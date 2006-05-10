@@ -4,5 +4,5 @@
 
 lib_LTLIBRARIES = libic_comm.la
 
-libcomm_la_SOURCES = setup_conn.c rw_comm.c
+libic_comm_la_SOURCES = setup_conn.c rw_comm.c
 

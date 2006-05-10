@@ -6,4 +6,4 @@
 noinst_PROGRAMS = test_comm
 
 test_comm_SOURCES = test_comm.c
-test_comm_LDADD = $(LDADD) ../comm/libcomm.la
+test_comm_LDADD = $(LDADD) ../comm/libic_comm.la
