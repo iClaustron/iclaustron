@@ -1,0 +1,64 @@
+iClaustron is a tool package designed to enable non-DBMS applications to take advantage
+of the features developed for NDB Cluster. It features an API to connect applications
+to the NDB kernel nodes. It contains an implementation of a cluster server. The cluster
+server manages configuration of many clusters. It implements a number of management
+functions for the cluster. The cluster client tool is a command driven tool that acts
+as an interface for end-users to manage the cluster. A graphical tool to manage the
+clusters would use the cluster client as interface or could have a cluster client
+integrated. The replication server is used to handle parallel replication from one
+cluster to another cluster. 
+
+Description of directories
+--------------------------
+cclient:
+This is the cluster client directory. It uses the API to the Cluster
+Server to implement management features as directed by the user. The
+user issues commands that are handled by a command parser. The command
+parser takes care of understanding the user objectives and then there is
+a set of programs to implement those features using the Cluster Server
+API.
+
+clusterserver:
+Implements the Cluster Server. It is controlled by issuing commands using
+the Cluster Server API and performs its action by using the API to the
+Data Servers. It controls a set of clusters where each such cluster has
+a configuration file that directs its start-up features. The Cluster Server
+controls changes to configuration and handles failures of a Cluster Server
+and failover to another Cluster Server. The Cluster Server uses an active-
+passive configuration but all changes to a configuration is written to all
+alive nodes before actually being changed.
+
+api_clusterserver:
+This is the C API to the Cluster Server. It is used by any application that
+need to interact with the Cluster Server.
+
+api_dataserver:
+This is the C API to the Data Servers. The data servers are the storage nodes
+in NDB Cluster. In iClaustron those are called Data Servers. Any application
+that uses the Data Server to store data needs to use this API to implement
+its functionality.
+
+repserver:
+This is the Replication Server, this server receives information about changes
+from the Data Servers and implements functions to replicate those changes to
+another cluster. It is only used for asynchronous replication. Synchronous
+replication is handled between the Data Servers.
+
+control:
+The Control Server is an aid to ensure that the Cluster Client also can control
+start and stop of iClaustron processes. It is also used to handle some support
+functions, such as emailing trace files to a Support Center.
+
+fileserver:
+This is an Application Server that implements the client part of the iClaustron
+Filesystem. This is a clustered filesystem that is implemented using FUSE,
+a filesystem in userspace. FUSE can be used on Linux and FreeBSD.
+
+comm:
+This implements common functions to implement Communication Functions. It uses
+currently IPv4 sockets. However many cluster interconnects implement socket
+APIs that bypass the TCP/IP stack.
+
+port:
+This is a portability library for iClaustron. In addition to this library,
+iClaustron uses glib for many common functions.
