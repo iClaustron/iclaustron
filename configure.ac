@@ -30,6 +30,7 @@ AC_PROG_YACC
 AC_PROG_LEX
 AC_PROG_LIBTOOL
 AC_CONFIG_FILES([Makefile port/Makefile comm/Makefile api_dataserver/Makefile api_clusterserver/Makefile control/Makefile cclient/Makefile clusterserver/Makefile repserver/Makefile fileserver/Makefile test/Makefile])
+AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 
 #
 # Next step is to check for all libraries such that the resulting programs
@@ -38,11 +39,31 @@ AC_CONFIG_FILES([Makefile port/Makefile comm/Makefile api_dataserver/Makefile ap
 
 AC_CHECK_FUNCS(bzero memset, break)
 AC_CHECK_FUNCS(socket bind connect listen accept)
+GLIB_PACKAGE="glib-2.0"
+GLIB_VERSION="2.10.2"
+if test "$PKG_CONFIG" = "no"; then
+  AC_MSG_ERROR([Error: You need to have pkg-config installed])
+fi
+GLIB_INCLUDE="`$PKG_CONFIG --cflags $GLIB_PACKAGE`"
+GLIB_LIB="`$PKG_CONFIG --libs $GLIB_PACKAGE`"
+
+LIBS="$LIBS $GLIB_LIB"
+IDIR="$IDIR $GLIB_INCLUDE"
+CFLAGS="$CFLAGS $GLIB_INCLUDE"
+CPPFLAGS="$CPPFLAGS $GLIB_INCLUDE"
+
+AC_CHECK_LIB(glib-2.0, g_list_append,,
+ [AC_MSG_ERROR([No glib library installed])])
 
 #
 # Next step is to check the existence of external header files.
 #
-AC_CHECK_HEADER([unistd.h netinet/in.h sys/types.h sys/socket.h])
+AC_HEADER_STDC
+AC_CHECK_HEADERS([unistd.h netinet/in.h sys/types.h sys/socket.h],,
+  [AC_MSG_ERROR([Common headers missing, e.g. socket.h])])
+AC_CHECK_HEADER(glib.h,,
+  [AC_MSG_ERROR([GLib headers missing])])
+
 #
 # Next step is to check for specific typedefs and structures found in the
 # external headers.
