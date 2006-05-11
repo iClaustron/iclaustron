@@ -5,7 +5,6 @@
 #include <errno.h>
 #include <common.h>
 #include <config.h>
-#include <glib.h>
 
 int setup_client(in_addr_t server_ip, u_short server_port,
                  in_addr_t my_ip, u_short my_port)
