@@ -6,17 +6,15 @@
 #include <common.h>
 #include <config.h>
 
-int setup_client(in_addr_t server_ip, u_short server_port,
-                 in_addr_t my_ip, u_short my_port)
+int setup_client(guint32 server_ip, guint16 server_port,
+                 guint32 my_ip, guint16 my_port)
 {
   int error, sockfd;
   struct sockaddr_in my_address, server_address;
-  gpointer a;
  
   bzero(&server_address, sizeof(server_address));
   bzero(&my_address, sizeof(my_address));
 
-  a= g_slice_alloc((gsize)1);
   server_address.sin_family= AF_INET;
   server_address.sin_addr.s_addr= htonl(server_ip);
   server_address.sin_port= htons(server_port);
