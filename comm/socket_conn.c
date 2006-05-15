@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <common.h>
 #include <config.h>
+#include <ic_comm.h>
 
 int set_up_socket_connection(struct ic_connection *conn)
 {
