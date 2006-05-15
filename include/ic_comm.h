@@ -1,9 +1,11 @@
-#ifdef COMM_H
-#define COMM_H
+#ifndef IC_COMM_H
+#define IC_COMM_H
 
 #include <netinet/in.h>
 #include <config.h>
-#include <common.h>
+#include <ic_common.h>
+
+struct ic_connection;
 
 struct ic_connect_operations
 {
@@ -29,13 +31,16 @@ struct ic_connection
   struct GMutex *read_mutex;
   struct GMutex *write_mutex;
   struct connection_buffer *first_con_buf;
-  struct connection_buffer *first_con_buf;
+  struct connection_buffer *last_con_buf;
+  struct ic_connect_operations *conn_op;
+  int backlog;
+  int sockfd;
   guint32 node_id;
   guint32 server_ip;
   guint32 client_ip;
   guint16 server_port;
   guint16 client_port;
-  bool is_client;
+  ic_bool is_client;
 };
 
 struct ic_connect_manager

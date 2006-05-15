@@ -10,6 +10,7 @@ AC_CONFIG_AUX_DIR(config)
 AC_CANONICAL_TARGET
 AM_INIT_AUTOMAKE(iclaustron, 0.0.1)
 AM_CONFIG_HEADER(include/config.h)
+AC_LANG(C)
 
 m4_ifdef([LT_INIT],
          [LT_INIT],

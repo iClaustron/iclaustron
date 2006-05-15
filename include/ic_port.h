@@ -1,4 +1,4 @@
-#ifdef PORT_H
+#ifndef PORT_H
 #define PORT_H
 
 #endif

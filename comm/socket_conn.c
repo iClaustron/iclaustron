@@ -3,11 +3,11 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <errno.h>
-#include <common.h>
+#include <ic_common.h>
 #include <config.h>
 #include <ic_comm.h>
 
-int set_up_socket_connection(struct ic_connection *conn)
+static int set_up_socket_connection(struct ic_connection *conn)
 {
   int error, sockfd;
   struct sockaddr_in client_address, server_address;
@@ -109,7 +109,7 @@ int set_up_socket_connection(struct ic_connection *conn)
 }
 
 int write_socket_connection(struct ic_connection *conn,
-                            const void *buf, guint32 size);
+                            const void *buf, guint32 size)
 {
   return 0;
 }
@@ -120,8 +120,8 @@ int read_socket_connection(struct ic_connection *conn,
   return 0;
 }
 
-int open_write_socket_connection(struct ic_connection *conn,
-                                 guint32 total_size);
+int open_write_socket_session(struct ic_connection *conn,
+                              guint32 total_size)
 {
   return 0;
 }
@@ -129,8 +129,8 @@ int open_write_socket_connection(struct ic_connection *conn,
 void set_socket_methods(struct ic_connection *conn)
 {
   conn->conn_op->set_up_ic_connection= set_up_socket_connection;
-  conn->conn_op->write_ic_connection = write_socket_connection,
-  conn->conn_op->read_ic_connection = read_socket_connection,
-  conn->conn_op->open_write_session = open_write_socket_session
+  conn->conn_op->write_ic_connection = write_socket_connection;
+  conn->conn_op->read_ic_connection = read_socket_connection;
+  conn->conn_op->open_write_session = open_write_socket_session;
 }
 
