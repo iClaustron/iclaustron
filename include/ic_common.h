@@ -1,6 +1,7 @@
 #ifndef COMMON_H
 #define COMMON_H
 #include <glib.h>
+#include <stdio.h>
 
 typedef unsigned char ic_bool;
 #if !HAVE_BZERO && HAVE_MEMSET

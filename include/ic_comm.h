@@ -3,6 +3,7 @@
 
 #include <netinet/in.h>
 #include <config.h>
+#include <string.h>
 #include <ic_common.h>
 
 struct ic_connection;
@@ -13,7 +14,8 @@ struct ic_connect_operations
   int (*read_ic_connection) (struct ic_connection *conn,
                              void **buf, guint32 size);
   int (*write_ic_connection) (struct ic_connection *conn,
-                              const void *buf, guint32 size);
+                              const void *buf, guint32 size,
+                              guint32 secs_to_try);
   int (*open_write_session) (struct ic_connection *conn, guint32 total_size);
 };
 
@@ -27,12 +29,12 @@ struct ic_connect_mgr_operations
 
 struct ic_connection
 {
+  struct ic_connect_operations conn_op;
   guint64 cpu_bindings;
   struct GMutex *read_mutex;
   struct GMutex *write_mutex;
   struct connection_buffer *first_con_buf;
   struct connection_buffer *last_con_buf;
-  struct ic_connect_operations *conn_op;
   int backlog;
   int sockfd;
   guint32 node_id;
