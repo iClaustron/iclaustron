@@ -9,7 +9,7 @@
 
 static int set_up_socket_connection(struct ic_connection *conn)
 {
-  int error, sockfd;
+  int error, sockfd, addr_len;
   struct sockaddr_in client_address, server_address;
 
   memset(&server_address, sizeof(server_address), 0);
@@ -75,8 +75,9 @@ static int set_up_socket_connection(struct ic_connection *conn)
       printf("listen error\n");
       goto error;
     }
+    addr_len= sizeof(client_address);
     if (accept(sockfd, (struct sockaddr *)&client_address,
-               sizeof(client_address)) < 0)
+               &addr_len) < 0)
     {
       printf("accept error\n");
       goto error;
