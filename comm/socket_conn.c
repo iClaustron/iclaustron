@@ -150,6 +150,12 @@ static int write_socket_connection(struct ic_connection *conn,
   return 0;
 }
 
+static int close_socket_connection(struct ic_connection *conn)
+{
+  close(conn->sockfd);
+  return 0;
+}
+
 static int read_socket_connection(struct ic_connection *conn,
                                   void **buf, guint32 size)
 {
@@ -165,6 +171,7 @@ static int open_write_socket_session(struct ic_connection *conn,
 void set_socket_methods(struct ic_connection *conn)
 {
   conn->conn_op.set_up_ic_connection= set_up_socket_connection;
+  conn->conn_op.close_ic_connection= close_socket_connection;
   conn->conn_op.write_ic_connection = write_socket_connection;
   conn->conn_op.read_ic_connection = read_socket_connection;
   conn->conn_op.open_write_session = open_write_socket_session;

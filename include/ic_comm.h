@@ -11,6 +11,7 @@ struct ic_connection;
 struct ic_connect_operations
 {
   int (*set_up_ic_connection) (struct ic_connection *conn);
+  int (*close_ic_connection) (struct ic_connection *conn);
   int (*read_ic_connection) (struct ic_connection *conn,
                              void **buf, guint32 size);
   int (*write_ic_connection) (struct ic_connection *conn,
