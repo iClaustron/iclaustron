@@ -11,6 +11,7 @@ struct ic_connection;
 struct ic_connect_operations
 {
   int (*set_up_ic_connection) (struct ic_connection *conn);
+  int (*accept_ic_connection) (struct ic_connection *conn);
   int (*close_ic_connection) (struct ic_connection *conn);
   int (*read_ic_connection) (struct ic_connection *conn,
                              void **buf, guint32 size);
@@ -43,7 +44,8 @@ struct ic_connection
   guint32 client_ip;
   guint16 server_port;
   guint16 client_port;
-  ic_bool is_client;
+  gboolean is_client;
+  gboolean call_accept;
 };
 
 struct ic_connect_manager

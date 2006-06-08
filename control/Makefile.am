@@ -5,4 +5,4 @@
 
 noinst_PROGRAMS = ic_cntrl
 ic_cntrl_SOURCES = ic_cntrl.c
-
+ic_cntrl_LDADD = $(LDADD) ../comm/libic_comm.la

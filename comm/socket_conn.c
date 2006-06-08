@@ -7,6 +7,23 @@
 #include <config.h>
 #include <ic_comm.h>
 
+
+static gboolean accept_socket_connection(struct ic_connection *conn)
+{
+  int error, addr_len;
+  struct sockaddr_in client_address;
+
+  addr_len= sizeof(client_address);
+  if (accept(conn->sockfd, (struct sockaddr *)&client_address,
+             &addr_len) < 0)
+  {
+    printf("accept error: %d %s\n", errno, sys_errlist[errno]);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+
 static int set_up_socket_connection(struct ic_connection *conn)
 {
   int error, sockfd, addr_len;
@@ -75,12 +92,10 @@ static int set_up_socket_connection(struct ic_connection *conn)
       printf("listen error\n");
       goto error;
     }
-    addr_len= sizeof(client_address);
-    if (accept(sockfd, (struct sockaddr *)&client_address,
-               &addr_len) < 0)
+    if (conn->call_accept)
     {
-      printf("accept error\n");
-      goto error;
+      if (accept_socket_connection(conn))
+        goto error;
     }
   }
   conn->sockfd= sockfd;
@@ -91,6 +106,7 @@ error:
    close(sockfd);
    return error;
 }
+
 
 static int write_socket_connection(struct ic_connection *conn,
                                    const void *buf, guint32 size,
@@ -171,6 +187,7 @@ static int open_write_socket_session(struct ic_connection *conn,
 void set_socket_methods(struct ic_connection *conn)
 {
   conn->conn_op.set_up_ic_connection= set_up_socket_connection;
+  conn->conn_op.accept_ic_connection= accept_socket_connection;
   conn->conn_op.close_ic_connection= close_socket_connection;
   conn->conn_op.write_ic_connection = write_socket_connection;
   conn->conn_op.read_ic_connection = read_socket_connection;

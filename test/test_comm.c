@@ -29,6 +29,7 @@ void connection_test()
   conn.client_port= glob_client_port;
   conn.is_client= is_client;
   conn.backlog= 1;
+  conn.call_accept= TRUE;
   set_socket_methods(&conn);
   ret_code= conn.conn_op.set_up_ic_connection(&conn);
   if (ret_code != 0)
@@ -46,9 +47,18 @@ int main(int argc, char *argv[])
   GOptionContext *context;
 
   context= g_option_context_new("- Basic test program communication module");
+  if (!context)
+    goto error;
   g_option_context_add_main_entries(context, entries, NULL);
-  g_option_context_parse(context, &argc, &argv, &error);
+  if (!g_option_context_parse(context, &argc, &argv, &error))
+    goto parse_error;
+  g_option_context_free(context);
   connection_test();
   return 0;
+
+parse_error:
+
+error:
+  return 1;
 }
 
