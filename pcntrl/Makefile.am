@@ -5,4 +5,4 @@
 
 bin_PROGRAMS = ic_pcntrl
 ic_pcntrl_SOURCES = ic_pcntrl.c
-ic_pcntrl_LDADD = $(LDADD) ../comm/libic_apid.la
+ic_pcntrl_LDADD = $(LDADD) ../api_dataserver/libic_apid.la

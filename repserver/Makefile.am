@@ -5,5 +5,5 @@
 
 bin_PROGRAMS = ic_repserv
 ic_repserv_SOURCES = ic_repserv.c
-ic_repserv_LDADD = $(LDADD) ../comm/libic_comm.la \
-                            ../port/libic_port.la
+ic_repserv_LDADD = $(LDADD) ../api_dataserver/libic_apid.la \
+                            ../api_clusterserver/libic_apic.la

@@ -2,6 +2,6 @@
 ## This directory is used to build iClaustron Portability Functions
 ##
 
-lib_LTLIBRARIES = libport.la
+lib_LTLIBRARIES = libic_port.la
 
-libport_la_SOURCES = ic_port.c
+libic_port_la_SOURCES = ic_port.c
