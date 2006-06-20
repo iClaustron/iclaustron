@@ -3,6 +3,8 @@
 ## This directory is used to build the iClaustron Cluster Server
 ##
 
-noinst_PROGRAMS = ic_cserv
+bin_PROGRAMS = ic_cserv
 ic_cserv_SOURCES = ic_cserv.c
+ic_cserv_LDADD = $(LDADD) ../comm/libic_comm.la \
+                          ../port/libic_port.la
 

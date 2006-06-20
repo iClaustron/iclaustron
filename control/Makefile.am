@@ -3,6 +3,6 @@
 # This directory is used to build the iClaustron Control Server
 #
 
-noinst_PROGRAMS = ic_cntrl
-ic_cntrl_SOURCES = ic_cntrl.c
-ic_cntrl_LDADD = $(LDADD) ../comm/libic_comm.la
+bin_PROGRAMS = ic_pcntrl
+ic_pcntrl_SOURCES = ic_pcntrl.c
+ic_pcntrl_LDADD = $(LDADD) ../comm/libic_apid.la

@@ -2,6 +2,8 @@
 ## This directory is used to build iClaustron API towards Cluster Server
 ##
 
-lib_LTLIBRARIES = libapic.la
+lib_LTLIBRARIES = libic_apic.la
 
-libapic_la_SOURCES = ic_apic.c
+libic_apic_la_SOURCES = ic_apic.c
+libic_apic_la_LIBADD = $(LDADD) ../comm/libic_comm.la \
+                                ../port/libic_port.la

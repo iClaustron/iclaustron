@@ -3,6 +3,6 @@
 ## This directory is used to build the iClaustron File Server
 ##
 
-noinst_PROGRAMS = ic_fileserv
+bin_PROGRAMS = ic_fileserv
 ic_fileserv_SOURCES = ic_fileserv.c
-
+ic_fileserv_LDADD = $(LDADD) ../comm/libic_apid.la

@@ -1,34 +1,39 @@
 /*
-  This program handles start and stop of cluster processes. It reads a configuration
-  file and based on its content enables start of a number of processes on the local
-  machine. It can start and stop processes belonging to different clusters. These sets
-  of clusters are referred to as a cluster group. A cluster group shares a common set
-  of Cluster Servers. These Cluster Servers handle the configuration and changes to the
-  configuration. They are also an essential point of contact for all other management
-  of the cluster and can be used to retrieve information from the cluster about its
+  This program handles start and stop of cluster processes. It reads a
+  configuration file and based on its content enables start of a number of
+  processes on the local machine. It can start and stop processes belonging
+  to different clusters. These sets of clusters are referred to as a cluster
+  group. A cluster group shares a common set of Cluster Servers. These
+  Cluster Servers handle the configuration and changes to the configuration.
+  They are also an essential point of contact for all other management of the
+  cluster and can be used to retrieve information from the cluster about its
   current state.
 
-  This program is also used to gather information from local log files as part of any
-  process to gather information about mishaps in the cluster(s).
+  This program is also used to gather information from local log files as 
+  part of any process to gather information about mishaps in the cluster(s).
 
-  This process listens to connections on a server port, this is either a default port or
-  one assigned when starting program. One can also set the IP address to use when listening
-  to connections. By default the process will discover its IP address by itself.
+  This process listens to connections on a server port, this is either a
+  default port or one assigned when starting program. One can also set the
+  IP address to use when listening to connections. By default the process
+  will discover its IP address by itself.
 
-  The program by default uses a configuration placed in /etc/ic_cntrl.conf but this can be
-  changed by a parameter to the program.
+  The program by default uses a configuration placed in /etc/ic_cntrl.conf
+  but this can be changed by a parameter to the program.
 
-  This program can be started and stopped by services in the Linux environment.
+  This program can be started and stopped by services in the Linux
+  environment.
   service ic_cntrl start
   service ic_cntrl stop
   service ic_cntrl status
   service ic_cntrl restart
-  The normal usage of ic_cntrl is to place it such that it is automatically started when the OS
-  starts. Then use the service commands to control its operation. Start will start if the service
-  isn't active already. Stop will stop its operation. It will not stop any of the processes that
-  the program has spawned off. Status is used to check its current status. Finally restart will
-  stop and start the program. The most common use of these operations are restart which can be used
-  to force the program to reread the configuration file.
+  The normal usage of ic_cntrl is to place it such that it is automatically
+  started when the OS starts. Then use the service commands to control its
+  operation. Start will start if the service isn't active already. Stop will
+  stop its operation. It will not stop any of the processes that the program
+  has spawned off. Status is used to check its current status. Finally
+  restart will stop and start the program. The most common use of these
+  operations are restart which can be used to force the program to reread
+  the configuration file.
 */
 
 #include <ic_comm.h>
@@ -60,6 +65,13 @@ static int start_services(struct ic_connection *conn,
   return ret_code;
 }
 
+static int verify_conf_file(GKeyFile *conf_file)
+{
+  printf("Verifying configuration file\n");
+  return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
   GError *error= NULL;
@@ -80,11 +92,13 @@ int main(int argc, char *argv[])
   /* Read configuration file */
   if (!(conf_file= g_key_file_new()))
     goto mem_error;
-/*
   if (!g_key_file_load_from_file(conf_file, glob_config_file,
                                  G_KEY_FILE_NONE, &error))
     goto conf_file_error;
-*/
+
+  if (verify_conf_file(conf_file))
+    return 1;
+
   /* Start listening for connections */
   if (glob_ip)
   {

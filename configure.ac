@@ -28,9 +28,9 @@ m4_ifdef([LT_INIT],
 
 AC_PROG_CC
 AC_PROG_YACC
-AC_PROG_LEX
+AM_PROG_LEX
 AC_PROG_LIBTOOL
-AC_CONFIG_FILES([Makefile port/Makefile comm/Makefile api_dataserver/Makefile api_clusterserver/Makefile control/Makefile cclient/Makefile clusterserver/Makefile repserver/Makefile fileserver/Makefile test/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile port/Makefile comm/Makefile api_dataserver/Makefile api_clusterserver/Makefile control/Makefile cclient/Makefile clusterserver/Makefile repserver/Makefile fileserver/Makefile test/Makefile])
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 
 #
