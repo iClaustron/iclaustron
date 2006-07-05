@@ -17,7 +17,7 @@ static gboolean accept_socket_connection(struct ic_connection *conn)
   if (accept(conn->sockfd, (struct sockaddr *)&client_address,
              &addr_len) < 0)
   {
-    printf("accept error: %d %s\n", errno, sys_errlist[errno]);
+    DEBUG(printf("accept error: %d %s\n", errno, sys_errlist[errno]));
     return TRUE;
   }
   return FALSE;
@@ -29,19 +29,24 @@ static int set_up_socket_connection(struct ic_connection *conn)
   int error, sockfd, addr_len;
   struct sockaddr_in client_address, server_address;
 
-  memset(&server_address, sizeof(server_address), 0);
-  memset(&client_address, sizeof(client_address), 0);
 
-  server_address.sin_family= AF_INET;
-  server_address.sin_addr.s_addr= g_htonl(conn->server_ip);
-  server_address.sin_port= g_htons(conn->server_port);
-
-  client_address.sin_family= AF_INET;
-  client_address.sin_addr.s_addr= g_htonl(conn->client_ip);
-  client_address.sin_port= g_htons(conn->client_port);
+  if (conn->is_client)
+  {
+    memset(&client_address, sizeof(client_address), 0);
+    client_address.sin_family= AF_INET;
+    client_address.sin_addr.s_addr= g_htonl(conn->client_ip);
+    client_address.sin_port= g_htons(conn->client_port);
+  }
+  else
+  {
+    memset(&server_address, sizeof(server_address), 0);
+    server_address.sin_family= AF_INET;
+    server_address.sin_addr.s_addr= g_htonl(conn->server_ip);
+    server_address.sin_port= g_htons(conn->server_port);
+  }
 
   /*
-    Create a socket for the client connection
+    Create a socket for the connection
   */
   if ((sockfd= socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
   {
@@ -50,12 +55,15 @@ static int set_up_socket_connection(struct ic_connection *conn)
   if (conn->is_client)
   { 
     /*
-      Bind the socket to an IP address on this box.
+      Bind the socket to an IP address and port on this box.  If the caller
+      set client_port to 0 then an ephemeral port will be used. If the
+      caller set client_ip to INADDR_ANY then any interface can be used on
+      the server.
     */
     if (bind(sockfd, (struct sockaddr *)&client_address,
              sizeof(client_address)) < 0)
     {
-      printf("bind error\n");
+      DEBUG(printf("bind error\n"));
       goto error;
     }
     do
@@ -81,7 +89,7 @@ static int set_up_socket_connection(struct ic_connection *conn)
     if (bind(sockfd, (struct sockaddr *)&server_address,
              sizeof(server_address)) < 0)
     {
-      printf("bind error\n");
+      DEBUG(printf("bind error\n"));
       goto error;
     }
     /*
@@ -89,7 +97,7 @@ static int set_up_socket_connection(struct ic_connection *conn)
     */
     if ((listen(sockfd, conn->backlog) < 0))
     {
-      printf("listen error\n");
+      DEBUG(printf("listen error\n"));
       goto error;
     }
     if (conn->call_accept)

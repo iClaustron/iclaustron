@@ -20,6 +20,15 @@ m4_ifdef([LT_INIT],
 # with a AC_ARG_ENABLE followed by a number of tests of various sorts to
 # handle dependencies among different options.
 #
+AC_ARG_WITH(production,
+         [  --with-production     Build a production version],
+         [with_production=$withval],
+         [with_production=no])
+
+AC_ARG_WITH(debug,
+         [  --with-debug      Build a debug version],
+         [with_debug=$withval],
+         [with_debug=no])
 
 #
 # Next step is to check for all the programs needed by the configure process.
@@ -34,8 +43,7 @@ AC_CONFIG_FILES([Makefile include/Makefile port/Makefile comm/Makefile api_datas
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 
 #
-# Next step is to check for all libraries such that the resulting programs
-# can be linked properly due to external dependencies.
+# Set compiler flags according to the user choice
 #
 
 AC_CHECK_FUNCS(bzero memset, break)
@@ -74,6 +82,30 @@ AC_CHECK_HEADER(glib.h,,
 # We check for all specific functions to be used by the tree.
 #
 
+DEBUG_FLAG="-g"
+OPTIMIZER_FLAG="-O2"
+WALL_FLAGS="-W -Wall"
+WARNING_FLAG="-W"
+
+if test "with_production" = "yes"; then
+  if test "$with_debug" = "yes"; then
+    CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $OPTIMIZER_FLAG"
+  else
+    CFLAGS="$WARNING_FLAG $OPTIMIZER_FLAG"
+  fi
+else
+  if test "$with_debug" = "yes"; then
+    CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $WALL_FLAGS"
+  else
+    CFLAGS="$WALL_FLAGS $DEBUG_FLAG $OPTIMIZER_FLAG"
+  fi
+fi
+CFLAGS="$CFLAGS $GLIB_INCLUDE"
+
+#
+# Next step is to check for all libraries such that the resulting programs
+# can be linked properly due to external dependencies.
+#
 #
 # Produce the output of the configure process.
 #

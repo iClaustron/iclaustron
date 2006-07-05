@@ -8,3 +8,9 @@ typedef unsigned char ic_bool;
 #define bzero(buf, bytes)  ((void) memset(buf, 0, bytes))
 #endif
 #endif
+
+#ifdef DEBUG_BUILD
+#define DEBUG(a) a
+#else
+#define DEBUG(a)
+#endif
