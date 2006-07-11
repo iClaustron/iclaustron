@@ -9,12 +9,17 @@ static guint32 glob_client_port= 10001;
 
 static GOptionEntry entries[] = 
 {
-  { "is_client", 0, 0, G_OPTION_ARG_NONE, &is_client, "Set process as client", NULL},
-  { "server_ip", 0, 0, G_OPTION_ARG_INT, &glob_server_ip, "Set Server IP address", NULL},
-  { "client_ip", 0, 0, G_OPTION_ARG_NONE, &glob_client_ip, "Set Client IP Address", NULL},
-  { "server_port", 0, 0, G_OPTION_ARG_NONE, &glob_server_port, "Set Server Port", NULL},
-  { "client_port", 0, 0, G_OPTION_ARG_NONE, &glob_client_port, "Set Client port", NULL},
-  { NULL }
+  { "is_client", 0, 0, G_OPTION_ARG_NONE, &is_client,
+    "Set process as client", NULL},
+  { "server_ip", 0, 0, G_OPTION_ARG_INT, &glob_server_ip,
+    "Set Server IP address", NULL},
+  { "client_ip", 0, 0, G_OPTION_ARG_NONE, &glob_client_ip,
+    "Set Client IP Address", NULL},
+  { "server_port", 0, 0, G_OPTION_ARG_NONE, &glob_server_port,
+    "Set Server Port", NULL},
+  { "client_port", 0, 0, G_OPTION_ARG_NONE, &glob_client_port,
+    "Set Client port", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
 void connection_test()

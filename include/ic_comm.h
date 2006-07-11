@@ -14,11 +14,16 @@ struct ic_connect_operations
   int (*accept_ic_connection) (struct ic_connection *conn);
   int (*close_ic_connection) (struct ic_connection *conn);
   int (*read_ic_connection) (struct ic_connection *conn,
-                             void **buf, guint32 size);
+                             void *buf, guint32 buf_size,
+                             guint32 *read_size);
   int (*write_ic_connection) (struct ic_connection *conn,
                               const void *buf, guint32 size,
                               guint32 secs_to_try);
-  int (*open_write_session) (struct ic_connection *conn, guint32 total_size);
+  int (*open_write_session) (struct ic_connection *conn,
+                             guint32 total_size);
+  int (*close_write_session) (struct ic_connection *conn);
+  int (*open_read_session) (struct ic_connection *conn);
+  int (*close_read_session) (struct ic_connection *conn);
 };
 
 struct ic_connect_mgr_operations
@@ -33,8 +38,8 @@ struct ic_connection
 {
   struct ic_connect_operations conn_op;
   guint64 cpu_bindings;
-  struct GMutex *read_mutex;
-  struct GMutex *write_mutex;
+  GMutex *read_mutex;
+  GMutex *write_mutex;
   struct connection_buffer *first_con_buf;
   struct connection_buffer *last_con_buf;
   int backlog;

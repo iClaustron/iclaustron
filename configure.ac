@@ -49,14 +49,17 @@ AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 AC_CHECK_FUNCS(bzero memset, break)
 AC_CHECK_FUNCS(socket bind connect listen accept)
 GLIB_PACKAGE="glib-2.0"
+GTHREAD_PACKAGE="gthread-2.0"
 GLIB_VERSION="2.10.2"
 if test "$PKG_CONFIG" = "no"; then
   AC_MSG_ERROR([Error: You need to have pkg-config installed])
 fi
 GLIB_INCLUDE="`$PKG_CONFIG --cflags $GLIB_PACKAGE`"
 GLIB_LIB="`$PKG_CONFIG --libs $GLIB_PACKAGE`"
+GTHREAD_LIB="`$PKG_CONFIG --libs $GTHREAD_PACKAGE`"
 
 LIBS="$LIBS $GLIB_LIB"
+LIBS="$LIBS $GTHREAD_LIB"
 IDIR="$IDIR $GLIB_INCLUDE"
 CFLAGS="$CFLAGS $GLIB_INCLUDE"
 CPPFLAGS="$CPPFLAGS $GLIB_INCLUDE"
