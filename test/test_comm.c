@@ -28,6 +28,7 @@ void connection_test()
   int ret_code;
 
   printf("Connection Test Started\n");
+  set_socket_methods(&conn);
   conn.server_ip= glob_server_ip;
   conn.server_port= glob_server_port;
   conn.client_ip= glob_client_ip;
@@ -35,7 +36,8 @@ void connection_test()
   conn.is_client= is_client;
   conn.backlog= 1;
   conn.call_accept= TRUE;
-  set_socket_methods(&conn);
+  conn.is_mutex_used= TRUE;
+  conn.is_connect_thread_used= TRUE;
   ret_code= conn.conn_op.set_up_ic_connection(&conn);
   if (ret_code != 0)
   {

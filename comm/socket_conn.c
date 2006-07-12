@@ -18,7 +18,8 @@ static int accept_socket_connection(struct ic_connection *conn)
   if (accept(conn->sockfd, (struct sockaddr *)&client_address,
              &addr_len) < 0)
   {
-    DEBUG(printf("accept error: %d %s\n", errno, sys_errlist[errno]));
+    DEBUG(printf("accept error: %d %s\n",
+                 errno, sys_errlist[errno]));
     error= errno;
     goto error;
   }
@@ -35,7 +36,9 @@ static int accept_socket_connection(struct ic_connection *conn)
       any port number is allowed to connect from.
       We'll disconnect by closing the socket and report an error.
     */
-    DEBUG(printf("Client connected from a disallowed address\n"));
+    DEBUG(printf(
+      "Client connect from a disallowed address, ip=%x, port=%u\n",
+      conn->client_ip, conn->client_port));
     error= 1;
     goto error;
   }
@@ -46,22 +49,23 @@ error:
   return error;
 }
 
-
-static int set_up_socket_connection(struct ic_connection *conn)
+static int int_set_up_socket_connection(struct ic_connection *conn)
 {
   int error, sockfd;
   struct sockaddr_in client_address, server_address;
 
-  if (!g_thread_supported())
-    g_thread_init(NULL);
-  conn->read_mutex= g_mutex_new();
-  conn->write_mutex= g_mutex_new();
-  if (!(conn->read_mutex && conn->write_mutex))
+  if (conn->is_mutex_used)
   {
-    /* Memory allocation failure */
-    return 2;
+    if (!g_thread_supported())
+      g_thread_init(NULL);
+    conn->read_mutex= g_mutex_new();
+    conn->write_mutex= g_mutex_new();
+    if (!(conn->read_mutex && conn->write_mutex))
+    {
+      /* Memory allocation failure */
+      return 2;
+    }
   }
-
   if (conn->is_client)
   {
     memset(&client_address, sizeof(client_address), 0);
@@ -148,6 +152,11 @@ error:
    return error;
 }
 
+static int set_up_socket_connection(struct ic_connection *conn)
+{
+  if (!conn->is_connect_thread_used)
+    return int_set_up_socket_connection(conn);
+}
 
 static int write_socket_connection(struct ic_connection *conn,
                                    const void *buf, guint32 size,
@@ -234,25 +243,29 @@ static int read_socket_connection(struct ic_connection *conn,
 static int open_write_socket_session(struct ic_connection *conn,
                                      guint32 total_size)
 {
-  g_mutex_lock(conn->write_mutex);
+  if (conn->is_mutex_used)
+    g_mutex_lock(conn->write_mutex);
   return 0;
 }
 
 static int close_write_socket_session(struct ic_connection *conn)
 {
-  g_mutex_unlock(conn->write_mutex);
+  if (conn->is_mutex_used)
+    g_mutex_unlock(conn->write_mutex);
   return 0;
 }
 
 static int open_read_socket_session(struct ic_connection *conn)
 {
-  g_mutex_lock(conn->read_mutex);
+  if (conn->is_mutex_used)
+    g_mutex_lock(conn->read_mutex);
   return 0;
 }
 
 static int close_read_socket_session(struct ic_connection *conn)
 {
-  g_mutex_unlock(conn->read_mutex);
+  if (conn->is_mutex_used)
+    g_mutex_unlock(conn->read_mutex);
   return 0;
 }
 
@@ -267,5 +280,14 @@ void set_socket_methods(struct ic_connection *conn)
   conn->conn_op.close_write_session = close_write_socket_session;
   conn->conn_op.open_read_session = open_read_socket_session;
   conn->conn_op.close_read_session = close_read_socket_session;
+  conn->is_client= FALSE;
+  conn->backlog= 1;
+  conn->server_ip= g_htonl(INADDR_ANY);
+  conn->server_port= 0;
+  conn->client_ip= g_htonl(INADDR_ANY);
+  conn->client_port= 0;
+  conn->is_mutex_used= TRUE;
+  conn->is_connect_thread_used= FALSE;
+  conn->call_accept= TRUE;
 }
 
