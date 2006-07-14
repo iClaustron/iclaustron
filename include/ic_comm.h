@@ -7,7 +7,9 @@
 #include <ic_common.h>
 
 struct ic_connection;
-void set_socket_methods(struct ic_connection *conn);
+void init_socket_object(struct ic_connection *conn, gboolean is_client,
+                        gboolean is_mutex_used,
+                        gboolean is_connect_thread_used);
 
 struct ic_connect_operations
 {
@@ -25,6 +27,8 @@ struct ic_connect_operations
   int (*close_write_session) (struct ic_connection *conn);
   int (*open_read_session) (struct ic_connection *conn);
   int (*close_read_session) (struct ic_connection *conn);
+  gboolean (*is_ic_conn_connected) (struct ic_connection *conn);
+  gboolean (*is_ic_conn_thread_active) (struct ic_connection *conn);
 };
 
 struct ic_connect_mgr_operations
@@ -45,10 +49,13 @@ struct ic_connection
   guint64 cpu_bindings;
   GMutex *read_mutex;
   GMutex *write_mutex;
+  GMutex *connect_mutex;
   struct connection_buffer *first_con_buf;
   struct connection_buffer *last_con_buf;
   int sockfd;
   guint32 node_id;
+  gboolean is_connected;
+  gboolean is_connect_thread_active;
   /*
     These are interface variables that are public. By setting
     those to proper values before calling set_up_ic_connection
@@ -98,11 +105,6 @@ struct ic_connection
   guint16 server_port;
   guint16 client_port;
   gboolean is_client;
-  /*
-    Not really sure why I introduced this variable. Should
-    probably be removed.
-  */
-  gboolean call_accept;
   /*
     If the connection is used in a multi-threaded environment
     we use a mutex before performing operations on the

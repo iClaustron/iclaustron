@@ -7,8 +7,37 @@
 #include <config.h>
 #include <ic_comm.h>
 
+static void
+set_is_connected(struct ic_connection *conn)
+{
+  g_mutex_lock(conn->connect_mutex);
+  conn->is_connected= TRUE;
+  g_mutex_unlock(conn->connect_mutex);
+  return;
+}
 
-static int accept_socket_connection(struct ic_connection *conn)
+static gboolean
+is_conn_connected(struct ic_connection *conn)
+{
+  gboolean is_connected;
+  g_mutex_lock(conn->connect_mutex);
+  is_connected= conn->is_connected;
+  g_mutex_unlock(conn->connect_mutex);
+  return is_connected;
+}
+
+static gboolean
+is_conn_thread_active(struct ic_connection *conn)
+{
+  gboolean is_thread_active;
+  g_mutex_lock(conn->connect_mutex);
+  is_thread_active= conn->is_connect_thread_active;
+  g_mutex_unlock(conn->connect_mutex);
+  return is_thread_active;
+}
+
+static int
+accept_socket_connection(struct ic_connection *conn)
 {
   int error;
   socklen_t addr_len;
@@ -42,6 +71,7 @@ static int accept_socket_connection(struct ic_connection *conn)
     error= 1;
     goto error;
   }
+  set_is_connected(conn);
   return 0;
 
 error:
@@ -49,15 +79,14 @@ error:
   return error;
 }
 
-static int int_set_up_socket_connection(struct ic_connection *conn)
+static int
+int_set_up_socket_connection(struct ic_connection *conn)
 {
   int error, sockfd;
   struct sockaddr_in client_address, server_address;
 
   if (conn->is_mutex_used)
   {
-    if (!g_thread_supported())
-      g_thread_init(NULL);
     conn->read_mutex= g_mutex_new();
     conn->write_mutex= g_mutex_new();
     if (!(conn->read_mutex && conn->write_mutex))
@@ -115,6 +144,7 @@ static int int_set_up_socket_connection(struct ic_connection *conn)
           continue;
         return errno;
       }
+      set_is_connected(conn);
       break;
     } while (1);
   }
@@ -137,11 +167,8 @@ static int int_set_up_socket_connection(struct ic_connection *conn)
       DEBUG(printf("listen error\n"));
       goto error;
     }
-    if (conn->call_accept)
-    {
-      if ((error= accept_socket_connection(conn)))
-        return error;
-    }
+    if ((error= accept_socket_connection(conn)))
+      return error;
   }
   conn->sockfd= sockfd;
   return 0;
@@ -152,15 +179,50 @@ error:
    return error;
 }
 
-static int set_up_socket_connection(struct ic_connection *conn)
+static gpointer
+run_set_up_socket_connection(gpointer data)
 {
-  if (!conn->is_connect_thread_used)
-    return int_set_up_socket_connection(conn);
+  int ret_code;
+  struct ic_connection *conn= (struct ic_connection *)data;
+  ret_code= int_set_up_socket_connection(conn);
+  g_mutex_lock(conn->connect_mutex);
+  conn->is_connect_thread_active= FALSE;
+  g_mutex_unlock(conn->connect_mutex);
+  return NULL;
 }
 
-static int write_socket_connection(struct ic_connection *conn,
-                                   const void *buf, guint32 size,
-                                   guint32 secs_to_try)
+static int
+set_up_socket_connection(struct ic_connection *conn)
+{
+  GError *error= NULL;
+  if (!g_thread_supported())
+    g_thread_init(NULL);
+  conn->connect_mutex= g_mutex_new();
+  if (!conn->connect_mutex)
+  {
+    /* Memory allocation failure */
+    return 2;
+  }
+  if (!conn->is_connect_thread_used)
+    return int_set_up_socket_connection(conn);
+
+  if (!g_thread_create_full(run_set_up_socket_connection,
+                           (gpointer)conn,
+                           65536, /* Stack size */
+                           FALSE, /* Not joinable */
+                           FALSE, /* Not bound */
+                           G_THREAD_PRIORITY_NORMAL,
+                           &error))
+  {
+    return 1; /* Should write proper error handling code here */
+  }
+  return 0;
+}
+
+static int
+write_socket_connection(struct ic_connection *conn,
+                        const void *buf, guint32 size,
+                        guint32 secs_to_try)
 {
   GTimer *time_measure;
   gdouble secs_expired;
@@ -216,15 +278,17 @@ static int write_socket_connection(struct ic_connection *conn,
   return 0;
 }
 
-static int close_socket_connection(struct ic_connection *conn)
+static int
+close_socket_connection(struct ic_connection *conn)
 {
   close(conn->sockfd);
   return 0;
 }
 
-static int read_socket_connection(struct ic_connection *conn,
-                                  void *buf, guint32 buf_size,
-                                  guint32 *read_size)
+static int
+read_socket_connection(struct ic_connection *conn,
+                       void *buf, guint32 buf_size,
+                       guint32 *read_size)
 {
   int ret_code, error;
   do
@@ -240,54 +304,94 @@ static int read_socket_connection(struct ic_connection *conn,
   return error;
 }
 
-static int open_write_socket_session(struct ic_connection *conn,
-                                     guint32 total_size)
+static int
+open_write_socket_session_mutex(struct ic_connection *conn,
+                                guint32 total_size)
 {
-  if (conn->is_mutex_used)
-    g_mutex_lock(conn->write_mutex);
+  g_mutex_lock(conn->write_mutex);
   return 0;
 }
 
-static int close_write_socket_session(struct ic_connection *conn)
+static int
+open_write_socket_session(struct ic_connection *conn,
+                          guint32 total_size)
 {
-  if (conn->is_mutex_used)
-    g_mutex_unlock(conn->write_mutex);
   return 0;
 }
 
-static int open_read_socket_session(struct ic_connection *conn)
+static int
+close_write_socket_session_mutex(struct ic_connection *conn)
 {
-  if (conn->is_mutex_used)
-    g_mutex_lock(conn->read_mutex);
+  g_mutex_unlock(conn->write_mutex);
   return 0;
 }
 
-static int close_read_socket_session(struct ic_connection *conn)
+static int
+close_write_socket_session(struct ic_connection *conn)
 {
-  if (conn->is_mutex_used)
-    g_mutex_unlock(conn->read_mutex);
   return 0;
 }
 
-void set_socket_methods(struct ic_connection *conn)
+static int
+open_read_socket_session_mutex(struct ic_connection *conn)
+{
+  g_mutex_lock(conn->read_mutex);
+  return 0;
+}
+
+static int
+open_read_socket_session(struct ic_connection *conn)
+{
+  return 0;
+}
+
+static int
+close_read_socket_session_mutex(struct ic_connection *conn)
+{
+  g_mutex_unlock(conn->read_mutex);
+  return 0;
+}
+
+static int
+close_read_socket_session(struct ic_connection *conn)
+{
+  return 0;
+}
+
+void
+init_socket_object(struct ic_connection *conn, gboolean is_client,
+                   gboolean is_mutex_used,
+                   gboolean is_connect_thread_used)
 {
   conn->conn_op.set_up_ic_connection= set_up_socket_connection;
   conn->conn_op.accept_ic_connection= accept_socket_connection;
   conn->conn_op.close_ic_connection= close_socket_connection;
   conn->conn_op.write_ic_connection = write_socket_connection;
   conn->conn_op.read_ic_connection = read_socket_connection;
-  conn->conn_op.open_write_session = open_write_socket_session;
-  conn->conn_op.close_write_session = close_write_socket_session;
-  conn->conn_op.open_read_session = open_read_socket_session;
-  conn->conn_op.close_read_session = close_read_socket_session;
-  conn->is_client= FALSE;
+  conn->conn_op.is_ic_conn_thread_active= is_conn_thread_active;
+  conn->conn_op.is_ic_conn_connected= is_conn_connected;
+  if (is_mutex_used)
+  {
+    conn->conn_op.open_write_session = open_write_socket_session_mutex;
+    conn->conn_op.close_write_session = close_write_socket_session_mutex;
+    conn->conn_op.open_read_session = open_read_socket_session_mutex;
+    conn->conn_op.close_read_session = close_read_socket_session_mutex;
+  }
+  else
+  {
+    conn->conn_op.open_write_session = open_write_socket_session;
+    conn->conn_op.open_read_session = open_read_socket_session;
+    conn->conn_op.close_write_session = close_write_socket_session;
+    conn->conn_op.close_read_session = close_read_socket_session;
+  }
+  conn->is_client= is_client;
+  conn->is_mutex_used= is_mutex_used;
+  conn->is_connect_thread_used= is_connect_thread_used;
+  conn->is_connected= FALSE;
   conn->backlog= 1;
   conn->server_ip= g_htonl(INADDR_ANY);
   conn->server_port= 0;
   conn->client_ip= g_htonl(INADDR_ANY);
   conn->client_port= 0;
-  conn->is_mutex_used= TRUE;
-  conn->is_connect_thread_used= FALSE;
-  conn->call_accept= TRUE;
 }
 

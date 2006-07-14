@@ -28,15 +28,12 @@ void connection_test()
   int ret_code;
 
   printf("Connection Test Started\n");
-  set_socket_methods(&conn);
+  init_socket_object(&conn, is_client, TRUE, FALSE);
   conn.server_ip= glob_server_ip;
   conn.server_port= glob_server_port;
   conn.client_ip= glob_client_ip;
   conn.client_port= glob_client_port;
   conn.is_client= is_client;
-  conn.backlog= 1;
-  conn.call_accept= TRUE;
-  conn.is_mutex_used= TRUE;
   conn.is_connect_thread_used= TRUE;
   ret_code= conn.conn_op.set_up_ic_connection(&conn);
   if (ret_code != 0)
