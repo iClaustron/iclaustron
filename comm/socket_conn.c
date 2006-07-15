@@ -1,10 +1,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
 #include <errno.h>
-#include <ic_common.h>
-#include <config.h>
 #include <ic_comm.h>
 
 static void
@@ -37,14 +35,85 @@ is_conn_thread_active(struct ic_connection *conn)
 }
 
 static int
-accept_socket_connection(struct ic_connection *conn)
+set_option_size(int sockfd, int size, int old_size,
+                int option_type, int option_no)
+{
+  if (size && size > old_size)
+  {
+    while (size > old_size &&
+           setsockopt(sockfd, option_type, option_no,
+           (const void*)&size, sizeof(int)))
+      size>>= 1; /* Try with half the size */
+    if (size > old_size)
+      return size;
+  }
+  return old_size;
+}
+
+static void
+ic_set_socket_options(struct ic_connection *conn, int sockfd)
+{
+  int no_delay, error, maxseg_size, rec_size, snd_size;
+  socklen_t sock_len;
+  /*
+    We start by setting TCP_NODELAY to ensure the OS does no
+    extra delays, we want to be in control of when data is
+    sent and received.
+  */
+  no_delay= 1;
+  if ((error= setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
+                         (const void*)&no_delay, sizeof(int))))
+  {
+    /*
+      We will continue even with this error.
+    */
+    no_delay= 0;
+    DEBUG(printf("Set TCP_NODELAY error: %d\n", error));
+  }
+  getsockopt(sockfd, IPPROTO_TCP, TCP_MAXSEG,
+             (void*)&maxseg_size, &sock_len);
+  getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF,
+             (void*)&rec_size, &sock_len);
+  getsockopt(sockfd, SOL_SOCKET, SO_SNDBUF,
+             (void*)&snd_size, &sock_len);
+  DEBUG(printf("Default TCP_MAXSEG = %d\n", maxseg_size));
+  DEBUG(printf("Default SO_RCVBUF = %d\n", rec_size));
+  DEBUG(printf("Default SO_SNDBUF = %d\n", snd_size));
+
+  if (conn->is_wan_connection)
+  {
+    maxseg_size= set_option_size(sockfd, WAN_TCP_MAXSEG_SIZE, maxseg_size,
+                                 IPPROTO_TCP, TCP_MAXSEG);
+    rec_size= set_option_size(sockfd, WAN_REC_BUF_SIZE, rec_size,
+                              SOL_SOCKET, SO_RCVBUF);
+    snd_size= set_option_size(sockfd, WAN_SND_BUF_SIZE, snd_size,
+                              SOL_SOCKET, SO_SNDBUF);
+  }
+  maxseg_size= set_option_size(sockfd, conn->tcp_maxseg_size, maxseg_size,
+                               IPPROTO_TCP, TCP_MAXSEG);
+  rec_size= set_option_size(sockfd, conn->tcp_receive_buffer_size,
+                            rec_size, SOL_SOCKET, SO_RCVBUF);
+  snd_size= set_option_size(sockfd, conn->tcp_send_buffer_size,
+                            snd_size, SOL_SOCKET, SO_SNDBUF);
+  DEBUG(printf("Used TCP_MAXSEG = %d\n", maxseg_size));
+  DEBUG(printf("Used SO_RCVBUF = %d\n", rec_size));
+  DEBUG(printf("Used SO_SNDBUF = %d\n", snd_size));
+  DEBUG(printf("Used TCP_NODELAY = %d\n", no_delay));
+  conn->tcp_maxseg_size= maxseg_size;
+  conn->tcp_receive_buffer_size= rec_size;
+  conn->tcp_send_buffer_size= snd_size;
+  conn->tcp_no_delay= no_delay;
+}
+
+static int
+accept_socket_connection(struct ic_connection *conn, int sockfd)
 {
   int error;
   socklen_t addr_len;
   struct sockaddr_in client_address;
 
   addr_len= sizeof(client_address);
-  if (accept(conn->sockfd, (struct sockaddr *)&client_address,
+  if (accept(sockfd, (struct sockaddr *)&client_address,
              &addr_len) < 0)
   {
     DEBUG(printf("accept error: %d %s\n",
@@ -68,14 +137,14 @@ accept_socket_connection(struct ic_connection *conn)
     DEBUG(printf(
       "Client connect from a disallowed address, ip=%x, port=%u\n",
       conn->client_ip, conn->client_port));
-    error= 1;
+    error= ACCEPT_ERROR;
     goto error;
   }
   set_is_connected(conn);
   return 0;
 
 error:
-  close(conn->sockfd);
+  close(sockfd);
   return error;
 }
 
@@ -90,25 +159,16 @@ int_set_up_socket_connection(struct ic_connection *conn)
     conn->read_mutex= g_mutex_new();
     conn->write_mutex= g_mutex_new();
     if (!(conn->read_mutex && conn->write_mutex))
-    {
-      /* Memory allocation failure */
-      return 2;
-    }
+      return MEM_ALLOC_ERROR;
   }
-  if (conn->is_client)
-  {
-    memset(&client_address, sizeof(client_address), 0);
-    client_address.sin_family= AF_INET;
-    client_address.sin_addr.s_addr= g_htonl(conn->client_ip);
-    client_address.sin_port= g_htons(conn->client_port);
-  }
-  else
-  {
-    memset(&server_address, sizeof(server_address), 0);
-    server_address.sin_family= AF_INET;
-    server_address.sin_addr.s_addr= g_htonl(conn->server_ip);
-    server_address.sin_port= g_htons(conn->server_port);
-  }
+  memset(&client_address, sizeof(client_address), 0);
+  client_address.sin_family= AF_INET;
+  client_address.sin_addr.s_addr= g_htonl(conn->client_ip);
+  client_address.sin_port= g_htons(conn->client_port);
+  memset(&server_address, sizeof(server_address), 0);
+  server_address.sin_family= AF_INET;
+  server_address.sin_addr.s_addr= g_htonl(conn->server_ip);
+  server_address.sin_port= g_htons(conn->server_port);
 
   /*
     Create a socket for the connection
@@ -117,6 +177,7 @@ int_set_up_socket_connection(struct ic_connection *conn)
   {
     return errno;
   }
+  ic_set_socket_options(conn, sockfd);
   if (conn->is_client)
   { 
     /*
@@ -167,7 +228,7 @@ int_set_up_socket_connection(struct ic_connection *conn)
       DEBUG(printf("listen error\n"));
       goto error;
     }
-    if ((error= accept_socket_connection(conn)))
+    if ((error= accept_socket_connection(conn, sockfd)))
       return error;
   }
   conn->sockfd= sockfd;
@@ -199,20 +260,17 @@ set_up_socket_connection(struct ic_connection *conn)
     g_thread_init(NULL);
   conn->connect_mutex= g_mutex_new();
   if (!conn->connect_mutex)
-  {
-    /* Memory allocation failure */
-    return 2;
-  }
+    return MEM_ALLOC_ERROR;
   if (!conn->is_connect_thread_used)
     return int_set_up_socket_connection(conn);
 
   if (!g_thread_create_full(run_set_up_socket_connection,
-                           (gpointer)conn,
-                           65536, /* Stack size */
-                           FALSE, /* Not joinable */
-                           FALSE, /* Not bound */
-                           G_THREAD_PRIORITY_NORMAL,
-                           &error))
+                            (gpointer)conn,
+                            8192, /* Stack size */
+                            FALSE, /* Not joinable */
+                            FALSE, /* Not bound */
+                            G_THREAD_PRIORITY_NORMAL,
+                            &error))
   {
     return 1; /* Should write proper error handling code here */
   }
@@ -359,9 +417,10 @@ close_read_socket_session(struct ic_connection *conn)
 }
 
 void
-init_socket_object(struct ic_connection *conn, gboolean is_client,
-                   gboolean is_mutex_used,
-                   gboolean is_connect_thread_used)
+ic_init_socket_object(struct ic_connection *conn,
+                      gboolean is_client,
+                      gboolean is_mutex_used,
+                      gboolean is_connect_thread_used)
 {
   conn->conn_op.set_up_ic_connection= set_up_socket_connection;
   conn->conn_op.accept_ic_connection= accept_socket_connection;
@@ -388,6 +447,10 @@ init_socket_object(struct ic_connection *conn, gboolean is_client,
   conn->is_mutex_used= is_mutex_used;
   conn->is_connect_thread_used= is_connect_thread_used;
   conn->is_connected= FALSE;
+  conn->tcp_maxseg_size= 0;
+  conn->tcp_receive_buffer_size= 0;
+  conn->tcp_send_buffer_size= 0;
+  conn->is_wan_connection= FALSE;
   conn->backlog= 1;
   conn->server_ip= g_htonl(INADDR_ANY);
   conn->server_port= 0;
