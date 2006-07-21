@@ -10,15 +10,16 @@
 #define ACCEPT_ERROR 32766
 
 struct ic_connection;
-void ic_init_socket_object(struct ic_connection *conn,
-                           gboolean is_client,
-                           gboolean is_mutex_used,
-                           gboolean is_connect_thread_used);
+struct ic_connect_stat;
+gboolean ic_init_socket_object(struct ic_connection *conn,
+                               gboolean is_client,
+                               gboolean is_mutex_used,
+                               gboolean is_connect_thread_used);
 
 struct ic_connect_operations
 {
   int (*set_up_ic_connection) (struct ic_connection *conn);
-  int (*accept_ic_connection) (struct ic_connection *conn);
+  int (*accept_ic_connection) (struct ic_connection *conn, int sockfd);
   int (*close_ic_connection) (struct ic_connection *conn);
   int (*read_ic_connection) (struct ic_connection *conn,
                              void *buf, guint32 buf_size,
@@ -31,8 +32,85 @@ struct ic_connect_operations
   int (*close_write_session) (struct ic_connection *conn);
   int (*open_read_session) (struct ic_connection *conn);
   int (*close_read_session) (struct ic_connection *conn);
+  void (*free_ic_connection) (struct ic_connection *conn);
+  /*
+    Read statistics of the connection. This is done by copying the statistics
+    information into the provided statistics object to ensure that the
+    connection can continue to execute.
+    The statistics isn't read with a mutex so in a multithreaded environment
+    there is no guarantee that the figures are completely consistent with
+    each other.
+    If safe read is needed use the safe_read_stat_ic_connection method instead.
+    The safe read cannot be used while a read or write session is ongoing by the
+    same thread as is calling the safe read statistics. This would create a
+    deadlock.
+  */
+  void (*read_stat_ic_connection) (struct ic_connection *conn,
+                                   struct ic_connect_stat *stat,
+                                   gboolean clear_stat_timer);
+  void (*safe_read_stat_ic_connection) (struct ic_connection *conn,
+                                        struct ic_connect_stat *stat,
+                                        gboolean clear_stat_timer);
+  /*
+    These are two routines to read times in conjunction with this connect
+    object.
+    The first measures the time since object was created if not connected
+    and time since connection was established.
+    The second reads the time since last time statistics was read. This
+    call should be done before calling read_stat_ic_connection if one is
+    interested in time since last time this timer was cleared (can be
+    cleared in read_stat_ic_connection call).
+  */
+  double (*ic_read_connection_time) (struct ic_connection *conn,
+                                     ulong *microseconds);
+  double (*ic_read_stat_time) (struct ic_connection *conn,
+                               ulong *microseconds);
   gboolean (*is_ic_conn_connected) (struct ic_connection *conn);
   gboolean (*is_ic_conn_thread_active) (struct ic_connection *conn);
+};
+
+struct ic_connect_stat
+{
+  /*
+    These variables represent statistics about this connection. It keeps track of
+    number of bytes sent and received. It keeps track of the sum of squares of these
+    values as well to enable calculation of standard deviation.
+    On top of this we also keep track of number of sent messages within size ranges.
+    The first range is 0-31 bytes, the second 32-63 bytes, 64-127 bytes and so forth
+    upto the last range which is 512kBytes and larger messages.
+    Also a similar array for received messages.
+  */
+  guint64 no_sent_buffers;
+  guint64 no_sent_bytes;
+  long double no_sent_bytes_square_sum;
+  guint64 no_rec_buffers;
+  guint64 no_rec_bytes;
+  long double no_rec_bytes_square_sum;
+  guint32 no_sent_buf_range[16];
+  guint32 no_rec_buf_range[16];
+  /*
+    These variables represent the Socket options as they were actually set.
+  */
+  int used_tcp_receive_buffer_size;
+  int used_tcp_send_buffer_size;
+  guint32 used_tcp_maxseg_size;
+  /*
+    These variables represent the connection status at the moment, endpoints,
+    if it is connected, if it is the server or client endpoint and if we have
+    a connect thread active
+  */
+  guint32 used_server_ip;
+  guint32 used_client_ip;
+  guint16 used_server_port;
+  guint16 used_client_port;
+  gboolean is_client_used;
+  gboolean is_connected;
+  gboolean is_connect_thread_active;
+  /*
+    This variable is set to 1 except in error cases when TCP_NODELAY was not
+    possible to set.
+  */
+  gboolean tcp_no_delay;
 };
 
 struct ic_connect_mgr_operations
@@ -50,6 +128,7 @@ struct ic_connection
     ic_connection class.
   */
   struct ic_connect_operations conn_op;
+  struct ic_connect_stat conn_stat;
   guint64 cpu_bindings;
   GMutex *read_mutex;
   GMutex *write_mutex;
@@ -58,8 +137,15 @@ struct ic_connection
   struct connection_buffer *last_con_buf;
   int sockfd;
   guint32 node_id;
-  gboolean is_connected;
-  gboolean is_connect_thread_active;
+  /*
+    We keep track of time that the connection has been up and a timer for how
+    long time has passed since last time the statistics was read. This timer is reset
+    every time a call to read statistics is made.
+    This is part of the statistics, but we don't want to export timers so we put it into
+    the private part of the ic_connection class.
+  */
+  GTimer *connection_start;
+  GTimer *last_read_stat;
   /*
     These are interface variables that are public. By setting
     those to proper values before calling set_up_ic_connection
@@ -174,7 +260,6 @@ struct ic_connection
     using Gigabit Ethernet with Jumbo Frames and even more so using
     10Gigabit Ethernet. In those cases the outstanding frames can be
     of substantial even on a highly loaded LAN.
-    These values are set to the used value after connection is established.
   */
   int tcp_receive_buffer_size;
   int tcp_send_buffer_size;
@@ -190,11 +275,6 @@ struct ic_connection
 #define WAN_SND_BUF_SIZE 4194304
 #define WAN_TCP_MAXSEG_SIZE 61440
   gboolean is_wan_connection;
-  /*
-    This variable is set to 1 except in error cases when TCP_NODELAY was not
-    possible to set.
-  */
-  int tcp_no_delay;
 };
 
 struct ic_connect_manager
