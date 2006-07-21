@@ -9,7 +9,7 @@ static void
 set_is_connected(struct ic_connection *conn)
 {
   g_mutex_lock(conn->connect_mutex);
-  conn->is_connected= TRUE;
+  conn->conn_stat.is_connected= TRUE;
   g_mutex_unlock(conn->connect_mutex);
   return;
 }
@@ -19,7 +19,7 @@ is_conn_connected(struct ic_connection *conn)
 {
   gboolean is_connected;
   g_mutex_lock(conn->connect_mutex);
-  is_connected= conn->is_connected;
+  is_connected= conn->conn_stat.is_connected;
   g_mutex_unlock(conn->connect_mutex);
   return is_connected;
 }
@@ -29,7 +29,7 @@ is_conn_thread_active(struct ic_connection *conn)
 {
   gboolean is_thread_active;
   g_mutex_lock(conn->connect_mutex);
-  is_thread_active= conn->is_connect_thread_active;
+  is_thread_active= conn->conn_stat.is_connect_thread_active;
   g_mutex_unlock(conn->connect_mutex);
   return is_thread_active;
 }
@@ -99,10 +99,10 @@ ic_set_socket_options(struct ic_connection *conn, int sockfd)
   DEBUG(printf("Used SO_RCVBUF = %d\n", rec_size));
   DEBUG(printf("Used SO_SNDBUF = %d\n", snd_size));
   DEBUG(printf("Used TCP_NODELAY = %d\n", no_delay));
-  conn->tcp_maxseg_size= maxseg_size;
-  conn->tcp_receive_buffer_size= rec_size;
-  conn->tcp_send_buffer_size= snd_size;
-  conn->tcp_no_delay= no_delay;
+  conn->conn_stat.used_tcp_maxseg_size= maxseg_size;
+  conn->conn_stat.used_tcp_receive_buffer_size= rec_size;
+  conn->conn_stat.used_tcp_send_buffer_size= snd_size;
+  conn->conn_stat.tcp_no_delay= no_delay;
 }
 
 static int
@@ -220,7 +220,8 @@ int_set_up_socket_connection(struct ic_connection *conn)
       DEBUG(printf("bind error\n"));
       goto error;
     }
-    /*
+    /*last time this timer was cleared (can be cleared in read_stat_ic_connection call).
+
       Listen for incoming connect messages
     */
     if ((listen(sockfd, conn->backlog) < 0))
@@ -247,7 +248,7 @@ run_set_up_socket_connection(gpointer data)
   struct ic_connection *conn= (struct ic_connection *)data;
   ret_code= int_set_up_socket_connection(conn);
   g_mutex_lock(conn->connect_mutex);
-  conn->is_connect_thread_active= FALSE;
+  conn->conn_stat.is_connect_thread_active= FALSE;
   g_mutex_unlock(conn->connect_mutex);
   return NULL;
 }
@@ -371,8 +372,7 @@ open_write_socket_session_mutex(struct ic_connection *conn,
 }
 
 static int
-open_write_socket_session(struct ic_connection *conn,
-                          guint32 total_size)
+open_write_socket_session(struct ic_connection *conn, guint32 total_size)
 {
   return 0;
 }
@@ -394,7 +394,7 @@ static int
 open_read_socket_session_mutex(struct ic_connection *conn)
 {
   g_mutex_lock(conn->read_mutex);
-  return 0;
+  return 0; 
 }
 
 static int
@@ -416,17 +416,70 @@ close_read_socket_session(struct ic_connection *conn)
   return 0;
 }
 
-void
+static void
+free_socket_connection(struct ic_connection *conn)
+{
+  g_timer_destroy(conn->connection_start);
+  g_timer_destroy(conn->last_read_stat);
+}
+
+static void
+read_stat_socket_connection(struct ic_connection *conn,
+                            struct ic_connect_stat *stat,
+                            gboolean clear_stat_timer)
+{
+  memcpy((void*)stat, (void*)&conn->conn_stat,
+         sizeof(struct ic_connect_stat));
+  if (clear_stat_timer)
+    g_timer_reset(conn->last_read_stat);
+}
+
+static void
+safe_read_stat_socket_conn(struct ic_connection *conn,
+                           struct ic_connect_stat *stat,
+                           gboolean clear_stat_timer)
+{
+  g_mutex_lock(conn->read_mutex);
+  g_mutex_lock(conn->write_mutex);
+  g_mutex_lock(conn->connect_mutex);
+  read_stat_socket_connection(conn, stat, clear_stat_timer);
+  g_mutex_unlock(conn->read_mutex);
+  g_mutex_unlock(conn->write_mutex);
+  g_mutex_unlock(conn->connect_mutex);
+}
+
+static double
+read_socket_connection_time(struct ic_connection *conn,
+                            ulong *microseconds)
+{
+  return g_timer_elapsed(conn->connection_start, microseconds);
+}
+
+static double
+read_socket_stat_time(struct ic_connection *conn,
+                      ulong *microseconds)
+{
+  return g_timer_elapsed(conn->last_read_stat, microseconds);
+}
+
+gboolean
 ic_init_socket_object(struct ic_connection *conn,
                       gboolean is_client,
                       gboolean is_mutex_used,
                       gboolean is_connect_thread_used)
 {
+  guint32 i;
+
   conn->conn_op.set_up_ic_connection= set_up_socket_connection;
   conn->conn_op.accept_ic_connection= accept_socket_connection;
   conn->conn_op.close_ic_connection= close_socket_connection;
   conn->conn_op.write_ic_connection = write_socket_connection;
   conn->conn_op.read_ic_connection = read_socket_connection;
+  conn->conn_op.free_ic_connection= free_socket_connection;
+  conn->conn_op.read_stat_ic_connection= read_stat_socket_connection;
+  conn->conn_op.safe_read_stat_ic_connection= safe_read_stat_socket_conn;
+  conn->conn_op.ic_read_connection_time= read_socket_connection_time;
+  conn->conn_op.ic_read_stat_time= read_socket_stat_time;
   conn->conn_op.is_ic_conn_thread_active= is_conn_thread_active;
   conn->conn_op.is_ic_conn_connected= is_conn_connected;
   if (is_mutex_used)
@@ -446,7 +499,6 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->is_client= is_client;
   conn->is_mutex_used= is_mutex_used;
   conn->is_connect_thread_used= is_connect_thread_used;
-  conn->is_connected= FALSE;
   conn->tcp_maxseg_size= 0;
   conn->tcp_receive_buffer_size= 0;
   conn->tcp_send_buffer_size= 0;
@@ -456,5 +508,34 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->server_port= 0;
   conn->client_ip= g_htonl(INADDR_ANY);
   conn->client_port= 0;
-}
 
+  conn->conn_stat.used_server_ip= g_htonl(INADDR_ANY);
+  conn->conn_stat.used_server_port= 0;
+  conn->conn_stat.used_client_ip= g_htonl(INADDR_ANY);
+  conn->conn_stat.used_client_port= 0;
+  conn->conn_stat.is_client_used= is_client;
+  conn->conn_stat.is_connected= FALSE;
+  conn->conn_stat.is_connect_thread_active= FALSE;
+
+  conn->conn_stat.used_tcp_maxseg_size= 0;
+  conn->conn_stat.used_tcp_receive_buffer_size= 0;
+  conn->conn_stat.used_tcp_send_buffer_size= 0;
+  conn->conn_stat.tcp_no_delay= FALSE;
+
+  conn->conn_stat.no_sent_buffers= (guint64)0;
+  conn->conn_stat.no_sent_bytes= (guint64)0;
+  conn->conn_stat.no_sent_bytes_square_sum= (long double)0;
+  conn->conn_stat.no_rec_buffers= (guint64)0;
+  conn->conn_stat.no_rec_bytes= (guint64)0;
+  conn->conn_stat.no_rec_bytes_square_sum= (long double)0;
+  for (i= 0; i < 16; i++)
+    conn->conn_stat.no_sent_buf_range[i]= 
+    conn->conn_stat.no_rec_buf_range[i]= 0;
+
+  if (!((conn->connection_start= g_timer_new()) &&
+      (conn->last_read_stat= g_timer_new())))
+    return TRUE;
+  g_timer_start(conn->last_read_stat);
+  g_timer_start(conn->connection_start);
+  return FALSE;
+}
