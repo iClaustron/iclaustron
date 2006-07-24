@@ -8,6 +8,7 @@
 
 #define MEM_ALLOC_ERROR 32767
 #define ACCEPT_ERROR 32766
+#define END_OF_FILE 32765
 
 struct ic_connection;
 struct ic_connect_stat;
@@ -34,16 +35,16 @@ struct ic_connect_operations
   int (*close_read_session) (struct ic_connection *conn);
   void (*free_ic_connection) (struct ic_connection *conn);
   /*
-    Read statistics of the connection. This is done by copying the statistics
-    information into the provided statistics object to ensure that the
-    connection can continue to execute.
+    Read statistics of the connection. This is done by copying the
+    statistics information into the provided statistics object to ensure
+    that the connection can continue to execute.
     The statistics isn't read with a mutex so in a multithreaded environment
     there is no guarantee that the figures are completely consistent with
     each other.
-    If safe read is needed use the safe_read_stat_ic_connection method instead.
-    The safe read cannot be used while a read or write session is ongoing by the
-    same thread as is calling the safe read statistics. This would create a
-    deadlock.
+    If safe read is needed use the safe_read_stat_ic_connection method
+    instead. The safe read cannot be used while a read or write session is
+    ongoing by the same thread as is calling the safe read statistics. This
+    would create a deadlock.
   */
   void (*read_stat_ic_connection) (struct ic_connection *conn,
                                    struct ic_connect_stat *stat,
@@ -51,6 +52,10 @@ struct ic_connect_operations
   void (*safe_read_stat_ic_connection) (struct ic_connection *conn,
                                         struct ic_connect_stat *stat,
                                         gboolean clear_stat_timer);
+  /*
+    Print statistics of the connection
+  */
+  void (*write_stat_ic_connection) (struct ic_connection *conn);
   /*
     These are two routines to read times in conjunction with this connect
     object.
@@ -72,22 +77,27 @@ struct ic_connect_operations
 struct ic_connect_stat
 {
   /*
-    These variables represent statistics about this connection. It keeps track of
-    number of bytes sent and received. It keeps track of the sum of squares of these
-    values as well to enable calculation of standard deviation.
-    On top of this we also keep track of number of sent messages within size ranges.
-    The first range is 0-31 bytes, the second 32-63 bytes, 64-127 bytes and so forth
-    upto the last range which is 512kBytes and larger messages.
+    These variables represent statistics about this connection. It keeps
+    track of number of bytes sent and received. It keeps track of the sum
+    of squares of these values as well to enable calculation of standard
+    deviation.
+    On top of this we also keep track of number of sent messages within
+    size ranges. The first range is 0-31 bytes, the second 32-63 bytes,
+    64-127 bytes and so forth upto the last range which is 512kBytes and
+    larger messages.
     Also a similar array for received messages.
   */
-  guint64 no_sent_buffers;
-  guint64 no_sent_bytes;
-  long double no_sent_bytes_square_sum;
-  guint64 no_rec_buffers;
-  guint64 no_rec_bytes;
-  long double no_rec_bytes_square_sum;
-  guint32 no_sent_buf_range[16];
-  guint32 no_rec_buf_range[16];
+  guint64 num_sent_buffers;
+  guint64 num_sent_bytes;
+  long double num_sent_bytes_square_sum;
+  guint64 num_rec_buffers;
+  guint64 num_rec_bytes;
+  long double num_rec_bytes_square_sum;
+  guint32 num_sent_buf_range[16];
+  guint32 num_rec_buf_range[16];
+  guint32 num_send_errors;
+  guint32 num_send_timeouts;
+  guint32 num_rec_errors;
   /*
     These variables represent the Socket options as they were actually set.
   */
@@ -151,6 +161,13 @@ struct ic_connection
     those to proper values before calling set_up_ic_connection
     the behaviour of the ic_connection is changed.
   */
+
+  /*
+    This variable is set after returning an error in the write socket call.
+    It provides the caller the number of bytes sent before the call returned
+    in error. It only has a valid value if the write call returned in error.
+  */
+  guint32 bytes_written_before_interrupt;
   /*
     backlog is the parameter provided to the listen call, thus
     this is only applicable for server side connections.

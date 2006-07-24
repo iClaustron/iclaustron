@@ -37,6 +37,7 @@ static GOptionEntry entries[] =
 void connection_test()
 {
   struct ic_connection conn;
+  char buf[8192];
   int ret_code;
 
   printf("Connection Test Started\n");
@@ -53,9 +54,43 @@ void connection_test()
   ret_code= conn.conn_op.set_up_ic_connection(&conn);
   if (ret_code != 0)
   {
-    printf("ret_code = %d\n", ret_code);
+    printf("Error in connection set-up: ret_code = %d\n", ret_code);
     return;
   }
+  if (glob_is_client)
+  {
+    guint32 read_size;
+    printf("Start reading\n");
+    while (!conn.conn_op.read_ic_connection(&conn,
+                                            (void*)buf,
+                                            sizeof(buf),
+                                            &read_size))
+      DEBUG(printf("One read completed: read_size = %u\n",
+                   read_size));
+  }
+  else
+  {
+    GTimer *timer;
+    double time_spent;
+    unsigned i;
+    memset(buf, 0, sizeof(buf));
+    timer= g_timer_new(); /* No errror check in test program */
+    printf("Start writing\n");
+    g_timer_start(timer);
+    for (i= 0; i < 8192; i++)
+    {
+      if (conn.conn_op.write_ic_connection(&conn,
+                                           (const void*)buf,
+                                           sizeof(buf),
+                                           2))
+        break;
+      DEBUG(printf("One write completed\n"));
+    }
+    time_spent= g_timer_elapsed(timer, NULL);
+    g_timer_destroy(timer);
+    printf("Time spent in writing 64 MBytes: %f\n", time_spent);
+  }
+  conn.conn_op.write_stat_ic_connection(&conn);
   conn.conn_op.close_ic_connection(&conn);
   printf("Connection Test Success\n");
 }

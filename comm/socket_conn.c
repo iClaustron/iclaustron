@@ -298,8 +298,20 @@ write_socket_connection(struct ic_connection *conn,
     ret_code= write(conn->sockfd, buf + write_size, buf_size);
     if (ret_code == (int)buf_size)
     {
+      unsigned i, range_limit;
       if (loop_count && time_measure)
         g_timer_destroy(time_measure);
+      conn->conn_stat.num_sent_buffers++;
+      conn->conn_stat.num_sent_bytes+= size;
+      conn->conn_stat.num_sent_bytes_square_sum+= (size*size);
+      range_limit= 32;
+      for (i= 0; i < 15; i++)
+      {
+        if (buf_size < range_limit)
+          break;
+        range_limit<<= 1;
+      }
+      conn->conn_stat.num_sent_buf_range[i]++;
       return 0;
     }
     if (!loop_count)
@@ -313,6 +325,8 @@ write_socket_connection(struct ic_connection *conn,
     {
       if (errno == EINTR)
         continue;
+      conn->conn_stat.num_send_errors++;
+      conn->bytes_written_before_interrupt= write_size;
       return errno;
     }
     write_size+= ret_code;
@@ -326,7 +340,11 @@ write_socket_connection(struct ic_connection *conn,
         next_sec_check+= (gdouble)1;
         secs_count++;
         if (secs_count >= secs_to_try)
+        {
+          conn->conn_stat.num_send_timeouts++;
+          conn->bytes_written_before_interrupt= write_size;
           return EINTR;
+        }
         loop_count= 1;
       }
     }
@@ -353,13 +371,29 @@ read_socket_connection(struct ic_connection *conn,
   do
   {
     ret_code= read(conn->sockfd, buf, buf_size);
-    if (ret_code >= 0)
+    if (ret_code > 0)
     {
+      unsigned i;
+      int range_limit;
       *read_size= ret_code;
+      conn->conn_stat.num_rec_buffers++;
+      conn->conn_stat.num_rec_bytes+= ret_code;
+      conn->conn_stat.num_rec_bytes_square_sum+= (ret_code*ret_code);
+      range_limit= 32;
+      for (i= 0; i < 15; i++)
+      {
+        if (ret_code < range_limit)
+          break;
+        range_limit<<= 1;
+      }
+      conn->conn_stat.num_rec_buf_range[i]++;
       return 0;
     }
+    if (ret_code == 0)
+      return END_OF_FILE;
     error= errno;
-  } while (error != EINTR);
+  } while (error == EINTR);
+  conn->conn_stat.num_rec_errors++;
   return error;
 }
 
@@ -462,6 +496,22 @@ read_socket_stat_time(struct ic_connection *conn,
   return g_timer_elapsed(conn->last_read_stat, microseconds);
 }
 
+static void
+write_stat_socket_connection(struct ic_connection *conn)
+{
+  printf("Number of sent buffers = %u, Number of sent bytes = %u\n",
+         conn->conn_stat.num_sent_buffers,
+         conn->conn_stat.num_sent_bytes);
+  printf("Number of rec buffers = %u, Number of rec bytes = %u\n",
+         conn->conn_stat.num_rec_buffers,
+         conn->conn_stat.num_rec_bytes);
+  printf("Number of send errors = %u, Number of send timeouts = %u\n",
+        conn->conn_stat.num_send_errors,
+        conn->conn_stat.num_send_timeouts);
+  printf("Number of rec errors = %u\n",
+        conn->conn_stat.num_rec_errors);
+}
+
 gboolean
 ic_init_socket_object(struct ic_connection *conn,
                       gboolean is_client,
@@ -482,6 +532,7 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->conn_op.ic_read_stat_time= read_socket_stat_time;
   conn->conn_op.is_ic_conn_thread_active= is_conn_thread_active;
   conn->conn_op.is_ic_conn_connected= is_conn_connected;
+  conn->conn_op.write_stat_ic_connection= write_stat_socket_connection;
   if (is_mutex_used)
   {
     conn->conn_op.open_write_session = open_write_socket_session_mutex;
@@ -508,6 +559,7 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->server_port= 0;
   conn->client_ip= g_htonl(INADDR_ANY);
   conn->client_port= 0;
+  conn->bytes_written_before_interrupt= 0;
 
   conn->conn_stat.used_server_ip= g_htonl(INADDR_ANY);
   conn->conn_stat.used_server_port= 0;
@@ -522,15 +574,18 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->conn_stat.used_tcp_send_buffer_size= 0;
   conn->conn_stat.tcp_no_delay= FALSE;
 
-  conn->conn_stat.no_sent_buffers= (guint64)0;
-  conn->conn_stat.no_sent_bytes= (guint64)0;
-  conn->conn_stat.no_sent_bytes_square_sum= (long double)0;
-  conn->conn_stat.no_rec_buffers= (guint64)0;
-  conn->conn_stat.no_rec_bytes= (guint64)0;
-  conn->conn_stat.no_rec_bytes_square_sum= (long double)0;
+  conn->conn_stat.num_sent_buffers= (guint64)0;
+  conn->conn_stat.num_sent_bytes= (guint64)0;
+  conn->conn_stat.num_sent_bytes_square_sum= (long double)0;
+  conn->conn_stat.num_send_errors= 0;
+  conn->conn_stat.num_send_timeouts= 0;
+  conn->conn_stat.num_rec_errors= 0;
+  conn->conn_stat.num_rec_buffers= (guint64)0;
+  conn->conn_stat.num_rec_bytes= (guint64)0;
+  conn->conn_stat.num_rec_bytes_square_sum= (long double)0;
   for (i= 0; i < 16; i++)
-    conn->conn_stat.no_sent_buf_range[i]= 
-    conn->conn_stat.no_rec_buf_range[i]= 0;
+    conn->conn_stat.num_sent_buf_range[i]= 
+    conn->conn_stat.num_rec_buf_range[i]= 0;
 
   if (!((conn->connection_start= g_timer_new()) &&
       (conn->last_read_stat= g_timer_new())))
