@@ -106,20 +106,32 @@ ic_set_socket_options(struct ic_connection *conn, int sockfd)
 }
 
 static int
-accept_socket_connection(struct ic_connection *conn, int sockfd)
+accept_socket_connection(struct ic_connection *conn)
 {
-  int error;
+  int error, ret_sockfd;
   socklen_t addr_len;
   struct sockaddr_in client_address;
 
+  /*
+    The socket used to listen to a part can be reused many times.
+    accept will return a new socket that can be used to read and
+    write from. We will not reuse a listening socket so we will
+    always close it immediately and only use the returned socket.
+  */
   addr_len= sizeof(client_address);
-  if (accept(sockfd, (struct sockaddr *)&client_address,
-             &addr_len) < 0)
+  ret_sockfd= accept(conn->listen_sockfd,
+                     (struct sockaddr *)&client_address,
+                     &addr_len);
+  if (!conn->is_listen_socket_retained)
+  {
+    close(conn->listen_sockfd);
+    conn->listen_sockfd= 0;
+  }
+  if (ret_sockfd < 0)
   {
     DEBUG(printf("accept error: %d %s\n",
                  errno, sys_errlist[errno]));
-    error= errno;
-    goto error;
+    return errno;
   }
   if (conn->client_ip != INADDR_ANY &&
       (g_htonl(conn->client_ip) != client_address.sin_addr.s_addr ||
@@ -138,14 +150,12 @@ accept_socket_connection(struct ic_connection *conn, int sockfd)
       "Client connect from a disallowed address, ip=%x, port=%u\n",
       conn->client_ip, conn->client_port));
     error= ACCEPT_ERROR;
-    goto error;
+    close(ret_sockfd);
+    return error;
   }
+  conn->rw_sockfd= ret_sockfd;
   set_is_connected(conn);
   return 0;
-
-error:
-  close(sockfd);
-  return error;
 }
 
 static int
@@ -189,7 +199,8 @@ int_set_up_socket_connection(struct ic_connection *conn)
     if (bind(sockfd, (struct sockaddr *)&client_address,
              sizeof(client_address)) < 0)
     {
-      DEBUG(printf("bind error\n"));
+      DEBUG(printf("bind error: %d %s\n",
+                   errno, sys_errlist[errno]));
       goto error;
     }
     do
@@ -203,8 +214,11 @@ int_set_up_socket_connection(struct ic_connection *conn)
       {
         if (errno == EINTR || errno == ECONNREFUSED)
           continue;
+        DEBUG(printf("connect error: %d %s\n",
+                     errno, sys_errlist[errno]));
         return errno;
       }
+      conn->rw_sockfd= sockfd;
       set_is_connected(conn);
       break;
     } while (1);
@@ -217,22 +231,31 @@ int_set_up_socket_connection(struct ic_connection *conn)
     if (bind(sockfd, (struct sockaddr *)&server_address,
              sizeof(server_address)) < 0)
     {
-      DEBUG(printf("bind error\n"));
+      DEBUG(printf("bind error: %d %s\n",
+                   errno, sys_errlist[errno]));
       goto error;
     }
-    /*last time this timer was cleared (can be cleared in read_stat_ic_connection call).
-
+    /*
       Listen for incoming connect messages
     */
     if ((listen(sockfd, conn->backlog) < 0))
     {
-      DEBUG(printf("listen error\n"));
+      DEBUG(printf("listen error: %d %s\n",
+                   errno, sys_errlist[errno]));
       goto error;
     }
-    if ((error= accept_socket_connection(conn, sockfd)))
-      return error;
+    conn->listen_sockfd= sockfd;
+    if (!conn->is_listen_socket_retained)
+    {
+      if ((error= accept_socket_connection(conn)))
+        return error;
+    }
+    else
+    {
+      conn->listen_sockfd= sockfd;
+      return 0;
+    }
   }
-  conn->sockfd= sockfd;
   return 0;
 
 error:
@@ -295,7 +318,8 @@ write_socket_connection(struct ic_connection *conn,
     gssize ret_code;
     gsize buf_size= size - write_size;
 
-    ret_code= write(conn->sockfd, buf + write_size, buf_size);
+    ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
+                   MSG_NOSIGNAL);
     if (ret_code == (int)buf_size)
     {
       unsigned i, range_limit;
@@ -327,6 +351,8 @@ write_socket_connection(struct ic_connection *conn,
         continue;
       conn->conn_stat.num_send_errors++;
       conn->bytes_written_before_interrupt= write_size;
+      DEBUG(printf("write error: %d %s\n",
+                   errno, sys_errlist[errno]));
       return errno;
     }
     write_size+= ret_code;
@@ -343,6 +369,7 @@ write_socket_connection(struct ic_connection *conn,
         {
           conn->conn_stat.num_send_timeouts++;
           conn->bytes_written_before_interrupt= write_size;
+          DEBUG(printf("timeout error on write\n"));
           return EINTR;
         }
         loop_count= 1;
@@ -358,7 +385,16 @@ write_socket_connection(struct ic_connection *conn,
 static int
 close_socket_connection(struct ic_connection *conn)
 {
-  close(conn->sockfd);
+  close(conn->rw_sockfd);
+  conn->rw_sockfd= 0;
+  return 0;
+}
+
+static int
+close_listen_socket_connection(struct ic_connection *conn)
+{
+  close(conn->listen_sockfd);
+  conn->listen_sockfd= 0;
   return 0;
 }
 
@@ -370,7 +406,7 @@ read_socket_connection(struct ic_connection *conn,
   int ret_code, error;
   do
   {
-    ret_code= read(conn->sockfd, buf, buf_size);
+    ret_code= recv(conn->rw_sockfd, buf, buf_size, 0);
     if (ret_code > 0)
     {
       unsigned i;
@@ -390,10 +426,15 @@ read_socket_connection(struct ic_connection *conn,
       return 0;
     }
     if (ret_code == 0)
+    {
+      DEBUG(printf("End of file received\n"));
       return END_OF_FILE;
+    }
     error= errno;
   } while (error == EINTR);
   conn->conn_stat.num_rec_errors++;
+  DEBUG(printf("read error: %d %s\n",
+               errno, sys_errlist[errno]));
   return error;
 }
 
@@ -410,7 +451,6 @@ open_write_socket_session(struct ic_connection *conn, guint32 total_size)
 {
   return 0;
 }
-
 static int
 close_write_socket_session_mutex(struct ic_connection *conn)
 {
@@ -500,16 +540,16 @@ static void
 write_stat_socket_connection(struct ic_connection *conn)
 {
   printf("Number of sent buffers = %u, Number of sent bytes = %u\n",
-         conn->conn_stat.num_sent_buffers,
-         conn->conn_stat.num_sent_bytes);
+         (guint32)conn->conn_stat.num_sent_buffers,
+         (guint32)conn->conn_stat.num_sent_bytes);
   printf("Number of rec buffers = %u, Number of rec bytes = %u\n",
-         conn->conn_stat.num_rec_buffers,
-         conn->conn_stat.num_rec_bytes);
+         (guint32)conn->conn_stat.num_rec_buffers,
+         (guint32)conn->conn_stat.num_rec_bytes);
   printf("Number of send errors = %u, Number of send timeouts = %u\n",
-        conn->conn_stat.num_send_errors,
-        conn->conn_stat.num_send_timeouts);
+        (guint32)conn->conn_stat.num_send_errors,
+        (guint32)conn->conn_stat.num_send_timeouts);
   printf("Number of rec errors = %u\n",
-        conn->conn_stat.num_rec_errors);
+        (guint32)conn->conn_stat.num_rec_errors);
 }
 
 gboolean
@@ -523,6 +563,7 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->conn_op.set_up_ic_connection= set_up_socket_connection;
   conn->conn_op.accept_ic_connection= accept_socket_connection;
   conn->conn_op.close_ic_connection= close_socket_connection;
+  conn->conn_op.close_ic_listen_connection= close_listen_socket_connection;
   conn->conn_op.write_ic_connection = write_socket_connection;
   conn->conn_op.read_ic_connection = read_socket_connection;
   conn->conn_op.free_ic_connection= free_socket_connection;
@@ -548,6 +589,7 @@ ic_init_socket_object(struct ic_connection *conn,
     conn->conn_op.close_read_session = close_read_socket_session;
   }
   conn->is_client= is_client;
+  conn->is_listen_socket_retained= 0;
   conn->is_mutex_used= is_mutex_used;
   conn->is_connect_thread_used= is_connect_thread_used;
   conn->tcp_maxseg_size= 0;
@@ -560,6 +602,8 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->client_ip= g_htonl(INADDR_ANY);
   conn->client_port= 0;
   conn->bytes_written_before_interrupt= 0;
+  conn->rw_sockfd= 0;
+  conn->listen_sockfd= 0;
 
   conn->conn_stat.used_server_ip= g_htonl(INADDR_ANY);
   conn->conn_stat.used_server_port= 0;

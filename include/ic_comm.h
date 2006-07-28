@@ -20,8 +20,9 @@ gboolean ic_init_socket_object(struct ic_connection *conn,
 struct ic_connect_operations
 {
   int (*set_up_ic_connection) (struct ic_connection *conn);
-  int (*accept_ic_connection) (struct ic_connection *conn, int sockfd);
+  int (*accept_ic_connection) (struct ic_connection *conn);
   int (*close_ic_connection) (struct ic_connection *conn);
+  int (*close_ic_listen_connection) (struct ic_connection *conn);
   int (*read_ic_connection) (struct ic_connection *conn,
                              void *buf, guint32 buf_size,
                              guint32 *read_size);
@@ -145,14 +146,15 @@ struct ic_connection
   GMutex *connect_mutex;
   struct connection_buffer *first_con_buf;
   struct connection_buffer *last_con_buf;
-  int sockfd;
+  int rw_sockfd;
+  int listen_sockfd;
   guint32 node_id;
   /*
     We keep track of time that the connection has been up and a timer for how
-    long time has passed since last time the statistics was read. This timer is reset
-    every time a call to read statistics is made.
-    This is part of the statistics, but we don't want to export timers so we put it into
-    the private part of the ic_connection class.
+    long time has passed since last time the statistics was read. This timer
+    is reset every time a call to read statistics is made.
+    This is part of the statistics, but we don't want to export timers so we
+    put it into the private part of the ic_connection class.
   */
   GTimer *connection_start;
   GTimer *last_read_stat;
@@ -211,6 +213,15 @@ struct ic_connection
   guint16 server_port;
   guint16 client_port;
   gboolean is_client;
+  /*
+    The normal way to use this connection API is to listen to a
+    socket and then close the listening socket after accept is
+    called, this flag set to true means that we will call accept
+    separately and that we don't close the listening thread after
+    a successful accept. If used the user must close the listening
+    connection in a separate call.
+  */
+  gboolean is_listen_socket_retained;
   /*
     If the connection is used in a multi-threaded environment
     we use a mutex before performing operations on the

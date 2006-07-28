@@ -4,8 +4,8 @@
 static gboolean glob_is_client= FALSE;
 static guint32 glob_server_ip= 0x7f000001;
 static guint32 glob_client_ip= 0x7f000001;
-static guint32 glob_server_port= 10000;
-static guint32 glob_client_port= 10001;
+static guint32 glob_server_port= 12000;
+static guint32 glob_client_port= 12001;
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
 static int glob_tcp_snd_size= 0;
@@ -65,8 +65,7 @@ void connection_test()
                                             (void*)buf,
                                             sizeof(buf),
                                             &read_size))
-      DEBUG(printf("One read completed: read_size = %u\n",
-                   read_size));
+      ;
   }
   else
   {
@@ -84,7 +83,6 @@ void connection_test()
                                            sizeof(buf),
                                            2))
         break;
-      DEBUG(printf("One write completed\n"));
     }
     time_spent= g_timer_elapsed(timer, NULL);
     g_timer_destroy(timer);
