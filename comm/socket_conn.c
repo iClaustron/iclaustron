@@ -302,6 +302,20 @@ set_up_socket_connection(struct ic_connection *conn)
 }
 
 static int
+write_socket_front_buffer(struct ic_connection *conn,
+                          const void *buf, guint32 size,
+                          guint32 secs_to_try)
+{
+  return write_socket_connection(conn, buf, size, secs_to_try);
+}
+
+static int
+flush_socket_front_buffer(struct ic_connection *conn)
+{
+  return 0;
+}
+
+static int
 write_socket_connection(struct ic_connection *conn,
                         const void *buf, guint32 size,
                         guint32 secs_to_try)
@@ -447,20 +461,9 @@ open_write_socket_session_mutex(struct ic_connection *conn,
 }
 
 static int
-open_write_socket_session(struct ic_connection *conn, guint32 total_size)
-{
-  return 0;
-}
-static int
 close_write_socket_session_mutex(struct ic_connection *conn)
 {
   g_mutex_unlock(conn->write_mutex);
-  return 0;
-}
-
-static int
-close_write_socket_session(struct ic_connection *conn)
-{
   return 0;
 }
 
@@ -472,12 +475,6 @@ open_read_socket_session_mutex(struct ic_connection *conn)
 }
 
 static int
-open_read_socket_session(struct ic_connection *conn)
-{
-  return 0;
-}
-
-static int
 close_read_socket_session_mutex(struct ic_connection *conn)
 {
   g_mutex_unlock(conn->read_mutex);
@@ -485,7 +482,13 @@ close_read_socket_session_mutex(struct ic_connection *conn)
 }
 
 static int
-close_read_socket_session(struct ic_connection *conn)
+no_op_socket_method(struct ic_connection *conn)
+{
+  return 0;
+}
+
+static int
+no_op_with_size_socket_method(struct ic_connection *conn)
 {
   return 0;
 }
@@ -564,7 +567,6 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->conn_op.accept_ic_connection= accept_socket_connection;
   conn->conn_op.close_ic_connection= close_socket_connection;
   conn->conn_op.close_ic_listen_connection= close_listen_socket_connection;
-  conn->conn_op.write_ic_connection = write_socket_connection;
   conn->conn_op.read_ic_connection = read_socket_connection;
   conn->conn_op.free_ic_connection= free_socket_connection;
   conn->conn_op.read_stat_ic_connection= read_stat_socket_connection;
@@ -583,10 +585,20 @@ ic_init_socket_object(struct ic_connection *conn,
   }
   else
   {
-    conn->conn_op.open_write_session = open_write_socket_session;
-    conn->conn_op.open_read_session = open_read_socket_session;
-    conn->conn_op.close_write_session = close_write_socket_session;
-    conn->conn_op.close_read_session = close_read_socket_session;
+    conn->conn_op.open_write_session = no_op_with_size_socket_method;
+    conn->conn_op.open_read_session = no_op_socket_method;
+    conn->conn_op.close_write_session = no_op_socket_method;
+    conn->conn_op.close_read_session = no_op_socket_method;
+  }
+  if (conn->is_using_front_buffer)
+  {
+    conn->conn_op.write_ic_connection= write_socket_front_buffer;
+    conn->conn_op.flush_ic_connection= flush_socket_front_buffer;
+  }
+  else
+  {
+    conn->conn_op.write_ic_connection= write_socket_connection;
+    conn->conn_op.flush_ic_connection= no_op_socket_method;
   }
   conn->is_client= is_client;
   conn->is_listen_socket_retained= 0;
