@@ -19,22 +19,40 @@ gboolean ic_init_socket_object(struct ic_connection *conn,
 
 struct ic_connect_operations
 {
+  /*
+    Set up a connection object, this can be either the server end or
+    the client end of the connection. For server end it is possible
+    that this call doesn't perform the accept call.
+  */
   int (*set_up_ic_connection) (struct ic_connection *conn);
   int (*accept_ic_connection) (struct ic_connection *conn);
   int (*close_ic_connection) (struct ic_connection *conn);
   int (*close_ic_listen_connection) (struct ic_connection *conn);
+  /*
+    These calls are used to read and write on a socket connection.
+    There is support for memory buffering in front of the socket.
+    In this case it is necessary to flush the memory buffer in order
+    to ensure that buffered operations have actually been written.
+  */
   int (*read_ic_connection) (struct ic_connection *conn,
                              void *buf, guint32 buf_size,
                              guint32 *read_size);
   int (*write_ic_connection) (struct ic_connection *conn,
                               const void *buf, guint32 size,
+                              guint32 prio_level,
                               guint32 secs_to_try);
+  int (*flush_ic_connection) (struct ic_connection *conn);
+  /*
+    In order to support multiple threads using the same connection
+    object at the same time we need to declare open and close of
+    read and write sessions. The socket connection can have a read
+    session and a write session concurrently.
+  */
   int (*open_write_session) (struct ic_connection *conn,
                              guint32 total_size);
   int (*close_write_session) (struct ic_connection *conn);
   int (*open_read_session) (struct ic_connection *conn);
   int (*close_read_session) (struct ic_connection *conn);
-  void (*free_ic_connection) (struct ic_connection *conn);
   /*
     Read statistics of the connection. This is done by copying the
     statistics information into the provided statistics object to ensure
@@ -73,6 +91,10 @@ struct ic_connect_operations
                                ulong *microseconds);
   gboolean (*is_ic_conn_connected) (struct ic_connection *conn);
   gboolean (*is_ic_conn_thread_active) (struct ic_connection *conn);
+  /*
+    Free all memory connected to a connection object
+  */
+  void (*free_ic_connection) (struct ic_connection *conn);
 };
 
 struct ic_connect_stat
@@ -223,6 +245,13 @@ struct ic_connection
   */
   gboolean is_listen_socket_retained;
   /*
+    If this variable is set we will use a front memory buffer such
+    that before writing on the socket we will write into a buffer.
+    We will only write to the socket if the memory buffer is full.
+    We will also write to the socket when a flush call is made.
+  */
+  gboolean is_using_front_buffer;
+  /*
     If the connection is used in a multi-threaded environment
     we use a mutex before performing operations on the
     connection. There is a separate mutex for read and write
@@ -308,7 +337,47 @@ struct ic_connection
 struct ic_connect_manager
 {
   struct ic_connection **ic_con_array;
-  struct GMutex *icm_mutex;
+  GMutex *icm_mutex;
+};
+
+/*
+  Definitions for the front buffer pool on the connection objects
+*/
+#define PRIO_LEVELS 2
+#define MAX_ALLOC_SEGMENTS 8
+#define HIGH_PRIO_BUF_SIZE 128
+struct ic_sock_buf_page;
+struct ic_sock_buf;
+
+struct ic_sock_buf* ic_init_socket_membuf(guint32 page_size,
+                                          guint32 no_of_pages);
+
+struct ic_sock_buf_operations
+{
+  gboolean (*get_ic_conn_buf) (struct ic_sock_buf *buf,
+                               struct ic_sock_buf_page **page);
+  gboolean (*return_ic_conn_buf) (struct ic_sock_buf *buf,
+                                  struct ic_sock_buf_page *page);
+  gboolean (*increase_ic_conn_buf) (guint32 no_of_pages);
+};
+
+struct ic_sock_buf_page
+{
+  char *prio_ref[PRIO_LEVELS];
+  guint32 prio_size[PRIO_LEVELS];
+  struct ic_sock_buf_page *next_sock_buf_page;
+  struct ic_sock_buf_page *prev_sock_buf_page;
+};
+
+struct ic_sock_buf
+{
+  struct ic_sock_buf_operations sock_buf_op;
+  struct ic_sock_buf_page *first_page;
+  guint32 page_size;
+  guint32 max_prio_size[PRIO_LEVELS];
+  guint32 alloc_segments;
+  char *alloc_segments_ref[MAX_ALLOC_SEGMENTS];
+  GMutex *ic_buf_mutex;
 };
 
 #endif
