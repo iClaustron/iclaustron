@@ -19,32 +19,27 @@ set_up_cluster_server_connection(struct ic_connection *conn,
 static int
 get_cs_config(struct ic_api_cluster_server *apic)
 {
-  unsigned int i, j;
+  unsigned int i;
   int error;
-  struct ic_connection *conn;
-  struct ic_api_cluster_connection *base_conn= apic->cluster_conn;
 
-  for (i= 0; i < apic->num_clusters; i++)
+  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
-    struct ic_api_cluster_connection *curr_conn= base_conn + i;
-    for (j= 0; j < curr_conn->num_cluster_servers; j++)
-    {
-       conn= curr_conn->cluster_srv_conns + j;
-       if ((error= set_up_cluster_server_connection(conn,
-                                       curr_conn->cluster_server_ips[j],
-                                       curr_conn->cluster_server_ports[j])))
-         return error;
-     }
+    if (!(error= set_up_cluster_server_connection(
+                                apic->cluster_conn.cluster_srv_conns + i,
+                                apic->cluster_conn.cluster_server_ips[i],
+                                apic->cluster_conn.cluster_server_ports[i])))
+      return 0;
   }
-  return 0;
+  return error;
 }
 
 struct ic_api_cluster_server*
 ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
+                    guint32 *cluster_ids,
                     guint32 num_clusters)
 {
-  unsigned int i;
   struct ic_api_cluster_server *apic;
+  guint32 num_cluster_servers= cluster_conn->num_cluster_servers;
   /*
     The idea with this method is that the user can set-up his desired usage
     of the clusters using stack variables. Then we copy those variables to
@@ -56,33 +51,28 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
   */
 
   apic= malloc(sizeof(struct ic_api_cluster_server));
-  apic->cluster_conn= malloc(num_clusters *
-                             sizeof(struct ic_api_cluster_connection));
-  for (i= 0; i < num_clusters; i++)
-  {
-    struct ic_api_cluster_connection *curr_conn= cluster_conn + i;
-    struct ic_api_cluster_connection *curr_init_conn= apic->cluster_conn + i;
-    guint32 num_cluster_servers= curr_conn->num_cluster_servers;
+  apic->cluster_ids= malloc(sizeof(guint32) * num_clusters);
+  apic->cluster_conn.cluster_server_ips= malloc(num_cluster_servers *
+                                                sizeof(guint32));
+  apic->cluster_conn.cluster_server_ports= malloc(num_cluster_servers *
+                                                  sizeof(guint16));
+  apic->cluster_conn.cluster_srv_conns= malloc(num_cluster_servers *
+                                               sizeof(struct ic_connection));
 
-    curr_init_conn->num_cluster_servers= num_cluster_servers;
-    curr_init_conn->node_id= curr_conn->node_id;
+  memcpy((char*)apic->cluster_ids,
+         (char*)cluster_ids,
+         num_clusters * sizeof(guint32));
 
-    curr_init_conn->cluster_server_ips= malloc(num_cluster_servers *
-                                               sizeof(guint32));
-    curr_init_conn->cluster_server_ports= malloc(num_cluster_servers *
-                                                 sizeof(guint16));
+  memcpy((char*)apic->cluster_conn.cluster_server_ips,
+         (char*)cluster_conn->cluster_server_ips,
+         num_cluster_servers * sizeof(guint32));
+  memcpy((char*)apic->cluster_conn.cluster_server_ports,
+         (char*)cluster_conn->cluster_server_ports,
+         num_cluster_servers * sizeof(guint16));
+  memset((char*)apic->cluster_conn.cluster_srv_conns, 0,
+         num_cluster_servers * sizeof(struct ic_connection));
 
-    memcpy((char*)curr_init_conn->cluster_server_ips,
-           (char*)curr_conn->cluster_server_ips,
-           num_cluster_servers * sizeof(guint32));
-    memcpy((char*)curr_init_conn->cluster_server_ports,
-           (char*)curr_conn->cluster_server_ports,
-           num_cluster_servers * sizeof(guint16));
-    curr_init_conn->cluster_srv_conns= malloc(num_cluster_servers *
-                                              sizeof(struct ic_connection));
-    memset((char*)curr_init_conn->cluster_srv_conns, 0,
-           num_cluster_servers * sizeof(struct ic_connection));
-  }
+  apic->cluster_conn.num_cluster_servers= num_cluster_servers;
   apic->conf_objects= NULL;
   apic->api_op.get_ic_config= get_cs_config;
   return apic;
