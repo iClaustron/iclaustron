@@ -302,14 +302,6 @@ set_up_socket_connection(struct ic_connection *conn)
 }
 
 static int
-write_socket_front_buffer(struct ic_connection *conn,
-                          const void *buf, guint32 size,
-                          guint32 secs_to_try)
-{
-  return write_socket_connection(conn, buf, size, secs_to_try);
-}
-
-static int
 flush_socket_front_buffer(struct ic_connection *conn)
 {
   return 0;
@@ -394,6 +386,14 @@ write_socket_connection(struct ic_connection *conn,
     loop_count++;
   } while (1);
   return 0;
+}
+
+static int
+write_socket_front_buffer(struct ic_connection *conn,
+                          const void *buf, guint32 size,
+                          guint32 secs_to_try)
+{
+  return write_socket_connection(conn, buf, size, secs_to_try);
 }
 
 static int
@@ -488,7 +488,8 @@ no_op_socket_method(struct ic_connection *conn)
 }
 
 static int
-no_op_with_size_socket_method(struct ic_connection *conn)
+no_op_with_size_socket_method(struct ic_connection *conn,
+                              guint32 total_size)
 {
   return 0;
 }
@@ -559,7 +560,8 @@ gboolean
 ic_init_socket_object(struct ic_connection *conn,
                       gboolean is_client,
                       gboolean is_mutex_used,
-                      gboolean is_connect_thread_used)
+                      gboolean is_connect_thread_used,
+                      gboolean is_using_front_buffer)
 {
   guint32 i;
 
@@ -590,7 +592,7 @@ ic_init_socket_object(struct ic_connection *conn,
     conn->conn_op.close_write_session = no_op_socket_method;
     conn->conn_op.close_read_session = no_op_socket_method;
   }
-  if (conn->is_using_front_buffer)
+  if (is_using_front_buffer)
   {
     conn->conn_op.write_ic_connection= write_socket_front_buffer;
     conn->conn_op.flush_ic_connection= flush_socket_front_buffer;
@@ -600,6 +602,7 @@ ic_init_socket_object(struct ic_connection *conn,
     conn->conn_op.write_ic_connection= write_socket_connection;
     conn->conn_op.flush_ic_connection= no_op_socket_method;
   }
+  conn->is_using_front_buffer= is_using_front_buffer;
   conn->is_client= is_client;
   conn->is_listen_socket_retained= 0;
   conn->is_mutex_used= is_mutex_used;

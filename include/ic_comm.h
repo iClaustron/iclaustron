@@ -15,7 +15,8 @@ struct ic_connect_stat;
 gboolean ic_init_socket_object(struct ic_connection *conn,
                                gboolean is_client,
                                gboolean is_mutex_used,
-                               gboolean is_connect_thread_used);
+                               gboolean is_connect_thread_used,
+                               gboolean is_using_front_buffer);
 
 struct ic_connect_operations
 {

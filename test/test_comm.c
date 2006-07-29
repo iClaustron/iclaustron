@@ -41,7 +41,7 @@ void connection_test()
   int ret_code;
 
   printf("Connection Test Started\n");
-  ic_init_socket_object(&conn, glob_is_client, TRUE, FALSE);
+  ic_init_socket_object(&conn, glob_is_client, TRUE, FALSE, TRUE);
   conn.server_ip= glob_server_ip;
   conn.server_port= glob_server_port;
   conn.client_ip= glob_client_ip;
@@ -80,7 +80,7 @@ void connection_test()
     {
       if (conn.conn_op.write_ic_connection(&conn,
                                            (const void*)buf,
-                                           sizeof(buf),
+                                           sizeof(buf), 0,
                                            2))
         break;
     }
