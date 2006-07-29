@@ -310,6 +310,7 @@ flush_socket_front_buffer(struct ic_connection *conn)
 static int
 write_socket_connection(struct ic_connection *conn,
                         const void *buf, guint32 size,
+                        guint32 prio_level,
                         guint32 secs_to_try)
 {
   GTimer *time_measure;
@@ -391,9 +392,11 @@ write_socket_connection(struct ic_connection *conn,
 static int
 write_socket_front_buffer(struct ic_connection *conn,
                           const void *buf, guint32 size,
+                          guint32 prio_level,
                           guint32 secs_to_try)
 {
-  return write_socket_connection(conn, buf, size, secs_to_try);
+  return write_socket_connection(conn, buf, size, prio_level,
+                                 secs_to_try);
 }
 
 static int

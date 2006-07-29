@@ -1,5 +1,34 @@
 #include <ic_apic.h>
 static int
+send_cluster_server(struct ic_connection *conn, char *send_buf, gboolean cr)
+{
+  guint32 inx;
+  int res;
+  char buf[2048];
+
+  strcpy(buf, send_buf);
+  inx= strlen(buf);
+  if (cr)
+    buf[inx++]= (char)10;
+  buf[inx]= (char)0;
+  res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
+  return res;
+}
+
+static int
+rec_cluster_server(struct ic_connection *conn)
+{
+  int res;
+  guint32 read_size;
+  char buf[2048];
+
+  res= conn->conn_op.read_ic_connection(conn, (void*)buf, (guint32)2048,
+                                        &read_size);
+  printf("%s", buf);
+  return res;
+}
+
+static int
 set_up_cluster_server_connection(struct ic_connection *conn,
                                  guint32 server_ip,
                                  guint16 server_port)
@@ -20,17 +49,26 @@ static int
 get_cs_config(struct ic_api_cluster_server *apic)
 {
   unsigned int i;
-  int error;
+  int error= 1;
+  struct ic_connection *conn;
 
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
-    if (!(error= set_up_cluster_server_connection(
-                                apic->cluster_conn.cluster_srv_conns + i,
+    conn= apic->cluster_conn.cluster_srv_conns + i;
+    if (!(error= set_up_cluster_server_connection(conn,
                                 apic->cluster_conn.cluster_server_ips[i],
                                 apic->cluster_conn.cluster_server_ports[i])))
-      return 0;
+      break;
   }
-  return error;
+  if (error)
+    return error;
+  send_cluster_server(conn, "get nodeid", TRUE);
+  send_cluster_server(conn, "version: 327948",TRUE);
+  send_cluster_server(conn, "nodetype: 1",TRUE);
+  send_cluster_server(conn, "no",FALSE);
+  while (!rec_cluster_server(conn))
+    ;
+  return 0;
 }
 
 struct ic_api_cluster_server*

@@ -1,18 +1,23 @@
 #include <ic_comm.h>
 #include <ic_common.h>
+#include <ic_apic.h>
 
 static gboolean glob_is_client= FALSE;
-static guint32 glob_server_ip= 0x7f000001;
+//static guint32 glob_server_ip= 0x7f000001;
+static guint32 glob_server_ip= 0xc0a800cd;
 static guint32 glob_client_ip= 0x7f000001;
-static guint32 glob_server_port= 12000;
-static guint32 glob_client_port= 12001;
+static guint16 glob_server_port= 1186;
+static guint16 glob_client_port= 12001;
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
 static int glob_tcp_snd_size= 0;
+static int glob_test_type= 0;
 static gboolean glob_is_wan_connection= FALSE;
 
 static GOptionEntry entries[] = 
 {
+  { "test_type", 0, 0, G_OPTION_ARG_INT, &glob_test_type,
+    "Set test type", NULL},
   { "is_client", 0, 0, G_OPTION_ARG_NONE, &glob_is_client,
     "Set process as client", NULL},
   { "is_wan_connection", 0, 0, G_OPTION_ARG_NONE, &glob_is_wan_connection,
@@ -93,6 +98,21 @@ void connection_test()
   printf("Connection Test Success\n");
 }
 
+static int
+api_clusterserver_test()
+{
+  struct ic_api_cluster_server *srv_obj; 
+  struct ic_api_cluster_connection cluster_conn;
+  guint32 cluster_id;
+
+  cluster_conn.cluster_server_ips= &glob_server_ip;
+  cluster_conn.cluster_server_ports= &glob_server_port;
+  cluster_conn.num_cluster_servers= 1;
+  srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id, (guint32)1);
+  srv_obj->api_op.get_ic_config(srv_obj);
+  return 0;
+}
+
 int main(int argc, char *argv[])
 {
   GError *error= NULL;
@@ -105,8 +125,17 @@ int main(int argc, char *argv[])
   if (!g_option_context_parse(context, &argc, &argv, &error))
     goto parse_error;
   g_option_context_free(context);
-  connection_test();
-  return 0;
+  switch (glob_test_type)
+  {
+    case 0:
+      connection_test();
+      return 0;
+    case 1:
+      api_clusterserver_test();
+      return 0;
+    default:
+      return 0;
+   }
 
 parse_error:
 

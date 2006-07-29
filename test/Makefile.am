@@ -7,4 +7,5 @@ noinst_PROGRAMS = test_comm
 
 test_comm_SOURCES = test_comm.c
 test_comm_LDADD = $(LDADD) ../comm/libic_comm.la \
-                           ../port/libic_port.la
+                           ../port/libic_port.la \
+                           ../api_clusterserver/libic_apic.la
