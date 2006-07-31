@@ -1,6 +1,6 @@
 #include <ic_apic.h>
 static int
-send_cluster_server(struct ic_connection *conn, char *send_buf, gboolean cr)
+send_cluster_server(struct ic_connection *conn, char *send_buf)
 {
   guint32 inx;
   int res;
@@ -8,22 +8,32 @@ send_cluster_server(struct ic_connection *conn, char *send_buf, gboolean cr)
 
   strcpy(buf, send_buf);
   inx= strlen(buf);
-  if (cr)
-    buf[inx++]= (char)10;
+  buf[inx++]= (char)10;
   buf[inx]= (char)0;
+  printf("Send: %s", buf);
   res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
   return res;
 }
 
 static int
-rec_cluster_server(struct ic_connection *conn)
+rec_cluster_server(struct ic_api_cluster_server *apic,
+                   struct ic_connection *conn)
 {
   int res;
+  unsigned i;
   guint32 read_size;
   char buf[2048];
 
   res= conn->conn_op.read_ic_connection(conn, (void*)buf, (guint32)2048,
                                         &read_size);
+  if (!res)
+  {
+    for (i= 0; i < read_size; i++)
+    {
+      if (i > 0 && buf[i-1] == (char)10 && buf[i] == (char)10)
+        res= 1;
+    }
+  }
   printf("%s", buf);
   return res;
 }
@@ -40,35 +50,106 @@ set_up_cluster_server_connection(struct ic_connection *conn,
   conn->server_ip= server_ip;
   conn->server_port= server_port;
   if ((error= conn->conn_op.set_up_ic_connection(conn)))
+  {
+    DEBUG(printf("Connect failed with error %d\n", error));
     return error;
+  }
   DEBUG(printf("Successfully set-up connection to cluster server\n"));
+  return 0;
+}
+
+static int
+send_get_nodeid(struct ic_connection *conn,
+                struct ic_api_cluster_server *apic,
+                guint32 current_cluster_index)
+{
+  char version_buf[32];
+  char nodeid_buf[32];
+
+  g_snprintf(version_buf, 32, "version: %u", (guint32)327948);
+  g_snprintf(nodeid_buf, 32, "nodeid: %u", (guint32)4);
+  if (send_cluster_server(conn, "get nodeid") ||
+      send_cluster_server(conn, version_buf) ||
+      send_cluster_server(conn, "nodetype: 1") ||
+      send_cluster_server(conn, nodeid_buf) ||
+      send_cluster_server(conn, "user: mysqld") ||
+      send_cluster_server(conn, "password: mysqld") ||
+      send_cluster_server(conn, "public key: a public key") ||
+#if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
+      send_cluster_server(conn, "endian: little") ||
+#else
+      send_cluster_server(conn, "endian: big") ||
+#endif
+      send_cluster_server(conn, "log_event: 0") ||
+      send_cluster_server(conn, ""))
+    return conn->error_code;
+  return 0;
+}
+static int
+send_get_config(struct ic_connection *conn,
+                struct ic_api_cluster_server *apic,
+                guint32 current_cluster_index)
+{
+  char version_buf[32];
+
+  g_snprintf(version_buf, 32, "version: %u", (guint32)327948);
+  if (send_cluster_server(conn, "get config") ||
+      send_cluster_server(conn, version_buf) ||
+      send_cluster_server(conn, ""))
+    return conn->error_code;
+  return 0;
+}
+
+static int
+rec_get_nodeid(struct ic_connection *conn,
+               struct ic_api_cluster_server *apic,
+               guint32 current_cluster_index)
+{
+  int error;
+  while (!(error= rec_cluster_server(apic, conn)))
+    ;
+  return 0;
+}
+
+static int
+rec_get_config(struct ic_connection *conn,
+               struct ic_api_cluster_server *apic,
+               guint32 current_cluster_index)
+{
+  int error;
+  while (!(error= rec_cluster_server(apic, conn)))
+    ;
   return 0;
 }
 
 static int
 get_cs_config(struct ic_api_cluster_server *apic)
 {
-  unsigned int i;
-  int error= 1;
+  guint32 i;
+  int error;
   struct ic_connection *conn;
 
+  printf("Get config start\n");
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
     conn= apic->cluster_conn.cluster_srv_conns + i;
     if (!(error= set_up_cluster_server_connection(conn,
-                                apic->cluster_conn.cluster_server_ips[i],
-                                apic->cluster_conn.cluster_server_ports[i])))
+                  apic->cluster_conn.cluster_server_ips[i],
+                  apic->cluster_conn.cluster_server_ports[i])))
       break;
   }
   if (error)
     return error;
-  send_cluster_server(conn, "get nodeid", TRUE);
-  send_cluster_server(conn, "version: 327948",TRUE);
-  send_cluster_server(conn, "nodetype: 1",TRUE);
-  send_cluster_server(conn, "no",FALSE);
-  while (!rec_cluster_server(conn))
-    ;
-  return 0;
+  for (i= 0; !error && i < apic->num_clusters_to_connect; i++)
+  {
+    if ((error= send_get_nodeid(conn, apic, i)) ||
+        (error= rec_get_nodeid(conn, apic, i)) ||
+        (error= send_get_config(conn, apic, i)) ||
+        (error= rec_get_config(conn, apic, i)))
+      ;
+    conn->conn_op.close_ic_connection(conn);
+  }
+  return error;
 }
 
 struct ic_api_cluster_server*

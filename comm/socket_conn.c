@@ -103,6 +103,7 @@ ic_set_socket_options(struct ic_connection *conn, int sockfd)
   conn->conn_stat.used_tcp_receive_buffer_size= rec_size;
   conn->conn_stat.used_tcp_send_buffer_size= snd_size;
   conn->conn_stat.tcp_no_delay= no_delay;
+  return;
 }
 
 static int
@@ -131,6 +132,7 @@ accept_socket_connection(struct ic_connection *conn)
   {
     DEBUG(printf("accept error: %d %s\n",
                  errno, sys_errlist[errno]));
+    conn->error_code= errno;
     return errno;
   }
   if (conn->client_ip != INADDR_ANY &&
@@ -149,11 +151,12 @@ accept_socket_connection(struct ic_connection *conn)
     DEBUG(printf(
       "Client connect from a disallowed address, ip=%x, port=%u\n",
       conn->client_ip, conn->client_port));
-    error= ACCEPT_ERROR;
+    conn->error_code= ACCEPT_ERROR;
     close(ret_sockfd);
-    return error;
+    return ACCEPT_ERROR;
   }
   conn->rw_sockfd= ret_sockfd;
+  conn->error_code= 0;
   set_is_connected(conn);
   return 0;
 }
@@ -169,7 +172,10 @@ int_set_up_socket_connection(struct ic_connection *conn)
     conn->read_mutex= g_mutex_new();
     conn->write_mutex= g_mutex_new();
     if (!(conn->read_mutex && conn->write_mutex))
+    {
+      conn->error_code= MEM_ALLOC_ERROR;
       return MEM_ALLOC_ERROR;
+    }
   }
   memset(&client_address, sizeof(client_address), 0);
   client_address.sin_family= AF_INET;
@@ -185,6 +191,7 @@ int_set_up_socket_connection(struct ic_connection *conn)
   */
   if ((sockfd= socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
   {
+    conn->error_code= errno;
     return errno;
   }
   ic_set_socket_options(conn, sockfd);
@@ -216,7 +223,7 @@ int_set_up_socket_connection(struct ic_connection *conn)
           continue;
         DEBUG(printf("connect error: %d %s\n",
                      errno, sys_errlist[errno]));
-        return errno;
+        goto error;
       }
       conn->rw_sockfd= sockfd;
       set_is_connected(conn);
@@ -246,20 +253,16 @@ int_set_up_socket_connection(struct ic_connection *conn)
     }
     conn->listen_sockfd= sockfd;
     if (!conn->is_listen_socket_retained)
-    {
-      if ((error= accept_socket_connection(conn)))
-        return error;
-    }
+      return accept_socket_connection(conn);
     else
-    {
       conn->listen_sockfd= sockfd;
-      return 0;
-    }
   }
+  conn->error_code= 0;
   return 0;
 
 error:
    error= errno;
+   conn->error_code= error;
    close(sockfd);
    return error;
 }
@@ -284,7 +287,10 @@ set_up_socket_connection(struct ic_connection *conn)
     g_thread_init(NULL);
   conn->connect_mutex= g_mutex_new();
   if (!conn->connect_mutex)
+  {
+    conn->error_code= MEM_ALLOC_ERROR;
     return MEM_ALLOC_ERROR;
+  }
   if (!conn->is_connect_thread_used)
     return int_set_up_socket_connection(conn);
 
@@ -296,6 +302,7 @@ set_up_socket_connection(struct ic_connection *conn)
                             G_THREAD_PRIORITY_NORMAL,
                             &error))
   {
+    conn->error_code= 1;
     return 1; /* Should write proper error handling code here */
   }
   return 0;
@@ -330,11 +337,11 @@ write_socket_connection(struct ic_connection *conn,
     if (ret_code == (int)buf_size)
     {
       unsigned i, range_limit;
-      if (loop_count && time_measure)
-        g_timer_destroy(time_measure);
-      conn->conn_stat.num_sent_buffers++;
-      conn->conn_stat.num_sent_bytes+= size;
-      conn->conn_stat.num_sent_bytes_square_sum+= (size*size);
+      guint32 num_sent_buf_range;
+      guint64 num_sent_bufs= conn->conn_stat.num_sent_buffers;
+      guint64 num_sent_bytes= conn->conn_stat.num_sent_bytes;
+      guint64 num_sent_square= conn->conn_stat.num_sent_bytes_square_sum;
+
       range_limit= 32;
       for (i= 0; i < 15; i++)
       {
@@ -342,7 +349,15 @@ write_socket_connection(struct ic_connection *conn,
           break;
         range_limit<<= 1;
       }
-      conn->conn_stat.num_sent_buf_range[i]++;
+      num_sent_buf_range= conn->conn_stat.num_sent_buf_range[i];
+      conn->error_code= 0;
+      conn->conn_stat.num_sent_buffers= num_sent_bufs + 1;
+      conn->conn_stat.num_sent_bytes= num_sent_bytes + size;
+      conn->conn_stat.num_sent_bytes_square_sum=
+                               num_sent_square + (size*size);
+      conn->conn_stat.num_sent_buf_range[i]= num_sent_buf_range + 1;
+      if (loop_count && time_measure)
+        g_timer_destroy(time_measure);
       return 0;
     }
     if (!loop_count)
@@ -360,6 +375,7 @@ write_socket_connection(struct ic_connection *conn,
       conn->bytes_written_before_interrupt= write_size;
       DEBUG(printf("write error: %d %s\n",
                    errno, sys_errlist[errno]));
+      conn->error_code= errno;
       return errno;
     }
     write_size+= ret_code;
@@ -376,6 +392,7 @@ write_socket_connection(struct ic_connection *conn,
         {
           conn->conn_stat.num_send_timeouts++;
           conn->bytes_written_before_interrupt= write_size;
+          conn->error_code= EINTR;
           DEBUG(printf("timeout error on write\n"));
           return EINTR;
         }
@@ -404,6 +421,7 @@ close_socket_connection(struct ic_connection *conn)
 {
   close(conn->rw_sockfd);
   conn->rw_sockfd= 0;
+  conn->error_code= 0;
   return 0;
 }
 
@@ -412,6 +430,7 @@ close_listen_socket_connection(struct ic_connection *conn)
 {
   close(conn->listen_sockfd);
   conn->listen_sockfd= 0;
+  conn->error_code= 0;
   return 0;
 }
 
@@ -428,10 +447,12 @@ read_socket_connection(struct ic_connection *conn,
     {
       unsigned i;
       int range_limit;
+      guint32 num_rec_buf_range;
+      guint64 num_rec_bufs= conn->conn_stat.num_rec_buffers;
+      guint64 num_rec_bytes= conn->conn_stat.num_rec_bytes;
+      guint64 num_rec_square= conn->conn_stat.num_rec_bytes_square_sum;
+      
       *read_size= ret_code;
-      conn->conn_stat.num_rec_buffers++;
-      conn->conn_stat.num_rec_bytes+= ret_code;
-      conn->conn_stat.num_rec_bytes_square_sum+= (ret_code*ret_code);
       range_limit= 32;
       for (i= 0; i < 15; i++)
       {
@@ -439,12 +460,19 @@ read_socket_connection(struct ic_connection *conn,
           break;
         range_limit<<= 1;
       }
-      conn->conn_stat.num_rec_buf_range[i]++;
+      num_rec_buf_range= conn->conn_stat.num_rec_buf_range[i];
+      conn->error_code= 0;
+      conn->conn_stat.num_rec_buffers= num_rec_bufs + 1;
+      conn->conn_stat.num_rec_bytes= num_rec_bytes + ret_code;
+      conn->conn_stat.num_rec_bytes_square_sum=
+                             num_rec_square + (ret_code*ret_code);
+      conn->conn_stat.num_rec_buf_range[i]= num_rec_buf_range + 1;
       return 0;
     }
     if (ret_code == 0)
     {
       DEBUG(printf("End of file received\n"));
+      conn->error_code= END_OF_FILE;
       return END_OF_FILE;
     }
     error= errno;
@@ -452,6 +480,7 @@ read_socket_connection(struct ic_connection *conn,
   conn->conn_stat.num_rec_errors++;
   DEBUG(printf("read error: %d %s\n",
                errno, sys_errlist[errno]));
+  conn->error_code= error;
   return error;
 }
 
@@ -622,6 +651,7 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->bytes_written_before_interrupt= 0;
   conn->rw_sockfd= 0;
   conn->listen_sockfd= 0;
+  conn->error_code= 0;
 
   conn->conn_stat.used_server_ip= g_htonl(INADDR_ANY);
   conn->conn_stat.used_server_port= 0;
@@ -646,8 +676,10 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->conn_stat.num_rec_bytes= (guint64)0;
   conn->conn_stat.num_rec_bytes_square_sum= (long double)0;
   for (i= 0; i < 16; i++)
+  {
     conn->conn_stat.num_sent_buf_range[i]= 
     conn->conn_stat.num_rec_buf_range[i]= 0;
+  }
 
   if (!((conn->connection_start= g_timer_new()) &&
       (conn->last_read_stat= g_timer_new())))

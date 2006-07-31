@@ -4,7 +4,7 @@
 
 static gboolean glob_is_client= FALSE;
 //static guint32 glob_server_ip= 0x7f000001;
-static guint32 glob_server_ip= 0xc0a800cd;
+static guint32 glob_server_ip= 0x7f000001;
 static guint32 glob_client_ip= 0x7f000001;
 static guint16 glob_server_port= 1186;
 static guint16 glob_client_port= 12001;
@@ -105,11 +105,14 @@ api_clusterserver_test()
   struct ic_api_cluster_connection cluster_conn;
   guint32 cluster_id;
 
+  printf("Starting cluster server test\n");
   cluster_conn.cluster_server_ips= &glob_server_ip;
   cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
   srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id, (guint32)1);
+  srv_obj->num_clusters_to_connect= 1;
   srv_obj->api_op.get_ic_config(srv_obj);
+  printf("Completing cluster server test\n");
   return 0;
 }
 

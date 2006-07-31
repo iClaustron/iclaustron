@@ -194,6 +194,10 @@ struct ic_connection
   */
   guint32 bytes_written_before_interrupt;
   /*
+    This variable is set to the error code if an error occurs.
+  */
+  int error_code;
+  /*
     backlog is the parameter provided to the listen call, thus
     this is only applicable for server side connections.
   */
