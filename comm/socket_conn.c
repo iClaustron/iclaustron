@@ -3,7 +3,7 @@
 #include <netinet/tcp.h>
 #include <unistd.h>
 #include <errno.h>
-#include <ic_comm.h>
+#include <ic_common.h>
 
 static void
 set_is_connected(struct ic_connection *conn)

@@ -2,13 +2,12 @@
 #define IC_COMM_H
 
 #include <netinet/in.h>
-#include <config.h>
-#include <string.h>
 #include <ic_common.h>
 
 #define MEM_ALLOC_ERROR 32767
 #define ACCEPT_ERROR 32766
 #define END_OF_FILE 32765
+#define PROTOCOL_ERROR 32764
 
 struct ic_connection;
 struct ic_connect_stat;
@@ -385,4 +384,17 @@ struct ic_sock_buf
   GMutex *ic_buf_mutex;
 };
 
+/*
+  Methods to encode and decode base64 data
+*/
+int base64_encode(char *dest, guint32 dest_len,
+                  const char *src, guint32 src_len);
+int base64_decode(char *dest, guint32 dest_len,
+                  const char *src, guint32 src_len);
+
+/*
+  Methods to handle conversion to integers from strings
+*/
+gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
+                                       guint64 *ret_number);
 #endif

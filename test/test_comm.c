@@ -1,4 +1,3 @@
-#include <ic_comm.h>
 #include <ic_common.h>
 #include <ic_apic.h>
 
@@ -103,15 +102,18 @@ api_clusterserver_test()
 {
   struct ic_api_cluster_server *srv_obj; 
   struct ic_api_cluster_connection cluster_conn;
-  guint32 cluster_id;
+  guint32 cluster_id= 0;
+  guint32 node_id= 0;
 
   printf("Starting cluster server test\n");
   cluster_conn.cluster_server_ips= &glob_server_ip;
   cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
-  srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id, (guint32)1);
+  srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id,
+                               &node_id, (guint32)1);
   srv_obj->num_clusters_to_connect= 1;
   srv_obj->api_op.get_ic_config(srv_obj);
+  srv_obj->api_op.free_ic_config(srv_obj);
   printf("Completing cluster server test\n");
   return 0;
 }

@@ -4,5 +4,5 @@
 
 lib_LTLIBRARIES = libic_comm.la
 
-libic_comm_la_SOURCES = socket_conn.c socket_membuf.c
+libic_comm_la_SOURCES = socket_conn.c socket_membuf.c comm_supp.c
 
