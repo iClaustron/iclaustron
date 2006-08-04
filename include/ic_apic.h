@@ -14,7 +14,7 @@ struct ic_api_cluster_operations
   int (*get_ic_config) (struct ic_api_cluster_server *apic);
   void (*free_ic_config) (struct ic_api_cluster_server *apic);
 };
-#define REC_BUF_SIZE 2048
+#define REC_BUF_SIZE 256
 struct ic_api_cluster_connection
 {
   guint32 *cluster_server_ips;
@@ -23,7 +23,7 @@ struct ic_api_cluster_connection
   guint32 num_cluster_servers;
   guint32 tail_index;
   guint32 head_index;
-  char rec_buf[2048];
+  char rec_buf[256];
 };
 
 struct ic_api_cluster_server

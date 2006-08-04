@@ -385,11 +385,15 @@ struct ic_sock_buf
 };
 
 /*
+  Debug print-outs
+*/
+void ic_print_buf(char *buf, guint32 size);
+/*
   Methods to encode and decode base64 data
 */
-int base64_encode(char *dest, guint32 dest_len,
+int base64_encode(char *dest, guint32 *dest_len,
                   const char *src, guint32 src_len);
-int base64_decode(char *dest, guint32 dest_len,
+int base64_decode(char *dest, guint32 *dest_len,
                   const char *src, guint32 src_len);
 
 /*
@@ -397,4 +401,8 @@ int base64_decode(char *dest, guint32 dest_len,
 */
 gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
                                        guint64 *ret_number);
+
+#define CARRIAGE_RETURN (char)10
+#define NULL_BYTE (char)0
+
 #endif

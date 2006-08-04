@@ -109,7 +109,7 @@ ic_set_socket_options(struct ic_connection *conn, int sockfd)
 static int
 accept_socket_connection(struct ic_connection *conn)
 {
-  int error, ret_sockfd;
+  int ret_sockfd;
   socklen_t addr_len;
   struct sockaddr_in client_address;
 
@@ -309,7 +309,7 @@ set_up_socket_connection(struct ic_connection *conn)
 }
 
 static int
-flush_socket_front_buffer(struct ic_connection *conn)
+flush_socket_front_buffer(__attribute__ ((unused)) struct ic_connection *conn)
 {
   return 0;
 }
@@ -317,7 +317,7 @@ flush_socket_front_buffer(struct ic_connection *conn)
 static int
 write_socket_connection(struct ic_connection *conn,
                         const void *buf, guint32 size,
-                        guint32 prio_level,
+                        __attribute__ ((unused)) guint32 prio_level,
                         guint32 secs_to_try)
 {
   GTimer *time_measure;
@@ -486,7 +486,7 @@ read_socket_connection(struct ic_connection *conn,
 
 static int
 open_write_socket_session_mutex(struct ic_connection *conn,
-                                guint32 total_size)
+                                __attribute__ ((unused)) guint32 total_size)
 {
   g_mutex_lock(conn->write_mutex);
   return 0;
@@ -514,14 +514,14 @@ close_read_socket_session_mutex(struct ic_connection *conn)
 }
 
 static int
-no_op_socket_method(struct ic_connection *conn)
+no_op_socket_method(__attribute__ ((unused)) struct ic_connection *conn)
 {
   return 0;
 }
 
 static int
-no_op_with_size_socket_method(struct ic_connection *conn,
-                              guint32 total_size)
+no_op_with_size_socket_method(__attribute__ ((unused)) struct ic_connection *conn,
+                              __attribute__ ((unused)) guint32 total_size)
 {
   return 0;
 }

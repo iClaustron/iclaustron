@@ -79,8 +79,6 @@ static const char *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const char *content_encoding_str= "Content-Transfer-Encoding: base64";
 static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 
-#define CARRIAGE_RETURN (char)10
-#define NULL_BYTE (char)0
 
 #define GET_NODEID_REPLY_STATE 0
 #define NODEID_STATE 1
@@ -92,6 +90,7 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define CONTENT_LENGTH_STATE 6
 #define OCTET_STREAM_STATE 7
 #define CONTENT_ENCODING_STATE 8
+#define RECEIVE_CONFIG_STATE 9
 
 #define GET_NODEID_REPLY_LEN 16
 #define NODEID_LEN 8
@@ -102,16 +101,9 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define OCTET_STREAM_LEN 36
 #define CONTENT_ENCODING_LEN 33
 
+#define CONFIG_LINE_LEN 76
 #define MAX_CONTENT_LEN 16 * 1024 * 1024 /* 16 MByte max */
 
-void
-print_buf(char *buf, guint32 size)
-{
-  char p_buf[2049];
-  memcpy(p_buf, buf, size);
-  p_buf[size]= NULL_BYTE;
-  printf("%s\n", p_buf);
-}
 
 static int
 send_cluster_server(struct ic_connection *conn, const char *send_buf)
@@ -127,6 +119,29 @@ send_cluster_server(struct ic_connection *conn, const char *send_buf)
   DEBUG(printf("Send: %s", buf));
   res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
   return res;
+}
+
+static int
+translate_config(__attribute__ ((unused)) struct ic_api_cluster_server *apic,
+                 __attribute__ ((unused)) guint32 current_cluster_index,
+                 char *config_buf,
+                 guint32 config_size)
+{
+  char *bin_buf;
+  guint32 bin_config_size;
+  int error;
+
+  g_assert((config_size & 3) == 0);
+  bin_config_size= (config_size >> 2) * 3;
+  if ((bin_buf= g_try_malloc0(bin_config_size)))
+    return MEM_ALLOC_ERROR;
+  if ((error= base64_decode(bin_buf, &bin_config_size,
+                            config_buf, config_size)))
+  {
+    DEBUG(printf("Protocol error in base64 decode\n"));
+    return PROTOCOL_ERROR;
+  }
+  return 0;
 }
 
 static int
@@ -147,12 +162,10 @@ rec_cs_read_line(struct ic_api_cluster_server *apic,
   {
     if (size_curr_buf > 0)
     {
-      printf("size_curr_buf > 0\n");
       for (end_line= tail_rec_buf, inx= 0;
            inx < size_curr_buf && end_line[inx] != CARRIAGE_RETURN;
            inx++)
         ;
-      printf("for-loop ok, inx = %u\n", inx);
       if (inx != size_curr_buf)
       {
         *read_line= tail_rec_buf;
@@ -172,7 +185,6 @@ rec_cs_read_line(struct ic_api_cluster_server *apic,
     }
     else
     {
-      printf("size_curr_buf = 0\n");
       apic->cluster_conn.head_index= apic->cluster_conn.tail_index= 0;
     }
 
@@ -183,8 +195,7 @@ rec_cs_read_line(struct ic_api_cluster_server *apic,
                                                &size_read)))
       return res;
 
-    printf("Read size_read bytes = %u\n", size_read);
-    DEBUG(print_buf(rec_buf + size_curr_buf, size_read));
+    DEBUG(ic_print_buf(rec_buf + size_curr_buf, size_read));
 
     size_curr_buf+= size_read;
     apic->cluster_conn.head_index+= size_read;
@@ -268,7 +279,7 @@ rec_get_nodeid(struct ic_connection *conn,
   guint32 state= GET_NODEID_REPLY_STATE;
   while (!(error= rec_cs_read_line(apic, conn, &read_line_buf, &read_size)))
   {
-     DEBUG(print_buf(read_line_buf, read_size));
+     DEBUG(ic_print_buf(read_line_buf, read_size));
      switch (state)
      {
        case GET_NODEID_REPLY_STATE:
@@ -324,16 +335,16 @@ rec_get_nodeid(struct ic_connection *conn,
 static int
 rec_get_config(struct ic_connection *conn,
                struct ic_api_cluster_server *apic,
-               __attribute__((unused)) guint32 current_cluster_index)
+               guint32 current_cluster_index)
 {
-  char *read_line_buf;
-  guint32 read_size;
+  char *read_line_buf, *config_buf;
+  guint32 read_size, config_size, rec_config_size;
   int error;
   guint64 content_length;
   guint32 state= GET_CONFIG_REPLY_STATE;
   while (!(error= rec_cs_read_line(apic, conn, &read_line_buf, &read_size)))
   {
-     DEBUG(print_buf(read_line_buf, read_size));
+     DEBUG(ic_print_buf(read_line_buf, read_size));
      switch (state)
      {
        case GET_CONFIG_REPLY_STATE:
@@ -367,7 +378,6 @@ rec_get_config(struct ic_connection *conn,
            DEBUG(printf("Protocol error in content length state\n"));
            return PROTOCOL_ERROR;
          }
-         /* Get content length */
          DEBUG(printf("Content Length: %u\n", (guint32)content_length));
          state= OCTET_STREAM_STATE;
          break;
@@ -392,7 +402,39 @@ rec_get_config(struct ic_connection *conn,
          state= WAIT_EMPTY_RETURN_STATE;
          break;
        case WAIT_EMPTY_RETURN_STATE:
-         return 0;
+         /*
+           At this point we should now start receiving the configuration in
+           base64 encoded format. It will arrive in 76 character chunks
+           followed by a carriage return.
+         */
+         state= RECEIVE_CONFIG_STATE;
+         if ((config_buf= g_try_malloc0(content_length)))
+           return MEM_ALLOC_ERROR;
+         config_size= 0;
+         rec_config_size= 0;
+         /*
+           Here we need to allocate receive buffer for configuration plus the
+           place to put the encoded binary data.
+         */
+         break;
+       case RECEIVE_CONFIG_STATE:
+         memcpy(config_buf+config_size, read_line_buf, read_size);
+         config_size+= read_size;
+         rec_config_size+= (read_size + 1);
+         if (rec_config_size >= content_length)
+         {
+           /*
+             This is the last line, we have now received the config
+             and are ready to translate it.
+           */
+           return translate_config(apic, current_cluster_index,
+                                   config_buf, config_size);
+         }
+         else if (read_size != CONFIG_LINE_LEN)
+         {
+           DEBUG(printf("Protocol error in config receive state\n"));
+           return PROTOCOL_ERROR;
+         }
          break;
        case RESULT_ERROR_STATE:
          break;
@@ -437,8 +479,22 @@ get_cs_config(struct ic_api_cluster_server *apic)
 }
 
 static void
-free_cs_config(__attribute__((unused)) struct ic_api_cluster_server *apic)
+free_cs_config(struct ic_api_cluster_server *apic)
 {
+  if (apic)
+  {
+    if (apic->cluster_conn.cluster_srv_conns)
+      g_free(apic->cluster_conn.cluster_srv_conns);
+    if (apic->cluster_conn.cluster_srv_conns)
+      g_free(apic->cluster_conn.cluster_server_ips);
+    if (apic->cluster_conn.cluster_server_ports)
+      g_free(apic->cluster_conn.cluster_server_ports);
+    if (apic->cluster_ids)
+      g_free(apic->cluster_ids);
+    if (apic->node_ids)
+      g_free(apic->node_ids);
+    g_free(apic);
+  }
   return;
 }
 
@@ -448,7 +504,7 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
                     guint32 *node_ids,
                     guint32 num_clusters)
 {
-  struct ic_api_cluster_server *apic;
+  struct ic_api_cluster_server *apic= NULL;
   guint32 num_cluster_servers= cluster_conn->num_cluster_servers;
   /*
     The idea with this method is that the user can set-up his desired usage
@@ -460,17 +516,22 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
     We will also ensure that the supplied data is validated.
   */
 
-  apic= malloc(sizeof(struct ic_api_cluster_server));
-  memset(apic, 0, sizeof(struct ic_api_cluster_server));
-
-  apic->cluster_ids= malloc(sizeof(guint32) * num_clusters);
-  apic->node_ids= malloc(sizeof(guint32) * num_clusters);
-  apic->cluster_conn.cluster_server_ips= malloc(num_cluster_servers *
-                                                sizeof(guint32));
-  apic->cluster_conn.cluster_server_ports= malloc(num_cluster_servers *
-                                                  sizeof(guint16));
-  apic->cluster_conn.cluster_srv_conns= malloc(num_cluster_servers *
-                                               sizeof(struct ic_connection));
+  if (!(apic= g_try_malloc0(sizeof(struct ic_api_cluster_server))) ||
+      !(apic->cluster_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
+      !(apic->node_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
+      !(apic->cluster_conn.cluster_server_ips= 
+         g_try_malloc0(num_cluster_servers *
+                       sizeof(guint32))) ||
+      !(apic->cluster_conn.cluster_server_ports=
+         g_try_malloc0(num_cluster_servers *
+                       sizeof(guint16))) ||
+      !(apic->cluster_conn.cluster_srv_conns=
+         g_try_malloc0(num_cluster_servers *
+                       sizeof(struct ic_connection))))
+  {
+    free_cs_config(apic);
+    return NULL;
+  }
 
   memcpy((char*)apic->cluster_ids,
          (char*)cluster_ids,
