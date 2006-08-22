@@ -121,26 +121,180 @@ send_cluster_server(struct ic_connection *conn, const char *send_buf)
   return res;
 }
 
+#define IC_CL_KEY_MASK 0x3FFF
+#define IC_CL_KEY_SHIFT 28
+#define IC_CL_SECT_SHIFT 14
+#define IC_CL_SECT_MASK 0x3FFF
+#define IC_CL_INT32_TYPE 1
+#define IC_CL_CHAR_TYPE  2
+#define IC_CL_SECT_TYPE  3
+#define IC_CL_INT64_TYPE 4
+
+#define IC_NODE_TYPE     999
+#define IC_NODE_ID       3
+#define IC_KERNEL_TYPE   0
+#define IC_CLIENT_TYPE   1
+#define IC_CLUSTER_SERVER_TYPE 2
+
+static guint32 no_of_node_sections= 0;
+static guint32 no_of_comm_sections= 0;
 static int
-translate_config(__attribute__ ((unused)) struct ic_api_cluster_server *apic,
-                 __attribute__ ((unused)) guint32 current_cluster_index,
+analyse_key_value(guint32 *key_value, guint32 len, int pass,
+                  __attribute__ ((unused)) struct ic_api_cluster_server *apic,
+                  __attribute__ ((unused)) guint32 current_cluster_index)
+{
+  guint32 i;
+  guint64 value64;
+  guint64 bitmap= 0;
+  guint32 *key_value_end= key_value + len;
+  gboolean read_sections= TRUE;
+  gboolean first= TRUE;
+  while (key_value < key_value_end)
+  {
+    guint32 key= g_ntohl(key_value[0]);
+    guint32 value= g_ntohl(key_value[1]);
+    guint32 hash_key= key & IC_CL_KEY_MASK;
+    guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
+    guint32 key_type= key >> IC_CL_KEY_SHIFT;
+    if (pass == 0)
+    {
+      if (sect_id == 1)
+        no_of_node_sections= MAX(no_of_node_sections, hash_key + 1);
+    }
+    else if (pass == 1)
+    {
+      if (sect_id == (no_of_node_sections + 2))
+        no_of_comm_sections= MAX(no_of_comm_sections, hash_key + 1);
+      if ((sect_id > 1 && sect_id < (no_of_node_sections + 2)))
+      {
+        if (hash_key == IC_NODE_TYPE)
+        {
+          printf("Node type of section %u is %u\n", sect_id, value); 
+          switch (value)
+          {
+            case IC_CLIENT_TYPE:
+              break;
+            case IC_KERNEL_TYPE:
+              break;
+            case IC_CLUSTER_SERVER_TYPE:
+              break;
+            default:
+              /* PROTOCOL ERROR */
+              break;
+          }
+        }
+        else if (hash_key == IC_NODE_ID)
+          printf("Node id = %u for section %u\n", value, sect_id); /* Fill in node id */
+        /* Ignore others for now */
+      }
+    }
+    else if (pass == 2)
+    {
+      if (first)
+      {
+        first= FALSE;
+        printf("no of nodes = %u, no of comms = %u\n", no_of_node_sections,
+                                                       no_of_comm_sections);
+      }
+      if (hash_key == 3)
+        printf("value = %u, hash_key = %u, sect_id = %u, key_type = %u\n",
+               value, hash_key, sect_id, key_type);
+      if (sect_id != 1 && sect_id != (no_of_node_sections + 2))
+        read_sections= TRUE;
+    }
+    key_value+= 2;
+    if (read_sections)
+    {
+
+    }
+    switch (key_type)
+    {
+      case IC_CL_INT32_TYPE:
+        break;
+      case IC_CL_INT64_TYPE:
+        if (key_value >= key_value_end)
+          goto error;
+        value64= (guint64)((guint64)value << 32) || (guint64)key_value[0];
+        key_value++;
+        break;
+      case IC_CL_SECT_TYPE:
+        break;
+      case IC_CL_CHAR_TYPE:
+      {
+        guint32 len_words= (value + 3)/4;
+        if ((key_value + len_words) >= key_value_end)
+          goto error;
+        if (value != (strlen((char*)key_value) + 1))
+        {
+          DEBUG(printf("Wrong length of character type\n"));
+          return 1;
+        }
+        key_value+= ((value + 3)/4);
+        break;
+      }
+      default:
+        DEBUG(printf("Wrong key type %u\n", key_type));
+        return 1;
+    }
+  }
+  return 0;
+
+error:
+  DEBUG(printf("Array ended in the middle of a type\n"));
+  return 1;
+}
+
+
+static char ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
+static int
+translate_config(struct ic_api_cluster_server *apic,
+                 guint32 current_cluster_index,
                  char *config_buf,
                  guint32 config_size)
 {
   char *bin_buf;
-  guint32 bin_config_size;
-  int error;
+  guint32 bin_config_size, bin_config_size32, checksum, i;
+  guint32 *bin_buf32, *key_value_ptr, key_value_len;
+  int error, pass;
 
   g_assert((config_size & 3) == 0);
   bin_config_size= (config_size >> 2) * 3;
-  if ((bin_buf= g_try_malloc0(bin_config_size)))
+  if (!(bin_buf= g_try_malloc0(bin_config_size)))
     return MEM_ALLOC_ERROR;
   if ((error= base64_decode(bin_buf, &bin_config_size,
                             config_buf, config_size)))
   {
-    DEBUG(printf("Protocol error in base64 decode\n"));
+    DEBUG(printf("1:Protocol error in base64 decode\n"));
     return PROTOCOL_ERROR;
   }
+  bin_config_size32= bin_config_size >> 2;
+  printf("size32 = %u\n", bin_config_size32);
+  if ((bin_config_size & 3) != 0 || bin_config_size32 <= 3)
+  {
+    DEBUG(printf("2:Protocol error in base64 decode\n"));
+    return PROTOCOL_ERROR;
+  }
+  if (memcmp(bin_buf, ver_string, 8))
+  {
+    DEBUG(printf("3:Protocol error in base64 decode\n"));
+    return PROTOCOL_ERROR;
+  }
+  bin_buf32= (guint32*)bin_buf;
+  checksum= 0;
+  for (i= 0; i < bin_config_size32; i++)
+    checksum^= g_ntohl(bin_buf32[i]);
+  if (checksum)
+  {
+    DEBUG(printf("4:Protocol error in base64 decode\n"));
+    return PROTOCOL_ERROR;
+  }
+  key_value_ptr= bin_buf32 + 2;
+  key_value_len= bin_config_size32 - 3;
+  for (pass= 0; pass < 3; pass++)
+    if (analyse_key_value(key_value_ptr, key_value_len, pass,
+                          apic, current_cluster_index))
+      return PROTOCOL_ERROR;
+  g_free(bin_buf);
   return 0;
 }
 
@@ -194,9 +348,6 @@ rec_cs_read_line(struct ic_api_cluster_server *apic,
                                                size_to_read,
                                                &size_read)))
       return res;
-
-    DEBUG(ic_print_buf(rec_buf + size_curr_buf, size_read));
-
     size_curr_buf+= size_read;
     apic->cluster_conn.head_index+= size_read;
     tail_rec_buf= rec_buf;
@@ -344,103 +495,106 @@ rec_get_config(struct ic_connection *conn,
   guint32 state= GET_CONFIG_REPLY_STATE;
   while (!(error= rec_cs_read_line(apic, conn, &read_line_buf, &read_size)))
   {
-     DEBUG(ic_print_buf(read_line_buf, read_size));
-     switch (state)
-     {
-       case GET_CONFIG_REPLY_STATE:
-         if ((read_size != GET_CONFIG_REPLY_LEN) ||
-             (memcmp(read_line_buf, get_config_reply_str,
-                     GET_CONFIG_REPLY_LEN) != 0))
-         {
-           DEBUG(printf("Protocol error in get config reply state\n"));
-           return PROTOCOL_ERROR;
-         }
-         state= RESULT_OK_STATE;
-         break;
-       case RESULT_OK_STATE:
-         if ((read_size != RESULT_OK_LEN) ||
-             (memcmp(read_line_buf, result_ok_str, RESULT_OK_LEN) != 0))
-         {
-           DEBUG(printf("Protocol error in result ok state\n"));
-           return PROTOCOL_ERROR;
-         }
-         state= CONTENT_LENGTH_STATE;
-         break;
-       case CONTENT_LENGTH_STATE:
-         if ((read_size <= CONTENT_LENGTH_LEN) ||
-             (memcmp(read_line_buf, content_len_str,
-                     CONTENT_LENGTH_LEN) != 0) ||
-             convert_str_to_int_fixed_size(read_line_buf+CONTENT_LENGTH_LEN,
-                                           read_size - CONTENT_LENGTH_LEN,
-                                           &content_length) ||
-             (content_length > MAX_CONTENT_LEN))
-         {
-           DEBUG(printf("Protocol error in content length state\n"));
-           return PROTOCOL_ERROR;
-         }
-         DEBUG(printf("Content Length: %u\n", (guint32)content_length));
-         state= OCTET_STREAM_STATE;
-         break;
-       case OCTET_STREAM_STATE:
-         if ((read_size != OCTET_STREAM_LEN) ||
-             (memcmp(read_line_buf, octet_stream_str,
-                     OCTET_STREAM_LEN) != 0))
-         {
-           DEBUG(printf("Protocol error in octet stream state\n"));
-           return PROTOCOL_ERROR;
-         }
-         state= CONTENT_ENCODING_STATE;
-         break;
-       case CONTENT_ENCODING_STATE:
-         if ((read_size != CONTENT_ENCODING_LEN) ||
-             (memcmp(read_line_buf, content_encoding_str,
-                     CONTENT_ENCODING_LEN) != 0))
-         {
-           DEBUG(printf("Protocol error in content encoding state\n"));
-           return PROTOCOL_ERROR;
-         }
-         state= WAIT_EMPTY_RETURN_STATE;
-         break;
-       case WAIT_EMPTY_RETURN_STATE:
-         /*
-           At this point we should now start receiving the configuration in
-           base64 encoded format. It will arrive in 76 character chunks
-           followed by a carriage return.
-         */
-         state= RECEIVE_CONFIG_STATE;
-         if ((config_buf= g_try_malloc0(content_length)))
-           return MEM_ALLOC_ERROR;
-         config_size= 0;
-         rec_config_size= 0;
-         /*
-           Here we need to allocate receive buffer for configuration plus the
-           place to put the encoded binary data.
-         */
-         break;
-       case RECEIVE_CONFIG_STATE:
-         memcpy(config_buf+config_size, read_line_buf, read_size);
-         config_size+= read_size;
-         rec_config_size+= (read_size + 1);
-         if (rec_config_size >= content_length)
-         {
-           /*
-             This is the last line, we have now received the config
-             and are ready to translate it.
-           */
-           return translate_config(apic, current_cluster_index,
-                                   config_buf, config_size);
-         }
-         else if (read_size != CONFIG_LINE_LEN)
-         {
-           DEBUG(printf("Protocol error in config receive state\n"));
-           return PROTOCOL_ERROR;
-         }
-         break;
-       case RESULT_ERROR_STATE:
-         break;
-       default:
-         break;
-     }
+    switch (state)
+    {
+      case GET_CONFIG_REPLY_STATE:
+        if ((read_size != GET_CONFIG_REPLY_LEN) ||
+            (memcmp(read_line_buf, get_config_reply_str,
+                    GET_CONFIG_REPLY_LEN) != 0))
+        {
+          DEBUG(printf("Protocol error in get config reply state\n"));
+          return PROTOCOL_ERROR;
+        }
+        state= RESULT_OK_STATE;
+        break;
+      case RESULT_OK_STATE:
+        if ((read_size != RESULT_OK_LEN) ||
+            (memcmp(read_line_buf, result_ok_str, RESULT_OK_LEN) != 0))
+        {
+          DEBUG(printf("Protocol error in result ok state\n"));
+          return PROTOCOL_ERROR;
+        }
+        state= CONTENT_LENGTH_STATE;
+        break;
+      case CONTENT_LENGTH_STATE:
+        if ((read_size <= CONTENT_LENGTH_LEN) ||
+            (memcmp(read_line_buf, content_len_str,
+                    CONTENT_LENGTH_LEN) != 0) ||
+            convert_str_to_int_fixed_size(read_line_buf+CONTENT_LENGTH_LEN,
+                                          read_size - CONTENT_LENGTH_LEN,
+                                          &content_length) ||
+            (content_length > MAX_CONTENT_LEN))
+        {
+          DEBUG(printf("Protocol error in content length state\n"));
+          return PROTOCOL_ERROR;
+        }
+        DEBUG(printf("Content Length: %u\n", (guint32)content_length));
+        state= OCTET_STREAM_STATE;
+        break;
+      case OCTET_STREAM_STATE:
+        if ((read_size != OCTET_STREAM_LEN) ||
+            (memcmp(read_line_buf, octet_stream_str,
+                    OCTET_STREAM_LEN) != 0))
+        {
+          DEBUG(printf("Protocol error in octet stream state\n"));
+          return PROTOCOL_ERROR;
+        }
+        state= CONTENT_ENCODING_STATE;
+        break;
+      case CONTENT_ENCODING_STATE:
+        if ((read_size != CONTENT_ENCODING_LEN) ||
+            (memcmp(read_line_buf, content_encoding_str,
+                    CONTENT_ENCODING_LEN) != 0))
+        {
+          DEBUG(printf("Protocol error in content encoding state\n"));
+          return PROTOCOL_ERROR;
+        }
+        state= WAIT_EMPTY_RETURN_STATE;
+        break;
+      case WAIT_EMPTY_RETURN_STATE:
+        /*
+          At this point we should now start receiving the configuration in
+          base64 encoded format. It will arrive in 76 character chunks
+          followed by a carriage return.
+        */
+        state= RECEIVE_CONFIG_STATE;
+        if (!(config_buf= g_try_malloc0(content_length)))
+          return MEM_ALLOC_ERROR;
+        config_size= 0;
+        rec_config_size= 0;
+        /*
+          Here we need to allocate receive buffer for configuration plus the
+          place to put the encoded binary data.
+        */
+        break;
+      case RECEIVE_CONFIG_STATE:
+        memcpy(config_buf+config_size, read_line_buf, read_size);
+        config_size+= read_size;
+        rec_config_size+= (read_size + 1);
+        if (rec_config_size >= content_length)
+        {
+          /*
+            This is the last line, we have now received the config
+            and are ready to translate it.
+          */
+          printf("Start decoding\n");
+          error= translate_config(apic, current_cluster_index,
+                                  config_buf, config_size);
+          g_free(config_buf);
+          return error;
+        }
+        else if (read_size != CONFIG_LINE_LEN)
+        {
+          g_free(config_buf);
+          DEBUG(printf("Protocol error in config receive state\n"));
+          return PROTOCOL_ERROR;
+        }
+        break;
+      case RESULT_ERROR_STATE:
+        break;
+      default:
+        break;
+    }
   }
   return error;
 }
