@@ -1,5 +1,12 @@
 #include <ic_common.h>
 
+enum ic_node_type
+{
+  IC_KERNEL_TYPE = 0,
+  IC_CLIENT_TYPE = 1,
+  IC_CLUSTER_SERVER_TYPE = 2
+};
+
 struct ic_cluster_config_object;
 struct ic_api_cluster_connection;
 
@@ -30,7 +37,7 @@ struct ic_api_cluster_connection
 struct ic_api_cluster_server
 {
   struct ic_api_cluster_operations api_op;
-  struct ic_api_cluster_config **conf_objects;
+  struct ic_api_cluster_config *conf_objects;
   struct ic_api_cluster_connection cluster_conn;
   guint32 *cluster_ids;
   guint32 *node_ids;
@@ -82,6 +89,6 @@ struct ic_api_cluster_config
   guint32 no_of_comms;
   guint32 *node_ids;
   enum ic_node_type *node_types;
-  void **node_config;
-  void **comm_config;
+  char **node_config;
+  char **comm_config;
 };

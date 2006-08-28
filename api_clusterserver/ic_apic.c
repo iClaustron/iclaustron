@@ -132,23 +132,93 @@ send_cluster_server(struct ic_connection *conn, const char *send_buf)
 
 #define IC_NODE_TYPE     999
 #define IC_NODE_ID       3
-#define IC_KERNEL_TYPE   0
-#define IC_CLIENT_TYPE   1
-#define IC_CLUSTER_SERVER_TYPE 2
 
-static guint32 no_of_node_sections= 0;
-static guint32 no_of_comm_sections= 0;
 static int
 analyse_key_value(guint32 *key_value, guint32 len, int pass,
-                  __attribute__ ((unused)) struct ic_api_cluster_server *apic,
-                  __attribute__ ((unused)) guint32 current_cluster_index)
+                  struct ic_api_cluster_server *apic,
+                  guint32 current_cluster_index)
 {
   guint32 i;
   guint64 value64;
-  guint64 bitmap= 0;
   guint32 *key_value_end= key_value + len;
   gboolean read_sections= TRUE;
   gboolean first= TRUE;
+  guint32 size_config_objects= 0;
+  struct ic_api_cluster_config *conf_object;
+  char *conf_obj_ptr;
+
+  conf_object= apic->conf_objects+current_cluster_index;
+  if (pass == 1)
+  {
+    /*
+      Allocate memory for pointer arrays pointing to the configurations of the
+      nodes in the cluster, also allocate memory for array of node types.
+    */
+    conf_object->node_types= g_try_malloc0(conf_object->no_of_nodes *
+                                           sizeof(enum ic_node_type*));
+    conf_object->node_ids= g_try_malloc0(conf_object->no_of_nodes *
+                                         sizeof(guint32));
+    conf_object->node_config= g_try_malloc0(conf_object->no_of_nodes *
+                                            sizeof(char*));
+    if (!conf_object->node_types || !conf_object->node_ids ||
+        !conf_object->node_config)
+      return MEM_ALLOC_ERROR;
+  }
+  else if (pass == 2)
+  {
+    /*
+      Allocate memory for the actual configuration objects for nodes and
+      communication sections.
+    */
+    for (i= 0; i < conf_object->no_of_nodes; i++)
+    {
+      switch (conf_object->node_types[i])
+      {
+        case IC_KERNEL_TYPE:
+          size_config_objects+= sizeof(struct ic_kernel_node_config);
+          break;
+        case IC_CLIENT_TYPE:
+          size_config_objects+= sizeof(struct ic_client_node_config);
+          break;
+        case IC_CLUSTER_SERVER_TYPE:
+          size_config_objects+= sizeof(struct ic_cluster_server_config);
+          break;
+        default:
+          g_assert(FALSE);
+          break;
+      }
+    }
+    size_config_objects+= conf_object->no_of_comms *
+                          sizeof(struct ic_comm_link_config);
+    if (!(conf_object->comm_config= g_try_malloc0(conf_object->no_of_comms *
+                                                 sizeof(char*))) ||
+        !(conf_obj_ptr= g_try_malloc0(size_config_objects)))
+      return MEM_ALLOC_ERROR;
+    for (i= 0; i < conf_object->no_of_nodes; i++)
+    {
+      conf_object->node_config[i]= conf_obj_ptr;
+      switch (conf_object->node_types[i])
+      {
+        case IC_KERNEL_TYPE:
+          conf_obj_ptr+= sizeof(struct ic_kernel_node_config);
+          break;
+        case IC_CLIENT_TYPE:
+          conf_obj_ptr+= sizeof(struct ic_client_node_config);
+          break;
+        case IC_CLUSTER_SERVER_TYPE:
+          conf_obj_ptr+= sizeof(struct ic_cluster_server_config);
+          break;
+        default:
+          g_assert(FALSE);
+          break;
+      }
+    }
+    for (i= 0; i < conf_object->no_of_comms; i++)
+    {
+      conf_object->comm_config[i]= conf_obj_ptr;
+      conf_obj_ptr+= sizeof(struct ic_comm_link_config);
+    }
+  }
   while (key_value < key_value_end)
   {
     guint32 key= g_ntohl(key_value[0]);
@@ -159,13 +229,13 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     if (pass == 0)
     {
       if (sect_id == 1)
-        no_of_node_sections= MAX(no_of_node_sections, hash_key + 1);
+        conf_object->no_of_nodes= MAX(conf_object->no_of_nodes, hash_key + 1);
     }
     else if (pass == 1)
     {
-      if (sect_id == (no_of_node_sections + 2))
-        no_of_comm_sections= MAX(no_of_comm_sections, hash_key + 1);
-      if ((sect_id > 1 && sect_id < (no_of_node_sections + 2)))
+      if (sect_id == (conf_object->no_of_nodes + 2))
+        conf_object->no_of_comms= MAX(conf_object->no_of_comms, hash_key + 1);
+      if ((sect_id > 1 && sect_id < (conf_object->no_of_nodes + 2)))
       {
         if (hash_key == IC_NODE_TYPE)
         {
@@ -173,19 +243,24 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
           switch (value)
           {
             case IC_CLIENT_TYPE:
+              conf_object->no_of_client_nodes++;
               break;
             case IC_KERNEL_TYPE:
+              conf_object->no_of_kernel_nodes++;
               break;
             case IC_CLUSTER_SERVER_TYPE:
+              conf_object->no_of_cluster_servers++;
               break;
             default:
-              /* PROTOCOL ERROR */
-              break;
+              return PROTOCOL_ERROR;
           }
+          conf_object->node_types[sect_id - 2]= (enum ic_node_type)value;
         }
         else if (hash_key == IC_NODE_ID)
-          printf("Node id = %u for section %u\n", value, sect_id); /* Fill in node id */
-        /* Ignore others for now */
+        {
+          conf_object->node_ids[sect_id - 2]= value;
+          printf("Node id = %u for section %u\n", value, sect_id);
+        }
       }
     }
     else if (pass == 2)
@@ -193,13 +268,11 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
       if (first)
       {
         first= FALSE;
-        printf("no of nodes = %u, no of comms = %u\n", no_of_node_sections,
-                                                       no_of_comm_sections);
       }
       if (hash_key == 3)
         printf("value = %u, hash_key = %u, sect_id = %u, key_type = %u\n",
                value, hash_key, sect_id, key_type);
-      if (sect_id != 1 && sect_id != (no_of_node_sections + 2))
+      if (sect_id != 1 && sect_id != (conf_object->no_of_nodes + 2))
         read_sections= TRUE;
     }
     key_value+= 2;
@@ -291,9 +364,11 @@ translate_config(struct ic_api_cluster_server *apic,
   key_value_ptr= bin_buf32 + 2;
   key_value_len= bin_config_size32 - 3;
   for (pass= 0; pass < 3; pass++)
-    if (analyse_key_value(key_value_ptr, key_value_len, pass,
-                          apic, current_cluster_index))
-      return PROTOCOL_ERROR;
+  {
+    if ((error= analyse_key_value(key_value_ptr, key_value_len, pass,
+                                  apic, current_cluster_index)))
+      return error;
+  }
   g_free(bin_buf);
   return 0;
 }
@@ -635,6 +710,7 @@ get_cs_config(struct ic_api_cluster_server *apic)
 static void
 free_cs_config(struct ic_api_cluster_server *apic)
 {
+  guint32 i, num_clusters;
   if (apic)
   {
     if (apic->cluster_conn.cluster_srv_conns)
@@ -647,6 +723,26 @@ free_cs_config(struct ic_api_cluster_server *apic)
       g_free(apic->cluster_ids);
     if (apic->node_ids)
       g_free(apic->node_ids);
+    if (apic->conf_objects)
+    {
+      num_clusters= apic->num_clusters_to_connect;
+      for (i= 0; i < num_clusters; i++)
+      {
+        struct ic_api_cluster_config *conf_obj= apic->conf_objects+i;
+        if (conf_obj->node_ids)
+          g_free(conf_obj->node_ids);
+        if (conf_obj->node_types)
+          g_free(conf_obj->node_types);
+        if (conf_obj->node_config)
+        {
+          g_free(conf_obj->node_config[0]);
+          g_free(conf_obj->node_config);
+        }
+        if (conf_obj->comm_config)
+          g_free(conf_obj->comm_config);
+      }
+      g_free(apic->conf_objects);
+    }
     g_free(apic);
   }
   return;
@@ -679,6 +775,8 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
       !(apic->cluster_conn.cluster_server_ports=
          g_try_malloc0(num_cluster_servers *
                        sizeof(guint16))) ||
+      !(apic->conf_objects= g_try_malloc0(num_cluster_servers *
+                                sizeof(struct ic_api_cluster_config))) ||
       !(apic->cluster_conn.cluster_srv_conns=
          g_try_malloc0(num_cluster_servers *
                        sizeof(struct ic_connection))))
@@ -701,11 +799,12 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
   memcpy((char*)apic->cluster_conn.cluster_server_ports,
          (char*)cluster_conn->cluster_server_ports,
          num_cluster_servers * sizeof(guint16));
+  memset((char*)apic->conf_objects, 0,
+         num_cluster_servers * sizeof(struct ic_api_cluster_config));
   memset((char*)apic->cluster_conn.cluster_srv_conns, 0,
          num_cluster_servers * sizeof(struct ic_connection));
 
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
-  apic->conf_objects= NULL;
   apic->api_op.get_ic_config= get_cs_config;
   apic->api_op.free_ic_config= free_cs_config;
   return apic;
