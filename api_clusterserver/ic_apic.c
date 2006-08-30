@@ -79,32 +79,6 @@ static const char *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const char *content_encoding_str= "Content-Transfer-Encoding: base64";
 static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 
-
-#define GET_NODEID_REPLY_STATE 0
-#define NODEID_STATE 1
-#define RESULT_OK_STATE 2
-#define WAIT_EMPTY_RETURN_STATE 3
-#define RESULT_ERROR_STATE 4
-
-#define GET_CONFIG_REPLY_STATE 5
-#define CONTENT_LENGTH_STATE 6
-#define OCTET_STREAM_STATE 7
-#define CONTENT_ENCODING_STATE 8
-#define RECEIVE_CONFIG_STATE 9
-
-#define GET_NODEID_REPLY_LEN 16
-#define NODEID_LEN 8
-#define RESULT_OK_LEN 10
-
-#define GET_CONFIG_REPLY_LEN 16
-#define CONTENT_LENGTH_LEN 16
-#define OCTET_STREAM_LEN 36
-#define CONTENT_ENCODING_LEN 33
-
-#define CONFIG_LINE_LEN 76
-#define MAX_CONTENT_LEN 16 * 1024 * 1024 /* 16 MByte max */
-
-
 static int
 send_cluster_server(struct ic_connection *conn, const char *send_buf)
 {
@@ -121,103 +95,317 @@ send_cluster_server(struct ic_connection *conn, const char *send_buf)
   return res;
 }
 
-#define IC_CL_KEY_MASK 0x3FFF
-#define IC_CL_KEY_SHIFT 28
-#define IC_CL_SECT_SHIFT 14
-#define IC_CL_SECT_MASK 0x3FFF
-#define IC_CL_INT32_TYPE 1
-#define IC_CL_CHAR_TYPE  2
-#define IC_CL_SECT_TYPE  3
-#define IC_CL_INT64_TYPE 4
 
-#define IC_NODE_TYPE     999
-#define IC_NODE_ID       3
+static int
+allocate_mem_phase1(struct ic_api_cluster_config *conf_obj)
+{
+  /*
+    Allocate memory for pointer arrays pointing to the configurations of the
+    nodes in the cluster, also allocate memory for array of node types.
+  */
+  conf_obj->node_types= g_try_malloc0(conf_obj->no_of_nodes *
+                                         sizeof(enum ic_node_type*));
+  conf_obj->node_ids= g_try_malloc0(conf_obj->no_of_nodes *
+                                       sizeof(guint32));
+  conf_obj->node_config= g_try_malloc0(conf_obj->no_of_nodes *
+                                          sizeof(char*));
+  if (!conf_obj->node_types || !conf_obj->node_ids || !conf_obj->node_config)
+    return MEM_ALLOC_ERROR;
+  return 0;
+}
+
+
+static int
+allocate_mem_phase2(struct ic_api_cluster_config *conf_obj)
+{
+  guint32 i;
+  guint32 size_config_objects= 0;
+  char *conf_obj_ptr, *string_mem;
+  /*
+    Allocate memory for the actual configuration objects for nodes and
+    communication sections.
+  */
+  for (i= 0; i < conf_obj->no_of_nodes; i++)
+  {
+    switch (conf_obj->node_types[i])
+    {
+      case IC_KERNEL_TYPE:
+        size_config_objects+= sizeof(struct ic_kernel_node_config);
+        break;
+      case IC_CLIENT_TYPE:
+        size_config_objects+= sizeof(struct ic_client_node_config);
+        break;
+      case IC_CLUSTER_SERVER_TYPE:
+        size_config_objects+= sizeof(struct ic_cluster_server_config);
+        break;
+      default:
+        g_assert(FALSE);
+        break;
+    }
+  }
+  size_config_objects+= conf_obj->no_of_comms *
+                        sizeof(struct ic_comm_link_config);
+  if (!(conf_obj->comm_config= g_try_malloc0(
+                     conf_obj->no_of_comms * sizeof(char*))) ||
+      !(conf_obj->string_memory_to_return= g_try_malloc0(
+                     conf_obj->string_memory_size)) ||
+      !(conf_obj->config_memory_to_return= g_try_malloc0(
+                     size_config_objects)))
+    return MEM_ALLOC_ERROR;
+
+  conf_obj_ptr= conf_obj->config_memory_to_return;
+  string_mem= conf_obj->string_memory_to_return;
+  conf_obj->end_string_memory= string_mem + conf_obj->string_memory_size;
+  conf_obj->next_string_memory= string_mem;
+
+  for (i= 0; i < conf_obj->no_of_nodes; i++)
+  {
+    conf_obj->node_config[i]= conf_obj_ptr;
+    switch (conf_obj->node_types[i])
+    {
+      case IC_KERNEL_TYPE:
+        conf_obj_ptr+= sizeof(struct ic_kernel_node_config);
+        break;
+      case IC_CLIENT_TYPE:
+        conf_obj_ptr+= sizeof(struct ic_client_node_config);
+        break;
+      case IC_CLUSTER_SERVER_TYPE:
+        conf_obj_ptr+= sizeof(struct ic_cluster_server_config);
+        break;
+      default:
+        g_assert(FALSE);
+
+        break;
+    }
+  }
+  for (i= 0; i < conf_obj->no_of_comms; i++)
+  {
+    conf_obj->comm_config[i]= conf_obj_ptr;
+    conf_obj_ptr+= sizeof(struct ic_comm_link_config);
+  }
+  g_assert(conf_obj_ptr == (conf_obj->config_memory_to_return +
+                            size_config_objects));
+  return 0;
+}
+
+static int
+analyse_node_section_phase1(struct ic_api_cluster_config *conf_obj,
+                            guint32 sect_id, guint32 value, guint32 hash_key)
+{
+  if (hash_key == IC_NODE_TYPE)
+  {
+    printf("Node type of section %u is %u\n", sect_id, value); 
+    switch (value)
+    {
+      case IC_CLIENT_TYPE:
+        conf_obj->no_of_client_nodes++;
+        break;
+      case IC_KERNEL_TYPE:
+        conf_obj->no_of_kernel_nodes++;
+        break;
+      case IC_CLUSTER_SERVER_TYPE:
+        conf_obj->no_of_cluster_servers++;
+
+        break;
+      default:
+        return PROTOCOL_ERROR;
+    }
+    conf_obj->node_types[sect_id - 2]= (enum ic_node_type)value;
+  }
+  else if (hash_key == IC_NODE_ID)
+  {
+    conf_obj->node_ids[sect_id - 2]= value;
+    printf("Node id = %u for section %u\n", value, sect_id);
+  }
+  return 0;
+}
+
+static int
+step_key_value(struct ic_api_cluster_config *conf_obj,
+               guint32 key_type, guint32 **key_value,
+               guint32 value, guint32 *key_value_end, int pass)
+{
+  guint32 len_words;
+  switch (key_type)
+  {
+    case IC_CL_INT32_TYPE:
+    case IC_CL_SECT_TYPE:
+      break;
+    case IC_CL_INT64_TYPE:
+      (*key_value)++;
+      break;
+    case IC_CL_CHAR_TYPE:
+      len_words= (value + 3)/4;
+      if (((*key_value) + len_words) >= key_value_end)
+      {
+        DEBUG(printf("Array ended in the middle of a type\n"));
+        return PROTOCOL_ERROR;
+      }
+      if (value != (strlen((char*)(*key_value)) + 1))
+      {
+        DEBUG(printf("Wrong length of character type\n"));
+        return PROTOCOL_ERROR;
+      }
+      (*key_value)+= len_words;
+      if (pass == 1)
+        conf_obj->string_memory_size+= value;
+        break;
+   default:
+     DEBUG(printf("Wrong key type %u\n", key_type));
+     return PROTOCOL_ERROR;
+  }
+  return 0;
+}
+
+static int
+read_node_section(struct ic_api_cluster_config *conf_obj,
+                  guint32 key_type, guint32 **key_value,
+                  guint32 value, guint32 hash_key,
+                  guint32 node_sect_id)
+{
+  guint32 len_words;
+  switch (key_type)
+  {
+    case IC_CL_INT32_TYPE:
+      break;
+    case IC_CL_SECT_TYPE:
+      break;
+    case IC_CL_INT64_TYPE:
+      (*key_value)++;
+      break;
+    case IC_CL_CHAR_TYPE:
+      len_words= (value + 3)/4;
+      (*key_value)+= len_words;
+      break;
+   default:
+     g_assert(FALSE);
+     return PROTOCOL_ERROR;
+  }
+  return 0;
+}
+
+static int
+read_comm_section(struct ic_api_cluster_config *conf_obj,
+                  guint32 key_type, guint32 **key_value,
+                  guint32 value, guint32 hash_key,
+                  guint32 comm_sect_id)
+{
+  guint32 len_words;
+  struct ic_tcp_comm_link_config *tcp_conf;
+
+  g_assert(comm_sect_id < conf_obj->no_of_comms);
+  tcp_conf= (struct ic_tcp_comm_link_config*)conf_obj->comm_config[comm_sect_id];
+  switch (key_type)
+  {
+    case IC_CL_INT32_TYPE:
+    {
+      switch (hash_key)
+      {
+        case TCP_FIRST_NODE_ID:
+          if (value > MAX_NODE_ID || !value)
+            return PROTOCOL_ERROR;
+          tcp_conf->first_node_id= value;
+          break;
+        case TCP_SECOND_NODE_ID:
+          if (value > MAX_NODE_ID || !value)
+            return PROTOCOL_ERROR;
+          tcp_conf->second_node_id= value;
+          break;
+        case TCP_USE_MESSAGE_ID:
+          if (value > 1)
+            return PROTOCOL_ERROR;
+          tcp_conf->use_message_id= (gchar)value;
+          break;
+        case TCP_USE_CHECKSUM:
+          if (value > 1)
+            return PROTOCOL_ERROR;
+          tcp_conf->use_checksum= (gchar)value;
+          break;
+        case TCP_CLIENT_PORT:
+          if (value > 65535)
+            return PROTOCOL_ERROR;
+          tcp_conf->client_port= (guint16)value;
+          break;
+        case TCP_SERVER_PORT:
+          if (value > 65535)
+            return PROTOCOL_ERROR;
+          tcp_conf->server_port= (guint16)value;
+          break;
+        case TCP_SERVER_NODE_ID:
+          if (value > MAX_NODE_ID || !value)
+            return PROTOCOL_ERROR;
+          tcp_conf->first_node_id= (guint16)value;
+          break;
+        case TCP_WRITE_BUFFER_SIZE:
+          if (value > TCP_MAX_WRITE_BUFFER_SIZE ||
+              value < TCP_MIN_WRITE_BUFFER_SIZE)
+            return PROTOCOL_ERROR;
+          tcp_conf->write_buffer_size= value;
+          break;
+        case TCP_READ_BUFFER_SIZE:
+          if (value > TCP_MAX_READ_BUFFER_SIZE ||
+              value < TCP_MIN_READ_BUFFER_SIZE)
+            return PROTOCOL_ERROR;
+          tcp_conf->read_buffer_size= value;
+          break;
+        case TCP_GROUP:
+        case IC_PARENT_ID:
+          /* Ignore for now */
+          break;
+        default:
+          return PROTOCOL_ERROR;
+      }
+      break;
+    }
+    case IC_CL_SECT_TYPE:
+      break;
+    case IC_CL_INT64_TYPE:
+      (*key_value)++;
+      break;
+    case IC_CL_CHAR_TYPE:
+    {
+      len_words= (value + 3)/4;
+      if (hash_key == TCP_FIRST_HOSTNAME)
+      {
+      }
+      else if (hash_key == TCP_SECOND_HOSTNAME)
+      {
+      }
+      else
+      {
+        DEBUG(printf("hash_key = %u, string = %s\n", hash_key,
+                     (char*)*key_value));
+        return PROTOCOL_ERROR;
+      }
+      (*key_value)+= len_words;
+      break;
+    }
+    default:
+      g_assert(FALSE);
+      return PROTOCOL_ERROR;
+  }
+  return 0;
+}
 
 static int
 analyse_key_value(guint32 *key_value, guint32 len, int pass,
                   struct ic_api_cluster_server *apic,
                   guint32 current_cluster_index)
 {
-  guint32 i;
-  guint64 value64;
   guint32 *key_value_end= key_value + len;
-  gboolean read_sections= TRUE;
-  gboolean first= TRUE;
-  guint32 size_config_objects= 0;
-  struct ic_api_cluster_config *conf_object;
-  char *conf_obj_ptr;
+  struct ic_api_cluster_config *conf_obj;
+  int error;
 
-  conf_object= apic->conf_objects+current_cluster_index;
+  conf_obj= apic->conf_objects+current_cluster_index;
   if (pass == 1)
   {
-    /*
-      Allocate memory for pointer arrays pointing to the configurations of the
-      nodes in the cluster, also allocate memory for array of node types.
-    */
-    conf_object->node_types= g_try_malloc0(conf_object->no_of_nodes *
-                                           sizeof(enum ic_node_type*));
-    conf_object->node_ids= g_try_malloc0(conf_object->no_of_nodes *
-                                         sizeof(guint32));
-    conf_object->node_config= g_try_malloc0(conf_object->no_of_nodes *
-                                            sizeof(char*));
-    if (!conf_object->node_types || !conf_object->node_ids ||
-        !conf_object->node_config)
-      return MEM_ALLOC_ERROR;
+    if ((error= allocate_mem_phase1(conf_obj)))
+      return error;
   }
   else if (pass == 2)
   {
-    /*
-      Allocate memory for the actual configuration objects for nodes and
-      communication sections.
-    */
-    for (i= 0; i < conf_object->no_of_nodes; i++)
-    {
-      switch (conf_object->node_types[i])
-      {
-        case IC_KERNEL_TYPE:
-          size_config_objects+= sizeof(struct ic_kernel_node_config);
-          break;
-        case IC_CLIENT_TYPE:
-          size_config_objects+= sizeof(struct ic_client_node_config);
-          break;
-        case IC_CLUSTER_SERVER_TYPE:
-          size_config_objects+= sizeof(struct ic_cluster_server_config);
-          break;
-        default:
-          g_assert(FALSE);
-          break;
-      }
-    }
-    size_config_objects+= conf_object->no_of_comms *
-                          sizeof(struct ic_comm_link_config);
-    if (!(conf_object->comm_config= g_try_malloc0(conf_object->no_of_comms *
-                                                 sizeof(char*))) ||
-        !(conf_obj_ptr= g_try_malloc0(size_config_objects)))
-      return MEM_ALLOC_ERROR;
-    for (i= 0; i < conf_object->no_of_nodes; i++)
-    {
-      conf_object->node_config[i]= conf_obj_ptr;
-      switch (conf_object->node_types[i])
-      {
-        case IC_KERNEL_TYPE:
-          conf_obj_ptr+= sizeof(struct ic_kernel_node_config);
-          break;
-        case IC_CLIENT_TYPE:
-          conf_obj_ptr+= sizeof(struct ic_client_node_config);
-          break;
-        case IC_CLUSTER_SERVER_TYPE:
-          conf_obj_ptr+= sizeof(struct ic_cluster_server_config);
-          break;
-        default:
-          g_assert(FALSE);
-          break;
-      }
-    }
-    for (i= 0; i < conf_object->no_of_comms; i++)
-    {
-      conf_object->comm_config[i]= conf_obj_ptr;
-      conf_obj_ptr+= sizeof(struct ic_comm_link_config);
-    }
+    if ((error= allocate_mem_phase2(conf_obj)))
+      return error;
   }
   while (key_value < key_value_end)
   {
@@ -226,97 +414,51 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     guint32 hash_key= key & IC_CL_KEY_MASK;
     guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
     guint32 key_type= key >> IC_CL_KEY_SHIFT;
-    if (pass == 0)
-    {
-      if (sect_id == 1)
-        conf_object->no_of_nodes= MAX(conf_object->no_of_nodes, hash_key + 1);
-    }
+    if (pass == 2)
+      printf("hash_key = %u, sect_id %u, key_type %u pass %d\n", hash_key, sect_id, key_type, pass);
+    if (pass == 0 && sect_id == 1)
+      conf_obj->no_of_nodes= MAX(conf_obj->no_of_nodes, hash_key + 1);
     else if (pass == 1)
     {
-      if (sect_id == (conf_object->no_of_nodes + 2))
-        conf_object->no_of_comms= MAX(conf_object->no_of_comms, hash_key + 1);
-      if ((sect_id > 1 && sect_id < (conf_object->no_of_nodes + 2)))
+      if (sect_id == (conf_obj->no_of_nodes + 2))
+        conf_obj->no_of_comms= MAX(conf_obj->no_of_comms, hash_key + 1);
+      if ((sect_id > 1 && sect_id < (conf_obj->no_of_nodes + 2)))
       {
-        if (hash_key == IC_NODE_TYPE)
-        {
-          printf("Node type of section %u is %u\n", sect_id, value); 
-          switch (value)
-          {
-            case IC_CLIENT_TYPE:
-              conf_object->no_of_client_nodes++;
-              break;
-            case IC_KERNEL_TYPE:
-              conf_object->no_of_kernel_nodes++;
-              break;
-            case IC_CLUSTER_SERVER_TYPE:
-              conf_object->no_of_cluster_servers++;
-              break;
-            default:
-              return PROTOCOL_ERROR;
-          }
-          conf_object->node_types[sect_id - 2]= (enum ic_node_type)value;
-        }
-        else if (hash_key == IC_NODE_ID)
-        {
-          conf_object->node_ids[sect_id - 2]= value;
-          printf("Node id = %u for section %u\n", value, sect_id);
-        }
+        if ((error= analyse_node_section_phase1(conf_obj, sect_id,
+                                                value, hash_key)))
+          return error;
       }
-    }
-    else if (pass == 2)
-    {
-      if (first)
-      {
-        first= FALSE;
-      }
-      if (hash_key == 3)
-        printf("value = %u, hash_key = %u, sect_id = %u, key_type = %u\n",
-               value, hash_key, sect_id, key_type);
-      if (sect_id != 1 && sect_id != (conf_object->no_of_nodes + 2))
-        read_sections= TRUE;
     }
     key_value+= 2;
-    if (read_sections)
+    if (pass < 2)
     {
-
+      if ((error= step_key_value(conf_obj, key_type, &key_value,
+                                 value, key_value_end, pass)))
+        return error;
     }
-    switch (key_type)
+    else
     {
-      case IC_CL_INT32_TYPE:
-        break;
-      case IC_CL_INT64_TYPE:
-        if (key_value >= key_value_end)
-          goto error;
-        value64= (guint64)((guint64)value << 32) || (guint64)key_value[0];
-        key_value++;
-        break;
-      case IC_CL_SECT_TYPE:
-        break;
-      case IC_CL_CHAR_TYPE:
+      if (sect_id != 1 && sect_id != (conf_obj->no_of_nodes + 2))
       {
-        guint32 len_words= (value + 3)/4;
-        if ((key_value + len_words) >= key_value_end)
-          goto error;
-        if (value != (strlen((char*)key_value) + 1))
+        if (sect_id < (conf_obj->no_of_nodes + 2))
         {
-          DEBUG(printf("Wrong length of character type\n"));
-          return 1;
+          guint32 node_sect_id= sect_id - 2;
+          if ((error= read_node_section(conf_obj, key_type, &key_value,
+                                        value, hash_key, node_sect_id)))
+            return error;
         }
-        key_value+= ((value + 3)/4);
-        break;
+        else
+        {
+          guint32 comm_sect_id= sect_id - (conf_obj->no_of_nodes + 3);
+          if ((error= read_comm_section(conf_obj, key_type, &key_value,
+                                        value, hash_key, comm_sect_id)))
+            return error;
+        }
       }
-      default:
-        DEBUG(printf("Wrong key type %u\n", key_type));
-        return 1;
     }
   }
   return 0;
-
-error:
-  DEBUG(printf("Array ended in the middle of a type\n"));
-  return 1;
 }
-
 
 static char ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
 static int
@@ -734,10 +876,11 @@ free_cs_config(struct ic_api_cluster_server *apic)
         if (conf_obj->node_types)
           g_free(conf_obj->node_types);
         if (conf_obj->node_config)
-        {
-          g_free(conf_obj->node_config[0]);
           g_free(conf_obj->node_config);
-        }
+        if (conf_obj->string_memory_to_return)
+          g_free(conf_obj->string_memory_to_return);
+        if (conf_obj->config_memory_to_return)
+          g_free(conf_obj->config_memory_to_return);
         if (conf_obj->comm_config)
           g_free(conf_obj->comm_config);
       }
