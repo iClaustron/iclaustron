@@ -8,6 +8,32 @@ enum ic_node_type
   IC_CLUSTER_SERVER_TYPE = 2
 };
 
+enum ic_config_entry_change
+{
+  IC_ONLINE_CHANGE = 0,
+  IC_NODE_RESTART_CHANGE = 1,
+  IC_ROLLING_UPGRADE_CHANGE = 2,
+  IC_CLUSTER_RESTART_CHANGE = 3,
+  IC_NOT_CHANGEABLE = 4
+};
+
+struct config_entry
+{
+  char *config_entry_name;
+  char *config_entry_description;
+  guint64 max_value;
+  guint64 min_value;
+  guint64 default_value;
+  enum ic_config_entry_change change_variant;
+  gchar is_max_value_defined;
+  gchar is_min_value_defined;
+  gchar is_defined;
+  gchar is_boolean;
+  gchar is_deprecated;
+  gchar is_string_type;
+  gchar is_mandatory_to_specify;
+};
+
 struct ic_cluster_config_object;
 struct ic_api_cluster_connection;
 

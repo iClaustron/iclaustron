@@ -102,19 +102,6 @@
 #define IC_NODE_ID       3
 #define IC_PARENT_ID     16382
 
-struct config_entry
-{
-  guint64 max_value;
-  guint64 min_value;
-  guint64 default_value;
-  gchar is_max_value_defined;
-  gchar is_min_value_defined;
-  gchar is_defined;
-  gchar is_boolean;
-  gchar is_deprecated;
-  gchar is_string_type;
-};
-
 static guint16 map_config_id[1024];
 static struct config_entry glob_conf_entry[256];
 static gboolean glob_conf_entry_inited= FALSE;
@@ -206,6 +193,7 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 static void
 ic_init_config_parameters()
 {
+  struct config_entry *conf_entry;
   if (glob_conf_entry_inited)
     return;
   glob_conf_entry_inited= TRUE;
@@ -213,14 +201,75 @@ ic_init_config_parameters()
   memset(glob_conf_entry, 0, 256 * sizeof(struct config_entry));
 
   map_config_id[KERNEL_MAX_TRACE_FILES]= 1;
-  glob_conf_entry[1].is_min_value_defined= TRUE;
-  glob_conf_entry[1].is_max_value_defined= TRUE;
-  glob_conf_entry[1].min_value= 1;
-  glob_conf_entry[1].max_value= 2048;
-  glob_conf_entry[1].default_value= 25;
+  conf_entry= &glob_conf_entry[1];
+  conf_entry->config_entry_name= "max_number_of_trace_files";
+  conf_entry->config_entry_description=
+  "The number of crashes that can be reported before we overwrite error log and trace files";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1;
+  conf_entry->max_value= 2048;
+  conf_entry->default_value= 25;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_REPLICAS]= 2;
+  conf_entry= &glob_conf_entry[2];
+  conf_entry->config_entry_name= "number_of_replicas";
+  conf_entry->config_entry_description=
+  "This defines number of nodes per node group, within a node group all nodes contain the same data";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1;
+  conf_entry->max_value= 4;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_TABLE_OBJECTS]= 3;
+  conf_entry= &glob_conf_entry[3];
+  conf_entry->config_entry_name= "number_of_table_objects";
+  conf_entry->config_entry_description=
+  "Sets the maximum number of tables that can be stored in cluster";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 32;
+  conf_entry->default_value= 256;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_COLUMN_OBJECTS]= 4;
+  conf_entry= &glob_conf_entry[4];
+  conf_entry->config_entry_name= "number_of_column_objects";
+  conf_entry->config_entry_description=
+  "Sets the maximum number of columns that can be stored in cluster";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 256;
+  conf_entry->default_value= 2048;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_INTERNAL_TRIGGER_OBJECTS]= 5;
+  conf_entry= &glob_conf_entry[5];
+  conf_entry->config_entry_name= "number_of_internal_trigger_objects";
+  conf_entry->config_entry_description=
+  "Each unique index will use 3 internal trigger objects, index/backup will use 1 per table";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 512;
+  conf_entry->default_value= 1536;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_CONNECTION_OBJECTS]= 6;
+  conf_entry= &glob_conf_entry[6];
+  conf_entry->config_entry_name= "number_of_connection_objects";
+  conf_entry->config_entry_description=
+  "Each active transaction and active scan uses a connection object";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 128;
+  conf_entry->default_value= 8192;
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
   map_config_id[KERNEL_LOCK_MEMORY]= 15;
-  glob_conf_entry[15].is_boolean= TRUE;
+  conf_entry= &glob_conf_entry[15];
+  conf_entry->config_entry_name= "use_unswappable_memory";
+  conf_entry->config_entry_description=
+  "Setting this to 1 means that all memory is locked and will not be swapped out";
+  conf_entry->is_boolean= TRUE;
 
   return;
 }
