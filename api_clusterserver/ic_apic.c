@@ -61,6 +61,64 @@
      <CR>
      base64-encoded string with length as provided above
 */
+
+
+#define MAX_NODE_ID 63
+
+#define GET_NODEID_REPLY_STATE 0
+#define NODEID_STATE 1
+#define RESULT_OK_STATE 2
+#define WAIT_EMPTY_RETURN_STATE 3
+#define RESULT_ERROR_STATE 4
+
+#define GET_CONFIG_REPLY_STATE 5
+#define CONTENT_LENGTH_STATE 6
+#define OCTET_STREAM_STATE 7
+#define CONTENT_ENCODING_STATE 8
+#define RECEIVE_CONFIG_STATE 9
+
+#define GET_NODEID_REPLY_LEN 16
+#define NODEID_LEN 8
+#define RESULT_OK_LEN 10
+
+#define GET_CONFIG_REPLY_LEN 16
+#define CONTENT_LENGTH_LEN 16
+#define OCTET_STREAM_LEN 36
+#define CONTENT_ENCODING_LEN 33
+
+#define CONFIG_LINE_LEN 76
+#define MAX_CONTENT_LEN 16 * 1024 * 1024 /* 16 MByte max */
+
+#define IC_CL_KEY_MASK 0x3FFF
+#define IC_CL_KEY_SHIFT 28
+#define IC_CL_SECT_SHIFT 14
+#define IC_CL_SECT_MASK 0x3FFF
+#define IC_CL_INT32_TYPE 1
+#define IC_CL_CHAR_TYPE  2
+#define IC_CL_SECT_TYPE  3
+#define IC_CL_INT64_TYPE 4
+
+#define IC_NODE_TYPE     999
+#define IC_NODE_ID       3
+#define IC_PARENT_ID     16382
+
+struct config_entry
+{
+  guint64 max_value;
+  guint64 min_value;
+  guint64 default_value;
+  gchar is_max_value_defined;
+  gchar is_min_value_defined;
+  gchar is_defined;
+  gchar is_boolean;
+  gchar is_deprecated;
+  gchar is_string_type;
+};
+
+static guint16 map_config_id[1024];
+static struct config_entry glob_conf_entry[256];
+static gboolean glob_conf_entry_inited= FALSE;
+
 static const char *get_nodeid_str= "get nodeid";
 static const char *get_nodeid_reply_str= "get nodeid reply";
 static const char *get_config_str= "get config";
@@ -79,22 +137,119 @@ static const char *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const char *content_encoding_str= "Content-Transfer-Encoding: base64";
 static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 
-static int
-send_cluster_server(struct ic_connection *conn, const char *send_buf)
-{
-  guint32 inx;
-  int res;
-  char buf[256];
+/*
+  CONFIGURATION PARAMETER MODULE
+  ------------------------------
 
-  strcpy(buf, send_buf);
-  inx= strlen(buf);
-  buf[inx++]= CARRIAGE_RETURN;
-  buf[inx]= NULL_BYTE;
-  DEBUG(printf("Send: %s", buf));
-  res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
-  return res;
+  This module contains all definitions of the configuration parameters.
+  They are only used in this file, the rest of the code can only get hold
+  of configuration objects that are filled in, they can also access methods
+  that create protocol objects based on those configuration objects.
+*/
+
+/*
+  This method defines all configuration parameters and puts them in a global
+  variable only accessible from a few methods in this file. When adding a
+  new configuration variable the following actions are needed:
+  1) Add a constant for the configuration variable in the header file
+  2) Add it to this method ic_init_config_parameters
+  3) Add it to any of the config reader routines dependent on if it is a
+     kernel, client, cluster server or communication variable.
+  4) In the same manner add it to any of the config writer routines
+*/
+
+#define KERNEL_MAX_TRACE_FILES 100
+#define KERNEL_REPLICAS 101
+#define KERNEL_TABLE_OBJECTS 102
+#define KERNEL_COLUMN_OBJECTS 103
+#define KERNEL_KEY_OBJECTS 104
+#define KERNEL_INTERNAL_TRIGGER_OBJECTS 105
+#define KERNEL_CONNECTION_OBJECTS 106
+#define KERNEL_OPERATION_OBJECTS 107
+#define KERNEL_SCAN_OBJECTS 108
+#define KERNEL_INTERNAL_TRIGGER_OPERATION_OBJECTS 109
+#define KERNEL_KEY_OPERATION_OBJECTS 110
+#define KERNEL_CONNECTION_BUFFER 111
+#define KERNEL_RAM_MEMORY 112
+#define KERNEL_HASH_MEMORY 113
+#define KERNEL_LOCK_MEMORY 114
+#define KERNEL_WAIT_PARTITIAL_START 115
+#define KERNEL_WAIT_PARTITIONED_START 116
+#define KERNEL_WAIT_ERROR_START 117
+#define KERNEL_HEARTBEAT_TIMER 118
+#define KERNEL_CLIENT_HEARTBEAT_TIMER 119
+#define KERNEL_LOCAL_CHECKPOINT_TIMER 120
+#define KERNEL_GLOBAL_CHECKPOINT_TIMER 121
+#define KERNEL_ARBITRATOR_TIMER 122
+#define KERNEL_WATCHDOG_TIMER 123
+#define KERNEL_DAEMON_RESTART_AT_ERROR 124
+
+#define TCP_FIRST_NODE_ID 400
+#define TCP_SECOND_NODE_ID 401
+#define TCP_USE_MESSAGE_ID 402
+#define TCP_USE_CHECKSUM 403
+#define TCP_CLIENT_PORT 2000
+#define TCP_SERVER_PORT 406
+#define TCP_SERVER_NODE_ID 410
+#define TCP_WRITE_BUFFER_SIZE 454
+#define TCP_READ_BUFFER_SIZE 455
+#define TCP_FIRST_HOSTNAME 407
+#define TCP_SECOND_HOSTNAME 408
+#define TCP_GROUP 409
+
+#define TCP_MIN_WRITE_BUFFER_SIZE 65536
+#define TCP_MAX_WRITE_BUFFER_SIZE 100000000
+
+#define TCP_MIN_READ_BUFFER_SIZE 8192
+#define TCP_MAX_READ_BUFFER_SIZE 1000000000
+
+static void
+ic_init_config_parameters()
+{
+  if (glob_conf_entry_inited)
+    return;
+  glob_conf_entry_inited= TRUE;
+  memset(map_config_id, 0, 1024 * sizeof(guint16));
+  memset(glob_conf_entry, 0, 256 * sizeof(struct config_entry));
+
+  map_config_id[KERNEL_MAX_TRACE_FILES]= 1;
+  glob_conf_entry[1].is_min_value_defined= TRUE;
+  glob_conf_entry[1].is_max_value_defined= TRUE;
+  glob_conf_entry[1].min_value= 1;
+  glob_conf_entry[1].max_value= 2048;
+  glob_conf_entry[1].default_value= 25;
+
+  map_config_id[KERNEL_LOCK_MEMORY]= 15;
+  glob_conf_entry[15].is_boolean= TRUE;
+
+  return;
 }
 
+static int
+ic_check_config_value(int config_id, guint64 value)
+{
+  guint32 inx;
+  struct config_entry *conf_entry;
+
+  if (config_id > 998)
+    return PROTOCOL_ERROR;
+  inx= map_config_id[config_id];
+  if (!inx)
+    return PROTOCOL_ERROR;
+  conf_entry= &glob_conf_entry[inx];
+  if ((conf_entry->is_boolean && (value > 1)) ||
+      (conf_entry->is_min_value_defined &&
+       (conf_entry->min_value > value)) ||
+      (conf_entry->is_max_value_defined &&
+       (conf_entry->max_value < value)))
+    return PROTOCOL_ERROR;
+  return 0;
+}
+
+/*
+  CONFIGURATION TRANSLATE KEY DATA TO CONFIGURATION OBJECTS MODULE
+  ----------------------------------------------------------------
+*/
 
 static int
 allocate_mem_phase1(struct ic_api_cluster_config *conf_obj)
@@ -264,23 +419,68 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
                   guint32 node_sect_id)
 {
   guint32 len_words;
-  switch (key_type)
+  if (conf_obj->node_types[node_sect_id] == IC_KERNEL_TYPE)
   {
-    case IC_CL_INT32_TYPE:
-      break;
-    case IC_CL_SECT_TYPE:
-      break;
-    case IC_CL_INT64_TYPE:
-      (*key_value)++;
-      break;
-    case IC_CL_CHAR_TYPE:
-      len_words= (value + 3)/4;
-      (*key_value)+= len_words;
-      break;
-   default:
-     g_assert(FALSE);
-     return PROTOCOL_ERROR;
+    switch (key_type)
+    {
+      case IC_CL_INT32_TYPE:
+        break;
+      case IC_CL_SECT_TYPE:
+        break;
+      case IC_CL_INT64_TYPE:
+        (*key_value)++;
+        break;
+      case IC_CL_CHAR_TYPE:
+        len_words= (value + 3)/4;
+        (*key_value)+= len_words;
+        break;
+     default:
+       g_assert(FALSE);
+       return PROTOCOL_ERROR;
+    }
   }
+  else if (conf_obj->node_types[node_sect_id] == IC_CLIENT_TYPE)
+  {
+    switch (key_type)
+    {
+      case IC_CL_INT32_TYPE:
+        break;
+      case IC_CL_SECT_TYPE:
+        break;
+      case IC_CL_INT64_TYPE:
+        (*key_value)++;
+        break;
+      case IC_CL_CHAR_TYPE:
+        len_words= (value + 3)/4;
+        (*key_value)+= len_words;
+        break;
+     default:
+       g_assert(FALSE);
+       return PROTOCOL_ERROR;
+    }
+  }
+  else if (conf_obj->node_types[node_sect_id] == IC_CLUSTER_SERVER_TYPE)
+  {
+    switch (key_type)
+    {
+      case IC_CL_INT32_TYPE:
+        break;
+      case IC_CL_SECT_TYPE:
+        break;
+      case IC_CL_INT64_TYPE:
+        (*key_value)++;
+        break;
+      case IC_CL_CHAR_TYPE:
+        len_words= (value + 3)/4;
+        (*key_value)+= len_words;
+        break;
+     default:
+       g_assert(FALSE);
+       return PROTOCOL_ERROR;
+    }
+  }
+  else
+    g_assert(FALSE);
   return 0;
 }
 
@@ -367,9 +567,13 @@ read_comm_section(struct ic_api_cluster_config *conf_obj,
       len_words= (value + 3)/4;
       if (hash_key == TCP_FIRST_HOSTNAME)
       {
+        tcp_conf->first_host_name= conf_obj->next_string_memory;
+        strcpy(tcp_conf->first_host_name, (char*)(*key_value));
       }
       else if (hash_key == TCP_SECOND_HOSTNAME)
       {
+        tcp_conf->second_host_name= conf_obj->next_string_memory;
+        strcpy(tcp_conf->second_host_name, (char*)(*key_value));
       }
       else
       {
@@ -377,6 +581,8 @@ read_comm_section(struct ic_api_cluster_config *conf_obj,
                      (char*)*key_value));
         return PROTOCOL_ERROR;
       }
+      conf_obj->next_string_memory+= (value + 1);
+      g_assert(conf_obj->next_string_memory <= conf_obj->end_string_memory);
       (*key_value)+= len_words;
       break;
     }
@@ -458,6 +664,29 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     }
   }
   return 0;
+}
+
+/*
+  CONFIGURATION RETRIEVE MODULE
+  -----------------------------
+  This module contains the code to retrieve the configuation for a given cluster
+  from the cluster server.
+*/
+
+static int
+send_cluster_server(struct ic_connection *conn, const char *send_buf)
+{
+  guint32 inx;
+  int res;
+  char buf[256];
+
+  strcpy(buf, send_buf);
+  inx= strlen(buf);
+  buf[inx++]= CARRIAGE_RETURN;
+  buf[inx]= NULL_BYTE;
+  DEBUG(printf("Send: %s", buf));
+  res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
+  return res;
 }
 
 static char ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
@@ -908,7 +1137,7 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
 
     We will also ensure that the supplied data is validated.
   */
-
+  ic_init_config_parameters();
   if (!(apic= g_try_malloc0(sizeof(struct ic_api_cluster_server))) ||
       !(apic->cluster_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
       !(apic->node_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
@@ -952,4 +1181,3 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
   apic->api_op.free_ic_config= free_cs_config;
   return apic;
 }
-
