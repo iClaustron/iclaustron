@@ -50,7 +50,7 @@ static GOptionEntry entries[] =
   { "port", 0, 0, G_OPTION_ARG_INT, &glob_port, "Set Port, default = 10002", NULL},
   { "config-file", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_file,
     "Sets path to configuration file, default /etc/ic_cntrl.conf", NULL},
-  { NULL }
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
 static int start_services(struct ic_connection *conn,
@@ -111,9 +111,8 @@ int main(int argc, char *argv[])
   conn.client_ip= 0;
   conn.client_port= 0;
   conn.backlog= 5;
-  conn.call_accept= FALSE;
   
-  set_socket_methods(&conn);
+  ic_init_socket_object(&conn, 0, 0, 0, 0);
   if ((ret_code= conn.conn_op.set_up_ic_connection(&conn)))
   {
     printf("Failed to set up listening port\n");
