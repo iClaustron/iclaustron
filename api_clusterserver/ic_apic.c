@@ -210,6 +210,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1;
   conf_entry->max_value= 2048;
   conf_entry->default_value= 25;
+  conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_REPLICAS]= 2;
@@ -222,6 +223,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1;
   conf_entry->max_value= 4;
   conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_TABLE_OBJECTS]= 3;
@@ -232,6 +234,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 32;
   conf_entry->default_value= 256;
+  conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_COLUMN_OBJECTS]= 4;
@@ -242,27 +245,126 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 256;
   conf_entry->default_value= 2048;
+  conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[KERNEL_INTERNAL_TRIGGER_OBJECTS]= 5;
+  map_config_id[KERNEL_KEY_OBJECTS]= 5;
   conf_entry= &glob_conf_entry[5];
+  conf_entry->config_entry_name= "number_of_key_objects";
+  conf_entry->config_entry_description=
+  "Sets the maximum number of keys that can be stored in cluster";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 32;
+  conf_entry->default_value= 256;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_INTERNAL_TRIGGER_OBJECTS]= 6;
+  conf_entry= &glob_conf_entry[6];
   conf_entry->config_entry_name= "number_of_internal_trigger_objects";
   conf_entry->config_entry_description=
   "Each unique index will use 3 internal trigger objects, index/backup will use 1 per table";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 512;
   conf_entry->default_value= 1536;
+  conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[KERNEL_CONNECTION_OBJECTS]= 6;
-  conf_entry= &glob_conf_entry[6];
+  map_config_id[KERNEL_CONNECTION_OBJECTS]= 7;
+  conf_entry= &glob_conf_entry[7];
   conf_entry->config_entry_name= "number_of_connection_objects";
   conf_entry->config_entry_description=
   "Each active transaction and active scan uses a connection object";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 128;
   conf_entry->default_value= 8192;
+  conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+  map_config_id[KERNEL_OPERATION_OBJECTS]= 8;
+  conf_entry= &glob_conf_entry[8];
+  conf_entry->config_entry_name= "number_of_operation_objects";
+  conf_entry->config_entry_description=
+  "Each record read/updated in a transaction uses an operation object during the transaction";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 1024;
+  conf_entry->default_value= 32768;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+  map_config_id[KERNEL_SCAN_OBJECTS]= 9;
+  conf_entry= &glob_conf_entry[9];
+  conf_entry->config_entry_name= "number_of_scan_objects";
+  conf_entry->config_entry_description=
+  "Each active scan uses a scan object for the lifetime of the scan operation";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 32;
+  conf_entry->max_value= 512;
+  conf_entry->default_value= 128;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_INTERNAL_TRIGGER_OPERATION_OBJECTS]= 10;
+  conf_entry= &glob_conf_entry[10];
+  conf_entry->config_entry_name= "number_of_internal_trigger_operation_objects";
+  conf_entry->config_entry_description=
+  "Each internal trigger that is fired uses an operation object for a short time";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->min_value= 4096;
+  conf_entry->max_value= 4096;
+  conf_entry->default_value= 4096;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_KEY_OPERATION_OBJECTS]= 11;
+  conf_entry= &glob_conf_entry[11];
+  conf_entry->config_entry_name= "number_of_key_operation_objects";
+  conf_entry->config_entry_description=
+  "Each read and update of an unique hash index in a transaction uses one of those objects";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 128;
+  conf_entry->default_value= 4096;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+  map_config_id[KERNEL_CONNECTION_BUFFER]= 12;
+  conf_entry= &glob_conf_entry[12];
+  conf_entry->config_entry_name= "size_of_connection_buffer";
+  conf_entry->config_entry_description=
+  "Internal buffer used by connections by transactions and scans";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->min_value= 1024 * 1024;
+  conf_entry->max_value= 1024 * 1024;
+  conf_entry->default_value= 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_RAM_MEMORY]= 13;
+  conf_entry= &glob_conf_entry[13];
+  conf_entry->config_entry_name= "size_of_ram_memory";
+  conf_entry->config_entry_description=
+  "Size of memory used to store RAM-based records";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 16 * 1024 * 1024;
+  conf_entry->default_value= 256 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_HASH_MEMORY]= 14;
+  conf_entry= &glob_conf_entry[14];
+  conf_entry->config_entry_name= "size_of_hash_memory";
+  conf_entry->config_entry_description=
+  "Size of memory used to store primary hash index on all tables and unique hash indexes";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 8 * 1024 * 1024;
+  conf_entry->default_value= 64 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_LOCK_MEMORY]= 15;
   conf_entry= &glob_conf_entry[15];
@@ -270,6 +372,55 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Setting this to 1 means that all memory is locked and will not be swapped out";
   conf_entry->is_boolean= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_WAIT_PARTIAL_START]= 16;
+  conf_entry= &glob_conf_entry[16];
+  conf_entry->config_entry_name= "timer_wait_partial_start";
+  conf_entry->config_entry_description=
+  "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever"
+  conf_entry->default_value= 20000;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_WAIT_PARTITIONED_START]= 17;
+  conf_entry= &glob_conf_entry[17];
+  conf_entry->config_entry_name= "timer_wait_partitioned_start";
+  conf_entry->config_entry_description=
+  "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever"
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_WAIT_ERROR_START]= 18;
+  conf_entry= &glob_conf_entry[18];
+  conf_entry->config_entry_name= "timer_wait_error_start";
+  conf_entry->config_entry_description=
+  "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever"
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_HEARTBEAT_TIMER]= 19;
+  conf_entry= &glob_conf_entry[19];
+  conf_entry->config_entry_name= "timer_heartbeat_kernel_nodes";
+  conf_entry->config_entry_description=
+  "Time in ms between sending heartbeat messages to kernel nodes, 4 missed leads to node crash"
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 10;
+  conf_entry->default_value= 700;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE_SPECIAL;
+
+  map_config_id[KERNEL_CLIENT_HEARTBEAT_TIMER]= 20;
+  conf_entry= &glob_conf_entry[20];
+  conf_entry->config_entry_name= "timer_heartbeat_client_nodes";
+  conf_entry->config_entry_description=
+  "Time in ms between sending heartbeat messages to client nodes, 4 missed leads to node crash"
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 10;
+  conf_entry->default_value= 1000;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE_SPECIAL;
 
   return;
 }

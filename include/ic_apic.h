@@ -13,8 +13,9 @@ enum ic_config_entry_change
   IC_ONLINE_CHANGE = 0,
   IC_NODE_RESTART_CHANGE = 1,
   IC_ROLLING_UPGRADE_CHANGE = 2,
-  IC_CLUSTER_RESTART_CHANGE = 3,
-  IC_NOT_CHANGEABLE = 4
+  IC_ROLLING_UPGRADE_CHANGE_SPECIAL = 3,
+  IC_CLUSTER_RESTART_CHANGE = 4,
+  IC_NOT_CHANGEABLE = 5
 };
 
 struct config_entry
@@ -24,7 +25,17 @@ struct config_entry
   guint64 max_value;
   guint64 min_value;
   guint64 default_value;
+  /*
+    When only one version exists then both these values are 0.
+    When a new version of default values is created the
+    max_version is set on the old defaults and the new entry
+    gets the min_version set to the old max_version + 1 and
+    its max_version_used is still 0.
+  */
+  guint32 min_version_used;
+  guint32 max_version_used;
   enum ic_config_entry_change change_variant;
+  enum ic_node_type node_type;
   gchar is_max_value_defined;
   gchar is_min_value_defined;
   gchar is_defined;
@@ -32,6 +43,7 @@ struct config_entry
   gchar is_deprecated;
   gchar is_string_type;
   gchar is_mandatory_to_specify;
+  gchar is_not_configurable;
 };
 
 struct ic_cluster_config_object;
