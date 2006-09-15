@@ -14,8 +14,9 @@ enum ic_config_entry_change
   IC_NODE_RESTART_CHANGE = 1,
   IC_ROLLING_UPGRADE_CHANGE = 2,
   IC_ROLLING_UPGRADE_CHANGE_SPECIAL = 3,
-  IC_CLUSTER_RESTART_CHANGE = 4,
-  IC_NOT_CHANGEABLE = 5
+  IC_INITIAL_NODE_RESTART = 4,
+  IC_CLUSTER_RESTART_CHANGE = 5,
+  IC_NOT_CHANGEABLE = 6
 };
 
 struct config_entry
@@ -24,7 +25,11 @@ struct config_entry
   char *config_entry_description;
   guint64 max_value;
   guint64 min_value;
-  guint64 default_value;
+  union
+  {
+    guint64 default_value;
+    char *default_string;
+  };
   /*
     When only one version exists then both these values are 0.
     When a new version of default values is created the

@@ -102,8 +102,10 @@
 #define IC_NODE_ID       3
 #define IC_PARENT_ID     16382
 
-static guint16 map_config_id[1024];
-static struct config_entry glob_conf_entry[256];
+#define MAX_MAP_CONFIG_ID 1024
+#define MAX_CONFIG_ID 256
+static guint16 map_config_id[MAX_MAP_CONFIG_ID];
+static struct config_entry glob_conf_entry[MAX_CONFIG_ID];
 static gboolean glob_conf_entry_inited= FALSE;
 
 static const char *get_nodeid_str= "get nodeid";
@@ -160,7 +162,7 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define KERNEL_RAM_MEMORY 112
 #define KERNEL_HASH_MEMORY 113
 #define KERNEL_LOCK_MEMORY 114
-#define KERNEL_WAIT_PARTITIAL_START 115
+#define KERNEL_WAIT_PARTIAL_START 115
 #define KERNEL_WAIT_PARTITIONED_START 116
 #define KERNEL_WAIT_ERROR_START 117
 #define KERNEL_HEARTBEAT_TIMER 118
@@ -170,6 +172,42 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define KERNEL_ARBITRATOR_TIMER 122
 #define KERNEL_WATCHDOG_TIMER 123
 #define KERNEL_DAEMON_RESTART_AT_ERROR 124
+#define KERNEL_FILESYSTEM_PATH 125
+#define KERNEL_REDO_LOG_FILES 126
+/* 127 and 128 deprecated */
+#define KERNEL_CHECK_INTERVAL 129
+#define KERNEL_CLIENT_ACTIVITY_TIMER 130
+#define KERNEL_DEADLOCK_TIMER 131
+#define KERNEL_CHECKPOINT_OBJECTS 132
+#define KERNEL_CHECKPOINT_MEMORY 133
+#define KERNEL_CHECKPOINT_DATA_MEMORY 134
+#define KERNEL_CHECKPOINT_LOG_MEMORY 135
+#define KERNEL_CHECKPOINT_WRITE_SIZE 136
+/* 137 and 138 deprecated */
+#define KERNEL_CHECKPOINT_MAX_WRITE_SIZE 139
+/* 140 - 146 not used */
+/* 147 Cluster Server parameter */
+#define KERNEL_VOLATILE_MODE 148
+#define KERNEL_ORDERED_KEY_OBJECTS 149
+#define KERNEL_UNIQUE_HASH_KEY_OBJECTS 150
+#define KERNEL_LOCAL_OPERATION_OBJECTS 151
+#define KERNEL_LOCAL_SCAN_OBJECTS 152
+#define KERNEL_SCAN_BATCH_SIZE 153
+/* 154 and 155 deprecated */
+#define KERNEL_REDO_LOG_MEMORY 156
+#define KERNEL_LONG_MESSAGE_MEMORY 157
+#define KERNEL_CHECKPOINT_PATH 158
+#define KERNEL_MAX_OPEN_FILES 159
+#define KERNEL_PAGE_CACHE_SIZE 160
+#define KERNEL_STRING_MEMORY 161
+#define KERNEL_INITIAL_OPEN_FILES 162
+#define KERNEL_FILE_SYNCH_SIZE 163
+#define KERNEL_DISK_WRITE_SPEED 164
+#define KERNEL_DISK_WRITE_SPEED_START 165
+#define KERNEL_MEMORY_POOL 198
+#define KERNEL_DUMMY 199
+
+#define CLUSTER_SERVER_EVENT_LOG 147
 
 #define TCP_FIRST_NODE_ID 400
 #define TCP_SECOND_NODE_ID 401
@@ -379,7 +417,7 @@ ic_init_config_parameters()
   conf_entry= &glob_conf_entry[16];
   conf_entry->config_entry_name= "timer_wait_partial_start";
   conf_entry->config_entry_description=
-  "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever"
+  "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever";
   conf_entry->default_value= 20000;
   conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
@@ -388,7 +426,7 @@ ic_init_config_parameters()
   conf_entry= &glob_conf_entry[17];
   conf_entry->config_entry_name= "timer_wait_partitioned_start";
   conf_entry->config_entry_description=
-  "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever"
+  "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever";
   conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
@@ -396,7 +434,7 @@ ic_init_config_parameters()
   conf_entry= &glob_conf_entry[18];
   conf_entry->config_entry_name= "timer_wait_error_start";
   conf_entry->config_entry_description=
-  "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever"
+  "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever";
   conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
@@ -404,7 +442,7 @@ ic_init_config_parameters()
   conf_entry= &glob_conf_entry[19];
   conf_entry->config_entry_name= "timer_heartbeat_kernel_nodes";
   conf_entry->config_entry_description=
-  "Time in ms between sending heartbeat messages to kernel nodes, 4 missed leads to node crash"
+  "Time in ms between sending heartbeat messages to kernel nodes, 4 missed leads to node crash";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 10;
   conf_entry->default_value= 700;
@@ -415,12 +453,426 @@ ic_init_config_parameters()
   conf_entry= &glob_conf_entry[20];
   conf_entry->config_entry_name= "timer_heartbeat_client_nodes";
   conf_entry->config_entry_description=
-  "Time in ms between sending heartbeat messages to client nodes, 4 missed leads to node crash"
+  "Time in ms between sending heartbeat messages to client nodes, 4 missed leads to node crash";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 10;
   conf_entry->default_value= 1000;
   conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE_SPECIAL;
+
+  map_config_id[KERNEL_LOCAL_CHECKPOINT_TIMER]= 21;
+  conf_entry= &glob_conf_entry[21];
+  conf_entry->config_entry_name= "timer_local_checkpoint";
+  conf_entry->config_entry_description=
+  "Specifies how often local checkpoints are executed, logarithmic scale on log size";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 6;
+  conf_entry->max_value= 31;
+  conf_entry->default_value= 24;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_GLOBAL_CHECKPOINT_TIMER]= 22;
+  conf_entry= &glob_conf_entry[22];
+  conf_entry->config_entry_name= "timer_global_checkpoint";
+  conf_entry->config_entry_description=
+  "Time in ms between starting global checkpoints";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 10;
+  conf_entry->default_value= 1000;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_ARBITRATOR_TIMER]= 23;
+  conf_entry= &glob_conf_entry[23];
+  conf_entry->config_entry_name= "timer_arbitrator";
+  conf_entry->config_entry_description=
+  "Time in ms waiting for response from arbitrator";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 10;
+  conf_entry->default_value= 2000;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_WATCHDOG_TIMER]= 24;
+  conf_entry= &glob_conf_entry[24];
+  conf_entry->config_entry_name= "timer_kernel_watchdog";
+  conf_entry->config_entry_description=
+  "Time in ms without activity in kernel before watchdog is fired";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 1000;
+  conf_entry->default_value= 6000;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_DAEMON_RESTART_AT_ERROR]= 25;
+  conf_entry= &glob_conf_entry[25];
+  conf_entry->config_entry_name= "kernel_automatic_restart";
+  conf_entry->config_entry_description=
+  "If set, kernel restarts automatically after a failure";
+  conf_entry->is_boolean= TRUE;
+  conf_entry->default_value= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_FILESYSTEM_PATH]= 26;
+  conf_entry= &glob_conf_entry[26];
+  conf_entry->config_entry_name= "kernel_filesystem_path";
+  conf_entry->config_entry_description=
+  "Path to filesystem of kernel";
+  conf_entry->is_string_type= TRUE;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
+
+  map_config_id[KERNEL_REDO_LOG_FILES]= 27;
+  conf_entry= &glob_conf_entry[27];
+  conf_entry->config_entry_name= "number_of_redo_log_files";
+  conf_entry->config_entry_description=
+  "Number of REDO log files, each file represents 64 MB log space";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 4;
+  conf_entry->default_value= 32;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
+
+  map_config_id[KERNEL_CHECK_INTERVAL]= 28;
+  conf_entry= &glob_conf_entry[28];
+  conf_entry->config_entry_name= "timer_check_interval";
+  conf_entry->config_entry_description=
+  "Time in ms between checks after transaction timeouts";
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 500;
+  conf_entry->max_value= 500;
+  conf_entry->default_value= 500;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_CLIENT_ACTIVITY_TIMER]= 29;
+  conf_entry= &glob_conf_entry[29];
+  conf_entry->config_entry_name= "timer_client_activity";
+  conf_entry->config_entry_description=
+  "Time in ms before transaction is aborted due to client inactivity";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 1000;
+  conf_entry->default_value= 1024 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_DEADLOCK_TIMER]= 30;
+  conf_entry= &glob_conf_entry[30];
+  conf_entry->config_entry_name= "timer_deadlock";
+  conf_entry->config_entry_description=
+  "Time in ms before transaction is aborted due to internal wait (indication of deadlock)";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 1000;
+  conf_entry->default_value= 2000;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_CHECKPOINT_OBJECTS]= 31;
+  conf_entry= &glob_conf_entry[31];
+  conf_entry->config_entry_name= "number_of_checkpoint_objects";
+  conf_entry->config_entry_description=
+  "Number of possible parallel backups and local checkpoints";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1;
+  conf_entry->max_value= 1;
+  conf_entry->default_value= 1;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_CHECKPOINT_MEMORY]= 32;
+  conf_entry= &glob_conf_entry[32];
+  conf_entry->config_entry_name= "checkpoint_memory";
+  conf_entry->config_entry_description=
+  "Size of memory buffers for local checkpoint and backup";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 4 * 1024 * 1024;
+  conf_entry->max_value= 4 * 1024 * 1024;
+  conf_entry->default_value= 4 * 1024 * 1024;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_CHECKPOINT_DATA_MEMORY]= 33;
+  conf_entry= &glob_conf_entry[33];
+  conf_entry->config_entry_name= "checkpoint_data_memory";
+  conf_entry->config_entry_description=
+  "Size of data memory buffers for local checkpoint and backup";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 2 * 1024 * 1024;
+  conf_entry->max_value= 2 * 1024 * 1024;
+  conf_entry->default_value= 2 * 1024 * 1024;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_CHECKPOINT_LOG_MEMORY]= 34;
+  conf_entry= &glob_conf_entry[34];
+  conf_entry->config_entry_name= "checkpoint_log_memory";
+  conf_entry->config_entry_description=
+  "Size of log memory buffers for local checkpoint and backup";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 2 * 1024 * 1024;
+  conf_entry->max_value= 2 * 1024 * 1024;
+  conf_entry->default_value= 2 * 1024 * 1024;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_CHECKPOINT_WRITE_SIZE]= 35;
+  conf_entry= &glob_conf_entry[35];
+  conf_entry->config_entry_name= "checkpoint_write_size";
+  conf_entry->config_entry_description=
+  "Size of default writes in local checkpoint and backups";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 64 * 1024;
+  conf_entry->max_value= 64 * 1024;
+  conf_entry->default_value= 64 * 1024;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_CHECKPOINT_MAX_WRITE_SIZE]= 36;
+  conf_entry= &glob_conf_entry[36];
+  conf_entry->config_entry_name= "checkpoint_max_write_size";
+  conf_entry->config_entry_description=
+  "Size of maximum writes in local checkpoint and backups";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 256 * 1024;
+  conf_entry->max_value= 256 * 1024;
+  conf_entry->default_value= 256 * 1024;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_VOLATILE_MODE]= 37;
+  conf_entry= &glob_conf_entry[37];
+  conf_entry->config_entry_name= "kernel_volatile_mode";
+  conf_entry->config_entry_description=
+  "In this mode all file writes are ignored and all starts becomes initial starts";
+  conf_entry->is_boolean= TRUE;
+  conf_entry->default_value= FALSE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_ORDERED_KEY_OBJECTS]= 38;
+  conf_entry= &glob_conf_entry[38];
+  conf_entry->config_entry_name= "number_of_ordered_key_objects";
+  conf_entry->config_entry_description=
+  "Sets the maximum number of ordered keys that can be stored in cluster";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 32;
+  conf_entry->default_value= 128;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_UNIQUE_HASH_KEY_OBJECTS]= 39;
+  conf_entry= &glob_conf_entry[39];
+  conf_entry->config_entry_name= "number_of_unique_hash_key_objects";
+  conf_entry->config_entry_description=
+  "Sets the maximum number of unique hash keys that can be stored in cluster";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 32;
+  conf_entry->default_value= 128;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_LOCAL_OPERATION_OBJECTS]= 40;
+  conf_entry= &glob_conf_entry[40];
+  conf_entry->config_entry_name= "number_of_local_operation_objects";
+  conf_entry->config_entry_description=
+  "Number of local operation records stored used in the node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 0;
+  conf_entry->default_value= 0;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_LOCAL_SCAN_OBJECTS]= 41;
+  conf_entry= &glob_conf_entry[41];
+  conf_entry->config_entry_name= "number_of_local_scan_objects";
+  conf_entry->config_entry_description=
+  "Number of local scan records stored used in the node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 0;
+  conf_entry->default_value= 0;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_SCAN_BATCH_SIZE]= 42;
+  conf_entry= &glob_conf_entry[42];
+  conf_entry->config_entry_name= "size_of_scan_batch";
+  conf_entry->config_entry_description=
+  "Number of records sent in a scan from the local kernel node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 64;
+  conf_entry->max_value= 64;
+  conf_entry->default_value= 64;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_REDO_LOG_MEMORY]= 43;
+  conf_entry= &glob_conf_entry[43];
+  conf_entry->config_entry_name= "redo_log_memory";
+  conf_entry->config_entry_description=
+  "Size of REDO log memory buffer";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 1 * 1024  * 1024;
+  conf_entry->default_value= 16 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_LONG_MESSAGE_MEMORY]= 44;
+  conf_entry= &glob_conf_entry[44];
+  conf_entry->config_entry_name= "long_message_memory";
+  conf_entry->config_entry_description=
+  "Size of long memory buffers";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 4 * 1024  * 1024;
+  conf_entry->max_value= 4 * 1024  * 1024;
+  conf_entry->default_value= 4 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_CHECKPOINT_PATH]= 45;
+  conf_entry= &glob_conf_entry[45];
+  conf_entry->config_entry_name= "kernel_checkpoint_path";
+  conf_entry->config_entry_description=
+  "Path to filesystem of checkpoints";
+  conf_entry->is_string_type= TRUE;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
+
+  map_config_id[KERNEL_MAX_OPEN_FILES]= 46;
+  conf_entry= &glob_conf_entry[46];
+  conf_entry->config_entry_name= "kernel_max_open_files";
+  conf_entry->config_entry_description=
+  "Maximum number of open files in kernel node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 96;
+  conf_entry->max_value= 96;
+  conf_entry->default_value= 96;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_PAGE_CACHE_SIZE]= 47;
+  conf_entry= &glob_conf_entry[47];
+  conf_entry->config_entry_name= "page_cache_size";
+  conf_entry->config_entry_description=
+  "Size of page cache for disk-based data";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 64 * 1024;
+  conf_entry->default_value= 128 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_STRING_MEMORY]= 48;
+  conf_entry= &glob_conf_entry[48];
+  conf_entry->config_entry_name= "size_of_string_memory";
+  conf_entry->config_entry_description=
+  "Size of string memory";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 0;
+  conf_entry->default_value= 0;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_INITIAL_OPEN_FILES]= 49;
+  conf_entry= &glob_conf_entry[49];
+  conf_entry->config_entry_name= "kernel_open_files";
+  conf_entry->config_entry_description=
+  "Number of open file handles in kernel node from start";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 30;
+  conf_entry->max_value= 30;
+  conf_entry->default_value= 30;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[KERNEL_FILE_SYNCH_SIZE]= 50;
+  conf_entry= &glob_conf_entry[50];
+  conf_entry->config_entry_name= "kernel_file_synch_size";
+  conf_entry->config_entry_description=
+  "Size of file writes before a synch is always used";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 1024 * 1024;
+  conf_entry->default_value= 4 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_DISK_WRITE_SPEED]= 51;
+  conf_entry= &glob_conf_entry[51];
+  conf_entry->config_entry_name= "kernel_disk_write_speed";
+  conf_entry->config_entry_description=
+  "Limit on how fast checkpoints are allowed to write to disk";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 64 * 1024;
+  conf_entry->default_value= 8 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_DISK_WRITE_SPEED_START]= 52;
+  conf_entry= &glob_conf_entry[52];
+  conf_entry->config_entry_name= "kernel_disk_write_speed_start";
+  conf_entry->config_entry_description=
+  "Limit on how fast checkpoints are allowed to write to disk during start of the node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 1024 * 1024;
+  conf_entry->default_value= 256 * 1024 * 1024;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_MEMORY_POOL]= 53;
+  conf_entry= &glob_conf_entry[53];
+  conf_entry->config_entry_name= "kernel_memory_pool";
+  conf_entry->config_entry_description=
+  "Size of memory pool for internal memory usage";
+  conf_entry->default_value= 0;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[KERNEL_DUMMY]= 54;
+  conf_entry= &glob_conf_entry[54];
+  conf_entry->config_entry_name= "kernel_dummy";
+  conf_entry->config_entry_description="";
+  conf_entry->default_value= 0;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
+
+  map_config_id[CLUSTER_SERVER_EVENT_LOG]= 137;
+  conf_entry= &glob_conf_entry[137];
+  conf_entry->config_entry_name= "cluster_event_log_type";
+  conf_entry->config_entry_description=
+  "Type of cluster event log";
+  conf_entry->is_string_type= TRUE;
+  conf_entry->default_string="";
+  conf_entry->node_type= IC_CLUSTER_SERVER_TYPE;
+  conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
   return;
 }
@@ -612,6 +1064,18 @@ step_key_value(struct ic_api_cluster_config *conf_obj,
   return 0;
 }
 
+static struct config_entry *get_conf_entry(guint32 hash_key)
+{
+  guint32 id;
+  if (hash_key < MAX_MAP_CONFIG_ID)
+  {
+    id= map_config_id[hash_key];
+    if (id < MAX_CONFIG_ID)
+      return &glob_conf_entry[id];
+  }
+  return NULL;
+}
+
 static int
 read_node_section(struct ic_api_cluster_config *conf_obj,
                   guint32 key_type, guint32 **key_value,
@@ -619,8 +1083,18 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
                   guint32 node_sect_id)
 {
   guint32 len_words;
+  struct config_entry *conf_entry;
+  void *node_config;
+  if ((conf_entry= get_conf_entry(hash_key)))
+    return PROTOCOL_ERROR;
+  if (node_sect_id >= conf_obj->no_of_nodes)
+    return PROTOCOL_ERROR;
+  if (!(node_config= (void*)conf_obj->node_config[node_sect_id]))
+    return PROTOCOL_ERROR;
   if (conf_obj->node_types[node_sect_id] == IC_KERNEL_TYPE)
   {
+    struct ic_kernel_node_config *kernel_conf;
+    kernel_conf= (struct ic_kernel_node_config*)node_config;
     switch (key_type)
     {
       case IC_CL_INT32_TYPE:
@@ -641,6 +1115,8 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
   }
   else if (conf_obj->node_types[node_sect_id] == IC_CLIENT_TYPE)
   {
+    struct ic_client_node_config *client_conf;
+    client_conf= (struct ic_client_node_config*)node_config;
     switch (key_type)
     {
       case IC_CL_INT32_TYPE:
@@ -661,6 +1137,8 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
   }
   else if (conf_obj->node_types[node_sect_id] == IC_CLUSTER_SERVER_TYPE)
   {
+    struct ic_cluster_server_config *cluster_server_conf;
+    cluster_server_conf= (struct ic_cluster_server_config*)node_config;
     switch (key_type)
     {
       case IC_CL_INT32_TYPE:
