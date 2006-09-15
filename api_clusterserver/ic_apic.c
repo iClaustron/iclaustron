@@ -1083,7 +1083,7 @@ ic_init_config_parameters()
   conf_entry= &glob_conf_entry[104];
   conf_entry->config_entry_name= "client_port_number";
   conf_entry->config_entry_description=
-  "Port number to use on client side (first node)";
+  "Port number to use on client side";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->min_value= 1024;
@@ -1096,7 +1096,7 @@ ic_init_config_parameters()
   conf_entry= &glob_conf_entry[105];
   conf_entry->config_entry_name= "server_port_number";
   conf_entry->config_entry_description=
-  "Port number to use on server side (second node)";
+  "Port number to use on server side";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->min_value= 1024;
@@ -1161,6 +1161,19 @@ ic_init_config_parameters()
   conf_entry->min_value= 55;
   conf_entry->max_value= 55;
   conf_entry->default_value= 55;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_SERVER_NODE_ID]= 111;
+  conf_entry= &glob_conf_entry[111];
+  conf_entry->config_entry_name= "server_node_id";
+  conf_entry->config_entry_description=
+  "Node id of node that is server part of connection";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1;
+  conf_entry->max_value= MAX_NODE_ID;
+  conf_entry->is_mandatory_to_specify= 1;
   conf_entry->node_type= IC_COMM_TYPE;
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
@@ -1230,7 +1243,7 @@ ic_check_config_string(int config_id, enum ic_config_type conf_type)
   if (!conf_entry)
     return PROTOCOL_ERROR;
   if (!conf_entry->is_string_type ||
-      conf_entry->node_type == conf_type)
+      conf_entry->node_type != conf_type)
   {
     DEBUG(printf("Debug string inconsistency\n"));
     return PROTOCOL_ERROR;
@@ -1408,11 +1421,20 @@ step_key_value(struct ic_api_cluster_config *conf_obj,
 static struct config_entry *get_conf_entry(guint32 hash_key)
 {
   guint32 id;
+  struct config_entry *conf_entry;
+
   if (hash_key < MAX_MAP_CONFIG_ID)
   {
     id= map_config_id[hash_key];
     if (id < MAX_CONFIG_ID)
-      return &glob_conf_entry[id];
+    {
+      conf_entry= &glob_conf_entry[id];
+      if (!conf_entry)
+      {
+        DEBUG(printf("No such config entry, return NULL\n"));
+      }
+      return conf_entry;
+    }  
   }
   DEBUG(printf("Error in map_config_id, returning NULL\n"));
   return NULL;
@@ -1427,7 +1449,10 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
   guint32 len_words;
   struct config_entry *conf_entry;
   void *node_config;
-  if ((conf_entry= get_conf_entry(hash_key)))
+
+  if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE)
+    return 0; /* Ignore for now */
+  if (!(conf_entry= get_conf_entry(hash_key)))
     return PROTOCOL_ERROR;
   if (node_sect_id >= conf_obj->no_of_nodes)
   {
@@ -1439,7 +1464,7 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
     DEBUG(printf("No such node_config object\n"));
     return PROTOCOL_ERROR;
   }
-  if (conf_obj->node_types[node_sect_id] == IC_KERNEL_TYPE)
+  if (conf_obj->node_types[node_sect_id] == IC_KERNEL_NODE)
   {
     struct ic_kernel_node_config *kernel_conf;
     kernel_conf= (struct ic_kernel_node_config*)node_config;
@@ -1457,11 +1482,12 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
         (*key_value)+= len_words;
         break;
      default:
+       DEBUG(printf("Wrong key type kernel node\n"));
        g_assert(FALSE);
        return PROTOCOL_ERROR;
     }
   }
-  else if (conf_obj->node_types[node_sect_id] == IC_CLIENT_TYPE)
+  else if (conf_obj->node_types[node_sect_id] == IC_CLIENT_NODE)
   {
     struct ic_client_node_config *client_conf;
     client_conf= (struct ic_client_node_config*)node_config;
@@ -1479,11 +1505,12 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
         (*key_value)+= len_words;
         break;
      default:
+       DEBUG(printf("Wrong key type client node\n"));
        g_assert(FALSE);
        return PROTOCOL_ERROR;
     }
   }
-  else if (conf_obj->node_types[node_sect_id] == IC_CLUSTER_SERVER_TYPE)
+  else if (conf_obj->node_types[node_sect_id] == IC_CLUSTER_SERVER_NODE)
   {
     struct ic_cluster_server_config *cluster_server_conf;
     cluster_server_conf= (struct ic_cluster_server_config*)node_config;
@@ -1501,12 +1528,14 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
         (*key_value)+= len_words;
         break;
      default:
+       DEBUG(printf("Wrong key type cluster server node\n"));
        g_assert(FALSE);
        return PROTOCOL_ERROR;
     }
   }
   else
     g_assert(FALSE);
+  printf("OK\n");
   return 0;
 }
 
@@ -1525,7 +1554,7 @@ read_comm_section(struct ic_api_cluster_config *conf_obj,
   {
     case IC_CL_INT32_TYPE:
     {
-      if (hash_key == IC_PARENT_ID)
+      if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE)
         break;
       if (ic_check_config_value(hash_key, (guint64)value, IC_COMM_TYPE))
         return PROTOCOL_ERROR;
@@ -1639,7 +1668,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     guint32 hash_key= key & IC_CL_KEY_MASK;
     guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
     guint32 key_type= key >> IC_CL_KEY_SHIFT;
-    if (pass == 2)
+    if (TRUE || pass == 2)
       printf("hash_key = %u, sect_id %u, key_type %u pass %d value %u\n", hash_key, sect_id, key_type, pass, value);
     if (pass == 0 && sect_id == 1)
       conf_obj->no_of_nodes= MAX(conf_obj->no_of_nodes, hash_key + 1);
@@ -1668,16 +1697,20 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
         if (sect_id < (conf_obj->no_of_nodes + 2))
         {
           guint32 node_sect_id= sect_id - 2;
+          printf("read node section\n");
           if ((error= read_node_section(conf_obj, key_type, &key_value,
                                         value, hash_key, node_sect_id)))
             return error;
+          printf("read node section ok\n");
         }
         else
         {
           guint32 comm_sect_id= sect_id - (conf_obj->no_of_nodes + 3);
+          printf("read comm section\n");
           if ((error= read_comm_section(conf_obj, key_type, &key_value,
                                         value, hash_key, comm_sect_id)))
             return error;
+          printf("read comm section ok\n");
         }
       }
     }
