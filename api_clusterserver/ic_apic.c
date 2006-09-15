@@ -207,6 +207,19 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define KERNEL_MEMORY_POOL 198
 #define KERNEL_DUMMY 199
 
+#define KERNEL_START_LOG_LEVEL 250
+#define KERNEL_STOP_LOG_LEVEL 251
+#define KERNEL_STAT_LOG_LEVEL 252
+#define KERNEL_CHECKPOINT_LOG_LEVEL 253
+#define KERNEL_RESTART_LOG_LEVEL 254
+#define KERNEL_CONNECTION_LOG_LEVEL 255
+#define KERNEL_REPORT_LOG_LEVEL 256
+#define KERNEL_WARNING_LOG_LEVEL 257
+#define KERNEL_ERROR_LOG_LEVEL 258
+#define KERNEL_CONGESTION_LOG_LEVEL 259
+#define KERNEL_DEBUG_LOG_LEVEL 260
+#define KERNEL_BACKUP_LOG_LEVEL 261
+
 #define CLUSTER_SERVER_EVENT_LOG 147
 
 #define TCP_FIRST_NODE_ID 400
@@ -222,12 +235,6 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define TCP_SECOND_HOSTNAME 408
 #define TCP_GROUP 409
 
-#define TCP_MIN_WRITE_BUFFER_SIZE 65536
-#define TCP_MAX_WRITE_BUFFER_SIZE 100000000
-
-#define TCP_MIN_READ_BUFFER_SIZE 8192
-#define TCP_MAX_READ_BUFFER_SIZE 1000000000
-
 static void
 ic_init_config_parameters()
 {
@@ -238,6 +245,9 @@ ic_init_config_parameters()
   memset(map_config_id, 0, 1024 * sizeof(guint16));
   memset(glob_conf_entry, 0, 256 * sizeof(struct config_entry));
 
+/*
+  This is the kernel node configuration section.
+*/
   map_config_id[KERNEL_MAX_TRACE_FILES]= 1;
   conf_entry= &glob_conf_entry[1];
   conf_entry->config_entry_name= "max_number_of_trace_files";
@@ -864,6 +874,299 @@ ic_init_config_parameters()
   conf_entry->node_type= IC_KERNEL_TYPE;
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
+  map_config_id[KERNEL_START_LOG_LEVEL]= 55;
+  conf_entry= &glob_conf_entry[55];
+  conf_entry->config_entry_name= "log_level_start";
+  conf_entry->config_entry_description=
+  "Log level at start of a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_STOP_LOG_LEVEL]= 56;
+  conf_entry= &glob_conf_entry[56];
+  conf_entry->config_entry_name= "log_level_stop";
+  conf_entry->config_entry_description=
+  "Log level at stop of a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_STAT_LOG_LEVEL]= 57;
+  conf_entry= &glob_conf_entry[57];
+  conf_entry->config_entry_name= "log_level_statistics";
+  conf_entry->config_entry_description=
+  "Log level of statistics on a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_CHECKPOINT_LOG_LEVEL]= 58;
+  conf_entry= &glob_conf_entry[58];
+  conf_entry->config_entry_name= "log_level_checkpoint";
+  conf_entry->config_entry_description=
+  "Log level at checkpoint of a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_RESTART_LOG_LEVEL]= 59;
+  conf_entry= &glob_conf_entry[59];
+  conf_entry->config_entry_name= "log_level_restart";
+  conf_entry->config_entry_description=
+  "Log level at restart of a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_CONNECTION_LOG_LEVEL]= 60;
+  conf_entry= &glob_conf_entry[60];
+  conf_entry->config_entry_name= "log_level_connection";
+  conf_entry->config_entry_description=
+  "Log level of connections to a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_REPORT_LOG_LEVEL]= 61;
+  conf_entry= &glob_conf_entry[61];
+  conf_entry->config_entry_name= "log_level_reports";
+  conf_entry->config_entry_description=
+  "Log level of reports from a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_WARNING_LOG_LEVEL]= 62;
+  conf_entry= &glob_conf_entry[62];
+  conf_entry->config_entry_name= "log_level_warning";
+  conf_entry->config_entry_description=
+  "Log level of warnings from a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_ERROR_LOG_LEVEL]= 63;
+  conf_entry= &glob_conf_entry[63];
+  conf_entry->config_entry_name= "log_level_error";
+  conf_entry->config_entry_description=
+  "Log level of errors from a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_CONGESTION_LOG_LEVEL]= 64;
+  conf_entry= &glob_conf_entry[64];
+  conf_entry->config_entry_name= "log_level_congestion";
+  conf_entry->config_entry_description=
+  "Log level of congestions to a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_DEBUG_LOG_LEVEL]= 65;
+  conf_entry= &glob_conf_entry[65];
+  conf_entry->config_entry_name= "log_level_debug";
+  conf_entry->config_entry_description=
+  "Log level of debug messages from a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_BACKUP_LOG_LEVEL]= 66;
+  conf_entry= &glob_conf_entry[66];
+  conf_entry->config_entry_name= "log_level_backup";
+  conf_entry->config_entry_description=
+  "Log level of backups at a node";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 15;
+  conf_entry->default_value= 8;
+  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+/*
+  This is the TCP configuration section.
+*/
+  map_config_id[TCP_FIRST_NODE_ID]= 100;
+  conf_entry= &glob_conf_entry[100];
+  conf_entry->config_entry_name= "first_node_id";
+  conf_entry->config_entry_description=
+  "First node id of the connection";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1;
+  conf_entry->max_value= MAX_NODE_ID;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_SECOND_NODE_ID]= 101;
+  conf_entry= &glob_conf_entry[101];
+  conf_entry->config_entry_name= "second_node_id";
+  conf_entry->config_entry_description=
+  "Second node id of the connection";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1;
+  conf_entry->max_value= MAX_NODE_ID;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_USE_MESSAGE_ID]= 102;
+  conf_entry= &glob_conf_entry[102];
+  conf_entry->config_entry_name= "use_message_id";
+  conf_entry->config_entry_description=
+  "Using message id can be a valuable resource to find problems related to distributed execution";
+  conf_entry->is_boolean= TRUE;
+  conf_entry->default_value= FALSE;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_USE_CHECKSUM]= 103;
+  conf_entry= &glob_conf_entry[103];
+  conf_entry->config_entry_name= "use_checksum";
+  conf_entry->config_entry_description=
+  "Using checksum ensures that internal bugs doesn't corrupt data while data is placed in buffers";
+  conf_entry->is_boolean= TRUE;
+  conf_entry->default_value= FALSE;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_CLIENT_PORT]= 104;
+  conf_entry= &glob_conf_entry[104];
+  conf_entry->config_entry_name= "client_port_number";
+  conf_entry->config_entry_description=
+  "Port number to use on client side (first node)";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1024;
+  conf_entry->max_value= 65535;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+  map_config_id[TCP_SERVER_PORT]= 105;
+  conf_entry= &glob_conf_entry[105];
+  conf_entry->config_entry_name= "server_port_number";
+  conf_entry->config_entry_description=
+  "Port number to use on server side (second node)";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1024;
+  conf_entry->max_value= 65535;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+  map_config_id[TCP_WRITE_BUFFER_SIZE]= 106;
+  conf_entry= &glob_conf_entry[106];
+  conf_entry->config_entry_name= "tcp_write_size";
+  conf_entry->config_entry_description=
+  "Size of write buffer in front of TCP socket";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->min_value= 128 * 1024;
+  conf_entry->default_value= 256 * 1024;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_READ_BUFFER_SIZE]= 107;
+  conf_entry= &glob_conf_entry[107];
+  conf_entry->config_entry_name= "tcp_read_size";
+  conf_entry->config_entry_description=
+  "Size of read buffer in front of TCP socket";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->min_value= 64 * 1024;
+  conf_entry->max_value= 64 * 1024;
+  conf_entry->default_value= 64 * 1024;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_FIRST_HOSTNAME]= 108;
+  conf_entry= &glob_conf_entry[108];
+  conf_entry->config_entry_name= "first_hostname";
+  conf_entry->config_entry_description=
+  "Hostname of first node";
+  conf_entry->is_string_type= TRUE;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_SECOND_HOSTNAME]= 109;
+  conf_entry= &glob_conf_entry[109];
+  conf_entry->config_entry_name= "second_hostname";
+  conf_entry->config_entry_description=
+  "Hostname of second node";
+  conf_entry->is_string_type= TRUE;
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+  map_config_id[TCP_GROUP]= 110;
+  conf_entry= &glob_conf_entry[110];
+  conf_entry->config_entry_name= "tcp_group";
+  conf_entry->config_entry_description=
+  "Group id of the connection";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_not_configurable= TRUE;
+  conf_entry->min_value= 55;
+  conf_entry->max_value= 55;
+  conf_entry->default_value= 55;
+  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+
+/*
+  This is the cluster server configuration section.
+*/
   map_config_id[CLUSTER_SERVER_EVENT_LOG]= 137;
   conf_entry= &glob_conf_entry[137];
   conf_entry->config_entry_name= "cluster_event_log_type";
@@ -877,24 +1180,61 @@ ic_init_config_parameters()
   return;
 }
 
-static int
-ic_check_config_value(int config_id, guint64 value)
+static struct config_entry *get_config_entry(int config_id)
 {
   guint32 inx;
-  struct config_entry *conf_entry;
 
+  printf("config_id = %d\n", config_id);
   if (config_id > 998)
-    return PROTOCOL_ERROR;
+  {
+    DEBUG(printf("config_id larger than 998 = %d\n", config_id));
+    return NULL;
+  }
   inx= map_config_id[config_id];
+  printf("inx = %d\n", inx);
   if (!inx)
+  {
+    DEBUG(printf("No config entry\n"));
+    return NULL;
+  }
+  return &glob_conf_entry[inx];
+  
+}
+static int
+ic_check_config_value(int config_id, guint64 value,
+                      enum ic_config_type conf_type)
+{
+  struct config_entry *conf_entry= get_config_entry(config_id);
+
+  if (!conf_entry)
     return PROTOCOL_ERROR;
-  conf_entry= &glob_conf_entry[inx];
-  if ((conf_entry->is_boolean && (value > 1)) ||
+
+  if ((conf_entry->node_type != conf_type) ||
+      (conf_entry->is_boolean && (value > 1)) ||
       (conf_entry->is_min_value_defined &&
        (conf_entry->min_value > value)) ||
       (conf_entry->is_max_value_defined &&
        (conf_entry->max_value < value)))
+  {
+    DEBUG(printf("Config value error\n"));
     return PROTOCOL_ERROR;
+  }
+  return 0;
+}
+
+static int
+ic_check_config_string(int config_id, enum ic_config_type conf_type)
+{
+  struct config_entry *conf_entry= get_config_entry(config_id);
+
+  if (!conf_entry)
+    return PROTOCOL_ERROR;
+  if (!conf_entry->is_string_type ||
+      conf_entry->node_type == conf_type)
+  {
+    DEBUG(printf("Debug string inconsistency\n"));
+    return PROTOCOL_ERROR;
+  }
   return 0;
 }
 
@@ -1015,6 +1355,7 @@ analyse_node_section_phase1(struct ic_api_cluster_config *conf_obj,
 
         break;
       default:
+        DEBUG(printf("No such node type\n"));
         return PROTOCOL_ERROR;
     }
     conf_obj->node_types[sect_id - 2]= (enum ic_node_type)value;
@@ -1073,6 +1414,7 @@ static struct config_entry *get_conf_entry(guint32 hash_key)
     if (id < MAX_CONFIG_ID)
       return &glob_conf_entry[id];
   }
+  DEBUG(printf("Error in map_config_id, returning NULL\n"));
   return NULL;
 }
 
@@ -1088,9 +1430,15 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
   if ((conf_entry= get_conf_entry(hash_key)))
     return PROTOCOL_ERROR;
   if (node_sect_id >= conf_obj->no_of_nodes)
+  {
+    DEBUG(printf("node_sect_id out of range\n"));
     return PROTOCOL_ERROR;
+  }
   if (!(node_config= (void*)conf_obj->node_config[node_sect_id]))
+  {
+    DEBUG(printf("No such node_config object\n"));
     return PROTOCOL_ERROR;
+  }
   if (conf_obj->node_types[node_sect_id] == IC_KERNEL_TYPE)
   {
     struct ic_kernel_node_config *kernel_conf;
@@ -1177,57 +1525,40 @@ read_comm_section(struct ic_api_cluster_config *conf_obj,
   {
     case IC_CL_INT32_TYPE:
     {
+      if (hash_key == IC_PARENT_ID)
+        break;
+      if (ic_check_config_value(hash_key, (guint64)value, IC_COMM_TYPE))
+        return PROTOCOL_ERROR;
       switch (hash_key)
       {
         case TCP_FIRST_NODE_ID:
-          if (value > MAX_NODE_ID || !value)
-            return PROTOCOL_ERROR;
           tcp_conf->first_node_id= value;
           break;
         case TCP_SECOND_NODE_ID:
-          if (value > MAX_NODE_ID || !value)
-            return PROTOCOL_ERROR;
           tcp_conf->second_node_id= value;
           break;
         case TCP_USE_MESSAGE_ID:
-          if (value > 1)
-            return PROTOCOL_ERROR;
           tcp_conf->use_message_id= (gchar)value;
           break;
         case TCP_USE_CHECKSUM:
-          if (value > 1)
-            return PROTOCOL_ERROR;
           tcp_conf->use_checksum= (gchar)value;
           break;
         case TCP_CLIENT_PORT:
-          if (value > 65535)
-            return PROTOCOL_ERROR;
           tcp_conf->client_port= (guint16)value;
           break;
         case TCP_SERVER_PORT:
-          if (value > 65535)
-            return PROTOCOL_ERROR;
           tcp_conf->server_port= (guint16)value;
           break;
         case TCP_SERVER_NODE_ID:
-          if (value > MAX_NODE_ID || !value)
-            return PROTOCOL_ERROR;
           tcp_conf->first_node_id= (guint16)value;
           break;
         case TCP_WRITE_BUFFER_SIZE:
-          if (value > TCP_MAX_WRITE_BUFFER_SIZE ||
-              value < TCP_MIN_WRITE_BUFFER_SIZE)
-            return PROTOCOL_ERROR;
           tcp_conf->write_buffer_size= value;
           break;
         case TCP_READ_BUFFER_SIZE:
-          if (value > TCP_MAX_READ_BUFFER_SIZE ||
-              value < TCP_MIN_READ_BUFFER_SIZE)
-            return PROTOCOL_ERROR;
           tcp_conf->read_buffer_size= value;
           break;
         case TCP_GROUP:
-        case IC_PARENT_ID:
           /* Ignore for now */
           break;
         default:
@@ -1236,13 +1567,23 @@ read_comm_section(struct ic_api_cluster_config *conf_obj,
       break;
     }
     case IC_CL_SECT_TYPE:
-      break;
+    {
+      DEBUG(printf("Wrong use of Section types\n"));
+      return PROTOCOL_ERROR;
+    }
     case IC_CL_INT64_TYPE:
+    {
+      guint64 long_val= value + (((guint64)(**key_value)) << 32);
+      if (ic_check_config_value(hash_key, long_val, IC_COMM_TYPE))
+        return PROTOCOL_ERROR;
       (*key_value)++;
       break;
+    }
     case IC_CL_CHAR_TYPE:
     {
       len_words= (value + 3)/4;
+      if (ic_check_config_string(hash_key, IC_COMM_TYPE))
+        return PROTOCOL_ERROR;
       if (hash_key == TCP_FIRST_HOSTNAME)
       {
         tcp_conf->first_host_name= conf_obj->next_string_memory;
@@ -1299,7 +1640,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
     guint32 key_type= key >> IC_CL_KEY_SHIFT;
     if (pass == 2)
-      printf("hash_key = %u, sect_id %u, key_type %u pass %d\n", hash_key, sect_id, key_type, pass);
+      printf("hash_key = %u, sect_id %u, key_type %u pass %d value %u\n", hash_key, sect_id, key_type, pass, value);
     if (pass == 0 && sect_id == 1)
       conf_obj->no_of_nodes= MAX(conf_obj->no_of_nodes, hash_key + 1);
     else if (pass == 1)
@@ -1612,8 +1953,11 @@ rec_get_config(struct ic_connection *conn,
                struct ic_api_cluster_server *apic,
                guint32 current_cluster_index)
 {
-  char *read_line_buf, *config_buf;
-  guint32 read_size, config_size, rec_config_size;
+  char *read_line_buf;
+  char *config_buf= NULL;
+  guint32 read_size; 
+  guint32 config_size= 0;
+  guint32 rec_config_size= 0;
   int error;
   guint64 content_length;
   guint32 state= GET_CONFIG_REPLY_STATE;
@@ -1692,6 +2036,7 @@ rec_get_config(struct ic_connection *conn,
         */
         break;
       case RECEIVE_CONFIG_STATE:
+        g_assert(config_buf);
         memcpy(config_buf+config_size, read_line_buf, read_size);
         config_size+= read_size;
         rec_config_size+= (read_size + 1);

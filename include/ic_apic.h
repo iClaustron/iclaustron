@@ -3,9 +3,17 @@
 
 enum ic_node_type
 {
+  IC_KERNEL_NODE = 0,
+  IC_CLIENT_NODE = 1,
+  IC_CLUSTER_SERVER_NODE = 2
+};
+
+enum ic_config_type
+{
   IC_KERNEL_TYPE = 0,
   IC_CLIENT_TYPE = 1,
-  IC_CLUSTER_SERVER_TYPE = 2
+  IC_CLUSTER_SERVER_TYPE = 2,
+  IC_COMM_TYPE = 3
 };
 
 enum ic_config_entry_change
@@ -40,7 +48,7 @@ struct config_entry
   guint32 min_version_used;
   guint32 max_version_used;
   enum ic_config_entry_change change_variant;
-  enum ic_node_type node_type;
+  enum ic_config_type node_type;
   gchar is_max_value_defined;
   gchar is_min_value_defined;
   gchar is_defined;
