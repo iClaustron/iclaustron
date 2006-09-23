@@ -98,14 +98,83 @@ struct ic_api_cluster_server
 
 struct ic_kernel_node_config
 {
+  char *filesystem_path;
+  char *checkpoint_path;
+  char *node_data_path;
+  char *hostname;
+
+  guint64 size_of_ram_memory;
+  guint64 size_of_hash_memory;
+  guint64 page_cache_size;
+  guint64 kernel_memory_pool;
+
+  guint32 max_number_of_trace_files;
+  guint32 number_of_replicas;
+  guint32 number_of_table_objects;
+  guint32 number_of_column_objects;
+  guint32 number_of_key_objects;
+  guint32 number_of_internal_trigger_objects;
+  guint32 number_of_connection_objects;
+  guint32 number_of_operation_objects;
+  guint32 number_of_scan_objects;
+  guint32 number_of_key_operation_objects;
+  guint32 use_unswappable_memory;
+  guint32 timer_wait_partial_start;
+  guint32 timer_wait_partitioned_start;
+  guint32 timer_wait_error_start;
+  guint32 timer_heartbeat_kernel_nodes;
+  guint32 timer_heartbeat_client_nodes;
+  guint32 timer_local_checkpoint;
+  guint32 timer_global_checkpoint;
+  guint32 timer_resolver;
+  guint32 timer_kernel_watchdog;
+  guint32 number_of_redo_log_files;
+  guint32 timer_check_interval;
+  guint32 timer_client_activity;
+  guint32 timer_deadlock;
+  guint32 number_of_ordered_key_objects;
+  guint32 number_of_unique_hash_key_objects;
+  guint32 redo_log_memory;
+  guint32 kernel_disk_write_speed;
+  guint32 kernel_disk_write_speed_start;
+  guint32 kernel_file_synch_size;
+  guint32 log_level_start;
+  guint32 log_level_stop;
+  guint32 log_level_statistics;
+  guint32 log_level_congestion;
+  guint32 log_level_checkpoint;
+  guint32 log_level_restart;
+  guint32 log_level_connection;
+  guint32 log_level_reports;
+  guint32 log_level_debug;
+  guint32 log_level_warning;
+  guint32 log_level_error;
+  guint32 log_level_backup;
+  guint32 inject_fault;
+
+  gchar kernel_volatile_mode;
+  gchar kernel_automatic_restart;
 };
 
 struct ic_client_node_config
 {
+  char *hostname;
+  char *node_data_path;
+  guint32 client_max_batch_byte_size;
+  guint32 client_batch_byte_size;
+  guint32 client_batch_size;
+  guint32 client_resolver_rank;
+  guint32 client_resolver_timer;
 };
 
 struct ic_cluster_server_config
 {
+  char *hostname;
+  char *node_data_path;
+  guint32 client_resolver_rank;
+  guint32 client_resolver_timer;
+  guint32 cluster_server_event_log;
+  guint32 cluster_server_port;
 };
 
 struct ic_tcp_comm_link_config
