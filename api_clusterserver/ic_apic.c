@@ -147,6 +147,7 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
   4) In the same manner add it to any of the config writer routines
 */
 
+#define KERNEL_INJECT_FAULT 1
 #define KERNEL_MAX_TRACE_FILES 100
 #define KERNEL_REPLICAS 101
 #define KERNEL_TABLE_OBJECTS 102
@@ -207,6 +208,9 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define KERNEL_MEMORY_POOL 198
 #define KERNEL_DUMMY 199
 
+#define CLIENT_RESOLVE_RANK 200
+#define CLIENT_RESOLVE_TIMER 201
+
 #define KERNEL_START_LOG_LEVEL 250
 #define KERNEL_STOP_LOG_LEVEL 251
 #define KERNEL_STAT_LOG_LEVEL 252
@@ -222,6 +226,8 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 
 #define CLUSTER_SERVER_EVENT_LOG 147
 
+#define CLUSTER_SERVER_PORT 300
+
 #define TCP_FIRST_NODE_ID 400
 #define TCP_SECOND_NODE_ID 401
 #define TCP_USE_MESSAGE_ID 402
@@ -234,6 +240,10 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define TCP_FIRST_HOSTNAME 407
 #define TCP_SECOND_HOSTNAME 408
 #define TCP_GROUP 409
+
+#define CLIENT_MAX_BATCH_BYTE_SIZE 800
+#define CLIENT_BATCH_BYTE_SIZE 801
+#define CLIENT_BATCH_SIZE 802
 
 static void
 ic_init_config_parameters()
@@ -258,7 +268,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1;
   conf_entry->max_value= 2048;
   conf_entry->default_value= 25;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_REPLICAS]= 2;
@@ -271,7 +281,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1;
   conf_entry->max_value= 4;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_TABLE_OBJECTS]= 3;
@@ -282,7 +292,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 32;
   conf_entry->default_value= 256;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_COLUMN_OBJECTS]= 4;
@@ -293,7 +303,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 256;
   conf_entry->default_value= 2048;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_KEY_OBJECTS]= 5;
@@ -304,7 +314,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 32;
   conf_entry->default_value= 256;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_INTERNAL_TRIGGER_OBJECTS]= 6;
@@ -315,7 +325,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 512;
   conf_entry->default_value= 1536;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_CONNECTION_OBJECTS]= 7;
@@ -326,7 +336,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 128;
   conf_entry->default_value= 8192;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
   map_config_id[KERNEL_OPERATION_OBJECTS]= 8;
@@ -337,7 +347,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 1024;
   conf_entry->default_value= 32768;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
   map_config_id[KERNEL_SCAN_OBJECTS]= 9;
@@ -350,7 +360,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 32;
   conf_entry->max_value= 512;
   conf_entry->default_value= 128;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_INTERNAL_TRIGGER_OPERATION_OBJECTS]= 10;
@@ -361,10 +371,10 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->min_value= 4096;
-  conf_entry->max_value= 4096;
-  conf_entry->default_value= 4096;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->min_value= 4000;
+  conf_entry->max_value= 4000;
+  conf_entry->default_value= 4000;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_KEY_OPERATION_OBJECTS]= 11;
@@ -375,7 +385,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 128;
   conf_entry->default_value= 4096;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
   map_config_id[KERNEL_CONNECTION_BUFFER]= 12;
@@ -389,7 +399,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1024 * 1024;
   conf_entry->max_value= 1024 * 1024;
   conf_entry->default_value= 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_RAM_MEMORY]= 13;
@@ -400,7 +410,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 16 * 1024 * 1024;
   conf_entry->default_value= 256 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_HASH_MEMORY]= 14;
@@ -411,7 +421,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 8 * 1024 * 1024;
   conf_entry->default_value= 64 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_LOCK_MEMORY]= 15;
@@ -420,7 +430,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Setting this to 1 means that all memory is locked and will not be swapped out";
   conf_entry->is_boolean= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_WAIT_PARTIAL_START]= 16;
@@ -429,7 +439,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever";
   conf_entry->default_value= 20000;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_WAIT_PARTITIONED_START]= 17;
@@ -437,7 +447,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_name= "timer_wait_partitioned_start";
   conf_entry->config_entry_description=
   "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever";
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_WAIT_ERROR_START]= 18;
@@ -445,7 +455,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_name= "timer_wait_error_start";
   conf_entry->config_entry_description=
   "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever";
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_HEARTBEAT_TIMER]= 19;
@@ -456,7 +466,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 10;
   conf_entry->default_value= 700;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE_SPECIAL;
 
   map_config_id[KERNEL_CLIENT_HEARTBEAT_TIMER]= 20;
@@ -467,7 +477,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 10;
   conf_entry->default_value= 1000;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE_SPECIAL;
 
   map_config_id[KERNEL_LOCAL_CHECKPOINT_TIMER]= 21;
@@ -480,7 +490,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 6;
   conf_entry->max_value= 31;
   conf_entry->default_value= 24;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_GLOBAL_CHECKPOINT_TIMER]= 22;
@@ -491,7 +501,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 10;
   conf_entry->default_value= 1000;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_ARBITRATOR_TIMER]= 23;
@@ -502,7 +512,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 10;
   conf_entry->default_value= 2000;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_WATCHDOG_TIMER]= 24;
@@ -513,7 +523,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 1000;
   conf_entry->default_value= 6000;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_DAEMON_RESTART_AT_ERROR]= 25;
@@ -523,7 +533,7 @@ ic_init_config_parameters()
   "If set, kernel restarts automatically after a failure";
   conf_entry->is_boolean= TRUE;
   conf_entry->default_value= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_FILESYSTEM_PATH]= 26;
@@ -533,7 +543,7 @@ ic_init_config_parameters()
   "Path to filesystem of kernel";
   conf_entry->is_string_type= TRUE;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
   map_config_id[KERNEL_REDO_LOG_FILES]= 27;
@@ -544,7 +554,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 4;
   conf_entry->default_value= 32;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
   map_config_id[KERNEL_CHECK_INTERVAL]= 28;
@@ -558,7 +568,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 500;
   conf_entry->max_value= 500;
   conf_entry->default_value= 500;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_CLIENT_ACTIVITY_TIMER]= 29;
@@ -569,7 +579,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 1000;
   conf_entry->default_value= 1024 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_DEADLOCK_TIMER]= 30;
@@ -580,7 +590,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 1000;
   conf_entry->default_value= 2000;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_CHECKPOINT_OBJECTS]= 31;
@@ -594,7 +604,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 1;
   conf_entry->default_value= 1;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_CHECKPOINT_MEMORY]= 32;
@@ -608,7 +618,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 4 * 1024 * 1024;
   conf_entry->default_value= 4 * 1024 * 1024;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_CHECKPOINT_DATA_MEMORY]= 33;
@@ -622,7 +632,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 2 * 1024 * 1024;
   conf_entry->default_value= 2 * 1024 * 1024;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_CHECKPOINT_LOG_MEMORY]= 34;
@@ -636,7 +646,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 2 * 1024 * 1024;
   conf_entry->default_value= 2 * 1024 * 1024;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_CHECKPOINT_WRITE_SIZE]= 35;
@@ -650,7 +660,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 64 * 1024;
   conf_entry->default_value= 64 * 1024;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_CHECKPOINT_MAX_WRITE_SIZE]= 36;
@@ -664,7 +674,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 256 * 1024;
   conf_entry->default_value= 256 * 1024;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_VOLATILE_MODE]= 37;
@@ -674,7 +684,7 @@ ic_init_config_parameters()
   "In this mode all file writes are ignored and all starts becomes initial starts";
   conf_entry->is_boolean= TRUE;
   conf_entry->default_value= FALSE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_ORDERED_KEY_OBJECTS]= 38;
@@ -685,7 +695,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 32;
   conf_entry->default_value= 128;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_UNIQUE_HASH_KEY_OBJECTS]= 39;
@@ -696,7 +706,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 32;
   conf_entry->default_value= 128;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_LOCAL_OPERATION_OBJECTS]= 40;
@@ -710,7 +720,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 0;
   conf_entry->default_value= 0;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_LOCAL_SCAN_OBJECTS]= 41;
@@ -724,7 +734,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 0;
   conf_entry->default_value= 0;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_SCAN_BATCH_SIZE]= 42;
@@ -738,7 +748,7 @@ ic_init_config_parameters()
   conf_entry->max_value= 64;
   conf_entry->default_value= 64;
   conf_entry->is_not_configurable= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_REDO_LOG_MEMORY]= 43;
@@ -749,7 +759,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 1 * 1024  * 1024;
   conf_entry->default_value= 16 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_LONG_MESSAGE_MEMORY]= 44;
@@ -759,10 +769,10 @@ ic_init_config_parameters()
   "Size of long memory buffers";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 4 * 1024  * 1024;
-  conf_entry->max_value= 4 * 1024  * 1024;
-  conf_entry->default_value= 4 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->min_value= 1 * 1024  * 1024;
+  conf_entry->max_value= 1 * 1024  * 1024;
+  conf_entry->default_value= 1 * 1024 * 1024;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_CHECKPOINT_PATH]= 45;
@@ -771,7 +781,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Path to filesystem of checkpoints";
   conf_entry->is_string_type= TRUE;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
   map_config_id[KERNEL_MAX_OPEN_FILES]= 46;
@@ -781,10 +791,10 @@ ic_init_config_parameters()
   "Maximum number of open files in kernel node";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 96;
-  conf_entry->max_value= 96;
-  conf_entry->default_value= 96;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->min_value= 40;
+  conf_entry->max_value= 40;
+  conf_entry->default_value= 40;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_PAGE_CACHE_SIZE]= 47;
@@ -795,7 +805,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 64 * 1024;
   conf_entry->default_value= 128 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_STRING_MEMORY]= 48;
@@ -808,7 +818,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 0;
   conf_entry->default_value= 0;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_INITIAL_OPEN_FILES]= 49;
@@ -818,10 +828,10 @@ ic_init_config_parameters()
   "Number of open file handles in kernel node from start";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 30;
-  conf_entry->max_value= 30;
-  conf_entry->default_value= 30;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->min_value= 27;
+  conf_entry->max_value= 27;
+  conf_entry->default_value= 27;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_FILE_SYNCH_SIZE]= 50;
@@ -832,7 +842,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 1024 * 1024;
   conf_entry->default_value= 4 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_DISK_WRITE_SPEED]= 51;
@@ -843,7 +853,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 64 * 1024;
   conf_entry->default_value= 8 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_DISK_WRITE_SPEED_START]= 52;
@@ -854,7 +864,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 1024 * 1024;
   conf_entry->default_value= 256 * 1024 * 1024;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_MEMORY_POOL]= 53;
@@ -863,7 +873,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Size of memory pool for internal memory usage";
   conf_entry->default_value= 0;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[KERNEL_DUMMY]= 54;
@@ -871,7 +881,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_name= "kernel_dummy";
   conf_entry->config_entry_description="";
   conf_entry->default_value= 0;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[KERNEL_START_LOG_LEVEL]= 55;
@@ -884,7 +894,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_STOP_LOG_LEVEL]= 56;
@@ -897,7 +907,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_STAT_LOG_LEVEL]= 57;
@@ -910,7 +920,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_CHECKPOINT_LOG_LEVEL]= 58;
@@ -923,7 +933,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_RESTART_LOG_LEVEL]= 59;
@@ -936,7 +946,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_CONNECTION_LOG_LEVEL]= 60;
@@ -949,7 +959,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_REPORT_LOG_LEVEL]= 61;
@@ -962,7 +972,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_WARNING_LOG_LEVEL]= 62;
@@ -975,7 +985,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_ERROR_LOG_LEVEL]= 63;
@@ -988,7 +998,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_CONGESTION_LOG_LEVEL]= 64;
@@ -1001,7 +1011,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_DEBUG_LOG_LEVEL]= 65;
@@ -1014,7 +1024,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
   map_config_id[KERNEL_BACKUP_LOG_LEVEL]= 66;
@@ -1027,7 +1037,44 @@ ic_init_config_parameters()
   conf_entry->min_value= 0;
   conf_entry->max_value= 15;
   conf_entry->default_value= 8;
-  conf_entry->node_type= IC_KERNEL_TYPE;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[127]= 67;
+  conf_entry= &glob_conf_entry[67];
+  conf_entry->is_deprecated= TRUE;
+
+  map_config_id[128]= 68;
+  conf_entry= &glob_conf_entry[68];
+  conf_entry->is_deprecated= TRUE;
+
+  map_config_id[137]= 69;
+  conf_entry= &glob_conf_entry[69];
+  conf_entry->is_deprecated= TRUE;
+
+  map_config_id[138]= 70;
+  conf_entry= &glob_conf_entry[70];
+  conf_entry->is_deprecated= TRUE;
+
+  map_config_id[154]= 71;
+  conf_entry= &glob_conf_entry[71];
+  conf_entry->is_deprecated= TRUE;
+
+  map_config_id[155]= 72;
+  conf_entry= &glob_conf_entry[72];
+  conf_entry->is_deprecated= TRUE;
+
+  map_config_id[KERNEL_INJECT_FAULT]= 73;
+  conf_entry= &glob_conf_entry[73];
+  conf_entry->config_entry_name= "inject_fault";
+  conf_entry->config_entry_description=
+  "Inject faults (only available in special test builds)";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 2;
+  conf_entry->default_value= 2;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
 /*
@@ -1043,7 +1090,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1;
   conf_entry->max_value= MAX_NODE_ID;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_SECOND_NODE_ID]= 101;
@@ -1056,7 +1103,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1;
   conf_entry->max_value= MAX_NODE_ID;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_USE_MESSAGE_ID]= 102;
@@ -1066,7 +1113,7 @@ ic_init_config_parameters()
   "Using message id can be a valuable resource to find problems related to distributed execution";
   conf_entry->is_boolean= TRUE;
   conf_entry->default_value= FALSE;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_USE_CHECKSUM]= 103;
@@ -1076,7 +1123,7 @@ ic_init_config_parameters()
   "Using checksum ensures that internal bugs doesn't corrupt data while data is placed in buffers";
   conf_entry->is_boolean= TRUE;
   conf_entry->default_value= FALSE;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_CLIENT_PORT]= 104;
@@ -1089,7 +1136,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1024;
   conf_entry->max_value= 65535;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
   map_config_id[TCP_SERVER_PORT]= 105;
@@ -1102,7 +1149,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 1024;
   conf_entry->max_value= 65535;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
   map_config_id[TCP_WRITE_BUFFER_SIZE]= 106;
@@ -1113,7 +1160,7 @@ ic_init_config_parameters()
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 128 * 1024;
   conf_entry->default_value= 256 * 1024;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_READ_BUFFER_SIZE]= 107;
@@ -1127,7 +1174,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 64 * 1024;
   conf_entry->max_value= 64 * 1024;
   conf_entry->default_value= 64 * 1024;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_FIRST_HOSTNAME]= 108;
@@ -1137,7 +1184,7 @@ ic_init_config_parameters()
   "Hostname of first node";
   conf_entry->is_string_type= TRUE;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_SECOND_HOSTNAME]= 109;
@@ -1147,7 +1194,7 @@ ic_init_config_parameters()
   "Hostname of second node";
   conf_entry->is_string_type= TRUE;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_GROUP]= 110;
@@ -1161,7 +1208,7 @@ ic_init_config_parameters()
   conf_entry->min_value= 55;
   conf_entry->max_value= 55;
   conf_entry->default_value= 55;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
   map_config_id[TCP_SERVER_NODE_ID]= 111;
@@ -1174,22 +1221,99 @@ ic_init_config_parameters()
   conf_entry->min_value= 1;
   conf_entry->max_value= MAX_NODE_ID;
   conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= IC_COMM_TYPE;
+  conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
 /*
   This is the cluster server configuration section.
 */
-  map_config_id[CLUSTER_SERVER_EVENT_LOG]= 137;
-  conf_entry= &glob_conf_entry[137];
+  map_config_id[CLUSTER_SERVER_EVENT_LOG]= 150;
+  conf_entry= &glob_conf_entry[150];
   conf_entry->config_entry_name= "cluster_event_log_type";
   conf_entry->config_entry_description=
   "Type of cluster event log";
   conf_entry->is_string_type= TRUE;
   conf_entry->default_string="";
-  conf_entry->node_type= IC_CLUSTER_SERVER_TYPE;
+  conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
+  map_config_id[CLUSTER_SERVER_PORT]= 151;
+  conf_entry= &glob_conf_entry[151];
+  conf_entry->config_entry_name= "cluster_server_port_number";
+  conf_entry->config_entry_description=
+  "Port number that cluster server will listen";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1024;
+  conf_entry->max_value= 65535;
+  conf_entry->default_value= 2286;
+  conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+/*
+  This is the client configuration section.
+*/
+
+  map_config_id[CLIENT_RESOLVE_RANK]= 200;
+  conf_entry= &glob_conf_entry[200];
+  conf_entry->config_entry_name= "client_resolve_rank";
+  conf_entry->config_entry_description=
+  "Rank in resolving network partition of the client";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 2;
+  conf_entry->default_value= 0;
+  conf_entry->node_type= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+  map_config_id[CLIENT_RESOLVE_TIMER]= 201;
+  conf_entry= &glob_conf_entry[201];
+  conf_entry->config_entry_name= "client_resolve_timer";
+  conf_entry->config_entry_description=
+  "Time in ms waiting for resolve before crashing";
+  conf_entry->default_value= 0;
+  conf_entry->node_type= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+
+  map_config_id[CLIENT_BATCH_SIZE]= 202;
+  conf_entry= &glob_conf_entry[202];
+  conf_entry->config_entry_name= "client_batch_size";
+  conf_entry->config_entry_description=
+  "Size in number of records of batches in scan operations";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 1;
+  conf_entry->max_value= 992;
+  conf_entry->default_value= 64;
+  conf_entry->node_type= (1 << IC_CLIENT_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[CLIENT_BATCH_BYTE_SIZE]= 203;
+  conf_entry= &glob_conf_entry[203];
+  conf_entry->config_entry_name= "client_batch_size";
+  conf_entry->config_entry_description=
+  "Size in bytes of batches in scan operations";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 128;
+  conf_entry->max_value= 65536;
+  conf_entry->default_value= 8192;
+  conf_entry->node_type= (1 << IC_CLIENT_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[CLIENT_MAX_BATCH_BYTE_SIZE]= 204;
+  conf_entry= &glob_conf_entry[204];
+  conf_entry->config_entry_name= "max_client_batch_byte_size";
+  conf_entry->config_entry_description=
+  "Size in bytes of max of the sum of the batches in a scan operations";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 32 * 1024;
+  conf_entry->max_value= 4 * 1024 * 1024;
+  conf_entry->default_value= 256 * 1024;
+  conf_entry->node_type= (1 << IC_CLIENT_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
   return;
 }
 
@@ -1197,14 +1321,12 @@ static struct config_entry *get_config_entry(int config_id)
 {
   guint32 inx;
 
-  printf("config_id = %d\n", config_id);
   if (config_id > 998)
   {
     DEBUG(printf("config_id larger than 998 = %d\n", config_id));
     return NULL;
   }
   inx= map_config_id[config_id];
-  printf("inx = %d\n", inx);
   if (!inx)
   {
     DEBUG(printf("No config entry\n"));
@@ -1220,18 +1342,32 @@ ic_check_config_value(int config_id, guint64 value,
   struct config_entry *conf_entry= get_config_entry(config_id);
 
   if (!conf_entry)
+  {
+    printf("Didn't find config entry for config_id = %d\n", config_id);
     return PROTOCOL_ERROR;
+  }
 
-  if ((conf_entry->node_type != conf_type) ||
+  if (conf_entry->is_deprecated)
+  {
+    DEBUG(printf("Entry config_id = %d is deprecated\n", config_id));
+    return 0;
+  }
+  if (conf_entry->is_not_configurable)
+  {
+    DEBUG(printf("Entry config_id = %d is not configurable\n", config_id));
+    return 0;
+  }
+  if (!(conf_entry->node_type & (1 << conf_type)) ||
       (conf_entry->is_boolean && (value > 1)) ||
       (conf_entry->is_min_value_defined &&
        (conf_entry->min_value > value)) ||
       (conf_entry->is_max_value_defined &&
        (conf_entry->max_value < value)))
   {
-    DEBUG(printf("Config value error\n"));
+    DEBUG(printf("Config value error config_id = %d\n", config_id));
     return PROTOCOL_ERROR;
   }
+  printf("%s: %u\n", conf_entry->config_entry_name, value); 
   return 0;
 }
 
@@ -1243,7 +1379,7 @@ ic_check_config_string(int config_id, enum ic_config_type conf_type)
   if (!conf_entry)
     return PROTOCOL_ERROR;
   if (!conf_entry->is_string_type ||
-      conf_entry->node_type != conf_type)
+      !(conf_entry->node_type & (1 << conf_type)))
   {
     DEBUG(printf("Debug string inconsistency\n"));
     return PROTOCOL_ERROR;
@@ -1264,7 +1400,7 @@ allocate_mem_phase1(struct ic_api_cluster_config *conf_obj)
     nodes in the cluster, also allocate memory for array of node types.
   */
   conf_obj->node_types= g_try_malloc0(conf_obj->no_of_nodes *
-                                         sizeof(enum ic_node_type*));
+                                         sizeof(enum ic_node_type));
   conf_obj->node_ids= g_try_malloc0(conf_obj->no_of_nodes *
                                        sizeof(guint32));
   conf_obj->node_config= g_try_malloc0(conf_obj->no_of_nodes *
@@ -1450,7 +1586,8 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
   struct config_entry *conf_entry;
   void *node_config;
 
-  if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE)
+  if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE ||
+      hash_key == IC_NODE_ID)
     return 0; /* Ignore for now */
   if (!(conf_entry= get_conf_entry(hash_key)))
     return PROTOCOL_ERROR;
@@ -1471,20 +1608,29 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
     switch (key_type)
     {
       case IC_CL_INT32_TYPE:
+        if (ic_check_config_value(hash_key, (guint64)value, IC_KERNEL_TYPE))
+          return PROTOCOL_ERROR;
         break;
       case IC_CL_SECT_TYPE:
         break;
       case IC_CL_INT64_TYPE:
+      {
+        guint64 long_val= value + (((guint64)(**key_value)) << 32);
+        if (ic_check_config_value(hash_key, long_val, IC_KERNEL_TYPE))
+          return PROTOCOL_ERROR;
         (*key_value)++;
         break;
+      }
       case IC_CL_CHAR_TYPE:
+      {
         len_words= (value + 3)/4;
         (*key_value)+= len_words;
         break;
-     default:
-       DEBUG(printf("Wrong key type kernel node\n"));
-       g_assert(FALSE);
-       return PROTOCOL_ERROR;
+      }
+      default:
+        DEBUG(printf("Wrong key type kernel node\n"));
+        g_assert(FALSE);
+        return PROTOCOL_ERROR;
     }
   }
   else if (conf_obj->node_types[node_sect_id] == IC_CLIENT_NODE)
@@ -1494,20 +1640,31 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
     switch (key_type)
     {
       case IC_CL_INT32_TYPE:
+      {
+        if (ic_check_config_value(hash_key, (guint64)value, IC_CLIENT_TYPE))
+          return PROTOCOL_ERROR;
         break;
+      }
       case IC_CL_SECT_TYPE:
         break;
       case IC_CL_INT64_TYPE:
+      {
+        guint64 long_val= value + (((guint64)(**key_value)) << 32);
+        if (ic_check_config_value(hash_key, long_val, IC_CLIENT_TYPE))
+          return PROTOCOL_ERROR;
         (*key_value)++;
         break;
+      }
       case IC_CL_CHAR_TYPE:
+      {
         len_words= (value + 3)/4;
         (*key_value)+= len_words;
         break;
-     default:
-       DEBUG(printf("Wrong key type client node\n"));
-       g_assert(FALSE);
-       return PROTOCOL_ERROR;
+      }
+      default:
+        DEBUG(printf("Wrong key type client node\n"));
+        g_assert(FALSE);
+        return PROTOCOL_ERROR;
     }
   }
   else if (conf_obj->node_types[node_sect_id] == IC_CLUSTER_SERVER_NODE)
@@ -1517,25 +1674,36 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
     switch (key_type)
     {
       case IC_CL_INT32_TYPE:
+      {
+        if (ic_check_config_value(hash_key, (guint64)value,
+                                  IC_CLUSTER_SERVER_TYPE))
+          return PROTOCOL_ERROR;
         break;
+      }
       case IC_CL_SECT_TYPE:
         break;
       case IC_CL_INT64_TYPE:
+      {
+        guint64 long_val= value + (((guint64)(**key_value)) << 32);
+        if (ic_check_config_value(hash_key, long_val, IC_CLIENT_TYPE))
+          return PROTOCOL_ERROR;
         (*key_value)++;
         break;
+      }
       case IC_CL_CHAR_TYPE:
+      {
         len_words= (value + 3)/4;
         (*key_value)+= len_words;
         break;
-     default:
-       DEBUG(printf("Wrong key type cluster server node\n"));
-       g_assert(FALSE);
-       return PROTOCOL_ERROR;
+      }
+      default:
+        DEBUG(printf("Wrong key type cluster server node\n"));
+        g_assert(FALSE);
+        return PROTOCOL_ERROR;
     }
   }
   else
     g_assert(FALSE);
-  printf("OK\n");
   return 0;
 }
 
@@ -1668,8 +1836,6 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     guint32 hash_key= key & IC_CL_KEY_MASK;
     guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
     guint32 key_type= key >> IC_CL_KEY_SHIFT;
-    if (TRUE || pass == 2)
-      printf("hash_key = %u, sect_id %u, key_type %u pass %d value %u\n", hash_key, sect_id, key_type, pass, value);
     if (pass == 0 && sect_id == 1)
       conf_obj->no_of_nodes= MAX(conf_obj->no_of_nodes, hash_key + 1);
     else if (pass == 1)
@@ -1692,25 +1858,21 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     }
     else
     {
-      if (sect_id != 1 && sect_id != (conf_obj->no_of_nodes + 2))
+      if (sect_id > 1 && sect_id != (conf_obj->no_of_nodes + 2))
       {
         if (sect_id < (conf_obj->no_of_nodes + 2))
         {
           guint32 node_sect_id= sect_id - 2;
-          printf("read node section\n");
           if ((error= read_node_section(conf_obj, key_type, &key_value,
                                         value, hash_key, node_sect_id)))
             return error;
-          printf("read node section ok\n");
         }
         else
         {
           guint32 comm_sect_id= sect_id - (conf_obj->no_of_nodes + 3);
-          printf("read comm section\n");
           if ((error= read_comm_section(conf_obj, key_type, &key_value,
                                         value, hash_key, comm_sect_id)))
             return error;
-          printf("read comm section ok\n");
         }
       }
     }
