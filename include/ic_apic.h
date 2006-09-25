@@ -51,7 +51,6 @@ struct config_entry
   enum ic_config_type node_type;
   gchar is_max_value_defined;
   gchar is_min_value_defined;
-  gchar is_defined;
   gchar is_boolean;
   gchar is_deprecated;
   gchar is_string_type;
@@ -67,6 +66,9 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
                     guint32 *cluster_ids,
                     guint32 *node_ids,
                     guint32 num_clusters);
+
+void
+ic_print_config_parameters();
 
 struct ic_api_cluster_operations
 {

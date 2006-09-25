@@ -111,6 +111,21 @@ api_clusterserver_test()
   cluster_conn.num_cluster_servers= 1;
   srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id,
                                &node_id, (guint32)1);
+  if (glob_test_type > 1)
+  {
+    printf("Testing print of config parameters\n");
+    if (glob_test_type == 2)
+      ic_print_config_parameters(1 << IC_KERNEL_TYPE);
+    if (glob_test_type == 3)
+      ic_print_config_parameters(1 << IC_CLIENT_TYPE);
+    if (glob_test_type == 4)
+      ic_print_config_parameters(1 << IC_CLUSTER_SERVER_TYPE);
+    if (glob_test_type == 5)
+      ic_print_config_parameters(1 << IC_COMM_TYPE);
+    if (glob_test_type == 6) /* Print all */
+      ic_print_config_parameters(0xFFFFFFFF);
+    return 0;
+  }
   srv_obj->num_clusters_to_connect= 1;
   srv_obj->api_op.get_ic_config(srv_obj);
   srv_obj->api_op.free_ic_config(srv_obj);
@@ -136,6 +151,11 @@ int main(int argc, char *argv[])
       connection_test();
       return 0;
     case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
       api_clusterserver_test();
       return 0;
     default:

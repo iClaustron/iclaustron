@@ -247,6 +247,96 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define CLIENT_BATCH_BYTE_SIZE 801
 #define CLIENT_BATCH_SIZE 802
 
+void
+ic_print_config_parameters(guint32 mask)
+{
+  struct config_entry *conf_entry;
+  guint32 inx, i;
+  if (!glob_conf_entry_inited)
+    return;
+  for (i= 0; i < 1024; i++)
+  {
+    if ((inx= map_config_id[i]))
+    {
+      conf_entry= &glob_conf_entry[inx];
+      if (!(conf_entry->node_type & mask))
+        continue;
+      printf("\n");
+      if (conf_entry->is_deprecated)
+      {
+        printf("Entry %u is deprecated\n", i);
+        continue;
+      }
+      printf("Entry %u:\n", i);
+      printf("Name: %s\n", conf_entry->config_entry_name);
+      printf("Comment: %s\n", conf_entry->config_entry_description);
+      if (conf_entry->is_not_configurable)
+      {
+        printf("Entry is not configurable with value %u\n",
+               (guint32)conf_entry->default_value);
+        continue;
+      }
+      switch (conf_entry->change_variant)
+      {
+        case IC_ONLINE_CHANGE:
+          printf("This parameter is changeable online\n");
+          break;
+        case IC_NODE_RESTART_CHANGE:
+          printf("This parameter can be changed during a node restart\n");
+          break;
+        case IC_ROLLING_UPGRADE_CHANGE:
+        case IC_ROLLING_UPGRADE_CHANGE_SPECIAL:
+          printf("Parameter can be changed during a rolling upgrade\n");
+          break;
+        case IC_INITIAL_NODE_RESTART:
+          printf("Parameter can be changed when node performs initial restart\n");
+          break;
+        case IC_CLUSTER_RESTART_CHANGE:
+          printf("Parameter can be changed after stopping cluster before restart\n");
+          break;
+        case IC_NOT_CHANGEABLE:
+          printf("Parameter can only be changed using backup, change, restore\n");
+          break;
+        default:
+          g_assert(0);
+      }
+      if (conf_entry->node_type & (1 << IC_CLIENT_TYPE))
+        printf("This config variable is used in a client node\n");
+      if (conf_entry->node_type & (1 << IC_KERNEL_TYPE))
+        printf("This config variable is used in a kernel node\n");
+      if (conf_entry->node_type & (1 << IC_CLUSTER_SERVER_TYPE))
+        printf("This config variable is used in a cluster server\n");
+      if (conf_entry->node_type & (1 << IC_COMM_TYPE))
+        printf("This config variable is used in connections\n");
+
+      if (conf_entry->is_mandatory_to_specify)
+        printf("Entry is mandatory and has no default value\n");
+      if (conf_entry->is_string_type)
+      {
+        if (!conf_entry->is_mandatory_to_specify)
+        {
+          printf("Entry has default value: %s\n",
+                 conf_entry->default_string);
+        }
+        continue;
+      }
+      if (conf_entry->is_boolean)
+      {
+        printf("Entry is either TRUE or FALSE\n");
+        continue;
+      }
+      if (conf_entry->is_min_value_defined)
+        printf("Min value defined: %u\n", (guint32)conf_entry->min_value);
+      else
+        printf("No min value defined\n");
+      if (conf_entry->is_max_value_defined)
+        printf("Max value defined: %u\n", (guint32)conf_entry->max_value);
+      else
+        printf("No max value defined\n");
+    }
+  }
+}
+
 static void
 ic_init_config_parameters()
 {
@@ -1093,7 +1183,7 @@ ic_init_config_parameters()
   conf_entry->max_value= MAX_NODE_ID;
   conf_entry->is_mandatory_to_specify= 1;
   conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[TCP_SECOND_NODE_ID]= 101;
   conf_entry= &glob_conf_entry[101];
@@ -1106,7 +1196,7 @@ ic_init_config_parameters()
   conf_entry->max_value= MAX_NODE_ID;
   conf_entry->is_mandatory_to_specify= 1;
   conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
   map_config_id[TCP_USE_MESSAGE_ID]= 102;
   conf_entry= &glob_conf_entry[102];
@@ -1224,7 +1314,7 @@ ic_init_config_parameters()
   conf_entry->max_value= MAX_NODE_ID;
   conf_entry->is_mandatory_to_specify= 1;
   conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
+  conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
 /*
   This is the cluster server configuration section.
