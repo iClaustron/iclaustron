@@ -1497,6 +1497,26 @@ ic_check_config_string(int config_id, enum ic_config_type conf_type)
   return 0;
 }
 
+static void
+init_config_kernel_object(struct ic_kernel_node_config *kernel_conf)
+{
+}
+
+static void
+init_config_client_object(struct ic_client_node_config *client_conf)
+{
+}
+
+static void
+init_config_cluster_server_object( struct ic_cluster_server_config *cs_conf)
+{
+}
+
+static void
+init_config_comm_object(struct ic_comm_link_config *comm_conf)
+{
+}
+
 /*
   CONFIGURATION TRANSLATE KEY DATA TO CONFIGURATION OBJECTS MODULE
   ----------------------------------------------------------------
@@ -1570,14 +1590,26 @@ allocate_mem_phase2(struct ic_api_cluster_config *conf_obj)
     switch (conf_obj->node_types[i])
     {
       case IC_KERNEL_TYPE:
+      {
+        init_config_kernel_object(
+          (struct ic_kernel_node_config*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(struct ic_kernel_node_config);
         break;
+      }
       case IC_CLIENT_TYPE:
+      {
+        init_config_client_object(
+          (struct ic_client_node_config*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(struct ic_client_node_config);
         break;
+      }
       case IC_CLUSTER_SERVER_TYPE:
+      {
+        init_config_cluster_server_object(
+          (struct ic_cluster_server_config*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(struct ic_cluster_server_config);
         break;
+      }
       default:
         g_assert(FALSE);
 
@@ -1586,6 +1618,8 @@ allocate_mem_phase2(struct ic_api_cluster_config *conf_obj)
   }
   for (i= 0; i < conf_obj->no_of_comms; i++)
   {
+    init_config_comm_object(
+      (struct ic_comm_link_config*)conf_obj_ptr);
     conf_obj->comm_config[i]= conf_obj_ptr;
     conf_obj_ptr+= sizeof(struct ic_comm_link_config);
   }
