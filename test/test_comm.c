@@ -105,7 +105,7 @@ api_clusterserver_test()
   guint32 cluster_id= 0;
   guint32 node_id= 0;
 
-  printf("Starting cluster server test\n");
+  printf("Starting API Cluster server test\n");
   cluster_conn.cluster_server_ips= &glob_server_ip;
   cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
@@ -133,6 +133,35 @@ api_clusterserver_test()
   return 0;
 }
 
+/*
+  This test case is used for initial development of Cluster Server.
+  It will start by receiving the Cluster Configuration from an
+  existing Cluster Server and set-up the data structures based
+  on the input.
+  The next step is to wait for Cluster node to try to read the
+  configuration from the Cluster Server. After one such attempt
+  the test will conclude.
+*/
+static int
+run_clusterserver_test()
+{
+  struct ic_api_cluster_server *srv_obj; 
+  struct ic_api_cluster_connection cluster_conn;
+  guint32 cluster_id= 0;
+  guint32 node_id= 0;
+
+  printf("Starting Run Cluster server test\n");
+  cluster_conn.cluster_server_ips= &glob_server_ip;
+  cluster_conn.cluster_server_ports= &glob_server_port;
+  cluster_conn.num_cluster_servers= 1;
+  srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id,
+                               &node_id, (guint32)1);
+
+  srv_obj->num_clusters_to_connect= 1;
+  srv_obj->api_op.get_ic_config(srv_obj);
+  return 0;
+}
+
 int main(int argc, char *argv[])
 {
   GError *error= NULL;
@@ -157,6 +186,9 @@ int main(int argc, char *argv[])
     case 5:
     case 6:
       api_clusterserver_test();
+      return 0;
+    case 7:
+      run_clusterserver_test();
       return 0;
     default:
       return 0;

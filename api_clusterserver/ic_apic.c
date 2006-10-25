@@ -41,7 +41,7 @@
      Where nodeid is the one chosen by the cluster server.
 
      An error response is sent as 
-     result: Error (MEssafge)<CR>
+     result: Error (Message)<CR>
      <CR>
 
   2) The next step is to get the configuration. To get the configuration
@@ -1523,7 +1523,7 @@ init_config_comm_object(struct ic_comm_link_config *comm_conf)
 */
 
 static int
-allocate_mem_phase1(struct ic_api_cluster_config *conf_obj)
+allocate_mem_phase1(struct ic_cluster_config *conf_obj)
 {
   /*
     Allocate memory for pointer arrays pointing to the configurations of the
@@ -1531,18 +1531,21 @@ allocate_mem_phase1(struct ic_api_cluster_config *conf_obj)
   */
   conf_obj->node_types= g_try_malloc0(conf_obj->no_of_nodes *
                                          sizeof(enum ic_node_type));
+  conf_obj->comm_types= g_try_malloc0(conf_obj->no_of_nodes *
+                                         sizeof(enum ic_communication_type));
   conf_obj->node_ids= g_try_malloc0(conf_obj->no_of_nodes *
                                        sizeof(guint32));
   conf_obj->node_config= g_try_malloc0(conf_obj->no_of_nodes *
                                           sizeof(char*));
-  if (!conf_obj->node_types || !conf_obj->node_ids || !conf_obj->node_config)
+  if (!conf_obj->node_types || !conf_obj->node_ids ||
+      !conf_obj->comm_types || !conf_obj->node_config)
     return MEM_ALLOC_ERROR;
   return 0;
 }
 
 
 static int
-allocate_mem_phase2(struct ic_api_cluster_config *conf_obj)
+allocate_mem_phase2(struct ic_cluster_config *conf_obj)
 {
   guint32 i;
   guint32 size_config_objects= 0;
@@ -1652,7 +1655,7 @@ get_64bit_value(guint32 value, guint32 **key_value)
 }
 
 static void
-update_string_data(struct ic_api_cluster_config *conf_obj, guint32 value,
+update_string_data(struct ic_cluster_config *conf_obj, guint32 value,
                    guint32 **key_value)
 {
   guint32 len_words= (value + 3)/4;
@@ -1662,7 +1665,7 @@ update_string_data(struct ic_api_cluster_config *conf_obj, guint32 value,
 }
 
 static int
-analyse_node_section_phase1(struct ic_api_cluster_config *conf_obj,
+analyse_node_section_phase1(struct ic_cluster_config *conf_obj,
                             guint32 sect_id, guint32 value, guint32 hash_key)
 {
   if (hash_key == IC_NODE_TYPE)
@@ -1691,7 +1694,7 @@ analyse_node_section_phase1(struct ic_api_cluster_config *conf_obj,
 }
 
 static int
-step_key_value(struct ic_api_cluster_config *conf_obj,
+step_key_value(struct ic_cluster_config *conf_obj,
                guint32 key_type, guint32 **key_value,
                guint32 value, guint32 *key_value_end, int pass)
 {
@@ -1752,7 +1755,7 @@ static struct config_entry *get_conf_entry(guint32 hash_key)
 }
 
 static int
-read_node_section(struct ic_api_cluster_config *conf_obj,
+read_node_section(struct ic_cluster_config *conf_obj,
                   guint32 key_type, guint32 **key_value,
                   guint32 value, guint32 hash_key,
                   guint32 node_sect_id)
@@ -2059,7 +2062,7 @@ read_node_section(struct ic_api_cluster_config *conf_obj,
 }
 
 static int
-read_comm_section(struct ic_api_cluster_config *conf_obj,
+read_comm_section(struct ic_cluster_config *conf_obj,
                   guint32 key_type, guint32 **key_value,
                   guint32 value, guint32 hash_key,
                   guint32 comm_sect_id)
@@ -2141,7 +2144,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
                   guint32 current_cluster_index)
 {
   guint32 *key_value_end= key_value + len;
-  struct ic_api_cluster_config *conf_obj;
+  struct ic_cluster_config *conf_obj;
   int error;
 
   conf_obj= apic->conf_objects+current_cluster_index;
@@ -2642,11 +2645,13 @@ free_cs_config(struct ic_api_cluster_server *apic)
       num_clusters= apic->num_clusters_to_connect;
       for (i= 0; i < num_clusters; i++)
       {
-        struct ic_api_cluster_config *conf_obj= apic->conf_objects+i;
+        struct ic_cluster_config *conf_obj= apic->conf_objects+i;
         if (conf_obj->node_ids)
           g_free(conf_obj->node_ids);
         if (conf_obj->node_types)
           g_free(conf_obj->node_types);
+        if (conf_obj->comm_types)
+          g_free(conf_obj->comm_types);
         if (conf_obj->node_config)
           g_free(conf_obj->node_config);
         if (conf_obj->string_memory_to_return)
@@ -2691,7 +2696,7 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
          g_try_malloc0(num_cluster_servers *
                        sizeof(guint16))) ||
       !(apic->conf_objects= g_try_malloc0(num_cluster_servers *
-                                sizeof(struct ic_api_cluster_config))) ||
+                                sizeof(struct ic_cluster_config))) ||
       !(apic->cluster_conn.cluster_srv_conns=
          g_try_malloc0(num_cluster_servers *
                        sizeof(struct ic_connection))))
@@ -2715,7 +2720,7 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
          (char*)cluster_conn->cluster_server_ports,
          num_cluster_servers * sizeof(guint16));
   memset((char*)apic->conf_objects, 0,
-         num_cluster_servers * sizeof(struct ic_api_cluster_config));
+         num_cluster_servers * sizeof(struct ic_cluster_config));
   memset((char*)apic->cluster_conn.cluster_srv_conns, 0,
          num_cluster_servers * sizeof(struct ic_connection));
 
@@ -2724,3 +2729,30 @@ ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
   apic->api_op.free_ic_config= free_cs_config;
   return apic;
 }
+
+static void
+free_run_cluster(struct ic_run_cluster_server *run_obj)
+{
+  return;
+}
+
+static int
+run_cluster_server(struct ic_cluster_config *cs_conf,
+                   struct ic_run_cluster_server *run_obj,
+                   guint32 num_connects)
+{
+  return 0;
+}
+
+struct ic_run_cluster_server*
+ic_init_run_cluster(struct ic_cluster_config *conf_objs,
+                    guint32 *cluster_ids,
+                    guint32 num_clusters)
+{
+  struct ic_run_cluster_server *run_obj;
+  ic_init_config_parameters();
+  if (!(run_obj= g_try_malloc0(sizeof(struct ic_api_cluster_server))))
+    return NULL;
+  return run_obj;
+}
+
