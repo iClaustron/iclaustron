@@ -195,7 +195,7 @@ int main(int argc, char *argv[])
    }
 
 parse_error:
-
+  printf("No such program option\n");
 error:
   return 1;
 }

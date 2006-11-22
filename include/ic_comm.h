@@ -397,6 +397,14 @@ int base64_decode(char *dest, guint32 *dest_len,
                   const char *src, guint32 src_len);
 
 /*
+  Methods to send and receive buffers with Carriage Return
+*/
+int send_with_cr(struct ic_connection *conn, const char *buf);
+int rec_with_cr(struct ic_connection *conn,
+                char *buf,
+                guint32 max_size);
+
+/*
   Methods to handle conversion to integers from strings
 */
 gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
