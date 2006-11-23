@@ -8,6 +8,9 @@
 #define ACCEPT_ERROR 32766
 #define END_OF_FILE 32765
 #define PROTOCOL_ERROR 32764
+#define AUTHENTICATE_ERROR 32763
+
+typedef int (*authenticate_func) (void *);
 
 struct ic_connection;
 struct ic_connect_stat;
@@ -15,7 +18,9 @@ gboolean ic_init_socket_object(struct ic_connection *conn,
                                gboolean is_client,
                                gboolean is_mutex_used,
                                gboolean is_connect_thread_used,
-                               gboolean is_using_front_buffer);
+                               gboolean is_using_front_buffer,
+                               authenticate_func func,
+                               void *auth_obj);
 
 struct ic_connect_operations
 {
@@ -240,6 +245,14 @@ struct ic_connection
   guint16 client_port;
   gboolean is_client;
   /*
+    In some cases it is desirable to do some authentication
+    processing before accepting a connection already set-up.
+    In this case there is a callback function plus a callback
+    object defined which is used for this purpose.
+  */
+  authenticate_func auth_func;
+  void *auth_obj;
+  /*
     The normal way to use this connection API is to listen to a
     socket and then close the listening socket after accept is
     called, this flag set to true means that we will call accept
@@ -399,10 +412,12 @@ int base64_decode(char *dest, guint32 *dest_len,
 /*
   Methods to send and receive buffers with Carriage Return
 */
-int send_with_cr(struct ic_connection *conn, const char *buf);
-int rec_with_cr(struct ic_connection *conn,
-                char *buf,
-                guint32 max_size);
+int ic_send_with_cr(struct ic_connection *conn, const char *buf);
+int ic_rec_with_cr(struct ic_connection *conn,
+                   char *rec_buf,
+                   guint32 *read_size,
+                   guint32 *size_curr_buf,
+                   guint32 buffer_size);
 
 /*
   Methods to handle conversion to integers from strings

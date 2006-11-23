@@ -5,6 +5,8 @@
 #include <errno.h>
 #include <ic_common.h>
 
+static int close_socket_connection(struct ic_connection *conn);
+
 static void
 set_is_connected(struct ic_connection *conn)
 {
@@ -275,6 +277,14 @@ run_set_up_socket_connection(gpointer data)
   ret_code= int_set_up_socket_connection(conn);
   g_mutex_lock(conn->connect_mutex);
   conn->conn_stat.is_connect_thread_active= FALSE;
+  if (conn->auth_func)
+  {
+    if ((ret_code= conn->auth_func(conn->auth_obj)))
+    {
+      close_socket_connection(conn);
+      conn->error_code= ret_code;
+    }
+  }
   g_mutex_unlock(conn->connect_mutex);
   return NULL;
 }
@@ -593,7 +603,9 @@ ic_init_socket_object(struct ic_connection *conn,
                       gboolean is_client,
                       gboolean is_mutex_used,
                       gboolean is_connect_thread_used,
-                      gboolean is_using_front_buffer)
+                      gboolean is_using_front_buffer,
+                      authenticate_func auth_func,
+                      void *auth_obj)
 {
   guint32 i;
 
@@ -675,6 +687,10 @@ ic_init_socket_object(struct ic_connection *conn,
   conn->conn_stat.num_rec_buffers= (guint64)0;
   conn->conn_stat.num_rec_bytes= (guint64)0;
   conn->conn_stat.num_rec_bytes_square_sum= (long double)0;
+
+  conn->auth_func= auth_func;
+  conn->auth_obj= auth_obj;
+
   for (i= 0; i < 16; i++)
   {
     conn->conn_stat.num_sent_buf_range[i]= 

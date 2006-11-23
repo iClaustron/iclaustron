@@ -24,7 +24,8 @@ int
 base64_decode(char *dest, guint32 *dest_len,
               const char *src, guint32 src_len)
 {
-  guint32 decode_len, conv_len, tot_conv_len;
+  guint32 decode_len, conv_len;
+  guint32 tot_conv_len= 0;
   guint32 inx, i;
   gboolean last= FALSE;
   char decode_char[4], conv_char;
@@ -87,5 +88,83 @@ convert_str_to_int_fixed_size(char *str, guint32 num_chars,
       return FALSE;
   }
   return TRUE;
+}
+
+int
+ic_send_with_cr(struct ic_connection *conn, const char *send_buf)
+{
+  guint32 inx;
+  int res;
+  char buf[256];
+
+  strcpy(buf, send_buf);
+  inx= strlen(buf);
+  buf[inx++]= CARRIAGE_RETURN;
+  buf[inx]= NULL_BYTE;
+  DEBUG(printf("Send: %s", buf));
+  res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
+  return res;
+}
+
+/*
+  ic_rec_with_cr:
+  Receive a line ended with CARRIAGE RETURN from connection
+  Parameters:
+    conn                IN: Connection object
+    rec_buf             IN/OUT: Pointer to receive buffer
+    read_size           IN: Size of previous read data
+                        OUT: Size of line read
+                        Neither includes CR
+    size_curr_buf       OUT: Size of current buffer read
+    buffer_size         IN: Total size of buffer
+*/
+
+int
+ic_rec_with_cr(struct ic_connection *conn,
+               char *rec_buf,
+               guint32 *read_size,
+               guint32 *size_curr_buf,
+               guint32 buffer_size)
+{
+  guint32 inx, size_to_read, size_read;
+  int res;
+  char *end_line;
+
+  if (*read_size > 0)
+  {
+    *read_size+= 1; /* Take CR into account */
+    *size_curr_buf-= *read_size;
+    memmove(rec_buf, rec_buf + *read_size,
+            *size_curr_buf);
+    *read_size= 0;
+  }
+  do
+  {
+    if (*size_curr_buf > 0)
+    {
+      for (end_line= rec_buf, inx= 0;
+           inx < *size_curr_buf && end_line[inx] != CARRIAGE_RETURN;
+           inx++)
+        ;
+      if (inx != *size_curr_buf)
+      {
+        /* Found a line to report */
+        *read_size= inx;
+        return 0;
+      }
+      /*
+        We had no complete lines to read in the buffer received so
+        far.
+      */
+    }
+    size_to_read= buffer_size - *size_curr_buf;
+    if ((res= conn->conn_op.read_ic_connection(conn,
+                                               rec_buf + *size_curr_buf,
+                                               size_to_read,
+                                               &size_read)))
+      return res;
+    *size_curr_buf+= size_read;
+  } while (1);
+  return 0;
 }
 

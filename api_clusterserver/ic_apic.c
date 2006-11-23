@@ -2216,22 +2216,6 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
   from the cluster server.
 */
 
-static int
-send_cluster_server(struct ic_connection *conn, const char *send_buf)
-{
-  guint32 inx;
-  int res;
-  char buf[256];
-
-  strcpy(buf, send_buf);
-  inx= strlen(buf);
-  buf[inx++]= CARRIAGE_RETURN;
-  buf[inx]= NULL_BYTE;
-  DEBUG(printf("Send: %s", buf));
-  res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
-  return res;
-}
-
 static char ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
 static int
 translate_config(struct ic_api_cluster_server *apic,
@@ -2287,70 +2271,14 @@ translate_config(struct ic_api_cluster_server *apic,
 }
 
 static int
-rec_cs_read_line(struct ic_api_cluster_server *apic,
-                 struct ic_connection *conn,
-                 char **read_line,
-                 guint32 *read_size)
-{
-  char *rec_buf= (char*)&apic->cluster_conn.rec_buf;
-  char *tail_rec_buf= rec_buf + apic->cluster_conn.tail_index;
-  guint32 size_curr_buf= apic->cluster_conn.head_index - 
-                         apic->cluster_conn.tail_index;
-  guint32 inx, size_to_read, size_read;
-  int res;
-  char *end_line;
-
-  do
-  {
-    if (size_curr_buf > 0)
-    {
-      for (end_line= tail_rec_buf, inx= 0;
-           inx < size_curr_buf && end_line[inx] != CARRIAGE_RETURN;
-           inx++)
-        ;
-      if (inx != size_curr_buf)
-      {
-        *read_line= tail_rec_buf;
-        *read_size= inx;
-        apic->cluster_conn.tail_index+= (inx + 1);
-        return 0;
-      }
-      /*
-        We had no complete lines to read in the buffer received so
-        far. We move the current buffer to the beginning to prepare
-        for receiving more data.
-      */
-      memmove(rec_buf, tail_rec_buf, size_curr_buf);
-      tail_rec_buf= rec_buf;
-      apic->cluster_conn.tail_index= 0;
-      apic->cluster_conn.head_index= size_curr_buf;
-    }
-    else
-    {
-      apic->cluster_conn.head_index= apic->cluster_conn.tail_index= 0;
-    }
-
-    size_to_read= REC_BUF_SIZE - size_curr_buf;
-    if ((res= conn->conn_op.read_ic_connection(conn,
-                                               rec_buf + size_curr_buf,
-                                               size_to_read,
-                                               &size_read)))
-      return res;
-    size_curr_buf+= size_read;
-    apic->cluster_conn.head_index+= size_read;
-    tail_rec_buf= rec_buf;
-  } while (1);
-  return 0;
-}
-
-static int
 set_up_cluster_server_connection(struct ic_connection *conn,
                                  guint32 server_ip,
                                  guint16 server_port)
 {
   int error;
 
-  if (ic_init_socket_object(conn, TRUE, FALSE, FALSE, FALSE))
+  if (ic_init_socket_object(conn, TRUE, FALSE, FALSE, FALSE,
+                            NULL, NULL))
     return MEM_ALLOC_ERROR;
   conn->server_ip= server_ip;
   conn->server_port= server_port;
@@ -2380,16 +2308,16 @@ send_get_nodeid(struct ic_connection *conn,
 #else
   g_snprintf(endian_buf, 32, "%s%s", endian_str, "big");
 #endif
-  if (send_cluster_server(conn, get_nodeid_str) ||
-      send_cluster_server(conn, version_buf) ||
-      send_cluster_server(conn, nodetype_str) ||
-      send_cluster_server(conn, nodeid_buf) ||
-      send_cluster_server(conn, user_str) ||
-      send_cluster_server(conn, password_str) ||
-      send_cluster_server(conn, public_key_str) ||
-      send_cluster_server(conn, endian_buf) ||
-      send_cluster_server(conn, log_event_str) ||
-      send_cluster_server(conn, ""))
+  if (ic_send_with_cr(conn, get_nodeid_str) ||
+      ic_send_with_cr(conn, version_buf) ||
+      ic_send_with_cr(conn, nodetype_str) ||
+      ic_send_with_cr(conn, nodeid_buf) ||
+      ic_send_with_cr(conn, user_str) ||
+      ic_send_with_cr(conn, password_str) ||
+      ic_send_with_cr(conn, public_key_str) ||
+      ic_send_with_cr(conn, endian_buf) ||
+      ic_send_with_cr(conn, log_event_str) ||
+      ic_send_with_cr(conn, ""))
     return conn->error_code;
   return 0;
 }
@@ -2399,9 +2327,9 @@ send_get_config(struct ic_connection *conn)
   char version_buf[32];
 
   g_snprintf(version_buf, 32, "%s%u", version_str, version_no);
-  if (send_cluster_server(conn, get_config_str) ||
-      send_cluster_server(conn, version_buf) ||
-      send_cluster_server(conn, ""))
+  if (ic_send_with_cr(conn, get_config_str) ||
+      ic_send_with_cr(conn, version_buf) ||
+      ic_send_with_cr(conn, ""))
     return conn->error_code;
   return 0;
 }
@@ -2411,19 +2339,21 @@ rec_get_nodeid(struct ic_connection *conn,
                struct ic_api_cluster_server *apic,
                guint32 current_cluster_index)
 {
-  char *read_line_buf;
-  guint32 read_size;
+  char read_buf[256];
+  guint32 read_size= 0;
+  guint32 size_curr_buf= 0;
   int error;
   guint64 node_number;
   guint32 state= GET_NODEID_REPLY_STATE;
-  while (!(error= rec_cs_read_line(apic, conn, &read_line_buf, &read_size)))
+  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
   {
-     DEBUG(ic_print_buf(read_line_buf, read_size));
+     DEBUG(ic_print_buf(read_buf, read_size));
      switch (state)
      {
        case GET_NODEID_REPLY_STATE:
          if ((read_size != GET_NODEID_REPLY_LEN) ||
-             (memcmp(read_line_buf, get_nodeid_reply_str,
+             (memcmp(read_buf, get_nodeid_reply_str,
                      GET_NODEID_REPLY_LEN) != 0))
          {
            printf("Protocol error in Get nodeid reply state\n");
@@ -2433,8 +2363,8 @@ rec_get_nodeid(struct ic_connection *conn,
          break;
        case NODEID_STATE:
          if ((read_size <= NODEID_LEN) ||
-             (memcmp(read_line_buf, nodeid_str, NODEID_LEN) != 0) ||
-             (convert_str_to_int_fixed_size(read_line_buf + NODEID_LEN,
+             (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
+             (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
                                             read_size - NODEID_LEN,
                                             &node_number)) ||
              (node_number > MAX_NODE_ID))
@@ -2448,7 +2378,7 @@ rec_get_nodeid(struct ic_connection *conn,
          break;
        case RESULT_OK_STATE:
          if ((read_size != RESULT_OK_LEN) ||
-             (memcmp(read_line_buf, result_ok_str, RESULT_OK_LEN) != 0))
+             (memcmp(read_buf, result_ok_str, RESULT_OK_LEN) != 0))
          {
            printf("Protocol error in result ok state\n");
            return PROTOCOL_ERROR;
@@ -2476,21 +2406,23 @@ rec_get_config(struct ic_connection *conn,
                struct ic_api_cluster_server *apic,
                guint32 current_cluster_index)
 {
-  char *read_line_buf;
+  char read_buf[256];
   char *config_buf= NULL;
-  guint32 read_size; 
+  guint32 read_size= 0;
+  guint32 size_curr_buf= 0;
   guint32 config_size= 0;
   guint32 rec_config_size= 0;
   int error;
   guint64 content_length;
   guint32 state= GET_CONFIG_REPLY_STATE;
-  while (!(error= rec_cs_read_line(apic, conn, &read_line_buf, &read_size)))
+  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
   {
     switch (state)
     {
       case GET_CONFIG_REPLY_STATE:
         if ((read_size != GET_CONFIG_REPLY_LEN) ||
-            (memcmp(read_line_buf, get_config_reply_str,
+            (memcmp(read_buf, get_config_reply_str,
                     GET_CONFIG_REPLY_LEN) != 0))
         {
           printf("Protocol error in get config reply state\n");
@@ -2500,7 +2432,7 @@ rec_get_config(struct ic_connection *conn,
         break;
       case RESULT_OK_STATE:
         if ((read_size != RESULT_OK_LEN) ||
-            (memcmp(read_line_buf, result_ok_str, RESULT_OK_LEN) != 0))
+            (memcmp(read_buf, result_ok_str, RESULT_OK_LEN) != 0))
         {
           printf("Protocol error in result ok state\n");
           return PROTOCOL_ERROR;
@@ -2509,9 +2441,9 @@ rec_get_config(struct ic_connection *conn,
         break;
       case CONTENT_LENGTH_STATE:
         if ((read_size <= CONTENT_LENGTH_LEN) ||
-            (memcmp(read_line_buf, content_len_str,
+            (memcmp(read_buf, content_len_str,
                     CONTENT_LENGTH_LEN) != 0) ||
-            convert_str_to_int_fixed_size(read_line_buf+CONTENT_LENGTH_LEN,
+            convert_str_to_int_fixed_size(read_buf+CONTENT_LENGTH_LEN,
                                           read_size - CONTENT_LENGTH_LEN,
                                           &content_length) ||
             (content_length > MAX_CONTENT_LEN))
@@ -2524,7 +2456,7 @@ rec_get_config(struct ic_connection *conn,
         break;
       case OCTET_STREAM_STATE:
         if ((read_size != OCTET_STREAM_LEN) ||
-            (memcmp(read_line_buf, octet_stream_str,
+            (memcmp(read_buf, octet_stream_str,
                     OCTET_STREAM_LEN) != 0))
         {
           printf("Protocol error in octet stream state\n");
@@ -2534,7 +2466,7 @@ rec_get_config(struct ic_connection *conn,
         break;
       case CONTENT_ENCODING_STATE:
         if ((read_size != CONTENT_ENCODING_LEN) ||
-            (memcmp(read_line_buf, content_encoding_str,
+            (memcmp(read_buf, content_encoding_str,
                     CONTENT_ENCODING_LEN) != 0))
         {
           printf("Protocol error in content encoding state\n");
@@ -2560,7 +2492,7 @@ rec_get_config(struct ic_connection *conn,
         break;
       case RECEIVE_CONFIG_STATE:
         g_assert(config_buf);
-        memcpy(config_buf+config_size, read_line_buf, read_size);
+        memcpy(config_buf+config_size, read_buf, read_size);
         config_size+= read_size;
         rec_config_size+= (read_size + 1);
         if (rec_config_size >= content_length)

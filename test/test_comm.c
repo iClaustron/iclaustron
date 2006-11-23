@@ -45,7 +45,8 @@ void connection_test()
   int ret_code;
 
   printf("Connection Test Started\n");
-  ic_init_socket_object(&conn, glob_is_client, TRUE, FALSE, TRUE);
+  ic_init_socket_object(&conn, glob_is_client, TRUE, FALSE, TRUE,
+                        NULL, NULL);
   conn.server_ip= glob_server_ip;
   conn.server_port= glob_server_port;
   conn.client_ip= glob_client_ip;

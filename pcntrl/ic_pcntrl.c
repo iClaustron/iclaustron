@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
   conn.client_port= 0;
   conn.backlog= 5;
   
-  ic_init_socket_object(&conn, 0, 0, 0, 0);
+  ic_init_socket_object(&conn, FALSE, FALSE, FALSE, FALSE, NULL, NULL);
   if ((ret_code= conn.conn_op.set_up_ic_connection(&conn)))
   {
     printf("Failed to set up listening port\n");

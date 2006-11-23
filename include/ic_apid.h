@@ -1,6 +1,8 @@
 #include <ic_comm.h>
 #include <ic_common.h>
 
+struct ic_ds_conn;
+
 void ic_init_ds_connection(struct ic_ds_conn *conn);
 
 struct ic_ds_operations
