@@ -130,7 +130,7 @@ ic_rec_with_cr(struct ic_connection *conn,
   int res;
   char *end_line;
 
-  if (*read_size > 0)
+  if (*size_curr_buf > 0)
   {
     *read_size+= 1; /* Take CR into account */
     *size_curr_buf-= *read_size;

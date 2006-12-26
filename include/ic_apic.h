@@ -196,9 +196,14 @@ struct ic_kernel_node_config
   guint32 log_level_error;
   guint32 log_level_backup;
   guint32 inject_fault;
+  guint32 kernel_scheduler_no_send_time;
+  guint32 kernel_scheduler_no_sleep_time;
+  guint32 kernel_lock_main_thread;
+  guint32 kernel_lock_other_threads;
 
   gchar kernel_volatile_mode;
   gchar kernel_automatic_restart;
+  gchar kernel_rt_scheduler_threads;
 };
 
 struct ic_client_node_config

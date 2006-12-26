@@ -1,5 +1,21 @@
 #include <ic_apic.h>
 /*
+  DESCRIPTION TO ADD NEW CONFIGURATION VARIABLE:
+  1) Add a new constant in this file e.g:
+  #define KERNEL_SCHEDULER_NO_SEND_TIME 166
+  2) Add a new entry in ic_init_config_parameters
+     Check how other entries look like, the struct
+     to fill in config_entry and is described in
+     ic_apic.h
+  3) Add a new variable in the struct's for the various
+     node types, for kernel variables the struct is
+     ic_kernel_node_config (ic_apic.h)
+  4) Add a case statement in the read_node_section or in
+     the read_comm_section method that fills in the
+     new variable in the reading of the configuration.
+*/
+
+/*
   Description of protocol to get configuration profile from
   cluster server.
   1) Start with get_nodeid session. The api sends a number of
@@ -126,7 +142,7 @@ static const char *result_ok_str= "result: Ok";
 static const char *content_len_str= "Content-Length: ";
 static const char *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const char *content_encoding_str= "Content-Transfer-Encoding: base64";
-static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
+static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 
 /*
   CONFIGURATION PARAMETER MODULE
@@ -207,6 +223,11 @@ static const guint32 version_no= (guint32)0x5010C; /* 5.1.12 */
 #define KERNEL_FILE_SYNCH_SIZE 163
 #define KERNEL_DISK_WRITE_SPEED 164
 #define KERNEL_DISK_WRITE_SPEED_START 165
+#define KERNEL_SCHEDULER_NO_SEND_TIME 166
+#define KERNEL_SCHEDULER_NO_SLEEP_TIME 167
+#define KERNEL_RT_SCHEDULER_THREADS 170
+#define KERNEL_LOCK_MAIN_THREAD 171
+#define KERNEL_LOCK_OTHER_THREADS 172
 #define KERNEL_MEMORY_POOL 198
 #define KERNEL_DUMMY 199
 
@@ -1169,6 +1190,73 @@ ic_init_config_parameters()
   conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
+  map_config_id[KERNEL_SCHEDULER_NO_SEND_TIME]= 74;
+  conf_entry= &glob_conf_entry[74];
+  conf_entry->config_entry_name= "kernel_scheduler_no_send_time";
+  conf_entry->config_entry_description=
+  "How long time can the scheduler execute without sending socket buffers";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 10999;
+  conf_entry->default_value= 0;
+  conf_entry->min_version_used= 0x5010D;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_SCHEDULER_NO_SLEEP_TIME]= 75;
+  conf_entry= &glob_conf_entry[75];
+  conf_entry->config_entry_name= "kernel_scheduler_no_sleep_time";
+  conf_entry->config_entry_description=
+  "How long time can the scheduler execute without going to sleep";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 10999;
+  conf_entry->default_value= 0;
+  conf_entry->min_version_used= 0x5010D;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_RT_SCHEDULER_THREADS]= 76;
+  conf_entry= &glob_conf_entry[76];
+  conf_entry->config_entry_name= "kernel_rt_scheduler_thread";
+  conf_entry->config_entry_description=
+  "If set the kernel is setting its thread in RT priority, requires root privileges";
+  conf_entry->is_boolean= TRUE;
+  conf_entry->default_value= FALSE;
+  conf_entry->min_version_used= 0x5010D;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_LOCK_MAIN_THREAD]= 77;
+  conf_entry= &glob_conf_entry[77];
+  conf_entry->config_entry_name= "kernel_lock_main_thread";
+  conf_entry->config_entry_description=
+  "Lock Main Thread to a CPU id";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 65535;
+  conf_entry->default_value= 65535;
+  conf_entry->min_version_used= 0x5010D;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
+  map_config_id[KERNEL_LOCK_OTHER_THREADS]= 78;
+  conf_entry= &glob_conf_entry[78];
+  conf_entry->config_entry_name= "kernel_lock_other_threads";
+  conf_entry->config_entry_description=
+  "Lock other threads to a CPU id";
+  conf_entry->is_min_value_defined= TRUE;
+  conf_entry->is_max_value_defined= TRUE;
+  conf_entry->min_value= 0;
+  conf_entry->max_value= 65535;
+  conf_entry->default_value= 65535;
+  conf_entry->min_version_used= 0x5010D;
+  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
+  conf_entry->change_variant= IC_ONLINE_CHANGE;
+
 /*
   This is the TCP configuration section.
 */
@@ -1842,7 +1930,7 @@ read_node_section(struct ic_cluster_config *conf_obj,
           case KERNEL_DEADLOCK_TIMER:
             kernel_conf->timer_deadlock= value; break;
           case KERNEL_VOLATILE_MODE:
-            kernel_conf->kernel_volatile_mode= value; break;
+            kernel_conf->kernel_volatile_mode= (gchar)value; break;
           case KERNEL_ORDERED_KEY_OBJECTS:
             kernel_conf->number_of_ordered_key_objects= value; break;
           case KERNEL_UNIQUE_HASH_KEY_OBJECTS:
@@ -1882,7 +1970,17 @@ read_node_section(struct ic_cluster_config *conf_obj,
           case KERNEL_FILE_SYNCH_SIZE:
             kernel_conf->kernel_file_synch_size= value; break;
           case KERNEL_DAEMON_RESTART_AT_ERROR:
-            kernel_conf->kernel_automatic_restart= value; break;
+            kernel_conf->kernel_automatic_restart= (gchar)value; break;
+          case KERNEL_SCHEDULER_NO_SEND_TIME:
+            kernel_conf->kernel_scheduler_no_send_time= value; break;
+          case KERNEL_SCHEDULER_NO_SLEEP_TIME:
+            kernel_conf->kernel_scheduler_no_sleep_time= value; break;
+          case KERNEL_RT_SCHEDULER_THREADS:
+            kernel_conf->kernel_rt_scheduler_threads= (gchar)value; break;
+          case KERNEL_LOCK_MAIN_THREAD:
+            kernel_conf->kernel_lock_main_thread= value; break;
+          case KERNEL_LOCK_OTHER_THREADS:
+            kernel_conf->kernel_lock_other_threads= value; break;
           case KERNEL_DUMMY:
           case KERNEL_INITIAL_OPEN_FILES:
           case KERNEL_MAX_OPEN_FILES:
@@ -2348,55 +2446,75 @@ rec_get_nodeid(struct ic_connection *conn,
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-     DEBUG(ic_print_buf(read_buf, read_size));
-     switch (state)
-     {
-       case GET_NODEID_REPLY_STATE:
-         if ((read_size != GET_NODEID_REPLY_LEN) ||
-             (memcmp(read_buf, get_nodeid_reply_str,
-                     GET_NODEID_REPLY_LEN) != 0))
-         {
-           printf("Protocol error in Get nodeid reply state\n");
-           return PROTOCOL_ERROR;
-         }
-         state= NODEID_STATE;
-         break;
-       case NODEID_STATE:
-         if ((read_size <= NODEID_LEN) ||
-             (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
-             (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
-                                            read_size - NODEID_LEN,
-                                            &node_number)) ||
-             (node_number > MAX_NODE_ID))
-         {
-           printf("Protocol error in nodeid state\n");
-           return PROTOCOL_ERROR;
-         }
-         DEBUG(printf("Nodeid = %u\n", (guint32)node_number));
-         apic->node_ids[current_cluster_index]= (guint32)node_number;
-         state= RESULT_OK_STATE;
-         break;
-       case RESULT_OK_STATE:
-         if ((read_size != RESULT_OK_LEN) ||
-             (memcmp(read_buf, result_ok_str, RESULT_OK_LEN) != 0))
-         {
-           printf("Protocol error in result ok state\n");
-           return PROTOCOL_ERROR;
-         }
-         state= WAIT_EMPTY_RETURN_STATE;
-         break;
-       case WAIT_EMPTY_RETURN_STATE:
-         if (read_size != 0)
-         {
-           printf("Protocol error in result ok state\n");
-           return PROTOCOL_ERROR;
-         }
-         return 0;
-       case RESULT_ERROR_STATE:
-         break;
-       default:
-         break;
-     }
+    DEBUG(ic_print_buf(read_buf, read_size));
+    switch (state)
+    {
+      case GET_NODEID_REPLY_STATE:
+        /*
+          The protocol is decoded in the order of the case statements in the switch
+          statements.
+        
+          Receive:
+          get nodeid reply<CR>
+        */
+        if ((read_size != GET_NODEID_REPLY_LEN) ||
+            (memcmp(read_buf, get_nodeid_reply_str,
+                    GET_NODEID_REPLY_LEN) != 0))
+        {
+          printf("Protocol error in Get nodeid reply state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= NODEID_STATE;
+        break;
+      case NODEID_STATE:
+        /*
+          Receive:
+          nodeid: __nodeid<CR>
+          Where __nodeid is an integer giving the nodeid of the starting process
+        */
+        if ((read_size <= NODEID_LEN) ||
+            (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
+            (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
+                                           read_size - NODEID_LEN,
+                                           &node_number)) ||
+            (node_number > MAX_NODE_ID))
+        {
+          printf("Protocol error in nodeid state\n");
+          return PROTOCOL_ERROR;
+        }
+        DEBUG(printf("Nodeid = %u\n", (guint32)node_number));
+        apic->node_ids[current_cluster_index]= (guint32)node_number;
+        state= RESULT_OK_STATE;
+        break;
+      case RESULT_OK_STATE:
+        /*
+          Receive:
+          result: Ok<CR>
+        */
+        if ((read_size != RESULT_OK_LEN) ||
+            (memcmp(read_buf, result_ok_str, RESULT_OK_LEN) != 0))
+        {
+          printf("Protocol error in result ok state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= WAIT_EMPTY_RETURN_STATE;
+        break;
+      case WAIT_EMPTY_RETURN_STATE:
+        /*
+          Receive:
+          <CR>
+        */
+        if (read_size != 0)
+        {
+          printf("Protocol error in wait empty state\n");
+          return PROTOCOL_ERROR;
+        }
+        return 0;
+      case RESULT_ERROR_STATE:
+        break;
+      default:
+        break;
+    }
   }
   return error;
 }
@@ -2418,9 +2536,17 @@ rec_get_config(struct ic_connection *conn,
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
+    DEBUG(ic_print_buf(read_buf, read_size));
     switch (state)
     {
       case GET_CONFIG_REPLY_STATE:
+        /*
+          The protocol is decoded in the order of the case statements in the switch
+          statements.
+ 
+          Receive:
+          get config reply<CR>
+        */
         if ((read_size != GET_CONFIG_REPLY_LEN) ||
             (memcmp(read_buf, get_config_reply_str,
                     GET_CONFIG_REPLY_LEN) != 0))
@@ -2431,6 +2557,10 @@ rec_get_config(struct ic_connection *conn,
         state= RESULT_OK_STATE;
         break;
       case RESULT_OK_STATE:
+        /*
+          Receive:
+          result: Ok<CR>
+        */
         if ((read_size != RESULT_OK_LEN) ||
             (memcmp(read_buf, result_ok_str, RESULT_OK_LEN) != 0))
         {
@@ -2440,6 +2570,11 @@ rec_get_config(struct ic_connection *conn,
         state= CONTENT_LENGTH_STATE;
         break;
       case CONTENT_LENGTH_STATE:
+        /*
+          Receive:
+          Content-Length: __length<CR>
+          Where __length is a decimal-coded number indicating length in bytes
+        */
         if ((read_size <= CONTENT_LENGTH_LEN) ||
             (memcmp(read_buf, content_len_str,
                     CONTENT_LENGTH_LEN) != 0) ||
@@ -2455,6 +2590,10 @@ rec_get_config(struct ic_connection *conn,
         state= OCTET_STREAM_STATE;
         break;
       case OCTET_STREAM_STATE:
+        /*
+          Receive:
+          Content-Type: ndbconfig/octet-stream<CR>
+        */
         if ((read_size != OCTET_STREAM_LEN) ||
             (memcmp(read_buf, octet_stream_str,
                     OCTET_STREAM_LEN) != 0))
@@ -2465,6 +2604,10 @@ rec_get_config(struct ic_connection *conn,
         state= CONTENT_ENCODING_STATE;
         break;
       case CONTENT_ENCODING_STATE:
+        /*
+          Receive:
+          Content-Transfer-Encoding: base64
+        */
         if ((read_size != CONTENT_ENCODING_LEN) ||
             (memcmp(read_buf, content_encoding_str,
                     CONTENT_ENCODING_LEN) != 0))
@@ -2472,25 +2615,34 @@ rec_get_config(struct ic_connection *conn,
           printf("Protocol error in content encoding state\n");
           return PROTOCOL_ERROR;
         }
+        /*
+          Here we need to allocate receive buffer for configuration plus the
+          place to put the encoded binary data.
+        */
+        if (!(config_buf= g_try_malloc0(content_length)))
+          return MEM_ALLOC_ERROR;
+        config_size= 0;
+        rec_config_size= 0;
         state= WAIT_EMPTY_RETURN_STATE;
         break;
       case WAIT_EMPTY_RETURN_STATE:
+        /*
+          Receive:
+          <CR>
+        */
+        if (read_size != 0)
+        {
+          printf("Protocol error in wait empty return state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= RECEIVE_CONFIG_STATE;
+        break;
+      case RECEIVE_CONFIG_STATE:
         /*
           At this point we should now start receiving the configuration in
           base64 encoded format. It will arrive in 76 character chunks
           followed by a carriage return.
         */
-        state= RECEIVE_CONFIG_STATE;
-        if (!(config_buf= g_try_malloc0(content_length)))
-          return MEM_ALLOC_ERROR;
-        config_size= 0;
-        rec_config_size= 0;
-        /*
-          Here we need to allocate receive buffer for configuration plus the
-          place to put the encoded binary data.
-        */
-        break;
-      case RECEIVE_CONFIG_STATE:
         g_assert(config_buf);
         memcpy(config_buf+config_size, read_buf, read_size);
         config_size+= read_size;
