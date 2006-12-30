@@ -124,10 +124,12 @@
 
 #define MAX_MAP_CONFIG_ID 1024
 #define MAX_CONFIG_ID 256
+
 static guint16 map_config_id[MAX_MAP_CONFIG_ID];
 static struct config_entry glob_conf_entry[MAX_CONFIG_ID];
 static gboolean glob_conf_entry_inited= FALSE;
 
+static const char *empty_string= "";
 static const char *get_nodeid_str= "get nodeid";
 static const char *get_nodeid_reply_str= "get nodeid reply";
 static const char *get_config_str= "get config";
@@ -257,8 +259,8 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define TCP_SECOND_NODE_ID 401
 #define TCP_USE_MESSAGE_ID 402
 #define TCP_USE_CHECKSUM 403
-#define TCP_CLIENT_PORT 2000
-#define TCP_SERVER_PORT 406
+#define TCP_CLIENT_PORT_NUMBER 420
+#define TCP_SERVER_PORT_NUMBER 406
 #define TCP_SERVER_NODE_ID 410
 #define TCP_WRITE_BUFFER_SIZE 454
 #define TCP_READ_BUFFER_SIZE 455
@@ -1021,7 +1023,7 @@ ic_init_config_parameters()
   map_config_id[KERNEL_DUMMY]= 54;
   conf_entry= &glob_conf_entry[54];
   conf_entry->config_entry_name= "kernel_dummy";
-  conf_entry->config_entry_description="";
+  conf_entry->config_entry_description= (char*)empty_string;
   conf_entry->default_value= 0;
   conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_NOT_CHANGEABLE;
@@ -1335,7 +1337,7 @@ ic_init_config_parameters()
   conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_CLIENT_PORT]= 104;
+  map_config_id[TCP_CLIENT_PORT_NUMBER]= 104;
   conf_entry= &glob_conf_entry[104];
   conf_entry->config_entry_name= "client_port_number";
   conf_entry->config_entry_description=
@@ -1347,8 +1349,9 @@ ic_init_config_parameters()
   conf_entry->is_mandatory_to_specify= 1;
   conf_entry->node_type= (1 << IC_COMM_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+  conf_entry->is_only_iclaustron= TRUE;
 
-  map_config_id[TCP_SERVER_PORT]= 105;
+  map_config_id[TCP_SERVER_PORT_NUMBER]= 105;
   conf_entry= &glob_conf_entry[105];
   conf_entry->config_entry_name= "server_port_number";
   conf_entry->config_entry_description=
@@ -1363,7 +1366,7 @@ ic_init_config_parameters()
 
   map_config_id[TCP_WRITE_BUFFER_SIZE]= 106;
   conf_entry= &glob_conf_entry[106];
-  conf_entry->config_entry_name= "tcp_write_size";
+  conf_entry->config_entry_name= "tcp_write_buffer_size";
   conf_entry->config_entry_description=
   "Size of write buffer in front of TCP socket";
   conf_entry->is_min_value_defined= TRUE;
@@ -1374,7 +1377,7 @@ ic_init_config_parameters()
 
   map_config_id[TCP_READ_BUFFER_SIZE]= 107;
   conf_entry= &glob_conf_entry[107];
-  conf_entry->config_entry_name= "tcp_read_size";
+  conf_entry->config_entry_name= "tcp_buffer_read_size";
   conf_entry->config_entry_description=
   "Size of read buffer in front of TCP socket";
   conf_entry->is_min_value_defined= TRUE;
@@ -1442,7 +1445,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Type of cluster event log";
   conf_entry->is_string_type= TRUE;
-  conf_entry->default_string="";
+  conf_entry->default_string= (char*)empty_string;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
@@ -1530,7 +1533,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Data directory of the node";
   conf_entry->is_string_type= TRUE;
-  conf_entry->default_string="";
+  conf_entry->default_string= (char*)empty_string;
   conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
@@ -1543,7 +1546,7 @@ ic_init_config_parameters()
   conf_entry->config_entry_description=
   "Hostname of the node";
   conf_entry->is_string_type= TRUE;
-  conf_entry->default_string="";
+  conf_entry->default_string= (char*)empty_string;
   conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
@@ -1619,8 +1622,8 @@ init_config_kernel_object(struct ic_kernel_node_config *kernel_conf)
 {
   kernel_conf->filesystem_path= NULL;
   kernel_conf->checkpoint_path= NULL;
-  kernel_conf->node_data_path= "";
-  kernel_conf->hostname= "";
+  kernel_conf->node_data_path= (char*)empty_string;
+  kernel_conf->hostname= (char*)empty_string;
 
   kernel_conf->size_of_ram_memory= 
     get_default_value_uint64(KERNEL_RAM_MEMORY);
@@ -1736,8 +1739,8 @@ init_config_kernel_object(struct ic_kernel_node_config *kernel_conf)
 static void
 init_config_client_object(struct ic_client_node_config *client_conf)
 {
-  client_conf->hostname= "";
-  client_conf->node_data_path= "";
+  client_conf->hostname= (char*)empty_string;
+  client_conf->node_data_path= (char*)empty_string;
 
   client_conf->client_max_batch_byte_size=
     get_default_value_uint32(CLIENT_MAX_BATCH_BYTE_SIZE);
@@ -1754,8 +1757,8 @@ init_config_client_object(struct ic_client_node_config *client_conf)
 static void
 init_config_cluster_server_object( struct ic_cluster_server_config *cs_conf)
 {
-  cs_conf->hostname= "";
-  cs_conf->node_data_path= "";
+  cs_conf->hostname= (char*)empty_string;
+  cs_conf->node_data_path= (char*)empty_string;
 
   cs_conf->client_resolve_rank=
     get_default_value_uint32(CLIENT_RESOLVE_RANK);
@@ -1770,6 +1773,22 @@ init_config_cluster_server_object( struct ic_cluster_server_config *cs_conf)
 static void
 init_config_comm_object(struct ic_comm_link_config *comm_conf)
 {
+  comm_conf->tcp_conf.first_host_name= (char*)empty_string;
+  comm_conf->tcp_conf.second_host_name= (char*)empty_string;
+
+  comm_conf->tcp_conf.first_node_id= 0;
+  comm_conf->tcp_conf.second_node_id= 0;
+
+  comm_conf->tcp_conf.tcp_write_buffer_size= 
+    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
+  comm_conf->tcp_conf.tcp_read_buffer_size= 
+    get_default_value_uint32(TCP_READ_BUFFER_SIZE);
+  comm_conf->tcp_conf.client_port_number= 
+    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
+  comm_conf->tcp_conf.tcp_write_buffer_size= 
+    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
+  comm_conf->tcp_conf.tcp_write_buffer_size= 
+    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
 }
 
 /*
@@ -2359,16 +2378,16 @@ read_comm_section(struct ic_cluster_config *conf_obj,
           tcp_conf->use_message_id= (gchar)value; break;
         case TCP_USE_CHECKSUM:
           tcp_conf->use_checksum= (gchar)value; break;
-        case TCP_CLIENT_PORT:
-          tcp_conf->client_port= (guint16)value; break;
-        case TCP_SERVER_PORT:
-          tcp_conf->server_port= (guint16)value; break;
+        case TCP_CLIENT_PORT_NUMBER:
+          tcp_conf->client_port_number= (guint16)value; break;
+        case TCP_SERVER_PORT_NUMBER:
+          tcp_conf->server_port_number= (guint16)value; break;
         case TCP_SERVER_NODE_ID:
           tcp_conf->first_node_id= (guint16)value; break;
         case TCP_WRITE_BUFFER_SIZE:
-          tcp_conf->write_buffer_size= value; break;
+          tcp_conf->tcp_write_buffer_size= value; break;
         case TCP_READ_BUFFER_SIZE:
-          tcp_conf->read_buffer_size= value; break;
+          tcp_conf->tcp_read_buffer_size= value; break;
         case TCP_GROUP:
           /* Ignore for now */
           break;
@@ -2582,7 +2601,7 @@ send_get_nodeid(struct ic_connection *conn,
       ic_send_with_cr(conn, public_key_str) ||
       ic_send_with_cr(conn, endian_buf) ||
       ic_send_with_cr(conn, log_event_str) ||
-      ic_send_with_cr(conn, ""))
+      ic_send_with_cr(conn, empty_string))
     return conn->error_code;
   return 0;
 }
@@ -2594,7 +2613,7 @@ send_get_config(struct ic_connection *conn)
   g_snprintf(version_buf, 32, "%s%u", version_str, version_no);
   if (ic_send_with_cr(conn, get_config_str) ||
       ic_send_with_cr(conn, version_buf) ||
-      ic_send_with_cr(conn, ""))
+      ic_send_with_cr(conn, empty_string))
     return conn->error_code;
   return 0;
 }

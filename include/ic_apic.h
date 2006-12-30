@@ -61,6 +61,7 @@ struct config_entry
   gchar is_string_type;
   gchar is_mandatory_to_specify;
   gchar is_not_configurable;
+  gchar is_only_iclaustron;
 };
 
 struct ic_cluster_config;
@@ -210,6 +211,7 @@ struct ic_client_node_config
 {
   char *hostname;
   char *node_data_path;
+
   guint32 client_max_batch_byte_size;
   guint32 client_batch_byte_size;
   guint32 client_batch_size;
@@ -221,6 +223,7 @@ struct ic_cluster_server_config
 {
   char *hostname;
   char *node_data_path;
+
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
   guint32 cluster_server_event_log;
@@ -231,13 +234,16 @@ struct ic_tcp_comm_link_config
 {
   char *first_host_name;
   char *second_host_name;
-  guint32 write_buffer_size;
-  guint32 read_buffer_size;
+
+  guint32 tcp_write_buffer_size;
+  guint32 tcp_read_buffer_size;
+
   guint16 first_node_id;
   guint16 second_node_id;
-  guint16 client_port;
-  guint16 server_port;
+  guint16 client_port_number;
+  guint16 server_port_number;
   guint16 server_node_id;
+
   gchar use_message_id;
   gchar use_checksum;
   /* Ignore Connection Group for now */
