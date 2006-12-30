@@ -171,7 +171,7 @@ struct ic_kernel_node_config
   guint32 timer_heartbeat_client_nodes;
   guint32 timer_local_checkpoint;
   guint32 timer_global_checkpoint;
-  guint32 timer_resolver;
+  guint32 timer_resolve;
   guint32 timer_kernel_watchdog;
   guint32 number_of_redo_log_files;
   guint32 timer_check_interval;
@@ -213,18 +213,18 @@ struct ic_client_node_config
   guint32 client_max_batch_byte_size;
   guint32 client_batch_byte_size;
   guint32 client_batch_size;
-  guint32 client_resolver_rank;
-  guint32 client_resolver_timer;
+  guint32 client_resolve_rank;
+  guint32 client_resolve_timer;
 };
 
 struct ic_cluster_server_config
 {
   char *hostname;
   char *node_data_path;
-  guint32 client_resolver_rank;
-  guint32 client_resolver_timer;
+  guint32 client_resolve_rank;
+  guint32 client_resolve_timer;
   guint32 cluster_server_event_log;
-  guint32 cluster_server_port;
+  guint32 cluster_server_port_number;
 };
 
 struct ic_tcp_comm_link_config

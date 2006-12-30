@@ -13,6 +13,8 @@
   4) Add a case statement in the read_node_section or in
      the read_comm_section method that fills in the
      new variable in the reading of the configuration.
+  5) Add an initialisation of the variable to its default
+     value in the proper initialisation routine.
 */
 
 /*
@@ -188,7 +190,7 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define KERNEL_CLIENT_HEARTBEAT_TIMER 119
 #define KERNEL_LOCAL_CHECKPOINT_TIMER 120
 #define KERNEL_GLOBAL_CHECKPOINT_TIMER 121
-#define KERNEL_RESOLVER_TIMER 122
+#define KERNEL_RESOLVE_TIMER 122
 #define KERNEL_WATCHDOG_TIMER 123
 #define KERNEL_DAEMON_RESTART_AT_ERROR 124
 #define KERNEL_FILESYSTEM_PATH 125
@@ -231,8 +233,8 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define KERNEL_MEMORY_POOL 198
 #define KERNEL_DUMMY 199
 
-#define CLIENT_RESOLVER_RANK 200
-#define CLIENT_RESOLVER_TIMER 201
+#define CLIENT_RESOLVE_RANK 200
+#define CLIENT_RESOLVE_TIMER 201
 
 #define KERNEL_START_LOG_LEVEL 250
 #define KERNEL_STOP_LOG_LEVEL 251
@@ -249,7 +251,7 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 
 #define CLUSTER_SERVER_EVENT_LOG 147
 
-#define CLUSTER_SERVER_PORT 300
+#define CLUSTER_SERVER_PORT_NUMBER 300
 
 #define TCP_FIRST_NODE_ID 400
 #define TCP_SECOND_NODE_ID 401
@@ -356,6 +358,33 @@ ic_print_config_parameters(guint32 mask)
         printf("No max value defined\n");
     }
   }
+}
+
+static guint32 get_default_value_uint32(guint32 id)
+{
+  struct config_entry *conf_entry;
+  g_assert(map_config_id[id]);
+  conf_entry= &glob_conf_entry[map_config_id[id]];
+  g_assert(!conf_entry->is_mandatory_to_specify);
+  return conf_entry->default_value;
+}
+
+static guint64 get_default_value_uint64(guint32 id)
+{
+  struct config_entry *conf_entry;
+  g_assert(map_config_id[id]);
+  conf_entry= &glob_conf_entry[map_config_id[id]];
+  g_assert(!conf_entry->is_mandatory_to_specify);
+  return (guint64)conf_entry->default_value;
+}
+
+static gchar get_default_value_uchar(guint32 id)
+{
+  struct config_entry *conf_entry;
+  g_assert(map_config_id[id]);
+  conf_entry= &glob_conf_entry[map_config_id[id]];
+  g_assert(!conf_entry->is_mandatory_to_specify);
+  return (gchar)conf_entry->default_value;
 }
 
 static void
@@ -617,11 +646,11 @@ ic_init_config_parameters()
   conf_entry->node_type= (1 << IC_KERNEL_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_RESOLVER_TIMER]= 23;
+  map_config_id[KERNEL_RESOLVE_TIMER]= 23;
   conf_entry= &glob_conf_entry[23];
-  conf_entry->config_entry_name= "timer_resolver";
+  conf_entry->config_entry_name= "timer_resolve";
   conf_entry->config_entry_description=
-  "Time in ms waiting for response from resolver";
+  "Time in ms waiting for response from resolve";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->min_value= 10;
   conf_entry->default_value= 2000;
@@ -1409,7 +1438,7 @@ ic_init_config_parameters()
 */
   map_config_id[CLUSTER_SERVER_EVENT_LOG]= 150;
   conf_entry= &glob_conf_entry[150];
-  conf_entry->config_entry_name= "cluster_event_log_type";
+  conf_entry->config_entry_name= "cluster_server_event_log";
   conf_entry->config_entry_description=
   "Type of cluster event log";
   conf_entry->is_string_type= TRUE;
@@ -1417,7 +1446,7 @@ ic_init_config_parameters()
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
-  map_config_id[CLUSTER_SERVER_PORT]= 151;
+  map_config_id[CLUSTER_SERVER_PORT_NUMBER]= 151;
   conf_entry= &glob_conf_entry[151];
   conf_entry->config_entry_name= "cluster_server_port_number";
   conf_entry->config_entry_description=
@@ -1434,7 +1463,7 @@ ic_init_config_parameters()
   This is the client configuration section.
 */
 
-  map_config_id[CLIENT_RESOLVER_RANK]= 200;
+  map_config_id[CLIENT_RESOLVE_RANK]= 200;
   conf_entry= &glob_conf_entry[200];
   conf_entry->config_entry_name= "client_resolve_rank";
   conf_entry->config_entry_description=
@@ -1447,7 +1476,7 @@ ic_init_config_parameters()
   conf_entry->node_type= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
-  map_config_id[CLIENT_RESOLVER_TIMER]= 201;
+  map_config_id[CLIENT_RESOLVE_TIMER]= 201;
   conf_entry= &glob_conf_entry[201];
   conf_entry->config_entry_name= "client_resolve_timer";
   conf_entry->config_entry_description=
@@ -1484,7 +1513,7 @@ ic_init_config_parameters()
 
   map_config_id[CLIENT_MAX_BATCH_BYTE_SIZE]= 204;
   conf_entry= &glob_conf_entry[204];
-  conf_entry->config_entry_name= "max_client_batch_byte_size";
+  conf_entry->config_entry_name= "client_max_batch_byte_size";
   conf_entry->config_entry_description=
   "Size in bytes of max of the sum of the batches in a scan operations";
   conf_entry->is_min_value_defined= TRUE;
@@ -1497,7 +1526,7 @@ ic_init_config_parameters()
 
   map_config_id[IC_NODE_DATA_PATH]= 250;
   conf_entry= &glob_conf_entry[250];
-  conf_entry->config_entry_name= "node_data_dir";
+  conf_entry->config_entry_name= "node_data_path";
   conf_entry->config_entry_description=
   "Data directory of the node";
   conf_entry->is_string_type= TRUE;
@@ -1588,16 +1617,154 @@ ic_check_config_string(int config_id, enum ic_config_type conf_type)
 static void
 init_config_kernel_object(struct ic_kernel_node_config *kernel_conf)
 {
+  kernel_conf->filesystem_path= NULL;
+  kernel_conf->checkpoint_path= NULL;
+  kernel_conf->node_data_path= "";
+  kernel_conf->hostname= "";
+
+  kernel_conf->size_of_ram_memory= 
+    get_default_value_uint64(KERNEL_RAM_MEMORY);
+  kernel_conf->size_of_hash_memory= 
+    get_default_value_uint64(KERNEL_HASH_MEMORY);
+  kernel_conf->page_cache_size= 
+    get_default_value_uint64(KERNEL_PAGE_CACHE_SIZE);
+  kernel_conf->kernel_memory_pool= 
+    get_default_value_uint64(KERNEL_MEMORY_POOL);
+
+  kernel_conf->number_of_replicas= 0;
+  kernel_conf->max_number_of_trace_files= 
+    get_default_value_uint32(KERNEL_MAX_TRACE_FILES);
+  kernel_conf->number_of_table_objects= 
+    get_default_value_uint32(KERNEL_TABLE_OBJECTS);
+  kernel_conf->number_of_column_objects= 
+    get_default_value_uint32(KERNEL_COLUMN_OBJECTS);
+  kernel_conf->number_of_key_objects= 
+    get_default_value_uint32(KERNEL_KEY_OBJECTS);
+  kernel_conf->number_of_internal_trigger_objects= 
+    get_default_value_uint32(KERNEL_INTERNAL_TRIGGER_OBJECTS);
+  kernel_conf->number_of_connection_objects= 
+    get_default_value_uint32(KERNEL_CONNECTION_OBJECTS);
+  kernel_conf->number_of_operation_objects= 
+    get_default_value_uint32(KERNEL_OPERATION_OBJECTS);
+  kernel_conf->number_of_scan_objects= 
+    get_default_value_uint32(KERNEL_SCAN_OBJECTS);
+  kernel_conf->number_of_key_operation_objects= 
+    get_default_value_uint32(KERNEL_KEY_OPERATION_OBJECTS);
+  kernel_conf->use_unswappable_memory= 
+    get_default_value_uint32(KERNEL_LOCK_MEMORY);
+  kernel_conf->timer_wait_partial_start= 
+    get_default_value_uint32(KERNEL_WAIT_PARTIAL_START);
+  kernel_conf->timer_wait_partitioned_start= 
+    get_default_value_uint32(KERNEL_WAIT_PARTITIONED_START);
+  kernel_conf->timer_wait_error_start= 
+    get_default_value_uint32(KERNEL_WAIT_ERROR_START);
+  kernel_conf->timer_heartbeat_kernel_nodes= 
+    get_default_value_uint32(KERNEL_HEARTBEAT_TIMER);
+  kernel_conf->timer_heartbeat_client_nodes= 
+    get_default_value_uint32(KERNEL_CLIENT_HEARTBEAT_TIMER);
+  kernel_conf->timer_local_checkpoint= 
+    get_default_value_uint32(KERNEL_LOCAL_CHECKPOINT_TIMER);
+  kernel_conf->timer_global_checkpoint= 
+    get_default_value_uint32(KERNEL_GLOBAL_CHECKPOINT_TIMER);
+  kernel_conf->timer_resolve= 
+    get_default_value_uint32(KERNEL_RESOLVE_TIMER);
+  kernel_conf->timer_kernel_watchdog= 
+    get_default_value_uint32(KERNEL_WATCHDOG_TIMER);
+  kernel_conf->number_of_redo_log_files= 
+    get_default_value_uint32(KERNEL_REDO_LOG_FILES);
+  kernel_conf->timer_check_interval= 
+    get_default_value_uint32(KERNEL_CHECK_INTERVAL);
+  kernel_conf->timer_client_activity= 
+    get_default_value_uint32(KERNEL_CLIENT_ACTIVITY_TIMER);
+  kernel_conf->timer_deadlock= 
+    get_default_value_uint32(KERNEL_DEADLOCK_TIMER);
+  kernel_conf->number_of_ordered_key_objects= 
+    get_default_value_uint32(KERNEL_ORDERED_KEY_OBJECTS);
+  kernel_conf->number_of_unique_hash_key_objects= 
+    get_default_value_uint32(KERNEL_UNIQUE_HASH_KEY_OBJECTS);
+  kernel_conf->redo_log_memory= 
+    get_default_value_uint32(KERNEL_REDO_LOG_MEMORY);
+  kernel_conf->kernel_file_synch_size= 
+    get_default_value_uint32(KERNEL_FILE_SYNCH_SIZE);
+  kernel_conf->kernel_disk_write_speed= 
+    get_default_value_uint32(KERNEL_DISK_WRITE_SPEED);
+  kernel_conf->kernel_disk_write_speed_start= 
+    get_default_value_uint32(KERNEL_DISK_WRITE_SPEED_START);
+  kernel_conf->log_level_start= 
+    get_default_value_uint32(KERNEL_START_LOG_LEVEL);
+  kernel_conf->log_level_stop= 
+    get_default_value_uint32(KERNEL_STOP_LOG_LEVEL);
+  kernel_conf->log_level_statistics= 
+    get_default_value_uint32(KERNEL_STAT_LOG_LEVEL);
+  kernel_conf->log_level_checkpoint= 
+    get_default_value_uint32(KERNEL_CHECKPOINT_LOG_LEVEL);
+  kernel_conf->log_level_restart= 
+    get_default_value_uint32(KERNEL_RESTART_LOG_LEVEL);
+  kernel_conf->log_level_connection= 
+    get_default_value_uint32(KERNEL_CONNECTION_LOG_LEVEL);
+  kernel_conf->log_level_reports= 
+    get_default_value_uint32(KERNEL_REPORT_LOG_LEVEL);
+  kernel_conf->log_level_warning= 
+    get_default_value_uint32(KERNEL_WARNING_LOG_LEVEL);
+  kernel_conf->log_level_error= 
+    get_default_value_uint32(KERNEL_ERROR_LOG_LEVEL);
+  kernel_conf->log_level_congestion= 
+    get_default_value_uint32(KERNEL_CONGESTION_LOG_LEVEL);
+  kernel_conf->log_level_debug= 
+    get_default_value_uint32(KERNEL_DEBUG_LOG_LEVEL);
+  kernel_conf->log_level_backup= 
+    get_default_value_uint32(KERNEL_BACKUP_LOG_LEVEL);
+  kernel_conf->inject_fault= 
+    get_default_value_uint32(KERNEL_INJECT_FAULT);
+  kernel_conf->kernel_scheduler_no_send_time= 
+    get_default_value_uint32(KERNEL_SCHEDULER_NO_SEND_TIME);
+  kernel_conf->kernel_scheduler_no_sleep_time= 
+    get_default_value_uint32(KERNEL_SCHEDULER_NO_SLEEP_TIME);
+  kernel_conf->kernel_lock_main_thread= 
+    get_default_value_uint32(KERNEL_LOCK_MAIN_THREAD);
+  kernel_conf->kernel_lock_other_threads= 
+    get_default_value_uint32(KERNEL_LOCK_OTHER_THREADS);
+
+  kernel_conf->kernel_volatile_mode= 
+    get_default_value_uchar(KERNEL_VOLATILE_MODE);
+  kernel_conf->kernel_automatic_restart= 
+    get_default_value_uchar(KERNEL_DAEMON_RESTART_AT_ERROR);
+  kernel_conf->kernel_rt_scheduler_threads= 
+    get_default_value_uchar(KERNEL_RT_SCHEDULER_THREADS);
 }
 
 static void
 init_config_client_object(struct ic_client_node_config *client_conf)
 {
+  client_conf->hostname= "";
+  client_conf->node_data_path= "";
+
+  client_conf->client_max_batch_byte_size=
+    get_default_value_uint32(CLIENT_MAX_BATCH_BYTE_SIZE);
+  client_conf->client_batch_byte_size=
+    get_default_value_uint32(CLIENT_BATCH_BYTE_SIZE);
+  client_conf->client_batch_size=
+    get_default_value_uint32(CLIENT_BATCH_SIZE);
+  client_conf->client_resolve_rank=
+    get_default_value_uint32(CLIENT_RESOLVE_RANK);
+  client_conf->client_resolve_timer=
+    get_default_value_uint32(CLIENT_RESOLVE_TIMER);
 }
 
 static void
 init_config_cluster_server_object( struct ic_cluster_server_config *cs_conf)
 {
+  cs_conf->hostname= "";
+  cs_conf->node_data_path= "";
+
+  cs_conf->client_resolve_rank=
+    get_default_value_uint32(CLIENT_RESOLVE_RANK);
+  cs_conf->client_resolve_timer=
+    get_default_value_uint32(CLIENT_RESOLVE_TIMER);
+  cs_conf->cluster_server_event_log=
+    get_default_value_uint32(CLUSTER_SERVER_EVENT_LOG);
+  cs_conf->cluster_server_port_number=
+    get_default_value_uint32(CLUSTER_SERVER_PORT_NUMBER);
 }
 
 static void
@@ -1917,8 +2084,8 @@ read_node_section(struct ic_cluster_config *conf_obj,
             kernel_conf->timer_local_checkpoint= value; break;
           case KERNEL_GLOBAL_CHECKPOINT_TIMER:
             kernel_conf->timer_global_checkpoint= value; break;
-          case KERNEL_RESOLVER_TIMER:
-            kernel_conf->timer_resolver= value; break;
+          case KERNEL_RESOLVE_TIMER:
+            kernel_conf->timer_resolve= value; break;
           case KERNEL_WATCHDOG_TIMER:
             kernel_conf->timer_kernel_watchdog= value; break;
           case KERNEL_REDO_LOG_FILES:
@@ -2072,10 +2239,10 @@ read_node_section(struct ic_cluster_config *conf_obj,
             client_conf->client_batch_byte_size= value; break;
           case CLIENT_BATCH_SIZE:
             client_conf->client_batch_size= value; break;
-          case CLIENT_RESOLVER_RANK:
-            client_conf->client_resolver_rank= value; break;
-          case CLIENT_RESOLVER_TIMER:
-            client_conf->client_resolver_timer= value; break;
+          case CLIENT_RESOLVE_RANK:
+            client_conf->client_resolve_rank= value; break;
+          case CLIENT_RESOLVE_TIMER:
+            client_conf->client_resolve_timer= value; break;
           default:
             return hash_key_error(hash_key, node_type, key_type);
         }
@@ -2107,8 +2274,8 @@ read_node_section(struct ic_cluster_config *conf_obj,
   }
   else if (node_type == IC_CLUSTER_SERVER_NODE)
   {
-    struct ic_cluster_server_config *cluster_server_conf;
-    cluster_server_conf= (struct ic_cluster_server_config*)node_config;
+    struct ic_cluster_server_config *cs_conf;
+    cs_conf= (struct ic_cluster_server_config*)node_config;
     switch (key_type)
     {
       case IC_CL_INT32_TYPE:
@@ -2118,12 +2285,12 @@ read_node_section(struct ic_cluster_config *conf_obj,
           return PROTOCOL_ERROR;
         switch (hash_key)
         {
-          case CLIENT_RESOLVER_RANK:
-            cluster_server_conf->client_resolver_rank= value; break;
-          case CLIENT_RESOLVER_TIMER:
-            cluster_server_conf->client_resolver_timer= value; break;
-          case CLUSTER_SERVER_PORT:
-            cluster_server_conf->cluster_server_port= value; break;
+          case CLIENT_RESOLVE_RANK:
+            cs_conf->client_resolve_rank= value; break;
+          case CLIENT_RESOLVE_TIMER:
+            cs_conf->client_resolve_timer= value; break;
+          case CLUSTER_SERVER_PORT_NUMBER:
+            cs_conf->cluster_server_port_number= value; break;
           default:
             return hash_key_error(hash_key, node_type, key_type);
         }
@@ -2136,12 +2303,12 @@ read_node_section(struct ic_cluster_config *conf_obj,
         switch (hash_key)
         {
           case IC_NODE_DATA_PATH:
-            cluster_server_conf->node_data_path= conf_obj->next_string_memory;
-            strcpy(cluster_server_conf->node_data_path, (char*)(*key_value));
+            cs_conf->node_data_path= conf_obj->next_string_memory;
+            strcpy(cs_conf->node_data_path, (char*)(*key_value));
             break;
           case IC_NODE_HOST:
-            cluster_server_conf->hostname= conf_obj->next_string_memory;
-            strcpy(cluster_server_conf->hostname, (char*)(*key_value));
+            cs_conf->hostname= conf_obj->next_string_memory;
+            strcpy(cs_conf->hostname, (char*)(*key_value));
             break;
           default:
             return hash_key_error(hash_key, node_type, key_type);
