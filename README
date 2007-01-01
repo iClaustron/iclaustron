@@ -1,22 +1,39 @@
-iClaustron is a tool package designed to enable non-DBMS applications to take advantage
-of the features developed for NDB Cluster. It features an API to connect applications
-to the NDB kernel nodes. It contains an implementation of a cluster server. The cluster
-server manages configuration of many clusters. It implements a number of management
-functions for the cluster. The cluster client tool is a command driven tool that acts
-as an interface for end-users to manage the cluster. A graphical tool to manage the
-clusters would use the cluster client as interface or could have a cluster client
-integrated. The replication server is used to handle parallel replication from one
-cluster to another cluster. 
+iClaustron is a tool package designed to enable non-DBMS applications to take
+advantage of the features developed for NDB Cluster. It features an API to
+connect applications to the NDB Data Servers. It contains an implementation of
+a Configuration Server. The Configuration Server manages configuration of many
+clusters. It also has an external interface that enables on-line changes to the
+configuration even in the presence of many Configuration Servers.
+
+The Cluster Server is a server that handles management commands. It implements
+a number of management functions for the cluster. These are implemented either
+directly towards the Data Servers and/or by interacting with the Configuration
+Servers.
+
+The Cluster Client tool is a command driven tool that acts as an interface for
+end-users to manage the cluster.
+
+A graphical tool to manage the clusters would use the Cluster Client as
+interface or could have a Cluster Client integrated.
+
+The Replication Server is used to handle parallel replication from one cluster
+to another cluster. 
 
 Description of directories
 --------------------------
+config_server:
+Implements the iClaustron Configuration Server. A configuration can contain
+one or several clusters. Each cluster is maintained in one configuration file.
+New clusters can be added on-line and there is an interface to change
+the configurations.
+
 cclient:
-This is the cluster client directory. It uses the API to the Cluster
+This is the Cluster Client directory. It uses the API to the Cluster
 Server to implement management features as directed by the user. The
 user issues commands that are handled by a command parser. The command
 parser takes care of understanding the user objectives and then there is
-a set of programs to implement those features using the Cluster Server
-API.
+a set of functions to implement those features using the NDB API Protocol
+and the protocol towards the iClaustron Configuration Server.
 
 clusterserver:
 Implements the Cluster Server. It is controlled by issuing commands using
@@ -44,7 +61,7 @@ from the Data Servers and implements functions to replicate those changes to
 another cluster. It is only used for asynchronous replication. Synchronous
 replication is handled between the Data Servers.
 
-control:
+pcntrl:
 The Control Server is an aid to ensure that the Cluster Client also can control
 start and stop of iClaustron processes. It is also used to handle some support
 functions, such as emailing trace files to a Support Center.
