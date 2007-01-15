@@ -426,6 +426,7 @@ gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
                                        guint64 *ret_number);
 
 #define CARRIAGE_RETURN (char)10
+#define LINE_FEED (char)13
 #define NULL_BYTE (char)0
 
 #endif
