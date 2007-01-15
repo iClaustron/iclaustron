@@ -1,0 +1,10 @@
+max_number_of_trace_files:
+Each time the kernel node crashes an entry in the error log is
+produced and a trace file is produced. There is a preset number
+of entries in an error log and the number of trace files also
+is preset. 
+
+number_of_replicas:
+Replicas are grouped in node groups in the iClaustron Kernel.
+Within a node group all nodes contain the same amount of data
+and records are stored in all nodes in a node group.
