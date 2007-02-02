@@ -7,5 +7,6 @@ bin_PROGRAMS = ic_conf
 ic_conf_SOURCES = ic_conf.c
 ic_conf_LDADD = $(LDADD) ../comm/libic_comm.la \
                           ../port/libic_port.la \
+                          ../util/libic_util.la \
                           ../api_clusterserver/libic_apic.la
 

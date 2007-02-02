@@ -1,3 +1,5 @@
+#ifndef IC_APIC_H
+#define IC_APIC_H
 #include <ic_common.h>
 
 
@@ -62,6 +64,7 @@ struct config_entry
   gchar is_mandatory_to_specify;
   gchar is_not_configurable;
   gchar is_only_iclaustron;
+  gchar is_array_value;
 };
 
 struct ic_cluster_config;
@@ -332,4 +335,4 @@ struct ic_cluster_config
   enum ic_node_type *node_types;
   enum ic_communication_type *comm_types;
 };
-
+#endif
