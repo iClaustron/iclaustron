@@ -57,6 +57,15 @@ ic_set_socket_options(struct ic_connection *conn, int sockfd)
 {
   int no_delay, error, maxseg_size, rec_size, snd_size;
   socklen_t sock_len;
+#ifdef __APPLE__
+  int no_sigpipe= 1;
+  /*
+    Mac OS X don't support MSG_NOSIGNAL but instead have a socket option
+    SO_NO_SIGPIPE that gives the same functionality.
+  */
+  setsockopt(sockfd, IPPROTO_TCP, SO_NOSIGPIPE,
+             (const void *)&no_sigpipe, sizeof(int));
+#endif
   /*
     We start by setting TCP_NODELAY to ensure the OS does no
     extra delays, we want to be in control of when data is
@@ -343,7 +352,7 @@ write_socket_connection(struct ic_connection *conn,
     gsize buf_size= size - write_size;
 
     ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
-                   MSG_NOSIGNAL);
+                   IC_MSG_NOSIGNAL);
     if (ret_code == (int)buf_size)
     {
       unsigned i, range_limit;
@@ -570,14 +579,14 @@ safe_read_stat_socket_conn(struct ic_connection *conn,
 
 static double
 read_socket_connection_time(struct ic_connection *conn,
-                            ulong *microseconds)
+                            gulong *microseconds)
 {
   return g_timer_elapsed(conn->connection_start, microseconds);
 }
 
 static double
 read_socket_stat_time(struct ic_connection *conn,
-                      ulong *microseconds)
+                      gulong *microseconds)
 {
   return g_timer_elapsed(conn->last_read_stat, microseconds);
 }

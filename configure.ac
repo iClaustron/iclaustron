@@ -106,6 +106,28 @@ fi
 CFLAGS="$CFLAGS $GLIB_INCLUDE"
 
 #
+# Check how to implement MSG_NOSIGNAL
+# Linux supports it but not Mac OS X and Solaris
+# Mac OS X instead supports SO_NOSIGPIPE
+#
+AC_MSG_CHECKING(whether we have MSG_NOSIGNAL in this platform)
+AC_TRY_COMPILE([#include <sys/socket.h>],
+[
+int main()
+{
+ int f=MSG_NOSIGNAL;
+}
+],
+# It was supported
+[ AC_MSG_RESULT(yes)
+ CFLAGS="$CFLAGS -DUSE_MSG_NOSIGNAL"
+]
+,
+# Don't use it
+AC_MSG_RESULT(no)
+)
+
+#
 # Next step is to check for all libraries such that the resulting programs
 # can be linked properly due to external dependencies.
 #
