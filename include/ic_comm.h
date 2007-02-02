@@ -10,6 +10,12 @@
 #define PROTOCOL_ERROR 32764
 #define AUTHENTICATE_ERROR 32763
 
+#ifdef USE_MSG_NOSIGNAL
+#define IC_MSG_NOSIGNAL MSG_NOSIGNAL
+#else
+#define IC_MSG_NOSIGNAL 0
+#endif
+
 typedef int (*authenticate_func) (void *);
 
 struct ic_connection;
@@ -91,9 +97,9 @@ struct ic_connect_operations
     cleared in read_stat_ic_connection call).
   */
   double (*ic_read_connection_time) (struct ic_connection *conn,
-                                     ulong *microseconds);
+                                     gulong *microseconds);
   double (*ic_read_stat_time) (struct ic_connection *conn,
-                               ulong *microseconds);
+                               gulong *microseconds);
   gboolean (*is_ic_conn_connected) (struct ic_connection *conn);
   gboolean (*is_ic_conn_thread_active) (struct ic_connection *conn);
   /*
