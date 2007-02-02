@@ -39,7 +39,7 @@ AC_PROG_CC
 AC_PROG_YACC
 AM_PROG_LEX
 AC_PROG_LIBTOOL
-AC_CONFIG_FILES([Makefile include/Makefile port/Makefile comm/Makefile api_dataserver/Makefile api_clusterserver/Makefile config_server/Makefile pcntrl/Makefile cclient/Makefile clusterserver/Makefile repserver/Makefile fileserver/Makefile test/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile port/Makefile comm/Makefile api_dataserver/Makefile api_clusterserver/Makefile config_server/Makefile pcntrl/Makefile cclient/Makefile clusterserver/Makefile repserver/Makefile fileserver/Makefilei util/Makefile test/Makefile])
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 
 #
@@ -121,8 +121,7 @@ int main()
 # It was supported
 [ AC_MSG_RESULT(yes)
  CFLAGS="$CFLAGS -DUSE_MSG_NOSIGNAL"
-]
-,
+],
 # Don't use it
 AC_MSG_RESULT(no)
 )
