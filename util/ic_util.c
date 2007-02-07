@@ -23,28 +23,7 @@ guint32 read_cr_line(gchar *iter_data, guint32 line_number)
     len++;
     iter_data++;
   } while (len < MAX_LINE_LEN);
-  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-        "Line %d was longer than %d characters\n",
-        line_number, MAX_LINE_LEN);
   return 0;
-}
-
-static
-int chk_str(const gchar *null_term_str, const gchar *cmp_str,
-                   guint32 len)
-{
-  guint32 iter_len= 0;
-  while (iter_len < len)
-  {
-    if (*null_term_str != *cmp_str)
-      return 1;
-    null_term_str++;
-    cmp_str++;
-    iter_len++;
-  }
-  if (*null_term_str == 0)
-    return 0;
-  return 1;
 }
 
 static
@@ -132,99 +111,63 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
 }
 
 static
-guint32 read_config_line(gchar *iter_data, gsize line_len,
-                         guint32 line_number)
+guint32 read_config_line(IC_CONFIG_OPS *conf_ops,
+                         IC_CONFIG_STRUCT *conf_obj,
+                         IC_CONFIG_ERROR *err_obj,
+                         IC_STRING *line_data,
+                         guint32 line_number,
+                         guint32 *section_num)
 {
+  IC_STRING loc_string;
+  gchar *iter_data= line_data->str;
+  guint32 line_len= line_data->len;
   if (line_len == 1)
   {
-    printf("Line number %d is an empty line\n", line_number);
+    printf("Line number %d in section %d is an empty line\n", line_number,
+                                                             *section_num);
     return 0;
   }
   else if (*iter_data == '#')
   {
-    printf("Line number %d was comment line\n", line_number);
-    return 0;
+    /*
+      We have found a correct comment line, report it to the configuration
+      object.
+    */
+    IC_STRING comment_str;
+    comment_str.str= iter_data;
+    comment_str.len= line_len;
+    comment_str.null_terminated= FALSE;
+    return conf_ops->ic_add_comment(conf_obj, line_number, *section_num,
+                                    &comment_str);
   }
   else if (*iter_data == '[')
   {
     if (iter_data[line_len - 2] != ']')
-    {
-      g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-            "Line number %d, missing ] after initial [\n", line_number);
-    }
+      return IC_ERROR_CONFIG_BRACKET;
     else
     {
+      IC_STRING section_name;
       guint32 group_id_len= line_len - 3;
       gchar *group_id= conv_group_id(&iter_data[1], group_id_len);
       if (!group_id)
-      {
-        g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-              "Found incorrect group id at Line number %d\n", line_number);
-        return 1;
-      }
-      if (!chk_str(data_server_str, group_id, group_id_len))
-      {
-        printf("Found data server group\n");
-        return 0;
-      }
-      else if (!chk_str(client_node_str, group_id, group_id_len))
-      {
-        printf("Found client group\n");
-        return 0;
-      }
-      else if (!chk_str(conf_server_str, group_id, group_id_len))
-      {
-        printf("Found configuration server group\n");
-        return 0;
-      }
-      else if (!chk_str(rep_server_str, group_id, group_id_len))
-      {
-        printf("Found replication server group\n");
-        return 0;
-      }
-      else if (!chk_str(net_part_str, group_id, group_id_len))
-      {
-        printf("Found network partition server group\n");
-        return 0;
-      }
-      else if (!chk_str(data_server_def_str, group_id, group_id_len))
-      {
-        printf("Found data server default group\n");
-        return 0;
-      }
-      else if (!chk_str(client_node_def_str, group_id, group_id_len))
-      {
-        printf("Found client default group\n");
-        return 0;
-      }
-      else if (!chk_str(conf_server_def_str, group_id, group_id_len))
-      {
-        printf("Found configuration server default group\n");
-        return 0;
-      }
-      else if (!chk_str(rep_server_def_str, group_id, group_id_len))
-      {
-        printf("Found replication server default group\n");
-        return 0;
-      }
-      else if (!chk_str(net_part_def_str, group_id, group_id_len))
-      {
-        printf("Found network partition server default group\n");
-        return 0;
-      }
-      else
-      {
-        group_id[group_id_len]= 0;
-        g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-              "Correct specification of group %s but not a valid group\n",
-              group_id);
-        return 1;
-      }
-      return 0;
+        return IC_ERROR_CONFIG_INCORRECT_GROUP_ID;
+      /*
+        We have found a correct group id, now tell the configuration
+        object about this and let him decide if this group id is
+        correct according to the definition of this configuration
+        object.
+      */
+      loc_string.str= group_id;
+      loc_string.len= group_id_len;
+      loc_string.null_terminated= FALSE;
+      (*section_num)++;
+      return conf_ops->ic_add_section(conf_obj, *section_num, line_number,
+                                      &section_name);
     }
   }
   else
   {
+    IC_STRING key_name, data_str;
     guint32 id_len= line_len;
     guint32 val_len;
     guint32 space_len= 0;
@@ -234,25 +177,35 @@ guint32 read_config_line(gchar *iter_data, gsize line_len,
     if ((key_id= conv_key_id(&iter_data[space_len], &id_len)) &&
         ((val_len= line_len - (id_len + space_len)), TRUE) &&
         ((val_str= conv_key_value(&iter_data[id_len+space_len], &val_len))))
-    {
-      g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-            "Line: %d, Not a proper key-value pair\n", (int)line_number);
-      return 1;
-    }
-    printf("Line: %d, Key-value pair\n", (int)line_number);
-    return 0;
+      return IC_ERROR_CONFIG_IMPROPER_KEY_VALUE;
+    /*
+      We have found a correct key-value pair. Now let the configuration object
+      decide whether this key and value makes sense and if so insert it into
+      the configuration.
+    */
+    key_name.str= key_id;
+    key_name.len= id_len;
+    key_name.null_terminated= FALSE;
+    data_str.str= val_str;
+    data_str.len= val_len;
+    data_str.null_terminated= FALSE;
+    return conf_ops->ic_add_key(conf_obj, *section_num, line_number,
+                                &key_name, &data_str);
   }
-  return 1;
 }
 
 int ic_build_config_data(IC_STRING *conf_data,
-                         struct ic_config_operations *ic_conf_op,
-                         struct ic_config_struct *ic_config)
+                         IC_CONFIG_OPS *ic_conf_op,
+                         IC_CONFIG_STRUCT *ic_config,
+                         IC_CONFIG_ERROR *err_obj)
 {
   guint32 line_number= 1;
   gsize iter_data_len= 0;
   guint32 line_length;
   gchar *iter_data= conf_data->str;
+  int error= IC_ERROR_CONFIG_LINE_TOO_LONG;
+  guint32 section_num= 0;
+  IC_STRING line_data;
   while (iter_data_len < conf_data->len)
   {
     if (*iter_data == LINE_FEED)
@@ -263,19 +216,53 @@ int ic_build_config_data(IC_STRING *conf_data,
       iter_data++;
       continue;
     }
+    error= IC_ERROR_CONFIG_LINE_TOO_LONG;
     if (!(line_length= read_cr_line(iter_data, line_number)))
-      return 1;
+      goto config_error;
     line_data.str= iter_data;
     line_data.len= line_length;
     line_data.null_terminated= FALSE;
-    if (read_config_line(&line_data, line_number))
-      return 1;
+    if ((error= read_config_line(ic_conf_op, ic_config, err_obj,
+                                 &line_data, line_number, &section_num)))
+      goto config_error;
     iter_data+= line_length;
     iter_data_len+= line_length;
     line_number++;
   }
   return 0;
+config_error:
+  err_obj->err_num= error;
+  err_obj->line_number= line_number;
+  return 1;
 }
+
+/*
+  MODULE:
+  iClaustron STRING ROUTINES
+  --------------------------
+  Some routines to handle iClaustron strings
+*/
+
+int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
+{
+  guint32 iter_len= 0;
+  gchar *cmp_char= cmp_str->str;
+  guint32 str_len= cmp_str->len;
+  if (cmp_str->null_terminated)
+    return strcmp(null_term_str, cmp_str->str) ? 1 : 0;
+  while (iter_len < str_len)
+  {
+    if (*null_term_str != *cmp_char)
+      return 1;
+    null_term_str++;
+    cmp_char++;
+    iter_len++;
+  }
+  if (*null_term_str == 0)
+    return 0;
+  return 1;
+}
+
 
 /*
   Module for printing error codes and retrieving error messages
@@ -283,17 +270,26 @@ int ic_build_config_data(IC_STRING *conf_data,
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7001
+#define IC_LAST_ERROR 7004
 #define IC_MAX_ERRORS 100
 static gchar* ic_error_str[IC_MAX_ERRORS];
-
+static gchar *no_such_error_str= "No such error";
 void
 ic_init_error_messages()
 {
+  guint32 i;
   for (i= 0; i < IC_MAX_ERRORS; i++)
     ic_error_str[i]= NULL;
-  ic_error_str[IC_ERROR_XX]= "xx";
-  ic_error_str[IC_ERROR_YY]= "yy";
+  ic_error_str[IC_ERROR_CONFIG_LINE_TOO_LONG -IC_FIRST_ERROR]=
+    "Line was longer than 120 characters";
+  ic_error_str[IC_ERROR_CONFIG_BRACKET - IC_FIRST_ERROR]=
+    "Missing ] after initial [";
+  ic_error_str[IC_ERROR_CONFIG_INCORRECT_GROUP_ID - IC_FIRST_ERROR]=
+    "Found incorrect group id";
+  ic_error_str[IC_ERROR_CONFIG_IMPROPER_KEY_VALUE - IC_FIRST_ERROR]=
+    "Improper key-value pair";
+  ic_error_str[IC_ERROR_CONFIG_NO_SUCH_SECTION - IC_FIRST_ERROR]=
+    "Section name doesn't exist in this configuration";
 }
 
 void

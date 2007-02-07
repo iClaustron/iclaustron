@@ -50,48 +50,108 @@ static GOptionEntry entries[] =
 
 /*
   MODULE:
-    CONFIG_SERVER
+  -------
+  CONFIG_SERVER
     This is a configuration server implementing the ic_config_operations
     interface. It converts a configuration file to a set of data structures
     describing the configuration of a iClaustron Cluster Server.
 */
 static
-int conf_serv_init(struct ic_config_struct *ic_conf)
+int conf_serv_init(IC_CONFIG_STRUCT *ic_conf)
 {
   return 0;
 }
 
 static
-int conf_serv_add_section(struct ic_config_struct *ic_config,
-                          guint32 section_number, guint32 line_number,
+int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
+                          guint32 section_number,
+                          guint32 line_number,
                           IC_STRING *section_name)
 {
-  return 0;
+  if (!ic_cmp_null_term_str(data_server_str, section_name))
+  {
+    printf("Found data server group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(client_node_str, section_name))
+  {
+    printf("Found client group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(conf_server_str, section_name))
+  {
+    printf("Found configuration server group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(rep_server_str, section_name))
+  {
+    printf("Found replication server group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(net_part_str, section_name))
+  {
+    printf("Found network partition server group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(data_server_def_str, section_name))
+  {
+    printf("Found data server default group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(client_node_def_str, section_name))
+  {
+    printf("Found client default group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(conf_server_def_str, section_name))
+  {
+    printf("Found configuration server default group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(rep_server_def_str, section_name))
+  {
+    printf("Found replication server default group\n");
+    return 0;
+  }
+  else if (!ic_cmp_null_term_str(net_part_def_str, section_name))
+  {
+    printf("Found network partition server default group\n");
+    return 0;
+  }
+  else
+    return IC_ERROR_CONFIG_NO_SUCH_SECTION;
 }
 
 static
-int conf_serv_add_key(struct ic_config_struct *ic_config,
-                      guint32 section_number, guint32 line_number,
-                      IC_STRING *key_name, IC_STRING *data)
+int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
+                      guint32 section_number,
+                      guint32 line_number,
+                      IC_STRING *key_name,
+                      IC_STRING *data)
 {
+  printf("Line: %d Section: %d, Key-value pair\n", (int)line_number,
+                                                   (int)section_number);
   return 0;
 }
 
 static
-int conf_serv_add_comment(struct ic_config_struct *ic_config,
-                          guint32 line_number, IC_STRING *comment)
+int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
+                          guint32 line_number,
+                          guint32 section_number,
+                          IC_STRING *comment)
 {
+  printf("Line number %d in section %d was comment line\n", line_number, section_number);
   return 0;
 }
 
 static
-int conf_serv_end(struct ic_config_struct *ic_config,
+int conf_serv_end(IC_CONFIG_STRUCT *ic_config,
                   guint32 line_number)
 {
   return 0;
 }
 
-static struct ic_config_operations config_server_ops =
+static IC_CONFIG_OPS config_server_ops =
 {
   .ic_config_init = conf_serv_init,
   .ic_add_section = conf_serv_add_section,
@@ -107,7 +167,9 @@ bootstrap()
   gsize conf_data_len;
   GError *loc_error= NULL;
   IC_STRING conf_data;
-  struct ic_config_struct conf_server;
+  int ret_val;
+  IC_CONFIG_STRUCT conf_server;
+  IC_CONFIG_ERROR err_obj;
 
   printf("glob_config_file = %s\n", glob_config_file);
   if (!glob_config_file ||
@@ -117,11 +179,17 @@ bootstrap()
 
   conf_data.str= conf_data_str;
   conf_data.len= conf_data_len;
-  conf_data.null_terminated= FALSE;
-  if (build_config_data(&conf_data, &config_server_ops,
-                        &conf_server))
-    return 1;
-  return 0;
+  conf_data.null_terminated= TRUE;
+  ret_val= ic_build_config_data(&conf_data, &config_server_ops,
+                                &conf_server, &err_obj);
+  g_free(conf_data.str);
+  if (ret_val == 1)
+  {
+    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+          "Error at Line number %u:\n%s",err_obj.line_number,
+          ic_get_error_message(err_obj.err_num));
+  }
+  return ret_val;
 
 file_open_error:
   if (!glob_config_file)
@@ -155,7 +223,7 @@ main(int argc, char *argv[])
 
 mem_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-        "Memory allocation error when allocation option context\n");
+        "Memory allocation error when allocating option context\n");
   return 1;
 parse_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,

@@ -2,7 +2,7 @@
 #define IC_COMM_H
 
 #include <netinet/in.h>
-#include <ic_common.h>
+#include <ic_common_header.h>
 
 #define MEM_ALLOC_ERROR 32767
 #define ACCEPT_ERROR 32766
