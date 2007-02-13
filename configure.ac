@@ -90,14 +90,14 @@ OPTIMIZER_FLAG="-O2"
 WALL_FLAGS="-W -Wall"
 WARNING_FLAG="-W"
 
-if test "with_production" = "yes"; then
-  if test "$with_debug" = "yes"; then
+if test "x$with_production" = "xyes"; then
+  if test "x$with_debug" = "xyes"; then
     CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $OPTIMIZER_FLAG"
   else
     CFLAGS="$WARNING_FLAG $OPTIMIZER_FLAG"
   fi
 else
-  if test "$with_debug" = "yes"; then
+  if test "x$with_debug" = "xyes"; then
     CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $WALL_FLAGS"
   else
     CFLAGS="$WALL_FLAGS $DEBUG_FLAG $OPTIMIZER_FLAG"

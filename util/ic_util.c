@@ -11,7 +11,7 @@
 const guint32 MAX_LINE_LEN = 120;
 
 static
-guint32 read_cr_line(gchar *iter_data, guint32 line_number)
+guint32 read_cr_line(gchar *iter_data)
 {
   gsize len= 1;
   do
@@ -116,7 +116,8 @@ guint32 read_config_line(IC_CONFIG_OPS *conf_ops,
                          IC_CONFIG_ERROR *err_obj,
                          IC_STRING *line_data,
                          guint32 line_number,
-                         guint32 *section_num)
+                         guint32 *section_num,
+                         guint32 pass)
 {
   IC_STRING loc_string;
   gchar *iter_data= line_data->str;
@@ -138,7 +139,7 @@ guint32 read_config_line(IC_CONFIG_OPS *conf_ops,
     comment_str.len= line_len;
     comment_str.null_terminated= FALSE;
     return conf_ops->ic_add_comment(conf_obj, line_number, *section_num,
-                                    &comment_str);
+                                    &comment_str, pass);
   }
   else if (*iter_data == '[')
   {
@@ -162,7 +163,7 @@ guint32 read_config_line(IC_CONFIG_OPS *conf_ops,
       loc_string.null_terminated= FALSE;
       (*section_num)++;
       return conf_ops->ic_add_section(conf_obj, *section_num, line_number,
-                                      &section_name);
+                                      &section_name, pass);
     }
   }
   else
@@ -190,7 +191,7 @@ guint32 read_config_line(IC_CONFIG_OPS *conf_ops,
     data_str.len= val_len;
     data_str.null_terminated= FALSE;
     return conf_ops->ic_add_key(conf_obj, *section_num, line_number,
-                                &key_name, &data_str);
+                                &key_name, &data_str, pass);
   }
 }
 
@@ -200,34 +201,41 @@ int ic_build_config_data(IC_STRING *conf_data,
                          IC_CONFIG_ERROR *err_obj)
 {
   guint32 line_number= 1;
-  gsize iter_data_len= 0;
-  guint32 line_length;
-  gchar *iter_data= conf_data->str;
-  int error= IC_ERROR_CONFIG_LINE_TOO_LONG;
+  guint32 line_length, pass;
+  int error;
   guint32 section_num= 0;
   IC_STRING line_data;
-  while (iter_data_len < conf_data->len)
+
+  if ((error= ic_conf_op->ic_config_init(ic_config)))
+    goto config_error;
+  for (pass= 0; pass < 2; pass++)
   {
-    if (*iter_data == LINE_FEED)
+    gchar *iter_data= conf_data->str;
+    gsize iter_data_len= 0;
+    while (iter_data_len < conf_data->len)
     {
-      /* Special handling of Windows Line Feeds after Carriage Return */
-      printf("Special case\n");
-      iter_data_len++;
-      iter_data++;
-      continue;
+      if (*iter_data == LINE_FEED)
+      {
+        /* Special handling of Windows Line Feeds after Carriage Return */
+        printf("Special case\n");
+        iter_data_len++;
+        iter_data++;
+        continue;
+      }
+      error= IC_ERROR_CONFIG_LINE_TOO_LONG;
+      if (!(line_length= read_cr_line(iter_data)))
+        goto config_error;
+      line_data.str= iter_data;
+      line_data.len= line_length;
+      line_data.null_terminated= FALSE;
+      if ((error= read_config_line(ic_conf_op, ic_config, err_obj,
+                                   &line_data, line_number, &section_num,
+                                   pass)))
+        goto config_error;
+      iter_data+= line_length;
+      iter_data_len+= line_length;
+      line_number++;
     }
-    error= IC_ERROR_CONFIG_LINE_TOO_LONG;
-    if (!(line_length= read_cr_line(iter_data, line_number)))
-      goto config_error;
-    line_data.str= iter_data;
-    line_data.len= line_length;
-    line_data.null_terminated= FALSE;
-    if ((error= read_config_line(ic_conf_op, ic_config, err_obj,
-                                 &line_data, line_number, &section_num)))
-      goto config_error;
-    iter_data+= line_length;
-    iter_data_len+= line_length;
-    line_number++;
   }
   return 0;
 config_error:
@@ -270,7 +278,7 @@ int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7004
+#define IC_LAST_ERROR 7005
 #define IC_MAX_ERRORS 100
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
@@ -290,6 +298,8 @@ ic_init_error_messages()
     "Improper key-value pair";
   ic_error_str[IC_ERROR_CONFIG_NO_SUCH_SECTION - IC_FIRST_ERROR]=
     "Section name doesn't exist in this configuration";
+  ic_error_str[IC_ERROR_MEM_ALLOC - IC_FIRST_ERROR]=
+    "Memory allocation failure";
 }
 
 void

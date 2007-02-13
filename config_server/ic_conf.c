@@ -59,6 +59,10 @@ static GOptionEntry entries[] =
 static
 int conf_serv_init(IC_CONFIG_STRUCT *ic_conf)
 {
+  IC_CLUSTER_CONFIG *clu_conf;
+  if (!(clu_conf= (IC_CLUSTER_CONFIG*)g_malloc(sizeof(IC_CLUSTER_CONFIG))))
+    return IC_ERROR_MEM_ALLOC;
+  memset((char*)clu_conf, 0, sizeof(IC_CLUSTER_CONFIG));
   return 0;
 }
 
@@ -66,7 +70,8 @@ static
 int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
                           guint32 section_number,
                           guint32 line_number,
-                          IC_STRING *section_name)
+                          IC_STRING *section_name,
+                          guint32 pass)
 {
   if (!ic_cmp_null_term_str(data_server_str, section_name))
   {
@@ -127,7 +132,8 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
                       guint32 section_number,
                       guint32 line_number,
                       IC_STRING *key_name,
-                      IC_STRING *data)
+                      IC_STRING *data,
+                      guint32 pass)
 {
   printf("Line: %d Section: %d, Key-value pair\n", (int)line_number,
                                                    (int)section_number);
@@ -138,17 +144,39 @@ static
 int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
                           guint32 line_number,
                           guint32 section_number,
-                          IC_STRING *comment)
+                          IC_STRING *comment,
+                          guint32 pass)
 {
+  IC_CLUSTER_CONFIG *clu_conf= ic_config->config_ptr.clu_conf; 
   printf("Line number %d in section %d was comment line\n", line_number, section_number);
+  if (pass == INITIAL_PASS)
+    clu_conf->comments.num_comments++;
+  else
+  {
+    ;
+  }
   return 0;
 }
 
 static
-int conf_serv_end(IC_CONFIG_STRUCT *ic_config,
-                  guint32 line_number)
+int conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
 {
-  return 0;
+  IC_CLUSTER_CONFIG *clu_conf= ic_conf->config_ptr.clu_conf;
+  guint32 i;
+  if (clu_conf)
+  {
+    for (i= 0; i < clu_conf->max_node_id; i++)
+    {
+      if (clu_conf->node_config_pointers[i])
+        g_free((gchar*)clu_conf->node_config_pointers[i]);
+    }
+    if (clu_conf->node_config_types)
+      g_free(clu_conf->node_config_types);
+    for (i= 0; i < clu_conf->comments.num_comments; i++)
+      g_free(clu_conf->comments.ptr_comments[i]);
+    g_free(ic_conf->config_ptr.clu_conf);
+  }
+  return;
 }
 
 static IC_CONFIG_OPS config_server_ops =
@@ -161,14 +189,13 @@ static IC_CONFIG_OPS config_server_ops =
 };
 
 static int
-bootstrap()
+bootstrap(IC_CONFIG_STRUCT *conf_server)
 {
   gchar *conf_data_str;
   gsize conf_data_len;
   GError *loc_error= NULL;
   IC_STRING conf_data;
   int ret_val;
-  IC_CONFIG_STRUCT conf_server;
   IC_CONFIG_ERROR err_obj;
 
   printf("glob_config_file = %s\n", glob_config_file);
@@ -186,7 +213,7 @@ bootstrap()
   if (ret_val == 1)
   {
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Error at Line number %u:\n%s",err_obj.line_number,
+          "Error at Line number %u:\n%s\n",err_obj.line_number,
           ic_get_error_message(err_obj.err_num));
   }
   return ret_val;
@@ -206,7 +233,9 @@ main(int argc, char *argv[])
 {
   GError *loc_error= NULL;
   GOptionContext *context;
+  IC_CONFIG_STRUCT conf_server;
 
+  memset((char*)&conf_server, 0, sizeof(IC_CLUSTER_CONFIG));
   ic_init_error_messages();
   /* Read command options */
   context= g_option_context_new("iClaustron Configuration Server");
@@ -218,7 +247,9 @@ main(int argc, char *argv[])
   g_option_context_free(context);
 
   if (glob_bootstrap)
-    return bootstrap();
+    return bootstrap(&conf_server);
+
+  config_server_ops.ic_config_end(&conf_server); 
   return 0;
 
 mem_error:
