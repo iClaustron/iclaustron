@@ -156,6 +156,7 @@ struct ic_connect_stat
   */
   gboolean tcp_no_delay;
 };
+typedef struct ic_connect_stat IC_CONNECT_STAT;
 
 struct ic_connect_mgr_operations
 {
@@ -164,6 +165,7 @@ struct ic_connect_mgr_operations
   int (*get_ic_connection) (struct ic_connection **conn, guint32 node_id);
   int (*get_free_ic_connection) (struct ic_connection **conn);
 };
+typedef struct ic_connect_mgr_operations IC_CONNECT_MGR_OPERATIONS;
 
 struct ic_connection
 {
@@ -356,12 +358,14 @@ struct ic_connection
 #define WAN_TCP_MAXSEG_SIZE 61440
   gboolean is_wan_connection;
 };
+typedef struct ic_connection IC_CONNECTION;
 
 struct ic_connect_manager
 {
   struct ic_connection **ic_con_array;
   GMutex *icm_mutex;
 };
+typedef struct ic_connect_manager IC_CONNECT_MANAGER;
 
 /*
   Definitions for the front buffer pool on the connection objects
@@ -369,11 +373,9 @@ struct ic_connect_manager
 #define PRIO_LEVELS 2
 #define MAX_ALLOC_SEGMENTS 8
 #define HIGH_PRIO_BUF_SIZE 128
+struct ic_sock_buf_operations;
 struct ic_sock_buf_page;
 struct ic_sock_buf;
-
-struct ic_sock_buf* ic_init_socket_membuf(guint32 page_size,
-                                          guint32 no_of_pages);
 
 struct ic_sock_buf_operations
 {
@@ -383,6 +385,7 @@ struct ic_sock_buf_operations
                                   struct ic_sock_buf_page *page);
   gboolean (*increase_ic_conn_buf) (guint32 no_of_pages);
 };
+typedef struct ic_sock_buf_operations IC_SOCK_BUF_OPERATIONS;
 
 struct ic_sock_buf_page
 {
@@ -391,6 +394,7 @@ struct ic_sock_buf_page
   struct ic_sock_buf_page *next_sock_buf_page;
   struct ic_sock_buf_page *prev_sock_buf_page;
 };
+typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
 
 struct ic_sock_buf
 {
@@ -402,6 +406,10 @@ struct ic_sock_buf
   char *alloc_segments_ref[MAX_ALLOC_SEGMENTS];
   GMutex *ic_buf_mutex;
 };
+typedef struct ic_sock_buf IC_SOCK_BUF;
+
+IC_SOCK_BUF *ic_init_socket_membuf(guint32 page_size,
+                                   guint32 no_of_pages);
 
 /*
   Debug print-outs
@@ -418,8 +426,8 @@ int base64_decode(char *dest, guint32 *dest_len,
 /*
   Methods to send and receive buffers with Carriage Return
 */
-int ic_send_with_cr(struct ic_connection *conn, const char *buf);
-int ic_rec_with_cr(struct ic_connection *conn,
+int ic_send_with_cr(IC_CONNECTION *conn, const char *buf);
+int ic_rec_with_cr(IC_CONNECTION *conn,
                    char *rec_buf,
                    guint32 *read_size,
                    guint32 *size_curr_buf,

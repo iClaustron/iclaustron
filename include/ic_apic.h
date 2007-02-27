@@ -5,23 +5,32 @@
 
 enum ic_node_type
 {
-  IC_KERNEL_NODE = 0,
-  IC_CLIENT_NODE = 1,
-  IC_CLUSTER_SERVER_NODE = 2
+  IC_NOT_EXIST_NODE_TYPE = 0,
+  IC_KERNEL_NODE = 1,
+  IC_CLIENT_NODE = 2,
+  IC_CLUSTER_SERVER_NODE = 3,
+  IC_SQL_SERVER_NODE = 4,
+  IC_REP_SERVER_NODE = 5
 };
+typedef enum ic_node_type IC_NODE_TYPE;
 
 enum ic_communication_type
 {
   IC_TCP_COMM = 0
 };
+typedef enum ic_communication_type IC_COMMUNICATION_TYPE;
 
 enum ic_config_type
 {
   IC_KERNEL_TYPE = 0,
   IC_CLIENT_TYPE = 1,
   IC_CLUSTER_SERVER_TYPE = 2,
-  IC_COMM_TYPE = 3
+  IC_COMM_TYPE = 3,
+  IC_CONFIG_SERVER_TYPE = 4,
+  IC_SQL_SERVER_TYPE = 5,
+  IC_REP_SERVER_TYPE = 6
 };
+typedef enum ic_config_type IC_CONFIG_TYPE;
 
 enum ic_config_entry_change
 {
@@ -33,8 +42,9 @@ enum ic_config_entry_change
   IC_CLUSTER_RESTART_CHANGE = 5,
   IC_NOT_CHANGEABLE = 6
 };
+typedef enum ic_config_entry_change IC_CONFIG_ENTRY_CHANGE;
 
-struct config_entry
+struct ic_config_entry
 {
   char *config_entry_name;
   char *config_entry_description;
@@ -66,18 +76,20 @@ struct config_entry
   gchar is_only_iclaustron;
   gchar is_array_value;
 };
+typedef struct ic_config_entry IC_CONFIG_ENTRY;
 
 struct ic_cluster_config;
 struct ic_api_cluster_connection;
-struct ic_api_cluster_server;
+struct ic_api_config_server;
 struct ic_run_cluster_server;
 struct ic_run_cluster_conn
 {
   guint32 ip_addr;
   guint16 ip_port;
 };
+typedef struct ic_run_cluster_conn IC_RUN_CLUSTER_CONN;
 
-struct ic_api_cluster_server*
+struct ic_api_config_server*
 ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
                     guint32 *cluster_ids,
                     guint32 *node_ids,
@@ -92,8 +104,8 @@ void ic_print_config_parameters();
 
 struct ic_api_cluster_operations
 {
-  int (*get_ic_config) (struct ic_api_cluster_server *apic);
-  void (*free_ic_config) (struct ic_api_cluster_server *apic);
+  int (*get_ic_config) (struct ic_api_config_server *apic);
+  void (*free_ic_config) (struct ic_api_config_server *apic);
 };
 
 struct ic_run_cluster_server_operations
@@ -109,7 +121,7 @@ struct ic_api_cluster_connection
 {
   guint32 *cluster_server_ips;
   guint16 *cluster_server_ports;
-  struct ic_connection *cluster_srv_conns;
+  IC_CONNECTION *cluster_srv_conns;
   guint32 num_cluster_servers;
   guint32 tail_index;
   guint32 head_index;
@@ -118,11 +130,11 @@ struct ic_api_cluster_connection
 
 
 /*
-  The struct ic_api_cluster_server represents the configuration of
+  The struct ic_api_config_server represents the configuration of
   all clusters that this node participates in and the node id it
   has in these clusters.
 */
-struct ic_api_cluster_server
+struct ic_api_config_server
 {
   struct ic_api_cluster_operations api_op;
   struct ic_cluster_config *conf_objects;
@@ -130,22 +142,33 @@ struct ic_api_cluster_server
   guint32 *cluster_ids;
   guint32 *node_ids;
   guint32 num_clusters_to_connect;
+  /*
+    We have a number of variables to keep track of allocated memory
+    and use of allocated memory for strings.
+  */
+  guint32 string_memory_size;
+  char *config_memory_to_return;
+  char *string_memory_to_return;
+  char *end_string_memory;
+  char *next_string_memory;
 };
+typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 
 /*
   The struct ic_run_cluster_server represents the configuration of
   all clusters that the Cluster Server maintains.
 */
-struct ic_run_cluster_server
+struct ic_run_config_server
 {
-  struct ic_run_cluster_server_operations run_op;
+  /*struct ic_run_config_server_operations run_op; */
   struct ic_cluster_config *conf_objects;
   struct ic_run_cluster_conn run_conn;
   guint32 *cluster_ids;
   guint32 num_clusters;
 };
+typedef struct ic_run_config_server IC_RUN_CONFIG_SERVER;
 
-struct ic_kernel_node_config
+struct ic_kernel_config
 {
   char *filesystem_path;
   char *checkpoint_path;
@@ -209,8 +232,9 @@ struct ic_kernel_node_config
   gchar kernel_automatic_restart;
   gchar kernel_rt_scheduler_threads;
 };
+typedef struct ic_kernel_config IC_KERNEL_CONFIG;
 
-struct ic_client_node_config
+struct ic_client_config
 {
   char *hostname;
   char *node_data_path;
@@ -221,6 +245,7 @@ struct ic_client_node_config
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
 };
+typedef struct ic_client_config IC_CLIENT_CONFIG;
 
 struct ic_cluster_server_config
 {
@@ -232,6 +257,28 @@ struct ic_cluster_server_config
   guint32 cluster_server_event_log;
   guint32 cluster_server_port_number;
 };
+typedef struct ic_cluster_server_config IC_CLUSTER_SERVER_CONFIG;
+
+struct ic_sql_server_config
+{
+  IC_CLIENT_CONFIG client_conf;
+  guint32          not_used;
+};
+typedef struct ic_sql_server_config IC_SQL_SERVER_CONFIG;
+
+struct ic_rep_server_config
+{
+  IC_CLIENT_CONFIG client_conf;
+  guint32          not_used;
+};
+typedef struct ic_rep_server_config IC_REP_SERVER_CONFIG;
+
+struct ic_config_server_config
+{
+  IC_CLIENT_CONFIG client_conf;
+  guint32          not_used;
+};
+typedef struct ic_config_server_config IC_CONFIG_SERVER_CONFIG;
 
 struct ic_tcp_comm_link_config
 {
@@ -251,6 +298,7 @@ struct ic_tcp_comm_link_config
   gchar use_checksum;
   /* Ignore Connection Group for now */
 };
+typedef struct ic_tcp_comm_link_config IC_TCP_COMM_LINK_CONFIG;
 
 struct ic_sci_comm_link_config
 {
@@ -269,6 +317,7 @@ struct ic_comm_link_config
     struct ic_shm_comm_link_config shm_conf;
   };
 };
+typedef struct ic_comm_link_config IC_COMM_LINK_CONFIG;
 
 /*
   The struct ic_cluster_config contains the configuration of one
@@ -294,20 +343,16 @@ struct ic_cluster_config
     number of communication links.
     For each node in the cluster and each communication link we also
     store the node id, the node type and the configuration parameters.
-
-    We have a number of variables to keep track of allocated memory
-    and use of allocated memory for strings.
   */
-  char *config_memory_to_return;
-  char *string_memory_to_return;
-  char *end_string_memory;
-  char *next_string_memory;
+
   /*
     node_config is an array of pointers that point to structs of the
     types:
-    ic_kernel_node_config        iClaustron kernel nodes
-    ic_client_node_config        iClaustron client nodes
-    ic_clusterserver_config      iClaustron cluster server nodes
+    ic_kernel_config             iClaustron kernel nodes
+    ic_client_config             iClaustron client nodes
+    ic_cluster_server_config     iClaustron cluster server nodes
+    ic_sql_server_config         iClaustron SQL server nodes
+    ic_rep_server_config         iClaustron Replication server nodes
 
     The array node_types below contains the actual type of struct
     used for each entry.
@@ -327,12 +372,48 @@ struct ic_cluster_config
 
   guint32 no_of_nodes;
   guint32 no_of_kernel_nodes;
-  guint32 no_of_cluster_servers;
+  guint32 no_of_config_servers;
+  guint32 no_sql_servers;
+  guint32 no_rep_servers;
   guint32 no_of_client_nodes;
   guint32 no_of_comms;
-  guint32 string_memory_size;
   guint32 *node_ids;
-  enum ic_node_type *node_types;
+  IC_NODE_TYPE *node_types;
   enum ic_communication_type *comm_types;
 };
+typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
+
+int ic_load_config_server_from_files(gchar *config_file_path);
+
+struct ic_cs_conf_comment
+{
+  guint32 num_comments;
+  char **ptr_comments;
+  guint32 node_id_attached;
+  guint32 config_id_attached;
+};
+typedef struct ic_cs_conf_comment IC_CS_CONF_COMMENT;
+
+struct ic_cluster_config_load
+{
+  IC_CLUSTER_CONFIG conf;
+  void *current_node_config;
+  IC_CONFIG_TYPE current_node_config_type;
+  IC_CS_CONF_COMMENT comments;
+  guint32 max_node_id;
+
+  /*
+    To avoid so many malloc calls we keep all default structures in this
+    struct. These structures are initialised by setting the defaults for
+    each parameter as defined by the iClaustron Cluster Server API.
+  */
+  IC_KERNEL_CONFIG default_kernel_config;
+  IC_REP_SERVER_CONFIG default_rep_config;
+  IC_SQL_SERVER_CONFIG default_sql_config;
+  IC_CONFIG_SERVER_CONFIG default_conf_server_config;
+  IC_CLIENT_CONFIG default_client_config;
+};
+typedef struct ic_cluster_config_struct IC_CLUSTER_CONFIG_LOAD;
+
+
 #endif

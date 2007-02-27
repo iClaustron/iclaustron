@@ -16,29 +16,12 @@
 */
 #define INITIAL_PASS 0
 #define BUILD_PASS   1
-struct ic_cs_conf_comment
-{
-  guint32 num_comments;
-  char **ptr_comments;
-  guint32 node_id_attached;
-  guint32 config_id_attached;
-};
 
-struct ic_cluster_config_struct
-{
-  void *current_node_config;
-  void **node_config_pointers;
-  char *node_config_types;
-  struct ic_cs_conf_comment comments;
-  guint32 max_node_id;
-  char current_node_config_type;
-};
-typedef struct ic_cluster_config_struct IC_CLUSTER_CONFIG;
-
+struct ic_cluster_config_load;
 struct ic_config_struct
 {
   union {
-    IC_CLUSTER_CONFIG *clu_conf;
+    struct ic_cluster_config_load *clu_conf;
   } config_ptr;
 };
 typedef struct ic_config_struct IC_CONFIG_STRUCT;
@@ -65,17 +48,18 @@ struct ic_config_operations
                         guint32 pass);
   void (*ic_config_end)(IC_CONFIG_STRUCT *ic_config);
 };
-typedef struct ic_config_operations IC_CONFIG_OPS;
+typedef struct ic_config_operations IC_CONFIG_OPERATIONS;
 
 /*
   This is a generic call to bootstrap a configuration file. It will read the
   configuration data and will call operations on the supplied
   ic_config_operations object.
   It needs a call to read the contents of the configuration file into a
-  variable before being called.
+  variable before being called. The contents of the file is sent in the
+  conf_data variable.
 */
 int ic_build_config_data(IC_STRING *conf_data,
-                         IC_CONFIG_OPS *ic_conf_op,
+                         IC_CONFIG_OPERATIONS *ic_conf_op,
                          IC_CONFIG_STRUCT *ic_conf_obj,
                          IC_CONFIG_ERROR *err_obj);
 

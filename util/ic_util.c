@@ -111,9 +111,8 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
 }
 
 static
-guint32 read_config_line(IC_CONFIG_OPS *conf_ops,
+guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
                          IC_CONFIG_STRUCT *conf_obj,
-                         IC_CONFIG_ERROR *err_obj,
                          IC_STRING *line_data,
                          guint32 line_number,
                          guint32 *section_num,
@@ -196,7 +195,7 @@ guint32 read_config_line(IC_CONFIG_OPS *conf_ops,
 }
 
 int ic_build_config_data(IC_STRING *conf_data,
-                         IC_CONFIG_OPS *ic_conf_op,
+                         IC_CONFIG_OPERATIONS *ic_conf_op,
                          IC_CONFIG_STRUCT *ic_config,
                          IC_CONFIG_ERROR *err_obj)
 {
@@ -228,7 +227,7 @@ int ic_build_config_data(IC_STRING *conf_data,
       line_data.str= iter_data;
       line_data.len= line_length;
       line_data.null_terminated= FALSE;
-      if ((error= read_config_line(ic_conf_op, ic_config, err_obj,
+      if ((error= read_config_line(ic_conf_op, ic_config,
                                    &line_data, line_number, &section_num,
                                    pass)))
         goto config_error;
