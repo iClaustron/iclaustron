@@ -3,7 +3,7 @@
 #include <ic_common.h>
 
 
-enum ic_node_type
+enum ic_node_types
 {
   IC_NOT_EXIST_NODE_TYPE = 0,
   IC_KERNEL_NODE = 1,
@@ -12,7 +12,7 @@ enum ic_node_type
   IC_SQL_SERVER_NODE = 4,
   IC_REP_SERVER_NODE = 5
 };
-typedef enum ic_node_type IC_NODE_TYPE;
+typedef enum ic_node_types IC_NODE_TYPES;
 
 enum ic_communication_type
 {
@@ -89,19 +89,6 @@ struct ic_run_cluster_conn
 };
 typedef struct ic_run_cluster_conn IC_RUN_CLUSTER_CONN;
 
-struct ic_api_config_server*
-ic_init_api_cluster(struct ic_api_cluster_connection *cluster_conn,
-                    guint32 *cluster_ids,
-                    guint32 *node_ids,
-                    guint32 num_clusters);
-
-struct ic_run_cluster_server*
-ic_init_run_cluster(struct ic_cluster_config *conf_objs,
-                    guint32 *cluster_ids,
-                    guint32 num_clusters);
-
-void ic_print_config_parameters();
-
 struct ic_api_cluster_operations
 {
   int (*get_ic_config) (struct ic_api_config_server *apic);
@@ -127,6 +114,7 @@ struct ic_api_cluster_connection
   guint32 head_index;
   char rec_buf[REC_BUF_SIZE];
 };
+typedef struct ic_api_cluster_connection IC_API_CLUSTER_CONNECTION;
 
 
 /*
@@ -373,12 +361,13 @@ struct ic_cluster_config
   guint32 no_of_nodes;
   guint32 no_of_kernel_nodes;
   guint32 no_of_config_servers;
+  guint32 no_of_cluster_servers;
   guint32 no_sql_servers;
   guint32 no_rep_servers;
   guint32 no_of_client_nodes;
   guint32 no_of_comms;
   guint32 *node_ids;
-  IC_NODE_TYPE *node_types;
+  IC_NODE_TYPES *node_types;
   enum ic_communication_type *comm_types;
 };
 typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
@@ -413,7 +402,19 @@ struct ic_cluster_config_load
   IC_CONFIG_SERVER_CONFIG default_conf_server_config;
   IC_CLIENT_CONFIG default_client_config;
 };
-typedef struct ic_cluster_config_struct IC_CLUSTER_CONFIG_LOAD;
+typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 
+IC_RUN_CONFIG_SERVER*
+ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
+                    guint32 *cluster_ids,
+                    guint32 num_clusters);
+
+IC_API_CONFIG_SERVER*
+ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
+                    guint32 *cluster_ids,
+                    guint32 *node_ids,
+                    guint32 num_clusters);
+
+void ic_print_config_parameters();
 
 #endif

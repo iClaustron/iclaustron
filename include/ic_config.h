@@ -16,8 +16,8 @@
 */
 #define INITIAL_PASS 0
 #define BUILD_PASS   1
-
 struct ic_cluster_config_load;
+
 struct ic_config_struct
 {
   union {

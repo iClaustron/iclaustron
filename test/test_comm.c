@@ -40,7 +40,7 @@ static GOptionEntry entries[] =
 
 void connection_test()
 {
-  struct ic_connection conn;
+  IC_CONNECTION conn;
   char buf[8192];
   int ret_code;
 
@@ -101,8 +101,8 @@ void connection_test()
 static int
 api_clusterserver_test()
 {
-  struct ic_api_cluster_server *srv_obj; 
-  struct ic_api_cluster_connection cluster_conn;
+  IC_API_CONFIG_SERVER *srv_obj; 
+  IC_API_CLUSTER_CONNECTION cluster_conn;
   guint32 cluster_id= 0;
   guint32 node_id= 0;
 
@@ -146,8 +146,8 @@ api_clusterserver_test()
 static int
 run_clusterserver_test()
 {
-  struct ic_api_cluster_server *srv_obj; 
-  struct ic_api_cluster_connection cluster_conn;
+  IC_API_CONFIG_SERVER *srv_obj; 
+  IC_API_CLUSTER_CONNECTION cluster_conn;
   guint32 cluster_id= 0;
   guint32 node_id= 0;
 

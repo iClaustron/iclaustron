@@ -13,17 +13,6 @@
 
 #include <ic_common.h>
 
-const gchar *data_server_str= "data server";
-const gchar *client_node_str= "client";
-const gchar *conf_server_str= "configuration server";
-const gchar *net_part_str= "network partition server";
-const gchar *rep_server_str= "replication server";
-const gchar *data_server_def_str= "data server default";
-const gchar *client_node_def_str= "client default";
-const gchar *conf_server_def_str= "configuration server default";
-const gchar *net_part_def_str= "network partition server default";
-const gchar *rep_server_def_str= "replication server default";
-
 static gchar *glob_config_file= NULL;
 static gchar *glob_config_path= NULL;
 static gboolean glob_bootstrap= FALSE;
