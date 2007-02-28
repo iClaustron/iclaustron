@@ -3195,7 +3195,7 @@ int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
 }
 
 static
-int conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
+void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
 {
   IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_conf->config_ptr.clu_conf;
   guint32 i;
@@ -3212,7 +3212,7 @@ int conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
       g_free(clu_conf->comments.ptr_comments[i]);
     g_free(ic_conf->config_ptr.clu_conf);
   }
-  return 0;
+  return;
 }
 
 static IC_CONFIG_OPERATIONS config_server_ops =
@@ -3238,13 +3238,11 @@ ic_load_config_server_from_files(gchar *config_file_path)
   memset(&conf_server, 0, sizeof(IC_CONFIG_STRUCT));
   printf("config_file_path = %s\n", config_file_path);
   if (!config_file_path ||
-      !g_file_get_contents(config_file_path, &conf_data.str,
+      !g_file_get_contents(config_file_path, &conf_data_str,
                            &conf_data_len, &loc_error))
     goto file_open_error;
 
-  conf_data.str= conf_data_str;
-  conf_data.len= conf_data_len;
-  conf_data.null_terminated= TRUE;
+  IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
   ret_val= ic_build_config_data(&conf_data, &config_server_ops,
                                 &conf_server, &err_obj);
   g_free(conf_data.str);

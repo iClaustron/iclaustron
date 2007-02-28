@@ -134,9 +134,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
       object.
     */
     IC_STRING comment_str;
-    comment_str.str= iter_data;
-    comment_str.len= line_len;
-    comment_str.null_terminated= FALSE;
+    IC_INIT_STRING(&comment_str, iter_data, line_len, FALSE);
     return conf_ops->ic_add_comment(conf_obj, line_number, *section_num,
                                     &comment_str, pass);
   }
@@ -157,9 +155,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
         correct according to the definition of this configuration
         object.
       */
-      loc_string.str= group_id;
-      loc_string.len= group_id_len;
-      loc_string.null_terminated= FALSE;
+      IC_INIT_STRING(&loc_string, group_id, group_id_len, FALSE);
       (*section_num)++;
       return conf_ops->ic_add_section(conf_obj, *section_num, line_number,
                                       &section_name, pass);
@@ -172,6 +168,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     guint32 val_len;
     guint32 space_len= 0;
     gchar *key_id, *val_str;
+
     rm_space(iter_data, &space_len, line_len);
     id_len-= space_len;
     if ((key_id= conv_key_id(&iter_data[space_len], &id_len)) &&
@@ -183,12 +180,8 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
       decide whether this key and value makes sense and if so insert it into
       the configuration.
     */
-    key_name.str= key_id;
-    key_name.len= id_len;
-    key_name.null_terminated= FALSE;
-    data_str.str= val_str;
-    data_str.len= val_len;
-    data_str.null_terminated= FALSE;
+    IC_INIT_STRING(&key_name, key_id, id_len, FALSE);
+    IC_INIT_STRING(&data_str, val_str, val_len, FALSE);
     return conf_ops->ic_add_key(conf_obj, *section_num, line_number,
                                 &key_name, &data_str, pass);
   }
@@ -224,9 +217,7 @@ int ic_build_config_data(IC_STRING *conf_data,
       error= IC_ERROR_CONFIG_LINE_TOO_LONG;
       if (!(line_length= read_cr_line(iter_data)))
         goto config_error;
-      line_data.str= iter_data;
-      line_data.len= line_length;
-      line_data.null_terminated= FALSE;
+      IC_INIT_STRING(&line_data, iter_data, line_length, FALSE);
       if ((error= read_config_line(ic_conf_op, ic_config,
                                    &line_data, line_number, &section_num,
                                    pass)))

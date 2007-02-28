@@ -23,6 +23,10 @@ struct ic_string
   gboolean null_terminated;
 };
 typedef struct ic_string IC_STRING;
+#define IC_INIT_STRING(obj, a, b, c) \
+  (obj)->str= (a); \
+  (obj)->len= (b); \
+  (obj)->null_terminated= (c);
 
 int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
 /*
