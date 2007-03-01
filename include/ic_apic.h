@@ -44,6 +44,16 @@ enum ic_config_entry_change
 };
 typedef enum ic_config_entry_change IC_CONFIG_ENTRY_CHANGE;
 
+typedef enum ic_config_data_type
+{
+  IC_CHAR = 1,
+  IC_BOOLEAN = 1,
+  IC_UINT16 = 2,
+  IC_UINT32 = 3,
+  IC_UINT64 = 4,
+  IC_CHARPTR = 5
+} IC_CONFIG_DATA_TYPE;
+
 struct ic_config_entry
 {
   char *config_entry_name;
@@ -55,6 +65,8 @@ struct ic_config_entry
     guint64 default_value;
     char *default_string;
   };
+  IC_CONFIG_DATA_TYPE data_type;
+  guint32 offset;
   /*
     When only one version exists then both these values are 0.
     When a new version of default values is created the
@@ -159,7 +171,7 @@ typedef struct ic_run_config_server IC_RUN_CONFIG_SERVER;
 struct ic_kernel_config
 {
   char *filesystem_path;
-  char *checkpoint_path;
+  char *kernel_checkpoint_path;
   char *node_data_path;
   char *hostname;
 
@@ -177,8 +189,9 @@ struct ic_kernel_config
   guint32 number_of_connection_objects;
   guint32 number_of_operation_objects;
   guint32 number_of_scan_objects;
+  guint32 number_of_internal_trigger_operation_objects;
   guint32 number_of_key_operation_objects;
-  guint32 use_unswappable_memory;
+  guint32 size_of_connection_buffer;
   guint32 timer_wait_partial_start;
   guint32 timer_wait_partitioned_start;
   guint32 timer_wait_error_start;
@@ -192,12 +205,26 @@ struct ic_kernel_config
   guint32 timer_check_interval;
   guint32 timer_client_activity;
   guint32 timer_deadlock;
+  guint32 number_of_checkpoint_objects;
+  guint32 checkpoint_memory;
+  guint32 checkpoint_data_memory;
+  guint32 checkpoint_log_memory;
+  guint32 checkpoint_write_size;
+  guint32 checkpoint_max_write_size;
   guint32 number_of_ordered_key_objects;
   guint32 number_of_unique_hash_key_objects;
+  guint32 number_of_local_operation_objects;
+  guint32 number_of_local_scan_objects;
+  guint32 size_of_scan_batch;
   guint32 redo_log_memory;
+  guint32 long_message_memory;
+  guint32 kernel_max_open_files;
+  guint32 size_of_string_memory;
+  guint32 kernel_open_files;
+  guint32 kernel_file_synch_size;
   guint32 kernel_disk_write_speed;
   guint32 kernel_disk_write_speed_start;
-  guint32 kernel_file_synch_size;
+  guint32 kernel_dummy;
   guint32 log_level_start;
   guint32 log_level_stop;
   guint32 log_level_statistics;
@@ -216,8 +243,9 @@ struct ic_kernel_config
   guint32 kernel_lock_main_thread;
   guint32 kernel_lock_other_threads;
 
-  gchar kernel_volatile_mode;
+  gchar use_unswappable_memory;
   gchar kernel_automatic_restart;
+  gchar kernel_volatile_mode;
   gchar kernel_rt_scheduler_threads;
 };
 typedef struct ic_kernel_config IC_KERNEL_CONFIG;
@@ -416,5 +444,44 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                     guint32 num_clusters);
 
 void ic_print_config_parameters();
+
+#define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->default_value= (val); \
+  (conf_entry)->data_type= (type); \
+  (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
+  (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_CONFIG_MIN(conf_entry, min) \
+  (conf_entry)->is_min_value_defined= TRUE; \
+  (conf_entry)->min_value= (min);
+
+#define IC_SET_CONFIG_MAX(conf_entry, min) \
+  (conf_entry)->is_max_value_defined= TRUE; \
+  (conf_entry)->max_value= (max);
+
+#define IC_SET_CONFIG_MIN_MAX(conf_entry, min, max) \
+  (conf_entry)->is_min_value_defined= TRUE; \
+  (conf_entry)->is_max_value_defined= TRUE; \
+  (conf_entry)->min_value= (min); \
+  (conf_entry)->max_value= (max); \
+  if ((min) == (max)) (conf_entry)->is_not_configurable= TRUE;
+
+#define IC_SET_KERNEL_BOOLEAN(conf_entry, name, def, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->data_type= IC_BOOLEAN; \
+  (conf_entry)->default_value= (def); \
+  (conf_entry)->is_boolean= TRUE; \
+  (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_KERNEL_STRING(conf_entry, name, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->data_type= IC_CHARPTR; \
+  (conf_entry)->is_string_type= TRUE; \
+  (conf_entry)->is_mandatory_to_specify= TRUE; \
+  (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->change_variant= (change);
 
 #endif
