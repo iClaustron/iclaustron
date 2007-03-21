@@ -412,859 +412,621 @@ ic_init_config_parameters()
 /*
   This is the kernel node configuration section.
 */
-  map_config_id[KERNEL_MAX_TRACE_FILES]= 1;
-  conf_entry= &glob_conf_entry[1];
-  conf_entry->config_entry_description=
-  "The number of crashes that can be reported before we overwrite error log and trace files";
+  IC_SET_CONFIG_MAP(KERNEL_MAX_TRACE_FILES, 1);
   IC_SET_KERNEL_CONFIG(conf_entry, max_number_of_trace_files,
                        IC_UINT32, 25, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 2048);
-
-  map_config_id[KERNEL_REPLICAS]= 2;
-  conf_entry= &glob_conf_entry[2];
   conf_entry->config_entry_description=
-  "This defines number of nodes per node group, within a node group all nodes contain the same data";
+  "The number of crashes that can be reported before we overwrite error log and trace files";
+
+  IC_SET_CONFIG_MAP(KERNEL_REPLICAS, 2);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_replicas,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
   conf_entry->is_mandatory_to_specify= 1;
-
-  map_config_id[KERNEL_TABLE_OBJECTS]= 3;
-  conf_entry= &glob_conf_entry[3];
   conf_entry->config_entry_description=
-  "Sets the maximum number of tables that can be stored in cluster";
+  "This defines number of nodes per node group, within a node group all nodes contain the same data";
+
+  IC_SET_CONFIG_MAP(KERNEL_TABLE_OBJECTS, 3);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_table_objects,
                        IC_UINT32, 256, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 32);
-
-  map_config_id[KERNEL_COLUMN_OBJECTS]= 4;
-  conf_entry= &glob_conf_entry[4];
   conf_entry->config_entry_description=
-  "Sets the maximum number of columns that can be stored in cluster";
+  "Sets the maximum number of tables that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(KERNEL_COLUMN_OBJECTS, 4);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_column_objects,
                        IC_UINT32, 2048, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 256);
-
-  map_config_id[KERNEL_KEY_OBJECTS]= 5;
-  conf_entry= &glob_conf_entry[5];
-  conf_entry->config_entry_name= "number_of_key_objects";
   conf_entry->config_entry_description=
-  "Sets the maximum number of keys that can be stored in cluster";
+  "Sets the maximum number of columns that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(KERNEL_KEY_OBJECTS, 5);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_key_objects,
                        IC_UINT32, 256, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 32);
-
-  map_config_id[KERNEL_INTERNAL_TRIGGER_OBJECTS]= 6;
-  conf_entry= &glob_conf_entry[6];
   conf_entry->config_entry_description=
-  "Each unique index will use 3 internal trigger objects, index/backup will use 1 per table";
+  "Sets the maximum number of keys that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(KERNEL_INTERNAL_TRIGGER_OBJECTS, 6);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_internal_trigger_objects,
                        IC_UINT32, 1536, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 512);
-
-  map_config_id[KERNEL_CONNECTION_OBJECTS]= 7;
-  conf_entry= &glob_conf_entry[7];
   conf_entry->config_entry_description=
-  "Each active transaction and active scan uses a connection object";
+  "Each unique index will use 3 internal trigger objects, index/backup will use 1 per table";
+
+  IC_SET_CONFIG_MAP(KERNEL_CONNECTION_OBJECTS, 7);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_connection_objects,
                        IC_UINT32, 8192, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 128);
-
-  map_config_id[KERNEL_OPERATION_OBJECTS]= 8;
-  conf_entry= &glob_conf_entry[8];
   conf_entry->config_entry_description=
-  "Each record read/updated in a transaction uses an operation object during the transaction";
+  "Each active transaction and active scan uses a connection object";
+
+  IC_SET_CONFIG_MAP(KERNEL_OPERATION_OBJECTS, 8);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_operation_objects,
                        IC_UINT32, 32768, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 1024);
-
-  map_config_id[KERNEL_SCAN_OBJECTS]= 9;
-  conf_entry= &glob_conf_entry[9];
   conf_entry->config_entry_description=
-  "Each active scan uses a scan object for the lifetime of the scan operation";
+  "Each record read/updated in a transaction uses an operation object during the transaction";
+
+  IC_SET_CONFIG_MAP(KERNEL_SCAN_OBJECTS, 9);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_scan_objects,
                        IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 32, 512);
-
-  map_config_id[KERNEL_INTERNAL_TRIGGER_OPERATION_OBJECTS]= 10;
-  conf_entry= &glob_conf_entry[10];
   conf_entry->config_entry_description=
-  "Each internal trigger that is fired uses an operation object for a short time";
+  "Each active scan uses a scan object for the lifetime of the scan operation";
+
+  IC_SET_CONFIG_MAP(KERNEL_INTERNAL_TRIGGER_OPERATION_OBJECTS, 10);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_internal_trigger_operation_objects,
                        IC_UINT32, 4000, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4000, 4000);
-
-  map_config_id[KERNEL_KEY_OPERATION_OBJECTS]= 11;
-  conf_entry= &glob_conf_entry[11];
   conf_entry->config_entry_description=
-  "Each read and update of an unique hash index in a transaction uses one of those objects";
+  "Each internal trigger that is fired uses an operation object for a short time";
+
+  IC_SET_CONFIG_MAP(KERNEL_KEY_OPERATION_OBJECTS, 11);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_key_operation_objects,
                        IC_UINT32, 4096, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 128);
-
-  map_config_id[KERNEL_CONNECTION_BUFFER]= 12;
-  conf_entry= &glob_conf_entry[12];
   conf_entry->config_entry_description=
-  "Internal buffer used by connections by transactions and scans";
+  "Each read and update of an unique hash index in a transaction uses one of those objects";
+
+  IC_SET_CONFIG_MAP(KERNEL_CONNECTION_BUFFER, 12);
   IC_SET_KERNEL_CONFIG(conf_entry, size_of_connection_buffer,
                        IC_UINT32, 1024*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1024*1024, 1024*1024);
-
-  map_config_id[KERNEL_RAM_MEMORY]= 13;
-  conf_entry= &glob_conf_entry[13];
   conf_entry->config_entry_description=
-  "Size of memory used to store RAM-based records";
+  "Internal buffer used by connections by transactions and scans";
+
+  IC_SET_CONFIG_MAP(KERNEL_RAM_MEMORY, 13);
   IC_SET_KERNEL_CONFIG(conf_entry, size_of_ram_memory,
                        IC_UINT64, 256*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 16*1024*1024);
-
-  map_config_id[KERNEL_HASH_MEMORY]= 14;
-  conf_entry= &glob_conf_entry[14];
   conf_entry->config_entry_description=
-  "Size of memory used to store primary hash index on all tables and unique hash indexes";
+  "Size of memory used to store RAM-based records";
+
+  IC_SET_CONFIG_MAP(KERNEL_HASH_MEMORY, 14);
   IC_SET_KERNEL_CONFIG(conf_entry, size_of_hash_memory,
                        IC_UINT64, 64*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 8*1024*1024);
-
-  map_config_id[KERNEL_LOCK_MEMORY]= 15;
-  conf_entry= &glob_conf_entry[15];
   conf_entry->config_entry_description=
-  "Setting this to 1 means that all memory is locked and will not be swapped out";
+  "Size of memory used to store primary hash index on all tables and unique hash indexes";
+
+  IC_SET_CONFIG_MAP(KERNEL_LOCK_MEMORY, 15);
   IC_SET_KERNEL_BOOLEAN(conf_entry, use_unswappable_memory, FALSE,
                         IC_ROLLING_UPGRADE_CHANGE);
-
-  map_config_id[KERNEL_WAIT_PARTIAL_START]= 16;
-  conf_entry= &glob_conf_entry[16];
   conf_entry->config_entry_description=
-  "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever";
+  "Setting this to 1 means that all memory is locked and will not be swapped out";
+
+  IC_SET_CONFIG_MAP(KERNEL_WAIT_PARTIAL_START, 16);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_wait_partial_start,
                        IC_UINT32, 20000, IC_ROLLING_UPGRADE_CHANGE);
-
-  map_config_id[KERNEL_WAIT_PARTITIONED_START]= 17;
-  conf_entry= &glob_conf_entry[17];
   conf_entry->config_entry_description=
-  "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever";
+  "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever";
+
+  IC_SET_CONFIG_MAP(KERNEL_WAIT_PARTITIONED_START, 17);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_wait_partitioned_start,
                        IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
-
-  map_config_id[KERNEL_WAIT_ERROR_START]= 18;
-  conf_entry= &glob_conf_entry[18];
   conf_entry->config_entry_description=
-  "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever";
+  "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever";
+
+  IC_SET_CONFIG_MAP(KERNEL_WAIT_ERROR_START, 18);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_wait_error_start,
                        IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
-
-  map_config_id[KERNEL_HEARTBEAT_TIMER]= 19;
-  conf_entry= &glob_conf_entry[19];
   conf_entry->config_entry_description=
-  "Time in ms between sending heartbeat messages to kernel nodes, 4 missed leads to node crash";
+  "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever";
+
+  IC_SET_CONFIG_MAP(KERNEL_HEARTBEAT_TIMER, 19);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_heartbeat_kernel_nodes,
                        IC_UINT32, 700, IC_ROLLING_UPGRADE_CHANGE_SPECIAL);
   IC_SET_CONFIG_MIN(conf_entry, 10);
-
-  map_config_id[KERNEL_CLIENT_HEARTBEAT_TIMER]= 20;
-  conf_entry= &glob_conf_entry[20];
   conf_entry->config_entry_description=
-  "Time in ms between sending heartbeat messages to client nodes, 4 missed leads to node crash";
+  "Time in ms between sending heartbeat messages to kernel nodes, 4 missed leads to node crash";
+
+  IC_SET_CONFIG_MAP(KERNEL_CLIENT_HEARTBEAT_TIMER, 20);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_heartbeat_client_nodes,
                        IC_UINT32, 1000, IC_ROLLING_UPGRADE_CHANGE_SPECIAL);
   IC_SET_CONFIG_MIN(conf_entry, 10);
-
-  map_config_id[KERNEL_LOCAL_CHECKPOINT_TIMER]= 21;
-  conf_entry= &glob_conf_entry[21];
   conf_entry->config_entry_description=
-  "Specifies how often local checkpoints are executed, logarithmic scale on log size";
+  "Time in ms between sending heartbeat messages to client nodes, 4 missed leads to node crash";
+
+  IC_SET_CONFIG_MAP(KERNEL_LOCAL_CHECKPOINT_TIMER, 21);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_local_checkpoint,
                        IC_UINT32, 24, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 6, 31);
-
-  map_config_id[KERNEL_GLOBAL_CHECKPOINT_TIMER]= 22;
-  conf_entry= &glob_conf_entry[22];
   conf_entry->config_entry_description=
-  "Time in ms between starting global checkpoints";
+  "Specifies how often local checkpoints are executed, logarithmic scale on log size";
+
+  IC_SET_CONFIG_MAP(KERNEL_GLOBAL_CHECKPOINT_TIMER, 22);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_global_checkpoint,
                        IC_UINT32, 1000, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 10);
-
-  map_config_id[KERNEL_RESOLVE_TIMER]= 23;
-  conf_entry= &glob_conf_entry[23];
   conf_entry->config_entry_description=
-  "Time in ms waiting for response from resolve";
+  "Time in ms between starting global checkpoints";
+
+  IC_SET_CONFIG_MAP(KERNEL_RESOLVE_TIMER, 23);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_resolve,
                        IC_UINT32, 2000, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 10);
-
-  map_config_id[KERNEL_WATCHDOG_TIMER]= 24;
-  conf_entry= &glob_conf_entry[24];
   conf_entry->config_entry_description=
-  "Time in ms without activity in kernel before watchdog is fired";
+  "Time in ms waiting for response from resolve";
+
+  IC_SET_CONFIG_MAP(KERNEL_WATCHDOG_TIMER, 24);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_kernel_watchdog,
                        IC_UINT32, 6000, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 1000);
-
-  map_config_id[KERNEL_DAEMON_RESTART_AT_ERROR]= 25;
-  conf_entry= &glob_conf_entry[25];
   conf_entry->config_entry_description=
-  "If set, kernel restarts automatically after a failure";
+  "Time in ms without activity in kernel before watchdog is fired";
+
+  IC_SET_CONFIG_MAP(KERNEL_DAEMON_RESTART_AT_ERROR, 25);
   IC_SET_KERNEL_BOOLEAN(conf_entry, kernel_automatic_restart, TRUE,
                         IC_ONLINE_CHANGE);
+  conf_entry->config_entry_description=
+  "If set, kernel restarts automatically after a failure";
 
-  map_config_id[KERNEL_FILESYSTEM_PATH]= 26;
-  conf_entry= &glob_conf_entry[26];
+  IC_SET_CONFIG_MAP(KERNEL_FILESYSTEM_PATH, 26);
+  IC_SET_KERNEL_STRING(conf_entry, filesystem_path, IC_INITIAL_NODE_RESTART);
   conf_entry->config_entry_description=
   "Path to filesystem of kernel";
-  IC_SET_KERNEL_STRING(conf_entry, filesystem_path, IC_INITIAL_NODE_RESTART);
 
-  map_config_id[KERNEL_REDO_LOG_FILES]= 27;
-  conf_entry= &glob_conf_entry[27];
-  conf_entry->config_entry_description=
-  "Number of REDO log files, each file represents 64 MB log space";
+  IC_SET_CONFIG_MAP(KERNEL_REDO_LOG_FILES, 27);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_redo_log_files,
                        IC_UINT32, 32, IC_INITIAL_NODE_RESTART);
   IC_SET_CONFIG_MIN(conf_entry, 4);
-
-  map_config_id[KERNEL_CHECK_INTERVAL]= 28;
-  conf_entry= &glob_conf_entry[28];
   conf_entry->config_entry_description=
-  "Time in ms between checks after transaction timeouts";
+  "Number of REDO log files, each file represents 64 MB log space";
+
+  IC_SET_CONFIG_MAP(KERNEL_CHECK_INTERVAL, 28);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_check_interval,
                        IC_UINT32, 500, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 500, 500);
-
-  map_config_id[KERNEL_CLIENT_ACTIVITY_TIMER]= 29;
-  conf_entry= &glob_conf_entry[29];
   conf_entry->config_entry_description=
-  "Time in ms before transaction is aborted due to client inactivity";
+  "Time in ms between checks after transaction timeouts";
+
+  IC_SET_CONFIG_MAP(KERNEL_CLIENT_ACTIVITY_TIMER, 29);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_client_activity,
                        IC_UINT32, 1024*1024*1024, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 1000);
-
-  map_config_id[KERNEL_DEADLOCK_TIMER]= 30;
-  conf_entry= &glob_conf_entry[30];
   conf_entry->config_entry_description=
-  "Time in ms before transaction is aborted due to internal wait (indication of deadlock)";
+  "Time in ms before transaction is aborted due to client inactivity";
+
+  IC_SET_CONFIG_MAP(KERNEL_DEADLOCK_TIMER, 30);
   IC_SET_KERNEL_CONFIG(conf_entry, timer_deadlock,
                        IC_UINT32, 2000, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 1000);
-
-  map_config_id[KERNEL_CHECKPOINT_OBJECTS]= 31;
-  conf_entry= &glob_conf_entry[31];
   conf_entry->config_entry_description=
-  "Number of possible parallel backups and local checkpoints";
+  "Time in ms before transaction is aborted due to internal wait (indication of deadlock)";
+
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_OBJECTS, 31);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_checkpoint_objects,
                        IC_UINT32, 1, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 1);
-
-  map_config_id[KERNEL_CHECKPOINT_MEMORY]= 32;
-  conf_entry= &glob_conf_entry[32];
   conf_entry->config_entry_description=
-  "Size of memory buffers for local checkpoint and backup";
+  "Number of possible parallel backups and local checkpoints";
+
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_MEMORY, 32);
   IC_SET_KERNEL_CONFIG(conf_entry, checkpoint_memory,
                        IC_UINT32, 4*1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 4*1024*1024);
-
-  map_config_id[KERNEL_CHECKPOINT_DATA_MEMORY]= 33;
-  conf_entry= &glob_conf_entry[33];
   conf_entry->config_entry_description=
-  "Size of data memory buffers for local checkpoint and backup";
+  "Size of memory buffers for local checkpoint and backup";
+
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_DATA_MEMORY, 33);
   IC_SET_KERNEL_CONFIG(conf_entry, checkpoint_data_memory,
                        IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
-
-  map_config_id[KERNEL_CHECKPOINT_LOG_MEMORY]= 34;
-  conf_entry= &glob_conf_entry[34];
   conf_entry->config_entry_description=
-  "Size of log memory buffers for local checkpoint and backup";
+  "Size of data memory buffers for local checkpoint and backup";
+
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_LOG_MEMORY, 34);
   IC_SET_KERNEL_CONFIG(conf_entry, checkpoint_log_memory,
                        IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
-
-  map_config_id[KERNEL_CHECKPOINT_WRITE_SIZE]= 35;
-  conf_entry= &glob_conf_entry[35];
-  conf_entry->config_entry_name= "checkpoint_write_size";
   conf_entry->config_entry_description=
-  "Size of default writes in local checkpoint and backups";
+  "Size of log memory buffers for local checkpoint and backup";
+
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_WRITE_SIZE, 35);
   IC_SET_KERNEL_CONFIG(conf_entry, checkpoint_write_size,
                        IC_UINT32, 64*1024, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 64*1024);
-
-  map_config_id[KERNEL_CHECKPOINT_MAX_WRITE_SIZE]= 36;
-  conf_entry= &glob_conf_entry[36];
-  conf_entry->config_entry_name= "checkpoint_max_write_size";
   conf_entry->config_entry_description=
-  "Size of maximum writes in local checkpoint and backups";
+  "Size of default writes in local checkpoint and backups";
+
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_MAX_WRITE_SIZE, 36);
   IC_SET_KERNEL_CONFIG(conf_entry, checkpoint_max_write_size,
                        IC_UINT32, 256*1024, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 256*1024, 256*1024);
-
-  map_config_id[KERNEL_VOLATILE_MODE]= 37;
-  conf_entry= &glob_conf_entry[37];
   conf_entry->config_entry_description=
-  "In this mode all file writes are ignored and all starts becomes initial starts";
+  "Size of maximum writes in local checkpoint and backups";
+
+  IC_SET_CONFIG_MAP(KERNEL_VOLATILE_MODE, 37);
   IC_SET_KERNEL_BOOLEAN(conf_entry, kernel_volatile_mode, FALSE,
                         IC_ROLLING_UPGRADE_CHANGE);
-
-
-  map_config_id[KERNEL_ORDERED_KEY_OBJECTS]= 38;
-  conf_entry= &glob_conf_entry[38];
   conf_entry->config_entry_description=
-  "Sets the maximum number of ordered keys that can be stored in cluster";
+  "In this mode all file writes are ignored and all starts becomes initial starts";
+
+
+  IC_SET_CONFIG_MAP(KERNEL_ORDERED_KEY_OBJECTS, 38);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_ordered_key_objects,
                        IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 32);
-
-  map_config_id[KERNEL_UNIQUE_HASH_KEY_OBJECTS]= 39;
-  conf_entry= &glob_conf_entry[39];
-  conf_entry->config_entry_name= "number_of_unique_hash_key_objects";
   conf_entry->config_entry_description=
-  "Sets the maximum number of unique hash keys that can be stored in cluster";
+  "Sets the maximum number of ordered keys that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(KERNEL_UNIQUE_HASH_KEY_OBJECTS, 39);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_unique_hash_key_objects,
                        IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 32);
-
-  map_config_id[KERNEL_LOCAL_OPERATION_OBJECTS]= 40;
-  conf_entry= &glob_conf_entry[40];
-  conf_entry->config_entry_name= "number_of_local_operation_objects";
   conf_entry->config_entry_description=
-  "Number of local operation records stored used in the node";
+  "Sets the maximum number of unique hash keys that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(KERNEL_LOCAL_OPERATION_OBJECTS, 40);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_local_operation_objects,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
-
-  map_config_id[KERNEL_LOCAL_SCAN_OBJECTS]= 41;
-  conf_entry= &glob_conf_entry[41];
   conf_entry->config_entry_description=
-  "Number of local scan records stored used in the node";
+  "Number of local operation records stored used in the node";
+
+  IC_SET_CONFIG_MAP(KERNEL_LOCAL_SCAN_OBJECTS, 41);
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_local_scan_objects,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
-
-  map_config_id[KERNEL_SCAN_BATCH_SIZE]= 42;
-  conf_entry= &glob_conf_entry[42];
   conf_entry->config_entry_description=
-  "Number of records sent in a scan from the local kernel node";
+  "Number of local scan records stored used in the node";
+
+  IC_SET_CONFIG_MAP(KERNEL_SCAN_BATCH_SIZE, 42);
   IC_SET_KERNEL_CONFIG(conf_entry, size_of_scan_batch,
                        IC_UINT32, 64, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64, 64);
-
-  map_config_id[KERNEL_REDO_LOG_MEMORY]= 43;
-  conf_entry= &glob_conf_entry[43];
   conf_entry->config_entry_description=
-  "Size of REDO log memory buffer";
+  "Number of records sent in a scan from the local kernel node";
+
+  IC_SET_CONFIG_MAP(KERNEL_REDO_LOG_MEMORY, 43);
   IC_SET_KERNEL_CONFIG(conf_entry, redo_log_memory,
                        IC_UINT32, 16*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
-
-  map_config_id[KERNEL_LONG_MESSAGE_MEMORY]= 44;
-  conf_entry= &glob_conf_entry[44];
   conf_entry->config_entry_description=
-  "Size of long memory buffers";
+  "Size of REDO log memory buffer";
+
+  IC_SET_CONFIG_MAP(KERNEL_LONG_MESSAGE_MEMORY, 44);
   IC_SET_KERNEL_CONFIG(conf_entry, long_message_memory,
                        IC_UINT32, 1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1024*1024, 1024*1024);
+  conf_entry->config_entry_description=
+  "Size of long memory buffers";
 
-  map_config_id[KERNEL_CHECKPOINT_PATH]= 45;
-  conf_entry= &glob_conf_entry[45];
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_PATH, 45);
+  IC_SET_KERNEL_STRING(conf_entry, kernel_checkpoint_path, IC_INITIAL_NODE_RESTART);
   conf_entry->config_entry_description=
   "Path to filesystem of checkpoints";
-  IC_SET_KERNEL_STRING(conf_entry, kernel_checkpoint_path, IC_INITIAL_NODE_RESTART);
 
-  map_config_id[KERNEL_MAX_OPEN_FILES]= 46;
-  conf_entry= &glob_conf_entry[46];
-  conf_entry->config_entry_description=
-  "Maximum number of open files in kernel node";
+  IC_SET_CONFIG_MAP(KERNEL_MAX_OPEN_FILES, 46);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_max_open_files,
                        IC_UINT32, 40, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 40, 40);
-
-  map_config_id[KERNEL_PAGE_CACHE_SIZE]= 47;
-  conf_entry= &glob_conf_entry[47];
   conf_entry->config_entry_description=
-  "Size of page cache for disk-based data";
+  "Maximum number of open files in kernel node";
+
+  IC_SET_CONFIG_MAP(KERNEL_PAGE_CACHE_SIZE, 47);
   IC_SET_KERNEL_CONFIG(conf_entry, page_cache_size,
                        IC_UINT64, 128*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 64*1024);
-
-  map_config_id[KERNEL_STRING_MEMORY]= 48;
-  conf_entry= &glob_conf_entry[48];
   conf_entry->config_entry_description=
-  "Size of string memory";
+  "Size of page cache for disk-based data";
+
+  IC_SET_CONFIG_MAP(KERNEL_STRING_MEMORY, 48);
   IC_SET_KERNEL_CONFIG(conf_entry, size_of_string_memory,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
-
-  map_config_id[KERNEL_INITIAL_OPEN_FILES]= 49;
-  conf_entry= &glob_conf_entry[49];
   conf_entry->config_entry_description=
-  "Number of open file handles in kernel node from start";
+  "Size of string memory";
+
+  IC_SET_CONFIG_MAP(KERNEL_INITIAL_OPEN_FILES, 49);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_open_files,
                        IC_UINT32, 27, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 27, 27);
-
-  map_config_id[KERNEL_FILE_SYNCH_SIZE]= 50;
-  conf_entry= &glob_conf_entry[50];
   conf_entry->config_entry_description=
-  "Size of file writes before a synch is always used";
+  "Number of open file handles in kernel node from start";
+
+  IC_SET_CONFIG_MAP(KERNEL_FILE_SYNCH_SIZE, 50);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_file_synch_size,
                        IC_UINT32, 4*1024*1024, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
-
-  map_config_id[KERNEL_DISK_WRITE_SPEED]= 51;
-  conf_entry= &glob_conf_entry[51];
   conf_entry->config_entry_description=
-  "Limit on how fast checkpoints are allowed to write to disk";
+  "Size of file writes before a synch is always used";
+
+  IC_SET_CONFIG_MAP(KERNEL_DISK_WRITE_SPEED, 51);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_disk_write_speed,
                        IC_UINT32, 8*1024*1024, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 64*1024);
-
-  map_config_id[KERNEL_DISK_WRITE_SPEED_START]= 52;
-  conf_entry= &glob_conf_entry[52];
   conf_entry->config_entry_description=
-  "Limit on how fast checkpoints are allowed to write to disk during start of the node";
+  "Limit on how fast checkpoints are allowed to write to disk";
+
+  IC_SET_CONFIG_MAP(KERNEL_DISK_WRITE_SPEED_START, 52);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_disk_write_speed_start,
                        IC_UINT32, 256*1024*1024, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
-
-  map_config_id[KERNEL_MEMORY_POOL]= 53;
-  conf_entry= &glob_conf_entry[53];
   conf_entry->config_entry_description=
-  "Size of memory pool for internal memory usage";
+  "Limit on how fast checkpoints are allowed to write to disk during start of the node";
+
+  IC_SET_CONFIG_MAP(KERNEL_MEMORY_POOL, 53);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_memory_pool,
                        IC_UINT64, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Size of memory pool for internal memory usage";
 
-  map_config_id[KERNEL_DUMMY]= 54;
-  conf_entry= &glob_conf_entry[54];
-  conf_entry->config_entry_description= (char*)empty_string;
+  IC_SET_CONFIG_MAP(KERNEL_DUMMY, 54);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_dummy,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
+  conf_entry->config_entry_description= (char*)empty_string;
 
-  map_config_id[KERNEL_START_LOG_LEVEL]= 55;
-  conf_entry= &glob_conf_entry[55];
-  conf_entry->config_entry_name= "log_level_start";
+  IC_SET_CONFIG_MAP(KERNEL_START_LOG_LEVEL, 55);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_start,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level at start of a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_STOP_LOG_LEVEL]= 56;
-  conf_entry= &glob_conf_entry[56];
-  conf_entry->config_entry_name= "log_level_stop";
+  IC_SET_CONFIG_MAP(KERNEL_STOP_LOG_LEVEL, 56);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_stop,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level at stop of a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_STAT_LOG_LEVEL]= 57;
-  conf_entry= &glob_conf_entry[57];
-  conf_entry->config_entry_name= "log_level_statistics";
+  IC_SET_CONFIG_MAP(KERNEL_STAT_LOG_LEVEL, 57);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_statistics,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of statistics on a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_CHECKPOINT_LOG_LEVEL]= 58;
-  conf_entry= &glob_conf_entry[58];
-  conf_entry->config_entry_name= "log_level_checkpoint";
+  IC_SET_CONFIG_MAP(KERNEL_CHECKPOINT_LOG_LEVEL, 58);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_checkpoint,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level at checkpoint of a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_RESTART_LOG_LEVEL]= 59;
-  conf_entry= &glob_conf_entry[59];
-  conf_entry->config_entry_name= "log_level_restart";
+  IC_SET_CONFIG_MAP(KERNEL_RESTART_LOG_LEVEL, 59);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_restart,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level at restart of a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_CONNECTION_LOG_LEVEL]= 60;
-  conf_entry= &glob_conf_entry[60];
-  conf_entry->config_entry_name= "log_level_connection";
+  IC_SET_CONFIG_MAP(KERNEL_CONNECTION_LOG_LEVEL, 60);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_connection,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of connections to a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_REPORT_LOG_LEVEL]= 61;
-  conf_entry= &glob_conf_entry[61];
-  conf_entry->config_entry_name= "log_level_reports";
+  IC_SET_CONFIG_MAP(KERNEL_REPORT_LOG_LEVEL, 61);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_reports,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of reports from a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_WARNING_LOG_LEVEL]= 62;
-  conf_entry= &glob_conf_entry[62];
-  conf_entry->config_entry_name= "log_level_warning";
+  IC_SET_CONFIG_MAP(KERNEL_WARNING_LOG_LEVEL, 62);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_warning,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of warnings from a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_ERROR_LOG_LEVEL]= 63;
-  conf_entry= &glob_conf_entry[63];
-  conf_entry->config_entry_name= "log_level_error";
+  IC_SET_CONFIG_MAP(KERNEL_ERROR_LOG_LEVEL, 63);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_error,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of errors from a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_CONGESTION_LOG_LEVEL]= 64;
-  conf_entry= &glob_conf_entry[64];
-  conf_entry->config_entry_name= "log_level_congestion";
+  IC_SET_CONFIG_MAP(KERNEL_CONGESTION_LOG_LEVEL, 64);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_congestion,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of congestions to a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_DEBUG_LOG_LEVEL]= 65;
-  conf_entry= &glob_conf_entry[65];
-  conf_entry->config_entry_name= "log_level_debug";
+  IC_SET_CONFIG_MAP(KERNEL_DEBUG_LOG_LEVEL, 65);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_debug,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of debug messages from a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_BACKUP_LOG_LEVEL]= 66;
-  conf_entry= &glob_conf_entry[66];
-  conf_entry->config_entry_name= "log_level_backup";
+  IC_SET_CONFIG_MAP(KERNEL_BACKUP_LOG_LEVEL, 66);
+  IC_SET_KERNEL_CONFIG(conf_entry, log_level_backup,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of backups at a node";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 15;
-  conf_entry->default_value= 8;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[127]= 67;
-  conf_entry= &glob_conf_entry[67];
+  IC_SET_CONFIG_MAP(127, 67);
   conf_entry->is_deprecated= TRUE;
 
-  map_config_id[128]= 68;
-  conf_entry= &glob_conf_entry[68];
+  IC_SET_CONFIG_MAP(128, 68);
   conf_entry->is_deprecated= TRUE;
 
-  map_config_id[137]= 69;
-  conf_entry= &glob_conf_entry[69];
+  IC_SET_CONFIG_MAP(137, 69);
   conf_entry->is_deprecated= TRUE;
 
-  map_config_id[138]= 70;
-  conf_entry= &glob_conf_entry[70];
+  IC_SET_CONFIG_MAP(138, 70);
   conf_entry->is_deprecated= TRUE;
 
-  map_config_id[154]= 71;
-  conf_entry= &glob_conf_entry[71];
+  IC_SET_CONFIG_MAP(154, 71);
   conf_entry->is_deprecated= TRUE;
 
-  map_config_id[155]= 72;
-  conf_entry= &glob_conf_entry[72];
+  IC_SET_CONFIG_MAP(155, 72);
   conf_entry->is_deprecated= TRUE;
 
-  map_config_id[KERNEL_INJECT_FAULT]= 73;
-  conf_entry= &glob_conf_entry[73];
-  conf_entry->config_entry_name= "inject_fault";
+  IC_SET_CONFIG_MAP(KERNEL_INJECT_FAULT, 73);
+  IC_SET_KERNEL_CONFIG(conf_entry, inject_fault,
+                       IC_UINT32, 2, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
   conf_entry->config_entry_description=
   "Inject faults (only available in special test builds)";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 2;
-  conf_entry->default_value= 2;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_SCHEDULER_NO_SEND_TIME]= 74;
-  conf_entry= &glob_conf_entry[74];
-  conf_entry->config_entry_name= "kernel_scheduler_no_send_time";
+  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SEND_TIME, 74);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_send_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
+  conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
   "How long time can the scheduler execute without sending socket buffers";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 10999;
-  conf_entry->default_value= 0;
-  conf_entry->min_version_used= 0x5010D;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_SCHEDULER_NO_SLEEP_TIME]= 75;
-  conf_entry= &glob_conf_entry[75];
-  conf_entry->config_entry_name= "kernel_scheduler_no_sleep_time";
+  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SLEEP_TIME, 75);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_sleep_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
+  conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
   "How long time can the scheduler execute without going to sleep";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 10999;
-  conf_entry->default_value= 0;
-  conf_entry->min_version_used= 0x5010D;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_RT_SCHEDULER_THREADS]= 76;
-  conf_entry= &glob_conf_entry[76];
-  conf_entry->config_entry_name= "kernel_rt_scheduler_thread";
+  IC_SET_CONFIG_MAP(KERNEL_RT_SCHEDULER_THREADS, 76);
+  IC_SET_KERNEL_BOOLEAN(conf_entry, kernel_rt_scheduler_threads,
+                       FALSE, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
+  conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
   "If set the kernel is setting its thread in RT priority, requires root privileges";
-  conf_entry->is_boolean= TRUE;
-  conf_entry->default_value= FALSE;
-  conf_entry->min_version_used= 0x5010D;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_LOCK_MAIN_THREAD]= 77;
-  conf_entry= &glob_conf_entry[77];
-  conf_entry->config_entry_name= "kernel_lock_main_thread";
+  IC_SET_CONFIG_MAP(KERNEL_LOCK_MAIN_THREAD, 77);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_lock_main_thread,
+                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
+  conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
   "Lock Main Thread to a CPU id";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 65535;
-  conf_entry->default_value= 65535;
-  conf_entry->min_version_used= 0x5010D;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
-  map_config_id[KERNEL_LOCK_OTHER_THREADS]= 78;
-  conf_entry= &glob_conf_entry[78];
-  conf_entry->config_entry_name= "kernel_lock_other_threads";
+  IC_SET_CONFIG_MAP(KERNEL_LOCK_OTHER_THREADS, 78);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_lock_main_thread,
+                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
+  conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
   "Lock other threads to a CPU id";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 65535;
-  conf_entry->default_value= 65535;
-  conf_entry->min_version_used= 0x5010D;
-  conf_entry->node_type= (1 << IC_KERNEL_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
 
 /*
   This is the TCP configuration section.
 */
-  map_config_id[TCP_FIRST_NODE_ID]= 100;
-  conf_entry= &glob_conf_entry[100];
-  conf_entry->config_entry_name= "first_node_id";
+  IC_SET_CONFIG_MAP(TCP_FIRST_NODE_ID, 100);
+  IC_SET_TCP_CONFIG(conf_entry, first_node_id,
+                    IC_UINT16, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  conf_entry->is_mandatory_to_specify= 1;
   conf_entry->config_entry_description=
   "First node id of the connection";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 1;
-  conf_entry->max_value= MAX_NODE_ID;
-  conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
-  map_config_id[TCP_SECOND_NODE_ID]= 101;
-  conf_entry= &glob_conf_entry[101];
-  conf_entry->config_entry_name= "second_node_id";
+  IC_SET_CONFIG_MAP(TCP_SECOND_NODE_ID, 101);
+  IC_SET_TCP_CONFIG(conf_entry, second_node_id,
+                    IC_UINT16, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  conf_entry->is_mandatory_to_specify= 1;
   conf_entry->config_entry_description=
   "Second node id of the connection";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 1;
-  conf_entry->max_value= MAX_NODE_ID;
-  conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
-  map_config_id[TCP_USE_MESSAGE_ID]= 102;
-  conf_entry= &glob_conf_entry[102];
-  conf_entry->config_entry_name= "use_message_id";
+  IC_SET_CONFIG_MAP(TCP_USE_MESSAGE_ID, 102);
+  IC_SET_TCP_BOOLEAN(conf_entry, use_message_id,
+                     FALSE, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Using message id can be a valuable resource to find problems related to distributed execution";
-  conf_entry->is_boolean= TRUE;
-  conf_entry->default_value= FALSE;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_USE_CHECKSUM]= 103;
-  conf_entry= &glob_conf_entry[103];
-  conf_entry->config_entry_name= "use_checksum";
+  IC_SET_CONFIG_MAP(TCP_USE_CHECKSUM, 103);
+  IC_SET_TCP_BOOLEAN(conf_entry, use_checksum,
+                     FALSE, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Using checksum ensures that internal bugs doesn't corrupt data while data is placed in buffers";
-  conf_entry->is_boolean= TRUE;
-  conf_entry->default_value= FALSE;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_CLIENT_PORT_NUMBER]= 104;
-  conf_entry= &glob_conf_entry[104];
-  conf_entry->config_entry_name= "client_port_number";
+  IC_SET_CONFIG_MAP(TCP_CLIENT_PORT_NUMBER, 104);
+  IC_SET_TCP_CONFIG(conf_entry, client_port_number,
+                    IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
+  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
   "Port number to use on client side";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 1024;
-  conf_entry->max_value= 65535;
-  conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
-  conf_entry->is_only_iclaustron= TRUE;
 
-  map_config_id[TCP_SERVER_PORT_NUMBER]= 105;
-  conf_entry= &glob_conf_entry[105];
-  conf_entry->config_entry_name= "server_port_number";
+  IC_SET_CONFIG_MAP(TCP_SERVER_PORT_NUMBER, 105);
+  IC_SET_TCP_CONFIG(conf_entry, server_port_number,
+                    IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
+  conf_entry->is_mandatory_to_specify= 1;
   conf_entry->config_entry_description=
   "Port number to use on server side";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 1024;
-  conf_entry->max_value= 65535;
-  conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
 
-  map_config_id[TCP_WRITE_BUFFER_SIZE]= 106;
-  conf_entry= &glob_conf_entry[106];
-  conf_entry->config_entry_name= "tcp_write_buffer_size";
+  IC_SET_CONFIG_MAP(TCP_WRITE_BUFFER_SIZE, 106);
+  IC_SET_TCP_CONFIG(conf_entry, tcp_write_buffer_size,
+                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 128*1024);
   conf_entry->config_entry_description=
   "Size of write buffer in front of TCP socket";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->min_value= 128 * 1024;
-  conf_entry->default_value= 256 * 1024;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_READ_BUFFER_SIZE]= 107;
-  conf_entry= &glob_conf_entry[107];
-  conf_entry->config_entry_name= "tcp_buffer_read_size";
+  IC_SET_CONFIG_MAP(TCP_READ_BUFFER_SIZE, 107);
+  IC_SET_TCP_CONFIG(conf_entry, tcp_read_buffer_size,
+                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 64*1024);
   conf_entry->config_entry_description=
   "Size of read buffer in front of TCP socket";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_not_configurable= TRUE;
-  conf_entry->min_value= 64 * 1024;
-  conf_entry->max_value= 64 * 1024;
-  conf_entry->default_value= 64 * 1024;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_FIRST_HOSTNAME]= 108;
-  conf_entry= &glob_conf_entry[108];
-  conf_entry->config_entry_name= "first_hostname";
+  IC_SET_CONFIG_MAP(TCP_FIRST_HOSTNAME, 108);
+  IC_SET_TCP_STRING(conf_entry, first_hostname, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Hostname of first node";
-  conf_entry->is_string_type= TRUE;
-  conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_SECOND_HOSTNAME]= 109;
-  conf_entry= &glob_conf_entry[109];
-  conf_entry->config_entry_name= "second_hostname";
+  IC_SET_CONFIG_MAP(TCP_SECOND_HOSTNAME, 109);
+  IC_SET_TCP_STRING(conf_entry, second_hostname, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Hostname of second node";
-  conf_entry->is_string_type= TRUE;
-  conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_GROUP]= 110;
-  conf_entry= &glob_conf_entry[110];
-  conf_entry->config_entry_name= "tcp_group";
+  IC_SET_CONFIG_MAP(TCP_GROUP, 110);
+  IC_SET_TCP_CONFIG(conf_entry, tcp_group,
+                    IC_UINT32, 55, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 55, 55);
   conf_entry->config_entry_description=
   "Group id of the connection";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_not_configurable= TRUE;
-  conf_entry->min_value= 55;
-  conf_entry->max_value= 55;
-  conf_entry->default_value= 55;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_ROLLING_UPGRADE_CHANGE;
 
-  map_config_id[TCP_SERVER_NODE_ID]= 111;
-  conf_entry= &glob_conf_entry[111];
-  conf_entry->config_entry_name= "server_node_id";
+  IC_SET_CONFIG_MAP(TCP_SERVER_NODE_ID, 111);
+  IC_SET_TCP_CONFIG(conf_entry, server_node_id,
+                    IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  conf_entry->is_mandatory_to_specify= 1;
   conf_entry->config_entry_description=
   "Node id of node that is server part of connection";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 1;
-  conf_entry->max_value= MAX_NODE_ID;
-  conf_entry->is_mandatory_to_specify= 1;
-  conf_entry->node_type= (1 << IC_COMM_TYPE);
-  conf_entry->change_variant= IC_NOT_CHANGEABLE;
 
 /*
   This is the cluster server configuration section.
 */
-  map_config_id[CLUSTER_SERVER_EVENT_LOG]= 150;
-  conf_entry= &glob_conf_entry[150];
-  conf_entry->config_entry_name= "cluster_server_event_log";
+  IC_SET_CONFIG_MAP(CLUSTER_SERVER_EVENT_LOG, 150);
+  IC_SET_CLUSTER_SERVER_STRING(conf_entry, cluster_server_event_log,
+                               empty_string, IC_INITIAL_NODE_RESTART);
   conf_entry->config_entry_description=
   "Type of cluster event log";
-  conf_entry->is_string_type= TRUE;
-  conf_entry->default_string= (char*)empty_string;
-  conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE);
-  conf_entry->change_variant= IC_INITIAL_NODE_RESTART;
 
-  map_config_id[CLUSTER_SERVER_PORT_NUMBER]= 151;
-  conf_entry= &glob_conf_entry[151];
+  IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 151);
   conf_entry->config_entry_name= "cluster_server_port_number";
-  conf_entry->config_entry_description=
-  "Port number that cluster server will listen";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->min_value= 1024;
@@ -1272,16 +1034,15 @@ ic_init_config_parameters()
   conf_entry->default_value= 2286;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+  conf_entry->config_entry_description=
+  "Port number that cluster server will listen";
 
 /*
   This is the client configuration section.
 */
 
-  map_config_id[CLIENT_RESOLVE_RANK]= 200;
-  conf_entry= &glob_conf_entry[200];
+  IC_SET_CONFIG_MAP(CLIENT_RESOLVE_RANK, 200);
   conf_entry->config_entry_name= "client_resolve_rank";
-  conf_entry->config_entry_description=
-  "Rank in resolving network partition of the client";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->min_value= 0;
@@ -1289,21 +1050,19 @@ ic_init_config_parameters()
   conf_entry->default_value= 0;
   conf_entry->node_type= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
-
-  map_config_id[CLIENT_RESOLVE_TIMER]= 201;
-  conf_entry= &glob_conf_entry[201];
-  conf_entry->config_entry_name= "client_resolve_timer";
   conf_entry->config_entry_description=
-  "Time in ms waiting for resolve before crashing";
+  "Rank in resolving network partition of the client";
+
+  IC_SET_CONFIG_MAP(CLIENT_RESOLVE_TIMER, 201);
+  conf_entry->config_entry_name= "client_resolve_timer";
   conf_entry->default_value= 0;
   conf_entry->node_type= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
-
-  map_config_id[CLIENT_BATCH_SIZE]= 202;
-  conf_entry= &glob_conf_entry[202];
-  conf_entry->config_entry_name= "client_batch_size";
   conf_entry->config_entry_description=
-  "Size in number of records of batches in scan operations";
+  "Time in ms waiting for resolve before crashing";
+
+  IC_SET_CONFIG_MAP(CLIENT_BATCH_SIZE, 202);
+  conf_entry->config_entry_name= "client_batch_size";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->min_value= 1;
@@ -1311,12 +1070,11 @@ ic_init_config_parameters()
   conf_entry->default_value= 64;
   conf_entry->node_type= (1 << IC_CLIENT_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
-
-  map_config_id[CLIENT_BATCH_BYTE_SIZE]= 203;
-  conf_entry= &glob_conf_entry[203];
-  conf_entry->config_entry_name= "client_batch_byte_size";
   conf_entry->config_entry_description=
-  "Size in bytes of batches in scan operations";
+  "Size in number of records of batches in scan operations";
+
+  IC_SET_CONFIG_MAP(CLIENT_BATCH_BYTE_SIZE, 203);
+  conf_entry->config_entry_name= "client_batch_byte_size";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->min_value= 128;
@@ -1324,12 +1082,11 @@ ic_init_config_parameters()
   conf_entry->default_value= 8192;
   conf_entry->node_type= (1 << IC_CLIENT_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
-
-  map_config_id[CLIENT_MAX_BATCH_BYTE_SIZE]= 204;
-  conf_entry= &glob_conf_entry[204];
-  conf_entry->config_entry_name= "client_max_batch_byte_size";
   conf_entry->config_entry_description=
-  "Size in bytes of max of the sum of the batches in a scan operations";
+  "Size in bytes of batches in scan operations";
+
+  IC_SET_CONFIG_MAP(CLIENT_MAX_BATCH_BYTE_SIZE, 204);
+  conf_entry->config_entry_name= "client_max_batch_byte_size";
   conf_entry->is_min_value_defined= TRUE;
   conf_entry->is_max_value_defined= TRUE;
   conf_entry->min_value= 32 * 1024;
@@ -1337,26 +1094,26 @@ ic_init_config_parameters()
   conf_entry->default_value= 256 * 1024;
   conf_entry->node_type= (1 << IC_CLIENT_TYPE);
   conf_entry->change_variant= IC_ONLINE_CHANGE;
-
-  map_config_id[IC_NODE_DATA_PATH]= 250;
-  conf_entry= &glob_conf_entry[250];
   conf_entry->config_entry_description=
-  "Data directory of the node";
+  "Size in bytes of max of the sum of the batches in a scan operations";
+
+  IC_SET_CONFIG_MAP(IC_NODE_DATA_PATH, 250);
   IC_SET_KERNEL_STRING(conf_entry, node_data_path, IC_INITIAL_NODE_RESTART);
   conf_entry->default_string= (char*)empty_string;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
                          (1 << IC_KERNEL_TYPE);
-
-  map_config_id[IC_NODE_HOST]= 251;
-  conf_entry= &glob_conf_entry[251];
   conf_entry->config_entry_description=
-  "Hostname of the node";
+  "Data directory of the node";
+
+  IC_SET_CONFIG_MAP(IC_NODE_HOST, 251);
   IC_SET_KERNEL_STRING(conf_entry, hostname, IC_CLUSTER_RESTART_CHANGE);
   conf_entry->default_string= (char*)empty_string;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
                          (1 << IC_KERNEL_TYPE);
+  conf_entry->config_entry_description=
+  "Hostname of the node";
   return;
 }
 

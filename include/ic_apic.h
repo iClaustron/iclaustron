@@ -267,10 +267,10 @@ struct ic_cluster_server_config
 {
   char *hostname;
   char *node_data_path;
+  char *cluster_server_event_log;
 
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
-  guint32 cluster_server_event_log;
   guint32 cluster_server_port_number;
 };
 typedef struct ic_cluster_server_config IC_CLUSTER_SERVER_CONFIG;
@@ -309,6 +309,7 @@ struct ic_tcp_comm_link_config
   guint16 client_port_number;
   guint16 server_port_number;
   guint16 server_node_id;
+  guint16 tcp_group;
 
   gchar use_message_id;
   gchar use_checksum;
@@ -445,6 +446,10 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 
 void ic_print_config_parameters();
 
+#define IC_SET_CONFIG_MAP(name, id) \
+  map_config_id[name]= id; \
+  conf_entry= &glob_conf_entry[id];
+
 #define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name= "name"; \
   (conf_entry)->default_value= (val); \
@@ -473,6 +478,7 @@ void ic_print_config_parameters();
   (conf_entry)->data_type= IC_BOOLEAN; \
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
+  (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
   (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
 
@@ -481,7 +487,43 @@ void ic_print_config_parameters();
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->is_mandatory_to_specify= TRUE; \
+  (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
   (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_TCP_CONFIG(conf_entry, name, type, val, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->default_value= (val); \
+  (conf_entry)->data_type= (type); \
+  (conf_entry)->offset= offsetof(IC_TCP_COMM_LINK_CONFIG, name); \
+  (conf_entry)->node_type= (1 << IC_COMM_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_TCP_BOOLEAN(conf_entry, name, def, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->data_type= IC_BOOLEAN; \
+  (conf_entry)->default_value= (def); \
+  (conf_entry)->is_boolean= TRUE; \
+  (conf_entry)->offset= offsetof(IC_TCP_COMM_LINK_CONFIG, name); \
+  (conf_entry)->node_type= (1 << IC_COMM_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_TCP_STRING(conf_entry, name, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->data_type= IC_CHARPTR; \
+  (conf_entry)->is_string_type= TRUE; \
+  (conf_entry)->is_mandatory_to_specify= TRUE; \
+  (conf_entry)->offset= offsetof(IC_TCP_COMM_LINK_CONFIG, name); \
+  (conf_entry)->node_type= (1 << IC_COMM_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_CLUSTER_SERVER_STRING(conf_entry, name, val, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->data_type= IC_CHARPTR; \
+  (conf_entry)->is_string_type= TRUE; \
+  (conf_entry)->default_string= (char*)(val); \
+  (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
+  (conf_entry)->node_type= (1 << IC_CLUSTER_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #endif
