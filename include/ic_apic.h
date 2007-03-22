@@ -170,10 +170,10 @@ typedef struct ic_run_config_server IC_RUN_CONFIG_SERVER;
 
 struct ic_kernel_config
 {
+  char *hostname;
+  char *node_data_path;
   char *filesystem_path;
   char *kernel_checkpoint_path;
-  char *node_data_path;
-  char *hostname;
 
   guint64 size_of_ram_memory;
   guint64 size_of_hash_memory;
@@ -255,23 +255,32 @@ struct ic_client_config
   char *hostname;
   char *node_data_path;
 
+  guint32 client_resolve_rank;
+  guint32 client_resolve_timer;
+
   guint32 client_max_batch_byte_size;
   guint32 client_batch_byte_size;
   guint32 client_batch_size;
-  guint32 client_resolve_rank;
-  guint32 client_resolve_timer;
 };
 typedef struct ic_client_config IC_CLIENT_CONFIG;
 
 struct ic_cluster_server_config
 {
+  /*
+     Start of section in common with Client config,
+     this section must be ordered in the same way as in IC_CLIENT_CONFIG
+     above to ensure offset of variables with same name are the same.
+  */
   char *hostname;
   char *node_data_path;
-  char *cluster_server_event_log;
 
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
-  guint32 cluster_server_port_number;
+  /* End of section in common with Client config */
+
+  char *cluster_server_event_log;
+
+  guint16 cluster_server_port_number;
 };
 typedef struct ic_cluster_server_config IC_CLUSTER_SERVER_CONFIG;
 
@@ -298,8 +307,8 @@ typedef struct ic_config_server_config IC_CONFIG_SERVER_CONFIG;
 
 struct ic_tcp_comm_link_config
 {
-  char *first_host_name;
-  char *second_host_name;
+  char *first_hostname;
+  char *second_hostname;
 
   guint32 tcp_write_buffer_size;
   guint32 tcp_read_buffer_size;
@@ -524,6 +533,22 @@ void ic_print_config_parameters();
   (conf_entry)->default_string= (char*)(val); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
   (conf_entry)->node_type= (1 << IC_CLUSTER_SERVER_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, name, type, val, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->default_value= (val); \
+  (conf_entry)->data_type= (type); \
+  (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
+  (conf_entry)->node_type= (1 << IC_CLUSTER_SERVER_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_CLIENT_CONFIG(conf_entry, name, type, val, change) \
+  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->default_value= (val); \
+  (conf_entry)->data_type= (type); \
+  (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \
+  (conf_entry)->node_type= (1 << IC_CLIENT_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #endif

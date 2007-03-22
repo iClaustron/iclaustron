@@ -139,23 +139,23 @@ static guint16 map_config_id[MAX_MAP_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
 static gboolean glob_conf_entry_inited= FALSE;
 
-static const char *empty_string= "";
-static const char *get_nodeid_str= "get nodeid";
-static const char *get_nodeid_reply_str= "get nodeid reply";
-static const char *get_config_str= "get config";
-static const char *get_config_reply_str= "get config reply";
-static const char *nodeid_str= "nodeid: ";
-static const char *version_str= "version: ";
-static const char *nodetype_str= "nodetype: 1";
-static const char *user_str= "user: mysqld";
-static const char *password_str= "password: mysqld";
-static const char *public_key_str= "public key: a public key";
-static const char *endian_str= "endian: ";
-static const char *log_event_str= "log_event: 0";
-static const char *result_ok_str= "result: Ok";
-static const char *content_len_str= "Content-Length: ";
-static const char *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
-static const char *content_encoding_str= "Content-Transfer-Encoding: base64";
+static const gchar *empty_string= "";
+static const gchar *get_nodeid_str= "get nodeid";
+static const gchar *get_nodeid_reply_str= "get nodeid reply";
+static const gchar *get_config_str= "get config";
+static const gchar *get_config_reply_str= "get config reply";
+static const gchar *nodeid_str= "nodeid: ";
+static const gchar *version_str= "version: ";
+static const gchar *nodetype_str= "nodetype: 1";
+static const gchar *user_str= "user: mysqld";
+static const gchar *password_str= "password: mysqld";
+static const gchar *public_key_str= "public key: a public key";
+static const gchar *endian_str= "endian: ";
+static const gchar *log_event_str= "log_event: 0";
+static const gchar *result_ok_str= "result: Ok";
+static const gchar *content_len_str= "Content-Length: ";
+static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
+static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 
 /*
@@ -305,12 +305,34 @@ ic_print_config_parameters(guint32 mask)
       printf("Entry %u:\n", i);
       printf("Name: %s\n", conf_entry->config_entry_name);
       printf("Comment: %s\n", conf_entry->config_entry_description);
+      switch (conf_entry->data_type)
+      {
+        case IC_CHARPTR:
+          printf("Data type is string\n");
+          break;
+        case IC_UINT16:
+          printf("Data type is 16-bit unsigned integer\n");
+          break;
+        case IC_UINT32:
+          printf("Data type is 32-bit unsigned integer\n");
+          break;
+        case IC_UINT64:
+          printf("Data type is 64-bit unsigned integer\n");
+          break;
+        case IC_BOOLEAN:
+          printf("Data type is boolean\n");
+          break;
+        default:
+          printf("Data type set to non-existent type!!!\n");
+          break;
+      }
       if (conf_entry->is_not_configurable)
       {
         printf("Entry is not configurable with value %u\n",
                (guint32)conf_entry->default_value);
         continue;
       }
+      printf("Offset of variable is %u\n", conf_entry->offset);
       switch (conf_entry->change_variant)
       {
         case IC_ONLINE_CHANGE:
@@ -346,7 +368,7 @@ ic_print_config_parameters(guint32 mask)
 
       if (conf_entry->is_mandatory_to_specify)
         printf("Entry is mandatory and has no default value\n");
-      if (conf_entry->is_string_type)
+      else if (conf_entry->is_string_type)
       {
         if (!conf_entry->is_mandatory_to_specify)
         {
@@ -355,6 +377,8 @@ ic_print_config_parameters(guint32 mask)
         }
         continue;
       }
+      else
+        printf("Default value is %u\n", (guint32)conf_entry->default_value);
       if (conf_entry->is_boolean)
       {
         printf("Entry is either TRUE or FALSE\n");
@@ -370,33 +394,6 @@ ic_print_config_parameters(guint32 mask)
         printf("No max value defined\n");
     }
   }
-}
-
-static guint32 get_default_value_uint32(guint32 id)
-{
-  IC_CONFIG_ENTRY *conf_entry;
-  g_assert(map_config_id[id]);
-  conf_entry= &glob_conf_entry[map_config_id[id]];
-  g_assert(!conf_entry->is_mandatory_to_specify);
-  return conf_entry->default_value;
-}
-
-static guint64 get_default_value_uint64(guint32 id)
-{
-  IC_CONFIG_ENTRY *conf_entry;
-  g_assert(map_config_id[id]);
-  conf_entry= &glob_conf_entry[map_config_id[id]];
-  g_assert(!conf_entry->is_mandatory_to_specify);
-  return (guint64)conf_entry->default_value;
-}
-
-static gchar get_default_value_uchar(guint32 id)
-{
-  IC_CONFIG_ENTRY *conf_entry;
-  g_assert(map_config_id[id]);
-  conf_entry= &glob_conf_entry[map_config_id[id]];
-  g_assert(!conf_entry->is_mandatory_to_specify);
-  return (gchar)conf_entry->default_value;
 }
 
 static void
@@ -778,7 +775,7 @@ ic_init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_dummy,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
-  conf_entry->config_entry_description= (char*)empty_string;
+  conf_entry->config_entry_description= (gchar*)empty_string;
 
   IC_SET_CONFIG_MAP(KERNEL_START_LOG_LEVEL, 55);
   IC_SET_KERNEL_CONFIG(conf_entry, log_level_start,
@@ -1026,14 +1023,9 @@ ic_init_config_parameters()
   "Type of cluster event log";
 
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 151);
-  conf_entry->config_entry_name= "cluster_server_port_number";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 1024;
-  conf_entry->max_value= 65535;
-  conf_entry->default_value= 2286;
-  conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE);
-  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
+  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number,
+                               IC_UINT16, 2286, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
   conf_entry->config_entry_description=
   "Port number that cluster server will listen";
 
@@ -1042,64 +1034,45 @@ ic_init_config_parameters()
 */
 
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_RANK, 200);
-  conf_entry->config_entry_name= "client_resolve_rank";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 0;
-  conf_entry->max_value= 2;
-  conf_entry->default_value= 0;
+  IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_rank,
+                       IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
   conf_entry->node_type= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
-  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
   conf_entry->config_entry_description=
   "Rank in resolving network partition of the client";
 
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_TIMER, 201);
-  conf_entry->config_entry_name= "client_resolve_timer";
-  conf_entry->default_value= 0;
+  IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_timer,
+                       IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
   conf_entry->node_type= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
-  conf_entry->change_variant= IC_CLUSTER_RESTART_CHANGE;
   conf_entry->config_entry_description=
   "Time in ms waiting for resolve before crashing";
 
   IC_SET_CONFIG_MAP(CLIENT_BATCH_SIZE, 202);
-  conf_entry->config_entry_name= "client_batch_size";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 1;
-  conf_entry->max_value= 992;
-  conf_entry->default_value= 64;
-  conf_entry->node_type= (1 << IC_CLIENT_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
+  IC_SET_CLIENT_CONFIG(conf_entry, client_batch_size,
+                       IC_UINT32, 64, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 992);
   conf_entry->config_entry_description=
   "Size in number of records of batches in scan operations";
 
   IC_SET_CONFIG_MAP(CLIENT_BATCH_BYTE_SIZE, 203);
-  conf_entry->config_entry_name= "client_batch_byte_size";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 128;
-  conf_entry->max_value= 65536;
-  conf_entry->default_value= 8192;
-  conf_entry->node_type= (1 << IC_CLIENT_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
+  IC_SET_CLIENT_CONFIG(conf_entry, client_batch_byte_size,
+                       IC_UINT32, 8192, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 128, 65536);
   conf_entry->config_entry_description=
   "Size in bytes of batches in scan operations";
 
   IC_SET_CONFIG_MAP(CLIENT_MAX_BATCH_BYTE_SIZE, 204);
-  conf_entry->config_entry_name= "client_max_batch_byte_size";
-  conf_entry->is_min_value_defined= TRUE;
-  conf_entry->is_max_value_defined= TRUE;
-  conf_entry->min_value= 32 * 1024;
-  conf_entry->max_value= 4 * 1024 * 1024;
-  conf_entry->default_value= 256 * 1024;
-  conf_entry->node_type= (1 << IC_CLIENT_TYPE);
-  conf_entry->change_variant= IC_ONLINE_CHANGE;
+  IC_SET_CLIENT_CONFIG(conf_entry, client_max_batch_byte_size,
+                       IC_UINT32, 256*1024, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 32*1024, 4*1024*1024);
   conf_entry->config_entry_description=
   "Size in bytes of max of the sum of the batches in a scan operations";
 
+  /* Parameters common for all node types */
   IC_SET_CONFIG_MAP(IC_NODE_DATA_PATH, 250);
   IC_SET_KERNEL_STRING(conf_entry, node_data_path, IC_INITIAL_NODE_RESTART);
-  conf_entry->default_string= (char*)empty_string;
+  conf_entry->default_string= (gchar*)empty_string;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
                          (1 << IC_KERNEL_TYPE);
@@ -1108,7 +1081,7 @@ ic_init_config_parameters()
 
   IC_SET_CONFIG_MAP(IC_NODE_HOST, 251);
   IC_SET_KERNEL_STRING(conf_entry, hostname, IC_CLUSTER_RESTART_CHANGE);
-  conf_entry->default_string= (char*)empty_string;
+  conf_entry->default_string= (gchar*)empty_string;
   conf_entry->node_type= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
                          (1 << IC_KERNEL_TYPE);
@@ -1180,192 +1153,59 @@ ic_check_config_string(int config_id, IC_CONFIG_TYPE conf_type)
 }
 
 static void
-init_config_kernel_object(IC_KERNEL_CONFIG *kernel_conf)
+init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
 {
-  kernel_conf->filesystem_path= NULL;
-  kernel_conf->kernel_checkpoint_path= NULL;
-  kernel_conf->node_data_path= (char*)empty_string;
-  kernel_conf->hostname= (char*)empty_string;
-
-  kernel_conf->size_of_ram_memory= 
-    get_default_value_uint64(KERNEL_RAM_MEMORY);
-  kernel_conf->size_of_hash_memory= 
-    get_default_value_uint64(KERNEL_HASH_MEMORY);
-  kernel_conf->page_cache_size= 
-    get_default_value_uint64(KERNEL_PAGE_CACHE_SIZE);
-  kernel_conf->kernel_memory_pool= 
-    get_default_value_uint64(KERNEL_MEMORY_POOL);
-
-  kernel_conf->number_of_replicas= 0;
-  kernel_conf->max_number_of_trace_files= 
-    get_default_value_uint32(KERNEL_MAX_TRACE_FILES);
-  kernel_conf->number_of_table_objects= 
-    get_default_value_uint32(KERNEL_TABLE_OBJECTS);
-  kernel_conf->number_of_column_objects= 
-    get_default_value_uint32(KERNEL_COLUMN_OBJECTS);
-  kernel_conf->number_of_key_objects= 
-    get_default_value_uint32(KERNEL_KEY_OBJECTS);
-  kernel_conf->number_of_internal_trigger_objects= 
-    get_default_value_uint32(KERNEL_INTERNAL_TRIGGER_OBJECTS);
-  kernel_conf->number_of_connection_objects= 
-    get_default_value_uint32(KERNEL_CONNECTION_OBJECTS);
-  kernel_conf->number_of_operation_objects= 
-    get_default_value_uint32(KERNEL_OPERATION_OBJECTS);
-  kernel_conf->number_of_scan_objects= 
-    get_default_value_uint32(KERNEL_SCAN_OBJECTS);
-  kernel_conf->number_of_key_operation_objects= 
-    get_default_value_uint32(KERNEL_KEY_OPERATION_OBJECTS);
-  kernel_conf->use_unswappable_memory= 
-    get_default_value_uint32(KERNEL_LOCK_MEMORY);
-  kernel_conf->timer_wait_partial_start= 
-    get_default_value_uint32(KERNEL_WAIT_PARTIAL_START);
-  kernel_conf->timer_wait_partitioned_start= 
-    get_default_value_uint32(KERNEL_WAIT_PARTITIONED_START);
-  kernel_conf->timer_wait_error_start= 
-    get_default_value_uint32(KERNEL_WAIT_ERROR_START);
-  kernel_conf->timer_heartbeat_kernel_nodes= 
-    get_default_value_uint32(KERNEL_HEARTBEAT_TIMER);
-  kernel_conf->timer_heartbeat_client_nodes= 
-    get_default_value_uint32(KERNEL_CLIENT_HEARTBEAT_TIMER);
-  kernel_conf->timer_local_checkpoint= 
-    get_default_value_uint32(KERNEL_LOCAL_CHECKPOINT_TIMER);
-  kernel_conf->timer_global_checkpoint= 
-    get_default_value_uint32(KERNEL_GLOBAL_CHECKPOINT_TIMER);
-  kernel_conf->timer_resolve= 
-    get_default_value_uint32(KERNEL_RESOLVE_TIMER);
-  kernel_conf->timer_kernel_watchdog= 
-    get_default_value_uint32(KERNEL_WATCHDOG_TIMER);
-  kernel_conf->number_of_redo_log_files= 
-    get_default_value_uint32(KERNEL_REDO_LOG_FILES);
-  kernel_conf->timer_check_interval= 
-    get_default_value_uint32(KERNEL_CHECK_INTERVAL);
-  kernel_conf->timer_client_activity= 
-    get_default_value_uint32(KERNEL_CLIENT_ACTIVITY_TIMER);
-  kernel_conf->timer_deadlock= 
-    get_default_value_uint32(KERNEL_DEADLOCK_TIMER);
-  kernel_conf->number_of_ordered_key_objects= 
-    get_default_value_uint32(KERNEL_ORDERED_KEY_OBJECTS);
-  kernel_conf->number_of_unique_hash_key_objects= 
-    get_default_value_uint32(KERNEL_UNIQUE_HASH_KEY_OBJECTS);
-  kernel_conf->redo_log_memory= 
-    get_default_value_uint32(KERNEL_REDO_LOG_MEMORY);
-  kernel_conf->kernel_file_synch_size= 
-    get_default_value_uint32(KERNEL_FILE_SYNCH_SIZE);
-  kernel_conf->kernel_disk_write_speed= 
-    get_default_value_uint32(KERNEL_DISK_WRITE_SPEED);
-  kernel_conf->kernel_disk_write_speed_start= 
-    get_default_value_uint32(KERNEL_DISK_WRITE_SPEED_START);
-  kernel_conf->log_level_start= 
-    get_default_value_uint32(KERNEL_START_LOG_LEVEL);
-  kernel_conf->log_level_stop= 
-    get_default_value_uint32(KERNEL_STOP_LOG_LEVEL);
-  kernel_conf->log_level_statistics= 
-    get_default_value_uint32(KERNEL_STAT_LOG_LEVEL);
-  kernel_conf->log_level_checkpoint= 
-    get_default_value_uint32(KERNEL_CHECKPOINT_LOG_LEVEL);
-  kernel_conf->log_level_restart= 
-    get_default_value_uint32(KERNEL_RESTART_LOG_LEVEL);
-  kernel_conf->log_level_connection= 
-    get_default_value_uint32(KERNEL_CONNECTION_LOG_LEVEL);
-  kernel_conf->log_level_reports= 
-    get_default_value_uint32(KERNEL_REPORT_LOG_LEVEL);
-  kernel_conf->log_level_warning= 
-    get_default_value_uint32(KERNEL_WARNING_LOG_LEVEL);
-  kernel_conf->log_level_error= 
-    get_default_value_uint32(KERNEL_ERROR_LOG_LEVEL);
-  kernel_conf->log_level_congestion= 
-    get_default_value_uint32(KERNEL_CONGESTION_LOG_LEVEL);
-  kernel_conf->log_level_debug= 
-    get_default_value_uint32(KERNEL_DEBUG_LOG_LEVEL);
-  kernel_conf->log_level_backup= 
-    get_default_value_uint32(KERNEL_BACKUP_LOG_LEVEL);
-  kernel_conf->inject_fault= 
-    get_default_value_uint32(KERNEL_INJECT_FAULT);
-  kernel_conf->kernel_scheduler_no_send_time= 
-    get_default_value_uint32(KERNEL_SCHEDULER_NO_SEND_TIME);
-  kernel_conf->kernel_scheduler_no_sleep_time= 
-    get_default_value_uint32(KERNEL_SCHEDULER_NO_SLEEP_TIME);
-  kernel_conf->kernel_lock_main_thread= 
-    get_default_value_uint32(KERNEL_LOCK_MAIN_THREAD);
-  kernel_conf->kernel_lock_other_threads= 
-    get_default_value_uint32(KERNEL_LOCK_OTHER_THREADS);
-
-  kernel_conf->kernel_volatile_mode= 
-    get_default_value_uchar(KERNEL_VOLATILE_MODE);
-  kernel_conf->kernel_automatic_restart= 
-    get_default_value_uchar(KERNEL_DAEMON_RESTART_AT_ERROR);
-  kernel_conf->kernel_rt_scheduler_threads= 
-    get_default_value_uchar(KERNEL_RT_SCHEDULER_THREADS);
+  switch (conf_entry->data_type)
+  {
+    case IC_CHARPTR:
+    {
+      gchar **varchar_ptr= (gchar**)var_ptr;
+      *varchar_ptr= conf_entry->default_string;
+      break;
+    }
+    case IC_UINT16:
+    {
+      guint16 *var16_ptr= (guint16*)var_ptr;
+      *var16_ptr= (guint16)conf_entry->default_value;
+      break;
+    }
+    case IC_UINT32:
+    {
+      guint32 *var32_ptr= (guint32*)var_ptr;
+      *var32_ptr= (guint32)conf_entry->default_value;
+      break;
+    }
+    case IC_UINT64:
+    {
+      guint64 *var64_ptr= (guint64*)var_ptr;
+      *var64_ptr= (guint64)conf_entry->default_value;
+      break;
+    }
+    case IC_BOOLEAN:
+    {
+      gchar *varboolean_ptr= (gchar*)var_ptr;
+      *varboolean_ptr= (gchar)conf_entry->default_value;
+      break;
+    }
+    default:
+      abort();
+      break;
+  }
 }
 
 static void
-init_config_client_object(IC_CLIENT_CONFIG *client_conf)
+init_config_object(gchar *conf_object, IC_CONFIG_TYPE node_type)
 {
-  client_conf->hostname= (char*)empty_string;
-  client_conf->node_data_path= (char*)empty_string;
-
-  client_conf->client_max_batch_byte_size=
-    get_default_value_uint32(CLIENT_MAX_BATCH_BYTE_SIZE);
-  client_conf->client_batch_byte_size=
-    get_default_value_uint32(CLIENT_BATCH_BYTE_SIZE);
-  client_conf->client_batch_size=
-    get_default_value_uint32(CLIENT_BATCH_SIZE);
-  client_conf->client_resolve_rank=
-    get_default_value_uint32(CLIENT_RESOLVE_RANK);
-  client_conf->client_resolve_timer=
-    get_default_value_uint32(CLIENT_RESOLVE_TIMER);
-}
-
-static void
-init_config_server_object(IC_CONFIG_SERVER_CONFIG *cs_conf)
-{
-}
-
-static void
-init_rep_server_object(IC_REP_SERVER_CONFIG *rep_conf)
-{
-}
-
-static void
-init_sql_server_object(IC_SQL_SERVER_CONFIG *sql_conf)
-{
-}
-
-static void
-init_cluster_server_object(IC_CLUSTER_SERVER_CONFIG *cs_conf)
-{
-  cs_conf->hostname= (char*)empty_string;
-  cs_conf->node_data_path= (char*)empty_string;
-
-  cs_conf->client_resolve_rank=
-    get_default_value_uint32(CLIENT_RESOLVE_RANK);
-  cs_conf->client_resolve_timer=
-    get_default_value_uint32(CLIENT_RESOLVE_TIMER);
-  cs_conf->cluster_server_event_log=
-    get_default_value_uint32(CLUSTER_SERVER_EVENT_LOG);
-  cs_conf->cluster_server_port_number=
-    get_default_value_uint32(CLUSTER_SERVER_PORT_NUMBER);
-}
-
-static void
-init_config_comm_object(IC_COMM_LINK_CONFIG *comm_conf)
-{
-  comm_conf->tcp_conf.first_host_name= (char*)empty_string;
-  comm_conf->tcp_conf.second_host_name= (char*)empty_string;
-
-  comm_conf->tcp_conf.first_node_id= 0;
-  comm_conf->tcp_conf.second_node_id= 0;
-
-  comm_conf->tcp_conf.tcp_write_buffer_size= 
-    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
-  comm_conf->tcp_conf.tcp_read_buffer_size= 
-    get_default_value_uint32(TCP_READ_BUFFER_SIZE);
-  comm_conf->tcp_conf.client_port_number= 
-    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
-  comm_conf->tcp_conf.tcp_write_buffer_size= 
-    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
-  comm_conf->tcp_conf.tcp_write_buffer_size= 
-    get_default_value_uint32(TCP_WRITE_BUFFER_SIZE);
+  guint32 i;
+  for (i= 0; i < 1024; i++)
+  {
+    IC_CONFIG_ENTRY *conf_entry= &glob_conf_entry[i];
+    if (conf_entry && conf_entry->node_type & node_type)
+    {
+      gchar *var_ptr= conf_object + conf_entry->offset;
+      init_config_default_value(var_ptr, conf_entry);
+    }
+  }
 }
 
 /*
@@ -1387,7 +1227,7 @@ allocate_mem_phase1(IC_CLUSTER_CONFIG *conf_obj)
   conf_obj->node_ids= g_try_malloc0(conf_obj->no_of_nodes *
                                        sizeof(guint32));
   conf_obj->node_config= g_try_malloc0(conf_obj->no_of_nodes *
-                                          sizeof(char*));
+                                          sizeof(gchar*));
   if (!conf_obj->node_types || !conf_obj->node_ids ||
       !conf_obj->comm_types || !conf_obj->node_config)
     return MEM_ALLOC_ERROR;
@@ -1400,7 +1240,7 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
 {
   guint32 i;
   guint32 size_config_objects= 0;
-  char *conf_obj_ptr, *string_mem;
+  gchar *conf_obj_ptr, *string_mem;
   /*
     Allocate memory for the actual configuration objects for nodes and
     communication sections.
@@ -1432,7 +1272,7 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   size_config_objects+= conf_obj->no_of_comms *
                         sizeof(struct ic_comm_link_config);
   if (!(conf_obj->comm_config= g_try_malloc0(
-                     conf_obj->no_of_comms * sizeof(char*))) ||
+                     conf_obj->no_of_comms * sizeof(gchar*))) ||
       !(apic->string_memory_to_return= g_try_malloc0(
                      apic->string_memory_size)) ||
       !(apic->config_memory_to_return= g_try_malloc0(
@@ -1447,41 +1287,35 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   for (i= 0; i < conf_obj->no_of_nodes; i++)
   {
     conf_obj->node_config[i]= conf_obj_ptr;
+    init_config_object(conf_obj_ptr, conf_obj->node_types[i]);
     switch (conf_obj->node_types[i])
     {
       case IC_KERNEL_TYPE:
-        init_config_kernel_object((IC_KERNEL_CONFIG*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(IC_KERNEL_CONFIG);
         break;
       case IC_CLIENT_TYPE:
-        init_config_client_object((IC_CLIENT_CONFIG*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(IC_CLIENT_CONFIG);
         break;
       case IC_CLUSTER_SERVER_TYPE:
-        init_cluster_server_object((IC_CLUSTER_SERVER_CONFIG*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(IC_CLUSTER_SERVER_CONFIG);
         break;
       case IC_SQL_SERVER_TYPE:
-        init_sql_server_object((IC_SQL_SERVER_CONFIG*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(IC_SQL_SERVER_CONFIG);
         break;
       case IC_REP_SERVER_TYPE:
-        init_rep_server_object((IC_REP_SERVER_CONFIG*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(IC_REP_SERVER_CONFIG);
         break;
       case IC_CONFIG_SERVER_TYPE:
-        init_config_server_object((IC_CONFIG_SERVER_CONFIG*)conf_obj_ptr);
         conf_obj_ptr+= sizeof(IC_CONFIG_SERVER_CONFIG);
         break;
       default:
         g_assert(FALSE);
-
         break;
     }
   }
   for (i= 0; i < conf_obj->no_of_comms; i++)
   {
-    init_config_comm_object((IC_COMM_LINK_CONFIG*)conf_obj_ptr);
+    init_config_object(conf_obj_ptr, IC_COMM_TYPE);
     conf_obj->comm_config[i]= conf_obj_ptr;
     conf_obj_ptr+= sizeof(IC_COMM_LINK_CONFIG);
   }
@@ -1576,7 +1410,7 @@ step_key_value(IC_API_CONFIG_SERVER *apic,
         printf("Array ended in the middle of a type\n");
         return PROTOCOL_ERROR;
       }
-      if (value != (strlen((char*)(*key_value)) + 1))
+      if (value != (strlen((gchar*)(*key_value)) + 1))
       {
         printf("Wrong length of character type\n");
         return PROTOCOL_ERROR;
@@ -1802,19 +1636,19 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
         {
           case IC_NODE_DATA_PATH:
             kernel_conf->node_data_path= apic->next_string_memory;
-            strcpy(kernel_conf->node_data_path, (char*)(*key_value));
+            strcpy(kernel_conf->node_data_path, (gchar*)(*key_value));
             break;
           case IC_NODE_HOST:
             kernel_conf->hostname= apic->next_string_memory;
-            strcpy(kernel_conf->hostname, (char*)(*key_value));
+            strcpy(kernel_conf->hostname, (gchar*)(*key_value));
             break;
           case KERNEL_FILESYSTEM_PATH:
             kernel_conf->filesystem_path= apic->next_string_memory;
-            strcpy(kernel_conf->filesystem_path, (char*)(*key_value));
+            strcpy(kernel_conf->filesystem_path, (gchar*)(*key_value));
             break;
           case KERNEL_CHECKPOINT_PATH:
             kernel_conf->kernel_checkpoint_path= apic->next_string_memory;
-            strcpy(kernel_conf->kernel_checkpoint_path, (char*)(*key_value));
+            strcpy(kernel_conf->kernel_checkpoint_path, (gchar*)(*key_value));
             break;
           default:
             return hash_key_error(hash_key, node_type, key_type);
@@ -1860,11 +1694,11 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
         {
           case IC_NODE_DATA_PATH:
             client_conf->node_data_path= apic->next_string_memory;
-            strcpy(client_conf->node_data_path, (char*)(*key_value));
+            strcpy(client_conf->node_data_path, (gchar*)(*key_value));
             break;
           case IC_NODE_HOST:
             client_conf->hostname= apic->next_string_memory;
-            strcpy(client_conf->hostname, (char*)(*key_value));
+            strcpy(client_conf->hostname, (gchar*)(*key_value));
             break;
           default:
             return hash_key_error(hash_key, node_type, key_type);
@@ -1907,11 +1741,11 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
         {
           case IC_NODE_DATA_PATH:
             cs_conf->node_data_path= apic->next_string_memory;
-            strcpy(cs_conf->node_data_path, (char*)(*key_value));
+            strcpy(cs_conf->node_data_path, (gchar*)(*key_value));
             break;
           case IC_NODE_HOST:
             cs_conf->hostname= apic->next_string_memory;
-            strcpy(cs_conf->hostname, (char*)(*key_value));
+            strcpy(cs_conf->hostname, (gchar*)(*key_value));
             break;
           default:
             return hash_key_error(hash_key, node_type, key_type);
@@ -1988,12 +1822,12 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
       switch (hash_key)
       {
         case TCP_FIRST_HOSTNAME:
-          tcp_conf->first_host_name= apic->next_string_memory;
-          strcpy(tcp_conf->first_host_name, (char*)(*key_value));
+          tcp_conf->first_hostname= apic->next_string_memory;
+          strcpy(tcp_conf->first_hostname, (gchar*)(*key_value));
           break;
         case TCP_SECOND_HOSTNAME:
-          tcp_conf->second_host_name= apic->next_string_memory;
-          strcpy(tcp_conf->second_host_name, (char*)(*key_value));
+          tcp_conf->second_hostname= apic->next_string_memory;
+          strcpy(tcp_conf->second_hostname, (gchar*)(*key_value));
           break;
         default:
           return hash_key_error(hash_key, IC_COMM_TYPE, key_type);
@@ -2085,14 +1919,14 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
   from the cluster server.
 */
 
-static char ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
+static gchar ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
 static int
 translate_config(IC_API_CONFIG_SERVER *apic,
                  guint32 current_cluster_index,
-                 char *config_buf,
+                 gchar *config_buf,
                  guint32 config_size)
 {
-  char *bin_buf;
+  gchar *bin_buf;
   guint32 bin_config_size, bin_config_size32, checksum, i;
   guint32 *bin_buf32, *key_value_ptr, key_value_len;
   int error, pass;
@@ -2165,9 +1999,9 @@ send_get_nodeid(IC_CONNECTION *conn,
                 IC_API_CONFIG_SERVER *apic,
                 guint32 current_cluster_index)
 {
-  char version_buf[32];
-  char nodeid_buf[32];
-  char endian_buf[32];
+  gchar version_buf[32];
+  gchar nodeid_buf[32];
+  gchar endian_buf[32];
   guint32 node_id= apic->node_ids[current_cluster_index];
 
   g_snprintf(version_buf, 32, "%s%u", version_str, version_no);
@@ -2193,7 +2027,7 @@ send_get_nodeid(IC_CONNECTION *conn,
 static int
 send_get_config(IC_CONNECTION *conn)
 {
-  char version_buf[32];
+  gchar version_buf[32];
 
   g_snprintf(version_buf, 32, "%s%u", version_str, version_no);
   if (ic_send_with_cr(conn, get_config_str) ||
@@ -2208,7 +2042,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
                IC_API_CONFIG_SERVER *apic,
                guint32 current_cluster_index)
 {
-  char read_buf[256];
+  gchar read_buf[256];
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
   int error;
@@ -2295,8 +2129,8 @@ rec_get_config(IC_CONNECTION *conn,
                IC_API_CONFIG_SERVER *apic,
                guint32 current_cluster_index)
 {
-  char read_buf[256];
-  char *config_buf= NULL;
+  gchar read_buf[256];
+  gchar *config_buf= NULL;
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
   guint32 config_size= 0;
@@ -2560,23 +2394,23 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
     return NULL;
   }
 
-  memcpy((char*)apic->cluster_ids,
-         (char*)cluster_ids,
+  memcpy((gchar*)apic->cluster_ids,
+         (gchar*)cluster_ids,
          num_clusters * sizeof(guint32));
 
-  memcpy((char*)apic->node_ids,
-         (char*)node_ids,
+  memcpy((gchar*)apic->node_ids,
+         (gchar*)node_ids,
          num_clusters * sizeof(guint32));
 
-  memcpy((char*)apic->cluster_conn.cluster_server_ips,
-         (char*)cluster_conn->cluster_server_ips,
+  memcpy((gchar*)apic->cluster_conn.cluster_server_ips,
+         (gchar*)cluster_conn->cluster_server_ips,
          num_cluster_servers * sizeof(guint32));
-  memcpy((char*)apic->cluster_conn.cluster_server_ports,
-         (char*)cluster_conn->cluster_server_ports,
+  memcpy((gchar*)apic->cluster_conn.cluster_server_ports,
+         (gchar*)cluster_conn->cluster_server_ports,
          num_cluster_servers * sizeof(guint16));
-  memset((char*)apic->conf_objects, 0,
+  memset((gchar*)apic->conf_objects, 0,
          num_cluster_servers * sizeof(IC_CLUSTER_CONFIG));
-  memset((char*)apic->cluster_conn.cluster_srv_conns, 0,
+  memset((gchar*)apic->cluster_conn.cluster_srv_conns, 0,
          num_cluster_servers * sizeof(IC_CONNECTION));
 
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
@@ -2632,7 +2466,7 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf)
   if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)g_malloc0(sizeof(IC_CLUSTER_CONFIG))))
     return IC_ERROR_MEM_ALLOC;
   ic_conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
-  if (!(clu_conf->conf.node_config= (char**)g_malloc0(sizeof(char*)*256)))
+  if (!(clu_conf->conf.node_config= (gchar**)g_malloc0(sizeof(gchar*)*256)))
     return IC_ERROR_MEM_ALLOC;
   if (!(clu_conf->conf.node_types= 
         (IC_NODE_TYPES*)g_malloc0(sizeof(IC_CONFIG_TYPE)*256)))
