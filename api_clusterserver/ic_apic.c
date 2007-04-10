@@ -1109,8 +1109,10 @@ static IC_CONFIG_ENTRY *get_config_entry(int config_id)
 }
 
 static int
-ic_check_config_value(int config_id, guint64 value,
-                      enum ic_config_type conf_type)
+ic_assign_config_value(int config_id, guint64 value,
+                      enum ic_config_type conf_type,
+                      int data_type,
+                      gchar *struct_ptr)
 {
   IC_CONFIG_ENTRY *conf_entry= get_config_entry(config_id);
 
@@ -1131,11 +1133,45 @@ ic_check_config_value(int config_id, guint64 value,
     printf("Config value error config_id = %d\n", config_id);
     return PROTOCOL_ERROR;
   }
+  struct_ptr+= conf_entry->offset;
+  if (data_type == IC_CL_INT32_TYPE)
+  {
+    if (conf_entry->data_type == IC_CHAR)
+    {
+      *(gchar*)struct_ptr= (gchar)value;
+    }
+    else if (conf_entry->data_type == IC_UINT16)
+    {
+      *(guint16*)struct_ptr= (guint16)value;
+    }
+    else if (conf_entry->data_type == IC_UINT32)
+    {
+      *(guint32*)struct_ptr= (guint32)value;
+    }
+    else
+      return PROTOCOL_ERROR;
+    return 0;
+  }
+  else if (data_type == IC_CL_INT64_TYPE)
+  {
+    if (conf_entry->data_type == IC_UINT64)
+    {
+      *(guint64*)struct_ptr= (guint64)value;
+    }
+    else
+      return PROTOCOL_ERROR;
+    return 0;
+  }
+  g_assert(FALSE);
   return 0;
 }
 
 static int
-ic_check_config_string(int config_id, IC_CONFIG_TYPE conf_type)
+ic_assign_config_string(int config_id, IC_CONFIG_TYPE conf_type,
+                        gchar *string_memory,
+                        guint32 string_len,
+                        gchar *struct_ptr,
+                        gchar **string_val)
 {
   IC_CONFIG_ENTRY *conf_entry= get_config_entry(config_id);
 
@@ -1149,6 +1185,9 @@ ic_check_config_string(int config_id, IC_CONFIG_TYPE conf_type)
     printf("Debug string inconsistency\n");
     return PROTOCOL_ERROR;
   }
+  struct_ptr+= conf_entry->offset;
+  *(gchar**)struct_ptr= string_memory;
+  strncpy(string_memory, *string_val, string_len);
   return 0;
 }
 
@@ -1325,14 +1364,6 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
 }
 
 static int
-hash_key_error(guint32 hash_key, guint32 node_type, guint32 key_type)
-{
-  printf("Protocol error for key %u node type %u type %u\n",
-         hash_key, node_type, key_type);
-  return PROTOCOL_ERROR;
-}
-
-static int
 key_type_error(guint32 hash_key, guint32 node_type)
 {
   printf("Wrong key type %u node type %u\n", hash_key, node_type);
@@ -1477,290 +1508,39 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
     return PROTOCOL_ERROR;
   }
   node_type= conf_obj->node_types[node_sect_id];
-  if (node_type == IC_KERNEL_NODE)
+  switch (key_type)
   {
-    IC_KERNEL_CONFIG *kernel_conf= (IC_KERNEL_CONFIG*)node_config;
-    switch (key_type)
+    case IC_CL_INT32_TYPE:
+      if (ic_assign_config_value(hash_key, (guint64)value,
+                                 node_type, key_type,
+                                 (gchar*)node_config))
+        return PROTOCOL_ERROR;
+      break;
+    case IC_CL_INT64_TYPE:
     {
-      case IC_CL_INT32_TYPE:
-        if (ic_check_config_value(hash_key, (guint64)value, IC_KERNEL_TYPE))
-          return PROTOCOL_ERROR;
-        switch (hash_key)
-        {
-          case KERNEL_MAX_TRACE_FILES:
-            kernel_conf->max_number_of_trace_files= value; break;
-          case KERNEL_REPLICAS:
-            kernel_conf->number_of_replicas= value; break;
-          case KERNEL_TABLE_OBJECTS:
-            kernel_conf->number_of_table_objects= value; break;
-          case KERNEL_COLUMN_OBJECTS:
-            kernel_conf->number_of_column_objects= value; break;
-          case KERNEL_KEY_OBJECTS:
-            kernel_conf->number_of_key_objects= value; break;
-          case KERNEL_INTERNAL_TRIGGER_OBJECTS:
-            kernel_conf->number_of_internal_trigger_objects= value; break;
-          case KERNEL_CONNECTION_OBJECTS:
-            kernel_conf->number_of_connection_objects= value; break;
-          case KERNEL_OPERATION_OBJECTS:
-            kernel_conf->number_of_operation_objects= value; break;
-          case KERNEL_SCAN_OBJECTS:
-            kernel_conf->number_of_scan_objects= value; break;
-          case KERNEL_KEY_OPERATION_OBJECTS:
-            kernel_conf->number_of_key_operation_objects= value; break;
-          case KERNEL_LOCK_MEMORY:
-            kernel_conf->use_unswappable_memory= value; break;
-          case KERNEL_WAIT_PARTIAL_START:
-            kernel_conf->timer_wait_partial_start= value; break;
-          case KERNEL_WAIT_PARTITIONED_START:
-            kernel_conf->timer_wait_partitioned_start= value; break;
-          case KERNEL_WAIT_ERROR_START:
-            kernel_conf->timer_wait_error_start= value; break;
-          case KERNEL_HEARTBEAT_TIMER:
-            kernel_conf->timer_heartbeat_kernel_nodes= value; break;
-          case KERNEL_CLIENT_HEARTBEAT_TIMER:
-            kernel_conf->timer_heartbeat_client_nodes= value; break;
-          case KERNEL_LOCAL_CHECKPOINT_TIMER:
-            kernel_conf->timer_local_checkpoint= value; break;
-          case KERNEL_GLOBAL_CHECKPOINT_TIMER:
-            kernel_conf->timer_global_checkpoint= value; break;
-          case KERNEL_RESOLVE_TIMER:
-            kernel_conf->timer_resolve= value; break;
-          case KERNEL_WATCHDOG_TIMER:
-            kernel_conf->timer_kernel_watchdog= value; break;
-          case KERNEL_REDO_LOG_FILES:
-            kernel_conf->number_of_redo_log_files= value; break;
-          case KERNEL_CHECK_INTERVAL:
-            kernel_conf->timer_check_interval= value; break;
-          case KERNEL_CLIENT_ACTIVITY_TIMER:
-            kernel_conf->timer_client_activity= value; break;
-          case KERNEL_DEADLOCK_TIMER:
-            kernel_conf->timer_deadlock= value; break;
-          case KERNEL_VOLATILE_MODE:
-            kernel_conf->kernel_volatile_mode= (gchar)value; break;
-          case KERNEL_ORDERED_KEY_OBJECTS:
-            kernel_conf->number_of_ordered_key_objects= value; break;
-          case KERNEL_UNIQUE_HASH_KEY_OBJECTS:
-            kernel_conf->number_of_unique_hash_key_objects= value; break;
-          case KERNEL_REDO_LOG_MEMORY:
-            kernel_conf->redo_log_memory= value; break;
-          case KERNEL_START_LOG_LEVEL:
-            kernel_conf->log_level_start= value; break;
-          case KERNEL_STOP_LOG_LEVEL:
-            kernel_conf->log_level_stop= value; break;
-          case KERNEL_STAT_LOG_LEVEL:
-            kernel_conf->log_level_statistics= value; break;
-          case KERNEL_CHECKPOINT_LOG_LEVEL:
-            kernel_conf->log_level_checkpoint= value; break;
-          case KERNEL_RESTART_LOG_LEVEL:
-            kernel_conf->log_level_restart= value; break;
-          case KERNEL_CONNECTION_LOG_LEVEL:
-            kernel_conf->log_level_connection= value; break;
-          case KERNEL_REPORT_LOG_LEVEL:
-            kernel_conf->log_level_reports= value; break;
-          case KERNEL_WARNING_LOG_LEVEL:
-            kernel_conf->log_level_warning= value; break;
-          case KERNEL_ERROR_LOG_LEVEL:
-            kernel_conf->log_level_error= value; break;
-          case KERNEL_DEBUG_LOG_LEVEL:
-            kernel_conf->log_level_debug= value; break;
-          case KERNEL_BACKUP_LOG_LEVEL:
-            kernel_conf->log_level_backup= value; break;
-          case KERNEL_CONGESTION_LOG_LEVEL:
-            kernel_conf->log_level_congestion= value; break;
-          case KERNEL_INJECT_FAULT:
-            kernel_conf->inject_fault= value; break;
-          case KERNEL_DISK_WRITE_SPEED:
-            kernel_conf->kernel_disk_write_speed= value; break;
-          case KERNEL_DISK_WRITE_SPEED_START:
-            kernel_conf->kernel_disk_write_speed_start= value; break;
-          case KERNEL_FILE_SYNCH_SIZE:
-            kernel_conf->kernel_file_synch_size= value; break;
-          case KERNEL_DAEMON_RESTART_AT_ERROR:
-            kernel_conf->kernel_automatic_restart= (gchar)value; break;
-          case KERNEL_SCHEDULER_NO_SEND_TIME:
-            kernel_conf->kernel_scheduler_no_send_time= value; break;
-          case KERNEL_SCHEDULER_NO_SLEEP_TIME:
-            kernel_conf->kernel_scheduler_no_sleep_time= value; break;
-          case KERNEL_RT_SCHEDULER_THREADS:
-            kernel_conf->kernel_rt_scheduler_threads= (gchar)value; break;
-          case KERNEL_LOCK_MAIN_THREAD:
-            kernel_conf->kernel_lock_main_thread= value; break;
-          case KERNEL_LOCK_OTHER_THREADS:
-            kernel_conf->kernel_lock_other_threads= value; break;
-          case KERNEL_DUMMY:
-          case KERNEL_INITIAL_OPEN_FILES:
-          case KERNEL_MAX_OPEN_FILES:
-          case KERNEL_LONG_MESSAGE_MEMORY:
-          case KERNEL_SCAN_BATCH_SIZE:
-          case KERNEL_LOCAL_SCAN_OBJECTS:
-          case KERNEL_LOCAL_OPERATION_OBJECTS:
-          case KERNEL_CHECKPOINT_OBJECTS:
-          case KERNEL_CHECKPOINT_MEMORY:
-          case KERNEL_CHECKPOINT_DATA_MEMORY:
-          case KERNEL_CHECKPOINT_LOG_MEMORY:
-          case KERNEL_CHECKPOINT_WRITE_SIZE:
-          case KERNEL_CHECKPOINT_MAX_WRITE_SIZE:
-          case KERNEL_CONNECTION_BUFFER:
-          case KERNEL_INTERNAL_TRIGGER_OPERATION_OBJECTS:
-          case KERNEL_STRING_MEMORY:
-            break;
-          default:
-            return hash_key_error(hash_key, node_type, key_type);
-        }
-        break;
-      case IC_CL_INT64_TYPE:
-      {
-        guint64 long_val= get_64bit_value(value, key_value);
-        if (ic_check_config_value(hash_key, long_val, IC_KERNEL_TYPE))
-          return PROTOCOL_ERROR;
-        switch (hash_key)
-        {
-          case KERNEL_RAM_MEMORY:
-            kernel_conf->size_of_ram_memory= long_val; break;
-          case KERNEL_HASH_MEMORY:
-            kernel_conf->size_of_hash_memory= long_val; break;
-          case KERNEL_PAGE_CACHE_SIZE:
-            kernel_conf->page_cache_size= long_val; break;
-          case KERNEL_MEMORY_POOL:
-            kernel_conf->kernel_memory_pool= long_val; break;
-          default:
-            return hash_key_error(hash_key, node_type, key_type);
-        }
-        break;
-      }
-      case IC_CL_CHAR_TYPE:
-      {
-        if (ic_check_config_string(hash_key, IC_KERNEL_TYPE))
-          return PROTOCOL_ERROR;
-        switch (hash_key)
-        {
-          case IC_NODE_DATA_PATH:
-            kernel_conf->node_data_path= apic->next_string_memory;
-            strcpy(kernel_conf->node_data_path, (gchar*)(*key_value));
-            break;
-          case IC_NODE_HOST:
-            kernel_conf->hostname= apic->next_string_memory;
-            strcpy(kernel_conf->hostname, (gchar*)(*key_value));
-            break;
-          case KERNEL_FILESYSTEM_PATH:
-            kernel_conf->filesystem_path= apic->next_string_memory;
-            strcpy(kernel_conf->filesystem_path, (gchar*)(*key_value));
-            break;
-          case KERNEL_CHECKPOINT_PATH:
-            kernel_conf->kernel_checkpoint_path= apic->next_string_memory;
-            strcpy(kernel_conf->kernel_checkpoint_path, (gchar*)(*key_value));
-            break;
-          default:
-            return hash_key_error(hash_key, node_type, key_type);
-        }
-        update_string_data(apic, value, key_value);
-        break;
-      }
-      default:
-        return key_type_error(hash_key, node_type);
+      guint64 long_val= get_64bit_value(value, key_value);
+      if (ic_assign_config_value(hash_key, long_val,
+                                 node_type,
+                                 key_type,
+                                 (gchar*)node_config))
+        return PROTOCOL_ERROR;
+      break;
     }
-  }
-  else if (node_type == IC_CLIENT_NODE)
-  {
-    IC_CLIENT_CONFIG *client_conf= (IC_CLIENT_CONFIG*)node_config;
-    switch (key_type)
+    case IC_CL_CHAR_TYPE:
     {
-      case IC_CL_INT32_TYPE:
-      {
-        if (ic_check_config_value(hash_key, (guint64)value, IC_CLIENT_TYPE))
-          return PROTOCOL_ERROR;
-        switch (hash_key)
-        {
-          case CLIENT_MAX_BATCH_BYTE_SIZE:
-            client_conf->client_max_batch_byte_size= value; break;
-          case CLIENT_BATCH_BYTE_SIZE:
-            client_conf->client_batch_byte_size= value; break;
-          case CLIENT_BATCH_SIZE:
-            client_conf->client_batch_size= value; break;
-          case CLIENT_RESOLVE_RANK:
-            client_conf->client_resolve_rank= value; break;
-          case CLIENT_RESOLVE_TIMER:
-            client_conf->client_resolve_timer= value; break;
-          default:
-            return hash_key_error(hash_key, node_type, key_type);
-        }
-        break;
-      }
-      case IC_CL_CHAR_TYPE:
-      {
-        if (ic_check_config_string(hash_key, IC_KERNEL_TYPE))
-          return PROTOCOL_ERROR;
-        switch (hash_key)
-        {
-          case IC_NODE_DATA_PATH:
-            client_conf->node_data_path= apic->next_string_memory;
-            strcpy(client_conf->node_data_path, (gchar*)(*key_value));
-            break;
-          case IC_NODE_HOST:
-            client_conf->hostname= apic->next_string_memory;
-            strcpy(client_conf->hostname, (gchar*)(*key_value));
-            break;
-          default:
-            return hash_key_error(hash_key, node_type, key_type);
-        }
-        update_string_data(apic, value, key_value);
-        break;
-      }
-      default:
-        return key_type_error(hash_key, node_type);
+      if (ic_assign_config_string(hash_key, node_type,
+                                  apic->next_string_memory,
+                                  value,
+                                  (gchar*)node_config,
+                                  (gchar**)key_value))
+        return PROTOCOL_ERROR;
+      update_string_data(apic, value, key_value);
+      break;
     }
+    default:
+      return key_type_error(hash_key, node_type);
   }
-  else if (node_type == IC_CLUSTER_SERVER_NODE)
-  {
-    IC_CLUSTER_SERVER_CONFIG *cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
-    switch (key_type)
-    {
-      case IC_CL_INT32_TYPE:
-      {
-        if (ic_check_config_value(hash_key, (guint64)value,
-                                  IC_CLUSTER_SERVER_TYPE))
-          return PROTOCOL_ERROR;
-        switch (hash_key)
-        {
-          case CLIENT_RESOLVE_RANK:
-            cs_conf->client_resolve_rank= value; break;
-          case CLIENT_RESOLVE_TIMER:
-            cs_conf->client_resolve_timer= value; break;
-          case CLUSTER_SERVER_PORT_NUMBER:
-            cs_conf->cluster_server_port_number= value; break;
-          default:
-            return hash_key_error(hash_key, node_type, key_type);
-        }
-        break;
-      }
-      case IC_CL_CHAR_TYPE:
-      {
-        if (ic_check_config_string(hash_key, IC_CLUSTER_SERVER_TYPE))
-          return PROTOCOL_ERROR;
-        switch (hash_key)
-        {
-          case IC_NODE_DATA_PATH:
-            cs_conf->node_data_path= apic->next_string_memory;
-            strcpy(cs_conf->node_data_path, (gchar*)(*key_value));
-            break;
-          case IC_NODE_HOST:
-            cs_conf->hostname= apic->next_string_memory;
-            strcpy(cs_conf->hostname, (gchar*)(*key_value));
-            break;
-          default:
-            return hash_key_error(hash_key, node_type, key_type);
-        }
-        update_string_data(apic, value, key_value);
-        break;
-      }
-      default:
-        return key_type_error(hash_key, node_type);
-    }
-  }
-  else
-    g_assert(FALSE);
   return 0;
-
 }
 
 static int
@@ -1785,53 +1565,29 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
   {
     case IC_CL_INT32_TYPE:
     {
-      if (ic_check_config_value(hash_key, (guint64)value, IC_COMM_TYPE))
+      if (ic_assign_config_value(hash_key, (guint64)value, IC_COMM_TYPE,
+                                 key_type, (gchar*)tcp_conf))
         return PROTOCOL_ERROR;
-      switch (hash_key)
-      {
-        case TCP_FIRST_NODE_ID:
-          tcp_conf->first_node_id= value; break;
-        case TCP_SECOND_NODE_ID:
-          tcp_conf->second_node_id= value; break;
-        case TCP_USE_MESSAGE_ID:
-          tcp_conf->use_message_id= (gchar)value; break;
-        case TCP_USE_CHECKSUM:
-          tcp_conf->use_checksum= (gchar)value; break;
-        case TCP_CLIENT_PORT_NUMBER:
-          tcp_conf->client_port_number= (guint16)value; break;
-        case TCP_SERVER_PORT_NUMBER:
-          tcp_conf->server_port_number= (guint16)value; break;
-        case TCP_SERVER_NODE_ID:
-          tcp_conf->first_node_id= (guint16)value; break;
-        case TCP_WRITE_BUFFER_SIZE:
-          tcp_conf->tcp_write_buffer_size= value; break;
-        case TCP_READ_BUFFER_SIZE:
-          tcp_conf->tcp_read_buffer_size= value; break;
-        case TCP_GROUP:
-          /* Ignore for now */
-          break;
-        default:
-          return hash_key_error(hash_key, IC_COMM_TYPE, key_type);
-      }
+      break;
+    }
+    case IC_CL_INT64_TYPE:
+    {
+      guint64 long_val= get_64bit_value(value, key_value);
+      if (ic_assign_config_value(hash_key, long_val,
+                                 IC_COMM_TYPE,
+                                 key_type,
+                                 (gchar*)tcp_conf))
+        return PROTOCOL_ERROR;
       break;
     }
     case IC_CL_CHAR_TYPE:
     {
-      if (ic_check_config_string(hash_key, IC_COMM_TYPE))
+      if (ic_assign_config_string(hash_key, IC_COMM_TYPE,
+                                  apic->next_string_memory,
+                                  value,
+                                  (gchar*)tcp_conf,
+                                  (gchar**)key_value))
         return PROTOCOL_ERROR;
-      switch (hash_key)
-      {
-        case TCP_FIRST_HOSTNAME:
-          tcp_conf->first_hostname= apic->next_string_memory;
-          strcpy(tcp_conf->first_hostname, (gchar*)(*key_value));
-          break;
-        case TCP_SECOND_HOSTNAME:
-          tcp_conf->second_hostname= apic->next_string_memory;
-          strcpy(tcp_conf->second_hostname, (gchar*)(*key_value));
-          break;
-        default:
-          return hash_key_error(hash_key, IC_COMM_TYPE, key_type);
-      }
       update_string_data(apic, value, key_value);
       break;
     }
@@ -2280,6 +2036,25 @@ rec_get_config(IC_CONNECTION *conn,
   return error;
 }
 
+/*
+  MODULE: CONFIGURATION CLIENT
+  ----------------------------
+    This module makes use of a lot of methods above to fetch configuration
+    from a configuration server.
+
+
+  This is the routine that is used to read a configuration from a
+  config server. It receives a struct that contains a list of configuration
+  servers to connect to. It tries to connect to any of the configuration
+  servers in this list. If successful it goes on to fetch the configuration
+  from this configuration server. There can be many clusters handled by
+  this set of configuration servers, however the configuration is fetched
+  for one configuration at a time.
+  
+  Any retry logic is placed outside of this routine. If this routine returns
+  0 all cluster configurations have been successfully fetched and also
+  successfully parsed and all necessary data structures have been initialised.
+*/
 static int
 get_cs_config(IC_API_CONFIG_SERVER *apic)
 {
@@ -2357,6 +2132,11 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
   return;
 }
 
+/*
+  This routine initialises the data structures needed for a configuration client.
+  It sets the proper routines to get the configuration and to free the
+  configuration.
+*/
 IC_API_CONFIG_SERVER*
 ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                     guint32 *cluster_ids,
@@ -2397,11 +2177,9 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   memcpy((gchar*)apic->cluster_ids,
          (gchar*)cluster_ids,
          num_clusters * sizeof(guint32));
-
   memcpy((gchar*)apic->node_ids,
          (gchar*)node_ids,
          num_clusters * sizeof(guint32));
-
   memcpy((gchar*)apic->cluster_conn.cluster_server_ips,
          (gchar*)cluster_conn->cluster_server_ips,
          num_cluster_servers * sizeof(guint32));
@@ -2419,6 +2197,13 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   return apic;
 }
 
+/*
+  MODULE: CONFIGURATION SERVER
+  ----------------------------
+    This is the module that provided with a configuration data structures
+    ensures that anyone can request this configuration through a given
+    socket and port.
+*/
 static void
 free_run_cluster(IC_RUN_CONFIG_SERVER *run_obj)
 {
@@ -2446,12 +2231,15 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
 }
 
 /*
-  MODULE:
-  -------
-  CONFIG_SERVER
+  MODULE: LOAD CONFIG DATA
+  ------------------------
     This is a configuration server implementing the ic_config_operations
     interface. It converts a configuration file to a set of data structures
     describing the configuration of a iClaustron Cluster Server.
+
+    This is the module that reads a configuration file to fill up the
+    data structures that later can be used by the Configuration Server
+    module to handle requests from Configuration Clients.
 */
 static
 int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number)
