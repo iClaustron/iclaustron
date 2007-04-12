@@ -84,6 +84,7 @@ struct ic_config_entry
   gchar is_deprecated;
   gchar is_string_type;
   gchar is_mandatory_to_specify;
+  gchar mandatory_bit;
   gchar is_not_configurable;
   gchar is_only_iclaustron;
   gchar is_array_value;
@@ -179,6 +180,7 @@ struct ic_kernel_config
   guint64 size_of_hash_memory;
   guint64 page_cache_size;
   guint64 kernel_memory_pool;
+  guint64 mandatory_bits;
 
   guint32 max_number_of_trace_files;
   guint32 number_of_replicas;
@@ -255,6 +257,7 @@ struct ic_client_config
   char *hostname;
   char *node_data_path;
 
+  guint64 mandatory_bits;
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
 
@@ -274,6 +277,7 @@ struct ic_cluster_server_config
   char *hostname;
   char *node_data_path;
 
+  guint64 mandatory_bits;
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
   /* End of section in common with Client config */
@@ -310,6 +314,7 @@ struct ic_tcp_comm_link_config
   char *first_hostname;
   char *second_hostname;
 
+  guint64 mandatory_bits;
   guint32 tcp_write_buffer_size;
   guint32 tcp_read_buffer_size;
 
@@ -328,10 +333,12 @@ typedef struct ic_tcp_comm_link_config IC_TCP_COMM_LINK_CONFIG;
 
 struct ic_sci_comm_link_config
 {
+  guint64 mandatory_bits;
 };
 
 struct ic_shm_comm_link_config
 {
+  guint64 mandatory_bits;
 };
 
 struct ic_comm_link_config
@@ -410,7 +417,8 @@ struct ic_cluster_config
 };
 typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 
-int ic_load_config_server_from_files(gchar *config_file_path);
+int ic_load_config_server_from_files(gchar *config_file_path,
+                                     IC_CONFIG_STRUCT *conf_server);
 
 struct ic_cs_conf_comment
 {
@@ -457,7 +465,8 @@ void ic_print_config_parameters();
 
 #define IC_SET_CONFIG_MAP(name, id) \
   map_config_id[name]= id; \
-  conf_entry= &glob_conf_entry[id];
+  conf_entry= &glob_conf_entry[id]; \
+  if (id > glob_conf_max_id) glob_conf_max_id= id;
 
 #define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name= "name"; \

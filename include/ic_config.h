@@ -17,15 +17,14 @@
 #define INITIAL_PASS 0
 #define BUILD_PASS   1
 struct ic_cluster_config_load;
-
 struct ic_config_struct
 {
   union {
     struct ic_cluster_config_load *clu_conf;
   } config_ptr;
+  struct ic_config_operations *clu_conf_ops;
 };
 typedef struct ic_config_struct IC_CONFIG_STRUCT;
-
 
 struct ic_config_operations
 {

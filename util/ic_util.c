@@ -165,9 +165,10 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
   {
     IC_STRING key_name, data_str;
     guint32 id_len= line_len;
-    guint32 val_len;
+    guint32 val_len= 0;
     guint32 space_len= 0;
-    gchar *key_id, *val_str;
+    gchar *key_id= NULL;
+    gchar *val_str= NULL;
 
     rm_space(iter_data, &space_len, line_len);
     id_len-= space_len;
@@ -229,6 +230,7 @@ int ic_build_config_data(IC_STRING *conf_data,
   }
   return 0;
 config_error:
+  ic_conf_op->ic_config_end(ic_config);
   err_obj->err_num= error;
   err_obj->line_number= line_number;
   return 1;

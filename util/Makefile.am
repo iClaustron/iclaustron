@@ -4,4 +4,4 @@
 
 lib_LTLIBRARIES = libic_util.la
 
-libic_util_la_SOURCES = ic_util.c
+libic_util_la_SOURCES = ic_util.c hashtable.c hashtable_itr.c

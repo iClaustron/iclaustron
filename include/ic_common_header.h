@@ -8,7 +8,7 @@
 #include <string.h>
 #include <config.h>
 
-#define MAX_NODE_ID 63
+#define MAX_NODE_ID 255
 
 typedef unsigned char ic_bool;
 

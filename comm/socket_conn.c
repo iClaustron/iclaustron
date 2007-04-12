@@ -339,12 +339,12 @@ write_socket_connection(struct ic_connection *conn,
                         __attribute__ ((unused)) guint32 prio_level,
                         guint32 secs_to_try)
 {
-  GTimer *time_measure;
-  gdouble secs_expired;
-  gdouble next_sec_check;
+  GTimer *time_measure= 0;
+  gdouble secs_expired= 0;
+  gdouble next_sec_check= 0;
   guint32 write_size= 0;
   guint32 loop_count= 0;
-  guint32 secs_count;
+  guint32 secs_count= 0;
 
   do
   {

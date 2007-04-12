@@ -91,7 +91,6 @@ const gchar *conf_server_def_str= "configuration server default";
 const gchar *net_part_def_str= "network partition server default";
 const gchar *rep_server_def_str= "replication server default";
 
-#define MAX_NODE_ID 63
 
 #define GET_NODEID_REPLY_STATE 0
 #define NODEID_STATE 1
@@ -135,9 +134,11 @@ const gchar *rep_server_def_str= "replication server default";
 #define MAX_MAP_CONFIG_ID 1024
 #define MAX_CONFIG_ID 256
 
+static guint32 glob_conf_max_id;
+static GHashTable *glob_conf_hash;
+static gboolean glob_conf_entry_inited= FALSE;
 static guint16 map_config_id[MAX_MAP_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
-static gboolean glob_conf_entry_inited= FALSE;
 
 static const gchar *empty_string= "";
 static const gchar *get_nodeid_str= "get nodeid";
@@ -396,13 +397,30 @@ ic_print_config_parameters(guint32 mask)
   }
 }
 
-static void
+static IC_CONFIG_ENTRY *get_config_entry(int config_id);
+
+static int
+build_config_name_hash()
+{
+  int i;
+  for (i= 0; i <= glob_conf_max_id; i++)
+  {
+    if (get_config_entry(i))
+    {
+    }
+  }
+  return 0;
+}
+
+static int
 ic_init_config_parameters()
 {
   IC_CONFIG_ENTRY *conf_entry;
+  guint32 mandatory_bits= 0;
   if (glob_conf_entry_inited)
-    return;
+    return 0;
   glob_conf_entry_inited= TRUE;
+  glob_conf_max_id= 0;
   memset(map_config_id, 0, 1024 * sizeof(guint16));
   memset(glob_conf_entry, 0, 256 * sizeof(IC_CONFIG_ENTRY));
 
@@ -421,6 +439,7 @@ ic_init_config_parameters()
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
   conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "This defines number of nodes per node group, within a node group all nodes contain the same data";
 
@@ -934,6 +953,7 @@ ic_init_config_parameters()
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
   conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "First node id of the connection";
 
@@ -942,6 +962,7 @@ ic_init_config_parameters()
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
   conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Second node id of the connection";
 
@@ -962,6 +983,7 @@ ic_init_config_parameters()
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
   conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
   "Port number to use on client side";
@@ -971,6 +993,7 @@ ic_init_config_parameters()
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
   conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Port number to use on server side";
 
@@ -1010,6 +1033,7 @@ ic_init_config_parameters()
                     IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
   conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Node id of node that is server part of connection";
 
@@ -1087,14 +1111,14 @@ ic_init_config_parameters()
                          (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
   "Hostname of the node";
-  return;
+  return build_config_name_hash();
 }
 
 static IC_CONFIG_ENTRY *get_config_entry(int config_id)
 {
   guint32 inx;
 
-  if (config_id > 998)
+  if (config_id >= IC_NODE_TYPE)
   {
     printf("config_id larger than 998 = %d\n", config_id);
     return NULL;
@@ -1236,7 +1260,7 @@ static void
 init_config_object(gchar *conf_object, IC_CONFIG_TYPE node_type)
 {
   guint32 i;
-  for (i= 0; i < 1024; i++)
+  for (i= 0; i < glob_conf_max_id; i++)
   {
     IC_CONFIG_ENTRY *conf_entry= &glob_conf_entry[i];
     if (conf_entry && conf_entry->node_type & node_type)
@@ -2154,7 +2178,6 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 
     We will also ensure that the supplied data is validated.
   */
-  ic_init_config_parameters();
   if (!(apic= g_try_malloc0(sizeof(IC_API_CONFIG_SERVER))) ||
       !(apic->cluster_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
       !(apic->node_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
@@ -2224,7 +2247,6 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
                     guint32 num_clusters)
 {
   IC_RUN_CONFIG_SERVER *run_obj;
-  ic_init_config_parameters();
   if (!(run_obj= g_try_malloc0(sizeof(IC_API_CONFIG_SERVER))))
     return NULL;
   return run_obj;
@@ -2251,13 +2273,14 @@ static
 int conf_serv_init(IC_CONFIG_STRUCT *ic_conf)
 {
   IC_CLUSTER_CONFIG_LOAD *clu_conf;
-  if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)g_malloc0(sizeof(IC_CLUSTER_CONFIG))))
+  if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)g_try_malloc0(sizeof(IC_CLUSTER_CONFIG))))
     return IC_ERROR_MEM_ALLOC;
   ic_conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
-  if (!(clu_conf->conf.node_config= (gchar**)g_malloc0(sizeof(gchar*)*256)))
+  if (!(clu_conf->conf.node_config= (gchar**)
+        g_try_malloc0(sizeof(gchar*)*(MAX_NODE_ID+1))))
     return IC_ERROR_MEM_ALLOC;
   if (!(clu_conf->conf.node_types= 
-        (IC_NODE_TYPES*)g_malloc0(sizeof(IC_CONFIG_TYPE)*256)))
+        (IC_NODE_TYPES*)g_try_malloc0(sizeof(IC_NODE_TYPES)*(MAX_NODE_ID+1))))
     return IC_ERROR_MEM_ALLOC;
 
   return 0;
@@ -2278,7 +2301,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   if (!ic_cmp_null_term_str(data_server_str, section_name))
   {
     if (!(clu_conf->current_node_config= 
-          (void*)g_malloc0(sizeof(struct ic_kernel_config))))
+          (void*)g_try_malloc0(sizeof(struct ic_kernel_config))))
       return IC_ERROR_MEM_ALLOC;
     memcpy(clu_conf->current_node_config, &clu_conf->default_kernel_config,
            sizeof(IC_KERNEL_CONFIG));
@@ -2399,7 +2422,8 @@ static IC_CONFIG_OPERATIONS config_server_ops =
 };
 
 int
-ic_load_config_server_from_files(gchar *config_file_path)
+ic_load_config_server_from_files(gchar *config_file_path,
+                                 IC_CONFIG_STRUCT *conf_server)
 {
   gchar *conf_data_str;
   gsize conf_data_len;
@@ -2407,10 +2431,10 @@ ic_load_config_server_from_files(gchar *config_file_path)
   IC_STRING conf_data;
   int ret_val;
   IC_CONFIG_ERROR err_obj;
-  IC_CONFIG_STRUCT conf_server;
 
   memset(&conf_server, 0, sizeof(IC_CONFIG_STRUCT));
-  printf("config_file_path = %s\n", config_file_path);
+  conf_server->clu_conf_ops= &config_server_ops;
+  DEBUG(printf("config_file_path = %s\n", config_file_path));
   if (!config_file_path ||
       !g_file_get_contents(config_file_path, &conf_data_str,
                            &conf_data_len, &loc_error))
@@ -2418,7 +2442,7 @@ ic_load_config_server_from_files(gchar *config_file_path)
 
   IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
   ret_val= ic_build_config_data(&conf_data, &config_server_ops,
-                                &conf_server, &err_obj);
+                                conf_server, &err_obj);
   g_free(conf_data.str);
   if (ret_val == 1)
   {
@@ -2438,3 +2462,22 @@ file_open_error:
   return 1;
 }
 
+/*
+  iClaustron initialisation routine
+  The ic_init routine must be called at the before using any other
+  function in the iClaustron API's. The ic_end must be called when
+  the iClaustron API's have been used to completion, normally at the
+  end of the program.
+*/
+int ic_init()
+{
+  ic_init_error_messages();
+  return ic_init_config_parameters();
+}
+
+void ic_end()
+{
+  if (glob_conf_hash)
+    g_hash_table_destroy(glob_conf_hash);
+  glob_conf_entry_inited= FALSE;
+}

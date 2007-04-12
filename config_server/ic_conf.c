@@ -12,6 +12,7 @@
 */
 
 #include <ic_common.h>
+#include <ic_apic.h>
 
 static gchar *glob_config_file= NULL;
 static gchar *glob_config_path= NULL;
@@ -42,6 +43,7 @@ main(int argc, char *argv[])
 {
   GError *loc_error= NULL;
   GOptionContext *context;
+  IC_CONFIG_STRUCT clu_conf;
 
   ic_init_error_messages();
   /* Read command options */
@@ -53,8 +55,10 @@ main(int argc, char *argv[])
     goto parse_error;
   g_option_context_free(context);
 
-  if (ic_load_config_server_from_files(glob_config_file))
+  if (ic_load_config_server_from_files(glob_config_file,
+                                       &clu_conf))
     return 1;
+  clu_conf.clu_conf_ops->ic_config_end(&clu_conf);
   return 0;
 
 mem_error:
