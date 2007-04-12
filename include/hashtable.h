@@ -61,6 +61,9 @@ struct hashtable;
  *
  */
 
+unsigned int hash_str(void *ptr);
+int keys_equal_str(void *ptr1, void *ptr2);
+
 /*****************************************************************************
  * create_hashtable
    

@@ -1,4 +1,5 @@
 #include <ic_apic.h>
+#include <hashtable.h>
 /*
   DESCRIPTION TO ADD NEW CONFIGURATION VARIABLE:
   1) Add a new constant in this file e.g:
@@ -135,7 +136,7 @@ const gchar *rep_server_def_str= "replication server default";
 #define MAX_CONFIG_ID 256
 
 static guint32 glob_conf_max_id;
-static GHashTable *glob_conf_hash;
+struct hashtable *glob_conf_hash;
 static gboolean glob_conf_entry_inited= FALSE;
 static guint16 map_config_id[MAX_MAP_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
@@ -402,11 +403,16 @@ static IC_CONFIG_ENTRY *get_config_entry(int config_id);
 static int
 build_config_name_hash()
 {
-  int i;
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 i;
   for (i= 0; i <= glob_conf_max_id; i++)
   {
-    if (get_config_entry(i))
+    if ((conf_entry= get_config_entry(i)))
     {
+      if (hashtable_insert(glob_conf_hash,
+                           (void*)conf_entry->config_entry_name,
+                           (void*)i))
+        return 1;
     }
   }
   return 0;
@@ -419,6 +425,9 @@ ic_init_config_parameters()
   guint32 mandatory_bits= 0;
   if (glob_conf_entry_inited)
     return 0;
+  if (!(glob_conf_hash= create_hashtable(256, hash_str,
+                                         keys_equal_str)))
+    return 1;
   glob_conf_entry_inited= TRUE;
   glob_conf_max_id= 0;
   memset(map_config_id, 0, 1024 * sizeof(guint16));
@@ -2471,13 +2480,16 @@ file_open_error:
 */
 int ic_init()
 {
+  int ret_value;
   ic_init_error_messages();
-  return ic_init_config_parameters();
+  if ((ret_value= ic_init_config_parameters()))
+    ic_end();
+  return ret_value;
 }
 
 void ic_end()
 {
   if (glob_conf_hash)
-    g_hash_table_destroy(glob_conf_hash);
+    hashtable_destroy(glob_conf_hash, (int)0);
   glob_conf_entry_inited= FALSE;
 }

@@ -36,6 +36,8 @@ int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
 void ic_init_error_messages();
 void ic_print_error(guint32 error_number);
 gchar *ic_get_error_message(guint32 error_number);
+int ic_init();
+void ic_end();
 
 #if !HAVE_BZERO && HAVE_MEMSET
 #define bzero(buf, bytes)  ((void) memset(buf, 0, bytes))

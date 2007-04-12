@@ -24,6 +24,26 @@ static const unsigned int primes[] = {
 const unsigned int prime_table_length = sizeof(primes)/sizeof(primes[0]);
 const float max_load_factor = 0.65;
 
+unsigned int
+hash_str(void *ptr)
+{
+  unsigned int hash= 0;
+  unsigned char *char_ptr= (unsigned char*)ptr;
+  unsigned int ptr_val;
+  while ((ptr_val= *char_ptr))
+  {
+    hash= ptr_val + (147*hash) + 5;
+    char_ptr++;
+  }
+  return hash;
+}
+
+int
+keys_equal_str(void *ptr1, void *ptr2)
+{
+  return strncmp((const char*)ptr1, (const char*)ptr2, 256) ? 1 : 0;
+}
+
 /*****************************************************************************/
 struct hashtable *
 create_hashtable(unsigned int minsize,
@@ -148,14 +168,14 @@ hashtable_insert(struct hashtable *h, void *k, void *v)
         hashtable_expand(h);
     }
     e = (struct entry *)malloc(sizeof(struct entry));
-    if (NULL == e) { --(h->entrycount); return 0; } /*oom*/
+    if (NULL == e) { --(h->entrycount); return 1; } /*oom*/
     e->h = hash(h,k);
     index = indexFor(h->tablelength,e->h);
     e->k = k;
     e->v = v;
     e->next = h->table[index];
     h->table[index] = e;
-    return -1;
+    return 0;
 }
 
 /*****************************************************************************/
