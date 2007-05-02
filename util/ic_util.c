@@ -10,6 +10,56 @@
 */
 const guint32 MAX_LINE_LEN = 120;
 
+const gchar *false_str= "false";
+const gchar *true_str= "true";
+
+static 
+gboolean ic_check_digit(gchar c)
+{
+  if (c < '0' || c > '9')
+    return FALSE;
+  return TRUE;
+}
+
+int
+conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
+{
+  guint32 i;
+  guint64 number= 0;
+  gboolean no_digit_found= FALSE;
+
+  if (!ic_cmp_null_term_str(false_str, ic_str))
+    return 0;
+  else if (!ic_cmp_null_term_str(true_str, ic_str))
+  {
+    number= 1;
+    return 0;
+  }
+  for (i= 0; i < ic_str->len; i++)
+  {
+    if (no_digit_found)
+      return 1;
+    if (ic_check_digit(ic_str->str[i]))
+    {
+      number*= 10;
+      number+= (ic_str->str[i] - '0');
+    }
+    else
+    {
+      no_digit_found= TRUE;
+      if (ic_str->str[i] == 'k')
+        number*= 1024;
+      else if (ic_str->str[i] == 'm')
+        number*= (1024*1024);
+      else if (ic_str->str[i] == 'g')
+        number*= (1024*1024*1024);
+      else
+        return 1;
+    }
+  }
+  *value= number;
+  return 0;
+}
 static
 guint32 read_cr_line(gchar *iter_data)
 {
@@ -199,12 +249,12 @@ int ic_build_config_data(IC_STRING *conf_data,
   guint32 section_num= 0;
   IC_STRING line_data;
 
-  if ((error= ic_conf_op->ic_config_init(ic_config)))
-    goto config_error;
   for (pass= 0; pass < 2; pass++)
   {
     gchar *iter_data= conf_data->str;
     gsize iter_data_len= 0;
+    if ((error= ic_conf_op->ic_config_init(ic_config, pass)))
+      goto config_error;
     while (iter_data_len < conf_data->len)
     {
       if (*iter_data == LINE_FEED)
@@ -267,10 +317,14 @@ int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
 /*
   Module for printing error codes and retrieving error messages
   given the error number.
+  To add a new error number do the following:
+  1) Change IC_LAST_ERROR
+  2) Add a new entry in ic_init_error_messages
+  3) Add the new error code in ic_err.h
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7005
+#define IC_LAST_ERROR 7013
 #define IC_MAX_ERRORS 100
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
@@ -292,6 +346,22 @@ ic_init_error_messages()
     "Section name doesn't exist in this configuration";
   ic_error_str[IC_ERROR_MEM_ALLOC - IC_FIRST_ERROR]=
     "Memory allocation failure";
+  ic_error_str[IC_ERROR_NO_SECTION_DEFINED_YET - IC_FIRST_ERROR]=
+    "Tried to define key value before first section defined";
+  ic_error_str[IC_ERROR_NO_SUCH_CONFIG_KEY - IC_FIRST_ERROR]=
+    "No such configuration key exists";
+  ic_error_str[IC_ERROR_DEFAULT_VALUE_FOR_MANDATORY - IC_FIRST_ERROR]=
+    "Trying to assign default value to a mandatory config entry";
+  ic_error_str[IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION - IC_FIRST_ERROR]=
+    "Assigning correct config entry in wrong section";
+  ic_error_str[IC_ERROR_NO_NODES_FOUND - IC_FIRST_ERROR]=
+    "No nodes found in the configuration file";
+  ic_error_str[IC_ERROR_WRONG_CONFIG_NUMBER - IC_FIRST_ERROR]=
+    "Number expected in config file, true, false and endings with k, m, g also allowed";
+  ic_error_str[IC_ERROR_NO_BOOLEAN_VALUE - IC_FIRST_ERROR]=
+    "Boolean value expected, got number larger than 1";
+  ic_error_str[IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS - IC_FIRST_ERROR]=
+    "Configuration value is out of bounds, check data type and min, max values";
 }
 
 void

@@ -28,7 +28,7 @@ typedef struct ic_config_struct IC_CONFIG_STRUCT;
 
 struct ic_config_operations
 {
-  int (*ic_config_init)(IC_CONFIG_STRUCT *ic_config);
+  int (*ic_config_init)(IC_CONFIG_STRUCT *ic_config, guint32 pass);
   int (*ic_add_section)(IC_CONFIG_STRUCT *ic_config,
                         guint32 section_number,
                         guint32 line_number,
@@ -62,4 +62,14 @@ int ic_build_config_data(IC_STRING *conf_data,
                          IC_CONFIG_STRUCT *ic_conf_obj,
                          IC_CONFIG_ERROR *err_obj);
 
+/*
+  Routine to convert configuration value for unsigned integer values 
+  Can be of the type:
+  true, TRUE => Value = 1
+  false, FALSE => Value = 0
+  Normal number using 1234567890
+  Number followed by k,K,m,M,g,G where k multiplies number by 1024, m
+  multiplies by 1024*1024 and g muiltiplies by 1024*1024*1024.
+*/
+  int conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
 #endif

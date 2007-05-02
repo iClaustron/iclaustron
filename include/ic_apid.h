@@ -11,7 +11,7 @@ struct ic_ds_operations
   int (*close_ic_ds_connection) (struct ic_ds_conn *ds_conn);
   int (*is_conn_established) (struct ic_ds_conn *ds_conn,
                               gboolean *is_established);
-  int (*authenticate_connection) (struct ic_ds_conn *ds_conn);
+  int (*authenticate_connection) (void *conn_obj);
 };
 
 struct ic_ds_conn

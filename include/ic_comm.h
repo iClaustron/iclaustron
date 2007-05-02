@@ -428,7 +428,7 @@ int base64_decode(char *dest, guint32 *dest_len,
 */
 int ic_send_with_cr(IC_CONNECTION *conn, const char *buf);
 int ic_rec_with_cr(IC_CONNECTION *conn,
-                   char *rec_buf,
+                   gchar *rec_buf,
                    guint32 *read_size,
                    guint32 *size_curr_buf,
                    guint32 buffer_size);

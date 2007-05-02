@@ -16,19 +16,19 @@ typedef enum ic_node_types IC_NODE_TYPES;
 
 enum ic_communication_type
 {
-  IC_TCP_COMM = 0
+  IC_SOCKET_COMM = 0
 };
 typedef enum ic_communication_type IC_COMMUNICATION_TYPE;
 
 enum ic_config_type
 {
-  IC_KERNEL_TYPE = 0,
-  IC_CLIENT_TYPE = 1,
-  IC_CLUSTER_SERVER_TYPE = 2,
-  IC_COMM_TYPE = 3,
-  IC_CONFIG_SERVER_TYPE = 4,
-  IC_SQL_SERVER_TYPE = 5,
-  IC_REP_SERVER_TYPE = 6
+  IC_NO_CONFIG_TYPE = 0,
+  IC_KERNEL_TYPE = 1,
+  IC_CLIENT_TYPE = 2,
+  IC_CLUSTER_SERVER_TYPE = 3,
+  IC_SQL_SERVER_TYPE = 4,
+  IC_REP_SERVER_TYPE = 5,
+  IC_COMM_TYPE = 6
 };
 typedef enum ic_config_type IC_CONFIG_TYPE;
 
@@ -77,7 +77,7 @@ struct ic_config_entry
   guint32 min_version_used;
   guint32 max_version_used;
   enum ic_config_entry_change change_variant;
-  enum ic_config_type node_type;
+  guint32 node_types;
   gchar is_max_value_defined;
   gchar is_min_value_defined;
   gchar is_boolean;
@@ -283,7 +283,6 @@ struct ic_cluster_server_config
   /* End of section in common with Client config */
 
   char *cluster_server_event_log;
-
   guint16 cluster_server_port_number;
 };
 typedef struct ic_cluster_server_config IC_CLUSTER_SERVER_CONFIG;
@@ -302,34 +301,27 @@ struct ic_rep_server_config
 };
 typedef struct ic_rep_server_config IC_REP_SERVER_CONFIG;
 
-struct ic_config_server_config
-{
-  IC_CLIENT_CONFIG client_conf;
-  guint32          not_used;
-};
-typedef struct ic_config_server_config IC_CONFIG_SERVER_CONFIG;
-
-struct ic_tcp_comm_link_config
+struct ic_socket_link_config
 {
   char *first_hostname;
   char *second_hostname;
 
   guint64 mandatory_bits;
-  guint32 tcp_write_buffer_size;
-  guint32 tcp_read_buffer_size;
+  guint32 socket_write_buffer_size;
+  guint32 socket_read_buffer_size;
 
   guint16 first_node_id;
   guint16 second_node_id;
   guint16 client_port_number;
   guint16 server_port_number;
   guint16 server_node_id;
-  guint16 tcp_group;
+  guint16 socket_group;
 
   gchar use_message_id;
   gchar use_checksum;
   /* Ignore Connection Group for now */
 };
-typedef struct ic_tcp_comm_link_config IC_TCP_COMM_LINK_CONFIG;
+typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;
 
 struct ic_sci_comm_link_config
 {
@@ -345,7 +337,7 @@ struct ic_comm_link_config
 {
   union
   {
-    struct ic_tcp_comm_link_config tcp_conf;
+    struct ic_socket_link_config socket_conf;
     struct ic_sci_comm_link_config sci_conf;
     struct ic_shm_comm_link_config shm_conf;
   };
@@ -383,7 +375,7 @@ struct ic_cluster_config
     types:
     ic_kernel_config             iClaustron kernel nodes
     ic_client_config             iClaustron client nodes
-    ic_cluster_server_config     iClaustron cluster server nodes
+    ic_conf_server_config        iClaustron config server nodes
     ic_sql_server_config         iClaustron SQL server nodes
     ic_rep_server_config         iClaustron Replication server nodes
 
@@ -394,12 +386,12 @@ struct ic_cluster_config
   /*
     comm_config is an array of pointers that point to structs of the
     types:
-    ic_tcp_comm_link_config       iClaustron TCP/IP link
+    ic_socket_link_config         iClaustron Socket link
     ic_shm_comm_link_config       iClaustron Shared Memory link
     ic_sci_comm_link_config       iClaustron SCI link
 
     The array comm_types below contains the actual type of the struct
-    for each entry. Currently only TCP/IP links are possible.
+    for each entry. Currently only socket links are possible.
   */
   char **comm_config;
 
@@ -433,9 +425,13 @@ struct ic_cluster_config_load
 {
   IC_CLUSTER_CONFIG conf;
   void *current_node_config;
+  gchar *string_memory;
   IC_CONFIG_TYPE current_node_config_type;
   IC_CS_CONF_COMMENT comments;
   guint32 max_node_id;
+  guint32 num_communication_sections;
+  guint32 size_string_memory;
+  gboolean default_section;
 
   /*
     To avoid so many malloc calls we keep all default structures in this
@@ -443,10 +439,11 @@ struct ic_cluster_config_load
     each parameter as defined by the iClaustron Cluster Server API.
   */
   IC_KERNEL_CONFIG default_kernel_config;
+  IC_CLIENT_CONFIG default_client_config;
+  IC_CLUSTER_SERVER_CONFIG default_cluster_server_config;
   IC_REP_SERVER_CONFIG default_rep_config;
   IC_SQL_SERVER_CONFIG default_sql_config;
-  IC_CONFIG_SERVER_CONFIG default_conf_server_config;
-  IC_CLIENT_CONFIG default_client_config;
+  IC_SOCKET_LINK_CONFIG default_socket_config;
 };
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 
@@ -473,7 +470,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CONFIG_MIN(conf_entry, min) \
@@ -497,7 +494,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_KERNEL_STRING(conf_entry, name, change) \
@@ -506,33 +503,33 @@ void ic_print_config_parameters();
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->is_mandatory_to_specify= TRUE; \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
 
-#define IC_SET_TCP_CONFIG(conf_entry, name, type, val, change) \
+#define IC_SET_SOCKET_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name= "name"; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
-  (conf_entry)->offset= offsetof(IC_TCP_COMM_LINK_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_COMM_TYPE); \
+  (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
+  (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);
 
-#define IC_SET_TCP_BOOLEAN(conf_entry, name, def, change) \
+#define IC_SET_SOCKET_BOOLEAN(conf_entry, name, def, change) \
   (conf_entry)->config_entry_name= "name"; \
   (conf_entry)->data_type= IC_BOOLEAN; \
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
-  (conf_entry)->offset= offsetof(IC_TCP_COMM_LINK_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_COMM_TYPE); \
+  (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
+  (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);
 
-#define IC_SET_TCP_STRING(conf_entry, name, change) \
+#define IC_SET_SOCKET_STRING(conf_entry, name, change) \
   (conf_entry)->config_entry_name= "name"; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->is_mandatory_to_specify= TRUE; \
-  (conf_entry)->offset= offsetof(IC_TCP_COMM_LINK_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_COMM_TYPE); \
+  (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
+  (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_STRING(conf_entry, name, val, change) \
@@ -541,7 +538,7 @@ void ic_print_config_parameters();
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->default_string= (char*)(val); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_CLUSTER_SERVER_TYPE); \
+  (conf_entry)->node_types= (1 << IC_CLUSTER_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, name, type, val, change) \
@@ -549,7 +546,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_CLUSTER_SERVER_TYPE); \
+  (conf_entry)->node_types= (1 << IC_CLUSTER_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLIENT_CONFIG(conf_entry, name, type, val, change) \
@@ -557,7 +554,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \
-  (conf_entry)->node_type= (1 << IC_CLIENT_TYPE); \
+  (conf_entry)->node_types= (1 << IC_CLIENT_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #endif

@@ -18,7 +18,7 @@ typedef unsigned char ic_bool;
 */
 struct ic_string
 {
-  char *str;
+  gchar *str;
   guint32 len;
   gboolean null_terminated;
 };

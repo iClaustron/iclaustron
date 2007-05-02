@@ -121,7 +121,7 @@ ic_send_with_cr(struct ic_connection *conn, const char *send_buf)
 
 int
 ic_rec_with_cr(struct ic_connection *conn,
-               char *rec_buf,
+               gchar *rec_buf,
                guint32 *read_size,
                guint32 *size_curr_buf,
                guint32 buffer_size)
