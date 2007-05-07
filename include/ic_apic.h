@@ -466,7 +466,7 @@ void ic_print_config_parameters();
   if (id > glob_conf_max_id) glob_conf_max_id= id;
 
 #define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
@@ -489,7 +489,7 @@ void ic_print_config_parameters();
   if ((min) == (max)) (conf_entry)->is_not_configurable= TRUE;
 
 #define IC_SET_KERNEL_BOOLEAN(conf_entry, name, def, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->data_type= IC_BOOLEAN; \
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
@@ -498,7 +498,7 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_KERNEL_STRING(conf_entry, name, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->is_mandatory_to_specify= TRUE; \
@@ -507,7 +507,7 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
@@ -515,7 +515,7 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_BOOLEAN(conf_entry, name, def, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->data_type= IC_BOOLEAN; \
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
@@ -524,7 +524,7 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_STRING(conf_entry, name, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->is_mandatory_to_specify= TRUE; \
@@ -533,7 +533,7 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_STRING(conf_entry, name, val, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->default_string= (char*)(val); \
@@ -542,7 +542,7 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
@@ -550,7 +550,7 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLIENT_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= "name"; \
+  (conf_entry)->config_entry_name= #name; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \

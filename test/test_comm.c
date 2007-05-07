@@ -179,7 +179,7 @@ int main(int argc, char *argv[])
   {
     case 0:
       connection_test();
-      return 0;
+      break;
     case 1:
     case 2:
     case 3:
@@ -187,14 +187,15 @@ int main(int argc, char *argv[])
     case 5:
     case 6:
       api_clusterserver_test();
-      return 0;
+      break;
     case 7:
       run_clusterserver_test();
-      return 0;
+      break;
     default:
-      return 0;
+      break;
    }
-
+   ic_end();
+   return 0;
 parse_error:
   printf("No such program option\n");
 error:

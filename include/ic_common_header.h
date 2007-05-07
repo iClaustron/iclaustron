@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <config.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #define MAX_NODE_ID 255
 
@@ -45,7 +47,17 @@ void ic_end();
 #endif
 
 #ifdef DEBUG_BUILD
+void ic_debug_entry(const char *entry_point);
+int ic_debug_open();
+void ic_debug_close();
 #define DEBUG(a) a
+#define DEBUG_ENTRY(a) ic_debug_entry(a);
+#define DEBUG_OPEN if (ic_debug_open()) return 1;
+#define DEBUG_CLOSE ic_debug_close();
 #else
 #define DEBUG(a)
+#define DEBUG_ENTRY(a)
+#define DEBUG_MAIN
+#define DEBUG_OPEN
+#define DEBUG_CLOSE
 #endif

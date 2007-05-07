@@ -408,7 +408,8 @@ build_config_name_hash()
   guint32 i;
   for (i= 0; i <= glob_conf_max_id; i++)
   {
-    if ((conf_entry= get_config_entry(i)))
+    if ((conf_entry= get_config_entry(i)) &&
+        conf_entry->config_entry_name)
     {
       if (hashtable_insert(glob_conf_hash,
                            (void*)conf_entry->config_entry_name,
@@ -424,6 +425,8 @@ ic_init_config_parameters()
 {
   IC_CONFIG_ENTRY *conf_entry;
   guint32 mandatory_bits= 0;
+  DEBUG_ENTRY("ic_init_config_parameters");
+
   if (glob_conf_entry_inited)
     return 0;
   if (!(glob_conf_hash= create_hashtable(256, hash_str,
@@ -1136,7 +1139,6 @@ static IC_CONFIG_ENTRY *get_config_entry(int config_id)
   inx= map_config_id[config_id];
   if (!inx)
   {
-    printf("No config entry for config_id %u\n", config_id);
     return NULL;
   }
   return &glob_conf_entry[inx];
@@ -2604,6 +2606,7 @@ ic_load_config_server_from_files(gchar *config_file_path,
   IC_STRING conf_data;
   int ret_val;
   IC_CONFIG_ERROR err_obj;
+  DEBUG_ENTRY("ic_load_config_server_from_files");
 
   memset(&conf_server, 0, sizeof(IC_CONFIG_STRUCT));
   conf_server->clu_conf_ops= &config_server_ops;
@@ -2645,6 +2648,7 @@ file_open_error:
 int ic_init()
 {
   int ret_value;
+  DEBUG_ENTRY("ic_init");
   ic_init_error_messages();
   if ((ret_value= ic_init_config_parameters()))
     ic_end();
@@ -2653,6 +2657,8 @@ int ic_init()
 
 void ic_end()
 {
+  DEBUG_ENTRY("ic_end");
+  DEBUG_CLOSE;
   if (glob_conf_hash)
     hashtable_destroy(glob_conf_hash, (int)0);
   glob_conf_entry_inited= FALSE;
