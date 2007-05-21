@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-
+#include <ic_common_header.h>
 /*
 Credit for primes table: Aaron Krowne
  http://br.endernet.org/~akrowne/
@@ -41,7 +41,13 @@ hash_str(void *ptr)
 int
 keys_equal_str(void *ptr1, void *ptr2)
 {
-  return strncmp((const char*)ptr1, (const char*)ptr2, 256) ? 1 : 0;
+  IC_STRING *str1= (IC_STRING*)ptr1;
+  IC_STRING *str2= (IC_STRING*)ptr2;
+  if (str1->len != str2->len)
+    return 1;
+  return strncmp((const char*)str1->str,
+                 (const char*)str2->str,
+                 str1->len) ? 1 : 0;
 }
 
 /*****************************************************************************/

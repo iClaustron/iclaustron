@@ -56,7 +56,7 @@ typedef enum ic_config_data_type
 
 struct ic_config_entry
 {
-  char *config_entry_name;
+  IC_STRING config_entry_name;
   char *config_entry_description;
   guint64 max_value;
   guint64 min_value;
@@ -171,8 +171,14 @@ typedef struct ic_run_config_server IC_RUN_CONFIG_SERVER;
 
 struct ic_kernel_config
 {
+  /* Common for all nodes */
   char *hostname;
   char *node_data_path;
+  guint64 mandatory_bits;
+  guint32 node_id;
+  guint32 port_number;
+  /* End common part */
+
   char *filesystem_path;
   char *kernel_checkpoint_path;
 
@@ -180,7 +186,6 @@ struct ic_kernel_config
   guint64 size_of_hash_memory;
   guint64 page_cache_size;
   guint64 kernel_memory_pool;
-  guint64 mandatory_bits;
 
   guint32 max_number_of_trace_files;
   guint32 number_of_replicas;
@@ -254,10 +259,14 @@ typedef struct ic_kernel_config IC_KERNEL_CONFIG;
 
 struct ic_client_config
 {
+  /* Common part */
   char *hostname;
   char *node_data_path;
 
   guint64 mandatory_bits;
+  guint32 node_id;
+  guint32 port_number;
+  /* End common part */
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
 
@@ -274,16 +283,19 @@ struct ic_cluster_server_config
      this section must be ordered in the same way as in IC_CLIENT_CONFIG
      above to ensure offset of variables with same name are the same.
   */
+  /* Common part */
   char *hostname;
   char *node_data_path;
 
   guint64 mandatory_bits;
+  guint32 node_id;
+  guint32 port_number;
+  /* End common part */
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
   /* End of section in common with Client config */
 
   char *cluster_server_event_log;
-  guint16 cluster_server_port_number;
 };
 typedef struct ic_cluster_server_config IC_CLUSTER_SERVER_CONFIG;
 
@@ -466,7 +478,9 @@ void ic_print_config_parameters();
   if (id > glob_conf_max_id) glob_conf_max_id= id;
 
 #define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
@@ -489,7 +503,9 @@ void ic_print_config_parameters();
   if ((min) == (max)) (conf_entry)->is_not_configurable= TRUE;
 
 #define IC_SET_KERNEL_BOOLEAN(conf_entry, name, def, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_BOOLEAN; \
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
@@ -498,7 +514,9 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_KERNEL_STRING(conf_entry, name, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->is_mandatory_to_specify= TRUE; \
@@ -507,7 +525,9 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
@@ -515,7 +535,9 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_BOOLEAN(conf_entry, name, def, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_BOOLEAN; \
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
@@ -524,7 +546,9 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_STRING(conf_entry, name, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->is_mandatory_to_specify= TRUE; \
@@ -533,7 +557,9 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_STRING(conf_entry, name, val, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->default_string= (char*)(val); \
@@ -542,7 +568,9 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
@@ -550,7 +578,9 @@ void ic_print_config_parameters();
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLIENT_CONFIG(conf_entry, name, type, val, change) \
-  (conf_entry)->config_entry_name= #name; \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \

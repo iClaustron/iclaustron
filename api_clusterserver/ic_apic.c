@@ -94,6 +94,10 @@ const gchar *sql_server_def_str= "sql server default";
 const gchar *socket_def_str= "socket default";
 
 
+#define MIN_PORT 1024
+#define MAX_PORT 65535
+#define DEF_MGM_PORT 2286
+
 #define GET_NODEID_REPLY_STATE 0
 #define NODEID_STATE 1
 #define RESULT_OK_STATE 2
@@ -285,6 +289,9 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define CLIENT_BATCH_BYTE_SIZE 801
 #define CLIENT_BATCH_SIZE 802
 
+#define IC_PORT_NUMBER 997
+#define DEF_PORT 2287
+
 void
 ic_print_config_parameters(guint32 mask)
 {
@@ -306,7 +313,7 @@ ic_print_config_parameters(guint32 mask)
         continue;
       }
       printf("Entry %u:\n", i);
-      printf("Name: %s\n", conf_entry->config_entry_name);
+      printf("Name: %s\n", conf_entry->config_entry_name.str);
       printf("Comment: %s\n", conf_entry->config_entry_description);
       switch (conf_entry->data_type)
       {
@@ -409,10 +416,10 @@ build_config_name_hash()
   for (i= 0; i <= glob_conf_max_id; i++)
   {
     if ((conf_entry= get_config_entry(i)) &&
-        conf_entry->config_entry_name)
+        conf_entry->config_entry_name.str)
     {
       if (hashtable_insert(glob_conf_hash,
-                           (void*)conf_entry->config_entry_name,
+                           (void*)&conf_entry->config_entry_name,
                            (void*)i))
         return 1;
     }
@@ -451,7 +458,7 @@ ic_init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_replicas,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
-  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "This defines number of nodes per node group, within a node group all nodes contain the same data";
@@ -965,7 +972,7 @@ ic_init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, first_node_id,
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
-  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "First node id of the connection";
@@ -974,7 +981,7 @@ ic_init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, second_node_id,
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
-  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Second node id of the connection";
@@ -994,8 +1001,8 @@ ic_init_config_parameters()
   IC_SET_CONFIG_MAP(SOCKET_CLIENT_PORT_NUMBER, 104);
   IC_SET_SOCKET_CONFIG(conf_entry, client_port_number,
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
-  conf_entry->is_mandatory_to_specify= 1;
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
@@ -1004,8 +1011,8 @@ ic_init_config_parameters()
   IC_SET_CONFIG_MAP(SOCKET_SERVER_PORT_NUMBER, 105);
   IC_SET_SOCKET_CONFIG(conf_entry, server_port_number,
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
-  conf_entry->is_mandatory_to_specify= 1;
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Port number to use on server side";
@@ -1045,7 +1052,7 @@ ic_init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, server_node_id,
                     IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
-  conf_entry->is_mandatory_to_specify= 1;
+  conf_entry->is_mandatory_to_specify= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Node id of node that is server part of connection";
@@ -1058,14 +1065,6 @@ ic_init_config_parameters()
                                empty_string, IC_INITIAL_NODE_RESTART);
   conf_entry->config_entry_description=
   "Type of cluster event log";
-
-  IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 151);
-  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number,
-                               IC_UINT16, 2286, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1024, 65535);
-  conf_entry->config_entry_description=
-  "Port number that cluster server will listen to";
-
 /*
   This is the client configuration section.
 */
@@ -1124,6 +1123,34 @@ ic_init_config_parameters()
                          (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
   "Hostname of the node";
+
+  /*
+    These two parameters require special treatment, they are not sent as
+    normal parameters, node id is the index used and sent in special
+    parameter and port numbers are sent as part of TCP section. This makes
+    it harder to put it back from protocol into data structure format.
+  */
+  IC_SET_CONFIG_MAP(IC_NODE_ID, 252);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  IC_SET_KERNEL_CONFIG(conf_entry, node_id, IC_UINT32,
+                       0, IC_NOT_CHANGEABLE);
+  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
+                          (1 << IC_CLIENT_TYPE) +
+                          (1 << IC_KERNEL_TYPE);
+  conf_entry->config_entry_description=
+  "Node id";
+
+  IC_SET_CONFIG_MAP(IC_PORT_NUMBER, 253);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_KERNEL_CONFIG(conf_entry, port_number, IC_UINT32,
+                       DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
+                          (1 << IC_CLIENT_TYPE) +
+                          (1 << IC_KERNEL_TYPE);
+  conf_entry->config_entry_description=
+  "Port number";
   return build_config_name_hash();
 }
 
@@ -2335,6 +2362,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   int error;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
   DEBUG_ENTRY("conf_serv_add_section");
+  DEBUG_IC_STRING(section_name);
 
   if ((error= complete_section(ic_config, line_number, pass)))
     return error;
@@ -2498,7 +2526,7 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
     return IC_ERROR_NO_SECTION_DEFINED_YET;
   if (!(conf_map_id= (guint32)hashtable_search(glob_conf_hash,
-                                               (void*)key_name->str)))
+                                               (void*)key_name)))
     return IC_ERROR_NO_SUCH_CONFIG_KEY;
   conf_entry= get_config_entry(conf_map_id);
   g_assert(conf_entry);

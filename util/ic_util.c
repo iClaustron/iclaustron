@@ -168,7 +168,7 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
   gchar *first_val_str= val_str;
 
   val_str= rm_space(val_str, &iter_len, *len);
-  if (*len == 0 || (val_str[0] != '=' && val_str[0] != ':'))
+  if (*len == iter_len || (val_str[0] != '=' && val_str[0] != ':'))
     return NULL;
   val_str++;
   iter_len++;
@@ -177,8 +177,9 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
   while (iter_len < *len)
   {
     gchar c= *val_str;
-    if (!(g_ascii_isalpha(c) || c == '/' || c == '\\' || c == '_'
-        || g_ascii_isspace(c)))
+    if (!(g_ascii_isalpha(c) || c == '/' || c == '\\' ||
+        g_ascii_isdigit(c) ||
+        c == '_' || g_ascii_isspace(c)))
       return NULL;
     val_str++;
     iter_len++;
@@ -186,7 +187,7 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
   }
   if (!found)
     return NULL;
-  *len= (guint32)((first_val_str + *len) - save_val_str);
+  *len= (guint32)(((first_val_str + *len) - save_val_str) - 1);
   return save_val_str;
 }
 
@@ -198,7 +199,6 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
                          guint32 *section_num,
                          guint32 pass)
 {
-  IC_STRING loc_string;
   gchar *iter_data= line_data->str;
   guint32 line_len= line_data->len;
   DEBUG_ENTRY("read_config_line");
@@ -237,7 +237,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
         correct according to the definition of this configuration
         object.
       */
-      IC_INIT_STRING(&loc_string, group_id, group_id_len, FALSE);
+      IC_INIT_STRING(&section_name, group_id, group_id_len, FALSE);
       (*section_num)++;
       return conf_ops->ic_add_section(conf_obj, *section_num, line_number,
                                       &section_name, pass);
@@ -254,9 +254,9 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
 
     rm_space(iter_data, &space_len, line_len);
     id_len-= space_len;
-    if ((key_id= conv_key_id(&iter_data[space_len], &id_len)) &&
-        ((val_len= line_len - (id_len + space_len)), TRUE) &&
-        ((val_str= conv_key_value(&iter_data[id_len+space_len], &val_len))))
+    if (!(key_id= conv_key_id(&iter_data[space_len], &id_len)) ||
+        ((val_len= line_len - (id_len + space_len)), FALSE) ||
+        (!(val_str= conv_key_value(&iter_data[id_len+space_len], &val_len))))
       return IC_ERROR_CONFIG_IMPROPER_KEY_VALUE;
     /*
       We have found a correct key-value pair. Now let the configuration object
@@ -326,12 +326,28 @@ config_error:
   Some routines to handle iClaustron strings
 */
 
+void ic_print_ic_string(IC_STRING *str)
+{
+  if (str->is_null_terminated)
+    printf("%s\n", str->str);
+  else
+  {
+    guint32 str_len= 0;
+    while (str_len < str->len)
+    {
+      putchar(str->str[str_len]);
+      str_len++;
+    }
+    putchar('\n');
+  }
+}
+
 int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
 {
   guint32 iter_len= 0;
   gchar *cmp_char= cmp_str->str;
   guint32 str_len= cmp_str->len;
-  if (cmp_str->null_terminated)
+  if (cmp_str->is_null_terminated)
     return strcmp(null_term_str, cmp_str->str) ? 1 : 0;
   while (iter_len < str_len)
   {

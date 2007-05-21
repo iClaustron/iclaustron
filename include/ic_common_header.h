@@ -22,13 +22,13 @@ struct ic_string
 {
   gchar *str;
   guint32 len;
-  gboolean null_terminated;
+  gboolean is_null_terminated;
 };
 typedef struct ic_string IC_STRING;
 #define IC_INIT_STRING(obj, a, b, c) \
   (obj)->str= (a); \
   (obj)->len= (b); \
-  (obj)->null_terminated= (c);
+  (obj)->is_null_terminated= (c);
 
 int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
 /*
@@ -51,13 +51,15 @@ void ic_debug_entry(const char *entry_point);
 int ic_debug_open();
 void ic_debug_close();
 #define DEBUG(a) a
-#define DEBUG_ENTRY(a) ic_debug_entry(a);
-#define DEBUG_OPEN if (ic_debug_open()) return 1;
-#define DEBUG_CLOSE ic_debug_close();
+#define DEBUG_ENTRY(a) ic_debug_entry(a)
+#define DEBUG_OPEN if (ic_debug_open()) return 1
+#define DEBUG_CLOSE ic_debug_close()
+#define DEBUG_IC_STRING(a) ic_print_ic_string(a)
 #else
 #define DEBUG(a)
 #define DEBUG_ENTRY(a)
 #define DEBUG_MAIN
 #define DEBUG_OPEN
 #define DEBUG_CLOSE
+#define DEBUG_IC_STRING(a)
 #endif
