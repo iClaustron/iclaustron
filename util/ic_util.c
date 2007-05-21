@@ -293,7 +293,7 @@ int ic_build_config_data(IC_STRING *conf_data,
       if (*iter_data == LINE_FEED)
       {
         /* Special handling of Windows Line Feeds after Carriage Return */
-        printf("Special case\n");
+        DEBUG(printf("Special case\n"));
         iter_data_len++;
         iter_data++;
         continue;

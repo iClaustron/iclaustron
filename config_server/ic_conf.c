@@ -57,15 +57,12 @@ main(int argc, char *argv[])
   if (!g_option_context_parse(context, &argc, &argv, &loc_error))
     goto parse_error;
   g_option_context_free(context);
-  DEBUG_CLOSE;
-  return 0;
-/*
   if (ic_load_config_server_from_files(glob_config_file,
                                        &clu_conf))
     return 1;
   clu_conf.clu_conf_ops->ic_config_end(&clu_conf);
   ic_end();
-*/
+  DEBUG_CLOSE;
   return 0;
 
 mem_error:

@@ -2286,7 +2286,7 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
   IC_CLUSTER_CONFIG_LOAD *clu_conf;
   guint32 max_node_id;
   guint32 num_communication_sections;
-
+  DEBUG_ENTRY("conf_serv_init");
   if (pass == INITIAL_PASS)
   {
     if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)g_try_malloc0(
@@ -2334,6 +2334,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
 {
   int error;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
+  DEBUG_ENTRY("conf_serv_add_section");
 
   if ((error= complete_section(ic_config, line_number, pass)))
     return error;
@@ -2426,6 +2427,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   else
   {
     clu_conf->default_section= TRUE;
+    printf("Here\n");
     if (!ic_cmp_null_term_str(data_server_def_str, section_name))
     {
       clu_conf->current_node_config= &clu_conf->default_kernel_config;
@@ -2469,7 +2471,10 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       return 0;
     }
     else
+    {
+      DEBUG(printf("No such config section\n"));
       return IC_ERROR_CONFIG_NO_SUCH_SECTION;
+    }
   }
 }
 
@@ -2487,6 +2492,7 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
   guint64 value;
   gchar *struct_ptr;
   guint64 num32_check;
+  DEBUG_ENTRY("conf_serv_add_key");
   printf("Line: %d Section: %d, Key-value pair\n", (int)line_number,
                                                    (int)section_number);
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
@@ -2554,7 +2560,8 @@ int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
                           IC_STRING *comment,
                           guint32 pass)
 {
-  IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf; 
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
+  DEBUG_ENTRY("conf_serv_add_comment");
   printf("Line number %d in section %d was comment line\n", line_number, section_number);
   if (pass == INITIAL_PASS)
     clu_conf->comments.num_comments++;
@@ -2570,6 +2577,7 @@ void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
 {
   IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_conf->config_ptr.clu_conf;
   guint32 i;
+  DEBUG_ENTRY("conf_serv_end");
   if (clu_conf)
   {
     for (i= 0; i < clu_conf->max_node_id; i++)
@@ -2607,8 +2615,7 @@ ic_load_config_server_from_files(gchar *config_file_path,
   int ret_val;
   IC_CONFIG_ERROR err_obj;
   DEBUG_ENTRY("ic_load_config_server_from_files");
-
-  memset(&conf_server, 0, sizeof(IC_CONFIG_STRUCT));
+  memset(conf_server, 0, sizeof(IC_CONFIG_STRUCT));
   conf_server->clu_conf_ops= &config_server_ops;
   DEBUG(printf("config_file_path = %s\n", config_file_path));
   if (!config_file_path ||
@@ -2658,7 +2665,6 @@ int ic_init()
 void ic_end()
 {
   DEBUG_ENTRY("ic_end");
-  DEBUG_CLOSE;
   if (glob_conf_hash)
     hashtable_destroy(glob_conf_hash, (int)0);
   glob_conf_entry_inited= FALSE;
