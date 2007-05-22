@@ -160,11 +160,10 @@ hashtable_count(struct hashtable *h);
    
  * @name        hashtable_destroy
  * @param   h   the hashtable
- * @param       free_values     whether to call 'free' on the remaining values
  */
 
 void
-hashtable_destroy(struct hashtable *h, int free_values);
+hashtable_destroy(struct hashtable *h);
 
 #endif /* __HASHTABLE_CWC22_H__ */
 

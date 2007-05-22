@@ -30,6 +30,7 @@ typedef struct ic_string IC_STRING;
   (obj)->len= (b); \
   (obj)->is_null_terminated= (c);
 
+int ic_print_ic_str(IC_STRING *str);
 int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
 /*
   Error handling interface

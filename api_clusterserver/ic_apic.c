@@ -427,23 +427,11 @@ build_config_name_hash()
   return 0;
 }
 
-static int
-ic_init_config_parameters()
+static void
+init_config_parameters()
 {
   IC_CONFIG_ENTRY *conf_entry;
   guint32 mandatory_bits= 0;
-  DEBUG_ENTRY("ic_init_config_parameters");
-
-  if (glob_conf_entry_inited)
-    return 0;
-  if (!(glob_conf_hash= create_hashtable(256, hash_str,
-                                         keys_equal_str)))
-    return 1;
-  glob_conf_entry_inited= TRUE;
-  glob_conf_max_id= 0;
-  memset(map_config_id, 0, 1024 * sizeof(guint16));
-  memset(glob_conf_entry, 0, 256 * sizeof(IC_CONFIG_ENTRY));
-
 /*
   This is the kernel node configuration section.
 */
@@ -1151,6 +1139,23 @@ ic_init_config_parameters()
                           (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
   "Port number";
+}
+
+static int
+ic_init_config_parameters()
+{
+  DEBUG_ENTRY("ic_init_config_parameters");
+
+  if (glob_conf_entry_inited)
+    return 0;
+  if (!(glob_conf_hash= create_hashtable(256, hash_str,
+                                         keys_equal_str)))
+    return 1;
+  glob_conf_entry_inited= TRUE;
+  glob_conf_max_id= 0;
+  memset(map_config_id, 0, 1024 * sizeof(guint16));
+  memset(glob_conf_entry, 0, 256 * sizeof(IC_CONFIG_ENTRY));
+  init_config_parameters();
   return build_config_name_hash();
 }
 
@@ -2694,6 +2699,6 @@ void ic_end()
 {
   DEBUG_ENTRY("ic_end");
   if (glob_conf_hash)
-    hashtable_destroy(glob_conf_hash, (int)0);
+    hashtable_destroy(glob_conf_hash);
   glob_conf_entry_inited= FALSE;
 }
