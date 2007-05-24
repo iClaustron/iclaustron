@@ -141,7 +141,7 @@ const gchar *socket_def_str= "socket default";
 #define MAX_CONFIG_ID 256
 
 static guint32 glob_conf_max_id;
-struct hashtable *glob_conf_hash;
+struct ic_hashtable *glob_conf_hash;
 static gboolean glob_conf_entry_inited= FALSE;
 static guint16 map_config_id[MAX_MAP_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
@@ -415,12 +415,12 @@ build_config_name_hash()
   guint32 i;
   for (i= 0; i <= glob_conf_max_id; i++)
   {
-    if ((conf_entry= get_config_entry(i)) &&
-        conf_entry->config_entry_name.str)
+    conf_entry= &glob_conf_entry[i];
+    if (conf_entry->config_entry_name.str != NULL)
     {
-      if (hashtable_insert(glob_conf_hash,
-                           (void*)&conf_entry->config_entry_name,
-                           (void*)i))
+      if (ic_hashtable_insert(glob_conf_hash,
+                              (void*)&conf_entry->config_entry_name,
+                              (void*)conf_entry))
         return 1;
     }
   }
@@ -1148,8 +1148,8 @@ ic_init_config_parameters()
 
   if (glob_conf_entry_inited)
     return 0;
-  if (!(glob_conf_hash= create_hashtable(256, hash_str,
-                                         keys_equal_str)))
+  if (!(glob_conf_hash= ic_create_hashtable(256, ic_hash_str,
+                                            ic_keys_equal_str)))
     return 1;
   glob_conf_entry_inited= TRUE;
   glob_conf_max_id= 0;
@@ -2309,6 +2309,10 @@ static
 int complete_section(IC_CONFIG_STRUCT *ic_config, guint32 line_number,
                      guint32 pass)
 {
+  /*
+    Need to check that all mandatory values have been assigned here in
+    second pass.
+  */
   return 0;
 }
 
@@ -2322,7 +2326,7 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
   if (pass == INITIAL_PASS)
   {
     if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)g_try_malloc0(
-                    sizeof(IC_CLUSTER_CONFIG))))
+                    sizeof(IC_CLUSTER_CONFIG_LOAD))))
       return IC_ERROR_MEM_ALLOC;
     ic_conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
     clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
@@ -2530,13 +2534,9 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
                                                    (int)section_number);
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
     return IC_ERROR_NO_SECTION_DEFINED_YET;
-  if (!(conf_map_id= (guint32)hashtable_search(glob_conf_hash,
-                                               (void*)key_name)))
+  if (!(conf_entry= (IC_CONFIG_ENTRY*)ic_hashtable_search(glob_conf_hash,
+                                                          (void*)key_name)))
     return IC_ERROR_NO_SUCH_CONFIG_KEY;
-  conf_entry= get_config_entry(conf_map_id);
-  g_assert(conf_entry);
-  if (clu_conf->default_section && conf_entry->is_mandatory_to_specify)
-    return IC_ERROR_DEFAULT_VALUE_FOR_MANDATORY;
   if (!(conf_entry->node_types & (1 << clu_conf->current_node_config_type)))
     return IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION;
   if (conf_entry->is_string_type)
@@ -2699,6 +2699,6 @@ void ic_end()
 {
   DEBUG_ENTRY("ic_end");
   if (glob_conf_hash)
-    hashtable_destroy(glob_conf_hash);
+    ic_hashtable_destroy(glob_conf_hash);
   glob_conf_entry_inited= FALSE;
 }

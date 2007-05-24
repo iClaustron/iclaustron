@@ -3,30 +3,30 @@
 #ifndef __HASHTABLE_CWC22_H__
 #define __HASHTABLE_CWC22_H__
 
-struct hashtable;
+struct ic_hashtable;
 
 /* Example of use:
  *
- *      struct hashtable  *h;
- *      struct some_key   *k;
- *      struct some_value *v;
+ *      struct ic_hashtable  *h;
+ *      struct some_key      *k;
+ *      struct some_value    *v;
  *
  *      static unsigned int         hash_from_key_fn( void *k );
  *      static int                  keys_equal_fn ( void *key1, void *key2 );
  *
- *      h = create_hashtable(16, hash_from_key_fn, keys_equal_fn);
+ *      h = ic_create_hashtable(16, hash_from_key_fn, keys_equal_fn);
  *      k = (struct some_key *)     malloc(sizeof(struct some_key));
  *      v = (struct some_value *)   malloc(sizeof(struct some_value));
  *
  *      (initialise k and v to suitable values)
  * 
- *      if (! hashtable_insert(h,k,v) )
+ *      if (! ic_hashtable_insert(h,k,v) )
  *      {     exit(-1);               }
  *
- *      if (NULL == (found = hashtable_search(h,k) ))
+ *      if (NULL == (found = ic_hashtable_search(h,k) ))
  *      {    printf("not found!");                  }
  *
- *      if (NULL == (found = hashtable_remove(h,k) ))
+ *      if (NULL == (found = ic_hashtable_remove(h,k) ))
  *      {    printf("Not found\n");                 }
  *
  */
@@ -43,12 +43,12 @@ struct hashtable;
  * DEFINE_HASHTABLE_REMOVE(remove_some, struct some_key, struct some_value);
  *
  * This defines the functions 'insert_some', 'search_some' and 'remove_some'.
- * These operate just like hashtable_insert etc., with the same parameters,
+ * These operate just like ic_hashtable_insert etc., with the same parameters,
  * but their function signatures have 'struct some_key *' rather than
  * 'void *', and hence can generate compile time errors if your program is
  * supplying incorrect data as a key (and similarly for value).
  *
- * Note that the hash and key equality functions passed to create_hashtable
+ * Note that the hash and key equality functions passed to ic_create_hashtable
  * still take 'void *' parameters instead of 'some key *'. This shouldn't be
  * a difficult issue as they're only defined and passed once, and the other
  * functions will ensure that only valid keys are supplied to them.
@@ -57,34 +57,34 @@ struct hashtable;
  * - if performance is important, it may be worth switching back to the
  * unsafe methods once your program has been debugged with the safe methods.
  * This just requires switching to some simple alternative defines - eg:
- * #define insert_some hashtable_insert
+ * #define insert_some ic_hashtable_insert
  *
  */
 
-unsigned int hash_str(void *ptr);
-int keys_equal_str(void *ptr1, void *ptr2);
+unsigned int ic_hash_str(void *ptr);
+int ic_keys_equal_str(void *ptr1, void *ptr2);
 
 /*****************************************************************************
- * create_hashtable
+ * ic_create_hashtable
    
- * @name                    create_hashtable
- * @param   minsize         minimum initial size of hashtable
+ * @name                    ic_create_hashtable
+ * @param   minsize         minimum initial size of ic_hashtable
  * @param   hashfunction    function for hashing keys
  * @param   key_eq_fn       function for determining key equality
- * @return                  newly created hashtable or NULL on failure
+ * @return                  newly created ic_hashtable or NULL on failure
  */
 
-struct hashtable *
-create_hashtable(unsigned int minsize,
-                 unsigned int (*hashfunction) (void*),
-                 int (*key_eq_fn) (void*,void*));
+struct ic_hashtable *
+ic_create_hashtable(unsigned int minsize,
+                    unsigned int (*hashfunction) (void*),
+                    int (*key_eq_fn) (void*,void*));
 
 /*****************************************************************************
- * hashtable_insert
+ * ic_hashtable_insert
    
- * @name        hashtable_insert
- * @param   h   the hashtable to insert into
- * @param   k   the key - hashtable claims ownership and will free on removal
+ * @name        ic_hashtable_insert
+ * @param   h   the ic_hashtable to insert into
+ * @param   k   the key - ic_hashtable claims ownership and will free on removal
  * @param   v   the value - does not claim ownership
  * @return      non-zero for successful insertion
  *
@@ -93,82 +93,83 @@ create_hashtable(unsigned int minsize,
  *
  * This function does not check for repeated insertions with a duplicate key.
  * The value returned when using a duplicate key is undefined -- when
- * the hashtable changes size, the order of retrieval of duplicate key
+ * the ic_hashtable changes size, the order of retrieval of duplicate key
  * entries is reversed.
  * If in doubt, remove before insert.
  */
 
 int 
-hashtable_insert(struct hashtable *h, void *k, void *v);
+ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v);
 
 #define DEFINE_HASHTABLE_INSERT(fnname, keytype, valuetype) \
-int fnname (struct hashtable *h, keytype *k, valuetype *v) \
+int fnname (struct ic_hashtable *h, keytype *k, valuetype *v) \
 { \
-    return hashtable_insert(h,k,v); \
+    return ic_hashtable_insert(h,k,v); \
 }
 
 /*****************************************************************************
- * hashtable_search
+ * ic_hashtable_search
    
- * @name        hashtable_search
- * @param   h   the hashtable to search
+ * @name        ic_hashtable_search
+ * @param   h   the ic_hashtable to search
  * @param   k   the key to search for  - does not claim ownership
  * @return      the value associated with the key, or NULL if none found
  */
 
 void *
-hashtable_search(struct hashtable *h, void *k);
+ic_hashtable_search(struct ic_hashtable *h, void *k);
 
 #define DEFINE_HASHTABLE_SEARCH(fnname, keytype, valuetype) \
-valuetype * fnname (struct hashtable *h, keytype *k) \
+valuetype * fnname (struct ic_hashtable *h, keytype *k) \
 { \
-    return (valuetype *) (hashtable_search(h,k)); \
+    return (valuetype *) (ic_hashtable_search(h,k)); \
 }
 
 /*****************************************************************************
- * hashtable_remove
+ * ic_hashtable_remove
    
- * @name        hashtable_remove
- * @param   h   the hashtable to remove the item from
+ * @name        ic_hashtable_remove
+ * @param   h   the ic_hashtable to remove the item from
  * @param   k   the key to search for  - does not claim ownership
  * @return      the value associated with the key, or NULL if none found
  */
 
 void * /* returns value */
-hashtable_remove(struct hashtable *h, void *k);
+ic_hashtable_remove(struct ic_hashtable *h, void *k);
 
 #define DEFINE_HASHTABLE_REMOVE(fnname, keytype, valuetype) \
-valuetype * fnname (struct hashtable *h, keytype *k) \
+valuetype * fnname (struct ic_hashtable *h, keytype *k) \
 { \
-    return (valuetype *) (hashtable_remove(h,k)); \
+    return (valuetype *) (ic_hashtable_remove(h,k)); \
 }
 
 
 /*****************************************************************************
- * hashtable_count
+ * ic_hashtable_count
    
- * @name        hashtable_count
- * @param   h   the hashtable
- * @return      the number of items stored in the hashtable
+ * @name        ic_hashtable_count
+ * @param   h   the ic_hashtable
+ * @return      the number of items stored in the ic_hashtable
  */
 unsigned int
-hashtable_count(struct hashtable *h);
+ic_hashtable_count(struct ic_hashtable *h);
 
 
 /*****************************************************************************
- * hashtable_destroy
+ * ic_hashtable_destroy
    
- * @name        hashtable_destroy
- * @param   h   the hashtable
+ * @name        ic_hashtable_destroy
+ * @param   h   the ic_hashtable
  */
 
 void
-hashtable_destroy(struct hashtable *h);
+ic_hashtable_destroy(struct ic_hashtable *h);
 
 #endif /* __HASHTABLE_CWC22_H__ */
 
 /*
  * Copyright (c) 2002, Christopher Clark
+ * Copyright (c) 2007, iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without

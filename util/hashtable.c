@@ -1,5 +1,5 @@
 /* Copyright (C) 2004 Christopher Clark <firstname.lastname@cl.cam.ac.uk> */
-
+/* Copyright (C) 2007 iClaustron AB */
 #include <hashtable.h>
 #include <hashtable_private.h>
 #include <stdlib.h>
@@ -25,46 +25,48 @@ const unsigned int prime_table_length = sizeof(primes)/sizeof(primes[0]);
 const float max_load_factor = 0.65;
 
 unsigned int
-hash_str(void *ptr)
+ic_hash_str(void *ptr)
 {
   unsigned int hash= 0;
-  unsigned char *char_ptr= (unsigned char*)ptr;
-  unsigned int ptr_val;
-  while ((ptr_val= *char_ptr))
+  IC_STRING *str= (IC_STRING*)ptr;
+  unsigned char *char_ptr= (unsigned char*)str->str;
+  unsigned len= str->len;
+  unsigned int i;
+  for (i= 0; i < len; i++)
   {
-    hash= ptr_val + (147*hash) + 5;
+    hash= *char_ptr + (147*hash) + 5;
     char_ptr++;
   }
   return hash;
 }
 
 int
-keys_equal_str(void *ptr1, void *ptr2)
+ic_keys_equal_str(void *ptr1, void *ptr2)
 {
   IC_STRING *str1= (IC_STRING*)ptr1;
   IC_STRING *str2= (IC_STRING*)ptr2;
   if (str1->len != str2->len)
-    return 1;
+    return 0;
   return strncmp((const char*)str1->str,
                  (const char*)str2->str,
-                 str1->len) ? 1 : 0;
+                 str1->len) ? 0 : 1;
 }
 
 /*****************************************************************************/
-struct hashtable *
-create_hashtable(unsigned int minsize,
-                 unsigned int (*hashf) (void*),
-                 int (*eqf) (void*,void*))
+struct ic_hashtable *
+ic_create_hashtable(unsigned int minsize,
+                    unsigned int (*hashf) (void*),
+                    int (*eqf) (void*,void*))
 {
-    struct hashtable *h;
+    struct ic_hashtable *h;
     unsigned int pindex, size = primes[0];
-    /* Check requested hashtable isn't too large */
+    /* Check requested ic_hashtable isn't too large */
     if (minsize > (1u << 30)) return NULL;
     /* Enforce size as prime */
     for (pindex=0; pindex < prime_table_length; pindex++) {
         if (primes[pindex] > minsize) { size = primes[pindex]; break; }
     }
-    h = (struct hashtable *)malloc(sizeof(struct hashtable));
+    h = (struct ic_hashtable *)malloc(sizeof(struct ic_hashtable));
     if (NULL == h) return NULL; /*oom*/
     h->table = (struct entry **)malloc(sizeof(struct entry*) * size);
     if (NULL == h->table) { free(h); return NULL; } /*oom*/
@@ -80,10 +82,10 @@ create_hashtable(unsigned int minsize,
 
 /*****************************************************************************/
 unsigned int
-hash(struct hashtable *h, void *k)
+hash(struct ic_hashtable *h, void *k)
 {
     /* Aim to protect against poor hash functions by adding logic here
-     * - logic taken from java 1.4 hashtable source */
+     * - logic taken from java 1.4 ic_hashtable source */
     unsigned int i = h->hashfn(k);
     i += ~(i << 9);
     i ^=  ((i >> 14) | (i << 18)); /* >>> */
@@ -94,7 +96,7 @@ hash(struct hashtable *h, void *k)
 
 /*****************************************************************************/
 static int
-hashtable_expand(struct hashtable *h)
+ic_hashtable_expand(struct ic_hashtable *h)
 {
   /* Double the size of the table to accomodate more entries */
   struct entry **newtable;
@@ -162,14 +164,14 @@ hashtable_expand(struct hashtable *h)
 
 /*****************************************************************************/
 unsigned int
-hashtable_count(struct hashtable *h)
+ic_hashtable_count(struct ic_hashtable *h)
 {
   return h->entrycount;
 }
 
 /*****************************************************************************/
 int
-hashtable_insert(struct hashtable *h, void *k, void *v)
+ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v)
 {
   /* This method allows duplicate keys - but they shouldn't be used */
   unsigned int index;
@@ -180,7 +182,7 @@ hashtable_insert(struct hashtable *h, void *k, void *v)
      * still try cramming just this value into the existing table
      * -- we may not have memory for a larger table, but one more
      * element may be ok. Next time we insert, we'll try expanding again.*/
-    hashtable_expand(h);
+    ic_hashtable_expand(h);
   }
   e = (struct entry *)malloc(sizeof(struct entry));
   if (NULL == e) { --(h->entrycount); return 1; } /*oom*/
@@ -195,7 +197,7 @@ hashtable_insert(struct hashtable *h, void *k, void *v)
 
 /*****************************************************************************/
 void * /* returns value associated with key */
-hashtable_search(struct hashtable *h, void *k)
+ic_hashtable_search(struct ic_hashtable *h, void *k)
 {
   struct entry *e;
   unsigned int hashvalue, index;
@@ -214,7 +216,7 @@ hashtable_search(struct hashtable *h, void *k)
 
 /*****************************************************************************/
 void * /* returns value associated with key */
-hashtable_remove(struct hashtable *h, void *k)
+ic_hashtable_remove(struct ic_hashtable *h, void *k)
 {
   /* TODO: consider compacting the table when the load factor drops enough,
    *       or provide a 'compact' method. */
@@ -248,7 +250,7 @@ hashtable_remove(struct hashtable *h, void *k)
 /*****************************************************************************/
 /* destroy */
 void
-hashtable_destroy(struct hashtable *h)
+ic_hashtable_destroy(struct ic_hashtable *h)
 {
   unsigned int i;
   struct entry *e, *f;
@@ -269,6 +271,7 @@ hashtable_destroy(struct hashtable *h)
 
 /*
  * Copyright (c) 2002, Christopher Clark
+ * Copyright (c) 2007, iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without

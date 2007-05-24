@@ -1,4 +1,5 @@
 /* Copyright (C) 2002, 2004 Christopher Clark <firstname.lastname@cl.cam.ac.uk> */
+/* Copyright (C) 2007, iClaustron AB */
 
 #ifndef __HASHTABLE_ITR_CWC22__
 #define __HASHTABLE_ITR_CWC22__
@@ -8,9 +9,9 @@
 /*****************************************************************************/
 /* This struct is only concrete here to allow the inlining of two of the
  * accessor functions. */
-struct hashtable_itr
+struct ic_hashtable_itr
 {
-    struct hashtable *h;
+    struct ic_hashtable *h;
     struct entry *e;
     struct entry *parent;
     unsigned int index;
@@ -18,18 +19,18 @@ struct hashtable_itr
 
 
 /*****************************************************************************/
-/* hashtable_iterator
+/* ic_hashtable_iterator
  */
 
-struct hashtable_itr *
-hashtable_iterator(struct hashtable *h);
+struct ic_hashtable_itr *
+ic_hashtable_iterator(struct ic_hashtable *h);
 
 /*****************************************************************************/
-/* hashtable_iterator_key
+/* ic_hashtable_iterator_key
  * - return the value of the (key,value) pair at the current position */
 
 extern inline void *
-hashtable_iterator_key(struct hashtable_itr *i)
+ic_hashtable_iterator_key(struct ic_hashtable_itr *i)
 {
     return i->e->k;
 }
@@ -38,7 +39,7 @@ hashtable_iterator_key(struct hashtable_itr *i)
 /* value - return the value of the (key,value) pair at the current position */
 
 extern inline void *
-hashtable_iterator_value(struct hashtable_itr *i)
+ic_hashtable_iterator_value(struct ic_hashtable_itr *i)
 {
     return i->e->v;
 }
@@ -48,7 +49,7 @@ hashtable_iterator_value(struct hashtable_itr *i)
  *           returns zero if advanced to end of table */
 
 int
-hashtable_iterator_advance(struct hashtable_itr *itr);
+ic_hashtable_iterator_advance(struct ic_hashtable_itr *itr);
 
 /*****************************************************************************/
 /* remove - remove current element and advance the iterator to the next element
@@ -57,21 +58,21 @@ hashtable_iterator_advance(struct hashtable_itr *itr);
  *          returns zero if advanced to end of table */
 
 int
-hashtable_iterator_remove(struct hashtable_itr *itr);
+ic_hashtable_iterator_remove(struct ic_hashtable_itr *itr);
 
 /*****************************************************************************/
 /* search - overwrite the supplied iterator, to point to the entry
  *          matching the supplied key.
-            h points to the hashtable to be searched.
+            h points to the ic_hashtable to be searched.
  *          returns zero if not found. */
 int
-hashtable_iterator_search(struct hashtable_itr *itr,
-                          struct hashtable *h, void *k);
+ic_hashtable_iterator_search(struct ic_hashtable_itr *itr,
+                             struct ic_hashtable *h, void *k);
 
 #define DEFINE_HASHTABLE_ITERATOR_SEARCH(fnname, keytype) \
-int fnname (struct hashtable_itr *i, struct hashtable *h, keytype *k) \
+int fnname (struct ic_hashtable_itr *i, struct ic_hashtable *h, keytype *k) \
 { \
-    return (hashtable_iterator_search(i,h,k)); \
+    return (ic_hashtable_iterator_search(i,h,k)); \
 }
 
 
@@ -80,6 +81,7 @@ int fnname (struct hashtable_itr *i, struct hashtable *h, keytype *k) \
 
 /*
  * Copyright (c) 2002, 2004, Christopher Clark
+ * Copyright (c) 2007, iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without

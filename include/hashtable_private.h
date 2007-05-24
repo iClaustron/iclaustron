@@ -1,4 +1,5 @@
 /* Copyright (C) 2002, 2004 Christopher Clark <firstname.lastname@cl.cam.ac.uk> */
+/* Copyright (C) 2007, iClaustron AB */
 
 #ifndef __HASHTABLE_PRIVATE_CWC22_H__
 #define __HASHTABLE_PRIVATE_CWC22_H__
@@ -13,7 +14,7 @@ struct entry
     struct entry *next;
 };
 
-struct hashtable {
+struct ic_hashtable {
     unsigned int tablelength;
     struct entry **table;
     unsigned int entrycount;
@@ -25,7 +26,7 @@ struct hashtable {
 
 /*****************************************************************************/
 unsigned int
-hash(struct hashtable *h, void *k);
+hash(struct ic_hashtable *h, void *k);
 
 /*****************************************************************************/
 /* indexFor */
@@ -53,6 +54,7 @@ indexFor(unsigned int tablelength, unsigned int hashvalue)
 
 /*
  * Copyright (c) 2002, Christopher Clark
+ * Copyright 2007, iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
