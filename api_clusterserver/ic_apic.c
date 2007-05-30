@@ -2398,9 +2398,8 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       clu_conf->num_data_servers++;
       return 0;
     }
-    if (!(clu_conf->current_node_config= 
-          (void*)g_try_malloc0(sizeof(IC_KERNEL_CONFIG))))
-      return IC_ERROR_MEM_ALLOC;
+    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+    clu_conf->struct_memory+= sizeof(IC_KERNEL_CONFIG);
     memcpy(clu_conf->current_node_config, &clu_conf->default_kernel_config,
            sizeof(IC_KERNEL_CONFIG));
     DEBUG(printf("Found data server group\n"));
@@ -2414,9 +2413,8 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       clu_conf->num_clients++;
       return 0;
     }
-    if (!(clu_conf->current_node_config= 
-          (void*)g_try_malloc0(sizeof(IC_CLIENT_CONFIG))))
-      return IC_ERROR_MEM_ALLOC;
+    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+    clu_conf->struct_memory+= sizeof(IC_CLIENT_CONFIG);
     memcpy(clu_conf->current_node_config, &clu_conf->default_client_config,
            sizeof(IC_CLIENT_CONFIG));
     DEBUG(printf("Found client group\n"));
@@ -2430,9 +2428,8 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       clu_conf->num_cluster_servers++;
       return 0;
     }
-    if (!(clu_conf->current_node_config= 
-          (void*)g_try_malloc0(sizeof(IC_CLUSTER_SERVER_CONFIG))))
-      return IC_ERROR_MEM_ALLOC;
+    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+    clu_conf->struct_memory+= sizeof(IC_CLUSTER_SERVER_CONFIG);
     memcpy(clu_conf->current_node_config,
            &clu_conf->default_cluster_server_config,
            sizeof(IC_CLUSTER_SERVER_CONFIG));
@@ -2447,9 +2444,8 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       clu_conf->num_rep_servers++;
       return 0;
     }
-    if (!(clu_conf->current_node_config= 
-          (void*)g_try_malloc0(sizeof(IC_REP_SERVER_CONFIG))))
-      return IC_ERROR_MEM_ALLOC;
+    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+    clu_conf->struct_memory+= sizeof(IC_REP_SERVER_CONFIG);
     memcpy(clu_conf->current_node_config,
            &clu_conf->default_rep_config,
            sizeof(IC_REP_SERVER_CONFIG));
@@ -2464,9 +2460,8 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       clu_conf->num_sql_servers++;
       return 0;
     }
-    if (!(clu_conf->current_node_config= 
-          (void*)g_try_malloc0(sizeof(IC_SQL_SERVER_CONFIG))))
-      return IC_ERROR_MEM_ALLOC;
+    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+    clu_conf->struct_memory+= sizeof(IC_SQL_SERVER_CONFIG);
     memcpy(clu_conf->current_node_config,
            &clu_conf->default_sql_config,
            sizeof(IC_SQL_SERVER_CONFIG));
@@ -2481,9 +2476,8 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       clu_conf->num_communication_sections++;
       return 0;
     }
-    if (!(clu_conf->current_node_config= 
-          (void*)g_try_malloc0(sizeof(IC_SOCKET_LINK_CONFIG))))
-      return IC_ERROR_MEM_ALLOC;
+    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+    clu_conf->struct_memory+= sizeof(IC_SOCKET_LINK_CONFIG);
     memcpy(clu_conf->current_node_config,
            &clu_conf->default_socket_config,
            sizeof(IC_SOCKET_LINK_CONFIG));
@@ -2493,7 +2487,6 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   else
   {
     clu_conf->default_section= TRUE;
-    printf("Here\n");
     if (!ic_cmp_null_term_str(data_server_def_str, section_name))
     {
       clu_conf->current_node_config= &clu_conf->default_kernel_config;
