@@ -92,6 +92,7 @@ const gchar *cluster_server_def_str= "cluster server default";
 const gchar *rep_server_def_str= "replication server default";
 const gchar *sql_server_def_str= "sql server default";
 const gchar *socket_def_str= "socket default";
+const gchar *node_id_str= "node_id";
 
 
 #define MIN_PORT 1024
@@ -2321,7 +2322,7 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
 {
   IC_CLUSTER_CONFIG_LOAD *clu_conf;
   guint32 max_node_id;
-  guint32 num_communication_sections;
+  guint32 size_structs= 0;
   DEBUG_ENTRY("conf_serv_init");
   if (pass == INITIAL_PASS)
   {
@@ -2337,11 +2338,24 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
   if (max_node_id == 0)
     return IC_ERROR_NO_NODES_FOUND;
   clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
-  num_communication_sections= clu_conf->num_communication_sections;
+  /*
+    Calculate size of all node struct's and allocate them in one chunk.
+  */
+  size_structs+= clu_conf->num_data_servers * sizeof(IC_KERNEL_CONFIG);
+  size_structs+= clu_conf->num_clients * sizeof(IC_CLIENT_CONFIG);
+  size_structs+= clu_conf->num_cluster_servers *
+                 sizeof(IC_CLUSTER_SERVER_CONFIG);
+  size_structs+= clu_conf->num_rep_servers * sizeof(IC_REP_SERVER_CONFIG);
+  size_structs+= clu_conf->num_sql_servers * sizeof(IC_SQL_SERVER_CONFIG);
+  size_structs+= clu_conf->num_communication_sections *
+                 sizeof(IC_SOCKET_LINK_CONFIG);
+  if (!(clu_conf->struct_memory= clu_conf->struct_memory_to_return= (gchar*)
+        g_try_malloc0(size_structs)))
+    return IC_ERROR_MEM_ALLOC;
   if (!(clu_conf->conf.node_config= (gchar**)
         g_try_malloc0(sizeof(gchar*)*(max_node_id + 1))))
     return IC_ERROR_MEM_ALLOC;
-  if (!(clu_conf->string_memory= (gchar*)
+  if (!(clu_conf->string_memory= clu_conf->string_memory_to_return= (gchar*)
         g_try_malloc0(clu_conf->size_string_memory)))
     return IC_ERROR_MEM_ALLOC;
   if (!(clu_conf->conf.node_types= 
@@ -2380,7 +2394,10 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   {
     clu_conf->current_node_config_type= IC_KERNEL_TYPE;
     if (pass == INITIAL_PASS)
+    {
+      clu_conf->num_data_servers++;
       return 0;
+    }
     if (!(clu_conf->current_node_config= 
           (void*)g_try_malloc0(sizeof(IC_KERNEL_CONFIG))))
       return IC_ERROR_MEM_ALLOC;
@@ -2393,7 +2410,10 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   {
     clu_conf->current_node_config_type= IC_CLIENT_TYPE;
     if (pass == INITIAL_PASS)
+    {
+      clu_conf->num_clients++;
       return 0;
+    }
     if (!(clu_conf->current_node_config= 
           (void*)g_try_malloc0(sizeof(IC_CLIENT_CONFIG))))
       return IC_ERROR_MEM_ALLOC;
@@ -2406,7 +2426,10 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   {
     clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
     if (pass == INITIAL_PASS)
+    {
+      clu_conf->num_cluster_servers++;
       return 0;
+    }
     if (!(clu_conf->current_node_config= 
           (void*)g_try_malloc0(sizeof(IC_CLUSTER_SERVER_CONFIG))))
       return IC_ERROR_MEM_ALLOC;
@@ -2420,7 +2443,10 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   {
     clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
     if (pass == INITIAL_PASS)
+    {
+      clu_conf->num_rep_servers++;
       return 0;
+    }
     if (!(clu_conf->current_node_config= 
           (void*)g_try_malloc0(sizeof(IC_REP_SERVER_CONFIG))))
       return IC_ERROR_MEM_ALLOC;
@@ -2434,7 +2460,10 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
   {
     clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
     if (pass == INITIAL_PASS)
+    {
+      clu_conf->num_sql_servers++;
       return 0;
+    }
     if (!(clu_conf->current_node_config= 
           (void*)g_try_malloc0(sizeof(IC_SQL_SERVER_CONFIG))))
       return IC_ERROR_MEM_ALLOC;
@@ -2530,6 +2559,8 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
   gchar *struct_ptr;
   guint64 num32_check;
   DEBUG_ENTRY("conf_serv_add_key");
+  DEBUG_IC_STRING(key_name);
+  DEBUG_IC_STRING(data);
   printf("Line: %d Section: %d, Key-value pair\n", (int)line_number,
                                                    (int)section_number);
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
@@ -2552,19 +2583,39 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
     }
     return 0;
   }
-  if (pass == INITIAL_PASS)
-    return 0;
   if (conv_config_str_to_int(&value, data))
     return IC_ERROR_WRONG_CONFIG_NUMBER;
   if (conf_entry->is_boolean && value > 1)
     return IC_ERROR_NO_BOOLEAN_VALUE;
   num32_check= 1;
   num32_check<<= 32;
-  if ((conf_entry->is_min_value_defined && conf_entry->min_value > value) ||
-      (conf_entry->is_max_value_defined && conf_entry->max_value < value) ||
-      (conf_entry->data_type == IC_UINT16 && value > 65535) ||
-      (conf_entry->data_type == IC_UINT32 && value >= num32_check))
+  if ((!ic_cmp_null_term_str(node_id_str, key_name)) &&
+       value > clu_conf->max_node_id)
+    clu_conf->max_node_id= value;
+  if (conf_entry->is_min_value_defined && conf_entry->min_value > value)
+  {
+    gchar buf[128];
+    printf("Parameter %s is smaller than min_value = %u\n",
+           ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->min_value);
     return IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS;
+  }
+  else if (conf_entry->is_max_value_defined && conf_entry->max_value < value)
+  {
+    gchar buf[128];
+    printf("Parameter %s is larger than min_value = %u\n",
+           ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->max_value);
+    return IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS;
+  }
+  else if ((conf_entry->data_type == IC_UINT16 && value > 65535) ||
+           (conf_entry->data_type == IC_UINT32 && value >= num32_check))
+  {
+    gchar buf[128];
+    printf("Parameter %s is larger than its type\n",
+           ic_get_ic_string(key_name, (gchar*)&buf));
+    return IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS;
+  }
+  if (pass == INITIAL_PASS)
+    return 0;
   struct_ptr= (gchar*)clu_conf->current_node_config + conf_entry->offset;
   /*
     Assign value of configuration variable according to its data type.
@@ -2613,16 +2664,20 @@ void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
   DEBUG_ENTRY("conf_serv_end");
   if (clu_conf)
   {
-    for (i= 0; i < clu_conf->max_node_id; i++)
+    if (clu_conf->conf.node_config)
     {
-      if (clu_conf->conf.node_config[i])
-        g_free((gchar*)clu_conf->conf.node_config[i]);
+      for (i= 0; i < clu_conf->max_node_id; i++)
+      {
+        if (clu_conf->conf.node_config[i])
+          g_free((gchar*)clu_conf->conf.node_config[i]);
+      }
+      g_free((gchar*)clu_conf->conf.node_config);
     }
     if (clu_conf->conf.node_types)
       g_free(clu_conf->conf.node_types);
     for (i= 0; i < clu_conf->comments.num_comments; i++)
       g_free(clu_conf->comments.ptr_comments[i]);
-    g_free(clu_conf->string_memory);
+    g_free(clu_conf->string_memory_to_return);
     g_free(ic_conf->config_ptr.clu_conf);
   }
   return;

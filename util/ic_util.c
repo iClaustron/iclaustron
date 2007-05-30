@@ -77,11 +77,14 @@ conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
     else
     {
       no_digit_found= TRUE;
-      if (ic_str->str[i] == 'k')
+      if ((ic_str->str[i] == 'k') ||
+          (ic_str->str[i] == 'K'))
         number*= 1024;
-      else if (ic_str->str[i] == 'm')
+      else if ((ic_str->str[i] == 'm') ||
+               (ic_str->str[i] == 'M'))
         number*= (1024*1024);
-      else if (ic_str->str[i] == 'g')
+      else if ((ic_str->str[i] == 'g') ||
+               (ic_str->str[i] == 'G'))
         number*= (1024*1024*1024);
       else
         return 1;
@@ -178,7 +181,7 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
   {
     gchar c= *val_str;
     if (!(g_ascii_isalpha(c) || c == '/' || c == '\\' ||
-        g_ascii_isdigit(c) ||
+        g_ascii_isdigit(c) || '.' ||
         c == '_' || g_ascii_isspace(c)))
       return NULL;
     val_str++;
@@ -275,10 +278,10 @@ int ic_build_config_data(IC_STRING *conf_data,
                          IC_CONFIG_STRUCT *ic_config,
                          IC_CONFIG_ERROR *err_obj)
 {
-  guint32 line_number= 1;
+  guint32 line_number;
   guint32 line_length, pass;
   int error;
-  guint32 section_num= 0;
+  guint32 section_num;
   IC_STRING line_data;
   DEBUG_ENTRY("ic_build_config_data");
 
@@ -286,6 +289,8 @@ int ic_build_config_data(IC_STRING *conf_data,
   {
     gchar *iter_data= conf_data->str;
     gsize iter_data_len= 0;
+    line_number= 1;
+    section_num= 0;
     if ((error= ic_conf_op->ic_config_init(ic_config, pass)))
       goto config_error;
     while (iter_data_len < conf_data->len)
@@ -325,6 +330,18 @@ config_error:
   --------------------------
   Some routines to handle iClaustron strings
 */
+
+gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
+{
+  guint32 i;
+  if (str && str->str)
+  {
+    for (i= 0; i < str->len; i++)
+      buf_ptr[i]= str->str[i];
+    return buf_ptr;
+  }
+  return NULL;
+}
 
 void ic_print_ic_string(IC_STRING *str)
 {

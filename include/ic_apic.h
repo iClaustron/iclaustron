@@ -58,8 +58,8 @@ struct ic_config_entry
 {
   IC_STRING config_entry_name;
   char *config_entry_description;
-  guint64 max_value;
-  guint64 min_value;
+  guint32 max_value;
+  guint32 min_value;
   union
   {
     guint64 default_value;
@@ -427,7 +427,7 @@ int ic_load_config_server_from_files(gchar *config_file_path,
 struct ic_cs_conf_comment
 {
   guint32 num_comments;
-  char **ptr_comments;
+  gchar **ptr_comments;
   guint32 node_id_attached;
   guint32 config_id_attached;
 };
@@ -438,10 +438,19 @@ struct ic_cluster_config_load
   IC_CLUSTER_CONFIG conf;
   void *current_node_config;
   gchar *string_memory;
+  gchar *string_memory_to_return;
+  gchar *struct_memory;
+  gchar *struct_memory_to_return;
   IC_CONFIG_TYPE current_node_config_type;
   IC_CS_CONF_COMMENT comments;
   guint32 max_node_id;
   guint32 num_communication_sections;
+  guint32 num_data_servers;
+  guint32 num_clients;
+  guint32 num_cluster_servers;
+  guint32 num_rep_servers;
+  guint32 num_sql_servers;
+  
   guint32 size_string_memory;
   gboolean default_section;
 
