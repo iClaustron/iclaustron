@@ -60,7 +60,6 @@ void ic_debug_close();
 #else
 #define DEBUG(a)
 #define DEBUG_ENTRY(a)
-#define DEBUG_MAIN
 #define DEBUG_OPEN
 #define DEBUG_CLOSE
 #define DEBUG_IC_STRING(a)

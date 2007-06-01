@@ -19,7 +19,6 @@ static gchar *glob_config_path= NULL;
 static gboolean glob_bootstrap= FALSE;
 static gint glob_cluster_id= 0;
 
-DEBUG_MAIN;
 static GOptionEntry entries[] = 
 {
   { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
@@ -44,9 +43,9 @@ main(int argc, char *argv[])
 {
   GError *loc_error= NULL;
   GOptionContext *context;
+  int error= 1;
   IC_CONFIG_STRUCT clu_conf;
 
-  DEBUG_OPEN;
   if (ic_init())
     return 1;
   /* Read command options */
@@ -59,11 +58,12 @@ main(int argc, char *argv[])
   g_option_context_free(context);
   if (ic_load_config_server_from_files(glob_config_file,
                                        &clu_conf))
-    return 1;
+    goto end;
   clu_conf.clu_conf_ops->ic_config_end(&clu_conf);
+  error= 0;
+end:
   ic_end();
-  DEBUG_CLOSE;
-  return 0;
+  return error;
 
 mem_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
@@ -72,8 +72,6 @@ mem_error:
 parse_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
         "Option processing error\n");
-end:
-  ic_end();
-  return 1;
+  goto end;
 }
 

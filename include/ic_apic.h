@@ -83,7 +83,7 @@ struct ic_config_entry
   gchar is_boolean;
   gchar is_deprecated;
   gchar is_string_type;
-  gchar is_mandatory_to_specify;
+  gchar is_mandatory;
   gchar mandatory_bit;
   gchar is_not_configurable;
   gchar is_only_iclaustron;
@@ -528,7 +528,7 @@ void ic_print_config_parameters();
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
-  (conf_entry)->is_mandatory_to_specify= TRUE; \
+  (conf_entry)->is_mandatory= TRUE; \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
   (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
@@ -560,7 +560,7 @@ void ic_print_config_parameters();
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
-  (conf_entry)->is_mandatory_to_specify= TRUE; \
+  (conf_entry)->is_mandatory= TRUE; \
   (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
   (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);

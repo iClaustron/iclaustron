@@ -377,11 +377,11 @@ ic_print_config_parameters(guint32 mask)
       if (conf_entry->node_types & (1 << IC_COMM_TYPE))
         printf("This config variable is used in connections\n");
 
-      if (conf_entry->is_mandatory_to_specify)
+      if (conf_entry->is_mandatory)
         printf("Entry is mandatory and has no default value\n");
       else if (conf_entry->is_string_type)
       {
-        if (!conf_entry->is_mandatory_to_specify)
+        if (!conf_entry->is_mandatory)
         {
           printf("Entry has default value: %s\n",
                  conf_entry->default_string);
@@ -447,7 +447,7 @@ init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, number_of_replicas,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
-  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "This defines number of nodes per node group, within a node group all nodes contain the same data";
@@ -961,7 +961,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, first_node_id,
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
-  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "First node id of the connection";
@@ -970,7 +970,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, second_node_id,
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
-  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Second node id of the connection";
@@ -991,7 +991,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, client_port_number,
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
-  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
@@ -1001,7 +1001,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, server_port_number,
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
-  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Port number to use on server side";
@@ -1041,7 +1041,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, server_node_id,
                     IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
-  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Node id of node that is server part of connection";
@@ -1123,7 +1123,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
   IC_SET_KERNEL_CONFIG(conf_entry, node_id, IC_UINT32,
                        0, IC_NOT_CHANGEABLE);
-  conf_entry->is_mandatory_to_specify= TRUE;
+  conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
                           (1 << IC_CLIENT_TYPE) +
@@ -2551,6 +2551,7 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
   guint64 value;
   gchar *struct_ptr;
   guint64 num32_check;
+  gchar buf[128];
   DEBUG_ENTRY("conf_serv_add_key");
   DEBUG_IC_STRING(key_name);
   DEBUG_IC_STRING(data);
@@ -2563,6 +2564,11 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
     return IC_ERROR_NO_SUCH_CONFIG_KEY;
   if (!(conf_entry->node_types & (1 << clu_conf->current_node_config_type)))
     return IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION;
+  if (conf_entry->is_mandatory)
+  {
+    ((IC_KERNEL_CONFIG*)clu_conf->current_node_config)->mandatory_bits|=
+      (1 << conf_entry->mandatory_bit);
+  }
   if (conf_entry->is_string_type)
   {
     if (pass == INITIAL_PASS)
@@ -2582,19 +2588,22 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
     return IC_ERROR_NO_BOOLEAN_VALUE;
   num32_check= 1;
   num32_check<<= 32;
-  if ((!ic_cmp_null_term_str(node_id_str, key_name)) &&
-       value > clu_conf->max_node_id)
-    clu_conf->max_node_id= value;
+  if (!ic_cmp_null_term_str(node_id_str, key_name))
+  {
+    /*
+      We have found a node id
+    */
+    if (value > clu_conf->max_node_id)
+      clu_conf->max_node_id= value;
+  }
   if (conf_entry->is_min_value_defined && conf_entry->min_value > value)
   {
-    gchar buf[128];
     printf("Parameter %s is smaller than min_value = %u\n",
            ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->min_value);
     return IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS;
   }
   else if (conf_entry->is_max_value_defined && conf_entry->max_value < value)
   {
-    gchar buf[128];
     printf("Parameter %s is larger than min_value = %u\n",
            ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->max_value);
     return IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS;
@@ -2602,7 +2611,6 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
   else if ((conf_entry->data_type == IC_UINT16 && value > 65535) ||
            (conf_entry->data_type == IC_UINT32 && value >= num32_check))
   {
-    gchar buf[128];
     printf("Parameter %s is larger than its type\n",
            ic_get_ic_string(key_name, (gchar*)&buf));
     return IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS;
@@ -2671,6 +2679,7 @@ void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
     for (i= 0; i < clu_conf->comments.num_comments; i++)
       g_free(clu_conf->comments.ptr_comments[i]);
     g_free(clu_conf->string_memory_to_return);
+    g_free(clu_conf->struct_memory_to_return);
     g_free(ic_conf->config_ptr.clu_conf);
   }
   return;
@@ -2737,6 +2746,7 @@ int ic_init()
 {
   int ret_value;
   DEBUG_ENTRY("ic_init");
+  DEBUG_OPEN;
   ic_init_error_messages();
   if ((ret_value= ic_init_config_parameters()))
     ic_end();
@@ -2749,4 +2759,5 @@ void ic_end()
   if (glob_conf_hash)
     ic_hashtable_destroy(glob_conf_hash);
   glob_conf_entry_inited= FALSE;
+  DEBUG_CLOSE;
 }
