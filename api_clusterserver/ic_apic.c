@@ -431,7 +431,7 @@ static IC_CONFIG_ENTRY *get_config_entry_mandatory(guint32 bit_id,
   {
     conf_entry= &glob_conf_entry[i];
     if (conf_entry && conf_entry->is_mandatory &&
-        conf_entry->mandatory_bit == bit_id &&
+        (guint32)conf_entry->mandatory_bit == bit_id &&
         conf_entry->node_types & (1 << conf_type))
       return conf_entry;
   }
@@ -2394,14 +2394,90 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
 */
 
 static
-int complete_section(IC_CONFIG_STRUCT *ic_config, guint32 line_number,
+int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
                      guint32 pass)
 {
+  IC_CLUSTER_CONFIG_LOAD *clu_conf;
+  IC_CONFIG_TYPE conf_type;
+  guint32 i;
+  guint64 mandatory_bits, missing_bits;
+  void *current_config;
+  IC_CONFIG_ENTRY *conf_entry;
   /*
     Need to check that all mandatory values have been assigned here in
     second pass.
   */
+  clu_conf= ic_conf->config_ptr.clu_conf;
+  conf_type= clu_conf->current_node_config_type;
+  current_config= clu_conf->current_node_config;
+  if (clu_conf->default_section || pass == INITIAL_PASS)
+    return 0;
+  switch (conf_type)
+  {
+    case IC_NO_CONFIG_TYPE:
+      return 0;
+    case IC_KERNEL_TYPE:
+      mandatory_bits= kernel_mandatory_bits;
+      if (((IC_KERNEL_CONFIG*)current_config)->mandatory_bits !=
+          kernel_mandatory_bits)
+        goto mandatory_error;
+      break;
+    case IC_CLIENT_TYPE:
+      mandatory_bits= client_mandatory_bits;
+      if (((IC_CLIENT_CONFIG*)current_config)->mandatory_bits !=
+          client_mandatory_bits)
+        goto mandatory_error;
+      break;
+    case IC_CLUSTER_SERVER_TYPE:
+      mandatory_bits= cluster_server_mandatory_bits;
+      if (((IC_CLUSTER_SERVER_CONFIG*)current_config)->mandatory_bits !=
+          cluster_server_mandatory_bits)
+        goto mandatory_error;
+      break;
+    case IC_REP_SERVER_TYPE:
+      mandatory_bits= rep_server_mandatory_bits;
+      if (((IC_REP_SERVER_CONFIG*)current_config)->client_conf.mandatory_bits
+          != rep_server_mandatory_bits)
+        goto mandatory_error;
+      break;
+    case IC_SQL_SERVER_TYPE:
+      mandatory_bits= sql_server_mandatory_bits;
+      if (((IC_SQL_SERVER_CONFIG*)current_config)->client_conf.mandatory_bits
+            != sql_server_mandatory_bits)
+        goto mandatory_error;
+      break;
+    case IC_COMM_TYPE:
+      mandatory_bits= comm_mandatory_bits;
+      if (((IC_SOCKET_LINK_CONFIG*)current_config)->mandatory_bits !=
+          comm_mandatory_bits)
+        goto mandatory_error;
+      break;
+    default:
+      abort();
+      break;
+  }
   return 0;
+
+mandatory_error:
+  missing_bits= mandatory_bits ^
+         ((IC_KERNEL_CONFIG*)current_config)->mandatory_bits;
+  g_assert(missing_bits);
+  for (i= 0; i < 64; i++)
+  {
+    if (missing_bits & (1 << i))
+    {
+      if (!(conf_entry= get_config_entry_mandatory(i, conf_type)))
+      {
+        DEBUG(printf("Didn't find mandatory entry after config error\n"));
+        abort();
+      }
+      printf("Configuration error found at line %u, missing mandatory",
+             line_number);
+      printf(" configuration item in previous section\n");
+      printf("Missing item is %s\n", conf_entry->config_entry_name);
+    }
+  }
+  return 1;
 }
 
 static
@@ -2490,7 +2566,6 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     memcpy(clu_conf->current_node_config, &clu_conf->default_kernel_config,
            sizeof(IC_KERNEL_CONFIG));
     DEBUG(printf("Found data server group\n"));
-    return 0;
   }
   else if (!ic_cmp_null_term_str(client_node_str, section_name))
   {
@@ -2505,7 +2580,6 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     memcpy(clu_conf->current_node_config, &clu_conf->default_client_config,
            sizeof(IC_CLIENT_CONFIG));
     DEBUG(printf("Found client group\n"));
-    return 0;
   }
   else if (!ic_cmp_null_term_str(cluster_server_str, section_name))
   {
@@ -2521,7 +2595,6 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
            &clu_conf->default_cluster_server_config,
            sizeof(IC_CLUSTER_SERVER_CONFIG));
     DEBUG(printf("Found cluster server group\n"));
-    return 0;
   }
   else if (!ic_cmp_null_term_str(rep_server_str, section_name))
   {
@@ -2537,7 +2610,6 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
            &clu_conf->default_rep_config,
            sizeof(IC_REP_SERVER_CONFIG));
     DEBUG(printf("Found replication server group\n"));
-    return 0;
   }
   else if (!ic_cmp_null_term_str(sql_server_str, section_name))
   {
@@ -2553,7 +2625,6 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
            &clu_conf->default_sql_config,
            sizeof(IC_SQL_SERVER_CONFIG));
     DEBUG(printf("Found sql server group\n"));
-    return 0;
   }
   else if (!ic_cmp_null_term_str(socket_str, section_name))
   {
@@ -2569,7 +2640,6 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
            &clu_conf->default_socket_config,
            sizeof(IC_SOCKET_LINK_CONFIG));
     DEBUG(printf("Found socket group\n"));
-    return 0;
   }
   else
   {
@@ -2579,42 +2649,36 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       clu_conf->current_node_config= &clu_conf->default_kernel_config;
       clu_conf->current_node_config_type= IC_KERNEL_TYPE;
       DEBUG(printf("Found data server default group\n"));
-      return 0;
     }
     else if (!ic_cmp_null_term_str(client_node_def_str, section_name))
     {
       clu_conf->current_node_config= &clu_conf->default_client_config;
       clu_conf->current_node_config_type= IC_CLIENT_TYPE;
       DEBUG(printf("Found client default group\n"));
-      return 0;
     }
     else if (!ic_cmp_null_term_str(cluster_server_def_str, section_name))
     {
       clu_conf->current_node_config= &clu_conf->default_cluster_server_config;
       clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
       DEBUG(printf("Found cluster server default group\n"));
-      return 0;
     }
     else if (!ic_cmp_null_term_str(sql_server_def_str, section_name))
     {
       clu_conf->current_node_config= &clu_conf->default_sql_config;
       clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
       DEBUG(printf("Found sql server default group\n"));
-      return 0;
     }
     else if (!ic_cmp_null_term_str(rep_server_def_str, section_name))
     {
       clu_conf->current_node_config= &clu_conf->default_rep_config;
       clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
       DEBUG(printf("Found replication server default group\n"));
-      return 0;
     }
     else if (!ic_cmp_null_term_str(socket_def_str, section_name))
     {
       clu_conf->current_node_config= &clu_conf->default_socket_config;
       clu_conf->current_node_config_type= IC_COMM_TYPE;
       DEBUG(printf("Found socket default group\n"));
-      return 0;
     }
     else
     {
@@ -2622,6 +2686,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
       return IC_ERROR_CONFIG_NO_SUCH_SECTION;
     }
   }
+  return 0;
 }
 
 static
@@ -2651,7 +2716,7 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
     return IC_ERROR_NO_SUCH_CONFIG_KEY;
   if (!(conf_entry->node_types & (1 << clu_conf->current_node_config_type)))
     return IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION;
-  if (conf_entry->is_mandatory)
+  if (conf_entry->is_mandatory && (pass != INITIAL_PASS))
   {
     ((IC_KERNEL_CONFIG*)clu_conf->current_node_config)->mandatory_bits|=
       (1 << conf_entry->mandatory_bit);
