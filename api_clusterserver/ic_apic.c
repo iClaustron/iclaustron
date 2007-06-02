@@ -1395,7 +1395,7 @@ init_config_object(gchar *conf_object, IC_CONFIG_TYPE node_type)
   for (i= 0; i < glob_conf_max_id; i++)
   {
     IC_CONFIG_ENTRY *conf_entry= &glob_conf_entry[i];
-    if (conf_entry && conf_entry->node_types & node_type)
+    if (conf_entry && conf_entry->node_types & (1 << node_type))
     {
       gchar *var_ptr= conf_object + conf_entry->offset;
       init_config_default_value(var_ptr, conf_entry);
