@@ -147,6 +147,18 @@ static gboolean glob_conf_entry_inited= FALSE;
 static guint16 map_config_id[MAX_MAP_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
 
+/*
+  Mandatory bits for kernel nodes, client nodes and so forth.
+  Calculated once and then used for quick access to see if a
+  configuration has provided all mandatory configuration items.
+*/
+static guint64 kernel_mandatory_bits;
+static guint64 client_mandatory_bits;
+static guint64 cluster_server_mandatory_bits;
+static guint64 rep_server_mandatory_bits;
+static guint64 sql_server_mandatory_bits;
+static guint64 comm_mandatory_bits;
+
 static const gchar *empty_string= "";
 static const gchar *get_nodeid_str= "get nodeid";
 static const gchar *get_nodeid_reply_str= "get nodeid reply";
@@ -408,6 +420,76 @@ ic_print_config_parameters(guint32 mask)
 }
 
 static IC_CONFIG_ENTRY *get_config_entry(int config_id);
+
+static IC_CONFIG_ENTRY *get_config_entry_mandatory(guint32 bit_id,
+                                                   IC_CONFIG_TYPE conf_type)
+{
+  guint32 i;
+  IC_CONFIG_ENTRY *conf_entry;
+  DEBUG_ENTRY("get_config_entry_mandatory");
+  for (i= 0; i <= glob_conf_max_id; i++)
+  {
+    conf_entry= &glob_conf_entry[i];
+    if (conf_entry && conf_entry->is_mandatory &&
+        conf_entry->mandatory_bit == bit_id &&
+        conf_entry->node_types & (1 << conf_type))
+      return conf_entry;
+  }
+  return NULL;
+}
+
+static void
+calculate_mandatory_bits()
+{
+  guint32 i;
+  IC_CONFIG_ENTRY *conf_entry;
+  DEBUG_ENTRY("calculate_mandatory_bits");
+
+  kernel_mandatory_bits= 0;
+  client_mandatory_bits= 0;
+  cluster_server_mandatory_bits= 0;
+  rep_server_mandatory_bits= 0;
+  sql_server_mandatory_bits= 0;
+  comm_mandatory_bits= 0;
+
+  for (i= 0; i <= glob_conf_max_id; i++)
+  {
+    conf_entry= &glob_conf_entry[i];
+    if (conf_entry->is_mandatory)
+    {
+      if (conf_entry->node_types & (1 << IC_KERNEL_TYPE))
+        kernel_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if (conf_entry->node_types & (1 << IC_CLIENT_TYPE))
+        client_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if ((conf_entry->node_types & (1 << IC_CLUSTER_SERVER_TYPE)) ||
+          (conf_entry->node_types & (1 << IC_CLIENT_TYPE)))
+        cluster_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if ((conf_entry->node_types & (1 << IC_REP_SERVER_TYPE)) ||
+          (conf_entry->node_types & (1 << IC_CLIENT_TYPE)))
+        rep_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if ((conf_entry->node_types & (1 << IC_SQL_SERVER_TYPE)) ||
+          (conf_entry->node_types & (1 << IC_CLIENT_TYPE)))
+        sql_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if (conf_entry->node_types & (1 << IC_COMM_TYPE))
+        comm_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+    }
+  }
+  {
+    gchar buf[128];
+    DEBUG(printf("kernel_mandatory_bits = %s\n",
+                 ic_guint64_hex_str(kernel_mandatory_bits, buf)));
+    DEBUG(printf("client_mandatory_bits = %s\n",
+                 ic_guint64_hex_str(client_mandatory_bits, buf)));
+    DEBUG(printf("cluster_server_mandatory_bits = %s\n",
+                 ic_guint64_hex_str(cluster_server_mandatory_bits, buf)));
+    DEBUG(printf("rep_server_mandatory_bits = %s\n",
+                 ic_guint64_hex_str(rep_server_mandatory_bits, buf)));
+    DEBUG(printf("sql_server_mandatory_bits = %s\n",
+                 ic_guint64_hex_str(sql_server_mandatory_bits, buf)));
+    DEBUG(printf("comm_mandatory_bits = %s\n",
+                  ic_guint64_hex_str(comm_mandatory_bits, buf)));
+  }
+}
 
 static int
 build_config_name_hash()
@@ -1098,6 +1180,8 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(IC_NODE_DATA_PATH, 250);
   IC_SET_KERNEL_STRING(conf_entry, node_data_path, IC_INITIAL_NODE_RESTART);
   conf_entry->default_string= (gchar*)empty_string;
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
                          (1 << IC_KERNEL_TYPE);
@@ -1107,9 +1191,11 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(IC_NODE_HOST, 251);
   IC_SET_KERNEL_STRING(conf_entry, hostname, IC_CLUSTER_RESTART_CHANGE);
   conf_entry->default_string= (gchar*)empty_string;
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
-                         (1 << IC_CLIENT_TYPE) +
-                         (1 << IC_KERNEL_TYPE);
+                          (1 << IC_CLIENT_TYPE) +
+                          (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
   "Hostname of the node";
 
@@ -1157,6 +1243,7 @@ ic_init_config_parameters()
   memset(map_config_id, 0, 1024 * sizeof(guint16));
   memset(glob_conf_entry, 0, 256 * sizeof(IC_CONFIG_ENTRY));
   init_config_parameters();
+  calculate_mandatory_bits();
   return build_config_name_hash();
 }
 
@@ -2745,8 +2832,8 @@ file_open_error:
 int ic_init()
 {
   int ret_value;
-  DEBUG_ENTRY("ic_init");
   DEBUG_OPEN;
+  DEBUG_ENTRY("ic_init");
   ic_init_error_messages();
   if ((ret_value= ic_init_config_parameters()))
     ic_end();

@@ -528,7 +528,6 @@ void ic_print_config_parameters();
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
-  (conf_entry)->is_mandatory= TRUE; \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
   (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
@@ -560,7 +559,6 @@ void ic_print_config_parameters();
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
-  (conf_entry)->is_mandatory= TRUE; \
   (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
   (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);
