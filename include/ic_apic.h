@@ -57,13 +57,13 @@ typedef enum ic_config_data_type
 struct ic_config_entry
 {
   IC_STRING config_entry_name;
-  char *config_entry_description;
+  gchar *config_entry_description;
   guint32 max_value;
   guint32 min_value;
   union
   {
     guint64 default_value;
-    char *default_string;
+    gchar *default_string;
   };
   IC_CONFIG_DATA_TYPE data_type;
   guint32 offset;
@@ -125,7 +125,7 @@ struct ic_api_cluster_connection
   guint32 num_cluster_servers;
   guint32 tail_index;
   guint32 head_index;
-  char rec_buf[REC_BUF_SIZE];
+  gchar rec_buf[REC_BUF_SIZE];
 };
 typedef struct ic_api_cluster_connection IC_API_CLUSTER_CONNECTION;
 
@@ -148,10 +148,10 @@ struct ic_api_config_server
     and use of allocated memory for strings.
   */
   guint32 string_memory_size;
-  char *config_memory_to_return;
-  char *string_memory_to_return;
-  char *end_string_memory;
-  char *next_string_memory;
+  gchar *config_memory_to_return;
+  gchar *string_memory_to_return;
+  gchar *end_string_memory;
+  gchar *next_string_memory;
 };
 typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 
@@ -172,15 +172,15 @@ typedef struct ic_run_config_server IC_RUN_CONFIG_SERVER;
 struct ic_kernel_config
 {
   /* Common for all nodes */
-  char *hostname;
-  char *node_data_path;
+  gchar *hostname;
+  gchar *node_data_path;
   guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
   /* End common part */
 
-  char *filesystem_path;
-  char *kernel_checkpoint_path;
+  gchar *filesystem_path;
+  gchar *kernel_checkpoint_path;
 
   guint64 size_of_ram_memory;
   guint64 size_of_hash_memory;
@@ -260,8 +260,8 @@ typedef struct ic_kernel_config IC_KERNEL_CONFIG;
 struct ic_client_config
 {
   /* Common part */
-  char *hostname;
-  char *node_data_path;
+  gchar *hostname;
+  gchar *node_data_path;
 
   guint64 mandatory_bits;
   guint32 node_id;
@@ -284,8 +284,8 @@ struct ic_cluster_server_config
      above to ensure offset of variables with same name are the same.
   */
   /* Common part */
-  char *hostname;
-  char *node_data_path;
+  gchar *hostname;
+  gchar *node_data_path;
 
   guint64 mandatory_bits;
   guint32 node_id;
@@ -315,8 +315,8 @@ typedef struct ic_rep_server_config IC_REP_SERVER_CONFIG;
 
 struct ic_socket_link_config
 {
-  char *first_hostname;
-  char *second_hostname;
+  gchar *first_hostname;
+  gchar *second_hostname;
 
   guint64 mandatory_bits;
   guint32 socket_write_buffer_size;
@@ -337,11 +337,17 @@ typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;
 
 struct ic_sci_comm_link_config
 {
+  gchar *first_hostname;
+  gchar *second_hostname;
+
   guint64 mandatory_bits;
 };
 
 struct ic_shm_comm_link_config
 {
+  gchar *first_hostname;
+  gchar *second_hostname;
+
   guint64 mandatory_bits;
 };
 
@@ -394,7 +400,7 @@ struct ic_cluster_config
     The array node_types below contains the actual type of struct
     used for each entry.
   */
-  char **node_config;
+  gchar **node_config;
   /*
     comm_config is an array of pointers that point to structs of the
     types:
@@ -405,7 +411,7 @@ struct ic_cluster_config
     The array comm_types below contains the actual type of the struct
     for each entry. Currently only socket links are possible.
   */
-  char **comm_config;
+  gchar **comm_config;
 
   guint32 no_of_nodes;
   guint32 no_of_kernel_nodes;
