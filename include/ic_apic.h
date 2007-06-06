@@ -413,14 +413,14 @@ struct ic_cluster_config
   */
   gchar **comm_config;
 
-  guint32 no_of_nodes;
-  guint32 no_of_kernel_nodes;
-  guint32 no_of_config_servers;
-  guint32 no_of_cluster_servers;
-  guint32 no_sql_servers;
-  guint32 no_rep_servers;
-  guint32 no_of_client_nodes;
-  guint32 no_of_comms;
+  guint32 max_node_id;
+  guint32 num_nodes;
+  guint32 num_data_servers;
+  guint32 num_cluster_servers;
+  guint32 num_clients;
+  guint32 num_sql_servers;
+  guint32 num_rep_servers;
+  guint32 num_comms;
   guint32 *node_ids;
   IC_NODE_TYPES *node_types;
   enum ic_communication_type *comm_types;
@@ -449,13 +449,6 @@ struct ic_cluster_config_load
   gchar *struct_memory_to_return;
   IC_CONFIG_TYPE current_node_config_type;
   IC_CS_CONF_COMMENT comments;
-  guint32 max_node_id;
-  guint32 num_communication_sections;
-  guint32 num_data_servers;
-  guint32 num_clients;
-  guint32 num_cluster_servers;
-  guint32 num_rep_servers;
-  guint32 num_sql_servers;
   
   guint32 size_string_memory;
   gboolean default_section;
@@ -490,6 +483,8 @@ void ic_print_config_parameters();
 #define IC_SET_CONFIG_MAP(name, id) \
   map_config_id[name]= id; \
   conf_entry= &glob_conf_entry[id]; \
+  if (conf_entry->config_entry_name.str) \
+    id_already_used_aborting(id);   \
   if (id > glob_conf_max_id) glob_conf_max_id= id;
 
 #define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \

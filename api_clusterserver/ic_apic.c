@@ -1,13 +1,24 @@
 #include <ic_apic.h>
 #include <hashtable.h>
 /*
-  DESCRIPTION TO ADD NEW CONFIGURATION VARIABLE:
+  DESCRIPTION HOW TO ADD NEW CONFIGURATION VARIABLE:
   1) Add a new constant in this file e.g:
   #define KERNEL_SCHEDULER_NO_SEND_TIME 166
+     This is the constant that will be used in the key-value pairs
+     sent in the NDB Management Server protocol.
+
   2) Add a new entry in ic_init_config_parameters
      Check how other entries look like, the struct
      to fill in config_entry and is described in
      ic_apic.h
+
+     Ensure that the hard-coded id used is unique, to ease the
+     allocation of unique id's ensure that you put the id's in 
+     increasing order in the file.
+
+     Here one defines minimum value, maximum value, default values,
+     value type and so forth.
+
   3) Add a new variable in the struct's for the various
      node types, for kernel variables the struct is
      ic_kernel_node_config (ic_apic.h). The name of this
@@ -16,13 +27,115 @@
      ic_init_config_parameters.
 
   ---------------------------------------------------------
+  *********************************************************
   ---------------------------------------------------------
 
+  Description of Management Server protocol
+  -----------------------------------------
+
+  We describe the protocol from a top-down view. Starting by describing what
+  the high-level data structure is, describing how this can be discovered and
+  then describing how parameters are described. Next step describing how the
+  data is encoded. The final step is to describe the conversation between the
+  client and the server in getting this encoded data.
+
+  Each node in the configuration has a separate section. These sections are
+  listed in section 1. Each section then contains all the configuration
+  parameters of that node. After the last node section there is another
+  section used to describe which communication sections that exists.
+  In the example case below there are 4 nodes and thus section 6 is the
+  section describing which communication sections that exist.
+  There is one communication section for each pair of nodes that require
+  communication. So in this case with 2 data nodes and 1 API node and 1
+  management server there is one communication section to interconnect the
+  data nodes and 2 communication sections for each data node to connect them
+  with the API and the cluster server. Thus a total of 5 communication
+  sections.
+
+  All the values in the sections are sent as a more or less random list of
+  key-value pairs. Each key-value pair contains section id, configuration
+  id, value type and the value. This means that we require to pass through
+  the list of key-value pairs one time in order to discover the number of
+  nodes of various types to understand the allocation requirements. This
+  further means that we require yet another pass to discover the number
+  of communication sections since we cannot interpret Section 6 properly
+  until we have discovered that this a descriptive section used to describe
+  which communication sections exists in the configuration.
+
+  The key-value pairs are sent as two 32-bit words for most data types, 64-bit
+  words require another 32-bit word and character strings require also more
+  words but they always add 32-bit words.
+
+  The final step is that the all these 32-bit words are converted to network
+  endian (big endian) format and the binary array of 32-bit words is then
+  finally converted to base64-encoding. This encoding transfers the data
+  over the wire using ASCII. base64-encoding sends its data with 76 ASCII
+  characters per line followed by newline character. As part of the encoded
+  data one also sends a verification string to ensure that the receiver can
+  verify that the data uses the NDB Management Server protocol.
+
+  There also some special configuration id's.
+  One is 16382 which describes the parent section which for all node sections
+  is equal to 0.
+  999 is a configuration id describing the node type.
+  3 is the configuration id providing the node id.
+
+  -------------------
+  -                 -
+  -  Section 1      -
+  -                 -
+  -------------------
+    |  |  |  |
+    |  |  |  |           Node Sections
+    |  |  |  ----------> ------------------
+    |  |  |              -  Section 2     -
+    |  |  |              ------------------
+    |  |  |
+    |  |  -------------> ------------------
+    |  |                 -  Section 3     -
+    |  |                 ------------------
+    |  |
+    |  ----------------> ------------------
+    |                    -  Section 4     -
+    |                    ------------------
+    |
+    -------------------> ------------------
+                         -  Section 5     -
+                         ------------------
+
+  -------------------
+  -                 -
+  -  Section 6      -
+  -                 -
+  -------------------
+   | | | | |             Communication Sections
+   | | | | ------------> ------------------
+   | | | |               -  Section 7     -
+   | | | |               ------------------
+   | | | |
+   | | | --------------> ------------------
+   | | |                 -  Section 8     -
+   | | |                 ------------------
+   | | |
+   | | ----------------> ------------------
+   | |                   -  Section 9     -
+   | |                   ------------------
+   | |
+   | ------------------> ------------------
+   |                     -  Section 10    -
+   |                     ------------------
+   |
+   --------------------> ------------------
+                         -  Section 11    -
+                         ------------------
+    
   Description of protocol to get configuration profile from
   cluster server.
-  1) Start with get_nodeid session. The api sends a number of
+
+  1) Start with get_nodeid session. The client sends a number of
      lines of text with information about itself and login
-     information.
+     information:
+
      get nodeid<CR>
      nodeid: 0<CR>
      version: 327948<CR>
@@ -37,11 +150,14 @@
      Here nodeid is normally 0, meaning that the receiver can accept
      any nodeid connected to the host we are connecting from. If nodeid
      != 0 then this is the only nodeid we accept.
+
      Version number is the version of the API, the version number is the
      hexadecimal notation of the version number (e.g. 5.1.12 = 0x5010c =
      327948).
+
      Nodetype is either 1 for API's to the data servers, for data servers
      the nodetype is 0 and for cluster servers it is 2.
+
      user, password and public key is preparation for future functionality
      so should always be mysqld, mysqld and a public key for API nodes.
      Endian should either be little or big, dependent on if the API is on
@@ -51,6 +167,7 @@
      The cluster server will respond with either an error response or
      a response that provides the nodeid to the API using the following
      messages.
+
      get nodeid reply<CR>
      nodeid: 4<CR>
      result: Ok<CR>
@@ -58,19 +175,22 @@
 
      Where nodeid is the one chosen by the cluster server.
 
-     An error response is sent as 
+     An error response is sent as:
+
      result: Error (Message)<CR>
      <CR>
 
   2) The next step is to get the configuration. To get the configuration
      the API sends the following messages:
+
      get config<CR>
      version: 327948<CR>
      <CR>
 
      In response to this the cluster server will send the configuration
      or an error response in the same manner as above.
-     The configuration is sent as follows.
+     The configuration is sent as follows:
+
      get config reply<CR>
      result: Ok<CR>
      Content-Length: 3047<CR>
@@ -78,6 +198,43 @@
      Content-Transfer-Encoding: base64<CR>
      <CR>
      base64-encoded string with length as provided above
+
+  General description of architecture of Cluster Servers
+  ------------------------------------------------------
+
+  The architecture of the Cluster Server is based on the following ideas.
+  There will be four routines to read/write configurations.
+  1) There will be one routine to read a configuration from a file.
+  2) There will be one routine to read the configuration from a Cluster Server
+     using the NDB Management Server Protocol.
+  3) There will be one routine to write the data structures of a configuration
+     into a file.
+  4) There will be one routine to write the data structures of a configuration
+     to another node using the NDB Management Server Protocol.
+
+  Using these four routines it is possible to easily design a fault-tolerant
+  Cluster Server, thus each time a change occurs one changes the data
+  structures then one ensures that the configuration is locked (actually the
+  first step) and starts changing the configuration in all servers. This
+  requires sending the configuration to all servers, then each server updates
+  its local copy on disk. Each time a Cluster Server starts up it will try to
+  get in contact with the other Cluster Servers. They will check if the
+  configuration has changed while the Cluster Server was down. If so it will
+  replace the configuration from the existing servers.
+
+  On top of this the idea is that the Cluster Server(s) will act as Cluster
+  Server not only for one cluster but for many. When requesting configuration
+  from a Cluster Server one can specify a number of clusters to fetch the
+  configuration for. To handle this we require a new parameter in the NDB
+  Management Server Protocol specifying the Cluster Id in a similar as the
+  node id is specified.
+
+  The routine to read configurations from a Cluster Server is
+  get_cs_config
+  This routine is part of the configuration client interface.
+  The routine to read a configuration from a file is
+  ic_load_config_server_from_files
+  This routine makes use of the config file reader interface.
 */
 
 const gchar *data_server_str= "data server";
@@ -186,17 +343,6 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
   They are only used in this file, the rest of the code can only get hold
   of configuration objects that are filled in, they can also access methods
   that create protocol objects based on those configuration objects.
-*/
-
-/*
-  This method defines all configuration parameters and puts them in a global
-  variable only accessible from a few methods in this file. When adding a
-  new configuration variable the following actions are needed:
-  1) Add a constant for the configuration variable in the header file
-  2) Add it to this method ic_init_config_parameters
-  3) Add it to any of the config reader routines dependent on if it is a
-     kernel, client, cluster server or communication variable.
-  4) In the same manner add it to any of the config writer routines
 */
 
 #define KERNEL_INJECT_FAULT 1
@@ -509,6 +655,18 @@ build_config_name_hash()
   }
   return 0;
 }
+
+static void
+id_already_used_aborting(int id)
+{
+  printf("Id = %d is already used, aborting\n", id);
+  abort();
+}
+
+/*
+  This method defines all configuration parameters and puts them in a global
+  variable only accessible from a few methods in this file.
+*/
 
 static void
 init_config_parameters()
@@ -1415,14 +1573,14 @@ allocate_mem_phase1(IC_CLUSTER_CONFIG *conf_obj)
     Allocate memory for pointer arrays pointing to the configurations of the
     nodes in the cluster, also allocate memory for array of node types.
   */
-  conf_obj->node_types= g_try_malloc0(conf_obj->no_of_nodes *
-                                         sizeof(IC_NODE_TYPES));
-  conf_obj->comm_types= g_try_malloc0(conf_obj->no_of_nodes *
-                                      sizeof(IC_COMMUNICATION_TYPE));
-  conf_obj->node_ids= g_try_malloc0(conf_obj->no_of_nodes *
-                                       sizeof(guint32));
-  conf_obj->node_config= g_try_malloc0(conf_obj->no_of_nodes *
-                                          sizeof(gchar*));
+  conf_obj->node_types= (IC_NODE_TYPES*)ic_calloc(conf_obj->num_nodes *
+                                                  sizeof(IC_NODE_TYPES));
+  conf_obj->comm_types= (IC_COMMUNICATION_TYPE*)
+         ic_calloc(conf_obj->num_nodes * sizeof(IC_COMMUNICATION_TYPE));
+  conf_obj->node_ids= (guint32*)ic_calloc(conf_obj->num_nodes *
+                                          sizeof(guint32));
+  conf_obj->node_config= (gchar**)ic_calloc(conf_obj->num_nodes *
+                                            sizeof(gchar*));
   if (!conf_obj->node_types || !conf_obj->node_ids ||
       !conf_obj->comm_types || !conf_obj->node_config)
     return MEM_ALLOC_ERROR;
@@ -1440,7 +1598,7 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
     Allocate memory for the actual configuration objects for nodes and
     communication sections.
   */
-  for (i= 0; i < conf_obj->no_of_nodes; i++)
+  for (i= 0; i < conf_obj->num_nodes; i++)
   {
     switch (conf_obj->node_types[i])
     {
@@ -1464,13 +1622,13 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
         break;
     }
   }
-  size_config_objects+= conf_obj->no_of_comms *
+  size_config_objects+= conf_obj->num_comms *
                         sizeof(struct ic_comm_link_config);
-  if (!(conf_obj->comm_config= g_try_malloc0(
-                     conf_obj->no_of_comms * sizeof(gchar*))) ||
-      !(apic->string_memory_to_return= g_try_malloc0(
+  if (!(conf_obj->comm_config= (gchar**)ic_calloc(
+                     conf_obj->num_comms * sizeof(gchar*))) ||
+      !(apic->string_memory_to_return= ic_calloc(
                      apic->string_memory_size)) ||
-      !(apic->config_memory_to_return= g_try_malloc0(
+      !(apic->config_memory_to_return= ic_calloc(
                      size_config_objects)))
     return MEM_ALLOC_ERROR;
 
@@ -1479,7 +1637,7 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   apic->end_string_memory= string_mem + apic->string_memory_size;
   apic->next_string_memory= string_mem;
 
-  for (i= 0; i < conf_obj->no_of_nodes; i++)
+  for (i= 0; i < conf_obj->num_nodes; i++)
   {
     conf_obj->node_config[i]= conf_obj_ptr;
     init_config_object(conf_obj_ptr, conf_obj->node_types[i]);
@@ -1505,7 +1663,7 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
         break;
     }
   }
-  for (i= 0; i < conf_obj->no_of_comms; i++)
+  for (i= 0; i < conf_obj->num_comms; i++)
   {
     init_config_object(conf_obj_ptr, IC_COMM_TYPE);
     conf_obj->comm_config[i]= conf_obj_ptr;
@@ -1551,12 +1709,16 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
     DEBUG(printf("Node type of section %u is %u\n", sect_id, value));
     switch (value)
     {
-      case IC_CLIENT_TYPE:
-        conf_obj->no_of_client_nodes++; break;
-      case IC_KERNEL_TYPE:
-        conf_obj->no_of_kernel_nodes++; break;
-      case IC_CLUSTER_SERVER_TYPE:
-        conf_obj->no_of_cluster_servers++; break;
+      case IC_KERNEL_NODE:
+        conf_obj->num_data_servers++; break;
+      case IC_CLIENT_NODE:
+        conf_obj->num_clients++; break;
+      case IC_CLUSTER_SERVER_NODE:
+        conf_obj->num_cluster_servers++; break;
+      case IC_SQL_SERVER_NODE:
+        conf_obj->num_sql_servers++; break;
+      case IC_REP_SERVER_NODE:
+        conf_obj->num_rep_servers++; break;
       default:
         printf("No such node type\n");
         return PROTOCOL_ERROR;
@@ -1566,6 +1728,7 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
   else if (hash_key == IC_NODE_ID)
   {
     conf_obj->node_ids[sect_id - 2]= value;
+    conf_obj->max_node_id= MAX(value, conf_obj->max_node_id);
     DEBUG(printf("Node id = %u for section %u\n", value, sect_id));
   }
   return 0;
@@ -1650,7 +1813,7 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
     return PROTOCOL_ERROR;
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
     return 0; /* Ignore */
-  if (node_sect_id >= conf_obj->no_of_nodes)
+  if (node_sect_id >= conf_obj->num_nodes)
   {
     printf("node_sect_id out of range\n");
     return PROTOCOL_ERROR;
@@ -1712,7 +1875,7 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
     return PROTOCOL_ERROR;
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
     return 0; /* Ignore */
-  g_assert(comm_sect_id < conf_obj->no_of_comms);
+  g_assert(comm_sect_id < conf_obj->num_comms);
   socket_conf= (IC_SOCKET_LINK_CONFIG*)conf_obj->comm_config[comm_sect_id];
   switch (key_type)
   {
@@ -1750,6 +1913,8 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
   return 0;
 }
 
+/*
+*/
 static int
 analyse_key_value(guint32 *key_value, guint32 len, int pass,
                   IC_API_CONFIG_SERVER *apic,
@@ -1778,12 +1943,12 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
     guint32 key_type= key >> IC_CL_KEY_SHIFT;
     if (pass == 0 && sect_id == 1)
-      conf_obj->no_of_nodes= MAX(conf_obj->no_of_nodes, hash_key + 1);
+      conf_obj->num_nodes= MAX(conf_obj->num_nodes, hash_key + 1);
     else if (pass == 1)
     {
-      if (sect_id == (conf_obj->no_of_nodes + 2))
-        conf_obj->no_of_comms= MAX(conf_obj->no_of_comms, hash_key + 1);
-      if ((sect_id > 1 && sect_id < (conf_obj->no_of_nodes + 2)))
+      if (sect_id == (conf_obj->num_nodes + 2))
+        conf_obj->num_comms= MAX(conf_obj->num_comms, hash_key + 1);
+      if ((sect_id > 1 && sect_id < (conf_obj->num_nodes + 2)))
       {
         if ((error= analyse_node_section_phase1(conf_obj, sect_id,
                                                 value, hash_key)))
@@ -1799,9 +1964,9 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     }
     else
     {
-      if (sect_id > 1 && sect_id != (conf_obj->no_of_nodes + 2))
+      if (sect_id > 1 && sect_id != (conf_obj->num_nodes + 2))
       {
-        if (sect_id < (conf_obj->no_of_nodes + 2))
+        if (sect_id < (conf_obj->num_nodes + 2))
         {
           guint32 node_sect_id= sect_id - 2;
           if ((error= read_node_section(conf_obj, apic, key_type, &key_value,
@@ -1810,7 +1975,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
         }
         else
         {
-          guint32 comm_sect_id= sect_id - (conf_obj->no_of_nodes + 3);
+          guint32 comm_sect_id= sect_id - (conf_obj->num_nodes + 3);
           if ((error= read_comm_section(conf_obj, apic, key_type, &key_value,
                                         value, hash_key, comm_sect_id)))
             return error;
@@ -1824,8 +1989,8 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
 /*
   CONFIGURATION RETRIEVE MODULE
   -----------------------------
-  This module contains the code to retrieve the configuation for a given cluster
-  from the cluster server.
+  This module contains the code to retrieve the configuration for a given
+  cluster from the cluster server.
 */
 
 static gchar ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
@@ -1842,7 +2007,7 @@ translate_config(IC_API_CONFIG_SERVER *apic,
 
   g_assert((config_size & 3) == 0);
   bin_config_size= (config_size >> 2) * 3;
-  if (!(bin_buf= g_try_malloc0(bin_config_size)))
+  if (!(bin_buf= ic_calloc(bin_config_size)))
     return MEM_ALLOC_ERROR;
   if ((error= base64_decode(bin_buf, &bin_config_size,
                             config_buf, config_size)))
@@ -2133,7 +2298,7 @@ rec_get_config(IC_CONNECTION *conn,
           Here we need to allocate receive buffer for configuration plus the
           place to put the encoded binary data.
         */
-        if (!(config_buf= g_try_malloc0(content_length)))
+        if (!(config_buf= ic_calloc(content_length)))
           return MEM_ALLOC_ERROR;
         config_size= 0;
         rec_config_size= 0;
@@ -2194,7 +2359,6 @@ rec_get_config(IC_CONNECTION *conn,
   ----------------------------
     This module makes use of a lot of methods above to fetch configuration
     from a configuration server.
-
 
   This is the routine that is used to read a configuration from a
   cluster server. It receives a struct that contains a list of configuration
@@ -2307,20 +2471,24 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 
     We will also ensure that the supplied data is validated.
   */
-  if (!(apic= g_try_malloc0(sizeof(IC_API_CONFIG_SERVER))) ||
-      !(apic->cluster_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
-      !(apic->node_ids= g_try_malloc0(sizeof(guint32) * num_clusters)) ||
+  if (!(apic= (IC_API_CONFIG_SERVER*)
+               ic_calloc(sizeof(IC_API_CONFIG_SERVER))) ||
+      !(apic->cluster_ids= (guint32*)
+               ic_calloc(sizeof(guint32) * num_clusters)) ||
+      !(apic->node_ids= (guint32*)
+               ic_calloc(sizeof(guint32) * num_clusters)) ||
       !(apic->cluster_conn.cluster_server_ips= 
-         g_try_malloc0(num_cluster_servers *
-                       sizeof(guint32))) ||
+         (guint32*)ic_calloc(num_cluster_servers *
+                             sizeof(guint32))) ||
       !(apic->cluster_conn.cluster_server_ports=
-         g_try_malloc0(num_cluster_servers *
+         (guint16*)ic_calloc(num_cluster_servers *
                        sizeof(guint16))) ||
-      !(apic->conf_objects= g_try_malloc0(num_cluster_servers *
-                                sizeof(IC_CLUSTER_CONFIG))) ||
+      !(apic->conf_objects= (IC_CLUSTER_CONFIG*)
+                   ic_calloc(num_cluster_servers *
+                             sizeof(IC_CLUSTER_CONFIG))) ||
       !(apic->cluster_conn.cluster_srv_conns=
-         g_try_malloc0(num_cluster_servers *
-                       sizeof(IC_CONNECTION))))
+         (IC_CONNECTION*)ic_calloc(num_cluster_servers *
+                                   sizeof(IC_CONNECTION))))
   {
     free_cs_config(apic);
     return NULL;
@@ -2356,6 +2524,7 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
     ensures that anyone can request this configuration through a given
     socket and port.
 */
+/*
 static void
 free_run_cluster(IC_RUN_CONFIG_SERVER *run_obj)
 {
@@ -2376,11 +2545,13 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
                     guint32 num_clusters)
 {
   IC_RUN_CONFIG_SERVER *run_obj;
-  if (!(run_obj= g_try_malloc0(sizeof(IC_API_CONFIG_SERVER))))
+  if (!(run_obj= (IC_API_CONFIG_SERVER*)
+      ic_calloc(sizeof(IC_API_CONFIG_SERVER))))
     return NULL;
   return run_obj;
 }
 
+*/
 /*
   MODULE: LOAD CONFIG DATA
   ------------------------
@@ -2400,7 +2571,7 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
   IC_CLUSTER_CONFIG_LOAD *clu_conf;
   IC_CONFIG_TYPE conf_type;
   guint32 i;
-  guint64 mandatory_bits, missing_bits;
+  guint64 mandatory_bits, missing_bits, bit64;
   void *current_config;
   IC_CONFIG_ENTRY *conf_entry;
   /*
@@ -2461,20 +2632,34 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
 mandatory_error:
   missing_bits= mandatory_bits ^
          ((IC_KERNEL_CONFIG*)current_config)->mandatory_bits;
+#if 0
+{
+  gchar buf[128];
+  printf("mandatory bits %s\n",
+    ic_guint64_hex_str(((IC_KERNEL_CONFIG*)current_config)->mandatory_bits,
+                       (gchar*)&buf));
+  printf("missing bits %s\n",
+    ic_guint64_hex_str(missing_bits,
+                       (gchar*)&buf));
+}
+#endif
   g_assert(missing_bits);
   for (i= 0; i < 64; i++)
   {
-    if (missing_bits & (1 << i))
+    bit64= 1;
+    bit64 <<= i;
+    if (missing_bits & bit64)
     {
       if (!(conf_entry= get_config_entry_mandatory(i, conf_type)))
       {
-        DEBUG(printf("Didn't find mandatory entry after config error\n"));
+        DEBUG(printf("Didn't find mandatory entry after config error, i= %u\n"
+                     ,i));
         abort();
       }
       printf("Configuration error found at line %u, missing mandatory",
              line_number);
       printf(" configuration item in previous section\n");
-      printf("Missing item is %s\n", conf_entry->config_entry_name);
+      printf("Missing item is %s\n", conf_entry->config_entry_name.str);
     }
   }
   return 1;
@@ -2489,7 +2674,7 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
   DEBUG_ENTRY("conf_serv_init");
   if (pass == INITIAL_PASS)
   {
-    if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)g_try_malloc0(
+    if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)ic_calloc(
                     sizeof(IC_CLUSTER_CONFIG_LOAD))))
       return IC_ERROR_MEM_ALLOC;
     ic_conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
@@ -2497,32 +2682,32 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
     return 0;
   }
   clu_conf= ic_conf->config_ptr.clu_conf;
-  max_node_id= clu_conf->max_node_id;
+  max_node_id= clu_conf->conf.max_node_id;
   if (max_node_id == 0)
     return IC_ERROR_NO_NODES_FOUND;
   clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
   /*
     Calculate size of all node struct's and allocate them in one chunk.
   */
-  size_structs+= clu_conf->num_data_servers * sizeof(IC_KERNEL_CONFIG);
-  size_structs+= clu_conf->num_clients * sizeof(IC_CLIENT_CONFIG);
-  size_structs+= clu_conf->num_cluster_servers *
+  size_structs+= clu_conf->conf.num_data_servers * sizeof(IC_KERNEL_CONFIG);
+  size_structs+= clu_conf->conf.num_clients * sizeof(IC_CLIENT_CONFIG);
+  size_structs+= clu_conf->conf.num_cluster_servers *
                  sizeof(IC_CLUSTER_SERVER_CONFIG);
-  size_structs+= clu_conf->num_rep_servers * sizeof(IC_REP_SERVER_CONFIG);
-  size_structs+= clu_conf->num_sql_servers * sizeof(IC_SQL_SERVER_CONFIG);
-  size_structs+= clu_conf->num_communication_sections *
+  size_structs+= clu_conf->conf.num_rep_servers * sizeof(IC_REP_SERVER_CONFIG);
+  size_structs+= clu_conf->conf.num_sql_servers * sizeof(IC_SQL_SERVER_CONFIG);
+  size_structs+= clu_conf->conf.num_comms *
                  sizeof(IC_SOCKET_LINK_CONFIG);
   if (!(clu_conf->struct_memory= clu_conf->struct_memory_to_return= (gchar*)
-        g_try_malloc0(size_structs)))
+        ic_calloc(size_structs)))
     return IC_ERROR_MEM_ALLOC;
   if (!(clu_conf->conf.node_config= (gchar**)
-        g_try_malloc0(sizeof(gchar*)*(max_node_id + 1))))
+        ic_calloc(sizeof(gchar*)*(max_node_id + 1))))
     return IC_ERROR_MEM_ALLOC;
   if (!(clu_conf->string_memory= clu_conf->string_memory_to_return= (gchar*)
-        g_try_malloc0(clu_conf->size_string_memory)))
+        ic_calloc(clu_conf->size_string_memory)))
     return IC_ERROR_MEM_ALLOC;
   if (!(clu_conf->conf.node_types= 
-        (IC_NODE_TYPES*)g_try_malloc0(sizeof(IC_NODE_TYPES)*(max_node_id+1))))
+        (IC_NODE_TYPES*)ic_calloc(sizeof(IC_NODE_TYPES)*(max_node_id+1))))
     return IC_ERROR_MEM_ALLOC;
   init_config_object((gchar*)&clu_conf->default_kernel_config, IC_KERNEL_TYPE);
   init_config_object((gchar*)&clu_conf->default_rep_config.client_conf,
@@ -2540,7 +2725,7 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
 
 static
 int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
-                          guint32 section_number,
+                          __attribute__ ((unused)) guint32 section_number,
                           guint32 line_number,
                           IC_STRING *section_name,
                           guint32 pass)
@@ -2558,7 +2743,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     clu_conf->current_node_config_type= IC_KERNEL_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->num_data_servers++;
+      clu_conf->conf.num_data_servers++;
       return 0;
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -2572,7 +2757,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     clu_conf->current_node_config_type= IC_CLIENT_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->num_clients++;
+      clu_conf->conf.num_clients++;
       return 0;
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -2586,7 +2771,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->num_cluster_servers++;
+      clu_conf->conf.num_cluster_servers++;
       return 0;
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -2601,7 +2786,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->num_rep_servers++;
+      clu_conf->conf.num_rep_servers++;
       return 0;
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -2616,7 +2801,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->num_sql_servers++;
+      clu_conf->conf.num_sql_servers++;
       return 0;
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -2631,7 +2816,7 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
     clu_conf->current_node_config_type= IC_COMM_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->num_communication_sections++;
+      clu_conf->conf.num_comms++;
       return 0;
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -2699,7 +2884,6 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
 {
   IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
   IC_CONFIG_ENTRY *conf_entry;
-  guint32 conf_map_id;
   guint64 value;
   gchar *struct_ptr;
   guint64 num32_check;
@@ -2745,8 +2929,7 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
     /*
       We have found a node id
     */
-    if (value > clu_conf->max_node_id)
-      clu_conf->max_node_id= value;
+    clu_conf->conf.max_node_id= MAX(value, clu_conf->conf.max_node_id);
   }
   if (conf_entry->is_min_value_defined && conf_entry->min_value > value)
   {
@@ -2794,7 +2977,7 @@ static
 int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
                           guint32 line_number,
                           guint32 section_number,
-                          IC_STRING *comment,
+                          __attribute__ ((unused)) IC_STRING *comment,
                           guint32 pass)
 {
   IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
@@ -2802,10 +2985,6 @@ int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
   printf("Line number %d in section %d was comment line\n", line_number, section_number);
   if (pass == INITIAL_PASS)
     clu_conf->comments.num_comments++;
-  else
-  {
-    ;
-  }
   return 0;
 }
 
@@ -2819,7 +2998,7 @@ void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
   {
     if (clu_conf->conf.node_config)
     {
-      for (i= 0; i < clu_conf->max_node_id; i++)
+      for (i= 0; i < clu_conf->conf.max_node_id; i++)
       {
         if (clu_conf->conf.node_config[i])
           g_free((gchar*)clu_conf->conf.node_config[i]);
@@ -2857,6 +3036,7 @@ ic_load_config_server_from_files(gchar *config_file_path,
   int ret_val;
   IC_CONFIG_ERROR err_obj;
   DEBUG_ENTRY("ic_load_config_server_from_files");
+
   memset(conf_server, 0, sizeof(IC_CONFIG_STRUCT));
   conf_server->clu_conf_ops= &config_server_ops;
   DEBUG(printf("config_file_path = %s\n", config_file_path));

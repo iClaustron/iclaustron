@@ -14,6 +14,8 @@
 
 typedef unsigned char ic_bool;
 
+gchar *ic_calloc(size_t size);
+gchar *ic_malloc(size_t size);
 /*
   This is a standard string type, it is declared as whether it is
   null_terminated or not.

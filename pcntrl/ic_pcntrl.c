@@ -54,7 +54,7 @@ static GOptionEntry entries[] =
 };
 
 static int start_services(struct ic_connection *conn,
-                          GKeyFile *conf_file)
+                          __attribute__ ((unused)) GKeyFile *conf_file)
 {
   int ret_code= 1;
   while (!conn->conn_op.accept_ic_connection(conn))
@@ -65,7 +65,7 @@ static int start_services(struct ic_connection *conn,
   return ret_code;
 }
 
-static int verify_conf_file(GKeyFile *conf_file)
+static int verify_conf_file(__attribute__ ((unused)) GKeyFile *conf_file)
 {
   printf("Verifying configuration file\n");
   return 0;
@@ -137,7 +137,6 @@ mem_error:
 
 parse_error:
   printf("Error in parsing option parameters, use --help for assistance\n%s\n", error->message);
-error:
   return 1;
 }
 

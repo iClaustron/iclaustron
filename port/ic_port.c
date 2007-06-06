@@ -1,5 +1,13 @@
-int port_ex(int param)
+#include <glib.h>
+gchar *
+ic_calloc(size_t size)
 {
-  return 0;
+  return g_try_malloc0(size);
+}
+
+gchar *
+ic_malloc(size_t size)
+{
+  return g_try_malloc(size);
 }
 
