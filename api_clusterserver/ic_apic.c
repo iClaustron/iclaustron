@@ -1913,8 +1913,38 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
   return 0;
 }
 
-/*
-*/
+static int
+arrange_node_arrays(IC_CLUSTER_CONFIG *conf_obj)
+{
+  gchar **new_node_config;
+  IC_NODE_TYPES *new_node_types;
+  guint32 i, node_id;
+  DEBUG_ENTRY("arrange_node_arrays");
+
+  new_node_types= (IC_NODE_TYPES*)ic_calloc((conf_obj->max_node_id + 1) *
+                                            sizeof(guint32));
+  new_node_config= (gchar**)ic_calloc((conf_obj->max_node_id + 1) *
+                                      sizeof(gchar*));
+  if (!new_node_types || !new_node_config)
+    return MEM_ALLOC_ERROR;
+
+  for (i= 0; i < conf_obj->num_nodes; i++)
+  {
+    node_id= conf_obj->node_ids[i];
+    if (!node_id)
+      continue;
+    new_node_types[node_id]= conf_obj->node_types[i];
+    new_node_config[node_id]= conf_obj->node_config[i];
+  }
+  ic_free((gchar*)conf_obj->node_types);
+  ic_free((gchar*)conf_obj->node_ids);
+  ic_free((gchar*)conf_obj->node_config);
+  conf_obj->node_config= new_node_config;
+  conf_obj->node_types= new_node_types;
+  conf_obj->node_ids= NULL;
+  return 0;
+}
+
 static int
 analyse_key_value(guint32 *key_value, guint32 len, int pass,
                   IC_API_CONFIG_SERVER *apic,
@@ -1983,7 +2013,9 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
       }
     }
   }
-  return 0;
+  if (pass != 2)
+    return 0;
+  return arrange_node_arrays(conf_obj);
 }
 
 /*
@@ -2043,7 +2075,7 @@ translate_config(IC_API_CONFIG_SERVER *apic,
                                   apic, current_cluster_index)))
       return error;
   }
-  g_free(bin_buf);
+  ic_free(bin_buf);
   return 0;
 }
 
@@ -2335,12 +2367,12 @@ rec_get_config(IC_CONNECTION *conn,
           DEBUG(printf("Start decoding\n"));
           error= translate_config(apic, current_cluster_index,
                                   config_buf, config_size);
-          g_free(config_buf);
+          ic_free(config_buf);
           return error;
         }
         else if (read_size != CONFIG_LINE_LEN)
         {
-          g_free(config_buf);
+          ic_free(config_buf);
           printf("Protocol error in config receive state\n");
           return PROTOCOL_ERROR;
         }
@@ -2412,15 +2444,15 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
   if (apic)
   {
     if (apic->cluster_conn.cluster_srv_conns)
-      g_free(apic->cluster_conn.cluster_srv_conns);
+      ic_free(apic->cluster_conn.cluster_srv_conns);
     if (apic->cluster_conn.cluster_srv_conns)
-      g_free(apic->cluster_conn.cluster_server_ips);
+      ic_free(apic->cluster_conn.cluster_server_ips);
     if (apic->cluster_conn.cluster_server_ports)
-      g_free(apic->cluster_conn.cluster_server_ports);
+      ic_free(apic->cluster_conn.cluster_server_ports);
     if (apic->cluster_ids)
-      g_free(apic->cluster_ids);
+      ic_free(apic->cluster_ids);
     if (apic->node_ids)
-      g_free(apic->node_ids);
+      ic_free(apic->node_ids);
     if (apic->conf_objects)
     {
       num_clusters= apic->num_clusters_to_connect;
@@ -2428,23 +2460,23 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
       {
         struct ic_cluster_config *conf_obj= apic->conf_objects+i;
         if (conf_obj->node_ids)
-          g_free(conf_obj->node_ids);
+          ic_free(conf_obj->node_ids);
         if (conf_obj->node_types)
-          g_free(conf_obj->node_types);
+          ic_free(conf_obj->node_types);
         if (conf_obj->comm_types)
-          g_free(conf_obj->comm_types);
+          ic_free(conf_obj->comm_types);
         if (conf_obj->node_config)
-          g_free(conf_obj->node_config);
+          ic_free(conf_obj->node_config);
         if (apic->string_memory_to_return)
-          g_free(apic->string_memory_to_return);
+          ic_free(apic->string_memory_to_return);
         if (apic->config_memory_to_return)
-          g_free(apic->config_memory_to_return);
+          ic_free(apic->config_memory_to_return);
         if (conf_obj->comm_config)
-          g_free(conf_obj->comm_config);
+          ic_free(conf_obj->comm_config);
       }
-      g_free(apic->conf_objects);
+      ic_free(apic->conf_objects);
     }
-    g_free(apic);
+    ic_free(apic);
   }
   return;
 }
@@ -2930,6 +2962,17 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
       We have found a node id
     */
     clu_conf->conf.max_node_id= MAX(value, clu_conf->conf.max_node_id);
+    if (!clu_conf->default_section && pass != INITIAL_PASS)
+    {
+      if (clu_conf->conf.node_config[value])
+      {
+        printf("Trying to define node %u twice", (guint32)value);
+        return IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS; /* TODO fix error value */
+      }
+      clu_conf->conf.node_config[value]= (gchar*)clu_conf->current_node_config;
+      clu_conf->conf.node_types[value]= 
+        clu_conf->current_node_config_type;
+    }
   }
   if (conf_entry->is_min_value_defined && conf_entry->min_value > value)
   {
@@ -2997,21 +3040,14 @@ void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
   if (clu_conf)
   {
     if (clu_conf->conf.node_config)
-    {
-      for (i= 0; i < clu_conf->conf.max_node_id; i++)
-      {
-        if (clu_conf->conf.node_config[i])
-          g_free((gchar*)clu_conf->conf.node_config[i]);
-      }
-      g_free((gchar*)clu_conf->conf.node_config);
-    }
+      ic_free((gchar*)clu_conf->conf.node_config);
     if (clu_conf->conf.node_types)
-      g_free(clu_conf->conf.node_types);
+      ic_free(clu_conf->conf.node_types);
     for (i= 0; i < clu_conf->comments.num_comments; i++)
-      g_free(clu_conf->comments.ptr_comments[i]);
-    g_free(clu_conf->string_memory_to_return);
-    g_free(clu_conf->struct_memory_to_return);
-    g_free(ic_conf->config_ptr.clu_conf);
+      ic_free(clu_conf->comments.ptr_comments[i]);
+    ic_free(clu_conf->string_memory_to_return);
+    ic_free(clu_conf->struct_memory_to_return);
+    ic_free(ic_conf->config_ptr.clu_conf);
   }
   return;
 }
@@ -3048,7 +3084,7 @@ ic_load_config_server_from_files(gchar *config_file_path,
   IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
   ret_val= ic_build_config_data(&conf_data, &config_server_ops,
                                 conf_server, &err_obj);
-  g_free(conf_data.str);
+  ic_free(conf_data.str);
   if (ret_val == 1)
   {
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
