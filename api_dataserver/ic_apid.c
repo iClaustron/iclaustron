@@ -59,7 +59,7 @@ open_ds_connection(struct ic_ds_conn *ds_conn)
 }
 
 static int
-close_ds_connection(struct ic_ds_conn *ds_conn)
+close_ds_connection(__attribute__ ((unused)) struct ic_ds_conn *ds_conn)
 {
   return 0;
 }

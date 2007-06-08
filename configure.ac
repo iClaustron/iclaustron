@@ -104,6 +104,7 @@ else
   fi
 fi
 CFLAGS="$CFLAGS $GLIB_INCLUDE"
+LIBS="$LIBS -lm"
 
 #
 # Check how to implement MSG_NOSIGNAL

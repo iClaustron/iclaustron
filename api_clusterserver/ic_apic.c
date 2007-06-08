@@ -621,7 +621,7 @@ calculate_mandatory_bits()
     }
   }
   {
-    gchar buf[128];
+    DEBUG(gchar buf[128]);
     DEBUG(printf("kernel_mandatory_bits = %s\n",
                  ic_guint64_hex_str(kernel_mandatory_bits, buf)));
     DEBUG(printf("client_mandatory_bits = %s\n",
