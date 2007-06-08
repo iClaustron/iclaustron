@@ -61,8 +61,10 @@ struct ic_hashtable;
  *
  */
 
+unsigned int ic_hash_nodeids(void *ptr);
 unsigned int ic_hash_str(void *ptr);
 int ic_keys_equal_str(void *ptr1, void *ptr2);
+int ic_keys_equal_nodeids(void *ptr1, void *ptr2);
 
 /*****************************************************************************
  * ic_create_hashtable

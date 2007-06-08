@@ -40,6 +40,26 @@ ic_hash_str(void *ptr)
   return hash;
 }
 
+unsigned int
+ic_hash_nodeids(void *ptr)
+{
+  IC_STRING str;
+  str.len= 8;
+  str.str= (char*)ptr;
+  str.is_null_terminated= FALSE;
+  return ic_hash_str((void*)&str);
+}
+
+int
+ic_keys_equals_nodeids(void *ptr1, void *ptr2)
+{
+  guint32 *p1= (guint32*)ptr1;
+  guint32 *p2= (guint32*)ptr2;
+  if (p1[0] == p2[0] && p1[1] == p2[1])
+    return 1;
+  return 0;
+}
+
 int
 ic_keys_equal_str(void *ptr1, void *ptr2)
 {
