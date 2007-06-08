@@ -44,7 +44,8 @@ main(int argc, char *argv[])
   GError *loc_error= NULL;
   GOptionContext *context;
   int error= 1;
-  IC_CONFIG_STRUCT clu_conf;
+  IC_CONFIG_STRUCT clu_conf_struct;
+  IC_CLUSTER_CONFIG *clu_conf;
 
   if (ic_init())
     return 1;
@@ -56,10 +57,10 @@ main(int argc, char *argv[])
   if (!g_option_context_parse(context, &argc, &argv, &loc_error))
     goto parse_error;
   g_option_context_free(context);
-  if (ic_load_config_server_from_files(glob_config_file,
-                                       &clu_conf))
+  if (!(clu_conf= ic_load_config_server_from_files(glob_config_file,
+                                                   &clu_conf_struct)))
     goto end;
-  clu_conf.clu_conf_ops->ic_config_end(&clu_conf);
+  clu_conf_struct.clu_conf_ops->ic_config_end(&clu_conf_struct);
   error= 0;
 end:
   ic_end();

@@ -2459,20 +2459,20 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
       for (i= 0; i < num_clusters; i++)
       {
         struct ic_cluster_config *conf_obj= apic->conf_objects+i;
+        if (conf_obj->node_config)
+          ic_free(conf_obj->node_config);
+        if (conf_obj->comm_config)
+          ic_free(conf_obj->comm_config);
         if (conf_obj->node_ids)
           ic_free(conf_obj->node_ids);
         if (conf_obj->node_types)
           ic_free(conf_obj->node_types);
         if (conf_obj->comm_types)
           ic_free(conf_obj->comm_types);
-        if (conf_obj->node_config)
-          ic_free(conf_obj->node_config);
         if (apic->string_memory_to_return)
           ic_free(apic->string_memory_to_return);
         if (apic->config_memory_to_return)
           ic_free(apic->config_memory_to_return);
-        if (conf_obj->comm_config)
-          ic_free(conf_obj->comm_config);
       }
       ic_free(apic->conf_objects);
     }
@@ -3043,6 +3043,8 @@ void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
       ic_free((gchar*)clu_conf->conf.node_config);
     if (clu_conf->conf.node_types)
       ic_free(clu_conf->conf.node_types);
+    if (clu_conf->conf.node_ids)
+      ic_free(clu_conf->conf.node_ids);
     for (i= 0; i < clu_conf->comments.num_comments; i++)
       ic_free(clu_conf->comments.ptr_comments[i]);
     ic_free(clu_conf->string_memory_to_return);
@@ -3061,7 +3063,7 @@ static IC_CONFIG_OPERATIONS config_server_ops =
   .ic_config_end  = conf_serv_end,
 };
 
-int
+IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file_path,
                                  IC_CONFIG_STRUCT *conf_server)
 {
@@ -3071,6 +3073,7 @@ ic_load_config_server_from_files(gchar *config_file_path,
   IC_STRING conf_data;
   int ret_val;
   IC_CONFIG_ERROR err_obj;
+  IC_CLUSTER_CONFIG *ret_ptr;
   DEBUG_ENTRY("ic_load_config_server_from_files");
 
   memset(conf_server, 0, sizeof(IC_CONFIG_STRUCT));
@@ -3090,8 +3093,11 @@ ic_load_config_server_from_files(gchar *config_file_path,
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
           "Error at Line number %u:\n%s\n",err_obj.line_number,
           ic_get_error_message(err_obj.err_num));
+    ret_ptr= NULL;
   }
-  return ret_val;
+  else
+    ret_ptr= &conf_server->config_ptr.clu_conf->conf;
+  return ret_ptr;
 
 file_open_error:
   if (!config_file_path)
@@ -3100,7 +3106,7 @@ file_open_error:
   else
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
           "Couldn't open file %s\n", config_file_path);
-  return 1;
+  return NULL;
 }
 
 /*

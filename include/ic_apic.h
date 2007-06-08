@@ -427,7 +427,8 @@ struct ic_cluster_config
 };
 typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 
-int ic_load_config_server_from_files(gchar *config_file_path,
+IC_CLUSTER_CONFIG*
+ic_load_config_server_from_files(gchar *config_file_path,
                                      IC_CONFIG_STRUCT *conf_server);
 
 struct ic_cs_conf_comment
