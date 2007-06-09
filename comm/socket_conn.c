@@ -592,7 +592,7 @@ read_socket_stat_time(struct ic_connection *conn,
 }
 
 static void
-write_stat_socket_connection(struct ic_connection *conn)
+write_stat_socket_connection(IC_CONNECTION *conn)
 {
   printf("Number of sent buffers = %u, Number of sent bytes = %u\n",
          (guint32)conn->conn_stat.num_sent_buffers,
@@ -608,7 +608,7 @@ write_stat_socket_connection(struct ic_connection *conn)
 }
 
 gboolean
-ic_init_socket_object(struct ic_connection *conn,
+ic_init_socket_object(IC_CONNECTION *conn,
                       gboolean is_client,
                       gboolean is_mutex_used,
                       gboolean is_connect_thread_used,

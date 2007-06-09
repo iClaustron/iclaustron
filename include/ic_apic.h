@@ -95,12 +95,6 @@ struct ic_cluster_config;
 struct ic_api_cluster_connection;
 struct ic_api_config_server;
 struct ic_run_cluster_server;
-struct ic_run_cluster_conn
-{
-  guint32 ip_addr;
-  guint16 ip_port;
-};
-typedef struct ic_run_cluster_conn IC_RUN_CLUSTER_CONN;
 
 struct ic_api_cluster_operations
 {
@@ -110,9 +104,7 @@ struct ic_api_cluster_operations
 
 struct ic_run_cluster_server_operations
 {
-  int (*run_ic_cluster_server) (struct ic_cluster_config *cs_conf,
-                                struct ic_run_cluster_conn *run_conn,
-                                guint32 num_connects);
+  int (*run_ic_cluster_server) (struct ic_run_cluster_server *run_obj);
   void (*free_ic_run_cluster) (struct ic_run_cluster_server *run_obj);
 };
 
@@ -163,7 +155,7 @@ struct ic_run_config_server
 {
   /*struct ic_run_config_server_operations run_op; */
   struct ic_cluster_config *conf_objects;
-  struct ic_run_cluster_conn run_conn;
+  IC_CONNECTION run_conn;
   guint32 *cluster_ids;
   guint32 num_clusters;
 };
@@ -492,16 +484,18 @@ struct ic_cluster_config_load
 };
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 
-IC_RUN_CONFIG_SERVER*
-ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
-                    guint32 *cluster_ids,
-                    guint32 num_clusters);
-
 IC_API_CONFIG_SERVER*
 ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                     guint32 *cluster_ids,
                     guint32 *node_ids,
                     guint32 num_clusters);
+
+IC_RUN_CONFIG_SERVER*
+ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
+                    guint32 *cluster_ids,
+                    guint32 num_clusters,
+                    guint32 ip_addr,
+                    guint16 port);
 
 void ic_print_config_parameters();
 

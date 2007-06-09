@@ -2625,17 +2625,16 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
     ensures that anyone can request this configuration through a given
     socket and port.
 */
-/*
 static void
 free_run_cluster(IC_RUN_CONFIG_SERVER *run_obj)
 {
+  if (run_obj)
+    ic_free(run_obj);
   return;
 }
 
 static int
-run_cluster_server(IC_CLUSTER_CONFIG *cs_conf,
-                   IC_RUN_CONFIG_SERVER *run_obj,
-                   guint32 num_connects)
+run_cluster_server(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj)
 {
   return 0;
 }
@@ -2643,16 +2642,58 @@ run_cluster_server(IC_CLUSTER_CONFIG *cs_conf,
 IC_RUN_CONFIG_SERVER*
 ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
                     guint32 *cluster_ids,
-                    guint32 num_clusters)
+                    guint32 num_clusters,
+                    guint32 ip_addr,
+                    guint16 port)
 {
   IC_RUN_CONFIG_SERVER *run_obj;
-  if (!(run_obj= (IC_API_CONFIG_SERVER*)
-      ic_calloc(sizeof(IC_API_CONFIG_SERVER))))
+  IC_CONNECTION *conn;
+  guint32 size;
+  int ret_code;
+  DEBUG_ENTRY("ic_init_run_cluster");
+
+  /*
+    Allocate memory for array of cluster ids, an array of cluster
+    configuration objects and the run configuration server object.
+    We allocate everything in one memory allocation.
+  */
+  size= sizeof(IC_RUN_CONFIG_SERVER);
+  size+= num_clusters * sizeof(guint32*);
+  size+= num_clusters * sizeof(IC_CLUSTER_CONFIG*);
+  if (!(run_obj= (IC_RUN_CONFIG_SERVER*)
+      ic_calloc(size)))
     return NULL;
+  run_obj->cluster_ids= (guint32*)(((gchar*)run_obj)+
+                        sizeof(IC_RUN_CONFIG_SERVER));
+  run_obj->conf_objects= (IC_CLUSTER_CONFIG*)(((gchar*)run_obj->cluster_ids)+
+                          (num_clusters * sizeof(guint32*)));
+  conn= &run_obj->run_conn;
+  if (ic_init_socket_object(conn,
+               FALSE, /* Not client */
+               FALSE, /* Don't use mutex */
+               FALSE, /* Don't use connect thread */
+               FALSE, /* Don't use front buffer */
+               NULL,  /* Don't use authentication function */
+               NULL)) /* No authentication object */
+    goto error;
+
+  memcpy((gchar*)run_obj->cluster_ids, (gchar*)cluster_ids,
+         num_clusters * sizeof(guint32*));
+  memcpy((gchar*)run_obj->conf_objects, (gchar*)conf_objs,
+         num_clusters * sizeof(IC_CLUSTER_CONFIG*));
+  run_obj->run_conn.server_ip= ip_addr;
+  run_obj->run_conn.server_port= port;
+  run_obj->run_conn.client_ip= INADDR_ANY;
+  run_obj->run_conn.client_port= 0;
+  run_obj->run_conn.is_wan_connection= FALSE;
+  ret_code= conn->conn_op.set_up_ic_connection(conn);
   return run_obj;
+
+error:
+  ic_free(run_obj);
+  return NULL;
 }
 
-*/
 /*
   MODULE: LOAD CONFIG DATA
   ------------------------
