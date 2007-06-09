@@ -4,6 +4,7 @@
 #define __HASHTABLE_CWC22_H__
 
 struct ic_hashtable;
+typedef struct ic_hashtable IC_HASHTABLE;
 
 /* Example of use:
  *

@@ -413,6 +413,12 @@ struct ic_cluster_config
   */
   gchar **comm_config;
 
+  /*
+    We keep track of the number of nodes of various types, maximum node id
+    and the number of communication objects. We don't necessarily store all
+    communication objects so the absence of a communication object simply
+    means that the default values can be used.
+  */
   guint32 max_node_id;
   guint32 num_nodes;
   guint32 num_data_servers;
@@ -421,15 +427,33 @@ struct ic_cluster_config
   guint32 num_sql_servers;
   guint32 num_rep_servers;
   guint32 num_comms;
+  /*
+    node_ids is an array of the node ids used temporarily when building the
+    data structures, this is not to be used after that, should be a NULL
+    pointer. The reason is that in the beginning this structure is in order
+    they arrive in the protocol rather than by node id. After that we arrange
+    the arrays to be by node id and thus there can be holes in the array if
+    there are node ids that are not represented in the cluster.
+
+    Currently we support only TCP/IP communication and probably won't extend
+    this given that most of the interesting alternatives can use sockets to
+    communicate.
+
+    We store an array of node types to be able to map the node config array
+    pointers into the proper structure and we also store a hash table on
+    communication objects where we can quickly find the communication object
+    given the node ids of the communication link.
+  */
   guint32 *node_ids;
   IC_NODE_TYPES *node_types;
-  enum ic_communication_type *comm_types;
+  IC_COMMUNICATION_TYPE *comm_types;
+  IC_HASHTABLE *comm_hash;
 };
 typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 
 IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file_path,
-                                     IC_CONFIG_STRUCT *conf_server);
+                                 IC_CONFIG_STRUCT *conf_server);
 
 struct ic_cs_conf_comment
 {

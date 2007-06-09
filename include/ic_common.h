@@ -3,4 +3,5 @@
 #include <ic_common_header.h>
 #include <ic_comm.h>
 #include <ic_config.h>
+#include <hashtable.h>
 #endif

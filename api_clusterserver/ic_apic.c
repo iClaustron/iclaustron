@@ -299,7 +299,7 @@ const gchar *node_id_str= "node_id";
 #define MAX_CONFIG_ID 256
 
 static guint32 glob_conf_max_id;
-struct ic_hashtable *glob_conf_hash;
+IC_HASHTABLE *glob_conf_hash;
 static gboolean glob_conf_entry_inited= FALSE;
 static guint16 map_config_id[MAX_MAP_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
@@ -450,6 +450,63 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 
 #define IC_PORT_NUMBER 997
 #define DEF_PORT 2287
+
+static IC_SOCKET_LINK_CONFIG*
+get_communication_object(IC_CLUSTER_CONFIG *clu_conf,
+                         guint16 first_node_id, guint16 second_node_id)
+{
+  IC_SOCKET_LINK_CONFIG test1;
+  test1.first_node_id= first_node_id;
+  test1.second_node_id= second_node_id;
+  return (IC_SOCKET_LINK_CONFIG*)ic_hashtable_search(clu_conf->comm_hash,
+                                                     (void*)&test1);
+}
+
+static unsigned int
+ic_hash_comms(void *ptr)
+{
+  IC_SOCKET_LINK_CONFIG *sock= (IC_SOCKET_LINK_CONFIG*)ptr;
+  return sock->first_node_id ^ sock->second_node_id;
+}
+
+static int
+ic_keys_equal_comms(void *ptr1, void *ptr2)
+{
+  IC_SOCKET_LINK_CONFIG *sock1= (IC_SOCKET_LINK_CONFIG*)ptr1;
+  IC_SOCKET_LINK_CONFIG *sock2= (IC_SOCKET_LINK_CONFIG*)ptr2;
+  if ((sock1->first_node_id == sock2->first_node_id &&
+       sock1->second_node_id == sock2->second_node_id) ||
+       (sock1->first_node_id == sock2->second_node_id &&
+        sock2->second_node_id == sock2->first_node_id))
+    return 1;
+  return 0;
+}
+
+static int
+build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf)
+{
+  IC_HASHTABLE *comm_hash;
+  IC_SOCKET_LINK_CONFIG *comm_obj;
+  guint32 i;
+  DEBUG_ENTRY("build_hash_on_comms");
+
+  if ((comm_hash= ic_create_hashtable(256, ic_hash_comms,
+                                      ic_keys_equal_comms)))
+  {
+    for (i= 0; i < clu_conf->num_comms; i++)
+    {
+      comm_obj= (IC_SOCKET_LINK_CONFIG*)clu_conf->comm_config[i];
+      if (ic_hashtable_insert(comm_hash, (void*)comm_obj, (void*)comm_obj))
+        goto error;
+    }
+    clu_conf->comm_hash= comm_hash;
+    return 0;
+  }
+error:
+  if (comm_hash)
+    ic_hashtable_destroy(comm_hash);
+  return 1;
+}
 
 void
 ic_print_config_parameters(guint32 mask)
@@ -2410,10 +2467,9 @@ get_cs_config(IC_API_CONFIG_SERVER *apic)
   guint32 i;
   int error= END_OF_FILE;
   IC_CONNECTION conn_obj, *conn;
+  DEBUG_ENTRY("get_cs_config");
 
-  DEBUG(printf("Get config start\n"));
   conn= &conn_obj;
-
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
     conn= apic->cluster_conn.cluster_srv_conns + i;
@@ -2431,6 +2487,15 @@ get_cs_config(IC_API_CONFIG_SERVER *apic)
         (error= send_get_config(conn)) ||
         (error= rec_get_config(conn, apic, i)))
       continue;
+  }
+  for (i= 0; i < apic->num_clusters_to_connect; i++)
+  {
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects+i;
+    if (build_hash_on_comms(clu_conf))
+    {
+      error= MEM_ALLOC_ERROR;
+      break;
+    }
   }
   conn->conn_op.close_ic_connection(conn);
   conn->conn_op.free_ic_connection(conn);
@@ -2453,12 +2518,18 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
       ic_free(apic->cluster_ids);
     if (apic->node_ids)
       ic_free(apic->node_ids);
+    if (apic->string_memory_to_return)
+      ic_free(apic->string_memory_to_return);
+    if (apic->config_memory_to_return)
+      ic_free(apic->config_memory_to_return);
     if (apic->conf_objects)
     {
       num_clusters= apic->num_clusters_to_connect;
       for (i= 0; i < num_clusters; i++)
       {
         struct ic_cluster_config *conf_obj= apic->conf_objects+i;
+        if (!conf_obj)
+          continue;
         if (conf_obj->node_config)
           ic_free(conf_obj->node_config);
         if (conf_obj->comm_config)
@@ -2469,10 +2540,8 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
           ic_free(conf_obj->node_types);
         if (conf_obj->comm_types)
           ic_free(conf_obj->comm_types);
-        if (apic->string_memory_to_return)
-          ic_free(apic->string_memory_to_return);
-        if (apic->config_memory_to_return)
-          ic_free(apic->config_memory_to_return);
+        if (conf_obj->comm_hash)
+          ic_hashtable_destroy(conf_obj->comm_hash);
       }
       ic_free(apic->conf_objects);
     }
@@ -3047,9 +3116,11 @@ void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
       ic_free(clu_conf->conf.node_ids);
     for (i= 0; i < clu_conf->comments.num_comments; i++)
       ic_free(clu_conf->comments.ptr_comments[i]);
+    if (clu_conf->conf.comm_hash)
+      ic_hashtable_destroy(clu_conf->conf.comm_hash);
     ic_free(clu_conf->string_memory_to_return);
     ic_free(clu_conf->struct_memory_to_return);
-    ic_free(ic_conf->config_ptr.clu_conf);
+    ic_free(clu_conf);
   }
   return;
 }
@@ -3096,7 +3167,14 @@ ic_load_config_server_from_files(gchar *config_file_path,
     ret_ptr= NULL;
   }
   else
+  {
     ret_ptr= &conf_server->config_ptr.clu_conf->conf;
+    if (build_hash_on_comms(ret_ptr))
+    {
+      conf_serv_end(conf_server);
+      ret_ptr= NULL;
+    }
+  }
   return ret_ptr;
 
 file_open_error:
