@@ -2634,9 +2634,33 @@ free_run_cluster(IC_RUN_CONFIG_SERVER *run_obj)
 }
 
 static int
-run_cluster_server(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj)
+handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
+                      __attribute__ ((unused)) IC_CONNECTION *conn)
 {
+  DEBUG_ENTRY("handle_config_request");
   return 0;
+}
+
+static int
+run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
+{
+  int ret_code;
+  IC_CONNECTION *conn;
+  DEBUG_ENTRY("run_cluster_server");
+
+  conn= &run_obj->run_conn;
+  ret_code= conn->conn_op.set_up_ic_connection(conn);
+  if (!ret_code)
+  {
+    printf("Failed to set-up connection");
+    goto error;
+  }
+  if ((ret_code= handle_config_request(run_obj, conn)))
+    goto error;
+  return 0;
+
+error:
+  return ret_code;
 }
 
 IC_RUN_CONFIG_SERVER*
@@ -2649,7 +2673,6 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
   IC_RUN_CONFIG_SERVER *run_obj;
   IC_CONNECTION *conn;
   guint32 size;
-  int ret_code;
   DEBUG_ENTRY("ic_init_run_cluster");
 
   /*
@@ -2681,12 +2704,12 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
          num_clusters * sizeof(guint32*));
   memcpy((gchar*)run_obj->conf_objects, (gchar*)conf_objs,
          num_clusters * sizeof(IC_CLUSTER_CONFIG*));
+
   run_obj->run_conn.server_ip= ip_addr;
   run_obj->run_conn.server_port= port;
   run_obj->run_conn.client_ip= INADDR_ANY;
   run_obj->run_conn.client_port= 0;
   run_obj->run_conn.is_wan_connection= FALSE;
-  ret_code= conn->conn_op.set_up_ic_connection(conn);
   return run_obj;
 
 error:
