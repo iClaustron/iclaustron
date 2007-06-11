@@ -256,6 +256,17 @@ const gchar *node_id_str= "node_id";
 #define MAX_PORT 65535
 #define DEF_MGM_PORT 2286
 
+#define GET_NODEID_REQ_STATE 0
+#define NODEID_REQ_STATE 1
+#define VERSION_REQ_STATE 2
+#define NODETYPE_REQ_STATE 3
+#define USER_REQ_STATE 4
+#define PASSWORD_REQ_STATE 5
+#define PUBLIC_KEY_REQ_STATE 6
+#define ENDIAN_REQ_STATE 7
+#define LOG_EVENT_REQ_STATE 8
+#define CLUSTER_ID_REQ_STATE 9
+
 #define GET_NODEID_REPLY_STATE 0
 #define NODEID_STATE 1
 #define RESULT_OK_STATE 2
@@ -270,6 +281,14 @@ const gchar *node_id_str= "node_id";
 
 #define GET_NODEID_REPLY_LEN 16
 #define NODEID_LEN 8
+#define VERSION_REQ_LEN 9
+#define NODETYPE_REQ_LEN 11
+#define USER_REQ_LEN 12
+#define PASSWORD_REQ_LEN 16
+#define PUBLIC_KEY_REQ_LEN 24
+#define ENDIAN_REQ_LEN 8
+#define LOG_EVENT_REQ_LEN 12
+#define CLUSTER_ID_REQ_LEN 11
 #define RESULT_OK_LEN 10
 
 #define GET_CONFIG_REPLY_LEN 16
@@ -322,6 +341,7 @@ static const gchar *get_nodeid_reply_str= "get nodeid reply";
 static const gchar *get_config_str= "get config";
 static const gchar *get_config_reply_str= "get config reply";
 static const gchar *nodeid_str= "nodeid: ";
+static const gchar *cluster_id_str= "clusterid: ";
 static const gchar *version_str= "version: ";
 static const gchar *nodetype_str= "nodetype: 1";
 static const gchar *user_str= "user: mysqld";
@@ -2635,9 +2655,117 @@ free_run_cluster(IC_RUN_CONFIG_SERVER *run_obj)
 
 static int
 handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
-                      __attribute__ ((unused)) IC_CONNECTION *conn)
+                      IC_CONNECTION *conn)
 {
+  gchar read_buf[256];
+  guint32 read_size= 0;
+  guint32 size_curr_buf= 0;
+  int error;
+  guint32 state= GET_NODEID_REQ_STATE;
+  guint64 node_number, version_number;
   DEBUG_ENTRY("handle_config_request");
+
+  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
+  {
+    DEBUG(ic_print_buf(read_buf, read_size));
+    switch (state)
+    {
+      case GET_NODEID_REQ_STATE:
+        if ((read_size != GET_NODEID_REPLY_LEN) ||
+            (memcmp(read_buf, get_nodeid_reply_str,
+                    GET_NODEID_REPLY_LEN) != 0))
+        {
+          printf("Protocol error in get nodeid request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= NODEID_REQ_STATE;
+        break;
+      case NODEID_REQ_STATE:
+        if ((read_size <= NODEID_LEN) ||
+            (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
+            (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
+                                           read_size - NODEID_LEN,
+                                           &node_number)) ||
+            (node_number > MAX_NODE_ID))
+        {
+          printf("Protocol error in nodeid request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= VERSION_REQ_STATE;
+        break;
+      case VERSION_REQ_STATE:
+        if ((read_size <= VERSION_REQ_LEN) ||
+            (memcmp(read_buf, version_str, VERSION_REQ_LEN) != 0) ||
+            (convert_str_to_int_fixed_size(read_buf + VERSION_REQ_LEN,
+                                           read_size - VERSION_REQ_LEN,
+                                           &version_number)))
+        {
+          printf("Protocol error in version request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= NODETYPE_REQ_STATE;
+        break;
+      case NODETYPE_REQ_STATE:
+        if ((read_size <= NODETYPE_REQ_LEN) ||
+            (memcmp(read_buf, nodetype_str, NODETYPE_REQ_LEN) != 0))
+        {
+          printf("Protocol error in nodetype request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= USER_REQ_STATE;
+        break;
+      case USER_REQ_STATE:
+        if ((read_size <= USER_REQ_LEN) ||
+            (memcmp(read_buf, user_str, USER_REQ_LEN) != 0))
+        {
+          printf("Protocol error in user request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= PASSWORD_REQ_STATE;
+        break;
+      case PASSWORD_REQ_STATE:
+        if ((read_size <= PASSWORD_REQ_LEN) ||
+            (memcmp(read_buf, password_str, PASSWORD_REQ_LEN) != 0))
+        {
+          printf("Protocol error in password request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= PUBLIC_KEY_REQ_STATE;
+        break;
+      case PUBLIC_KEY_REQ_STATE:
+        if ((read_size <= PUBLIC_KEY_REQ_LEN) ||
+            (memcmp(read_buf, public_key_str, PUBLIC_KEY_REQ_LEN) != 0))
+        {
+          printf("Protocol error in public key request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= ENDIAN_REQ_STATE;
+        break;
+      case ENDIAN_REQ_STATE:
+        if ((read_size <= ENDIAN_REQ_LEN) ||
+            (memcmp(read_buf, endian_str, ENDIAN_REQ_LEN) != 0))
+        {
+          printf("Protocol error in endian request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= LOG_EVENT_REQ_STATE;
+        break;
+      case LOG_EVENT_REQ_STATE:
+        if ((read_size <= LOG_EVENT_REQ_LEN) ||
+            (memcmp(read_buf, log_event_str, LOG_EVENT_REQ_LEN) != 0))
+        {
+          printf("Protocol error in log_event request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= CLUSTER_ID_REQ_STATE;
+        break;
+      case CLUSTER_ID_REQ_STATE:
+        break;
+      default:
+        abort();
+    }
+  }
   return 0;
 }
 
