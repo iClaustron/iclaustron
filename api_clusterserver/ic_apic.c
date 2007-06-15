@@ -145,6 +145,7 @@
      public key: a public key<CR>
      endian: little<CR>
      log_event: 0<CR>
+     cluster_id: 0<CR> This is only used in iClaustron
      <CR>
 
      Here nodeid is normally 0, meaning that the receiver can accept
@@ -279,10 +280,11 @@ const gchar *node_id_str= "node_id";
 #define CONTENT_ENCODING_STATE 8
 #define RECEIVE_CONFIG_STATE 9
 
+#define GET_NODEID_LEN 10
 #define GET_NODEID_REPLY_LEN 16
 #define NODEID_LEN 8
 #define VERSION_REQ_LEN 9
-#define NODETYPE_REQ_LEN 11
+#define NODETYPE_REQ_LEN 10
 #define USER_REQ_LEN 12
 #define PASSWORD_REQ_LEN 16
 #define PUBLIC_KEY_REQ_LEN 24
@@ -343,7 +345,7 @@ static const gchar *get_config_reply_str= "get config reply";
 static const gchar *nodeid_str= "nodeid: ";
 static const gchar *cluster_id_str= "clusterid: ";
 static const gchar *version_str= "version: ";
-static const gchar *nodetype_str= "nodetype: 1";
+static const gchar *nodetype_str= "nodetype: ";
 static const gchar *user_str= "user: mysqld";
 static const gchar *password_str= "password: mysqld";
 static const gchar *public_key_str= "public key: a public key";
@@ -2185,10 +2187,13 @@ send_get_nodeid(IC_CONNECTION *conn,
   gchar version_buf[32];
   gchar nodeid_buf[32];
   gchar endian_buf[32];
+  gchar nodetype_buf[32];
+  guint32 node_type= 1;
   guint32 node_id= apic->node_ids[current_cluster_index];
 
   g_snprintf(version_buf, 32, "%s%u", version_str, version_no);
   g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
+  g_snprintf(nodetype_buf, 32, "%s%u", nodetype_str, node_type);
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
   g_snprintf(endian_buf, 32, "%s%s", endian_str, "little");
 #else
@@ -2196,7 +2201,7 @@ send_get_nodeid(IC_CONNECTION *conn,
 #endif
   if (ic_send_with_cr(conn, get_nodeid_str) ||
       ic_send_with_cr(conn, version_buf) ||
-      ic_send_with_cr(conn, nodetype_str) ||
+      ic_send_with_cr(conn, nodetype_buf) ||
       ic_send_with_cr(conn, nodeid_buf) ||
       ic_send_with_cr(conn, user_str) ||
       ic_send_with_cr(conn, password_str) ||
@@ -2662,7 +2667,8 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
   guint32 size_curr_buf= 0;
   int error;
   guint32 state= GET_NODEID_REQ_STATE;
-  guint64 node_number, version_number;
+  guint64 node_number, version_number, node_type;
+  guint64 cluster_id= 0;
   DEBUG_ENTRY("handle_config_request");
 
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
@@ -2672,9 +2678,9 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
     switch (state)
     {
       case GET_NODEID_REQ_STATE:
-        if ((read_size != GET_NODEID_REPLY_LEN) ||
-            (memcmp(read_buf, get_nodeid_reply_str,
-                    GET_NODEID_REPLY_LEN) != 0))
+        if ((read_size != GET_NODEID_LEN) ||
+            (memcmp(read_buf, get_nodeid_str,
+                    GET_NODEID_LEN) != 0))
         {
           printf("Protocol error in get nodeid request state\n");
           return PROTOCOL_ERROR;
@@ -2708,7 +2714,10 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
         break;
       case NODETYPE_REQ_STATE:
         if ((read_size <= NODETYPE_REQ_LEN) ||
-            (memcmp(read_buf, nodetype_str, NODETYPE_REQ_LEN) != 0))
+            (memcmp(read_buf, nodetype_str, NODETYPE_REQ_LEN) != 0) ||
+            (convert_str_to_int_fixed_size(read_buf + NODETYPE_REQ_LEN,
+                                           read_size - NODETYPE_REQ_LEN,
+                                           &node_type)))
         {
           printf("Protocol error in nodetype request state\n");
           return PROTOCOL_ERROR;
@@ -2716,7 +2725,7 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
         state= USER_REQ_STATE;
         break;
       case USER_REQ_STATE:
-        if ((read_size <= USER_REQ_LEN) ||
+        if ((read_size != USER_REQ_LEN) ||
             (memcmp(read_buf, user_str, USER_REQ_LEN) != 0))
         {
           printf("Protocol error in user request state\n");
@@ -2725,7 +2734,7 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
         state= PASSWORD_REQ_STATE;
         break;
       case PASSWORD_REQ_STATE:
-        if ((read_size <= PASSWORD_REQ_LEN) ||
+        if ((read_size != PASSWORD_REQ_LEN) ||
             (memcmp(read_buf, password_str, PASSWORD_REQ_LEN) != 0))
         {
           printf("Protocol error in password request state\n");
@@ -2734,7 +2743,7 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
         state= PUBLIC_KEY_REQ_STATE;
         break;
       case PUBLIC_KEY_REQ_STATE:
-        if ((read_size <= PUBLIC_KEY_REQ_LEN) ||
+        if ((read_size != PUBLIC_KEY_REQ_LEN) ||
             (memcmp(read_buf, public_key_str, PUBLIC_KEY_REQ_LEN) != 0))
         {
           printf("Protocol error in public key request state\n");
@@ -2743,7 +2752,7 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
         state= ENDIAN_REQ_STATE;
         break;
       case ENDIAN_REQ_STATE:
-        if ((read_size <= ENDIAN_REQ_LEN) ||
+        if ((read_size != ENDIAN_REQ_LEN) ||
             (memcmp(read_buf, endian_str, ENDIAN_REQ_LEN) != 0))
         {
           printf("Protocol error in endian request state\n");
@@ -2752,20 +2761,33 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
         state= LOG_EVENT_REQ_STATE;
         break;
       case LOG_EVENT_REQ_STATE:
-        if ((read_size <= LOG_EVENT_REQ_LEN) ||
+        if ((read_size != LOG_EVENT_REQ_LEN) ||
             (memcmp(read_buf, log_event_str, LOG_EVENT_REQ_LEN) != 0))
         {
           printf("Protocol error in log_event request state\n");
           return PROTOCOL_ERROR;
         }
+        if (version_number < 1000000)
+          goto finish;
         state= CLUSTER_ID_REQ_STATE;
         break;
       case CLUSTER_ID_REQ_STATE:
+        if ((read_size <= CLUSTER_ID_REQ_LEN) ||
+            (memcmp(read_buf, cluster_id_str, CLUSTER_ID_REQ_LEN) != 0) ||
+            (convert_str_to_int_fixed_size(read_buf + CLUSTER_ID_REQ_LEN,
+                                           read_size - CLUSTER_ID_REQ_LEN,
+                                           &cluster_id)))
+        {
+          printf("Protocol error in cluster id request state\n");
+          return PROTOCOL_ERROR;
+        }
+        goto finish;
         break;
       default:
         abort();
     }
   }
+finish:
   return 0;
 }
 
