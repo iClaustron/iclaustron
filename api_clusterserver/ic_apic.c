@@ -2659,17 +2659,18 @@ free_run_cluster(IC_RUN_CONFIG_SERVER *run_obj)
 }
 
 static int
-handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
-                      IC_CONNECTION *conn)
+rec_get_nodeid_req(IC_CONNECTION *conn,
+                   guint64 *node_number,
+                   guint64 *version_number,
+                   guint64 *node_type,
+                   guint64 *cluster_id)
 {
-  gchar read_buf[256];
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
-  int error;
   guint32 state= GET_NODEID_REQ_STATE;
-  guint64 node_number, version_number, node_type;
-  guint64 cluster_id= 0;
-  DEBUG_ENTRY("handle_config_request");
+  int error;
+  gchar read_buf[256];
+  DEBUG_ENTRY("rec_get_nodeid_req");
 
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
@@ -2692,8 +2693,8 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
             (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
             (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
                                            read_size - NODEID_LEN,
-                                           &node_number)) ||
-            (node_number > MAX_NODE_ID))
+                                           node_number)) ||
+            (*node_number > MAX_NODE_ID))
         {
           printf("Protocol error in nodeid request state\n");
           return PROTOCOL_ERROR;
@@ -2705,7 +2706,7 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
             (memcmp(read_buf, version_str, VERSION_REQ_LEN) != 0) ||
             (convert_str_to_int_fixed_size(read_buf + VERSION_REQ_LEN,
                                            read_size - VERSION_REQ_LEN,
-                                           &version_number)))
+                                           version_number)))
         {
           printf("Protocol error in version request state\n");
           return PROTOCOL_ERROR;
@@ -2717,7 +2718,7 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
             (memcmp(read_buf, nodetype_str, NODETYPE_REQ_LEN) != 0) ||
             (convert_str_to_int_fixed_size(read_buf + NODETYPE_REQ_LEN,
                                            read_size - NODETYPE_REQ_LEN,
-                                           &node_type)))
+                                           node_type)))
         {
           printf("Protocol error in nodetype request state\n");
           return PROTOCOL_ERROR;
@@ -2767,8 +2768,8 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
           printf("Protocol error in log_event request state\n");
           return PROTOCOL_ERROR;
         }
-        if (version_number < 1000000)
-          goto finish;
+        if (*version_number < 1000000)
+          return 0;
         state= CLUSTER_ID_REQ_STATE;
         break;
       case CLUSTER_ID_REQ_STATE:
@@ -2776,18 +2777,82 @@ handle_config_request(__attribute__ ((unused)) IC_RUN_CONFIG_SERVER *run_obj,
             (memcmp(read_buf, cluster_id_str, CLUSTER_ID_REQ_LEN) != 0) ||
             (convert_str_to_int_fixed_size(read_buf + CLUSTER_ID_REQ_LEN,
                                            read_size - CLUSTER_ID_REQ_LEN,
-                                           &cluster_id)))
+                                           cluster_id)))
         {
           printf("Protocol error in cluster id request state\n");
           return PROTOCOL_ERROR;
         }
-        goto finish;
+        return 0;
         break;
       default:
         abort();
+        break;
     }
   }
-finish:
+  printf("Error in receiving get node id request, error = %d", error);
+  return error;
+}
+
+static int
+send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
+{
+  gchar nodeid_buf[32];
+  DEBUG_ENTRY("send_get_nodeid_reply");
+
+  g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
+  if (ic_send_with_cr(conn, get_nodeid_reply_str) ||
+      ic_send_with_cr(conn, nodeid_buf) ||
+      ic_send_with_cr(conn, result_ok_str) ||
+      ic_send_with_cr(conn, empty_string))
+    return conn->error_code;
+  return 0;
+}
+
+static int
+rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
+{
+  return 0;
+}
+
+static int
+send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
+                  size_t config_len)
+{
+  return 0;
+}
+
+static int
+handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
+                      IC_CONNECTION *conn)
+{
+  int ret_code;
+  guint32 node_id;
+  guint64 node_number, version_number, node_type;
+  guint64 cluster_id= 0;
+  gchar *config_base64_str;
+  size_t config_len;
+  DEBUG_ENTRY("handle_config_request");
+
+  if ((ret_code= rec_get_nodeid_req(conn,
+                       &node_number, &version_number,
+                       &node_type, &cluster_id)))
+    return ret_code;
+  if (node_number == 0)
+  {
+    /* Here we need to discover which node id to use */
+    node_id= 1; /* Fake for now */
+  }
+  else
+  {
+    /* Here we ensure that the requested node id is correct */
+    node_id= 1;
+  }
+  if ((ret_code= send_get_nodeid_reply(conn, node_id)))
+    return ret_code;
+  if ((ret_code= rec_get_config_req(conn, version_number)))
+    return ret_code;
+  if ((ret_code= send_config_reply(conn, config_base64_str, config_len)))
+    return ret_code;
   return 0;
 }
 
