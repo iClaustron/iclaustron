@@ -268,6 +268,9 @@ const gchar *node_id_str= "node_id";
 #define LOG_EVENT_REQ_STATE 8
 #define CLUSTER_ID_REQ_STATE 9
 
+#define GET_CONFIG_REQ_STATE 0
+#define EMPTY_STATE 1
+
 #define GET_NODEID_REPLY_STATE 0
 #define NODEID_STATE 1
 #define RESULT_OK_STATE 2
@@ -2811,13 +2814,49 @@ send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
 static int
 rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
 {
+  guint32 read_size= 0;
+  guint32 size_curr_buf= 0;
+  guint32 state= GET_CONFIG_REQ_STATE;
+  int error;
+  gchar read_buf[256];
+  DEBUG_ENTRY("rec_get_nodeid_req");
+
+  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
+  {
+    switch(state)
+    {
+      case GET_CONFIG_REQ_STATE:
+        break;
+      case VERSION_REQ_STATE:
+        break;
+      case EMPTY_STATE:
+        break;
+      default:
+        abort();
+        break;
+    }
+  }
   return 0;
 }
 
 static int
 send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
-                  size_t config_len)
+                  guint32 config_len)
 {
+  gchar content_buf[64];
+  DEBUG_ENTRY("send_config_reply");
+ 
+  g_snprintf(content_buf, 64, "%s%u", get_config_reply_str, config_len);
+  if (ic_send_with_cr(conn, get_config_reply_str) ||
+      ic_send_with_cr(conn, result_ok_str) ||
+      ic_send_with_cr(conn, content_buf) ||
+      ic_send_with_cr(conn, octet_stream_str) ||
+      ic_send_with_cr(conn, content_encoding_str) ||
+      ic_send_with_cr(conn, empty_string) ||
+      conn->conn_op.write_ic_connection(conn, (const void*)config_base64_str,
+                                        config_len, 0,1))
+    return conn->error_code;
   return 0;
 }
 
@@ -2830,7 +2869,7 @@ handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
   guint64 node_number, version_number, node_type;
   guint64 cluster_id= 0;
   gchar *config_base64_str;
-  size_t config_len;
+  guint32 config_len;
   DEBUG_ENTRY("handle_config_request");
 
   if ((ret_code= rec_get_nodeid_req(conn,
