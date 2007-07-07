@@ -2654,10 +2654,13 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
     socket and port.
 */
 static void
-free_run_cluster(IC_RUN_CONFIG_SERVER *run_obj)
+free_run_cluster(struct ic_run_config_server *run_obj)
 {
   if (run_obj)
+  {
+    run_obj->run_conn.conn_op.free_ic_connection(&run_obj->run_conn); 
     ic_free(run_obj);
+  }
   return;
 }
 
@@ -2873,8 +2876,8 @@ handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
   DEBUG_ENTRY("handle_config_request");
 
   if ((ret_code= rec_get_nodeid_req(conn,
-                       &node_number, &version_number,
-                       &node_type, &cluster_id)))
+                                    &node_number, &version_number,
+                                    &node_type, &cluster_id)))
     return ret_code;
   if (node_number == 0)
   {
@@ -2896,7 +2899,7 @@ handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
 }
 
 static int
-run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
+run_cluster_server(struct ic_run_config_server *run_obj)
 {
   int ret_code;
   IC_CONNECTION *conn;
@@ -2946,12 +2949,12 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
                           (num_clusters * sizeof(guint32*)));
   conn= &run_obj->run_conn;
   if (ic_init_socket_object(conn,
-               FALSE, /* Not client */
-               FALSE, /* Don't use mutex */
-               FALSE, /* Don't use connect thread */
-               FALSE, /* Don't use front buffer */
-               NULL,  /* Don't use authentication function */
-               NULL)) /* No authentication object */
+                            FALSE, /* Not client */
+                            FALSE, /* Don't use mutex */
+                            FALSE, /* Don't use connect thread */
+                            FALSE, /* Don't use front buffer */
+                            NULL,  /* Don't use authentication function */
+                            NULL)) /* No authentication object */
     goto error;
 
   memcpy((gchar*)run_obj->cluster_ids, (gchar*)cluster_ids,
@@ -2964,6 +2967,8 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
   run_obj->run_conn.client_ip= INADDR_ANY;
   run_obj->run_conn.client_port= 0;
   run_obj->run_conn.is_wan_connection= FALSE;
+  run_obj->run_op.run_ic_cluster_server= run_cluster_server;
+  run_obj->run_op.free_ic_run_cluster= free_run_cluster;
   return run_obj;
 
 error:

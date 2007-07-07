@@ -94,7 +94,7 @@ typedef struct ic_config_entry IC_CONFIG_ENTRY;
 struct ic_cluster_config;
 struct ic_api_cluster_connection;
 struct ic_api_config_server;
-struct ic_run_cluster_server;
+struct ic_run_config_server;
 
 struct ic_api_cluster_operations
 {
@@ -102,10 +102,10 @@ struct ic_api_cluster_operations
   void (*free_ic_config) (struct ic_api_config_server *apic);
 };
 
-struct ic_run_cluster_server_operations
+struct ic_run_config_server_operations
 {
-  int (*run_ic_cluster_server) (struct ic_run_cluster_server *run_obj);
-  void (*free_ic_run_cluster) (struct ic_run_cluster_server *run_obj);
+  int (*run_ic_cluster_server) (struct ic_run_config_server *run_obj);
+  void (*free_ic_run_cluster) (struct ic_run_config_server *run_obj);
 };
 
 #define REC_BUF_SIZE 256
@@ -153,7 +153,7 @@ typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 */
 struct ic_run_config_server
 {
-  /*struct ic_run_config_server_operations run_op; */
+  struct ic_run_config_server_operations run_op;
   struct ic_cluster_config *conf_objects;
   IC_CONNECTION run_conn;
   guint32 *cluster_ids;

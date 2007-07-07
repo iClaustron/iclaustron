@@ -38,7 +38,8 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-void connection_test()
+static int
+connection_test()
 {
   IC_CONNECTION conn;
   char buf[8192];
@@ -60,7 +61,7 @@ void connection_test()
   if (ret_code != 0)
   {
     printf("Error in connection set-up: ret_code = %d\n", ret_code);
-    return;
+    return 1;
   }
   if (glob_is_client)
   {
@@ -96,6 +97,7 @@ void connection_test()
   conn.conn_op.write_stat_ic_connection(&conn);
   conn.conn_op.close_ic_connection(&conn);
   printf("Connection Test Success\n");
+  return 0;
 }
 
 static int
@@ -136,7 +138,11 @@ api_clusterserver_test()
 
 /*
   This test case is used for initial development of Cluster Server.
-  It will start by receiving the Cluster Configuration from an
+  It will start by receiving the Cluster Configuration from a file
+  and set-up configuration based on it.
+
+  Next step is to wait for configuration requests from a client and
+  send response.
   existing Cluster Server and set-up the data structures based
   on the input.
   The next step is to wait for Cluster node to try to read the
@@ -146,25 +152,37 @@ api_clusterserver_test()
 static int
 run_clusterserver_test()
 {
-  IC_API_CONFIG_SERVER *srv_obj; 
-  IC_API_CLUSTER_CONNECTION cluster_conn;
+  IC_RUN_CONFIG_SERVER *run_obj;
+  IC_CONFIG_STRUCT clu_conf_struct;
+  IC_CLUSTER_CONFIG *clu_conf;
   guint32 cluster_id= 0;
-  guint32 node_id= 0;
+  int ret_code= 0;
+  gchar *conf_file= "config.ini";
 
   printf("Starting Run Cluster server test\n");
-  cluster_conn.cluster_server_ips= &glob_server_ip;
-  cluster_conn.cluster_server_ports= &glob_server_port;
-  cluster_conn.num_cluster_servers= 1;
-  srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id,
-                               &node_id, (guint32)1);
+  if (!(clu_conf= ic_load_config_server_from_files(conf_file,
+                                                   &clu_conf_struct)))
+  {
+    printf("Failed to load config file %s from disk", conf_file);
+    return 1;
+  }
+  run_obj= ic_init_run_cluster(clu_conf, &cluster_id, (guint32)1,
+                               glob_server_ip, glob_server_port);
 
-  srv_obj->num_clusters_to_connect= 1;
-  srv_obj->api_op.get_ic_config(srv_obj);
-  return 0;
+  if ((ret_code= run_obj->run_op.run_ic_cluster_server(run_obj)))
+  {
+    printf("run_cluster_server returned error code %u\n", ret_code);
+    goto end;
+  }
+end:
+  clu_conf_struct.clu_conf_ops->ic_config_end(&clu_conf_struct);
+  run_obj->run_op.free_ic_run_cluster(run_obj);
+  return ret_code;
 }
 
 int main(int argc, char *argv[])
 {
+  int ret_code= 1;
   GError *error= NULL;
   GOptionContext *context;
 
@@ -175,10 +193,12 @@ int main(int argc, char *argv[])
   if (!g_option_context_parse(context, &argc, &argv, &error))
     goto parse_error;
   g_option_context_free(context);
+  if (ic_init())
+    return ret_code;
   switch (glob_test_type)
   {
     case 0:
-      connection_test();
+      ret_code= connection_test();
       break;
     case 1:
     case 2:
@@ -186,19 +206,19 @@ int main(int argc, char *argv[])
     case 4:
     case 5:
     case 6:
-      api_clusterserver_test();
+      ret_code= api_clusterserver_test();
       break;
     case 7:
-      run_clusterserver_test();
+      ret_code= run_clusterserver_test();
       break;
     default:
       break;
    }
    ic_end();
-   return 0;
+   return ret_code;
 parse_error:
   printf("No such program option\n");
 error:
-  return 1;
+  return ret_code;
 }
 
