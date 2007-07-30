@@ -2907,9 +2907,9 @@ run_cluster_server(struct ic_run_config_server *run_obj)
 
   conn= &run_obj->run_conn;
   ret_code= conn->conn_op.set_up_ic_connection(conn);
-  if (!ret_code)
+  if (ret_code)
   {
-    printf("Failed to set-up connection");
+    printf("Failed to set-up connection\n");
     goto error;
   }
   if ((ret_code= handle_config_request(run_obj, conn)))
