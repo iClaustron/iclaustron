@@ -292,6 +292,8 @@ const gchar *node_id_str= "node_id";
 #define PASSWORD_REQ_LEN 16
 #define PUBLIC_KEY_REQ_LEN 24
 #define ENDIAN_REQ_LEN 8
+#define LITTLE_ENDIAN_LEN 6
+#define BIG_ENDIAN_LEN 3
 #define LOG_EVENT_REQ_LEN 12
 #define CLUSTER_ID_REQ_LEN 11
 #define RESULT_OK_LEN 10
@@ -353,6 +355,8 @@ static const gchar *user_str= "user: mysqld";
 static const gchar *password_str= "password: mysqld";
 static const gchar *public_key_str= "public key: a public key";
 static const gchar *endian_str= "endian: ";
+static const gchar *little_endian_str= "little";
+static const gchar *big_endian_str= "big";
 static const gchar *log_event_str= "log_event: 0";
 static const gchar *result_ok_str= "result: Ok";
 static const gchar *content_len_str= "Content-Length: ";
@@ -2198,9 +2202,9 @@ send_get_nodeid(IC_CONNECTION *conn,
   g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
   g_snprintf(nodetype_buf, 32, "%s%u", nodetype_str, node_type);
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
-  g_snprintf(endian_buf, 32, "%s%s", endian_str, "little");
+  g_snprintf(endian_buf, 32, "%s%s", endian_str, little_endian_str);
 #else
-  g_snprintf(endian_buf, 32, "%s%s", endian_str, "big");
+  g_snprintf(endian_buf, 32, "%s%s", endian_str, big_endian_str);
 #endif
   if (ic_send_with_cr(conn, get_nodeid_str) ||
       ic_send_with_cr(conn, version_buf) ||
@@ -2692,19 +2696,6 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
           printf("Protocol error in get nodeid request state\n");
           return PROTOCOL_ERROR;
         }
-        state= NODEID_REQ_STATE;
-        break;
-      case NODEID_REQ_STATE:
-        if ((read_size <= NODEID_LEN) ||
-            (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
-            (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
-                                           read_size - NODEID_LEN,
-                                           node_number)) ||
-            (*node_number > MAX_NODE_ID))
-        {
-          printf("Protocol error in nodeid request state\n");
-          return PROTOCOL_ERROR;
-        }
         state= VERSION_REQ_STATE;
         break;
       case VERSION_REQ_STATE:
@@ -2727,6 +2718,19 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
                                            node_type)))
         {
           printf("Protocol error in nodetype request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= NODEID_REQ_STATE;
+        break;
+      case NODEID_REQ_STATE:
+        if ((read_size <= NODEID_LEN) ||
+            (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
+            (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
+                                           read_size - NODEID_LEN,
+                                           node_number)) ||
+            (*node_number > MAX_NODE_ID))
+        {
+          printf("Protocol error in nodeid request state\n");
           return PROTOCOL_ERROR;
         }
         state= USER_REQ_STATE;
@@ -2759,10 +2763,20 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= ENDIAN_REQ_STATE;
         break;
       case ENDIAN_REQ_STATE:
-        if ((read_size != ENDIAN_REQ_LEN) ||
+        if ((read_size < ENDIAN_REQ_LEN) ||
             (memcmp(read_buf, endian_str, ENDIAN_REQ_LEN) != 0))
         {
           printf("Protocol error in endian request state\n");
+          return PROTOCOL_ERROR;
+        }
+        if (!((read_size == ENDIAN_REQ_LEN + LITTLE_ENDIAN_LEN &&
+              memcmp(read_buf+ENDIAN_REQ_LEN, little_endian_str,
+                     LITTLE_ENDIAN_LEN) == 0) ||
+             (read_size == ENDIAN_REQ_LEN + BIG_ENDIAN_LEN &&
+              memcmp(read_buf+ENDIAN_REQ_LEN, big_endian_str,
+                     BIG_ENDIAN_LEN) == 0)))
+        {
+          printf("Failure in representation of what endian type\n");
           return PROTOCOL_ERROR;
         }
         state= LOG_EVENT_REQ_STATE;
@@ -2822,7 +2836,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
   guint32 state= GET_CONFIG_REQ_STATE;
   int error;
   gchar read_buf[256];
-  DEBUG_ENTRY("rec_get_nodeid_req");
+  DEBUG_ENTRY("rec_get_config_req");
 
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
