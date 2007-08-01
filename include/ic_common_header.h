@@ -39,6 +39,7 @@ int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
 
 gchar *ic_guint64_str(guint64 val, gchar *ptr);
 gchar *ic_guint64_hex_str(guint64 val, gchar *ptr);
+int ic_conv_str_to_int(gchar *str, guint64 *number);
 /*
   Error handling interface
 */

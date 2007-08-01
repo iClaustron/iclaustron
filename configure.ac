@@ -47,7 +47,7 @@ AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 #
 
 AC_CHECK_FUNCS(bzero memset, break)
-AC_CHECK_FUNCS(socket bind connect listen accept)
+AC_CHECK_FUNCS(socket bind connect listen accept getaddrinfo freeaddrinfo inet_ntop)
 GLIB_PACKAGE="glib-2.0"
 GTHREAD_PACKAGE="gthread-2.0"
 GLIB_VERSION="2.10.2"
@@ -71,7 +71,7 @@ AC_CHECK_LIB(glib-2.0, g_list_append,,
 # Next step is to check the existence of external header files.
 #
 AC_HEADER_STDC
-AC_CHECK_HEADERS([unistd.h netinet/in.h sys/types.h sys/socket.h],,
+AC_CHECK_HEADERS([unistd.h netinet/in.h sys/types.h sys/socket.h netdb.h arpa/inet.h],,
   [AC_MSG_ERROR([Common headers missing, e.g. socket.h])])
 AC_CHECK_HEADER(glib.h,,
   [AC_MSG_ERROR([GLib headers missing])])

@@ -2,6 +2,10 @@
 #define IC_COMM_H
 
 #include <netinet/in.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include <ic_common_header.h>
 
 #define MEM_ALLOC_ERROR 32767
@@ -77,10 +81,10 @@ struct ic_connect_operations
     would create a deadlock.
   */
   void (*read_stat_ic_connection) (struct ic_connection *conn,
-                                   struct ic_connect_stat *stat,
+                                   struct ic_connection *stat,
                                    gboolean clear_stat_timer);
   void (*safe_read_stat_ic_connection) (struct ic_connection *conn,
-                                        struct ic_connect_stat *stat,
+                                        struct ic_connection *stat,
                                         gboolean clear_stat_timer);
   /*
     Print statistics of the connection
@@ -143,10 +147,10 @@ struct ic_connect_stat
     if it is connected, if it is the server or client endpoint and if we have
     a connect thread active
   */
-  guint32 used_server_ip;
-  guint32 used_client_ip;
-  guint16 used_server_port;
-  guint16 used_client_port;
+  gchar server_ip_addr_str[128];
+  gchar client_ip_addr_str[128];
+  gchar *server_ip_addr;
+  gchar *client_ip_addr;
   gboolean is_client_used;
   gboolean is_connected;
   gboolean is_connect_thread_active;
@@ -218,40 +222,50 @@ struct ic_connection
     Server Connection:
     ------------------
     This is signalled by setting is_client to FALSE
-    For a server connection the server ip address should be set
-    to a proper ip address to bind the interface we are listening
-    to. If any interface can be used then server_ip should be
-    set to INADDR_ANY.
-    server_port must be set for server connections. This is the
+    For a server connection the server name should be set to a proper ip
+    address or to a hostname to bind the interface we are listening
+    to. The server name can be a IPv4 or an IPv6 address or hostname.
+    The server name and server port will be used by getaddrinfo to set the
+    struct's used by the socket functions.
+
+    For server connections the server name isn't allowed to be NULL. We desire
+    more control over which interface is actually used.
+    server_port must be set != "0" for server connections. This is the
     port we are listening to.
     If we allow any client to connect to the server we should set
-    client_ip to INADDR_ANY and client_port to 0. If client_ip
-    is not set to INADDR_ANY then we will only accept connections
-    from this IP address and if port != 0 then we will only accept
-    connections where the client is using this port.
+    client_name to NULL and client_port to "0". If client_name is not NULL
+    we will only accept connections from this IP address and if port != "0"
+    we will only accept connections where the client is using this port.
 
     Client Connection:
     ------------------
     This is signalled by setting is_client to TRUE
-    For a client connection the server_ip and server_port must
+    For a client connection the server_name and server_port must
     be set to proper values. Otherwise the client won't find
     the server side part of the connection.
-    client_ip can be set to INADDR_ANY and in this case the
-    operating system will select the interface to use for the
-    connection. If an IP address is provided this will be used
-    to select a proper interface for the connection.
+    client_name can be set to NULL and in this case the operating system will
+    select the interface to use for the connection. If an IP address/hostname
+    is provided this will be used to select a proper interface for the
+    connection.
 
-    client_port can be set to 0 and in this case the ephemeral
+    client_port can be set to "0" and in this case the ephemeral
     port will be used, meaning that the operating system will
     select a port from 1500 and upwards. If a port is provided
     then this is the port which will be used in the connect
     message to the server part of the connection.
   */
-  guint32 server_ip;
-  guint32 client_ip;
-  guint16 server_port;
-  guint16 client_port;
+  gchar *server_name;
+  gchar *client_name;
+  gchar *server_port;
+  gchar *client_port;
+  struct addrinfo *server_addrinfo;
+  struct addrinfo *client_addrinfo;
+  struct addrinfo *ret_server_addrinfo;
+  struct addrinfo *ret_client_addrinfo;
+  guint16 server_port_num;
+  guint16 client_port_num;
   gboolean is_client;
+
   /*
     In some cases it is desirable to do some authentication
     processing before accepting a connection already set-up.

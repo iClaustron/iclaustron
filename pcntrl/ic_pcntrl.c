@@ -40,14 +40,14 @@
 #include <ic_common.h>
 
 static gchar *glob_ip= NULL;
-static gint   glob_port= 10002;
+static gchar *glob_port= "10002";
 static gchar *glob_config_file= "/etc/ic_cntrl.conf";
 
 static GOptionEntry entries[] = 
 {
   { "ip", 0, 0, G_OPTION_ARG_STRING, &glob_ip,
     "Set IP address, default is IP address of computer", NULL},
-  { "port", 0, 0, G_OPTION_ARG_INT, &glob_port, "Set Port, default = 10002", NULL},
+  { "port", 0, 0, G_OPTION_ARG_STRING, &glob_port, "Set Port, default = 10002", NULL},
   { "config-file", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_file,
     "Sets path to configuration file, default /etc/ic_cntrl.conf", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
@@ -102,14 +102,14 @@ int main(int argc, char *argv[])
   /* Start listening for connections */
   if (glob_ip)
   {
-    /*conn.server_ip= glob_ip;*/
+    conn.server_name= glob_ip;
   }
   else
-    conn.server_ip= INADDR_ANY;
+    conn.server_name= "localhost";
   conn.server_port= glob_port;
   conn.is_client= FALSE;
-  conn.client_ip= 0;
-  conn.client_port= 0;
+  conn.client_name= NULL;
+  conn.client_port= NULL;
   conn.backlog= 5;
   
   ic_init_socket_object(&conn, FALSE, FALSE, FALSE, FALSE, NULL, NULL);

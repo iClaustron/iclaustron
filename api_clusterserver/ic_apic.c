@@ -2163,15 +2163,15 @@ translate_config(IC_API_CONFIG_SERVER *apic,
 
 static int
 set_up_cluster_server_connection(IC_CONNECTION *conn,
-                                 guint32 server_ip,
-                                 guint16 server_port)
+                                 gchar *server_name,
+                                 gchar *server_port)
 {
   int error;
 
   if (ic_init_socket_object(conn, TRUE, FALSE, FALSE, FALSE,
                             NULL, NULL))
     return MEM_ALLOC_ERROR;
-  conn->server_ip= server_ip;
+  conn->server_name= server_name;
   conn->server_port= server_port;
   if ((error= conn->conn_op.set_up_ic_connection(conn)))
   {
@@ -2607,11 +2607,11 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
       !(apic->node_ids= (guint32*)
                ic_calloc(sizeof(guint32) * num_clusters)) ||
       !(apic->cluster_conn.cluster_server_ips= 
-         (guint32*)ic_calloc(num_cluster_servers *
-                             sizeof(guint32))) ||
+         (gchar**)ic_calloc(num_cluster_servers *
+                             sizeof(gchar*))) ||
       !(apic->cluster_conn.cluster_server_ports=
-         (guint16*)ic_calloc(num_cluster_servers *
-                       sizeof(guint16))) ||
+         (gchar**)ic_calloc(num_cluster_servers *
+                            sizeof(gchar*))) ||
       !(apic->conf_objects= (IC_CLUSTER_CONFIG*)
                    ic_calloc(num_cluster_servers *
                              sizeof(IC_CLUSTER_CONFIG))) ||
@@ -2912,6 +2912,7 @@ run_cluster_server(struct ic_run_config_server *run_obj)
     printf("Failed to set-up connection\n");
     goto error;
   }
+  printf("Run cluster server has set up connection and has received a connection\n");
   if ((ret_code= handle_config_request(run_obj, conn)))
     goto error;
   return 0;
@@ -2924,8 +2925,8 @@ IC_RUN_CONFIG_SERVER*
 ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
                     guint32 *cluster_ids,
                     guint32 num_clusters,
-                    guint32 ip_addr,
-                    guint16 port)
+                    gchar *server_name,
+                    gchar *server_port)
 {
   IC_RUN_CONFIG_SERVER *run_obj;
   IC_CONNECTION *conn;
@@ -2962,9 +2963,9 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
   memcpy((gchar*)run_obj->conf_objects, (gchar*)conf_objs,
          num_clusters * sizeof(IC_CLUSTER_CONFIG*));
 
-  run_obj->run_conn.server_ip= ip_addr;
-  run_obj->run_conn.server_port= port;
-  run_obj->run_conn.client_ip= INADDR_ANY;
+  run_obj->run_conn.server_name= server_name;
+  run_obj->run_conn.server_port= server_port;
+  run_obj->run_conn.client_name= NULL;
   run_obj->run_conn.client_port= 0;
   run_obj->run_conn.is_wan_connection= FALSE;
   run_obj->run_op.run_ic_cluster_server= run_cluster_server;
@@ -3342,7 +3343,7 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
     }
     return 0;
   }
-  if (conv_config_str_to_int(&value, data))
+  if (ic_conv_config_str_to_int(&value, data))
     return IC_ERROR_WRONG_CONFIG_NUMBER;
   if (conf_entry->is_boolean && value > 1)
     return IC_ERROR_NO_BOOLEAN_VALUE;

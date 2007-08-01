@@ -2,11 +2,10 @@
 #include <ic_apic.h>
 
 static gboolean glob_is_client= FALSE;
-//static guint32 glob_server_ip= 0x7f000001;
-static guint32 glob_server_ip= 0x7f000001;
-static guint32 glob_client_ip= 0x7f000001;
-static guint16 glob_server_port= 10005;
-static guint16 glob_client_port= 12001;
+static gchar *glob_server_ip= "127.0.0.1";
+static gchar *glob_client_ip= "127.0.0.1";
+static gchar *glob_server_port= "10005";
+static gchar *glob_client_port= "12001";
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
 static int glob_tcp_snd_size= 0;
@@ -27,13 +26,13 @@ static GOptionEntry entries[] =
     "Set SO_RCVBUF on connection", NULL},
   { "SO_SNDBUF", 0, 0, G_OPTION_ARG_INT, &glob_tcp_snd_size,
     "Set SO_SNDBUF on connection", NULL},
-  { "server_ip", 0, 0, G_OPTION_ARG_INT, &glob_server_ip,
-    "Set Server IP address", NULL},
-  { "client_ip", 0, 0, G_OPTION_ARG_INT, &glob_client_ip,
-    "Set Client IP Address", NULL},
-  { "server_port", 0, 0, G_OPTION_ARG_INT, &glob_server_port,
+  { "server_name", 0, 0, G_OPTION_ARG_STRING, &glob_server_ip,
+    "Set Server Host address", NULL},
+  { "client_name", 0, 0, G_OPTION_ARG_STRING, &glob_client_ip,
+    "Set Client Host Address", NULL},
+  { "server_port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
     "Set Server Port", NULL},
-  { "client_port", 0, 0, G_OPTION_ARG_INT, &glob_client_port,
+  { "client_port", 0, 0, G_OPTION_ARG_STRING, &glob_client_port,
     "Set Client port", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
@@ -48,9 +47,9 @@ connection_test()
   printf("Connection Test Started\n");
   ic_init_socket_object(&conn, glob_is_client, TRUE, FALSE, TRUE,
                         NULL, NULL);
-  conn.server_ip= glob_server_ip;
+  conn.server_name= glob_server_ip;
   conn.server_port= glob_server_port;
-  conn.client_ip= glob_client_ip;
+  conn.client_name= glob_client_ip;
   conn.client_port= glob_client_port;
   conn.is_connect_thread_used= FALSE;
   conn.is_wan_connection= glob_is_wan_connection;
@@ -172,6 +171,7 @@ run_clusterserver_test()
   if ((ret_code= run_obj->run_op.run_ic_cluster_server(run_obj)))
   {
     printf("run_cluster_server returned error code %u\n", ret_code);
+    ic_print_error(ret_code);
     goto end;
   }
 end:
@@ -193,6 +193,7 @@ int main(int argc, char *argv[])
   if (!g_option_context_parse(context, &argc, &argv, &error))
     goto parse_error;
   g_option_context_free(context);
+  printf("Server ip = %s, Client ip = %s\n", glob_server_ip, glob_client_ip);
   if (ic_init())
     return ret_code;
   switch (glob_test_type)

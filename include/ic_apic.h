@@ -111,8 +111,8 @@ struct ic_run_config_server_operations
 #define REC_BUF_SIZE 256
 struct ic_api_cluster_connection
 {
-  guint32 *cluster_server_ips;
-  guint16 *cluster_server_ports;
+  gchar **cluster_server_ips;
+  gchar **cluster_server_ports;
   IC_CONNECTION *cluster_srv_conns;
   guint32 num_cluster_servers;
   guint32 tail_index;
@@ -494,8 +494,8 @@ IC_RUN_CONFIG_SERVER*
 ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
                     guint32 *cluster_ids,
                     guint32 num_clusters,
-                    guint32 ip_addr,
-                    guint16 port);
+                    gchar *server_name,
+                    gchar* server_port);
 
 void ic_print_config_parameters();
 
