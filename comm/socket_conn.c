@@ -150,6 +150,8 @@ accept_socket_connection(struct ic_connection *conn)
   int ret_sockfd, ok;
   socklen_t addr_len;
   struct sockaddr_storage client_address;
+  const struct sockaddr *client_addr_ptr= 
+        (const struct sockaddr*)&client_address;
   struct sockaddr_in *ipv4_client_address=
            (struct sockaddr_in*)&client_address;
   struct sockaddr_in6 *ipv6_client_address=
@@ -216,7 +218,7 @@ accept_socket_connection(struct ic_connection *conn)
       not_accepted= TRUE;
   }
   /* Record a human-readable address for the client part of the connection */
-  ok= ic_sock_ntop(&client_address,
+  ok= ic_sock_ntop(client_addr_ptr,
                    conn->conn_stat.client_ip_addr,
                    sizeof(conn->conn_stat.client_ip_addr_str));
   if (not_accepted)
@@ -245,11 +247,10 @@ accept_socket_connection(struct ic_connection *conn)
 static int
 translate_hostnames(struct ic_connection *conn)
 {
-  struct addrinfo hints, *next;
+  struct addrinfo hints;
   int n;
   guint64 server_port= 0LL;
   guint64 client_port= 0LL;
-  gchar *canonname;
 
   if (!conn->server_name)
     return IC_ERROR_NO_SERVER_NAME;
@@ -685,9 +686,9 @@ static void
 free_socket_connection(struct ic_connection *conn)
 {
   if (conn->client_addrinfo)
-    freeaddrinfo(conn->client_addrinfo);
+    freeaddrinfo(conn->ret_client_addrinfo);
   if (conn->server_addrinfo)
-    freeaddrinfo(conn->server_addrinfo);
+    freeaddrinfo(conn->ret_server_addrinfo);
   g_timer_destroy(conn->connection_start);
   g_timer_destroy(conn->last_read_stat);
 }
