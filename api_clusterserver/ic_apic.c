@@ -298,6 +298,7 @@ const gchar *node_id_str= "node_id";
 #define CLUSTER_ID_REQ_LEN 11
 #define RESULT_OK_LEN 10
 
+#define GET_CONFIG_LEN 10
 #define GET_CONFIG_REPLY_LEN 16
 #define CONTENT_LENGTH_LEN 16
 #define OCTET_STREAM_LEN 36
@@ -2341,8 +2342,8 @@ rec_get_config(IC_CONNECTION *conn,
     {
       case GET_CONFIG_REPLY_STATE:
         /*
-          The protocol is decoded in the order of the case statements in the switch
-          statements.
+          The protocol is decoded in the order of the case statements in the
+          switch statements.
  
           Receive:
           get config reply<CR>
@@ -2386,7 +2387,6 @@ rec_get_config(IC_CONNECTION *conn,
           printf("Protocol error in content length state\n");
           return PROTOCOL_ERROR;
         }
-        DEBUG(printf("Content Length: %u\n", (guint32)content_length));
         state= OCTET_STREAM_STATE;
         break;
       case OCTET_STREAM_STATE:
@@ -2834,6 +2834,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
   guint32 state= GET_CONFIG_REQ_STATE;
+  guint64 read_version_num;
   int error;
   gchar read_buf[256];
   DEBUG_ENTRY("rec_get_config_req");
@@ -2841,20 +2842,45 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
+    DEBUG(ic_print_buf(read_buf, read_size));
     switch(state)
     {
       case GET_CONFIG_REQ_STATE:
+        if (read_size != GET_CONFIG_LEN ||
+            memcmp(read_buf, get_config_str, GET_CONFIG_LEN))
+        {
+          printf("Protocol error in get config request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= VERSION_REQ_STATE;
         break;
       case VERSION_REQ_STATE:
+        if ((read_size <= VERSION_REQ_LEN) ||
+            (memcmp(read_buf, version_str, VERSION_REQ_LEN) != 0) ||
+            (convert_str_to_int_fixed_size(read_buf + VERSION_REQ_LEN,
+                                           read_size - VERSION_REQ_LEN,
+                                           &read_version_num)) ||
+            version_number != read_version_num)
+        {
+          printf("Protocol error in version request state\n");
+          return PROTOCOL_ERROR;
+        }
+        state= EMPTY_STATE;
         break;
       case EMPTY_STATE:
-        break;
+        if (read_size != 0)
+        {
+          printf("Protocol error in wait empty state\n");
+          return PROTOCOL_ERROR;
+        }
+        return 0;
       default:
         abort();
         break;
     }
   }
-  return 0;
+  printf("Error in receiving get config request, error = %d", error);
+  return error;
 }
 
 static int
@@ -2864,7 +2890,7 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
   gchar content_buf[64];
   DEBUG_ENTRY("send_config_reply");
  
-  g_snprintf(content_buf, 64, "%s%u", get_config_reply_str, config_len);
+  g_snprintf(content_buf, 64, "%s%u", content_len_str, config_len);
   if (ic_send_with_cr(conn, get_config_reply_str) ||
       ic_send_with_cr(conn, result_ok_str) ||
       ic_send_with_cr(conn, content_buf) ||
@@ -2907,6 +2933,7 @@ handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
     return ret_code;
   if ((ret_code= rec_get_config_req(conn, version_number)))
     return ret_code;
+  config_len= 0;
   if ((ret_code= send_config_reply(conn, config_base64_str, config_len)))
     return ret_code;
   return 0;
