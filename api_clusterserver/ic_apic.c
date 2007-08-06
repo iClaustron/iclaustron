@@ -253,9 +253,8 @@ const gchar *socket_def_str= "socket default";
 const gchar *node_id_str= "node_id";
 
 
-#define MIN_PORT 1024
+#define MIN_PORT 0
 #define MAX_PORT 65535
-#define DEF_MGM_PORT 2286
 
 #define GET_NODEID_REQ_STATE 0
 #define NODEID_REQ_STATE 1
@@ -414,7 +413,9 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define KERNEL_CHECKPOINT_WRITE_SIZE 136
 /* 137 and 138 deprecated */
 #define KERNEL_CHECKPOINT_MAX_WRITE_SIZE 139
-/* 140 - 146 not used */
+#define KERNEL_SIZE_OF_REDO_LOG_FILES 140
+#define KERNEL_INITIAL_WATCHDOG_TIMER 141
+/* 142 - 146 not used */
 /* 147 Cluster Server parameter */
 #define KERNEL_VOLATILE_MODE 148
 #define KERNEL_ORDERED_KEY_OBJECTS 149
@@ -435,6 +436,8 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define KERNEL_DISK_WRITE_SPEED_START 165
 #define KERNEL_SCHEDULER_NO_SEND_TIME 166
 #define KERNEL_SCHEDULER_NO_SLEEP_TIME 167
+#define KERNEL_USE_O_DIRECT 168
+#define KERNEL_MAX_ALLOCATE_SIZE 169
 #define KERNEL_RT_SCHEDULER_THREADS 170
 #define KERNEL_LOCK_MAIN_THREAD 171
 #define KERNEL_LOCK_OTHER_THREADS 172
@@ -470,6 +473,10 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define SOCKET_SERVER_NODE_ID 410
 #define SOCKET_WRITE_BUFFER_SIZE 454
 #define SOCKET_READ_BUFFER_SIZE 455
+#define SOCKET_KERNEL_READ_BUFFER_SIZE 457
+#define SOCKET_KERNEL_WRITE_BUFFER_SIZE 458
+#define SOCKET_MAXSEG_SIZE 459
+#define SOCKET_BIND_ADDRESS 460
 #define SOCKET_FIRST_HOSTNAME 407
 #define SOCKET_SECOND_HOSTNAME 408
 #define SOCKET_GROUP 409
@@ -479,7 +486,8 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define CLIENT_BATCH_SIZE 802
 
 #define IC_PORT_NUMBER 997
-#define DEF_PORT 2287
+#define DEF_CLUSTER_SERVER_PORT 1186
+#define DEF_PORT 1187
 
 static IC_SOCKET_LINK_CONFIG*
 get_communication_object(IC_CLUSTER_CONFIG *clu_conf,
@@ -1281,6 +1289,37 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Lock other threads to a CPU id";
 
+  IC_SET_CONFIG_MAP(KERNEL_SIZE_OF_REDO_LOG_FILES, 79);
+  IC_SET_KERNEL_CONFIG(conf_entry, size_of_redo_log_files,
+                       IC_UINT32, 16, IC_INITIAL_NODE_RESTART);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 2000*1024*1024);
+  conf_entry->min_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Size of REDO log files";
+
+  IC_SET_CONFIG_MAP(KERNEL_INITIAL_WATCHDOG_TIMER, 80);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_initial_watchdog_timer,
+                       IC_UINT32, 15000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 100);
+  conf_entry->min_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Initial value of watchdog timer before communication set-up";
+
+  IC_SET_CONFIG_MAP(KERNEL_USE_O_DIRECT, 81);
+  IC_SET_KERNEL_BOOLEAN(conf_entry, use_o_direct, TRUE,
+                        IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Use O_DIRECT on file system of kernel nodes";
+
+  IC_SET_CONFIG_MAP(KERNEL_MAX_ALLOCATE_SIZE, 82);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_max_allocate_size,
+                       IC_UINT32, 32*1024*1024, IC_INITIAL_NODE_RESTART);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1*1024*1024, 1000*1024*1024);
+  conf_entry->min_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Size of maximum extent allocated at a time for table memory";
+
 /*
   This is the Socket configuration section.
 */
@@ -1373,6 +1412,33 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Node id of node that is server part of connection";
 
+  IC_SET_CONFIG_MAP(SOCKET_KERNEL_READ_BUFFER_SIZE, 112);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_read_buffer_size,
+                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 128*1024);
+  conf_entry->config_entry_description=
+  "Size of receive buffer for socket in OS kernel";
+
+  IC_SET_CONFIG_MAP(SOCKET_KERNEL_WRITE_BUFFER_SIZE, 113);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_write_buffer_size,
+                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 128*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of send buffer of socket inside the OS kernel";
+
+  IC_SET_CONFIG_MAP(SOCKET_MAXSEG_SIZE, 114);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_maxseg_size,
+                    IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MAX(conf_entry, 128*1024*1024);
+  conf_entry->config_entry_description=
+  "TCP_MAXSEG on socket";
+
+  IC_SET_CONFIG_MAP(SOCKET_BIND_ADDRESS, 115);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_bind_address,
+                    IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "IP address to bind socket to";
+
 /*
   This is the cluster server configuration section.
 */
@@ -1381,6 +1447,15 @@ init_config_parameters()
                                empty_string, IC_INITIAL_NODE_RESTART);
   conf_entry->config_entry_description=
   "Type of cluster event log";
+  
+  IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 151);
+  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, port_number, IC_UINT32,
+                               DEF_CLUSTER_SERVER_PORT,
+                               IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->config_entry_description=
+  "Port number";
+
 /*
   This is the client configuration section.
 */
@@ -1466,8 +1541,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   IC_SET_KERNEL_CONFIG(conf_entry, port_number, IC_UINT32,
                        DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
-  conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
-                          (1 << IC_CLIENT_TYPE) +
+  conf_entry->node_types= (1 << IC_CLIENT_TYPE) +
                           (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
   "Port number";
@@ -1531,7 +1605,16 @@ ic_assign_config_value(int config_id, guint64 value,
       (conf_entry->is_max_value_defined &&
        (conf_entry->max_value < value)))
   {
-    printf("Config value error config_id = %d\n", config_id);
+    printf("Config value error config_id = %d. ", config_id);
+    if (conf_entry->is_min_value_defined && value < conf_entry->min_value)
+      printf("Value too small\n");
+    else if (conf_entry->is_max_value_defined && value > conf_entry->max_value)
+      printf("Value too large\n");
+    else if (conf_entry->is_boolean && (value > 1))
+      printf("Erroneus bool value\n");
+    else
+      printf("Error with node type, node_types = %u, conf_type %u\n",
+             conf_entry->node_types, conf_type);
     return PROTOCOL_ERROR;
   }
   struct_ptr+= conf_entry->offset;
@@ -2059,6 +2142,9 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     guint32 hash_key= key & IC_CL_KEY_MASK;
     guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
     guint32 key_type= key >> IC_CL_KEY_SHIFT;
+//    if (sect_id == 0 || sect_id == 1)
+      printf("Section: %u, Config id: %u, Type: %u, value: %u\n", sect_id, hash_key,
+             key_type, value);
     if (pass == 0 && sect_id == 1)
       conf_obj->num_nodes= MAX(conf_obj->num_nodes, hash_key + 1);
     else if (pass == 1)
@@ -2128,8 +2214,8 @@ translate_config(IC_API_CONFIG_SERVER *apic,
   bin_config_size= (config_size >> 2) * 3;
   if (!(bin_buf= ic_calloc(bin_config_size)))
     return MEM_ALLOC_ERROR;
-  if ((error= base64_decode(bin_buf, &bin_config_size,
-                            config_buf, config_size)))
+  if ((error= base64_decode((guint8*)bin_buf, &bin_config_size,
+                            (const guint8*)config_buf, config_size)))
   {
     printf("1:Protocol error in base64 decode\n");
     return PROTOCOL_ERROR;

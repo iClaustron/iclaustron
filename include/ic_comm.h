@@ -432,10 +432,10 @@ void ic_print_buf(char *buf, guint32 size);
 /*
   Methods to encode and decode base64 data
 */
-int base64_encode(char *dest, guint32 *dest_len,
-                  const char *src, guint32 src_len);
-int base64_decode(char *dest, guint32 *dest_len,
-                  const char *src, guint32 src_len);
+int base64_encode(guint8 **dest, guint32 *dest_len,
+                  const guint8 *src, guint32 src_len);
+int base64_decode(guint8 *dest, guint32 *dest_len,
+                  const guint8 *src, guint32 src_len);
 
 /*
   Methods to send and receive buffers with Carriage Return

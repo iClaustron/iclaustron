@@ -5,12 +5,12 @@
 
 enum ic_node_types
 {
-  IC_NOT_EXIST_NODE_TYPE = 0,
-  IC_KERNEL_NODE = 1,
-  IC_CLIENT_NODE = 2,
-  IC_CLUSTER_SERVER_NODE = 3,
-  IC_SQL_SERVER_NODE = 4,
-  IC_REP_SERVER_NODE = 5
+  IC_NOT_EXIST_NODE_TYPE = 9,
+  IC_KERNEL_NODE = 0,
+  IC_CLIENT_NODE = 1,
+  IC_CLUSTER_SERVER_NODE = 2,
+  IC_SQL_SERVER_NODE = 3,
+  IC_REP_SERVER_NODE = 4
 };
 typedef enum ic_node_types IC_NODE_TYPES;
 
@@ -22,13 +22,13 @@ typedef enum ic_communication_type IC_COMMUNICATION_TYPE;
 
 enum ic_config_type
 {
-  IC_NO_CONFIG_TYPE = 0,
-  IC_KERNEL_TYPE = 1,
-  IC_CLIENT_TYPE = 2,
-  IC_CLUSTER_SERVER_TYPE = 3,
-  IC_SQL_SERVER_TYPE = 4,
-  IC_REP_SERVER_TYPE = 5,
-  IC_COMM_TYPE = 6
+  IC_NO_CONFIG_TYPE = 9,
+  IC_KERNEL_TYPE = 0,
+  IC_CLIENT_TYPE = 1,
+  IC_CLUSTER_SERVER_TYPE = 2,
+  IC_SQL_SERVER_TYPE = 3,
+  IC_REP_SERVER_TYPE = 4,
+  IC_COMM_TYPE = 5
 };
 typedef enum ic_config_type IC_CONFIG_TYPE;
 
@@ -241,11 +241,15 @@ struct ic_kernel_config
   guint32 kernel_scheduler_no_sleep_time;
   guint32 kernel_lock_main_thread;
   guint32 kernel_lock_other_threads;
+  guint32 size_of_redo_log_files;
+  guint32 kernel_initial_watchdog_timer;
+  guint32 kernel_max_allocate_size;
 
   gchar use_unswappable_memory;
   gchar kernel_automatic_restart;
   gchar kernel_volatile_mode;
   gchar kernel_rt_scheduler_threads;
+  gchar use_o_direct;
 };
 typedef struct ic_kernel_config IC_KERNEL_CONFIG;
 
@@ -313,6 +317,10 @@ struct ic_socket_link_config
   guint64 mandatory_bits;
   guint32 socket_write_buffer_size;
   guint32 socket_read_buffer_size;
+  guint32 socket_kernel_read_buffer_size;
+  guint32 socket_kernel_write_buffer_size;
+  guint32 socket_maxseg_size;
+  guint32 socket_bind_address;
 
   guint16 first_node_id;
   guint16 second_node_id;
@@ -520,7 +528,7 @@ void ic_print_config_parameters();
   (conf_entry)->is_min_value_defined= TRUE; \
   (conf_entry)->min_value= (min);
 
-#define IC_SET_CONFIG_MAX(conf_entry, min) \
+#define IC_SET_CONFIG_MAX(conf_entry, max) \
   (conf_entry)->is_max_value_defined= TRUE; \
   (conf_entry)->max_value= (max);
 
