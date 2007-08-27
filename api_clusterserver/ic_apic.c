@@ -468,18 +468,18 @@ static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
 #define SOCKET_SECOND_NODE_ID 401
 #define SOCKET_USE_MESSAGE_ID 402
 #define SOCKET_USE_CHECKSUM 403
-#define SOCKET_CLIENT_PORT_NUMBER 420
 #define SOCKET_SERVER_PORT_NUMBER 406
+#define SOCKET_FIRST_HOSTNAME 407
+#define SOCKET_SECOND_HOSTNAME 408
+#define SOCKET_GROUP 409
 #define SOCKET_SERVER_NODE_ID 410
+#define SOCKET_CLIENT_PORT_NUMBER 420
 #define SOCKET_WRITE_BUFFER_SIZE 454
 #define SOCKET_READ_BUFFER_SIZE 455
 #define SOCKET_KERNEL_READ_BUFFER_SIZE 457
 #define SOCKET_KERNEL_WRITE_BUFFER_SIZE 458
 #define SOCKET_MAXSEG_SIZE 459
 #define SOCKET_BIND_ADDRESS 460
-#define SOCKET_FIRST_HOSTNAME 407
-#define SOCKET_SECOND_HOSTNAME 408
-#define SOCKET_GROUP 409
 
 #define CLIENT_MAX_BATCH_BYTE_SIZE 800
 #define CLIENT_BATCH_BYTE_SIZE 801
@@ -1268,7 +1268,6 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(KERNEL_RT_SCHEDULER_THREADS, 76);
   IC_SET_KERNEL_BOOLEAN(conf_entry, kernel_rt_scheduler_threads,
                        FALSE, IC_ONLINE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
   conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
   "If set the kernel is setting its thread in RT priority, requires root privileges";
@@ -1434,10 +1433,10 @@ init_config_parameters()
   "TCP_MAXSEG on socket";
 
   IC_SET_CONFIG_MAP(SOCKET_BIND_ADDRESS, 115);
-  IC_SET_SOCKET_CONFIG(conf_entry, socket_bind_address,
-                    IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_SOCKET_BOOLEAN(conf_entry, socket_bind_address, FALSE,
+                        IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
-  "IP address to bind socket to";
+  "Bind to IP address of server";
 
 /*
   This is the cluster server configuration section.
@@ -1449,12 +1448,12 @@ init_config_parameters()
   "Type of cluster event log";
   
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 151);
-  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, port_number, IC_UINT32,
+  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number, IC_UINT32,
                                DEF_CLUSTER_SERVER_PORT,
                                IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   conf_entry->config_entry_description=
-  "Port number";
+  "Port number of Cluster Server";
 
 /*
   This is the client configuration section.
@@ -2721,10 +2720,10 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
          num_clusters * sizeof(guint32));
   memcpy((gchar*)apic->cluster_conn.cluster_server_ips,
          (gchar*)cluster_conn->cluster_server_ips,
-         num_cluster_servers * sizeof(guint32));
+         num_cluster_servers * sizeof(gchar*));
   memcpy((gchar*)apic->cluster_conn.cluster_server_ports,
          (gchar*)cluster_conn->cluster_server_ports,
-         num_cluster_servers * sizeof(guint16));
+         num_cluster_servers * sizeof(gchar*));
   memset((gchar*)apic->conf_objects, 0,
          num_cluster_servers * sizeof(IC_CLUSTER_CONFIG));
   memset((gchar*)apic->cluster_conn.cluster_srv_conns, 0,

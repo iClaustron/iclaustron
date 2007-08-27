@@ -285,7 +285,7 @@ struct ic_cluster_server_config
 
   guint64 mandatory_bits;
   guint32 node_id;
-  guint32 port_number;
+  guint32 cluster_server_port_number;
   /* End common part */
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
@@ -320,7 +320,6 @@ struct ic_socket_link_config
   guint32 socket_kernel_read_buffer_size;
   guint32 socket_kernel_write_buffer_size;
   guint32 socket_maxseg_size;
-  guint32 socket_bind_address;
 
   guint16 first_node_id;
   guint16 second_node_id;
@@ -331,6 +330,7 @@ struct ic_socket_link_config
 
   gchar use_message_id;
   gchar use_checksum;
+  gchar socket_bind_address;
   /* Ignore Connection Group for now */
 };
 typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;

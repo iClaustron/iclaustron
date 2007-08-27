@@ -256,6 +256,7 @@ translate_hostnames(struct ic_connection *conn)
     return IC_ERROR_NO_SERVER_NAME;
   if (!conn->server_port)
     return IC_ERROR_NO_SERVER_PORT;
+  printf("Server port = %s\n", conn->server_port);
   if (ic_conv_str_to_int(conn->server_port, &server_port) ||
       server_port == 0LL || server_port > 65535)
     return IC_ERROR_ILLEGAL_SERVER_PORT;
