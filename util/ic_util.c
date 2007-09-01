@@ -478,7 +478,7 @@ int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7019
+#define IC_LAST_ERROR 7020
 #define IC_MAX_ERRORS 100
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
@@ -529,6 +529,8 @@ ic_init_error_messages()
     "Trying to use IPv4 and IPv6 simultaneously on server/client part not supported";
   ic_error_str[IC_ERROR_ILLEGAL_CLIENT_PORT - IC_FIRST_ERROR]=
     "Provided client port isn't a legal port number";
+  ic_error_str[IC_ERROR_INCONSISTENT_DATA - IC_FIRST_ERROR]=
+    "Internal data structure error";
 }
 
 void

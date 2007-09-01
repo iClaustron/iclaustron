@@ -165,6 +165,12 @@ run_clusterserver_test()
     printf("Failed to load config file %s from disk", conf_file);
     return 1;
   }
+  if ((ret_code= ic_get_base64_config(clu_conf)))
+  {
+    printf("ic_get_base64_config returned error code %u\n", ret_code);
+    ic_print_error(ret_code);
+    goto end;
+  }
   run_obj= ic_init_run_cluster(clu_conf, &cluster_id, (guint32)1,
                                glob_server_ip, glob_server_port);
 

@@ -20,7 +20,7 @@ enum ic_communication_type
 };
 typedef enum ic_communication_type IC_COMMUNICATION_TYPE;
 
-enum ic_config_type
+enum ic_config_types
 {
   IC_NO_CONFIG_TYPE = 9,
   IC_KERNEL_TYPE = 0,
@@ -30,7 +30,7 @@ enum ic_config_type
   IC_REP_SERVER_TYPE = 4,
   IC_COMM_TYPE = 5
 };
-typedef enum ic_config_type IC_CONFIG_TYPE;
+typedef enum ic_config_types IC_CONFIG_TYPES;
 
 enum ic_config_entry_change
 {
@@ -77,7 +77,7 @@ struct ic_config_entry
   guint32 min_version_used;
   guint32 max_version_used;
   enum ic_config_entry_change change_variant;
-  guint32 node_types;
+  guint32 config_types;
   gchar is_max_value_defined;
   gchar is_min_value_defined;
   gchar is_boolean;
@@ -472,7 +472,7 @@ struct ic_cluster_config_load
   gchar *string_memory_to_return;
   gchar *struct_memory;
   gchar *struct_memory_to_return;
-  IC_CONFIG_TYPE current_node_config_type;
+  IC_CONFIG_TYPES current_node_config_type;
   IC_CS_CONF_COMMENT comments;
   
   guint32 size_string_memory;
@@ -521,7 +521,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->config_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CONFIG_MIN(conf_entry, min) \
@@ -547,7 +547,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->config_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_KERNEL_STRING(conf_entry, name, change) \
@@ -557,7 +557,7 @@ void ic_print_config_parameters();
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->config_types= (1 << IC_KERNEL_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_CONFIG(conf_entry, name, type, val, change) \
@@ -567,7 +567,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
+  (conf_entry)->config_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_BOOLEAN(conf_entry, name, def, change) \
@@ -578,7 +578,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
   (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
+  (conf_entry)->config_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_STRING(conf_entry, name, change) \
@@ -588,7 +588,7 @@ void ic_print_config_parameters();
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->offset= offsetof(IC_SOCKET_LINK_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_COMM_TYPE); \
+  (conf_entry)->config_types= (1 << IC_COMM_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_STRING(conf_entry, name, val, change) \
@@ -599,7 +599,7 @@ void ic_print_config_parameters();
   (conf_entry)->is_string_type= TRUE; \
   (conf_entry)->default_string= (char*)(val); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_CLUSTER_SERVER_TYPE); \
+  (conf_entry)->config_types= (1 << IC_CLUSTER_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, name, type, val, change) \
@@ -609,7 +609,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_CLUSTER_SERVER_TYPE); \
+  (conf_entry)->config_types= (1 << IC_CLUSTER_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLIENT_CONFIG(conf_entry, name, type, val, change) \
@@ -619,7 +619,7 @@ void ic_print_config_parameters();
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \
-  (conf_entry)->node_types= (1 << IC_CLIENT_TYPE); \
+  (conf_entry)->config_types= (1 << IC_CLIENT_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #endif

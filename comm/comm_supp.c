@@ -31,8 +31,8 @@ encode_table[64]= {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
                    0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x2B, 0x2F};
 
 int
-base64_decode(guint8 *dest, guint32 *dest_len,
-              const guint8 *src, guint32 src_len)
+ic_base64_decode(guint8 *dest, guint32 *dest_len,
+                 const guint8 *src, guint32 src_len)
 {
   guint32 decode_len, conv_len;
   guint32 tot_conv_len= 0;
@@ -76,10 +76,10 @@ base64_decode(guint8 *dest, guint32 *dest_len,
 }
 
 int
-base64_encode(guint8 **dest,
-              guint32 *dest_len,
-              const guint8 *src,
-              guint32 src_len)
+ic_base64_encode(guint8 **dest,
+                 guint32 *dest_len,
+                 const guint8 *src,
+                 guint32 src_len)
 {
   guint32 std_quads= src_len/3;
   guint32 left_overs= src_len - 3*std_quads;

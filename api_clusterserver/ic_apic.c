@@ -236,6 +236,61 @@
   The routine to read a configuration from a file is
   ic_load_config_server_from_files
   This routine makes use of the config file reader interface.
+
+  Description of Cluster Server Data Structures
+  ---------------------------------------------
+  The configuration of a cluster is kept within the IC_CLUSTER_CONFIG
+  struct. This struct contains arrays of all node structs, all communication
+  struct's. There is also various variables keeping track of numbers of
+  nodes of all types and number of communication sections and maximum node
+  id. The arrays of node and communication struct's is actually a pointer to
+  an array of pointers to the structs. There is also an array of the types
+  of the nodes and the types of the communication types. It is thus necessary
+  to read both the pointer array and the type array to know which struct to
+  map the pointer of nodes and communications to.
+
+  Finally all communication sections that exists in the configuration are
+  in a hash table based on nodeid of both ends of the communication. If
+  no communication object is found then the default communication parameters
+  are used.
+
+  During load of a configuration file from disk a special data structure,
+  IC_CLUSTER_CONFIG_LOAD is used, this contains space for default config
+  parameters and pointers to allocated memory for the configuration. It also
+  contains space for some temporary variables used during the reading of the
+  config file. The space of the IC_CLUSTER_CONFIG struct is part of this
+  struct.
+
+  Reading of the configuration file is performed using the module for config
+  file readers. It's a generic module that reads a config file using sections,
+  keys and comments. It contains an init call and an end call to clean up.
+
+  Each configuration file represents one cluster. There is also a grid config
+  file that represents the clusters that are part of the grid. This grid config
+  file only contains references to the cluster config files.
+
+  A cluster server accepts requests for configurations and sends the
+  configuration to the requester. A request is always for a specific
+  cluster. The cluster server does however serve a grid. Thus it can
+  serve configurations for many different clusters.
+
+  There will be a struct representing the grid and the most important
+  thing this grid contains is pointers to an array of cluster configurations.
+  The cluster server will also calculate the base64 representation of each
+  cluster and store it in this struct. Thus when a request for a configuration
+  arrives it isn't necessary to calculate this. This means of course that
+  this base64 representation has to be recalculated on every change of the
+  configuration of a cluster.
+
+  For clients that access the cluster server to retrieve the configuration of
+  one or more clusters the IC_API_CONFIG_SERVER is used to represent the
+  cluster configurations retrieved from the cluster server. The most important
+  part of this struct is a pointer to a set of structs of type
+  IC_CLUSTER_CONFIG. There is also an interface to this implementation to
+  make it replaceable by a separate implementation. The struct also contains
+  an array of the cluster id's and the nodeid we're represented by in the
+  specific cluster. There is also a set of temporary variables used when
+  retrieving the config from the cluster server.
 */
 
 const gchar *data_server_str= "data server";
@@ -251,7 +306,6 @@ const gchar *rep_server_def_str= "replication server default";
 const gchar *sql_server_def_str= "sql server default";
 const gchar *socket_def_str= "socket default";
 const gchar *node_id_str= "node_id";
-
 
 #define MIN_PORT 0
 #define MAX_PORT 65535
@@ -528,7 +582,7 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf)
   guint32 i;
   DEBUG_ENTRY("build_hash_on_comms");
 
-  if ((comm_hash= ic_create_hashtable(256, ic_hash_comms,
+  if ((comm_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_comms,
                                       ic_keys_equal_comms)))
   {
     for (i= 0; i < clu_conf->num_comms; i++)
@@ -553,12 +607,12 @@ ic_print_config_parameters(guint32 mask)
   guint32 inx, i;
   if (!glob_conf_entry_inited)
     return;
-  for (i= 0; i < 1024; i++)
+  for (i= 0; i < MAX_MAP_CONFIG_ID; i++)
   {
     if ((inx= map_config_id[i]))
     {
       conf_entry= &glob_conf_entry[inx];
-      if (!(conf_entry->node_types & mask))
+      if (!(conf_entry->config_types & mask))
         continue;
       printf("\n");
       if (conf_entry->is_deprecated)
@@ -621,13 +675,13 @@ ic_print_config_parameters(guint32 mask)
         default:
           g_assert(0);
       }
-      if (conf_entry->node_types & (1 << IC_CLIENT_TYPE))
+      if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
         printf("This config variable is used in a client node\n");
-      if (conf_entry->node_types & (1 << IC_KERNEL_TYPE))
+      if (conf_entry->config_types & (1 << IC_KERNEL_TYPE))
         printf("This config variable is used in a kernel node\n");
-      if (conf_entry->node_types & (1 << IC_CLUSTER_SERVER_TYPE))
+      if (conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE))
         printf("This config variable is used in a cluster server\n");
-      if (conf_entry->node_types & (1 << IC_COMM_TYPE))
+      if (conf_entry->config_types & (1 << IC_COMM_TYPE))
         printf("This config variable is used in connections\n");
 
       if (conf_entry->is_mandatory)
@@ -663,7 +717,7 @@ ic_print_config_parameters(guint32 mask)
 static IC_CONFIG_ENTRY *get_config_entry(int config_id);
 
 static IC_CONFIG_ENTRY *get_config_entry_mandatory(guint32 bit_id,
-                                                   IC_CONFIG_TYPE conf_type)
+                                                   IC_CONFIG_TYPES conf_type)
 {
   guint32 i;
   IC_CONFIG_ENTRY *conf_entry;
@@ -673,7 +727,7 @@ static IC_CONFIG_ENTRY *get_config_entry_mandatory(guint32 bit_id,
     conf_entry= &glob_conf_entry[i];
     if (conf_entry && conf_entry->is_mandatory &&
         (guint32)conf_entry->mandatory_bit == bit_id &&
-        conf_entry->node_types & (1 << conf_type))
+        conf_entry->config_types & (1 << conf_type))
       return conf_entry;
   }
   return NULL;
@@ -698,20 +752,20 @@ calculate_mandatory_bits()
     conf_entry= &glob_conf_entry[i];
     if (conf_entry->is_mandatory)
     {
-      if (conf_entry->node_types & (1 << IC_KERNEL_TYPE))
+      if (conf_entry->config_types & (1 << IC_KERNEL_TYPE))
         kernel_mandatory_bits|= (1 << conf_entry->mandatory_bit);
-      if (conf_entry->node_types & (1 << IC_CLIENT_TYPE))
+      if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
         client_mandatory_bits|= (1 << conf_entry->mandatory_bit);
-      if ((conf_entry->node_types & (1 << IC_CLUSTER_SERVER_TYPE)) ||
-          (conf_entry->node_types & (1 << IC_CLIENT_TYPE)))
+      if ((conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE)) ||
+          (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
         cluster_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
-      if ((conf_entry->node_types & (1 << IC_REP_SERVER_TYPE)) ||
-          (conf_entry->node_types & (1 << IC_CLIENT_TYPE)))
+      if ((conf_entry->config_types & (1 << IC_REP_SERVER_TYPE)) ||
+          (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
         rep_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
-      if ((conf_entry->node_types & (1 << IC_SQL_SERVER_TYPE)) ||
-          (conf_entry->node_types & (1 << IC_CLIENT_TYPE)))
+      if ((conf_entry->config_types & (1 << IC_SQL_SERVER_TYPE)) ||
+          (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
         sql_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
-      if (conf_entry->node_types & (1 << IC_COMM_TYPE))
+      if (conf_entry->config_types & (1 << IC_COMM_TYPE))
         comm_mandatory_bits|= (1 << conf_entry->mandatory_bit);
     }
   }
@@ -1463,14 +1517,14 @@ init_config_parameters()
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_rank,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
-  conf_entry->node_types= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->config_types= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->config_entry_description=
   "Rank in resolving network partition of the client";
 
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_TIMER, 201);
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_timer,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
-  conf_entry->node_types= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->config_types= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->config_entry_description=
   "Time in ms waiting for resolve before crashing";
 
@@ -1501,7 +1555,7 @@ init_config_parameters()
   conf_entry->default_string= (gchar*)empty_string;
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
-  conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
+  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
                          (1 << IC_CLIENT_TYPE) +
                          (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
@@ -1512,7 +1566,7 @@ init_config_parameters()
   conf_entry->default_string= (gchar*)empty_string;
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
-  conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
+  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
                           (1 << IC_CLIENT_TYPE) +
                           (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
@@ -1530,7 +1584,7 @@ init_config_parameters()
                        0, IC_NOT_CHANGEABLE);
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
-  conf_entry->node_types= (1 << IC_CLUSTER_SERVER_TYPE) +
+  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
                           (1 << IC_CLIENT_TYPE) +
                           (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
@@ -1540,7 +1594,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   IC_SET_KERNEL_CONFIG(conf_entry, port_number, IC_UINT32,
                        DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
-  conf_entry->node_types= (1 << IC_CLIENT_TYPE) +
+  conf_entry->config_types= (1 << IC_CLIENT_TYPE) +
                           (1 << IC_KERNEL_TYPE);
   conf_entry->config_entry_description=
   "Port number";
@@ -1553,13 +1607,13 @@ ic_init_config_parameters()
 
   if (glob_conf_entry_inited)
     return 0;
-  if (!(glob_conf_hash= ic_create_hashtable(256, ic_hash_str,
+  if (!(glob_conf_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_str,
                                             ic_keys_equal_str)))
     return 1;
   glob_conf_entry_inited= TRUE;
   glob_conf_max_id= 0;
-  memset(map_config_id, 0, 1024 * sizeof(guint16));
-  memset(glob_conf_entry, 0, 256 * sizeof(IC_CONFIG_ENTRY));
+  memset(map_config_id, 0, MAX_MAP_CONFIG_ID * sizeof(guint16));
+  memset(glob_conf_entry, 0, MAX_CONFIG_ID * sizeof(IC_CONFIG_ENTRY));
   init_config_parameters();
   calculate_mandatory_bits();
   return build_config_name_hash();
@@ -1584,7 +1638,7 @@ static IC_CONFIG_ENTRY *get_config_entry(int config_id)
 
 static int
 ic_assign_config_value(int config_id, guint64 value,
-                      enum ic_config_type conf_type,
+                       IC_CONFIG_TYPES conf_type,
                       int data_type,
                       gchar *struct_ptr)
 {
@@ -1597,7 +1651,7 @@ ic_assign_config_value(int config_id, guint64 value,
   }
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
     return 0;
-  if (!(conf_entry->node_types & (1 << conf_type)) ||
+  if (!(conf_entry->config_types & (1 << conf_type)) ||
       (conf_entry->is_boolean && (value > 1)) ||
       (conf_entry->is_min_value_defined &&
        (conf_entry->min_value > value)) ||
@@ -1612,8 +1666,8 @@ ic_assign_config_value(int config_id, guint64 value,
     else if (conf_entry->is_boolean && (value > 1))
       printf("Erroneus bool value\n");
     else
-      printf("Error with node type, node_types = %u, conf_type %u\n",
-             conf_entry->node_types, conf_type);
+      printf("Error with node type, config_types = %u, conf_type %u\n",
+             conf_entry->config_types, conf_type);
     return PROTOCOL_ERROR;
   }
   struct_ptr+= conf_entry->offset;
@@ -1650,7 +1704,7 @@ ic_assign_config_value(int config_id, guint64 value,
 }
 
 static int
-ic_assign_config_string(int config_id, IC_CONFIG_TYPE conf_type,
+ic_assign_config_string(int config_id, IC_CONFIG_TYPES conf_type,
                         gchar *string_memory,
                         guint32 string_len,
                         gchar *struct_ptr,
@@ -1661,10 +1715,10 @@ ic_assign_config_string(int config_id, IC_CONFIG_TYPE conf_type,
   if (!conf_entry)
     return PROTOCOL_ERROR;
   if (!conf_entry->is_string_type ||
-      !(conf_entry->node_types & (1 << conf_type)))
+      !(conf_entry->config_types & (1 << conf_type)))
   {
-    DEBUG(printf("conf_type = %u, node_type = %u, config_id = %u\n",
-           conf_type, conf_entry->node_types, config_id));
+    DEBUG(printf("conf_type = %u, config_types = %u, config_id = %u\n",
+           conf_type, conf_entry->config_types, config_id));
     DEBUG(printf("Debug string inconsistency\n"));
     return PROTOCOL_ERROR;
   }
@@ -1716,13 +1770,13 @@ init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
 }
 
 static void
-init_config_object(gchar *conf_object, IC_CONFIG_TYPE node_type)
+init_config_object(gchar *conf_object, IC_CONFIG_TYPES config_type)
 {
   guint32 i;
   for (i= 0; i < glob_conf_max_id; i++)
   {
     IC_CONFIG_ENTRY *conf_entry= &glob_conf_entry[i];
-    if (conf_entry && conf_entry->node_types & (1 << node_type))
+    if (conf_entry && conf_entry->config_types & (1 << config_type))
     {
       gchar *var_ptr= conf_object + conf_entry->offset;
       init_config_default_value(var_ptr, conf_entry);
@@ -1771,19 +1825,19 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   {
     switch (conf_obj->node_types[i])
     {
-      case IC_KERNEL_TYPE:
+      case IC_KERNEL_NODE:
         size_config_objects+= sizeof(IC_KERNEL_CONFIG);
         break;
-      case IC_CLIENT_TYPE:
+      case IC_CLIENT_NODE:
         size_config_objects+= sizeof(IC_CLIENT_CONFIG);
         break;
-      case IC_CLUSTER_SERVER_TYPE:
+      case IC_CLUSTER_SERVER_NODE:
         size_config_objects+= sizeof(IC_CLUSTER_SERVER_CONFIG);
         break;
-      case IC_SQL_SERVER_TYPE:
+      case IC_SQL_SERVER_NODE:
         size_config_objects+= sizeof(IC_SQL_SERVER_CONFIG);
         break;
-      case IC_REP_SERVER_TYPE:
+      case IC_REP_SERVER_NODE:
         size_config_objects+= sizeof(IC_REP_SERVER_CONFIG);
         break;
       default:
@@ -1812,19 +1866,19 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
     init_config_object(conf_obj_ptr, conf_obj->node_types[i]);
     switch (conf_obj->node_types[i])
     {
-      case IC_KERNEL_TYPE:
+      case IC_KERNEL_NODE:
         conf_obj_ptr+= sizeof(IC_KERNEL_CONFIG);
         break;
-      case IC_CLIENT_TYPE:
+      case IC_CLIENT_NODE:
         conf_obj_ptr+= sizeof(IC_CLIENT_CONFIG);
         break;
-      case IC_CLUSTER_SERVER_TYPE:
+      case IC_CLUSTER_SERVER_NODE:
         conf_obj_ptr+= sizeof(IC_CLUSTER_SERVER_CONFIG);
         break;
-      case IC_SQL_SERVER_TYPE:
+      case IC_SQL_SERVER_NODE:
         conf_obj_ptr+= sizeof(IC_SQL_SERVER_CONFIG);
         break;
-      case IC_REP_SERVER_TYPE:
+      case IC_REP_SERVER_NODE:
         conf_obj_ptr+= sizeof(IC_REP_SERVER_CONFIG);
         break;
       default:
@@ -2213,8 +2267,8 @@ translate_config(IC_API_CONFIG_SERVER *apic,
   bin_config_size= (config_size >> 2) * 3;
   if (!(bin_buf= ic_calloc(bin_config_size)))
     return MEM_ALLOC_ERROR;
-  if ((error= base64_decode((guint8*)bin_buf, &bin_config_size,
-                            (const guint8*)config_buf, config_size)))
+  if ((error= ic_base64_decode((guint8*)bin_buf, &bin_config_size,
+                               (const guint8*)config_buf, config_size)))
   {
     printf("1:Protocol error in base64 decode\n");
     return PROTOCOL_ERROR;
@@ -3104,6 +3158,288 @@ error:
 }
 
 /*
+  The module below implements translation of a IC_CLUSTER_CONFIG object to a
+  an array of key-value pairs divided in sections according to cluster
+  server protocol. It also uses the ic_base64_encode routine to convert this
+  into a base64 representation which is how it is sent in the cluster server
+  protocol.
+*/
+static guint32
+get_length_of_section(IC_CONFIG_TYPES config_type,
+                      gchar *conf)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 len= 0, i, str_len;
+  for (i= 0; i < MAX_CONFIG_ID; i++)
+  {
+    if ((conf_entry= get_config_entry(i)) &&
+        conf_entry->config_types & config_type)
+    {
+      switch (conf_entry->data_type)
+      {
+        case IC_BOOLEAN:
+        case IC_UINT16:
+        case IC_UINT32:
+          len+= 2;
+          break;
+        case IC_UINT64:
+          len+= 3;
+          break;
+        case IC_CHARPTR:
+        {
+          len+= 1;
+          str_len= strlen(((gchar*)conf)+conf_entry->offset);
+          len+= ((str_len+4)/4); /* Also make place for final NULL */
+          break;
+        }
+        default:
+          abort();
+          break;
+      }
+    }
+  }
+  return len;
+}
+
+static int
+fill_key_value_section(IC_CONFIG_TYPES config_type,
+                       gchar *conf,
+                       guint32 sect_id,
+                       guint32 **key_value_array,
+                       guint32 *key_value_array_len)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 len= 0, i, key, config_id, value, data_type, str_len;
+  guint32 *assign_array;
+  for (i= 0; i < MAX_CONFIG_ID; i++)
+  {
+    if ((conf_entry= get_config_entry(i)) &&
+        conf_entry->config_types & config_type)
+    {
+      assign_array= *key_value_array;
+      switch (conf_entry->data_type)
+      {
+        case IC_BOOLEAN:
+        {
+          guint8 *entry= (guint8*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT16:
+        {
+          guint16 *entry= (guint16*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT32:
+        {
+          guint32 *entry= (guint32*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT64:
+        {
+          guint64 *entry= (guint64*)(conf+conf_entry->offset);
+          value= (*entry >> 32);
+          assign_array[2]= g_htonl(value);
+          value= *entry & 0xFFFFFFFF;
+          *key_value_array++;
+          *key_value_array_len++;
+          data_type= IC_CL_INT64_TYPE;
+          break;
+        }
+        case IC_CHARPTR:
+        {
+          str_len= strlen(conf+conf_entry->offset);
+          /* 
+             Adjust to number of words with one word removed and
+             an extra null byte calculated for
+           */
+          len= str_len/4;
+          /* We don't need to copy null byte since we initialised to 0 */
+          memcpy(&assign_array[1], conf+conf_entry->offset, str_len);
+          value= g_ntohl(assign_array[1]);
+          *key_value_array+= len;
+          *key_value_array_len+= len;
+          data_type= IC_CL_CHAR_TYPE;
+          break;
+        }
+        default:
+          return IC_ERROR_INCONSISTENT_DATA;
+      }
+      /*
+         Assign the key consisting of:
+         1) Section id
+         2) Data Type
+         3) Config id
+       */
+      config_id= map_config_id[i];
+      key= (config_id << 14) + (data_type << 28) + (sect_id);
+      assign_array[0]= g_htonl(key);
+      assign_array[1]= g_htonl(value);
+      *key_value_array+= 2;
+      *key_value_array_len+= 2;
+    }
+  }
+  return 0;
+}
+
+static IC_SOCKET_LINK_CONFIG*
+get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
+                 IC_SOCKET_LINK_CONFIG *comm_section,
+                 guint32 node1, guint32 node2)
+{
+  IC_SOCKET_LINK_CONFIG *local_comm_section;
+  comm_section->first_node_id= node1;
+  comm_section->second_node_id= node2;
+  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
+                           ic_hashtable_search(clu_conf->comm_hash,
+                                               (void*)comm_section)))
+    return local_comm_section;
+  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
+                           ic_hashtable_search(clu_conf->comm_hash,
+                                               (void*)comm_section)))
+    return local_comm_section;
+  init_config_object((gchar*)comm_section, IC_COMM_TYPE);
+  return comm_section;
+}
+
+static int
+ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
+                                 guint32 **key_value_array,
+                                 guint32 *key_value_array_len)
+{
+  guint32 len= 0, num_comms= 0;
+  guint32 node_sect_len, i, j;
+  guint32 **temp_key_value_array;
+  int ret_code;
+  IC_SOCKET_LINK_CONFIG test1, *comm_section;
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    /* Add length of each node section */
+    if (clu_conf->node_config[i])
+    {
+      node_sect_len= get_length_of_section(
+                          (IC_CONFIG_TYPES)clu_conf->node_types[i],
+                                           clu_conf->node_config[i]);
+      if (node_sect_len == 0)
+        return IC_ERROR_INCONSISTENT_DATA;
+      len+= node_sect_len;
+    }
+  }
+  /* Add length of each comm section */
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i])
+    {
+      for (j= i+1; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
+        {
+          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
+               clu_conf->node_types[j] == IC_KERNEL_NODE))
+            continue;
+          /* We have found two nodes needing a comm section */
+          comm_section= get_comm_section(clu_conf, &test1, i, j);
+          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section);
+          num_comms++;
+        }
+      }
+    }
+  }
+
+  /*
+   * Add 2 key-value pairs for section 0
+   * Add 2 words for verification string
+   * Add one key-value pair for each node section
+   *   - This is section 2
+   * Add one key-value pair for each comm section
+   *   - This is section 2 + no of nodes
+   * Add 3 key-value pairs for each node section
+   *   - Node id, x and y
+   * Add 3 key-value pairs for each comm section
+   *   - x, y and z
+   */
+  len+= 2;
+  len+= clu_conf->num_nodes;
+  len+= num_comms;
+  /* Allocate memory for key-value pairs */
+  if (!(*key_value_array= (guint32*)ic_calloc(4*len)))
+    return MEM_ALLOC_ERROR;
+
+  /* Fill Section 0 */
+
+  /* Fill Section 1 */
+
+  /* Fill node sections */
+  for (i= 1; i < clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i] &&
+        (ret_code= fill_key_value_section(clu_conf->node_types[i],
+                                          clu_conf->node_config[i],
+                                          (2 + i),
+                                          temp_key_value_array,
+                                          key_value_array_len)))
+      return ret_code;
+  }
+
+  /* Fill section 1 + 1 + no_of_nodes */
+
+  /* Fill comm sections */
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i])
+    {
+      for (j= i+1; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
+        {
+          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
+               clu_conf->node_types[j] == IC_KERNEL_NODE))
+            continue;
+          /* We have found two nodes needing a comm section */
+          comm_section= get_comm_section(clu_conf, &test1, i, j);
+          if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
+                                                (gchar*)comm_section,
+                                                (2 + clu_conf->num_nodes + i),
+                                                temp_key_value_array,
+                                                key_value_array_len)))
+            return ret_code;
+        }
+      }
+    }
+  }
+  if ((len*4) == *key_value_array_len)
+    return 0;
+  ic_free(*key_value_array);
+  return IC_ERROR_INCONSISTENT_DATA;
+}
+
+int
+ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
+                     guint8 **base64_array,
+                     guint32 *base64_array_len)
+{
+  guint32 *key_value_array;
+  guint32 key_value_array_len;
+  int ret_code;
+
+  *base64_array= 0;
+  if ((ret_code= ic_get_key_value_sections_config(clu_conf, &key_value_array,
+                                                  &key_value_array_len)))
+    return ret_code;
+  ret_code= ic_base64_encode(base64_array,
+                             base64_array_len,
+                             (const guint8*)key_value_array,
+                             key_value_array_len*4);
+  ic_free(key_value_array);
+  return ret_code;
+}
+
+/*
   MODULE: LOAD CONFIG DATA
   ------------------------
     This is a configuration server implementing the ic_config_operations
@@ -3120,7 +3456,7 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
                      guint32 pass)
 {
   IC_CLUSTER_CONFIG_LOAD *clu_conf;
-  IC_CONFIG_TYPE conf_type;
+  IC_CONFIG_TYPES conf_type;
   guint32 i;
   guint64 mandatory_bits, missing_bits, bit64;
   void *current_config;
@@ -3449,7 +3785,7 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
   if (!(conf_entry= (IC_CONFIG_ENTRY*)ic_hashtable_search(glob_conf_hash,
                                                           (void*)key_name)))
     return IC_ERROR_NO_SUCH_CONFIG_KEY;
-  if (!(conf_entry->node_types & (1 << clu_conf->current_node_config_type)))
+  if (!(conf_entry->config_types & (1 << clu_conf->current_node_config_type)))
     return IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION;
   if (conf_entry->is_mandatory && (pass != INITIAL_PASS))
   {
