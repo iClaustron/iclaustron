@@ -74,6 +74,12 @@
   data one also sends a verification string to ensure that the receiver can
   verify that the data uses the NDB Management Server protocol.
 
+  Part of the protocol is that before transformation into base64 format there
+  is a 8-byte verification string added at the beginning of the array of
+  32-bit words and finally at the end a 4-byte checksum is added, this is
+  calculated as the XOR of all words including the verification string and
+  where checksum is 0 in the calculation.
+
   There also some special configuration id's.
   One is 16382 which describes the parent section which for all node sections
   is equal to 0.
@@ -1907,7 +1913,9 @@ key_type_error(guint32 hash_key, guint32 node_type)
 static guint64
 get_64bit_value(guint32 value, guint32 **key_value)
 {
-  guint64 long_val= value + (((guint64)(**key_value)) << 32);
+  guint32 val= (guint64)**key_value;
+  val= g_ntohl(val);
+  guint64 long_val= value + (((guint64)val) << 32);
   (*key_value)++;
   return long_val;
 }
@@ -3180,14 +3188,12 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
         case IC_BOOLEAN:
         case IC_UINT16:
         case IC_UINT32:
-          len+= 2;
           break;
         case IC_UINT64:
-          len+= 3;
+          len++;
           break;
         case IC_CHARPTR:
         {
-          len+= 1;
           str_len= strlen(((gchar*)conf)+conf_entry->offset);
           len+= ((str_len+4)/4); /* Also make place for final NULL */
           break;
@@ -3196,6 +3202,7 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
           abort();
           break;
       }
+      len+= 2;
     }
   }
   return len;
@@ -3243,7 +3250,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
         case IC_UINT64:
         {
           guint64 *entry= (guint64*)(conf+conf_entry->offset);
-          value= (*entry >> 32);
+          value= (guint32)((guint64)(*entry >> 32));
           assign_array[2]= g_htonl(value);
           value= *entry & 0xFFFFFFFF;
           *key_value_array++;
@@ -3254,14 +3261,14 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
         case IC_CHARPTR:
         {
           str_len= strlen(conf+conf_entry->offset);
+          value= str_len + 1; /* Reported length includes NULL byte */
           /* 
              Adjust to number of words with one word removed and
              an extra null byte calculated for
            */
-          len= str_len/4;
+          len= (value + 3)/4;
           /* We don't need to copy null byte since we initialised to 0 */
-          memcpy(&assign_array[1], conf+conf_entry->offset, str_len);
-          value= g_ntohl(assign_array[1]);
+          memcpy(&assign_array[2], conf+conf_entry->offset, str_len);
           *key_value_array+= len;
           *key_value_array_len+= len;
           data_type= IC_CL_CHAR_TYPE;
@@ -3272,12 +3279,14 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
       }
       /*
          Assign the key consisting of:
-         1) Section id
-         2) Data Type
+         1) Data Type
+         2) Section id
          3) Config id
        */
       config_id= map_config_id[i];
-      key= (config_id << 14) + (data_type << 28) + (sect_id);
+      key= (data_type << IC_CL_KEY_SHIFT) +
+           (sect_id << IC_CL_SECT_SHIFT) +
+           (config_id);
       assign_array[0]= g_htonl(key);
       assign_array[1]= g_htonl(value);
       *key_value_array+= 2;
@@ -3313,7 +3322,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                  guint32 *key_value_array_len)
 {
   guint32 len= 0, num_comms= 0;
-  guint32 node_sect_len, i, j;
+  guint32 node_sect_len, i, j, checksum;
+  guint32 section_id, comm_desc_section, node_desc_section;
   guint32 **temp_key_value_array;
   int ret_code;
   IC_SOCKET_LINK_CONFIG test1, *comm_section;
@@ -3352,8 +3362,9 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   }
 
   /*
+   * Add 2 words for verification string in beginning
+   * Add 1 word for checksum at the end
    * Add 2 key-value pairs for section 0
-   * Add 2 words for verification string
    * Add one key-value pair for each node section
    *   - This is section 2
    * Add one key-value pair for each comm section
@@ -3364,31 +3375,83 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
    *   - x, y and z
    */
   len+= 2;
-  len+= clu_conf->num_nodes;
+  len+= 4;
+  len+= clu_conf->num_nodes * 2;
   len+= num_comms;
   /* Allocate memory for key-value pairs */
   if (!(*key_value_array= (guint32*)ic_calloc(4*len)))
     return MEM_ALLOC_ERROR;
 
-  /* Fill Section 0 */
+  /*
+    Put in verification section
+  */
+  memcpy((gchar*)*key_value_array, ver_string, 8);
 
-  /* Fill Section 1 */
+  /*
+    Fill Section 0
+      Id 2000 specifies section 1 as a section that specifies node sections
+      Id 3000 specifies section number of the section that describes the
+      communication sections
+  */
+  section_id= 0;
+  comm_desc_section= 2 + clu_conf->num_nodes;
+  node_desc_section= 1;
+  *key_value_array[2]= (3 << IC_CL_KEY_SHIFT) +
+                       (section_id << IC_CL_SECT_SHIFT) +
+                       2000;
+  *key_value_array[3]= node_desc_section << IC_CL_SECT_SHIFT;
+
+  *key_value_array[4]= (3 << IC_CL_KEY_SHIFT) +
+                       (section_id << IC_CL_SECT_SHIFT) +
+                       3000;
+  *key_value_array[5]= comm_desc_section << IC_CL_SECT_SHIFT;
+  *key_value_array_len= 6;
+
+  /*
+    Fill Section 1
+    One key-value for each section that specifies a node, starting at
+    section 2 and ending at section 2+num_nodes-1.
+  */
+  section_id= 1;
+  for (i= 0; i < clu_conf->num_nodes; i++)
+  {
+    *key_value_array[*key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
+                                              (section_id << IC_CL_SECT_SHIFT) +
+                                              i;
+    *key_value_array[*key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
+  }
 
   /* Fill node sections */
+  section_id= 2;
   for (i= 1; i < clu_conf->max_node_id; i++)
   {
     if (clu_conf->node_config[i] &&
         (ret_code= fill_key_value_section(clu_conf->node_types[i],
                                           clu_conf->node_config[i],
-                                          (2 + i),
+                                          section_id++,
                                           temp_key_value_array,
                                           key_value_array_len)))
-      return ret_code;
+      goto error;
   }
 
-  /* Fill section 1 + 1 + no_of_nodes */
+  /*
+    Fill section 1 + 1 + no_of_nodes
+    This specifies the communication sections, one for each pair of nodes
+    that need to communicate
+  */
+  g_assert(comm_desc_section == section_id);
+  section_id= comm_desc_section;
+  for (i= 0; i < num_comms; i++)
+  {
+    *key_value_array[*key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
+                             (comm_desc_section << IC_CL_SECT_SHIFT) +
+                             i;
+    *key_value_array[*key_value_array_len++]= 
+                              (comm_desc_section+i) << IC_CL_SECT_SHIFT;
+  }
 
   /* Fill comm sections */
+  section_id= comm_desc_section + 1;
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
     if (clu_conf->node_config[i])
@@ -3404,18 +3467,27 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
           comm_section= get_comm_section(clu_conf, &test1, i, j);
           if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
                                                 (gchar*)comm_section,
-                                                (2 + clu_conf->num_nodes + i),
+                                                section_id++,
                                                 temp_key_value_array,
                                                 key_value_array_len)))
-            return ret_code;
+            goto error;
         }
       }
     }
   }
+  /* Calculate and fill out checksum */
+  for (i= 0; i < *key_value_array_len; i++)
+    checksum^= *key_value_array[i];
+  *key_value_array[*key_value_array_len++]= checksum;
+
+  /* Perform final set of checks */
   if ((len*4) == *key_value_array_len)
     return 0;
+
+  ret_code= IC_ERROR_INCONSISTENT_DATA;
+error:
   ic_free(*key_value_array);
-  return IC_ERROR_INCONSISTENT_DATA;
+  return ret_code;
 }
 
 int
