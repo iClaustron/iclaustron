@@ -4,7 +4,7 @@
 static gboolean glob_is_client= FALSE;
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_client_ip= "127.0.0.1";
-static gchar *glob_server_port= "10006";
+static gchar *glob_server_port= "10003";
 static gchar *glob_client_port= "12002";
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
@@ -108,8 +108,8 @@ api_clusterserver_test()
   guint32 node_id= 0;
 
   printf("Starting API Cluster server test\n");
-  cluster_conn.cluster_server_ips= &glob_server_ip;
-  cluster_conn.cluster_server_ports= &glob_server_port;
+  cluster_conn.cluster_server_ips= &glob_client_ip;
+  cluster_conn.cluster_server_ports= &glob_client_port;
   cluster_conn.num_cluster_servers= 1;
   srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id,
                                &node_id, (guint32)1);
@@ -165,13 +165,7 @@ run_clusterserver_test()
     printf("Failed to load config file %s from disk", conf_file);
     return 1;
   }
-  if ((ret_code= ic_get_base64_config(clu_conf)))
-  {
-    printf("ic_get_base64_config returned error code %u\n", ret_code);
-    ic_print_error(ret_code);
-    goto end;
-  }
-  run_obj= ic_init_run_cluster(clu_conf, &cluster_id, (guint32)1,
+  run_obj= ic_init_run_cluster(&clu_conf, &cluster_id, (guint32)1,
                                glob_server_ip, glob_server_port);
 
   if ((ret_code= run_obj->run_op.run_ic_cluster_server(run_obj)))

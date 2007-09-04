@@ -154,7 +154,8 @@ typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 struct ic_run_config_server
 {
   struct ic_run_config_server_operations run_op;
-  struct ic_cluster_config *conf_objects;
+  struct ic_cluster_config **conf_objects;
+  IC_STRING base64_arr;
   IC_CONNECTION run_conn;
   guint32 *cluster_ids;
   guint32 num_clusters;
@@ -499,7 +500,7 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                     guint32 num_clusters);
 
 IC_RUN_CONFIG_SERVER*
-ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
+ic_init_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
                     guint32 *cluster_ids,
                     guint32 num_clusters,
                     gchar *server_name,

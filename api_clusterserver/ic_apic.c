@@ -2798,6 +2798,352 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 }
 
 /*
+  The module below implements translation of a IC_CLUSTER_CONFIG object to a
+  an array of key-value pairs divided in sections according to cluster
+  server protocol. It also uses the ic_base64_encode routine to convert this
+  into a base64 representation which is how it is sent in the cluster server
+  protocol.
+*/
+static guint32
+get_length_of_section(IC_CONFIG_TYPES config_type,
+                      gchar *conf)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 len= 0, i, str_len;
+  for (i= 0; i < MAX_CONFIG_ID; i++)
+  {
+    if ((conf_entry= get_config_entry(i)) &&
+        conf_entry->config_types & config_type)
+    {
+      switch (conf_entry->data_type)
+      {
+        case IC_BOOLEAN:
+        case IC_UINT16:
+        case IC_UINT32:
+          break;
+        case IC_UINT64:
+          len++;
+          break;
+        case IC_CHARPTR:
+        {
+          str_len= strlen(((gchar*)conf)+conf_entry->offset);
+          len+= ((str_len+4)/4); /* Also make place for final NULL */
+          break;
+        }
+        default:
+          abort();
+          break;
+      }
+      len+= 2;
+    }
+  }
+  return len;
+}
+
+static int
+fill_key_value_section(IC_CONFIG_TYPES config_type,
+                       gchar *conf,
+                       guint32 sect_id,
+                       guint32 *key_value_array,
+                       guint32 *key_value_array_len)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 len= 0, i, key, config_id, value, data_type, str_len;
+  guint32 *assign_array;
+  for (i= 0; i < MAX_CONFIG_ID; i++)
+  {
+    if ((conf_entry= get_config_entry(i)) &&
+        conf_entry->config_types & config_type)
+    {
+      assign_array= &key_value_array[*key_value_array_len];
+      switch (conf_entry->data_type)
+      {
+        case IC_BOOLEAN:
+        {
+          guint8 *entry= (guint8*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT16:
+        {
+          guint16 *entry= (guint16*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT32:
+        {
+          guint32 *entry= (guint32*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT64:
+        {
+          guint64 *entry= (guint64*)(conf+conf_entry->offset);
+          value= (guint32)((guint64)(*entry >> 32));
+          assign_array[2]= g_htonl(value);
+          value= *entry & 0xFFFFFFFF;
+          *key_value_array_len++;
+          data_type= IC_CL_INT64_TYPE;
+          break;
+        }
+        case IC_CHARPTR:
+        {
+          str_len= strlen(conf+conf_entry->offset);
+          value= str_len + 1; /* Reported length includes NULL byte */
+          /* 
+             Adjust to number of words with one word removed and
+             an extra null byte calculated for
+           */
+          len= (value + 3)/4;
+          /* We don't need to copy null byte since we initialised to 0 */
+          memcpy(&assign_array[2], conf+conf_entry->offset, str_len);
+          *key_value_array_len+= len;
+          data_type= IC_CL_CHAR_TYPE;
+          break;
+        }
+        default:
+          return IC_ERROR_INCONSISTENT_DATA;
+      }
+      /*
+         Assign the key consisting of:
+         1) Data Type
+         2) Section id
+         3) Config id
+       */
+      config_id= map_config_id[i];
+      key= (data_type << IC_CL_KEY_SHIFT) +
+           (sect_id << IC_CL_SECT_SHIFT) +
+           (config_id);
+      assign_array[0]= g_htonl(key);
+      assign_array[1]= g_htonl(value);
+      *key_value_array_len+= 2;
+    }
+  }
+  return 0;
+}
+
+static IC_SOCKET_LINK_CONFIG*
+get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
+                 IC_SOCKET_LINK_CONFIG *comm_section,
+                 guint32 node1, guint32 node2)
+{
+  IC_SOCKET_LINK_CONFIG *local_comm_section;
+  comm_section->first_node_id= node1;
+  comm_section->second_node_id= node2;
+  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
+                           ic_hashtable_search(clu_conf->comm_hash,
+                                               (void*)comm_section)))
+    return local_comm_section;
+  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
+                           ic_hashtable_search(clu_conf->comm_hash,
+                                               (void*)comm_section)))
+    return local_comm_section;
+  init_config_object((gchar*)comm_section, IC_COMM_TYPE);
+  return comm_section;
+}
+
+static int
+ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
+                                 guint32 **key_value_array,
+                                 guint32 *key_value_array_len)
+{
+  guint32 len= 0, num_comms= 0;
+  guint32 node_sect_len, i, j, checksum;
+  guint32 section_id, comm_desc_section, node_desc_section;
+  guint32 *loc_key_value_array;
+  guint32 loc_key_value_array_len= 0;
+  int ret_code;
+  IC_SOCKET_LINK_CONFIG test1, *comm_section;
+
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    /* Add length of each node section */
+    if (clu_conf->node_config[i])
+    {
+      node_sect_len= get_length_of_section(
+                          (IC_CONFIG_TYPES)clu_conf->node_types[i],
+                                           clu_conf->node_config[i]);
+      if (node_sect_len == 0)
+        return IC_ERROR_INCONSISTENT_DATA;
+      len+= node_sect_len;
+    }
+  }
+  /* Add length of each comm section */
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i])
+    {
+      for (j= i+1; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
+        {
+          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
+               clu_conf->node_types[j] == IC_KERNEL_NODE))
+            continue;
+          /* We have found two nodes needing a comm section */
+          comm_section= get_comm_section(clu_conf, &test1, i, j);
+          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section);
+          num_comms++;
+        }
+      }
+    }
+  }
+
+  /*
+   * Add 2 words for verification string in beginning
+   * Add 1 word for checksum at the end
+   * Add 2 key-value pairs for section 0
+   * Add one key-value pair for each node section
+   *   - This is section 2
+   * Add one key-value pair for each comm section
+   *   - This is section 2 + no of nodes
+   * Add 3 key-value pairs for each node section
+   *   - Node id, x and y
+   * Add 3 key-value pairs for each comm section
+   *   - x, y and z
+   */
+  len+= 2;
+  len+= 4;
+  len+= clu_conf->num_nodes * 2;
+  len+= num_comms;
+  /* Allocate memory for key-value pairs */
+  if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
+    return MEM_ALLOC_ERROR;
+  *key_value_array= loc_key_value_array;
+  /*
+    Put in verification section
+  */
+  memcpy((gchar*)loc_key_value_array, ver_string, 8);
+
+  /*
+    Fill Section 0
+      Id 2000 specifies section 1 as a section that specifies node sections
+      Id 3000 specifies section number of the section that describes the
+      communication sections
+  */
+  section_id= 0;
+  comm_desc_section= 2 + clu_conf->num_nodes;
+  node_desc_section= 1;
+  loc_key_value_array[2]= (3 << IC_CL_KEY_SHIFT) +
+                          (section_id << IC_CL_SECT_SHIFT) +
+                          2000;
+  loc_key_value_array[3]= node_desc_section << IC_CL_SECT_SHIFT;
+
+  loc_key_value_array[4]= (3 << IC_CL_KEY_SHIFT) +
+                          (section_id << IC_CL_SECT_SHIFT) +
+                          3000;
+  loc_key_value_array[5]= comm_desc_section << IC_CL_SECT_SHIFT;
+  loc_key_value_array_len= 6;
+
+  /*
+    Fill Section 1
+    One key-value for each section that specifies a node, starting at
+    section 2 and ending at section 2+num_nodes-1.
+  */
+  section_id= 1;
+  for (i= 0; i < clu_conf->num_nodes; i++)
+  {
+    loc_key_value_array[loc_key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
+                                          (section_id << IC_CL_SECT_SHIFT) +
+                                              i;
+    loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
+  }
+
+  /* Fill node sections */
+  section_id= 2;
+  for (i= 1; i < clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i] &&
+        (ret_code= fill_key_value_section(clu_conf->node_types[i],
+                                          clu_conf->node_config[i],
+                                          section_id++,
+                                          loc_key_value_array,
+                                          &loc_key_value_array_len)))
+      goto error;
+  }
+
+  /*
+    Fill section 1 + 1 + no_of_nodes
+    This specifies the communication sections, one for each pair of nodes
+    that need to communicate
+  */
+  g_assert(comm_desc_section == section_id);
+  section_id= comm_desc_section;
+  for (i= 0; i < num_comms; i++)
+  {
+    loc_key_value_array[loc_key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
+                                   (comm_desc_section << IC_CL_SECT_SHIFT) +
+                                   i;
+    loc_key_value_array[loc_key_value_array_len++]= 
+                              (comm_desc_section+i) << IC_CL_SECT_SHIFT;
+  }
+
+  /* Fill comm sections */
+  section_id= comm_desc_section + 1;
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i])
+    {
+      for (j= i+1; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
+        {
+          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
+               clu_conf->node_types[j] == IC_KERNEL_NODE))
+            continue;
+          /* We have found two nodes needing a comm section */
+          comm_section= get_comm_section(clu_conf, &test1, i, j);
+          if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
+                                                (gchar*)comm_section,
+                                                section_id++,
+                                                loc_key_value_array,
+                                                &loc_key_value_array_len)))
+            goto error;
+        }
+      }
+    }
+  }
+  /* Calculate and fill out checksum */
+  for (i= 0; i < loc_key_value_array_len; i++)
+    checksum^= loc_key_value_array[i];
+  loc_key_value_array[loc_key_value_array_len++]= checksum;
+
+  /* Perform final set of checks */
+  *key_value_array_len= loc_key_value_array_len;
+  if ((len*4) == loc_key_value_array_len)
+    return 0;
+
+  ret_code= IC_ERROR_INCONSISTENT_DATA;
+error:
+  ic_free(*key_value_array);
+  return ret_code;
+}
+
+static int
+ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
+                     guint8 **base64_array,
+                     guint32 *base64_array_len)
+{
+  guint32 *key_value_array;
+  guint32 key_value_array_len;
+  int ret_code;
+
+  *base64_array= 0;
+  if ((ret_code= ic_get_key_value_sections_config(clu_conf, &key_value_array,
+                                                  &key_value_array_len)))
+    return ret_code;
+  ret_code= ic_base64_encode(base64_array,
+                             base64_array_len,
+                             (const guint8*)key_value_array,
+                             key_value_array_len*4);
+  ic_free(key_value_array);
+  return ret_code;
+}
+
+/*
   MODULE: CONFIGURATION SERVER
   ----------------------------
     This is the module that provided with a configuration data structures
@@ -3080,17 +3426,20 @@ handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
     return ret_code;
   if ((ret_code= rec_get_config_req(conn, version_number)))
     return ret_code;
-  config_len= 0;
+  config_len= run_obj->base64_arr.len;
+  config_base64_str= run_obj->base64_arr.str;
   if ((ret_code= send_config_reply(conn, config_base64_str, config_len)))
     return ret_code;
   return 0;
 }
 
 static int
-run_cluster_server(struct ic_run_config_server *run_obj)
+run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
 {
   int ret_code;
   IC_CONNECTION *conn;
+  guint8 *base64_arr;
+  guint32 base64_arr_len;
   DEBUG_ENTRY("run_cluster_server");
 
   conn= &run_obj->run_conn;
@@ -3101,6 +3450,12 @@ run_cluster_server(struct ic_run_config_server *run_obj)
     goto error;
   }
   printf("Run cluster server has set up connection and has received a connection\n");
+  if ((ret_code= ic_get_base64_config(run_obj->conf_objects[0],
+                                      &base64_arr, &base64_arr_len)))
+    goto error;
+  printf("Converted configuration to a base64 representation\n");
+  IC_INIT_STRING(&run_obj->base64_arr, (gchar*)base64_arr, base64_arr_len,
+                 FALSE);
   if ((ret_code= handle_config_request(run_obj, conn)))
     goto error;
   return 0;
@@ -3110,7 +3465,7 @@ error:
 }
 
 IC_RUN_CONFIG_SERVER*
-ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
+ic_init_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
                     guint32 *cluster_ids,
                     guint32 num_clusters,
                     gchar *server_name,
@@ -3127,15 +3482,15 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
     We allocate everything in one memory allocation.
   */
   size= sizeof(IC_RUN_CONFIG_SERVER);
-  size+= num_clusters * sizeof(guint32*);
+  size+= num_clusters * sizeof(guint32);
   size+= num_clusters * sizeof(IC_CLUSTER_CONFIG*);
   if (!(run_obj= (IC_RUN_CONFIG_SERVER*)
       ic_calloc(size)))
     return NULL;
   run_obj->cluster_ids= (guint32*)(((gchar*)run_obj)+
                         sizeof(IC_RUN_CONFIG_SERVER));
-  run_obj->conf_objects= (IC_CLUSTER_CONFIG*)(((gchar*)run_obj->cluster_ids)+
-                          (num_clusters * sizeof(guint32*)));
+  run_obj->conf_objects= (IC_CLUSTER_CONFIG**)(((gchar*)run_obj->cluster_ids)+
+                          (num_clusters * sizeof(guint32)));
   conn= &run_obj->run_conn;
   if (ic_init_socket_object(conn,
                             FALSE, /* Not client */
@@ -3147,7 +3502,7 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
     goto error;
 
   memcpy((gchar*)run_obj->cluster_ids, (gchar*)cluster_ids,
-         num_clusters * sizeof(guint32*));
+         num_clusters * sizeof(guint32));
   memcpy((gchar*)run_obj->conf_objects, (gchar*)conf_objs,
          num_clusters * sizeof(IC_CLUSTER_CONFIG*));
 
@@ -3163,352 +3518,6 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG *conf_objs,
 error:
   ic_free(run_obj);
   return NULL;
-}
-
-/*
-  The module below implements translation of a IC_CLUSTER_CONFIG object to a
-  an array of key-value pairs divided in sections according to cluster
-  server protocol. It also uses the ic_base64_encode routine to convert this
-  into a base64 representation which is how it is sent in the cluster server
-  protocol.
-*/
-static guint32
-get_length_of_section(IC_CONFIG_TYPES config_type,
-                      gchar *conf)
-{
-  IC_CONFIG_ENTRY *conf_entry;
-  guint32 len= 0, i, str_len;
-  for (i= 0; i < MAX_CONFIG_ID; i++)
-  {
-    if ((conf_entry= get_config_entry(i)) &&
-        conf_entry->config_types & config_type)
-    {
-      switch (conf_entry->data_type)
-      {
-        case IC_BOOLEAN:
-        case IC_UINT16:
-        case IC_UINT32:
-          break;
-        case IC_UINT64:
-          len++;
-          break;
-        case IC_CHARPTR:
-        {
-          str_len= strlen(((gchar*)conf)+conf_entry->offset);
-          len+= ((str_len+4)/4); /* Also make place for final NULL */
-          break;
-        }
-        default:
-          abort();
-          break;
-      }
-      len+= 2;
-    }
-  }
-  return len;
-}
-
-static int
-fill_key_value_section(IC_CONFIG_TYPES config_type,
-                       gchar *conf,
-                       guint32 sect_id,
-                       guint32 **key_value_array,
-                       guint32 *key_value_array_len)
-{
-  IC_CONFIG_ENTRY *conf_entry;
-  guint32 len= 0, i, key, config_id, value, data_type, str_len;
-  guint32 *assign_array;
-  for (i= 0; i < MAX_CONFIG_ID; i++)
-  {
-    if ((conf_entry= get_config_entry(i)) &&
-        conf_entry->config_types & config_type)
-    {
-      assign_array= *key_value_array;
-      switch (conf_entry->data_type)
-      {
-        case IC_BOOLEAN:
-        {
-          guint8 *entry= (guint8*)(conf+conf_entry->offset);
-          value= (guint32)*entry;
-          data_type= IC_CL_INT32_TYPE;
-          break;
-        }
-        case IC_UINT16:
-        {
-          guint16 *entry= (guint16*)(conf+conf_entry->offset);
-          value= (guint32)*entry;
-          data_type= IC_CL_INT32_TYPE;
-          break;
-        }
-        case IC_UINT32:
-        {
-          guint32 *entry= (guint32*)(conf+conf_entry->offset);
-          value= (guint32)*entry;
-          data_type= IC_CL_INT32_TYPE;
-          break;
-        }
-        case IC_UINT64:
-        {
-          guint64 *entry= (guint64*)(conf+conf_entry->offset);
-          value= (guint32)((guint64)(*entry >> 32));
-          assign_array[2]= g_htonl(value);
-          value= *entry & 0xFFFFFFFF;
-          *key_value_array++;
-          *key_value_array_len++;
-          data_type= IC_CL_INT64_TYPE;
-          break;
-        }
-        case IC_CHARPTR:
-        {
-          str_len= strlen(conf+conf_entry->offset);
-          value= str_len + 1; /* Reported length includes NULL byte */
-          /* 
-             Adjust to number of words with one word removed and
-             an extra null byte calculated for
-           */
-          len= (value + 3)/4;
-          /* We don't need to copy null byte since we initialised to 0 */
-          memcpy(&assign_array[2], conf+conf_entry->offset, str_len);
-          *key_value_array+= len;
-          *key_value_array_len+= len;
-          data_type= IC_CL_CHAR_TYPE;
-          break;
-        }
-        default:
-          return IC_ERROR_INCONSISTENT_DATA;
-      }
-      /*
-         Assign the key consisting of:
-         1) Data Type
-         2) Section id
-         3) Config id
-       */
-      config_id= map_config_id[i];
-      key= (data_type << IC_CL_KEY_SHIFT) +
-           (sect_id << IC_CL_SECT_SHIFT) +
-           (config_id);
-      assign_array[0]= g_htonl(key);
-      assign_array[1]= g_htonl(value);
-      *key_value_array+= 2;
-      *key_value_array_len+= 2;
-    }
-  }
-  return 0;
-}
-
-static IC_SOCKET_LINK_CONFIG*
-get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
-                 IC_SOCKET_LINK_CONFIG *comm_section,
-                 guint32 node1, guint32 node2)
-{
-  IC_SOCKET_LINK_CONFIG *local_comm_section;
-  comm_section->first_node_id= node1;
-  comm_section->second_node_id= node2;
-  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
-                           ic_hashtable_search(clu_conf->comm_hash,
-                                               (void*)comm_section)))
-    return local_comm_section;
-  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
-                           ic_hashtable_search(clu_conf->comm_hash,
-                                               (void*)comm_section)))
-    return local_comm_section;
-  init_config_object((gchar*)comm_section, IC_COMM_TYPE);
-  return comm_section;
-}
-
-static int
-ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
-                                 guint32 **key_value_array,
-                                 guint32 *key_value_array_len)
-{
-  guint32 len= 0, num_comms= 0;
-  guint32 node_sect_len, i, j, checksum;
-  guint32 section_id, comm_desc_section, node_desc_section;
-  guint32 **temp_key_value_array;
-  int ret_code;
-  IC_SOCKET_LINK_CONFIG test1, *comm_section;
-  for (i= 1; i <= clu_conf->max_node_id; i++)
-  {
-    /* Add length of each node section */
-    if (clu_conf->node_config[i])
-    {
-      node_sect_len= get_length_of_section(
-                          (IC_CONFIG_TYPES)clu_conf->node_types[i],
-                                           clu_conf->node_config[i]);
-      if (node_sect_len == 0)
-        return IC_ERROR_INCONSISTENT_DATA;
-      len+= node_sect_len;
-    }
-  }
-  /* Add length of each comm section */
-  for (i= 1; i <= clu_conf->max_node_id; i++)
-  {
-    if (clu_conf->node_config[i])
-    {
-      for (j= i+1; j <= clu_conf->max_node_id; j++)
-      {
-        if (clu_conf->node_config[j])
-        {
-          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
-               clu_conf->node_types[j] == IC_KERNEL_NODE))
-            continue;
-          /* We have found two nodes needing a comm section */
-          comm_section= get_comm_section(clu_conf, &test1, i, j);
-          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section);
-          num_comms++;
-        }
-      }
-    }
-  }
-
-  /*
-   * Add 2 words for verification string in beginning
-   * Add 1 word for checksum at the end
-   * Add 2 key-value pairs for section 0
-   * Add one key-value pair for each node section
-   *   - This is section 2
-   * Add one key-value pair for each comm section
-   *   - This is section 2 + no of nodes
-   * Add 3 key-value pairs for each node section
-   *   - Node id, x and y
-   * Add 3 key-value pairs for each comm section
-   *   - x, y and z
-   */
-  len+= 2;
-  len+= 4;
-  len+= clu_conf->num_nodes * 2;
-  len+= num_comms;
-  /* Allocate memory for key-value pairs */
-  if (!(*key_value_array= (guint32*)ic_calloc(4*len)))
-    return MEM_ALLOC_ERROR;
-
-  /*
-    Put in verification section
-  */
-  memcpy((gchar*)*key_value_array, ver_string, 8);
-
-  /*
-    Fill Section 0
-      Id 2000 specifies section 1 as a section that specifies node sections
-      Id 3000 specifies section number of the section that describes the
-      communication sections
-  */
-  section_id= 0;
-  comm_desc_section= 2 + clu_conf->num_nodes;
-  node_desc_section= 1;
-  *key_value_array[2]= (3 << IC_CL_KEY_SHIFT) +
-                       (section_id << IC_CL_SECT_SHIFT) +
-                       2000;
-  *key_value_array[3]= node_desc_section << IC_CL_SECT_SHIFT;
-
-  *key_value_array[4]= (3 << IC_CL_KEY_SHIFT) +
-                       (section_id << IC_CL_SECT_SHIFT) +
-                       3000;
-  *key_value_array[5]= comm_desc_section << IC_CL_SECT_SHIFT;
-  *key_value_array_len= 6;
-
-  /*
-    Fill Section 1
-    One key-value for each section that specifies a node, starting at
-    section 2 and ending at section 2+num_nodes-1.
-  */
-  section_id= 1;
-  for (i= 0; i < clu_conf->num_nodes; i++)
-  {
-    *key_value_array[*key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
-                                              (section_id << IC_CL_SECT_SHIFT) +
-                                              i;
-    *key_value_array[*key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
-  }
-
-  /* Fill node sections */
-  section_id= 2;
-  for (i= 1; i < clu_conf->max_node_id; i++)
-  {
-    if (clu_conf->node_config[i] &&
-        (ret_code= fill_key_value_section(clu_conf->node_types[i],
-                                          clu_conf->node_config[i],
-                                          section_id++,
-                                          temp_key_value_array,
-                                          key_value_array_len)))
-      goto error;
-  }
-
-  /*
-    Fill section 1 + 1 + no_of_nodes
-    This specifies the communication sections, one for each pair of nodes
-    that need to communicate
-  */
-  g_assert(comm_desc_section == section_id);
-  section_id= comm_desc_section;
-  for (i= 0; i < num_comms; i++)
-  {
-    *key_value_array[*key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
-                             (comm_desc_section << IC_CL_SECT_SHIFT) +
-                             i;
-    *key_value_array[*key_value_array_len++]= 
-                              (comm_desc_section+i) << IC_CL_SECT_SHIFT;
-  }
-
-  /* Fill comm sections */
-  section_id= comm_desc_section + 1;
-  for (i= 1; i <= clu_conf->max_node_id; i++)
-  {
-    if (clu_conf->node_config[i])
-    {
-      for (j= i+1; j <= clu_conf->max_node_id; j++)
-      {
-        if (clu_conf->node_config[j])
-        {
-          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
-               clu_conf->node_types[j] == IC_KERNEL_NODE))
-            continue;
-          /* We have found two nodes needing a comm section */
-          comm_section= get_comm_section(clu_conf, &test1, i, j);
-          if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
-                                                (gchar*)comm_section,
-                                                section_id++,
-                                                temp_key_value_array,
-                                                key_value_array_len)))
-            goto error;
-        }
-      }
-    }
-  }
-  /* Calculate and fill out checksum */
-  for (i= 0; i < *key_value_array_len; i++)
-    checksum^= *key_value_array[i];
-  *key_value_array[*key_value_array_len++]= checksum;
-
-  /* Perform final set of checks */
-  if ((len*4) == *key_value_array_len)
-    return 0;
-
-  ret_code= IC_ERROR_INCONSISTENT_DATA;
-error:
-  ic_free(*key_value_array);
-  return ret_code;
-}
-
-int
-ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
-                     guint8 **base64_array,
-                     guint32 *base64_array_len)
-{
-  guint32 *key_value_array;
-  guint32 key_value_array_len;
-  int ret_code;
-
-  *base64_array= 0;
-  if ((ret_code= ic_get_key_value_sections_config(clu_conf, &key_value_array,
-                                                  &key_value_array_len)))
-    return ret_code;
-  ret_code= ic_base64_encode(base64_array,
-                             base64_array_len,
-                             (const guint8*)key_value_array,
-                             key_value_array_len*4);
-  ic_free(key_value_array);
-  return ret_code;
 }
 
 /*
