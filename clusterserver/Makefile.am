@@ -9,5 +9,6 @@ bin_PROGRAMS = ic_cserv
 ic_cserv_SOURCES = ic_cserv.c
 #ic_parser.y ic_lex.l
 ic_cserv_LDADD = $(LDADD) ../comm/libic_comm.la \
+                          ../util/libic_util.la \
                           ../port/libic_port.la
 

@@ -9,7 +9,7 @@ static gchar *glob_client_port= "12002";
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
 static int glob_tcp_snd_size= 0;
-static int glob_test_type= 0;
+static int glob_test_type= 5;
 static gboolean glob_is_wan_connection= FALSE;
 
 static GOptionEntry entries[] = 
@@ -180,6 +180,53 @@ end:
   return ret_code;
 }
 
+static int
+/*  Methods to send and receive buffers with Carriage Return
+
+int ic_send_with_cr(IC_CONNECTION *conn, const char *buf);
+int ic_rec_with_cr(IC_CONNECTION *conn,
+                   gchar *rec_buf,
+                   guint32 *read_size,
+                   guint32 *size_curr_buf,
+                   guint32 buffer_size);*/
+
+test_pcntrl()
+{
+  int ret_code, error;
+  IC_CONNECTION conn;
+  gchar read_buf[256];
+  guint32 read_size=0;
+  guint32 size_curr_buf=0;
+  guint32 buf_size;
+
+  ic_init_socket_object(&conn, TRUE, TRUE, FALSE, TRUE,
+                        NULL, NULL);
+  conn.server_name= glob_server_ip;
+  conn.server_port= glob_server_port;
+  conn.client_name= glob_client_ip;
+  conn.client_port= glob_client_port;
+  conn.is_connect_thread_used= FALSE;
+  conn.is_wan_connection= glob_is_wan_connection;
+  conn.tcp_maxseg_size= glob_tcp_maxseg;
+  conn.tcp_receive_buffer_size= glob_tcp_rec_size;
+  conn.tcp_send_buffer_size= glob_tcp_snd_size;
+  ret_code= conn.conn_op.set_up_ic_connection(&conn);
+  if ((error= ic_send_with_cr(&conn, "ls")) ||
+      (error= ic_send_with_cr(&conn, "-la")) ||
+      (error= ic_send_with_cr(&conn, "")))
+  {
+    ic_print_error(error);
+    return 0;
+  }
+  if ((error= ic_rec_with_cr(&conn, read_buf, &read_size,
+                             &size_curr_buf, sizeof(read_buf))))
+  {
+    ic_print_error(error);
+    return 0;
+  }
+  return 0;
+}
+
 int main(int argc, char *argv[])
 {
   int ret_code= 1;
@@ -206,6 +253,8 @@ int main(int argc, char *argv[])
     case 3:
     case 4:
     case 5:
+      test_pcntrl();
+      break;
     case 6:
       ret_code= api_clusterserver_test();
       break;

@@ -1,14 +1,8 @@
-/*
-  This program handles start and stop of cluster processes. It reads a
-  configuration file and based on its content enables start of a number of
-  processes on the local machine. It can start and stop processes belonging
-  to different clusters. These sets of clusters are referred to as a cluster
-  group. A cluster group shares a common set of Cluster Servers. These
-  Cluster Servers handle the configuration and changes to the configuration.
-  They are also an essential point of contact for all other management of the
-  cluster and can be used to retrieve information from the cluster about its
-  current state.
+#include <glib.h>
+#include <stdio.h>
 
+
+/*
   This program is also used to gather information from local log files as 
   part of any process to gather information about mishaps in the cluster(s).
 
@@ -38,6 +32,10 @@
 
 #include <ic_comm.h>
 #include <ic_common.h>
+
+#define REC_PROG_NAME 0
+#define REC_PARAM 1
+#define REC_FINAL_CR 2
 
 static gchar *glob_ip= NULL;
 static gchar *glob_port= "10002";
@@ -74,12 +72,17 @@ static int verify_conf_file(__attribute__ ((unused)) GKeyFile *conf_file)
 
 int main(int argc, char *argv[])
 {
+  IC_CONNECTION conn;
   GError *error= NULL;
+  gchar *arg_vector[4];
+  gchar read_buf[256];
+  guint32 read_size= 0;
+  guint32 size_curr_buf= 0;
+  int state= REC_PROG_NAME;
+  GPid barn_pid;
   GOptionContext *context;
-  GKeyFile *conf_file= NULL;
-  struct ic_connection conn;
-  int ret_code;
-
+  int i, ret_code;
+ 
   /* Read command options */
   context= g_option_context_new("iClaustron Control Server");
   if (!context)
@@ -89,54 +92,45 @@ int main(int argc, char *argv[])
     goto parse_error;
   g_option_context_free(context);
 
-  /* Read configuration file */
-  if (!(conf_file= g_key_file_new()))
-    goto mem_error;
-  if (!g_key_file_load_from_file(conf_file, glob_config_file,
-                                 G_KEY_FILE_NONE, &error))
-    goto conf_file_error;
-
-  if (verify_conf_file(conf_file))
-    return 1;
-
-  /* Start listening for connections */
-  if (glob_ip)
+  while (!(ret_code= ic_rec_with_cr(&conn, read_buf, &read_size,
+                                    &size_curr_buf,
+                                    sizeof(read_buf))))
   {
-    conn.server_name= glob_ip;
+    DEBUG(ic_print_buf(read_buf, read_size));
+    switch (state)
+    {
+      case REC_PROG_NAME: /* Receive program name */
+	state= REC_PARAM;
+        break;
+      case REC_PARAM: /* Receive parameters */
+	state= REC_FINAL_CR;
+        break;
+      case REC_FINAL_CR: /* Receive final CR */
+	return 0;
+        break;
+      default:
+        abort();
+    }
   }
-  else
-    conn.server_name= "localhost";
-  conn.server_port= glob_port;
-  conn.is_client= FALSE;
-  conn.client_name= NULL;
-  conn.client_port= NULL;
-  conn.backlog= 5;
-  
-  ic_init_socket_object(&conn, FALSE, FALSE, FALSE, FALSE, NULL, NULL);
-  if ((ret_code= conn.conn_op.set_up_ic_connection(&conn)))
-  {
-    printf("Failed to set up listening port\n");
-    g_key_file_free(conf_file);
-    return 1;
-  }
+  /* for (i=0; i<=argc; i++)
+     arg_vector[i]=argv[i];*/
 
-  /* Run the services of this program */
-  start_services(&conn, conf_file);
-
-  conn.conn_op.close_ic_connection(&conn); 
-  g_key_file_free(conf_file);
-  return 0;
-
-conf_file_error:
-  printf("Configuration File Error: \n%s\n", error->message);
-  return 1;
-
+  /*  arg_vector[0]="vi";*/
+  /*arg_vector[1]="ic_pcntrl.c";*/
+  arg_vector[i]=NULL;
+  printf("anrop av g-spawn-async\n");
+  g_spawn_async(NULL,&arg_vector[0], NULL, G_SPAWN_SEARCH_PATH,
+                NULL,NULL,&barn_pid,&error);
+  printf("Anrop gjort barn_pid = %d\n", barn_pid);
+  ic_guint64_str((guint64)barn_pid, read_buf);
+  /* printf("Kill process %s\n", buf);
+  arg_vector[0]="kill";
+  arg_vector[1]="-9";
+  arg_vector[2]=buf;
+  arg_vector[3]=NULL;
+  g_spawn_async(NULL,&arg_vector[0], NULL, G_SPAWN_SEARCH_PATH,
+  NULL,NULL,&barn_pid,&fel);*/
 mem_error:
-  printf("Memory allocation error\n");
-  return 1;
-
 parse_error:
-  printf("Error in parsing option parameters, use --help for assistance\n%s\n", error->message);
-  return 1;
+  return 0;
 }
-
