@@ -2917,6 +2917,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
   IC_CONFIG_ENTRY *conf_entry;
   guint32 len= 0, i, key, config_id, value, data_type, str_len;
   guint32 *assign_array;
+  gchar **charptr;
   guint32 loc_key_value_array_len= *key_value_array_len;
   for (i= 0; i < MAX_CONFIG_ID; i++)
   {
@@ -2960,7 +2961,10 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
         }
         case IC_CHARPTR:
         {
-          str_len= strlen(conf+conf_entry->offset);
+          charptr= (gchar**)(conf+conf_entry->offset);
+          str_len= 0;
+          if (*charptr)
+            str_len= strlen(*charptr);
           value= str_len + 1; /* Reported length includes NULL byte */
           /* 
              Adjust to number of words with one word removed and
@@ -2968,7 +2972,10 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
            */
           len= (value + 3)/4;
           /* We don't need to copy null byte since we initialised to 0 */
-          memcpy((gchar*)&assign_array[2], conf+conf_entry->offset, str_len);
+          if (*charptr)
+            memcpy((gchar*)&assign_array[2],
+                   *charptr,
+                   str_len);
           DEBUG(printf("String value = %s\n", (gchar*)&assign_array[2]));
           loc_key_value_array_len+= len;
           data_type= IC_CL_CHAR_TYPE;
