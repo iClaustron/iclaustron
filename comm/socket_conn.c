@@ -266,7 +266,8 @@ translate_hostnames(struct ic_connection *conn)
   hints.ai_flags= AI_PASSIVE;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
-  printf("Server name = %s, service = %s\n", conn->server_name, conn->server_port);
+  printf("Server name = %s, service = %s\n",
+         conn->server_name, conn->server_port);
   if ((n= getaddrinfo(conn->server_name, conn->server_port,
        &hints, &conn->server_addrinfo)) != 0)
     return IC_ERROR_GETADDRINFO;
@@ -293,6 +294,8 @@ translate_hostnames(struct ic_connection *conn)
   hints.ai_flags= AI_CANONNAME;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
+  printf("Client name = %s, service = %s\n",
+         conn->client_name, conn->client_port);
   if ((n= getaddrinfo(conn->client_name, conn->client_port,
        &hints, &conn->client_addrinfo)) != 0)
     return IC_ERROR_GETADDRINFO;

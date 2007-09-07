@@ -108,8 +108,8 @@ api_clusterserver_test()
   guint32 node_id= 0;
 
   printf("Starting API Cluster server test\n");
-  cluster_conn.cluster_server_ips= &glob_client_ip;
-  cluster_conn.cluster_server_ports= &glob_client_port;
+  cluster_conn.cluster_server_ips= &glob_server_ip;
+  cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
   srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id,
                                &node_id, (guint32)1);
@@ -241,6 +241,8 @@ int main(int argc, char *argv[])
     goto parse_error;
   g_option_context_free(context);
   printf("Server ip = %s, Client ip = %s\n", glob_server_ip, glob_client_ip);
+  printf("Server port = %s, Client port = %s\n",
+         glob_server_port, glob_client_port);
   if (ic_init())
     return ret_code;
   switch (glob_test_type)
@@ -253,13 +255,15 @@ int main(int argc, char *argv[])
     case 3:
     case 4:
     case 5:
-      test_pcntrl();
-      break;
     case 6:
+      /* api_cluster_server_test() uses all the test_type 1-6 */
       ret_code= api_clusterserver_test();
       break;
     case 7:
       ret_code= run_clusterserver_test();
+      break;
+    case 8:
+      test_pcntrl();
       break;
     default:
       break;

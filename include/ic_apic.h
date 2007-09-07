@@ -88,6 +88,7 @@ struct ic_config_entry
   gchar is_not_configurable;
   gchar is_only_iclaustron;
   gchar is_array_value;
+  gchar is_not_sent;
 };
 typedef struct ic_config_entry IC_CONFIG_ENTRY;
 
@@ -509,11 +510,16 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
 void ic_print_config_parameters();
 
 #define IC_SET_CONFIG_MAP(name, id) \
-  map_config_id[name]= id; \
+  if (name >= MAX_MAP_CONFIG_ID) \
+    id_out_of_range(name); \
+  if (id >= MAX_CONFIG_ID) \
+    name_out_of_range(id); \
+  map_config_id_to_inx[name]= id; \
+  map_inx_to_config_id[id]= name; \
   conf_entry= &glob_conf_entry[id]; \
   if (conf_entry->config_entry_name.str) \
     id_already_used_aborting(id);   \
-  if (id > glob_conf_max_id) glob_conf_max_id= id;
+  if (id > glob_max_config_id) glob_max_config_id= id;
 
 #define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name.str= #name; \
