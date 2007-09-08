@@ -3774,8 +3774,9 @@ mandatory_error:
 }
 
 static
-int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
+int conf_serv_init(void *ic_conf, guint32 pass)
 {
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf;
   guint32 max_node_id;
   guint32 size_structs= 0;
@@ -3785,11 +3786,11 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
     if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)ic_calloc(
                     sizeof(IC_CLUSTER_CONFIG_LOAD))))
       return IC_ERROR_MEM_ALLOC;
-    ic_conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
+    conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
     clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
     return 0;
   }
-  clu_conf= ic_conf->config_ptr.clu_conf;
+  clu_conf= conf->config_ptr.clu_conf;
   max_node_id= clu_conf->conf.max_node_id;
   if (max_node_id == 0)
     return IC_ERROR_NO_NODES_FOUND;
@@ -3832,14 +3833,15 @@ int conf_serv_init(IC_CONFIG_STRUCT *ic_conf, guint32 pass)
 }
 
 static
-int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
+int conf_serv_add_section(void *ic_config,
                           __attribute__ ((unused)) guint32 section_number,
                           guint32 line_number,
                           IC_STRING *section_name,
                           guint32 pass)
 {
   int error;
-  IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   DEBUG_ENTRY("conf_serv_add_section");
   DEBUG_IC_STRING(section_name);
 
@@ -3988,14 +3990,15 @@ int conf_serv_add_section(IC_CONFIG_STRUCT *ic_config,
 }
 
 static
-int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
+int conf_serv_add_key(void *ic_config,
                       guint32 section_number,
                       guint32 line_number,
                       IC_STRING *key_name,
                       IC_STRING *data,
                       guint32 pass)
 {
-  IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   IC_CONFIG_ENTRY *conf_entry;
   guint64 value;
   gchar *struct_ptr;
@@ -4098,13 +4101,14 @@ int conf_serv_add_key(IC_CONFIG_STRUCT *ic_config,
 }
 
 static
-int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
+int conf_serv_add_comment(void *ic_config,
                           guint32 line_number,
                           guint32 section_number,
                           __attribute__ ((unused)) IC_STRING *comment,
                           guint32 pass)
 {
-  IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_config->config_ptr.clu_conf;
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   DEBUG_ENTRY("conf_serv_add_comment");
   printf("Line number %d in section %d was comment line\n", line_number, section_number);
   if (pass == INITIAL_PASS)
@@ -4113,9 +4117,18 @@ int conf_serv_add_comment(IC_CONFIG_STRUCT *ic_config,
 }
 
 static
-void conf_serv_end(IC_CONFIG_STRUCT *ic_conf)
+int conf_serv_verify_conf(void *ic_conf)
 {
-  IC_CLUSTER_CONFIG_LOAD *clu_conf= ic_conf->config_ptr.clu_conf;
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  return 0;
+}
+
+static
+void conf_serv_end(void *ic_conf)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   guint32 i;
   DEBUG_ENTRY("conf_serv_end");
   if (clu_conf)
@@ -4143,6 +4156,7 @@ static IC_CONFIG_OPERATIONS config_server_ops =
   .ic_add_section = conf_serv_add_section,
   .ic_add_key     = conf_serv_add_key,
   .ic_add_comment = conf_serv_add_comment,
+  .ic_verify_conf = conf_serv_verify_conf,
   .ic_config_end  = conf_serv_end,
 };
 

@@ -28,24 +28,25 @@ typedef struct ic_config_struct IC_CONFIG_STRUCT;
 
 struct ic_config_operations
 {
-  int (*ic_config_init)(IC_CONFIG_STRUCT *ic_config, guint32 pass);
-  int (*ic_add_section)(IC_CONFIG_STRUCT *ic_config,
+  int (*ic_config_init)(void *ic_config, guint32 pass);
+  int (*ic_add_section)(void *ic_config,
                         guint32 section_number,
                         guint32 line_number,
                         IC_STRING *section_name,
                         guint32 pass);
-  int (*ic_add_key)(IC_CONFIG_STRUCT *ic_config,
+  int (*ic_add_key)(void *ic_config,
                     guint32 section_number,
                     guint32 line_number,
                     IC_STRING *key_name,
                     IC_STRING *data,
                     guint32 pass);
-  int (*ic_add_comment)(IC_CONFIG_STRUCT *ic_config,
+  int (*ic_add_comment)(void *ic_config,
                         guint32 line_number,
                         guint32 section_number,
                         IC_STRING *comment,
                         guint32 pass);
-  void (*ic_config_end)(IC_CONFIG_STRUCT *ic_config);
+  int (*ic_verify_conf)(void *ic_config);
+  void (*ic_config_end)(void *ic_config);
 };
 typedef struct ic_config_operations IC_CONFIG_OPERATIONS;
 
