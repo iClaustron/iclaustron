@@ -3040,7 +3040,8 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
                  guint32 node1, guint32 node2)
 {
   IC_SOCKET_LINK_CONFIG *local_comm_section;
-  IC_KERNEL_CONFIG *kernel_conf;
+  IC_KERNEL_CONFIG *server_conf;
+  IC_KERNEL_CONFIG *client_conf;
   comm_section->first_node_id= node1;
   comm_section->second_node_id= node2;
   if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
