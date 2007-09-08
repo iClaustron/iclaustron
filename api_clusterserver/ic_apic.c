@@ -1099,7 +1099,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(KERNEL_SIZE_OF_REDO_LOG_FILES, 60);
   IC_SET_KERNEL_CONFIG(conf_entry, size_of_redo_log_files,
-                       IC_UINT32, 16, IC_INITIAL_NODE_RESTART);
+                       IC_UINT32, 16 * 1024 * 1024, IC_INITIAL_NODE_RESTART);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 2000*1024*1024);
   conf_entry->min_version_used= 0x50119;
   conf_entry->config_entry_description=
@@ -1586,15 +1586,15 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_KERNEL_READ_BUFFER_SIZE, 197);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_read_buffer_size,
-                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 128*1024);
+                    IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024);
   conf_entry->config_entry_description=
   "Size of receive buffer for socket in OS kernel";
 
   IC_SET_CONFIG_MAP(SOCKET_KERNEL_WRITE_BUFFER_SIZE, 198);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_write_buffer_size,
-                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 128*1024*1024);
+                    IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024*1024);
   conf_entry->config_entry_description=
   "Size of send buffer of socket inside the OS kernel";
 
@@ -2019,7 +2019,6 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
         printf("No such node type\n");
         return PROTOCOL_ERROR;
     }
-    conf_obj->num_nodes++;
     conf_obj->node_types[sect_id - 2]= (IC_NODE_TYPES)value;
   }
   else if (hash_key == IC_NODE_ID)
@@ -2733,6 +2732,8 @@ get_cs_config(IC_API_CONFIG_SERVER *apic)
         (error= rec_get_config(conn, apic, i)))
       continue;
   }
+  if (error)
+    goto error;
   for (i= 0; i < apic->num_clusters_to_connect; i++)
   {
     IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects+i;
@@ -2742,6 +2743,7 @@ get_cs_config(IC_API_CONFIG_SERVER *apic)
       break;
     }
   }
+error:
   conn->conn_op.close_ic_connection(conn);
   conn->conn_op.free_ic_connection(conn);
   return error;
@@ -2972,7 +2974,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
            */
           len= (value + 3)/4;
           /* We don't need to copy null byte since we initialised to 0 */
-          if (*charptr)
+          if (str_len)
             memcpy((gchar*)&assign_array[2],
                    *charptr,
                    str_len);
@@ -3031,6 +3033,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
   return 0;
 }
 
+/* This routine depends on that node1 < node2 */
 static IC_SOCKET_LINK_CONFIG*
 get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
                  IC_SOCKET_LINK_CONFIG *comm_section,
@@ -3048,6 +3051,13 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
                                                (void*)comm_section)))
     return local_comm_section;
   init_config_object((gchar*)comm_section, IC_COMM_TYPE);
+  comm_section->first_node_id= node1;
+  comm_section->second_node_id= node2;
+  if (clu_conf->node_types[node1] == IC_KERNEL_NODE ||
+      clu_conf->node_types[node2] != IC_KERNEL_NODE)
+    comm_section->server_node_id= node1;
+  else
+    comm_section->server_node_id= node2;
   return comm_section;
 }
 
@@ -3161,6 +3171,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                               i;
     loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
   }
+  for (i= 2; i < 6 + (2 * clu_conf->num_nodes); i++)
+    loc_key_value_array[i]= g_htonl(loc_key_value_array[i]);
 
   /* Fill node sections */
   section_id= 2;
@@ -3184,11 +3196,12 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   section_id= comm_desc_section;
   for (i= 0; i < num_comms; i++)
   {
-    loc_key_value_array[loc_key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
+    loc_key_value_array[loc_key_value_array_len++]= g_htonl(
+                                   (1 << IC_CL_KEY_SHIFT) +
                                    (comm_desc_section << IC_CL_SECT_SHIFT) +
-                                   i;
-    loc_key_value_array[loc_key_value_array_len++]= 
-                              (comm_desc_section+i) << IC_CL_SECT_SHIFT;
+                                   i);
+    loc_key_value_array[loc_key_value_array_len++]= g_htonl(
+                              (comm_desc_section+i) << IC_CL_SECT_SHIFT);
   }
 
   /* Fill comm sections */
@@ -3217,9 +3230,10 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     }
   }
   /* Calculate and fill out checksum */
+  checksum= 0;
   for (i= 0; i < loc_key_value_array_len; i++)
-    checksum^= loc_key_value_array[i];
-  loc_key_value_array[loc_key_value_array_len++]= checksum;
+    checksum^= g_ntohl(loc_key_value_array[i]);
+  loc_key_value_array[loc_key_value_array_len++]= g_ntohl(checksum);
 
   /* Perform final set of checks */
   *key_value_array_len= loc_key_value_array_len;
@@ -3249,6 +3263,7 @@ ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
                              base64_array_len,
                              (const guint8*)key_value_array,
                              key_value_array_len*4);
+  DEBUG(printf("%s", *(gchar**)base64_array));
   ic_free(key_value_array);
   return ret_code;
 }

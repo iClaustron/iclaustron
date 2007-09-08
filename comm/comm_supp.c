@@ -87,19 +87,21 @@ ic_base64_encode(guint8 **dest,
   guint32 c1, c2, c3, c4;
   guint32 real_quads= (src_len+2)/3;
   guint32 no_crs= (real_quads+18)/19;
-  guint8 *dst, *end_dst;;
+  guint8 *dst, *end_dst;
+  guint32 dst_len;
   DEBUG_ENTRY("base64_encode");
 
-  *dest_len= 4*real_quads+no_crs;
-  dst= (guint8*)ic_calloc(*dest_len);
+  dst_len= 4*real_quads+no_crs;
+  dst= (guint8*)ic_calloc(dst_len + 1);
   if (!dst)
     return MEM_ALLOC_ERROR;
   *dest= dst;
-  end_dst= dst+*dest_len;
+  *dest_len= dst_len;
+  end_dst= dst + dst_len + 1;
   for (i= 0; i < std_quads; i++, src+= 3, dst+= 4)
   {
-    c1= src[0] << 2;
-    c2= ((src[0] >> 6) << 4) + (src[1] >> 4);
+    c1= src[0] >> 2;
+    c2= ((src[0] & 0x3) << 4) + (src[1] >> 4);
     c3= ((src[1] & 0xF) << 2) + (src[2] >> 6);
     c4= src[2] & 0x3F;
     dst[0]= encode_table[c1];
@@ -108,31 +110,31 @@ ic_base64_encode(guint8 **dest,
     dst[3]= encode_table[c4];
     if (++cr_count == 19)
     {
-      *dst= CARRIAGE_RETURN;
+      dst[4]= CARRIAGE_RETURN;
       dst++;
       cr_count= 0;
     }
   }
   if (left_overs == 1)
   {
-    c1= src[0] << 2;
-    c2= (src[0] >> 6) << 4;
+    c1= src[0] >> 2;
+    c2= (src[0] & 0x3) << 4;
     dst[0]= encode_table[c1];
     dst[1]= encode_table[c2];
-    dst[2]= 64;
-    dst[3]= 64;
+    dst[2]= '=';
+    dst[3]= '=';
     dst+= 4;
     cr_count++;
   }
   else if (left_overs == 2)
   {
-    c1= src[0] << 2;
-    c2= ((src[0] >> 6) << 4) + (src[1] >> 4);
+    c1= src[0] >> 2;
+    c2= ((src[0] & 0x3) << 4) + (src[1] >> 4);
     c3= (src[1] & 0xF) << 2;
     dst[0]= encode_table[c1];
     dst[1]= encode_table[c2];
     dst[2]= encode_table[c3];
-    dst[3]= 64;
+    dst[3]= '=';
     dst+= 4;
     cr_count++;
   }
@@ -141,6 +143,8 @@ ic_base64_encode(guint8 **dest,
     *dst= CARRIAGE_RETURN;
     dst++;
   }
+  *dst= 0;
+  dst++;
   g_assert(dst == end_dst);
   return 0;
 }
