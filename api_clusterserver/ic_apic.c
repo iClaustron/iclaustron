@@ -3040,6 +3040,7 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
                  guint32 node1, guint32 node2)
 {
   IC_SOCKET_LINK_CONFIG *local_comm_section;
+  IC_KERNEL_CONFIG *kernel_conf;
   comm_section->first_node_id= node1;
   comm_section->second_node_id= node2;
   if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
@@ -3055,9 +3056,21 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
   comm_section->second_node_id= node2;
   if (clu_conf->node_types[node1] == IC_KERNEL_NODE ||
       clu_conf->node_types[node2] != IC_KERNEL_NODE)
+  {
     comm_section->server_node_id= node1;
+    server_conf= clu_conf->node_config[node1];
+    client_conf= clu_conf->node_config[node2];
+  }
   else
+  {
     comm_section->server_node_id= node2;
+    server_conf= clu_conf->node_config[node2];
+    client_conf= clu_conf->node_config[node1];
+  }
+  comm_section->server_port_number= server_conf->port_number;
+  comm_section->client_port_number= client_conf->port_number;
+  comm_section->first_hostname= server_conf->hostname;
+  comm_section->second_hostname= client_conf->hostname;
   return comm_section;
 }
 
