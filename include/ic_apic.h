@@ -287,11 +287,12 @@ struct ic_cluster_server_config
 
   guint64 mandatory_bits;
   guint32 node_id;
-  guint32 cluster_server_port_number;
+  guint32 port_number;
   /* End common part */
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
   /* End of section in common with Client config */
+  guint32 cluster_server_port_number;
 
   char *cluster_server_event_log;
 };

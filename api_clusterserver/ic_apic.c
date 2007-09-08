@@ -1658,6 +1658,7 @@ init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, port_number, IC_UINT32,
                        DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_types= (1 << IC_CLIENT_TYPE) +
+                            (1 << IC_CLUSTER_SERVER_TYPE) +
                             (1 << IC_KERNEL_TYPE);
   conf_entry->is_not_sent= TRUE;
   conf_entry->config_entry_description=
@@ -3059,14 +3060,14 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
       clu_conf->node_types[node2] != IC_KERNEL_NODE)
   {
     comm_section->server_node_id= node1;
-    server_conf= clu_conf->node_config[node1];
-    client_conf= clu_conf->node_config[node2];
+    server_conf= (IC_KERNEL_CONFIG*)clu_conf->node_config[node1];
+    client_conf= (IC_KERNEL_CONFIG*)clu_conf->node_config[node2];
   }
   else
   {
     comm_section->server_node_id= node2;
-    server_conf= clu_conf->node_config[node2];
-    client_conf= clu_conf->node_config[node1];
+    server_conf= (IC_KERNEL_CONFIG*)clu_conf->node_config[node2];
+    client_conf= (IC_KERNEL_CONFIG*)clu_conf->node_config[node1];
   }
   comm_section->server_port_number= server_conf->port_number;
   comm_section->client_port_number= client_conf->port_number;
