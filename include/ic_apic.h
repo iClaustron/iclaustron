@@ -246,6 +246,8 @@ struct ic_kernel_config
   guint32 size_of_redo_log_files;
   guint32 kernel_initial_watchdog_timer;
   guint32 kernel_max_allocate_size;
+  guint32 kernel_report_memory_frequency;
+  guint32 kernel_backup_status_frequency;
 
   gchar use_unswappable_memory;
   gchar kernel_automatic_restart;

@@ -45,7 +45,7 @@ struct ic_config_operations
                         guint32 section_number,
                         IC_STRING *comment,
                         guint32 pass);
-  int (*ic_verify_conf)(void *ic_config);
+  int (*ic_config_verify)(void *ic_config);
   void (*ic_config_end)(void *ic_config);
 };
 typedef struct ic_config_operations IC_CONFIG_OPERATIONS;

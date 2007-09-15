@@ -404,6 +404,8 @@ int ic_build_config_data(IC_STRING *conf_data,
       line_number++;
     }
   }
+  if ((error= ic_conf_op->ic_config_verify(ic_config)))
+    goto config_error;
   return 0;
 config_error:
   ic_conf_op->ic_config_end(ic_config);

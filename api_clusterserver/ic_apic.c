@@ -1204,8 +1204,8 @@ init_config_parameters()
 #define KERNEL_FILE_SYNCH_SIZE 163
 #define KERNEL_DISK_WRITE_SPEED 164
 #define KERNEL_DISK_WRITE_SPEED_START 165
-#define KERNEL_SCHEDULER_NO_SEND_TIME 166
-#define KERNEL_SCHEDULER_NO_SLEEP_TIME 167
+#define KERNEL_REPORT_MEMORY_FREQUENCY 166
+#define KERNEL_BACKUP_STATUS_FREQUENCY 167
 #define KERNEL_USE_O_DIRECT 168
 #define KERNEL_MAX_ALLOCATE_SIZE 169
 
@@ -1251,21 +1251,17 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Limit on how fast checkpoints are allowed to write to disk during start of the node";
 
-  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SEND_TIME, 86);
-  IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_send_time,
+  IC_SET_CONFIG_MAP(KERNEL_REPORT_MEMORY_FREQUENCY, 86)
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_report_memory_frequency,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
-  conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
-  "How long time can the scheduler execute without sending socket buffers";
+  "Frequency of memory reports, 0 means only at certain thresholds";
 
-  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SLEEP_TIME, 87);
-  IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_sleep_time,
+  IC_SET_CONFIG_MAP(KERNEL_BACKUP_STATUS_FREQUENCY, 87)
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_backup_status_frequency,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
-  conf_entry->min_version_used= 0x50111;
   conf_entry->config_entry_description=
-  "How long time can the scheduler execute without going to sleep";
+  "Frequency of backup status, 0 means no status reporting except at end";
 
   IC_SET_CONFIG_MAP(KERNEL_USE_O_DIRECT, 88);
   IC_SET_KERNEL_BOOLEAN(conf_entry, use_o_direct, TRUE,
@@ -1286,12 +1282,14 @@ init_config_parameters()
 #define KERNEL_RT_SCHEDULER_THREADS 170
 #define KERNEL_LOCK_MAIN_THREAD 171
 #define KERNEL_LOCK_OTHER_THREADS 172
-/* 173-179 not used */
+#define KERNEL_SCHEDULER_NO_SEND_TIME 173
+#define KERNEL_SCHEDULER_NO_SLEEP_TIME 174
+/* 175-179 not used */
 
   IC_SET_CONFIG_MAP(KERNEL_RT_SCHEDULER_THREADS, 90);
   IC_SET_KERNEL_BOOLEAN(conf_entry, kernel_rt_scheduler_threads,
                        FALSE, IC_ONLINE_CHANGE);
-  conf_entry->min_version_used= 0x50111;
+  conf_entry->min_version_used= 0x60304;
   conf_entry->config_entry_description=
   "If set the kernel is setting its thread in RT priority, requires root privileges";
 
@@ -1299,7 +1297,7 @@ init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_lock_main_thread,
                        IC_UINT32, 65535, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
-  conf_entry->min_version_used= 0x50111;
+  conf_entry->min_version_used= 0x60304;
   conf_entry->config_entry_description=
   "Lock Main Thread to a CPU id";
 
@@ -1307,9 +1305,25 @@ init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_lock_main_thread,
                        IC_UINT32, 65535, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
-  conf_entry->min_version_used= 0x50111;
+  conf_entry->min_version_used= 0x60304;
   conf_entry->config_entry_description=
   "Lock other threads to a CPU id";
+
+  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SEND_TIME, 93);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_send_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
+  conf_entry->min_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "How long time can the scheduler execute without sending socket buffers";
+
+  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SLEEP_TIME, 94);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_sleep_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
+  conf_entry->min_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "How long time can the scheduler execute without going to sleep";
 
 /* Id 100-109 for configuration id 180-189 */
 /* 180-189 not used */
@@ -2878,6 +2892,7 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
                       gchar *conf)
 {
   IC_CONFIG_ENTRY *conf_entry;
+  gchar **charptr;
   guint32 len= 0, i, str_len;
   for (i= 0; i < MAX_CONFIG_ID; i++)
   {
@@ -2896,7 +2911,10 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
           break;
         case IC_CHARPTR:
         {
-          str_len= strlen(((gchar*)conf)+conf_entry->offset);
+          charptr= (gchar**)(conf+conf_entry->offset);
+          str_len= 0;
+          if (*charptr)
+            str_len= strlen(*charptr);
           len+= ((str_len+4)/4); /* Also make place for final NULL */
           break;
         }
@@ -2907,6 +2925,8 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
       len+= 2;
     }
   }
+  len+= 2; /* One key-value pair for node type */
+  len+= 2; /* One key-value pair for parent node id */
   return len;
 }
 
@@ -3089,6 +3109,16 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   int ret_code;
   IC_SOCKET_LINK_CONFIG test1, *comm_section;
 
+  /*
+   * Add 2 words for verification string in beginning
+   * Add 2 key-value pairs for section 0
+   * Add one key-value pair for each node section
+   *   - This is section 1
+   */
+  len+= 2;
+  len+= 4;
+  len+= clu_conf->num_nodes * 2;
+  printf("1: len=%u\n", len);
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
     /* Add length of each node section */
@@ -3100,6 +3130,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
       if (node_sect_len == 0)
         return IC_ERROR_INCONSISTENT_DATA;
       len+= node_sect_len;
+      printf("2: len=%u\n", len);
     }
   }
   /* Add length of each comm section */
@@ -3118,31 +3149,20 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
           comm_section= get_comm_section(clu_conf, &test1, i, j);
           len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section);
           num_comms++;
+          printf("4: len=%u\n", len);
         }
       }
     }
   }
-
   /*
-   * Add 2 words for verification string in beginning
-   * Add 2 key-value pairs for section 0
-   * Add one key-value pair for each node section
-   *   - This is section 1
    * Add one key-value pair for each comm section
    *   - This is section 2 + num_nodes
-   * Add 2 key-value pairs for each node section
-   *   - This is the node type and parent node id (== 0)
-   * Add 2 key-value pairs for each comm section
-   *   - This is the node type and parent node id (== 0)
-   * Add 1 word for checksum at the end
    */
-  len+= 2;
-  len+= 4;
-  len+= clu_conf->num_nodes * 2;
-  len+= clu_conf->num_nodes * 4;
   len+= num_comms * 2;
-  len+= num_comms * 4;
+  printf("3: len=%u\n", len);
+  /* Add 1 word for checksum at the end */
   len+= 1;
+  printf("5: len=%u\n", len);
 
   /* Allocate memory for key-value pairs */
   if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
@@ -3186,6 +3206,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                               i;
     loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
   }
+  printf("1: fill_len=%u\n", loc_key_value_array_len);
   for (i= 2; i < 6 + (2 * clu_conf->num_nodes); i++)
     loc_key_value_array[i]= g_htonl(loc_key_value_array[i]);
 
@@ -3200,6 +3221,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                           loc_key_value_array,
                                           &loc_key_value_array_len)))
       goto error;
+    printf("2: fill_len=%u\n", loc_key_value_array_len);
   }
 
   /*
@@ -3219,6 +3241,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                               (comm_desc_section+i) << IC_CL_SECT_SHIFT);
   }
 
+  printf("3: fill_len=%u\n", loc_key_value_array_len);
   /* Fill comm sections */
   section_id= comm_desc_section + 1;
   for (i= 1; i <= clu_conf->max_node_id; i++)
@@ -3240,6 +3263,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                                 loc_key_value_array,
                                                 &loc_key_value_array_len)))
             goto error;
+          printf("4: fill_len=%u\n", loc_key_value_array_len);
         }
       }
     }
@@ -3249,7 +3273,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   for (i= 0; i < loc_key_value_array_len; i++)
     checksum^= g_ntohl(loc_key_value_array[i]);
   loc_key_value_array[loc_key_value_array_len++]= g_ntohl(checksum);
-
+  printf("5: fill_len=%u\n", loc_key_value_array_len);
   /* Perform final set of checks */
   *key_value_array_len= loc_key_value_array_len;
   if (len == loc_key_value_array_len)
@@ -3582,6 +3606,10 @@ run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
   guint32 base64_arr_len;
   DEBUG_ENTRY("run_cluster_server");
 
+  if ((ret_code= ic_get_base64_config(run_obj->conf_objects[0],
+                                      &base64_arr, &base64_arr_len)))
+    goto error;
+  printf("Converted configuration to a base64 representation\n");
   conn= &run_obj->run_conn;
   ret_code= conn->conn_op.set_up_ic_connection(conn);
   if (ret_code)
@@ -3590,10 +3618,6 @@ run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
     goto error;
   }
   printf("Run cluster server has set up connection and has received a connection\n");
-  if ((ret_code= ic_get_base64_config(run_obj->conf_objects[0],
-                                      &base64_arr, &base64_arr_len)))
-    goto error;
-  printf("Converted configuration to a base64 representation\n");
   IC_INIT_STRING(&run_obj->base64_arr, (gchar*)base64_arr, base64_arr_len,
                  FALSE);
   if ((ret_code= handle_config_request(run_obj, conn)))
@@ -3696,11 +3720,17 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
     case IC_NO_CONFIG_TYPE:
       return 0;
     case IC_KERNEL_TYPE:
+    {
+      IC_KERNEL_CONFIG *kernel_conf= (IC_KERNEL_CONFIG*)current_config;
       mandatory_bits= kernel_mandatory_bits;
-      if (((IC_KERNEL_CONFIG*)current_config)->mandatory_bits !=
-          kernel_mandatory_bits)
+      if (kernel_conf->mandatory_bits != kernel_mandatory_bits)
         goto mandatory_error;
+      if (kernel_conf->filesystem_path == NULL)
+        kernel_conf->filesystem_path= kernel_conf->node_data_path;
+      if (kernel_conf->kernel_checkpoint_path == NULL)
+        kernel_conf->kernel_checkpoint_path= kernel_conf->filesystem_path;
       break;
+    }
     case IC_CLIENT_TYPE:
       mandatory_bits= client_mandatory_bits;
       if (((IC_CLIENT_CONFIG*)current_config)->mandatory_bits !=
@@ -4014,6 +4044,7 @@ int conf_serv_add_key(void *ic_config,
   if (!(conf_entry= (IC_CONFIG_ENTRY*)ic_hashtable_search(glob_conf_hash,
                                                           (void*)key_name)))
     return IC_ERROR_NO_SUCH_CONFIG_KEY;
+  struct_ptr= (gchar*)clu_conf->current_node_config + conf_entry->offset;
   if (!(conf_entry->config_types & (1 << clu_conf->current_node_config_type)))
     return IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION;
   if (conf_entry->is_mandatory && (pass != INITIAL_PASS))
@@ -4030,6 +4061,7 @@ int conf_serv_add_key(void *ic_config,
     else
     {
       strncpy(clu_conf->string_memory, data->str, data->len);
+      *(gchar**)struct_ptr= clu_conf->string_memory;
       clu_conf->string_memory+= (data->len+1);
     }
     return 0;
@@ -4079,7 +4111,6 @@ int conf_serv_add_key(void *ic_config,
   }
   if (pass == INITIAL_PASS)
     return 0;
-  struct_ptr= (gchar*)clu_conf->current_node_config + conf_entry->offset;
   /*
     Assign value of configuration variable according to its data type.
   */
@@ -4117,10 +4148,12 @@ int conf_serv_add_comment(void *ic_config,
 }
 
 static
-int conf_serv_verify_conf(void *ic_conf)
+int conf_serv_verify_conf(__attribute__ ((unused)) void *ic_conf)
 {
+/*
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+*/
   return 0;
 }
 
@@ -4156,7 +4189,7 @@ static IC_CONFIG_OPERATIONS config_server_ops =
   .ic_add_section = conf_serv_add_section,
   .ic_add_key     = conf_serv_add_key,
   .ic_add_comment = conf_serv_add_comment,
-  .ic_verify_conf = conf_serv_verify_conf,
+  .ic_config_verify = conf_serv_verify_conf,
   .ic_config_end  = conf_serv_end,
 };
 
