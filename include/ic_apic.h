@@ -74,8 +74,10 @@ struct ic_config_entry
     gets the min_version set to the old max_version + 1 and
     its max_version_used is still 0.
   */
-  guint32 min_version_used;
-  guint32 max_version_used;
+  guint32 min_ic_version_used;
+  guint32 max_ic_version_used;
+  guint32 min_ndb_version_used;
+  guint32 max_ndb_version_used;
   enum ic_config_entry_change change_variant;
   guint32 config_types;
   gchar is_max_value_defined;
@@ -99,7 +101,8 @@ struct ic_run_config_server;
 
 struct ic_api_cluster_operations
 {
-  int (*get_ic_config) (struct ic_api_config_server *apic);
+  int (*get_ic_config) (struct ic_api_config_server *apic,
+                        guint64 our_version_num);
   void (*free_ic_config) (struct ic_api_config_server *apic);
 };
 
@@ -156,7 +159,6 @@ struct ic_run_config_server
 {
   struct ic_run_config_server_operations run_op;
   struct ic_cluster_config **conf_objects;
-  IC_STRING base64_arr;
   IC_CONNECTION run_conn;
   guint32 *cluster_ids;
   guint32 num_clusters;
@@ -248,6 +250,7 @@ struct ic_kernel_config
   guint32 kernel_max_allocate_size;
   guint32 kernel_report_memory_frequency;
   guint32 kernel_backup_status_frequency;
+  guint32 kernel_group_commit_delay;
 
   gchar use_unswappable_memory;
   gchar kernel_automatic_restart;

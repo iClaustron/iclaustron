@@ -341,6 +341,7 @@ const gchar *node_id_str= "node_id";
 #define OCTET_STREAM_STATE 7
 #define CONTENT_ENCODING_STATE 8
 #define RECEIVE_CONFIG_STATE 9
+#define WAIT_LAST_EMPTY_RETURN_STATE 10
 
 #define GET_NODEID_LEN 10
 #define GET_NODEID_REPLY_LEN 16
@@ -417,7 +418,9 @@ static const gchar *result_ok_str= "result: Ok";
 static const gchar *content_len_str= "Content-Length: ";
 static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
-static const guint32 version_no= (guint32)0x5010D; /* 5.1.13 */
+/* Set version number Ndb = 6.3.1, iClaustron = 0.0.1 */
+static const guint64 version_no= (guint64)0x60301 +
+                                 (((guint64)0x000001) << 32);
 
 /*
   CONFIGURATION PARAMETER MODULE
@@ -620,6 +623,27 @@ static IC_CONFIG_ENTRY *get_config_entry_mandatory(guint32 bit_id,
       return conf_entry;
   }
   return NULL;
+}
+
+static gboolean
+is_entry_used_in_version(IC_CONFIG_ENTRY *conf_entry,
+                         guint64 version_num)
+{
+  guint32 ic_version_num= (guint32)(version_num >> 32);
+  guint32 ndb_version_num= (guint32)(version_num & 0xFFFFFFFF);
+  /* Check Ndb Version */
+  if ((ic_version_num == 0) && conf_entry->is_only_iclaustron)
+    return FALSE;
+  if (conf_entry->min_ndb_version_used > ndb_version_num ||
+      (conf_entry->max_ndb_version_used &&
+       conf_entry->max_ndb_version_used < ndb_version_num))
+    return FALSE;
+  /* Check iClaustron Version */
+  if (conf_entry->min_ic_version_used > ic_version_num ||
+      (conf_entry->max_ic_version_used &&
+       conf_entry->max_ic_version_used < ic_version_num))
+    return FALSE;
+  return TRUE;
 }
 
 static void
@@ -1101,7 +1125,7 @@ init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, size_of_redo_log_files,
                        IC_UINT32, 16 * 1024 * 1024, IC_INITIAL_NODE_RESTART);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 2000*1024*1024);
-  conf_entry->min_version_used= 0x50119;
+  conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
   "Size of REDO log files";
 
@@ -1109,7 +1133,7 @@ init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_initial_watchdog_timer,
                        IC_UINT32, 15000, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 100);
-  conf_entry->min_version_used= 0x50119;
+  conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
   "Initial value of watchdog timer before communication set-up";
 
@@ -1266,7 +1290,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(KERNEL_USE_O_DIRECT, 88);
   IC_SET_KERNEL_BOOLEAN(conf_entry, use_o_direct, TRUE,
                         IC_ROLLING_UPGRADE_CHANGE);
-  conf_entry->min_version_used= 0x50119;
+  conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
   "Use O_DIRECT on file system of kernel nodes";
 
@@ -1274,54 +1298,63 @@ init_config_parameters()
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_max_allocate_size,
                        IC_UINT32, 32*1024*1024, IC_INITIAL_NODE_RESTART);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1*1024*1024, 1000*1024*1024);
-  conf_entry->min_version_used= 0x50119;
+  conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
   "Size of maximum extent allocated at a time for table memory";
 
 /* Id 90-99 for configuration id 170-179 */
-#define KERNEL_RT_SCHEDULER_THREADS 170
-#define KERNEL_LOCK_MAIN_THREAD 171
-#define KERNEL_LOCK_OTHER_THREADS 172
-#define KERNEL_SCHEDULER_NO_SEND_TIME 173
-#define KERNEL_SCHEDULER_NO_SLEEP_TIME 174
-/* 175-179 not used */
+#define KERNEL_GROUP_COMMIT_DELAY 170
+#define KERNEL_RT_SCHEDULER_THREADS 173
+#define KERNEL_LOCK_MAIN_THREAD 174
+#define KERNEL_LOCK_OTHER_THREADS 175
+#define KERNEL_SCHEDULER_NO_SEND_TIME 176
+#define KERNEL_SCHEDULER_NO_SLEEP_TIME 177
+/* 171-172 not used */
+/* 178-179 not used */
 
-  IC_SET_CONFIG_MAP(KERNEL_RT_SCHEDULER_THREADS, 90);
+  IC_SET_CONFIG_MAP(KERNEL_GROUP_COMMIT_DELAY, 90);
+  IC_SET_KERNEL_CONFIG(conf_entry, kernel_group_commit_delay,
+                       IC_UINT32, 100, IC_ONLINE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60301;
+  conf_entry->config_entry_description=
+  "How long is the delay between each group commit started by the cluster";
+
+  IC_SET_CONFIG_MAP(KERNEL_RT_SCHEDULER_THREADS, 93);
   IC_SET_KERNEL_BOOLEAN(conf_entry, kernel_rt_scheduler_threads,
                        FALSE, IC_ONLINE_CHANGE);
-  conf_entry->min_version_used= 0x60304;
+  conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
   "If set the kernel is setting its thread in RT priority, requires root privileges";
 
-  IC_SET_CONFIG_MAP(KERNEL_LOCK_MAIN_THREAD, 91);
+  IC_SET_CONFIG_MAP(KERNEL_LOCK_MAIN_THREAD, 94);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_lock_main_thread,
                        IC_UINT32, 65535, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
-  conf_entry->min_version_used= 0x60304;
+  conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
   "Lock Main Thread to a CPU id";
 
-  IC_SET_CONFIG_MAP(KERNEL_LOCK_OTHER_THREADS, 92);
+  IC_SET_CONFIG_MAP(KERNEL_LOCK_OTHER_THREADS, 95);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_lock_main_thread,
                        IC_UINT32, 65535, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
-  conf_entry->min_version_used= 0x60304;
+  conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
   "Lock other threads to a CPU id";
 
-  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SEND_TIME, 93);
+  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SEND_TIME, 96);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_send_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
-  conf_entry->min_version_used= 0x60304;
+  conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
   "How long time can the scheduler execute without sending socket buffers";
 
-  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SLEEP_TIME, 94);
+  IC_SET_CONFIG_MAP(KERNEL_SCHEDULER_NO_SLEEP_TIME, 97);
   IC_SET_KERNEL_CONFIG(conf_entry, kernel_scheduler_no_sleep_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
-  conf_entry->min_version_used= 0x60304;
+  conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
   "How long time can the scheduler execute without going to sleep";
 
@@ -1580,6 +1613,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->max_ndb_version_used= 1;
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
   "Port number to use on client side";
@@ -1811,6 +1845,7 @@ ic_assign_config_string(int config_id, IC_CONFIG_TYPES conf_type,
   struct_ptr+= conf_entry->offset;
   *(gchar**)struct_ptr= string_memory;
   strncpy(string_memory, *string_val, string_len);
+  printf("String value = %s\n", string_memory);
   return 0;
 }
 
@@ -2417,16 +2452,19 @@ set_up_cluster_server_connection(IC_CONNECTION *conn,
 static int
 send_get_nodeid(IC_CONNECTION *conn,
                 IC_API_CONFIG_SERVER *apic,
-                guint32 current_cluster_index)
+                guint32 current_cluster_index,
+                guint64 the_version_num)
 {
-  gchar version_buf[32];
+  gchar version_buf[128];
   gchar nodeid_buf[32];
   gchar endian_buf[32];
   gchar nodetype_buf[32];
+  gchar buf[128];
   guint32 node_type= 1;
   guint32 node_id= apic->node_ids[current_cluster_index];
 
-  g_snprintf(version_buf, 32, "%s%u", version_str, version_no);
+  g_snprintf(version_buf, 32, "%s%s", version_str, 
+             ic_guint64_str(the_version_num, buf));
   g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
   g_snprintf(nodetype_buf, 32, "%s%u", nodetype_str, node_type);
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
@@ -2448,11 +2486,13 @@ send_get_nodeid(IC_CONNECTION *conn,
   return 0;
 }
 static int
-send_get_config(IC_CONNECTION *conn)
+send_get_config(IC_CONNECTION *conn, guint64 the_version_num)
 {
-  gchar version_buf[32];
+  gchar version_buf[128];
+  gchar buf[128];
 
-  g_snprintf(version_buf, 32, "%s%u", version_str, version_no);
+  g_snprintf(version_buf, 32, "%s%s", version_str,
+             ic_guint64_str(the_version_num, buf));
   if (ic_send_with_cr(conn, get_config_str) ||
       ic_send_with_cr(conn, version_buf) ||
       ic_send_with_cr(conn, empty_string))
@@ -2653,6 +2693,7 @@ rec_get_config(IC_CONNECTION *conn,
         state= WAIT_EMPTY_RETURN_STATE;
         break;
       case WAIT_EMPTY_RETURN_STATE:
+      case WAIT_LAST_EMPTY_RETURN_STATE:
         /*
           Receive:
           <CR>
@@ -2662,7 +2703,10 @@ rec_get_config(IC_CONNECTION *conn,
           printf("Protocol error in wait empty return state\n");
           return PROTOCOL_ERROR;
         }
-        state= RECEIVE_CONFIG_STATE;
+        if (state == WAIT_EMPTY_RETURN_STATE)
+          state= RECEIVE_CONFIG_STATE;
+        else
+          return 0;
         break;
       case RECEIVE_CONFIG_STATE:
         /*
@@ -2684,7 +2728,9 @@ rec_get_config(IC_CONNECTION *conn,
           error= translate_config(apic, current_cluster_index,
                                   config_buf, config_size);
           ic_free(config_buf);
-          return error;
+          if (error)
+            return error;
+          state= WAIT_LAST_EMPTY_RETURN_STATE;
         }
         else if (read_size != CONFIG_LINE_LEN)
         {
@@ -2721,13 +2767,15 @@ rec_get_config(IC_CONNECTION *conn,
   successfully parsed and all necessary data structures have been initialised.
 */
 static int
-get_cs_config(IC_API_CONFIG_SERVER *apic)
+get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num)
 {
   guint32 i;
   int error= END_OF_FILE;
   IC_CONNECTION conn_obj, *conn;
   DEBUG_ENTRY("get_cs_config");
 
+  if (the_version_num == 0LL)
+    the_version_num= version_no;
   conn= &conn_obj;
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
@@ -2741,9 +2789,9 @@ get_cs_config(IC_API_CONFIG_SERVER *apic)
     return error;
   for (i= 0; i < apic->num_clusters_to_connect; i++)
   {
-    if ((error= send_get_nodeid(conn, apic, i)) ||
+    if ((error= send_get_nodeid(conn, apic, i, the_version_num)) ||
         (error= rec_get_nodeid(conn, apic, i)) ||
-        (error= send_get_config(conn)) ||
+        (error= send_get_config(conn, the_version_num)) ||
         (error= rec_get_config(conn, apic, i)))
       continue;
   }
@@ -2889,7 +2937,7 @@ ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 */
 static guint32
 get_length_of_section(IC_CONFIG_TYPES config_type,
-                      gchar *conf)
+                      gchar *conf, guint64 version_number)
 {
   IC_CONFIG_ENTRY *conf_entry;
   gchar **charptr;
@@ -2898,7 +2946,8 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
   {
     conf_entry= &glob_conf_entry[i];
     if ((conf_entry->config_types & (1 << ((guint32)config_type))) &&
-        (!conf_entry->is_not_sent))
+        (!conf_entry->is_not_sent) &&
+        is_entry_used_in_version(conf_entry, version_number))
     {
       switch (conf_entry->data_type)
       {
@@ -2935,7 +2984,8 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
                        gchar *conf,
                        guint32 sect_id,
                        guint32 *key_value_array,
-                       guint32 *key_value_array_len)
+                       guint32 *key_value_array_len,
+                       guint64 version_number)
 {
   IC_CONFIG_ENTRY *conf_entry;
   guint32 len= 0, i, key, config_id, value, data_type, str_len;
@@ -2946,7 +2996,8 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
   {
     conf_entry= &glob_conf_entry[i];
     if ((conf_entry->config_types & (1 << ((guint32)config_type))) &&
-        (!conf_entry->is_not_sent))
+        (!conf_entry->is_not_sent) &&
+        is_entry_used_in_version(conf_entry, version_number))
     {
       assign_array= &key_value_array[loc_key_value_array_len];
       switch (conf_entry->data_type)
@@ -3099,7 +3150,8 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
 static int
 ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                  guint32 **key_value_array,
-                                 guint32 *key_value_array_len)
+                                 guint32 *key_value_array_len,
+                                 guint64 version_number)
 {
   guint32 len= 0, num_comms= 0;
   guint32 node_sect_len, i, j, checksum;
@@ -3107,6 +3159,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   guint32 *loc_key_value_array;
   guint32 loc_key_value_array_len= 0;
   int ret_code;
+  gboolean from_iclaustron= version_number > (guint64)0xFFFFFFFF;
   IC_SOCKET_LINK_CONFIG test1, *comm_section;
 
   /*
@@ -3126,7 +3179,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     {
       node_sect_len= get_length_of_section(
                           (IC_CONFIG_TYPES)clu_conf->node_types[i],
-                                           clu_conf->node_config[i]);
+                                           clu_conf->node_config[i],
+                                           version_number);
       if (node_sect_len == 0)
         return IC_ERROR_INCONSISTENT_DATA;
       len+= node_sect_len;
@@ -3142,12 +3196,15 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
       {
         if (clu_conf->node_config[j])
         {
-          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
-               clu_conf->node_types[j] == IC_KERNEL_NODE))
+          /* iClaustron uses a fully connected cluster */
+          if ((!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
+                clu_conf->node_types[j] == IC_KERNEL_NODE)) ||
+                from_iclaustron)
             continue;
           /* We have found two nodes needing a comm section */
           comm_section= get_comm_section(clu_conf, &test1, i, j);
-          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section);
+          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section,
+                                      version_number);
           num_comms++;
           printf("4: len=%u\n", len);
         }
@@ -3219,7 +3276,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                           clu_conf->node_config[i],
                                           section_id++,
                                           loc_key_value_array,
-                                          &loc_key_value_array_len)))
+                                          &loc_key_value_array_len,
+                                          version_number)))
       goto error;
     printf("2: fill_len=%u\n", loc_key_value_array_len);
   }
@@ -3238,7 +3296,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                    (comm_desc_section << IC_CL_SECT_SHIFT) +
                                    i);
     loc_key_value_array[loc_key_value_array_len++]= g_htonl(
-                              (comm_desc_section+i) << IC_CL_SECT_SHIFT);
+                              (comm_desc_section+i+1) << IC_CL_SECT_SHIFT);
   }
 
   printf("3: fill_len=%u\n", loc_key_value_array_len);
@@ -3252,8 +3310,10 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
       {
         if (clu_conf->node_config[j])
         {
-          if (!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
-               clu_conf->node_types[j] == IC_KERNEL_NODE))
+          /* iClaustron uses a fully connected cluster */
+          if ((!(clu_conf->node_types[i] == IC_KERNEL_NODE ||
+               clu_conf->node_types[j] == IC_KERNEL_NODE)) ||
+               from_iclaustron)
             continue;
           /* We have found two nodes needing a comm section */
           comm_section= get_comm_section(clu_conf, &test1, i, j);
@@ -3261,7 +3321,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                                 (gchar*)comm_section,
                                                 section_id++,
                                                 loc_key_value_array,
-                                                &loc_key_value_array_len)))
+                                                &loc_key_value_array_len,
+                                                version_number)))
             goto error;
           printf("4: fill_len=%u\n", loc_key_value_array_len);
         }
@@ -3288,7 +3349,8 @@ error:
 static int
 ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
                      guint8 **base64_array,
-                     guint32 *base64_array_len)
+                     guint32 *base64_array_len,
+                     guint64 version_number)
 {
   guint32 *key_value_array;
   guint32 key_value_array_len;
@@ -3296,7 +3358,8 @@ ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
 
   *base64_array= 0;
   if ((ret_code= ic_get_key_value_sections_config(clu_conf, &key_value_array,
-                                                  &key_value_array_len)))
+                                                  &key_value_array_len,
+                                                  version_number)))
     return ret_code;
   ret_code= ic_base64_encode(base64_array,
                              base64_array_len,
@@ -3590,10 +3653,19 @@ handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
     return ret_code;
   if ((ret_code= rec_get_config_req(conn, version_number)))
     return ret_code;
-  config_len= run_obj->base64_arr.len;
-  config_base64_str= run_obj->base64_arr.str;
-  if ((ret_code= send_config_reply(conn, config_base64_str, config_len)))
+  if ((ret_code= ic_get_base64_config(run_obj->conf_objects[0],
+                                      (guint8**)&config_base64_str,
+                                      &config_len,
+                                      version_number)))
     return ret_code;
+  printf("Converted configuration to a base64 representation\n");
+  if ((ret_code= send_config_reply(conn, config_base64_str, config_len)) ||
+      (ret_code= ic_send_with_cr(conn, empty_string)))
+  {
+    ic_free(config_base64_str);
+    return ret_code;
+  }
+  g_usleep(30*1000*1000);
   return 0;
 }
 
@@ -3602,14 +3674,8 @@ run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
 {
   int ret_code;
   IC_CONNECTION *conn;
-  guint8 *base64_arr;
-  guint32 base64_arr_len;
   DEBUG_ENTRY("run_cluster_server");
 
-  if ((ret_code= ic_get_base64_config(run_obj->conf_objects[0],
-                                      &base64_arr, &base64_arr_len)))
-    goto error;
-  printf("Converted configuration to a base64 representation\n");
   conn= &run_obj->run_conn;
   ret_code= conn->conn_op.set_up_ic_connection(conn);
   if (ret_code)
@@ -3618,8 +3684,6 @@ run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
     goto error;
   }
   printf("Run cluster server has set up connection and has received a connection\n");
-  IC_INIT_STRING(&run_obj->base64_arr, (gchar*)base64_arr, base64_arr_len,
-                 FALSE);
   if ((ret_code= handle_config_request(run_obj, conn)))
     goto error;
   return 0;
