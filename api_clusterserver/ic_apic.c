@@ -2485,6 +2485,7 @@ send_get_nodeid(IC_CONNECTION *conn,
     return conn->error_code;
   return 0;
 }
+
 static int
 send_get_config(IC_CONNECTION *conn, guint64 the_version_num)
 {
@@ -2498,6 +2499,27 @@ send_get_config(IC_CONNECTION *conn, guint64 the_version_num)
       ic_send_with_cr(conn, empty_string))
     return conn->error_code;
   return 0;
+}
+
+static gboolean
+check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
+{
+  if ((read_size != (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) != 0))
+    return TRUE;
+  return FALSE;
+}
+
+static gboolean
+check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
+                   int str_len, guint64 *number)
+{
+  if ((read_size < (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) != 0) ||
+      (convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
+                                     number)))
+    return TRUE;
+  return FALSE;
 }
 
 static int
@@ -2525,9 +2547,8 @@ rec_get_nodeid(IC_CONNECTION *conn,
           Receive:
           get nodeid reply<CR>
         */
-        if ((read_size != GET_NODEID_REPLY_LEN) ||
-            (memcmp(read_buf, get_nodeid_reply_str,
-                    GET_NODEID_REPLY_LEN) != 0))
+        if (check_buf(read_buf, read_size, get_nodeid_reply_str,
+                      GET_NODEID_REPLY_LEN))
         {
           printf("Protocol error in Get nodeid reply state\n");
           return PROTOCOL_ERROR;
@@ -2540,11 +2561,8 @@ rec_get_nodeid(IC_CONNECTION *conn,
           nodeid: __nodeid<CR>
           Where __nodeid is an integer giving the nodeid of the starting process
         */
-        if ((read_size <= NODEID_LEN) ||
-            (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
-            (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
-                                           read_size - NODEID_LEN,
-                                           &node_number)) ||
+        if (check_buf_with_int(read_buf, read_size, nodeid_str, NODEID_LEN,
+                               &node_number) ||
             (node_number > MAX_NODE_ID))
         {
           printf("Protocol error in nodeid state\n");
@@ -2559,8 +2577,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
           Receive:
           result: Ok<CR>
         */
-        if ((read_size != RESULT_OK_LEN) ||
-            (memcmp(read_buf, result_ok_str, RESULT_OK_LEN) != 0))
+        if (check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
         {
           printf("Protocol error in result ok state\n");
           return PROTOCOL_ERROR;
@@ -2615,9 +2632,8 @@ rec_get_config(IC_CONNECTION *conn,
           Receive:
           get config reply<CR>
         */
-        if ((read_size != GET_CONFIG_REPLY_LEN) ||
-            (memcmp(read_buf, get_config_reply_str,
-                    GET_CONFIG_REPLY_LEN) != 0))
+        if (check_buf(read_buf, read_size, get_config_reply_str,
+                      GET_CONFIG_REPLY_LEN))
         {
           printf("Protocol error in get config reply state\n");
           return PROTOCOL_ERROR;
@@ -2629,8 +2645,7 @@ rec_get_config(IC_CONNECTION *conn,
           Receive:
           result: Ok<CR>
         */
-        if ((read_size != RESULT_OK_LEN) ||
-            (memcmp(read_buf, result_ok_str, RESULT_OK_LEN) != 0))
+        if (check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
         {
           printf("Protocol error in result ok state\n");
           return PROTOCOL_ERROR;
@@ -2643,12 +2658,8 @@ rec_get_config(IC_CONNECTION *conn,
           Content-Length: __length<CR>
           Where __length is a decimal-coded number indicating length in bytes
         */
-        if ((read_size <= CONTENT_LENGTH_LEN) ||
-            (memcmp(read_buf, content_len_str,
-                    CONTENT_LENGTH_LEN) != 0) ||
-            convert_str_to_int_fixed_size(read_buf+CONTENT_LENGTH_LEN,
-                                          read_size - CONTENT_LENGTH_LEN,
-                                          &content_length) ||
+        if (check_buf_with_int(read_buf, read_size, content_len_str,
+                               CONTENT_LENGTH_LEN, &content_length) ||
             (content_length > MAX_CONTENT_LEN))
         {
           printf("Protocol error in content length state\n");
@@ -2661,9 +2672,7 @@ rec_get_config(IC_CONNECTION *conn,
           Receive:
           Content-Type: ndbconfig/octet-stream<CR>
         */
-        if ((read_size != OCTET_STREAM_LEN) ||
-            (memcmp(read_buf, octet_stream_str,
-                    OCTET_STREAM_LEN) != 0))
+        if (check_buf(read_buf, read_size, octet_stream_str, OCTET_STREAM_LEN))
         {
           printf("Protocol error in octet stream state\n");
           return PROTOCOL_ERROR;
@@ -2675,9 +2684,8 @@ rec_get_config(IC_CONNECTION *conn,
           Receive:
           Content-Transfer-Encoding: base64
         */
-        if ((read_size != CONTENT_ENCODING_LEN) ||
-            (memcmp(read_buf, content_encoding_str,
-                    CONTENT_ENCODING_LEN) != 0))
+        if (check_buf(read_buf, read_size, content_encoding_str,
+                      CONTENT_ENCODING_LEN))
         {
           printf("Protocol error in content encoding state\n");
           return PROTOCOL_ERROR;
@@ -3409,9 +3417,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
     switch (state)
     {
       case GET_NODEID_REQ_STATE:
-        if ((read_size != GET_NODEID_LEN) ||
-            (memcmp(read_buf, get_nodeid_str,
-                    GET_NODEID_LEN) != 0))
+        if (check_buf(read_buf, read_size, get_nodeid_str, GET_NODEID_LEN))
         {
           printf("Protocol error in get nodeid request state\n");
           return PROTOCOL_ERROR;
@@ -3419,11 +3425,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= VERSION_REQ_STATE;
         break;
       case VERSION_REQ_STATE:
-        if ((read_size <= VERSION_REQ_LEN) ||
-            (memcmp(read_buf, version_str, VERSION_REQ_LEN) != 0) ||
-            (convert_str_to_int_fixed_size(read_buf + VERSION_REQ_LEN,
-                                           read_size - VERSION_REQ_LEN,
-                                           version_number)))
+        if (check_buf_with_int(read_buf, read_size, version_str,
+                               VERSION_REQ_LEN, version_number))
         {
           printf("Protocol error in version request state\n");
           return PROTOCOL_ERROR;
@@ -3431,11 +3434,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= NODETYPE_REQ_STATE;
         break;
       case NODETYPE_REQ_STATE:
-        if ((read_size <= NODETYPE_REQ_LEN) ||
-            (memcmp(read_buf, nodetype_str, NODETYPE_REQ_LEN) != 0) ||
-            (convert_str_to_int_fixed_size(read_buf + NODETYPE_REQ_LEN,
-                                           read_size - NODETYPE_REQ_LEN,
-                                           node_type)))
+        if (check_buf_with_int(read_buf, read_size, nodetype_str,
+                               NODETYPE_REQ_LEN, node_type))
         {
           printf("Protocol error in nodetype request state\n");
           return PROTOCOL_ERROR;
@@ -3443,11 +3443,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= NODEID_REQ_STATE;
         break;
       case NODEID_REQ_STATE:
-        if ((read_size <= NODEID_LEN) ||
-            (memcmp(read_buf, nodeid_str, NODEID_LEN) != 0) ||
-            (convert_str_to_int_fixed_size(read_buf + NODEID_LEN,
-                                           read_size - NODEID_LEN,
-                                           node_number)) ||
+        if (check_buf_with_int(read_buf, read_size, nodeid_str,
+                               NODEID_LEN, node_number) ||
             (*node_number > MAX_NODE_ID))
         {
           printf("Protocol error in nodeid request state\n");
@@ -3456,8 +3453,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= USER_REQ_STATE;
         break;
       case USER_REQ_STATE:
-        if ((read_size != USER_REQ_LEN) ||
-            (memcmp(read_buf, user_str, USER_REQ_LEN) != 0))
+        if (check_buf(read_buf, read_size, user_str, USER_REQ_LEN))
         {
           printf("Protocol error in user request state\n");
           return PROTOCOL_ERROR;
@@ -3465,8 +3461,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= PASSWORD_REQ_STATE;
         break;
       case PASSWORD_REQ_STATE:
-        if ((read_size != PASSWORD_REQ_LEN) ||
-            (memcmp(read_buf, password_str, PASSWORD_REQ_LEN) != 0))
+        if (check_buf(read_buf, read_size, password_str, PASSWORD_REQ_LEN))
         {
           printf("Protocol error in password request state\n");
           return PROTOCOL_ERROR;
@@ -3474,8 +3469,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= PUBLIC_KEY_REQ_STATE;
         break;
       case PUBLIC_KEY_REQ_STATE:
-        if ((read_size != PUBLIC_KEY_REQ_LEN) ||
-            (memcmp(read_buf, public_key_str, PUBLIC_KEY_REQ_LEN) != 0))
+        if (check_buf(read_buf, read_size, public_key_str,
+                      PUBLIC_KEY_REQ_LEN))
         {
           printf("Protocol error in public key request state\n");
           return PROTOCOL_ERROR;
@@ -3502,8 +3497,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= LOG_EVENT_REQ_STATE;
         break;
       case LOG_EVENT_REQ_STATE:
-        if ((read_size != LOG_EVENT_REQ_LEN) ||
-            (memcmp(read_buf, log_event_str, LOG_EVENT_REQ_LEN) != 0))
+        if (check_buf(read_buf, read_size, log_event_str, LOG_EVENT_REQ_LEN))
         {
           printf("Protocol error in log_event request state\n");
           return PROTOCOL_ERROR;
@@ -3513,11 +3507,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= CLUSTER_ID_REQ_STATE;
         break;
       case CLUSTER_ID_REQ_STATE:
-        if ((read_size <= CLUSTER_ID_REQ_LEN) ||
-            (memcmp(read_buf, cluster_id_str, CLUSTER_ID_REQ_LEN) != 0) ||
-            (convert_str_to_int_fixed_size(read_buf + CLUSTER_ID_REQ_LEN,
-                                           read_size - CLUSTER_ID_REQ_LEN,
-                                           cluster_id)))
+        if (check_buf_with_int(read_buf, read_size, cluster_id_str,
+                               CLUSTER_ID_REQ_LEN, cluster_id))
         {
           printf("Protocol error in cluster id request state\n");
           return PROTOCOL_ERROR;
@@ -3566,8 +3557,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
     switch(state)
     {
       case GET_CONFIG_REQ_STATE:
-        if (read_size != GET_CONFIG_LEN ||
-            memcmp(read_buf, get_config_str, GET_CONFIG_LEN))
+        if (check_buf(read_buf, read_size, get_config_str, GET_CONFIG_LEN))
         {
           printf("Protocol error in get config request state\n");
           return PROTOCOL_ERROR;
@@ -3575,12 +3565,9 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
         state= VERSION_REQ_STATE;
         break;
       case VERSION_REQ_STATE:
-        if ((read_size <= VERSION_REQ_LEN) ||
-            (memcmp(read_buf, version_str, VERSION_REQ_LEN) != 0) ||
-            (convert_str_to_int_fixed_size(read_buf + VERSION_REQ_LEN,
-                                           read_size - VERSION_REQ_LEN,
-                                           &read_version_num)) ||
-            version_number != read_version_num)
+        if (check_buf_with_int(read_buf, read_size, version_str,
+                               VERSION_REQ_LEN, &read_version_num) ||
+            (version_number != read_version_num))
         {
           printf("Protocol error in version request state\n");
           return PROTOCOL_ERROR;
