@@ -1,10 +1,10 @@
 ##
 ## This is the template to produce Makefile.in for this directory
-## This directory is used to build the iClaustron Configuration Server
+## This directory is used to build the iClaustron Cluster Server
 ##
-INCLUDES = -DG_LOG_DOMAIN=\"iClaustron_Config_Server\"
-bin_PROGRAMS = ic_conf
-ic_conf_SOURCES = ic_conf.c
+INCLUDES = -DG_LOG_DOMAIN=\"iClaustron_Cluster_Server\"
+bin_PROGRAMS = ic_cs
+ic_conf_SOURCES = ic_cs.c
 ic_conf_LDADD = $(LDADD) ../comm/libic_comm.la \
                           ../port/libic_port.la \
                           ../util/libic_util.la \
