@@ -3708,7 +3708,7 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
                           (num_clusters * sizeof(guint32)));
   conn= &run_obj->run_conn;
   if (ic_init_socket_object(conn,
-                            FALSE, /* Not client */
+                            FALSE, /* Server connection */
                             FALSE, /* Don't use mutex */
                             FALSE, /* Don't use connect thread */
                             FALSE, /* Don't use front buffer */
