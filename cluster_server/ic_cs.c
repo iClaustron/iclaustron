@@ -42,8 +42,10 @@ main(int argc, char *argv[])
   GError *loc_error= NULL;
   GOptionContext *context;
   int error= 1;
+  guint32 cluster_id= 0;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_CLUSTER_CONFIG *clu_conf;
+  IC_RUN_CONFIG_SERVER *run_obj;
 
   if (ic_init())
     return 1;
@@ -71,10 +73,11 @@ main(int argc, char *argv[])
     goto late_end;
   }
   printf("Starting the iClaustron Cluster Server\n");
-  if ((ret_code= run_obj->run_op.run_ic_cluster_server(run_obj)))
+  if ((error= run_obj->run_op.run_ic_cluster_server(run_obj)))
   {
-    printf("run_ic_cluster_server returned error code %u\n", ret_code);
-    ic_print_error(ret_code);
+    printf("run_ic_cluster_server returned error code %u\n", error);
+    ic_print_error(error);
+    goto late_end;
   }
   error= 0;
 late_end:

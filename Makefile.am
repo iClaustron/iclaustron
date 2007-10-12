@@ -3,6 +3,6 @@
 ACLOCAL_AMFLAGS = -I m4
 
 SUBDIRS = port util comm api_dataserver api_clusterserver include \
-          config_server \
-          pcntrl cclient clusterserver repserver fileserver test
+          cluster_server \
+          pcntrl cluster_client cluster_mgr repserver fileserver test
 
