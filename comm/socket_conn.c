@@ -416,7 +416,7 @@ static gpointer
 run_set_up_socket_connection(gpointer data)
 {
   int ret_code;
-  struct ic_connection *conn= (struct ic_connection *)data;
+  IC_CONNECTION *conn= (IC_CONNECTION*)data;
   ret_code= int_set_up_socket_connection(conn);
   g_mutex_lock(conn->connect_mutex);
   conn->conn_stat.is_connect_thread_active= FALSE;
@@ -674,6 +674,8 @@ no_op_with_size_socket_method(__attribute__ ((unused)) struct ic_connection *con
 static void
 free_socket_connection(struct ic_connection *conn)
 {
+  if (!conn)
+    return;
   if (conn->client_addrinfo)
     freeaddrinfo(conn->ret_client_addrinfo);
   if (conn->server_addrinfo)
@@ -682,6 +684,7 @@ free_socket_connection(struct ic_connection *conn)
     g_timer_destroy(conn->connection_start);
   if (conn->last_read_stat)
     g_timer_destroy(conn->last_read_stat);
+  ic_free(conn);
 }
 
 static void

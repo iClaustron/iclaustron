@@ -115,8 +115,8 @@ api_clusterserver_test()
   cluster_conn.cluster_server_ips= &glob_server_ip;
   cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
-  srv_obj= ic_init_api_cluster(&cluster_conn, &cluster_id,
-                               &node_id, (guint32)1);
+  srv_obj= ic_create_api_cluster(&cluster_conn, &cluster_id,
+                                 &node_id, (guint32)1);
   if (glob_test_type > 1)
   {
     printf("Testing print of config parameters\n");

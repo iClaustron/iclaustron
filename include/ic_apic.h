@@ -501,10 +501,10 @@ struct ic_cluster_config_load
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 
 IC_API_CONFIG_SERVER*
-ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
-                    guint32 *cluster_ids,
-                    guint32 *node_ids,
-                    guint32 num_clusters);
+ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
+                      guint32 *cluster_ids,
+                      guint32 *node_ids,
+                      guint32 num_clusters);
 
 IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,

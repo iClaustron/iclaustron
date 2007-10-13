@@ -179,6 +179,7 @@ struct ic_connection
   */
   struct ic_connect_operations conn_op;
   struct ic_connect_stat conn_stat;
+  void *param; /* Used to pass objects to threads */
   struct ic_connection *orig_conn;
   guint64 cpu_bindings;
   GMutex *read_mutex;

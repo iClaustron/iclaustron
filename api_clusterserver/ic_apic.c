@@ -2874,7 +2874,7 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
   configuration.
 */
 IC_API_CONFIG_SERVER*
-ic_init_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
+ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                     guint32 *cluster_ids,
                     guint32 *node_ids,
                     guint32 num_clusters)
@@ -3656,11 +3656,49 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
   return 0;
 }
 
+static gpointer
+run_handle_config_request(gpointer data)
+{
+  int ret_code;
+  IC_CONNECTION *conn= (IC_CONNECTION*)data;
+  IC_RUN_CLUSTER_SERVER *run_obj= (IC_RUN_CLUSTER_SERVER*)conn->param;
+  if ((ret_code= handle_config_request(run_obj, conn)))
+  {
+    printf("Error from handle_config_request, code = %u\n", ret_code);
+    goto error;
+  }
+error:
+  return NULL;
+}
+
+static int
+start_handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
+                            IC_CONNECTION *conn)
+{
+  GError *error= NULL;
+  conn->param= (void*)run_obj;
+  DEBUG_ENTRY("start_handle_config_request");
+
+  if (!g_thread_create_full(run_handle_config_request,
+                            (gpointer)conn,
+                            1024*16, /* 16 kByte stack size */
+                            FALSE,   /* Not joinable        */
+                            FALSE,   /* Not bound           */
+                            G_THREAD_PRIORITY_NORMAL,
+                            &error))
+  {
+    conn->error_code= 1;
+    return 1;
+  }
+  return 0;
+}
+
+
 static int
 run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
 {
   int ret_code;
-  IC_CONNECTION *conn;
+  IC_CONNECTION *conn, *fork_conn;
   DEBUG_ENTRY("run_cluster_server");
 
   conn= run_obj->run_conn;
@@ -3668,12 +3706,32 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
   ret_code= conn->conn_op.set_up_ic_connection(conn);
   if (ret_code)
   {
-    printf("Failed to set-up connection\n");
+    printf("Failed to set-up listening connection\n");
     goto error;
   }
-  printf("Run cluster server has set up connection and has received a connection\n");
-  if ((ret_code= handle_config_request(run_obj, conn)))
-    goto error;
+  do
+  {
+    if ((ret_code= conn->conn_op.accept_ic_connection(conn)))
+    {
+      printf("Failed to accept a new connection\n");
+      goto error;
+    }
+    printf("Run cluster server has set up connection and has received a connection\n");
+    if (!(fork_conn=
+           conn->conn_op.ic_fork_accept_connection(conn,
+                                          FALSE, /* No mutex */
+                                          FALSE))) /* No front buffer */
+    {
+      printf("Failed to fork a new connection from an accepted connection\n");
+      goto error;
+    }
+    if ((ret_code= start_handle_config_request(run_obj, fork_conn)))
+    {
+      printf("Start new thread to handle configuration request\n");
+      goto error;
+    }
+    printf("Ready to accept a new connection\n");
+  } while (1);
   return 0;
 
 error:
