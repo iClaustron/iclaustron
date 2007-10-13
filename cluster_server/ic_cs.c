@@ -45,7 +45,7 @@ main(int argc, char *argv[])
   guint32 cluster_id= 0;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_CLUSTER_CONFIG *clu_conf;
-  IC_RUN_CONFIG_SERVER *run_obj;
+  IC_RUN_CLUSTER_SERVER *run_obj;
 
   if (ic_init())
     return 1;
@@ -66,7 +66,7 @@ main(int argc, char *argv[])
     printf("Failed to load config file %s from disk", glob_config_file);
     goto end;
   }
-  if (!(run_obj= ic_init_run_cluster(&clu_conf, &cluster_id, (guint32)1,
+  if (!(run_obj= ic_create_run_cluster(&clu_conf, &cluster_id, (guint32)1,
                                     glob_server_name, glob_server_port)))
   {
     printf("Failed to initialise run_cluster object\n");

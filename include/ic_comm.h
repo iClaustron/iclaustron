@@ -24,16 +24,16 @@ typedef int (*authenticate_func) (void *);
 
 struct ic_connection;
 struct ic_connect_stat;
-gboolean ic_init_socket_object(struct ic_connection *conn,
-                               gboolean is_client,
-                               gboolean is_mutex_used,
-                               gboolean is_connect_thread_used,
-                               gboolean is_using_front_buffer,
-                               authenticate_func func,
-                               void *auth_obj);
-
 struct ic_connect_operations
 {
+  /*
+    After accept has received a connection it is possible to fork the
+    connection and continue listening to the server port.
+  */
+  struct ic_connection* (*ic_fork_accept_connection)
+       (struct ic_connection *orig_conn,
+        gboolean use_mutex,
+        gboolean use_front_buffer);
   /*
     Set up a connection object, this can be either the server end or
     the client end of the connection. For server end it is possible
@@ -179,6 +179,7 @@ struct ic_connection
   */
   struct ic_connect_operations conn_op;
   struct ic_connect_stat conn_stat;
+  struct ic_connection *orig_conn;
   guint64 cpu_bindings;
   GMutex *read_mutex;
   GMutex *write_mutex;
@@ -264,6 +265,7 @@ struct ic_connection
   struct addrinfo *ret_client_addrinfo;
   guint16 server_port_num;
   guint16 client_port_num;
+  guint32 forked_connections;
   gboolean is_client;
 
   /*
@@ -373,6 +375,13 @@ struct ic_connection
   gboolean is_wan_connection;
 };
 typedef struct ic_connection IC_CONNECTION;
+
+IC_CONNECTION *ic_create_socket_object(gboolean is_client,
+                                       gboolean is_mutex_used,
+                                       gboolean is_connect_thread_used,
+                                       gboolean is_using_front_buffer,
+                                       authenticate_func func,
+                                       void *auth_obj);
 
 struct ic_connect_manager
 {

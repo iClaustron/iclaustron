@@ -2435,8 +2435,8 @@ set_up_cluster_server_connection(IC_CONNECTION *conn,
 {
   int error;
 
-  if (ic_init_socket_object(conn, TRUE, FALSE, FALSE, FALSE,
-                            NULL, NULL))
+  if (!(conn= ic_create_socket_object(TRUE, FALSE, FALSE, FALSE,
+                                      NULL, NULL)))
     return MEM_ALLOC_ERROR;
   conn->server_name= server_name;
   conn->server_port= server_port;
@@ -3390,7 +3390,7 @@ free_run_cluster(struct ic_run_config_server *run_obj)
 {
   if (run_obj)
   {
-    run_obj->run_conn.conn_op.free_ic_connection(&run_obj->run_conn); 
+    run_obj->run_conn->conn_op.free_ic_connection(run_obj->run_conn); 
     ic_free(run_obj);
   }
   return;
@@ -3611,7 +3611,7 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
 }
 
 static int
-handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
+handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
                       IC_CONNECTION *conn)
 {
   int ret_code;
@@ -3657,13 +3657,14 @@ handle_config_request(IC_RUN_CONFIG_SERVER *run_obj,
 }
 
 static int
-run_cluster_server(IC_RUN_CONFIG_SERVER *run_obj)
+run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
 {
   int ret_code;
   IC_CONNECTION *conn;
   DEBUG_ENTRY("run_cluster_server");
 
-  conn= &run_obj->run_conn;
+  conn= run_obj->run_conn;
+  conn->is_listen_socket_retained= TRUE;
   ret_code= conn->conn_op.set_up_ic_connection(conn);
   if (ret_code)
   {
@@ -3679,16 +3680,16 @@ error:
   return ret_code;
 }
 
-IC_RUN_CONFIG_SERVER*
-ic_init_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
+IC_RUN_CLUSTER_SERVER*
+ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
                     guint32 *cluster_ids,
                     guint32 num_clusters,
                     gchar *server_name,
                     gchar *server_port)
 {
-  IC_RUN_CONFIG_SERVER *run_obj;
-  IC_CONNECTION *conn;
+  IC_RUN_CLUSTER_SERVER *run_obj;
   guint32 size;
+  IC_CONNECTION *conn;
   DEBUG_ENTRY("ic_init_run_cluster");
 
   /*
@@ -3696,24 +3697,23 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
     configuration objects and the run configuration server object.
     We allocate everything in one memory allocation.
   */
-  size= sizeof(IC_RUN_CONFIG_SERVER);
+  size= sizeof(IC_RUN_CLUSTER_SERVER);
   size+= num_clusters * sizeof(guint32);
   size+= num_clusters * sizeof(IC_CLUSTER_CONFIG*);
-  if (!(run_obj= (IC_RUN_CONFIG_SERVER*)
+  if (!(run_obj= (IC_RUN_CLUSTER_SERVER*)
       ic_calloc(size)))
     return NULL;
   run_obj->cluster_ids= (guint32*)(((gchar*)run_obj)+
-                        sizeof(IC_RUN_CONFIG_SERVER));
+                        sizeof(IC_RUN_CLUSTER_SERVER));
   run_obj->conf_objects= (IC_CLUSTER_CONFIG**)(((gchar*)run_obj->cluster_ids)+
                           (num_clusters * sizeof(guint32)));
-  conn= &run_obj->run_conn;
-  if (ic_init_socket_object(conn,
+  if (!(run_obj->run_conn= ic_create_socket_object(
                             FALSE, /* Server connection */
                             FALSE, /* Don't use mutex */
                             FALSE, /* Don't use connect thread */
                             FALSE, /* Don't use front buffer */
                             NULL,  /* Don't use authentication function */
-                            NULL)) /* No authentication object */
+                            NULL))) /* No authentication object */
     goto error;
 
   memcpy((gchar*)run_obj->cluster_ids, (gchar*)cluster_ids,
@@ -3721,11 +3721,12 @@ ic_init_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
   memcpy((gchar*)run_obj->conf_objects, (gchar*)conf_objs,
          num_clusters * sizeof(IC_CLUSTER_CONFIG*));
 
-  run_obj->run_conn.server_name= server_name;
-  run_obj->run_conn.server_port= server_port;
-  run_obj->run_conn.client_name= NULL;
-  run_obj->run_conn.client_port= 0;
-  run_obj->run_conn.is_wan_connection= FALSE;
+  conn= run_obj->run_conn;
+  conn->server_name= server_name;
+  conn->server_port= server_port;
+  conn->client_name= NULL;
+  conn->client_port= 0;
+  conn->is_wan_connection= FALSE;
   run_obj->run_op.run_ic_cluster_server= run_cluster_server;
   run_obj->run_op.free_ic_run_cluster= free_run_cluster;
   return run_obj;
@@ -4309,6 +4310,8 @@ int ic_init()
   int ret_value;
   DEBUG_OPEN;
   DEBUG_ENTRY("ic_init");
+  if (!g_thread_supported())
+    g_thread_init(NULL);
   ic_init_error_messages();
   if ((ret_value= ic_init_config_parameters()))
     ic_end();

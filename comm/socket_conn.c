@@ -5,6 +5,9 @@
 #include <errno.h>
 #include <ic_common.h>
 
+static void destroy_timers(IC_CONNECTION *conn);
+static void destroy_mutexes(IC_CONNECTION *conn);
+
 static int close_socket_connection(struct ic_connection *conn);
 
 static void
@@ -328,16 +331,6 @@ int_set_up_socket_connection(struct ic_connection *conn)
   int error, sockfd;
   struct addrinfo *loc_addrinfo;
 
-  if (conn->is_mutex_used)
-  {
-    conn->read_mutex= g_mutex_new();
-    conn->write_mutex= g_mutex_new();
-    if (!(conn->read_mutex && conn->write_mutex))
-    {
-      conn->error_code= MEM_ALLOC_ERROR;
-      return MEM_ALLOC_ERROR;
-    }
-  }
   printf("Translating hostnames\n");
   if ((error= translate_hostnames(conn)))
   {
@@ -443,14 +436,6 @@ static int
 set_up_socket_connection(struct ic_connection *conn)
 {
   GError *error= NULL;
-  if (!g_thread_supported())
-    g_thread_init(NULL);
-  conn->connect_mutex= g_mutex_new();
-  if (!conn->connect_mutex)
-  {
-    conn->error_code= MEM_ALLOC_ERROR;
-    return MEM_ALLOC_ERROR;
-  }
   if (!conn->is_connect_thread_used)
     return int_set_up_socket_connection(conn);
 
@@ -693,8 +678,10 @@ free_socket_connection(struct ic_connection *conn)
     freeaddrinfo(conn->ret_client_addrinfo);
   if (conn->server_addrinfo)
     freeaddrinfo(conn->ret_server_addrinfo);
-  g_timer_destroy(conn->connection_start);
-  g_timer_destroy(conn->last_read_stat);
+  if (conn->connection_start)
+    g_timer_destroy(conn->connection_start);
+  if (conn->last_read_stat)
+    g_timer_destroy(conn->last_read_stat);
 }
 
 static void
@@ -713,9 +700,9 @@ safe_read_stat_socket_conn(struct ic_connection *conn,
                            struct ic_connection *conn_stat,
                            gboolean clear_stat_timer)
 {
-  g_mutex_lock(conn->read_mutex);
-  g_mutex_lock(conn->write_mutex);
   g_mutex_lock(conn->connect_mutex);
+  g_mutex_lock(conn->write_mutex);
+  g_mutex_lock(conn->read_mutex);
   read_stat_socket_connection(conn, conn_stat, clear_stat_timer);
   g_mutex_unlock(conn->read_mutex);
   g_mutex_unlock(conn->write_mutex);
@@ -752,31 +739,77 @@ write_stat_socket_connection(IC_CONNECTION *conn)
         (guint32)conn->conn_stat.num_rec_errors);
 }
 
-gboolean
-ic_init_socket_object(IC_CONNECTION *conn,
-                      gboolean is_client,
-                      gboolean is_mutex_used,
-                      gboolean is_connect_thread_used,
-                      gboolean is_using_front_buffer,
-                      authenticate_func auth_func,
-                      void *auth_obj)
+static void
+destroy_timers(IC_CONNECTION *conn)
 {
-  guint32 i;
+  if (conn->connection_start)
+    g_timer_destroy(conn->connection_start);
+  if (conn->last_read_stat)
+    g_timer_destroy(conn->last_read_stat);
+  conn->connection_start= NULL;
+  conn->last_read_stat= NULL;
+}
 
-  conn->conn_op.set_up_ic_connection= set_up_socket_connection;
-  conn->conn_op.accept_ic_connection= accept_socket_connection;
-  conn->conn_op.close_ic_connection= close_socket_connection;
-  conn->conn_op.close_ic_listen_connection= close_listen_socket_connection;
-  conn->conn_op.read_ic_connection = read_socket_connection;
-  conn->conn_op.free_ic_connection= free_socket_connection;
-  conn->conn_op.read_stat_ic_connection= read_stat_socket_connection;
-  conn->conn_op.safe_read_stat_ic_connection= safe_read_stat_socket_conn;
-  conn->conn_op.ic_read_connection_time= read_socket_connection_time;
-  conn->conn_op.ic_read_stat_time= read_socket_stat_time;
-  conn->conn_op.is_ic_conn_thread_active= is_conn_thread_active;
-  conn->conn_op.is_ic_conn_connected= is_conn_connected;
-  conn->conn_op.write_stat_ic_connection= write_stat_socket_connection;
-  if (is_mutex_used)
+static void
+destroy_mutexes(IC_CONNECTION *conn)
+{
+  if (conn->read_mutex)
+    g_mutex_free(conn->read_mutex);
+  if (conn->write_mutex)
+    g_mutex_free(conn->write_mutex);
+  if (conn->connect_mutex)
+    g_mutex_free(conn->connect_mutex);
+  conn->read_mutex= NULL;
+  conn->write_mutex= NULL;
+  conn->connect_mutex= NULL;
+}
+
+static gboolean
+create_mutexes(IC_CONNECTION *conn)
+{
+  if (!((conn->read_mutex= g_mutex_new()) &&
+        (conn->write_mutex= g_mutex_new()) &&
+        (conn->connect_mutex= g_mutex_new())))
+  {
+    destroy_mutexes(conn);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean
+create_timers(IC_CONNECTION *conn)
+{
+  if (!((conn->connection_start= g_timer_new()) &&
+        (conn->last_read_stat= g_timer_new())))
+  {
+    destroy_timers(conn);
+    return TRUE;
+  }
+  g_timer_start(conn->last_read_stat);
+  g_timer_start(conn->connection_start);
+  return FALSE;
+}
+
+static void
+set_up_methods_front_buffer(IC_CONNECTION *conn)
+{
+  if (conn->is_using_front_buffer)
+  {
+    conn->conn_op.write_ic_connection= write_socket_front_buffer;
+    conn->conn_op.flush_ic_connection= flush_socket_front_buffer;
+  }
+  else
+  {
+    conn->conn_op.write_ic_connection= write_socket_connection;
+    conn->conn_op.flush_ic_connection= no_op_socket_method;
+  }
+}
+
+static void
+set_up_rw_methods_mutex(IC_CONNECTION *conn)
+{
+  if (conn->is_mutex_used)
   {
     conn->conn_op.open_write_session = open_write_socket_session_mutex;
     conn->conn_op.close_write_session = close_write_socket_session_mutex;
@@ -790,38 +823,12 @@ ic_init_socket_object(IC_CONNECTION *conn,
     conn->conn_op.close_write_session = no_op_socket_method;
     conn->conn_op.close_read_session = no_op_socket_method;
   }
-  if (is_using_front_buffer)
-  {
-    conn->conn_op.write_ic_connection= write_socket_front_buffer;
-    conn->conn_op.flush_ic_connection= flush_socket_front_buffer;
-  }
-  else
-  {
-    conn->conn_op.write_ic_connection= write_socket_connection;
-    conn->conn_op.flush_ic_connection= no_op_socket_method;
-  }
-  conn->is_using_front_buffer= is_using_front_buffer;
-  conn->is_client= is_client;
-  conn->is_listen_socket_retained= 0;
-  conn->is_mutex_used= is_mutex_used;
-  conn->is_connect_thread_used= is_connect_thread_used;
-  conn->tcp_maxseg_size= 0;
-  conn->tcp_receive_buffer_size= 0;
-  conn->tcp_send_buffer_size= 0;
-  conn->is_wan_connection= FALSE;
-  conn->backlog= 1;
-  conn->server_addrinfo= NULL;
-  conn->server_name= NULL;
-  conn->server_port= NULL;
-  conn->server_port_num= 0;
-  conn->client_addrinfo= NULL;
-  conn->client_name= NULL;
-  conn->client_port= NULL;
-  conn->client_port_num= 0;
-  conn->bytes_written_before_interrupt= 0;
-  conn->rw_sockfd= 0;
-  conn->listen_sockfd= 0;
-  conn->error_code= 0;
+}
+
+static void
+init_connect_stat(IC_CONNECTION *conn)
+{
+  guint32 i;
 
   conn->conn_stat.is_connected= FALSE;
   conn->conn_stat.is_connect_thread_active= FALSE;
@@ -846,19 +853,117 @@ ic_init_socket_object(IC_CONNECTION *conn,
   conn->conn_stat.num_rec_bytes= (guint64)0;
   conn->conn_stat.num_rec_bytes_square_sum= (long double)0;
 
-  conn->auth_func= auth_func;
-  conn->auth_obj= auth_obj;
-
   for (i= 0; i < 16; i++)
   {
     conn->conn_stat.num_sent_buf_range[i]= 
     conn->conn_stat.num_rec_buf_range[i]= 0;
   }
+}
 
-  if (!((conn->connection_start= g_timer_new()) &&
-      (conn->last_read_stat= g_timer_new())))
-    return TRUE;
-  g_timer_start(conn->last_read_stat);
-  g_timer_start(conn->connection_start);
-  return FALSE;
+
+/*
+  In the case of a server connection we have accepted a connection, we want
+  to continue to listen to the original connection. Thus we fork a new
+  connection object by copying the original one, resetting statistics,
+  setting some specific variables on the forked object and resetting the
+  original object to not connected.
+*/
+
+IC_CONNECTION*
+fork_accept_connection(IC_CONNECTION *orig_conn,
+                       gboolean use_mutex,
+                       gboolean use_front_buffer)
+{
+  IC_CONNECTION *fork_conn;
+
+  if ((fork_conn= (IC_CONNECTION*)ic_calloc(sizeof(IC_CONNECTION))) == NULL)
+    return NULL;
+  memcpy(fork_conn, orig_conn, sizeof(IC_CONNECTION));
+
+  init_connect_stat(fork_conn);
+  fork_conn->orig_conn= orig_conn;
+  fork_conn->forked_connections= 0;
+  fork_conn->read_mutex= NULL;
+  fork_conn->write_mutex= NULL;
+  fork_conn->connect_mutex= NULL;
+  fork_conn->connection_start= NULL;
+  fork_conn->last_read_stat= NULL;
+  fork_conn->first_con_buf= NULL;
+  fork_conn->last_con_buf= NULL;
+  fork_conn->listen_sockfd= 0;
+  fork_conn->bytes_written_before_interrupt= 0;
+  fork_conn->error_code= 0;
+  fork_conn->is_listen_socket_retained= FALSE;
+  fork_conn->is_mutex_used= FALSE;
+  fork_conn->is_connect_thread_used= FALSE;
+  fork_conn->is_mutex_used= use_mutex;
+  fork_conn->is_using_front_buffer= use_front_buffer;
+  orig_conn->forked_connections++;
+
+  set_up_methods_front_buffer(fork_conn);
+  set_up_rw_methods_mutex(fork_conn);
+
+  if (create_mutexes(fork_conn))
+    goto error;
+  if (create_timers(fork_conn))
+    goto error;
+  return fork_conn;
+
+error:
+  destroy_mutexes(fork_conn);
+  ic_free(fork_conn);
+  return NULL;
+}
+
+IC_CONNECTION*
+ic_create_socket_object(gboolean is_client,
+                        gboolean is_mutex_used,
+                        gboolean is_connect_thread_used,
+                        gboolean is_using_front_buffer,
+                        authenticate_func auth_func,
+                        void *auth_obj)
+{
+  IC_CONNECTION *conn;
+
+  if ((conn= (IC_CONNECTION*)ic_calloc(sizeof(IC_CONNECTION))) == NULL)
+    return NULL;
+  conn->conn_op.set_up_ic_connection= set_up_socket_connection;
+  conn->conn_op.accept_ic_connection= accept_socket_connection;
+  conn->conn_op.close_ic_connection= close_socket_connection;
+  conn->conn_op.close_ic_listen_connection= close_listen_socket_connection;
+  conn->conn_op.read_ic_connection = read_socket_connection;
+  conn->conn_op.free_ic_connection= free_socket_connection;
+  conn->conn_op.read_stat_ic_connection= read_stat_socket_connection;
+  conn->conn_op.safe_read_stat_ic_connection= safe_read_stat_socket_conn;
+  conn->conn_op.ic_read_connection_time= read_socket_connection_time;
+  conn->conn_op.ic_read_stat_time= read_socket_stat_time;
+  conn->conn_op.is_ic_conn_thread_active= is_conn_thread_active;
+  conn->conn_op.is_ic_conn_connected= is_conn_connected;
+  conn->conn_op.write_stat_ic_connection= write_stat_socket_connection;
+  conn->conn_op.ic_fork_accept_connection= fork_accept_connection;
+
+  conn->is_client= is_client;
+  conn->is_connect_thread_used= is_connect_thread_used;
+  conn->backlog= 1;
+  conn->is_using_front_buffer= is_using_front_buffer;
+  conn->is_mutex_used= is_mutex_used;
+
+  set_up_rw_methods_mutex(conn);
+  set_up_methods_front_buffer(conn);
+
+  init_connect_stat(conn);
+
+  conn->auth_func= auth_func;
+  conn->auth_obj= auth_obj;
+
+  if (create_mutexes(conn))
+    goto error;
+  if (create_timers(conn))
+    goto error;
+  return conn;
+error:
+  if (conn)
+    destroy_mutexes(conn);
+  ic_free(conn);
+  return NULL;
 }

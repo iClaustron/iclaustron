@@ -40,23 +40,27 @@ static GOptionEntry entries[] =
 static int
 connection_test()
 {
-  IC_CONNECTION conn;
+  IC_CONNECTION *conn;
   char buf[8192];
   int ret_code;
 
   printf("Connection Test Started\n");
-  ic_init_socket_object(&conn, glob_is_client, TRUE, FALSE, TRUE,
-                        NULL, NULL);
-  conn.server_name= glob_server_ip;
-  conn.server_port= glob_server_port;
-  conn.client_name= glob_client_ip;
-  conn.client_port= glob_client_port;
-  conn.is_connect_thread_used= FALSE;
-  conn.is_wan_connection= glob_is_wan_connection;
-  conn.tcp_maxseg_size= glob_tcp_maxseg;
-  conn.tcp_receive_buffer_size= glob_tcp_rec_size;
-  conn.tcp_send_buffer_size= glob_tcp_snd_size;
-  ret_code= conn.conn_op.set_up_ic_connection(&conn);
+  if (!(conn= ic_create_socket_object(glob_is_client, TRUE, FALSE, TRUE,
+                                      NULL, NULL)))
+  {
+    printf("Memory allocation error\n");
+    return MEM_ALLOC_ERROR;
+  }
+  conn->server_name= glob_server_ip;
+  conn->server_port= glob_server_port;
+  conn->client_name= glob_client_ip;
+  conn->client_port= glob_client_port;
+  conn->is_connect_thread_used= FALSE;
+  conn->is_wan_connection= glob_is_wan_connection;
+  conn->tcp_maxseg_size= glob_tcp_maxseg;
+  conn->tcp_receive_buffer_size= glob_tcp_rec_size;
+  conn->tcp_send_buffer_size= glob_tcp_snd_size;
+  ret_code= conn->conn_op.set_up_ic_connection(conn);
   if (ret_code != 0)
   {
     printf("Error in connection set-up: ret_code = %d\n", ret_code);
@@ -66,10 +70,10 @@ connection_test()
   {
     guint32 read_size;
     printf("Start reading\n");
-    while (!conn.conn_op.read_ic_connection(&conn,
-                                            (void*)buf,
-                                            sizeof(buf),
-                                            &read_size))
+    while (!conn->conn_op.read_ic_connection(conn,
+                                             (void*)buf,
+                                             sizeof(buf),
+                                             &read_size))
       ;
   }
   else
@@ -83,18 +87,18 @@ connection_test()
     g_timer_start(timer);
     for (i= 0; i < 8192; i++)
     {
-      if (conn.conn_op.write_ic_connection(&conn,
-                                           (const void*)buf,
-                                           sizeof(buf), 0,
-                                           2))
+      if (conn->conn_op.write_ic_connection(conn,
+                                            (const void*)buf,
+                                            sizeof(buf), 0,
+                                            2))
         break;
     }
     time_spent= g_timer_elapsed(timer, NULL);
     g_timer_destroy(timer);
     printf("Time spent in writing 64 MBytes: %f\n", time_spent);
   }
-  conn.conn_op.write_stat_ic_connection(&conn);
-  conn.conn_op.close_ic_connection(&conn);
+  conn->conn_op.write_stat_ic_connection(conn);
+  conn->conn_op.close_ic_connection(conn);
   printf("Connection Test Success\n");
   return 0;
 }
@@ -152,7 +156,7 @@ api_clusterserver_test()
 static int
 run_clusterserver_test()
 {
-  IC_RUN_CONFIG_SERVER *run_obj;
+  IC_RUN_CLUSTER_SERVER *run_obj;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_CLUSTER_CONFIG *clu_conf;
   guint32 cluster_id= 0;
@@ -166,8 +170,8 @@ run_clusterserver_test()
     printf("Failed to load config file %s from disk", conf_file);
     return 1;
   }
-  run_obj= ic_init_run_cluster(&clu_conf, &cluster_id, (guint32)1,
-                               glob_server_ip, glob_server_port);
+  run_obj= ic_create_run_cluster(&clu_conf, &cluster_id, (guint32)1,
+                                 glob_server_ip, glob_server_port);
 
   if ((ret_code= run_obj->run_op.run_ic_cluster_server(run_obj)))
   {
@@ -194,37 +198,42 @@ int ic_rec_with_cr(IC_CONNECTION *conn,
 test_pcntrl()
 {
   int ret_code, error;
-  IC_CONNECTION conn;
+  IC_CONNECTION *conn;
   gchar read_buf[256];
   guint32 read_size=0;
   guint32 size_curr_buf=0;
-  guint32 buf_size;
 
-  ic_init_socket_object(&conn, TRUE, TRUE, FALSE, TRUE,
-                        NULL, NULL);
-  conn.server_name= glob_server_ip;
-  conn.server_port= glob_server_port;
-  conn.client_name= glob_client_ip;
-  conn.client_port= glob_client_port;
-  conn.is_connect_thread_used= FALSE;
-  conn.is_wan_connection= glob_is_wan_connection;
-  conn.tcp_maxseg_size= glob_tcp_maxseg;
-  conn.tcp_receive_buffer_size= glob_tcp_rec_size;
-  conn.tcp_send_buffer_size= glob_tcp_snd_size;
-  ret_code= conn.conn_op.set_up_ic_connection(&conn);
-  if ((error= ic_send_with_cr(&conn, "ls")) ||
-      (error= ic_send_with_cr(&conn, "-la")) ||
-      (error= ic_send_with_cr(&conn, "")))
+  if (!(conn= ic_create_socket_object(TRUE, TRUE, FALSE, TRUE,
+                                      NULL, NULL)))
+  {
+    printf("Memory allocation error\n");
+    return MEM_ALLOC_ERROR;
+  }
+  conn->server_name= glob_server_ip;
+  conn->server_port= glob_server_port;
+  conn->client_name= glob_client_ip;
+  conn->client_port= glob_client_port;
+  conn->is_connect_thread_used= FALSE;
+  conn->is_wan_connection= glob_is_wan_connection;
+  conn->tcp_maxseg_size= glob_tcp_maxseg;
+  conn->tcp_receive_buffer_size= glob_tcp_rec_size;
+  conn->tcp_send_buffer_size= glob_tcp_snd_size;
+  ret_code= conn->conn_op.set_up_ic_connection(conn);
+  if ((error= ic_send_with_cr(conn, "ls")) ||
+      (error= ic_send_with_cr(conn, "-la")) ||
+      (error= ic_send_with_cr(conn, "")))
   {
     ic_print_error(error);
-    return 0;
+    goto end;
   }
-  if ((error= ic_rec_with_cr(&conn, read_buf, &read_size,
+  if ((error= ic_rec_with_cr(conn, read_buf, &read_size,
                              &size_curr_buf, sizeof(read_buf))))
   {
     ic_print_error(error);
-    return 0;
+    goto end;
   }
+end:
+  conn->conn_op.free_ic_connection(conn);
   return 0;
 }
 
