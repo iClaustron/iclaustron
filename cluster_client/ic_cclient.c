@@ -116,7 +116,11 @@ command_interpreter()
         return error;
       }
       if (line_ptr->len == 0)
+      {
+        if (line_ptr->str)
+          ic_free(line_ptr->str);
         continue;
+      }
       IC_COPY_STRING(line_ptrs[lines], line_ptr);
       lines++;
     } while (!check_last_line(line_ptr));
@@ -207,4 +211,3 @@ parse_error:
 error:
   return ret_code;
 }
-
