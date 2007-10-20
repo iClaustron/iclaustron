@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #include <ic_common.h>
 /*
   MODULE: GENERIC_CONFIG_READER
@@ -467,6 +482,45 @@ int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
   if (*null_term_str == 0)
     return 0;
   return 1;
+}
+
+void
+ic_set_up_ic_string(IC_STRING *in_out_str)
+{
+  guint32 i;
+  if (!in_out_str->str)
+  {
+    in_out_str->len= 0;
+    in_out_str->is_null_terminated= FALSE;
+    return;
+  }
+  for (i= 0; i < in_out_str->len; i++)
+  {
+    if (in_out_str->str[i])
+      continue;
+    else
+    {
+      in_out_str->len= i;
+      in_out_str->is_null_terminated= TRUE;
+      return;
+    }
+  }
+  in_out_str->is_null_terminated= FALSE;
+}
+
+int
+ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
+{
+  gchar *str;
+  IC_INIT_STRING(out_str, NULL, 0, FALSE);
+  if (in_str->len == 0)
+    return FALSE;
+  if (!(str= ic_malloc(in_str->len)))
+    return TRUE;
+  IC_COPY_STRING(out_str, in_str);
+  out_str->str= str;
+  memcpy(out_str->str, in_str->str, in_str->len);
+  return FALSE;
 }
 
 

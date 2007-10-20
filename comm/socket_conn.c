@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
@@ -8,19 +23,41 @@
 static void destroy_timers(IC_CONNECTION *conn);
 static void destroy_mutexes(IC_CONNECTION *conn);
 
-static int close_socket_connection(struct ic_connection *conn);
+static int close_socket_connection(IC_CONNECTION *conn);
 
 static void
-set_is_connected(struct ic_connection *conn)
+lock_connect_mutex(IC_CONNECTION *conn)
 {
-  g_mutex_lock(conn->connect_mutex);
+  if (conn->connect_mutex)
+    g_mutex_lock(conn->connect_mutex);
+}
+
+static void
+unlock_connect_mutex(IC_CONNECTION *conn)
+{
+  if (conn->connect_mutex)
+    g_mutex_unlock(conn->connect_mutex);
+}
+
+static void
+set_is_connected(IC_CONNECTION *conn)
+{
+  lock_connect_mutex(conn);
   conn->conn_stat.is_connected= TRUE;
-  g_mutex_unlock(conn->connect_mutex);
+  unlock_connect_mutex(conn);
   return;
 }
 
 static gboolean
-is_conn_connected(struct ic_connection *conn)
+is_conn_connected(IC_CONNECTION *conn)
+{
+  gboolean is_connected;
+  is_connected= conn->conn_stat.is_connected;
+  return is_connected;
+}
+
+static gboolean
+is_mutex_conn_connected(IC_CONNECTION *conn)
 {
   gboolean is_connected;
   g_mutex_lock(conn->connect_mutex);
@@ -30,7 +67,15 @@ is_conn_connected(struct ic_connection *conn)
 }
 
 static gboolean
-is_conn_thread_active(struct ic_connection *conn)
+is_conn_thread_active(IC_CONNECTION *conn)
+{
+  gboolean is_thread_active;
+  is_thread_active= conn->conn_stat.is_connect_thread_active;
+  return is_thread_active;
+}
+
+static gboolean
+is_mutex_conn_thread_active(IC_CONNECTION *conn)
 {
   gboolean is_thread_active;
   g_mutex_lock(conn->connect_mutex);
@@ -56,7 +101,7 @@ set_option_size(int sockfd, int size, int old_size,
 }
 
 static void
-ic_set_socket_options(struct ic_connection *conn, int sockfd)
+ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
 {
   int no_delay, error, maxseg_size, rec_size, snd_size;
   socklen_t sock_len;
@@ -147,7 +192,7 @@ ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
 }
 
 static int
-accept_socket_connection(struct ic_connection *conn)
+accept_socket_connection(IC_CONNECTION *conn)
 {
   gboolean not_accepted= FALSE;
   int ret_sockfd, ok;
@@ -248,7 +293,7 @@ accept_socket_connection(struct ic_connection *conn)
 }
 
 static int
-translate_hostnames(struct ic_connection *conn)
+translate_hostnames(IC_CONNECTION *conn)
 {
   struct addrinfo hints;
   int n;
@@ -326,7 +371,7 @@ translate_hostnames(struct ic_connection *conn)
 }
 
 static int
-int_set_up_socket_connection(struct ic_connection *conn)
+int_set_up_socket_connection(IC_CONNECTION *conn)
 {
   int error, sockfd;
   struct addrinfo *loc_addrinfo;
@@ -418,22 +463,24 @@ run_set_up_socket_connection(gpointer data)
   int ret_code;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   ret_code= int_set_up_socket_connection(conn);
-  g_mutex_lock(conn->connect_mutex);
+  lock_connect_mutex(conn);
   conn->conn_stat.is_connect_thread_active= FALSE;
   if (conn->auth_func)
   {
     if ((ret_code= conn->auth_func(conn->auth_obj)))
     {
+      unlock_connect_mutex(conn);
       close_socket_connection(conn);
       conn->error_code= ret_code;
+      return NULL;
     }
   }
-  g_mutex_unlock(conn->connect_mutex);
+  unlock_connect_mutex(conn);
   return NULL;
 }
 
 static int
-set_up_socket_connection(struct ic_connection *conn)
+set_up_socket_connection(IC_CONNECTION *conn)
 {
   GError *error= NULL;
   if (!conn->is_connect_thread_used)
@@ -454,13 +501,13 @@ set_up_socket_connection(struct ic_connection *conn)
 }
 
 static int
-flush_socket_front_buffer(__attribute__ ((unused)) struct ic_connection *conn)
+flush_socket_front_buffer(__attribute__ ((unused)) IC_CONNECTION *conn)
 {
   return 0;
 }
 
 static int
-write_socket_connection(struct ic_connection *conn,
+write_socket_connection(IC_CONNECTION *conn,
                         const void *buf, guint32 size,
                         __attribute__ ((unused)) guint32 prio_level,
                         guint32 secs_to_try)
@@ -552,7 +599,7 @@ write_socket_connection(struct ic_connection *conn,
 }
 
 static int
-write_socket_front_buffer(struct ic_connection *conn,
+write_socket_front_buffer(IC_CONNECTION *conn,
                           const void *buf, guint32 size,
                           guint32 prio_level,
                           guint32 secs_to_try)
@@ -562,25 +609,40 @@ write_socket_front_buffer(struct ic_connection *conn,
 }
 
 static int
-close_socket_connection(struct ic_connection *conn)
+close_socket_connection(IC_CONNECTION *conn)
 {
-  close(conn->rw_sockfd);
-  conn->rw_sockfd= 0;
+  lock_connect_mutex(conn);
+  if (conn->listen_sockfd)
+  {
+    close(conn->listen_sockfd);
+    conn->listen_sockfd= 0;
+  }
+  if (conn->rw_sockfd)
+  {
+    close(conn->rw_sockfd);
+    conn->rw_sockfd= 0;
+  }
+  return 0;
   conn->error_code= 0;
+  unlock_connect_mutex(conn);
+}
+
+static int
+close_listen_socket_connection(IC_CONNECTION *conn)
+{
+  lock_connect_mutex(conn);
+  if (conn->listen_sockfd)
+  {
+    close(conn->listen_sockfd);
+    conn->listen_sockfd= 0;
+  }
+  conn->error_code= 0;
+  unlock_connect_mutex(conn);
   return 0;
 }
 
 static int
-close_listen_socket_connection(struct ic_connection *conn)
-{
-  close(conn->listen_sockfd);
-  conn->listen_sockfd= 0;
-  conn->error_code= 0;
-  return 0;
-}
-
-static int
-read_socket_connection(struct ic_connection *conn,
+read_socket_connection(IC_CONNECTION *conn,
                        void *buf, guint32 buf_size,
                        guint32 *read_size)
 {
@@ -630,7 +692,7 @@ read_socket_connection(struct ic_connection *conn,
 }
 
 static int
-open_write_socket_session_mutex(struct ic_connection *conn,
+open_write_socket_session_mutex(IC_CONNECTION *conn,
                                 __attribute__ ((unused)) guint32 total_size)
 {
   g_mutex_lock(conn->write_mutex);
@@ -638,69 +700,68 @@ open_write_socket_session_mutex(struct ic_connection *conn,
 }
 
 static int
-close_write_socket_session_mutex(struct ic_connection *conn)
+close_write_socket_session_mutex(IC_CONNECTION *conn)
 {
   g_mutex_unlock(conn->write_mutex);
   return 0;
 }
 
 static int
-open_read_socket_session_mutex(struct ic_connection *conn)
+open_read_socket_session_mutex(IC_CONNECTION *conn)
 {
   g_mutex_lock(conn->read_mutex);
   return 0; 
 }
 
 static int
-close_read_socket_session_mutex(struct ic_connection *conn)
+close_read_socket_session_mutex(IC_CONNECTION *conn)
 {
   g_mutex_unlock(conn->read_mutex);
   return 0;
 }
 
 static int
-no_op_socket_method(__attribute__ ((unused)) struct ic_connection *conn)
+no_op_socket_method(__attribute__ ((unused)) IC_CONNECTION *conn)
 {
   return 0;
 }
 
 static int
-no_op_with_size_socket_method(__attribute__ ((unused)) struct ic_connection *conn,
+no_op_with_size_socket_method(__attribute__ ((unused)) IC_CONNECTION *conn,
                               __attribute__ ((unused)) guint32 total_size)
 {
   return 0;
 }
 
 static void
-free_socket_connection(struct ic_connection *conn)
+free_socket_connection(IC_CONNECTION *conn)
 {
   if (!conn)
     return;
+  close_socket_connection(conn);
   if (conn->client_addrinfo)
     freeaddrinfo(conn->ret_client_addrinfo);
   if (conn->server_addrinfo)
     freeaddrinfo(conn->ret_server_addrinfo);
-  if (conn->connection_start)
-    g_timer_destroy(conn->connection_start);
-  if (conn->last_read_stat)
-    g_timer_destroy(conn->last_read_stat);
+  destroy_timers(conn);
+  destroy_mutexes(conn);
   ic_free(conn);
 }
 
 static void
-read_stat_socket_connection(struct ic_connection *conn,
-                            struct ic_connection *conn_stat,
+read_stat_socket_connection(IC_CONNECTION *conn,
+                            IC_CONNECTION *conn_stat,
                             gboolean clear_stat_timer)
 {
   memcpy((void*)conn_stat, (void*)conn,
-         sizeof(struct ic_connection));
+         sizeof(IC_CONNECTION));
   if (clear_stat_timer)
     g_timer_reset(conn->last_read_stat);
 }
 
 static void
-safe_read_stat_socket_conn(struct ic_connection *conn,
-                           struct ic_connection *conn_stat,
+safe_read_stat_socket_conn(IC_CONNECTION *conn,
+                           IC_CONNECTION *conn_stat,
                            gboolean clear_stat_timer)
 {
   g_mutex_lock(conn->connect_mutex);
@@ -713,14 +774,14 @@ safe_read_stat_socket_conn(struct ic_connection *conn,
 }
 
 static double
-read_socket_connection_time(struct ic_connection *conn,
+read_socket_connection_time(IC_CONNECTION *conn,
                             gulong *microseconds)
 {
   return g_timer_elapsed(conn->connection_start, microseconds);
 }
 
 static double
-read_socket_stat_time(struct ic_connection *conn,
+read_socket_stat_time(IC_CONNECTION *conn,
                       gulong *microseconds)
 {
   return g_timer_elapsed(conn->last_read_stat, microseconds);
@@ -799,13 +860,13 @@ set_up_methods_front_buffer(IC_CONNECTION *conn)
 {
   if (conn->is_using_front_buffer)
   {
-    conn->conn_op.write_ic_connection= write_socket_front_buffer;
-    conn->conn_op.flush_ic_connection= flush_socket_front_buffer;
+    conn->conn_op.ic_write_connection= write_socket_front_buffer;
+    conn->conn_op.ic_flush_connection= flush_socket_front_buffer;
   }
   else
   {
-    conn->conn_op.write_ic_connection= write_socket_connection;
-    conn->conn_op.flush_ic_connection= no_op_socket_method;
+    conn->conn_op.ic_write_connection= write_socket_connection;
+    conn->conn_op.ic_flush_connection= no_op_socket_method;
   }
 }
 
@@ -814,17 +875,21 @@ set_up_rw_methods_mutex(IC_CONNECTION *conn)
 {
   if (conn->is_mutex_used)
   {
-    conn->conn_op.open_write_session = open_write_socket_session_mutex;
-    conn->conn_op.close_write_session = close_write_socket_session_mutex;
-    conn->conn_op.open_read_session = open_read_socket_session_mutex;
-    conn->conn_op.close_read_session = close_read_socket_session_mutex;
+    conn->conn_op.ic_open_write_session= open_write_socket_session_mutex;
+    conn->conn_op.ic_close_write_session= close_write_socket_session_mutex;
+    conn->conn_op.ic_open_read_session= open_read_socket_session_mutex;
+    conn->conn_op.ic_close_read_session= close_read_socket_session_mutex;
+    conn->conn_op.ic_is_conn_thread_active= is_mutex_conn_thread_active;
+    conn->conn_op.ic_is_conn_connected= is_mutex_conn_connected;
   }
   else
   {
-    conn->conn_op.open_write_session = no_op_with_size_socket_method;
-    conn->conn_op.open_read_session = no_op_socket_method;
-    conn->conn_op.close_write_session = no_op_socket_method;
-    conn->conn_op.close_read_session = no_op_socket_method;
+    conn->conn_op.ic_open_write_session= no_op_with_size_socket_method;
+    conn->conn_op.ic_open_read_session= no_op_socket_method;
+    conn->conn_op.ic_close_write_session= no_op_socket_method;
+    conn->conn_op.ic_close_read_session= no_op_socket_method;
+    conn->conn_op.ic_is_conn_thread_active= is_conn_thread_active;
+    conn->conn_op.ic_is_conn_connected= is_conn_connected;
   }
 }
 
@@ -930,19 +995,17 @@ ic_create_socket_object(gboolean is_client,
 
   if ((conn= (IC_CONNECTION*)ic_calloc(sizeof(IC_CONNECTION))) == NULL)
     return NULL;
-  conn->conn_op.set_up_ic_connection= set_up_socket_connection;
-  conn->conn_op.accept_ic_connection= accept_socket_connection;
-  conn->conn_op.close_ic_connection= close_socket_connection;
-  conn->conn_op.close_ic_listen_connection= close_listen_socket_connection;
-  conn->conn_op.read_ic_connection = read_socket_connection;
-  conn->conn_op.free_ic_connection= free_socket_connection;
-  conn->conn_op.read_stat_ic_connection= read_stat_socket_connection;
-  conn->conn_op.safe_read_stat_ic_connection= safe_read_stat_socket_conn;
+  conn->conn_op.ic_set_up_connection= set_up_socket_connection;
+  conn->conn_op.ic_accept_connection= accept_socket_connection;
+  conn->conn_op.ic_close_connection= close_socket_connection;
+  conn->conn_op.ic_close_listen_connection= close_listen_socket_connection;
+  conn->conn_op.ic_read_connection = read_socket_connection;
+  conn->conn_op.ic_free_connection= free_socket_connection;
+  conn->conn_op.ic_read_stat_connection= read_stat_socket_connection;
+  conn->conn_op.ic_safe_read_stat_connection= safe_read_stat_socket_conn;
   conn->conn_op.ic_read_connection_time= read_socket_connection_time;
   conn->conn_op.ic_read_stat_time= read_socket_stat_time;
-  conn->conn_op.is_ic_conn_thread_active= is_conn_thread_active;
-  conn->conn_op.is_ic_conn_connected= is_conn_connected;
-  conn->conn_op.write_stat_ic_connection= write_stat_socket_connection;
+  conn->conn_op.ic_write_stat_connection= write_stat_socket_connection;
   conn->conn_op.ic_fork_accept_connection= fork_accept_connection;
 
   conn->is_client= is_client;

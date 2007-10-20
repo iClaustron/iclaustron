@@ -1,16 +1,31 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #include <ic_apid.h>
 
 static int
-is_ds_conn_established(struct ic_ds_conn *ds_conn,
+is_ds_conn_established(IC_DS_CONNECTION *ds_conn,
                        gboolean *is_connected)
 {
-  struct ic_connection *conn= &ds_conn->conn_obj;
+  IC_CONNECTION *conn= ds_conn->conn_obj;
 
   *is_connected= FALSE;
-  if (conn->conn_op.is_ic_conn_thread_active(conn))
+  if (conn->conn_op.ic_is_conn_thread_active(conn))
     return 0;
   *is_connected= TRUE;
-  if (conn->conn_op.is_ic_conn_connected(conn))
+  if (conn->conn_op.ic_is_conn_connected(conn))
     return 0;
   return conn->error_code;
 }
@@ -23,12 +38,12 @@ authenticate_ds_connection(void *conn_obj)
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
   int error;
-  struct ic_ds_conn *ds_conn= conn_obj;
-  struct ic_connection *conn= &ds_conn->conn_obj;
+  IC_DS_CONNECTION *ds_conn= conn_obj;
+  IC_CONNECTION *conn= ds_conn->conn_obj;
 
   ic_send_with_cr(conn, "ndbd");
   ic_send_with_cr(conn, "ndbd passwd");
-  conn->conn_op.flush_ic_connection(conn);
+  conn->conn_op.ic_flush_connection(conn);
   if ((error= ic_rec_with_cr(conn, (gchar*)&buf, &read_size, &size_curr_buf,
                              sizeof(buf))))
     return error;
@@ -44,31 +59,31 @@ authenticate_ds_connection(void *conn_obj)
 }
 
 static int
-open_ds_connection(struct ic_ds_conn *ds_conn)
+open_ds_connection(IC_DS_CONNECTION *ds_conn)
 {
   int error;
-  struct ic_connection *conn= &ds_conn->conn_obj;
-  if (ic_init_socket_object(conn,
-                            TRUE, TRUE, TRUE, TRUE,
-                            authenticate_ds_connection,
-                            (void*)ds_conn))
+  IC_CONNECTION *conn= ds_conn->conn_obj;
+  if (!(conn= ic_create_socket_object(TRUE, TRUE, TRUE, TRUE,
+                                      authenticate_ds_connection,
+                                      (void*)ds_conn)))
     return MEM_ALLOC_ERROR;
-  if ((error= conn->conn_op.set_up_ic_connection(conn)))
+  ds_conn->conn_obj= conn;
+  if ((error= conn->conn_op.ic_set_up_connection(conn)))
     return error;
   return 0;
 }
 
 static int
-close_ds_connection(__attribute__ ((unused)) struct ic_ds_conn *ds_conn)
+close_ds_connection(__attribute__ ((unused)) IC_DS_CONNECTION *ds_conn)
 {
   return 0;
 }
 
 void
-ic_init_ds_connection(struct ic_ds_conn *ds_conn)
+ic_init_ds_connection(IC_DS_CONNECTION *ds_conn)
 {
-  ds_conn->operations.set_up_ic_ds_connection= open_ds_connection;
-  ds_conn->operations.close_ic_ds_connection= close_ds_connection;
-  ds_conn->operations.is_conn_established= is_ds_conn_established;
-  ds_conn->operations.authenticate_connection= authenticate_ds_connection;
+  ds_conn->operations.ic_set_up_ds_connection= open_ds_connection;
+  ds_conn->operations.ic_close_ds_connection= close_ds_connection;
+  ds_conn->operations.ic_is_conn_established= is_ds_conn_established;
+  ds_conn->operations.ic_authenticate_connection= authenticate_ds_connection;
 }

@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 /*
   This program implements the iClaustron Cluster Server.
   It reads a configuration file at bootstrap, one file per cluster
@@ -73,7 +88,7 @@ main(int argc, char *argv[])
     goto late_end;
   }
   printf("Starting the iClaustron Cluster Server\n");
-  if ((error= run_obj->run_op.run_ic_cluster_server(run_obj)))
+  if ((error= run_obj->run_op.ic_run_cluster_server(run_obj)))
   {
     printf("run_ic_cluster_server returned error code %u\n", error);
     ic_print_error(error);

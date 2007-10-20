@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #ifndef IC_COMM_H
 #define IC_COMM_H
 
@@ -39,35 +54,35 @@ struct ic_connect_operations
     the client end of the connection. For server end it is possible
     that this call doesn't perform the accept call.
   */
-  int (*set_up_ic_connection) (struct ic_connection *conn);
-  int (*accept_ic_connection) (struct ic_connection *conn);
-  int (*close_ic_connection) (struct ic_connection *conn);
-  int (*close_ic_listen_connection) (struct ic_connection *conn);
+  int (*ic_set_up_connection) (struct ic_connection *conn);
+  int (*ic_accept_connection) (struct ic_connection *conn);
+  int (*ic_close_connection) (struct ic_connection *conn);
+  int (*ic_close_listen_connection) (struct ic_connection *conn);
   /*
     These calls are used to read and write on a socket connection.
     There is support for memory buffering in front of the socket.
     In this case it is necessary to flush the memory buffer in order
     to ensure that buffered operations have actually been written.
   */
-  int (*read_ic_connection) (struct ic_connection *conn,
+  int (*ic_read_connection) (struct ic_connection *conn,
                              void *buf, guint32 buf_size,
                              guint32 *read_size);
-  int (*write_ic_connection) (struct ic_connection *conn,
+  int (*ic_write_connection) (struct ic_connection *conn,
                               const void *buf, guint32 size,
                               guint32 prio_level,
                               guint32 secs_to_try);
-  int (*flush_ic_connection) (struct ic_connection *conn);
+  int (*ic_flush_connection) (struct ic_connection *conn);
   /*
     In order to support multiple threads using the same connection
     object at the same time we need to declare open and close of
     read and write sessions. The socket connection can have a read
     session and a write session concurrently.
   */
-  int (*open_write_session) (struct ic_connection *conn,
-                             guint32 total_size);
-  int (*close_write_session) (struct ic_connection *conn);
-  int (*open_read_session) (struct ic_connection *conn);
-  int (*close_read_session) (struct ic_connection *conn);
+  int (*ic_open_write_session) (struct ic_connection *conn,
+                                guint32 total_size);
+  int (*ic_close_write_session) (struct ic_connection *conn);
+  int (*ic_open_read_session) (struct ic_connection *conn);
+  int (*ic_close_read_session) (struct ic_connection *conn);
   /*
     Read statistics of the connection. This is done by copying the
     statistics information into the provided statistics object to ensure
@@ -80,16 +95,16 @@ struct ic_connect_operations
     ongoing by the same thread as is calling the safe read statistics. This
     would create a deadlock.
   */
-  void (*read_stat_ic_connection) (struct ic_connection *conn,
+  void (*ic_read_stat_connection) (struct ic_connection *conn,
                                    struct ic_connection *stat,
                                    gboolean clear_stat_timer);
-  void (*safe_read_stat_ic_connection) (struct ic_connection *conn,
+  void (*ic_safe_read_stat_connection) (struct ic_connection *conn,
                                         struct ic_connection *stat,
                                         gboolean clear_stat_timer);
   /*
     Print statistics of the connection
   */
-  void (*write_stat_ic_connection) (struct ic_connection *conn);
+  void (*ic_write_stat_connection) (struct ic_connection *conn);
   /*
     These are two routines to read times in conjunction with this connect
     object.
@@ -104,12 +119,13 @@ struct ic_connect_operations
                                      gulong *microseconds);
   double (*ic_read_stat_time) (struct ic_connection *conn,
                                gulong *microseconds);
-  gboolean (*is_ic_conn_connected) (struct ic_connection *conn);
-  gboolean (*is_ic_conn_thread_active) (struct ic_connection *conn);
+  gboolean (*ic_is_conn_connected) (struct ic_connection *conn);
+  gboolean (*ic_is_conn_thread_active) (struct ic_connection *conn);
   /*
     Free all memory connected to a connection object
+    It also closes all connection if not already done
   */
-  void (*free_ic_connection) (struct ic_connection *conn);
+  void (*ic_free_connection) (struct ic_connection *conn);
 };
 
 struct ic_connect_stat
@@ -164,10 +180,10 @@ typedef struct ic_connect_stat IC_CONNECT_STAT;
 
 struct ic_connect_mgr_operations
 {
-  int (*add_ic_connection) (struct ic_connection *conn);
-  int (*drop_ic_connection) (struct ic_connection *conn);
-  int (*get_ic_connection) (struct ic_connection **conn, guint32 node_id);
-  int (*get_free_ic_connection) (struct ic_connection **conn);
+  int (*ic_add_connection) (struct ic_connection *conn);
+  int (*ic_drop_connection) (struct ic_connection *conn);
+  int (*ic_get_connection) (struct ic_connection **conn, guint32 node_id);
+  int (*ic_get_free_connection) (struct ic_connection **conn);
 };
 typedef struct ic_connect_mgr_operations IC_CONNECT_MGR_OPERATIONS;
 
@@ -403,11 +419,11 @@ struct ic_sock_buf;
 
 struct ic_sock_buf_operations
 {
-  gboolean (*get_ic_conn_buf) (struct ic_sock_buf *buf,
+  gboolean (*ic_get_conn_buf) (struct ic_sock_buf *buf,
                                struct ic_sock_buf_page **page);
-  gboolean (*return_ic_conn_buf) (struct ic_sock_buf *buf,
+  gboolean (*ic_return_conn_buf) (struct ic_sock_buf *buf,
                                   struct ic_sock_buf_page *page);
-  gboolean (*increase_ic_conn_buf) (guint32 no_of_pages);
+  gboolean (*ic_increase_conn_buf) (guint32 no_of_pages);
 };
 typedef struct ic_sock_buf_operations IC_SOCK_BUF_OPERATIONS;
 
@@ -432,8 +448,8 @@ struct ic_sock_buf
 };
 typedef struct ic_sock_buf IC_SOCK_BUF;
 
-IC_SOCK_BUF *ic_init_socket_membuf(guint32 page_size,
-                                   guint32 no_of_pages);
+IC_SOCK_BUF *ic_create_socket_membuf(guint32 page_size,
+                                     guint32 no_of_pages);
 
 /*
   Debug print-outs
@@ -463,8 +479,8 @@ int ic_rec_with_cr(IC_CONNECTION *conn,
 gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
                                        guint64 *ret_number);
 
-#define CARRIAGE_RETURN (char)10
-#define LINE_FEED (char)13
-#define NULL_BYTE (char)0
+#define CARRIAGE_RETURN (gchar)10
+#define LINE_FEED (gchar)13
+#define NULL_BYTE (gchar)0
 
 #endif

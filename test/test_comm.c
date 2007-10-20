@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #include <ic_common.h>
 #include <ic_apic.h>
 
@@ -60,7 +75,7 @@ connection_test()
   conn->tcp_maxseg_size= glob_tcp_maxseg;
   conn->tcp_receive_buffer_size= glob_tcp_rec_size;
   conn->tcp_send_buffer_size= glob_tcp_snd_size;
-  ret_code= conn->conn_op.set_up_ic_connection(conn);
+  ret_code= conn->conn_op.ic_set_up_connection(conn);
   if (ret_code != 0)
   {
     printf("Error in connection set-up: ret_code = %d\n", ret_code);
@@ -70,7 +85,7 @@ connection_test()
   {
     guint32 read_size;
     printf("Start reading\n");
-    while (!conn->conn_op.read_ic_connection(conn,
+    while (!conn->conn_op.ic_read_connection(conn,
                                              (void*)buf,
                                              sizeof(buf),
                                              &read_size))
@@ -87,7 +102,7 @@ connection_test()
     g_timer_start(timer);
     for (i= 0; i < 8192; i++)
     {
-      if (conn->conn_op.write_ic_connection(conn,
+      if (conn->conn_op.ic_write_connection(conn,
                                             (const void*)buf,
                                             sizeof(buf), 0,
                                             2))
@@ -97,8 +112,8 @@ connection_test()
     g_timer_destroy(timer);
     printf("Time spent in writing 64 MBytes: %f\n", time_spent);
   }
-  conn->conn_op.write_stat_ic_connection(conn);
-  conn->conn_op.close_ic_connection(conn);
+  conn->conn_op.ic_write_stat_connection(conn);
+  conn->conn_op.ic_close_connection(conn);
   printf("Connection Test Success\n");
   return 0;
 }
@@ -133,9 +148,9 @@ api_clusterserver_test()
     return 0;
   }
   srv_obj->num_clusters_to_connect= 1;
-  srv_obj->api_op.get_ic_config(srv_obj, (guint64)0x60301);
+  srv_obj->api_op.ic_get_config(srv_obj, (guint64)0x60301);
   /*srv_obj->api_op.get_ic_config(srv_obj, (guint64)0x000000); */
-  srv_obj->api_op.free_ic_config(srv_obj);
+  srv_obj->api_op.ic_free_config(srv_obj);
   printf("Completing cluster server test\n");
   return 0;
 }
@@ -173,7 +188,7 @@ run_clusterserver_test()
   run_obj= ic_create_run_cluster(&clu_conf, &cluster_id, (guint32)1,
                                  glob_server_ip, glob_server_port);
 
-  if ((ret_code= run_obj->run_op.run_ic_cluster_server(run_obj)))
+  if ((ret_code= run_obj->run_op.ic_run_cluster_server(run_obj)))
   {
     printf("run_cluster_server returned error code %u\n", ret_code);
     ic_print_error(ret_code);
@@ -181,7 +196,7 @@ run_clusterserver_test()
   }
 end:
   clu_conf_struct.clu_conf_ops->ic_config_end(&clu_conf_struct);
-  run_obj->run_op.free_ic_run_cluster(run_obj);
+  run_obj->run_op.ic_free_run_cluster(run_obj);
   return ret_code;
 }
 
@@ -218,7 +233,7 @@ test_pcntrl()
   conn->tcp_maxseg_size= glob_tcp_maxseg;
   conn->tcp_receive_buffer_size= glob_tcp_rec_size;
   conn->tcp_send_buffer_size= glob_tcp_snd_size;
-  ret_code= conn->conn_op.set_up_ic_connection(conn);
+  ret_code= conn->conn_op.ic_set_up_connection(conn);
   if ((error= ic_send_with_cr(conn, "ls")) ||
       (error= ic_send_with_cr(conn, "-la")) ||
       (error= ic_send_with_cr(conn, "")))
@@ -233,7 +248,7 @@ test_pcntrl()
     goto end;
   }
 end:
-  conn->conn_op.free_ic_connection(conn);
+  conn->conn_op.ic_free_connection(conn);
   return 0;
 }
 

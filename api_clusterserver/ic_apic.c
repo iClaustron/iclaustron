@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #include <ic_apic.h>
 #include <hashtable.h>
 /*
@@ -2440,7 +2455,7 @@ set_up_cluster_server_connection(IC_CONNECTION *conn,
     return MEM_ALLOC_ERROR;
   conn->server_name= server_name;
   conn->server_port= server_port;
-  if ((error= conn->conn_op.set_up_ic_connection(conn)))
+  if ((error= conn->conn_op.ic_set_up_connection(conn)))
   {
     DEBUG(printf("Connect failed with error %d\n", error));
     return error;
@@ -2815,8 +2830,8 @@ get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num)
     }
   }
 error:
-  conn->conn_op.close_ic_connection(conn);
-  conn->conn_op.free_ic_connection(conn);
+  conn->conn_op.ic_close_connection(conn);
+  conn->conn_op.ic_free_connection(conn);
   return error;
 }
 
@@ -2931,8 +2946,8 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
          num_cluster_servers * sizeof(IC_CONNECTION));
 
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
-  apic->api_op.get_ic_config= get_cs_config;
-  apic->api_op.free_ic_config= free_cs_config;
+  apic->api_op.ic_get_config= get_cs_config;
+  apic->api_op.ic_free_config= free_cs_config;
   return apic;
 }
 
@@ -3390,7 +3405,7 @@ free_run_cluster(struct ic_run_config_server *run_obj)
 {
   if (run_obj)
   {
-    run_obj->run_conn->conn_op.free_ic_connection(run_obj->run_conn); 
+    run_obj->run_conn->conn_op.ic_free_connection(run_obj->run_conn); 
     ic_free(run_obj);
   }
   return;
@@ -3604,7 +3619,7 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
       ic_send_with_cr(conn, octet_stream_str) ||
       ic_send_with_cr(conn, content_encoding_str) ||
       ic_send_with_cr(conn, empty_string) ||
-      conn->conn_op.write_ic_connection(conn, (const void*)config_base64_str,
+      conn->conn_op.ic_write_connection(conn, (const void*)config_base64_str,
                                         config_len, 0,1))
     return conn->error_code;
   return 0;
@@ -3703,7 +3718,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
 
   conn= run_obj->run_conn;
   conn->is_listen_socket_retained= TRUE;
-  ret_code= conn->conn_op.set_up_ic_connection(conn);
+  ret_code= conn->conn_op.ic_set_up_connection(conn);
   if (ret_code)
   {
     printf("Failed to set-up listening connection\n");
@@ -3711,7 +3726,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
   }
   do
   {
-    if ((ret_code= conn->conn_op.accept_ic_connection(conn)))
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       printf("Failed to accept a new connection\n");
       goto error;
@@ -3785,8 +3800,8 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
   conn->client_name= NULL;
   conn->client_port= 0;
   conn->is_wan_connection= FALSE;
-  run_obj->run_op.run_ic_cluster_server= run_cluster_server;
-  run_obj->run_op.free_ic_run_cluster= free_run_cluster;
+  run_obj->run_op.ic_run_cluster_server= run_cluster_server;
+  run_obj->run_op.ic_free_run_cluster= free_run_cluster;
   return run_obj;
 
 error:

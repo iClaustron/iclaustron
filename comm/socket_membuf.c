@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #include <ic_comm.h>
 static gboolean
 get_sock_buf_page(struct ic_sock_buf *buf,
@@ -43,8 +58,8 @@ return_sock_buf_page(struct ic_sock_buf *buf,
 }
 
 struct ic_sock_buf*
-ic_init_socket_membuf(guint32 page_size,
-                      guint32 no_of_pages)
+ic_create_socket_membuf(guint32 page_size,
+                        guint32 no_of_pages)
 {
   char *ptr;
   struct ic_sock_buf *buf;
@@ -53,8 +68,8 @@ ic_init_socket_membuf(guint32 page_size,
   buf= malloc(sizeof(struct ic_sock_buf));
   ptr= malloc(page_size * no_of_pages +
               (no_of_pages * sizeof(struct ic_sock_buf_page)));
-  buf->sock_buf_op.get_ic_conn_buf= get_sock_buf_page;
-  buf->sock_buf_op.return_ic_conn_buf= return_sock_buf_page;
+  buf->sock_buf_op.ic_get_conn_buf= get_sock_buf_page;
+  buf->sock_buf_op.ic_return_conn_buf= return_sock_buf_page;
   return 0;
 }
 

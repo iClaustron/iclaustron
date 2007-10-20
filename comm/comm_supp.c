@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #include <ic_common.h>
 
 void
@@ -177,7 +192,7 @@ ic_send_with_cr(struct ic_connection *conn, const char *send_buf)
   buf[inx++]= CARRIAGE_RETURN;
   buf[inx]= NULL_BYTE;
   DEBUG(printf("Send: %s", buf));
-  res= conn->conn_op.write_ic_connection(conn, (const void*)buf, inx, 0, 1);
+  res= conn->conn_op.ic_write_connection(conn, (const void*)buf, inx, 0, 1);
   return res;
 }
 
@@ -233,7 +248,7 @@ ic_rec_with_cr(struct ic_connection *conn,
       */
     }
     size_to_read= buffer_size - *size_curr_buf;
-    if ((res= conn->conn_op.read_ic_connection(conn,
+    if ((res= conn->conn_op.ic_read_connection(conn,
                                                rec_buf + *size_curr_buf,
                                                size_to_read,
                                                &size_read)))

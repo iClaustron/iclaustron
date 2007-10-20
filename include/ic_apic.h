@@ -1,3 +1,18 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
 #ifndef IC_APIC_H
 #define IC_APIC_H
 #include <ic_common.h>
@@ -101,15 +116,15 @@ struct ic_run_config_server;
 
 struct ic_api_cluster_operations
 {
-  int (*get_ic_config) (struct ic_api_config_server *apic,
+  int (*ic_get_config) (struct ic_api_config_server *apic,
                         guint64 our_version_num);
-  void (*free_ic_config) (struct ic_api_config_server *apic);
+  void (*ic_free_config) (struct ic_api_config_server *apic);
 };
 
 struct ic_run_config_server_operations
 {
-  int (*run_ic_cluster_server) (struct ic_run_config_server *run_obj);
-  void (*free_ic_run_cluster) (struct ic_run_config_server *run_obj);
+  int (*ic_run_cluster_server) (struct ic_run_config_server *run_obj);
+  void (*ic_free_run_cluster) (struct ic_run_config_server *run_obj);
 };
 
 #define REC_BUF_SIZE 256
