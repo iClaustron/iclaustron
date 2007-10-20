@@ -14,6 +14,8 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
+#include <stdio.h>
+#include <readline/readline.h>
 
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_server_port= "10003";
@@ -51,19 +53,25 @@ static int
 read_one_line(IC_STRING *out_str)
 {
   IC_STRING line_str;
-  gchar line[2048];
-
-  line_str.len= 2048;
-#ifdef HAVE_READLINE
+#ifdef HAVE_LIBREADLINE
   line_str.str= readline(ic_prompt);
 #else
+  gchar line[2048];
+
   printf("%s", ic_prompt);
   line_str.str= fgets(line, sizeof(line), stdin);
 #endif
+  line_str.len= 2048;
   ic_set_up_ic_string(&line_str);
-#ifdef HAVE_READLINE
+#ifdef HAVE_LIBREADLINE
   if (line_str.len)
     add_history(line_str.str);
+#else
+  if (line_str.str[line_str.len - 1] == CARRIAGE_RETURN)
+  {
+    line_str.str[line_str.len - 1]= NULL_BYTE;
+    line_str.len--;
+  }
 #endif
   if (!line_str.str)
     return 1;
@@ -107,19 +115,15 @@ command_interpreter()
         printf("error = %u\n", error);
         return error;
       }
-      if (line_ptr->str[line_ptr->len - 1] == CARRIAGE_RETURN)
-      {
-        line_ptr->str[line_ptr->len - 1]= NULL_BYTE;
-        line_ptr->len--;
-      }
       if (line_ptr->len == 0)
         continue;
       IC_COPY_STRING(line_ptrs[lines], line_ptr);
       lines++;
     } while (!check_last_line(line_ptr));
     if (lines == 1 &&
-        (ic_cmp_null_term_str("quit", line_ptrs[0]) ||
-         ic_cmp_null_term_str("q", line_ptrs[0])))
+        ((ic_cmp_null_term_str("quit;", line_ptrs[0])) ||
+         (ic_cmp_null_term_str("exit;", line_ptrs[0])) ||
+          ic_cmp_null_term_str("q;", line_ptrs[0])))
     {
       ic_free(line_ptrs[0]->str);
       break;
@@ -164,7 +168,7 @@ int main(int argc, char *argv[])
 
   if (ic_init())
     return ret_code;
-#ifdef HAVE_READLINE
+#ifdef HAVE_LIBREADLINE
   using_history();
   stifle_history(glob_history_size);
 #endif
@@ -172,7 +176,7 @@ int main(int argc, char *argv[])
     goto error;
   ret_code= command_interpreter(conn);
   conn->conn_op.ic_free_connection(conn);
-#ifdef HAVE_READLINE
+#ifdef HAVE_LIBREADLINE
   clear_history();
 #endif
   ic_end();

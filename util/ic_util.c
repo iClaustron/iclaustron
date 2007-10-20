@@ -38,7 +38,6 @@ ic_reverse_str(gchar *in_buf, gchar *out_buf)
     out_buf[j++]= in_buf[--i];
 }
 
-#ifdef DEBUG_BUILD
 gchar *ic_guint64_str(guint64 val, gchar *ptr)
 {
   guint32 i= 0;
@@ -88,6 +87,7 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
   return ptr;
 }
 
+#ifdef DEBUG_BUILD
 static FILE *ic_fptr;
 void
 ic_debug_entry(const char *entry_point)
@@ -470,7 +470,7 @@ int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
   gchar *cmp_char= cmp_str->str;
   guint32 str_len= cmp_str->len;
   if (cmp_str->is_null_terminated)
-    return strcmp(null_term_str, cmp_str->str) ? 1 : 0;
+    return (strcmp(null_term_str, cmp_str->str) == 0) ? 1 : 0;
   while (iter_len < str_len)
   {
     if (*null_term_str != *cmp_char)
@@ -515,11 +515,13 @@ ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
   IC_INIT_STRING(out_str, NULL, 0, FALSE);
   if (in_str->len == 0)
     return FALSE;
-  if (!(str= ic_malloc(in_str->len)))
+  if (!(str= ic_malloc(in_str->len+1)))
     return TRUE;
   IC_COPY_STRING(out_str, in_str);
   out_str->str= str;
   memcpy(out_str->str, in_str->str, in_str->len);
+  if (out_str->is_null_terminated)
+    out_str->str[out_str->len]= NULL_BYTE;
   return FALSE;
 }
 

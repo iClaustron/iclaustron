@@ -30,6 +30,11 @@ AC_ARG_WITH(debug,
          [with_debug=$withval],
          [with_debug=no])
 
+AC_ARG_WITH(readline,
+         [  --with-readline   Build with readline],
+         [with_readline=$withval],
+         [with_readline=no])
+
 #
 # Next step is to check for all the programs needed by the configure process.
 # These include usage of macros such as AC_CHECK_PROG and AC_PATH_TOOL.
@@ -67,6 +72,16 @@ CFLAGS="$CFLAGS $GLIB_INCLUDE"
 AC_CHECK_LIB(glib-2.0, g_list_append,,
  [AC_MSG_ERROR([No glib library installed])])
 
+AS_IF([test "x$with_readline" != "xno"],
+  [AC_CHECK_LIB([readline], [main],
+    [AC_SUBST([LIBREADLINE], ["-lreadline -lncurses"])
+     AC_DEFINE([HAVE_LIBREADLINE], [1], [Define if you have libreadline])
+    ],
+    [AC_MSG_FAILURE(
+       [readline wasn't available, remove --with-readline option])],
+    [-lcurses])])
+
+LIBS="$LIBS $LIBREADLINE"
 #
 # Next step is to check the existence of external header files.
 #
