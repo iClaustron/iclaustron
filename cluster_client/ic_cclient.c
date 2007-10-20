@@ -18,7 +18,7 @@
 #include <readline/readline.h>
 
 static gchar *glob_server_ip= "127.0.0.1";
-static gchar *glob_server_port= "10003";
+static gchar *glob_server_port= "10006";
 static guint32 glob_history_size= 100;
 static gchar *ic_prompt= "iclaustron client> ";
 
@@ -147,6 +147,27 @@ error:
 static int
 connect_cluster_mgr(IC_CONNECTION **conn)
 {
+  IC_CONNECTION *loc_conn;
+  int ret_code;
+
+  if (!(loc_conn= ic_create_socket_object(TRUE, FALSE,
+                                          FALSE, FALSE,
+                                          NULL, NULL)))
+  {
+    printf("Failed to create Connection object\n");
+    return 1;
+  }
+  printf("Connecting to Cluster Manager at %s:%s\n",
+         glob_server_ip, glob_server_port);
+  loc_conn->server_name= glob_server_ip;
+  loc_conn->server_port= glob_server_port;
+  if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
+  {
+    printf("Failed to connect to Cluster Manager\n");
+    loc_conn->conn_op.ic_free_connection(loc_conn);
+    return 1;
+  }
+  *conn= loc_conn;
   return 0;
 }
 
@@ -164,7 +185,6 @@ int main(int argc, char *argv[])
   if (!g_option_context_parse(context, &argc, &argv, &error))
     goto parse_error;
   g_option_context_free(context);
-  printf("Server name = %s, Server port = %s\n", glob_server_ip, glob_server_port);
 
   if (ic_init())
     return ret_code;

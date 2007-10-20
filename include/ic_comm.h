@@ -53,6 +53,44 @@ struct ic_connect_operations
     Set up a connection object, this can be either the server end or
     the client end of the connection. For server end it is possible
     that this call doesn't perform the accept call.
+
+    The necessary parameters to set-up before this call are:
+      server_name : This is the server to connect to for client and it is the
+                    server ip/name we will listen to as server
+      server_ip   : This is the port we will connect to for clients and it is
+                    the port we'll listen to for servers.
+
+    For server connections we can also set:
+      client_name: This is the only allowed client name that is allowed to connect
+      client_port: This is the only allowed port from which clients can connect
+      backlog    : Sets the backlog parameter, how many connections can the OS
+                   keep in the backlog before refusing new connections.
+      is_listen_socket_retained : Set if we don't want the listening socket to
+                   be closed after accepting a connection. Useful when we use
+                   one socket for multiple connections.
+    For client connections we can also set:
+      client_name: This is the hostname we will bind to before connecting.
+                   If not set we will use any interface on the machine.
+      client_ip  : This is the port we will bind to before connecting, if not
+                   set we'll use the ephemeral port where the port is choosen
+                   by the OS.
+    In addition we can also set a number of performance related parameters
+    that are useful both on the server and client side.
+      tcp_maxseg :  Will set the parameter TCP_MAXSEG on the socket
+      is_wan_connection : Will optimise parameters for a WAN connection
+      tcp_receive_buffer_size : Receive buffer size allocated in OS kernel
+      tcp_send_buffer_size : Send buffer size allocated in OS kernel
+
+    In addition when we create the socket object we need to specify the
+    following boolean variables:
+    is_client : Is it a server socket or a client socket
+    is_mutex_used : Is it necessary to protect all accesses by mutex
+    is_connect_thread_used : Is it necessary to handle connects in a separate
+                thread.
+    is_using_front_buffer : Should the object buffer messages before
+                actually sending them.
+    Finally an authenticate function and object can be provided in the
+    create socket call.
   */
   int (*ic_set_up_connection) (struct ic_connection *conn);
   int (*ic_accept_connection) (struct ic_connection *conn);

@@ -19,7 +19,7 @@
 static gboolean glob_is_client= FALSE;
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_client_ip= "127.0.0.1";
-static gchar *glob_server_port= "10003";
+static gchar *glob_server_port= "10006";
 static gchar *glob_client_port= "12002";
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
@@ -70,7 +70,6 @@ connection_test()
   conn->server_port= glob_server_port;
   conn->client_name= glob_client_ip;
   conn->client_port= glob_client_port;
-  conn->is_connect_thread_used= FALSE;
   conn->is_wan_connection= glob_is_wan_connection;
   conn->tcp_maxseg_size= glob_tcp_maxseg;
   conn->tcp_receive_buffer_size= glob_tcp_rec_size;

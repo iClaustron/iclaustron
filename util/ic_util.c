@@ -182,7 +182,6 @@ ic_conv_str_to_int(gchar *str, guint64 *number)
   int str_len= strlen(str);
   DEBUG_ENTRY("ic_conv_str_to_int");
 
-  DEBUG(printf("str_len = %d\n", str_len));
   if (str_len > 60 || str_len == 0)
     return 1;
   ic_reverse_str(str, rev_str);

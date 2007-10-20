@@ -28,14 +28,14 @@ static int close_socket_connection(IC_CONNECTION *conn);
 static void
 lock_connect_mutex(IC_CONNECTION *conn)
 {
-  if (conn->connect_mutex)
+  if (conn->is_mutex_used)
     g_mutex_lock(conn->connect_mutex);
 }
 
 static void
 unlock_connect_mutex(IC_CONNECTION *conn)
 {
-  if (conn->connect_mutex)
+  if (conn->is_mutex_used)
     g_mutex_unlock(conn->connect_mutex);
 }
 
@@ -325,11 +325,13 @@ translate_hostnames(IC_CONNECTION *conn)
                conn->conn_stat.server_ip_addr,
                sizeof(conn->conn_stat.server_ip_addr_str));
 
-  if (!conn->is_client)
+  if (!conn->client_name)
   {
-    /* Handle Server connections */
-    if (conn->client_name)
-      return 0; /* Connections from all clients and ports possible */
+    /*
+      Client: Connections from all clients and ports possible
+      Server: No bind used since no client host provided
+    */
+    return 0;
   }
   if (!conn->client_port)
     conn->client_port= "0"; /* Use "0" if user provided no port */
@@ -376,29 +378,32 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
   int error, sockfd;
   struct addrinfo *loc_addrinfo;
 
-  printf("Translating hostnames\n");
+  DEBUG(printf("Translating hostnames\n"));
   if ((error= translate_hostnames(conn)))
   {
     printf("Translating hostnames failed error = %d\n", error);
     conn->error_code= error;
     return conn->error_code;
   }
-  printf("Translating hostnames done\n");
+  DEBUG(printf("Translating hostnames done\n"));
 
   loc_addrinfo= conn->is_client ?
       conn->client_addrinfo : conn->server_addrinfo;
   /*
     Create a socket for the connection
   */
-  if ((sockfd= socket(loc_addrinfo->ai_family, loc_addrinfo->ai_socktype,
-                      loc_addrinfo->ai_protocol)) < 0)
+  if ((sockfd= socket(conn->server_addrinfo->ai_family,
+                      conn->server_addrinfo->ai_socktype,
+                      conn->server_addrinfo->ai_protocol)) < 0)
   {
     conn->error_code= errno;
     return errno;
   }
   ic_set_socket_options(conn, sockfd);
-  if (bind(sockfd, (struct sockaddr *)loc_addrinfo->ai_addr,
-           loc_addrinfo->ai_addrlen) < 0)
+  if (((conn->is_client == FALSE) ||
+       (conn->client_name != NULL)) &&
+       (bind(sockfd, (struct sockaddr *)loc_addrinfo->ai_addr,
+             loc_addrinfo->ai_addrlen) < 0))
   {
     /*
       Bind the socket to an IP address and port on this box.  If the caller
@@ -622,9 +627,9 @@ close_socket_connection(IC_CONNECTION *conn)
     close(conn->rw_sockfd);
     conn->rw_sockfd= 0;
   }
-  return 0;
   conn->error_code= 0;
   unlock_connect_mutex(conn);
+  return 0;
 }
 
 static int
