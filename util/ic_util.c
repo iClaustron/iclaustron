@@ -513,15 +513,15 @@ ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
   gchar *str;
   IC_INIT_STRING(out_str, NULL, 0, FALSE);
   if (in_str->len == 0)
-    return FALSE;
+    return 0;
   if (!(str= ic_malloc(in_str->len+1)))
-    return TRUE;
+    return 1;
   IC_COPY_STRING(out_str, in_str);
   out_str->str= str;
   memcpy(out_str->str, in_str->str, in_str->len);
   if (out_str->is_null_terminated)
     out_str->str[out_str->len]= NULL_BYTE;
-  return FALSE;
+  return 0;
 }
 
 

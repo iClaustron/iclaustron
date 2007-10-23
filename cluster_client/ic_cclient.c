@@ -52,31 +52,46 @@ execute_command(IC_STRING **str_array, guint32 num_lines)
 static int
 read_one_line(IC_STRING *out_str)
 {
-  IC_STRING line_str;
 #ifdef HAVE_LIBREADLINE
+  IC_STRING line_str;
+  int ret_value;
+
   line_str.str= readline(ic_prompt);
+  if (!line_str.str)
+    return 1;
+  line_str.len= 2048;
+  ic_set_up_ic_string(&line_str);
+  if (!line_str.is_null_terminated)
+  {
+    ic_free(line_str.str);
+    return 1;
+  }
+  if (line_str.len)
+    add_history(line_str.str);
+  ret_value= ic_strdup(out_str, &line_str);
+  ic_free(line_str.str);
+  return ret_value;
 #else
+  IC_STRING line_str;
+  int ret_value;
   gchar line[2048];
 
   printf("%s", ic_prompt);
   line_str.str= fgets(line, sizeof(line), stdin);
-#endif
+  if (!line_str.str)
+    return 1;
   line_str.len= 2048;
   ic_set_up_ic_string(&line_str);
-#ifdef HAVE_LIBREADLINE
-  if (line_str.len)
-    add_history(line_str.str);
-#else
+  if (!line_str.is_null_terminated)
+    return 1;
   if (line_str.str[line_str.len - 1] == CARRIAGE_RETURN)
   {
     line_str.str[line_str.len - 1]= NULL_BYTE;
     line_str.len--;
   }
+  ret_value= ic_strdup(out_str, &line_str);
+  return ret_value;
 #endif
-  if (!line_str.str)
-    return 1;
-  ic_strdup(out_str, &line_str);
-  return 0;
 }
 
 static gboolean
