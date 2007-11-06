@@ -6,3 +6,4 @@ SUBDIRS = port util comm api_dataserver api_clusterserver include \
           cluster_server \
           pcntrl cluster_client cluster_mgr repserver fileserver test
 
+EXTRA_DIST = bootstrap.sh
