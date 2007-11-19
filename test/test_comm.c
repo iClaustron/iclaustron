@@ -254,21 +254,13 @@ end:
 int main(int argc, char *argv[])
 {
   int ret_code= 1;
-  GError *error= NULL;
-  GOptionContext *context;
 
-  context= g_option_context_new("- Basic test program communication module");
-  if (!context)
-    goto error;
-  g_option_context_add_main_entries(context, entries, NULL);
-  if (!g_option_context_parse(context, &argc, &argv, &error))
-    goto parse_error;
-  g_option_context_free(context);
+  if ((ret_code= ic_start_program(argc, argv, entries,
+           "- Basic test program communication module")))
+    return ret_code;
   printf("Server ip = %s, Client ip = %s\n", glob_server_ip, glob_client_ip);
   printf("Server port = %s, Client port = %s\n",
          glob_server_port, glob_client_port);
-  if (ic_init())
-    return ret_code;
   switch (glob_test_type)
   {
     case 0:

@@ -36,6 +36,8 @@ DEP_ARRAY_NODE_LIST=""
 BUILD_NODE="0"
 NODE=""
 BIN_NODE=""
+CURRENT_PWD=""
+BIN_TAR_FILES=""
 
 #
 # These variables contain the version of the MySQL and iClaustron
@@ -279,6 +281,27 @@ build_local()
   exec_command cd ..
 
   output_msg "Successfully built and installed $ICLAUSTRON_VERSION"
+#
+# Now that we've successfully built the MySQL and iClaustron source code
+# we'll create compressed tar-files of the binaries for later distribution
+# to other dependent nodes
+#
+  if test "x$BIN_TAR_FILES" = "xy" ; then
+    CURRENT_PWD=`pwd`
+    cd $BIN_INSTALL_DIR
+    output_msg "Create compressed tar files of the installed binaries"
+    tar cfz ${MYSQL_VERSION}_binary.tar.gz $MYSQL_VERSION
+    tar cfz ${ICLAUSTRON_VERSION}_binary.tar.gz $ICLAUSTRON_VERSION
+    cd ${CURRENT_PWD}
+  fi
+}
+
+remove_tar_files()
+{
+  output_msg "Remove tar files with binaries"
+  rm ${1}/${MYSQL_VERSION}_binary.tar.gz
+  rm ${1}/${ICLAUSTRON_VERSION}_binary.tar.gz
+  return 0
 }
 
 install_local()
@@ -324,6 +347,9 @@ do
     ;;
   --install )
     SOURCE_BUILD="n"
+    ;;
+  --create-tar-bins )
+    BIN_TAR_FILES="y"
     ;;
   --with-debug )
     WITH_DEBUG="--with-debug"
@@ -381,11 +407,15 @@ output_msg "REMOTE_INSTALL = " $REMOTE_INSTALL
 
 if test "x$LOCAL_INSTALL" = "xy" ; then
   if test "x$SOURCE_BUILD" = "xy" ; then
+    if test "x$LOCAL_DEP_NODE_LIST" != "x" ; then
+      BIN_TAR_FILES="y"
+    fi
     build_local
     for NODE in $LOCAL_DEP_NODE_LIST
     do
-      remote_install_binary $NODE
+      remote_install_binary $NODE $BIN_INSTALL_DIR
     done
+    remove_tar_files $BIN_INSTALL_DIR
   else
     install_local
   fi

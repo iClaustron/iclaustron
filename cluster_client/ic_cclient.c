@@ -34,19 +34,29 @@ static GOptionEntry entries[] =
 };
 
 static int
-send_parse_string(IC_STRING *parse_string)
+execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
 {
-  return 0;
-}
+  guint32 i, read_size;
+  guint32 size_curr_buf= 0;
+  int ret_code;
+  gchar rec_buf[2048];
 
-
-static int
-execute_command(IC_STRING **str_array, guint32 num_lines)
-{
-  guint32 i;
   for (i= 0; i < num_lines; i++)
-    printf("%s\n", str_array[i]->str);
+  {
+    if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
+      goto error;
+  }
+  while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
+                                    &size_curr_buf, sizeof(rec_buf))))
+  {
+    if (read_size == 0)
+      break;
+    printf("%s\n", rec_buf);
+  }
   return 0;
+
+error:
+  return ret_code;
 }
 
 static int
@@ -102,8 +112,21 @@ check_last_line(IC_STRING *ic_str)
   return FALSE;
 }
 
+static gchar *help_str[] =
+{
+  "help",
+  NULL,
+};
+
+static void
+output_help(void)
+{
+  gchar **loc_help_str= help_str;
+  for ( ; *loc_help_str ; loc_help_str++)
+    printf("%s", *loc_help_str);
+}
 static int
-command_interpreter()
+command_interpreter(IC_CONNECTION *conn)
 {
   guint32 lines, i;
   int error;
@@ -147,10 +170,12 @@ command_interpreter()
       ic_free(line_ptrs[0]->str);
       break;
     }
-    if ((error= execute_command(&line_ptrs[0], lines)))
+    if (lines == 1 && (ic_cmp_null_term_str("help;", line_ptrs[0])))
+      output_help();
+    else if ((error= execute_command(conn, &line_ptrs[0], lines)))
     {
       printf("error = %u\n", error);
-      return error;
+      goto error;
     }
     for (i= 0; i < lines; i++)
       ic_free(line_ptrs[i]->str);
@@ -192,20 +217,11 @@ connect_cluster_mgr(IC_CONNECTION **conn)
 
 int main(int argc, char *argv[])
 {
-  int ret_code;
-  GError *error= NULL;
-  GOptionContext *context;
+  int ret_code= 1;
   IC_CONNECTION *conn;
 
-  context= g_option_context_new("- iClaustron Command Client");
-  if (!context)
-    goto error;
-  g_option_context_add_main_entries(context, entries, NULL);
-  if (!g_option_context_parse(context, &argc, &argv, &error))
-    goto parse_error;
-  g_option_context_free(context);
-
-  if (ic_init())
+  if ((ret_code= ic_start_program(argc, argv, entries,
+           "- iClaustron Command Client")))
     return ret_code;
 #ifdef HAVE_LIBREADLINE
   using_history();
@@ -221,8 +237,6 @@ int main(int argc, char *argv[])
   ic_end();
   return ret_code;
 
-parse_error:
-  printf("No such program option\n");
 error:
   return ret_code;
 }

@@ -504,7 +504,7 @@ int ic_base64_decode(guint8 *dest, guint32 *dest_len,
 /*
   Methods to send and receive buffers with Carriage Return
 */
-int ic_send_with_cr(IC_CONNECTION *conn, const char *buf);
+int ic_send_with_cr(IC_CONNECTION *conn, const gchar *buf);
 int ic_rec_with_cr(IC_CONNECTION *conn,
                    gchar *rec_buf,
                    guint32 *read_size,

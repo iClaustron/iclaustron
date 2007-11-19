@@ -54,24 +54,15 @@ static GOptionEntry entries[] =
 int
 main(int argc, char *argv[])
 {
-  GError *loc_error= NULL;
-  GOptionContext *context;
   int error= 1;
   guint32 cluster_id= 0;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_RUN_CLUSTER_SERVER *run_obj;
 
-  if (ic_init())
-    return 1;
-  /* Read command options */
-  context= g_option_context_new("iClaustron Cluster Server");
-  if (!context)
-    goto mem_error;
-  g_option_context_add_main_entries(context, entries, NULL);
-  if (!g_option_context_parse(context, &argc, &argv, &loc_error))
-    goto parse_error;
-  g_option_context_free(context);
+  if ((error= ic_start_program(argc, argv, entries,
+           "- iClaustron Cluster Server")))
+    return error;
   /*
     Read the configuration from the file provided
   */
@@ -104,10 +95,6 @@ end:
 mem_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
         "Memory allocation error when allocating option context\n");
-  goto end;
-parse_error:
-  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-        "Option processing error\n");
   goto end;
 }
 

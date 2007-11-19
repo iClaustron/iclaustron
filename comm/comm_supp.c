@@ -181,7 +181,7 @@ convert_str_to_int_fixed_size(char *str, guint32 num_chars,
 }
 
 int
-ic_send_with_cr(struct ic_connection *conn, const char *send_buf)
+ic_send_with_cr(struct ic_connection *conn, const gchar *send_buf)
 {
   guint32 inx;
   int res;

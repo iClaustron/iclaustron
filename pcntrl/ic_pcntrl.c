@@ -88,24 +88,18 @@ static int verify_conf_file(__attribute__ ((unused)) GKeyFile *conf_file)
 int main(int argc, char *argv[])
 {
   IC_CONNECTION conn;
-  GError *error= NULL;
   gchar *arg_vector[4];
   gchar read_buf[256];
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
   int state= REC_PROG_NAME;
   GPid barn_pid;
-  GOptionContext *context;
+  GError *error= NULL;
   int i, ret_code;
  
-  /* Read command options */
-  context= g_option_context_new("iClaustron Control Server");
-  if (!context)
-    goto mem_error;
-  g_option_context_add_main_entries(context, entries, NULL);
-  if (!g_option_context_parse(context, &argc, &argv, &error))
-    goto parse_error;
-  g_option_context_free(context);
+  if ((ret_code= ic_start_program(argc, argv, entries,
+           "- iClaustron Control Server")))
+    return ret_code;
 
   while (!(ret_code= ic_rec_with_cr(&conn, read_buf, &read_size,
                                     &size_curr_buf,
@@ -145,7 +139,5 @@ int main(int argc, char *argv[])
   arg_vector[3]=NULL;
   g_spawn_async(NULL,&arg_vector[0], NULL, G_SPAWN_SEARCH_PATH,
   NULL,NULL,&barn_pid,&fel);*/
-mem_error:
-parse_error:
   return 0;
 }

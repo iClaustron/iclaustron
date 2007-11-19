@@ -3742,7 +3742,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
     }
     if ((ret_code= start_handle_config_request(run_obj, fork_conn)))
     {
-      printf("Start new thread to handle configuration request\n");
+      printf("Start new thread to handle configuration request failed\n");
       goto error;
     }
     printf("Ready to accept a new connection\n");

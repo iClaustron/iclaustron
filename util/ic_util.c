@@ -611,3 +611,29 @@ gchar *ic_get_error_message(guint32 error_number)
     return ic_error_str[error_number - IC_FIRST_ERROR];
 }
 
+int
+ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+                 gchar *start_text)
+{
+  int ret_code= 1;
+  GError *error= NULL;
+  GOptionContext *context;
+
+  context= g_option_context_new(start_text);
+  if (!context)
+    goto error;
+  /* Read command options */
+  g_option_context_add_main_entries(context, entries, NULL);
+  if (!g_option_context_parse(context, &argc, &argv, &error))
+    goto parse_error;
+  g_option_context_free(context);
+  if ((ret_code= ic_init()))
+    return ret_code;
+  return 0;
+
+parse_error:
+  printf("No such program option\n");
+error:
+  return ret_code;
+}
+  
