@@ -18,7 +18,7 @@
 #include <readline/readline.h>
 
 static gchar *glob_server_ip= "127.0.0.1";
-static gchar *glob_server_port= "10006";
+static gchar *glob_server_port= "12003";
 static guint32 glob_history_size= 100;
 static gchar *ic_prompt= "iclaustron client> ";
 
@@ -33,6 +33,8 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+static gchar *empty_str= "";
+
 static int
 execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
 {
@@ -45,15 +47,18 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
   {
     if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
       goto error;
+    if ((ret_code= ic_send_with_cr(conn, empty_str)))
+      goto error;
   }
   while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
                                     &size_curr_buf, sizeof(rec_buf))))
   {
     if (read_size == 0)
       break;
-    printf("%s\n", rec_buf);
+    rec_buf[read_size]= 0;
+    printf("%s\n",rec_buf);
   }
-  return 0;
+  return ret_code;
 
 error:
   return ret_code;
@@ -123,7 +128,7 @@ output_help(void)
 {
   gchar **loc_help_str= help_str;
   for ( ; *loc_help_str ; loc_help_str++)
-    printf("%s", *loc_help_str);
+    printf("%s\n", *loc_help_str);
 }
 static int
 command_interpreter(IC_CONNECTION *conn)
@@ -150,7 +155,7 @@ command_interpreter(IC_CONNECTION *conn)
       }
       if ((error= read_one_line(line_ptr)))
       {
-        printf("error = %u\n", error);
+        ic_print_error(error);
         return error;
       }
       if (line_ptr->len == 0)
@@ -174,7 +179,7 @@ command_interpreter(IC_CONNECTION *conn)
       output_help();
     else if ((error= execute_command(conn, &line_ptrs[0], lines)))
     {
-      printf("error = %u\n", error);
+      ic_print_error(error);
       goto error;
     }
     for (i= 0; i < lines; i++)
@@ -208,6 +213,7 @@ connect_cluster_mgr(IC_CONNECTION **conn)
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
     printf("Failed to connect to Cluster Manager\n");
+    ic_print_error(ret_code);
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;
   }

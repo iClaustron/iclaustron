@@ -15,10 +15,11 @@
 
 #include <ic_common.h>
 
+static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
 static gchar *glob_cluster_server_ip= "127.0.0.1";
 static gchar *glob_cluster_server_port= "10006";
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
-static gchar *glob_cluster_mgr_port= "12002";
+static gchar *glob_cluster_mgr_port= "12003";
 
 static GOptionEntry entries[] = 
 {
@@ -56,7 +57,7 @@ set_up_server_connection(IC_CONNECTION **conn)
   loc_conn->is_listen_socket_retained= TRUE;
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
-    printf("Failed to connect to Cluster Manager\n");
+    printf("Failed to set-up connection for Cluster Manager\n");
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;
   }
@@ -71,16 +72,27 @@ run_handle_new_connection(gpointer data)
   guint32 read_size;
   guint32 size_curr_buf= 0;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
+  gchar *parse_buf;
+  guint32 parse_inx= 0;
   gchar rec_buf[256];
 
+  if (!(parse_buf= ic_calloc(PARSE_BUF_SIZE)))
+  {
+    ic_print_error(IC_ERROR_MEM_ALLOC);
+    return NULL;
+  }
   while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
                                     &size_curr_buf, sizeof(rec_buf))))
   {
     if (read_size == 0)
+    {
+      printf("Ready to execute command:\n%s\n", parse_buf);
+      ic_send_with_cr(conn, "Ok");
       ic_send_with_cr(conn, "");
-    else
-      printf("%s\n", rec_buf);
+    }
+    memcpy(parse_buf+parse_inx, rec_buf, read_size);
   }
+  printf("End of client connection\n");
   return NULL;
 }
 
@@ -141,7 +153,6 @@ int main(int argc,
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;
   ret_code= wait_for_connections_and_fork(conn);
-late_error:
   conn->conn_op.ic_free_connection(conn);
 error:
   ic_end();

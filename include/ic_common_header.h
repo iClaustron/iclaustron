@@ -92,16 +92,21 @@ void ic_end();
 #endif
 #endif
 
+void ic_set_debug(gboolean val);
+gboolean ic_get_debug();
+
 #ifdef DEBUG_BUILD
 void ic_debug_entry(const char *entry_point);
 int ic_debug_open();
 void ic_debug_close();
-#define DEBUG(a) a
+#define DEBUG_DECL(a) a
+#define DEBUG(a) if (ic_get_debug()) a
 #define DEBUG_ENTRY(a) ic_debug_entry(a)
 #define DEBUG_OPEN if (ic_debug_open()) return 1
 #define DEBUG_CLOSE ic_debug_close()
-#define DEBUG_IC_STRING(a) ic_print_ic_string(a)
+#define DEBUG_IC_STRING(a) if (ic_get_debug()) ic_print_ic_string(a)
 #else
+#define DEBUG_DECL(a)
 #define DEBUG(a)
 #define DEBUG_ENTRY(a)
 #define DEBUG_OPEN
