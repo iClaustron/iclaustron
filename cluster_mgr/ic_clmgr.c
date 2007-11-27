@@ -63,6 +63,8 @@ set_up_server_connection(IC_CONNECTION **conn)
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;
   }
+  printf("Successfully set-up connection for Cluster Manager at %s:%s\n",
+         glob_cluster_mgr_ip, glob_cluster_mgr_port);
   *conn= loc_conn;
   return 0;
 }
