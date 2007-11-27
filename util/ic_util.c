@@ -109,8 +109,7 @@ ic_debug_entry(const char *entry_point)
 {
   if (glob_debug_screen)
     printf("Entry into: %s\n", entry_point);
-  if (fprintf(ic_fptr, "Entry into: %s\n", entry_point) <= 0)
-    printf("ic_debug_entry: error %d\n", errno);
+  fprintf(ic_fptr, "Entry into: %s\n", entry_point);
 }
 
 int ic_debug_open()
@@ -121,8 +120,7 @@ int ic_debug_open()
     printf("Failed to open %s\n", glob_debug_file);
     return 1;
   }
-  if (fprintf(ic_fptr, "Entry into: \n") <= 0)
-    printf("error %d\n", errno);
+  fprintf(ic_fptr, "Entry into: \n");
   return 0;
 }
 
@@ -142,8 +140,7 @@ ic_debug_printf(const char *format,...)
   va_start(args, format);
   if (glob_debug_screen)
     printf(format, args);
-  if (fprintf(ic_fptr, format, args) <= 0)
-    printf("ic_debug_printf: error %d\n", errno);
+  fprintf(ic_fptr, format, args);
   va_end(args);
 }
 
@@ -347,8 +344,9 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
 
   if (line_len == 1)
   {
-    printf("Line number %d in section %d is an empty line\n", line_number,
-                                                             *section_num);
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Line number %d in section %d is an empty line\n", line_number,
+       *section_num));
     return 0;
   }
   else if (*iter_data == '#')

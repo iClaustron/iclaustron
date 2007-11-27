@@ -78,10 +78,12 @@ main(int argc, char *argv[])
     printf("Failed to initialise run_cluster object\n");
     goto late_end;
   }
-  printf("Starting the iClaustron Cluster Server\n");
+  DEBUG_PRINT(PROGRAM_LEVEL,
+    ("Starting the iClaustron Cluster Server\n"));
   if ((error= run_obj->run_op.ic_run_cluster_server(run_obj)))
   {
-    printf("run_ic_cluster_server returned error code %u\n", error);
+    DEBUG_PRINT(PROGRAM_LEVEL,
+      ("run_ic_cluster_server returned error code %u\n", error));
     ic_print_error(error);
     goto late_end;
   }

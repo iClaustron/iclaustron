@@ -101,14 +101,17 @@ void ic_debug_print_buf(gchar *buf, guint32 read_size);
 #define ENTRY_LEVEL 2
 #define CONFIG_LEVEL 3
 #define PROGRAM_LEVEL 4
+#define THREAD_LEVEL 5
 
 #ifdef DEBUG_BUILD
 void ic_debug_entry(const char *entry_point);
 int ic_debug_open();
 void ic_debug_close();
+#define DEBUG_RETURN_EMPTY return
+#define DEBUG_RETURN(a) return a
 #define DEBUG_DECL(a) a
 #define DEBUG_PRINT(level, printf_args) \
-  if (ic_get_debug() & level) ic_debug_printf printf_args
+  { if (ic_get_debug() & level) { ic_debug_printf printf_args; }}
 #define DEBUG(level, a) if (ic_get_debug() & level) a
 #define DEBUG_ENTRY(a) if (ic_get_debug() & ENTRY_LEVEL) ic_debug_entry(a)
 #define DEBUG_OPEN if (ic_debug_open()) return 1
@@ -116,6 +119,8 @@ void ic_debug_close();
 #define DEBUG_IC_STRING(level, a) \
   if (ic_get_debug() & level) ic_print_ic_string(a)
 #else
+#define DEBUG_RETURNE_EMPTY return
+#define DEBUG_RETURN(a) return a
 #define DEBUG_DECL(a)
 #define DEBUG_PRINT(level, printf_args)
 #define DEBUG(level, a)
