@@ -47,17 +47,19 @@ set_up_server_connection(IC_CONNECTION **conn)
   if (!(loc_conn= ic_create_socket_object(FALSE, TRUE, FALSE, FALSE,
                                           NULL, NULL)))
   {
-    printf("Failed to create Connection object\n");
+    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object\n"));
     return 1;
   }
-  printf("Setting up server connection for Cluster Manager at %s:%s\n",
-         glob_cluster_mgr_ip, glob_cluster_mgr_port);
+  DEBUG_PRINT(COMM_LEVEL,
+    ("Setting up server connection for Cluster Manager at %s:%s\n",
+     glob_cluster_mgr_ip, glob_cluster_mgr_port));
   loc_conn->server_name= glob_cluster_mgr_ip;
   loc_conn->server_port= glob_cluster_mgr_port;
   loc_conn->is_listen_socket_retained= TRUE;
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
-    printf("Failed to set-up connection for Cluster Manager\n");
+    DEBUG_PRINT(COMM_LEVEL,
+      ("Failed to set-up connection for Cluster Manager\n"));
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;
   }
@@ -86,13 +88,14 @@ run_handle_new_connection(gpointer data)
   {
     if (read_size == 0)
     {
-      printf("Ready to execute command:\n%s\n", parse_buf);
+      DEBUG_PRINT(PROGRAM_LEVEL,
+        ("Ready to execute command:\n%s\n", parse_buf));
       ic_send_with_cr(conn, "Ok");
       ic_send_with_cr(conn, "");
     }
     memcpy(parse_buf+parse_inx, rec_buf, read_size);
   }
-  printf("End of client connection\n");
+  DEBUG_PRINT(PROGRAM_LEVEL, ("End of client connection\n"));
   return NULL;
 }
 
@@ -122,17 +125,20 @@ wait_for_connections_and_fork(IC_CONNECTION *conn)
   {
     if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       goto error;
-    printf("Cluster Manager has accepted a new connection\n");
+    DEBUG_PRINT(PROGRAM_LEVEL,
+      ("Cluster Manager has accepted a new connection\n"));
     if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
                                               FALSE,   /* No mutex */
                                               FALSE))) /* No front buffer */
     {
-      printf("Failed to fork a new connection from an accepted connection\n");
+      DEBUG_PRINT(PROGRAM_LEVEL,
+        ("Failed to fork a new connection from an accepted connection\n"));
       goto error;
     }
     if ((ret_code= handle_new_connection(fork_conn)))
     {
-      printf("Failed to start new Cluster Manager thread\n");
+      DEBUG_PRINT(PROGRAM_LEVEL,
+        ("Failed to start new Cluster Manager thread\n"));
       goto error;
     }
   } while (1);

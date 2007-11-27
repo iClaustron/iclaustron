@@ -286,9 +286,5 @@ int main(int argc, char *argv[])
    }
    ic_end();
    return ret_code;
-parse_error:
-  printf("No such program option\n");
-error:
-  return ret_code;
 }
 

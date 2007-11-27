@@ -92,13 +92,13 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
 }
 
 #ifdef DEBUG_BUILD
-gboolean
+guint32
 ic_get_debug()
 {
   return glob_debug;
 }
 
-void ic_set_debug(gboolean val)
+void ic_set_debug(guint32 val)
 {
   glob_debug= val;
 }
@@ -107,25 +107,44 @@ static FILE *ic_fptr;
 void
 ic_debug_entry(const char *entry_point)
 {
-  if (glob_debug)
-  {
+  if (glob_debug_screen)
     printf("Entry into: %s\n", entry_point);
-    if (fprintf(ic_fptr, "Entry into: %s\n", entry_point) <= 0)
-      printf("error %d\n", errno);
-  }
+  if (fprintf(ic_fptr, "Entry into: %s\n", entry_point) <= 0)
+    printf("ic_debug_entry: error %d\n", errno);
 }
 
 int ic_debug_open()
 {
-  ic_fptr= fopen("debug.log", "w");
+  ic_fptr= fopen(glob_debug_file, "w");
   if (ic_fptr == NULL)
   {
-    printf("Failed to open debug.log");
+    printf("Failed to open %s\n", glob_debug_file);
     return 1;
   }
   if (fprintf(ic_fptr, "Entry into: \n") <= 0)
     printf("error %d\n", errno);
   return 0;
+}
+
+void
+ic_debug_print_buf(char *buf, guint32 size)
+{
+  char p_buf[2049];
+  memcpy(p_buf, buf, size);
+  p_buf[size]= NULL_BYTE;
+  ic_debug_printf("Receive buffer, size %u:\n%s\n", size, p_buf);
+}
+
+void
+ic_debug_printf(const char *format,...)
+{
+  va_list args;
+  va_start(args, format);
+  if (glob_debug_screen)
+    printf(format, args);
+  if (fprintf(ic_fptr, format, args) <= 0)
+    printf("ic_debug_printf: error %d\n", errno);
+  va_end(args);
 }
 
 void
@@ -418,7 +437,7 @@ int ic_build_config_data(IC_STRING *conf_data,
       if (*iter_data == LINE_FEED)
       {
         /* Special handling of Windows Line Feeds after Carriage Return */
-        DEBUG(printf("Special case\n"));
+        DEBUG_PRINT(CONFIG_LEVEL, ("Special case\n"));
         iter_data_len++;
         iter_data++;
         continue;
@@ -643,7 +662,16 @@ static GOptionEntry debug_entries[] =
 static gchar *help_debug= "Group of flags to set-up debugging";
 static gchar *debug_description= "\
 Group of flags to set-up debugging level and where to pipe debug output \n\
-more to come\n\
+Debug level is actually several levels, one can decide to debug a certain\n\
+area at a time. Each area has a bit in debug level. So if one wants to\n\
+debug the communication area one sets debug_level to 1 (set bit 0). By\n\
+setting several bits it is possible to debug several areas at once.\n\
+\n\
+Current levels defined: \n\
+  Level 0 (= 1): Communication debugging\n\
+  Level 1 (= 2): Entry into functions debugging\n\
+  Level 2 (= 4): Configuration debugging\n\
+  Level 3 (= 8): Debugging specific to the currently executing program\n\
 ";
 
 int

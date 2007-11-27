@@ -91,10 +91,5 @@ late_end:
 end:
   ic_end();
   return error;
-
-mem_error:
-  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-        "Memory allocation error when allocating option context\n");
-  goto end;
 }
 

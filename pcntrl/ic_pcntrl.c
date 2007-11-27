@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
                                     &size_curr_buf,
                                     sizeof(read_buf))))
   {
-    DEBUG(ic_print_buf(read_buf, read_size));
+    DEBUG(COMM_LEVEL, ic_debug_print_buf(read_buf, read_size));
     switch (state)
     {
       case REC_PROG_NAME: /* Receive program name */

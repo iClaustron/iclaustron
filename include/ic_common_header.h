@@ -92,24 +92,35 @@ void ic_end();
 #endif
 #endif
 
-void ic_set_debug(gboolean val);
-gboolean ic_get_debug();
+void ic_set_debug(guint32 val);
+guint32 ic_get_debug();
+void ic_debug_printf(const char *format,...);
+void ic_debug_print_buf(gchar *buf, guint32 read_size);
+
+#define COMM_LEVEL 1
+#define ENTRY_LEVEL 2
+#define CONFIG_LEVEL 3
+#define PROGRAM_LEVEL 4
 
 #ifdef DEBUG_BUILD
 void ic_debug_entry(const char *entry_point);
 int ic_debug_open();
 void ic_debug_close();
 #define DEBUG_DECL(a) a
-#define DEBUG(a) if (ic_get_debug()) a
-#define DEBUG_ENTRY(a) ic_debug_entry(a)
+#define DEBUG_PRINT(level, printf_args) \
+  if (ic_get_debug() & level) ic_debug_printf printf_args
+#define DEBUG(level, a) if (ic_get_debug() & level) a
+#define DEBUG_ENTRY(a) if (ic_get_debug() & ENTRY_LEVEL) ic_debug_entry(a)
 #define DEBUG_OPEN if (ic_debug_open()) return 1
 #define DEBUG_CLOSE ic_debug_close()
-#define DEBUG_IC_STRING(a) if (ic_get_debug()) ic_print_ic_string(a)
+#define DEBUG_IC_STRING(level, a) \
+  if (ic_get_debug() & level) ic_print_ic_string(a)
 #else
 #define DEBUG_DECL(a)
-#define DEBUG(a)
+#define DEBUG_PRINT(level, printf_args)
+#define DEBUG(level, a)
 #define DEBUG_ENTRY(a)
 #define DEBUG_OPEN
 #define DEBUG_CLOSE
-#define DEBUG_IC_STRING(a)
+#define DEBUG_IC_STRING(level, a)
 #endif

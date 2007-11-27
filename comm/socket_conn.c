@@ -127,7 +127,7 @@ ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
       We will continue even with this error.
     */
     no_delay= 0;
-    DEBUG(printf("Set TCP_NODELAY error: %d\n", error));
+    DEBUG_PRINT(COMM_LEVEL, ("Set TCP_NODELAY error: %d\n", error));
   }
   getsockopt(sockfd, IPPROTO_TCP, TCP_MAXSEG,
              (void*)&maxseg_size, &sock_len);
@@ -135,9 +135,9 @@ ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
              (void*)&rec_size, &sock_len);
   getsockopt(sockfd, SOL_SOCKET, SO_SNDBUF,
              (void*)&snd_size, &sock_len);
-  DEBUG(printf("Default TCP_MAXSEG = %d\n", maxseg_size));
-  DEBUG(printf("Default SO_RCVBUF = %d\n", rec_size));
-  DEBUG(printf("Default SO_SNDBUF = %d\n", snd_size));
+  DEBUG_PRINT(COMM_LEVEL, ("Default TCP_MAXSEG = %d\n", maxseg_size));
+  DEBUG_PRINT(COMM_LEVEL, ("Default SO_RCVBUF = %d\n", rec_size));
+  DEBUG_PRINT(COMM_LEVEL, ("Default SO_SNDBUF = %d\n", snd_size));
 
   if (conn->is_wan_connection)
   {
@@ -154,10 +154,10 @@ ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
                             rec_size, SOL_SOCKET, SO_RCVBUF);
   snd_size= set_option_size(sockfd, conn->tcp_send_buffer_size,
                             snd_size, SOL_SOCKET, SO_SNDBUF);
-  DEBUG(printf("Used TCP_MAXSEG = %d\n", maxseg_size));
-  DEBUG(printf("Used SO_RCVBUF = %d\n", rec_size));
-  DEBUG(printf("Used SO_SNDBUF = %d\n", snd_size));
-  DEBUG(printf("Used TCP_NODELAY = %d\n", no_delay));
+  DEBUG_PRINT(COMM_LEVEL, ("Used TCP_MAXSEG = %d\n", maxseg_size));
+  DEBUG_PRINT(COMM_LEVEL, ("Used SO_RCVBUF = %d\n", rec_size));
+  DEBUG_PRINT(COMM_LEVEL, ("Used SO_SNDBUF = %d\n", snd_size));
+  DEBUG_PRINT(COMM_LEVEL, ("Used TCP_NODELAY = %d\n", no_delay));
   conn->conn_stat.used_tcp_maxseg_size= maxseg_size;
   conn->conn_stat.used_tcp_receive_buffer_size= rec_size;
   conn->conn_stat.used_tcp_send_buffer_size= snd_size;
@@ -214,8 +214,8 @@ accept_socket_connection(IC_CONNECTION *conn)
     always close it immediately and only use the returned socket.
   */
   addr_len= sizeof(client_address);
-  DEBUG(printf("Accepting connections on server %s\n",
-               conn->conn_stat.server_ip_addr));
+  DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s\n",
+                           conn->conn_stat.server_ip_addr));
   ret_sockfd= accept(conn->listen_sockfd,
                      (struct sockaddr *)&client_address,
                      &addr_len);
@@ -226,8 +226,8 @@ accept_socket_connection(IC_CONNECTION *conn)
   }
   if (ret_sockfd < 0)
   {
-    DEBUG(printf("accept error: %d %s\n",
-                 errno, sys_errlist[errno]));
+    DEBUG_PRINT(COMM_LEVEL, ("accept error: %d %s\n",
+                             errno, sys_errlist[errno]));
     conn->error_code= errno;
     return errno;
   }
@@ -279,8 +279,9 @@ accept_socket_connection(IC_CONNECTION *conn)
     */
     if (ok)
     {
-      DEBUG(printf("Client connect from a disallowed address, ip=%s\n",
-            conn->conn_stat.client_ip_addr));
+      DEBUG_PRINT(COMM_LEVEL,
+                  ("Client connect from a disallowed address, ip=%s\n",
+                   conn->conn_stat.client_ip_addr));
     }
     conn->error_code= ACCEPT_ERROR;
     close(ret_sockfd);
@@ -304,7 +305,7 @@ translate_hostnames(IC_CONNECTION *conn)
     return IC_ERROR_NO_SERVER_NAME;
   if (!conn->server_port)
     return IC_ERROR_NO_SERVER_PORT;
-  printf("Server port = %s\n", conn->server_port);
+  DEBUG_PRINT(COMM_LEVEL, ("Server port = %s\n", conn->server_port));
   if (ic_conv_str_to_int(conn->server_port, &server_port) ||
       server_port == 0LL || server_port > 65535)
     return IC_ERROR_ILLEGAL_SERVER_PORT;
@@ -314,8 +315,8 @@ translate_hostnames(IC_CONNECTION *conn)
   hints.ai_flags= AI_PASSIVE;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
-  printf("Server name = %s, service = %s\n",
-         conn->server_name, conn->server_port);
+  DEBUG_PRINT(COMM_LEVEL, ("Server name = %s, service = %s\n",
+              conn->server_name, conn->server_port));
   if ((n= getaddrinfo(conn->server_name, conn->server_port,
        &hints, &conn->server_addrinfo)) != 0)
     return IC_ERROR_GETADDRINFO;
@@ -344,8 +345,8 @@ translate_hostnames(IC_CONNECTION *conn)
   hints.ai_flags= AI_CANONNAME;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
-  printf("Client name = %s, service = %s\n",
-         conn->client_name, conn->client_port);
+  DEBUG_PRINT(COMM_LEVEL, ("Client name = %s, service = %s\n",
+              conn->client_name, conn->client_port));
   if ((n= getaddrinfo(conn->client_name, conn->client_port,
        &hints, &conn->client_addrinfo)) != 0)
     return IC_ERROR_GETADDRINFO;
@@ -378,14 +379,15 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
   int error, sockfd;
   struct addrinfo *loc_addrinfo;
 
-  DEBUG(printf("Translating hostnames\n"));
+  DEBUG_PRINT(COMM_LEVEL, ("Translating hostnames\n"));
   if ((error= translate_hostnames(conn)))
   {
-    printf("Translating hostnames failed error = %d\n", error);
+    DEBUG_PRINT(COMM_LEVEL,
+      ("Translating hostnames failed error = %d\n", error));
     conn->error_code= error;
     return conn->error_code;
   }
-  DEBUG(printf("Translating hostnames done\n"));
+  DEBUG_PRINT(COMM_LEVEL, ("Translating hostnames done\n"));
 
   loc_addrinfo= conn->is_client ?
       conn->client_addrinfo : conn->server_addrinfo;
@@ -409,7 +411,7 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
       Bind the socket to an IP address and port on this box.  If the caller
       set port to "0" for a client connection an ephemeral port will be used.
     */
-    DEBUG(printf("bind error: %d %s\n",
+    DEBUG_PRINT(COMM_LEVEL, ("bind error: %d %s\n",
                  errno, sys_errlist[errno]));
     goto error;
   }
@@ -426,7 +428,7 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
       {
         if (errno == EINTR || errno == ECONNREFUSED)
           continue;
-        DEBUG(printf("connect error: %d %s\n",
+        DEBUG_PRINT(COMM_LEVEL, ("connect error: %d %s\n",
                      errno, sys_errlist[errno]));
         goto error;
       }
@@ -442,8 +444,8 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
     */
     if ((listen(sockfd, conn->backlog) < 0))
     {
-      DEBUG(printf("listen error: %d %s\n",
-                   errno, sys_errlist[errno]));
+      DEBUG_PRINT(COMM_LEVEL, ("listen error: %d %s\n",
+                  errno, sys_errlist[errno]));
       goto error;
     }
     conn->listen_sockfd= sockfd;
@@ -570,8 +572,8 @@ write_socket_connection(IC_CONNECTION *conn,
         continue;
       conn->conn_stat.num_send_errors++;
       conn->bytes_written_before_interrupt= write_size;
-      DEBUG(printf("write error: %d %s\n",
-                   errno, sys_errlist[errno]));
+      DEBUG_PRINT(COMM_LEVEL, ("write error: %d %s\n",
+                               errno, sys_errlist[errno]));
       conn->error_code= errno;
       return errno;
     }
@@ -590,7 +592,7 @@ write_socket_connection(IC_CONNECTION *conn,
           conn->conn_stat.num_send_timeouts++;
           conn->bytes_written_before_interrupt= write_size;
           conn->error_code= EINTR;
-          DEBUG(printf("timeout error on write\n"));
+          DEBUG_PRINT(COMM_LEVEL, ("timeout error on write\n"));
           return EINTR;
         }
         loop_count= 1;
@@ -683,15 +685,15 @@ read_socket_connection(IC_CONNECTION *conn,
     }
     if (ret_code == 0)
     {
-      DEBUG(printf("End of file received\n"));
+      DEBUG_PRINT(COMM_LEVEL, ("End of file received\n"));
       conn->error_code= END_OF_FILE;
       return END_OF_FILE;
     }
     error= errno;
   } while (error == EINTR);
   conn->conn_stat.num_rec_errors++;
-  DEBUG(printf("read error: %d %s\n",
-               errno, sys_errlist[errno]));
+  DEBUG_PRINT(COMM_LEVEL, ("read error: %d %s\n",
+                            errno, sys_errlist[errno]));
   conn->error_code= error;
   return error;
 }

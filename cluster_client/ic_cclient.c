@@ -56,7 +56,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
     if (read_size == 0)
       break;
     rec_buf[read_size]= 0;
-    printf("%s\n",rec_buf);
+    DEBUG_PRINT(PROGRAM_LEVEL, ("%s\n",rec_buf));
   }
   return ret_code;
 
@@ -203,16 +203,18 @@ connect_cluster_mgr(IC_CONNECTION **conn)
                                           FALSE, FALSE,
                                           NULL, NULL)))
   {
-    printf("Failed to create Connection object\n");
+    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object\n"));
     return 1;
   }
-  printf("Connecting to Cluster Manager at %s:%s\n",
-         glob_server_ip, glob_server_port);
+  DEBUG_PRINT(PROGRAM_LEVEL,
+    ("Connecting to Cluster Manager at %s:%s\n",
+     glob_server_ip, glob_server_port));
   loc_conn->server_name= glob_server_ip;
   loc_conn->server_port= glob_server_port;
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
-    printf("Failed to connect to Cluster Manager\n");
+    DEBUG_PRINT(PROGRAM_LEVEL,
+     ("Failed to connect to Cluster Manager\n"));
     ic_print_error(ret_code);
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;
