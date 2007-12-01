@@ -413,7 +413,7 @@ static guint64 rep_server_mandatory_bits;
 static guint64 sql_server_mandatory_bits;
 static guint64 comm_mandatory_bits;
 
-static const gchar *empty_string= "";
+gchar *ic_empty_string= "";
 static const gchar *get_nodeid_str= "get nodeid";
 static const gchar *get_nodeid_reply_str= "get nodeid reply";
 static const gchar *get_config_str= "get config";
@@ -801,7 +801,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(IC_NODE_HOST, 5);
   IC_SET_KERNEL_STRING(conf_entry, hostname, IC_CLUSTER_RESTART_CHANGE);
-  conf_entry->default_string= (gchar*)empty_string;
+  conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
@@ -812,7 +812,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(IC_NODE_DATA_PATH, 7);
   IC_SET_KERNEL_STRING(conf_entry, node_data_path, IC_INITIAL_NODE_RESTART);
-  conf_entry->default_string= (gchar*)empty_string;
+  conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
@@ -1156,7 +1156,7 @@ init_config_parameters()
   /* This is a cluster server parameter */
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_EVENT_LOG, 67);
   IC_SET_CLUSTER_SERVER_STRING(conf_entry, cluster_server_event_log,
-                               empty_string, IC_INITIAL_NODE_RESTART);
+                               ic_empty_string, IC_INITIAL_NODE_RESTART);
   conf_entry->is_not_sent= TRUE;
   conf_entry->config_entry_description=
   "Type of cluster event log";
@@ -2521,7 +2521,7 @@ send_get_nodeid(IC_CONNECTION *conn,
       ic_send_with_cr(conn, public_key_str) ||
       ic_send_with_cr(conn, endian_buf) ||
       ic_send_with_cr(conn, log_event_str) ||
-      ic_send_with_cr(conn, empty_string))
+      ic_send_with_cr(conn, ic_empty_string))
     return conn->error_code;
   return 0;
 }
@@ -2536,7 +2536,7 @@ send_get_config(IC_CONNECTION *conn, guint64 the_version_num)
              ic_guint64_str(the_version_num, buf));
   if (ic_send_with_cr(conn, get_config_str) ||
       ic_send_with_cr(conn, version_buf) ||
-      ic_send_with_cr(conn, empty_string))
+      ic_send_with_cr(conn, ic_empty_string))
     return conn->error_code;
   return 0;
 }
@@ -3606,7 +3606,7 @@ send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
   if (ic_send_with_cr(conn, get_nodeid_reply_str) ||
       ic_send_with_cr(conn, nodeid_buf) ||
       ic_send_with_cr(conn, result_ok_str) ||
-      ic_send_with_cr(conn, empty_string))
+      ic_send_with_cr(conn, ic_empty_string))
     error= conn->error_code;
   DEBUG_RETURN(error);
 }
@@ -3680,7 +3680,7 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
       ic_send_with_cr(conn, content_buf) ||
       ic_send_with_cr(conn, octet_stream_str) ||
       ic_send_with_cr(conn, content_encoding_str) ||
-      ic_send_with_cr(conn, empty_string) ||
+      ic_send_with_cr(conn, ic_empty_string) ||
       conn->conn_op.ic_write_connection(conn, (const void*)config_base64_str,
                                         config_len, 0,1))
     error= conn->error_code;
@@ -3725,7 +3725,7 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Converted configuration to a base64 representation\n"));
   if ((ret_code= send_config_reply(conn, config_base64_str, config_len)) ||
-      (ret_code= ic_send_with_cr(conn, empty_string)))
+      (ret_code= ic_send_with_cr(conn, ic_empty_string)))
   {
     ic_free(config_base64_str);
     DEBUG_RETURN(ret_code);

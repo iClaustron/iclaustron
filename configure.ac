@@ -39,7 +39,6 @@ AC_ARG_WITH(readline,
 # Next step is to check for all the programs needed by the configure process.
 # These include usage of macros such as AC_CHECK_PROG and AC_PATH_TOOL.
 #
-
 AC_PROG_CC
 AC_PROG_YACC
 AM_PROG_LEX

@@ -1,0 +1,147 @@
+/* Copyright (C) 2007 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+%{
+#include <ic_common.h>
+#include <ic_clmgr.h>
+#include "ic_parser.h"
+#include <string.h>
+int line_no= 1;
+#define LEX_DATA ((IC_PARSE_DATA*)yyget_extra(yyscanner))
+
+#define YY_INPUT(buffer, res, max_size) \
+{ \
+  if (LEX_DATA->parse_inx >= LEX_DATA->parse_str_len) \
+    res= YY_NULL; \
+  else \
+  { \
+    res= LEX_DATA->parse_str_len - LEX_DATA->parse_inx; \
+    if (res > max_size) res= max_size; \
+    memcpy(buffer, LEX_DATA->parse_buf+LEX_DATA->parse_inx, res); \
+    LEX_DATA->parse_inx= res; \
+  } \
+}
+
+%}
+
+%e 1200
+%option reentrant noyywrap bison-bridge nounput
+
+%%
+
+AS                      { return AS_SYM;           }
+ALL                     { return ALL_SYM;          }
+BACKUP                  { return BACKUP_SYM;       }
+CLUSTER                 { return CLUSTER_SYM;      }
+CLUSTERS                { return CLUSTERS_SYM;     }
+CLUSTER_LOG             { return CLUSTER_LOG_SYM;  }
+CONFIG                  { return CONFIG_SYM;       }
+CONNECTIONS             { return CONNECTIONS_SYM;  }
+DIE                     { return DIE_SYM;          }
+DISPLAY                 { return DISPLAY_SYM;      }
+FROM                    { return FROM_SYM;         }
+GROUP                   { return GROUP_SYM;        }
+IC_CLMGR                { return IC_CLMGR_SYM;     }
+IC_CS                   { return IC_CS_SYM;        }
+IC_FSD                  { return IC_FSD_SYM;       }
+IC_REPD                 { return IC_REPD_SYM;      }
+KILL                    { return KILL_SYM;         }
+LIST                    { return LIST_SYM;         }
+LISTEN                  { return LISTEN_SYM;       }
+MEMORY                  { return MEMORY_SYM;       }
+MOVE                    { return MOVE_SYM;         }
+MYSQLD                  { return MYSQLD_SYM;       }
+MYSQDL_SAFE             { return MYSQLD_SAFE_SYM;  }
+NODE                    { return NODE_SYM;         }
+NODEGROUP               { return NODEGROUP_SYM;    }
+NODEGROUPS              { return NODEGROUPS_SYM;   }
+NDBD                    { return NDBD_SYM;         }
+NDBMTD                  { return NDBMTD_SYM;       }
+NDB_RESTORE             { return NDB_RESTORE_SYM;  }
+PERFORM                 { return PERFORM_SYM;      }
+RESTART                 { return RESTART_SYM;      }
+ROLLING                 { return ROLLING_SYM;      }
+SEEN                    { return SEEN_SYM;         }
+SET                     { return SET_SYM;          }
+SHOW                    { return SHOW_SYM;         }
+START                   { return START_SYM;        }
+STATUS                  { return STATUS_SYM;       }
+STATS                   { return STATS_SYM;        }
+STATVARS                { return STATVARS_SYM;     }
+STAT_LEVEL              { return STAT_LEVEL_SYM;   }
+STOP                    { return STOP_SYM;         }
+TO                      { return TO_SYM;           }
+TOP                     { return TOP_SYM;          }
+UPGRADE                 { return UPGRADE_SYM;      }
+USE                     { return USE_SYM;          }
+VARIABLE                { return VARIABLE_SYM;     }
+VERSION                 { return VERSION_SYM;      }
+
+
+";" {
+  return END;
+}
+
+[A-Za-z][A-Za-z0-9_]* {
+  IC_INIT_STRING(&yylval->ic_str, yytext, yyleng, FALSE);
+  return IDENTIFIER;
+}
+
+[0-9]+  {
+  IC_STRING int_str;
+  guint64 int_val;
+  int error;
+
+  IC_INIT_STRING(&int_str, yytext, yyleng, FALSE);
+  if ((error= ic_conv_config_str_to_int(&int_val, &int_str)))
+  {
+    yyerror((void*)LEX_DATA, yyscanner, "Integer Overflow");
+    return error;
+  }
+  yylval->int_val= int_val;
+  return INTEGER;
+}
+
+%%
+
+void
+yyerror(void *parse_data,
+        __attribute__ ((unused)) void *scanner,
+        char *s)
+{
+  IC_CONNECTION *conn= PARSE_DATA->conn;
+  gchar buf[1024];
+
+  g_snprintf(buf, 1024, "Error: %s", s);
+  if (ic_send_with_cr(conn, buf) ||
+      ic_send_with_cr(conn, ic_empty_string))
+    PARSE_DATA->exit_flag= TRUE;
+}
+
+
+void
+ic_call_parser(gchar *parse_string, int str_len, void *parse_data)
+{
+  IC_PARSE_DATA *loc_parse_data= (IC_PARSE_DATA*)parse_data;
+  yylex_init(&loc_parse_data->yyscanner);
+  yyset_extra(parse_data, loc_parse_data->yyscanner);
+
+  PARSE_DATA->parse_buf= parse_string;
+  PARSE_DATA->parse_inx= 0;
+  PARSE_DATA->parse_str_len= str_len;
+
+  yyparse(loc_parse_data, loc_parse_data->yyscanner);
+  yylex_destroy(loc_parse_data->yyscanner);
+}

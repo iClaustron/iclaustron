@@ -27,6 +27,8 @@
 
 #define MAX_NODE_ID 255
 
+extern gchar *ic_empty_string;
+
 typedef unsigned char ic_bool;
 
 gchar *ic_calloc(size_t size);
@@ -119,7 +121,7 @@ void ic_debug_close();
 #define DEBUG_IC_STRING(level, a) \
   if (ic_get_debug() & level) ic_print_ic_string(a)
 #else
-#define DEBUG_RETURNE_EMPTY return
+#define DEBUG_RETURN_EMPTY return
 #define DEBUG_RETURN(a) return a
 #define DEBUG_DECL(a)
 #define DEBUG_PRINT(level, printf_args)

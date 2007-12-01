@@ -33,8 +33,6 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-static gchar *empty_str= "";
-
 static int
 execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
 {
@@ -47,7 +45,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
   {
     if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
       goto error;
-    if ((ret_code= ic_send_with_cr(conn, empty_str)))
+    if ((ret_code= ic_send_with_cr(conn, ic_empty_string)))
       goto error;
   }
   while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
@@ -56,7 +54,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
     if (read_size == 0)
       break;
     rec_buf[read_size]= 0;
-    DEBUG_PRINT(PROGRAM_LEVEL, ("%s\n",rec_buf));
+    printf("%s\n", rec_buf);
   }
   return ret_code;
 
