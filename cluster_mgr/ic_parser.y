@@ -16,11 +16,11 @@
 %{
 #include <ic_common.h>
 #include <ic_clmgr.h>
-
+int yylex(void *parse_data, void *scanner);
 %}
 %union{
   guint64 int_val;
-  IC_STRING ic_str;
+  IC_STRING *ic_str;
 }
 
 %token AS_SYM
@@ -124,39 +124,49 @@ statistics_command:
 
 die_command:
     DIE_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_DIE_CMD; }
     ;
 
 kill_command:
     KILL_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_DIE_CMD; }
     ;
 
 move_command:
     MOVE_SYM opt_cluster
+    { PARSE_DATA->command= IC_MOVE_CMD; }
     ;
 
 perform_command:
     PERFORM_SYM BACKUP_SYM
+    { PARSE_DATA->command= IC_PERFORM_BACKUP_CMD; }
     | PERFORM_SYM opt_cluster ROLLING_SYM UPGRADE_SYM
+    { PARSE_DATA->command= IC_PERFORM_ROLLING_UPGRADE_CMD; }
     ;
 
 restart_command:
     RESTART_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_RESTART_CMD; }
     ;
 
 start_command:
     START_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_START_CMD; }
     ;
 
 stop_command:
     STOP_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_STOP_CMD; }
     ;
 
 list_command:
     LIST_SYM CLUSTERS_SYM
+    { PARSE_DATA->command= IC_LIST_CMD; }
     ;
 
 listen_command:
     LISTEN_SYM CLUSTER_LOG_SYM
+    { PARSE_DATA->command= IC_LISTEN_CMD; }
     ;
 
 show_command:
@@ -171,42 +181,52 @@ show_command:
 
 show_cluster_command:
     SHOW_SYM CLUSTER_SYM opt_cluster
+    { PARSE_DATA->command= IC_SHOW_CLUSTER_CMD; }
     ;
 
 show_cluster_status_command:
     SHOW_SYM CLUSTER_SYM STATUS_SYM opt_cluster opt_seen_from
+    { PARSE_DATA->command= IC_SHOW_CLUSTER_STATUS_CMD; }
     ;
 
 show_connections_command:
     SHOW_SYM CONNECTIONS_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_SHOW_CONNECTIONS_CMD; }
     ;
 
 show_config_command:
     SHOW_SYM CONFIG_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_SHOW_CONFIG_CMD; }
     ;
 
 show_memory_command:
     SHOW_SYM MEMORY_SYM opt_cluster opt_node opt_all
+    { PARSE_DATA->command= IC_SHOW_MEMORY_CMD; }
     ;
 
 show_statvars_command:
     SHOW_SYM STATVARS_SYM opt_cluster opt_node opt_group
+    { PARSE_DATA->command= IC_SHOW_STATVARS_CMD; }
     ;
 
 show_stat_command:
     SHOW_SYM STATS_SYM opt_group
+    { PARSE_DATA->command= IC_SHOW_STATS_CMD; }
     ;
 
 set_command:
     SET_SYM STAT_LEVEL_SYM opt_cluster opt_node opt_group opt_variable
+    { PARSE_DATA->command= IC_SET_STAT_LEVEL_CMD; }
     ;
 
 use_command:
-    USE_SYM CLUSTER_SYM cluster_reference
+    USE_SYM CLUSTER_SYM one_cluster_reference
+    { PARSE_DATA->command= IC_USE_CLUSTER_CMD; }
     ;
 
 display_command:
     DISPLAY_SYM STATS_SYM opt_cluster opt_node opt_group opt_variable
+    { PARSE_DATA->command= IC_DISPLAY_STATS_CMD; }
     ;
 
 top_command:
@@ -239,9 +259,16 @@ opt_cluster:
     | CLUSTER_SYM cluster_reference
     ;
 
+one_cluster_reference:
+    cluster_id { PARSE_DATA->cluster_id= $1; }
+    | cluster_name
+    { memcpy(&PARSE_DATA->cluster_name, $1,sizeof(IC_STRING)); }
+    ;
+
 cluster_reference:
     cluster_id { PARSE_DATA->cluster_id= $1; }
-    | cluster_name {memcpy(&PARSE_DATA->cluster_name,&$1,sizeof(IC_STRING));}
+    | cluster_name
+    { memcpy(&PARSE_DATA->cluster_name, $1,sizeof(IC_STRING)); }
     | ALL_SYM { PARSE_DATA->cluster_all= TRUE; }
     ;
 

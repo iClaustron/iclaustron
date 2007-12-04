@@ -35,6 +35,37 @@ gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
 void ic_free(void *ret_obj);
 
+#define MC_MIN_BASE_SIZE 128
+#define MC_DEFAULT_BASE_SIZE 8180
+#define ic_align(a, b) ((((a)+(b-1))/(b))*(b))
+struct ic_memory_container;
+struct ic_memory_container_ops
+{
+  gchar* (*ic_mc_alloc) (struct ic_memory_container *mc_ptr, guint32 size);
+  gchar* (*ic_mc_calloc) (struct ic_memory_container *mc_ptr, guint32 size);
+  void (*ic_mc_reset) (struct ic_memory_container *mc_ptr);
+  void (*ic_mc_free) (struct ic_memory_container *mc_ptr);
+};
+typedef struct ic_memory_container_ops IC_MEMORY_CONTAINER_OPS;
+
+struct ic_memory_container
+{
+  IC_MEMORY_CONTAINER_OPS mc_ops;
+  gchar *current_buf;
+  gchar **buf_array;
+  guint64 total_size;
+  guint64 max_size;
+  guint32 base_size;
+  guint32 buf_array_size;
+  guint32 current_buf_inx;
+  guint32 current_free_len;
+};
+typedef struct ic_memory_container IC_MEMORY_CONTAINER;
+
+IC_MEMORY_CONTAINER*
+ic_create_memory_container(guint32 base_size, guint32 max_size);
+
+
 int ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
                      gchar *start_text);
 /*

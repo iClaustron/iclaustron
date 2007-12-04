@@ -51,6 +51,8 @@ struct ic_parse_data
   guint32 parse_inx;
   guint32 parse_str_len;
 
+  /* Memory container for parser/lexer */
+  IC_MEMORY_CONTAINER *mc_ptr;
   /* Command sent by user */
   IC_PARSE_COMMANDS command;
   /* Representation of connection to command client */

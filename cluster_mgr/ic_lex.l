@@ -95,7 +95,21 @@ VERSION                 { return VERSION_SYM;      }
 }
 
 [A-Za-z][A-Za-z0-9_]* {
-  IC_INIT_STRING(&yylval->ic_str, yytext, yyleng, FALSE);
+  IC_STRING *ic_str_ptr;
+  IC_PARSE_DATA *ic_parse_data= (void*)LEX_DATA;
+  IC_MEMORY_CONTAINER *mc_ptr= ic_parse_data->mc_ptr;
+  gchar *buf_ptr;
+
+  if (!(ic_str_ptr=
+        (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
+      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, yyleng)))
+  {
+    yyerror((void*)ic_parse_data, yyscanner, "Memory allocation failure");
+    return 0;
+  }
+  memcpy(buf_ptr, yytext, yyleng);
+  IC_INIT_STRING(ic_str_ptr, buf_ptr, yyleng, FALSE);
+  yylval->ic_str= ic_str_ptr;
   return IDENTIFIER;
 }
 

@@ -22,6 +22,10 @@ static gchar *glob_cluster_server_port= "10006";
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
 static gchar *glob_cluster_mgr_port= "12003";
 
+static gchar *not_impl_string= "not implemented yet";
+static gchar *no_such_cluster_string=
+"The specified cluster name doesn't exist in this grid";
+
 static GOptionEntry entries[] = 
 {
   { "cluster_server_hostname", 0, 0, G_OPTION_ARG_STRING,
@@ -39,6 +43,11 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+static int
+translate_cluster_name(IC_STRING *cluster_name, guint64 *cluster_id)
+{
+  return 1;
+}
 
 static int
 set_up_server_connection(IC_CONNECTION **conn)
@@ -80,127 +89,221 @@ not_implemented_yet(IC_PARSE_DATA *parse_data)
 static int
 ic_die_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "DIE") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_kill_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "KILL") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_move_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "MOVE") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_perform_backup_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "PERFORM BACKUP") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_perform_rolling_upgrade_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "PERFORM ROLLING UPGRADE") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_restart_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "RESTART") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_start_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "START") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_stop_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "STOP") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_list_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "LIST") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_listen_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "LISTEN") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_show_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SHOW CLUSTER") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_show_cluster_status_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SHOW CLUSTER STATUS") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_show_connections_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SHOW CONNECTIONS") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_show_config_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SHOW CONFIG") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_show_memory_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SHOW MEMORY") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_show_statvars_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SHOW STATVARS") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_show_stats_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SHOW STATS") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_set_stat_level_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "SET STAT LEVEL") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_use_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  gchar buf[256];
+  printf("len= %u, ptr= %u, str= %s\n", parse_data->cluster_name.len,
+  (guint32)parse_data->cluster_name.str, parse_data->cluster_name.str);
+  if (parse_data->cluster_name.str)
+  {
+    if (translate_cluster_name(&parse_data->cluster_name,
+                               &parse_data->cluster_id))
+    {
+      if (ic_send_with_cr(parse_data->conn, no_such_cluster_string) ||
+          ic_send_with_cr(parse_data->conn, ic_empty_string))
+        parse_data->exit_flag= TRUE;
+    }
+  }
+  g_snprintf(buf, 128, "Cluster id set to %u", (guint32)parse_data->cluster_id);
+  if (ic_send_with_cr(parse_data->conn, buf) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_display_stats_cmd(IC_PARSE_DATA *parse_data)
 {
-  return not_implemented_yet(parse_data);
+  if (ic_send_with_cr(parse_data->conn, "DISPLAY STATS") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return 0;
 }
 
 static int
 ic_top_cmd(IC_PARSE_DATA *parse_data)
 {
   if (ic_send_with_cr(parse_data->conn, "TOP") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_with_cr(parse_data->conn, ic_empty_string))
     parse_data->exit_flag= TRUE;
   return 0;
@@ -273,6 +376,7 @@ run_handle_new_connection(gpointer data)
   guint32 read_size;
   guint32 size_curr_buf= 0;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
   gchar *parse_buf;
   guint32 parse_inx= 0;
   IC_PARSE_DATA parse_data;
@@ -284,6 +388,12 @@ run_handle_new_connection(gpointer data)
     ic_print_error(IC_ERROR_MEM_ALLOC);
     goto error;
   }
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+  {
+    ic_print_error(IC_ERROR_MEM_ALLOC);
+    goto error;
+  }
+  parse_data.mc_ptr= mc_ptr;
   while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
                                     &size_curr_buf, sizeof(rec_buf))))
   {
@@ -313,6 +423,8 @@ exit:
 error:
   ic_free(parse_buf);
   release_parse_data(&parse_data);
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   conn->conn_op.ic_free_connection(conn);
   return NULL;
 }
