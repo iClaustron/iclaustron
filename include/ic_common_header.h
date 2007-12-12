@@ -38,6 +38,9 @@ void ic_free(void *ret_obj);
 #define MC_MIN_BASE_SIZE 128
 #define MC_DEFAULT_BASE_SIZE 8180
 #define ic_align(a, b) ((((a)+(b-1))/(b))*(b))
+#define IC_MIN(a, b) ((a) < (b)) ? (a) : (b)
+#define IC_MAX(a, b) ((a) > (b)) ? (a) : (b)
+
 struct ic_memory_container;
 struct ic_memory_container_ops
 {
@@ -59,6 +62,7 @@ struct ic_memory_container
   guint32 buf_array_size;
   guint32 current_buf_inx;
   guint32 current_free_len;
+  guint32 first_buf_inx;
 };
 typedef struct ic_memory_container IC_MEMORY_CONTAINER;
 

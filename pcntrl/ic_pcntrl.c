@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Control Server")))
     return ret_code;
-
+if (0){
   while (!(ret_code= ic_rec_with_cr(&conn, read_buf, &read_size,
                                     &size_curr_buf,
                                     sizeof(read_buf))))
@@ -121,15 +121,22 @@ int main(int argc, char *argv[])
         abort();
     }
   }
+}
+arg_vector[0]="ls";
+arg_vector[1]="-al";
   /* for (i=0; i<=argc; i++)
      arg_vector[i]=argv[i];*/
 
   /*  arg_vector[0]="vi";*/
   /*arg_vector[1]="ic_pcntrl.c";*/
-  arg_vector[i]=NULL;
+  arg_vector[2]=NULL;
   printf("anrop av g-spawn-async\n");
-  g_spawn_async(NULL,&arg_vector[0], NULL, G_SPAWN_SEARCH_PATH,
-                NULL,NULL,&barn_pid,&error);
+  g_spawn_async_with_pipes(NULL,&arg_vector[0],
+                           NULL,
+                           G_SPAWN_SEARCH_PATH,
+                           NULL,NULL,&barn_pid,
+                           NULL, NULL, NULL,
+                           &error);
   printf("Anrop gjort barn_pid = %d\n", barn_pid);
   ic_guint64_str((guint64)barn_pid, read_buf);
   /* printf("Kill process %s\n", buf);

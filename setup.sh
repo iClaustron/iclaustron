@@ -26,8 +26,8 @@ MYSQL_INSTALL_DIR=""
 ICLAUSTRON_INSTALL_DIR=""
 WITH_DEBUG=""
 LOCAL_ONLY=""
-LOCAL_INSTALL=""
-REMOTE_INSTALL=""
+LOCAL_INSTALL="n"
+REMOTE_INSTALL="n"
 NODE_LIST=""
 BUILD_NODE_LIST=""
 LOCAL_DEP_NODE_LIST=""
@@ -57,6 +57,10 @@ SOURCE_BUILD="y"
 msg_to_log()
 {
   echo "$*" >> $LOG_FILE
+  if test "x$?" != "x0" ; then
+    echo "Failed to write to $LOG_FILE"
+    exit 1
+  fi
 }
 
 output_msg()
@@ -80,7 +84,6 @@ create_dir()
 exec_command()
 {
   output_msg "Executing $*"
-#  eval $* >> $LOG_FILE
   if test "x$?" != "x0" ; then
     output_msg "Failed command $*"
     exit 1
@@ -267,14 +270,13 @@ build_local()
 
   output_msg "Building iClaustron"
   exec_command cd $ICLAUSTRON_VERSION
-  exec_command ./bootstrap.sh
   exec_command ./configure --with-production \
                --with-readline --prefix=$ICLAUSTRON_INSTALL_DIR $WITH_DEBUG
   exec_command make
   exec_command make install
   exec_command cd ..
 
-  output_msg "Building MySQL"
+  output_msg "Building MySQL version: $MYSQL_VERSION"
   exec_command cd $MYSQL_VERSION
   exec_command BUILD/build_mccge.sh --prefix=$MYSQL_INSTALL_DIR $WITH_DEBUG
   exec_command make install
@@ -287,20 +289,22 @@ build_local()
 # to other dependent nodes
 #
   if test "x$BIN_TAR_FILES" = "xy" ; then
+# Verify that pwd works before using it
+    exec_command pwd 
     CURRENT_PWD=`pwd`
-    cd $BIN_INSTALL_DIR
+    exec_command cd $BIN_INSTALL_DIR
     output_msg "Create compressed tar files of the installed binaries"
-    tar cfz ${MYSQL_VERSION}_binary.tar.gz $MYSQL_VERSION
-    tar cfz ${ICLAUSTRON_VERSION}_binary.tar.gz $ICLAUSTRON_VERSION
-    cd ${CURRENT_PWD}
+    exec_command tar cfz ${MYSQL_VERSION}_binary.tar.gz $MYSQL_VERSION
+    exec_command tar cfz ${ICLAUSTRON_VERSION}_binary.tar.gz $ICLAUSTRON_VERSION
+    exec_command cd ${CURRENT_PWD}
   fi
 }
 
 remove_tar_files()
 {
   output_msg "Remove tar files with binaries"
-  rm ${1}/${MYSQL_VERSION}_binary.tar.gz
-  rm ${1}/${ICLAUSTRON_VERSION}_binary.tar.gz
+  exec_command rm ${1}/${MYSQL_VERSION}_binary.tar.gz
+  exec_command rm ${1}/${ICLAUSTRON_VERSION}_binary.tar.gz
   return 0
 }
 
@@ -338,6 +342,10 @@ remote_install_binary()
   output_msg "Install binaries at $1"
   return 0
 }
+
+#
+# Start of shell script
+#
 
 while test $# -gt 0
 do
@@ -388,6 +396,10 @@ else
   fi
 fi
 echo "Message log created for iclaustron installation on $DATE" > $LOG_FILE
+if test "x$?" != "x0" ; then
+  echo "Failed to write to $LOG_FILE"
+  exit 1
+fi
 if test "x$SOURCE_BUILD" = "xy" ; then
   output_msg "Source will be installed at $SRC_INSTALL_DIR"
 fi
@@ -399,7 +411,7 @@ if test "x$LOCAL_ONLY" = "x" ; then
   get_debug_install
 else
   LOCAL_INSTALL="y"
-  REMOTE_INSTALL=""
+  REMOTE_INSTALL="n"
 fi
 
 output_msg "LOCAL_INSTALL = " $LOCAL_INSTALL

@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
+#include <ic_apic.h>
 
 void ic_call_parser(char *parse_string, int str_len, void *some_data);
 
@@ -53,6 +54,8 @@ struct ic_parse_data
 
   /* Memory container for parser/lexer */
   IC_MEMORY_CONTAINER *mc_ptr;
+  /* Configuration of the grid of clusters */
+  IC_API_CONFIG_SERVER *clu_conf;
   /* Command sent by user */
   IC_PARSE_COMMANDS command;
   /* Representation of connection to command client */

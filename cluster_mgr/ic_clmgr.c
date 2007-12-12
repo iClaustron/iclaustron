@@ -377,6 +377,7 @@ run_handle_new_connection(gpointer data)
   guint32 size_curr_buf= 0;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  IC_API_CONFIG_SERVER *clu_conf= conn->param;
   gchar *parse_buf;
   guint32 parse_inx= 0;
   IC_PARSE_DATA parse_data;
@@ -394,13 +395,14 @@ run_handle_new_connection(gpointer data)
     goto error;
   }
   parse_data.mc_ptr= mc_ptr;
+  parse_data.conn= conn;
+  parse_data.clu_conf= clu_conf;
   while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
                                     &size_curr_buf, sizeof(rec_buf))))
   {
     if (read_size == 0)
     {
       memset(&parse_data, sizeof(IC_PARSE_DATA), 0);
-      parse_data.conn= conn;
       parse_buf[parse_inx]= 0;
       parse_buf[parse_inx+1]= 0;
       parse_inx+= 2;
@@ -430,9 +432,11 @@ error:
 }
 
 static int
-handle_new_connection(IC_CONNECTION *conn)
+handle_new_connection(IC_CONNECTION *conn,
+                      IC_API_CONFIG_SERVER *clu_conf)
 {
   GError *error= NULL;
+  conn->param= clu_conf;
   if (!g_thread_create_full(run_handle_new_connection,
                             (gpointer)conn,
                             1024*256, /* 256 kByte stack size */
@@ -447,7 +451,8 @@ handle_new_connection(IC_CONNECTION *conn)
   return 0;
 }
 static int
-wait_for_connections_and_fork(IC_CONNECTION *conn)
+wait_for_connections_and_fork(IC_CONNECTION *conn,
+                              IC_API_CONFIG_SERVER *clu_conf)
 {
   int ret_code;
   IC_CONNECTION *fork_conn;
@@ -465,7 +470,7 @@ wait_for_connections_and_fork(IC_CONNECTION *conn)
         ("Failed to fork a new connection from an accepted connection\n"));
       goto error;
     }
-    if ((ret_code= handle_new_connection(fork_conn)))
+    if ((ret_code= handle_new_connection(fork_conn, clu_conf)))
     {
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Failed to start new Cluster Manager thread\n"));
@@ -477,20 +482,49 @@ error:
   return ret_code;
 }
 
+static IC_API_CONFIG_SERVER*
+get_configuration(IC_API_CLUSTER_CONNECTION *clu_conf)
+{
+  IC_API_CONFIG_SERVER *config_server_obj;
+  guint32 cluster_id= 1;
+  guint32 node_id= 1;
+
+  clu_conf->num_cluster_servers= 1;
+  clu_conf->cluster_server_ips= &glob_cluster_server_ip;
+  clu_conf->cluster_server_ports= &glob_cluster_server_port;
+  if ((config_server_obj= ic_create_api_cluster(clu_conf, &cluster_id,
+                                                &node_id, (guint32)1)))
+  {
+    config_server_obj->num_clusters_to_connect= 1;
+    if (config_server_obj->api_op.ic_get_config(config_server_obj,
+                                                (guint64)0x000001,
+                                                WAIT_LOCK_INFO))
+      return config_server_obj;
+    config_server_obj->api_op.ic_free_config(config_server_obj);
+  }
+  return NULL;
+}
+
 int main(int argc,
          char *argv[])
 {
   int ret_code= 1;
   IC_CONNECTION *conn;
+  IC_API_CLUSTER_CONNECTION clu_conf;
+  IC_API_CONFIG_SERVER *config_server_obj= NULL;
 
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Manager")))
     return ret_code;
+  if ((config_server_obj= get_configuration(&clu_conf)))
+    goto error;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;
-  ret_code= wait_for_connections_and_fork(conn);
+  ret_code= wait_for_connections_and_fork(conn, config_server_obj);
   conn->conn_op.ic_free_connection(conn);
 error:
+  if (config_server_obj)
+    config_server_obj->api_op.ic_free_config(config_server_obj);
   ic_end();
   return ret_code;
 }

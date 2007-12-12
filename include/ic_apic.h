@@ -17,6 +17,9 @@
 #define IC_APIC_H
 #include <ic_common.h>
 
+#define NO_WAIT 0
+#define WAIT_LOCK_INFO 1
+#define WAIT_CHANGE_INFO 2
 
 enum ic_node_types
 {
@@ -117,7 +120,7 @@ struct ic_run_config_server;
 struct ic_api_cluster_operations
 {
   int (*ic_get_config) (struct ic_api_config_server *apic,
-                        guint64 our_version_num);
+                        guint64 our_version_num, int wait_type);
   void (*ic_free_config) (struct ic_api_config_server *apic);
 };
 
@@ -151,6 +154,7 @@ struct ic_api_config_server
   struct ic_api_cluster_operations api_op;
   struct ic_cluster_config *conf_objects;
   struct ic_api_cluster_connection cluster_conn;
+  GMutex *config_mutex;
   guint32 *cluster_ids;
   guint32 *node_ids;
   guint32 num_clusters_to_connect;

@@ -327,6 +327,8 @@ const gchar *rep_server_def_str= "replication server default";
 const gchar *sql_server_def_str= "sql server default";
 const gchar *socket_def_str= "socket default";
 const gchar *node_id_str= "node_id";
+const gchar *inform_wait_lock_str= "waiting for lock requests";
+const gchar *inform_wait_change_str= "waiting for change requests";
 
 #define MIN_PORT 0
 #define MAX_PORT 65535
@@ -2825,8 +2827,69 @@ rec_get_config(IC_CONNECTION *conn,
   0 all cluster configurations have been successfully fetched and also
   successfully parsed and all necessary data structures have been initialised.
 */
+
+static void
+disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
+{
+  guint32 i;
+  IC_CONNECTION *conn;
+
+  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+  {
+    conn= apic->cluster_conn.cluster_srv_conns + i;
+    conn->conn_op.ic_close_connection(conn);
+    conn->conn_op.ic_free_connection(conn);
+  }
+}
+
+static gboolean
+connect_api_connections(IC_API_CONFIG_SERVER *apic)
+{
+  guint32 i;
+  int error;
+  gboolean success= FALSE;
+  IC_CONNECTION *conn;
+
+  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+  {
+    conn= apic->cluster_conn.cluster_srv_conns + i;
+    if (!(error= set_up_cluster_server_connection(conn,
+                  apic->cluster_conn.cluster_server_ips[i],
+                  apic->cluster_conn.cluster_server_ports[i])))
+      success= TRUE;
+  }
+  return success ? 0 : error;
+}
+
 static int
-get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num)
+put_config_connections(IC_API_CONFIG_SERVER *apic, int wait_type)
+{
+  guint32 i;
+  gboolean success= FALSE;
+  const gchar *send_str;
+  int error= 1;
+  IC_CONNECTION *conn;
+
+  for (i= 0; i < apic->num_clusters_to_connect; i++)
+  {
+    conn= apic->cluster_conn.cluster_srv_conns + i;
+    if (!conn->conn_op.ic_is_conn_connected(conn))
+      continue;
+    if (wait_type == WAIT_LOCK_INFO)
+      send_str= inform_wait_lock_str;
+    else if (wait_type == WAIT_CHANGE_INFO)
+      send_str= inform_wait_change_str;
+    else
+      abort();
+    if (!(error= ic_send_with_cr(conn, send_str)))
+      success= TRUE;
+  }
+  return success ? 0 : error;
+}
+
+static int
+get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num,
+              int wait_type)
 {
   guint32 i;
   int error= END_OF_FILE;
@@ -2836,15 +2899,7 @@ get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num)
   if (the_version_num == 0LL)
     the_version_num= version_no;
   conn= &conn_obj;
-  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
-  {
-    conn= apic->cluster_conn.cluster_srv_conns + i;
-    if (!(error= set_up_cluster_server_connection(conn,
-                  apic->cluster_conn.cluster_server_ips[i],
-                  apic->cluster_conn.cluster_server_ports[i])))
-      break;
-  }
-  if (error)
+  if (!(error= connect_api_connections(apic)))
     DEBUG_RETURN(error);
   for (i= 0; i < apic->num_clusters_to_connect; i++)
   {
@@ -2865,9 +2920,12 @@ get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num)
       break;
     }
   }
+  if (wait_type)
+    error= put_config_connections(apic, wait_type);
+
 error:
-  conn->conn_op.ic_close_connection(conn);
-  conn->conn_op.ic_free_connection(conn);
+  if (error || wait_type == 0)
+    disconnect_api_connections(apic);
   DEBUG_RETURN(error);
 }
 
@@ -2879,7 +2937,7 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
   {
     if (apic->cluster_conn.cluster_srv_conns)
       ic_free(apic->cluster_conn.cluster_srv_conns);
-    if (apic->cluster_conn.cluster_srv_conns)
+    if (apic->cluster_conn.cluster_server_ips)
       ic_free(apic->cluster_conn.cluster_server_ips);
     if (apic->cluster_conn.cluster_server_ports)
       ic_free(apic->cluster_conn.cluster_server_ports);
@@ -2891,6 +2949,8 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
       ic_free(apic->string_memory_to_return);
     if (apic->config_memory_to_return)
       ic_free(apic->config_memory_to_return);
+    if (apic->config_mutex)
+      g_mutex_free(apic->config_mutex);
     if (apic->conf_objects)
     {
       num_clusters= apic->num_clusters_to_connect;
@@ -2926,9 +2986,9 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
 */
 IC_API_CONFIG_SERVER*
 ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
-                    guint32 *cluster_ids,
-                    guint32 *node_ids,
-                    guint32 num_clusters)
+                      guint32 *cluster_ids,
+                      guint32 *node_ids,
+                      guint32 num_clusters)
 {
   IC_API_CONFIG_SERVER *apic= NULL;
   guint32 num_cluster_servers= cluster_conn->num_cluster_servers;
@@ -2958,7 +3018,8 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                              sizeof(IC_CLUSTER_CONFIG))) ||
       !(apic->cluster_conn.cluster_srv_conns=
          (IC_CONNECTION*)ic_calloc(num_cluster_servers *
-                                   sizeof(IC_CONNECTION))))
+                                   sizeof(IC_CONNECTION))) ||
+      !(apic->config_mutex= g_mutex_new()))
   {
     free_cs_config(apic);
     return NULL;
@@ -3688,10 +3749,52 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
 }
 
 static int
+rec_inform_wait_type(IC_CONNECTION *conn)
+{
+  guint32 read_size= 0;
+  guint32 size_curr_buf= 0;
+  int error;
+  gchar read_buf[256];
+  DEBUG_ENTRY("rec_inform_wait_type");
+
+  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
+  {
+    if (!check_buf(read_buf, read_size, inform_wait_lock_str,
+                  strlen(inform_wait_lock_str)))
+      DEBUG_RETURN(WAIT_LOCK_INFO);
+    else if (!check_buf(read_buf, read_size, inform_wait_change_str,
+                        strlen(inform_wait_change_str)))
+      DEBUG_RETURN(WAIT_CHANGE_INFO);
+    else
+    {
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Protocol error in waiting for information of Lock/Change config\n"));
+      DEBUG_RETURN(PROTOCOL_ERROR);
+    }
+  }
+  if (conn->error_code == END_OF_FILE) /* Normal close connection when done */
+    DEBUG_RETURN(0);
+  DEBUG_RETURN(error);
+}
+
+static void
+put_connection_in_wait_lock(IC_CONNECTION *conn)
+{
+  return;
+}
+
+static void
+put_connection_in_wait_change(IC_CONNECTION *conn)
+{
+  return;
+}
+
+static int
 handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
                       IC_CONNECTION *conn)
 {
-  int ret_code;
+  int ret_code, wait_type;
   guint32 node_id;
   guint64 node_number, version_number, node_type;
   guint64 cluster_id= 0;
@@ -3730,7 +3833,12 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
     ic_free(config_base64_str);
     DEBUG_RETURN(ret_code);
   }
-  g_usleep(30*1000*1000);
+  ic_free(config_base64_str);
+  wait_type= rec_inform_wait_type(conn);
+  if (wait_type == WAIT_LOCK_INFO)
+    put_connection_in_wait_lock(conn);
+  else if (wait_type == WAIT_CHANGE_INFO)
+    put_connection_in_wait_change(conn);
   DEBUG_RETURN(0);
 }
 

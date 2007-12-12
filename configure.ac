@@ -20,6 +20,11 @@ m4_ifdef([LT_INIT],
 # with a AC_ARG_ENABLE followed by a number of tests of various sorts to
 # handle dependencies among different options.
 #
+AC_ARG_WITH(unit-test,
+         [  --with-unit-test     Build unit test programs],
+         [with_unit_testn=$withval],
+         [with_unit_test=no])
+
 AC_ARG_WITH(production,
          [  --with-production     Build a production version],
          [with_production=$withval],
@@ -116,6 +121,9 @@ else
   else
     CFLAGS="$WALL_FLAGS $DEBUG_FLAG $OPTIMIZER_FLAG"
   fi
+fi
+if test "x$with_unit_test" = "xyes" ; then
+  CFLAGS="$CFLAGS -DWITH_UNIT_TEST"
 fi
 CFLAGS="$CFLAGS $GLIB_INCLUDE"
 LIBS="$LIBS -lm"

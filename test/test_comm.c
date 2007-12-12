@@ -52,6 +52,36 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+#ifdef WITH_UNIT_TEST
+static void
+unit_test_mc()
+{
+  IC_MEMORY_CONTAINER *mc_ptr;
+  guint32 i, j, k, max_alloc_size, no_allocs;
+  gboolean large;
+  for (i= 1; i < 1000; i++)
+  {
+    srandom(i);
+    mc_ptr= ic_create_memory_container(313*i, 0);
+    no_allocs= random() & 255;
+    for (j= 0; j < 4; j++)
+    {
+      for (k= 0; k < no_allocs; k++)
+      {
+        large= ((random() & 3) == 1); /* 25% of allocations are large */
+        if (large)
+          max_alloc_size= 32767;
+        else
+          max_alloc_size= 511;
+        mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, random() & max_alloc_size);
+      }
+      mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
+    }
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  }
+}
+#endif
+
 static int
 connection_test()
 {
@@ -147,8 +177,7 @@ api_clusterserver_test()
     return 0;
   }
   srv_obj->num_clusters_to_connect= 1;
-  srv_obj->api_op.ic_get_config(srv_obj, (guint64)0x60301);
-  /*srv_obj->api_op.get_ic_config(srv_obj, (guint64)0x000000); */
+  srv_obj->api_op.ic_get_config(srv_obj, (guint64)0x60301, NO_WAIT);
   srv_obj->api_op.ic_free_config(srv_obj);
   printf("Completing cluster server test\n");
   return 0;
@@ -281,6 +310,11 @@ int main(int argc, char *argv[])
     case 8:
       test_pcntrl();
       break;
+#ifdef WITH_UNIT_TEST
+    case 9:
+      unit_test_mc();
+      break;
+#endif
     default:
       break;
    }

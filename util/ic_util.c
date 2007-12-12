@@ -46,7 +46,7 @@ mc_realloc_buf_array(IC_MEMORY_CONTAINER *mc_ptr, guint32 new_size)
   guint32 old_buf_size, copy_buf_size;
 
   old_buf_size= mc_ptr->buf_array_size;
-  copy_buf_size= (old_buf_size > new_size) ? old_buf_size : new_size;
+  copy_buf_size= IC_MIN(old_buf_size, new_size);
 
   if (!(new_buf_array= ic_calloc(new_size*sizeof(gchar*))))
     return NULL;
@@ -61,7 +61,7 @@ static gchar*
 mc_alloc(IC_MEMORY_CONTAINER *mc_ptr, guint32 size)
 {
   gchar *new_buf_array= NULL, *ptr, *new_buf;
-  guint32 buf_size, alloc_size, buf_inx;
+  guint32 alloc_size, buf_inx;
   guint64 new_total_size;
 
   size= ic_align(size, 8); /* Always allocate on 8 byte boundaries */
@@ -84,7 +84,7 @@ mc_alloc(IC_MEMORY_CONTAINER *mc_ptr, guint32 size)
   if (buf_inx >= mc_ptr->buf_array_size)
   {
     if (!(new_buf_array= mc_realloc_buf_array(mc_ptr,
-          mc_ptr->buf_array_size+4)))
+          mc_ptr->buf_array_size+16)))
       return NULL;
   }
   if (!(new_buf= ic_calloc(alloc_size)))
@@ -96,15 +96,18 @@ mc_alloc(IC_MEMORY_CONTAINER *mc_ptr, guint32 size)
       New buffer already empty, let's continue to use the old
       buffer still, by putting at the front. In this the current
       buffer and its length remains the same as before.
+      Keep track of if first buffer index is moved around.
     */
-    mc_ptr->buf_array[buf_size]= mc_ptr->buf_array[buf_size-1];
-    mc_ptr->buf_array[buf_size-1]= new_buf;
+    mc_ptr->buf_array[buf_inx]= mc_ptr->buf_array[buf_inx-1];
+    mc_ptr->buf_array[buf_inx-1]= new_buf;
+    if (mc_ptr->first_buf_inx == (buf_inx - 1))
+      mc_ptr->first_buf_inx= buf_inx;
   }
   else
   {
     mc_ptr->current_buf= new_buf+size;
     mc_ptr->current_free_len= alloc_size - size;
-    mc_ptr->buf_array[buf_size]= new_buf;
+    mc_ptr->buf_array[buf_inx]= new_buf;
   }
   mc_ptr->total_size= new_total_size;
   return new_buf;
@@ -124,6 +127,20 @@ static void
 mc_reset(IC_MEMORY_CONTAINER *mc_ptr)
 {
   guint32 orig_arr_size, i;
+  guint32 first_alloc_buf;
+  gchar *tmp;
+
+  /*
+    The first allocated buffer which is of appropriate length has been
+    moved around, moved it to the first slot such that it is kept and
+    the other buffers are released.
+  */
+  first_alloc_buf= mc_ptr->first_buf_inx;
+  tmp= mc_ptr->buf_array[first_alloc_buf];
+  mc_ptr->buf_array[first_alloc_buf]= mc_ptr->buf_array[0];
+  mc_ptr->buf_array[0]= tmp;
+  mc_ptr->first_buf_inx= 0;
+
   /* Deallocate all extra buffers except the first one */
   for (i= 1; i <= mc_ptr->current_buf_inx; i++)
     ic_free(mc_ptr->buf_array[i]);
@@ -189,12 +206,14 @@ ic_create_memory_container(guint32 base_size, guint32 max_size)
   /* Initialise Memory Container variables */ 
   mc_ptr->current_buf= first_buf;
   mc_ptr->buf_array= (gchar**)buf_array_ptr;
+  mc_ptr->buf_array[0]= first_buf;
   mc_ptr->total_size= 0;
   mc_ptr->max_size= max_size;
   mc_ptr->base_size= base_size;
   mc_ptr->buf_array_size= buf_size;
   mc_ptr->current_buf_inx= 0;
   mc_ptr->current_free_len= base_size;
+  mc_ptr->first_buf_inx= 0;
   return mc_ptr;
 }
  
