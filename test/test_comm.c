@@ -177,7 +177,7 @@ api_clusterserver_test()
     return 0;
   }
   srv_obj->num_clusters_to_connect= 1;
-  srv_obj->api_op.ic_get_config(srv_obj, (guint64)0x60301, NO_WAIT);
+  srv_obj->api_op.ic_get_config(srv_obj, (guint64)0x60301);
   srv_obj->api_op.ic_free_config(srv_obj);
   printf("Completing cluster server test\n");
   return 0;

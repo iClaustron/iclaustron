@@ -94,6 +94,10 @@ typedef struct ic_string IC_STRING;
   (dest_obj)->is_null_terminated= (src_obj)->is_null_terminated;
 
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr);
+
+void ic_add_string(IC_STRING *dest_str, gchar *input_str);
+void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
+
 /*
   Input:
     str                 String to set up

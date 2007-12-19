@@ -497,8 +497,7 @@ get_configuration(IC_API_CLUSTER_CONNECTION *clu_conf)
   {
     config_server_obj->num_clusters_to_connect= 1;
     if (config_server_obj->api_op.ic_get_config(config_server_obj,
-                                                (guint64)0x000001,
-                                                WAIT_LOCK_INFO))
+                                                (guint64)0x000001))
       return config_server_obj;
     config_server_obj->api_op.ic_free_config(config_server_obj);
   }

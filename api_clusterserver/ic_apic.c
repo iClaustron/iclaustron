@@ -327,8 +327,35 @@ const gchar *rep_server_def_str= "replication server default";
 const gchar *sql_server_def_str= "sql server default";
 const gchar *socket_def_str= "socket default";
 const gchar *node_id_str= "node_id";
-const gchar *inform_wait_lock_str= "waiting for lock requests";
-const gchar *inform_wait_change_str= "waiting for change requests";
+const gchar *get_mgmd_nodeid_str= "get mgmd nodeid";
+const gchar *get_mgmd_nodeid_reply_str= "get mgmd nodeid reply";
+const gchar *set_connection_parameter_str= "set connection parameter";
+const gchar *set_connection_parameter_reply_str=
+  "set connection parameter reply";
+const gchar *convert_transporter_str= "transporter connect";
+
+gchar *ic_empty_string= "";
+static const gchar *get_nodeid_str= "get nodeid";
+static const gchar *get_nodeid_reply_str= "get nodeid reply";
+static const gchar *get_config_str= "get config";
+static const gchar *get_config_reply_str= "get config reply";
+static const gchar *nodeid_str= "nodeid: ";
+static const gchar *cluster_id_str= "clusterid: ";
+static const gchar *version_str= "version: ";
+static const gchar *nodetype_str= "nodetype: ";
+static const gchar *user_str= "user: mysqld";
+static const gchar *password_str= "password: mysqld";
+static const gchar *public_key_str= "public key: a public key";
+static const gchar *endian_str= "endian: ";
+static const gchar *little_endian_str= "little";
+static const gchar *big_endian_str= "big";
+static const gchar *log_event_str= "log_event: 0";
+static const gchar *result_ok_str= "result: Ok";
+static const gchar *content_len_str= "Content-Length: ";
+static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
+static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
+
+#define READ_BUF_SIZE 256
 
 #define MIN_PORT 0
 #define MAX_PORT 65535
@@ -415,26 +442,6 @@ static guint64 rep_server_mandatory_bits;
 static guint64 sql_server_mandatory_bits;
 static guint64 comm_mandatory_bits;
 
-gchar *ic_empty_string= "";
-static const gchar *get_nodeid_str= "get nodeid";
-static const gchar *get_nodeid_reply_str= "get nodeid reply";
-static const gchar *get_config_str= "get config";
-static const gchar *get_config_reply_str= "get config reply";
-static const gchar *nodeid_str= "nodeid: ";
-static const gchar *cluster_id_str= "clusterid: ";
-static const gchar *version_str= "version: ";
-static const gchar *nodetype_str= "nodetype: ";
-static const gchar *user_str= "user: mysqld";
-static const gchar *password_str= "password: mysqld";
-static const gchar *public_key_str= "public key: a public key";
-static const gchar *endian_str= "endian: ";
-static const gchar *little_endian_str= "little";
-static const gchar *big_endian_str= "big";
-static const gchar *log_event_str= "log_event: 0";
-static const gchar *result_ok_str= "result: Ok";
-static const gchar *content_len_str= "Content-Length: ";
-static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
-static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 /* Set version number Ndb = 6.3.1, iClaustron = 0.0.1 */
 static const guint64 version_no= (guint64)0x60301 +
                                  (((guint64)0x000001) << 32);
@@ -2569,7 +2576,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
                IC_API_CONFIG_SERVER *apic,
                guint32 current_cluster_index)
 {
-  gchar read_buf[256];
+  gchar read_buf[READ_BUF_SIZE];
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
   int error;
@@ -2655,7 +2662,7 @@ rec_get_config(IC_CONNECTION *conn,
                IC_API_CONFIG_SERVER *apic,
                guint32 current_cluster_index)
 {
-  gchar read_buf[256];
+  gchar read_buf[READ_BUF_SIZE];
   gchar *config_buf= NULL;
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
@@ -2826,7 +2833,25 @@ rec_get_config(IC_CONNECTION *conn,
   Any retry logic is placed outside of this routine. If this routine returns
   0 all cluster configurations have been successfully fetched and also
   successfully parsed and all necessary data structures have been initialised.
+
+  After a successful retrieval of the configuration one can either drop the
+  connection, one can convert the connection to a transporter channel. To
+  convert it into a transporter channel is the normal behaviour.
+
+  Through the transporter channel the cluster server can inform the
+  configuration client can ensure that it is informed of all changes to
+  the configuration. In this manner we can ensure that the configuration
+  database is kept up-to-date. Thus each client becomes an entity that will be
+  involved in any changes to the configuration. It is enough to be involved in
+  the changes of the clusters the client is a part of.
 */
+
+static int
+get_config_info_channels(IC_API_CONFIG_SERVER *apic)
+{
+  DEBUG_ENTRY("get_config_info_channels");
+  DEBUG_RETURN(0);
+}
 
 static void
 disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
@@ -2837,17 +2862,14 @@ disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
     conn= apic->cluster_conn.cluster_srv_conns + i;
-    conn->conn_op.ic_close_connection(conn);
-    conn->conn_op.ic_free_connection(conn);
   }
 }
 
-static gboolean
-connect_api_connections(IC_API_CONFIG_SERVER *apic)
+static int
+connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
 {
   guint32 i;
   int error;
-  gboolean success= FALSE;
   IC_CONNECTION *conn;
 
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
@@ -2856,50 +2878,41 @@ connect_api_connections(IC_API_CONFIG_SERVER *apic)
     if (!(error= set_up_cluster_server_connection(conn,
                   apic->cluster_conn.cluster_server_ips[i],
                   apic->cluster_conn.cluster_server_ports[i])))
-      success= TRUE;
+    {
+      *conn_ptr= conn;
+      return 0;
+    }
   }
-  return success ? 0 : error;
+  return error;
 }
 
 static int
-put_config_connections(IC_API_CONFIG_SERVER *apic, int wait_type)
+get_info_config_channels(IC_API_CONFIG_SERVER *apic)
 {
-  guint32 i;
-  gboolean success= FALSE;
-  const gchar *send_str;
-  int error= 1;
-  IC_CONNECTION *conn;
-
-  for (i= 0; i < apic->num_clusters_to_connect; i++)
-  {
-    conn= apic->cluster_conn.cluster_srv_conns + i;
-    if (!conn->conn_op.ic_is_conn_connected(conn))
-      continue;
-    if (wait_type == WAIT_LOCK_INFO)
-      send_str= inform_wait_lock_str;
-    else if (wait_type == WAIT_CHANGE_INFO)
-      send_str= inform_wait_change_str;
-    else
-      abort();
-    if (!(error= ic_send_with_cr(conn, send_str)))
-      success= TRUE;
-  }
-  return success ? 0 : error;
+  return 0;
 }
 
+/*
+  This method connects to one of the provided cluster servers. Then it
+  retrieves the configuration from this cluster server. In a successful
+  case we keep this connection so that it can be kept for other usage
+  such that we can stay informed about changes of the configuration.
+  The configuration is by default locked in the sense that the configuration
+  cannot be changed until the connection is converted to a information
+  channel where the requester of the configuration also is informed of
+  any changes to the configuration in proper order.
+*/
 static int
-get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num,
-              int wait_type)
+get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num)
 {
   guint32 i;
   int error= END_OF_FILE;
-  IC_CONNECTION conn_obj, *conn;
+  IC_CONNECTION *conn;
   DEBUG_ENTRY("get_cs_config");
 
   if (the_version_num == 0LL)
     the_version_num= version_no;
-  conn= &conn_obj;
-  if (!(error= connect_api_connections(apic)))
+  if (!(error= connect_api_connections(apic, &conn)))
     DEBUG_RETURN(error);
   for (i= 0; i < apic->num_clusters_to_connect; i++)
   {
@@ -2920,12 +2933,13 @@ get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num,
       break;
     }
   }
-  if (wait_type)
-    error= put_config_connections(apic, wait_type);
-
+  apic->cluster_conn.current_conn= conn;  
 error:
-  if (error || wait_type == 0)
-    disconnect_api_connections(apic);
+  if (error)
+  {
+    conn->conn_op.ic_close_connection(conn);
+    conn->conn_op.ic_free_connection(conn);
+  }
   DEBUG_RETURN(error);
 }
 
@@ -3044,6 +3058,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
   apic->api_op.ic_get_config= get_cs_config;
+  apic->api_op.ic_get_info_config_channels= get_info_config_channels;
   apic->api_op.ic_free_config= free_cs_config;
   return apic;
 }
@@ -3527,7 +3542,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
   guint32 size_curr_buf= 0;
   guint32 state= GET_NODEID_REQ_STATE;
   int error;
-  gchar read_buf[256];
+  gchar read_buf[READ_BUF_SIZE];
   DEBUG_ENTRY("rec_get_nodeid_req");
 
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
@@ -3680,7 +3695,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
   guint32 state= GET_CONFIG_REQ_STATE;
   guint64 read_version_num;
   int error;
-  gchar read_buf[256];
+  gchar read_buf[READ_BUF_SIZE];
   DEBUG_ENTRY("rec_get_config_req");
 
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
@@ -3749,52 +3764,78 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
 }
 
 static int
-rec_inform_wait_type(IC_CONNECTION *conn)
+rec_simple_str(IC_CONNECTION *conn, const gchar *str)
 {
-  guint32 read_size= 0;
-  guint32 size_curr_buf= 0;
+  guint32 read_size= 0, size_curr_buf= 0;
   int error;
-  gchar read_buf[256];
-  DEBUG_ENTRY("rec_inform_wait_type");
-
-  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+  gchar read_buf[READ_BUF_SIZE];
+  if (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-    if (!check_buf(read_buf, read_size, inform_wait_lock_str,
-                  strlen(inform_wait_lock_str)))
-      DEBUG_RETURN(WAIT_LOCK_INFO);
-    else if (!check_buf(read_buf, read_size, inform_wait_change_str,
-                        strlen(inform_wait_change_str)))
-      DEBUG_RETURN(WAIT_CHANGE_INFO);
-    else
+    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    if (!check_buf(read_buf, read_size, str,
+                   strlen(str)))
     {
       DEBUG_PRINT(CONFIG_LEVEL,
-        ("Protocol error in waiting for information of Lock/Change config\n"));
+        ("Protocol error in waiting for %s\n", str));
       DEBUG_RETURN(PROTOCOL_ERROR);
     }
-  }
-  if (conn->error_code == END_OF_FILE) /* Normal close connection when done */
     DEBUG_RETURN(0);
+  }
   DEBUG_RETURN(error);
 }
 
-static void
-put_connection_in_wait_lock(IC_CONNECTION *conn)
+static int
+wait_convert_transporter_req(IC_CONNECTION *conn,
+                             guint32 cs_nodeid,
+                             guint32 client_nodeid)
 {
-  return;
+  int error;
+  gchar cs_nodeid_buf[32];
+  gchar client_nodeid_buf[32];
+  gchar trp_buf[32];
+  DEBUG_ENTRY("rec_inform_wait_type");
+
+  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
+  g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
+  g_snprintf(trp_buf, 32, "%u %u", (guint32)1, client_nodeid);
+
+  if ((error= rec_simple_str(conn, get_mgmd_nodeid_str)) ||
+      (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
+      (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
+      (error= rec_simple_str(conn, set_connection_parameter_str)) ||
+      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
+      (error= rec_simple_str(conn, client_nodeid_buf)) ||
+      (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
+      (error= ic_send_with_cr(conn, result_ok_str)) ||
+      (error= rec_simple_str(conn, convert_transporter_str)) ||
+      (error= rec_simple_str(conn, ic_empty_string)))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+                ("Protocol error in converting to transporter"));
+    DEBUG_RETURN(PROTOCOL_ERROR);
+  }
+  DEBUG_RETURN(0);
 }
 
-static void
-put_connection_in_wait_change(IC_CONNECTION *conn)
+static int
+wait_start_transporter_req(IC_CONNECTION *conn, guint32 cs_nodeid,
+                           guint32 client_nodeid)
 {
-  return;
+  return 0;
+}
+
+static int
+put_connection_in_change_queue(IC_CONNECTION *conn, guint64 node_type)
+{
+  return 0;
 }
 
 static int
 handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
                       IC_CONNECTION *conn)
 {
-  int ret_code, wait_type;
+  int ret_code;
   guint32 node_id;
   guint64 node_number, version_number, node_type;
   guint64 cluster_id= 0;
@@ -3834,11 +3875,21 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
     DEBUG_RETURN(ret_code);
   }
   ic_free(config_base64_str);
-  wait_type= rec_inform_wait_type(conn);
-  if (wait_type == WAIT_LOCK_INFO)
-    put_connection_in_wait_lock(conn);
-  else if (wait_type == WAIT_CHANGE_INFO)
-    put_connection_in_wait_change(conn);
+  if ((ret_code= wait_convert_transporter_req(conn, (guint32)1/*cs_nodeid*/,
+                                              (guint32)1/*client_nodeid*/)))
+  {
+    /* The client wasn't interested in receiving changes */
+    DEBUG_RETURN(ret_code);
+  }
+  if ((ret_code= wait_start_transporter_req(conn, (guint32)1 /*cs_nodeid*/,
+                                       (guint32)1 /* client_nodeid*/)))
+  {
+    DEBUG_RETURN(ret_code);
+  }
+  if ((ret_code= put_connection_in_change_queue(conn, node_type)))
+  {
+    DEBUG_RETURN(ret_code);
+  }
   DEBUG_RETURN(0);
 }
 

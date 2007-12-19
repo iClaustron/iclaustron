@@ -120,7 +120,8 @@ struct ic_run_config_server;
 struct ic_api_cluster_operations
 {
   int (*ic_get_config) (struct ic_api_config_server *apic,
-                        guint64 our_version_num, int wait_type);
+                        guint64 our_version_num);
+  int (*ic_get_info_config_channels) (struct ic_api_config_server *apic);
   void (*ic_free_config) (struct ic_api_config_server *apic);
 };
 
@@ -136,6 +137,7 @@ struct ic_api_cluster_connection
   gchar **cluster_server_ips;
   gchar **cluster_server_ports;
   IC_CONNECTION *cluster_srv_conns;
+  IC_CONNECTION *current_conn;
   guint32 num_cluster_servers;
   guint32 tail_index;
   guint32 head_index;
