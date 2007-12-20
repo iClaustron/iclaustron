@@ -183,6 +183,7 @@ struct ic_run_config_server
   IC_CONNECTION *run_conn;
   guint32 *cluster_ids;
   guint32 num_clusters;
+  guint32 cs_nodeid;
 };
 typedef struct ic_run_config_server IC_RUN_CLUSTER_SERVER;
 

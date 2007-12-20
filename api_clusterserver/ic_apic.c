@@ -3788,29 +3788,34 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
 static int
 wait_convert_transporter_req(IC_CONNECTION *conn,
                              guint32 cs_nodeid,
-                             guint32 client_nodeid)
+                             guint32 client_nodeid,
+                             gboolean *no_conversion)
 {
   int error;
   gchar cs_nodeid_buf[32];
   gchar client_nodeid_buf[32];
-  gchar trp_buf[32];
-  DEBUG_ENTRY("rec_inform_wait_type");
+  DEBUG_ENTRY("wait_convert_transporter_req");
 
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
   g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
-  g_snprintf(trp_buf, 32, "%u %u", (guint32)1, client_nodeid);
 
   if ((error= rec_simple_str(conn, get_mgmd_nodeid_str)) ||
+      ((*no_conversion= FALSE), FALSE) ||
       (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
       (error= rec_simple_str(conn, set_connection_parameter_str)) ||
-      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
       (error= rec_simple_str(conn, client_nodeid_buf)) ||
+      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
       (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
       (error= ic_send_with_cr(conn, result_ok_str)) ||
       (error= rec_simple_str(conn, convert_transporter_str)) ||
       (error= rec_simple_str(conn, ic_empty_string)))
   {
+    if (error == END_OF_FILE && *no_conversion)
+    {
+      /* Normal disconnect after receiving configuration */
+      DEBUG_RETURN(0);
+    }
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));
     DEBUG_RETURN(PROTOCOL_ERROR);
@@ -3836,36 +3841,40 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
                       IC_CONNECTION *conn)
 {
   int ret_code;
-  guint32 node_id;
+  guint32 client_nodeid, cs_nodeid;
   guint64 node_number, version_number, node_type;
   guint64 cluster_id= 0;
   gchar *config_base64_str;
   guint32 config_len;
+  gboolean no_conversion= TRUE;
   DEBUG_ENTRY("handle_config_request");
 
+  cs_nodeid= run_obj->cs_nodeid;
   if ((ret_code= rec_get_nodeid_req(conn,
                                     &node_number, &version_number,
                                     &node_type, &cluster_id)))
+  {
     DEBUG_RETURN(ret_code);
+  }
   if (node_number == 0)
   {
     /* Here we need to discover which node id to use */
-    node_id= 1; /* Fake for now */
+    client_nodeid= 1; /* Fake for now */
   }
   else
   {
     /* Here we ensure that the requested node id is correct */
-    node_id= 1;
+    client_nodeid= 1;
   }
-  if ((ret_code= send_get_nodeid_reply(conn, node_id)))
-    return ret_code;
-  if ((ret_code= rec_get_config_req(conn, version_number)))
-    return ret_code;
-  if ((ret_code= ic_get_base64_config(run_obj->conf_objects[0],
+  if ((ret_code= send_get_nodeid_reply(conn, client_nodeid)) ||
+      (ret_code= rec_get_config_req(conn, version_number)) ||
+      (ret_code= ic_get_base64_config(run_obj->conf_objects[0],
                                       (guint8**)&config_base64_str,
                                       &config_len,
                                       version_number)))
+  {
     DEBUG_RETURN(ret_code);
+  }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Converted configuration to a base64 representation\n"));
   if ((ret_code= send_config_reply(conn, config_base64_str, config_len)) ||
@@ -3875,18 +3884,13 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
     DEBUG_RETURN(ret_code);
   }
   ic_free(config_base64_str);
-  if ((ret_code= wait_convert_transporter_req(conn, (guint32)1/*cs_nodeid*/,
-                                              (guint32)1/*client_nodeid*/)))
-  {
-    /* The client wasn't interested in receiving changes */
-    DEBUG_RETURN(ret_code);
-  }
-  if ((ret_code= wait_start_transporter_req(conn, (guint32)1 /*cs_nodeid*/,
-                                       (guint32)1 /* client_nodeid*/)))
-  {
-    DEBUG_RETURN(ret_code);
-  }
-  if ((ret_code= put_connection_in_change_queue(conn, node_type)))
+  if ((ret_code= wait_convert_transporter_req(conn, cs_nodeid,
+                                              client_nodeid,
+                                              &no_conversion)) ||
+      (no_conversion) ||
+      (ret_code= wait_start_transporter_req(conn, cs_nodeid,
+                                            client_nodeid)) ||
+      (ret_code= put_connection_in_change_queue(conn, node_type)))
   {
     DEBUG_RETURN(ret_code);
   }
