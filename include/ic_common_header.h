@@ -31,16 +31,46 @@ extern gchar *ic_empty_string;
 
 typedef unsigned char ic_bool;
 
+/*
+  iClaustron interface to memory allocation routines.
+*/
 gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
 void ic_free(void *ret_obj);
 
-#define MC_MIN_BASE_SIZE 128
-#define MC_DEFAULT_BASE_SIZE 8180
+/*
+  A couple of useful macros.
+
+  ic_align(a, b)
+    a is size of an element, the macro returns an increase of a to be a
+    multiple of b and thus it will be aligned to b.
+
+  IC_MIN(a,b)
+    Return minimum of a and b
+
+  IC_MAX(a,b)
+    Return maximum of a and b
+
+  IC_DIFF(a, b)
+    Return difference of a and b == | a - b | in mathematical terms
+*/
 #define ic_align(a, b) ((((a)+(b-1))/(b))*(b))
 #define IC_MIN(a, b) ((a) < (b)) ? (a) : (b)
 #define IC_MAX(a, b) ((a) > (b)) ? (a) : (b)
+#define IC_DIFF(a,b) (IC_MAX(a,b) - IC_MIN(a,b))
 
+/*
+  A helpful support function to handle many memory allocations within one
+  container. This allocates a linked list of containers of base size (except
+  when allocations are larger than base size. When freeing it will free all
+  of those containers.
+
+  Reset means that we deallocate everything one container of base size.
+  Thus we're back to the situation after performing the first allocation of
+  the container. Reset will also set all bytes to 0 in container.
+*/
+#define MC_MIN_BASE_SIZE 128
+#define MC_DEFAULT_BASE_SIZE 8180
 struct ic_memory_container;
 struct ic_memory_container_ops
 {
@@ -69,9 +99,14 @@ typedef struct ic_memory_container IC_MEMORY_CONTAINER;
 IC_MEMORY_CONTAINER*
 ic_create_memory_container(guint32 base_size, guint32 max_size);
 
-
+/*
+  This function is used by all iClaustron to read program parameters and
+  issue start text. The function contains a set of standard parameters
+  shared by all iClaustron programs.
+*/
 int ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
                      gchar *start_text);
+
 /*
   This is a standard string type, it is declared as whether it is
   null_terminated or not.
