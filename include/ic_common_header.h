@@ -83,22 +83,64 @@ struct ic_string
   gboolean is_null_terminated;
 };
 typedef struct ic_string IC_STRING;
+
+/* Macro to quickly initialise an IC_STRING */
 #define IC_INIT_STRING(obj, a, b, c) \
   (obj)->str= (a); \
   (obj)->len= (b); \
   (obj)->is_null_terminated= (c);
 
+/* Macro to copy from one IC_STRING to another */
 #define IC_COPY_STRING(dest_obj, src_obj) \
   (dest_obj)->str= (src_obj)->str; \
   (dest_obj)->len= (src_obj)->len; \
   (dest_obj)->is_null_terminated= (src_obj)->is_null_terminated;
 
-gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr);
-
-void ic_add_string(IC_STRING *dest_str, gchar *input_str);
-void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
 
 /*
+  ic_get_ic_string
+    Convert IC_STRING to normal NULL-terminated string
+
+  ic_add_string
+    This function adds input_str to dest_str, input_str is always a normal
+    NULL-terminated string. If the input string doesn't exist it returns
+    an empty string.
+
+  ic_add_ic_string
+    Adds input_str to dest_str
+
+  ic_str_find_first
+    This function finds the first occurrence of the searched_char in the
+    string. If it doesn't find any occurrence it reports the length of
+    the string.
+
+  ic_print_ic_string
+    This function prints the IC_STRING to stdout
+
+  ic_cmp_null_term_str
+    This function compares a NULL-terminated string with an IC_STRING
+
+  ic_strdup
+    Create a copy of the input IC_STR and allocate memory for the string.
+    Assumes someone else allocated memory for new IC_STRING.
+
+  ic_conv_config_str_to_int
+    Converts an IC_STRING containing a number from a configuration file
+    to a number. A configuration file number can contain k, K, m, M, g and G
+    to represent 1024, 1024*1024 and 1024*1024*1024.
+*/
+gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr);
+void ic_add_string(IC_STRING *dest_str, gchar *input_str);
+void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
+guint32 ic_str_find_first(IC_STRING *ic_str, gchar searched_char);
+void ic_print_ic_string(IC_STRING *str);
+int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
+int ic_strdup(IC_STRING *out_str, IC_STRING *in_str);
+int ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
+
+/*
+  ic_set_up_ic_string()
+
   Input:
     str                 String to set up
     len                 Maximum length
@@ -110,13 +152,12 @@ void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
     is_null_terminated  Normally true, except when no NULL was found in string
 */
 void ic_set_up_ic_string(IC_STRING *in_out_str);
-void ic_print_ic_string(IC_STRING *str);
-int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
-int ic_strdup(IC_STRING *out_str, IC_STRING *in_str);
 
+/*
+  Conversion routines from string to number and vice versa.
+*/
 gchar *ic_guint64_str(guint64 val, gchar *ptr);
 gchar *ic_guint64_hex_str(guint64 val, gchar *ptr);
-int ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
 int ic_conv_str_to_int(gchar *str, guint64 *number);
 /*
   Error handling interface

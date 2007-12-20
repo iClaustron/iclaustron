@@ -18,29 +18,6 @@
 static guint32 glob_debug= 0;
 static gchar *glob_debug_file= "debug.log";
 static guint32 glob_debug_screen= 0;
-
-void
-ic_add_string(IC_STRING *dest_str, gchar *input_str)
-{
-  IC_STRING input_ic_str;
-
-  IC_INIT_STRING(&input_ic_str, input_str, strlen(input_str), TRUE);
-  ic_add_ic_string(dest_str, &input_ic_str);
-}
-
-void
-ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
-{
-  gchar *start_ptr= dest_str->str+dest_str->len;
-  gchar *end_ptr;
-  memcpy(start_ptr, input_str->str, input_str->len);
-  if (dest_str->is_null_terminated)
-  {
-    end_ptr= start_ptr + input_str->len;
-    *end_ptr= 0;
-  }
-}
-
 /*
   MODULE: Memory Container
   Description:
@@ -690,16 +667,51 @@ config_error:
   Some routines to handle iClaustron strings
 */
 
+guint32
+ic_str_find_first(IC_STRING *ic_str, gchar searched_char)
+{
+  guint32 i;
+  for (i= 0; i < ic_str->len; i++)
+  {
+    if (ic_str->str[i] == searched_char)
+      return i;
+  }
+  return ic_str->len;
+}
+
+void
+ic_add_string(IC_STRING *dest_str, gchar *input_str)
+{
+  IC_STRING input_ic_str;
+
+  IC_INIT_STRING(&input_ic_str, input_str, strlen(input_str), TRUE);
+  ic_add_ic_string(dest_str, &input_ic_str);
+}
+
+void
+ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
+{
+  gchar *start_ptr= dest_str->str+dest_str->len;
+  gchar *end_ptr;
+  memcpy(start_ptr, input_str->str, input_str->len);
+  if (dest_str->is_null_terminated)
+  {
+    end_ptr= start_ptr + input_str->len;
+    *end_ptr= 0;
+  }
+}
+
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
 {
   guint32 i;
+  buf_ptr[0]= 0;
   if (str && str->str)
   {
     for (i= 0; i < str->len; i++)
       buf_ptr[i]= str->str[i];
-    return buf_ptr;
+    buf_ptr[str->len]= 0;
   }
-  return NULL;
+  return buf_ptr;
 }
 
 void ic_print_ic_string(IC_STRING *str)
