@@ -4643,3 +4643,4 @@ void ic_end()
   glob_conf_entry_inited= FALSE;
   DEBUG_CLOSE;
 }
+

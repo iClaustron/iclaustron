@@ -902,6 +902,7 @@ Current levels defined: \n\
   Level 1 (= 2): Entry into functions debugging\n\
   Level 2 (= 4): Configuration debugging\n\
   Level 3 (= 8): Debugging specific to the currently executing program\n\
+  Level 4 (=16): Debugging of threads\n\
 ";
 
 int
@@ -940,3 +941,4 @@ mem_error:
 error:
   return ret_code;
 }
+

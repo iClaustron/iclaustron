@@ -103,7 +103,7 @@ set_option_size(int sockfd, int size, int old_size,
 static void
 ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
 {
-  int no_delay, error, maxseg_size, rec_size, snd_size;
+  int no_delay, error, maxseg_size, rec_size, snd_size, reuse_addr;
   socklen_t sock_len;
 #ifdef __APPLE__
   int no_sigpipe= 1;
@@ -123,11 +123,17 @@ ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
   if ((error= setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
                          (const void*)&no_delay, sizeof(int))))
   {
-    /*
-      We will continue even with this error.
-    */
+    /* We will continue even with this error.  */
     no_delay= 0;
     DEBUG_PRINT(COMM_LEVEL, ("Set TCP_NODELAY error: %d\n", error));
+  }
+  reuse_addr= 1;
+  if ((error= setsockopt(sockfd, SO_REUSEADDR,
+                         (const void*)&reuse_addr, sizeof(int))))
+  {
+    /* We will continue even with this error */
+    DEBUG_PRINT(COMM_LEVEL, ("Set SO_REUSEADDR error: %d\n", error));
+    reuse_addr= 0;
   }
   getsockopt(sockfd, IPPROTO_TCP, TCP_MAXSEG,
              (void*)&maxseg_size, &sock_len);
@@ -158,6 +164,7 @@ ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
   DEBUG_PRINT(COMM_LEVEL, ("Used SO_RCVBUF = %d\n", rec_size));
   DEBUG_PRINT(COMM_LEVEL, ("Used SO_SNDBUF = %d\n", snd_size));
   DEBUG_PRINT(COMM_LEVEL, ("Used TCP_NODELAY = %d\n", no_delay));
+  DEBUG_PRINT(COMM_LEVEL, ("Used SO_REUSEADDR = %d\n", reuse_addr));
   conn->conn_stat.used_tcp_maxseg_size= maxseg_size;
   conn->conn_stat.used_tcp_receive_buffer_size= rec_size;
   conn->conn_stat.used_tcp_send_buffer_size= snd_size;

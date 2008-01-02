@@ -1,4 +1,4 @@
-#
+
 # A configure.ac file needs to start by defining tree name and version
 # of the tree.
 # After that invoking automake (AM_INIT_AUTOMAKE) and then creating the
@@ -39,6 +39,20 @@ AC_ARG_WITH(readline,
          [  --with-readline   Build with readline],
          [with_readline=$withval],
          [with_readline=no])
+
+AC_ARG_WITH(openssl,
+         AC_HELP_STRING([--with-openssl=DIR],
+                        [Use openssl, if DIR is provided it is the
+                         installation directory of openssl.]),
+         [openssl_dir=$withval],
+         [openssl_dir=no])
+
+AC_ARG_WITH(cyassl,
+         AC_HELP_STRING([--with-cyassl=DIR],
+                        [Use cyassl, if DIR is provided it is the
+                         installation directory of cyassl.]),
+         [cyassl_dir=$withval],
+         [cyassl_dir=no])
 
 #
 # Next step is to check for all the programs needed by the configure process.
@@ -150,9 +164,81 @@ AC_MSG_RESULT(no)
 )
 
 #
+# Checking for SSL support, we can use any of openssl or
+# cyassl. We prefer openssl first, then cyassl
+#
+have_ssl="no"
+
+case "$openssl_dir" in
+  "no")
+    have_openssl="no"
+    AC_MSG_RESULT([not including openssl])
+    ;;
+  * )
+    have_openssl="yes"
+    if test "x$openssl_dir" = "xyes" ; then
+      openssl_dir="/usr/local/ssl"
+    fi
+    have_ssl="yes"
+    ssl_dir="$openssl_dir"
+    SSL_LIB="-lssl -lcrypto"
+    AC_MSG_RESULT([including openssl from $openssl_dir])
+    ;;
+esac
+
+case "$cyassl_dir" in
+  "no")
+    have_cyassl="no"
+    AC_MSG_RESULT([not including cyassl])
+    ;;
+  * )
+    have_cyassl="yes"
+    if test "x$cyassl_dir" = "xyes" ; then
+      cyassl_dir="/usr/local/cyassl"
+    fi
+    if test "x$have_ssl" = "xno" ; then
+      have_ssl="yes"
+      ssl_dir="$cyassl_dir"
+      SSL_LIB="-lcyassl"
+      AC_MSG_RESULT([including cyassl from $cyassl_dir])
+    else
+      have_cyassl="no"
+      AC_MSG_RESULT([ignoring cyassl option since SSL support already defined])
+    fi
+    ;;
+esac
+
+#
 # Next step is to check for all libraries such that the resulting programs
 # can be linked properly due to external dependencies.
 #
+
+if test "x$have_ssl" = "xyes" ; then
+  save_LIBS="$LIBS"
+  save_CFLAGS="$CFLAGS"
+  CFLAGS="$CFLAGS -I$ssl_dir/include"
+  LIBS="$LIBS $SSL_LIB"
+  LIBS="$LIBS -L$ssl_dir/lib"
+  AC_TRY_LINK([#include <openssl/ssl.h>],
+             [return SSL_library_init();],
+             [have_ssl="yes"],
+             [have_ssl="no"])
+  if test "x$have_ssl" = "xno" ; then
+    AC_MSG_RESULT([Unsuccessful attempt to link SSL library, removing SSL])
+    LIBS="$save_LIBS"
+    CFLAGS="$save_CFLAGS"
+  else
+    AC_DEFINE([HAVE_SSL], [1], [Defined by configure, using SSL.])
+  fi
+fi
+
+AS_IF([test "x$have_openssl" = "xyes"],
+    [AC_DEFINE([HAVE_OPENSSL], [1],
+     [Defined by configure, using openssl for SSL.])])
+AS_IF([test "x$have_cyassl" = "xyes"],
+    [AC_DEFINE([HAVE_CYASSL], [1],
+     [Defined by configure, using cyassl for SSL.])])
+
 #
 # Produce the output of the configure process.
 #
