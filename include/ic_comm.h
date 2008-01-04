@@ -22,6 +22,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <ic_common_header.h>
+#include <ic_ssl.h>
 
 #define MEM_ALLOC_ERROR 32767
 #define ACCEPT_ERROR 32766
@@ -46,9 +47,9 @@ struct ic_connect_operations
     connection and continue listening to the server port.
   */
   struct ic_connection* (*ic_fork_accept_connection)
-       (struct ic_connection *orig_conn,
-        gboolean use_mutex,
-        gboolean use_front_buffer);
+                         (struct ic_connection *orig_conn,
+                          gboolean use_mutex,
+                          gboolean use_front_buffer);
   /*
     Set up a connection object, this can be either the server end or
     the client end of the connection. For server end it is possible
@@ -428,6 +429,18 @@ struct ic_connection
 #define WAN_SND_BUF_SIZE 4194304
 #define WAN_TCP_MAXSEG_SIZE 61440
   gboolean is_wan_connection;
+#ifdef HAVE_SSL
+  /*
+    This is a set of variables that define an SSL connection. 
+    ssl_connection represents the SSL connection.
+  */
+  gboolean is_ssl_connection;
+  IC_STRING root_certificate_path;
+  IC_STRING server_certificate_path;
+  IC_STRING client_certificate_path;
+  SSL *ssl_conn;
+  SSL_CTX *ssl_ctx;
+#endif
 };
 typedef struct ic_connection IC_CONNECTION;
 
@@ -437,6 +450,13 @@ IC_CONNECTION *ic_create_socket_object(gboolean is_client,
                                        gboolean is_using_front_buffer,
                                        authenticate_func func,
                                        void *auth_obj);
+
+IC_CONNECTION *ic_create_ssl_object(gboolean is_client,
+                                    IC_STRING *root_certificate_path,
+                                    IC_STRING *server_certification_path,
+                                    IC_STRING *client_certification_path,
+                                    gboolean is_connect_thread_used,
+                                    gboolean is_using_front_buffer);
 
 struct ic_connect_manager
 {

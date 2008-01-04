@@ -69,9 +69,7 @@ is_mutex_conn_connected(IC_CONNECTION *conn)
 static gboolean
 is_conn_thread_active(IC_CONNECTION *conn)
 {
-  gboolean is_thread_active;
-  is_thread_active= conn->conn_stat.is_connect_thread_active;
-  return is_thread_active;
+  return conn->conn_stat.is_connect_thread_active;
 }
 
 static gboolean
@@ -542,19 +540,14 @@ write_socket_connection(IC_CONNECTION *conn,
                    IC_MSG_NOSIGNAL);
     if (ret_code == (int)buf_size)
     {
-      unsigned i, range_limit;
+      unsigned i;
       guint32 num_sent_buf_range;
       guint64 num_sent_bufs= conn->conn_stat.num_sent_buffers;
       guint64 num_sent_bytes= conn->conn_stat.num_sent_bytes;
       guint64 num_sent_square= conn->conn_stat.num_sent_bytes_square_sum;
 
-      range_limit= 32;
-      for (i= 0; i < 15; i++)
-      {
-        if (buf_size < range_limit)
-          break;
-        range_limit<<= 1;
-      }
+      i= ic_count_highest_bit(buf_size | 32);
+      i-= 6;
       num_sent_buf_range= conn->conn_stat.num_sent_buf_range[i];
       conn->error_code= 0;
       conn->conn_stat.num_sent_buffers= num_sent_bufs + 1;
@@ -885,9 +878,9 @@ set_up_methods_front_buffer(IC_CONNECTION *conn)
 }
 
 static void
-set_up_rw_methods_mutex(IC_CONNECTION *conn)
+set_up_rw_methods_mutex(IC_CONNECTION *conn, gboolean is_mutex_used)
 {
-  if (conn->is_mutex_used)
+  if (is_mutex_used)
   {
     conn->conn_op.ic_open_write_session= open_write_socket_session_mutex;
     conn->conn_op.ic_close_write_session= close_write_socket_session_mutex;
@@ -983,7 +976,7 @@ fork_accept_connection(IC_CONNECTION *orig_conn,
   orig_conn->forked_connections++;
 
   set_up_methods_front_buffer(fork_conn);
-  set_up_rw_methods_mutex(fork_conn);
+  set_up_rw_methods_mutex(fork_conn, fork_conn->is_mutex_used);
 
   if (create_mutexes(fork_conn))
     goto error;
@@ -1028,7 +1021,7 @@ ic_create_socket_object(gboolean is_client,
   conn->is_using_front_buffer= is_using_front_buffer;
   conn->is_mutex_used= is_mutex_used;
 
-  set_up_rw_methods_mutex(conn);
+  set_up_rw_methods_mutex(conn, is_mutex_used);
   set_up_methods_front_buffer(conn);
 
   init_connect_stat(conn);
@@ -1047,3 +1040,225 @@ error:
   ic_free(conn);
   return NULL;
 }
+
+/*
+  Module: SSL
+  -----------
+    This module implements sockets using the SSL protocol. It will use
+    the same interface except for when a connection is created. In the
+    back-end methods there are lots of new methods although many of the
+    old methods are reused also for SSL connections.
+*/
+#ifdef HAVE_SSL
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
+
+int
+ic_ssl_init()
+{
+  if (!SSL_library_init())
+    return 1;
+  return 0;
+}
+
+static void
+free_ssl_session(IC_CONNECTION *conn)
+{
+  if (conn->ssl_ctx)
+    SSL_CTX_free(conn->ssl_ctx);
+  if (conn->ssl_conn)
+    SSL_free(conn->ssl_conn);
+  if (conn->root_certificate_path.str)
+    ic_free(conn->root_certificate_path.str);
+  if (conn->server_certificate_path.str)
+    ic_free(conn->server_certificate_path.str);
+  if (conn->client_certificate_path.str)
+    ic_free(conn->client_certificate_path.str);
+}
+
+static int
+ssl_create_session(IC_CONNECTION *conn)
+{
+  if (!(conn->ssl_ctx= SSL_CTX_new(SSLv3_method())))
+    goto error;
+  /*
+    Now we have allocated a context from which this connection will work in.
+    Next step is to define certificate handling of this context. And finally
+    after this we'll create an SSL session which is then ready for SSL_connect
+    or SSL_accept.
+  */
+  if (!(conn->ssl_conn= SSL_new(conn->ssl_ctx)))
+    goto error;
+  return 0;
+error:
+  free_ssl_session(conn);
+  return 1;
+}
+
+int set_up_ssl_connection(IC_CONNECTION *conn)
+{
+  int error= 1;
+  DEBUG_ENTRY("set_up_ssl_connection");
+
+  lock_connect_mutex(conn);
+  if ((error= set_up_socket_connection(conn)))
+  {
+    /*
+      Here we perform the SSL specific set-up of the connection. When we
+      arrive here a connection is already set-up and now we want to
+      convert the connection into an SSL connection by performing the
+      start-up part of the SSL protocol.
+    */
+    if (!ssl_create_session(conn))
+      goto ssl_create_error;
+    SSL_set_fd(conn->ssl_conn, conn->rw_sockfd);
+    if (conn->is_client)
+      error= SSL_connect(conn->ssl_conn);
+    else
+      error= SSL_accept(conn->ssl_conn);
+  }
+  if (error)
+    goto error_handler;
+  unlock_connect_mutex(conn);
+  DEBUG_RETURN(0);
+
+error_handler:
+ssl_create_error:
+  free_ssl_session(conn);
+  DEBUG_RETURN(error);
+}
+
+static int
+accept_ssl_connection(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("accept_ssl_connection");
+
+  lock_connect_mutex(conn);
+  if ((error= accept_socket_connection(conn)))
+  {
+    /* Here we perform server related set-up code for SSL connections. */
+  }
+  unlock_connect_mutex(conn);
+  DEBUG_RETURN(error);
+}
+
+static void
+free_ssl_connection(IC_CONNECTION *conn)
+{
+  DEBUG_ENTRY("free_ssl_connection");
+  /* Free SSL related parts of the connection */
+  free_ssl_session(conn);
+  /* Free normal socket connection parts */
+  free_socket_connection(conn);
+  DEBUG_RETURN_EMPTY;
+}
+
+static IC_CONNECTION*
+fork_accept_ssl_connection(IC_CONNECTION *orig_conn,
+                           gboolean use_mutex,
+                           gboolean use_front_buffer)
+{
+  IC_CONNECTION *new_conn;
+  DEBUG_ENTRY("fork_accept_ssl_connection");
+
+  lock_connect_mutex(orig_conn);
+  if ((new_conn= fork_accept_connection(orig_conn, use_mutex,
+                                        use_front_buffer)))
+  {
+    /* Assign SSL specific variables to new connection */
+  }
+  unlock_connect_mutex(orig_conn);
+  DEBUG_RETURN(new_conn);
+}
+
+static int
+read_ssl_connection(IC_CONNECTION *conn, void *buf, guint32 buf_size,
+                    guint32 *read_size)
+{
+  int error;
+  DEBUG_ENTRY("read_ssl_connection");
+
+  lock_connect_mutex(conn);
+  error= read_socket_connection(conn, buf, buf_size, read_size);
+  unlock_connect_mutex(conn);
+  DEBUG_RETURN(error);
+}
+
+static int
+write_ssl_connection(IC_CONNECTION *conn, const void *buf, guint32 size,
+                     guint32 prio_level, guint32 secs_to_try)
+{
+  int error;
+  DEBUG_ENTRY("write_ssl_connection");
+
+  lock_connect_mutex(conn);
+  error= write_socket_connection(conn, buf, size, prio_level, secs_to_try);
+  unlock_connect_mutex(conn);
+  DEBUG_RETURN(error);
+}
+
+static int
+write_ssl_front_buffer(IC_CONNECTION *conn, const void *buf, guint32 size,
+                       guint32 prio_level, guint32 secs_to_try)
+{
+  int error;
+  DEBUG_ENTRY("write_ssl_connection");
+
+  lock_connect_mutex(conn);
+  error= write_socket_front_buffer(conn, buf, size, prio_level, secs_to_try);
+  unlock_connect_mutex(conn);
+  DEBUG_RETURN(error);
+}
+
+IC_CONNECTION*
+ic_create_ssl_object(gboolean is_client,
+                     IC_STRING *root_certificate_path,
+                     IC_STRING *server_certificate_path,
+                     IC_STRING *client_certificate_path,
+                     gboolean is_connect_thread_used,
+                     gboolean is_using_front_buffer)
+{
+  IC_CONNECTION *conn;
+  DEBUG_ENTRY("ic_create_ssl_object");
+
+  if ((conn= ic_create_socket_object(is_client, FALSE,
+                                     is_connect_thread_used,
+                                     is_using_front_buffer, NULL, NULL)))
+  {
+    DEBUG_RETURN(NULL);
+  }
+  if (ic_strdup(&conn->root_certificate_path, root_certificate_path) ||
+      ic_strdup(&conn->server_certificate_path, server_certificate_path) ||
+      ic_strdup(&conn->client_certificate_path, client_certificate_path))
+  {
+    free_ssl_connection(conn);
+    DEBUG_RETURN(NULL);
+  }
+  conn->conn_op.ic_set_up_connection= set_up_ssl_connection;
+  conn->conn_op.ic_accept_connection= accept_ssl_connection;
+  conn->conn_op.ic_free_connection= free_ssl_connection;
+  
+  /*
+    Read and write routines are the same routines but with a number of
+    if-statements to handle SSL specific things, however we still want
+    to reuse the statistics code in the normal socket object.
+
+    Since we do need to grab a mutex in all cases before accessing an SSL
+    connection we define all methods requiring a mutex lock/unlock.
+  */
+  conn->conn_op.ic_read_connection= read_ssl_connection;
+  if (conn->is_using_front_buffer)
+    conn->conn_op.ic_write_connection= write_ssl_front_buffer;
+  else
+    conn->conn_op.ic_write_connection= write_ssl_connection;
+
+  set_up_rw_methods_mutex(conn, FALSE);
+  conn->conn_op.ic_fork_accept_connection= fork_accept_ssl_connection;
+  /* Mutex handling for SSL requires one mutex for read/write */
+  conn->is_ssl_connection= TRUE;
+  return conn;
+}
+
+
+#endif

@@ -194,6 +194,10 @@ void ic_set_up_ic_string(IC_STRING *in_out_str);
 gchar *ic_guint64_str(guint64 val, gchar *ptr);
 gchar *ic_guint64_hex_str(guint64 val, gchar *ptr);
 int ic_conv_str_to_int(gchar *str, guint64 *number);
+
+/* Bit manipulation routines */
+guint32 ic_count_highest_bit(guint32 bit_var);
+
 /*
   Error handling interface
 */

@@ -18,6 +18,26 @@
 static guint32 glob_debug= 0;
 static gchar *glob_debug_file= "debug.log";
 static guint32 glob_debug_screen= 0;
+
+/*
+  Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
+  no bit set is reported 0, thus we report one more than the bit index
+  of the highest bit set
+*/
+
+guint32
+ic_count_highest_bit(guint32 bit_var)
+{
+  guint32 i;
+  guint32 bit_inx= 0;
+  for (i= 0; i < 32; i++)
+  {
+    if (bit_var | (1 << i))
+      bit_inx= i+1;
+  }
+  return bit_inx;
+}
+
 /*
   MODULE: Memory Container
   Description:
@@ -930,6 +950,10 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   g_option_context_free(context);
   if ((ret_code= ic_init()))
     return ret_code;
+#ifdef HAVE_SSL
+  if (ic_ssl_init())
+    return 1;
+#endif
   return 0;
 
 parse_error:

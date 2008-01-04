@@ -21,6 +21,10 @@ static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_client_ip= "127.0.0.1";
 static gchar *glob_server_port= "10006";
 static gchar *glob_client_port= "12002";
+static gchar *glob_root_certificate_path="root.pem";
+static gchar *glob_server_certificate_path="server.pem";
+static gchar *glob_client_certificate_path="client.pem";
+
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
 static int glob_tcp_snd_size= 0;
@@ -83,18 +87,44 @@ unit_test_mc()
 #endif
 
 static int
-connection_test()
+connection_test(gboolean use_ssl)
 {
   IC_CONNECTION *conn;
   char buf[8192];
   int ret_code;
 
   printf("Connection Test Started\n");
-  if (!(conn= ic_create_socket_object(glob_is_client, TRUE, FALSE, TRUE,
-                                      NULL, NULL)))
+  if (use_ssl)
   {
-    printf("Memory allocation error\n");
-    return MEM_ALLOC_ERROR;
+#ifdef HAVE_SSL
+    IC_STRING root_certificate_path;
+    IC_STRING server_certificate_path;
+    IC_STRING client_certificate_path;
+    root_certificate_path.str= glob_root_certificate_path;
+    server_certificate_path.str= glob_server_certificate_path;
+    client_certificate_path.str= glob_server_certificate_path;
+    if (!(conn= ic_create_ssl_object(glob_is_client,
+                                     &root_certificate_path,
+                                     &server_certificate_path,
+                                     &client_certificate_path,
+                                     FALSE, FALSE)))
+    {
+      printf("Error creating SSL connection object\n");
+      return 1;
+    }
+#else
+    printf("SSL not supported in this build\n");
+    return 0;
+#endif
+  }
+  else
+  {
+    if (!(conn= ic_create_socket_object(glob_is_client, TRUE, FALSE, TRUE,
+                                        NULL, NULL)))
+    {
+      printf("Memory allocation error\n");
+      return MEM_ALLOC_ERROR;
+    }
   }
   conn->server_name= glob_server_ip;
   conn->server_port= glob_server_port;
@@ -143,6 +173,7 @@ connection_test()
   }
   conn->conn_op.ic_write_stat_connection(conn);
   conn->conn_op.ic_close_connection(conn);
+  conn->conn_op.ic_free_connection(conn);
   printf("Connection Test Success\n");
   return 0;
 }
@@ -293,7 +324,7 @@ int main(int argc, char *argv[])
   switch (glob_test_type)
   {
     case 0:
-      ret_code= connection_test();
+      ret_code= connection_test(FALSE);
       break;
     case 1:
     case 2:
@@ -315,6 +346,9 @@ int main(int argc, char *argv[])
       unit_test_mc();
       break;
 #endif
+    case 10:
+      ret_code= connection_test(TRUE);
+      break;
     default:
       break;
    }
