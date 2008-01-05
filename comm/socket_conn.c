@@ -249,7 +249,7 @@ accept_socket_connection(IC_CONNECTION *conn)
     if (client_address.ss_family == AF_INET)
     {
       ipv4_check_address= (struct sockaddr_in*)conn->client_addrinfo->ai_addr;
-      if (ipv4_client_address->sin_addr.s_addr ==
+      if (ipv4_client_address->sin_addr.s_addr !=
           ipv4_check_address->sin_addr.s_addr)
         not_accepted= TRUE;
       if (conn->client_port_num != 0 &&
@@ -1074,6 +1074,11 @@ free_ssl_session(IC_CONNECTION *conn)
     ic_free(conn->server_certificate_path.str);
   if (conn->client_certificate_path.str)
     ic_free(conn->client_certificate_path.str);
+  conn->ssl_ctx= NULL;
+  conn->ssl_conn= NULL;
+  IC_INIT_STRING(&conn->root_certificate_path, NULL, 0, FALSE);
+  IC_INIT_STRING(&conn->server_certificate_path, NULL, 0, FALSE);
+  IC_INIT_STRING(&conn->client_certificate_path, NULL, 0, FALSE);
 }
 
 static int
@@ -1101,7 +1106,7 @@ int set_up_ssl_connection(IC_CONNECTION *conn)
   DEBUG_ENTRY("set_up_ssl_connection");
 
   lock_connect_mutex(conn);
-  if ((error= set_up_socket_connection(conn)))
+  if (!(error= set_up_socket_connection(conn)))
   {
     /*
       Here we perform the SSL specific set-up of the connection. When we
@@ -1109,13 +1114,29 @@ int set_up_ssl_connection(IC_CONNECTION *conn)
       convert the connection into an SSL connection by performing the
       start-up part of the SSL protocol.
     */
-    if (!ssl_create_session(conn))
-      goto ssl_create_error;
-    SSL_set_fd(conn->ssl_conn, conn->rw_sockfd);
+    if (ssl_create_session(conn))
+      goto error_handler;
+    if (!SSL_set_fd(conn->ssl_conn, conn->rw_sockfd))
+    {
+      error= SSL_get_error(conn->ssl_conn, 0);
+      goto error_handler;
+    }
     if (conn->is_client)
       error= SSL_connect(conn->ssl_conn);
     else
       error= SSL_accept(conn->ssl_conn);
+    error= SSL_get_error(conn->ssl_conn, error);
+    if (error == SSL_ERROR_NONE)
+      error= 0;
+    if (error == SSL_ERROR_SSL)
+    {
+      while (error != SSL_ERROR_NONE)
+      {
+        /* Go through SSL error stack */
+        SSL_get_error(conn->ssl_conn, error);
+        printf("SSL Error: %d\n", error);
+      }
+    }
   }
   if (error)
     goto error_handler;
@@ -1123,7 +1144,6 @@ int set_up_ssl_connection(IC_CONNECTION *conn)
   DEBUG_RETURN(0);
 
 error_handler:
-ssl_create_error:
   free_ssl_session(conn);
   DEBUG_RETURN(error);
 }
@@ -1222,9 +1242,9 @@ ic_create_ssl_object(gboolean is_client,
   IC_CONNECTION *conn;
   DEBUG_ENTRY("ic_create_ssl_object");
 
-  if ((conn= ic_create_socket_object(is_client, FALSE,
-                                     is_connect_thread_used,
-                                     is_using_front_buffer, NULL, NULL)))
+  if (!(conn= ic_create_socket_object(is_client, FALSE,
+                                      is_connect_thread_used,
+                                      is_using_front_buffer, NULL, NULL)))
   {
     DEBUG_RETURN(NULL);
   }

@@ -100,9 +100,18 @@ connection_test(gboolean use_ssl)
     IC_STRING root_certificate_path;
     IC_STRING server_certificate_path;
     IC_STRING client_certificate_path;
-    root_certificate_path.str= glob_root_certificate_path;
-    server_certificate_path.str= glob_server_certificate_path;
-    client_certificate_path.str= glob_server_certificate_path;
+    IC_INIT_STRING(&root_certificate_path,
+                   glob_root_certificate_path,
+                   strlen(glob_root_certificate_path),
+                   TRUE);
+    IC_INIT_STRING(&server_certificate_path,
+                   glob_server_certificate_path,
+                   strlen(glob_server_certificate_path),
+                   TRUE);
+    IC_INIT_STRING(&client_certificate_path,
+                   glob_client_certificate_path,
+                   strlen(glob_client_certificate_path),
+                   TRUE);
     if (!(conn= ic_create_ssl_object(glob_is_client,
                                      &root_certificate_path,
                                      &server_certificate_path,
