@@ -346,8 +346,8 @@ ic_debug_printf(const char *format,...)
   va_list args;
   va_start(args, format);
   if (glob_debug_screen)
-    printf(format, args);
-  fprintf(ic_fptr, format, args);
+    vprintf(format, args);
+  vfprintf(ic_fptr, format, args);
   va_end(args);
 }
 
