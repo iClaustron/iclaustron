@@ -1084,6 +1084,7 @@ free_ssl_session(IC_CONNECTION *conn)
 static int
 ssl_create_session(IC_CONNECTION *conn)
 {
+  IC_STRING *loc_cert_file;
   if (!(conn->ssl_ctx= SSL_CTX_new(SSLv3_method())))
     goto error;
   /*
@@ -1092,6 +1093,17 @@ ssl_create_session(IC_CONNECTION *conn)
     after this we'll create an SSL session which is then ready for SSL_connect
     or SSL_accept.
   */
+  if (conn->is_client)
+    loc_cert_file= &conn->client_certificate_path;
+  else
+    loc_cert_file= &conn->server_certificate_path;
+  if (SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
+                                         loc_cert_file->str) != 1)
+    goto error;
+  if (SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
+                                  loc_cert_file->str,
+                                  SSL_FILETYPE_PEM) != 1)
+    goto error;
   if (!(conn->ssl_conn= SSL_new(conn->ssl_ctx)))
     goto error;
   return 0;
