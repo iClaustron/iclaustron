@@ -24,6 +24,7 @@ static gchar *glob_client_port= "12002";
 static gchar *glob_root_certificate_path="root.pem";
 static gchar *glob_server_certificate_path="server.pem";
 static gchar *glob_client_certificate_path="client.pem";
+static gchar *glob_passwd_string="jolle";
 
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
@@ -100,6 +101,12 @@ connection_test(gboolean use_ssl)
     IC_STRING root_certificate_path;
     IC_STRING server_certificate_path;
     IC_STRING client_certificate_path;
+    IC_STRING passwd_string;
+    IC_STRING *loc_cert_path;
+    IC_INIT_STRING(&passwd_string,
+                   glob_passwd_string,
+                   strlen(glob_passwd_string),
+                   TRUE);
     IC_INIT_STRING(&root_certificate_path,
                    glob_root_certificate_path,
                    strlen(glob_root_certificate_path),
@@ -112,10 +119,13 @@ connection_test(gboolean use_ssl)
                    glob_client_certificate_path,
                    strlen(glob_client_certificate_path),
                    TRUE);
+    loc_cert_path= glob_is_client ?
+           &client_certificate_path :
+           &server_certificate_path;
     if (!(conn= ic_create_ssl_object(glob_is_client,
                                      &root_certificate_path,
-                                     &server_certificate_path,
-                                     &client_certificate_path,
+                                     loc_cert_path,
+                                     &passwd_string,
                                      FALSE, FALSE)))
     {
       printf("Error creating SSL connection object\n");

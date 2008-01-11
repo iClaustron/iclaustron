@@ -1070,21 +1070,23 @@ free_ssl_session(IC_CONNECTION *conn)
     SSL_free(conn->ssl_conn);
   if (conn->root_certificate_path.str)
     ic_free(conn->root_certificate_path.str);
-  if (conn->server_certificate_path.str)
-    ic_free(conn->server_certificate_path.str);
-  if (conn->client_certificate_path.str)
-    ic_free(conn->client_certificate_path.str);
+  if (conn->loc_certificate_path.str)
+    ic_free(conn->loc_certificate_path.str);
+  if (conn->passwd_string.str)
+    ic_free(conn->passwd_string.str);
   conn->ssl_ctx= NULL;
   conn->ssl_conn= NULL;
   IC_INIT_STRING(&conn->root_certificate_path, NULL, 0, FALSE);
-  IC_INIT_STRING(&conn->server_certificate_path, NULL, 0, FALSE);
-  IC_INIT_STRING(&conn->client_certificate_path, NULL, 0, FALSE);
+  IC_INIT_STRING(&conn->loc_certificate_path, NULL, 0, FALSE);
+  IC_INIT_STRING(&conn->passwd_string, NULL, 0, FALSE);
 }
 
 static int
 ssl_create_session(IC_CONNECTION *conn)
 {
   IC_STRING *loc_cert_file;
+  gchar buf [256];
+  gchar *buf_ptr;
   if (!(conn->ssl_ctx= SSL_CTX_new(SSLv3_method())))
     goto error;
   /*
@@ -1093,10 +1095,9 @@ ssl_create_session(IC_CONNECTION *conn)
     after this we'll create an SSL session which is then ready for SSL_connect
     or SSL_accept.
   */
-  if (conn->is_client)
-    loc_cert_file= &conn->client_certificate_path;
-  else
-    loc_cert_file= &conn->server_certificate_path;
+  loc_cert_file= &conn->loc_certificate_path;
+  buf_ptr= ic_get_ic_string(&conn->passwd_string, buf); 
+  SSL_CTX_set_default_passwd_cb_userdata(conn->ssl_ctx, (void*)buf_ptr);
   if (SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
                                          loc_cert_file->str) != 1)
     goto error;
@@ -1111,8 +1112,8 @@ error:
   free_ssl_session(conn);
   return 1;
 }
-
-int set_up_ssl_connection(IC_CONNECTION *conn)
+static int
+set_up_ssl_connection(IC_CONNECTION *conn)
 {
   int error= 1;
   DEBUG_ENTRY("set_up_ssl_connection");
@@ -1133,21 +1134,23 @@ int set_up_ssl_connection(IC_CONNECTION *conn)
       error= SSL_get_error(conn->ssl_conn, 0);
       goto error_handler;
     }
+    printf("SSL session created\n");
     if (conn->is_client)
       error= SSL_connect(conn->ssl_conn);
     else
       error= SSL_accept(conn->ssl_conn);
+    printf("SSL session connected\n");
     error= SSL_get_error(conn->ssl_conn, error);
     if (error == SSL_ERROR_NONE)
-      error= 0;
-    if (error == SSL_ERROR_SSL)
     {
-      while (error != SSL_ERROR_NONE)
-      {
-        /* Go through SSL error stack */
-        SSL_get_error(conn->ssl_conn, error);
-        printf("SSL Error: %d\n", error);
-      }
+      printf("SSL Success\n");
+      error= 0;
+    }
+    else
+    {
+      /* Go through SSL error stack */
+      SSL_get_error(conn->ssl_conn, error);
+      printf("SSL Error: %d\n", error);
     }
   }
   if (error)
@@ -1246,8 +1249,8 @@ write_ssl_front_buffer(IC_CONNECTION *conn, const void *buf, guint32 size,
 IC_CONNECTION*
 ic_create_ssl_object(gboolean is_client,
                      IC_STRING *root_certificate_path,
-                     IC_STRING *server_certificate_path,
-                     IC_STRING *client_certificate_path,
+                     IC_STRING *loc_certificate_path,
+                     IC_STRING *passwd_string,
                      gboolean is_connect_thread_used,
                      gboolean is_using_front_buffer)
 {
@@ -1261,8 +1264,8 @@ ic_create_ssl_object(gboolean is_client,
     DEBUG_RETURN(NULL);
   }
   if (ic_strdup(&conn->root_certificate_path, root_certificate_path) ||
-      ic_strdup(&conn->server_certificate_path, server_certificate_path) ||
-      ic_strdup(&conn->client_certificate_path, client_certificate_path))
+      ic_strdup(&conn->loc_certificate_path, loc_certificate_path) ||
+      ic_strdup(&conn->passwd_string, passwd_string))
   {
     free_ssl_connection(conn);
     DEBUG_RETURN(NULL);

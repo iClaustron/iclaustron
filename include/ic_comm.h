@@ -436,8 +436,8 @@ struct ic_connection
   */
   gboolean is_ssl_connection;
   IC_STRING root_certificate_path;
-  IC_STRING server_certificate_path;
-  IC_STRING client_certificate_path;
+  IC_STRING loc_certificate_path;
+  IC_STRING passwd_string;
   SSL *ssl_conn;
   SSL_CTX *ssl_ctx;
 #endif
@@ -453,8 +453,8 @@ IC_CONNECTION *ic_create_socket_object(gboolean is_client,
 
 IC_CONNECTION *ic_create_ssl_object(gboolean is_client,
                                     IC_STRING *root_certificate_path,
-                                    IC_STRING *server_certification_path,
-                                    IC_STRING *client_certification_path,
+                                    IC_STRING *loc_certification_path,
+                                    IC_STRING *passwd_string,
                                     gboolean is_connect_thread_used,
                                     gboolean is_using_front_buffer);
 
