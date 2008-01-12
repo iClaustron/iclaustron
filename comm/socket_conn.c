@@ -20,6 +20,9 @@
 #include <errno.h>
 #include <ic_common.h>
 
+#ifdef HAVE_SSL
+static int ssl_create_connection(IC_SSL_CONNECTION *conn);
+#endif
 static void destroy_timers(IC_CONNECTION *conn);
 static void destroy_mutexes(IC_CONNECTION *conn);
 
@@ -197,10 +200,36 @@ ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
 }
 
 static int
+security_handler_at_connect(IC_CONNECTION *conn)
+{
+  int error;
+#ifdef HAVE_SSL
+  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
+  if (conn->is_ssl_connection &&
+      (error= ssl_create_connection(ssl_conn)))
+  {
+    conn->error_code= SSL_ERROR;
+    goto error;
+  }
+#endif
+  if (conn->auth_func)
+  {
+    if ((error= conn->auth_func(conn->auth_obj)))
+    {
+      /* error handler */
+      return error;
+    }
+  }
+  return 0;
+error:
+  return error;
+}
+
+static int
 accept_socket_connection(IC_CONNECTION *conn)
 {
   gboolean not_accepted= FALSE;
-  int ret_sockfd, ok;
+  int ret_sockfd, ok, error;
   socklen_t addr_len;
   struct sockaddr_storage client_address;
   const struct sockaddr *client_addr_ptr= 
@@ -294,8 +323,13 @@ accept_socket_connection(IC_CONNECTION *conn)
   }
   conn->rw_sockfd= ret_sockfd;
   conn->error_code= 0;
+  if ((error= security_handler_at_connect(conn)))
+    goto error;
   set_is_connected(conn);
   return 0;
+error:
+  close(ret_sockfd);
+  return error;
 }
 
 static int
@@ -460,11 +494,14 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
       conn->listen_sockfd= sockfd;
   }
   conn->error_code= 0;
+  if ((error= security_handler_at_connect(conn)))
+    goto error2;
   return 0;
 
 error:
    error= errno;
    conn->error_code= error;
+error2:
    close(sockfd);
    return error;
 }
@@ -477,16 +514,6 @@ run_set_up_socket_connection(gpointer data)
   ret_code= int_set_up_socket_connection(conn);
   lock_connect_mutex(conn);
   conn->conn_stat.is_connect_thread_active= FALSE;
-  if (conn->auth_func)
-  {
-    if ((ret_code= conn->auth_func(conn->auth_obj)))
-    {
-      unlock_connect_mutex(conn);
-      close_socket_connection(conn);
-      conn->error_code= ret_code;
-      return NULL;
-    }
-  }
   unlock_connect_mutex(conn);
   return NULL;
 }
@@ -950,10 +977,11 @@ fork_accept_connection(IC_CONNECTION *orig_conn,
                        gboolean use_front_buffer)
 {
   IC_CONNECTION *fork_conn;
-
-  if ((fork_conn= (IC_CONNECTION*)ic_calloc(sizeof(IC_CONNECTION))) == NULL)
+  int size_object= orig_conn->is_ssl_connection ?
+                   sizeof(IC_SSL_CONNECTION) : sizeof(IC_CONNECTION);
+  if ((fork_conn= (IC_CONNECTION*)ic_calloc(size_object)) == NULL)
     return NULL;
-  memcpy(fork_conn, orig_conn, sizeof(IC_CONNECTION));
+  memcpy(fork_conn, orig_conn, size_object);
 
   init_connect_stat(fork_conn);
   fork_conn->orig_conn= orig_conn;
@@ -990,18 +1018,23 @@ error:
   return NULL;
 }
 
+
 IC_CONNECTION*
-ic_create_socket_object(gboolean is_client,
-                        gboolean is_mutex_used,
-                        gboolean is_connect_thread_used,
-                        gboolean is_using_front_buffer,
-                        authenticate_func auth_func,
-                        void *auth_obj)
+int_create_socket_object(gboolean is_client,
+                         gboolean is_mutex_used,
+                         gboolean is_connect_thread_used,
+                         gboolean is_using_front_buffer,
+                         gboolean is_ssl,
+                         gboolean is_ssl_used_for_data,
+                         authenticate_func auth_func,
+                         void *auth_obj)
 {
+  int size_object= is_ssl ? sizeof(IC_SSL_CONNECTION) : sizeof(IC_CONNECTION);
   IC_CONNECTION *conn;
 
-  if ((conn= (IC_CONNECTION*)ic_calloc(sizeof(IC_CONNECTION))) == NULL)
-    return NULL;
+  if ((conn= (IC_CONNECTION*)ic_calloc(size_object)) == NULL)
+      return NULL;
+
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
   conn->conn_op.ic_accept_connection= accept_socket_connection;
   conn->conn_op.ic_close_connection= close_socket_connection;
@@ -1015,6 +1048,8 @@ ic_create_socket_object(gboolean is_client,
   conn->conn_op.ic_write_stat_connection= write_stat_socket_connection;
   conn->conn_op.ic_fork_accept_connection= fork_accept_connection;
 
+  conn->is_ssl_connection= is_ssl;
+  conn->is_ssl_used_for_data= is_ssl_used_for_data;
   conn->is_client= is_client;
   conn->is_connect_thread_used= is_connect_thread_used;
   conn->backlog= 1;
@@ -1041,6 +1076,21 @@ error:
   return NULL;
 }
 
+IC_CONNECTION*
+ic_create_socket_object(gboolean is_client,
+                        gboolean is_mutex_used,
+                        gboolean is_connect_thread_used,
+                        gboolean is_using_front_buffer,
+                        authenticate_func auth_func,
+                        void *auth_obj)
+{
+  return int_create_socket_object(is_client, is_mutex_used,
+                                  is_connect_thread_used,
+                                  is_using_front_buffer,
+                                  FALSE, FALSE,
+                                  auth_func, auth_obj);
+}
+
 /*
   Module: SSL
   -----------
@@ -1062,7 +1112,7 @@ ic_ssl_init()
 }
 
 static void
-free_ssl_session(IC_CONNECTION *conn)
+free_ssl_session(IC_SSL_CONNECTION *conn)
 {
   if (conn->ssl_ctx)
     SSL_CTX_free(conn->ssl_ctx);
@@ -1074,8 +1124,11 @@ free_ssl_session(IC_CONNECTION *conn)
     ic_free(conn->loc_certificate_path.str);
   if (conn->passwd_string.str)
     ic_free(conn->passwd_string.str);
+  if (conn->dh)
+    DH_free(conn->dh);
   conn->ssl_ctx= NULL;
   conn->ssl_conn= NULL;
+  conn->dh= NULL;
   IC_INIT_STRING(&conn->root_certificate_path, NULL, 0, FALSE);
   IC_INIT_STRING(&conn->loc_certificate_path, NULL, 0, FALSE);
   IC_INIT_STRING(&conn->passwd_string, NULL, 0, FALSE);
@@ -1102,103 +1155,91 @@ ic_ssl_verify_callback(int ok, X509_STORE_CTX *ctx_store)
   return ok;
 }
 
+/*
+  This method is used after a successful set-up of a TCP/IP connection. It is
+  used both on client and server side. It creates an SSL context whereafter it
+  creates and SSL connection and uses this to perform the SSL related parts of
+  the connection set-up.
+*/
 static int
-ssl_create_session(IC_CONNECTION *conn)
+ssl_create_connection(IC_SSL_CONNECTION *conn)
 {
   IC_STRING *loc_cert_file;
   gchar buf [256];
   gchar *buf_ptr;
+  int error;
+  IC_CONNECTION *sock_conn= (IC_CONNECTION*)conn;
+
   if (!(conn->ssl_ctx= SSL_CTX_new(SSLv3_method())))
-    goto error;
+    goto error_handler;
   /*
-    Now we have allocated a context from which this connection will work in.
-    Next step is to define certificate handling of this context. And finally
-    after this we'll create an SSL session which is then ready for SSL_connect
-    or SSL_accept.
+    Set-up password to use for this SSL session object. This password is the
+    private key which the SSL certificates have been signed with.
   */
   loc_cert_file= &conn->loc_certificate_path;
   buf_ptr= ic_get_ic_string(&conn->passwd_string, buf);
-  printf("Set up password\n");
   SSL_CTX_set_default_passwd_cb_userdata(conn->ssl_ctx, (void*)buf_ptr);
-  printf("Set up certificate chain file\n");
-  if (SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
-                                         loc_cert_file->str) != 1)
-    goto error;
-  printf("Set up private key file\n");
-  if (SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
-                                  loc_cert_file->str,
-                                  SSL_FILETYPE_PEM) != 1)
-    goto error;
-  printf("Load verify locations\n");
-  if (SSL_CTX_load_verify_locations(conn->ssl_ctx,
-                                    conn->root_certificate_path.str,
-                                    NULL) != 1)
-    goto error;
-  printf("Set default verify paths\n");
-  if (SSL_CTX_set_default_verify_paths(conn->ssl_ctx) != 1)
-    goto error;
-  printf("Set verify\n");
-  SSL_CTX_set_verify(conn->ssl_ctx,
-    SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-    ic_ssl_verify_callback);
-  printf("Create new SSL object\n");
+  /*
+    We use a local certificate chain file, normally either server.pem or client.pem.
+    This file is also the file where the private key is stored.
+  */
+  if ((SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
+                                          loc_cert_file->str) !=
+                                          IC_SSL_SUCCESS) ||
+      (SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
+                                   loc_cert_file->str,
+                                   SSL_FILETYPE_PEM) != IC_SSL_SUCCESS) ||
+      (SSL_CTX_load_verify_locations(conn->ssl_ctx,
+                                     conn->root_certificate_path.str,
+                                     NULL) != IC_SSL_SUCCESS) ||
+      (SSL_CTX_set_default_verify_paths(conn->ssl_ctx) != IC_SSL_SUCCESS) ||
+      (SSL_CTX_set_verify(conn->ssl_ctx,
+           SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+           ic_ssl_verify_callback), FALSE))
+    goto error_handler;
   if (!(conn->ssl_conn= SSL_new(conn->ssl_ctx)))
-    goto error;
+    goto error_handler;
   printf("Successfully created context\n");
+
+  if (!SSL_set_fd(conn->ssl_conn, sock_conn->rw_sockfd))
+  {
+    error= SSL_get_error(conn->ssl_conn, 0);
+    goto error_handler;
+  }
+  printf("SSL session created\n");
+  if (sock_conn->is_client)
+    error= SSL_connect(conn->ssl_conn);
+  else
+    error= SSL_accept(conn->ssl_conn);
+  printf("SSL session connected\n");
+  error= SSL_get_error(conn->ssl_conn, error);
+  if (error == SSL_ERROR_NONE)
+  {
+    printf("SSL Success\n");
+    error= 0;
+  }
+  else
+  {
+    /* Go through SSL error stack */
+    SSL_get_error(conn->ssl_conn, error);
+    printf("SSL Error: %d\n", error);
+  }
+
   return 0;
-error:
+error_handler:
   printf("Session creation failed\n");
   free_ssl_session(conn);
   return 1;
 }
 static int
-set_up_ssl_connection(IC_CONNECTION *conn)
+set_up_ssl_connection(IC_CONNECTION *in_conn)
 {
   int error= 1;
   DEBUG_ENTRY("set_up_ssl_connection");
 
-  lock_connect_mutex(conn);
-  if (!(error= set_up_socket_connection(conn)))
-  {
-    /*
-      Here we perform the SSL specific set-up of the connection. When we
-      arrive here a connection is already set-up and now we want to
-      convert the connection into an SSL connection by performing the
-      start-up part of the SSL protocol.
-    */
-    if (ssl_create_session(conn))
-      goto error_handler;
-    if (!SSL_set_fd(conn->ssl_conn, conn->rw_sockfd))
-    {
-      error= SSL_get_error(conn->ssl_conn, 0);
-      goto error_handler;
-    }
-    printf("SSL session created\n");
-    if (conn->is_client)
-      error= SSL_connect(conn->ssl_conn);
-    else
-      error= SSL_accept(conn->ssl_conn);
-    printf("SSL session connected\n");
-    error= SSL_get_error(conn->ssl_conn, error);
-    if (error == SSL_ERROR_NONE)
-    {
-      printf("SSL Success\n");
-      error= 0;
-    }
-    else
-    {
-      /* Go through SSL error stack */
-      SSL_get_error(conn->ssl_conn, error);
-      printf("SSL Error: %d\n", error);
-    }
-  }
-  if (error)
-    goto error_handler;
-  unlock_connect_mutex(conn);
-  DEBUG_RETURN(0);
-
-error_handler:
-  free_ssl_session(conn);
+  lock_connect_mutex(in_conn);
+  error= set_up_socket_connection(in_conn);
+  unlock_connect_mutex(in_conn);
   DEBUG_RETURN(error);
 }
 
@@ -1209,22 +1250,21 @@ accept_ssl_connection(IC_CONNECTION *conn)
   DEBUG_ENTRY("accept_ssl_connection");
 
   lock_connect_mutex(conn);
-  if ((error= accept_socket_connection(conn)))
-  {
-    /* Here we perform server related set-up code for SSL connections. */
-  }
+  error= accept_socket_connection(conn);
   unlock_connect_mutex(conn);
   DEBUG_RETURN(error);
 }
 
 static void
-free_ssl_connection(IC_CONNECTION *conn)
+free_ssl_connection(IC_CONNECTION *in_conn)
 {
+  IC_SSL_CONNECTION *conn= (IC_SSL_CONNECTION*)in_conn;
   DEBUG_ENTRY("free_ssl_connection");
+
   /* Free SSL related parts of the connection */
   free_ssl_session(conn);
   /* Free normal socket connection parts */
-  free_socket_connection(conn);
+  free_socket_connection(in_conn);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -1234,16 +1274,36 @@ fork_accept_ssl_connection(IC_CONNECTION *orig_conn,
                            gboolean use_front_buffer)
 {
   IC_CONNECTION *new_conn;
+  IC_SSL_CONNECTION *new_ssl_conn;
+  IC_SSL_CONNECTION *orig_ssl_conn= (IC_SSL_CONNECTION*)orig_conn;
   DEBUG_ENTRY("fork_accept_ssl_connection");
 
   lock_connect_mutex(orig_conn);
   if ((new_conn= fork_accept_connection(orig_conn, use_mutex,
                                         use_front_buffer)))
   {
+    new_ssl_conn= (IC_SSL_CONNECTION*)new_conn;
     /* Assign SSL specific variables to new connection */
+    if (ic_strdup(&new_ssl_conn->root_certificate_path,
+                  &orig_ssl_conn->root_certificate_path) ||
+        ic_strdup(&new_ssl_conn->loc_certificate_path,
+                  &orig_ssl_conn->loc_certificate_path) ||
+        ic_strdup(&new_ssl_conn->passwd_string,
+                  &orig_ssl_conn->passwd_string))
+      goto error_handler;
+    new_ssl_conn->ssl_conn= NULL;
+    new_ssl_conn->ssl_ctx= NULL;
+    new_ssl_conn->dh= NULL;
+    if (ssl_create_connection(new_ssl_conn))
+      goto error_handler;
   }
   unlock_connect_mutex(orig_conn);
   DEBUG_RETURN(new_conn);
+
+error_handler:
+  unlock_connect_mutex(orig_conn);
+  free_ssl_connection(new_conn);
+  DEBUG_RETURN(NULL);
 }
 
 static int
@@ -1290,21 +1350,28 @@ ic_create_ssl_object(gboolean is_client,
                      IC_STRING *root_certificate_path,
                      IC_STRING *loc_certificate_path,
                      IC_STRING *passwd_string,
+                     gboolean is_ssl_used_for_data,
                      gboolean is_connect_thread_used,
-                     gboolean is_using_front_buffer)
+                     gboolean is_using_front_buffer,
+                     authenticate_func auth_func,
+                     void *auth_obj)
 {
   IC_CONNECTION *conn;
+  IC_SSL_CONNECTION *ssl_conn;
   DEBUG_ENTRY("ic_create_ssl_object");
 
-  if (!(conn= ic_create_socket_object(is_client, FALSE,
-                                      is_connect_thread_used,
-                                      is_using_front_buffer, NULL, NULL)))
+  if (!(conn= int_create_socket_object(is_client, FALSE,
+                                       is_connect_thread_used,
+                                       is_using_front_buffer,
+                                       TRUE, is_ssl_used_for_data,
+                                       auth_func, auth_obj)))
   {
     DEBUG_RETURN(NULL);
   }
-  if (ic_strdup(&conn->root_certificate_path, root_certificate_path) ||
-      ic_strdup(&conn->loc_certificate_path, loc_certificate_path) ||
-      ic_strdup(&conn->passwd_string, passwd_string))
+  ssl_conn= (IC_SSL_CONNECTION*)conn;
+  if (ic_strdup(&ssl_conn->root_certificate_path, root_certificate_path) ||
+      ic_strdup(&ssl_conn->loc_certificate_path, loc_certificate_path) ||
+      ic_strdup(&ssl_conn->passwd_string, passwd_string))
   {
     free_ssl_connection(conn);
     DEBUG_RETURN(NULL);
@@ -1329,10 +1396,6 @@ ic_create_ssl_object(gboolean is_client,
 
   set_up_rw_methods_mutex(conn, FALSE);
   conn->conn_op.ic_fork_accept_connection= fork_accept_ssl_connection;
-  /* Mutex handling for SSL requires one mutex for read/write */
-  conn->is_ssl_connection= TRUE;
   return conn;
 }
-
-
 #endif

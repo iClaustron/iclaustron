@@ -29,6 +29,7 @@
 #define END_OF_FILE 32765
 #define PROTOCOL_ERROR 32764
 #define AUTHENTICATE_ERROR 32763
+#define SSL_ERROR 32762
 
 #ifdef USE_MSG_NOSIGNAL
 #define IC_MSG_NOSIGNAL MSG_NOSIGNAL
@@ -36,7 +37,7 @@
 #define IC_MSG_NOSIGNAL 0
 #endif
 
-typedef int (*authenticate_func) (void *);
+typedef int (*authenticate_func) (void*);
 
 struct ic_connection;
 struct ic_connect_stat;
@@ -325,13 +326,14 @@ struct ic_connection
   gboolean is_client;
 
   /*
-    In some cases it is desirable to do some authentication
-    processing before accepting a connection already set-up.
-    In this case there is a callback function plus a callback
-    object defined which is used for this purpose.
+    In some cases the application logic requires some authentication
+    processing to occur after completing all parts of the connection
+    set-up. This is signalled through the use of a user-supplied
+    authentication function.
   */
   authenticate_func auth_func;
   void *auth_obj;
+
   /*
     The normal way to use this connection API is to listen to a
     socket and then close the listening socket after accept is
@@ -429,20 +431,29 @@ struct ic_connection
 #define WAN_SND_BUF_SIZE 4194304
 #define WAN_TCP_MAXSEG_SIZE 61440
   gboolean is_wan_connection;
+  gboolean is_ssl_connection;
+  gboolean is_ssl_used_for_data;
+};
+typedef struct ic_connection IC_CONNECTION;
+
+#define IC_SSL_SUCCESS 1
+struct ic_ssl_connection
+{
+  IC_CONNECTION socket_conn;
 #ifdef HAVE_SSL
   /*
     This is a set of variables that define an SSL connection. 
     ssl_connection represents the SSL connection.
   */
-  gboolean is_ssl_connection;
   IC_STRING root_certificate_path;
   IC_STRING loc_certificate_path;
   IC_STRING passwd_string;
   SSL *ssl_conn;
   SSL_CTX *ssl_ctx;
+  DH *dh;
 #endif
 };
-typedef struct ic_connection IC_CONNECTION;
+typedef struct ic_ssl_connection IC_SSL_CONNECTION;
 
 IC_CONNECTION *ic_create_socket_object(gboolean is_client,
                                        gboolean is_mutex_used,
@@ -455,8 +466,11 @@ IC_CONNECTION *ic_create_ssl_object(gboolean is_client,
                                     IC_STRING *root_certificate_path,
                                     IC_STRING *loc_certification_path,
                                     IC_STRING *passwd_string,
+                                    gboolean is_ssl_used_for_data,
                                     gboolean is_connect_thread_used,
-                                    gboolean is_using_front_buffer);
+                                    gboolean is_using_front_buffer,
+                                    authenticate_func func,
+                                    void *auth_obj);
 
 struct ic_connect_manager
 {

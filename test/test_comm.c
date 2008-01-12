@@ -126,7 +126,8 @@ connection_test(gboolean use_ssl)
                                      &root_certificate_path,
                                      loc_cert_path,
                                      &passwd_string,
-                                     FALSE, FALSE)))
+                                     FALSE, FALSE, FALSE,
+                                     NULL, NULL)))
     {
       printf("Error creating SSL connection object\n");
       return 1;
