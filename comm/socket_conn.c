@@ -1082,6 +1082,27 @@ free_ssl_session(IC_CONNECTION *conn)
 }
 
 static int
+ic_ssl_verify_callback(int ok, X509_STORE_CTX *ctx_store)
+{
+  gchar buf[512];
+  printf("verify callback %d\n", ok);
+  if (ok == 0)
+  {
+    X509 *cert= X509_STORE_CTX_get_current_cert(ctx_store);
+    int depth= X509_STORE_CTX_get_error_depth(ctx_store);
+    int error= X509_STORE_CTX_get_error(ctx_store);
+
+    printf("Error with certificate at depth %d\n", depth);
+    X509_NAME_oneline(X509_get_issuer_name(cert), buf, 512);
+    printf("Issuer = %s\n", buf);
+    X509_NAME_oneline(X509_get_subject_name(cert), buf, 512);
+    printf("Subject = %s\n", buf);
+    printf("Error %d, %s\n", error, X509_verify_cert_error_string(error));
+  }
+  return ok;
+}
+
+static int
 ssl_create_session(IC_CONNECTION *conn)
 {
   IC_STRING *loc_cert_file;
@@ -1096,19 +1117,37 @@ ssl_create_session(IC_CONNECTION *conn)
     or SSL_accept.
   */
   loc_cert_file= &conn->loc_certificate_path;
-  buf_ptr= ic_get_ic_string(&conn->passwd_string, buf); 
+  buf_ptr= ic_get_ic_string(&conn->passwd_string, buf);
+  printf("Set up password\n");
   SSL_CTX_set_default_passwd_cb_userdata(conn->ssl_ctx, (void*)buf_ptr);
+  printf("Set up certificate chain file\n");
   if (SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
                                          loc_cert_file->str) != 1)
     goto error;
+  printf("Set up private key file\n");
   if (SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
                                   loc_cert_file->str,
                                   SSL_FILETYPE_PEM) != 1)
     goto error;
+  printf("Load verify locations\n");
+  if (SSL_CTX_load_verify_locations(conn->ssl_ctx,
+                                    conn->root_certificate_path.str,
+                                    NULL) != 1)
+    goto error;
+  printf("Set default verify paths\n");
+  if (SSL_CTX_set_default_verify_paths(conn->ssl_ctx) != 1)
+    goto error;
+  printf("Set verify\n");
+  SSL_CTX_set_verify(conn->ssl_ctx,
+    SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+    ic_ssl_verify_callback);
+  printf("Create new SSL object\n");
   if (!(conn->ssl_conn= SSL_new(conn->ssl_ctx)))
     goto error;
+  printf("Successfully created context\n");
   return 0;
 error:
+  printf("Session creation failed\n");
   free_ssl_session(conn);
   return 1;
 }
