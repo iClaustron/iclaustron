@@ -19,6 +19,7 @@ static guint32 glob_debug= 0;
 static gchar *glob_debug_file= "debug.log";
 static guint32 glob_debug_screen= 0;
 
+
 /*
   Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
   no bit set is reported 0, thus we report one more than the bit index

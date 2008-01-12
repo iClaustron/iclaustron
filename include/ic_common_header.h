@@ -39,6 +39,11 @@ gchar *ic_malloc(size_t size);
 void ic_free(void *ret_obj);
 
 /*
+  iClaustron Timer routines
+*/
+void ic_sleep(int sleep_ms);
+
+/*
   A couple of useful macros.
 
   ic_align(a, b)

@@ -242,10 +242,9 @@ accept_socket_connection(IC_CONNECTION *conn)
   struct sockaddr_in6 *ipv6_check_address;
 
   /*
-    The socket used to listen to a part can be reused many times.
+    The socket used to listen to a port can be reused many times.
     accept will return a new socket that can be used to read and
-    write from. We will not reuse a listening socket so we will
-    always close it immediately and only use the returned socket.
+    write from.
   */
   addr_len= sizeof(client_address);
   DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s\n",
@@ -472,6 +471,8 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
         goto error;
       }
       conn->rw_sockfd= sockfd;
+      if ((error= security_handler_at_connect(conn)))
+        goto error2;
       set_is_connected(conn);
       break;
     } while (1);
@@ -494,14 +495,12 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
       conn->listen_sockfd= sockfd;
   }
   conn->error_code= 0;
-  if ((error= security_handler_at_connect(conn)))
-    goto error2;
   return 0;
 
 error:
    error= errno;
-   conn->error_code= error;
 error2:
+   conn->error_code= error;
    close(sockfd);
    return error;
 }
@@ -1091,6 +1090,7 @@ ic_create_socket_object(gboolean is_client,
                                   auth_func, auth_obj);
 }
 
+#ifdef HAVE_SSL
 /*
   Module: SSL
   -----------
@@ -1099,7 +1099,6 @@ ic_create_socket_object(gboolean is_client,
     back-end methods there are lots of new methods although many of the
     old methods are reused also for SSL connections.
 */
-#ifdef HAVE_SSL
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
@@ -1114,21 +1113,24 @@ ic_ssl_init()
 static void
 free_ssl_session(IC_SSL_CONNECTION *conn)
 {
+  if (conn->ssl_conn)
+  {
+    SSL_shutdown(conn->ssl_conn);
+    SSL_free(conn->ssl_conn);
+  }
   if (conn->ssl_ctx)
     SSL_CTX_free(conn->ssl_ctx);
-  if (conn->ssl_conn)
-    SSL_free(conn->ssl_conn);
+  if (conn->ssl_dh)
+    DH_free(conn->ssl_dh);
   if (conn->root_certificate_path.str)
     ic_free(conn->root_certificate_path.str);
   if (conn->loc_certificate_path.str)
     ic_free(conn->loc_certificate_path.str);
   if (conn->passwd_string.str)
     ic_free(conn->passwd_string.str);
-  if (conn->dh)
-    DH_free(conn->dh);
   conn->ssl_ctx= NULL;
   conn->ssl_conn= NULL;
-  conn->dh= NULL;
+  conn->ssl_dh= NULL;
   IC_INIT_STRING(&conn->root_certificate_path, NULL, 0, FALSE);
   IC_INIT_STRING(&conn->loc_certificate_path, NULL, 0, FALSE);
   IC_INIT_STRING(&conn->passwd_string, NULL, 0, FALSE);
@@ -1221,8 +1223,8 @@ ssl_create_connection(IC_SSL_CONNECTION *conn)
   else
   {
     /* Go through SSL error stack */
-    SSL_get_error(conn->ssl_conn, error);
     printf("SSL Error: %d\n", error);
+    goto error_handler;
   }
 
   return 0;
@@ -1293,7 +1295,7 @@ fork_accept_ssl_connection(IC_CONNECTION *orig_conn,
       goto error_handler;
     new_ssl_conn->ssl_conn= NULL;
     new_ssl_conn->ssl_ctx= NULL;
-    new_ssl_conn->dh= NULL;
+    new_ssl_conn->ssl_dh= NULL;
     if (ssl_create_connection(new_ssl_conn))
       goto error_handler;
   }

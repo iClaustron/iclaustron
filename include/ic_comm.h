@@ -437,6 +437,9 @@ struct ic_connection
 typedef struct ic_connection IC_CONNECTION;
 
 #define IC_SSL_SUCCESS 1
+#define IC_SSL_ERROR -1
+#define IC_SSL_INDICATION 0
+
 struct ic_ssl_connection
 {
   IC_CONNECTION socket_conn;
@@ -445,16 +448,43 @@ struct ic_ssl_connection
     This is a set of variables that define an SSL connection. 
     ssl_connection represents the SSL connection.
   */
+  SSL_CTX *ssl_ctx;
+  SSL *ssl_conn;
+  DH *ssl_dh;
+
   IC_STRING root_certificate_path;
   IC_STRING loc_certificate_path;
   IC_STRING passwd_string;
-  SSL *ssl_conn;
-  SSL_CTX *ssl_ctx;
-  DH *dh;
 #endif
 };
 typedef struct ic_ssl_connection IC_SSL_CONNECTION;
 
+/*
+  There are three levels in the connection set-up. The connection set-up will
+  always start by performing a normal TCP/IP connection. When this connection
+  is up one will create an SSL session if we created a SSL socket object.
+  The final and third phase is application specific authentication logic
+  which is also optional.
+
+  In addition the connect can be performed in a separate thread. In this case
+  the application should not use the connection other than checking whether
+  the connection is connected until the connected flag is set.
+
+  When the connection has been set-up there is the possibility to use a front
+  buffer. If this is used there is a specific flush call to ensure no data is
+  left in the front buffer.
+
+  For SSL connection one can use whether the data transport should be encrypted
+  or not. The application authentication part will always be encrypted since it
+  will often entail sending passwords.
+
+  All socket objects gather statistics about its usage and there is a set of
+  calls to gather this statistics.
+
+  It is possible to set-up a listening socket and then create new socket objects
+  each time someone connects to this listening socket. Each socket object needs
+  to be free'd independent of how they were created.
+*/
 IC_CONNECTION *ic_create_socket_object(gboolean is_client,
                                        gboolean is_mutex_used,
                                        gboolean is_connect_thread_used,
