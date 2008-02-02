@@ -951,10 +951,6 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   g_option_context_free(context);
   if ((ret_code= ic_init()))
     return ret_code;
-#ifdef HAVE_SSL
-  if (ic_ssl_init())
-    return 1;
-#endif
   return 0;
 
 parse_error:

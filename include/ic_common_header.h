@@ -31,6 +31,9 @@ extern gchar *ic_empty_string;
 
 typedef unsigned char ic_bool;
 
+/* SSL initialisation routines */
+int ic_ssl_init();
+void ic_ssl_end();
 /*
   iClaustron interface to memory allocation routines.
 */

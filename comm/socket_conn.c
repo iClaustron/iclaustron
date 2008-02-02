@@ -203,6 +203,7 @@ static int
 security_handler_at_connect(IC_CONNECTION *conn)
 {
   int error;
+  gboolean save_ssl_used_for_data;
 #ifdef HAVE_SSL
   IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
   if (conn->is_ssl_connection &&
@@ -214,7 +215,11 @@ security_handler_at_connect(IC_CONNECTION *conn)
 #endif
   if (conn->auth_func)
   {
-    if ((error= conn->auth_func(conn->auth_obj)))
+    save_ssl_used_for_data= conn->is_ssl_used_for_data;
+    conn->is_ssl_used_for_data= TRUE;
+    error= conn->auth_func(conn->auth_obj);
+    conn->is_ssl_used_for_data= save_ssl_used_for_data;
+    if (error)
     {
       /* error handler */
       return error;
@@ -1100,14 +1105,77 @@ ic_create_socket_object(gboolean is_client,
     old methods are reused also for SSL connections.
 */
 #include <openssl/ssl.h>
+#include <openssl/rand.h>
 #include <openssl/x509v3.h>
+#include <openssl/dh.h>
+
+static unsigned char dh_512_prime[]=
+{
+  0xc2, 0x38, 0x44, 0x9a, 0x7f, 0x9c, 0x22, 0xc9,
+  0x9d, 0x86, 0xe0, 0x2c, 0x3a, 0xf0, 0x70, 0x6a,
+  0xed, 0xb1, 0x74, 0x9a, 0x8e, 0x43, 0x9b, 0x86,
+  0xa9, 0x98, 0x1e, 0x37, 0x9d, 0x0d, 0x8a, 0x41,
+  0xc6, 0x26, 0x8e, 0x73, 0xe4, 0x67, 0x33, 0x36,
+  0xb1, 0x0f, 0xbe, 0x48, 0x83, 0xbd, 0x03, 0xb2,
+  0x05, 0x6d, 0xf5, 0x2f, 0x1f, 0x49, 0x71, 0x0f,
+  0x77, 0x02, 0x93, 0x41, 0xb5, 0x1a, 0x76, 0xe3,
+};
+
+static unsigned char dh_1024_prime[]=
+{
+  0xdd, 0x0c, 0x20, 0x0b, 0xbb, 0x10, 0xc7, 0x4a,
+  0x9b, 0x1c, 0x0b, 0xa1, 0x7f, 0x09, 0xdc, 0x4e,
+  0x5e, 0xec, 0x15, 0x12, 0xc9, 0xcf, 0x3e, 0xdf,
+  0xde, 0x4d, 0x21, 0xc5, 0x72, 0x27, 0x9e, 0xc2,
+  0x80, 0x1d, 0x22, 0x33, 0xb3, 0x6e, 0x2d, 0x50,
+  0xb0, 0x00, 0x01, 0x3b, 0x3e, 0x70, 0xe9, 0x6e,
+  0x00, 0x59, 0xdd, 0xfe, 0x39, 0x39, 0x61, 0x57,
+  0x14, 0xfa, 0xfa, 0xb9, 0x7e, 0x1a, 0xc2, 0x2b,
+  0x9c, 0x0f, 0xb7, 0x8f, 0x06, 0x33, 0x1d, 0x08,
+  0x13, 0xdf, 0x1f, 0x78, 0xfe, 0x2c, 0x68, 0xc6,
+  0xaf, 0x52, 0x1a, 0xac, 0x5b, 0xcc, 0x13, 0x31,
+  0x28, 0x55, 0x9c, 0x2d, 0x50, 0x53, 0xe2, 0xee,
+  0x41, 0x6d, 0x89, 0x89, 0xb2, 0x88, 0x4f, 0xc2,
+  0xe4, 0x6c, 0x8b, 0x79, 0x23, 0xa4, 0x7f, 0x2d,
+  0x2f, 0xf1, 0xfa, 0x93, 0x8f, 0xce, 0x07, 0xea,
+  0x3f, 0x27, 0x98, 0x68, 0x15, 0x38, 0xe2, 0xcb,
+};
+
+static DH *dh_512= NULL;
+static DH *dh_1024= NULL;
 
 int
 ic_ssl_init()
 {
+  unsigned char dh_512_group[1]= {0x5};
+  unsigned char dh_1024_group[1]= {0x5};
+
   if (!SSL_library_init())
     return 1;
+  if (!((dh_512= DH_new()) &&
+      (dh_1024= DH_new())))
+    return 1;
+  /*
+    Check if BIN_bin2bn allocates memory, if so we need to deallocate it in
+    the end routine.
+  */
+  if (!((dh_512->p= BN_bin2bn(dh_512_prime, sizeof(dh_512_prime), NULL)) &&
+        (dh_1024->p= BN_bin2bn(dh_1024_prime, sizeof(dh_1024_prime), NULL)) &&
+        (dh_512->g= BN_bin2bn(dh_512_group, 1, NULL)) &&
+        (dh_1024->g= BN_bin2bn(dh_1024_group, 1, NULL))))
+    return 1;
+  /* Provide random entropy */
+  if (!RAND_load_file("/dev/random", 1024))
+    return 1;
   return 0;
+}
+
+void ic_ssl_end()
+{
+  if (dh_512)
+    DH_free(dh_512);
+  if (dh_1024)
+    DH_free(dh_1024);
 }
 
 static void
@@ -1157,6 +1225,17 @@ ic_ssl_verify_callback(int ok, X509_STORE_CTX *ctx_store)
   return ok;
 }
 
+static DH*
+ssl_get_dh_callback(__attribute__ ((unused)) SSL *ssl,
+                    __attribute__ ((unused)) int is_export,
+                    int key_length)
+{
+  if (key_length == 512)
+    return dh_512;
+  else
+    return dh_1024;
+}
+
 /*
   This method is used after a successful set-up of a TCP/IP connection. It is
   used both on client and server side. It creates an SSL context whereafter it
@@ -1182,27 +1261,43 @@ ssl_create_connection(IC_SSL_CONNECTION *conn)
   buf_ptr= ic_get_ic_string(&conn->passwd_string, buf);
   SSL_CTX_set_default_passwd_cb_userdata(conn->ssl_ctx, (void*)buf_ptr);
   /*
-    We use a local certificate chain file, normally either server.pem or client.pem.
+    We use a local certificate chain file, normally either server.pem or
+    client.pem.
     This file is also the file where the private key is stored.
+    We specify where the root certificate is stored. Then we specify that both
+    server and client need to have a certificate and we specify that we are
+    going to use SHA1 of the greatest strength as the cipher for the
+    encryption of the data channel. Finally we load the Diffie-Hellman keys
+    used for key management, this is only performed by the server part of the
+    connection.
   */
-  if ((SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
-                                          loc_cert_file->str) !=
-                                          IC_SSL_SUCCESS) ||
-      (SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
-                                   loc_cert_file->str,
-                                   SSL_FILETYPE_PEM) != IC_SSL_SUCCESS) ||
-      (SSL_CTX_load_verify_locations(conn->ssl_ctx,
-                                     conn->root_certificate_path.str,
-                                     NULL) != IC_SSL_SUCCESS) ||
-      (SSL_CTX_set_default_verify_paths(conn->ssl_ctx) != IC_SSL_SUCCESS) ||
-      (SSL_CTX_set_verify(conn->ssl_ctx,
-           SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-           ic_ssl_verify_callback), FALSE))
+  if ((error= SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
+                                                 loc_cert_file->str) !=
+                                                 IC_SSL_SUCCESS))
     goto error_handler;
+  if ((error= SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
+                                          loc_cert_file->str,
+                                          SSL_FILETYPE_PEM) != IC_SSL_SUCCESS))
+    goto error_handler;
+  if ((error= SSL_CTX_load_verify_locations(conn->ssl_ctx,
+                                            conn->root_certificate_path.str,
+                                            NULL) != IC_SSL_SUCCESS))
+    goto error_handler;
+  if ((error= SSL_CTX_set_default_verify_paths(conn->ssl_ctx)
+               != IC_SSL_SUCCESS))
+    goto error_handler;
+  SSL_CTX_set_verify(conn->ssl_ctx,
+                     SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                     ic_ssl_verify_callback);
+  SSL_CTX_set_verify_depth(conn->ssl_ctx, 3);
+  if ((error= SSL_CTX_set_cipher_list(conn->ssl_ctx, "SHA1:@STRENGTH")) !=
+              IC_SSL_SUCCESS)
+    goto error_handler;
+  if (sock_conn->is_client)
+    SSL_CTX_set_tmp_dh_callback(conn->ssl_ctx, ssl_get_dh_callback);
   if (!(conn->ssl_conn= SSL_new(conn->ssl_ctx)))
     goto error_handler;
-  printf("Successfully created context\n");
-
+  printf("Successfully created a new SSL session\n");
   if (!SSL_set_fd(conn->ssl_conn, sock_conn->rw_sockfd))
   {
     error= SSL_get_error(conn->ssl_conn, 0);
@@ -1399,5 +1494,15 @@ ic_create_ssl_object(gboolean is_client,
   set_up_rw_methods_mutex(conn, FALSE);
   conn->conn_op.ic_fork_accept_connection= fork_accept_ssl_connection;
   return conn;
+}
+#else
+int ic_ssl_init()
+{
+  return 0;
+}
+
+void ic_ssl_end()
+{
+  return;
 }
 #endif

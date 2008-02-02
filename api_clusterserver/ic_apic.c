@@ -4630,7 +4630,12 @@ int ic_init()
   if ((ret_value= ic_init_config_parameters()))
   {
     ic_end();
-    return ret_value;
+    DEBUG_RETURN(ret_value);
+  }
+  if ((ret_value= ic_ssl_init()))
+  {
+    ic_end();
+    DEBUG_RETURN(ret_value);
   }
   DEBUG_RETURN(0);
 }
@@ -4641,6 +4646,7 @@ void ic_end()
   if (glob_conf_hash)
     ic_hashtable_destroy(glob_conf_hash);
   glob_conf_entry_inited= FALSE;
+  ic_ssl_end();
   DEBUG_CLOSE;
 }
 
