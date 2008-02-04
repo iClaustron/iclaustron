@@ -549,6 +549,33 @@ flush_socket_front_buffer(__attribute__ ((unused)) IC_CONNECTION *conn)
   return 0;
 }
 
+#ifdef HAVE_SSL
+static int
+ic_ssl_write(IC_CONNECTION *conn, const void *buf, guint32 buf_size)
+{
+  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
+  int ret_code= SSL_write(ssl_conn->ssl_conn, buf, buf_size);
+  int error;
+
+  switch ((error= SSL_get_error(ssl_conn->ssl_conn, ret_code)))
+  {
+    case SSL_ERROR_NONE:
+      /* Data successfully written */
+      return ret_code;
+    case SSL_ERROR_ZERO_RETURN:
+      /* SSL connection closed */
+      return 0;
+    case SSL_ERROR_WANT_READ:
+    case SSL_ERROR_WANT_WRITE:
+      return -EINTR;
+    default:
+      DEBUG_PRINT(COMM_LEVEL, ("SSL error %d", error));
+      return 0;
+  }
+  return 0;
+}
+#endif
+
 static int
 write_socket_connection(IC_CONNECTION *conn,
                         const void *buf, guint32 size,
@@ -567,8 +594,16 @@ write_socket_connection(IC_CONNECTION *conn,
     gssize ret_code;
     gsize buf_size= size - write_size;
 
+#ifdef HAVE_SSL
+    if (conn->is_ssl_used_for_data)
+      ret_code= ic_ssl_write(conn, buf + write_size, buf_size);
+    else
+      ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
+                     IC_MSG_NOSIGNAL);
+#else
     ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
                    IC_MSG_NOSIGNAL);
+#endif
     if (ret_code == (int)buf_size)
     {
       unsigned i;
@@ -599,14 +634,19 @@ write_socket_connection(IC_CONNECTION *conn,
     }
     if (ret_code < 0)
     {
-      if (errno == EINTR)
+      int error;
+      if (!conn->is_ssl_used_for_data)
+        error= errno;
+      else
+        error= (-1) * ret_code;
+      if (error == EINTR)
         continue;
       conn->conn_stat.num_send_errors++;
       conn->bytes_written_before_interrupt= write_size;
       DEBUG_PRINT(COMM_LEVEL, ("write error: %d %s\n",
                                errno, sys_errlist[errno]));
-      conn->error_code= errno;
-      return errno;
+      conn->error_code= error;
+      return error;
     }
     write_size+= ret_code;
     if (loop_count)
@@ -679,6 +719,37 @@ close_listen_socket_connection(IC_CONNECTION *conn)
   return 0;
 }
 
+#ifdef HAVE_SSL
+static int
+ic_ssl_read(IC_CONNECTION *conn,
+            void *buf, guint32 buf_size,
+            guint32 *read_size)
+{
+  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
+  int ret_code= SSL_read(ssl_conn->ssl_conn, buf, buf_size);
+  int error;
+  printf("Wrote %d bytes through SSL\n", buf_size);
+
+  switch ((error= SSL_get_error(ssl_conn->ssl_conn, ret_code)))
+  {
+    case SSL_ERROR_NONE:
+      /* Data successfully read */
+      *read_size= (guint32)ret_code;
+      return ret_code;
+    case SSL_ERROR_ZERO_RETURN:
+      /* SSL connection closed */
+      return 0;
+    case SSL_ERROR_WANT_READ:
+    case SSL_ERROR_WANT_WRITE:
+      return -EINTR;
+    default:
+      DEBUG_PRINT(COMM_LEVEL, ("SSL error %d", error));
+      return 0;
+  }
+  return 0;
+}
+#endif
+
 static int
 read_socket_connection(IC_CONNECTION *conn,
                        void *buf, guint32 buf_size,
@@ -687,7 +758,14 @@ read_socket_connection(IC_CONNECTION *conn,
   int ret_code, error;
   do
   {
+#ifdef HAVE_SSL
+    if (conn->is_ssl_used_for_data)
+      ret_code= ic_ssl_read(conn, buf, buf_size, read_size);
+    else
+      ret_code= recv(conn->rw_sockfd, buf, buf_size, 0);
+#else
     ret_code= recv(conn->rw_sockfd, buf, buf_size, 0);
+#endif
     if (ret_code > 0)
     {
       unsigned i;
@@ -720,7 +798,10 @@ read_socket_connection(IC_CONNECTION *conn,
       conn->error_code= END_OF_FILE;
       return END_OF_FILE;
     }
-    error= errno;
+    if (!conn->is_ssl_used_for_data)
+      error= errno;
+    else
+      error= (-1) * ret_code;
   } while (error == EINTR);
   conn->conn_stat.num_rec_errors++;
   DEBUG_PRINT(COMM_LEVEL, ("read error: %d %s\n",
