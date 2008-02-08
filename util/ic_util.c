@@ -710,7 +710,7 @@ ic_add_string(IC_STRING *dest_str, gchar *input_str)
 }
 
 int
-ic_add_dup_string(IC_STRING *dest_str, gchar *add_str)
+ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
 {
   guint32 add_len= strlen(add_str);
   guint32 orig_len= dest_str->len;

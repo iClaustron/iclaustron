@@ -56,6 +56,7 @@ static gchar *glob_ip= NULL;
 static gchar *glob_port= "10002";
 static gchar *glob_config_file= "/etc/ic_cntrl.conf";
 static gchar *glob_base_dir= NULL;
+static guint32 glob_stop_flag= FALSE;
 
 static IC_STRING ic_base_dir;
 
@@ -69,41 +70,156 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-static int start_services(struct ic_connection *conn,
-                          __attribute__ ((unused)) GKeyFile *conf_file)
+static int 
+kill_process(GPid pid)
 {
-  int ret_code= 1;
-  while (!conn->conn_op.ic_accept_connection(conn))
-  {
-    ret_code= 0;
-    break;
-  }
-  return ret_code;
-}
-
-static int verify_conf_file(__attribute__ ((unused)) GKeyFile *conf_file)
-{
-  printf("Verifying configuration file\n");
+  gchar buf[128];
+  gchar *arg_vector[4];
+  GError *error; 
+  ic_guint64_str((guint64)pid,buf);
+  printf("Kill process %s\n", buf);
+  arg_vector[0]="kill";
+  arg_vector[1]="-9";
+  arg_vector[2]=buf;
+  arg_vector[3]=NULL;
+  g_spawn_async(NULL,&arg_vector[0], NULL,
+                G_SPAWN_SEARCH_PATH,
+                NULL,NULL,&pid,&error);
   return 0;
 }
 
-
-int main(int argc, char *argv[])
+static int
+send_ok_reply(IC_CONNECTION *conn)
 {
-  IC_CONNECTION conn;
+  int error;
+  if ((error= ic_send_with_cr(conn, "Ok")) ||
+      (error= ic_send_with_cr(conn, "")))
+    return error;
+  return 0;
+}
+
+static int
+x(IC_CONNECTION *conn)
+{
+  GError *error= NULL;
   gchar *arg_vector[4];
   gchar read_buf[256];
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
-  int state= REC_PROG_NAME;
-  GPid barn_pid;
-  GError *error= NULL;
-  int i, ret_code;
+  guint32 items_received= 0;
+  guint32 i;
+  GPid child_pid;
+  gchar *arg_str;
+  int ret_code;
+
+  memset(read_buf, 0, sizeof(read_buf)); /* Zeroes in read_buf*/
+  memset(arg_vector, 0, 4*sizeof(gchar*));
+
+  while (!(ret_code= ic_rec_with_cr(conn, read_buf, &read_size,
+                                    &size_curr_buf,
+                                    sizeof(read_buf))))
+  {
+    DEBUG(COMM_LEVEL, ic_print_buf(read_buf, read_size));
+    if (read_size == 0)
+    {
+      arg_vector[items_received]= NULL;
+      break;
+    }
+    arg_str= ic_malloc(read_size+1); /*allocate memory, even for extra NULL*/
+    if (arg_str == NULL)
+      goto mem_error;
+    memcpy(arg_str, read_buf, read_size);/*copy buffer to memory arg_str*/
+    printf("memcpy\n");
+    arg_str[read_size]= 0; /* add NULL */
+    printf("Add NULL\n");
+    
+    arg_vector[items_received]=arg_str;
+     
+    if (0==strcmp("",arg_str))
+    {
+      send_ok_reply(conn);
+      break;
+    }
+    items_received++;
+   
+  }
+  for(i=0; i < items_received; i++)
+    printf("arg_vector[%u] = %s\n", i, arg_vector[i]);
+
+  printf("anrop av g-spawn-async\n");
+  g_spawn_async_with_pipes(NULL,&arg_vector[0],
+                           NULL, G_SPAWN_SEARCH_PATH,
+                           NULL,NULL,&child_pid,
+                           NULL, NULL, NULL,
+                           &error);
+  printf("Anrop gjort child_pid = %d\n", child_pid);
+  ic_send_with_cr(conn, "Ok");
+  return 0;
+mem_error:
+
+  for (i= 0; i < items_received; i++)
+  {
+    if (arg_vector[i])
+      ic_free(arg_vector[i]);
+  }
+  return 1;
+}
+
+int set_up_connection(IC_CONNECTION *conn)
+{
+  int ret_code;
+  IC_CONNECTION *fork_conn;
+
+  conn->server_name= glob_ip;
+  conn->server_port= glob_port;
+  conn->client_name= NULL;
+  conn->client_port= 0;
+  conn->is_wan_connection= FALSE;
+  conn->is_listen_socket_retained= TRUE;
+  ret_code= conn->conn_op.ic_set_up_connection(conn);
+  if (ret_code)
+  {
+  }
+  do
+  {
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
+    {
+    }
+    if (!(fork_conn= 
+          conn->conn_op.ic_fork_accept_connection(conn,
+                                      FALSE,    /* No mutex */
+                                      FALSE)))  /* No front buffer */
+    {
+    }
+    /*
+      Here it is time to put the new connection into the set of connections
+      we are currently receiving data on.
+    */
+  } while (!glob_stop_flag);
+  return 0;
+}
+
+int main(int argc, char *argv[])
+{
+  int ret_code;
  
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Control Server")))
     return ret_code;
 
+  /*
+    First step is to set-up path to where the binaries reside. All binaries
+    we control will reside under this directory. Under this directory the
+    binaries will be placed in either
+    MYSQL_VERSION/bin
+    or
+    ICLAUSTRON_VERSION/bin
+    and libraries will be in either
+    MYSQL_VERSION/lib
+    or
+    ICLAUSTRON_VERSION/lib
+  */
+  IC_INIT_STRING(&ic_base_dir, NULL, 0, TRUE);
   if (glob_base_dir == NULL)
   {
     /*
@@ -114,20 +230,15 @@ int main(int argc, char *argv[])
       the software by default.
     */
     const gchar *user_name= g_get_user_name();
-    printf("user_name = %s\n", user_name);
     if (strcmp(user_name, "root") == 0)
     {
-      IC_INIT_STRING(&ic_base_dir, NULL, 0, TRUE);
       if (ic_add_dup_string(&ic_base_dir, "/var/lib/iclaustron/"))
         goto error;
     }
     else
     {
-      IC_STRING home_var_str;
       const gchar *home_var= g_getenv("HOME");
-      IC_INIT_STRING(&home_var_str, home_var, strlen(home_var), TRUE);
-      printf("home_var = %s\n", home_var);
-      if (ic_strdup(&ic_base_dir, &home_var_str))
+      if (ic_add_dup_string(&ic_base_dir, home_var))
         goto error;
       if (ic_add_dup_string(&ic_base_dir, "/iclaustron_install/"))
         goto error;
@@ -135,61 +246,44 @@ int main(int argc, char *argv[])
   }
   else
   {
-    IC_INIT_STRING(&ic_base_dir, NULL, 0, TRUE);
     if (ic_add_dup_string(&ic_base_dir, glob_base_dir))
       goto error;
   }
-  printf("Base directory: %s\n", ic_base_dir.str);
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s\n", ic_base_dir.str));
+  /*
+    Next step is to check if we have a list of processes we already started
+    in a previous incarnation. This file is always placed in the base
+    directory and called icl_pcntl.pidinfo. If the file doesn't exist then
+    this is an initial start on this machine or set-up and we'll create the
+    file.
+
+    This file isn't implemented yet, but will be a file with constant size
+    for each process controlled. It will be a binary file with the aim to
+    make it human readable, but not human writeable.
+  */
+
+  /*
+    Next step is to wait for Cluster Servers to connect to us, after they
+    have connected they can request action from us as well. Any server can
+    connect us a Cluster Server, but they have to provide the proper
+    password in order to get connected.
+
+    We will always be ready to receive new connections.
+  */
+
+  /*
+    Finally we start the action loop, this waits for events on connected
+    Cluster Servers and acts on it, one item at a time. Thus we do not
+    try to handle more than process start, stop or kill at a time to make
+    things simpler. We might change this in the future if deemed necessary.
+
+    The manner to stop this program is by performing a kill -15 operation
+    such that the program receives a SIGKILL signal. The program cannot
+    be started and stopped from a Cluster Server for security reasons.
+  */
   ic_free(ic_base_dir.str);
   return 0;
 error:
   ic_free(ic_base_dir.str);
   return 1;
-if (0){
-  while (!(ret_code= ic_rec_with_cr(&conn, read_buf, &read_size,
-                                    &size_curr_buf,
-                                    sizeof(read_buf))))
-  {
-    DEBUG(COMM_LEVEL, ic_debug_print_buf(read_buf, read_size));
-    switch (state)
-    {
-      case REC_PROG_NAME: /* Receive program name */
-	state= REC_PARAM;
-        break;
-      case REC_PARAM: /* Receive parameters */
-	state= REC_FINAL_CR;
-        break;
-      case REC_FINAL_CR: /* Receive final CR */
-	return 0;
-        break;
-      default:
-        abort();
-    }
-  }
-}
-arg_vector[0]="ls";
-arg_vector[1]="-al";
-  /* for (i=0; i<=argc; i++)
-     arg_vector[i]=argv[i];*/
-
-  /*  arg_vector[0]="vi";*/
-  /*arg_vector[1]="ic_pcntrl.c";*/
-  arg_vector[2]=NULL;
-  printf("anrop av g-spawn-async\n");
-  g_spawn_async_with_pipes(NULL,&arg_vector[0],
-                           NULL,
-                           G_SPAWN_SEARCH_PATH,
-                           NULL,NULL,&barn_pid,
-                           NULL, NULL, NULL,
-                           &error);
-  printf("Anrop gjort barn_pid = %d\n", barn_pid);
-  ic_guint64_str((guint64)barn_pid, read_buf);
-  /* printf("Kill process %s\n", buf);
-  arg_vector[0]="kill";
-  arg_vector[1]="-9";
-  arg_vector[2]=buf;
-  arg_vector[3]=NULL;
-  g_spawn_async(NULL,&arg_vector[0], NULL, G_SPAWN_SEARCH_PATH,
-  NULL,NULL,&barn_pid,&fel);*/
-  return 0;
 }
