@@ -149,6 +149,12 @@ typedef struct ic_string IC_STRING;
     NULL-terminated string. If the input string doesn't exist it returns
     an empty string.
 
+  ic_add_dup_string
+    This function will first allocate a new string to contain the destination
+    string and the added string, then copy it to the new string and finally
+    also release the storage of the old string. Thus it is a prerequisite for
+    this function that the string is allocated using normal malloc.
+
   ic_add_ic_string
     Adds input_str to dest_str
 
@@ -174,6 +180,7 @@ typedef struct ic_string IC_STRING;
 */
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr);
 void ic_add_string(IC_STRING *dest_str, gchar *input_str);
+int ic_add_dup_string(IC_STRING *dest_str, gchar *add_str);
 void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
 guint32 ic_str_find_first(IC_STRING *ic_str, gchar searched_char);
 void ic_print_ic_string(IC_STRING *str);

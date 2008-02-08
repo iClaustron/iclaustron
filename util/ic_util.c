@@ -709,6 +709,27 @@ ic_add_string(IC_STRING *dest_str, gchar *input_str)
   ic_add_ic_string(dest_str, &input_ic_str);
 }
 
+int
+ic_add_dup_string(IC_STRING *dest_str, gchar *add_str)
+{
+  guint32 add_len= strlen(add_str);
+  guint32 orig_len= dest_str->len;
+  guint32 new_len= add_len + orig_len;
+  gchar *new_str= malloc(new_len + 1);
+  if (new_str == NULL)
+    return MEM_ALLOC_ERROR;
+  if (orig_len > 0)
+    memcpy(new_str, dest_str->str, orig_len);
+  memcpy(new_str + orig_len, add_str, add_len);
+  if (dest_str->is_null_terminated)
+    new_str[new_len]= 0;
+  if (dest_str->str)
+    ic_free(dest_str->str);
+  dest_str->str= new_str;
+  dest_str->len= new_len;
+  return 0;
+}
+
 void
 ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
 {

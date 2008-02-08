@@ -55,6 +55,9 @@
 static gchar *glob_ip= NULL;
 static gchar *glob_port= "10002";
 static gchar *glob_config_file= "/etc/ic_cntrl.conf";
+static gchar *glob_base_dir= NULL;
+
+static IC_STRING ic_base_dir;
 
 static GOptionEntry entries[] = 
 {
@@ -100,6 +103,48 @@ int main(int argc, char *argv[])
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Control Server")))
     return ret_code;
+
+  if (glob_base_dir == NULL)
+  {
+    /*
+      The user specified no base directory himself, in this case we'll
+      use $HOME/iclaustron_install as the base directory unless the user is
+      the root user, in this case we'll instead use /var/lib/iclaustron as
+      the default directory. This is also how the iClaustron will install
+      the software by default.
+    */
+    const gchar *user_name= g_get_user_name();
+    printf("user_name = %s\n", user_name);
+    if (strcmp(user_name, "root") == 0)
+    {
+      IC_INIT_STRING(&ic_base_dir, NULL, 0, TRUE);
+      if (ic_add_dup_string(&ic_base_dir, "/var/lib/iclaustron/"))
+        goto error;
+    }
+    else
+    {
+      IC_STRING home_var_str;
+      const gchar *home_var= g_getenv("HOME");
+      IC_INIT_STRING(&home_var_str, home_var, strlen(home_var), TRUE);
+      printf("home_var = %s\n", home_var);
+      if (ic_strdup(&ic_base_dir, &home_var_str))
+        goto error;
+      if (ic_add_dup_string(&ic_base_dir, "/iclaustron_install/"))
+        goto error;
+    }
+  }
+  else
+  {
+    IC_INIT_STRING(&ic_base_dir, NULL, 0, TRUE);
+    if (ic_add_dup_string(&ic_base_dir, glob_base_dir))
+      goto error;
+  }
+  printf("Base directory: %s\n", ic_base_dir.str);
+  ic_free(ic_base_dir.str);
+  return 0;
+error:
+  ic_free(ic_base_dir.str);
+  return 1;
 if (0){
   while (!(ret_code= ic_rec_with_cr(&conn, read_buf, &read_size,
                                     &size_curr_buf,
