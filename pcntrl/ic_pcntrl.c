@@ -52,21 +52,23 @@
 #define REC_PARAM 1
 #define REC_FINAL_CR 2
 
+/* Configurable variables */
 static gchar *glob_ip= NULL;
 static gchar *glob_port= "10002";
-static gchar *glob_config_file= "/etc/ic_cntrl.conf";
 static gchar *glob_base_dir= NULL;
-static guint32 glob_stop_flag= FALSE;
 
+/* Global variables */
+static guint32 glob_stop_flag= FALSE;
 static IC_STRING ic_base_dir;
+GMutex *action_loop_lock= NULL;
 
 static GOptionEntry entries[] = 
 {
   { "ip", 0, 0, G_OPTION_ARG_STRING, &glob_ip,
     "Set IP address, default is IP address of computer", NULL},
   { "port", 0, 0, G_OPTION_ARG_STRING, &glob_port, "Set Port, default = 10002", NULL},
-  { "config-file", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_file,
-    "Sets path to configuration file, default /etc/ic_cntrl.conf", NULL},
+  { "basedir", 0, 0, G_OPTION_ARG_STRING, &glob_base_dir,
+    "Sets path to binaries controlled by this program", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -98,9 +100,10 @@ send_ok_reply(IC_CONNECTION *conn)
   return 0;
 }
 
-static int
-x(IC_CONNECTION *conn)
+static gpointer
+run_command_handler(gpointer data)
 {
+  IC_CONNECTION *conn= (IC_CONNECTION*)data;
   GError *error= NULL;
   gchar *arg_vector[4];
   gchar read_buf[256];
@@ -154,7 +157,8 @@ x(IC_CONNECTION *conn)
                            &error);
   printf("Anrop gjort child_pid = %d\n", child_pid);
   ic_send_with_cr(conn, "Ok");
-  return 0;
+  conn->conn_op.ic_free_connection(conn);
+  return NULL;
 mem_error:
 
   for (i= 0; i < items_received; i++)
@@ -162,13 +166,16 @@ mem_error:
     if (arg_vector[i])
       ic_free(arg_vector[i]);
   }
-  return 1;
+  conn->conn_op.ic_free_connection(conn);
+  return NULL;
 }
 
-int set_up_connection(IC_CONNECTION *conn)
+int start_connection_loop()
 {
   int ret_code;
+  IC_CONNECTION *conn;
   IC_CONNECTION *fork_conn;
+  GError *error= NULL;
 
   conn->server_name= glob_ip;
   conn->server_port= glob_port;
@@ -178,35 +185,54 @@ int set_up_connection(IC_CONNECTION *conn)
   conn->is_listen_socket_retained= TRUE;
   ret_code= conn->conn_op.ic_set_up_connection(conn);
   if (ret_code)
-  {
-  }
+    return ret_code;
   do
   {
-    if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
+    do
     {
-    }
-    if (!(fork_conn= 
-          conn->conn_op.ic_fork_accept_connection(conn,
-                                      FALSE,    /* No mutex */
-                                      FALSE)))  /* No front buffer */
-    {
-    }
-    /*
-      Here it is time to put the new connection into the set of connections
-      we are currently receiving data on.
-    */
+      /* Wait for someone to connect to us. */
+      if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
+      {
+        printf("Error %d received in accept connection\n", ret_code);
+        break;
+      }
+      if (!(fork_conn= 
+            conn->conn_op.ic_fork_accept_connection(conn,
+                                        FALSE,    /* No mutex */
+                                        FALSE)))  /* No front buffer */
+      {
+        printf("Error %d received in fork accepted connection\n", ret_code);
+        break;
+      }
+      /*
+        We have an active connection, we'll handle the connection in a
+        separate thread.
+      */
+      if (!g_thread_create_full(run_command_handler,
+                                (gpointer)fork_conn,
+                                1024*32,      /* 32 kByte stack */
+                                FALSE,        /* Not joinable */
+                                FALSE,        /* Not bound */
+                                G_THREAD_PRIORITY_NORMAL,
+                                &error))
+      {
+        printf("Failed to create thread after forking accept connection\n");
+        fork_conn->conn_op.ic_free_connection(fork_conn);
+        break;
+      }
+    } while (1);
   } while (!glob_stop_flag);
   return 0;
 }
 
 int main(int argc, char *argv[])
 {
-  int ret_code;
+  int ret_code= 0;
  
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Control Server")))
     return ret_code;
-
+  ret_code= 1;
   /*
     First step is to set-up path to where the binaries reside. All binaries
     we control will reside under this directory. Under this directory the
@@ -218,6 +244,9 @@ int main(int argc, char *argv[])
     MYSQL_VERSION/lib
     or
     ICLAUSTRON_VERSION/lib
+
+    The resulting base directory is stored in the global variable
+    ic_base_dir.
   */
   IC_INIT_STRING(&ic_base_dir, NULL, 0, TRUE);
   if (glob_base_dir == NULL)
@@ -251,39 +280,19 @@ int main(int argc, char *argv[])
   }
   DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s\n", ic_base_dir.str));
   /*
-    Next step is to check if we have a list of processes we already started
-    in a previous incarnation. This file is always placed in the base
-    directory and called icl_pcntl.pidinfo. If the file doesn't exist then
-    this is an initial start on this machine or set-up and we'll create the
-    file.
-
-    This file isn't implemented yet, but will be a file with constant size
-    for each process controlled. It will be a binary file with the aim to
-    make it human readable, but not human writeable.
-  */
-
-  /*
     Next step is to wait for Cluster Servers to connect to us, after they
     have connected they can request action from us as well. Any server can
     connect us a Cluster Server, but they have to provide the proper
     password in order to get connected.
 
     We will always be ready to receive new connections.
-  */
-
-  /*
-    Finally we start the action loop, this waits for events on connected
-    Cluster Servers and acts on it, one item at a time. Thus we do not
-    try to handle more than process start, stop or kill at a time to make
-    things simpler. We might change this in the future if deemed necessary.
 
     The manner to stop this program is by performing a kill -15 operation
     such that the program receives a SIGKILL signal. The program cannot
     be started and stopped from a Cluster Server for security reasons.
   */
-  ic_free(ic_base_dir.str);
-  return 0;
+  ret_code= start_connection_loop();
 error:
   ic_free(ic_base_dir.str);
-  return 1;
+  return ret_code;
 }
