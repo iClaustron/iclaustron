@@ -2993,6 +2993,59 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
   return;
 }
 
+static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *apic,
+                                             guint32 cluster_id)
+{
+  guint32 i;
+
+  if (!apic->conf_objects)
+    return NULL;
+  for (i= 0; i < apic->num_clusters_to_connect; i++)
+  {
+    if (apic->cluster_ids[i] == cluster_id)
+      return (apic->conf_objects+i);
+  }
+  return NULL;
+}
+
+static gchar*
+get_node_and_cluster_config(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                            guint32 node_id,
+                            IC_CLUSTER_CONFIG **clu_conf)
+{
+  gchar *node_config;
+  *clu_conf= get_cluster_config(apic, cluster_id);
+  if (!clu_conf)
+    return NULL;
+  node_config= (*clu_conf)->node_config[node_id];
+  if (!node_config)
+    return NULL;
+  return node_config;
+}
+
+static gchar*
+get_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                      guint32 node_id)
+{
+  IC_CLUSTER_CONFIG *clu_conf;
+  return get_node_and_cluster_config(apic, cluster_id, node_id,
+                                     &clu_conf);
+}
+
+static gchar*
+get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                      guint32 node_id, IC_NODE_TYPES node_type)
+{
+  IC_CLUSTER_CONFIG *clu_conf= NULL;
+  gchar *node_config= get_node_and_cluster_config(apic, cluster_id,
+                                                  node_id,
+                                                  &clu_conf);
+  if (clu_conf &&
+      clu_conf->node_types[node_id] == node_type)
+    return node_config;
+  return NULL;
+}
+
 /*
   This routine initialises the data structures needed for a configuration client.
   It sets the proper routines to get the configuration and to free the
@@ -3059,6 +3112,9 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
   apic->api_op.ic_get_config= get_cs_config;
   apic->api_op.ic_get_info_config_channels= get_info_config_channels;
+  apic->api_op.ic_get_cluster_config= get_cluster_config;
+  apic->api_op.ic_get_node_object= get_node_object;
+  apic->api_op.ic_get_typed_node_object= get_typed_node_object;
   apic->api_op.ic_free_config= free_cs_config;
   return apic;
 }

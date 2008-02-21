@@ -33,15 +33,14 @@ int yylex(void *parse_data, void *scanner);
 %token CONNECTIONS_SYM
 %token DIE_SYM
 %token DISPLAY_SYM
+%token FILE_SYM
 %token FROM_SYM
 %token GROUP_SYM
-%token IC_CLMGR_SYM
-%token IC_CS_SYM
-%token IC_FSD_SYM
-%token IC_REPD_SYM
+%token IC_KERNEL_SYM
 %token KILL_SYM
 %token LIST_SYM
 %token LISTEN_SYM
+%token MANAGER_SYM
 %token MEMORY_SYM
 %token MOVE_SYM
 %token MYSQLD_SYM
@@ -49,15 +48,16 @@ int yylex(void *parse_data, void *scanner);
 %token NODE_SYM
 %token NODEGROUP_SYM
 %token NODEGROUPS_SYM
-%token NDBD_SYM
-%token NDBMTD_SYM
-%token NDB_RESTORE_SYM
 %token PERFORM_SYM
+%token REPLICATION_SYM
 %token RESTART_SYM
+%token RESTORE_SYM
 %token ROLLING_SYM
 %token SEEN_SYM
+%token SERVER_SYM
 %token SET_SYM
 %token SHOW_SYM
+%token SQL_SYM
 %token START_SYM
 %token STATUS_SYM
 %token STATS_SYM
@@ -74,13 +74,14 @@ int yylex(void *parse_data, void *scanner);
 %token END
 %token IDENTIFIER
 %token INTEGER
+%token VERSION_IDENTIFIER
 
 %pure_parser
 %parse-param { IC_PARSE_DATA *parse_data }
 %parse-param { void *scanner }
 %lex-param   { yyscan_t *scanner }
 
-%type <ic_str> IDENTIFIER cluster_name node_name
+%type <ic_str> IDENTIFIER VERSION_IDENTIFIER cluster_name node_name
 %type <int_val> INTEGER cluster_id node_id
 
 %%
@@ -150,8 +151,34 @@ restart_command:
     ;
 
 start_command:
-    START_SYM opt_cluster opt_node opt_all
+    START_SYM start_params
     { PARSE_DATA->command= IC_START_CMD; }
+
+start_params:
+    binary_type opt_cluster node_or_all
+    | opt_cluster opt_node opt_all
+    ;
+
+binary_type:
+    IC_KERNEL_SYM
+    { PARSE_DATA->binary_type= IC_KERNEL_NODE; }
+    | CLUSTER_SYM SERVER_SYM
+    { PARSE_DATA->binary_type= IC_CLUSTER_SERVER_NODE; }
+    | SQL_SYM
+    { PARSE_DATA->binary_type= IC_SQL_SERVER_NODE; }
+    | REPLICATION_SYM SERVER_SYM
+    { PARSE_DATA->binary_type= IC_REP_SERVER_NODE; }
+    | FILE_SYM SERVER_SYM
+    { PARSE_DATA->binary_type= IC_FILE_SERVER_NODE; }
+    | RESTORE_SYM
+    { PARSE_DATA->binary_type= IC_RESTORE_NODE; }
+    | CLUSTER_SYM MANAGER_SYM
+    { PARSE_DATA->binary_type= IC_CLUSTER_MANAGER_NODE; }
+    ;
+
+node_or_all:
+    node
+    | all
     ;
 
 stop_command:
@@ -268,7 +295,7 @@ one_cluster_reference:
 cluster_reference:
     cluster_id { PARSE_DATA->cluster_id= $1; }
     | cluster_name
-    { memcpy(&PARSE_DATA->cluster_name, $1,sizeof(IC_STRING)); }
+    { memcpy(&PARSE_DATA->cluster_name,$1,sizeof(IC_STRING)); }
     | ALL_SYM { PARSE_DATA->cluster_all= TRUE; }
     ;
 
@@ -283,7 +310,11 @@ cluster_name:
 opt_node:
     /* empty */
     { PARSE_DATA->default_node= TRUE; }
-    | NODE_SYM node_reference
+    | node
+    ;
+
+node:
+    NODE_SYM node_reference
     ;
 
 node_reference:
@@ -302,7 +333,10 @@ node_name:
 
 opt_all:
     /* empty */
-    | ALL_SYM { PARSE_DATA->all= TRUE; }
+    | all
     ;
+
+all:
+    ALL_SYM { PARSE_DATA->all= TRUE; }
 %%
 

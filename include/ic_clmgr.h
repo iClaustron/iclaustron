@@ -55,13 +55,17 @@ struct ic_parse_data
   /* Memory container for parser/lexer */
   IC_MEMORY_CONTAINER *mc_ptr;
   /* Configuration of the grid of clusters */
-  IC_API_CONFIG_SERVER *clu_conf;
+  IC_API_CONFIG_SERVER *apic;
   /* Command sent by user */
   IC_PARSE_COMMANDS command;
   /* Representation of connection to command client */
   IC_CONNECTION *conn;
   /* Flag for parser and executer to flag exit */
   gboolean exit_flag;
+  /* Flag for start command to perform initial start */
+  gboolean initial_flag;
+  /* Node type started */
+  IC_NODE_TYPES binary_type;
 
   /* Current cluster reference */
   IC_STRING current_cluster_name;

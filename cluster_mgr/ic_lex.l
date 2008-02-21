@@ -51,31 +51,29 @@ CONFIG                  { return CONFIG_SYM;       }
 CONNECTIONS             { return CONNECTIONS_SYM;  }
 DIE                     { return DIE_SYM;          }
 DISPLAY                 { return DISPLAY_SYM;      }
+FILE                    { return FILE_SYM;         }
 FROM                    { return FROM_SYM;         }
 GROUP                   { return GROUP_SYM;        }
-IC_CLMGR                { return IC_CLMGR_SYM;     }
-IC_CS                   { return IC_CS_SYM;        }
-IC_FSD                  { return IC_FSD_SYM;       }
-IC_REPD                 { return IC_REPD_SYM;      }
+KERNEL_NODE             { return IC_KERNEL_SYM;    }
 KILL                    { return KILL_SYM;         }
 LIST                    { return LIST_SYM;         }
 LISTEN                  { return LISTEN_SYM;       }
+MANAGER                 { return MANAGER_SYM;      }
 MEMORY                  { return MEMORY_SYM;       }
 MOVE                    { return MOVE_SYM;         }
-MYSQLD                  { return MYSQLD_SYM;       }
-MYSQDL_SAFE             { return MYSQLD_SAFE_SYM;  }
 NODE                    { return NODE_SYM;         }
 NODEGROUP               { return NODEGROUP_SYM;    }
 NODEGROUPS              { return NODEGROUPS_SYM;   }
-NDBD                    { return NDBD_SYM;         }
-NDBMTD                  { return NDBMTD_SYM;       }
-NDB_RESTORE             { return NDB_RESTORE_SYM;  }
+RESTORE                 { return RESTORE_SYM;      }
 PERFORM                 { return PERFORM_SYM;      }
+REPLICATION             { return REPLICATION_SYM;  }
 RESTART                 { return RESTART_SYM;      }
 ROLLING                 { return ROLLING_SYM;      }
 SEEN                    { return SEEN_SYM;         }
+SERVER                  { return SERVER_SYM;       }
 SET                     { return SET_SYM;          }
 SHOW                    { return SHOW_SYM;         }
+SQL                     { return SQL_SYM;          }
 START                   { return START_SYM;        }
 STATUS                  { return STATUS_SYM;       }
 STATS                   { return STATS_SYM;        }
@@ -92,6 +90,25 @@ VERSION                 { return VERSION_SYM;      }
 
 ";" {
   return END;
+}
+
+[a-z][a-z0-9_-.]* {
+  IC_STRING *ic_str_ptr;
+  IC_PARSE_DATA *ic_parse_data= (void*)LEX_DATA;
+  IC_MEMORY_CONTAINER *mc_ptr= ic_parse_data->mc_ptr;
+  gchar *buf_ptr;
+
+  if (!(ic_str_ptr=
+        (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
+      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, yyleng)))
+  {
+    yyerror((void*)ic_parse_data, yyscanner, "Memory allocation failure");
+    return 0;
+  }
+  memcpy(buf_ptr, yytext, yyleng);
+  IC_INIT_STRING(ic_str_ptr, buf_ptr, yyleng, FALSE);
+  yylval->ic_str= ic_str_ptr;
+  return VERSION_IDENTIFIER;
 }
 
 [A-Za-z][A-Za-z0-9_]* {

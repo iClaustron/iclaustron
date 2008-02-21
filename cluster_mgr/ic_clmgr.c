@@ -87,6 +87,41 @@ not_implemented_yet(IC_PARSE_DATA *parse_data)
 }
 
 static int
+start_kernel_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
+                  gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_client_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
+                  gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_cs_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
+              gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_sql_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
+               gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_rep_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
+                  gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
 ic_die_cmd(IC_PARSE_DATA *parse_data)
 {
   if (ic_send_with_cr(parse_data->conn, "DIE") ||
@@ -149,6 +184,62 @@ ic_restart_cmd(IC_PARSE_DATA *parse_data)
 static int
 ic_start_cmd(IC_PARSE_DATA *parse_data)
 {
+  guint32 cluster_id;
+  guint32 node_id;
+  int error;
+  gchar *node_config;
+  gboolean initial_flag;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_API_CONFIG_SERVER *apic= parse_data->apic;
+
+  if (parse_data->cluster_all)
+    goto error;
+  if (parse_data->default_cluster)
+    cluster_id= (guint32)parse_data->current_cluster_id;
+  else
+    cluster_id= (guint32)parse_data->cluster_id;
+  if (parse_data->default_node)
+    goto error;
+  node_id= (guint32)parse_data->node_id;
+  clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
+  if (!clu_conf)
+    goto error;
+  node_config= apic->api_op.ic_get_node_object(apic, cluster_id, node_id);
+  if (!node_config)
+    goto error;
+  initial_flag= parse_data->initial_flag;
+  switch (clu_conf->node_types[node_id])
+  {
+    case IC_KERNEL_NODE:
+    {
+      start_kernel_node(node_config, cluster_id, node_id, initial_flag);
+      break;
+    }
+    case IC_CLIENT_NODE:
+    {
+      start_client_node(node_config, cluster_id, node_id, initial_flag);
+      break;
+    }
+    case IC_CLUSTER_SERVER_NODE:
+    {
+      start_cs_node(node_config, cluster_id, node_id, initial_flag);
+      break;
+    }
+    case IC_SQL_SERVER_NODE:
+    {
+      start_sql_node(node_config, cluster_id, node_id, initial_flag);
+      break;
+    }
+    case IC_REP_SERVER_NODE:
+    {
+      start_rep_node(node_config, cluster_id, node_id, initial_flag);
+       break;
+    }
+    default:
+      break;
+  }
+  return 0;
+error:
   if (ic_send_with_cr(parse_data->conn, "START") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_with_cr(parse_data->conn, ic_empty_string))
@@ -377,7 +468,7 @@ run_handle_new_connection(gpointer data)
   guint32 size_curr_buf= 0;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
-  IC_API_CONFIG_SERVER *clu_conf= conn->param;
+  IC_API_CONFIG_SERVER *apic= conn->param;
   gchar *parse_buf;
   guint32 parse_inx= 0;
   IC_PARSE_DATA parse_data;
@@ -396,7 +487,7 @@ run_handle_new_connection(gpointer data)
   }
   parse_data.mc_ptr= mc_ptr;
   parse_data.conn= conn;
-  parse_data.clu_conf= clu_conf;
+  parse_data.apic= apic;
   while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
                                     &size_curr_buf, sizeof(rec_buf))))
   {
@@ -433,10 +524,10 @@ error:
 
 static int
 handle_new_connection(IC_CONNECTION *conn,
-                      IC_API_CONFIG_SERVER *clu_conf)
+                      IC_API_CONFIG_SERVER *apic)
 {
   GError *error= NULL;
-  conn->param= clu_conf;
+  conn->param= apic;
   if (!g_thread_create_full(run_handle_new_connection,
                             (gpointer)conn,
                             1024*256, /* 256 kByte stack size */
@@ -452,7 +543,7 @@ handle_new_connection(IC_CONNECTION *conn,
 }
 static int
 wait_for_connections_and_fork(IC_CONNECTION *conn,
-                              IC_API_CONFIG_SERVER *clu_conf)
+                              IC_API_CONFIG_SERVER *apic)
 {
   int ret_code;
   IC_CONNECTION *fork_conn;
@@ -470,7 +561,7 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
         ("Failed to fork a new connection from an accepted connection\n"));
       goto error;
     }
-    if ((ret_code= handle_new_connection(fork_conn, clu_conf)))
+    if ((ret_code= handle_new_connection(fork_conn, apic)))
     {
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Failed to start new Cluster Manager thread\n"));
@@ -483,16 +574,16 @@ error:
 }
 
 static IC_API_CONFIG_SERVER*
-get_configuration(IC_API_CLUSTER_CONNECTION *clu_conf)
+get_configuration(IC_API_CLUSTER_CONNECTION *apic)
 {
   IC_API_CONFIG_SERVER *config_server_obj;
   guint32 cluster_id= 1;
   guint32 node_id= 1;
 
-  clu_conf->num_cluster_servers= 1;
-  clu_conf->cluster_server_ips= &glob_cluster_server_ip;
-  clu_conf->cluster_server_ports= &glob_cluster_server_port;
-  if ((config_server_obj= ic_create_api_cluster(clu_conf, &cluster_id,
+  apic->num_cluster_servers= 1;
+  apic->cluster_server_ips= &glob_cluster_server_ip;
+  apic->cluster_server_ports= &glob_cluster_server_port;
+  if ((config_server_obj= ic_create_api_cluster(apic, &cluster_id,
                                                 &node_id, (guint32)1)))
   {
     config_server_obj->num_clusters_to_connect= 1;
@@ -509,13 +600,13 @@ int main(int argc,
 {
   int ret_code= 1;
   IC_CONNECTION *conn;
-  IC_API_CLUSTER_CONNECTION clu_conf;
+  IC_API_CLUSTER_CONNECTION apic;
   IC_API_CONFIG_SERVER *config_server_obj= NULL;
 
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Manager")))
     return ret_code;
-  if ((config_server_obj= get_configuration(&clu_conf)))
+  if ((config_server_obj= get_configuration(&apic)))
     goto error;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;
@@ -527,3 +618,4 @@ error:
   ic_end();
   return ret_code;
 }
+

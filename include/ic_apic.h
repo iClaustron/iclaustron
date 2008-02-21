@@ -28,7 +28,10 @@ enum ic_node_types
   IC_CLIENT_NODE = 1,
   IC_CLUSTER_SERVER_NODE = 2,
   IC_SQL_SERVER_NODE = 3,
-  IC_REP_SERVER_NODE = 4
+  IC_REP_SERVER_NODE = 4,
+  IC_FILE_SERVER_NODE = 6,
+  IC_RESTORE_NODE = 7,
+  IC_CLUSTER_MANAGER_NODE = 8
 };
 typedef enum ic_node_types IC_NODE_TYPES;
 
@@ -122,6 +125,13 @@ struct ic_api_cluster_operations
   int (*ic_get_config) (struct ic_api_config_server *apic,
                         guint64 our_version_num);
   int (*ic_get_info_config_channels) (struct ic_api_config_server *apic);
+  struct ic_cluster_config* (*ic_get_cluster_config)
+    (struct ic_apic_config_server *apic, guint32 cluster_id);
+  gchar* (*ic_get_node_object)
+    (struct ic_api_config_server *apic, guint32 cluster_id, guint32 node_id);
+  gchar* (*ic_get_typed_node_object)
+    (struct ic_api_config_server *apic, guint32 cluster_id,
+     guint32 node_id, IC_NODE_TYPES node_type);
   void (*ic_free_config) (struct ic_api_config_server *apic);
 };
 
