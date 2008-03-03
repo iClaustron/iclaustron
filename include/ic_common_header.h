@@ -25,7 +25,20 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define MAX_NODE_ID 255
+#define IC_VERSION 0x000001
+#define MYSQL_VERSION 0x06030c
+#define IC_VERSION_BIT_START 24
+#define IC_PROTOCOL_BIT 20
+
+#define IC_MAX_UINT32 0xFFFFFFFF
+#define IC_MAX_CLUSTER_ID 255
+#define IC_MAX_NODE_ID 255
+#define IC_MAX_FILE_NAME_SIZE 255
+
+#define ic_is_bit_set(value, bit_number) \
+  (((value | (1 << bit_number)) == 0) ? 0 : 1)
+#define ic_set_bit(value, bit_number) \
+  value|= (1 << bit_number);
 
 extern gchar *ic_empty_string;
 
@@ -169,24 +182,33 @@ typedef struct ic_string IC_STRING;
   ic_cmp_null_term_str
     This function compares a NULL-terminated string with an IC_STRING
 
-  ic_strdup
+  ic_strdup, ic_mc_strdup
     Create a copy of the input IC_STR and allocate memory for the string.
     Assumes someone else allocated memory for new IC_STRING.
+    ic_mc_strdup does the same thing but allocates memory from a memory
+    container instead.
 
   ic_conv_config_str_to_int
     Converts an IC_STRING containing a number from a configuration file
     to a number. A configuration file number can contain k, K, m, M, g and G
     to represent 1024, 1024*1024 and 1024*1024*1024.
+
+  ic_convert_file_to_dir
+    Converts a filename string to a directory name. Searches for the last
+    '\' in the filename ('/' on Windows).
 */
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr);
-void ic_add_string(IC_STRING *dest_str, gchar *input_str);
+void ic_add_string(IC_STRING *dest_str, const gchar *input_str);
 int ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str);
 void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
 guint32 ic_str_find_first(IC_STRING *ic_str, gchar searched_char);
 void ic_print_ic_string(IC_STRING *str);
 int ic_cmp_null_term_str(const char *null_term_str, IC_STRING *cmp_str);
 int ic_strdup(IC_STRING *out_str, IC_STRING *in_str);
+int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
+                 IC_STRING *out_str, IC_STRING *in_str);
 int ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
+gchar *ic_convert_file_to_dir(gchar *buf, gchar *file_name);
 
 /*
   ic_set_up_ic_string()

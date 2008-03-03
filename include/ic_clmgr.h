@@ -40,13 +40,18 @@ enum ic_parse_commands
   IC_SET_STAT_LEVEL_CMD = 17,
   IC_USE_CLUSTER_CMD = 18,
   IC_DISPLAY_STATS_CMD = 19,
-  IC_TOP_CMD = 20
+  IC_TOP_CMD = 20,
+  IC_NO_SUCH_CMD = 999
 };
 typedef enum ic_parse_commands IC_PARSE_COMMANDS;
 
 struct ic_parse_data
 {
-  /* Support variables for buffer to lexer */
+  /*
+    Support variables for buffer to lexer
+    These variables are initialised before
+    call to parser and only used by lexer.
+  */
   void *yyscanner;
   gchar *parse_buf;
   guint32 parse_inx;
@@ -65,10 +70,10 @@ struct ic_parse_data
   /* Flag for start command to perform initial start */
   gboolean initial_flag;
   /* Node type started */
+  gboolean binary_type_flag;
   IC_NODE_TYPES binary_type;
 
   /* Current cluster reference */
-  IC_STRING current_cluster_name;
   guint64   current_cluster_id;
 
   /* Cluster reference */
@@ -82,9 +87,6 @@ struct ic_parse_data
   guint64   node_id;
   gboolean  node_all;
   gboolean  default_node;
-
-  /* Is ALL set on command */
-  gboolean  all;
 };
 typedef struct ic_parse_data IC_PARSE_DATA;
 

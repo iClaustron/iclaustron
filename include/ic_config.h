@@ -31,13 +31,16 @@
 */
 #define INITIAL_PASS 0
 #define BUILD_PASS   1
+struct ic_cluster_config_temp;
 struct ic_cluster_config_load;
 struct ic_config_struct
 {
   union {
     struct ic_cluster_config_load *clu_conf;
+    struct ic_cluster_config_temp *cluster_conf;
   } config_ptr;
   struct ic_config_operations *clu_conf_ops;
+  struct ic_memory_container *perm_mc_ptr;
 };
 typedef struct ic_config_struct IC_CONFIG_STRUCT;
 
@@ -56,11 +59,12 @@ struct ic_config_operations
                     IC_STRING *data,
                     guint32 pass);
   int (*ic_add_comment)(void *ic_config,
-                        guint32 line_number,
                         guint32 section_number,
+                        guint32 line_number,
                         IC_STRING *comment,
                         guint32 pass);
   int (*ic_config_verify)(void *ic_config);
+  void (*ic_init_end)(void *ic_config);
   void (*ic_config_end)(void *ic_config);
 };
 typedef struct ic_config_operations IC_CONFIG_OPERATIONS;
@@ -74,7 +78,6 @@ typedef struct ic_config_operations IC_CONFIG_OPERATIONS;
   conf_data variable.
 */
 int ic_build_config_data(IC_STRING *conf_data,
-                         IC_CONFIG_OPERATIONS *ic_conf_op,
                          IC_CONFIG_STRUCT *ic_conf_obj,
                          IC_CONFIG_ERROR *err_obj);
 
@@ -87,5 +90,5 @@ int ic_build_config_data(IC_STRING *conf_data,
   Number followed by k,K,m,M,g,G where k multiplies number by 1024, m
   multiplies by 1024*1024 and g muiltiplies by 1024*1024*1024.
 */
-  int conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
+int conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
 #endif

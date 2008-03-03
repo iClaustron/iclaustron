@@ -115,7 +115,111 @@ struct ic_config_entry
 };
 typedef struct ic_config_entry IC_CONFIG_ENTRY;
 
-struct ic_cluster_config;
+struct ic_cluster_connect_info
+{
+  IC_STRING cluster_name;
+  IC_STRING password;
+  guint32 cluster_id;
+};
+typedef struct ic_cluster_connect_info IC_CLUSTER_CONNECT_INFO;
+
+/*
+  The struct ic_cluster_config contains the configuration of one
+  cluster. This struct is used both by users of the Cluster
+  Server and by the Cluster Server itself.
+
+  The Cluster Server itself fills this structure from a configuration
+  file whereas the API users fills it up by receiving the cluster
+  configuration using the protocol towards the Cluster Server.
+
+  The Cluster Server uses this struct when responding to a configuration
+  request from another node in the cluster.
+*/
+
+struct ic_cluster_config
+{
+  /*
+    DESCRIPTION:
+    ------------
+    We keep track of all nodes in each cluster we participate in,
+    also we keep track of number of kernel nodes, number of
+    cluster servers, and number of client nodes and finally the
+    number of communication links.
+    For each node in the cluster and each communication link we also
+    store the node id, the node type and the configuration parameters.
+  */
+
+  /*
+    node_config is an array of pointers that point to structs of the
+    types:
+    ic_kernel_config             iClaustron kernel nodes
+    ic_client_config             iClaustron client nodes
+    ic_conf_server_config        iClaustron config server nodes
+    ic_sql_server_config         iClaustron SQL server nodes
+    ic_rep_server_config         iClaustron Replication server nodes
+
+    The array node_types below contains the actual type of struct
+    used for each entry.
+  */
+  gchar **node_config;
+  /*
+    comm_config is an array of pointers that point to structs of the
+    types:
+    ic_socket_link_config         iClaustron Socket link
+    ic_shm_comm_link_config       iClaustron Shared Memory link
+    ic_sci_comm_link_config       iClaustron SCI link
+
+    The array comm_types below contains the actual type of the struct
+    for each entry. Currently only socket links are possible. Thus this
+    array is currently not implemented.
+  */
+  gchar **comm_config;
+
+  /*
+    We have a name and an id and a password on all clusters. This is
+    specified in the configuration file where we specify the clusters,
+    the rest of the information is stored in each specific cluster
+    configuration file. There is also a cluster id for each cluster.
+  */
+  IC_CLUSTER_CONNECT_INFO clu_info;
+
+  /*
+    We keep track of the number of nodes of various types, maximum node id
+    and the number of communication objects. We don't necessarily store all
+    communication objects so the absence of a communication object simply
+    means that the default values can be used.
+  */
+  guint32 max_node_id;
+  guint32 num_nodes;
+  guint32 num_data_servers;
+  guint32 num_cluster_servers;
+  guint32 num_clients;
+  guint32 num_sql_servers;
+  guint32 num_rep_servers;
+  guint32 num_comms;
+  /*
+    node_ids is an array of the node ids used temporarily when building the
+    data structures, this is not to be used after that, should be a NULL
+    pointer. The reason is that in the beginning this structure is in order
+    they arrive in the protocol rather than by node id. After that we arrange
+    the arrays to be by node id and thus there can be holes in the array if
+    there are node ids that are not represented in the cluster.
+
+    Currently we support only TCP/IP communication and probably won't extend
+    this given that most of the interesting alternatives can use sockets to
+    communicate.
+
+    We store an array of node types to be able to map the node config array
+    pointers into the proper structure and we also store a hash table on
+    communication objects where we can quickly find the communication object
+    given the node ids of the communication link.
+  */
+  guint32 *node_ids;
+  IC_NODE_TYPES *node_types;
+  IC_HASHTABLE *comm_hash;
+};
+typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
+
 struct ic_api_cluster_connection;
 struct ic_api_config_server;
 struct ic_run_config_server;
@@ -123,17 +227,27 @@ struct ic_run_config_server;
 struct ic_api_cluster_operations
 {
   int (*ic_get_config) (struct ic_api_config_server *apic,
-                        guint64 our_version_num);
+                        IC_CLUSTER_CONNECT_INFO **clu_info,
+                        guint32 *node_ids);
+
+  int (*ic_get_cluster_ids) (struct ic_api_config_server *apic,
+                            IC_CLUSTER_CONNECT_INFO **clu_infos);
+
   int (*ic_get_info_config_channels) (struct ic_api_config_server *apic);
-  struct ic_cluster_config* (*ic_get_cluster_config)
-    (struct ic_apic_config_server *apic, guint32 cluster_id);
+
+  IC_CLUSTER_CONFIG* (*ic_get_cluster_config)
+       (struct ic_api_config_server *apic, guint32 cluster_id);
+
   gchar* (*ic_get_node_object)
-    (struct ic_api_config_server *apic, guint32 cluster_id, guint32 node_id);
+       (struct ic_api_config_server *apic, guint32 cluster_id, guint32 node_id);
+
   gchar* (*ic_get_typed_node_object)
-    (struct ic_api_config_server *apic, guint32 cluster_id,
-     guint32 node_id, IC_NODE_TYPES node_type);
+       (struct ic_api_config_server *apic, guint32 cluster_id,
+        guint32 node_id, IC_NODE_TYPES node_type);
+
   void (*ic_free_config) (struct ic_api_config_server *apic);
 };
+typedef struct ic_api_cluster_operations IC_API_CLUSTER_OPERATIONS;
 
 struct ic_run_config_server_operations
 {
@@ -163,13 +277,14 @@ typedef struct ic_api_cluster_connection IC_API_CLUSTER_CONNECTION;
 */
 struct ic_api_config_server
 {
-  struct ic_api_cluster_operations api_op;
-  struct ic_cluster_config *conf_objects;
-  struct ic_api_cluster_connection cluster_conn;
+  IC_API_CLUSTER_OPERATIONS api_op;
+  IC_CLUSTER_CONFIG **conf_objects;
+  IC_MEMORY_CONTAINER *mc_ptr;
+  IC_API_CLUSTER_CONNECTION cluster_conn;
   GMutex *config_mutex;
-  guint32 *cluster_ids;
+
+  guint32 max_cluster_id;
   guint32 *node_ids;
-  guint32 num_clusters_to_connect;
   /*
     We have a number of variables to keep track of allocated memory
     and use of allocated memory for strings.
@@ -191,7 +306,7 @@ struct ic_run_config_server
   struct ic_run_config_server_operations run_op;
   struct ic_cluster_config **conf_objects;
   IC_CONNECTION *run_conn;
-  guint32 *cluster_ids;
+  guint32 max_cluster_id;
   guint32 num_clusters;
   guint32 cs_nodeid;
 };
@@ -402,94 +517,9 @@ struct ic_comm_link_config
 };
 typedef struct ic_comm_link_config IC_COMM_LINK_CONFIG;
 
-/*
-  The struct ic_cluster_config contains the configuration of one
-  cluster. This struct is used both by users of the Cluster
-  Server and by the Cluster Server itself.
-
-  The Cluster Server itself fills this structure from a configuration
-  file whereas the API users fills it up by receiving the cluster
-  configuration using the protocol towards the Cluster Server.
-
-  The Cluster Server uses this struct when responding to a configuration
-  request from another node in the cluster.
-*/
-
-struct ic_cluster_config
-{
-  /*
-    DESCRIPTION:
-    ------------
-    We keep track of all nodes in each cluster we participate in,
-    also we keep track of number of kernel nodes, number of
-    cluster servers, and number of client nodes and finally the
-    number of communication links.
-    For each node in the cluster and each communication link we also
-    store the node id, the node type and the configuration parameters.
-  */
-
-  /*
-    node_config is an array of pointers that point to structs of the
-    types:
-    ic_kernel_config             iClaustron kernel nodes
-    ic_client_config             iClaustron client nodes
-    ic_conf_server_config        iClaustron config server nodes
-    ic_sql_server_config         iClaustron SQL server nodes
-    ic_rep_server_config         iClaustron Replication server nodes
-
-    The array node_types below contains the actual type of struct
-    used for each entry.
-  */
-  gchar **node_config;
-  /*
-    comm_config is an array of pointers that point to structs of the
-    types:
-    ic_socket_link_config         iClaustron Socket link
-    ic_shm_comm_link_config       iClaustron Shared Memory link
-    ic_sci_comm_link_config       iClaustron SCI link
-
-    The array comm_types below contains the actual type of the struct
-    for each entry. Currently only socket links are possible.
-  */
-  gchar **comm_config;
-
-  /*
-    We keep track of the number of nodes of various types, maximum node id
-    and the number of communication objects. We don't necessarily store all
-    communication objects so the absence of a communication object simply
-    means that the default values can be used.
-  */
-  guint32 max_node_id;
-  guint32 num_nodes;
-  guint32 num_data_servers;
-  guint32 num_cluster_servers;
-  guint32 num_clients;
-  guint32 num_sql_servers;
-  guint32 num_rep_servers;
-  guint32 num_comms;
-  /*
-    node_ids is an array of the node ids used temporarily when building the
-    data structures, this is not to be used after that, should be a NULL
-    pointer. The reason is that in the beginning this structure is in order
-    they arrive in the protocol rather than by node id. After that we arrange
-    the arrays to be by node id and thus there can be holes in the array if
-    there are node ids that are not represented in the cluster.
-
-    Currently we support only TCP/IP communication and probably won't extend
-    this given that most of the interesting alternatives can use sockets to
-    communicate.
-
-    We store an array of node types to be able to map the node config array
-    pointers into the proper structure and we also store a hash table on
-    communication objects where we can quickly find the communication object
-    given the node ids of the communication link.
-  */
-  guint32 *node_ids;
-  IC_NODE_TYPES *node_types;
-  IC_COMMUNICATION_TYPE *comm_types;
-  IC_HASHTABLE *comm_hash;
-};
-typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
+IC_CLUSTER_CONNECT_INFO**
+ic_load_cluster_config_from_file(gchar *config_file_path,
+                                 IC_CONFIG_STRUCT *cluster_conf);
 
 IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file_path,
@@ -504,9 +534,23 @@ struct ic_cs_conf_comment
 };
 typedef struct ic_cs_conf_comment IC_CS_CONF_COMMENT;
 
+struct ic_cluster_config_temp
+{
+  IC_CLUSTER_CONNECT_INFO **clu_info;
+  guint32 size_string_memory;
+  gchar *string_memory;
+  guint32 num_clusters;
+  gboolean init_state;
+  IC_STRING cluster_name;
+  IC_STRING password;
+  guint32 cluster_id;
+};
+typedef struct ic_cluster_config_temp IC_CLUSTER_CONFIG_TEMP;
+
 struct ic_cluster_config_load
 {
-  IC_CLUSTER_CONFIG conf;
+  IC_CLUSTER_CONFIG *conf;
+  IC_MEMORY_CONTAINER *temp_mc_ptr;
   void *current_node_config;
   gchar *string_memory;
   gchar *string_memory_to_return;
@@ -533,15 +577,11 @@ struct ic_cluster_config_load
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 
 IC_API_CONFIG_SERVER*
-ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
-                      guint32 *cluster_ids,
-                      guint32 *node_ids,
-                      guint32 num_clusters);
+ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn);
 
 IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
-                      guint32 *cluster_ids,
-                      guint32 num_clusters,
+                      IC_MEMORY_CONTAINER *mc_ptr,
                       gchar *server_name,
                       gchar* server_port);
 

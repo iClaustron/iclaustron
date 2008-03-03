@@ -37,6 +37,7 @@ int yylex(void *parse_data, void *scanner);
 %token FROM_SYM
 %token GROUP_SYM
 %token IC_KERNEL_SYM
+%token INITIAL_SYM
 %token KILL_SYM
 %token LIST_SYM
 %token LISTEN_SYM
@@ -124,12 +125,12 @@ statistics_command:
     ;
 
 die_command:
-    DIE_SYM opt_cluster opt_node opt_all
+    DIE_SYM target_specifier
     { PARSE_DATA->command= IC_DIE_CMD; }
     ;
 
 kill_command:
-    KILL_SYM opt_cluster opt_node opt_all
+    KILL_SYM target_specifier
     { PARSE_DATA->command= IC_DIE_CMD; }
     ;
 
@@ -146,43 +147,16 @@ perform_command:
     ;
 
 restart_command:
-    RESTART_SYM opt_cluster opt_node opt_all
+    RESTART_SYM target_specifier
     { PARSE_DATA->command= IC_RESTART_CMD; }
     ;
 
 start_command:
-    START_SYM start_params
+    START_SYM target_specifier opt_initial
     { PARSE_DATA->command= IC_START_CMD; }
 
-start_params:
-    binary_type opt_cluster node_or_all
-    | opt_cluster opt_node opt_all
-    ;
-
-binary_type:
-    IC_KERNEL_SYM
-    { PARSE_DATA->binary_type= IC_KERNEL_NODE; }
-    | CLUSTER_SYM SERVER_SYM
-    { PARSE_DATA->binary_type= IC_CLUSTER_SERVER_NODE; }
-    | SQL_SYM
-    { PARSE_DATA->binary_type= IC_SQL_SERVER_NODE; }
-    | REPLICATION_SYM SERVER_SYM
-    { PARSE_DATA->binary_type= IC_REP_SERVER_NODE; }
-    | FILE_SYM SERVER_SYM
-    { PARSE_DATA->binary_type= IC_FILE_SERVER_NODE; }
-    | RESTORE_SYM
-    { PARSE_DATA->binary_type= IC_RESTORE_NODE; }
-    | CLUSTER_SYM MANAGER_SYM
-    { PARSE_DATA->binary_type= IC_CLUSTER_MANAGER_NODE; }
-    ;
-
-node_or_all:
-    node
-    | all
-    ;
-
 stop_command:
-    STOP_SYM opt_cluster opt_node opt_all
+    STOP_SYM target_specifier
     { PARSE_DATA->command= IC_STOP_CMD; }
     ;
 
@@ -207,27 +181,27 @@ show_command:
     ;
 
 show_cluster_command:
-    SHOW_SYM CLUSTER_SYM opt_cluster
+    SHOW_SYM CLUSTER_SYM opt_cluster_reference
     { PARSE_DATA->command= IC_SHOW_CLUSTER_CMD; }
     ;
 
 show_cluster_status_command:
-    SHOW_SYM CLUSTER_SYM STATUS_SYM opt_cluster opt_seen_from
+    SHOW_SYM CLUSTER_SYM opt_cluster_reference STATUS_SYM opt_seen_from
     { PARSE_DATA->command= IC_SHOW_CLUSTER_STATUS_CMD; }
     ;
 
 show_connections_command:
-    SHOW_SYM CONNECTIONS_SYM opt_cluster opt_node opt_all
+    SHOW_SYM CONNECTIONS_SYM target_specifier
     { PARSE_DATA->command= IC_SHOW_CONNECTIONS_CMD; }
     ;
 
 show_config_command:
-    SHOW_SYM CONFIG_SYM opt_cluster opt_node opt_all
+    SHOW_SYM CONFIG_SYM target_specifier
     { PARSE_DATA->command= IC_SHOW_CONFIG_CMD; }
     ;
 
 show_memory_command:
-    SHOW_SYM MEMORY_SYM opt_cluster opt_node opt_all
+    SHOW_SYM MEMORY_SYM target_specifier
     { PARSE_DATA->command= IC_SHOW_MEMORY_CMD; }
     ;
 
@@ -270,6 +244,13 @@ opt_group:
     | group_reference
     ;
 
+opt_initial:
+    /* empty */
+    { PARSE_DATA->initial_flag= FALSE; }
+    | INITIAL_SYM
+    { PARSE_DATA->initial_flag= TRUE; }
+    ;
+
 group_reference:
     GROUP_SYM ALL_SYM
     | GROUP_SYM IDENTIFIER
@@ -280,31 +261,16 @@ opt_seen_from:
     | SEEN_SYM FROM_SYM opt_node
     ;
 
+opt_cluster_reference:
+    /* empty */
+    { PARSE_DATA->default_cluster= TRUE; }
+    | one_cluster_reference
+    ;
+
 opt_cluster:
     /* empty */
     { PARSE_DATA->default_cluster= TRUE; }
-    | CLUSTER_SYM cluster_reference
-    ;
-
-one_cluster_reference:
-    cluster_id { PARSE_DATA->cluster_id= $1; }
-    | cluster_name
-    { memcpy(&PARSE_DATA->cluster_name, $1,sizeof(IC_STRING)); }
-    ;
-
-cluster_reference:
-    cluster_id { PARSE_DATA->cluster_id= $1; }
-    | cluster_name
-    { memcpy(&PARSE_DATA->cluster_name,$1,sizeof(IC_STRING)); }
-    | ALL_SYM { PARSE_DATA->cluster_all= TRUE; }
-    ;
-
-cluster_id:
-    INTEGER { $$= $1; }
-    ;
-
-cluster_name:
-    IDENTIFIER { $$= $1; }
+    | CLUSTER_SYM one_cluster_reference
     ;
 
 opt_node:
@@ -313,6 +279,39 @@ opt_node:
     | node
     ;
 
+target_specifier:
+    binary_type node_target_specifier
+    { PARSE_DATA->binary_type_flag= TRUE; }
+    | node_target_specifier
+    { PARSE_DATA->binary_type_flag= FALSE; }
+    ;
+
+node_target_specifier:
+    cluster node
+    | node
+    { PARSE_DATA->default_cluster= TRUE; }
+    | cluster_all
+    | node_all
+    { PARSE_DATA->default_cluster= TRUE; }
+    ;
+
+binary_type:
+    IC_KERNEL_SYM
+    { PARSE_DATA->binary_type= IC_KERNEL_NODE; }
+    | CLUSTER_SYM SERVER_SYM
+    { PARSE_DATA->binary_type= IC_CLUSTER_SERVER_NODE; }
+    | SQL_SYM
+    { PARSE_DATA->binary_type= IC_SQL_SERVER_NODE; }
+    | REPLICATION_SYM SERVER_SYM
+    { PARSE_DATA->binary_type= IC_REP_SERVER_NODE; }
+    | FILE_SYM SERVER_SYM
+    { PARSE_DATA->binary_type= IC_FILE_SERVER_NODE; }
+    | RESTORE_SYM
+    { PARSE_DATA->binary_type= IC_RESTORE_NODE; }
+    | CLUSTER_SYM MANAGER_SYM
+    { PARSE_DATA->binary_type= IC_CLUSTER_MANAGER_NODE; }
+    ;
+ 
 node:
     NODE_SYM node_reference
     ;
@@ -320,7 +319,6 @@ node:
 node_reference:
     node_id { PARSE_DATA->node_id= $1; }
     | node_name {memcpy(&PARSE_DATA->node_name,&$1,sizeof(IC_STRING));}
-    | ALL_SYM { PARSE_DATA->node_all= TRUE; }
     ;
 
 node_id:
@@ -331,12 +329,29 @@ node_name:
     IDENTIFIER { $$= $1; }
     ;
 
-opt_all:
-    /* empty */
-    | all
+cluster:
+    CLUSTER_SYM one_cluster_reference
     ;
 
-all:
-    ALL_SYM { PARSE_DATA->all= TRUE; }
+one_cluster_reference:
+    cluster_id { PARSE_DATA->cluster_id= $1; }
+    | cluster_name
+    { memcpy(&PARSE_DATA->cluster_name, $1,sizeof(IC_STRING)); }
+    ;
+
+cluster_id:
+    INTEGER { $$= $1; }
+    ;
+
+cluster_name:
+    IDENTIFIER { $$= $1; }
+    ;
+
+node_all:
+    NODE_SYM ALL_SYM { PARSE_DATA->node_all= TRUE; }
+
+cluster_all:
+    ALL_SYM { PARSE_DATA->cluster_all= TRUE; }
+
 %%
 

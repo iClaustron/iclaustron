@@ -21,10 +21,6 @@ static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_client_ip= "127.0.0.1";
 static gchar *glob_server_port= "10006";
 static gchar *glob_client_port= "12002";
-static gchar *glob_root_certificate_path="root.pem";
-static gchar *glob_server_certificate_path="server.pem";
-static gchar *glob_client_certificate_path="client.pem";
-static gchar *glob_passwd_string="jolle";
 
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
@@ -198,20 +194,24 @@ connection_test(gboolean use_ssl)
   return 0;
 }
 
+static gchar *kalle_str= "kalle";
+static gchar *kalle_pwd_str= "jetset";
+
 static int
 api_clusterserver_test()
 {
   IC_API_CONFIG_SERVER *srv_obj; 
   IC_API_CLUSTER_CONNECTION cluster_conn;
-  guint32 cluster_id= 0;
-  guint32 node_id= 0;
+  IC_CLUSTER_CONNECT_INFO clu_info;
+  IC_CLUSTER_CONNECT_INFO *clu_info_ptr[2];
+  guint32 node_id= 1;
 
   printf("Starting API Cluster server test\n");
   cluster_conn.cluster_server_ips= &glob_server_ip;
   cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
-  srv_obj= ic_create_api_cluster(&cluster_conn, &cluster_id,
-                                 &node_id, (guint32)1);
+  if ((srv_obj= ic_create_api_cluster(&cluster_conn)))
+    return 1;
   if (glob_test_type > 1)
   {
     printf("Testing print of config parameters\n");
@@ -227,8 +227,13 @@ api_clusterserver_test()
       ic_print_config_parameters(0xFFFFFFFF);
     return 0;
   }
-  srv_obj->num_clusters_to_connect= 1;
-  srv_obj->api_op.ic_get_config(srv_obj, (guint64)0x60301);
+  clu_info_ptr[0]= &clu_info;
+  clu_info_ptr[1]= NULL;
+  IC_INIT_STRING(&clu_info.cluster_name, kalle_str, strlen(kalle_str), TRUE);
+  IC_INIT_STRING(&clu_info.password, kalle_pwd_str, strlen(kalle_pwd_str),
+                 TRUE);
+  clu_info.cluster_id= IC_MAX_UINT32;
+  srv_obj->api_op.ic_get_config(srv_obj, &clu_info_ptr[0], &node_id);
   srv_obj->api_op.ic_free_config(srv_obj);
   printf("Completing cluster server test\n");
   return 0;
@@ -247,39 +252,6 @@ api_clusterserver_test()
   configuration from the Cluster Server. After one such attempt
   the test will conclude.
 */
-static int
-run_clusterserver_test()
-{
-  IC_RUN_CLUSTER_SERVER *run_obj;
-  IC_CONFIG_STRUCT clu_conf_struct;
-  IC_CLUSTER_CONFIG *clu_conf;
-  guint32 cluster_id= 0;
-  int ret_code= 0;
-  gchar *conf_file= "config.ini";
-
-  printf("Starting Run Cluster server test\n");
-  if (!(clu_conf= ic_load_config_server_from_files(conf_file,
-                                                   &clu_conf_struct)))
-  {
-    printf("Failed to load config file %s from disk", conf_file);
-    return 1;
-  }
-  run_obj= ic_create_run_cluster(&clu_conf, &cluster_id, (guint32)1,
-                                 glob_server_ip, glob_server_port);
-
-  if ((ret_code= run_obj->run_op.ic_run_cluster_server(run_obj)))
-  {
-    printf("run_cluster_server returned error code %u\n", ret_code);
-    ic_print_error(ret_code);
-    goto end;
-  }
-end:
-  clu_conf_struct.clu_conf_ops->ic_config_end(&clu_conf_struct);
-  run_obj->run_op.ic_free_run_cluster(run_obj);
-  return ret_code;
-}
-
-static int
 /*  Methods to send and receive buffers with Carriage Return
 
 int ic_send_with_cr(IC_CONNECTION *conn, const char *buf);
@@ -289,6 +261,7 @@ int ic_rec_with_cr(IC_CONNECTION *conn,
                    guint32 *size_curr_buf,
                    guint32 buffer_size);*/
 
+static int
 test_pcntrl()
 {
   int ret_code, error;
@@ -356,7 +329,6 @@ int main(int argc, char *argv[])
       ret_code= api_clusterserver_test();
       break;
     case 7:
-      ret_code= run_clusterserver_test();
       break;
     case 8:
       test_pcntrl();

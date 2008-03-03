@@ -314,33 +314,47 @@
   retrieving the config from the cluster server.
 */
 
-const gchar *data_server_str= "data server";
-const gchar *client_node_str= "client";
-const gchar *cluster_server_str= "cluster server";
-const gchar *rep_server_str= "replication server";
-const gchar *sql_server_str= "sql server";
-const gchar *socket_str= "socket";
-const gchar *data_server_def_str= "data server default";
-const gchar *client_node_def_str= "client default";
-const gchar *cluster_server_def_str= "cluster server default";
-const gchar *rep_server_def_str= "replication server default";
-const gchar *sql_server_def_str= "sql server default";
-const gchar *socket_def_str= "socket default";
-const gchar *node_id_str= "node_id";
-const gchar *get_mgmd_nodeid_str= "get mgmd nodeid";
-const gchar *get_mgmd_nodeid_reply_str= "get mgmd nodeid reply";
-const gchar *set_connection_parameter_str= "set connection parameter";
-const gchar *set_connection_parameter_reply_str=
-  "set connection parameter reply";
-const gchar *convert_transporter_str= "transporter connect";
-
 gchar *ic_empty_string= "";
+/* Strings used in cluster configuration files */
+static const gchar *cluster_str= "cluster";
+static const gchar *cluster_id_string= "cluster_id";
+static const gchar *cluster_name_str= "cluster_name";
+static const gchar *cluster_password_str= "password";
+
+/* Strings used in configuration files for each cluster */
+static const gchar *data_server_str= "data server";
+static const gchar *client_node_str= "client";
+static const gchar *cluster_server_str= "cluster server";
+static const gchar *rep_server_str= "replication server";
+static const gchar *sql_server_str= "sql server";
+static const gchar *socket_str= "socket";
+static const gchar *data_server_def_str= "data server default";
+static const gchar *client_node_def_str= "client default";
+static const gchar *cluster_server_def_str= "cluster server default";
+static const gchar *rep_server_def_str= "replication server default";
+static const gchar *sql_server_def_str= "sql server default";
+static const gchar *socket_def_str= "socket default";
+static const gchar *node_id_str= "node_id";
+
+/* Strings used in NDB MGMAPI Protocol, first group additions */
+static const gchar *get_cluster_list_str= "get cluster list";
+static const gchar *get_cluster_list_reply_str= "get cluster list reply";
+static const gchar *cluster_name_string= "clustername: ";
+static const gchar *cluster_id_str= "clusterid: ";
+static const gchar *end_get_cluster_list_str= "end get cluster list";
+
+static const gchar *get_mgmd_nodeid_str= "get mgmd nodeid";
+static const gchar *get_mgmd_nodeid_reply_str= "get mgmd nodeid reply";
+static const gchar *set_connection_parameter_str= "set connection parameter";
+static const gchar *set_connection_parameter_reply_str=
+  "set connection parameter reply";
+static const gchar *convert_transporter_str= "transporter connect";
+
 static const gchar *get_nodeid_str= "get nodeid";
 static const gchar *get_nodeid_reply_str= "get nodeid reply";
 static const gchar *get_config_str= "get config";
 static const gchar *get_config_reply_str= "get config reply";
 static const gchar *nodeid_str= "nodeid: ";
-static const gchar *cluster_id_str= "clusterid: ";
 static const gchar *version_str= "version: ";
 static const gchar *nodetype_str= "nodetype: ";
 static const gchar *user_str= "user: mysqld";
@@ -402,6 +416,8 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 #define CLUSTER_ID_REQ_LEN 11
 #define RESULT_OK_LEN 10
 
+#define CLUSTER_NAME_REQ_LEN 13
+
 #define GET_CONFIG_LEN 10
 #define GET_CONFIG_REPLY_LEN 16
 #define CONTENT_LENGTH_LEN 16
@@ -442,10 +458,6 @@ static guint64 rep_server_mandatory_bits;
 static guint64 sql_server_mandatory_bits;
 static guint64 comm_mandatory_bits;
 
-/* Set version number Ndb = 6.3.1, iClaustron = 0.0.1 */
-static const guint64 version_no= (guint64)0x60301 +
-                                 (((guint64)0x000001) << 32);
-
 /*
   CONFIGURATION PARAMETER MODULE
   ------------------------------
@@ -458,6 +470,14 @@ static const guint64 version_no= (guint64)0x60301 +
 
 #define DEF_CLUSTER_SERVER_PORT 1186
 #define DEF_PORT 1187
+
+static guint64
+get_iclaustron_protocol_version()
+{
+  guint64 version_no= (IC_VERSION << IC_VERSION_BIT_START) + MYSQL_VERSION;
+  ic_set_bit(version_no, IC_PROTOCOL_BIT);
+  return version_no;
+}
 
 static IC_SOCKET_LINK_CONFIG*
 get_communication_object(IC_CLUSTER_CONFIG *clu_conf,
@@ -797,7 +817,7 @@ init_config_parameters()
 
   /* These parameters are common for most node types */
   IC_SET_CONFIG_MAP(IC_NODE_ID, 3);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   IC_SET_KERNEL_CONFIG(conf_entry, node_id, IC_UINT32,
                        0, IC_NOT_CHANGEABLE);
   conf_entry->is_mandatory= TRUE;
@@ -1556,7 +1576,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(SOCKET_FIRST_NODE_ID, 180);
   IC_SET_SOCKET_CONFIG(conf_entry, first_node_id,
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
@@ -1565,7 +1585,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(SOCKET_SECOND_NODE_ID, 181);
   IC_SET_SOCKET_CONFIG(conf_entry, second_node_id,
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
@@ -1626,7 +1646,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(SOCKET_SERVER_NODE_ID, 190);
   IC_SET_SOCKET_CONFIG(conf_entry, server_node_id,
                     IC_UINT32, 0, IC_NOT_CHANGEABLE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, MAX_NODE_ID);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
@@ -1949,23 +1969,66 @@ init_config_object(gchar *conf_object, IC_CONFIG_TYPES config_type)
   ----------------------------------------------------------------
 */
 
+static gboolean
+check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
+{
+  if ((read_size != (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) != 0))
+    return TRUE;
+  return FALSE;
+}
+
+static gboolean
+check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
+                   int str_len, guint64 *number)
+{
+  if ((read_size < (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) != 0) ||
+      (convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
+                                     number)))
+    return TRUE;
+  return FALSE;
+}
+
+static int
+rec_simple_str(IC_CONNECTION *conn, const gchar *str)
+{
+  guint32 read_size= 0, size_curr_buf= 0;
+  int error;
+  gchar read_buf[READ_BUF_SIZE];
+  if (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
+  {
+    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    if (!check_buf(read_buf, read_size, str,
+                   strlen(str)))
+    {
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Protocol error in waiting for %s\n", str));
+      DEBUG_RETURN(PROTOCOL_ERROR);
+    }
+    DEBUG_RETURN(0);
+  }
+  DEBUG_RETURN(error);
+}
+
 static int
 allocate_mem_phase1(IC_CLUSTER_CONFIG *conf_obj)
 {
   /*
     Allocate memory for pointer arrays pointing to the configurations of the
     nodes in the cluster, also allocate memory for array of node types.
+    This memory is only temporary allocated for the analysis of the
+    configuration data.
   */
   conf_obj->node_types= (IC_NODE_TYPES*)ic_calloc(conf_obj->num_nodes *
                                                   sizeof(IC_NODE_TYPES));
-  conf_obj->comm_types= (IC_COMMUNICATION_TYPE*)
-         ic_calloc(conf_obj->num_nodes * sizeof(IC_COMMUNICATION_TYPE));
   conf_obj->node_ids= (guint32*)ic_calloc(conf_obj->num_nodes *
                                           sizeof(guint32));
   conf_obj->node_config= (gchar**)ic_calloc(conf_obj->num_nodes *
                                             sizeof(gchar*));
   if (!conf_obj->node_types || !conf_obj->node_ids ||
-      !conf_obj->comm_types || !conf_obj->node_config)
+      !conf_obj->node_config)
     return MEM_ALLOC_ERROR;
   return 0;
 }
@@ -1977,6 +2040,7 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   guint32 i;
   guint32 size_config_objects= 0;
   gchar *conf_obj_ptr, *string_mem;
+  IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
   /*
     Allocate memory for the actual configuration objects for nodes and
     communication sections.
@@ -2007,11 +2071,14 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   }
   size_config_objects+= conf_obj->num_comms *
                         sizeof(struct ic_comm_link_config);
-  if (!(conf_obj->comm_config= (gchar**)ic_calloc(
+  if (!(conf_obj->comm_config= (gchar**)
+      mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                      conf_obj->num_comms * sizeof(gchar*))) ||
-      !(apic->string_memory_to_return= ic_calloc(
+      !(apic->string_memory_to_return= 
+      mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                      apic->string_memory_size)) ||
-      !(apic->config_memory_to_return= ic_calloc(
+      !(apic->config_memory_to_return= 
+      mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                      size_config_objects)))
     return MEM_ALLOC_ERROR;
 
@@ -2303,17 +2370,20 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
 }
 
 static int
-arrange_node_arrays(IC_CLUSTER_CONFIG *conf_obj)
+arrange_node_arrays(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
 {
   gchar **new_node_config;
   IC_NODE_TYPES *new_node_types;
   guint32 i, node_id;
+  IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
   DEBUG_ENTRY("arrange_node_arrays");
 
-  new_node_types= (IC_NODE_TYPES*)ic_calloc((conf_obj->max_node_id + 1) *
-                                            sizeof(guint32));
-  new_node_config= (gchar**)ic_calloc((conf_obj->max_node_id + 1) *
-                                      sizeof(gchar*));
+  new_node_types= (IC_NODE_TYPES*)
+    mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, (conf_obj->max_node_id + 1) *
+                                        sizeof(guint32));
+  new_node_config= (gchar**)
+    mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, (conf_obj->max_node_id + 1) *
+                                        sizeof(gchar*));
   if (!new_node_types || !new_node_config)
     DEBUG_RETURN(MEM_ALLOC_ERROR);
 
@@ -2337,22 +2407,22 @@ arrange_node_arrays(IC_CLUSTER_CONFIG *conf_obj)
 static int
 analyse_key_value(guint32 *key_value, guint32 len, int pass,
                   IC_API_CONFIG_SERVER *apic,
-                  guint32 current_cluster_index)
+                  guint32 cluster_id)
 {
   guint32 *key_value_end= key_value + len;
   IC_CLUSTER_CONFIG *conf_obj;
   int error;
 
-  conf_obj= apic->conf_objects+current_cluster_index;
+  conf_obj= apic->conf_objects[cluster_id];
   if (pass == 1)
   {
     if ((error= allocate_mem_phase1(conf_obj)))
-      return error;
+      goto error;
   }
   else if (pass == 2)
   {
     if ((error= allocate_mem_phase2(apic, conf_obj)))
-      return error;
+      goto error;
   }
   while (key_value < key_value_end)
   {
@@ -2375,7 +2445,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
       {
         if ((error= analyse_node_section_phase1(conf_obj, sect_id,
                                                 value, hash_key)))
-          return error;
+          goto error;
       }
     }
     key_value+= 2;
@@ -2383,7 +2453,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     {
       if ((error= step_key_value(apic, key_type, &key_value,
                                  value, key_value_end, pass)))
-        return error;
+        goto error;
     }
     else
     {
@@ -2394,21 +2464,37 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
           guint32 node_sect_id= sect_id - 2;
           if ((error= read_node_section(conf_obj, apic, key_type, &key_value,
                                         value, hash_key, node_sect_id)))
-            return error;
+            goto error;
         }
         else
         {
           guint32 comm_sect_id= sect_id - (conf_obj->num_nodes + 3);
           if ((error= read_comm_section(conf_obj, apic, key_type, &key_value,
                                         value, hash_key, comm_sect_id)))
-            return error;
+            goto error;
         }
       }
     }
   }
   if (pass != 2)
     return 0;
-  return arrange_node_arrays(conf_obj);
+  if ((error= arrange_node_arrays(apic, conf_obj)))
+    goto error;
+  return 0;
+error:
+  if (pass == 1 || pass == 2)
+  {
+    if (conf_obj->node_types)
+      ic_free(conf_obj->node_types);
+    if (conf_obj->node_ids)
+      ic_free(conf_obj->node_ids);
+    if (conf_obj->node_config)
+      ic_free(conf_obj->node_config);
+    conf_obj->node_types= NULL;
+    conf_obj->node_ids= NULL;
+    conf_obj->node_config= NULL;
+  }
+  return error;
 }
 
 /*
@@ -2421,7 +2507,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
 static gchar ver_string[8] = { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
 static int
 translate_config(IC_API_CONFIG_SERVER *apic,
-                 guint32 current_cluster_index,
+                 guint32 cluster_id,
                  gchar *config_buf,
                  guint32 config_size)
 {
@@ -2432,6 +2518,10 @@ translate_config(IC_API_CONFIG_SERVER *apic,
 
   g_assert((config_size & 3) == 0);
   bin_config_size= (config_size >> 2) * 3;
+  /*
+    This memory allocation is temporary allocation simply because size is
+    variable and can be larger than stack.
+  */
   if (!(bin_buf= ic_calloc(bin_config_size)))
     return MEM_ALLOC_ERROR;
   if ((error= ic_base64_decode((guint8*)bin_buf, &bin_config_size,
@@ -2439,20 +2529,20 @@ translate_config(IC_API_CONFIG_SERVER *apic,
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("1:Protocol error in base64 decode\n"));
-    return PROTOCOL_ERROR;
+    goto protocol_error;
   }
   bin_config_size32= bin_config_size >> 2;
   if ((bin_config_size & 3) != 0 || bin_config_size32 <= 3)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("2:Protocol error in base64 decode\n"));
-    return PROTOCOL_ERROR;
+    goto protocol_error;
   }
   if (memcmp(bin_buf, ver_string, 8))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("3:Protocol error in base64 decode\n"));
-    return PROTOCOL_ERROR;
+    goto protocol_error;
   }
   bin_buf32= (guint32*)bin_buf;
   checksum= 0;
@@ -2462,18 +2552,24 @@ translate_config(IC_API_CONFIG_SERVER *apic,
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("4:Protocol error in base64 decode\n"));
-    return PROTOCOL_ERROR;
+    goto protocol_error;
   }
   key_value_ptr= bin_buf32 + 2;
   key_value_len= bin_config_size32 - 3;
   for (pass= 0; pass < 3; pass++)
   {
     if ((error= analyse_key_value(key_value_ptr, key_value_len, pass,
-                                  apic, current_cluster_index)))
-      return error;
+                                  apic, cluster_id)))
+      goto error;
   }
+  error= 0;
+  goto error;
+
+protocol_error:
+  error= PROTOCOL_ERROR;
+error:
   ic_free(bin_buf);
-  return 0;
+  return error;
 }
 
 static int
@@ -2501,8 +2597,7 @@ set_up_cluster_server_connection(IC_CONNECTION *conn,
 static int
 send_get_nodeid(IC_CONNECTION *conn,
                 IC_API_CONFIG_SERVER *apic,
-                guint32 current_cluster_index,
-                guint64 the_version_num)
+                guint32 cluster_id)
 {
   gchar version_buf[128];
   gchar nodeid_buf[32];
@@ -2510,10 +2605,12 @@ send_get_nodeid(IC_CONNECTION *conn,
   gchar nodetype_buf[32];
   gchar buf[128];
   guint32 node_type= 1;
-  guint32 node_id= apic->node_ids[current_cluster_index];
+  guint64 version_no;
+  guint32 node_id= apic->node_ids[cluster_id];
 
+  version_no= get_iclaustron_protocol_version();
   g_snprintf(version_buf, 32, "%s%s", version_str, 
-             ic_guint64_str(the_version_num, buf));
+             ic_guint64_str(version_no, buf));
   g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
   g_snprintf(nodetype_buf, 32, "%s%u", nodetype_str, node_type);
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
@@ -2536,13 +2633,15 @@ send_get_nodeid(IC_CONNECTION *conn,
 }
 
 static int
-send_get_config(IC_CONNECTION *conn, guint64 the_version_num)
+send_get_config(IC_CONNECTION *conn)
 {
   gchar version_buf[128];
   gchar buf[128];
+  guint64 version_no;
 
+  version_no= get_iclaustron_protocol_version();
   g_snprintf(version_buf, 32, "%s%s", version_str,
-             ic_guint64_str(the_version_num, buf));
+             ic_guint64_str(version_no, buf));
   if (ic_send_with_cr(conn, get_config_str) ||
       ic_send_with_cr(conn, version_buf) ||
       ic_send_with_cr(conn, ic_empty_string))
@@ -2550,31 +2649,10 @@ send_get_config(IC_CONNECTION *conn, guint64 the_version_num)
   return 0;
 }
 
-static gboolean
-check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
-{
-  if ((read_size != (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0))
-    return TRUE;
-  return FALSE;
-}
-
-static gboolean
-check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
-                   int str_len, guint64 *number)
-{
-  if ((read_size < (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0) ||
-      (convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
-                                     number)))
-    return TRUE;
-  return FALSE;
-}
-
 static int
 rec_get_nodeid(IC_CONNECTION *conn,
                IC_API_CONFIG_SERVER *apic,
-               guint32 current_cluster_index)
+               guint32 cluster_id)
 {
   gchar read_buf[READ_BUF_SIZE];
   guint32 read_size= 0;
@@ -2613,14 +2691,14 @@ rec_get_nodeid(IC_CONNECTION *conn,
         */
         if (check_buf_with_int(read_buf, read_size, nodeid_str, NODEID_LEN,
                                &node_number) ||
-            (node_number > MAX_NODE_ID))
+            (node_number > IC_MAX_NODE_ID))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in nodeid state\n"));
           return PROTOCOL_ERROR;
         }
         DEBUG_PRINT(CONFIG_LEVEL, ("Nodeid = %u\n", (guint32)node_number));
-        apic->node_ids[current_cluster_index]= (guint32)node_number;
+        apic->node_ids[cluster_id]= (guint32)node_number;
         state= RESULT_OK_STATE;
         break;
       case RESULT_OK_STATE:
@@ -2660,7 +2738,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
 static int
 rec_get_config(IC_CONNECTION *conn,
                IC_API_CONFIG_SERVER *apic,
-               guint32 current_cluster_index)
+               guint32 cluster_id)
 {
   gchar read_buf[READ_BUF_SIZE];
   gchar *config_buf= NULL;
@@ -2668,7 +2746,7 @@ rec_get_config(IC_CONNECTION *conn,
   guint32 size_curr_buf= 0;
   guint32 config_size= 0;
   guint32 rec_config_size= 0;
-  int error;
+  int error= 0;
   guint64 content_length;
   guint32 state= GET_CONFIG_REPLY_STATE;
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
@@ -2690,7 +2768,7 @@ rec_get_config(IC_CONNECTION *conn,
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in get config reply state\n"));
-          return PROTOCOL_ERROR;
+          goto protocol_error;
         }
         state= RESULT_OK_STATE;
         break;
@@ -2703,7 +2781,7 @@ rec_get_config(IC_CONNECTION *conn,
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in result ok state\n"));
-          return PROTOCOL_ERROR;
+          goto protocol_error;
         }
         state= CONTENT_LENGTH_STATE;
         break;
@@ -2719,7 +2797,7 @@ rec_get_config(IC_CONNECTION *conn,
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in content length state\n"));
-          return PROTOCOL_ERROR;
+          goto protocol_error;
         }
         state= OCTET_STREAM_STATE;
         break;
@@ -2732,7 +2810,7 @@ rec_get_config(IC_CONNECTION *conn,
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in octet stream state\n"));
-          return PROTOCOL_ERROR;
+          goto protocol_error;
         }
         state= CONTENT_ENCODING_STATE;
         break;
@@ -2746,11 +2824,12 @@ rec_get_config(IC_CONNECTION *conn,
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in content encoding state\n"));
-          return PROTOCOL_ERROR;
+          goto protocol_error;
         }
         /*
           Here we need to allocate receive buffer for configuration plus the
           place to put the encoded binary data.
+          This is a temporary memory allocation only for this method.
         */
         if (!(config_buf= ic_calloc(content_length)))
           return MEM_ALLOC_ERROR;
@@ -2768,12 +2847,12 @@ rec_get_config(IC_CONNECTION *conn,
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in wait empty return state\n"));
-          return PROTOCOL_ERROR;
+          goto protocol_error;
         }
         if (state == WAIT_EMPTY_RETURN_STATE)
           state= RECEIVE_CONFIG_STATE;
         else
-          return 0;
+          goto end;
         break;
       case RECEIVE_CONFIG_STATE:
         /*
@@ -2792,19 +2871,17 @@ rec_get_config(IC_CONNECTION *conn,
             and are ready to translate it.
           */
           DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding\n"));
-          error= translate_config(apic, current_cluster_index,
+          error= translate_config(apic, cluster_id,
                                   config_buf, config_size);
-          ic_free(config_buf);
           if (error)
-            return error;
+            goto end;
           state= WAIT_LAST_EMPTY_RETURN_STATE;
         }
         else if (read_size != CONFIG_LINE_LEN)
         {
-          ic_free(config_buf);
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in config receive state\n"));
-          return PROTOCOL_ERROR;
+          goto protocol_error;
         }
         break;
       case RESULT_ERROR_STATE:
@@ -2813,7 +2890,13 @@ rec_get_config(IC_CONNECTION *conn,
         break;
     }
   }
+end:
+  if (config_buf)
+    ic_free(config_buf);
   return error;
+protocol_error:
+  error= PROTOCOL_ERROR;
+  goto end;
 }
 
 /*
@@ -2847,7 +2930,7 @@ rec_get_config(IC_CONNECTION *conn,
 */
 
 static int
-get_config_info_channels(IC_API_CONFIG_SERVER *apic)
+get_config_info_channels(__attribute__ ((unused)) IC_API_CONFIG_SERVER *apic)
 {
   DEBUG_ENTRY("get_config_info_channels");
   DEBUG_RETURN(0);
@@ -2862,6 +2945,7 @@ disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
     conn= apic->cluster_conn.cluster_srv_conns + i;
+    conn->conn_op.ic_free_connection(conn);
   }
 }
 
@@ -2887,11 +2971,24 @@ connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
 }
 
 static int
-get_info_config_channels(IC_API_CONFIG_SERVER *apic)
+get_info_config_channels(__attribute__ ((unused)) IC_API_CONFIG_SERVER *apic)
 {
   return 0;
 }
 
+static guint32
+count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
+{
+  IC_CLUSTER_CONNECT_INFO **clu_info_iter;
+  guint32 num_clusters;
+  clu_info_iter= clu_infos;
+  while (*clu_info_iter)
+  {
+    num_clusters++;
+    clu_info_iter++;
+  }
+  return num_clusters;
+}
 /*
   This method connects to one of the provided cluster servers. Then it
   retrieves the configuration from this cluster server. In a successful
@@ -2903,92 +3000,195 @@ get_info_config_channels(IC_API_CONFIG_SERVER *apic)
   any changes to the configuration in proper order.
 */
 static int
-get_cs_config(IC_API_CONFIG_SERVER *apic, guint64 the_version_num)
+get_cs_config(IC_API_CONFIG_SERVER *apic,
+              IC_CLUSTER_CONNECT_INFO **clu_infos,
+              guint32 *node_ids)
 {
-  guint32 i;
+  guint32 i, max_cluster_id= 0;
+  guint32 cluster_id, num_clusters;
   int error= END_OF_FILE;
   IC_CONNECTION *conn;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
   DEBUG_ENTRY("get_cs_config");
 
-  if (the_version_num == 0LL)
-    the_version_num= version_no;
+  num_clusters= count_clusters(clu_infos);
   if (!(error= connect_api_connections(apic, &conn)))
     DEBUG_RETURN(error);
-  for (i= 0; i < apic->num_clusters_to_connect; i++)
+  if (!(error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
+    DEBUG_RETURN(error);
+  for (i= 0; i < num_clusters; i++)
+    max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
+
+  apic->max_cluster_id= max_cluster_id;
+  if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+           (max_cluster_id + 1) * sizeof(IC_CLUSTER_CONFIG**))) ||
+      !(apic->node_ids= (guint32*)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+            sizeof(guint32) * (max_cluster_id + 1))))
+    goto mem_alloc_error;
+
+  for (i= 0; i < num_clusters; i++)
   {
-    if ((error= send_get_nodeid(conn, apic, i, the_version_num)) ||
-        (error= rec_get_nodeid(conn, apic, i)) ||
-        (error= send_get_config(conn, the_version_num)) ||
-        (error= rec_get_config(conn, apic, i)))
+    cluster_id= clu_infos[i]->cluster_id;
+    if (!(clu_conf= (IC_CLUSTER_CONFIG*)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
+      goto mem_alloc_error;
+    if (!(ic_mc_strdup(mc_ptr, &clu_conf->clu_info.cluster_name,
+                       &clu_infos[i]->cluster_name)) ||
+        !(ic_mc_strdup(mc_ptr, &clu_conf->clu_info.password,
+                       &clu_infos[i]->password)))
+      goto mem_alloc_error;
+    clu_conf->clu_info.cluster_id= cluster_id;
+    if (apic->conf_objects[cluster_id])
+      goto error;
+    apic->conf_objects[cluster_id]= clu_conf;
+    apic->node_ids[cluster_id]= node_ids[i];
+  }
+
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    if (!apic->conf_objects[cluster_id] ||
+       ((error= send_get_nodeid(conn, apic, cluster_id)) ||
+        (error= rec_get_nodeid(conn, apic, cluster_id)) ||
+        (error= send_get_config(conn)) ||
+        (error= rec_get_config(conn, apic, cluster_id))))
       continue;
   }
   if (error)
     goto error;
-  for (i= 0; i < apic->num_clusters_to_connect; i++)
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
-    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects+i;
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    if (!clu_conf)
+      continue;
     if (build_hash_on_comms(clu_conf))
-    {
-      error= MEM_ALLOC_ERROR;
-      break;
-    }
+      goto mem_alloc_error;
   }
   apic->cluster_conn.current_conn= conn;  
 error:
-  if (error)
+  DEBUG_RETURN(error);
+mem_alloc_error:
+  DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+}
+
+#define RECEIVE_FIRST 0
+#define RECEIVE_CLUSTER_NAME 1
+#define RECEIVE_CLUSTER_ID 2
+#define RECEIVE_NEXT 3
+
+static int
+get_cluster_ids(IC_API_CONFIG_SERVER *apic,
+                IC_CLUSTER_CONNECT_INFO **clu_infos)
+{
+  guint32 read_size= 0, size_curr_buf= 0;
+  guint32 state, num_clusters_found= 0;
+  guint32 num_clusters= 0;
+  guint64 cluster_id;
+  IC_CLUSTER_CONNECT_INFO *found_clu_info, **clu_info_iter, *clu_info;
+  int error;
+  gchar read_buf[READ_BUF_SIZE];
+  IC_CONNECTION *conn= apic->cluster_conn.current_conn;
+  DEBUG_ENTRY("get_cluster_ids");
+
+  num_clusters= count_clusters(clu_infos);
+  if (ic_send_with_cr(conn, get_cluster_list_str))
   {
-    conn->conn_op.ic_close_connection(conn);
-    conn->conn_op.ic_free_connection(conn);
+    error= conn->error_code;
+    goto error;
   }
+  if ((error= rec_simple_str(conn, get_cluster_list_reply_str)))
+    goto error;
+  state= RECEIVE_CLUSTER_NAME;
+  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
+  {
+    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    if (check_buf(read_buf, read_size, end_get_cluster_list_str,
+                  strlen(end_get_cluster_list_str)))
+      break;
+    switch (state)
+    {
+      case RECEIVE_CLUSTER_NAME:
+        if ((read_size < CLUSTER_NAME_REQ_LEN) ||
+            (memcmp(read_buf, cluster_name_string, CLUSTER_NAME_REQ_LEN) != 0))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in receive cluster name state\n"));
+          goto protocol_error;
+        }
+        found_clu_info= NULL;
+        clu_info_iter= clu_infos;
+        while (*clu_info_iter)
+        {
+          clu_info= *clu_info_iter;
+          if ((memcmp(found_clu_info->cluster_name.str,
+                     read_buf+CLUSTER_NAME_REQ_LEN,
+                     found_clu_info->cluster_name.len) == 0) &&
+              (found_clu_info->cluster_name.len ==
+               (read_size - CLUSTER_NAME_REQ_LEN)))
+          {
+            found_clu_info= clu_info;
+            break;
+          }
+          clu_info_iter++;
+        }
+        state= RECEIVE_CLUSTER_ID;
+        break;
+      case RECEIVE_CLUSTER_ID:
+        if (check_buf_with_int(read_buf, read_size, cluster_id_str,
+                               CLUSTER_ID_REQ_LEN, &cluster_id))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in receive cluster id state\n"));
+          goto protocol_error;
+        }
+        if (cluster_id > IC_MAX_CLUSTER_ID)
+          goto protocol_error;
+        if (found_clu_info)
+        {
+          found_clu_info->cluster_id= cluster_id;
+          num_clusters_found++;
+        }
+        state= RECEIVE_CLUSTER_NAME;
+        break;
+      default:
+        g_assert(FALSE);
+    }
+  }
+  error= 1;
+  if (num_clusters_found != num_clusters)
+    goto error;
+  DEBUG_RETURN(0);
+protocol_error:
+  error= PROTOCOL_ERROR;
+error:
   DEBUG_RETURN(error);
 }
 
 static void
 free_cs_config(IC_API_CONFIG_SERVER *apic)
 {
-  guint32 i, num_clusters;
+  guint32 i;
   if (apic)
   {
-    if (apic->cluster_conn.cluster_srv_conns)
-      ic_free(apic->cluster_conn.cluster_srv_conns);
-    if (apic->cluster_conn.cluster_server_ips)
-      ic_free(apic->cluster_conn.cluster_server_ips);
-    if (apic->cluster_conn.cluster_server_ports)
-      ic_free(apic->cluster_conn.cluster_server_ports);
-    if (apic->cluster_ids)
-      ic_free(apic->cluster_ids);
-    if (apic->node_ids)
-      ic_free(apic->node_ids);
-    if (apic->string_memory_to_return)
-      ic_free(apic->string_memory_to_return);
-    if (apic->config_memory_to_return)
-      ic_free(apic->config_memory_to_return);
+    disconnect_api_connections(apic);
     if (apic->config_mutex)
       g_mutex_free(apic->config_mutex);
     if (apic->conf_objects)
     {
-      num_clusters= apic->num_clusters_to_connect;
-      for (i= 0; i < num_clusters; i++)
+      for (i= 0; i <= apic->max_cluster_id; i++)
       {
-        struct ic_cluster_config *conf_obj= apic->conf_objects+i;
+        IC_CLUSTER_CONFIG *conf_obj= apic->conf_objects[i];
         if (!conf_obj)
           continue;
-        if (conf_obj->node_config)
-          ic_free(conf_obj->node_config);
-        if (conf_obj->comm_config)
-          ic_free(conf_obj->comm_config);
-        if (conf_obj->node_ids)
-          ic_free(conf_obj->node_ids);
-        if (conf_obj->node_types)
-          ic_free(conf_obj->node_types);
-        if (conf_obj->comm_types)
-          ic_free(conf_obj->comm_types);
+        g_assert(!conf_obj->node_ids);
         if (conf_obj->comm_hash)
           ic_hashtable_destroy(conf_obj->comm_hash);
       }
-      ic_free(apic->conf_objects);
     }
-    ic_free(apic);
+    apic->mc_ptr->mc_ops.ic_mc_free(apic->mc_ptr);
   }
   return;
 }
@@ -2996,16 +3196,10 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
 static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *apic,
                                              guint32 cluster_id)
 {
-  guint32 i;
-
-  if (!apic->conf_objects)
+  if (!apic->conf_objects ||
+      cluster_id > apic->max_cluster_id)
     return NULL;
-  for (i= 0; i < apic->num_clusters_to_connect; i++)
-  {
-    if (apic->cluster_ids[i] == cluster_id)
-      return (apic->conf_objects+i);
-  }
-  return NULL;
+  return apic->conf_objects[cluster_id];
 }
 
 static gchar*
@@ -3052,13 +3246,16 @@ get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
   configuration.
 */
 IC_API_CONFIG_SERVER*
-ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
-                      guint32 *cluster_ids,
-                      guint32 *node_ids,
-                      guint32 num_clusters)
+ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn)
 {
+  IC_MEMORY_CONTAINER *mc_ptr;
   IC_API_CONFIG_SERVER *apic= NULL;
   guint32 num_cluster_servers= cluster_conn->num_cluster_servers;
+  DEBUG_ENTRY("ic_create_api_cluster");
+
+
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    DEBUG_RETURN(NULL);
   /*
     The idea with this method is that the user can set-up his desired usage
     of the clusters using stack variables. Then we copy those variables to
@@ -3069,54 +3266,45 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
     We will also ensure that the supplied data is validated.
   */
   if (!(apic= (IC_API_CONFIG_SERVER*)
-               ic_calloc(sizeof(IC_API_CONFIG_SERVER))) ||
-      !(apic->cluster_ids= (guint32*)
-               ic_calloc(sizeof(guint32) * num_clusters)) ||
-      !(apic->node_ids= (guint32*)
-               ic_calloc(sizeof(guint32) * num_clusters)) ||
-      !(apic->cluster_conn.cluster_server_ips= 
-         (gchar**)ic_calloc(num_cluster_servers *
-                             sizeof(gchar*))) ||
-      !(apic->cluster_conn.cluster_server_ports=
-         (gchar**)ic_calloc(num_cluster_servers *
-                            sizeof(gchar*))) ||
-      !(apic->conf_objects= (IC_CLUSTER_CONFIG*)
-                   ic_calloc(num_cluster_servers *
-                             sizeof(IC_CLUSTER_CONFIG))) ||
-      !(apic->cluster_conn.cluster_srv_conns=
-         (IC_CONNECTION*)ic_calloc(num_cluster_servers *
+      mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_API_CONFIG_SERVER))))
+  {
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+    DEBUG_RETURN(NULL);
+  }
+  apic->mc_ptr= mc_ptr;
+  apic->cluster_conn.num_cluster_servers= num_cluster_servers;
+
+  apic->api_op.ic_get_config= get_cs_config;
+  apic->api_op.ic_get_cluster_ids= get_cluster_ids;
+  apic->api_op.ic_get_info_config_channels= get_info_config_channels;
+  apic->api_op.ic_get_cluster_config= get_cluster_config;
+  apic->api_op.ic_get_node_object= get_node_object;
+  apic->api_op.ic_get_typed_node_object= get_typed_node_object;
+  apic->api_op.ic_free_config= free_cs_config;
+
+  if (!(apic->cluster_conn.cluster_server_ips= (gchar**)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, num_cluster_servers *
+                                  sizeof(gchar*))) ||
+      !(apic->cluster_conn.cluster_server_ports= (gchar**)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, num_cluster_servers *
+                                  sizeof(gchar*))) ||
+      !(apic->cluster_conn.cluster_srv_conns= (IC_CONNECTION*)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, num_cluster_servers *
                                    sizeof(IC_CONNECTION))) ||
       !(apic->config_mutex= g_mutex_new()))
-  {
-    free_cs_config(apic);
-    return NULL;
-  }
+    goto error;
 
-  memcpy((gchar*)apic->cluster_ids,
-         (gchar*)cluster_ids,
-         num_clusters * sizeof(guint32));
-  memcpy((gchar*)apic->node_ids,
-         (gchar*)node_ids,
-         num_clusters * sizeof(guint32));
   memcpy((gchar*)apic->cluster_conn.cluster_server_ips,
          (gchar*)cluster_conn->cluster_server_ips,
          num_cluster_servers * sizeof(gchar*));
   memcpy((gchar*)apic->cluster_conn.cluster_server_ports,
          (gchar*)cluster_conn->cluster_server_ports,
          num_cluster_servers * sizeof(gchar*));
-  memset((gchar*)apic->conf_objects, 0,
-         num_cluster_servers * sizeof(IC_CLUSTER_CONFIG));
-  memset((gchar*)apic->cluster_conn.cluster_srv_conns, 0,
-         num_cluster_servers * sizeof(IC_CONNECTION));
 
-  apic->cluster_conn.num_cluster_servers= num_cluster_servers;
-  apic->api_op.ic_get_config= get_cs_config;
-  apic->api_op.ic_get_info_config_channels= get_info_config_channels;
-  apic->api_op.ic_get_cluster_config= get_cluster_config;
-  apic->api_op.ic_get_node_object= get_node_object;
-  apic->api_op.ic_get_typed_node_object= get_typed_node_object;
-  apic->api_op.ic_free_config= free_cs_config;
-  return apic;
+  DEBUG_RETURN(apic);
+error:
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  DEBUG_RETURN(NULL);
 }
 
 /*
@@ -3416,7 +3604,10 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   len+= 1;
   DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u\n", len));
 
-  /* Allocate memory for key-value pairs */
+  /*
+     Allocate memory for key-value pairs, this memory is only temporary for
+     this method and its caller, so memory will be freed soon again
+  */
   if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
     return MEM_ALLOC_ERROR;
   *key_value_array= loc_key_value_array;
@@ -3596,7 +3787,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
 {
   guint32 read_size= 0;
   guint32 size_curr_buf= 0;
-  guint32 state= GET_NODEID_REQ_STATE;
+  guint32 state= VERSION_REQ_STATE; /* get nodeid already received */
   int error;
   gchar read_buf[READ_BUF_SIZE];
   DEBUG_ENTRY("rec_get_nodeid_req");
@@ -3607,15 +3798,6 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
     DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
     switch (state)
     {
-      case GET_NODEID_REQ_STATE:
-        if (check_buf(read_buf, read_size, get_nodeid_str, GET_NODEID_LEN))
-        {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in get nodeid request state\n"));
-          DEBUG_RETURN(PROTOCOL_ERROR);
-        }
-        state= VERSION_REQ_STATE;
-        break;
       case VERSION_REQ_STATE:
         if (check_buf_with_int(read_buf, read_size, version_str,
                                VERSION_REQ_LEN, version_number))
@@ -3639,7 +3821,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
       case NODEID_REQ_STATE:
         if (check_buf_with_int(read_buf, read_size, nodeid_str,
                                NODEID_LEN, node_number) ||
-            (*node_number > MAX_NODE_ID))
+            (*node_number > IC_MAX_NODE_ID))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in nodeid request state\n"));
@@ -3703,7 +3885,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
             ("Protocol error in log_event request state\n"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
-        if (*version_number < 1000000)
+        if (!ic_is_bit_set(*version_number, IC_PROTOCOL_BIT))
           DEBUG_RETURN(0);
         state= CLUSTER_ID_REQ_STATE;
         break;
@@ -3820,32 +4002,43 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
 }
 
 static int
-rec_simple_str(IC_CONNECTION *conn, const gchar *str)
+handle_get_cluster_list(IC_RUN_CLUSTER_SERVER *run_obj,
+                        IC_CONNECTION *conn)
 {
-  guint32 read_size= 0, size_curr_buf= 0;
+  gchar cluster_id_buf[32];
+  gchar cluster_name_buf[128];
+  guint32 i;
   int error;
-  gchar read_buf[READ_BUF_SIZE];
-  if (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
-                                 &size_curr_buf, sizeof(read_buf))))
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_STRING cluster_name;
+
+  if ((error= ic_send_with_cr(conn, get_cluster_list_reply_str)))
+    goto error;
+  for (i= 0; i <= run_obj->max_cluster_id; i++)
   {
-    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
-    if (!check_buf(read_buf, read_size, str,
-                   strlen(str)))
-    {
-      DEBUG_PRINT(CONFIG_LEVEL,
-        ("Protocol error in waiting for %s\n", str));
-      DEBUG_RETURN(PROTOCOL_ERROR);
-    }
-    DEBUG_RETURN(0);
+    clu_conf= run_obj->conf_objects[i];
+    if (!clu_conf)
+      continue;
+    g_snprintf(cluster_id_buf, 32, "%s%u", cluster_id_str, i);
+    cluster_name_buf[0]= 0;
+    IC_INIT_STRING(&cluster_name, cluster_name_buf, 0, TRUE);
+    ic_add_string(&cluster_name, cluster_name_string);
+    ic_add_ic_string(&cluster_name, &clu_conf->clu_info.cluster_name);
+    if ((error= ic_send_with_cr(conn, cluster_id_buf)) ||
+        (error= ic_send_with_cr(conn, cluster_name.str)))
+      goto error;
   }
-  DEBUG_RETURN(error);
+  if ((error= ic_send_with_cr(conn, get_cluster_list_str)))
+    goto error;
+  return 0;
+error:
+  return error;
 }
 
 static int
 wait_convert_transporter_req(IC_CONNECTION *conn,
                              guint32 cs_nodeid,
-                             guint32 client_nodeid,
-                             gboolean *no_conversion)
+                             guint32 client_nodeid)
 {
   int error;
   gchar cs_nodeid_buf[32];
@@ -3855,9 +4048,7 @@ wait_convert_transporter_req(IC_CONNECTION *conn,
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
   g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
 
-  if ((error= rec_simple_str(conn, get_mgmd_nodeid_str)) ||
-      ((*no_conversion= FALSE), FALSE) ||
-      (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
+  if ((error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
       (error= rec_simple_str(conn, set_connection_parameter_str)) ||
       (error= rec_simple_str(conn, client_nodeid_buf)) ||
@@ -3867,11 +4058,6 @@ wait_convert_transporter_req(IC_CONNECTION *conn,
       (error= rec_simple_str(conn, convert_transporter_str)) ||
       (error= rec_simple_str(conn, ic_empty_string)))
   {
-    if (error == END_OF_FILE && *no_conversion)
-    {
-      /* Normal disconnect after receiving configuration */
-      DEBUG_RETURN(0);
-    }
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));
     DEBUG_RETURN(PROTOCOL_ERROR);
@@ -3892,61 +4078,72 @@ put_connection_in_change_queue(IC_CONNECTION *conn, guint64 node_type)
   return 0;
 }
 
+struct ic_rc_param
+{
+  guint64 node_number;
+  guint64 version_number;
+  guint64 node_type;
+  guint64 cluster_id;
+  guint64 client_nodeid;
+};
+typedef struct ic_rc_param IC_RC_PARAM;
+
 static int
 handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
-                      IC_CONNECTION *conn)
+                      IC_CONNECTION *conn,
+                      IC_RC_PARAM *param)
 {
   int ret_code;
-  guint32 client_nodeid, cs_nodeid;
-  guint64 node_number, version_number, node_type;
-  guint64 cluster_id= 0;
   gchar *config_base64_str;
   guint32 config_len;
-  gboolean no_conversion= TRUE;
   DEBUG_ENTRY("handle_config_request");
 
-  cs_nodeid= run_obj->cs_nodeid;
   if ((ret_code= rec_get_nodeid_req(conn,
-                                    &node_number, &version_number,
-                                    &node_type, &cluster_id)))
+                                    &param->node_number,
+                                    &param->version_number,
+                                    &param->node_type,
+                                    &param->cluster_id)))
   {
     DEBUG_RETURN(ret_code);
   }
-  if (node_number == 0)
+  if (param->node_number == 0)
   {
     /* Here we need to discover which node id to use */
-    client_nodeid= 1; /* Fake for now */
+    param->client_nodeid= 1; /* Fake for now */
   }
   else
   {
     /* Here we ensure that the requested node id is correct */
-    client_nodeid= 1;
+    param->client_nodeid= 1;
   }
-  if ((ret_code= send_get_nodeid_reply(conn, client_nodeid)) ||
-      (ret_code= rec_get_config_req(conn, version_number)) ||
-      (ret_code= ic_get_base64_config(run_obj->conf_objects[0],
+  if ((ret_code= send_get_nodeid_reply(conn, param->client_nodeid)) ||
+      (ret_code= rec_get_config_req(conn, param->version_number)) ||
+      (ret_code= ic_get_base64_config(run_obj->conf_objects[param->cluster_id],
                                       (guint8**)&config_base64_str,
                                       &config_len,
-                                      version_number)))
+                                      param->version_number)))
   {
     DEBUG_RETURN(ret_code);
   }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Converted configuration to a base64 representation\n"));
-  if ((ret_code= send_config_reply(conn, config_base64_str, config_len)) ||
-      (ret_code= ic_send_with_cr(conn, ic_empty_string)))
-  {
-    ic_free(config_base64_str);
-    DEBUG_RETURN(ret_code);
-  }
+  if (!(ret_code= send_config_reply(conn, config_base64_str, config_len)))
+    ret_code= ic_send_with_cr(conn, ic_empty_string);
   ic_free(config_base64_str);
-  if ((ret_code= wait_convert_transporter_req(conn, cs_nodeid,
-                                              client_nodeid,
-                                              &no_conversion)) ||
-      (no_conversion) ||
-      (ret_code= wait_start_transporter_req(conn, cs_nodeid,
-                                            client_nodeid)) ||
-      (ret_code= put_connection_in_change_queue(conn, node_type)))
+  DEBUG_RETURN(ret_code);
+}
+
+static int
+handle_convert_transporter(IC_CONNECTION *conn,
+                           IC_RUN_CLUSTER_SERVER *run_obj,
+                           IC_RC_PARAM *param)
+{
+  int ret_code;
+  if ((ret_code= wait_convert_transporter_req(conn, run_obj->cs_nodeid,
+                                              param->client_nodeid)) ||
+      (ret_code= wait_start_transporter_req(conn, run_obj->cs_nodeid,
+                                            param->client_nodeid)) ||
+      (ret_code= put_connection_in_change_queue(conn, param->node_type)))
   {
     DEBUG_RETURN(ret_code);
   }
@@ -3956,14 +4153,49 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
 static gpointer
 run_handle_config_request(gpointer data)
 {
-  int ret_code;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_RUN_CLUSTER_SERVER *run_obj= (IC_RUN_CLUSTER_SERVER*)conn->param;
-  if ((ret_code= handle_config_request(run_obj, conn)))
+  guint32 read_size= 0, size_curr_buf= 0;
+  int error;
+  IC_RC_PARAM param;
+  gchar read_buf[READ_BUF_SIZE];
+
+  while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
+                                 &size_curr_buf, sizeof(read_buf))))
   {
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Error from handle_config_request, code = %u\n", ret_code));
-    goto error;
+    if (check_buf(read_buf, read_size, get_nodeid_str,
+                  strlen(get_nodeid_str)))
+    {
+      /* Handle a request to get configuration for a cluster */
+      if ((error= handle_config_request(run_obj, conn, &param)))
+      {
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Error from handle_config_request, code = %u\n", error));
+        goto error;
+      }
+    }
+    else if (check_buf(read_buf, read_size, get_cluster_list_str,
+                       strlen(get_cluster_list_str)))
+    {
+      if ((error= handle_get_cluster_list(run_obj, conn)))
+      {
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Error from handle_get_cluster_list, code = %u\n", error));
+        goto error;
+      }
+    }
+    else if (check_buf(read_buf, read_size, get_mgmd_nodeid_str,
+                       strlen(get_mgmd_nodeid_str)))
+    {
+      if ((error= handle_convert_transporter(conn, run_obj, &param)))
+      {
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Error from handle_convert_transporter, code = %u\n", error));
+        goto error;
+      }
+    }
+    else
+      goto error;
   }
 error:
   return NULL;
@@ -4043,32 +4275,56 @@ error:
 }
 
 IC_RUN_CLUSTER_SERVER*
-ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
-                    guint32 *cluster_ids,
-                    guint32 num_clusters,
-                    gchar *server_name,
-                    gchar *server_port)
+ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
+                      IC_MEMORY_CONTAINER *mc_ptr,
+                      gchar *server_name,
+                      gchar *server_port)
 {
   IC_RUN_CLUSTER_SERVER *run_obj;
-  guint32 size;
   IC_CONNECTION *conn;
-  DEBUG_ENTRY("ic_init_run_cluster");
+  guint32 max_cluster_id, cluster_id;
+  IC_CLUSTER_CONFIG **cluster_iterator;
+  IC_CLUSTER_CONFIG **cluster_array;
+  DEBUG_ENTRY("ic_create_run_cluster");
 
   /*
-    Allocate memory for array of cluster ids, an array of cluster
-    configuration objects and the run configuration server object.
-    We allocate everything in one memory allocation.
+    Iterate over the clusters to find the maximum cluster id, this is later
+    used to build an index into the cluster configuration structs using
+    cluster id.
   */
-  size= sizeof(IC_RUN_CLUSTER_SERVER);
-  size+= num_clusters * sizeof(guint32);
-  size+= num_clusters * sizeof(IC_CLUSTER_CONFIG*);
-  if (!(run_obj= (IC_RUN_CLUSTER_SERVER*)
-      ic_calloc(size)))
+  max_cluster_id= 0;
+  cluster_iterator= clusters;
+  while (*cluster_iterator)
+  {
+    max_cluster_id= IC_MAX(max_cluster_id,
+                           (*cluster_iterator)->clu_info.cluster_id);
+    cluster_iterator++;
+  }
+  if (!(run_obj= (IC_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
+                mc_ptr, sizeof(IC_RUN_CLUSTER_SERVER))))
+  {
     DEBUG_RETURN(NULL);
-  run_obj->cluster_ids= (guint32*)(((gchar*)run_obj)+
-                        sizeof(IC_RUN_CLUSTER_SERVER));
-  run_obj->conf_objects= (IC_CLUSTER_CONFIG**)(((gchar*)run_obj->cluster_ids)+
-                          (num_clusters * sizeof(guint32)));
+  }
+  if (!(cluster_array= (IC_CLUSTER_CONFIG**)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
+             sizeof(IC_CLUSTER_CONFIG*) * (max_cluster_id + 1))))
+  {
+    DEBUG_RETURN(NULL);
+  }
+
+  cluster_iterator= clusters;
+  while (*cluster_iterator)
+  {
+    cluster_id= (*cluster_iterator)->clu_info.cluster_id;
+    if (cluster_array[cluster_id])
+    {
+      printf("Configured two clusters with same id\n");
+      DEBUG_RETURN(NULL);
+    }
+    cluster_array[cluster_id]= *cluster_iterator;
+    cluster_iterator++;
+  }
+  run_obj->conf_objects= cluster_array;
+  run_obj->max_cluster_id= max_cluster_id;
   if (!(run_obj->run_conn= ic_create_socket_object(
                             FALSE, /* Server connection */
                             FALSE, /* Don't use mutex */
@@ -4077,11 +4333,6 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
                             NULL,  /* Don't use authentication function */
                             NULL))) /* No authentication object */
     goto error;
-
-  memcpy((gchar*)run_obj->cluster_ids, (gchar*)cluster_ids,
-         num_clusters * sizeof(guint32));
-  memcpy((gchar*)run_obj->conf_objects, (gchar*)conf_objs,
-         num_clusters * sizeof(IC_CLUSTER_CONFIG*));
 
   conn= run_obj->run_conn;
   conn->server_name= server_name;
@@ -4094,7 +4345,6 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
   DEBUG_RETURN(run_obj);
 
 error:
-  ic_free(run_obj);
   DEBUG_RETURN(NULL);
 }
 
@@ -4223,46 +4473,84 @@ int conf_serv_init(void *ic_conf, guint32 pass)
 {
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf;
+  IC_CLUSTER_CONFIG *clu_conf_perm;
+  IC_MEMORY_CONTAINER *temp_mc_ptr;
+  IC_MEMORY_CONTAINER *perm_mc_ptr;
   guint32 max_node_id;
   guint32 size_structs= 0;
   DEBUG_ENTRY("conf_serv_init");
+  perm_mc_ptr= conf->perm_mc_ptr;
   if (pass == INITIAL_PASS)
   {
-    if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)ic_calloc(
-                    sizeof(IC_CLUSTER_CONFIG_LOAD))))
+    /*
+      In this initial phase we allocate a temporary memory container and we
+      set up the pointers for deallocation, the memory to be returned is
+      allocated on a memory container supplied by the caller.
+    */
+    if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    {
       DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)temp_mc_ptr->mc_ops.ic_mc_calloc(
+                    temp_mc_ptr, sizeof(IC_CLUSTER_CONFIG_LOAD))))
+    {
+      temp_mc_ptr->mc_ops.ic_mc_free(temp_mc_ptr);
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
     conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
+    clu_conf->temp_mc_ptr= temp_mc_ptr;
+    if (!(clu_conf_perm= (IC_CLUSTER_CONFIG*)perm_mc_ptr->mc_ops.ic_mc_calloc(
+                         perm_mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
+    {
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    clu_conf->conf= clu_conf_perm;
     clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
     DEBUG_RETURN(0);
   }
   clu_conf= conf->config_ptr.clu_conf;
-  max_node_id= clu_conf->conf.max_node_id;
+  max_node_id= clu_conf->conf->max_node_id;
   if (max_node_id == 0)
+  {
     DEBUG_RETURN(IC_ERROR_NO_NODES_FOUND);
+  }
   clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
   /*
     Calculate size of all node struct's and allocate them in one chunk.
   */
-  size_structs+= clu_conf->conf.num_data_servers * sizeof(IC_KERNEL_CONFIG);
-  size_structs+= clu_conf->conf.num_clients * sizeof(IC_CLIENT_CONFIG);
-  size_structs+= clu_conf->conf.num_cluster_servers *
+  size_structs+= clu_conf->conf->num_data_servers * sizeof(IC_KERNEL_CONFIG);
+  size_structs+= clu_conf->conf->num_clients * sizeof(IC_CLIENT_CONFIG);
+  size_structs+= clu_conf->conf->num_cluster_servers *
                  sizeof(IC_CLUSTER_SERVER_CONFIG);
-  size_structs+= clu_conf->conf.num_rep_servers * sizeof(IC_REP_SERVER_CONFIG);
-  size_structs+= clu_conf->conf.num_sql_servers * sizeof(IC_SQL_SERVER_CONFIG);
-  size_structs+= clu_conf->conf.num_comms *
+  size_structs+= clu_conf->conf->num_rep_servers * sizeof(IC_REP_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_sql_servers * sizeof(IC_SQL_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_comms *
                  sizeof(IC_SOCKET_LINK_CONFIG);
-  if (!(clu_conf->struct_memory= clu_conf->struct_memory_to_return= (gchar*)
-        ic_calloc(size_structs)))
+
+  if (!(clu_conf->struct_memory= (gchar*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr, size_structs)))
+  {
     DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
-  if (!(clu_conf->conf.node_config= (gchar**)
-        ic_calloc(sizeof(gchar*)*(max_node_id + 1))))
+  }
+  if (!(clu_conf->conf->node_config= (gchar**)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                                sizeof(gchar*)*(max_node_id + 1))))
+  {
     DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
-  if (!(clu_conf->string_memory= clu_conf->string_memory_to_return= (gchar*)
-        ic_calloc(clu_conf->size_string_memory)))
+  }
+  if (!(clu_conf->string_memory= (gchar*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                                         clu_conf->size_string_memory)))
+  {
     DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
-  if (!(clu_conf->conf.node_types= 
-        (IC_NODE_TYPES*)ic_calloc(sizeof(IC_NODE_TYPES)*(max_node_id+1))))
+  }
+  if (!(clu_conf->conf->node_types= (IC_NODE_TYPES*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                             sizeof(IC_NODE_TYPES)*(max_node_id+1))))
+  {
     DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+
   init_config_object((gchar*)&clu_conf->default_kernel_config, IC_KERNEL_TYPE);
   init_config_object((gchar*)&clu_conf->default_rep_config.client_conf,
                      IC_CLIENT_TYPE);
@@ -4293,13 +4581,13 @@ int conf_serv_add_section(void *ic_config,
   if ((error= complete_section(ic_config, line_number, pass)))
     DEBUG_RETURN(error);
   clu_conf->default_section= FALSE;
-  if (!ic_cmp_null_term_str(data_server_str, section_name))
+  if (ic_cmp_null_term_str(data_server_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_KERNEL_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->conf.num_data_servers++;
-      clu_conf->conf.num_nodes++;
+      clu_conf->conf->num_data_servers++;
+      clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -4308,13 +4596,13 @@ int conf_serv_add_section(void *ic_config,
            sizeof(IC_KERNEL_CONFIG));
     DEBUG_PRINT(CONFIG_LEVEL, ("Found data server group\n"));
   }
-  else if (!ic_cmp_null_term_str(client_node_str, section_name))
+  else if (ic_cmp_null_term_str(client_node_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_CLIENT_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->conf.num_clients++;
-      clu_conf->conf.num_nodes++;
+      clu_conf->conf->num_clients++;
+      clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -4323,13 +4611,13 @@ int conf_serv_add_section(void *ic_config,
            sizeof(IC_CLIENT_CONFIG));
     DEBUG_PRINT(CONFIG_LEVEL, ("Found client group\n"));
   }
-  else if (!ic_cmp_null_term_str(cluster_server_str, section_name))
+  else if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->conf.num_cluster_servers++;
-      clu_conf->conf.num_nodes++;
+      clu_conf->conf->num_cluster_servers++;
+      clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -4339,13 +4627,13 @@ int conf_serv_add_section(void *ic_config,
            sizeof(IC_CLUSTER_SERVER_CONFIG));
     DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group\n"));
   }
-  else if (!ic_cmp_null_term_str(rep_server_str, section_name))
+  else if (ic_cmp_null_term_str(rep_server_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->conf.num_rep_servers++;
-      clu_conf->conf.num_nodes++;
+      clu_conf->conf->num_rep_servers++;
+      clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -4355,13 +4643,13 @@ int conf_serv_add_section(void *ic_config,
            sizeof(IC_REP_SERVER_CONFIG));
     DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server group\n"));
   }
-  else if (!ic_cmp_null_term_str(sql_server_str, section_name))
+  else if (ic_cmp_null_term_str(sql_server_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->conf.num_sql_servers++;
-      clu_conf->conf.num_nodes++;
+      clu_conf->conf->num_sql_servers++;
+      clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -4371,12 +4659,12 @@ int conf_serv_add_section(void *ic_config,
            sizeof(IC_SQL_SERVER_CONFIG));
     DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server group\n"));
   }
-  else if (!ic_cmp_null_term_str(socket_str, section_name))
+  else if (ic_cmp_null_term_str(socket_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_COMM_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->conf.num_comms++;
+      clu_conf->conf->num_comms++;
       DEBUG_RETURN(0);
     }
     clu_conf->current_node_config= (void*)clu_conf->struct_memory;
@@ -4389,38 +4677,38 @@ int conf_serv_add_section(void *ic_config,
   else
   {
     clu_conf->default_section= TRUE;
-    if (!ic_cmp_null_term_str(data_server_def_str, section_name))
+    if (ic_cmp_null_term_str(data_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_kernel_config;
       clu_conf->current_node_config_type= IC_KERNEL_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found data server default group\n"));
     }
-    else if (!ic_cmp_null_term_str(client_node_def_str, section_name))
+    else if (ic_cmp_null_term_str(client_node_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_client_config;
       clu_conf->current_node_config_type= IC_CLIENT_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found client default group\n"));
     }
-    else if (!ic_cmp_null_term_str(cluster_server_def_str, section_name))
+    else if (ic_cmp_null_term_str(cluster_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_cluster_server_config;
       clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server default group\n"));
     }
-    else if (!ic_cmp_null_term_str(sql_server_def_str, section_name))
+    else if (ic_cmp_null_term_str(sql_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_sql_config;
       clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server default group\n"));
     }
-    else if (!ic_cmp_null_term_str(rep_server_def_str, section_name))
+    else if (ic_cmp_null_term_str(rep_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_rep_config;
       clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL,
                   ("Found replication server default group\n"));
     }
-    else if (!ic_cmp_null_term_str(socket_def_str, section_name))
+    else if (ic_cmp_null_term_str(socket_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_socket_config;
       clu_conf->current_node_config_type= IC_COMM_TYPE;
@@ -4454,7 +4742,7 @@ int conf_serv_add_key(void *ic_config,
   DEBUG_IC_STRING(CONFIG_LEVEL, key_name);
   DEBUG_IC_STRING(CONFIG_LEVEL, data);
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("Line: %d Section: %d, Key-value pair\n", (int)line_number,
+    ("Line: %d, Section: %d, Key-value pair\n", (int)line_number,
      (int)section_number));
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
     DEBUG_RETURN(IC_ERROR_NO_SECTION_DEFINED_YET);
@@ -4494,17 +4782,17 @@ int conf_serv_add_key(void *ic_config,
     /*
       We have found a node id
     */
-    clu_conf->conf.max_node_id= MAX(value, clu_conf->conf.max_node_id);
+    clu_conf->conf->max_node_id= MAX(value, clu_conf->conf->max_node_id);
     if (!clu_conf->default_section && pass != INITIAL_PASS)
     {
-      if (clu_conf->conf.node_config[value])
+      if (clu_conf->conf->node_config[value])
       {
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Trying to define node %u twice", (guint32)value));
         DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS); /* TODO fix error value */
       }
-      clu_conf->conf.node_config[value]= (gchar*)clu_conf->current_node_config;
-      clu_conf->conf.node_types[value]= 
+      clu_conf->conf->node_config[value]= (gchar*)clu_conf->current_node_config;
+      clu_conf->conf->node_types[value]= 
         clu_conf->current_node_config_type;
     }
   }
@@ -4553,8 +4841,8 @@ int conf_serv_add_key(void *ic_config,
 
 static
 int conf_serv_add_comment(void *ic_config,
-                          guint32 line_number,
                           guint32 section_number,
+                          guint32 line_number,
                           __attribute__ ((unused)) IC_STRING *comment,
                           guint32 pass)
 {
@@ -4572,11 +4860,32 @@ int conf_serv_add_comment(void *ic_config,
 static
 int conf_serv_verify_conf(__attribute__ ((unused)) void *ic_conf)
 {
-/*
+  /*
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
-*/
+  */
   return 0;
+}
+
+static void
+conf_init_end(void *ic_conf)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  if (clu_conf)
+  {
+    /*
+      We are now ready to release the temporary data structures we needed
+      to generate the configuration data structures. The permanent data
+      structures are released by the caller of the building of the
+      configuration data since many configuration files can use the same
+      memory container.
+    */
+    if (clu_conf->temp_mc_ptr)
+      clu_conf->temp_mc_ptr->mc_ops.ic_mc_free(clu_conf->temp_mc_ptr);
+    clu_conf->temp_mc_ptr= NULL;
+  }
+  return;
 }
 
 static
@@ -4584,23 +4893,11 @@ void conf_serv_end(void *ic_conf)
 {
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
-  guint32 i;
   DEBUG_ENTRY("conf_serv_end");
   if (clu_conf)
   {
-    if (clu_conf->conf.node_config)
-      ic_free((gchar*)clu_conf->conf.node_config);
-    if (clu_conf->conf.node_types)
-      ic_free(clu_conf->conf.node_types);
-    if (clu_conf->conf.node_ids)
-      ic_free(clu_conf->conf.node_ids);
-    for (i= 0; i < clu_conf->comments.num_comments; i++)
-      ic_free(clu_conf->comments.ptr_comments[i]);
-    if (clu_conf->conf.comm_hash)
-      ic_hashtable_destroy(clu_conf->conf.comm_hash);
-    ic_free(clu_conf->string_memory_to_return);
-    ic_free(clu_conf->struct_memory_to_return);
-    ic_free(clu_conf);
+    if (clu_conf->conf->comm_hash)
+      ic_hashtable_destroy(clu_conf->conf->comm_hash);
   }
   DEBUG_RETURN_EMPTY;
 }
@@ -4612,11 +4909,12 @@ static IC_CONFIG_OPERATIONS config_server_ops =
   .ic_add_key     = conf_serv_add_key,
   .ic_add_comment = conf_serv_add_comment,
   .ic_config_verify = conf_serv_verify_conf,
+  .ic_init_end    = conf_init_end,
   .ic_config_end  = conf_serv_end,
 };
 
 IC_CLUSTER_CONFIG*
-ic_load_config_server_from_files(gchar *config_file_path,
+ic_load_config_server_from_files(gchar *config_file,
                                  IC_CONFIG_STRUCT *conf_server)
 {
   gchar *conf_data_str;
@@ -4628,46 +4926,303 @@ ic_load_config_server_from_files(gchar *config_file_path,
   IC_CLUSTER_CONFIG *ret_ptr;
   DEBUG_ENTRY("ic_load_config_server_from_files");
 
-  memset(conf_server, 0, sizeof(IC_CONFIG_STRUCT));
   conf_server->clu_conf_ops= &config_server_ops;
-  DEBUG_PRINT(CONFIG_LEVEL, ("config_file_path = %s\n", config_file_path));
-  if (!config_file_path ||
-      !g_file_get_contents(config_file_path, &conf_data_str,
+  conf_server->config_ptr.clu_conf= NULL;
+  DEBUG_PRINT(CONFIG_LEVEL, ("config_file = %s\n", config_file));
+  if (!config_file ||
+      !g_file_get_contents(config_file, &conf_data_str,
                            &conf_data_len, &loc_error))
     goto file_open_error;
 
   IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
-  ret_val= ic_build_config_data(&conf_data, &config_server_ops,
-                                conf_server, &err_obj);
+  ret_val= ic_build_config_data(&conf_data, conf_server, &err_obj);
   ic_free(conf_data.str);
   if (ret_val == 1)
   {
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Error at Line number %u:\n%s\n",err_obj.line_number,
+          "Error at Line number %u:\n%s\n", err_obj.line_number,
           ic_get_error_message(err_obj.err_num));
     ret_ptr= NULL;
   }
   else
   {
-    ret_ptr= &conf_server->config_ptr.clu_conf->conf;
+    ret_ptr= conf_server->config_ptr.clu_conf->conf;
     if (build_hash_on_comms(ret_ptr))
     {
       conf_serv_end(conf_server);
       ret_ptr= NULL;
     }
   }
+  config_server_ops.ic_init_end(conf_server);
   DEBUG_RETURN(ret_ptr);
 
 file_open_error:
-  if (!config_file_path)
+  if (!config_file)
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
           "--config-file parameter required when using --bootstrap\n");
   else
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Couldn't open file %s\n", config_file_path);
+          "Couldn't open file %s\n", config_file);
   DEBUG_RETURN(NULL);
 }
 
+static void
+init_cluster_params(IC_CLUSTER_CONFIG_TEMP *temp)
+{
+  memset(&temp->cluster_name, 0, sizeof(IC_STRING));
+  memset(&temp->password, 0, sizeof(IC_STRING));
+  temp->cluster_id= IC_MAX_UINT32;
+}
+
+static void
+set_cluster_config_string(IC_STRING *dest_str, IC_STRING *in_str,
+                          IC_CLUSTER_CONFIG_TEMP *temp)
+{
+  memcpy(dest_str, in_str, sizeof(IC_STRING));
+  dest_str->str= temp->string_memory;
+  dest_str->str[in_str->len]= 0;
+  dest_str->is_null_terminated= TRUE;
+  temp->string_memory+= (in_str->len + 1);
+}
+
+static void
+set_cluster_config(IC_CLUSTER_CONNECT_INFO *clu_info,
+                   IC_CLUSTER_CONFIG_TEMP *temp)
+{
+  memcpy(&clu_info->cluster_name,
+         &temp->cluster_name, sizeof(IC_STRING));
+  memcpy(&clu_info->password,
+         &temp->password, sizeof(IC_STRING));
+  clu_info->cluster_id= temp->cluster_id;
+}
+
+static int
+cluster_config_init(void *ic_config, guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  IC_CLUSTER_CONNECT_INFO **clusters;
+  IC_MEMORY_CONTAINER *mc_ptr= conf->perm_mc_ptr;
+  guint32 i;
+  DEBUG_ENTRY("cluster_config_init");
+
+  if (pass == INITIAL_PASS)
+  {
+    if (!(temp= (IC_CLUSTER_CONFIG_TEMP*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
+                      sizeof(IC_CLUSTER_CONFIG_TEMP))))
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    temp->string_memory= NULL;
+    conf->config_ptr.cluster_conf= temp;
+  }
+  else
+  {
+    temp= conf->config_ptr.cluster_conf;
+    if (!(clusters= (IC_CLUSTER_CONNECT_INFO**)
+           mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+           (temp->num_clusters + 1) * sizeof(IC_CLUSTER_CONNECT_INFO*))))
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    temp->clu_info= clusters;
+    for (i= 0; i < temp->num_clusters; i++)
+    {
+      if (!(clusters[i]= (IC_CLUSTER_CONNECT_INFO*)
+          mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+            sizeof(IC_CLUSTER_CONNECT_INFO))))
+        DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    if (!(temp->string_memory= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+          temp->size_string_memory)))
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    clusters[temp->num_clusters]= NULL;
+  }
+  temp->num_clusters= 0;
+  temp->init_state= TRUE;
+  temp->size_string_memory= 0;
+  init_cluster_params(temp);
+  DEBUG_RETURN(0);
+}
+
+static int
+cluster_config_add_section(void *ic_config, guint32 section_number,
+                           guint32 line_number, IC_STRING *section_name,
+                           guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  DEBUG_ENTRY("cluster_config_add_section");
+
+  temp= conf->config_ptr.cluster_conf;
+  if (ic_cmp_null_term_str(cluster_str, section_name) == 0)
+  {
+    /*
+       Found a cluster section (the only allowed one in this type of
+       configuration file.
+    */
+    if (pass != INITIAL_PASS && !temp->init_state)
+    {
+      /*
+        We have completed a section and need to copy the data over to the
+        IC_CLUSTER_CONFIG struct.
+      */
+      clu_info= temp->clu_info[temp->num_clusters-1];
+      set_cluster_config(clu_info, temp);
+    }
+    init_cluster_params(temp);
+    temp->num_clusters++;
+    temp->init_state= FALSE;
+  }
+  else
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("No such cluster config section\n"));
+    DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
+  }
+  return 0;
+}
+
+static int
+cluster_config_add_key(void *ic_config, guint32 section_number,
+                       guint32 line_number, IC_STRING *key_name,
+                       IC_STRING *data, guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  guint64 value;
+  DEBUG_ENTRY("cluster_config_add_key");
+
+  DEBUG_IC_STRING(CONFIG_LEVEL, key_name);
+  DEBUG_IC_STRING(CONFIG_LEVEL, data);
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Line: %d, Section: %d, Key-value pair\n", (int)line_number,
+     (int)section_number));
+
+  temp= conf->config_ptr.cluster_conf;
+  if (temp->init_state)
+    DEBUG_RETURN(IC_ERROR_NO_SECTION_DEFINED_YET);
+  if (pass == INITIAL_PASS)
+    temp->size_string_memory+= (data->len + 1);
+  else
+    memcpy(temp->string_memory, data->str, data->len);
+  if (ic_cmp_null_term_str(cluster_name_str, key_name) == 0)
+  {
+    if (pass != INITIAL_PASS)
+      set_cluster_config_string(&temp->cluster_name, data, temp);
+  }
+  else if (ic_cmp_null_term_str(cluster_password_str, key_name) == 0)
+  {
+    if (pass != INITIAL_PASS)
+      set_cluster_config_string(&temp->password, data, temp);
+  }
+  else if (ic_cmp_null_term_str(cluster_id_string, key_name) == 0)
+  {
+    if (pass != INITIAL_PASS)
+    {
+      if (ic_conv_config_str_to_int(&value, data))
+        DEBUG_RETURN(IC_ERROR_WRONG_CONFIG_NUMBER);
+      temp->cluster_id= (guint32)value;
+      if (temp->cluster_id > IC_MAX_CLUSTER_ID)
+        DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+    }
+  }
+  else
+    DEBUG_RETURN(IC_ERROR_NO_SUCH_CONFIG_KEY);
+  return 0;
+}
+
+static int
+cluster_config_add_comment(__attribute__ ((unused)) void *ic_config,
+                           __attribute__ ((unused)) guint32 section_number,
+                           __attribute__ ((unused)) guint32 line_number,
+                           __attribute__ ((unused)) IC_STRING *comment,
+                           __attribute__ ((unused)) guint32 pass)
+{
+  return 0;
+}
+
+static int
+cluster_config_verify(__attribute__ ((unused)) void *ic_config)
+{
+  return 0;
+}
+
+static void
+cluster_config_init_end(void *ic_config)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  DEBUG_ENTRY("cluster_config_init_end");
+
+  temp= conf->config_ptr.cluster_conf;
+  clu_info= temp->clu_info[temp->num_clusters-1];
+  set_cluster_config(clu_info, temp);
+  return;
+}
+
+static void
+cluster_config_end(__attribute__ ((unused)) void *ic_config)
+{
+  return;
+}
+
+static IC_CONFIG_OPERATIONS cluster_config_ops =
+{
+  .ic_config_init = cluster_config_init,
+  .ic_add_section = cluster_config_add_section,
+  .ic_add_key     = cluster_config_add_key,
+  .ic_add_comment = cluster_config_add_comment,
+  .ic_config_verify = cluster_config_verify,
+  .ic_init_end    = cluster_config_init_end,
+  .ic_config_end  = cluster_config_end,
+};
+
+IC_CLUSTER_CONNECT_INFO**
+ic_load_cluster_config_from_file(gchar *cluster_config_file,
+                                IC_CONFIG_STRUCT *cluster_conf)
+{
+  gchar *conf_data_str;
+  gsize conf_data_len;
+  GError *loc_error= NULL;
+  IC_STRING conf_data;
+  int ret_val;
+  IC_CONFIG_ERROR err_obj;
+  IC_CLUSTER_CONNECT_INFO **ret_ptr;
+  DEBUG_ENTRY("ic_load_cluster_config_from_file");
+
+  cluster_conf->clu_conf_ops= &cluster_config_ops;
+  cluster_conf->config_ptr.cluster_conf= NULL;
+  DEBUG_PRINT(CONFIG_LEVEL, ("cluster_config_file = %s\n",
+                             cluster_config_file));
+  if (!cluster_config_file ||
+      !g_file_get_contents(cluster_config_file, &conf_data_str,
+                           &conf_data_len, &loc_error))
+    goto file_open_error;
+
+  IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
+  ret_val= ic_build_config_data(&conf_data, cluster_conf, &err_obj);
+  ic_free(conf_data.str);
+  if (ret_val == 1)
+  {
+    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+          "Error at Line number %u:\n%s\n", err_obj.line_number,
+          ic_get_error_message(err_obj.err_num));
+    ret_ptr= NULL;
+  }
+  else
+  {
+    ret_ptr= cluster_conf->config_ptr.cluster_conf->clu_info;
+  }
+  cluster_config_ops.ic_init_end(cluster_conf);
+  DEBUG_RETURN(ret_ptr);
+
+file_open_error:
+  if (!cluster_config_file)
+    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+          "--config-file parameter required when using --bootstrap\n");
+  else
+    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+          "Couldn't open file %s\n", cluster_config_file);
+  DEBUG_RETURN(NULL);
+}
 /*
   iClaustron initialisation routine
   The ic_init routine must be called at the before using any other

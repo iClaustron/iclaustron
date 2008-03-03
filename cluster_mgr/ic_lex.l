@@ -54,6 +54,7 @@ DISPLAY                 { return DISPLAY_SYM;      }
 FILE                    { return FILE_SYM;         }
 FROM                    { return FROM_SYM;         }
 GROUP                   { return GROUP_SYM;        }
+INITIAL                 { return INITIAL_SYM;      }
 KERNEL_NODE             { return IC_KERNEL_SYM;    }
 KILL                    { return KILL_SYM;         }
 LIST                    { return LIST_SYM;         }
@@ -88,11 +89,10 @@ VARIABLE                { return VARIABLE_SYM;     }
 VERSION                 { return VERSION_SYM;      }
 
 
-";" {
-  return END;
-}
+";" { return END; }
 
-[a-z][a-z0-9_-.]* {
+[a-z][a-z0-9_]* {
+/*[a-z][a-z0-9_-.]* { */
   IC_STRING *ic_str_ptr;
   IC_PARSE_DATA *ic_parse_data= (void*)LEX_DATA;
   IC_MEMORY_CONTAINER *mc_ptr= ic_parse_data->mc_ptr;

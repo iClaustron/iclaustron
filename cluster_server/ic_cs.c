@@ -29,6 +29,7 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 
+static gchar *config_ending_str= ".ini";
 static gchar *glob_config_file= "config.ini";
 static gchar *glob_config_path= NULL;
 static gboolean glob_bootstrap= FALSE;
@@ -51,29 +52,119 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+static int
+load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
+                  IC_CLUSTER_CONFIG **clusters,
+                  IC_CONFIG_STRUCT *conf_server_struct,
+                  IC_MEMORY_CONTAINER *mc_ptr,
+                  gchar *config_file)
+{
+  IC_STRING base_dir_string;
+  IC_STRING file_name_string;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  IC_CLUSTER_CONFIG *cluster;
+  gchar dir_name[IC_MAX_FILE_NAME_SIZE];
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  gchar *base_dir;
+  IC_STRING end_pattern;
+
+  conf_server_struct->perm_mc_ptr= mc_ptr;
+  base_dir= ic_convert_file_to_dir(dir_name, config_file);
+  IC_INIT_STRING(&base_dir_string, base_dir, strlen(base_dir), TRUE);
+  IC_INIT_STRING(&end_pattern, config_ending_str, strlen(config_ending_str),
+                 TRUE);
+  while (*clu_infos)
+  {
+    clu_info= *clu_infos;
+    clu_infos++;
+    file_name[0]= 0;
+    IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
+    ic_add_ic_string(&file_name_string, &base_dir_string);
+    ic_add_ic_string(&file_name_string, &clu_info->cluster_name);
+    ic_add_ic_string(&file_name_string, &end_pattern);
+    /*
+      We have now formed the filename of the configuration of this
+      cluster. It's now time to open the configuration file and
+      convert it into a IC_CLUSTER_CONFIG struct.
+    */
+    if (!(cluster= ic_load_config_server_from_files(file_name_string.str,
+                                                    conf_server_struct)))
+    {
+      printf("Failed to load config file %s from disk\n",
+             file_name_string.str);
+      return 1;
+    }
+    /*
+      Copy information from cluster configuration file which isn't set in
+      the configuration and ensure it's allocated on the proper memory
+      container.
+    */
+    if (ic_mc_strdup(mc_ptr, &cluster->clu_info.cluster_name,
+                     &clu_info->cluster_name))
+      return 1;
+    if (ic_mc_strdup(mc_ptr, &cluster->clu_info.password,
+                     &clu_info->password))
+      return 1;
+    cluster->clu_info.cluster_id= clu_info->cluster_id;
+
+    *clusters= cluster;
+    clusters++;
+  }
+  *clusters= NULL;
+  return 0;
+}
+
+static IC_CLUSTER_CONNECT_INFO**
+load_cluster_config(gchar *cluster_config_file,
+                    IC_CONFIG_STRUCT *cluster_conf,
+                    IC_MEMORY_CONTAINER *mc_ptr)
+{
+  cluster_conf->perm_mc_ptr= mc_ptr;
+  return ic_load_cluster_config_from_file(cluster_config_file,
+                                          cluster_conf);
+}
+
 int
 main(int argc, char *argv[])
 {
   int error= 1;
-  guint32 cluster_id= 0;
-  IC_CONFIG_STRUCT clu_conf_struct;
-  IC_CLUSTER_CONFIG *clu_conf;
+  IC_CONFIG_STRUCT conf_server_struct, cluster_conf_struct;
+  IC_CLUSTER_CONFIG *clusters[IC_MAX_CLUSTER_ID+1];
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
   IC_RUN_CLUSTER_SERVER *run_obj;
+  IC_MEMORY_CONTAINER *mc_ptr, *cluster_mc_ptr;
 
+  mc_ptr= cluster_mc_ptr= NULL;
   if ((error= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Server")))
     return error;
-  /*
-    Read the configuration from the file provided
-  */
-  if (!(clu_conf= ic_load_config_server_from_files(glob_config_file,
-                                                   &clu_conf_struct)))
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
   {
-    printf("Failed to load config file %s from disk", glob_config_file);
+    printf("Failed to create memory container for configuration\n");
     goto end;
   }
-  if (!(run_obj= ic_create_run_cluster(&clu_conf, &cluster_id, (guint32)1,
-                                    glob_server_name, glob_server_port)))
+  if (!(cluster_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+  {
+    printf("Failed to create memory container for cluster configuration\n");
+    goto end;
+  }
+  if (!(clu_infos= load_cluster_config(glob_config_file,
+                                           &cluster_conf_struct,
+                                           cluster_mc_ptr)))
+  {
+    printf("Failed to load the cluster configuration file\n");
+    goto end;
+  }
+  if (load_config_files(clu_infos, clusters, &conf_server_struct,
+                        mc_ptr, glob_config_file))
+  {
+    printf("Failed to load a configuration file\n");
+    goto end;
+  }
+  cluster_mc_ptr->mc_ops.ic_mc_free(cluster_mc_ptr);
+  cluster_mc_ptr= NULL;
+  if (!(run_obj= ic_create_run_cluster(clusters, mc_ptr, glob_server_name,
+                                       glob_server_port)))
   {
     printf("Failed to initialise run_cluster object\n");
     goto late_end;
@@ -88,9 +179,15 @@ main(int argc, char *argv[])
     goto late_end;
   }
   error= 0;
+  run_obj->run_op.ic_free_run_cluster(run_obj);
 late_end:
-  clu_conf_struct.clu_conf_ops->ic_config_end(&clu_conf_struct);
+  conf_server_struct.clu_conf_ops->ic_config_end(&conf_server_struct);
+  cluster_conf_struct.clu_conf_ops->ic_config_end(&cluster_conf_struct);
 end:
+  if (cluster_mc_ptr)
+    cluster_mc_ptr->mc_ops.ic_mc_free(cluster_mc_ptr);
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   ic_end();
   return error;
 }

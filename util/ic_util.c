@@ -382,6 +382,46 @@ gboolean ic_check_digit(gchar c)
   return TRUE;
 }
 
+gchar*
+ic_convert_file_to_dir(gchar *buf, gchar *file_name)
+{
+  gchar *buf_start= buf;
+  gchar *last_separator= NULL;
+  gchar separator;
+
+#ifndef WINDOWS
+  separator= '\\';
+#else
+  separator= '/';
+#endif
+  while (*file_name)
+  {
+    *buf= *file_name;
+    if (*buf == separator)
+      last_separator= buf+1;
+    buf++;
+    file_name++;
+  }
+  if (last_separator)
+  {
+    /*
+      We found a separator, thus filename contains a directory part.
+      We insert a 0 after this separator to remove filename
+      part from the full pathname.
+    */
+    *last_separator= 0;
+  }
+  else
+  {
+    /*
+       We found no separator, thus the directory part is empty and we return
+       an empty string.
+    */
+    *buf_start= 0;
+  }
+  return buf_start;
+}
+
 int
 ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
 {
@@ -627,9 +667,23 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
                                 &key_name, &data_str, pass);
   }
 }
+/*
+  This method is used to build the configuration data structure from reading
+  the configuration file. It's designed to be reusable for any type of
+  configuration file. The configuration file is always read in two passes,
+  the first usually gathers some information about size of various parts.
+  
+  PARAMETERS:
+  conf_data      This parameter contains the configuration file as a long string
+  ic_conf_op     This contains the function pointers for this specific config
+                 file type
+  ic_config      This contains the pointer to the data structure where the
+                 configuration data is placed, this is done through a union
+                 of pointers to one struct per configuration file type
+  err_obj        Any error information is returned in this object
+*/
 
 int ic_build_config_data(IC_STRING *conf_data,
-                         IC_CONFIG_OPERATIONS *ic_conf_op,
                          IC_CONFIG_STRUCT *ic_config,
                          IC_CONFIG_ERROR *err_obj)
 {
@@ -638,6 +692,7 @@ int ic_build_config_data(IC_STRING *conf_data,
   int error;
   guint32 section_num;
   IC_STRING line_data;
+  IC_CONFIG_OPERATIONS *ic_conf_op= ic_config->clu_conf_ops;
   DEBUG_ENTRY("ic_build_config_data");
 
   for (pass= 0; pass < 2; pass++)
@@ -701,7 +756,7 @@ ic_str_find_first(IC_STRING *ic_str, gchar searched_char)
 }
 
 void
-ic_add_string(IC_STRING *dest_str, gchar *input_str)
+ic_add_string(IC_STRING *dest_str, const gchar *input_str)
 {
   IC_STRING input_ic_str;
 
@@ -741,6 +796,7 @@ ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
     end_ptr= start_ptr + input_str->len;
     *end_ptr= 0;
   }
+  dest_str->len+= input_str->len;
 }
 
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
@@ -816,21 +872,35 @@ ic_set_up_ic_string(IC_STRING *in_out_str)
   in_out_str->is_null_terminated= FALSE;
 }
 
-int
-ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
+int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr, IC_STRING *out_str,
+                 IC_STRING *in_str)
 {
   gchar *str;
   IC_INIT_STRING(out_str, NULL, 0, FALSE);
   if (in_str->len == 0)
     return 0;
-  if (!(str= ic_malloc(in_str->len+1)))
-    return 1;
+  if (mc_ptr)
+  {
+    if (!(str= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, in_str->len+1)))
+      return 1;
+  }
+  else
+  {
+    if (!(str= ic_malloc(in_str->len+1)))
+      return 1;
+  }
   IC_COPY_STRING(out_str, in_str);
   out_str->str= str;
   memcpy(out_str->str, in_str->str, in_str->len);
   if (out_str->is_null_terminated)
     out_str->str[out_str->len]= NULL_BYTE;
   return 0;
+}
+
+int
+ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
+{
+  return ic_mc_strdup(NULL, out_str, in_str);
 }
 
 
