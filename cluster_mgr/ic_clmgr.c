@@ -22,7 +22,9 @@ static gchar *glob_cluster_server_port= "10006";
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
 static gchar *glob_cluster_mgr_port= "12003";
 static gchar *glob_config_file= "config.ini";
-static guint32 glob_node_id= 0;
+static guint32 glob_node_id= 5;
+static guint32 glob_bootstrap_cs_id= 1;
+static gboolean glob_bootstrap= FALSE; 
 
 static gchar *not_impl_string= "not implemented yet";
 static gchar *no_such_cluster_string=
@@ -41,12 +43,22 @@ static GOptionEntry entries[] =
   { "cluster_manager_hostname", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_ip,
     "Set Server Hostname of Cluster Manager", NULL},
-  { "cluster_config_file", 0, 0, G_OPTION_ARG_STRING,
-    &glob_config_file,
-    "Cluster configuration file", NULL},
+  { "cluster_manager_port", 0, 0, G_OPTION_ARG_STRING,
+     &glob_cluster_mgr_port,
+    "Set Server Port of Cluster Manager", NULL},
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &glob_node_id,
     "Node id of Cluster Manager in all clusters", NULL},
+  { "cluster_config_file", 0, 0, G_OPTION_ARG_STRING,
+    &glob_config_file,
+    "Specification of Clusters to manage for Cluster Manager with access info",
+     NULL},
+  { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
+    "Use this flag to start first cluster server before reading configuration",
+    NULL},
+  { "bootstrap_cs_id", 0, 0, G_OPTION_ARG_INT,
+    &glob_bootstrap_cs_id,
+    "Node id of Cluster Server to bootstrap in all clusters", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -59,13 +71,15 @@ report_error(IC_PARSE_DATA *parse_data, gchar *error_str)
 }
 
 static int
-translate_node_name(IC_STRING *cluster_name, IC_CLUSTER_CONFIG *clu_conf)
+translate_node_name(__attribute ((unused)) IC_STRING *cluster_name,
+                    __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return IC_MAX_UINT32;
 }
 
 static int
-translate_cluster_name(IC_STRING *cluster_name, guint64 *cluster_id)
+translate_cluster_name(__attribute ((unused)) IC_STRING *cluster_name,
+                       __attribute ((unused)) guint64 *cluster_id)
 {
   return IC_MAX_UINT32;
 }
@@ -122,36 +136,46 @@ set_up_server_connection(IC_CONNECTION **conn)
 }
 
 static int
-start_kernel_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
-                  gboolean initial_flag)
+start_kernel_node(__attribute ((unused)) gchar *node_config,
+                  __attribute ((unused)) guint32 cluster_id,
+                  __attribute ((unused)) guint32 node_id,
+                  __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
 
 static int
-start_client_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
-                  gboolean initial_flag)
+start_client_node(__attribute ((unused)) gchar *node_config,
+                  __attribute ((unused)) guint32 cluster_id,
+                  __attribute ((unused)) guint32 node_id,
+                  __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
 
 static int
-start_cs_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
-              gboolean initial_flag)
+start_cs_node(__attribute ((unused)) gchar *node_config,
+              __attribute ((unused)) guint32 cluster_id,
+              __attribute ((unused)) guint32 node_id,
+              __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
 
 static int
-start_sql_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
-               gboolean initial_flag)
+start_sql_node(__attribute ((unused)) gchar *node_config,
+               __attribute ((unused)) guint32 cluster_id,
+               __attribute ((unused)) guint32 node_id,
+               __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
 
 static int
-start_rep_node(gchar *node_config, guint32 cluster_id, guint32 node_id,
-                  gboolean initial_flag)
+start_rep_node(__attribute ((unused)) gchar *node_config,
+               __attribute ((unused)) guint32 cluster_id,
+               __attribute ((unused)) guint32 node_id,
+               __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
@@ -518,7 +542,7 @@ ic_execute(IC_PARSE_DATA *parse_data)
 }
 
 static void
-release_parse_data(IC_PARSE_DATA *parse_data)
+release_parse_data(__attribute ((unused)) IC_PARSE_DATA *parse_data)
 {
 }
 
@@ -683,6 +707,12 @@ end:
   return config_server_obj;
 }
 
+static int
+bootstrap()
+{
+  return 0;
+}
+
 int main(int argc,
          char *argv[])
 {
@@ -694,6 +724,8 @@ int main(int argc,
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Manager")))
     return ret_code;
+  if (glob_bootstrap && (ret_code= bootstrap()))
+    goto error;
   if ((config_server_obj= get_configuration(&apic)))
     goto error;
   if ((ret_code= set_up_server_connection(&conn)))

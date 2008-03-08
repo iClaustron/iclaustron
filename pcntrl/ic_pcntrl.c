@@ -72,6 +72,7 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+/*
 static int 
 kill_process(GPid pid)
 {
@@ -89,6 +90,7 @@ kill_process(GPid pid)
                 NULL,NULL,&pid,&error);
   return 0;
 }
+*/
 
 static int
 send_ok_reply(IC_CONNECTION *conn)

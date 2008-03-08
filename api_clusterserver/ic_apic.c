@@ -324,12 +324,14 @@ static const gchar *cluster_password_str= "password";
 /* Strings used in configuration files for each cluster */
 static const gchar *data_server_str= "data server";
 static const gchar *client_node_str= "client";
+static const gchar *cluster_mgr_str= "cluster manager";
 static const gchar *cluster_server_str= "cluster server";
 static const gchar *rep_server_str= "replication server";
 static const gchar *sql_server_str= "sql server";
 static const gchar *socket_str= "socket";
 static const gchar *data_server_def_str= "data server default";
 static const gchar *client_node_def_str= "client default";
+static const gchar *cluster_mgr_def_str= "cluster manager default";
 static const gchar *cluster_server_def_str= "cluster server default";
 static const gchar *rep_server_def_str= "replication server default";
 static const gchar *sql_server_def_str= "sql server default";
@@ -479,6 +481,7 @@ get_iclaustron_protocol_version()
   return version_no;
 }
 
+/*
 static IC_SOCKET_LINK_CONFIG*
 get_communication_object(IC_CLUSTER_CONFIG *clu_conf,
                          guint16 first_node_id, guint16 second_node_id)
@@ -489,6 +492,7 @@ get_communication_object(IC_CLUSTER_CONFIG *clu_conf,
   return (IC_SOCKET_LINK_CONFIG*)ic_hashtable_search(clu_conf->comm_hash,
                                                      (void*)&test1);
 }
+*/
 
 static unsigned int
 ic_hash_comms(void *ptr)
@@ -2929,12 +2933,14 @@ protocol_error:
   the changes of the clusters the client is a part of.
 */
 
+/*
 static int
 get_config_info_channels(__attribute__ ((unused)) IC_API_CONFIG_SERVER *apic)
 {
   DEBUG_ENTRY("get_config_info_channels");
   DEBUG_RETURN(0);
 }
+*/
 
 static void
 disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
@@ -3061,9 +3067,7 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
     IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
-    if (!clu_conf)
-      continue;
-    if (build_hash_on_comms(clu_conf))
+    if (clu_conf && build_hash_on_comms(clu_conf))
       goto mem_alloc_error;
   }
   apic->cluster_conn.current_conn= conn;  
@@ -3073,10 +3077,8 @@ mem_alloc_error:
   DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
 }
 
-#define RECEIVE_FIRST 0
 #define RECEIVE_CLUSTER_NAME 1
 #define RECEIVE_CLUSTER_ID 2
-#define RECEIVE_NEXT 3
 
 static int
 get_cluster_ids(IC_API_CONFIG_SERVER *apic,
@@ -3123,11 +3125,11 @@ get_cluster_ids(IC_API_CONFIG_SERVER *apic,
         while (*clu_info_iter)
         {
           clu_info= *clu_info_iter;
-          if ((memcmp(found_clu_info->cluster_name.str,
-                     read_buf+CLUSTER_NAME_REQ_LEN,
-                     found_clu_info->cluster_name.len) == 0) &&
-              (found_clu_info->cluster_name.len ==
-               (read_size - CLUSTER_NAME_REQ_LEN)))
+          if ((found_clu_info->cluster_name.len ==
+               (read_size - CLUSTER_NAME_REQ_LEN)) &&
+              (memcmp(found_clu_info->cluster_name.str,
+                      read_buf+CLUSTER_NAME_REQ_LEN,
+                      found_clu_info->cluster_name.len) == 0))
           {
             found_clu_info= clu_info;
             break;
@@ -4066,14 +4068,16 @@ wait_convert_transporter_req(IC_CONNECTION *conn,
 }
 
 static int
-wait_start_transporter_req(IC_CONNECTION *conn, guint32 cs_nodeid,
-                           guint32 client_nodeid)
+wait_start_transporter_req(__attribute ((unused)) IC_CONNECTION *conn,
+                           __attribute ((unused)) guint32 cs_nodeid,
+                           __attribute ((unused)) guint32 client_nodeid)
 {
   return 0;
 }
 
 static int
-put_connection_in_change_queue(IC_CONNECTION *conn, guint64 node_type)
+put_connection_in_change_queue(__attribute ((unused)) IC_CONNECTION *conn,
+                               __attribute ((unused)) guint64 node_type)
 {
   return 0;
 }
@@ -4520,6 +4524,8 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   */
   size_structs+= clu_conf->conf->num_data_servers * sizeof(IC_KERNEL_CONFIG);
   size_structs+= clu_conf->conf->num_clients * sizeof(IC_CLIENT_CONFIG);
+  size_structs+= clu_conf->conf->num_cluster_mgrs *
+                   sizeof(IC_CLUSTER_MGR_CONFIG);
   size_structs+= clu_conf->conf->num_cluster_servers *
                  sizeof(IC_CLUSTER_SERVER_CONFIG);
   size_structs+= clu_conf->conf->num_rep_servers * sizeof(IC_REP_SERVER_CONFIG);
@@ -4561,16 +4567,26 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   init_config_object((gchar*)&clu_conf->default_cluster_server_config,
                      IC_CLUSTER_SERVER_TYPE);
   init_config_object((gchar*)&clu_conf->default_client_config, IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
+                     IC_CLUSTER_MGR_TYPE);
   init_config_object((gchar*)&clu_conf->default_socket_config, IC_COMM_TYPE);
   DEBUG_RETURN(0);
 }
 
-static
-int conf_serv_add_section(void *ic_config,
-                          __attribute__ ((unused)) guint32 section_number,
-                          guint32 line_number,
-                          IC_STRING *section_name,
-                          guint32 pass)
+static void
+init_node(IC_CLUSTER_CONFIG_LOAD *clu_conf, size_t size, void *config_struct)
+{
+  clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+  clu_conf->struct_memory+= size;
+  memcpy(clu_conf->current_node_config, config_struct, size);
+}
+
+static int
+conf_serv_add_section(void *ic_config,
+                      __attribute__ ((unused)) guint32 section_number,
+                      guint32 line_number,
+                      IC_STRING *section_name,
+                      guint32 pass)
 {
   int error;
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
@@ -4586,14 +4602,12 @@ int conf_serv_add_section(void *ic_config,
     clu_conf->current_node_config_type= IC_KERNEL_TYPE;
     if (pass == INITIAL_PASS)
     {
-      clu_conf->conf->num_data_servers++;
       clu_conf->conf->num_nodes++;
+      clu_conf->conf->num_data_servers++;
       DEBUG_RETURN(0);
     }
-    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
-    clu_conf->struct_memory+= sizeof(IC_KERNEL_CONFIG);
-    memcpy(clu_conf->current_node_config, &clu_conf->default_kernel_config,
-           sizeof(IC_KERNEL_CONFIG));
+    init_node(clu_conf, sizeof(IC_KERNEL_CONFIG),
+              (void*)&clu_conf->default_kernel_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found data server group\n"));
   }
   else if (ic_cmp_null_term_str(client_node_str, section_name) == 0)
@@ -4605,11 +4619,23 @@ int conf_serv_add_section(void *ic_config,
       clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
-    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
-    clu_conf->struct_memory+= sizeof(IC_CLIENT_CONFIG);
-    memcpy(clu_conf->current_node_config, &clu_conf->default_client_config,
-           sizeof(IC_CLIENT_CONFIG));
+    init_node(clu_conf, sizeof(IC_CLIENT_CONFIG),
+              (void*)&clu_conf->default_client_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found client group\n"));
+  }
+  else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_clients++;
+      clu_conf->conf->num_cluster_mgrs++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_CLUSTER_MGR_CONFIG),
+              (void*)&clu_conf->default_cluster_mgr_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group\n"));
   }
   else if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
   {
@@ -4620,11 +4646,8 @@ int conf_serv_add_section(void *ic_config,
       clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
-    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
-    clu_conf->struct_memory+= sizeof(IC_CLUSTER_SERVER_CONFIG);
-    memcpy(clu_conf->current_node_config,
-           &clu_conf->default_cluster_server_config,
-           sizeof(IC_CLUSTER_SERVER_CONFIG));
+    init_node(clu_conf, sizeof(IC_CLUSTER_SERVER_CONFIG),
+              (void*)&clu_conf->default_cluster_server_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group\n"));
   }
   else if (ic_cmp_null_term_str(rep_server_str, section_name) == 0)
@@ -4636,11 +4659,8 @@ int conf_serv_add_section(void *ic_config,
       clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
-    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
-    clu_conf->struct_memory+= sizeof(IC_REP_SERVER_CONFIG);
-    memcpy(clu_conf->current_node_config,
-           &clu_conf->default_rep_config,
-           sizeof(IC_REP_SERVER_CONFIG));
+    init_node(clu_conf, sizeof(IC_REP_SERVER_CONFIG),
+              (void*)&clu_conf->default_rep_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server group\n"));
   }
   else if (ic_cmp_null_term_str(sql_server_str, section_name) == 0)
@@ -4652,11 +4672,8 @@ int conf_serv_add_section(void *ic_config,
       clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
-    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
-    clu_conf->struct_memory+= sizeof(IC_SQL_SERVER_CONFIG);
-    memcpy(clu_conf->current_node_config,
-           &clu_conf->default_sql_config,
-           sizeof(IC_SQL_SERVER_CONFIG));
+    init_node(clu_conf, sizeof(IC_SQL_SERVER_CONFIG),
+              (void*)&clu_conf->default_sql_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server group\n"));
   }
   else if (ic_cmp_null_term_str(socket_str, section_name) == 0)
@@ -4667,11 +4684,8 @@ int conf_serv_add_section(void *ic_config,
       clu_conf->conf->num_comms++;
       DEBUG_RETURN(0);
     }
-    clu_conf->current_node_config= (void*)clu_conf->struct_memory;
-    clu_conf->struct_memory+= sizeof(IC_SOCKET_LINK_CONFIG);
-    memcpy(clu_conf->current_node_config,
-           &clu_conf->default_socket_config,
-           sizeof(IC_SOCKET_LINK_CONFIG));
+    init_node(clu_conf, sizeof(IC_SOCKET_LINK_CONFIG),
+              (void*)&clu_conf->default_socket_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found socket group\n"));
   }
   else
@@ -4688,6 +4702,12 @@ int conf_serv_add_section(void *ic_config,
       clu_conf->current_node_config= &clu_conf->default_client_config;
       clu_conf->current_node_config_type= IC_CLIENT_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found client default group\n"));
+    }
+    else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
+      clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group\n"));
     }
     else if (ic_cmp_null_term_str(cluster_server_def_str, section_name) == 0)
     {
@@ -5042,8 +5062,10 @@ cluster_config_init(void *ic_config, guint32 pass)
 }
 
 static int
-cluster_config_add_section(void *ic_config, guint32 section_number,
-                           guint32 line_number, IC_STRING *section_name,
+cluster_config_add_section(void *ic_config,
+                           __attribute ((unused)) guint32 section_number,
+                           __attribute ((unused)) guint32 line_number,
+                           IC_STRING *section_name,
                            guint32 pass)
 {
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;

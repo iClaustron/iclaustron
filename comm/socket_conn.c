@@ -220,13 +220,11 @@ security_handler_at_connect(IC_CONNECTION *conn)
     error= conn->auth_func(conn->auth_obj);
     conn->is_ssl_used_for_data= save_ssl_used_for_data;
     if (error)
-    {
-      /* error handler */
-      return error;
-    }
+      goto error;
   }
   return 0;
 error:
+  /* error handler */
   return error;
 }
 

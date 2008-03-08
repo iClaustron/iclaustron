@@ -33,7 +33,6 @@ static gchar *config_ending_str= ".ini";
 static gchar *glob_config_file= "config.ini";
 static gchar *glob_config_path= NULL;
 static gboolean glob_bootstrap= FALSE;
-static gint glob_cluster_id= 0;
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= "10203";
 
@@ -124,6 +123,63 @@ load_cluster_config(gchar *cluster_config_file,
                                           cluster_conf);
 }
 
+static int
+verify_grid_config(IC_CLUSTER_CONFIG **clusters)
+{
+  guint32 i;
+  guint32 max_grid_node_id= 0;
+  gboolean first_cs_or_cm= FALSE;
+  gboolean first;
+  IC_CLUSTER_CONFIG **cluster_iter= clusters;
+  IC_NODE_TYPES node_type;
+
+  while (*cluster_iter)
+  {
+    max_grid_node_id= IC_MAX(max_grid_node_id, (*cluster_iter)->max_node_id);
+    cluster_iter++;
+  }
+  for (i= 1; i <= max_grid_node_id; i++)
+  {
+    first= TRUE;
+    cluster_iter= clusters;
+    while (*cluster_iter)
+    {
+      IC_CLUSTER_CONFIG *cluster= *cluster_iter;
+      cluster_iter++;
+      if (first)
+      {
+        if (i <= cluster->max_node_id)
+          node_type= cluster->node_types[i];
+        else
+          node_type= IC_NOT_EXIST_NODE_TYPE;
+        first_cs_or_cm= node_type == IC_CLUSTER_SERVER_TYPE ||
+                        node_type == IC_CLUSTER_MGR_TYPE;
+        first= FALSE;
+      }
+      else
+      {
+        if (first_cs_or_cm)
+        {
+          if (i > cluster->max_node_id ||
+              cluster->node_types[i] != node_type)
+            goto error;
+        }
+        else
+        {
+          if (i <= cluster->max_node_id &&
+              (cluster->node_types[i] == IC_CLUSTER_SERVER_TYPE ||
+               cluster->node_types[i] == IC_CLUSTER_MGR_TYPE))
+            goto error;
+        }
+      }
+    }
+  }
+  return 0;
+error:
+  printf("Grids require cluster managers/servers to be on same nodeid\n");
+  return 1;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -163,6 +219,8 @@ main(int argc, char *argv[])
   }
   cluster_mc_ptr->mc_ops.ic_mc_free(cluster_mc_ptr);
   cluster_mc_ptr= NULL;
+  if (verify_grid_config(clusters))
+    goto late_end;
   if (!(run_obj= ic_create_run_cluster(clusters, mc_ptr, glob_server_name,
                                        glob_server_port)))
   {

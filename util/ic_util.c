@@ -760,7 +760,7 @@ ic_add_string(IC_STRING *dest_str, const gchar *input_str)
 {
   IC_STRING input_ic_str;
 
-  IC_INIT_STRING(&input_ic_str, input_str, strlen(input_str), TRUE);
+  IC_INIT_STRING(&input_ic_str, (gchar*)input_str, strlen(input_str), TRUE);
   ic_add_ic_string(dest_str, &input_ic_str);
 }
 
