@@ -14,5 +14,7 @@
  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 #ifndef IC_SSL_H
 #define IC_SSL_H
+#ifdef HAVE_SSL
 #include <openssl/ssl.h>
+#endif
 #endif
