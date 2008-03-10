@@ -29,6 +29,8 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 
+static gchar *err_str= "Error:";
+
 static gchar *config_ending_str= ".ini";
 static gchar *glob_config_file= "config.ini";
 static gchar *glob_config_path= NULL;
@@ -176,7 +178,8 @@ verify_grid_config(IC_CLUSTER_CONFIG **clusters)
   }
   return 0;
 error:
-  printf("Grids require cluster managers/servers to be on same nodeid\n");
+  printf("%s Grids require cluster managers/servers to be on same nodeid\n",
+         err_str);
   return 1;
 }
 
@@ -196,25 +199,28 @@ main(int argc, char *argv[])
     return error;
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
   {
-    printf("Failed to create memory container for configuration\n");
+    printf("%s Failed to create memory container for configuration\n",
+           err_str);
     goto end;
   }
   if (!(cluster_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
   {
-    printf("Failed to create memory container for cluster configuration\n");
+    printf("%s Failed to create memory container for cluster configuration\n",
+           err_str);
     goto end;
   }
   if (!(clu_infos= load_cluster_config(glob_config_file,
                                            &cluster_conf_struct,
                                            cluster_mc_ptr)))
   {
-    printf("Failed to load the cluster configuration file\n");
+    printf("%s Failed to load the cluster configuration file\n",
+           err_str);
     goto end;
   }
   if (load_config_files(clu_infos, clusters, &conf_server_struct,
                         mc_ptr, glob_config_file))
   {
-    printf("Failed to load a configuration file\n");
+    printf("%s Failed to load a configuration file\n", err_str);
     goto end;
   }
   cluster_mc_ptr->mc_ops.ic_mc_free(cluster_mc_ptr);
@@ -224,7 +230,7 @@ main(int argc, char *argv[])
   if (!(run_obj= ic_create_run_cluster(clusters, mc_ptr, glob_server_name,
                                        glob_server_port)))
   {
-    printf("Failed to initialise run_cluster object\n");
+    printf("%s Failed to initialise run_cluster object\n", err_str);
     goto late_end;
   }
   DEBUG_PRINT(PROGRAM_LEVEL,

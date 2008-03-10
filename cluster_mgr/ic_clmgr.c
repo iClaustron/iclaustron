@@ -449,8 +449,8 @@ static void
 ic_use_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
   gchar buf[256];
-  printf("len= %u, ptr= %u, str= %s\n", parse_data->cluster_name.len,
-  (guint32)parse_data->cluster_name.str, parse_data->cluster_name.str);
+  printf("len= %u, str= %s\n", (guint32)parse_data->cluster_name.len,
+         parse_data->cluster_name.str);
   if (parse_data->cluster_name.str)
   {
     if (translate_cluster_name(&parse_data->cluster_name,
