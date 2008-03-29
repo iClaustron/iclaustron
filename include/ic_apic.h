@@ -17,6 +17,7 @@
 #define IC_APIC_H
 #include <ic_common.h>
 
+#define IC_VERSION_FILE_LEN 8
 #define NO_WAIT 0
 #define WAIT_LOCK_INFO 1
 #define WAIT_CHANGE_INFO 2
@@ -224,7 +225,7 @@ typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 
 struct ic_api_cluster_connection;
 struct ic_api_config_server;
-struct ic_run_config_server;
+struct ic_run_cluster_server;
 
 struct ic_api_cluster_operations
 {
@@ -251,10 +252,10 @@ struct ic_api_cluster_operations
 };
 typedef struct ic_api_cluster_operations IC_API_CLUSTER_OPERATIONS;
 
-struct ic_run_config_server_operations
+struct ic_run_cluster_server_operations
 {
-  int (*ic_run_cluster_server) (struct ic_run_config_server *run_obj);
-  void (*ic_free_run_cluster) (struct ic_run_config_server *run_obj);
+  int (*ic_run_cluster_server) (struct ic_run_cluster_server *run_obj);
+  void (*ic_free_run_cluster) (struct ic_run_cluster_server *run_obj);
 };
 
 #define REC_BUF_SIZE 256
@@ -299,20 +300,34 @@ struct ic_api_config_server
 };
 typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 
+struct ic_run_cluster_state
+{
+  gboolean cs_master;
+  gboolean cs_started;
+  gboolean bootstrap;
+
+  guint8 num_cluster_servers;
+  guint8 num_cluster_servers_connected;
+  gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
+  gchar* config_path;
+  GMutex *protect_state;
+};
+typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 /*
   The struct ic_run_cluster_server represents the configuration of
   all clusters that the Cluster Server maintains.
 */
-struct ic_run_config_server
+struct ic_run_cluster_server
 {
-  struct ic_run_config_server_operations run_op;
+  struct ic_run_cluster_server_operations run_op;
   struct ic_cluster_config **conf_objects;
+  IC_RUN_CLUSTER_STATE state;
   IC_CONNECTION *run_conn;
   guint32 max_cluster_id;
   guint32 num_clusters;
   guint32 cs_nodeid;
 };
-typedef struct ic_run_config_server IC_RUN_CLUSTER_SERVER;
+typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
 
 struct ic_kernel_config
 {

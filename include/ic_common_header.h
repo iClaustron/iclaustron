@@ -33,7 +33,9 @@
 #define IC_MAX_UINT32 0xFFFFFFFF
 #define IC_MAX_CLUSTER_ID 255
 #define IC_MAX_NODE_ID 255
+#define IC_MAX_CLUSTER_SERVERS 4
 #define IC_MAX_FILE_NAME_SIZE 255
+#define IC_MAX_INT_STRING 32
 
 #define ic_is_bit_set(value, bit_number) \
   (((value | (1 << bit_number)) == 0) ? 0 : 1)

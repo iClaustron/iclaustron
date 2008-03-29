@@ -3770,7 +3770,7 @@ ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
     socket and port.
 */
 static void
-free_run_cluster(struct ic_run_config_server *run_obj)
+free_run_cluster(IC_RUN_CLUSTER_SERVER *run_obj)
 {
   if (run_obj)
   {
@@ -4163,19 +4163,35 @@ run_handle_config_request(gpointer data)
   int error;
   IC_RC_PARAM param;
   gchar read_buf[READ_BUF_SIZE];
+  IC_RUN_CLUSTER_STATE *rcs_state= &run_obj->state;
+  GMutex *state_mutex= rcs_state->protect_state;
 
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
+    g_mutex_lock(state_mutex);
     if (check_buf(read_buf, read_size, get_nodeid_str,
                   strlen(get_nodeid_str)))
     {
-      /* Handle a request to get configuration for a cluster */
-      if ((error= handle_config_request(run_obj, conn, &param)))
+      if (rcs_state->cs_started && rcs_state->cs_master)
       {
-        DEBUG_PRINT(CONFIG_LEVEL,
-          ("Error from handle_config_request, code = %u\n", error));
-        goto error;
+        /* Handle a request to get configuration for a cluster */
+        if ((error= handle_config_request(run_obj, conn, &param)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Error from handle_config_request, code = %u\n", error));
+          goto error;
+        }
+      }
+      else if (rcs_state->cs_started && !rcs_state->cs_master)
+      {
+        /* Send an error message to indicate we're not master */
+        ;
+      }
+      else
+      {
+        /* Send an error message to indicate we're still in start-up phase */
+        ;
       }
     }
     else if (check_buf(read_buf, read_size, get_cluster_list_str,
@@ -4200,8 +4216,11 @@ run_handle_config_request(gpointer data)
     }
     else
       goto error;
+    g_mutex_unlock(state_mutex);
   }
+  return NULL;
 error:
+  g_mutex_unlock(state_mutex);
   return NULL;
 }
 
@@ -4236,6 +4255,20 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
   IC_CONNECTION *conn, *fork_conn;
   DEBUG_ENTRY("run_cluster_server");
 
+  /*
+    Before we start-up our server connection to listen to incoming events
+    we first create some socket connections to connect to our fellow
+    Cluster Servers. In the start-up phase this is necessary to handle
+    synchronisation which Cluster Server becomes the master and who is to
+    deliver the current configuration state to the other Cluster Servers.
+
+    After the start-up phase these connections are maintained in an open
+    state to ensure we can communicate to the other Cluster Servers at all
+    times for changes of the configuration. If we don't manage to set-up
+    connections to a certain Cluster Server in the start-up phase we'll
+    close this client connection and wait for it to connect to our server
+    connection.
+  */
   conn= run_obj->run_conn;
   conn->is_listen_socket_retained= TRUE;
   ret_code= conn->conn_op.ic_set_up_connection(conn);
@@ -4314,6 +4347,20 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
   {
     DEBUG_RETURN(NULL);
   }
+
+  /*
+    Initialise the Cluster Server state, the state is protected by a mutex to
+    ensure when several connections receive requests only one at a time can
+    change the Cluster Server state.
+  */
+  if (!(run_obj->state.protect_state= g_mutex_new()))
+  {
+    DEBUG_RETURN(NULL);
+  }
+  run_obj->state.cs_master= FALSE;
+  run_obj->state.cs_started= FALSE;
+  run_obj->state.bootstrap= FALSE;
+  run_obj->state.config_path= NULL;
 
   cluster_iterator= clusters;
   while (*cluster_iterator)

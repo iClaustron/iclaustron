@@ -69,6 +69,7 @@ struct ic_config_operations
 };
 typedef struct ic_config_operations IC_CONFIG_OPERATIONS;
 
+
 /*
   This is a generic call to bootstrap a configuration file. It will read the
   configuration data and will call operations on the supplied
