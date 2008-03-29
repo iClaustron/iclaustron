@@ -29,11 +29,14 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 
+/* Global variables */
 static gchar *err_str= "Error:";
 static gchar *ic_version_file_str= "config.version";
 static gchar *ic_cluster_config_file= "config.ini";
 static gchar *config_ending_str= ".ini";
+static IC_STRING glob_config_dir;
 
+/* Option variables */
 static gchar *glob_config_path= NULL;
 static gboolean glob_bootstrap= FALSE;
 static gchar *glob_server_name= "127.0.0.1";
@@ -112,6 +115,20 @@ static GOptionEntry entries[] =
   those files are stored in. The remaining information is always the same
   or provided in configuration files.
 */
+
+/*
+ The default configuration directory is ICLAUSTRON_BASE_DIR/config
+*/
+static int
+set_config_path(gchar *buf)
+{
+  int error;
+  IC_STRING base_dir;
+  if ((error= ic_set_base_dir(&base_dir, glob_config_path)))
+    return error;
+  ic_set_binary_base_dir(&glob_config_dir, &base_dir, buf, "config");
+  return 0;
+}
 
 /* Create a string like ".3" if number is 3 */
 static void
@@ -372,9 +389,12 @@ main(int argc, char *argv[])
   IC_CLUSTER_CONFIG *clusters[IC_MAX_CLUSTER_ID+1];
   IC_RUN_CLUSTER_SERVER *run_obj;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
 
   if ((error= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Server")))
+    return error;
+  if ((error= set_config_path(buf)))
     return error;
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
   {
@@ -393,7 +413,7 @@ main(int argc, char *argv[])
     goto late_end;
   }
   run_obj->state.bootstrap= glob_bootstrap;
-  run_obj->state.config_path= glob_config_path;
+  run_obj->state.config_path= glob_config_dir.str;
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Starting the iClaustron Cluster Server\n"));
   if ((error= run_obj->run_op.ic_run_cluster_server(run_obj)))
@@ -410,6 +430,7 @@ late_end:
 end:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  ic_free(glob_config_dir.str);
   ic_end();
   return error;
 }

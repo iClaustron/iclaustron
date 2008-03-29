@@ -59,7 +59,9 @@ static gchar *glob_base_dir= NULL;
 
 /* Global variables */
 static guint32 glob_stop_flag= FALSE;
-static IC_STRING ic_base_dir;
+static IC_STRING glob_base_dir_string;
+static IC_STRING glob_ic_base_dir_string;
+static IC_STRING glob_mysql_base_dir_string;
 GMutex *action_loop_lock= NULL;
 
 static GOptionEntry entries[] = 
@@ -230,6 +232,9 @@ int start_connection_loop()
 int main(int argc, char *argv[])
 {
   int ret_code= 0;
+  gchar tmp_buf[IC_MAX_FILE_NAME_SIZE];
+  gchar iclaustron_buf[IC_MAX_FILE_NAME_SIZE];
+  gchar mysql_buf[IC_MAX_FILE_NAME_SIZE];
  
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Control Server")))
@@ -248,39 +253,20 @@ int main(int argc, char *argv[])
     ICLAUSTRON_VERSION/lib
 
     The resulting base directory is stored in the global variable
-    ic_base_dir.
+    glob_base_dir_string. We set up the default strings for the
+    version we've compiled, the protocol to the process controller
+    enables the Cluster Manager to specify which version to use.
   */
-  IC_INIT_STRING(&ic_base_dir, NULL, 0, TRUE);
-  if (glob_base_dir == NULL)
-  {
-    /*
-      The user specified no base directory himself, in this case we'll
-      use $HOME/iclaustron_install as the base directory unless the user is
-      the root user, in this case we'll instead use /var/lib/iclaustron as
-      the default directory. This is also how the iClaustron will install
-      the software by default.
-    */
-    const gchar *user_name= g_get_user_name();
-    if (strcmp(user_name, "root") == 0)
-    {
-      if (ic_add_dup_string(&ic_base_dir, "/var/lib/iclaustron/"))
-        goto error;
-    }
-    else
-    {
-      const gchar *home_var= g_getenv("HOME");
-      if (ic_add_dup_string(&ic_base_dir, home_var))
-        goto error;
-      if (ic_add_dup_string(&ic_base_dir, "/iclaustron_install/"))
-        goto error;
-    }
-  }
-  else
-  {
-    if (ic_add_dup_string(&ic_base_dir, glob_base_dir))
-      goto error;
-  }
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s\n", ic_base_dir.str));
+  if ((ret_code= ic_set_base_dir(&glob_base_dir_string, glob_base_dir)))
+    goto error;
+  ic_make_iclaustron_version_string(&glob_ic_base_dir_string, tmp_buf);
+  ic_set_binary_base_dir(&glob_ic_base_dir_string, &glob_base_dir_string,
+                         iclaustron_buf, glob_ic_base_dir_string.str);
+  ic_make_mysql_version_string(&glob_mysql_base_dir_string, tmp_buf);
+  ic_set_binary_base_dir(&glob_mysql_base_dir_string, &glob_base_dir_string,
+                         mysql_buf, glob_mysql_base_dir_string.str);
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s\n",
+                              glob_base_dir_string.str));
   /*
     Next step is to wait for Cluster Servers to connect to us, after they
     have connected they can request action from us as well. Any server can
@@ -295,6 +281,6 @@ int main(int argc, char *argv[])
   */
   ret_code= start_connection_loop();
 error:
-  ic_free(ic_base_dir.str);
+  ic_free(glob_base_dir_string.str);
   return ret_code;
 }

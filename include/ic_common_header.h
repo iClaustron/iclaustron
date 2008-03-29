@@ -27,6 +27,7 @@
 
 #define IC_VERSION 0x000001
 #define MYSQL_VERSION 0x06030c
+#define MYSQL_VERSION_STRING "mysql-5.1.23-ndb-6.3.12"
 #define IC_VERSION_BIT_START 24
 #define IC_PROTOCOL_BIT 20
 
@@ -154,6 +155,15 @@ typedef struct ic_string IC_STRING;
   (dest_obj)->len= (src_obj)->len; \
   (dest_obj)->is_null_terminated= (src_obj)->is_null_terminated;
 
+/*
+ * A few functions to set default directory references to iClaustron
+ * directories.
+*/
+int ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir);
+void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
+                            gchar *buf, const gchar *version);
+void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf);
+void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf);
 
 /*
   ic_get_ic_string

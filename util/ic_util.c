@@ -19,6 +19,86 @@ static guint32 glob_debug= 0;
 static gchar *glob_debug_file= "debug.log";
 static guint32 glob_debug_screen= 0;
 
+/*
+  A couple of functions to set references to directories in the iClaustron
+  installation.
+*/
+
+int
+ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
+{
+  int error= IC_ERROR_MEM_ALLOC;
+  IC_INIT_STRING(base_dir, NULL, 0, TRUE);
+  if (input_base_dir == NULL)
+  {
+    /*
+      The user specified no base directory himself, in this case we'll
+      use $HOME/iclaustron_install as the base directory unless the user is
+      the root user, in this case we'll instead use /var/lib/iclaustron as
+      the default directory. This is also how the iClaustron will install
+      the software by default.
+    */
+    const gchar *user_name= g_get_user_name();
+    if (strcmp(user_name, "root") == 0)
+    {
+#ifdef WINDOWS
+      if (ic_add_dup_string(base_dir, "\\var\\lib\\iclaustron\\"))
+#else
+      if (ic_add_dup_string(base_dir, "/var/lib/iclaustron/"))
+#endif
+        goto end;
+    }
+    else
+    {
+      const gchar *home_var= g_getenv("HOME");
+      if (ic_add_dup_string(base_dir, home_var))
+        goto end;
+#ifdef WINDOWS
+      if (ic_add_dup_string(base_dir, "\\iclaustron_install\\"))
+#else
+      if (ic_add_dup_string(base_dir, "/iclaustron_install/"))
+#endif
+        goto end;
+    }
+  }
+  else
+  {
+    if (ic_add_dup_string(base_dir, input_base_dir))
+      goto end;
+  }
+  error= 0;
+end:
+  return error;
+}
+
+void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf)
+{
+  buf[0]= 0;
+  IC_INIT_STRING(res_str, buf, 0, TRUE);
+  ic_add_string(buf, (const gchar *)PACKAGE);
+  ic_add_string(buf, (const gchar *)"-");
+  ic_add_string(buf, (const gchar *)VERSION);
+}
+
+void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf)
+{
+  buf[0]= 0;
+  IC_INIT_STRING(res_str, buf, 0, TRUE);
+  ic_add_string(buf, (const gchar *)MYSQL_VERSION_STRING);
+}
+
+void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
+                            gchar *buf, const gchar *version)
+{
+  IC_INIT_STRING(res_str, buf, 0, TRUE);
+  ic_add_ic_string(res_str, base_dir);
+  ic_add_string(res_str, version);
+#ifdef WINDOWS
+  ic_add_string(res_str, "\\");
+#else
+  ic_add_string(res_str, "/");
+#endif
+}
 
 /*
   Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
