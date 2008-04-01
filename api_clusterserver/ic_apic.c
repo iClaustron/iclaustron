@@ -5232,6 +5232,32 @@ cluster_config_end(__attribute__ ((unused)) void *ic_config)
   return;
 }
 
+int
+ic_write_full_config_to_disk(IC_STRING *config_dir,
+                             guint32 *old_version_number,
+                             IC_CLUSTER_CONNECT_INFO **clu_infos,
+                             IC_CLUSTER_CONFIG **clusters)
+{
+  /*
+   The first step before writing anything is to ensure that the previous
+   write was successfully completed. This is accomplished by removing any
+   files related to the previous version which might still be left in the
+   directory (this could potentially happen since writing the new config is
+   a multi-step write.
+
+   1) Write the new configuration files with the new configuration version
+   2) Update the config.version file with the new config version number
+   3) Remove the old config version files
+
+   If a crash occurs after step 2) but before step 3) has completed the
+   configuration change was still successful although it didn't finish the
+   clean-up. To finish the clean-up we perform it always before updating to
+   a new version since it is safe to remove config files that are no longer
+   current.
+  */
+  return 0;
+}
+
 static IC_CONFIG_OPERATIONS cluster_config_ops =
 {
   .ic_config_init = cluster_config_init,

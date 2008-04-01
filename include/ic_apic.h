@@ -542,6 +542,12 @@ struct ic_comm_link_config
 };
 typedef struct ic_comm_link_config IC_COMM_LINK_CONFIG;
 
+int
+ic_write_full_config_to_disk(IC_STRING *config_dir,
+                             guint32 *old_version_number,
+                             IC_CLUSTER_CONNECT_INFO **clu_infos,
+                             IC_CLUSTER_CONFIG **clusters);
+
 IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(gchar *config_file_path,
                                  IC_CONFIG_STRUCT *cluster_conf);

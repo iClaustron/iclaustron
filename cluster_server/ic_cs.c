@@ -336,6 +336,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
                   IC_CLUSTER_CONFIG **clusters,
                   guint32 *config_version_number)
 {
+  int error;
   IC_MEMORY_CONTAINER *cluster_mc_ptr;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   gchar *cluster_config_file;
@@ -371,9 +372,21 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
     cluster_conf_ptr->clu_conf_ops->ic_config_end(cluster_conf_ptr);
     goto error;
   }
-  cluster_mc_ptr->mc_ops.ic_mc_free(cluster_mc_ptr);
   if (verify_grid_config(clusters))
-    return 1;
+    goto error;
+  if (glob_bootstrap && (*config_version_number == 0))
+  {
+    if ((error= ic_write_full_config_to_disk(&glob_config_dir,
+                                             config_version_number,
+                                             clu_infos,
+                                             clusters)))
+    {
+      printf("%s Failed to write initial configuration version\n", err_str);
+      cluster_conf_ptr->clu_conf_ops->ic_config_end(cluster_conf_ptr);
+      goto error;
+    }
+  }
+  cluster_mc_ptr->mc_ops.ic_mc_free(cluster_mc_ptr);
   return 0;
 error:
   cluster_mc_ptr->mc_ops.ic_mc_free(cluster_mc_ptr);
