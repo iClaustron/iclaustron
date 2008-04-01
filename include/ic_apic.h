@@ -309,7 +309,8 @@ struct ic_run_cluster_state
   guint8 num_cluster_servers;
   guint8 num_cluster_servers_connected;
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
-  gchar* config_path;
+  guint32 config_version_number;
+  IC_STRING *config_dir;
   GMutex *protect_state;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;

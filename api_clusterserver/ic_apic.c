@@ -732,17 +732,17 @@ calculate_mandatory_bits()
   }
   {
     DEBUG_DECL(gchar buf[128]);
-    DEBUG_PRINT(CONFIG_LEVEL, ("kernel_mandatory_bits = %s\n",
+    DEBUG_PRINT(CONFIG_LEVEL, ("kernel_mandatory_bits = %s",
                       ic_guint64_hex_str(kernel_mandatory_bits, buf)));
-    DEBUG_PRINT(CONFIG_LEVEL, ("client_mandatory_bits = %s\n",
+    DEBUG_PRINT(CONFIG_LEVEL, ("client_mandatory_bits = %s",
                  ic_guint64_hex_str(client_mandatory_bits, buf)));
-    DEBUG_PRINT(CONFIG_LEVEL, ("cluster_server_mandatory_bits = %s\n",
+    DEBUG_PRINT(CONFIG_LEVEL, ("cluster_server_mandatory_bits = %s",
                  ic_guint64_hex_str(cluster_server_mandatory_bits, buf)));
-    DEBUG_PRINT(CONFIG_LEVEL, ("rep_server_mandatory_bits = %s\n",
+    DEBUG_PRINT(CONFIG_LEVEL, ("rep_server_mandatory_bits = %s",
                  ic_guint64_hex_str(rep_server_mandatory_bits, buf)));
-    DEBUG_PRINT(CONFIG_LEVEL, ("sql_server_mandatory_bits = %s\n",
+    DEBUG_PRINT(CONFIG_LEVEL, ("sql_server_mandatory_bits = %s",
                  ic_guint64_hex_str(sql_server_mandatory_bits, buf)));
-    DEBUG_PRINT(CONFIG_LEVEL, ("comm_mandatory_bits = %s\n",
+    DEBUG_PRINT(CONFIG_LEVEL, ("comm_mandatory_bits = %s",
                   ic_guint64_hex_str(comm_mandatory_bits, buf)));
   }
   DEBUG_RETURN_EMPTY;
@@ -1795,7 +1795,7 @@ static IC_CONFIG_ENTRY *get_config_entry(int config_id)
   if (config_id >= IC_NODE_TYPE)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("config_id larger than 998 = %d\n", config_id));
+      ("config_id larger than 998 = %d", config_id));
     return NULL;
   }
   inx= map_config_id_to_inx[config_id];
@@ -1813,11 +1813,12 @@ ic_assign_config_value(int config_id, guint64 value,
                       gchar *struct_ptr)
 {
   IC_CONFIG_ENTRY *conf_entry= get_config_entry(config_id);
+  gchar *char_ptr;
 
   if (!conf_entry)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("Didn't find config entry for config_id = %d\n", config_id));
+      ("Didn't find config entry for config_id = %d", config_id));
     return PROTOCOL_ERROR;
   }
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
@@ -1829,25 +1830,23 @@ ic_assign_config_value(int config_id, guint64 value,
       (conf_entry->is_max_value_defined &&
        (conf_entry->max_value < value)))
   {
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Config value error config_id = %d. ", config_id));
     if (conf_entry->is_min_value_defined && value < conf_entry->min_value)
-    {
-      DEBUG_PRINT(CONFIG_LEVEL, ("Value too small\n"));
-    }
+      char_ptr= "Value too small";
     else if (conf_entry->is_max_value_defined && value > conf_entry->max_value)
-    {
-      DEBUG_PRINT(CONFIG_LEVEL, ("Value too large\n"));
-    }
+      char_ptr= "Value too large";
     else if (conf_entry->is_boolean && (value > 1))
-    {
-      DEBUG_PRINT(CONFIG_LEVEL, ("Erroneus bool value\n"));
-    }
+      char_ptr= "Erroneus bool value";
     else
     {
+      char_ptr= NULL;
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Error with node type, config_types = %u, conf_type %u\n",
          conf_entry->config_types, conf_type));
+    }
+    if (char_ptr)
+    {
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Config value error config_id = %d. %s", config_id, char_ptr));
     }
     return PROTOCOL_ERROR;
   }
@@ -1899,16 +1898,16 @@ ic_assign_config_string(int config_id, IC_CONFIG_TYPES conf_type,
       !(conf_entry->config_types & (1 << conf_type)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-          ("conf_type = %u, config_types = %u, config_id = %u\n",
+          ("conf_type = %u, config_types = %u, config_id = %u",
            conf_type, conf_entry->config_types, config_id));
-    DEBUG_PRINT(CONFIG_LEVEL, ("Debug string inconsistency\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Debug string inconsistency"));
     return PROTOCOL_ERROR;
   }
   struct_ptr+= conf_entry->offset;
   *(gchar**)struct_ptr= string_memory;
   strncpy(string_memory, *string_val, string_len);
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("String value = %s\n", string_memory));
+    ("String value = %s", string_memory));
   return 0;
 }
 
@@ -2003,12 +2002,12 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   if (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
     if (!check_buf(read_buf, read_size, str,
                    strlen(str)))
     {
       DEBUG_PRINT(CONFIG_LEVEL,
-        ("Protocol error in waiting for %s\n", str));
+        ("Protocol error in waiting for %s", str));
       DEBUG_RETURN(PROTOCOL_ERROR);
     }
     DEBUG_RETURN(0);
@@ -2132,7 +2131,7 @@ static int
 key_type_error(guint32 hash_key, guint32 node_type)
 {
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("Wrong key type %u node type %u\n", hash_key, node_type));
+    ("Wrong key type %u node type %u", hash_key, node_type));
   return PROTOCOL_ERROR;
 }
 
@@ -2164,7 +2163,7 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
   if (hash_key == IC_NODE_TYPE)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-                ("Node type of section %u is %u\n", sect_id, value));
+                ("Node type of section %u is %u", sect_id, value));
     switch (value)
     {
       case IC_KERNEL_NODE:
@@ -2178,7 +2177,7 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
       case IC_REP_SERVER_NODE:
         conf_obj->num_rep_servers++; break;
       default:
-        DEBUG_PRINT(CONFIG_LEVEL, ("No such node type\n"));
+        DEBUG_PRINT(CONFIG_LEVEL, ("No such node type"));
         return PROTOCOL_ERROR;
     }
     conf_obj->node_types[sect_id - 2]= (IC_NODE_TYPES)value;
@@ -2188,7 +2187,7 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
     conf_obj->node_ids[sect_id - 2]= value;
     conf_obj->max_node_id= MAX(value, conf_obj->max_node_id);
     DEBUG_PRINT(CONFIG_LEVEL,
-                ("Node id = %u for section %u\n", value, sect_id));
+                ("Node id = %u for section %u", value, sect_id));
   }
   return 0;
 }
@@ -2213,12 +2212,12 @@ step_key_value(IC_API_CONFIG_SERVER *apic,
       len_words= (value + 3)/4;
       if (((*key_value) + len_words) >= key_value_end)
       {
-        DEBUG_PRINT(CONFIG_LEVEL, ("Array ended in the middle of a type\n"));
+        DEBUG_PRINT(CONFIG_LEVEL, ("Array ended in the middle of a type"));
         return PROTOCOL_ERROR;
       }
       if (value != (strlen((gchar*)(*key_value)) + 1))
       {
-        DEBUG_PRINT(CONFIG_LEVEL, ("Wrong length of character type\n"));
+        DEBUG_PRINT(CONFIG_LEVEL, ("Wrong length of character type"));
         return PROTOCOL_ERROR;
       }
       (*key_value)+= len_words;
@@ -2245,13 +2244,13 @@ static IC_CONFIG_ENTRY *get_conf_entry(guint32 hash_key)
       conf_entry= &glob_conf_entry[id];
       if (!conf_entry)
       {
-        DEBUG_PRINT(CONFIG_LEVEL, ("No such config entry, return NULL\n"));
+        DEBUG_PRINT(CONFIG_LEVEL, ("No such config entry, return NULL"));
       }
       return conf_entry;
     }  
   }
   DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error in map_config_id_to_inx, returning NULL\n"));
+              ("Error in map_config_id_to_inx, returning NULL"));
   return NULL;
 }
 
@@ -2275,12 +2274,12 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
     return 0; /* Ignore */
   if (node_sect_id >= conf_obj->num_nodes)
   {
-    DEBUG_PRINT(CONFIG_LEVEL, ("node_sect_id out of range\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("node_sect_id out of range"));
     return PROTOCOL_ERROR;
   }
   if (!(node_config= (void*)conf_obj->node_config[node_sect_id]))
   {
-    DEBUG_PRINT(CONFIG_LEVEL, ("No such node_config object\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("No such node_config object"));
     return PROTOCOL_ERROR;
   }
   node_type= conf_obj->node_types[node_sect_id];
@@ -2437,7 +2436,7 @@ analyse_key_value(guint32 *key_value, guint32 len, int pass,
     guint32 key_type= key >> IC_CL_KEY_SHIFT;
 //    if (sect_id == 0 || sect_id == 1)
       DEBUG_PRINT(CONFIG_LEVEL,
-      ("Section: %u, Config id: %u, Type: %u, value: %u\n", sect_id, hash_key,
+      ("Section: %u, Config id: %u, Type: %u, value: %u", sect_id, hash_key,
        key_type, value));
     if (pass == 0 && sect_id == 1)
       conf_obj->num_nodes= MAX(conf_obj->num_nodes, hash_key + 1);
@@ -2532,20 +2531,20 @@ translate_config(IC_API_CONFIG_SERVER *apic,
                                (const guint8*)config_buf, config_size)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("1:Protocol error in base64 decode\n"));
+      ("1:Protocol error in base64 decode"));
     goto protocol_error;
   }
   bin_config_size32= bin_config_size >> 2;
   if ((bin_config_size & 3) != 0 || bin_config_size32 <= 3)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("2:Protocol error in base64 decode\n"));
+      ("2:Protocol error in base64 decode"));
     goto protocol_error;
   }
   if (memcmp(bin_buf, ver_string, 8))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("3:Protocol error in base64 decode\n"));
+      ("3:Protocol error in base64 decode"));
     goto protocol_error;
   }
   bin_buf32= (guint32*)bin_buf;
@@ -2555,7 +2554,7 @@ translate_config(IC_API_CONFIG_SERVER *apic,
   if (checksum)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("4:Protocol error in base64 decode\n"));
+      ("4:Protocol error in base64 decode"));
     goto protocol_error;
   }
   key_value_ptr= bin_buf32 + 2;
@@ -2590,11 +2589,11 @@ set_up_cluster_server_connection(IC_CONNECTION *conn,
   conn->server_port= server_port;
   if ((error= conn->conn_op.ic_set_up_connection(conn)))
   {
-    DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d\n", error));
+    DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", error));
     return error;
   }
   DEBUG_PRINT(COMM_LEVEL,
-              ("Successfully set-up connection to cluster server\n"));
+              ("Successfully set-up connection to cluster server"));
   return 0;
 }
 
@@ -2667,7 +2666,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
     switch (state)
     {
       case GET_NODEID_REPLY_STATE:
@@ -2682,7 +2681,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
                       GET_NODEID_REPLY_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in Get nodeid reply state\n"));
+            ("Protocol error in Get nodeid reply state"));
           return PROTOCOL_ERROR;
         }
         state= NODEID_STATE;
@@ -2698,10 +2697,10 @@ rec_get_nodeid(IC_CONNECTION *conn,
             (node_number > IC_MAX_NODE_ID))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in nodeid state\n"));
+            ("Protocol error in nodeid state"));
           return PROTOCOL_ERROR;
         }
-        DEBUG_PRINT(CONFIG_LEVEL, ("Nodeid = %u\n", (guint32)node_number));
+        DEBUG_PRINT(CONFIG_LEVEL, ("Nodeid = %u", (guint32)node_number));
         apic->node_ids[cluster_id]= (guint32)node_number;
         state= RESULT_OK_STATE;
         break;
@@ -2713,7 +2712,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
         if (check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in result ok state\n"));
+            ("Protocol error in result ok state"));
           return PROTOCOL_ERROR;
         }
         state= WAIT_EMPTY_RETURN_STATE;
@@ -2726,7 +2725,7 @@ rec_get_nodeid(IC_CONNECTION *conn,
         if (read_size != 0)
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in wait empty state\n"));
+            ("Protocol error in wait empty state"));
           return PROTOCOL_ERROR;
         }
         return 0;
@@ -2756,7 +2755,7 @@ rec_get_config(IC_CONNECTION *conn,
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
     switch (state)
     {
       case GET_CONFIG_REPLY_STATE:
@@ -2771,7 +2770,7 @@ rec_get_config(IC_CONNECTION *conn,
                       GET_CONFIG_REPLY_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in get config reply state\n"));
+            ("Protocol error in get config reply state"));
           goto protocol_error;
         }
         state= RESULT_OK_STATE;
@@ -2784,7 +2783,7 @@ rec_get_config(IC_CONNECTION *conn,
         if (check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in result ok state\n"));
+            ("Protocol error in result ok state"));
           goto protocol_error;
         }
         state= CONTENT_LENGTH_STATE;
@@ -2800,7 +2799,7 @@ rec_get_config(IC_CONNECTION *conn,
             (content_length > MAX_CONTENT_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in content length state\n"));
+            ("Protocol error in content length state"));
           goto protocol_error;
         }
         state= OCTET_STREAM_STATE;
@@ -2813,7 +2812,7 @@ rec_get_config(IC_CONNECTION *conn,
         if (check_buf(read_buf, read_size, octet_stream_str, OCTET_STREAM_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in octet stream state\n"));
+            ("Protocol error in octet stream state"));
           goto protocol_error;
         }
         state= CONTENT_ENCODING_STATE;
@@ -2827,7 +2826,7 @@ rec_get_config(IC_CONNECTION *conn,
                       CONTENT_ENCODING_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in content encoding state\n"));
+            ("Protocol error in content encoding state"));
           goto protocol_error;
         }
         /*
@@ -2850,7 +2849,7 @@ rec_get_config(IC_CONNECTION *conn,
         if (read_size != 0)
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in wait empty return state\n"));
+            ("Protocol error in wait empty return state"));
           goto protocol_error;
         }
         if (state == WAIT_EMPTY_RETURN_STATE)
@@ -2874,7 +2873,7 @@ rec_get_config(IC_CONNECTION *conn,
             This is the last line, we have now received the config
             and are ready to translate it.
           */
-          DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding\n"));
+          DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding"));
           error= translate_config(apic, cluster_id,
                                   config_buf, config_size);
           if (error)
@@ -2884,7 +2883,7 @@ rec_get_config(IC_CONNECTION *conn,
         else if (read_size != CONFIG_LINE_LEN)
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in config receive state\n"));
+            ("Protocol error in config receive state"));
           goto protocol_error;
         }
         break;
@@ -3106,7 +3105,7 @@ get_cluster_ids(IC_API_CONFIG_SERVER *apic,
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
     if (check_buf(read_buf, read_size, end_get_cluster_list_str,
                   strlen(end_get_cluster_list_str)))
       break;
@@ -3117,7 +3116,7 @@ get_cluster_ids(IC_API_CONFIG_SERVER *apic,
             (memcmp(read_buf, cluster_name_string, CLUSTER_NAME_REQ_LEN) != 0))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in receive cluster name state\n"));
+            ("Protocol error in receive cluster name state"));
           goto protocol_error;
         }
         found_clu_info= NULL;
@@ -3143,7 +3142,7 @@ get_cluster_ids(IC_API_CONFIG_SERVER *apic,
                                CLUSTER_ID_REQ_LEN, &cluster_id))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in receive cluster id state\n"));
+            ("Protocol error in receive cluster id state"));
           goto protocol_error;
         }
         if (cluster_id > IC_MAX_CLUSTER_ID)
@@ -3432,7 +3431,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
                    *charptr,
                    str_len);
           DEBUG_PRINT(CONFIG_LEVEL,
-                      ("String value = %s\n", (gchar*)&assign_array[2]));
+                      ("String value = %s", (gchar*)&assign_array[2]));
           loc_key_value_array_len+= len;
           data_type= IC_CL_CHAR_TYPE;
           break;
@@ -3453,7 +3452,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
       assign_array[0]= g_htonl(key);
       assign_array[1]= g_htonl(value);
       DEBUG_PRINT(CONFIG_LEVEL,
-                  ("sectid = %u, config_id = %u, value = %u\n",
+                  ("sectid = %u, config_id = %u, value = %u",
                    sect_id, config_id, value));
       loc_key_value_array_len+= 2;
     }
@@ -3466,7 +3465,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
        config_id;
   value= (config_type == IC_COMM_TYPE) ? 0 : (guint32)config_type;
   DEBUG_PRINT(CONFIG_LEVEL,
-              ("sectid = %u, config_id = %u, value = %u\n",
+              ("sectid = %u, config_id = %u, value = %u",
                 sect_id, config_id, value));
   assign_array[0]= g_htonl(key);
   assign_array[1]= g_htonl(value);
@@ -3480,7 +3479,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
        config_id;
   value= (guint32)0;
   DEBUG_PRINT(CONFIG_LEVEL,
-              ("sectid = %u, config_id = %u, value = %u\n",
+              ("sectid = %u, config_id = %u, value = %u",
                 sect_id, config_id, value));
   assign_array[0]= g_htonl(key);
   assign_array[1]= g_htonl(value);
@@ -3556,7 +3555,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   len+= 2;
   len+= 4;
   len+= clu_conf->num_nodes * 2;
-  DEBUG_PRINT(CONFIG_LEVEL, ("1: len=%u\n", len));
+  DEBUG_PRINT(CONFIG_LEVEL, ("1: len=%u", len));
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
     /* Add length of each node section */
@@ -3569,7 +3568,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
       if (node_sect_len == 0)
         return IC_ERROR_INCONSISTENT_DATA;
       len+= node_sect_len;
-      DEBUG_PRINT(CONFIG_LEVEL, ("2: len=%u\n", len));
+      DEBUG_PRINT(CONFIG_LEVEL, ("2: len=%u", len));
     }
   }
   /* Add length of each comm section */
@@ -3591,7 +3590,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
           len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section,
                                       version_number);
           num_comms++;
-          DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u\n", len));
+          DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u", len));
         }
       }
     }
@@ -3601,10 +3600,10 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
    *   - This is section 2 + num_nodes
    */
   len+= num_comms * 2;
-  DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u\n", len));
+  DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u", len));
   /* Add 1 word for checksum at the end */
   len+= 1;
-  DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u\n", len));
+  DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u", len));
 
   /*
      Allocate memory for key-value pairs, this memory is only temporary for
@@ -3652,7 +3651,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
   }
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("1: fill_len=%u\n", loc_key_value_array_len));
+    ("1: fill_len=%u", loc_key_value_array_len));
   for (i= 2; i < 6 + (2 * clu_conf->num_nodes); i++)
     loc_key_value_array[i]= g_htonl(loc_key_value_array[i]);
 
@@ -3668,7 +3667,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                           &loc_key_value_array_len,
                                           version_number)))
       goto error;
-    DEBUG_PRINT(CONFIG_LEVEL, ("2: fill_len=%u\n", loc_key_value_array_len));
+    DEBUG_PRINT(CONFIG_LEVEL, ("2: fill_len=%u", loc_key_value_array_len));
   }
 
   /*
@@ -3689,7 +3688,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   }
 
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("3: fill_len=%u\n", loc_key_value_array_len));
+    ("3: fill_len=%u", loc_key_value_array_len));
   /* Fill comm sections */
   section_id= comm_desc_section + 1;
   for (i= 1; i <= clu_conf->max_node_id; i++)
@@ -3715,7 +3714,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                                 version_number)))
             goto error;
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("4: fill_len=%u\n", loc_key_value_array_len));
+            ("4: fill_len=%u", loc_key_value_array_len));
         }
       }
     }
@@ -3726,7 +3725,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     checksum^= g_ntohl(loc_key_value_array[i]);
   loc_key_value_array[loc_key_value_array_len++]= g_ntohl(checksum);
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("5: fill_len=%u\n", loc_key_value_array_len));
+    ("5: fill_len=%u", loc_key_value_array_len));
   /* Perform final set of checks */
   *key_value_array_len= loc_key_value_array_len;
   if (len == loc_key_value_array_len)
@@ -3757,7 +3756,7 @@ ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
                              base64_array_len,
                              (const guint8*)key_value_array,
                              key_value_array_len*4);
-  DEBUG_PRINT(CONFIG_LEVEL, ("%s", *(gchar**)base64_array));
+  DEBUG_PRINT_BUF(CONFIG_LEVEL, *(gchar**)base64_array);
   ic_free(key_value_array);
   return ret_code;
 }
@@ -3797,7 +3796,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
     switch (state)
     {
       case VERSION_REQ_STATE:
@@ -3805,7 +3804,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
                                VERSION_REQ_LEN, version_number))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in version request state\n"));
+            ("Protocol error in version request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= NODETYPE_REQ_STATE;
@@ -3815,7 +3814,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
                                NODETYPE_REQ_LEN, node_type))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in nodetype request state\n"));
+            ("Protocol error in nodetype request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= NODEID_REQ_STATE;
@@ -3826,7 +3825,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
             (*node_number > IC_MAX_NODE_ID))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in nodeid request state\n"));
+            ("Protocol error in nodeid request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= USER_REQ_STATE;
@@ -3835,7 +3834,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         if (check_buf(read_buf, read_size, user_str, USER_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in user request state\n"));
+            ("Protocol error in user request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= PASSWORD_REQ_STATE;
@@ -3844,7 +3843,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         if (check_buf(read_buf, read_size, password_str, PASSWORD_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in password request state\n"));
+            ("Protocol error in password request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= PUBLIC_KEY_REQ_STATE;
@@ -3854,7 +3853,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
                       PUBLIC_KEY_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in public key request state\n"));
+            ("Protocol error in public key request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= ENDIAN_REQ_STATE;
@@ -3864,7 +3863,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
             (memcmp(read_buf, endian_str, ENDIAN_REQ_LEN) != 0))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in endian request state\n"));
+            ("Protocol error in endian request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         if (!((read_size == ENDIAN_REQ_LEN + LITTLE_ENDIAN_LEN &&
@@ -3875,7 +3874,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
                      BIG_ENDIAN_LEN) == 0)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Failure in representation of what endian type\n"));
+            ("Failure in representation of what endian type"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= LOG_EVENT_REQ_STATE;
@@ -3884,7 +3883,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         if (check_buf(read_buf, read_size, log_event_str, LOG_EVENT_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in log_event request state\n"));
+            ("Protocol error in log_event request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         if (!ic_is_bit_set(*version_number, IC_PROTOCOL_BIT))
@@ -3896,7 +3895,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
                                CLUSTER_ID_REQ_LEN, cluster_id))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in cluster id request state\n"));
+            ("Protocol error in cluster id request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         DEBUG_RETURN(0);
@@ -3941,14 +3940,14 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
   while (!(error= ic_rec_with_cr(conn, read_buf, &read_size,
                                  &size_curr_buf, sizeof(read_buf))))
   {
-    DEBUG(CONFIG_LEVEL, ic_debug_print_buf(read_buf, read_size));
+    DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
     switch(state)
     {
       case GET_CONFIG_REQ_STATE:
         if (check_buf(read_buf, read_size, get_config_str, GET_CONFIG_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in get config request state\n"));
+            ("Protocol error in get config request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= VERSION_REQ_STATE;
@@ -3959,7 +3958,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
             (version_number != read_version_num))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in version request state\n"));
+            ("Protocol error in version request state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         state= EMPTY_STATE;
@@ -3968,7 +3967,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
         if (read_size != 0)
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in wait empty state\n"));
+            ("Protocol error in wait empty state"));
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         return 0;
@@ -4130,7 +4129,7 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
     DEBUG_RETURN(ret_code);
   }
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("Converted configuration to a base64 representation\n"));
+    ("Converted configuration to a base64 representation"));
   if (!(ret_code= send_config_reply(conn, config_base64_str, config_len)))
     ret_code= ic_send_with_cr(conn, ic_empty_string);
   ic_free(config_base64_str);
@@ -4179,7 +4178,7 @@ run_handle_config_request(gpointer data)
         if ((error= handle_config_request(run_obj, conn, &param)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Error from handle_config_request, code = %u\n", error));
+            ("Error from handle_config_request, code = %u", error));
           goto error;
         }
       }
@@ -4200,7 +4199,7 @@ run_handle_config_request(gpointer data)
       if ((error= handle_get_cluster_list(run_obj, conn)))
       {
         DEBUG_PRINT(CONFIG_LEVEL,
-          ("Error from handle_get_cluster_list, code = %u\n", error));
+          ("Error from handle_get_cluster_list, code = %u", error));
         goto error;
       }
     }
@@ -4210,7 +4209,7 @@ run_handle_config_request(gpointer data)
       if ((error= handle_convert_transporter(conn, run_obj, &param)))
       {
         DEBUG_PRINT(CONFIG_LEVEL,
-          ("Error from handle_convert_transporter, code = %u\n", error));
+          ("Error from handle_convert_transporter, code = %u", error));
         goto error;
       }
     }
@@ -4275,7 +4274,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
   if (ret_code)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("Failed to set-up listening connection\n"));
+      ("Failed to set-up listening connection"));
     goto error;
   }
   do
@@ -4283,28 +4282,28 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
     if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       DEBUG_PRINT(COMM_LEVEL,
-        ("Failed to accept a new connection\n"));
+        ("Failed to accept a new connection"));
       goto error;
     }
     DEBUG_PRINT(CONFIG_LEVEL,
-("Run cluster server has set up connection and has received a connection\n"));
+("Run cluster server has set up connection and has received a connection"));
     if (!(fork_conn=
            conn->conn_op.ic_fork_accept_connection(conn,
                                           FALSE, /* No mutex */
                                           FALSE))) /* No front buffer */
     {
       DEBUG_PRINT(COMM_LEVEL,
-      ("Failed to fork a new connection from an accepted connection\n"));
+      ("Failed to fork a new connection from an accepted connection"));
       goto error;
     }
     if ((ret_code= start_handle_config_request(run_obj, fork_conn)))
     {
       DEBUG_PRINT(THREAD_LEVEL,
-        ("Start new thread to handle configuration request failed\n"));
+        ("Start new thread to handle configuration request failed"));
       goto error;
     }
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("Ready to accept a new connection\n"));
+      ("Ready to accept a new connection"));
   } while (1);
 
 error:
@@ -4360,7 +4359,7 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
   run_obj->state.cs_master= FALSE;
   run_obj->state.cs_started= FALSE;
   run_obj->state.bootstrap= FALSE;
-  run_obj->state.config_path= NULL;
+  run_obj->state.config_dir= NULL;
 
   cluster_iterator= clusters;
   while (*cluster_iterator)
@@ -4488,11 +4487,11 @@ mandatory_error:
   {
     gchar buf[128];
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("mandatory bits %s\n",
+      ("mandatory bits %s",
       ic_guint64_hex_str(((IC_KERNEL_CONFIG*)current_config)->mandatory_bits,
                          (gchar*)&buf)));
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("missing bits %s\n",
+      ("missing bits %s",
       ic_guint64_hex_str(missing_bits,
                          (gchar*)&buf)));
   }
@@ -4506,7 +4505,7 @@ mandatory_error:
       if (!(conf_entry= get_config_entry_mandatory(i, conf_type)))
       {
         DEBUG_PRINT(CONFIG_LEVEL,
-                    ("Didn't find mandatory entry after config error, i= %u\n"
+                    ("Didn't find mandatory entry after config error, i= %u"
                      ,i));
         abort();
       }
@@ -4655,7 +4654,7 @@ conf_serv_add_section(void *ic_config,
     }
     init_node(clu_conf, sizeof(IC_KERNEL_CONFIG),
               (void*)&clu_conf->default_kernel_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found data server group\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found data server group"));
   }
   else if (ic_cmp_null_term_str(client_node_str, section_name) == 0)
   {
@@ -4668,7 +4667,7 @@ conf_serv_add_section(void *ic_config,
     }
     init_node(clu_conf, sizeof(IC_CLIENT_CONFIG),
               (void*)&clu_conf->default_client_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found client group\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found client group"));
   }
   else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
   {
@@ -4682,7 +4681,7 @@ conf_serv_add_section(void *ic_config,
     }
     init_node(clu_conf, sizeof(IC_CLUSTER_MGR_CONFIG),
               (void*)&clu_conf->default_cluster_mgr_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group"));
   }
   else if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
   {
@@ -4695,7 +4694,7 @@ conf_serv_add_section(void *ic_config,
     }
     init_node(clu_conf, sizeof(IC_CLUSTER_SERVER_CONFIG),
               (void*)&clu_conf->default_cluster_server_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group"));
   }
   else if (ic_cmp_null_term_str(rep_server_str, section_name) == 0)
   {
@@ -4708,7 +4707,7 @@ conf_serv_add_section(void *ic_config,
     }
     init_node(clu_conf, sizeof(IC_REP_SERVER_CONFIG),
               (void*)&clu_conf->default_rep_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server group\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server group"));
   }
   else if (ic_cmp_null_term_str(sql_server_str, section_name) == 0)
   {
@@ -4721,7 +4720,7 @@ conf_serv_add_section(void *ic_config,
     }
     init_node(clu_conf, sizeof(IC_SQL_SERVER_CONFIG),
               (void*)&clu_conf->default_sql_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server group\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server group"));
   }
   else if (ic_cmp_null_term_str(socket_str, section_name) == 0)
   {
@@ -4733,7 +4732,7 @@ conf_serv_add_section(void *ic_config,
     }
     init_node(clu_conf, sizeof(IC_SOCKET_LINK_CONFIG),
               (void*)&clu_conf->default_socket_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found socket group\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found socket group"));
   }
   else
   {
@@ -4742,48 +4741,48 @@ conf_serv_add_section(void *ic_config,
     {
       clu_conf->current_node_config= &clu_conf->default_kernel_config;
       clu_conf->current_node_config_type= IC_KERNEL_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found data server default group\n"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found data server default group"));
     }
     else if (ic_cmp_null_term_str(client_node_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_client_config;
       clu_conf->current_node_config_type= IC_CLIENT_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found client default group\n"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found client default group"));
     }
     else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
       clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group\n"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group"));
     }
     else if (ic_cmp_null_term_str(cluster_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_cluster_server_config;
       clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server default group\n"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server default group"));
     }
     else if (ic_cmp_null_term_str(sql_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_sql_config;
       clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server default group\n"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server default group"));
     }
     else if (ic_cmp_null_term_str(rep_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_rep_config;
       clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL,
-                  ("Found replication server default group\n"));
+                  ("Found replication server default group"));
     }
     else if (ic_cmp_null_term_str(socket_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_socket_config;
       clu_conf->current_node_config_type= IC_COMM_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found socket default group\n"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found socket default group"));
     }
     else
     {
-      DEBUG_PRINT(CONFIG_LEVEL, ("No such config section\n"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("No such config section"));
       DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
     }
   }
@@ -4809,7 +4808,7 @@ int conf_serv_add_key(void *ic_config,
   DEBUG_IC_STRING(CONFIG_LEVEL, key_name);
   DEBUG_IC_STRING(CONFIG_LEVEL, data);
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("Line: %d, Section: %d, Key-value pair\n", (int)line_number,
+    ("Line: %d, Section: %d, Key-value pair", (int)line_number,
      (int)section_number));
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
     DEBUG_RETURN(IC_ERROR_NO_SECTION_DEFINED_YET);
@@ -4866,21 +4865,21 @@ int conf_serv_add_key(void *ic_config,
   if (conf_entry->is_min_value_defined && conf_entry->min_value > value)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("Parameter %s is smaller than min_value = %u\n",
+      ("Parameter %s is smaller than min_value = %u",
        ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->min_value));
     DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
   else if (conf_entry->is_max_value_defined && conf_entry->max_value < value)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("Parameter %s is larger than min_value = %u\n",
+      ("Parameter %s is larger than min_value = %u",
       ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->max_value));
     DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
   else if ((conf_entry->data_type == IC_UINT16 && value > 65535) ||
            (conf_entry->data_type == IC_UINT32 && value >= num32_check))
   {
-    DEBUG_PRINT(CONFIG_LEVEL, ("Parameter %s is larger than its type\n",
+    DEBUG_PRINT(CONFIG_LEVEL, ("Parameter %s is larger than its type",
            ic_get_ic_string(key_name, (gchar*)&buf)));
     DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
@@ -4917,7 +4916,7 @@ int conf_serv_add_comment(void *ic_config,
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   DEBUG_ENTRY("conf_serv_add_comment");
   DEBUG_PRINT(CONFIG_LEVEL,
-              ("Line number %d in section %d was comment line\n",
+              ("Line number %d in section %d was comment line",
                line_number, section_number));
   if (pass == INITIAL_PASS)
     clu_conf->comments.num_comments++;
@@ -4995,7 +4994,7 @@ ic_load_config_server_from_files(gchar *config_file,
 
   conf_server->clu_conf_ops= &config_server_ops;
   conf_server->config_ptr.clu_conf= NULL;
-  DEBUG_PRINT(CONFIG_LEVEL, ("config_file = %s\n", config_file));
+  DEBUG_PRINT(CONFIG_LEVEL, ("config_file = %s", config_file));
   if (!config_file ||
       !g_file_get_contents(config_file, &conf_data_str,
                            &conf_data_len, &loc_error))
@@ -5142,7 +5141,7 @@ cluster_config_add_section(void *ic_config,
   }
   else
   {
-    DEBUG_PRINT(CONFIG_LEVEL, ("No such cluster config section\n"));
+    DEBUG_PRINT(CONFIG_LEVEL, ("No such cluster config section"));
     DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
   }
   return 0;
@@ -5161,7 +5160,7 @@ cluster_config_add_key(void *ic_config, guint32 section_number,
   DEBUG_IC_STRING(CONFIG_LEVEL, key_name);
   DEBUG_IC_STRING(CONFIG_LEVEL, data);
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("Line: %d, Section: %d, Key-value pair\n", (int)line_number,
+    ("Line: %d, Section: %d, Key-value pair", (int)line_number,
      (int)section_number));
 
   temp= conf->config_ptr.cluster_conf;
@@ -5259,7 +5258,7 @@ ic_load_cluster_config_from_file(gchar *cluster_config_file,
 
   cluster_conf->clu_conf_ops= &cluster_config_ops;
   cluster_conf->config_ptr.cluster_conf= NULL;
-  DEBUG_PRINT(CONFIG_LEVEL, ("cluster_config_file = %s\n",
+  DEBUG_PRINT(CONFIG_LEVEL, ("cluster_config_file = %s",
                              cluster_config_file));
   if (!cluster_config_file ||
       !g_file_get_contents(cluster_config_file, &conf_data_str,

@@ -413,22 +413,35 @@ int ic_debug_open()
 }
 
 void
-ic_debug_print_buf(char *buf, guint32 size)
+ic_debug_print_char_buf(gchar *buf)
+{
+  if (glob_debug_screen)
+    printf("%s\n", buf);
+  fprintf(ic_fptr, "%s\n", buf);
+}
+
+void
+ic_debug_print_rec_buf(char *buf, guint32 size)
 {
   char p_buf[2049];
   memcpy(p_buf, buf, size);
   p_buf[size]= NULL_BYTE;
-  ic_debug_printf("Receive buffer, size %u:\n%s\n", size, p_buf);
+  ic_debug_printf("Receive buffer, size %u:\n%s", size, p_buf);
 }
 
 void
 ic_debug_printf(const char *format,...)
 {
   va_list args;
+  char buf[2049];
+
   va_start(args, format);
+  vsprintf(buf, format, args);
   if (glob_debug_screen)
-    vprintf(format, args);
-  vfprintf(ic_fptr, format, args);
+  {
+    printf("%s\n", buf);
+  }
+  fprintf(ic_fptr, "%s\n", buf);
   va_end(args);
 }
 
@@ -683,7 +696,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
   if (line_len == 1)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-      ("Line number %d in section %d is an empty line\n", line_number,
+      ("Line number %d in section %d is an empty line", line_number,
        *section_num));
     return 0;
   }
@@ -788,7 +801,7 @@ int ic_build_config_data(IC_STRING *conf_data,
       if (*iter_data == LINE_FEED)
       {
         /* Special handling of Windows Line Feeds after Carriage Return */
-        DEBUG_PRINT(CONFIG_LEVEL, ("Special case\n"));
+        DEBUG_PRINT(CONFIG_LEVEL, ("Special case"));
         iter_data_len++;
         iter_data++;
         continue;
@@ -1125,7 +1138,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   return 0;
 
 parse_error:
-  printf("No such program option\n");
+  printf("No such program option: %s\n", error->message);
   goto error;
 mem_error:
   printf("Memory allocation error\n");

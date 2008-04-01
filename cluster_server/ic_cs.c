@@ -127,6 +127,7 @@ set_config_path(gchar *buf)
   if ((error= ic_set_base_dir(&base_dir, glob_config_path)))
     return error;
   ic_set_binary_base_dir(&glob_config_dir, &base_dir, buf, "config");
+  DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", glob_config_dir.str));
   return 0;
 }
 
@@ -141,7 +142,7 @@ set_number_ending_string(gchar *buf, guint64 number)
 }
 
 static guint32
-load_version_number(const gchar *file_path)
+load_config_version_number(const gchar *file_path)
 {
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   gchar *version_file_str;
@@ -152,7 +153,7 @@ load_version_number(const gchar *file_path)
 
   IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
   IC_INIT_STRING(&file_path_string, (gchar*)file_path,
-                strlen(file_path), TRUE);
+                (file_path ? strlen(file_path) : 0), TRUE);
   IC_INIT_STRING(&loc_file_name_string, ic_version_file_str,
                  strlen(ic_version_file_str), TRUE);
   ic_add_ic_string(&file_name_string, &file_path_string);
@@ -183,23 +184,21 @@ load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
                   IC_CLUSTER_CONFIG **clusters,
                   IC_CONFIG_STRUCT *conf_server_struct,
                   IC_MEMORY_CONTAINER *mc_ptr,
-                  const gchar *base_dir,
-                  guint32 version_number)
+                  IC_STRING *base_config_dir_string,
+                  guint32 config_version_number)
 {
-  IC_STRING base_dir_string;
   IC_STRING file_name_string;
   IC_STRING version_ending;
   IC_STRING end_pattern;
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *cluster;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
-  gchar version_number_string[IC_MAX_INT_STRING];
+  gchar config_version_number_string[IC_MAX_INT_STRING];
 
-  set_number_ending_string(version_number_string, version_number);
-  IC_INIT_STRING(&version_ending, version_number_string,
-                 strlen(version_number_string), TRUE);
-  IC_INIT_STRING(&base_dir_string, (gchar*)base_dir,
-                strlen(base_dir), TRUE);
+  set_number_ending_string(config_version_number_string,
+                           config_version_number);
+  IC_INIT_STRING(&version_ending, config_version_number_string,
+                 strlen(config_version_number_string), TRUE);
   IC_INIT_STRING(&end_pattern, config_ending_str, strlen(config_ending_str),
                  TRUE);
   conf_server_struct->perm_mc_ptr= mc_ptr;
@@ -209,10 +208,10 @@ load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
     clu_infos++;
     file_name[0]= 0;
     IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
-    ic_add_ic_string(&file_name_string, &base_dir_string);
+    ic_add_ic_string(&file_name_string, base_config_dir_string);
     ic_add_ic_string(&file_name_string, &clu_info->cluster_name);
     ic_add_ic_string(&file_name_string, &end_pattern);
-    if (version_number)
+    if (config_version_number)
       ic_add_ic_string(&file_name_string, &version_ending);
     /*
       We have now formed the filename of the configuration of this
@@ -309,23 +308,23 @@ error:
   and $CONFIG_PATH/config.ini.3 if version number is 3.
 */
 static gchar*
-get_cluster_config_file_name(gchar *path, gchar *buf, guint32 version_number)
+get_cluster_config_file_name(IC_STRING *path_string, gchar *buf,
+                             guint32 config_version_number)
 {
   gchar number_str[IC_MAX_INT_STRING];
   IC_STRING buf_string;
-  IC_STRING path_string, version_ending, std_cluster_config_file;
+  IC_STRING version_ending, std_cluster_config_file;
 
-  set_number_ending_string(number_str, (guint64)version_number);
+  set_number_ending_string(number_str, (guint64)config_version_number);
   buf[0]= 0;
   IC_INIT_STRING(&buf_string, buf, 0, TRUE);
-  IC_INIT_STRING(&path_string, path, strlen(path), TRUE);
   IC_INIT_STRING(&std_cluster_config_file, ic_cluster_config_file,
                  strlen(ic_cluster_config_file), TRUE);
   IC_INIT_STRING(&version_ending, number_str, strlen(number_str), TRUE);
 
-  ic_add_ic_string(&buf_string, &path_string);
+  ic_add_ic_string(&buf_string, path_string);
   ic_add_ic_string(&buf_string, &std_cluster_config_file);
-  if (version_number)
+  if (config_version_number)
     ic_add_ic_string(&buf_string, &version_ending);
   return buf;
 }
@@ -334,11 +333,11 @@ static int
 load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
                   IC_CONFIG_STRUCT *conf_server_ptr,
                   IC_CONFIG_STRUCT *cluster_conf_ptr,
-                  IC_CLUSTER_CONFIG **clusters)
+                  IC_CLUSTER_CONFIG **clusters,
+                  guint32 *config_version_number)
 {
   IC_MEMORY_CONTAINER *cluster_mc_ptr;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
-  guint32 version_number;
   gchar *cluster_config_file;
   gchar cluster_config_file_buf[IC_MAX_FILE_NAME_SIZE];
 
@@ -348,15 +347,15 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
            err_str);
     return 1;
   }
-  version_number= load_version_number(glob_config_path);
-  if (glob_bootstrap && version_number)
+  *config_version_number= load_config_version_number(glob_config_path);
+  if (glob_bootstrap && *config_version_number)
   {
     printf("Bootstrap has already been performed\n");
     goto error;
   }
-  cluster_config_file= get_cluster_config_file_name(glob_config_path,
+  cluster_config_file= get_cluster_config_file_name(&glob_config_dir,
                                                     cluster_config_file_buf,
-                                                    version_number);
+                                                    *config_version_number);
   cluster_conf_ptr->perm_mc_ptr= cluster_mc_ptr;
   if (!(clu_infos= ic_load_cluster_config_from_file(cluster_config_file,
                                                     cluster_conf_ptr)))
@@ -366,7 +365,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
     goto error;
   }
   if (load_config_files(clu_infos, clusters, conf_server_ptr,
-                        mc_ptr, glob_config_path, version_number))
+                        mc_ptr, &glob_config_dir, *config_version_number))
   {
     printf("%s Failed to load a configuration file\n", err_str);
     cluster_conf_ptr->clu_conf_ops->ic_config_end(cluster_conf_ptr);
@@ -390,6 +389,7 @@ main(int argc, char *argv[])
   IC_RUN_CLUSTER_SERVER *run_obj;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
+  guint32 config_version_number;
 
   if ((error= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Server")))
@@ -403,7 +403,8 @@ main(int argc, char *argv[])
     goto end;
   }
   if ((error= load_local_config(mc_ptr, &conf_server_struct,
-                                &cluster_conf_struct, clusters)))
+                                &cluster_conf_struct, clusters,
+                                &config_version_number)))
     goto end;
   if (!(run_obj= ic_create_run_cluster(clusters, mc_ptr, glob_server_name,
                                        glob_server_port)))
@@ -413,13 +414,14 @@ main(int argc, char *argv[])
     goto late_end;
   }
   run_obj->state.bootstrap= glob_bootstrap;
-  run_obj->state.config_path= glob_config_dir.str;
+  run_obj->state.config_dir= &glob_config_dir;
+  run_obj->state.config_version_number= config_version_number;
   DEBUG_PRINT(PROGRAM_LEVEL,
-    ("Starting the iClaustron Cluster Server\n"));
+    ("Starting the iClaustron Cluster Server"));
   if ((error= run_obj->run_op.ic_run_cluster_server(run_obj)))
   {
     DEBUG_PRINT(PROGRAM_LEVEL,
-      ("run_ic_cluster_server returned error code %u\n", error));
+      ("run_ic_cluster_server returned error code %u", error));
     ic_print_error(error);
   }
 

@@ -265,7 +265,7 @@ int main(int argc, char *argv[])
   ic_make_mysql_version_string(&glob_mysql_base_dir_string, tmp_buf);
   ic_set_binary_base_dir(&glob_mysql_base_dir_string, &glob_base_dir_string,
                          mysql_buf, glob_mysql_base_dir_string.str);
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s\n",
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
                               glob_base_dir_string.str));
   /*
     Next step is to wait for Cluster Servers to connect to us, after they

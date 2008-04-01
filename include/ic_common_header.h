@@ -264,8 +264,9 @@ void ic_end();
 
 void ic_set_debug(guint32 val);
 guint32 ic_get_debug();
+void ic_debug_print_char_buf(gchar *buf);
 void ic_debug_printf(const char *format,...);
-void ic_debug_print_buf(gchar *buf, guint32 read_size);
+void ic_debug_print_rec_buf(gchar *buf, guint32 read_size);
 
 #define COMM_LEVEL 1
 #define ENTRY_LEVEL 2
@@ -280,6 +281,8 @@ void ic_debug_close();
 #define DEBUG_RETURN_EMPTY return
 #define DEBUG_RETURN(a) return a
 #define DEBUG_DECL(a) a
+#define DEBUG_PRINT_BUF(level, buf) \
+  { if (ic_get_debug() & level) { ic_debug_print_char_buf(buf); }}
 #define DEBUG_PRINT(level, printf_args) \
   { if (ic_get_debug() & level) { ic_debug_printf printf_args; }}
 #define DEBUG(level, a) if (ic_get_debug() & level) a
@@ -292,6 +295,7 @@ void ic_debug_close();
 #define DEBUG_RETURN_EMPTY return
 #define DEBUG_RETURN(a) return a
 #define DEBUG_DECL(a)
+#define DEBUG_PRINT_BUF(level, buf)
 #define DEBUG_PRINT(level, printf_args)
 #define DEBUG(level, a)
 #define DEBUG_ENTRY(a)

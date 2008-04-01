@@ -201,18 +201,18 @@ connect_cluster_mgr(IC_CONNECTION **conn)
                                           FALSE, FALSE,
                                           NULL, NULL)))
   {
-    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object\n"));
+    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
     return 1;
   }
   DEBUG_PRINT(PROGRAM_LEVEL,
-    ("Connecting to Cluster Manager at %s:%s\n",
+    ("Connecting to Cluster Manager at %s:%s",
      glob_server_ip, glob_server_port));
   loc_conn->server_name= glob_server_ip;
   loc_conn->server_port= glob_server_port;
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
     DEBUG_PRINT(PROGRAM_LEVEL,
-     ("Failed to connect to Cluster Manager\n"));
+     ("Failed to connect to Cluster Manager"));
     ic_print_error(ret_code);
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;

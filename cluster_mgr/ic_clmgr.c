@@ -113,11 +113,11 @@ set_up_server_connection(IC_CONNECTION **conn)
   if (!(loc_conn= ic_create_socket_object(FALSE, TRUE, FALSE, FALSE,
                                           NULL, NULL)))
   {
-    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object\n"));
+    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
     return 1;
   }
   DEBUG_PRINT(COMM_LEVEL,
-    ("Setting up server connection for Cluster Manager at %s:%s\n",
+    ("Setting up server connection for Cluster Manager at %s:%s",
      glob_cluster_mgr_ip, glob_cluster_mgr_port));
   loc_conn->server_name= glob_cluster_mgr_ip;
   loc_conn->server_port= glob_cluster_mgr_port;
@@ -125,7 +125,7 @@ set_up_server_connection(IC_CONNECTION **conn)
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
     DEBUG_PRINT(COMM_LEVEL,
-      ("Failed to set-up connection for Cluster Manager\n"));
+      ("Failed to set-up connection for Cluster Manager"));
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;
   }
@@ -595,7 +595,7 @@ run_handle_new_connection(gpointer data)
       parse_buf[parse_inx+1]= 0;
       parse_inx+= 2;
       DEBUG_PRINT(PROGRAM_LEVEL,
-        ("Ready to execute command:\n%s\n", parse_buf));
+        ("Ready to execute command:\n%s", parse_buf));
       ic_call_parser(parse_buf, parse_inx, (void*)&parse_data);
       if (parse_data.exit_flag)
         goto exit;
@@ -612,7 +612,7 @@ run_handle_new_connection(gpointer data)
     }
   }
 exit:
-  DEBUG_PRINT(PROGRAM_LEVEL, ("End of client connection\n"));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("End of client connection"));
 error:
   ic_free(parse_buf);
   release_parse_data(&parse_data);
@@ -652,19 +652,19 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
     if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       goto error;
     DEBUG_PRINT(PROGRAM_LEVEL,
-      ("Cluster Manager has accepted a new connection\n"));
+      ("Cluster Manager has accepted a new connection"));
     if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
                                               FALSE,   /* No mutex */
                                               FALSE))) /* No front buffer */
     {
       DEBUG_PRINT(PROGRAM_LEVEL,
-        ("Failed to fork a new connection from an accepted connection\n"));
+        ("Failed to fork a new connection from an accepted connection"));
       goto error;
     }
     if ((ret_code= handle_new_connection(fork_conn, apic)))
     {
       DEBUG_PRINT(PROGRAM_LEVEL,
-        ("Failed to start new Cluster Manager thread\n"));
+        ("Failed to start new Cluster Manager thread"));
       goto error;
     }
   } while (1);
