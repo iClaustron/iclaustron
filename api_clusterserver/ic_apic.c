@@ -5232,12 +5232,33 @@ cluster_config_end(__attribute__ ((unused)) void *ic_config)
   return;
 }
 
+static void
+remove_config_files(IC_STRING *config_dir, guint32 config_version)
+{
+  return;
+}
+
+static int
+write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   IC_CLUSTER_CONFIG **clusters, guint32 config_version)
+{
+  return 0;
+}
+
+static int
+write_config_version_file(IC_STRING *config_dir, guint32 config_version)
+{
+  return 0;
+}
+
 int
 ic_write_full_config_to_disk(IC_STRING *config_dir,
-                             guint32 *old_version_number,
+                             guint32 *old_config_version_number,
                              IC_CLUSTER_CONNECT_INFO **clu_infos,
                              IC_CLUSTER_CONFIG **clusters)
 {
+  int error= 0;
+  guint32 old_version= *old_config_version_number;
   /*
    The first step before writing anything is to ensure that the previous
    write was successfully completed. This is accomplished by removing any
@@ -5246,6 +5267,8 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
    a multi-step write.
 
    1) Write the new configuration files with the new configuration version
+     This step means updating the cluster configuration file plus each
+     configuration file of each cluster.
    2) Update the config.version file with the new config version number
    3) Remove the old config version files
 
@@ -5253,9 +5276,35 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
    configuration change was still successful although it didn't finish the
    clean-up. To finish the clean-up we perform it always before updating to
    a new version since it is safe to remove config files that are no longer
-   current.
+   current. Thus we add a step 0:
+
+   0) Remove the cluster configuration file and all configuration files for
+      all clusters for old_config_version_number - 1. This is only applicable
+      if old_config_version_number > 1. Otherwise no previous version can
+      exist.
+
+   When the old config version number is 0 it means that we're writing the
+   first version and we can thus skip both step 0 and step 3, also step 2
+   is a create rather than an update.
+
+   When the old config version number is 1 we can skip step 0 but need to
+   perform step 3.
   */
+  if (old_version > (guint32)1)
+    remove_config_files(config_dir, old_version - 1); /* Step 0 */
+  /* Step 1 */
+  if ((error= write_config_files(config_dir, clu_infos, clusters,
+                                 old_version + 1)))
+    goto error;
+  /* Step 2 */
+  if ((error= write_config_version_file(config_dir, old_version + 1)))
+    goto error;
+  if (old_version > 0)
+    remove_config_files(config_dir, old_version); /* Step 3 */
   return 0;
+error:
+  remove_config_files(config_dir, old_version + 1);
+  return error;
 }
 
 static IC_CONFIG_OPERATIONS cluster_config_ops =
