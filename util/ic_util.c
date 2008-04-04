@@ -19,10 +19,44 @@ static guint32 glob_debug= 0;
 static gchar *glob_debug_file= "debug.log";
 static guint32 glob_debug_screen= 0;
 
+IC_STRING ic_version_file_str=
+{(gchar*)".version", (guint32)8, (gboolean)TRUE};
+IC_STRING ic_config_string=
+{(gchar*)"config", (guint32)6, (gboolean)TRUE};
+IC_STRING ic_config_ending_string=
+{(gchar*)".ini", (guint32)4, (gboolean)TRUE};
+
 /*
   A couple of functions to set references to directories in the iClaustron
   installation.
 */
+
+void
+ic_create_config_file_name(IC_STRING *file_name,
+                           IC_STRING *config_dir,
+                           IC_STRING *name,
+                           guint32 config_version_number)
+{
+  gchar int_buf[IC_MAX_INT_STRING];
+  IC_STRING ending_string;
+
+  ic_add_ic_string(file_name, config_dir);
+  ic_add_ic_string(file_name, &ic_config_string); 
+  ic_add_ic_string(file_name, &ic_config_ending_string);
+  ic_set_number_ending_string(int_buf, (guint64)config_version_number);
+  IC_INIT_STRING(&ending_string, int_buf, strlen(int_buf), TRUE);
+  ic_add_ic_string(file_name, &ending_string);
+}
+
+/* Create a string like ".3" if number is 3 */
+void
+ic_set_number_ending_string(gchar *buf, guint64 number)
+{
+  gchar *ignore_ptr;
+  buf[0]= '.';
+  ignore_ptr= ic_guint64_str(number,
+                             &buf[1]);
+}
 
 int
 ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
@@ -75,9 +109,9 @@ void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf)
 {
   buf[0]= 0;
   IC_INIT_STRING(res_str, buf, 0, TRUE);
-  ic_add_string(buf, (const gchar *)PACKAGE);
-  ic_add_string(buf, (const gchar *)"-");
-  ic_add_string(buf, (const gchar *)VERSION);
+  ic_add_string(res_str, (const gchar *)PACKAGE);
+  ic_add_string(res_str, (const gchar *)"-");
+  ic_add_string(res_str, (const gchar *)VERSION);
 }
 
 void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf)

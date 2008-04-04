@@ -31,9 +31,6 @@
 
 /* Global variables */
 static gchar *err_str= "Error:";
-static gchar *ic_version_file_str= "config.version";
-static gchar *ic_cluster_config_file= "config.ini";
-static gchar *config_ending_str= ".ini";
 static IC_STRING glob_config_dir;
 
 /* Option variables */
@@ -126,19 +123,10 @@ set_config_path(gchar *buf)
   IC_STRING base_dir;
   if ((error= ic_set_base_dir(&base_dir, glob_config_path)))
     return error;
-  ic_set_binary_base_dir(&glob_config_dir, &base_dir, buf, "config");
+  ic_set_binary_base_dir(&glob_config_dir, &base_dir, buf,
+                         ic_config_string.str);
   DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", glob_config_dir.str));
   return 0;
-}
-
-/* Create a string like ".3" if number is 3 */
-static void
-set_number_ending_string(gchar *buf, guint64 number)
-{
-  gchar *ignore_ptr;
-  buf[0]= '.';
-  ignore_ptr= ic_guint64_str(number,
-                             &buf[1]);
 }
 
 static guint32
@@ -154,10 +142,9 @@ load_config_version_number(const gchar *file_path)
   IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
   IC_INIT_STRING(&file_path_string, (gchar*)file_path,
                 (file_path ? strlen(file_path) : 0), TRUE);
-  IC_INIT_STRING(&loc_file_name_string, ic_version_file_str,
-                 strlen(ic_version_file_str), TRUE);
   ic_add_ic_string(&file_name_string, &file_path_string);
-  ic_add_ic_string(&file_name_string, &loc_file_name_string);
+  ic_add_ic_string(&file_name_string, &ic_config_string);
+  ic_add_ic_string(&file_name_string, &ic_config_ending_string);
   /*
     We have now formed the file name of the version identifier file which
     contains the version number this Cluster Server most recently created.
@@ -195,12 +182,10 @@ load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   gchar config_version_number_string[IC_MAX_INT_STRING];
 
-  set_number_ending_string(config_version_number_string,
-                           config_version_number);
+  ic_set_number_ending_string(config_version_number_string,
+                              config_version_number);
   IC_INIT_STRING(&version_ending, config_version_number_string,
                  strlen(config_version_number_string), TRUE);
-  IC_INIT_STRING(&end_pattern, config_ending_str, strlen(config_ending_str),
-                 TRUE);
   conf_server_struct->perm_mc_ptr= mc_ptr;
   while (*clu_infos)
   {
@@ -210,7 +195,7 @@ load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
     IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
     ic_add_ic_string(&file_name_string, base_config_dir_string);
     ic_add_ic_string(&file_name_string, &clu_info->cluster_name);
-    ic_add_ic_string(&file_name_string, &end_pattern);
+    ic_add_ic_string(&file_name_string, &ic_config_ending_string);
     if (config_version_number)
       ic_add_ic_string(&file_name_string, &version_ending);
     /*
@@ -313,17 +298,16 @@ get_cluster_config_file_name(IC_STRING *path_string, gchar *buf,
 {
   gchar number_str[IC_MAX_INT_STRING];
   IC_STRING buf_string;
-  IC_STRING version_ending, std_cluster_config_file;
+  IC_STRING version_ending;
 
-  set_number_ending_string(number_str, (guint64)config_version_number);
+  ic_set_number_ending_string(number_str, (guint64)config_version_number);
   buf[0]= 0;
   IC_INIT_STRING(&buf_string, buf, 0, TRUE);
-  IC_INIT_STRING(&std_cluster_config_file, ic_cluster_config_file,
-                 strlen(ic_cluster_config_file), TRUE);
   IC_INIT_STRING(&version_ending, number_str, strlen(number_str), TRUE);
 
   ic_add_ic_string(&buf_string, path_string);
-  ic_add_ic_string(&buf_string, &std_cluster_config_file);
+  ic_add_ic_string(&buf_string, &ic_config_string);
+  ic_add_ic_string(&buf_string, &ic_config_ending_string);
   if (config_version_number)
     ic_add_ic_string(&buf_string, &version_ending);
   return buf;

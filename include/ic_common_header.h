@@ -166,6 +166,19 @@ void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf);
 void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf);
 
 /*
+  Pointers to strings that contain the standard names of configuration
+  files and configuration version files.
+*/
+extern IC_STRING ic_version_file_str;
+extern IC_STRING ic_config_string;
+extern IC_STRING ic_config_ending_string;
+void ic_set_number_ending_string(gchar *buf, guint64 number);
+void ic_create_config_file_name(IC_STRING *file_name,
+                                IC_STRING *config_dir,
+                                IC_STRING *name,
+                                guint32 config_version_number);
+
+/*
   ic_get_ic_string
     Convert IC_STRING to normal NULL-terminated string
 

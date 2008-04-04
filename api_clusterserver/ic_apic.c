@@ -5233,8 +5233,25 @@ cluster_config_end(__attribute__ ((unused)) void *ic_config)
 }
 
 static void
-remove_config_files(IC_STRING *config_dir, guint32 config_version)
+remove_config_files(IC_STRING *config_dir,
+                    IC_CLUSTER_CONNECT_INFO **clu_infos,
+                    guint32 config_version)
 {
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  IC_STRING file_name_string, ending_string;
+
+  file_name[0]= 0;
+  IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
+  ic_create_config_file_name(&file_name_string, config_dir, &ic_config_string,
+                             config_version);
+  while (*clu_infos)
+  {
+    IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
+    ic_create_config_file_name(&file_name_string, config_dir,
+                               &(*clu_infos)->cluster_name,
+                               config_version);
+
+  }
   return;
 }
 
@@ -5291,7 +5308,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
    perform step 3.
   */
   if (old_version > (guint32)1)
-    remove_config_files(config_dir, old_version - 1); /* Step 0 */
+    remove_config_files(config_dir, clu_infos, old_version - 1); /* Step 0 */
   /* Step 1 */
   if ((error= write_config_files(config_dir, clu_infos, clusters,
                                  old_version + 1)))
@@ -5300,10 +5317,10 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
   if ((error= write_config_version_file(config_dir, old_version + 1)))
     goto error;
   if (old_version > 0)
-    remove_config_files(config_dir, old_version); /* Step 3 */
+    remove_config_files(config_dir, clu_infos, old_version); /* Step 3 */
   return 0;
 error:
-  remove_config_files(config_dir, old_version + 1);
+  remove_config_files(config_dir, clu_infos, old_version + 1);
   return error;
 }
 
