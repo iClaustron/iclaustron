@@ -157,6 +157,28 @@ void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
 #endif
 }
 
+IC_DYNAMIC_ARRAY*
+ic_create_dynamic_array(guint32 initial_alloc_size)
+{
+}
+
+static int
+insert_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
+                     gchar *buf, guint32 size)
+{
+  return 0;
+}
+
+static int
+write_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *dyn_array, int file_ptr)
+{
+}
+
+void
+free_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array)
+{
+}
+
 /*
   Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
   no bit set is reported 0, thus we report one more than the bit index

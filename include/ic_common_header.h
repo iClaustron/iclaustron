@@ -123,6 +123,29 @@ typedef struct ic_memory_container IC_MEMORY_CONTAINER;
 IC_MEMORY_CONTAINER*
 ic_create_memory_container(guint32 base_size, guint32 max_size);
 
+struct ic_dynamic_array;
+
+struct ic_dynamic_array_ops
+{
+  int (*ic_insert_dynamic_array) (struct ic_dynamic_array *dyn_array,
+                                  gchar *buf, guint32 size);
+  int (*ic_write_dynamic_array_to_disk) (struct ic_dynamic_array *dyn_array,
+                                         int file_ptr);
+  void (*ic_free_dynamic_array) (struct ic_dynamic_array);
+};
+typedef struct ic_dynamic_array_ops IC_DYNAMIC_ARRAY_OPS;
+
+struct ic_dynamic_array
+{
+  gchar *first_buffer;
+  gchar *last_buffer;
+  gchar *current_ptr;
+};
+typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;
+
+
+IC_DYNAMIC_ARRAY* ic_create_dynamic_array(guint32 inital_alloc_size);
+
 /*
   This function is used by all iClaustron to read program parameters and
   issue start text. The function contains a set of standard parameters
