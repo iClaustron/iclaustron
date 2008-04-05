@@ -15,6 +15,7 @@
 
 #include <ic_apic.h>
 #include <hashtable.h>
+#include <glib/gstdio.h>
 /*
   DESCRIPTION HOW TO ADD NEW CONFIGURATION VARIABLE:
   1) Add a new constant in this file e.g:
@@ -5240,17 +5241,17 @@ remove_config_files(IC_STRING *config_dir,
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   IC_STRING file_name_string, ending_string;
 
-  file_name[0]= 0;
-  IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
-  ic_create_config_file_name(&file_name_string, config_dir, &ic_config_string,
+  ic_create_config_file_name(&file_name_string, file_name,
+                             config_dir, &ic_config_string,
                              config_version);
+  g_unlink((const gchar *)file_name);
   while (*clu_infos)
   {
     IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
-    ic_create_config_file_name(&file_name_string, config_dir,
+    ic_create_config_file_name(&file_name_string, file_name, config_dir,
                                &(*clu_infos)->cluster_name,
                                config_version);
-
+    g_unlink((const gchar *)file_name);
   }
   return;
 }
@@ -5263,9 +5264,36 @@ write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
 }
 
 static int
-write_config_version_file(IC_STRING *config_dir, guint32 config_version)
+write_config_version_file(IC_STRING *config_dir,
+                          guint32 config_version,
+                          guint32 state)
 {
+  int file_ptr;
+  IC_STRING file_name_string;
+  guint32 file_content[2];
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+
+  file_content[0]= config_version;
+  file_content[1]= state;
+  file_content[0]= g_htonl(file_content[0]);
+  file_content[1]= g_htonl(file_content[1]);
+
+  ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
+  if (config_version == (guint32)1)
+  {
+    /* This is the initial write of the file */
+    file_ptr= g_creat((const gchar *)file_name, S_IXUSR | S_IRUSR);
+    if (file_ptr == (int)-1)
+      goto file_error;
+    close(file_ptr);
+  }
+  /* Open config.version for writing */
+  file_ptr= g_open((const gchar *)file_name, O_WRONLY | O_SYNC, 0);
+  ic_write_file(file_ptr, (const gchar*)file_content, 2 * sizeof(guint32));
+  close(file_ptr);
   return 0;
+file_error:
+  return 1;
 }
 
 int
@@ -5314,7 +5342,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
                                  old_version + 1)))
     goto error;
   /* Step 2 */
-  if ((error= write_config_version_file(config_dir, old_version + 1)))
+  if ((error= write_config_version_file(config_dir, old_version + 1, 0)))
     goto error;
   if (old_version > 0)
     remove_config_files(config_dir, clu_infos, old_version); /* Step 3 */

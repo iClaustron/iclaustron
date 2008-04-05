@@ -57,9 +57,9 @@ gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
 void ic_free(void *ret_obj);
 
-/*
-  iClaustron Timer routines
-*/
+/* iClaustron file routines */
+int ic_write_file(int file_ptr, const gchar *buf, size_t size);
+/* iClaustron Timer routines */
 void ic_sleep(int sleep_ms);
 
 /*
@@ -174,10 +174,13 @@ extern IC_STRING ic_config_string;
 extern IC_STRING ic_config_ending_string;
 void ic_set_number_ending_string(gchar *buf, guint64 number);
 void ic_create_config_file_name(IC_STRING *file_name,
+                                gchar *buf,
                                 IC_STRING *config_dir,
                                 IC_STRING *name,
                                 guint32 config_version_number);
-
+void ic_create_config_version_file_name(IC_STRING *file_name,
+                                        gchar *buf,
+                                        IC_STRING *config_dir);
 /*
   ic_get_ic_string
     Convert IC_STRING to normal NULL-terminated string

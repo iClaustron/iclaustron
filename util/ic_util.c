@@ -19,7 +19,7 @@ static guint32 glob_debug= 0;
 static gchar *glob_debug_file= "debug.log";
 static guint32 glob_debug_screen= 0;
 
-IC_STRING ic_version_file_str=
+IC_STRING ic_version_file_string=
 {(gchar*)".version", (guint32)8, (gboolean)TRUE};
 IC_STRING ic_config_string=
 {(gchar*)"config", (guint32)6, (gboolean)TRUE};
@@ -32,7 +32,25 @@ IC_STRING ic_config_ending_string=
 */
 
 void
+ic_create_config_version_file_name(IC_STRING *file_name,
+                                   gchar *buf,
+                                   IC_STRING *config_dir)
+{
+  buf[0]= 0;
+  IC_INIT_STRING(file_name, buf, 0, TRUE);
+  ic_add_ic_string(file_name, config_dir);
+  ic_add_ic_string(file_name, &ic_config_string);
+  ic_add_ic_string(file_name, &ic_version_file_string);
+  ic_add_ic_string(file_name, &ic_config_ending_string);
+}
+
+/*
+  Create a file name like $CONFIG_PATH/config.ini for initial version
+  and $CONFIG_PATH/config.ini.3 if version number is 3.
+*/
+void
 ic_create_config_file_name(IC_STRING *file_name,
+                           gchar *buf,
                            IC_STRING *config_dir,
                            IC_STRING *name,
                            guint32 config_version_number)
@@ -40,12 +58,17 @@ ic_create_config_file_name(IC_STRING *file_name,
   gchar int_buf[IC_MAX_INT_STRING];
   IC_STRING ending_string;
 
+  buf[0]= 0;
+  IC_INIT_STRING(file_name, buf, 0, TRUE);
   ic_add_ic_string(file_name, config_dir);
   ic_add_ic_string(file_name, &ic_config_string); 
   ic_add_ic_string(file_name, &ic_config_ending_string);
-  ic_set_number_ending_string(int_buf, (guint64)config_version_number);
-  IC_INIT_STRING(&ending_string, int_buf, strlen(int_buf), TRUE);
-  ic_add_ic_string(file_name, &ending_string);
+  if (config_version_number)
+  {
+    ic_set_number_ending_string(int_buf, (guint64)config_version_number);
+    IC_INIT_STRING(&ending_string, int_buf, strlen(int_buf), TRUE);
+    ic_add_ic_string(file_name, &ending_string);
+  }
 }
 
 /* Create a string like ".3" if number is 3 */

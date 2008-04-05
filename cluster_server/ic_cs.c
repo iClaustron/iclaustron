@@ -130,21 +130,17 @@ set_config_path(gchar *buf)
 }
 
 static guint32
-load_config_version_number(const gchar *file_path)
+load_config_version_number()
 {
-  gchar file_name[IC_MAX_FILE_NAME_SIZE];
   gchar *version_file_str;
   gsize version_file_len;
-  IC_STRING file_name_string, file_path_string, loc_file_name_string;
   guint32 version_num_array[2];
   GError *loc_error= NULL;
+  IC_STRING file_name_string;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
 
-  IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
-  IC_INIT_STRING(&file_path_string, (gchar*)file_path,
-                (file_path ? strlen(file_path) : 0), TRUE);
-  ic_add_ic_string(&file_name_string, &file_path_string);
-  ic_add_ic_string(&file_name_string, &ic_config_string);
-  ic_add_ic_string(&file_name_string, &ic_config_ending_string);
+  ic_create_config_version_file_name(&file_name_string, file_name,
+                                     &glob_config_dir);
   /*
     We have now formed the file name of the version identifier file which
     contains the version number this Cluster Server most recently created.
@@ -171,39 +167,28 @@ load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
                   IC_CLUSTER_CONFIG **clusters,
                   IC_CONFIG_STRUCT *conf_server_struct,
                   IC_MEMORY_CONTAINER *mc_ptr,
-                  IC_STRING *base_config_dir_string,
                   guint32 config_version_number)
 {
-  IC_STRING file_name_string;
-  IC_STRING version_ending;
-  IC_STRING end_pattern;
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *cluster;
+  IC_STRING file_name_string;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
-  gchar config_version_number_string[IC_MAX_INT_STRING];
 
-  ic_set_number_ending_string(config_version_number_string,
-                              config_version_number);
-  IC_INIT_STRING(&version_ending, config_version_number_string,
-                 strlen(config_version_number_string), TRUE);
   conf_server_struct->perm_mc_ptr= mc_ptr;
   while (*clu_infos)
   {
     clu_info= *clu_infos;
     clu_infos++;
-    file_name[0]= 0;
-    IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
-    ic_add_ic_string(&file_name_string, base_config_dir_string);
-    ic_add_ic_string(&file_name_string, &clu_info->cluster_name);
-    ic_add_ic_string(&file_name_string, &ic_config_ending_string);
-    if (config_version_number)
-      ic_add_ic_string(&file_name_string, &version_ending);
+    ic_create_config_file_name(&file_name_string, file_name,
+                               &glob_config_dir,
+                               &clu_info->cluster_name,
+                               config_version_number);
     /*
       We have now formed the filename of the configuration of this
       cluster. It's now time to open the configuration file and
       convert it into a IC_CLUSTER_CONFIG struct.
     */
-    if (!(cluster= ic_load_config_server_from_files(file_name_string.str,
+    if (!(cluster= ic_load_config_server_from_files(file_name,
                                                     conf_server_struct)))
     {
       printf("Failed to load config file %s from disk\n",
@@ -288,31 +273,6 @@ error:
   return 1;
 }
 
-/*
-  Create a file name like $CONFIG_PATH/config.ini for initial version
-  and $CONFIG_PATH/config.ini.3 if version number is 3.
-*/
-static gchar*
-get_cluster_config_file_name(IC_STRING *path_string, gchar *buf,
-                             guint32 config_version_number)
-{
-  gchar number_str[IC_MAX_INT_STRING];
-  IC_STRING buf_string;
-  IC_STRING version_ending;
-
-  ic_set_number_ending_string(number_str, (guint64)config_version_number);
-  buf[0]= 0;
-  IC_INIT_STRING(&buf_string, buf, 0, TRUE);
-  IC_INIT_STRING(&version_ending, number_str, strlen(number_str), TRUE);
-
-  ic_add_ic_string(&buf_string, path_string);
-  ic_add_ic_string(&buf_string, &ic_config_string);
-  ic_add_ic_string(&buf_string, &ic_config_ending_string);
-  if (config_version_number)
-    ic_add_ic_string(&buf_string, &version_ending);
-  return buf;
-}
-
 static int
 load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
                   IC_CONFIG_STRUCT *conf_server_ptr,
@@ -324,7 +284,8 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
   IC_MEMORY_CONTAINER *cluster_mc_ptr;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   gchar *cluster_config_file;
-  gchar cluster_config_file_buf[IC_MAX_FILE_NAME_SIZE];
+  IC_STRING file_name_string;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
 
   if (!(cluster_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
   {
@@ -332,17 +293,18 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
            err_str);
     return 1;
   }
-  *config_version_number= load_config_version_number(glob_config_path);
+  *config_version_number= load_config_version_number();
   if (glob_bootstrap && *config_version_number)
   {
     printf("Bootstrap has already been performed\n");
     goto error;
   }
-  cluster_config_file= get_cluster_config_file_name(&glob_config_dir,
-                                                    cluster_config_file_buf,
-                                                    *config_version_number);
+  ic_create_config_file_name(&file_name_string, file_name,
+                             &glob_config_dir,
+                             &ic_config_string,
+                             config_version_number);
   cluster_conf_ptr->perm_mc_ptr= cluster_mc_ptr;
-  if (!(clu_infos= ic_load_cluster_config_from_file(cluster_config_file,
+  if (!(clu_infos= ic_load_cluster_config_from_file(file_name,
                                                     cluster_conf_ptr)))
   {
     printf("%s Failed to load the cluster configuration file %s\n",
@@ -350,7 +312,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
     goto error;
   }
   if (load_config_files(clu_infos, clusters, conf_server_ptr,
-                        mc_ptr, &glob_config_dir, *config_version_number))
+                        mc_ptr, *config_version_number))
   {
     printf("%s Failed to load a configuration file\n", err_str);
     cluster_conf_ptr->clu_conf_ops->ic_config_end(cluster_conf_ptr);

@@ -14,6 +14,8 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <glib.h>
+#include <unistd.h>
+
 gchar *
 ic_calloc(size_t size)
 {
@@ -30,4 +32,10 @@ void
 ic_free(void *ret_obj)
 {
   g_free(ret_obj);
+}
+
+int
+ic_write_file(int file_ptr, const gchar *buf, size_t size)
+{
+  return write(file_ptr, (const void*)buf, size);
 }
