@@ -15,6 +15,7 @@
 
 #include <glib.h>
 #include <unistd.h>
+#include <errno.h>
 
 gchar *
 ic_calloc(size_t size)
@@ -37,5 +38,19 @@ ic_free(void *ret_obj)
 int
 ic_write_file(int file_ptr, const gchar *buf, size_t size)
 {
-  return write(file_ptr, (const void*)buf, size);
+  int ret_code;
+  do
+  {
+    ret_code= write(file_ptr, (const void*)buf, size);
+    if (ret_code == (int)-1)
+    {
+      ret_code= errno;
+      return ret_code;
+    }
+    if (ret_code == size)
+      return 0;
+    buf+= ret_code;
+    size-= ret_code;
+  } while (1);
+  return 0;
 }

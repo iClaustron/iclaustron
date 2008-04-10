@@ -123,6 +123,7 @@ typedef struct ic_memory_container IC_MEMORY_CONTAINER;
 IC_MEMORY_CONTAINER*
 ic_create_memory_container(guint32 base_size, guint32 max_size);
 
+#define SIMPLE_DYNAMIC_ARRAY_BUF_SIZE 1024
 struct ic_dynamic_array;
 
 struct ic_dynamic_array_ops
@@ -131,20 +132,41 @@ struct ic_dynamic_array_ops
                                   gchar *buf, guint32 size);
   int (*ic_write_dynamic_array_to_disk) (struct ic_dynamic_array *dyn_array,
                                          int file_ptr);
+  int (*ic_read_dynamic_array) (struct ic_dynamic_array *dyn_array,
+                                guint32 position, guint32 size,
+                                gchar *ret_buf);
   void (*ic_free_dynamic_array) (struct ic_dynamic_array);
 };
 typedef struct ic_dynamic_array_ops IC_DYNAMIC_ARRAY_OPS;
 
+struct ic_simple_dynamic_buf;
+struct ic_simple_dynamic_buf
+{
+  struct ic_simple_dynamic_buf *next_dyn_buf;
+  guint64 buf[SIMPLE_DYNAMIC_ARRAY_BUF_SIZE/8];
+};
+typedef struct ic_simple_dynamic_buf IC_SIMPLE_DYNAMIC_BUF;
+
+struct ic_simple_dynamic_array
+{
+  IC_SIMPLE_DYNAMIC_BUF *first_dyn_buf;
+  IC_SIMPLE_DYNAMIC_BUF *last_dyn_buf;
+  guint32 bytes_used;
+};
+typedef struct ic_simple_dynamic_array IC_SIMPLE_DYNAMIC_ARRAY;
+
 struct ic_dynamic_array
 {
-  gchar *first_buffer;
-  gchar *last_buffer;
-  gchar *current_ptr;
+  struct ic_dynamic_array_ops da_ops;
+  union
+  {
+    IC_SIMPLE_DYNAMIC_ARRAY sd_array;
+  } data;
 };
 typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;
 
 
-IC_DYNAMIC_ARRAY* ic_create_dynamic_array(guint32 inital_alloc_size);
+IC_DYNAMIC_ARRAY* ic_create_simple_dynamic_array();
 
 /*
   This function is used by all iClaustron to read program parameters and

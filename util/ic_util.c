@@ -61,7 +61,7 @@ ic_create_config_file_name(IC_STRING *file_name,
   buf[0]= 0;
   IC_INIT_STRING(file_name, buf, 0, TRUE);
   ic_add_ic_string(file_name, config_dir);
-  ic_add_ic_string(file_name, &ic_config_string); 
+  ic_add_ic_string(file_name, name); 
   ic_add_ic_string(file_name, &ic_config_ending_string);
   if (config_version_number)
   {
@@ -141,7 +141,7 @@ void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf)
 {
   buf[0]= 0;
   IC_INIT_STRING(res_str, buf, 0, TRUE);
-  ic_add_string(buf, (const gchar *)MYSQL_VERSION_STRING);
+  ic_add_string(res_str, (const gchar *)MYSQL_VERSION_STRING);
 }
 
 void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
@@ -157,26 +157,151 @@ void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
 #endif
 }
 
-IC_DYNAMIC_ARRAY*
-ic_create_dynamic_array(guint32 initial_alloc_size)
-{
-}
+/*
+  Implementation of the dynamic array. A very simple variant
+  using a simple linked list of buffers.
+*/
 
 static int
-insert_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
-                     gchar *buf, guint32 size)
+insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
+                            gchar *buf, guint32 size)
 {
+  IC_SIMPLE_DYNAMIC_ARRAY *sd_array= &dyn_array->data.sd_array;
+  IC_SIMPLE_DYNAMIC_BUF *curr= sd_array->last_dyn_buf;
+  guint32 bytes_used= sd_array->bytes_used;
+  gchar *buf_ptr= (gchar*)&curr->buf[0];
+  guint32 size_left_to_copy= size;
+  guint32 buf_ptr_start_pos;
+  guint32 size_in_buffer= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - bytes_used;
+  IC_SIMPLE_DYNAMIC_BUF *new_simple_dyn_buf;
+
+  buf_ptr+= bytes_used;
+  buf_ptr_start_pos= bytes_used;
+  while (size_left_to_copy > size_in_buffer)
+  {
+    memcpy(buf_ptr, buf, size_in_buffer);
+    size_left_to_copy-= size_in_buffer;
+    buf+= size_in_buffer;
+    if (!(new_simple_dyn_buf=
+      (IC_SIMPLE_DYNAMIC_BUF*) ic_calloc(sizeof(IC_SIMPLE_DYNAMIC_BUF))))
+      return MEM_ALLOC_ERROR;
+    curr->next_dyn_buf= new_simple_dyn_buf;
+    dyn_array->data.sd_array.last_dyn_buf= new_simple_dyn_buf;
+    buf_ptr= (gchar*)&new_simple_dyn_buf->buf[0];
+    curr= new_simple_dyn_buf;
+    size_in_buffer= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
+    buf_ptr_start_pos= 0;
+  }
+  memcpy(buf_ptr, buf, size_left_to_copy);
+  sd_array->bytes_used= buf_ptr_start_pos + size_left_to_copy;
   return 0;
 }
 
 static int
-write_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *dyn_array, int file_ptr)
+read_simple_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array, guint32 pos,
+                          guint32 size, gchar *ret_buf)
 {
+  guint32 scan_pos= 0;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= dyn_array->data.sd_array.first_dyn_buf;
+  guint32 end_pos, read_size, already_read_size;
+  gchar *read_buf;
+
+  while (dyn_buf)
+  {
+    end_pos= scan_pos + SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
+    if (pos >= end_pos)
+    {
+      /* Still searching for first buffer where to start reading */
+      dyn_buf= dyn_buf->next_dyn_buf;
+      scan_pos= end_pos;
+      continue;
+    }
+    read_buf= (gchar*)&dyn_buf->buf[0];
+    read_buf+= (pos - scan_pos);
+    read_size= IC_MIN(size,
+                      (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - (pos - scan_pos)));
+    memcpy(ret_buf, read_buf, read_size);
+    while (read_size < size)
+    {
+      read_buf+= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
+      dyn_buf= dyn_buf->next_dyn_buf;
+      if (dyn_buf == NULL)
+        return 1;
+      already_read_size= read_size;
+      read_size= IC_MIN(size, (read_size + SIMPLE_DYNAMIC_ARRAY_BUF_SIZE));
+      read_buf= (gchar*)&dyn_buf->buf[0];
+      memcpy(ret_buf, read_buf, (read_size - already_read_size));
+    }
+    return 0;
+  }
+  return 0;
+}
+
+static int
+write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *dyn_array, int file_ptr)
+{
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= dyn_array->data.sd_array.first_dyn_buf;
+  IC_SIMPLE_DYNAMIC_BUF *last_dyn_buf= dyn_array->data.sd_array.last_dyn_buf;
+  gchar *buf;
+  guint32 size_in_buffer;
+  int ret_code;
+
+  while (dyn_buf)
+  {
+    if (dyn_buf != last_dyn_buf)
+      size_in_buffer= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
+    else
+      size_in_buffer= dyn_array->data.sd_array.bytes_used;
+    buf= (gchar*)&dyn_buf->buf[0];
+    if ((ret_code= ic_write_file(file_ptr, buf, size_in_buffer)))
+      return ret_code;
+    dyn_buf= dyn_buf->next_dyn_buf;
+    assert((dyn_buf != last_dyn_buf && dyn_buf) ||
+           (dyn_buf == last_dyn_buf && !dyn_buf));
+  }
+  return 0;
 }
 
 void
-free_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array)
+free_simple_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array)
 {
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf, *next_dyn_buf;
+
+  next_dyn_buf= dyn_array->data.sd_array.first_dyn_buf;
+  while (next_dyn_buf != NULL)
+  {
+    dyn_buf= next_dyn_buf;
+    next_dyn_buf= dyn_buf->next_dyn_buf;
+    ic_free((void*)dyn_buf);
+  }
+  ic_free(dyn_array);
+}
+
+IC_DYNAMIC_ARRAY*
+ic_create_simple_dynamic_array()
+{
+  IC_DYNAMIC_ARRAY *dyn_array;
+  IC_SIMPLE_DYNAMIC_ARRAY *sd_array;
+  IC_DYNAMIC_ARRAY_OPS *da_ops;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf;
+
+  if (!(dyn_array= (IC_DYNAMIC_ARRAY*)ic_calloc(sizeof(IC_DYNAMIC_ARRAY))))
+    return NULL;
+  if (!(dyn_buf= (IC_SIMPLE_DYNAMIC_BUF*)ic_calloc(
+         sizeof(IC_SIMPLE_DYNAMIC_BUF))))
+  {
+    ic_free(dyn_array);
+    return NULL;
+  }
+  sd_array= &dyn_array->data.sd_array;
+  sd_array->first_dyn_buf= dyn_buf;
+  sd_array->last_dyn_buf= dyn_buf;
+  da_ops= &dyn_array->da_ops;
+  da_ops->ic_insert_dynamic_array= insert_simple_dynamic_array;
+  da_ops->ic_read_dynamic_array= read_simple_dynamic_array;
+  da_ops->ic_write_dynamic_array_to_disk= write_simple_dynamic_array_to_disk;
+  da_ops->ic_free_dynamic_array= free_simple_dynamic_array;
+  return dyn_array;
 }
 
 /*
