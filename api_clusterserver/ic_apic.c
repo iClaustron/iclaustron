@@ -16,6 +16,7 @@
 #include <ic_apic.h>
 #include <hashtable.h>
 #include <glib/gstdio.h>
+#include <unistd.h>
 /*
   DESCRIPTION HOW TO ADD NEW CONFIGURATION VARIABLE:
   1) Add a new constant in this file e.g:
@@ -5233,6 +5234,11 @@ cluster_config_end(__attribute__ ((unused)) void *ic_config)
   return;
 }
 
+/*
+  These methods are used to implement the configuration change algorithms
+  whereby we can change a configuration in a coherent manner.
+*/
+
 static void
 remove_config_files(IC_STRING *config_dir,
                     IC_CLUSTER_CONNECT_INFO **clu_infos,
@@ -5254,6 +5260,93 @@ remove_config_files(IC_STRING *config_dir,
     g_unlink((const gchar *)file_name);
   }
   return;
+}
+
+static int
+write_cluster_config_file(IC_STRING *config_dir,
+                          IC_CLUSTER_CONNECT_INFO **clu_infos,
+                          guint32 config_version)
+{
+  IC_DYNAMIC_ARRAY *dyn_array;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  gchar buf[512];
+  int error= MEM_ALLOC_ERROR;
+  int file_ptr;
+
+  if (!(dyn_array= ic_create_simple_dynamic_array()))
+    return MEM_ALLOC_ERROR;
+
+  while (*clu_infos)
+  {
+    clu_info= *clu_infos;
+    clu_infos++;
+  /* Write [cluster]<CR> into the buffer */
+    buf[0]= '[';
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, cluster_str,
+                                                (guint32)strlen(cluster_str)))
+      goto error;
+    buf[0]= ']';
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+    buf[0]= CARRIAGE_RETURN;
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+
+  /* Write cluster_name: __name__<CR> into the buffer */
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, cluster_name_str,
+                                           (guint32)strlen(cluster_name_str)))
+      goto error;
+    buf[0]= ':';
+    buf[1]= ' ';
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+      goto error;
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
+                                                  clu_info->cluster_name.str,
+                                                  clu_info->cluster_name.len))
+      goto error;
+    buf[0]= CARRIAGE_RETURN;
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+
+  /* Write cluster_id: __id__<CR> into the buffer */
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, cluster_id_string,
+                                       (guint32)strlen(cluster_id_string)))
+      goto error;
+    buf[0]= ':';
+    buf[1]= ' ';
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+      goto error;
+
+    buf[0]= CARRIAGE_RETURN;
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+
+  /* Write password: __password__<CR> into the buffer */
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
+                                                  cluster_password_str,
+                                     (guint32)strlen(cluster_password_str)))
+      goto error;
+    buf[0]= ':';
+    buf[1]= ' ';
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+      goto error;
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
+                                                  clu_info->password.str,
+                                                  clu_info->password.len))
+      goto error;
+    buf[0]= CARRIAGE_RETURN;
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+  }
+  if ((error= dyn_array->da_ops.ic_write_dynamic_array_to_disk(dyn_array,
+                                                               file_ptr)))
+    goto error;
+  dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
+  error= 0;
+error:
+  return error;
 }
 
 static int
@@ -5292,6 +5385,7 @@ write_config_version_file(IC_STRING *config_dir,
   ic_write_file(file_ptr, (const gchar*)file_content, 2 * sizeof(guint32));
   close(file_ptr);
   return 0;
+
 file_error:
   return 1;
 }

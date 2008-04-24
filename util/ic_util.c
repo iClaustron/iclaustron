@@ -167,6 +167,13 @@ void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
 
   The interface is designed to be useful also for more complex
   dynamic array implementation such as FIFO queues as well.
+
+  We can hopefully also adapt it slightly to be able to use it
+  also for a concurrent data structure implementing a linked list
+  of buffers. This linked list of buffers should get its buffers from a
+  threaded malloc implementation. This can also use one of our own data
+  structures and so the reference to a threaded malloc pool should be
+  provided in the dynamic array.
 */
 
 static void

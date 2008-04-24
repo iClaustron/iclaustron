@@ -130,7 +130,7 @@ struct ic_dynamic_array;
 struct ic_dynamic_array_ops
 {
   int (*ic_insert_dynamic_array) (struct ic_dynamic_array *dyn_array,
-                                  gchar *buf, guint64 size);
+                                  const gchar *buf, guint64 size);
   int (*ic_write_dynamic_array_to_disk) (struct ic_dynamic_array *dyn_array,
                                          int file_ptr);
   int (*ic_read_dynamic_array) (struct ic_dynamic_array *dyn_array,
