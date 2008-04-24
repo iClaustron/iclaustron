@@ -5269,12 +5269,28 @@ write_cluster_config_file(IC_STRING *config_dir,
 {
   IC_DYNAMIC_ARRAY *dyn_array;
   IC_CLUSTER_CONNECT_INFO *clu_info;
-  gchar buf[512];
+  IC_DYNAMIC_ARRAY_OPS *da_ops;
+  IC_STRING file_name_str;
   int error= MEM_ALLOC_ERROR;
   int file_ptr;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+
+  ic_create_config_file_name(&file_name_str,
+                             buf,
+                             config_dir,
+                             &ic_config_string,
+                             config_version);
+  /* We are writing a new file here */
+  file_ptr= g_creat((const gchar *)buf, S_IXUSR | S_IRUSR);
+  if (file_ptr == (int)-1)
+  {
+    error= errno;
+    goto file_error;
+  }
 
   if (!(dyn_array= ic_create_simple_dynamic_array()))
     return MEM_ALLOC_ERROR;
+  da_ops= &dyn_array->da_ops;
 
   while (*clu_infos)
   {
@@ -5282,70 +5298,76 @@ write_cluster_config_file(IC_STRING *config_dir,
     clu_infos++;
   /* Write [cluster]<CR> into the buffer */
     buf[0]= '[';
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
       goto error;
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, cluster_str,
-                                                (guint32)strlen(cluster_str)))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_str,
+                                        (guint32)strlen(cluster_str)))
       goto error;
     buf[0]= ']';
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
       goto error;
     buf[0]= CARRIAGE_RETURN;
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
       goto error;
 
   /* Write cluster_name: __name__<CR> into the buffer */
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, cluster_name_str,
-                                           (guint32)strlen(cluster_name_str)))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_name_str,
+                                        (guint32)strlen(cluster_name_str)))
       goto error;
     buf[0]= ':';
     buf[1]= ' ';
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
       goto error;
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                                  clu_info->cluster_name.str,
-                                                  clu_info->cluster_name.len))
+    if (da_ops->ic_insert_dynamic_array(dyn_array,
+                                        clu_info->cluster_name.str,
+                                        clu_info->cluster_name.len))
       goto error;
     buf[0]= CARRIAGE_RETURN;
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
       goto error;
 
   /* Write cluster_id: __id__<CR> into the buffer */
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, cluster_id_string,
-                                       (guint32)strlen(cluster_id_string)))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_id_string,
+                                        (guint32)strlen(cluster_id_string)))
       goto error;
     buf[0]= ':';
     buf[1]= ' ';
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
       goto error;
-
+    
+    if (!ic_guint64_str((guint64)clu_info->cluster_id, buf))
+      goto error;
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, strlen(buf)))
+      goto error;
     buf[0]= CARRIAGE_RETURN;
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
       goto error;
 
   /* Write password: __password__<CR> into the buffer */
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                                  cluster_password_str,
-                                     (guint32)strlen(cluster_password_str)))
+    if (da_ops->ic_insert_dynamic_array(dyn_array,
+                                        cluster_password_str,
+                                        (guint32)strlen(cluster_password_str)))
       goto error;
     buf[0]= ':';
     buf[1]= ' ';
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
       goto error;
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                                  clu_info->password.str,
-                                                  clu_info->password.len))
+    if (da_ops->ic_insert_dynamic_array(dyn_array,
+                                        clu_info->password.str,
+                                        clu_info->password.len))
       goto error;
     buf[0]= CARRIAGE_RETURN;
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
       goto error;
   }
-  if ((error= dyn_array->da_ops.ic_write_dynamic_array_to_disk(dyn_array,
-                                                               file_ptr)))
+  if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
+                                                     file_ptr)))
     goto error;
-  dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
   error= 0;
 error:
+  close(file_ptr);
+  da_ops->ic_free_dynamic_array(dyn_array);
+file_error:
   return error;
 }
 

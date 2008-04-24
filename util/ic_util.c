@@ -457,7 +457,7 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
     {
       release_dyn_buf(old_dyn_buf->next_dyn_buf);
       for (i= 0; i < ins_buf_count; i++)
-        release_last_buf(dyn_array);
+        release_dyn_buf(dyn_array);
       return ret_code;
     }
     ins_buf_count++;
