@@ -40,6 +40,11 @@ AC_ARG_WITH(readline,
          [with_readline=$withval],
          [with_readline=no])
 
+AC_ARG_WITH(dtrace,
+         [  --with-dtrace     Build with DTrace support],
+         [with_dtrace=$withval],
+         [with_dtrace=no])
+
 AC_ARG_WITH(openssl,
          AC_HELP_STRING([--with-openssl=DIR],
                         [Use openssl, if DIR is provided it is the
@@ -162,6 +167,24 @@ int main()
 # Don't use it
 AC_MSG_RESULT(no)
 )
+
+#
+# Checking for DTrace support
+#
+
+if test "x$with_dtrace" != "xno" ; then
+  AC_CHECK_PROGS(DTRACE, dtrace)
+  if test ! -z "$DTRACE" ; then
+    AC_DEFINE([HAVE_DTRACE], [1], [Set DTrace enabled flag])
+    AC_SUBST(DTRACEFLAGS)
+    AC_SUBST(HAVE_DTRACE)
+    AC_MSG_RESULT(yes)
+  else
+    with_dtrace=no
+  fi
+fi
+AM_CONDITIONAL([HAVE_DTRACE],
+               [ test "x$with_dtrace" != "xno" ])
 
 #
 # Checking for SSL support, we can use any of openssl or
