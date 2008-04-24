@@ -5372,9 +5372,33 @@ file_error:
 }
 
 static int
+write_one_cluster_config_file(IC_STRING *config_dir,
+                              IC_CLUSTER_CONNECT_INFO *clu_conn_info,
+                              IC_CLUSTER_CONFIG *clu_conf,
+                              guint32 config_version)
+{
+  return 0;
+}
+
+static int
 write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
                    IC_CLUSTER_CONFIG **clusters, guint32 config_version)
 {
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  IC_CLUSTER_CONFIG *clu_conf;
+  int error;
+  if ((error= write_cluster_config_file(config_dir,
+                                        clu_infos,
+                                        config_version)))
+    return error;
+  while (*clu_infos)
+  {
+    clu_info= *clu_infos;
+    clu_conf= clusters[clu_info->cluster_id];
+    if ((error= write_one_cluster_config_file(config_dir, clu_info,
+                                              clu_conf, config_version)))
+      return error;
+  }
   return 0;
 }
 
