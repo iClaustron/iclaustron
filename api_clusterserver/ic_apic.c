@@ -5387,7 +5387,6 @@ file_error:
 
 static int
 write_one_cluster_config_file(IC_STRING *config_dir,
-                              IC_CLUSTER_CONNECT_INFO *clu_conn_info,
                               IC_CLUSTER_CONFIG *clu_conf,
                               guint32 config_version)
 {
@@ -5405,7 +5404,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   ic_create_config_file_name(&file_name_str,
                              buf,
                              config_dir,
-                             &clu_conn_info->cluster_name,
+                             &clu_conf->clu_info.cluster_name,
                              config_version);
   /* We are writing a new file here */
   file_ptr= g_creat((const gchar *)buf, S_IXUSR | S_IRUSR);
@@ -5429,7 +5428,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        data_server_def_str)))
     goto error;
-  /* Write all its defaults */
+
   /* Write [client default] and its defaults into the buffer */
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        client_node_def_str)))
@@ -5486,7 +5485,7 @@ write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
   {
     clu_info= *clu_infos;
     clu_conf= clusters[clu_info->cluster_id];
-    if ((error= write_one_cluster_config_file(config_dir, clu_info,
+    if ((error= write_one_cluster_config_file(config_dir,
                                               clu_conf, config_version)))
       return error;
   }

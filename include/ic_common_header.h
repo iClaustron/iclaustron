@@ -83,6 +83,76 @@ void ic_sleep(int sleep_ms);
 #define IC_MAX(a, b) ((a) > (b)) ? (a) : (b)
 #define IC_DIFF(a,b) (IC_MAX(a,b) - IC_MIN(a,b))
 
+struct ic_malloc;
+struct ic_malloc_ops
+{
+  gchar* (*ic_mem_alloc) (struct ic_malloc *malloc_ptr, size_t size);
+  void (*ic_free) (struct ic_malloc *malloc_ptr, void *ptr);
+  int (*ic_free_allocator) (struct ic_malloc *malloc_ptr);
+  /*
+    This method is used to connect a thread specific allocator to a
+    global allocator, in this manner we can create thread-local
+    allocator objects that will get memory from global allocator when
+    necessary and return to global allocator when no longer needed.
+    The thread-local allocator will use the normal mem_alloc and free
+    methods on the global allocator to get and return memory objects.
+    When thread-local object is freed there is also a disconnect method
+    such that the global allocator isn't possible to free before all
+    thread-local allocators connected to it are freed first.
+  */
+  int (*ic_connect_global_allocator) (struct ic_malloc *malloc_ptr,
+                                      struct ic_malloc *glob_malloc_ptr);
+  int (*ic_disconnect_global_allocator) (struct ic_malloc *malloc_ptr,
+                                         struct ic_malloc *glob_malloc_ptr);
+};
+typedef struct ic_malloc_ops IC_MALLOC_OPS;
+
+struct ic_malloc
+{
+  IC_MALLOC_OPS malloc_ops;
+  void *malloc_data;
+};
+typedef struct ic_malloc IC_MALLOC;
+
+/*
+  This memory allocator is simply an interface to the normal malloc
+  and free. It's necessary to allow use of any memory allocator passed to
+  underlying modules that will allocate memory from the IC_MALLOC object
+  passed to them and will not care about what object this is.
+*/
+int
+ic_create_std_malloc();
+
+/*
+  This simple memory allocator can only be used on a single thread and it
+  uses the normal malloc, but records each address it allocates. By so
+  doing the release of the memory allocator object can release all memory
+  it has allocated. To simplify things this allocator will ignore any
+  free call and will instead free everything when the memory allocator is
+  freed.
+*/
+int
+ic_create_simple_malloc();
+
+/*
+  This memory allocator will only allow allocation of the same size always.
+  It keeps track of this allocation and allocates an initial amount
+  immediately.
+  All accesses to this pool are protected by a mutex since it is expected that
+  many thread-local allocators will be on top of this allocator.
+*/
+int
+ic_create_fixed_size_pool_malloc(guint32 fixed_size,
+                                 guint32 initial_pool_size);
+
+/*
+  The thread-local pool that can connect to the above global fixed size pool.
+*/
+int
+ic_create_thread_fixed_size_pool_malloc(guint32 fixed_size,
+                                        guint32 initial_pool_size,
+                                        IC_MALLOC *glob_malloc_ptr);
+
 /*
   A helpful support function to handle many memory allocations within one
   container. This allocates a linked list of containers of base size (except
