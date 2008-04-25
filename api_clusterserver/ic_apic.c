@@ -5385,13 +5385,83 @@ file_error:
   return error;
 }
 
-static int
-check_if_all_same_value(IC_CLUSTER_CONFIG *clu_conf,
-                        IC_CONFIG_TYPES section_type,
-                        guint32 offset,
-                        IC_CONFIG_DATA_TYPE data_type)
+static guint64
+get_node_data(const gchar *struct_ptr, guint32 offset,
+              IC_CONFIG_DATA_TYPE data_type)
 {
   guint64 value;
+  switch (data_type)
+  {
+    case IC_CHAR:
+      value= (guint64)*(guint8*)(struct_ptr+offset);
+      break;
+    case IC_UINT16:
+      value= (guint64)*(guint16*)(struct_ptr+offset);
+      break;
+    case IC_UINT32:
+      value= (guint64)*(guint32*)(struct_ptr+offset);
+      break;
+    case IC_UINT64:
+      value= *(guint64*)(struct_ptr+offset);
+      break;
+    default:
+      g_assert(FALSE);
+  }
+  return value;
+}
+
+static int
+check_if_all_same_value_charptr(IC_CLUSTER_CONFIG *clu_conf,
+                                IC_CONFIG_TYPES section_type,
+                                guint32 offset,
+                                gchar **val_str)
+{
+  gchar *str_ptr;
+  gboolean first= TRUE;
+  guint32 max_node_id;
+  guint32 i, num_comms;
+  IC_NODE_TYPES node_type;
+
+  if (section_type != IC_COMM_TYPE)
+  {
+    max_node_id= clu_conf->max_node_id;
+    node_type= (IC_NODE_TYPES)section_type;
+    for (i= 1; i <= max_node_id; i++)
+    {
+      g_assert(clu_conf->node_config[i]);
+      if (clu_conf->node_config[i] == NULL)
+        return 2;
+      str_ptr= clu_conf->node_config[i] + offset;
+      if (first)
+      {
+        *val_str= str_ptr;
+        first= FALSE;
+      }
+      else
+      {
+        if (strcmp(str_ptr, *val_str) != 0)
+          return 1;
+      }
+    }
+  }
+  else
+  {
+    num_comms= clu_conf->num_comms;
+    for (i= 0; i < num_comms; i++)
+    {
+    }
+  }
+  return 0;
+}
+
+static int
+check_if_all_same_value_int(IC_CLUSTER_CONFIG *clu_conf,
+                            IC_CONFIG_TYPES section_type,
+                            guint32 offset,
+                            guint64 *value,
+                            IC_CONFIG_DATA_TYPE data_type)
+{
+  guint64 data;
   gboolean first= TRUE;
   guint32 max_node_id;
   guint32 i, num_comms;
@@ -5405,6 +5475,20 @@ check_if_all_same_value(IC_CLUSTER_CONFIG *clu_conf,
     {
       if (clu_conf->node_types[i] == node_type)
       {
+        g_assert(clu_conf->node_config[i]);
+        if (clu_conf->node_config[i] == NULL)
+          return 2;
+        data= get_node_data(clu_conf->node_config[i], offset, data_type);
+        if (first)
+        {
+          *value= data;
+          first= FALSE;
+        }
+        else
+        {
+          if (data != (*value))
+            return 1;
+        }
       }
     }
   }
@@ -5415,7 +5499,7 @@ check_if_all_same_value(IC_CLUSTER_CONFIG *clu_conf,
     {
     }
   }
-  return 1;
+  return 0;
 }
 
 static int
@@ -5429,7 +5513,10 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
   gchar *default_struct_ptr;
   gchar *data_ptr;
   guint32 i, inx;
+  guint64 value;
+  gchar *val_str;
   IC_CONFIG_ENTRY *conf_entry;
+  int error;
 
   switch (section_type)
   {
@@ -5466,17 +5553,49 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
         continue;
       /* We found a configuration item of this section type, handle it */
       data_ptr= default_struct_ptr + conf_entry->offset;
+      if (conf_entry->data_type != IC_CHARPTR)
+      {
+        if ((error= check_if_all_same_value_int(clu_conf, section_type,
+                                                conf_entry->offset,
+                                                &value,
+                                                conf_entry->data_type)))
+        {
+          if (error= 2)
+            return 1;
+          /*
+            There was differing values in the nodes and thus we need to
+            the standard default value.
+          */
+          value= conf_entry->default_value;
+        }
+      }
+      else
+      {
+        if ((error= check_if_all_same_value_charptr(clu_conf, section_type,
+                                                    conf_entry->offset,
+                                                    &val_str)))
+        {
+          if (error= 2)
+            return 1;
+          val_str= conf_entry->default_string;
+        }
+      }
       switch (conf_entry->data_type)
       {
         case IC_CHAR:
+          *(guint8*)data_ptr= (guint8)value;
           break;
         case IC_UINT16:
+          *(guint16*)data_ptr= (guint16)value;
           break;
         case IC_UINT32:
+          *(guint32*)data_ptr= (guint32)value;
           break;
         case IC_UINT64:
+          *(guint64*)data_ptr= value;
           break;
         case IC_CHARPTR:
+          *(gchar**)data_ptr= val_str;
           break;
         default:
           g_assert(FALSE);
@@ -5785,4 +5904,3 @@ void ic_end()
   ic_ssl_end();
   DEBUG_CLOSE;
 }
-
