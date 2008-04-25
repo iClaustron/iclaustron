@@ -87,6 +87,7 @@ struct ic_malloc;
 struct ic_malloc_ops
 {
   gchar* (*ic_mem_alloc) (struct ic_malloc *malloc_ptr, size_t size);
+  gchar* (*ic_mem_calloc) (struct ic_malloc *malloc_ptr, size_t size);
   void (*ic_free) (struct ic_malloc *malloc_ptr, void *ptr);
   int (*ic_free_allocator) (struct ic_malloc *malloc_ptr);
   /*

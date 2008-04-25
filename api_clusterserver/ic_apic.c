@@ -5386,6 +5386,107 @@ file_error:
 }
 
 static int
+check_if_all_same_value(IC_CLUSTER_CONFIG *clu_conf,
+                        IC_CONFIG_TYPES section_type,
+                        guint32 offset,
+                        IC_CONFIG_DATA_TYPE data_type)
+{
+  guint64 value;
+  gboolean first= TRUE;
+  guint32 max_node_id;
+  guint32 i, num_comms;
+  IC_NODE_TYPES node_type;
+
+  if (section_type != IC_COMM_TYPE)
+  {
+    max_node_id= clu_conf->max_node_id;
+    node_type= (IC_NODE_TYPES)section_type;
+    for (i= 1; i <= max_node_id; i++)
+    {
+      if (clu_conf->node_types[i] == node_type)
+      {
+      }
+    }
+  }
+  else
+  {
+    num_comms= clu_conf->num_comms;
+    for (i= 0; i < num_comms; i++)
+    {
+    }
+  }
+  return 1;
+}
+
+static int
+write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
+                      IC_DYNAMIC_ARRAY_OPS *da_ops,
+                      gchar *buf,
+                      IC_CLUSTER_CONFIG *clu_conf,
+                      IC_CLUSTER_CONFIG_LOAD *clu_def,
+                      IC_CONFIG_TYPES section_type)
+{
+  gchar *default_struct_ptr;
+  gchar *data_ptr;
+  guint32 i, inx;
+  IC_CONFIG_ENTRY *conf_entry;
+
+  switch (section_type)
+  {
+    case IC_KERNEL_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_kernel_config;
+      break;
+    case IC_CLIENT_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_client_config;
+      break;
+    case IC_CLUSTER_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_cluster_server_config;
+      break;
+    case IC_SQL_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_sql_config;
+      break;
+    case IC_REP_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_rep_config;
+      break;
+    case IC_CLUSTER_MGR_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
+      break;
+    case IC_COMM_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_socket_config;
+      break;
+    default:
+      return 1;
+  }
+  for (i= 0; i < glob_max_config_id; i++)
+  {
+    if ((inx= map_inx_to_config_id[i]))
+    {
+      conf_entry= &glob_conf_entry[i];
+      if (conf_entry->config_types != section_type)
+        continue;
+      /* We found a configuration item of this section type, handle it */
+      data_ptr= default_struct_ptr + conf_entry->offset;
+      switch (conf_entry->data_type)
+      {
+        case IC_CHAR:
+          break;
+        case IC_UINT16:
+          break;
+        case IC_UINT32:
+          break;
+        case IC_UINT64:
+          break;
+        case IC_CHARPTR:
+          break;
+        default:
+          g_assert(FALSE);
+          return 1;
+      }
+    }
+  }
+}
+
+static int
 write_one_cluster_config_file(IC_STRING *config_dir,
                               IC_CLUSTER_CONFIG *clu_conf,
                               guint32 config_version)
@@ -5395,8 +5496,10 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   IC_STRING file_name_str;
   int error= MEM_ALLOC_ERROR;
   int file_ptr;
+  IC_CLUSTER_CONFIG_LOAD clu_def;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
+  memset(&clu_def, 0, sizeof(IC_CLUSTER_CONFIG_LOAD));
   /*
      We start by creating the new configuration file and a dynamic array
      used to fill in the content of this new file before we write it.
@@ -5427,6 +5530,10 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   /* Write [data server default] into the buffer */
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        data_server_def_str)))
+    goto error;
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_KERNEL_TYPE)))
     goto error;
 
   /* Write [client default] and its defaults into the buffer */

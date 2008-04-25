@@ -162,6 +162,15 @@ struct ic_cluster_config
 
     The array node_types below contains the actual type of struct
     used for each entry.
+
+    In the build phase the nodes are organised in order found, the node_ids
+    array gives the nodeid for each entry, in the final storage after
+    spanning all configuration entries it is organised by using nodeid as
+    index into the node_config array. Thus there can be NULL pointers when
+    no node of a certain node id exists.
+
+    Also the node_types array is addressed by nodeid in the final version of
+    this data structure.
   */
   gchar **node_config;
   /*
