@@ -5263,6 +5263,30 @@ remove_config_files(IC_STRING *config_dir,
 }
 
 static int
+write_new_section_header(IC_DYNAMIC_ARRAY *dyn_array,
+                         IC_DYNAMIC_ARRAY_OPS *da_ops,
+                         gchar *buf,
+                         const gchar *section_name)
+{
+  int error= MEM_ALLOC_ERROR;
+  buf[0]= '[';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, section_name,
+                                      (guint32)strlen(section_name)))
+    goto error;
+  buf[0]= ']';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  buf[0]= CARRIAGE_RETURN;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  error= 0;
+error:
+  return error;
+}
+
+static int
 write_cluster_config_file(IC_STRING *config_dir,
                           IC_CLUSTER_CONNECT_INFO **clu_infos,
                           guint32 config_version)
@@ -5297,18 +5321,8 @@ write_cluster_config_file(IC_STRING *config_dir,
     clu_info= *clu_infos;
     clu_infos++;
   /* Write [cluster]<CR> into the buffer */
-    buf[0]= '[';
-    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
-      goto error;
-    if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_str,
-                                        (guint32)strlen(cluster_str)))
-      goto error;
-    buf[0]= ']';
-    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
-      goto error;
-    buf[0]= CARRIAGE_RETURN;
-    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
-      goto error;
+  if ((error= write_new_section_header(dyn_array, da_ops, buf, cluster_str)))
+    goto error;
 
   /* Write cluster_name: __name__<CR> into the buffer */
     if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_name_str,
@@ -5377,7 +5391,84 @@ write_one_cluster_config_file(IC_STRING *config_dir,
                               IC_CLUSTER_CONFIG *clu_conf,
                               guint32 config_version)
 {
-  return 0;
+  IC_DYNAMIC_ARRAY *dyn_array;
+  IC_DYNAMIC_ARRAY_OPS *da_ops;
+  IC_STRING file_name_str;
+  int error= MEM_ALLOC_ERROR;
+  int file_ptr;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+
+  /*
+     We start by creating the new configuration file and a dynamic array
+     used to fill in the content of this new file before we write it.
+  */
+  ic_create_config_file_name(&file_name_str,
+                             buf,
+                             config_dir,
+                             &clu_conn_info->cluster_name,
+                             config_version);
+  /* We are writing a new file here */
+  file_ptr= g_creat((const gchar *)buf, S_IXUSR | S_IRUSR);
+  if (file_ptr == (int)-1)
+  {
+    error= errno;
+    goto file_error;
+  }
+
+  if (!(dyn_array= ic_create_simple_dynamic_array()))
+    return MEM_ALLOC_ERROR;
+  da_ops= &dyn_array->da_ops;
+
+  /*
+    First step is to write all the default sections and also to
+    record all the defaults. We need to record all defaults to avoid issues
+    if we at some point decide to change the default value of a certain
+    configuration parameter in a later release of the iClaustron software.
+  */
+  /* Write [data server default] into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       data_server_def_str)))
+    goto error;
+  /* Write all its defaults */
+  /* Write [client default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       client_node_def_str)))
+    goto error;
+  /* Write [cluster manager default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       cluster_mgr_def_str)))
+    goto error;
+  /* Write [cluster server default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       cluster_server_def_str)))
+    goto error;
+  /* Write [rep server default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       rep_server_def_str)))
+    goto error;
+  /* Write [sql server default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       sql_server_def_str)))
+    goto error;
+  /* Write [socket default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       socket_def_str)))
+    goto error;
+
+  /*
+    Now it is time to write all node specific configuration items.
+    This is performed node by node, only values that differs from
+    default values are recorded in the node specific section.
+  */
+  if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
+                                                     file_ptr)))
+    goto error;
+  error= 0;
+error:
+  close(file_ptr);
+  da_ops->ic_free_dynamic_array(dyn_array);
+file_error:
+  return error;
 }
 
 static int
