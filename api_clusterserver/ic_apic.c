@@ -5605,7 +5605,8 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
     if ((inx= map_inx_to_config_id[i]))
     {
       conf_entry= &glob_conf_entry[i];
-      if (conf_entry->config_types != section_type)
+      if (conf_entry->config_types != section_type ||
+          conf_entry->is_mandatory)
         continue;
       /* We found a configuration item of this section type, handle it */
       data_ptr= default_struct_ptr + conf_entry->offset;
@@ -5659,18 +5660,21 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
       }
       if (conf_entry->data_type != IC_CHARPTR)
       {
-        write_line_with_int_value(dyn_array, da_ops, buf,
-                                  &conf_entry->config_entry_name,
-                                  value);
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+                                              &conf_entry->config_entry_name,
+                                              value)))
+          return error;
       }
       else
       {
-        write_line_with_char_value(dyn_array, da_ops, buf,
-                                   &conf_entry->config_entry_name,
-                                   val_str);
+        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+                                               &conf_entry->config_entry_name,
+                                               val_str)))
+          return error;
       }
     }
   }
+  return 0;
 }
 
 static int
@@ -5714,7 +5718,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     if we at some point decide to change the default value of a certain
     configuration parameter in a later release of the iClaustron software.
   */
-  /* Write [data server default] into the buffer */
+  /* Write [data server default] and its defaults into the buffer */
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        data_server_def_str)))
     goto error;
