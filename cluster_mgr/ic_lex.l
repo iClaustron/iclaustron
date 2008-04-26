@@ -49,13 +49,13 @@ CLUSTERS                { return CLUSTERS_SYM;     }
 CLUSTER_LOG             { return CLUSTER_LOG_SYM;  }
 CONFIG                  { return CONFIG_SYM;       }
 CONNECTIONS             { return CONNECTIONS_SYM;  }
+DATA                    { return DATA_SYM;         }
 DIE                     { return DIE_SYM;          }
 DISPLAY                 { return DISPLAY_SYM;      }
 FILE                    { return FILE_SYM;         }
 FROM                    { return FROM_SYM;         }
 GROUP                   { return GROUP_SYM;        }
 INITIAL                 { return INITIAL_SYM;      }
-KERNEL_NODE             { return KERNEL_SYM;    }
 KILL                    { return KILL_SYM;         }
 LIST                    { return LIST_SYM;         }
 LISTEN                  { return LISTEN_SYM;       }

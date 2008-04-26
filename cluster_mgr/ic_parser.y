@@ -31,12 +31,12 @@ int yylex(void *parse_data, void *scanner);
 %token CLUSTER_LOG_SYM
 %token CONFIG_SYM
 %token CONNECTIONS_SYM
+%token DATA_SYM
 %token DIE_SYM
 %token DISPLAY_SYM
 %token FILE_SYM
 %token FROM_SYM
 %token GROUP_SYM
-%token KERNEL_SYM
 %token INITIAL_SYM
 %token KILL_SYM
 %token LIST_SYM
@@ -296,11 +296,11 @@ node_target_specifier:
     ;
 
 binary_type:
-    KERNEL_SYM
+    DATA_SYM SERVER_SYM
     { PARSE_DATA->binary_type= IC_KERNEL_NODE; }
     | CLUSTER_SYM SERVER_SYM
     { PARSE_DATA->binary_type= IC_CLUSTER_SERVER_NODE; }
-    | SQL_SYM
+    | SQL_SYM SERVER_SYM
     { PARSE_DATA->binary_type= IC_SQL_SERVER_NODE; }
     | REPLICATION_SYM SERVER_SYM
     { PARSE_DATA->binary_type= IC_REP_SERVER_NODE; }

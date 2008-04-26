@@ -330,7 +330,7 @@ static const gchar *cluster_server_str= "cluster server";
 static const gchar *sql_server_str= "sql server";
 static const gchar *rep_server_str= "replication server";
 static const gchar *file_server_str= "file server";
-static const gchar *restore_str= "restore";
+static const gchar *restore_node_str= "restore";
 static const gchar *cluster_mgr_str= "cluster manager";
 static const gchar *socket_str= "socket";
 static const gchar *data_server_def_str= "data server default";
@@ -339,7 +339,7 @@ static const gchar *cluster_server_def_str= "cluster server default";
 static const gchar *sql_server_def_str= "sql server default";
 static const gchar *rep_server_def_str= "replication server default";
 static const gchar *file_server_def_str= "file server default";
-static const gchar *restore_def_str= "restore default";
+static const gchar *restore_node_def_str= "restore default";
 static const gchar *cluster_mgr_def_str= "cluster manager default";
 static const gchar *socket_def_str= "socket default";
 static const gchar *node_id_str= "node_id";
@@ -4749,7 +4749,7 @@ conf_serv_add_section(void *ic_config,
               (void*)&clu_conf->default_file_server_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found file server group"));
   }
-  else if (ic_cmp_null_term_str(restore_str, section_name) == 0)
+  else if (ic_cmp_null_term_str(restore_node_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_RESTORE_TYPE;
     if (pass == INITIAL_PASS)
@@ -4826,7 +4826,7 @@ conf_serv_add_section(void *ic_config,
       clu_conf->current_node_config_type= IC_FILE_SERVER_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found file server default group"));
     }
-    else if (ic_cmp_null_term_str(restore_def_str, section_name) == 0)
+    else if (ic_cmp_null_term_str(restore_node_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_restore_config;
       clu_conf->current_node_config_type= IC_RESTORE_TYPE;
@@ -5801,25 +5801,72 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        client_node_def_str)))
     goto error;
-  /* Write [cluster manager default] and its defaults into the buffer */
-  if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                       cluster_mgr_def_str)))
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_CLIENT_TYPE)))
     goto error;
+
   /* Write [cluster server default] and its defaults into the buffer */
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        cluster_server_def_str)))
     goto error;
-  /* Write [rep server default] and its defaults into the buffer */
-  if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                       rep_server_def_str)))
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_CLUSTER_SERVER_TYPE)))
     goto error;
+
   /* Write [sql server default] and its defaults into the buffer */
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        sql_server_def_str)))
     goto error;
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_SQL_SERVER_TYPE)))
+    goto error;
+
+  /* Write [rep server default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       rep_server_def_str)))
+    goto error;
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_REP_SERVER_TYPE)))
+    goto error;
+
+  /* Write [file server default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       file_server_def_str)))
+    goto error;
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_FILE_SERVER_TYPE)))
+    goto error;
+
+  /* Write [restore default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       restore_node_def_str)))
+    goto error;
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_RESTORE_TYPE)))
+    goto error;
+
+  /* Write [cluster manager default] and its defaults into the buffer */
+  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       cluster_mgr_def_str)))
+    goto error;
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_CLUSTER_MGR_TYPE)))
+    goto error;
+
   /* Write [socket default] and its defaults into the buffer */
   if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        socket_def_str)))
+    goto error;
+
+  if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                    &clu_def, IC_COMM_TYPE)))
     goto error;
 
   for (i= 1; i <= clu_conf->max_node_id; i++)
@@ -5830,20 +5877,44 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     switch (clu_conf->node_types[i])
     {
       case IC_KERNEL_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             data_server_str)))
+          goto error;
         break;
       case IC_CLIENT_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             client_node_str)))
+          goto error;
         break;
        case IC_CLUSTER_SERVER_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             cluster_server_str)))
+          goto error;
          break;
        case IC_SQL_SERVER_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             sql_server_str)))
+          goto error;
          break;
        case IC_REP_SERVER_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             rep_server_str)))
+          goto error;
          break;
        case IC_FILE_SERVER_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             file_server_str)))
+          goto error;
          break;
        case IC_RESTORE_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             restore_node_str)))
+          goto error;
          break;
        case IC_CLUSTER_MGR_NODE:
+        if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                             cluster_mgr_str)))
+          goto error;
          break;
        default:
          g_assert(FALSE);
