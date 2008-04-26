@@ -1602,6 +1602,7 @@ init_config_parameters()
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
+  conf_entry->is_key= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "First node id of the connection";
@@ -1611,6 +1612,7 @@ init_config_parameters()
                     IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
+  conf_entry->is_key= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Second node id of the connection";
@@ -1632,17 +1634,20 @@ init_config_parameters()
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   conf_entry->is_mandatory= TRUE;
+  conf_entry->is_derived_default= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Port number to use on server side";
 
   IC_SET_CONFIG_MAP(SOCKET_FIRST_HOSTNAME, 187);
   IC_SET_SOCKET_STRING(conf_entry, first_hostname, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->is_derived_default= TRUE;
   conf_entry->config_entry_description=
   "Hostname of first node";
 
   IC_SET_CONFIG_MAP(SOCKET_SECOND_HOSTNAME, 188);
   IC_SET_SOCKET_STRING(conf_entry, second_hostname, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->is_derived_default= TRUE;
   conf_entry->config_entry_description=
   "Hostname of second node";
 
@@ -1672,6 +1677,7 @@ init_config_parameters()
                     IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
+  conf_entry->is_derived_default= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Node id of node that is server part of connection";
@@ -1680,8 +1686,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, client_port_number,
                     IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
-  conf_entry->is_mandatory= TRUE;
-  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->is_derived_default= TRUE;
   conf_entry->max_ndb_version_used= 1;
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
@@ -5757,7 +5762,8 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
     {
       conf_entry= &glob_conf_entry[i];
       if (conf_entry->config_types != section_type ||
-          conf_entry->is_mandatory)
+          conf_entry->is_mandatory ||
+          conf_entry->is_derived_default)
         continue;
       /* We found a configuration item of this section type, handle it */
       data_ptr= default_struct_ptr + conf_entry->offset;
@@ -5954,6 +5960,11 @@ write_one_cluster_config_file(IC_STRING *config_dir,
                                     &clu_def, IC_COMM_TYPE)))
     goto error;
 
+  /*
+    Now it is time to write all node specific configuration items.
+    This is performed node by node, only values that differs from
+    default values are recorded in the node specific section.
+  */
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
     struct_ptr= clu_conf->node_config[i];
@@ -6004,11 +6015,9 @@ write_one_cluster_config_file(IC_STRING *config_dir,
                                    struct_ptr, default_struct_ptr)))
       goto error;
   }
-  /*
-    Now it is time to write all node specific configuration items.
-    This is performed node by node, only values that differs from
-    default values are recorded in the node specific section.
-  */
+  for (i= 0; i < clu_conf->num_comms; i++)
+  {
+  }
   if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
                                                      file_ptr)))
     goto error;

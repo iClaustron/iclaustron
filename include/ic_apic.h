@@ -111,6 +111,16 @@ struct ic_config_entry
   gchar is_deprecated;
   gchar is_string_type;
   gchar is_mandatory;
+  /*
+    For all configurations (nodes and links) we have a key item, it's the node
+    id and for a link it is both the links involved.
+  */
+  gchar is_key;
+  /*
+    For communication configurations we have defaults that are derived from
+    its nodes in some cases. This is specified with this variable.
+  */
+  gchar is_derived_default;
   gchar mandatory_bit;
   gchar is_not_configurable;
   gchar is_only_iclaustron;
