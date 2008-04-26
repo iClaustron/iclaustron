@@ -5348,6 +5348,31 @@ remove_config_files(IC_STRING *config_dir,
   return;
 }
 
+static guint64
+get_node_data(const gchar *struct_ptr, guint32 offset,
+              IC_CONFIG_DATA_TYPE data_type)
+{
+  guint64 value= 0;
+  switch (data_type)
+  {
+    case IC_CHAR:
+      value= (guint64)*(guint8*)(struct_ptr+offset);
+      break;
+    case IC_UINT16:
+      value= (guint64)*(guint16*)(struct_ptr+offset);
+      break;
+    case IC_UINT32:
+      value= (guint64)*(guint32*)(struct_ptr+offset);
+      break;
+    case IC_UINT64:
+      value= *(guint64*)(struct_ptr+offset);
+      break;
+    default:
+      g_assert(FALSE);
+  }
+  return value;
+}
+
 static int
 write_new_section_header(IC_DYNAMIC_ARRAY *dyn_array,
                          IC_DYNAMIC_ARRAY_OPS *da_ops,
@@ -5527,31 +5552,6 @@ file_error:
   return error;
 }
 
-static guint64
-get_node_data(const gchar *struct_ptr, guint32 offset,
-              IC_CONFIG_DATA_TYPE data_type)
-{
-  guint64 value;
-  switch (data_type)
-  {
-    case IC_CHAR:
-      value= (guint64)*(guint8*)(struct_ptr+offset);
-      break;
-    case IC_UINT16:
-      value= (guint64)*(guint16*)(struct_ptr+offset);
-      break;
-    case IC_UINT32:
-      value= (guint64)*(guint32*)(struct_ptr+offset);
-      break;
-    case IC_UINT64:
-      value= *(guint64*)(struct_ptr+offset);
-      break;
-    default:
-      g_assert(FALSE);
-  }
-  return value;
-}
-
 static int
 check_if_all_same_value_charptr(IC_CLUSTER_CONFIG *clu_conf,
                                 IC_CONFIG_TYPES section_type,
@@ -5652,11 +5652,11 @@ write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
                    gchar *struct_ptr,
                    gchar *default_struct_ptr)
 {
-  guint32 i, inx;
+  guint32 i, inx, offset;
   IC_CONFIG_ENTRY *conf_entry;
   IC_CONFIG_TYPES section_type= (IC_CONFIG_TYPES)node_type;
-  gchar *data_ptr, *default_data_ptr;
   guint64 value= 0, default_value= 0;
+  IC_STRING *entry_name;
   IC_CONFIG_DATA_TYPE data_type;
   int error;
 
@@ -5668,62 +5668,36 @@ write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
       if (conf_entry->config_types != section_type)
         continue;
       /* We found a configuration item of this section type, handle it */
-      data_ptr= struct_ptr + conf_entry->offset;
-      default_data_ptr= default_struct_ptr + conf_entry->offset;
       data_type= conf_entry->data_type;
-      switch (data_type)
-      {
-        case IC_CHAR:
-          value= (guint64)*(guint8*)data_ptr;
-          default_value= (guint64)*(guint8*)default_data_ptr;
-          break;
-        case IC_UINT16:
-          value= (guint64)*(guint16*)data_ptr;
-          default_value= (guint64)*(guint16*)default_data_ptr;
-          break;
-        case IC_UINT32:
-          value= (guint64)*(guint32*)data_ptr;
-          default_value= (guint64)*(guint32*)default_data_ptr;
-          break;
-        case IC_UINT64:
-          value= *(guint64*)data_ptr;
-          default_value= *(guint64*)default_data_ptr;
-          break;
-        case IC_CHARPTR:
-          break;
-        default:
-          g_assert(FALSE);
-          return 1;
-      }
-      if (!conf_entry->is_mandatory)
-      {
-        /* Check if non-mandatory config variable is different from default */
-        if (data_type != IC_CHARPTR)
-        {
-          if (value == default_value)
-            continue;
-        }
-        else
-        {
-          if (strcmp(data_ptr, default_data_ptr) == 0)
-            continue;
-        }
-      }
-      /* We need to write a configuration variable line */
+      offset= conf_entry->offset;
       if (data_type != IC_CHARPTR)
       {
-        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-                                              &conf_entry->config_entry_name,
-                                              value)))
-          return error;
+        value= get_node_data(struct_ptr, offset, data_type);
+        default_value= get_node_data(default_struct_ptr, offset, data_type);
+      }
+      entry_name= &conf_entry->config_entry_name;
+      /* Check if non-mandatory config variable is different from default */
+      if (data_type != IC_CHARPTR)
+      {
+        if (!conf_entry->is_mandatory && value == default_value)
+          continue;
+        /* We need to write a configuration variable line */
+        if (!(error= write_line_with_int_value(dyn_array, da_ops, buf,
+                                               entry_name, value)))
+          continue;
       }
       else
       {
-        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
-                                               &conf_entry->config_entry_name,
-                                               data_ptr)))
-          return error;
+        if (!conf_entry->is_mandatory &&
+            (strcmp(struct_ptr + offset, default_struct_ptr + offset) == 0))
+          continue;
+        /* We need to write a configuration variable line */
+        if (!(error= write_line_with_char_value(dyn_array, da_ops, buf,
+                                                entry_name,
+                                                struct_ptr + offset)))
+          continue;
       }
+      return error;
     }
   }
   return 0;
