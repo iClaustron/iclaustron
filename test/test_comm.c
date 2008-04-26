@@ -216,7 +216,7 @@ api_clusterserver_test()
   {
     printf("Testing print of config parameters\n");
     if (glob_test_type == 2)
-      ic_print_config_parameters(1 << IC_KERNEL_TYPE);
+      ic_print_config_parameters(1 << IC_DATA_SERVER_TYPE);
     if (glob_test_type == 3)
       ic_print_config_parameters(1 << IC_CLIENT_TYPE);
     if (glob_test_type == 4)

@@ -297,7 +297,7 @@ node_target_specifier:
 
 binary_type:
     DATA_SYM SERVER_SYM
-    { PARSE_DATA->binary_type= IC_KERNEL_NODE; }
+    { PARSE_DATA->binary_type= IC_DATA_SERVER_NODE; }
     | CLUSTER_SYM SERVER_SYM
     { PARSE_DATA->binary_type= IC_CLUSTER_SERVER_NODE; }
     | SQL_SYM SERVER_SYM

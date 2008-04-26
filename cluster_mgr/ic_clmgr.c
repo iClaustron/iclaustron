@@ -136,10 +136,10 @@ set_up_server_connection(IC_CONNECTION **conn)
 }
 
 static int
-start_kernel_node(__attribute ((unused)) gchar *node_config,
-                  __attribute ((unused)) guint32 cluster_id,
-                  __attribute ((unused)) guint32 node_id,
-                  __attribute ((unused)) gboolean initial_flag)
+start_data_server_node(__attribute ((unused)) gchar *node_config,
+                       __attribute ((unused)) guint32 cluster_id,
+                       __attribute ((unused)) guint32 node_id,
+                       __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
@@ -154,28 +154,55 @@ start_client_node(__attribute ((unused)) gchar *node_config,
 }
 
 static int
-start_cs_node(__attribute ((unused)) gchar *node_config,
-              __attribute ((unused)) guint32 cluster_id,
-              __attribute ((unused)) guint32 node_id,
-              __attribute ((unused)) gboolean initial_flag)
+start_cluster_server_node(__attribute ((unused)) gchar *node_config,
+                          __attribute ((unused)) guint32 cluster_id,
+                          __attribute ((unused)) guint32 node_id,
+                          __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
 
 static int
-start_sql_node(__attribute ((unused)) gchar *node_config,
-               __attribute ((unused)) guint32 cluster_id,
-               __attribute ((unused)) guint32 node_id,
-               __attribute ((unused)) gboolean initial_flag)
+start_sql_server_node(__attribute ((unused)) gchar *node_config,
+                      __attribute ((unused)) guint32 cluster_id,
+                      __attribute ((unused)) guint32 node_id,
+                      __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
 
 static int
-start_rep_node(__attribute ((unused)) gchar *node_config,
-               __attribute ((unused)) guint32 cluster_id,
-               __attribute ((unused)) guint32 node_id,
-               __attribute ((unused)) gboolean initial_flag)
+start_rep_server_node(__attribute ((unused)) gchar *node_config,
+                      __attribute ((unused)) guint32 cluster_id,
+                      __attribute ((unused)) guint32 node_id,
+                      __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_file_server_node(__attribute ((unused)) gchar *node_config,
+                       __attribute ((unused)) guint32 cluster_id,
+                       __attribute ((unused)) guint32 node_id,
+                       __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_restore_node(__attribute ((unused)) gchar *node_config,
+                   __attribute ((unused)) guint32 cluster_id,
+                   __attribute ((unused)) guint32 node_id,
+                   __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_cluster_mgr_node(__attribute ((unused)) gchar *node_config,
+                       __attribute ((unused)) guint32 cluster_id,
+                       __attribute ((unused)) guint32 node_id,
+                       __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
 }
@@ -203,9 +230,9 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
   }
   switch (clu_conf->node_types[node_id])
   {
-    case IC_KERNEL_NODE:
+    case IC_DATA_SERVER_NODE:
     {
-      start_kernel_node(node_config, cluster_id, node_id, initial_flag);
+      start_data_server_node(node_config, cluster_id, node_id, initial_flag);
       break;
     }
     case IC_CLIENT_NODE:
@@ -215,18 +242,34 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     }
     case IC_CLUSTER_SERVER_NODE:
     {
-      start_cs_node(node_config, cluster_id, node_id, initial_flag);
+      start_cluster_server_node(node_config, cluster_id,
+                                node_id, initial_flag);
       break;
     }
     case IC_SQL_SERVER_NODE:
     {
-      start_sql_node(node_config, cluster_id, node_id, initial_flag);
+      start_sql_server_node(node_config, cluster_id, node_id, initial_flag);
       break;
     }
     case IC_REP_SERVER_NODE:
     {
-      start_rep_node(node_config, cluster_id, node_id, initial_flag);
+      start_rep_server_node(node_config, cluster_id, node_id, initial_flag);
        break;
+    }
+    case IC_FILE_SERVER_NODE:
+    {
+      start_file_server_node(node_config, cluster_id, node_id, initial_flag);
+       break;
+    }
+    case IC_RESTORE_NODE:
+    {
+      start_restore_node(node_config, cluster_id, node_id, initial_flag);
+      break;
+    }
+    case IC_CLUSTER_MGR_NODE:
+    {
+      start_cluster_mgr_node(node_config, cluster_id, node_id, initial_flag);
+      break;
     }
     default:
       break;

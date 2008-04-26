@@ -25,7 +25,7 @@
 enum ic_node_types
 {
   IC_NOT_EXIST_NODE_TYPE = 9,
-  IC_KERNEL_NODE = 0,
+  IC_DATA_SERVER_NODE = 0,
   IC_CLIENT_NODE = 1,
   IC_CLUSTER_SERVER_NODE = 2,
   IC_SQL_SERVER_NODE = 3,
@@ -45,7 +45,7 @@ typedef enum ic_communication_type IC_COMMUNICATION_TYPE;
 enum ic_config_types
 {
   IC_NO_CONFIG_TYPE = 9,
-  IC_KERNEL_TYPE = 0,
+  IC_DATA_SERVER_TYPE = 0,
   IC_CLIENT_TYPE = 1,
   IC_CLUSTER_SERVER_TYPE = 2,
   IC_SQL_SERVER_TYPE = 3,
@@ -146,7 +146,7 @@ struct ic_cluster_config
     DESCRIPTION:
     ------------
     We keep track of all nodes in each cluster we participate in,
-    also we keep track of number of kernel nodes, number of
+    also we keep track of number of data server nodes, number of
     cluster servers, and number of client nodes and finally the
     number of communication links.
     For each node in the cluster and each communication link we also
@@ -156,7 +156,7 @@ struct ic_cluster_config
   /*
     node_config is an array of pointers that point to structs of the
     types:
-    ic_kernel_config             iClaustron kernel nodes
+    ic_data_server_config        iClaustron data server nodes
     ic_client_config             iClaustron client nodes
     ic_conf_server_config        iClaustron config server nodes
     ic_sql_server_config         iClaustron SQL server nodes
@@ -343,7 +343,7 @@ struct ic_run_cluster_server
 };
 typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
 
-struct ic_kernel_config
+struct ic_data_server_config
 {
   /* Common for all nodes */
   gchar *hostname;
@@ -354,12 +354,12 @@ struct ic_kernel_config
   /* End common part */
 
   gchar *filesystem_path;
-  gchar *kernel_checkpoint_path;
+  gchar *data_server_checkpoint_path;
 
   guint64 size_of_ram_memory;
   guint64 size_of_hash_memory;
   guint64 page_cache_size;
-  guint64 kernel_memory_pool;
+  guint64 data_server_memory_pool;
 
   guint32 max_number_of_trace_files;
   guint32 number_of_replicas;
@@ -376,12 +376,12 @@ struct ic_kernel_config
   guint32 timer_wait_partial_start;
   guint32 timer_wait_partitioned_start;
   guint32 timer_wait_error_start;
-  guint32 timer_heartbeat_kernel_nodes;
+  guint32 timer_heartbeat_data_server_nodes;
   guint32 timer_heartbeat_client_nodes;
   guint32 timer_local_checkpoint;
   guint32 timer_global_checkpoint;
   guint32 timer_resolve;
-  guint32 timer_kernel_watchdog;
+  guint32 timer_data_server_watchdog;
   guint32 number_of_redo_log_files;
   guint32 timer_check_interval;
   guint32 timer_client_activity;
@@ -399,13 +399,13 @@ struct ic_kernel_config
   guint32 size_of_scan_batch;
   guint32 redo_log_memory;
   guint32 long_message_memory;
-  guint32 kernel_max_open_files;
+  guint32 data_server_max_open_files;
   guint32 size_of_string_memory;
-  guint32 kernel_open_files;
-  guint32 kernel_file_synch_size;
-  guint32 kernel_disk_write_speed;
-  guint32 kernel_disk_write_speed_start;
-  guint32 kernel_dummy;
+  guint32 data_server_open_files;
+  guint32 data_server_file_synch_size;
+  guint32 data_server_disk_write_speed;
+  guint32 data_server_disk_write_speed_start;
+  guint32 data_server_dummy;
   guint32 log_level_start;
   guint32 log_level_stop;
   guint32 log_level_statistics;
@@ -419,24 +419,24 @@ struct ic_kernel_config
   guint32 log_level_error;
   guint32 log_level_backup;
   guint32 inject_fault;
-  guint32 kernel_scheduler_no_send_time;
-  guint32 kernel_scheduler_no_sleep_time;
-  guint32 kernel_lock_main_thread;
-  guint32 kernel_lock_other_threads;
+  guint32 data_server_scheduler_no_send_time;
+  guint32 data_server_scheduler_no_sleep_time;
+  guint32 data_server_lock_main_thread;
+  guint32 data_server_lock_other_threads;
   guint32 size_of_redo_log_files;
-  guint32 kernel_initial_watchdog_timer;
-  guint32 kernel_max_allocate_size;
-  guint32 kernel_report_memory_frequency;
-  guint32 kernel_backup_status_frequency;
-  guint32 kernel_group_commit_delay;
+  guint32 data_server_initial_watchdog_timer;
+  guint32 data_server_max_allocate_size;
+  guint32 data_server_report_memory_frequency;
+  guint32 data_server_backup_status_frequency;
+  guint32 data_server_group_commit_delay;
 
   gchar use_unswappable_memory;
-  gchar kernel_automatic_restart;
-  gchar kernel_volatile_mode;
-  gchar kernel_rt_scheduler_threads;
+  gchar data_server_automatic_restart;
+  gchar data_server_volatile_mode;
+  gchar data_server_rt_scheduler_threads;
   gchar use_o_direct;
 };
-typedef struct ic_kernel_config IC_KERNEL_CONFIG;
+typedef struct ic_data_server_config IC_DATA_SERVER_CONFIG;
 
 struct ic_client_config
 {
@@ -625,7 +625,7 @@ struct ic_cluster_config_load
     struct. These structures are initialised by setting the defaults for
     each parameter as defined by the iClaustron Cluster Server API.
   */
-  IC_KERNEL_CONFIG default_kernel_config;
+  IC_DATA_SERVER_CONFIG default_data_server_config;
   IC_CLIENT_CONFIG default_client_config;
   IC_CLUSTER_SERVER_CONFIG default_cluster_server_config;
   IC_SQL_SERVER_CONFIG default_sql_server_config;
@@ -660,14 +660,14 @@ void ic_print_config_parameters();
     id_already_used_aborting(id);   \
   if (id > glob_max_config_id) glob_max_config_id= id;
 
-#define IC_SET_KERNEL_CONFIG(conf_entry, name, type, val, change) \
+#define IC_SET_DATA_SERVER_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name.str= #name; \
   (conf_entry)->config_entry_name.len= strlen(#name); \
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
-  (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->config_types= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->offset= offsetof(IC_DATA_SERVER_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_DATA_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CONFIG_MIN(conf_entry, min) \
@@ -685,25 +685,25 @@ void ic_print_config_parameters();
   (conf_entry)->max_value= (max); \
   if ((min) == (max)) (conf_entry)->is_not_configurable= TRUE;
 
-#define IC_SET_KERNEL_BOOLEAN(conf_entry, name, def, change) \
+#define IC_SET_DATA_SERVER_BOOLEAN(conf_entry, name, def, change) \
   (conf_entry)->config_entry_name.str= #name; \
   (conf_entry)->config_entry_name.len= strlen(#name); \
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_BOOLEAN; \
   (conf_entry)->default_value= (def); \
   (conf_entry)->is_boolean= TRUE; \
-  (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->config_types= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->offset= offsetof(IC_DATA_SERVER_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_DATA_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
-#define IC_SET_KERNEL_STRING(conf_entry, name, change) \
+#define IC_SET_DATA_SERVER_STRING(conf_entry, name, change) \
   (conf_entry)->config_entry_name.str= #name; \
   (conf_entry)->config_entry_name.len= strlen(#name); \
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->data_type= IC_CHARPTR; \
   (conf_entry)->is_string_type= TRUE; \
-  (conf_entry)->offset= offsetof(IC_KERNEL_CONFIG, name); \
-  (conf_entry)->config_types= (1 << IC_KERNEL_TYPE); \
+  (conf_entry)->offset= offsetof(IC_DATA_SERVER_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_DATA_SERVER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_SOCKET_CONFIG(conf_entry, name, type, val, change) \
