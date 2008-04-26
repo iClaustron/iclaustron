@@ -2984,7 +2984,7 @@ static int
 connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
 {
   guint32 i;
-  int error;
+  int error= 1;
   IC_CONNECTION *conn;
 
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
@@ -3011,7 +3011,7 @@ static guint32
 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
 {
   IC_CLUSTER_CONNECT_INFO **clu_info_iter;
-  guint32 num_clusters;
+  guint32 num_clusters= 0;
   clu_info_iter= clu_infos;
   while (*clu_info_iter)
   {
@@ -3038,7 +3038,7 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   guint32 i, max_cluster_id= 0;
   guint32 cluster_id, num_clusters;
   int error= END_OF_FILE;
-  IC_CONNECTION *conn;
+  IC_CONNECTION *conn= NULL;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
   DEBUG_ENTRY("get_cs_config");
@@ -3113,7 +3113,8 @@ get_cluster_ids(IC_API_CONFIG_SERVER *apic,
   guint32 state, num_clusters_found= 0;
   guint32 num_clusters= 0;
   guint64 cluster_id;
-  IC_CLUSTER_CONNECT_INFO *found_clu_info, **clu_info_iter, *clu_info;
+  IC_CLUSTER_CONNECT_INFO *found_clu_info= NULL;
+  IC_CLUSTER_CONNECT_INFO **clu_info_iter, *clu_info;
   int error;
   gchar read_buf[READ_BUF_SIZE];
   IC_CONNECTION *conn= apic->cluster_conn.current_conn;
@@ -5640,6 +5641,91 @@ check_if_all_same_value_int(IC_CLUSTER_CONFIG *clu_conf,
 }
 
 static int
+write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
+                   IC_DYNAMIC_ARRAY_OPS *da_ops,
+                   IC_NODE_TYPES node_type,
+                   gchar *buf,
+                   gchar *struct_ptr,
+                   gchar *default_struct_ptr)
+{
+  guint32 i, inx;
+  IC_CONFIG_ENTRY *conf_entry;
+  IC_CONFIG_TYPES section_type= (IC_CONFIG_TYPES)node_type;
+  gchar *data_ptr, *default_data_ptr;
+  guint64 value= 0, default_value= 0;
+  IC_CONFIG_DATA_TYPE data_type;
+  int error;
+
+  for (i= 0; i < glob_max_config_id; i++)
+  {
+    if ((inx= map_inx_to_config_id[i]))
+    {
+      conf_entry= &glob_conf_entry[i];
+      if (conf_entry->config_types != section_type)
+        continue;
+      /* We found a configuration item of this section type, handle it */
+      data_ptr= struct_ptr + conf_entry->offset;
+      default_data_ptr= default_struct_ptr + conf_entry->offset;
+      data_type= conf_entry->data_type;
+      switch (data_type)
+      {
+        case IC_CHAR:
+          value= (guint64)*(guint8*)data_ptr;
+          default_value= (guint64)*(guint8*)default_data_ptr;
+          break;
+        case IC_UINT16:
+          value= (guint64)*(guint16*)data_ptr;
+          default_value= (guint64)*(guint16*)default_data_ptr;
+          break;
+        case IC_UINT32:
+          value= (guint64)*(guint32*)data_ptr;
+          default_value= (guint64)*(guint32*)default_data_ptr;
+          break;
+        case IC_UINT64:
+          value= *(guint64*)data_ptr;
+          default_value= *(guint64*)default_data_ptr;
+          break;
+        case IC_CHARPTR:
+          break;
+        default:
+          g_assert(FALSE);
+          return 1;
+      }
+      if (!conf_entry->is_mandatory)
+      {
+        /* Check if non-mandatory config variable is different from default */
+        if (data_type != IC_CHARPTR)
+        {
+          if (value == default_value)
+            continue;
+        }
+        else
+        {
+          if (strcmp(data_ptr, default_data_ptr) == 0)
+            continue;
+        }
+      }
+      /* We need to write a configuration variable line */
+      if (data_type != IC_CHARPTR)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+                                              &conf_entry->config_entry_name,
+                                              value)))
+          return error;
+      }
+      else
+      {
+        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+                                               &conf_entry->config_entry_name,
+                                               data_ptr)))
+          return error;
+      }
+    }
+  }
+  return 0;
+}
+
+static int
 write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
                       IC_DYNAMIC_ARRAY_OPS *da_ops,
                       gchar *buf,
@@ -5650,8 +5736,8 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
   gchar *default_struct_ptr;
   gchar *data_ptr;
   guint32 i, inx;
-  guint64 value;
-  gchar *val_str;
+  guint64 value= 0;
+  gchar *val_str= NULL;
   IC_CONFIG_ENTRY *conf_entry;
   int error;
 
@@ -5775,8 +5861,10 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   int error= MEM_ALLOC_ERROR;
   int file_ptr;
   IC_CLUSTER_CONFIG_LOAD clu_def;
-  gchar *node_ptr;
+  gchar *struct_ptr, *default_struct_ptr;
+  const gchar *sect_name;
   guint32 i;
+  IC_NODE_TYPES node_type;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
   memset(&clu_def, 0, sizeof(IC_CLUSTER_CONFIG_LOAD));
@@ -5890,55 +5978,53 @@ write_one_cluster_config_file(IC_STRING *config_dir,
 
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
-    node_ptr= clu_conf->node_config[i];
-    if (!node_ptr)
+    struct_ptr= clu_conf->node_config[i];
+    if (!struct_ptr)
       continue;
-    switch (clu_conf->node_types[i])
+    node_type= clu_conf->node_types[i];
+    switch (node_type)
     {
       case IC_DATA_SERVER_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             data_server_str)))
-          goto error;
+        sect_name= data_server_str;
+        default_struct_ptr= (gchar*)&clu_def.default_data_server_config;
         break;
       case IC_CLIENT_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             client_node_str)))
-          goto error;
+        sect_name= client_node_str;
+        default_struct_ptr= (gchar*)&clu_def.default_client_config;
         break;
-       case IC_CLUSTER_SERVER_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             cluster_server_str)))
-          goto error;
-         break;
-       case IC_SQL_SERVER_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             sql_server_str)))
-          goto error;
-         break;
-       case IC_REP_SERVER_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             rep_server_str)))
-          goto error;
-         break;
-       case IC_FILE_SERVER_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             file_server_str)))
-          goto error;
-         break;
-       case IC_RESTORE_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             restore_node_str)))
-          goto error;
-         break;
-       case IC_CLUSTER_MGR_NODE:
-        if ((error= write_new_section_header(dyn_array, da_ops, buf,
-                                             cluster_mgr_str)))
-          goto error;
-         break;
-       default:
-         g_assert(FALSE);
-         return 1;
+      case IC_CLUSTER_SERVER_NODE:
+        sect_name= cluster_server_str;
+        default_struct_ptr= (gchar*)&clu_def.default_cluster_server_config;
+        break;
+      case IC_SQL_SERVER_NODE:
+        sect_name= sql_server_str;
+        default_struct_ptr= (gchar*)&clu_def.default_sql_server_config;
+        break;
+      case IC_REP_SERVER_NODE:
+        sect_name= rep_server_str;
+        default_struct_ptr= (gchar*)&clu_def.default_rep_server_config;
+        break;
+      case IC_FILE_SERVER_NODE:
+        sect_name= file_server_str;
+        default_struct_ptr= (gchar*)&clu_def.default_file_server_config;
+        break;
+      case IC_RESTORE_NODE:
+        sect_name= restore_node_str;
+        default_struct_ptr= (gchar*)&clu_def.default_restore_config;
+        break;
+      case IC_CLUSTER_MGR_NODE:
+        sect_name= cluster_mgr_str;
+        default_struct_ptr= (gchar*)&clu_def.default_cluster_mgr_config;
+        break;
+      default:
+        g_assert(FALSE);
+        return 1;
     }
+    if ((error= write_new_section_header(dyn_array, da_ops, buf, sect_name)))
+      goto error;
+    if ((error= write_node_section(dyn_array, da_ops, node_type, buf,
+                                   struct_ptr, default_struct_ptr)))
+      goto error;
   }
   /*
     Now it is time to write all node specific configuration items.
