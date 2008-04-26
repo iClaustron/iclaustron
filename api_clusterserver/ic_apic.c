@@ -5287,6 +5287,62 @@ error:
 }
 
 static int
+write_line_with_int_value(IC_DYNAMIC_ARRAY *dyn_array,
+                          IC_DYNAMIC_ARRAY_OPS *da_ops,
+                          gchar *buf,
+                          IC_STRING *name_var,
+                          guint64 value)
+{
+  int error= MEM_ALLOC_ERROR;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, name_var->str, name_var->len))
+    goto error;
+
+  buf[0]= ':';
+  buf[1]= ' ';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+    goto error;
+
+  if (!ic_guint64_str(value, buf))
+    goto error;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, strlen(buf)))
+    goto error;
+  
+  buf[0]= CARRIAGE_RETURN;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  error= 0;
+error:
+  return error;
+}
+
+static int
+write_line_with_char_value(IC_DYNAMIC_ARRAY *dyn_array,
+                           IC_DYNAMIC_ARRAY_OPS *da_ops,
+                           gchar *buf,
+                           IC_STRING *name_var,
+                           gchar *val_str)
+{
+  int error= MEM_ALLOC_ERROR;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, name_var->str, name_var->len))
+    goto error;
+
+  buf[0]= ':';
+  buf[1]= ' ';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+    goto error;
+
+  if (da_ops->ic_insert_dynamic_array(dyn_array, val_str, strlen(val_str)))
+    goto error;
+
+  buf[0]= CARRIAGE_RETURN;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  error= 0;
+error:
+  return error;
+}
+
+static int
 write_cluster_config_file(IC_STRING *config_dir,
                           IC_CLUSTER_CONNECT_INFO **clu_infos,
                           guint32 config_version)
@@ -5560,7 +5616,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
                                                 &value,
                                                 conf_entry->data_type)))
         {
-          if (error= 2)
+          if (error == 2)
             return 1;
           /*
             There was differing values in the nodes and thus we need to
@@ -5575,7 +5631,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
                                                     conf_entry->offset,
                                                     &val_str)))
         {
-          if (error= 2)
+          if (error == 2)
             return 1;
           val_str= conf_entry->default_string;
         }
@@ -5600,6 +5656,18 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
         default:
           g_assert(FALSE);
           return 1;
+      }
+      if (conf_entry->data_type != IC_CHARPTR)
+      {
+        write_line_with_int_value(dyn_array, da_ops, buf,
+                                  &conf_entry->config_entry_name,
+                                  value);
+      }
+      else
+      {
+        write_line_with_char_value(dyn_array, da_ops, buf,
+                                   &conf_entry->config_entry_name,
+                                   val_str);
       }
     }
   }
