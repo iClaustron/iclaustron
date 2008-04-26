@@ -2148,7 +2148,8 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
 }
 
 static int
-key_type_error(guint32 hash_key, guint32 node_type)
+key_type_error(__attribute__ ((unused)) guint32 hash_key,
+               __attribute__ ((unused)) guint32 node_type)
 {
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Wrong key type %u node type %u", hash_key, node_type));
@@ -4094,16 +4095,16 @@ wait_convert_transporter_req(IC_CONNECTION *conn,
 }
 
 static int
-wait_start_transporter_req(__attribute ((unused)) IC_CONNECTION *conn,
-                           __attribute ((unused)) guint32 cs_nodeid,
-                           __attribute ((unused)) guint32 client_nodeid)
+wait_start_transporter_req(__attribute__ ((unused)) IC_CONNECTION *conn,
+                           __attribute__ ((unused)) guint32 cs_nodeid,
+                           __attribute__ ((unused)) guint32 client_nodeid)
 {
   return 0;
 }
 
 static int
-put_connection_in_change_queue(__attribute ((unused)) IC_CONNECTION *conn,
-                               __attribute ((unused)) guint64 node_type)
+put_connection_in_change_queue(__attribute__ ((unused)) IC_CONNECTION *conn,
+                               __attribute__ ((unused)) guint64 node_type)
 {
   return 0;
 }
@@ -4514,7 +4515,7 @@ mandatory_error:
   missing_bits= mandatory_bits ^
          ((IC_DATA_SERVER_CONFIG*)current_config)->mandatory_bits;
   {
-    gchar buf[128];
+    __attribute__ ((unused)) gchar buf[128];
     DEBUG_PRINT(CONFIG_LEVEL,
       ("mandatory bits %s",
       ic_guint64_hex_str(((IC_DATA_SERVER_CONFIG*)
@@ -4875,8 +4876,8 @@ conf_serv_add_section(void *ic_config,
 
 static
 int conf_serv_add_key(void *ic_config,
-                      guint32 section_number,
-                      guint32 line_number,
+                      __attribute__ ((unused)) guint32 section_number,
+                      __attribute__ ((unused)) guint32 line_number,
                       IC_STRING *key_name,
                       IC_STRING *data,
                       guint32 pass)
@@ -4887,7 +4888,7 @@ int conf_serv_add_key(void *ic_config,
   guint64 value;
   gchar *struct_ptr;
   guint64 num32_check;
-  gchar buf[128];
+  __attribute__ ((unused)) gchar buf[128];
   DEBUG_ENTRY("conf_serv_add_key");
   DEBUG_IC_STRING(CONFIG_LEVEL, key_name);
   DEBUG_IC_STRING(CONFIG_LEVEL, data);
@@ -4991,8 +4992,8 @@ int conf_serv_add_key(void *ic_config,
 
 static
 int conf_serv_add_comment(void *ic_config,
-                          guint32 section_number,
-                          guint32 line_number,
+                          __attribute__ ((unused)) guint32 section_number,
+                          __attribute__ ((unused)) guint32 line_number,
                           __attribute__ ((unused)) IC_STRING *comment,
                           guint32 pass)
 {
@@ -5232,9 +5233,12 @@ cluster_config_add_section(void *ic_config,
 }
 
 static int
-cluster_config_add_key(void *ic_config, guint32 section_number,
-                       guint32 line_number, IC_STRING *key_name,
-                       IC_STRING *data, guint32 pass)
+cluster_config_add_key(void *ic_config,
+                       __attribute__ ((unused)) guint32 section_number,
+                       __attribute__ ((unused)) guint32 line_number,
+                       IC_STRING *key_name,
+                       IC_STRING *data,
+                       guint32 pass)
 {
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
   IC_CLUSTER_CONFIG_TEMP *temp;
@@ -5327,7 +5331,7 @@ remove_config_files(IC_STRING *config_dir,
                     guint32 config_version)
 {
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
-  IC_STRING file_name_string, ending_string;
+  IC_STRING file_name_string;
 
   ic_create_config_file_name(&file_name_string, file_name,
                              config_dir, &ic_config_string,
