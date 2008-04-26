@@ -326,17 +326,21 @@ static const gchar *cluster_password_str= "password";
 /* Strings used in configuration files for each cluster */
 static const gchar *data_server_str= "data server";
 static const gchar *client_node_str= "client";
-static const gchar *cluster_mgr_str= "cluster manager";
 static const gchar *cluster_server_str= "cluster server";
-static const gchar *rep_server_str= "replication server";
 static const gchar *sql_server_str= "sql server";
+static const gchar *rep_server_str= "replication server";
+static const gchar *file_server_str= "file server";
+static const gchar *restore_str= "restore";
+static const gchar *cluster_mgr_str= "cluster manager";
 static const gchar *socket_str= "socket";
 static const gchar *data_server_def_str= "data server default";
 static const gchar *client_node_def_str= "client default";
-static const gchar *cluster_mgr_def_str= "cluster manager default";
 static const gchar *cluster_server_def_str= "cluster server default";
-static const gchar *rep_server_def_str= "replication server default";
 static const gchar *sql_server_def_str= "sql server default";
+static const gchar *rep_server_def_str= "replication server default";
+static const gchar *file_server_def_str= "file server default";
+static const gchar *restore_def_str= "restore default";
+static const gchar *cluster_mgr_def_str= "cluster manager default";
 static const gchar *socket_def_str= "socket default";
 static const gchar *node_id_str= "node_id";
 
@@ -2178,6 +2182,12 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
         conf_obj->num_sql_servers++; break;
       case IC_REP_SERVER_NODE:
         conf_obj->num_rep_servers++; break;
+      case IC_FILE_SERVER_NODE:
+        conf_obj->num_file_servers++; break;
+      case IC_RESTORE_NODE:
+        conf_obj->num_restore_nodes++; break;
+      case IC_CLUSTER_MGR_NODE:
+        conf_obj->num_cluster_mgrs++; break;
       default:
         DEBUG_PRINT(CONFIG_LEVEL, ("No such node type"));
         return PROTOCOL_ERROR;
@@ -4572,12 +4582,18 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   */
   size_structs+= clu_conf->conf->num_data_servers * sizeof(IC_KERNEL_CONFIG);
   size_structs+= clu_conf->conf->num_clients * sizeof(IC_CLIENT_CONFIG);
-  size_structs+= clu_conf->conf->num_cluster_mgrs *
-                   sizeof(IC_CLUSTER_MGR_CONFIG);
   size_structs+= clu_conf->conf->num_cluster_servers *
                  sizeof(IC_CLUSTER_SERVER_CONFIG);
-  size_structs+= clu_conf->conf->num_rep_servers * sizeof(IC_REP_SERVER_CONFIG);
-  size_structs+= clu_conf->conf->num_sql_servers * sizeof(IC_SQL_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_sql_servers *
+                 sizeof(IC_SQL_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_rep_servers *
+                 sizeof(IC_REP_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_file_servers *
+                 sizeof(IC_FILE_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_restore_nodes *
+                 sizeof(IC_RESTORE_CONFIG);
+  size_structs+= clu_conf->conf->num_cluster_mgrs *
+                   sizeof(IC_CLUSTER_MGR_CONFIG);
   size_structs+= clu_conf->conf->num_comms *
                  sizeof(IC_SOCKET_LINK_CONFIG);
 
@@ -4606,15 +4622,25 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   }
 
   init_config_object((gchar*)&clu_conf->default_kernel_config, IC_KERNEL_TYPE);
-  init_config_object((gchar*)&clu_conf->default_rep_config.client_conf,
-                     IC_CLIENT_TYPE);
-  init_config_object((gchar*)&clu_conf->default_rep_config, IC_REP_SERVER_TYPE);
-  init_config_object((gchar*)&clu_conf->default_sql_config.client_conf,
-                     IC_CLIENT_TYPE);
-  init_config_object((gchar*)&clu_conf->default_sql_config, IC_SQL_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_client_config, IC_CLIENT_TYPE);
   init_config_object((gchar*)&clu_conf->default_cluster_server_config,
                      IC_CLUSTER_SERVER_TYPE);
-  init_config_object((gchar*)&clu_conf->default_client_config, IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_sql_server_config.client_conf,
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_sql_server_config,
+                     IC_SQL_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_rep_server_config.client_conf,
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_rep_server_config,
+                     IC_REP_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_file_server_config.client_conf,
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_file_server_config,
+                     IC_FILE_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_restore_config.client_conf,
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_restore_config,
+                     IC_RESTORE_TYPE);
   init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
                      IC_CLUSTER_MGR_TYPE);
   init_config_object((gchar*)&clu_conf->default_socket_config, IC_COMM_TYPE);
@@ -4671,20 +4697,6 @@ conf_serv_add_section(void *ic_config,
               (void*)&clu_conf->default_client_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found client group"));
   }
-  else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
-  {
-    clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
-    if (pass == INITIAL_PASS)
-    {
-      clu_conf->conf->num_clients++;
-      clu_conf->conf->num_cluster_mgrs++;
-      clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
-    }
-    init_node(clu_conf, sizeof(IC_CLUSTER_MGR_CONFIG),
-              (void*)&clu_conf->default_cluster_mgr_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group"));
-  }
   else if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
@@ -4698,19 +4710,6 @@ conf_serv_add_section(void *ic_config,
               (void*)&clu_conf->default_cluster_server_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group"));
   }
-  else if (ic_cmp_null_term_str(rep_server_str, section_name) == 0)
-  {
-    clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
-    if (pass == INITIAL_PASS)
-    {
-      clu_conf->conf->num_rep_servers++;
-      clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
-    }
-    init_node(clu_conf, sizeof(IC_REP_SERVER_CONFIG),
-              (void*)&clu_conf->default_rep_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server group"));
-  }
   else if (ic_cmp_null_term_str(sql_server_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
@@ -4721,8 +4720,60 @@ conf_serv_add_section(void *ic_config,
       DEBUG_RETURN(0);
     }
     init_node(clu_conf, sizeof(IC_SQL_SERVER_CONFIG),
-              (void*)&clu_conf->default_sql_config);
+              (void*)&clu_conf->default_sql_server_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server group"));
+  }
+  else if (ic_cmp_null_term_str(rep_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_rep_servers++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_REP_SERVER_CONFIG),
+              (void*)&clu_conf->default_rep_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server group"));
+  }
+  else if (ic_cmp_null_term_str(file_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_FILE_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_file_servers++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_FILE_SERVER_CONFIG),
+              (void*)&clu_conf->default_file_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found file server group"));
+  }
+  else if (ic_cmp_null_term_str(restore_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_RESTORE_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_restore_nodes++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_RESTORE_CONFIG),
+              (void*)&clu_conf->default_restore_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found restore node group"));
+  }
+  else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_cluster_mgrs++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_CLUSTER_MGR_CONFIG),
+              (void*)&clu_conf->default_cluster_mgr_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group"));
   }
   else if (ic_cmp_null_term_str(socket_str, section_name) == 0)
   {
@@ -4751,12 +4802,6 @@ conf_serv_add_section(void *ic_config,
       clu_conf->current_node_config_type= IC_CLIENT_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found client default group"));
     }
-    else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
-    {
-      clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
-      clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group"));
-    }
     else if (ic_cmp_null_term_str(cluster_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_cluster_server_config;
@@ -4765,16 +4810,33 @@ conf_serv_add_section(void *ic_config,
     }
     else if (ic_cmp_null_term_str(sql_server_def_str, section_name) == 0)
     {
-      clu_conf->current_node_config= &clu_conf->default_sql_config;
+      clu_conf->current_node_config= &clu_conf->default_sql_server_config;
       clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server default group"));
     }
     else if (ic_cmp_null_term_str(rep_server_def_str, section_name) == 0)
     {
-      clu_conf->current_node_config= &clu_conf->default_rep_config;
+      clu_conf->current_node_config= &clu_conf->default_rep_server_config;
       clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL,
-                  ("Found replication server default group"));
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server default group"));
+    }
+    else if (ic_cmp_null_term_str(file_server_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_file_server_config;
+      clu_conf->current_node_config_type= IC_FILE_SERVER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found file server default group"));
+    }
+    else if (ic_cmp_null_term_str(restore_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_restore_config;
+      clu_conf->current_node_config_type= IC_RESTORE_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found restore default group"));
+    }
+    else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
+      clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group"));
     }
     else if (ic_cmp_null_term_str(socket_def_str, section_name) == 0)
     {
@@ -5586,10 +5648,16 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
       default_struct_ptr= (gchar*)&clu_def->default_cluster_server_config;
       break;
     case IC_SQL_SERVER_TYPE:
-      default_struct_ptr= (gchar*)&clu_def->default_sql_config;
+      default_struct_ptr= (gchar*)&clu_def->default_sql_server_config;
       break;
     case IC_REP_SERVER_TYPE:
-      default_struct_ptr= (gchar*)&clu_def->default_rep_config;
+      default_struct_ptr= (gchar*)&clu_def->default_rep_server_config;
+      break;
+    case IC_FILE_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_file_server_config;
+      break;
+    case IC_RESTORE_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_restore_config;
       break;
     case IC_CLUSTER_MGR_TYPE:
       default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
@@ -5688,6 +5756,8 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   int error= MEM_ALLOC_ERROR;
   int file_ptr;
   IC_CLUSTER_CONFIG_LOAD clu_def;
+  gchar *node_ptr;
+  guint32 i;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
   memset(&clu_def, 0, sizeof(IC_CLUSTER_CONFIG_LOAD));
@@ -5752,6 +5822,34 @@ write_one_cluster_config_file(IC_STRING *config_dir,
                                        socket_def_str)))
     goto error;
 
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    node_ptr= clu_conf->node_config[i];
+    if (!node_ptr)
+      continue;
+    switch (clu_conf->node_types[i])
+    {
+      case IC_KERNEL_NODE:
+        break;
+      case IC_CLIENT_NODE:
+        break;
+       case IC_CLUSTER_SERVER_NODE:
+         break;
+       case IC_SQL_SERVER_NODE:
+         break;
+       case IC_REP_SERVER_NODE:
+         break;
+       case IC_FILE_SERVER_NODE:
+         break;
+       case IC_RESTORE_NODE:
+         break;
+       case IC_CLUSTER_MGR_NODE:
+         break;
+       default:
+         g_assert(FALSE);
+         return 1;
+    }
+  }
   /*
     Now it is time to write all node specific configuration items.
     This is performed node by node, only values that differs from

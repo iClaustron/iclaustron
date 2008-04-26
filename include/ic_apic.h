@@ -32,7 +32,7 @@ enum ic_node_types
   IC_REP_SERVER_NODE = 4,
   IC_FILE_SERVER_NODE = 6,
   IC_RESTORE_NODE = 7,
-  IC_CLUSTER_MANAGER_NODE = 8
+  IC_CLUSTER_MGR_NODE = 8
 };
 typedef enum ic_node_types IC_NODE_TYPES;
 
@@ -50,7 +50,9 @@ enum ic_config_types
   IC_CLUSTER_SERVER_TYPE = 2,
   IC_SQL_SERVER_TYPE = 3,
   IC_REP_SERVER_TYPE = 4,
-  IC_CLUSTER_MGR_TYPE = 6,
+  IC_FILE_SERVER_TYPE = 6,
+  IC_RESTORE_TYPE = 7,
+  IC_CLUSTER_MGR_TYPE = 8,
   IC_COMM_TYPE = 5
 };
 typedef enum ic_config_types IC_CONFIG_TYPES;
@@ -205,9 +207,11 @@ struct ic_cluster_config
   guint32 num_data_servers;
   guint32 num_cluster_servers;
   guint32 num_clients;
-  guint32 num_cluster_mgrs;
   guint32 num_sql_servers;
   guint32 num_rep_servers;
+  guint32 num_file_servers;
+  guint32 num_restore_nodes;
+  guint32 num_cluster_mgrs;
   guint32 num_comms;
   /*
     node_ids is an array of the node ids used temporarily when building the
@@ -498,6 +502,20 @@ struct ic_rep_server_config
 };
 typedef struct ic_rep_server_config IC_REP_SERVER_CONFIG;
 
+struct ic_file_server_config
+{
+  IC_CLIENT_CONFIG client_conf;
+  guint32          not_used;
+};
+typedef struct ic_file_server_config IC_FILE_SERVER_CONFIG;
+
+struct ic_restore_config
+{
+  IC_CLIENT_CONFIG client_conf;
+  guint32          not_used;
+};
+typedef struct ic_restore_config IC_RESTORE_CONFIG;
+
 struct ic_socket_link_config
 {
   gchar *first_hostname;
@@ -609,10 +627,12 @@ struct ic_cluster_config_load
   */
   IC_KERNEL_CONFIG default_kernel_config;
   IC_CLIENT_CONFIG default_client_config;
-  IC_CLUSTER_MGR_CONFIG default_cluster_mgr_config;
   IC_CLUSTER_SERVER_CONFIG default_cluster_server_config;
-  IC_REP_SERVER_CONFIG default_rep_config;
-  IC_SQL_SERVER_CONFIG default_sql_config;
+  IC_SQL_SERVER_CONFIG default_sql_server_config;
+  IC_REP_SERVER_CONFIG default_rep_server_config;
+  IC_FILE_SERVER_CONFIG default_file_server_config;
+  IC_RESTORE_CONFIG default_restore_config;
+  IC_CLUSTER_MGR_CONFIG default_cluster_mgr_config;
   IC_SOCKET_LINK_CONFIG default_socket_config;
 };
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;

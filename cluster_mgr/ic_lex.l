@@ -55,7 +55,7 @@ FILE                    { return FILE_SYM;         }
 FROM                    { return FROM_SYM;         }
 GROUP                   { return GROUP_SYM;        }
 INITIAL                 { return INITIAL_SYM;      }
-KERNEL_NODE             { return IC_KERNEL_SYM;    }
+KERNEL_NODE             { return KERNEL_SYM;    }
 KILL                    { return KILL_SYM;         }
 LIST                    { return LIST_SYM;         }
 LISTEN                  { return LISTEN_SYM;       }
