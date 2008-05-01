@@ -17,6 +17,9 @@
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <unistd.h>
+#ifdef HAVE_TRACE
+#include <probes.h>
+#endif
 #include <errno.h>
 #include <ic_common.h>
 
@@ -587,6 +590,7 @@ write_socket_connection(IC_CONNECTION *conn,
   guint32 loop_count= 0;
   guint32 secs_count= 0;
 
+  ICLAUSTRON_SEND_SOCKET(conn->rw_sockfd);
   do
   {
     gssize ret_code;

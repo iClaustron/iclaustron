@@ -15,7 +15,7 @@ if HAVE_DTRACE
 endif
 
 probes.h: probes.d
-	$(DTRACE) $(DTRACEFLAGS) -s probe.d
+	$(DTRACE) $(DTRACEFLAGS) -h -s probe.d
 
 SUFFIXES : .d
 

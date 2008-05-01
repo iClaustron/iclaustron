@@ -5846,9 +5846,13 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   int file_ptr;
   IC_CLUSTER_CONFIG_LOAD clu_def;
   gchar *struct_ptr, *default_struct_ptr;
+  gchar *first_hostname, *second_hostname;
+  guint32 node1_id, node2_id, node1_port, node2_port;
   const gchar *sect_name;
   guint32 i;
   IC_NODE_TYPES node_type;
+  IC_SOCKET_LINK_CONFIG *comm_ptr, *default_comm_ptr;
+  IC_DATA_SERVER_CONFIG *node1_ptr, *node2_ptr;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
   memset(&clu_def, 0, sizeof(IC_CLUSTER_CONFIG_LOAD));
@@ -6017,6 +6021,147 @@ write_one_cluster_config_file(IC_STRING *config_dir,
   }
   for (i= 0; i < clu_conf->num_comms; i++)
   {
+    /*
+      To speed up execution a bit we check specific config items rather than
+      go through all configuration items for each communication section.
+      This is an optimisation that means that we have to add code here every
+      time we add or remove a configuration parameter for communication
+      sections.
+    */
+    default_comm_ptr= &clu_def.default_socket_config;
+    comm_ptr= (IC_SOCKET_LINK_CONFIG*)clu_conf->comm_config[i];
+    node1_id= comm_ptr->first_node_id;
+    node2_id= comm_ptr->second_node_id;
+    node1_ptr= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node1_id];
+    node2_ptr= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node2_id];
+    node1_port= node1_ptr->port_number;
+    node2_port= node2_ptr->port_number;
+    first_hostname= node1_ptr->hostname;
+    second_hostname= node2_ptr->hostname;
+    if ((strcmp(first_hostname, comm_ptr->first_hostname) != 0) ||
+        (strcmp(second_hostname, comm_ptr->second_hostname) != 0) ||
+        ((node1_id == comm_ptr->server_node_id) ?
+         ((node1_port != comm_ptr->server_port_number) ||
+          (node2_port != comm_ptr->client_port_number)) :
+         ((node1_port != comm_ptr->client_port_number) ||
+          (node2_port != comm_ptr->server_port_number))) ||
+        (default_comm_ptr->socket_write_buffer_size !=
+         comm_ptr->socket_write_buffer_size) ||
+        (default_comm_ptr->socket_read_buffer_size !=
+         comm_ptr->socket_read_buffer_size) ||
+        (default_comm_ptr->socket_kernel_read_buffer_size !=
+         comm_ptr->socket_kernel_read_buffer_size) ||
+        (default_comm_ptr->socket_kernel_write_buffer_size !=
+         comm_ptr->socket_kernel_write_buffer_size) ||
+        (default_comm_ptr->socket_maxseg_size !=
+         comm_ptr->socket_maxseg_size) ||
+        (default_comm_ptr->use_message_id !=
+         comm_ptr->use_message_id) ||
+        (default_comm_ptr->use_checksum !=
+         comm_ptr->use_checksum) ||
+        (default_comm_ptr->socket_bind_address != 
+         comm_ptr->socket_bind_address))
+    {
+      /* This section isn't a default section so we need to fill it in */
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_FIRST_NODE_ID].config_entry_name,
+           (guint64)node1_id)))
+        goto error;
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_SECOND_NODE_ID].config_entry_name,
+           (guint64)node2_id)))
+        goto error;
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_SERVER_NODE_ID].config_entry_name,
+           (guint64)comm_ptr->server_node_id)))
+        goto error;
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_CLIENT_PORT_NUMBER].config_entry_name,
+           (guint64)comm_ptr->client_port_number)))
+        goto error;
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_SERVER_PORT_NUMBER].config_entry_name,
+           (guint64)comm_ptr->server_port_number)))
+        goto error;
+      if (strcmp(first_hostname, comm_ptr->first_hostname) != 0)
+      {
+        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_FIRST_HOSTNAME].config_entry_name,
+           comm_ptr->first_hostname)))
+          goto error;
+      }
+      if (strcmp(second_hostname, comm_ptr->second_hostname) != 0)
+      {
+        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_SECOND_HOSTNAME].config_entry_name,
+           comm_ptr->second_hostname)))
+          goto error;
+      }
+      if (comm_ptr->socket_write_buffer_size !=
+          default_comm_ptr->socket_write_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_WRITE_BUFFER_SIZE].config_entry_name,
+           comm_ptr->socket_write_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_read_buffer_size !=
+          default_comm_ptr->socket_read_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_READ_BUFFER_SIZE].config_entry_name,
+           comm_ptr->socket_read_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_kernel_write_buffer_size !=
+          default_comm_ptr->socket_kernel_write_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_KERNEL_WRITE_BUFFER_SIZE].config_entry_name,
+           comm_ptr->socket_kernel_write_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_kernel_read_buffer_size !=
+          default_comm_ptr->socket_kernel_read_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+          &glob_conf_entry[SOCKET_KERNEL_READ_BUFFER_SIZE].config_entry_name,
+          comm_ptr->socket_kernel_read_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_maxseg_size !=
+          default_comm_ptr->socket_maxseg_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_MAXSEG_SIZE].config_entry_name,
+           comm_ptr->socket_maxseg_size)))
+          goto error;
+      }
+      if (comm_ptr->use_message_id !=
+          default_comm_ptr->use_message_id)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_USE_MESSAGE_ID].config_entry_name,
+           comm_ptr->use_message_id)))
+          goto error;
+      }
+      if (comm_ptr->use_checksum !=
+          default_comm_ptr->use_checksum)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_USE_CHECKSUM].config_entry_name,
+           comm_ptr->use_checksum)))
+          goto error;
+      }
+      if (comm_ptr->socket_bind_address !=
+          default_comm_ptr->socket_bind_address)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_BIND_ADDRESS].config_entry_name,
+           comm_ptr->socket_bind_address)))
+          goto error;
+      }
+    }
   }
   if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
                                                      file_ptr)))
