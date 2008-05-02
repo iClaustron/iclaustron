@@ -5834,49 +5834,14 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
   return 0;
 }
 
-static int
-write_one_cluster_config_file(IC_STRING *config_dir,
-                              IC_CLUSTER_CONFIG *clu_conf,
-                              guint32 config_version)
+int
+write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                       IC_DYNAMIC_ARRAY_OPS *da_ops,
+                       gchar *buf,
+                       IC_CLUSTER_CONFIG *clu_conf,
+                       IC_CLUSTER_CONFIG_LOAD *clu_def)
 {
-  IC_DYNAMIC_ARRAY *dyn_array;
-  IC_DYNAMIC_ARRAY_OPS *da_ops;
-  IC_STRING file_name_str;
-  int error= MEM_ALLOC_ERROR;
-  int file_ptr;
-  IC_CLUSTER_CONFIG_LOAD clu_def;
-  gchar *struct_ptr, *default_struct_ptr;
-  gchar *first_hostname, *second_hostname;
-  guint32 node1_id, node2_id, node1_port, node2_port;
-  const gchar *sect_name;
-  guint32 i;
-  IC_NODE_TYPES node_type;
-  IC_SOCKET_LINK_CONFIG *comm_ptr, *default_comm_ptr;
-  IC_DATA_SERVER_CONFIG *node1_ptr, *node2_ptr;
-  gchar buf[IC_MAX_FILE_NAME_SIZE];
-
-  memset(&clu_def, 0, sizeof(IC_CLUSTER_CONFIG_LOAD));
-  /*
-     We start by creating the new configuration file and a dynamic array
-     used to fill in the content of this new file before we write it.
-  */
-  ic_create_config_file_name(&file_name_str,
-                             buf,
-                             config_dir,
-                             &clu_conf->clu_info.cluster_name,
-                             config_version);
-  /* We are writing a new file here */
-  file_ptr= g_creat((const gchar *)buf, S_IXUSR | S_IRUSR);
-  if (file_ptr == (int)-1)
-  {
-    error= errno;
-    goto file_error;
-  }
-
-  if (!(dyn_array= ic_create_simple_dynamic_array()))
-    return MEM_ALLOC_ERROR;
-  da_ops= &dyn_array->da_ops;
-
+  int error;
   /*
     First step is to write all the default sections and also to
     record all the defaults. We need to record all defaults to avoid issues
@@ -5889,7 +5854,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_DATA_SERVER_TYPE)))
+                                    clu_def, IC_DATA_SERVER_TYPE)))
     goto error;
 
   /* Write [client default] and its defaults into the buffer */
@@ -5898,7 +5863,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_CLIENT_TYPE)))
+                                    clu_def, IC_CLIENT_TYPE)))
     goto error;
 
   /* Write [cluster server default] and its defaults into the buffer */
@@ -5907,7 +5872,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_CLUSTER_SERVER_TYPE)))
+                                    clu_def, IC_CLUSTER_SERVER_TYPE)))
     goto error;
 
   /* Write [sql server default] and its defaults into the buffer */
@@ -5916,7 +5881,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_SQL_SERVER_TYPE)))
+                                    clu_def, IC_SQL_SERVER_TYPE)))
     goto error;
 
   /* Write [rep server default] and its defaults into the buffer */
@@ -5925,7 +5890,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_REP_SERVER_TYPE)))
+                                    clu_def, IC_REP_SERVER_TYPE)))
     goto error;
 
   /* Write [file server default] and its defaults into the buffer */
@@ -5934,7 +5899,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_FILE_SERVER_TYPE)))
+                                    clu_def, IC_FILE_SERVER_TYPE)))
     goto error;
 
   /* Write [restore default] and its defaults into the buffer */
@@ -5943,7 +5908,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_RESTORE_TYPE)))
+                                    clu_def, IC_RESTORE_TYPE)))
     goto error;
 
   /* Write [cluster manager default] and its defaults into the buffer */
@@ -5952,7 +5917,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_CLUSTER_MGR_TYPE)))
+                                    clu_def, IC_CLUSTER_MGR_TYPE)))
     goto error;
 
   /* Write [socket default] and its defaults into the buffer */
@@ -5961,8 +5926,25 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     goto error;
 
   if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
-                                    &clu_def, IC_COMM_TYPE)))
+                                    clu_def, IC_COMM_TYPE)))
     goto error;
+
+error:
+  return error;
+}
+
+static int
+write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                    IC_DYNAMIC_ARRAY_OPS *da_ops,
+                    gchar *buf,
+                    IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_def)
+{
+  IC_NODE_TYPES node_type;
+  guint32 i;
+  gchar *struct_ptr, *default_struct_ptr;
+  const gchar *sect_name;
+  int error= 0;
 
   /*
     Now it is time to write all node specific configuration items.
@@ -5979,35 +5961,35 @@ write_one_cluster_config_file(IC_STRING *config_dir,
     {
       case IC_DATA_SERVER_NODE:
         sect_name= data_server_str;
-        default_struct_ptr= (gchar*)&clu_def.default_data_server_config;
+        default_struct_ptr= (gchar*)&clu_def->default_data_server_config;
         break;
       case IC_CLIENT_NODE:
         sect_name= client_node_str;
-        default_struct_ptr= (gchar*)&clu_def.default_client_config;
+        default_struct_ptr= (gchar*)&clu_def->default_client_config;
         break;
       case IC_CLUSTER_SERVER_NODE:
         sect_name= cluster_server_str;
-        default_struct_ptr= (gchar*)&clu_def.default_cluster_server_config;
+        default_struct_ptr= (gchar*)&clu_def->default_cluster_server_config;
         break;
       case IC_SQL_SERVER_NODE:
         sect_name= sql_server_str;
-        default_struct_ptr= (gchar*)&clu_def.default_sql_server_config;
+        default_struct_ptr= (gchar*)&clu_def->default_sql_server_config;
         break;
       case IC_REP_SERVER_NODE:
         sect_name= rep_server_str;
-        default_struct_ptr= (gchar*)&clu_def.default_rep_server_config;
+        default_struct_ptr= (gchar*)&clu_def->default_rep_server_config;
         break;
       case IC_FILE_SERVER_NODE:
         sect_name= file_server_str;
-        default_struct_ptr= (gchar*)&clu_def.default_file_server_config;
+        default_struct_ptr= (gchar*)&clu_def->default_file_server_config;
         break;
       case IC_RESTORE_NODE:
         sect_name= restore_node_str;
-        default_struct_ptr= (gchar*)&clu_def.default_restore_config;
+        default_struct_ptr= (gchar*)&clu_def->default_restore_config;
         break;
       case IC_CLUSTER_MGR_NODE:
         sect_name= cluster_mgr_str;
-        default_struct_ptr= (gchar*)&clu_def.default_cluster_mgr_config;
+        default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
         break;
       default:
         g_assert(FALSE);
@@ -6019,6 +6001,24 @@ write_one_cluster_config_file(IC_STRING *config_dir,
                                    struct_ptr, default_struct_ptr)))
       goto error;
   }
+error:
+  return error;
+}
+
+static int
+write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                    IC_DYNAMIC_ARRAY_OPS *da_ops,
+                    gchar *buf,
+                    IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_def)
+{
+  guint32 i;
+  guint32 node1_id, node2_id, node1_port, node2_port;
+  gchar *first_hostname, *second_hostname;
+  IC_SOCKET_LINK_CONFIG *comm_ptr, *default_comm_ptr;
+  IC_DATA_SERVER_CONFIG *node1_ptr, *node2_ptr;
+  int error= 0;
+
   for (i= 0; i < clu_conf->num_comms; i++)
   {
     /*
@@ -6028,7 +6028,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
       time we add or remove a configuration parameter for communication
       sections.
     */
-    default_comm_ptr= &clu_def.default_socket_config;
+    default_comm_ptr= &clu_def->default_socket_config;
     comm_ptr= (IC_SOCKET_LINK_CONFIG*)clu_conf->comm_config[i];
     node1_id= comm_ptr->first_node_id;
     node2_id= comm_ptr->second_node_id;
@@ -6163,6 +6163,57 @@ write_one_cluster_config_file(IC_STRING *config_dir,
       }
     }
   }
+error:
+  return error;
+}
+
+static int
+write_one_cluster_config_file(IC_STRING *config_dir,
+                              IC_CLUSTER_CONFIG *clu_conf,
+                              guint32 config_version)
+{
+  IC_DYNAMIC_ARRAY *dyn_array;
+  IC_DYNAMIC_ARRAY_OPS *da_ops;
+  IC_STRING file_name_str;
+  int error= MEM_ALLOC_ERROR;
+  int file_ptr;
+  IC_CLUSTER_CONFIG_LOAD clu_def;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+
+  memset(&clu_def, 0, sizeof(IC_CLUSTER_CONFIG_LOAD));
+  /*
+     We start by creating the new configuration file and a dynamic array
+     used to fill in the content of this new file before we write it.
+  */
+  ic_create_config_file_name(&file_name_str,
+                             buf,
+                             config_dir,
+                             &clu_conf->clu_info.cluster_name,
+                             config_version);
+  /* We are writing a new file here */
+  file_ptr= g_creat((const gchar *)buf, S_IXUSR | S_IRUSR);
+  if (file_ptr == (int)-1)
+  {
+    error= errno;
+    goto file_error;
+  }
+
+  if (!(dyn_array= ic_create_simple_dynamic_array()))
+    return MEM_ALLOC_ERROR;
+  da_ops= &dyn_array->da_ops;
+
+  if ((error= write_default_sections(dyn_array, da_ops, buf,
+                                     clu_conf, &clu_def)))
+    goto error;
+ 
+  if ((error= write_node_sections(dyn_array, da_ops, buf,
+                                  clu_conf, &clu_def)))
+    goto error;
+
+  if ((error= write_comm_sections(dyn_array, da_ops, buf,
+                                  clu_conf, &clu_def)))
+    goto error;
+
   if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
                                                      file_ptr)))
     goto error;

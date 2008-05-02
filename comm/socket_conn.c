@@ -590,7 +590,7 @@ write_socket_connection(IC_CONNECTION *conn,
   guint32 loop_count= 0;
   guint32 secs_count= 0;
 
-  ICLAUSTRON_SEND_SOCKET(conn->rw_sockfd);
+  /* ICLAUSTRON_SEND_SOCKET(conn->rw_sockfd); */
   do
   {
     gssize ret_code;
