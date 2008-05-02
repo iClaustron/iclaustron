@@ -20,7 +20,7 @@ static gchar *glob_debug_file= "debug.log";
 static guint32 glob_debug_screen= 0;
 
 IC_STRING ic_version_file_string=
-{(gchar*)".version", (guint32)8, (gboolean)TRUE};
+{(gchar*)"_version", (guint32)8, (gboolean)TRUE};
 IC_STRING ic_config_string=
 {(gchar*)"config", (guint32)6, (gboolean)TRUE};
 IC_STRING ic_config_ending_string=
@@ -85,6 +85,8 @@ int
 ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
 {
   int error= IC_ERROR_MEM_ALLOC;
+  gchar *c_str;
+
   IC_INIT_STRING(base_dir, NULL, 0, TRUE);
   if (input_base_dir == NULL)
   {
@@ -122,6 +124,16 @@ ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
   {
     if (ic_add_dup_string(base_dir, input_base_dir))
       goto end;
+#ifdef WINDOWS
+    c_str= "\\";
+#else
+    c_str= "/";
+#endif
+    if (base_dir->str[base_dir->len - 1] != c_str[0])
+    {
+      if (ic_add_dup_string(base_dir, c_str))
+        goto end;
+    }
   }
   error= 0;
 end:

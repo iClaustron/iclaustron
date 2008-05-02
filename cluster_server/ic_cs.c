@@ -43,8 +43,8 @@ static GOptionEntry entries[] =
 {
   { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
     "Is this bootstrap of a cluster", NULL},
-  { "config_path", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_path,
-    "Sets path to directory of configuration files", NULL},
+  { "base_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_path,
+    "Sets path to base directory, config files in subdirectory config", NULL},
   { "server_port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
     "Set Cluster Server connection Port", NULL},
   { "server_name", 0, 0, G_OPTION_ARG_STRING, &glob_server_name,
