@@ -302,7 +302,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
   ic_create_config_file_name(&file_name_string, file_name,
                              &glob_config_dir,
                              &ic_config_string,
-                             config_version_number);
+                             *config_version_number);
   cluster_conf_ptr->perm_mc_ptr= cluster_mc_ptr;
   if (!(clu_infos= ic_load_cluster_config_from_file(file_name,
                                                     cluster_conf_ptr)))
@@ -323,7 +323,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
   if (glob_bootstrap && (*config_version_number == 0))
   {
     if ((error= ic_write_full_config_to_disk(&glob_config_dir,
-                                             config_version_number,
+                                             *config_version_number,
                                              clu_infos,
                                              clusters)))
     {
