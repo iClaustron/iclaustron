@@ -244,8 +244,8 @@ verify_grid_config(IC_CLUSTER_CONFIG **clusters)
           node_type= cluster->node_types[i];
         else
           node_type= IC_NOT_EXIST_NODE_TYPE;
-        first_cs_or_cm= node_type == IC_CLUSTER_SERVER_TYPE ||
-                        node_type == IC_CLUSTER_MGR_TYPE;
+        first_cs_or_cm= node_type == IC_CLUSTER_SERVER_NODE ||
+                        node_type == IC_CLUSTER_MGR_NODE;
         first= FALSE;
       }
       else
@@ -259,8 +259,8 @@ verify_grid_config(IC_CLUSTER_CONFIG **clusters)
         else
         {
           if (i <= cluster->max_node_id &&
-              (cluster->node_types[i] == IC_CLUSTER_SERVER_TYPE ||
-               cluster->node_types[i] == IC_CLUSTER_MGR_TYPE))
+              (cluster->node_types[i] == IC_CLUSTER_SERVER_NODE ||
+               cluster->node_types[i] == IC_CLUSTER_MGR_NODE))
             goto error;
         }
       }
@@ -268,7 +268,7 @@ verify_grid_config(IC_CLUSTER_CONFIG **clusters)
   }
   return 0;
 error:
-  printf("%s Grids require cluster managers/servers to be on same nodeid\n",
+  printf("%s Grids require cluster managers/servers to be on same nodeid in all clusters\n",
          err_str);
   return 1;
 }
@@ -323,7 +323,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
   if (glob_bootstrap && (*config_version_number == 0))
   {
     if ((error= ic_write_full_config_to_disk(&glob_config_dir,
-                                             *config_version_number,
+                                             config_version_number,
                                              clu_infos,
                                              clusters)))
     {

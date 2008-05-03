@@ -316,6 +316,7 @@ write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *dyn_array, int file_ptr)
 {
   IC_SIMPLE_DYNAMIC_BUF *dyn_buf= dyn_array->sd_array.first_dyn_buf;
   IC_SIMPLE_DYNAMIC_BUF *last_dyn_buf= dyn_array->sd_array.last_dyn_buf;
+  IC_SIMPLE_DYNAMIC_BUF *old_dyn_buf;
   gchar *buf;
   guint32 size_in_buffer;
   int ret_code;
@@ -329,9 +330,10 @@ write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *dyn_array, int file_ptr)
     buf= (gchar*)&dyn_buf->buf[0];
     if ((ret_code= ic_write_file(file_ptr, buf, size_in_buffer)))
       return ret_code;
+    old_dyn_buf= dyn_buf;
     dyn_buf= dyn_buf->next_dyn_buf;
-    g_assert((dyn_buf != last_dyn_buf && dyn_buf) ||
-             (dyn_buf == last_dyn_buf && !dyn_buf));
+    g_assert((old_dyn_buf != last_dyn_buf && dyn_buf) ||
+             (old_dyn_buf == last_dyn_buf && !dyn_buf));
   }
   return 0;
 }
