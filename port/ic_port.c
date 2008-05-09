@@ -54,3 +54,17 @@ ic_write_file(int file_ptr, const gchar *buf, size_t size)
   } while (1);
   return 0;
 }
+
+int
+ic_read_file(int file_ptr, gchar *buf, size_t size, guint32 *len)
+{
+  int ret_code;
+  ret_code= read(file_ptr, (void*)buf, size);
+  if (ret_code == (int)-1)
+  {
+    ret_code= errno;
+    return ret_code;
+  }
+  *len= (guint32)ret_code;
+  return 0;
+}

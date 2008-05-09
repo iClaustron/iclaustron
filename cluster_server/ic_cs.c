@@ -132,34 +132,19 @@ set_config_path(gchar *buf)
 static guint32
 load_config_version_number()
 {
-  gchar *version_file_str;
-  gsize version_file_len;
-  guint32 version_num_array[2];
-  GError *loc_error= NULL;
-  IC_STRING file_name_string;
-  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  guint32 version_number;
+  guint32 state;
+  int error;
 
-  ic_create_config_version_file_name(&file_name_string, file_name,
-                                     &glob_config_dir);
-  /*
-    We have now formed the file name of the version identifier file which
-    contains the version number this Cluster Server most recently created.
-  */
-  if (!file_name_string.str ||
-      !g_file_get_contents(file_name_string.str, &version_file_str,
-                           &version_file_len, &loc_error))
-    goto file_error;
-  if (version_file_len != IC_VERSION_FILE_LEN)
-    goto file_error;
-  /* Now time to interpret the actual data file */
-  memcpy(version_num_array, version_file_str, 2*sizeof(guint32));
-  ic_free(version_file_str);
-  version_num_array[0]= g_ntohl(version_num_array[0]);
-  version_num_array[1]= g_ntohl(version_num_array[1]);
-  return version_num_array[0];
-
-file_error:
-  return 0;
+  if ((error= ic_read_config_version_file(&glob_config_dir,
+                                          &version_number,
+                                          &state)))
+  {
+    /* More code to write */
+    exit(1);
+    return 0;
+  }
+  return version_number;
 }
 
 static int

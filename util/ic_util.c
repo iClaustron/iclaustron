@@ -78,7 +78,8 @@ ic_set_number_ending_string(gchar *buf, guint64 number)
   gchar *ignore_ptr;
   buf[0]= '.';
   ignore_ptr= ic_guint64_str(number,
-                             &buf[1]);
+                             &buf[1],
+                             NULL);
 }
 
 int
@@ -204,7 +205,7 @@ release_dyn_buf(IC_SIMPLE_DYNAMIC_BUF *loop_dyn_buf)
 
 static int
 insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
-                            gchar *buf, guint64 size)
+                            const gchar *buf, guint64 size)
 {
   IC_SIMPLE_DYNAMIC_ARRAY *sd_array= &dyn_array->sd_array;
   IC_SIMPLE_DYNAMIC_BUF *curr= sd_array->last_dyn_buf;
@@ -445,7 +446,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY *dyn_array,
 
 static int
 insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
-                             gchar *buf, guint64 size)
+                             const gchar *buf, guint64 size)
 {
   int ret_code;
   IC_SIMPLE_DYNAMIC_BUF *old_dyn_buf= dyn_array->sd_array.last_dyn_buf;
@@ -466,12 +467,16 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
     last_dyn_index= dyn_array->ord_array.last_dyn_index;
     if ((ret_code= insert_buf_in_ordered_dynamic_index(dyn_array,
                                                        last_dyn_index,
-                                                       (void*)loop_dyn_buf,
-                                                       TRUE)))
+                                                       NULL,
+                                                       (void*)loop_dyn_buf)))
     {
-      release_dyn_buf(old_dyn_buf->next_dyn_buf);
+      loop_dyn_buf= old_dyn_buf->next_dyn_buf;
+      release_dyn_buf(loop_dyn_buf);
       for (i= 0; i < ins_buf_count; i++)
-        release_dyn_buf(dyn_array);
+      {
+        loop_dyn_buf= loop_dyn_buf->next_dyn_buf;
+        release_dyn_buf(loop_dyn_buf);
+      }
       return ret_code;
     }
     ins_buf_count++;
@@ -480,9 +485,11 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
 }
 
 static int
-find_pos_ordered_dyn_array(IC_DYNAMIC_ARRAY *dyn_array, guint64 pos,
-                           IC_SIMPLE_DYNAMIC_BUF **dyn_buf,
-                           guint64 *buf_pos)
+find_pos_ordered_dyn_array(
+__attribute__ ((unused)) IC_DYNAMIC_ARRAY *dyn_array,
+__attribute__ ((unused)) guint64 pos,
+__attribute__ ((unused)) IC_SIMPLE_DYNAMIC_BUF **dyn_buf,
+__attribute__ ((unused)) guint64 *buf_pos)
 {
   return 0;
 }
@@ -780,7 +787,7 @@ ic_reverse_str(gchar *in_buf, gchar *out_buf)
     out_buf[j++]= in_buf[--i];
 }
 
-gchar *ic_guint64_str(guint64 val, gchar *ptr)
+gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
 {
   guint32 i= 0;
   gchar buf[128];
@@ -800,6 +807,8 @@ gchar *ic_guint64_str(guint64 val, gchar *ptr)
   }
   buf[i]= 0;
   ic_reverse_str((gchar*)&buf, ptr);
+  if (len)
+    *len= i;
   return ptr;
 }
 
@@ -917,8 +926,8 @@ const guint32 MAX_LINE_LEN = 120;
 const gchar *false_str= "false";
 const gchar *true_str= "true";
 
-static 
-gboolean ic_check_digit(gchar c)
+static gboolean
+ic_check_digit(gchar c)
 {
   if (c < '0' || c > '9')
     return FALSE;
@@ -1009,24 +1018,39 @@ ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
 }
 
 int
-ic_conv_str_to_int(gchar *str, guint64 *number)
+ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len,
+                   gboolean is_null_terminated)
 {
+  gchar *rev_str;
+  guint32 str_len;
+  gchar save_char;
   gchar reverse_str[64];
-  gchar *rev_str= reverse_str;
-  *number= 0;
-  int str_len= strlen(str);
   DEBUG_ENTRY("ic_conv_str_to_int");
+  rev_str= reverse_str;
+  *number= 0;
 
+  for (str_len= 0; str_len < 62; str_len++)
+  {
+    if (!ic_check_digit(str[str_len]))
+      break;
+  }
   if (str_len > 60 || str_len == 0)
     return 1;
+  if (len)
+    *len= str_len;
+  if (!is_null_terminated)
+  {
+    save_char= str[str_len];
+    str[str_len]= 0;
+  }
   ic_reverse_str(str, rev_str);
   while (*rev_str)
   {
-    if (*rev_str < '0' || *rev_str > '9')
-      return 1;
     *number= (*number * 10) + (*rev_str - '0');
     rev_str++;
   }
+  if (!is_null_terminated)
+    str[str_len]= save_char;
   return 0;
 }
 
