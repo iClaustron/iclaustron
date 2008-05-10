@@ -57,6 +57,7 @@ gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
 void ic_free(void *ret_obj);
 
+guint32 ic_get_own_pid();
 int ic_is_process_alive(guint32 pid, gchar *process_name, gchar **err_msg);
 /* iClaustron file routines */
 int ic_write_file(int file_ptr, const gchar *buf, size_t size);

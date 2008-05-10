@@ -6310,6 +6310,7 @@ read_config_version_file(IC_STRING *config_dir,
     {
       *config_version= 0;
       *state= 0;
+      *pid= 0;
       return 0;
     }
     goto file_error;
@@ -6337,86 +6338,56 @@ file_error:
   return error;
 }
 
-int
-ic_load_config_version(IC_STRING *config_dir,
-                       guint32 *config_version)
+static void
+insert_line_config_version_file(IC_STRING *str,
+                                gchar **ptr,
+                                guint32 value)
 {
-  guint32 state, pid;
-  int error;
-  gchar *err_msg;
-  DEBUG_ENTRY("ic_load_config_version");
+  guint32 str_len;
+  guint64 long_value= (guint64)value;
+  gchar *loc_ptr= *ptr;
 
-  if ((error= read_config_version_file(config_dir,
-                                       config_version,
-                                       &state,
-                                       &pid)))
-  {
-    if (state == CONFIG_STATE_IDLE)
-    {
-      /*
-        Configuration not in update process. It is also idle in the sense mmmmm
-        that no other process is active using this configuration.
-      */
-      return 0;
-    }
-    else if (state == CONFIG_STATE_BUSY)
-    {
-      /*
-        Another process is still running a Cluster Server on the same
-        configuration files. We will double-check that the process is
-        still running and that it hasn't died on us. If it's dead then
-        we can change the state to CONFIG_STATE_BUSY and set our own
-        pid instead of the previous owner.
-      */
-      if (ic_is_process_alive(pid, (gchar*)"ic_cs", &err_msg))
-      {
-        printf("%s\n", err_msg);
-        return 1;
-      }
-    }
-    else if (state == CONFIG_STATE_UPDATE_CLUSTER_CONFIG)
-    {
-    }
-  }
-  return 0;
+  strcpy(loc_ptr, str->str);
+  loc_ptr+= str->len;
+  loc_ptr= ic_guint64_str(long_value, loc_ptr, &str_len);
+  loc_ptr+= str_len;
+  *loc_ptr= CARRIAGE_RETURN;
+  loc_ptr++;
+  *ptr= loc_ptr;
 }
 
 static int
 write_config_version_file(IC_STRING *config_dir,
                           guint32 config_version,
-                          guint32 state)
+                          guint32 state,
+                          guint32 pid)
 {
   int file_ptr, error;
-  IC_STRING file_name_string;
-  guint64 value;
-  guint32 str_len;
-  gchar *ptr;
+  IC_STRING file_name_string, str;
   gchar buf[128];
+  gchar *ptr= buf;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("write_config_version_file");
 
   /*
     Create a string like
     version: <config_version><CR>
     state: <state><CR>
+    pid: <pid><CR>
+
+    The version is the current version of the configuration
+    State is either idle if no one is currently running the
+    cluster server using this configuration, it's busy when
+    someone is running and isn't updating the configuration,
+    finally it can be in a number of states which is used
+    when the configuration is updated.
   */
-
-  ptr= buf;
-
-  strcpy(buf, version_str);
-  ptr+= VERSION_REQ_LEN;
-  value= (guint64)config_version;
-  ptr= ic_guint64_str(value, ptr, &str_len);
-  ptr+= str_len;
-  *ptr= CARRIAGE_RETURN;
-  ptr++;
-
-  strcpy(ptr, state_str);
-  ptr+= STATE_STR_LEN;
-  value= (guint64)state;
-  ptr= ic_guint64_str(value, ptr, &str_len);
-  ptr+= str_len;
-  *ptr= CARRIAGE_RETURN;
-  ptr++;
+  IC_INIT_STRING(&str, (gchar*)version_str, VERSION_REQ_LEN, TRUE);
+  insert_line_config_version_file(&str, &ptr, config_version);
+  IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
+  insert_line_config_version_file(&str, &ptr, state);
+  IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
+  insert_line_config_version_file(&str, &ptr, pid);
 
   ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
   if (config_version == (guint32)1)
@@ -6446,6 +6417,54 @@ file_error:
 }
 
 int
+ic_load_config_version(IC_STRING *config_dir,
+                       gchar *process_name,
+                       guint32 *config_version)
+{
+  guint32 state, pid;
+  int error;
+  gchar *err_msg;
+  DEBUG_ENTRY("ic_load_config_version");
+
+  if ((error= read_config_version_file(config_dir,
+                                       config_version,
+                                       &state,
+                                       &pid)))
+  {
+    if (state == CONFIG_STATE_IDLE)
+    {
+      /*
+        Configuration not in update process. It is also idle in the sense
+        that no other process is active using this configuration. In this
+        state we can trust the version number read and update the file
+        such that the state is set to busy with our own process id.
+      */
+      return 0;
+    }
+
+    else if (state == CONFIG_STATE_BUSY)
+    {
+      /*
+        Another process is still running a Cluster Server on the same
+        configuration files. We will double-check that the process is
+        still running and that it hasn't died on us. If it's dead then
+        we can change the state to CONFIG_STATE_BUSY and set our own
+        pid instead of the previous owner.
+      */
+      if (ic_is_process_alive(pid, process_name, &err_msg))
+      {
+        printf("%s\n", err_msg);
+        return 1;
+      }
+    }
+    else if (state == CONFIG_STATE_UPDATE_CLUSTER_CONFIG)
+    {
+    }
+  }
+  return 0;
+}
+
+int
 ic_write_full_config_to_disk(IC_STRING *config_dir,
                              guint32 *old_config_version_number,
                              IC_CLUSTER_CONNECT_INFO **clu_infos,
@@ -6453,6 +6472,8 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
 {
   int error= 0;
   guint32 old_version= *old_config_version_number;
+  guint32 own_pid;
+  DEBUG_ENTRY("ic_write_full_config_to_disk");
   /*
    The first step before writing anything is to ensure that the previous
    write was successfully completed. This is accomplished by removing any
@@ -6484,6 +6505,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
    When the old config version number is 1 we can skip step 0 but need to
    perform step 3.
   */
+  own_pid= ic_get_own_pid();
   if (old_version > (guint32)1)
     remove_config_files(config_dir, clu_infos, old_version - 1); /* Step 0 */
   /* Step 1 */
@@ -6491,7 +6513,8 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
                                  old_version + 1)))
     goto error;
   /* Step 2 */
-  if ((error= write_config_version_file(config_dir, old_version + 1, 0)))
+  if ((error= write_config_version_file(config_dir, old_version + 1, 0,
+                                        own_pid)))
     goto error;
   if (old_version > 0)
     remove_config_files(config_dir, clu_infos, old_version); /* Step 3 */

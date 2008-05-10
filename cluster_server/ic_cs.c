@@ -32,6 +32,7 @@
 /* Global variables */
 static gchar *err_str= "Error:";
 static IC_STRING glob_config_dir;
+static gchar *glob_process_name= "ic_cs";
 
 /* Option variables */
 static gchar *glob_config_path= NULL;
@@ -261,6 +262,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
     return 1;
   }
   if ((error= ic_load_config_version(&glob_config_dir,
+                                     (gchar*)glob_process_name,
                                      config_version_number)))
     goto error;
   if (glob_bootstrap && *config_version_number)

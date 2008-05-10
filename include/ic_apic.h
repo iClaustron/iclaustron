@@ -581,6 +581,7 @@ struct ic_comm_link_config
 typedef struct ic_comm_link_config IC_COMM_LINK_CONFIG;
 
 int ic_load_config_version(IC_STRING *config_dir,
+                           gchar *process_name,
                            guint32 *version_number);
 int
 ic_write_full_config_to_disk(IC_STRING *config_dir,

@@ -37,13 +37,12 @@ ic_free(void *ret_obj)
   g_free(ret_obj);
 }
 
-int
-ic_get_own_pid(int *own_pid)
+guint32
+ic_get_own_pid()
 {
   pid_t pid;
   pid= getpid();
-  *own_pid= (int)pid;
-  return 0;
+  return (guint32)pid;
 }
 int run_process(gchar **argv,
                 int *exit_status)
