@@ -6362,6 +6362,47 @@ write_config_version_file(IC_STRING *config_dir,
                           guint32 state,
                           guint32 pid)
 {
+  guint32 read_pid, read_state, read_cv;
+  int error;
+  DEBUG_ENTRY("write_config_version_file");
+
+  if ((error= write_cv_file(config_dir, config_version,
+                            state, pid)))
+    goto error;
+  if ((error= read_config_version_file(config_dir,
+                                       &read_cv,
+                                       &read_state,
+                                       &read_pid)))
+    goto error;
+  if ((read_cv != config_version) ||
+      (read_state != state) ||
+      (read_pid != pid))
+  {
+    /*
+      We have written the config version file but after reading it,
+      the values doesn't match. This means someone else have got
+      there before us. In this case we need to stop this process
+      and let the other process win.
+    */
+    error= 1;
+  }
+  /*
+    We are now safe since our pid is written into the config version
+    file and anyone trying to start using this config directory will
+    have to check if our process is awake. So as long as we are alive
+    we are safe.
+    error == 0 in this path.
+  */
+error:
+  return error;
+}
+
+static int
+write_cv_file(IC_STRING *config_dir,
+              guint32 config_version,
+              guint32 state,
+              guint32 pid)
+{
   int file_ptr, error;
   IC_STRING file_name_string, str;
   gchar buf[128];
@@ -6441,16 +6482,21 @@ ic_load_config_version(IC_STRING *config_dir,
       */
       return 0;
     }
-
-    else if (state == CONFIG_STATE_BUSY)
+    if ((error= ic_is_process_alive(pid, process_name, &err_msg)))
     {
       /*
         Another process is still running a Cluster Server on the same
         configuration files. We will double-check that the process is
         still running and that it hasn't died on us. If it's dead then
         we can change the state to CONFIG_STATE_BUSY and set our own
-        pid instead of the previous owner.
+        pid instead of the previous owner. If the state is in an update
+        state we need to clean up before changing the state.
       */
+      printf("%s\n", err_msg);
+      return 1;
+    }
+    if (state == CONFIG_STATE_BUSY)
+    {
       if (ic_is_process_alive(pid, process_name, &err_msg))
       {
         printf("%s\n", err_msg);
