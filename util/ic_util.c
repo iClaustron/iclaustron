@@ -774,15 +774,15 @@ ic_create_memory_container(guint32 base_size, guint32 max_size)
 }
  
 static void
-ic_reverse_str(gchar *in_buf, gchar *out_buf)
+ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char)
 {
   guint32 i= 0;
   guint32 j= 0;
   DEBUG_ENTRY("ic_reverse_str");
 
-  while (in_buf[i])
+  while (in_buf[i] != end_char)
     i++;
-  out_buf[i]= in_buf[i]; /* Copy NULL byte */
+  out_buf[i]= in_buf[i]; /* Copy end_char byte */
   while (i)
     out_buf[j++]= in_buf[--i];
 }
@@ -806,7 +806,7 @@ gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
     i++;
   }
   buf[i]= 0;
-  ic_reverse_str((gchar*)&buf, ptr);
+  ic_reverse_str((gchar*)&buf, ptr, 0);
   if (len)
     *len= i;
   return ptr;
@@ -834,7 +834,7 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
     i++;
   }
   buf[i]= 0;
-  ic_reverse_str((gchar*)&buf, ptr);
+  ic_reverse_str((gchar*)&buf, ptr, 0);
   return ptr;
 }
 
@@ -1018,12 +1018,11 @@ ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
 }
 
 int
-ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len,
-                   gboolean is_null_terminated)
+ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len)
 {
   gchar *rev_str;
   guint32 str_len;
-  gchar save_char;
+  gchar end_char;
   gchar reverse_str[64];
   DEBUG_ENTRY("ic_conv_str_to_int");
   rev_str= reverse_str;
@@ -1036,21 +1035,15 @@ ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len,
   }
   if (str_len > 60 || str_len == 0)
     return 1;
+  end_char= str[str_len];
   if (len)
     *len= str_len;
-  if (!is_null_terminated)
-  {
-    save_char= str[str_len];
-    str[str_len]= 0;
-  }
-  ic_reverse_str(str, rev_str);
-  while (*rev_str)
+  ic_reverse_str(str, rev_str, end_char);
+  while (*rev_str != end_char)
   {
     *number= (*number * 10) + (*rev_str - '0');
     rev_str++;
   }
-  if (!is_null_terminated)
-    str[str_len]= save_char;
   return 0;
 }
 

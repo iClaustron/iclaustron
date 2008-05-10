@@ -129,24 +129,6 @@ set_config_path(gchar *buf)
   return 0;
 }
 
-static guint32
-load_config_version_number()
-{
-  guint32 version_number;
-  guint32 state;
-  int error;
-
-  if ((error= ic_read_config_version_file(&glob_config_dir,
-                                          &version_number,
-                                          &state)))
-  {
-    /* More code to write */
-    exit(1);
-    return 0;
-  }
-  return version_number;
-}
-
 static int
 load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
                   IC_CLUSTER_CONFIG **clusters,
@@ -278,7 +260,9 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
            err_str);
     return 1;
   }
-  *config_version_number= load_config_version_number();
+  if ((error= ic_load_config_version(&glob_config_dir,
+                                     config_version_number)))
+    goto error;
   if (glob_bootstrap && *config_version_number)
   {
     printf("Bootstrap has already been performed\n");

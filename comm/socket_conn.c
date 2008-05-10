@@ -350,7 +350,7 @@ translate_hostnames(IC_CONNECTION *conn)
   if (!conn->server_port)
     return IC_ERROR_NO_SERVER_PORT;
   DEBUG_PRINT(COMM_LEVEL, ("Server port = %s", conn->server_port));
-  if (ic_conv_str_to_int(conn->server_port, &server_port, NULL, TRUE) ||
+  if (ic_conv_str_to_int(conn->server_port, &server_port, NULL) ||
       server_port == 0LL || server_port > 65535)
     return IC_ERROR_ILLEGAL_SERVER_PORT;
   conn->server_port_num= (guint16)server_port;
@@ -380,7 +380,7 @@ translate_hostnames(IC_CONNECTION *conn)
   }
   if (!conn->client_port)
     conn->client_port= "0"; /* Use "0" if user provided no port */
-  if (ic_conv_str_to_int(conn->client_port, &client_port, NULL, TRUE) ||
+  if (ic_conv_str_to_int(conn->client_port, &client_port, NULL) ||
       client_port > 65535)
     return IC_ERROR_ILLEGAL_CLIENT_PORT;
   conn->client_port_num= (guint16)client_port;

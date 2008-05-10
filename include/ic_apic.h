@@ -580,9 +580,8 @@ struct ic_comm_link_config
 };
 typedef struct ic_comm_link_config IC_COMM_LINK_CONFIG;
 
-int ic_read_config_version_file(IC_STRING *config_dir,
-                                guint32 *version_number,
-                                guint32 *state);
+int ic_load_config_version(IC_STRING *config_dir,
+                           guint32 *version_number);
 int
 ic_write_full_config_to_disk(IC_STRING *config_dir,
                              guint32 *old_version_number,

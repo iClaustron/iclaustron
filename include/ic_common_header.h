@@ -57,6 +57,7 @@ gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
 void ic_free(void *ret_obj);
 
+int ic_is_process_alive(guint32 pid, gchar *process_name, gchar **err_msg);
 /* iClaustron file routines */
 int ic_write_file(int file_ptr, const gchar *buf, size_t size);
 int ic_read_file(int file_ptr, gchar *buf, size_t size, guint32 *len);
@@ -394,8 +395,7 @@ void ic_set_up_ic_string(IC_STRING *in_out_str);
 */
 gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len);
 gchar *ic_guint64_hex_str(guint64 val, gchar *ptr);
-int ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len,
-                       gboolean is_null_terminated);
+int ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len);
 
 /* Bit manipulation routines */
 guint32 ic_count_highest_bit(guint32 bit_var);

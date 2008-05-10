@@ -15,6 +15,8 @@
 
 #include <glib.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <ic_common_header.h>
 #include <errno.h>
 
 gchar *
@@ -36,6 +38,74 @@ ic_free(void *ret_obj)
 }
 
 int
+ic_get_own_pid(int *own_pid)
+{
+  pid_t pid;
+  pid= getpid();
+  *own_pid= (int)pid;
+  return 0;
+}
+int run_process(gchar **argv,
+                int *exit_status)
+{
+  GError *error;
+  if (g_spawn_sync(NULL,
+                   argv,
+                   NULL,
+                   G_SPAWN_FILE_AND_ARGV_ZERO | G_SPAWN_SEARCH_PATH,
+                   NULL,
+                   NULL,
+                   NULL,
+                   NULL,
+                   exit_status,
+                   &error))
+    return 0;
+  printf("Exit status %d", *exit_status);
+  return *exit_status;
+}
+
+int
+ic_is_process_alive(guint32 pid,
+                    gchar *process_name,
+                    gchar **err_msg)
+{
+  gchar *argv[5];
+  gint exit_status;
+  guint64 value= (guint64)pid;
+  gchar *pid_number_str;
+  int error;
+  gchar buf[64];
+
+  pid_number_str= ic_guint64_str(value, buf, NULL);
+#ifdef LINUX
+  argv[0]= "linux_check_process.sh";
+#endif
+#ifdef MACOSX
+  argv[0]= "macosx_check_process.sh";
+#endif
+#ifdef SOLARIS
+  argv[0]= "solaris_check_process.sh";
+#endif
+  argv[1]= "--process_name";
+  argv[2]= process_name;
+  argv[3]= "--pid";
+  argv[4]= pid_number_str;
+
+  error= run_process(argv, &exit_status);
+  if (error == (gint)1)
+  {
+    *err_msg= "Process is still running";
+    return 1;
+  }
+  else if (error == (gint)2)
+  {
+    *err_msg= "Error in script finding process state";
+    return 2;
+  }
+  return 0;
+}
+
+int
 ic_write_file(int file_ptr, const gchar *buf, size_t size)
 {
   int ret_code;
@@ -47,7 +117,7 @@ ic_write_file(int file_ptr, const gchar *buf, size_t size)
       ret_code= errno;
       return ret_code;
     }
-    if (ret_code == size)
+    if (ret_code == (int)size)
       return 0;
     buf+= ret_code;
     size-= ret_code;

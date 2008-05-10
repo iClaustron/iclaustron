@@ -323,7 +323,13 @@ gchar *ic_empty_string= "";
   protocol
 */
 static const gchar *state_str= "state: ";
+static const gchar *pid_str= "pid: ";
 #define STATE_STR_LEN 7
+#define PID_STR_LEN 5
+#define CONFIG_STATE_IDLE 0
+#define CONFIG_STATE_BUSY 1
+#define CONFIG_STATE_UPDATE_CLUSTER_CONFIG 2
+#define CONFIG_STATE_UPDATE_CONFIGS 3
 /* Strings used in cluster configuration files */
 static const gchar *cluster_str= "cluster";
 static const gchar *cluster_id_string= "cluster_id";
@@ -6250,15 +6256,47 @@ write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
   return 0;
 }
 
-int
-ic_read_config_version_file(IC_STRING *config_dir,
-                            guint32 *config_version,
-                            guint32 *state)
+static int
+cmp_config_version_line(IC_STRING *str, guint32 *len,
+                        guint32 *value, gchar **ptr)
+{
+  guint64 loc_value;
+  guint32 value_len;
+  guint32 loc_len= *len;
+  gchar *loc_ptr= *ptr;
+  int error;
+
+  if (memcmp(loc_ptr, str->str, str->len) || loc_len < str->len)
+    goto file_error;
+  loc_len-= str->len;
+  loc_ptr+= str->len;
+  if (ic_conv_str_to_int(loc_ptr, &loc_value, &value_len))
+    goto file_error;
+  if ((loc_len < (value_len + 1)) ||
+      (loc_value > (guint64)(((guint64)1) << 32)))
+    goto file_error;
+  *value= (guint32)loc_value;
+  loc_ptr+= value_len;
+  if (*loc_ptr != CARRIAGE_RETURN)
+    goto file_error;
+  loc_ptr++;
+  loc_len-= (value_len + 1);
+  *ptr= loc_ptr;
+  *len= loc_len;
+file_error:
+  return error;
+}
+
+static int
+read_config_version_file(IC_STRING *config_dir,
+                         guint32 *config_version,
+                         guint32 *state,
+                         guint32 *pid)
 {
   IC_STRING file_name_string;
+  IC_STRING str;
   int file_ptr, error;
-  guint32 len, value_len;
-  guint64 value;
+  guint32 len;
   gchar *ptr;
   gchar buf[128];
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
@@ -6280,45 +6318,67 @@ ic_read_config_version_file(IC_STRING *config_dir,
     Read a string like
     version: <config_version><CR>
     state: <state><CR>
+    pid: <pid><CR>
   */
   if ((error= ic_read_file(file_ptr, buf, sizeof(buf), &len)))
     goto file_error;
 
-  error= 1;
   ptr= buf;
-  if (memcmp(ptr, version_str, VERSION_REQ_LEN) || len < VERSION_REQ_LEN)
+  IC_INIT_STRING(&str, (gchar*)version_str, VERSION_REQ_LEN, TRUE);
+  if ((error= cmp_config_version_line(&str, &len, config_version, &ptr)))
     goto file_error;
-  len-= VERSION_REQ_LEN;
-  ptr+= VERSION_REQ_LEN;
-  if (ic_conv_str_to_int(ptr, &value, &value_len, FALSE))
+  IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
+  if ((error= cmp_config_version_line(&str, &len, state, &ptr)))
     goto file_error;
-  if ((len < (value_len + 1 + STATE_STR_LEN)) ||
-      (value > (guint64)(((guint64)1) << 32)))
+  IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
+  if ((error= cmp_config_version_line(&str, &len, pid, &ptr)))
     goto file_error;
-  *config_version= (guint32)value;
-  ptr+= value_len;
-  if (*ptr != CARRIAGE_RETURN)
-    goto file_error;
-  ptr++;
-  if (memcmp(ptr, state_str, STATE_STR_LEN))
-    goto file_error;
-  len-= (value_len + 1 + STATE_STR_LEN);
-  ptr+= STATE_STR_LEN;
-  if (ic_conv_str_to_int(ptr, &value, &value_len, FALSE))
-    goto file_error;
-  if ((len < (value_len + 1)) ||
-      (value > (guint64)(((guint64)1) << 32)))
-    goto file_error;
-  *state= (guint32)value;
-  ptr+= value_len;
-  if (*ptr != CARRIAGE_RETURN)
-    goto file_error;
-  len-= (value_len + 1);
-  if (len)
-    goto file_error;
-  error= 0;
 file_error:
   return error;
+}
+
+int
+ic_load_config_version(IC_STRING *config_dir,
+                       guint32 *config_version)
+{
+  guint32 state, pid;
+  int error;
+  gchar *err_msg;
+  DEBUG_ENTRY("ic_load_config_version");
+
+  if ((error= read_config_version_file(config_dir,
+                                       config_version,
+                                       &state,
+                                       &pid)))
+  {
+    if (state == CONFIG_STATE_IDLE)
+    {
+      /*
+        Configuration not in update process. It is also idle in the sense mmmmm
+        that no other process is active using this configuration.
+      */
+      return 0;
+    }
+    else if (state == CONFIG_STATE_BUSY)
+    {
+      /*
+        Another process is still running a Cluster Server on the same
+        configuration files. We will double-check that the process is
+        still running and that it hasn't died on us. If it's dead then
+        we can change the state to CONFIG_STATE_BUSY and set our own
+        pid instead of the previous owner.
+      */
+      if (ic_is_process_alive(pid, (gchar*)"ic_cs", &err_msg))
+      {
+        printf("%s\n", err_msg);
+        return 1;
+      }
+    }
+    else if (state == CONFIG_STATE_UPDATE_CLUSTER_CONFIG)
+    {
+    }
+  }
+  return 0;
 }
 
 static int

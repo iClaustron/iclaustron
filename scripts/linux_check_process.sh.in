@@ -1,0 +1,138 @@
+#!/bin/bash
+## Copyright (C) 2008 iClaustron AB
+## This program is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation; version 2 of the License.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+check_binaries()
+{
+  ret=1
+  if test -x $PS ; then
+    FAULTY_PROCESS="ps"
+    return $ret
+  fi
+  if test -x $GREP ; then
+    FAULTY_PROCESS="grep"
+    return $ret
+  fi
+  if test -x $WC ; then
+    FAULTY_PROCESS="wc"
+    return $ret
+  fi
+  if test -x $ECHO ; then
+    FAULTY_PROCESS="echo"
+    return $ret
+  fi
+  ret=0
+  return $ret
+}
+
+check_process_alive()
+{
+  LINES=`$PS -p $SEARCHED_PID -o cmd | \
+         $GREP $SEARCHED_PROCESS | \
+         $WC -l`
+  return $LINES
+}
+
+set_binaries()
+{
+  WHICH=`which which`
+  if test "x$WHICH" = "x" ; then
+    WHICH="/usr/bin/which"
+  fi
+  if test -x $WHICH ; then
+    PS="/bin/ps"
+    GREP="/bin/grep"
+    WC="/usr/bin/wc"
+    ECHO="/bin/echo"
+  else
+    PS=`$WHICH ps`
+    GREP=`$WHICH grep`
+    WC=`$WHICH wc`
+    ECHO=`$WHICH echo`
+  fi
+  if test "x$PS" = "x" ; then
+    PS="/bin/ps"
+  fi
+  if test "x$GREP" = "x" ; then
+    GREP="/bin/grep"
+  fi
+  if test "x$WC" = "x" ; then
+    WC="/bin/wc"
+  fi
+  if test "x$ECHO" = "x" ; then
+    WC="/bin/echo"
+  fi
+}
+
+read_options()
+{
+  ret=1
+  while test $# -gt 0
+  do
+    case $1 in
+    --process_name )
+      shift
+      if test "x$PROCESS_NAME" = "x1"
+        return $ret
+      fi
+      PROCESS_NAME="1"
+      SEARCHED_PROCESS="$1"
+      ;;
+    --pid )
+      shift
+      if test "x$PROCESS_PID" = "x1"
+        return $ret
+      fi
+      PROCESS_PID="1"
+      SEARCHED_PID="$1"
+      ;;
+    * )
+      return $ret
+    esac
+    shift
+  done
+  if test "x$PROCESS_NAME" = "x" ; then
+    return $ret
+  fi
+  if test "x$PROCESS_PID" = "x" ; then
+    return $ret
+  fi
+  ret=0
+  return $ret
+}
+
+WHICH=
+PS=
+GREP=
+WC=
+LINES=
+SEARCHED_PID=
+SEARCHED_PROCESS=
+PROCESS_NAME=
+PROCESS_PID=
+
+if read_options; then
+  EXIT_CODE=2
+  EXIT $EXIT_CODE
+fi
+set_binaries
+if check_binaries; then
+  if "x$FAULTY_PROCESS" != "echo"
+    $ECHO "Couldn't find a $FAULTY_PROCESS binary"
+  fi
+  EXIT_CODE=2
+else
+  EXIT_CODE=check_process_alive
+fi
+EXIT $EXIT_CODE

@@ -12,16 +12,11 @@
 ## along with this program; if not, write to the Free Software
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
-#
-# This is the template to produce Makefile.in for this directory
-# This directory is used to build the iClaustron Control Server
-#
+##
+## This file is used to produce the Makefile.in for this directory
+## This directory is used to build iClaustron Portability Functions
+##
 
-bin_PROGRAMS = ic_pcntrl
-ic_pcntrl_SOURCES = ic_pcntrl.c
-ic_pcntrl_LDADD = $(LDADD) \
-                  ../api_dataserver/libic_apid.la \
-                  ../api_clusterserver/libic_apic.la \
-                  ../util/libic_util.la \
-                  ../port/libic_port.la \
-                  ../comm/libic_comm.la
+dist_bin_SCRIPTS = linux_check_process.sh \
+                   macosx_check_process.sh \
+                   solaris_check_process.sh
