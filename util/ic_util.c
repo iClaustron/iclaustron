@@ -82,14 +82,27 @@ ic_set_number_ending_string(gchar *buf, guint64 number)
                              NULL);
 }
 
-int
-ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
+static int
+add_dir_slash(IC_STRING *dir)
+{
+#ifdef WINDOWS
+  if (ic_add_dup_string(dir, "\\"))
+#else
+  if (ic_add_dup_string(dir, "/"))
+#endif
+    return IC_ERROR_MEM_ALLOC;
+  return 0;
+}
+
+static int
+set_default_dir(const gchar *default_dir, IC_STRING *dir,
+                const gchar *input_dir)
 {
   int error= IC_ERROR_MEM_ALLOC;
   gchar *c_str;
 
-  IC_INIT_STRING(base_dir, NULL, 0, TRUE);
-  if (input_base_dir == NULL)
+  IC_INIT_STRING(dir, NULL, 0, TRUE);
+  if (input_dir == NULL)
   {
     /*
       The user specified no base directory himself, in this case we'll
@@ -102,43 +115,57 @@ ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
     if (strcmp(user_name, "root") == 0)
     {
 #ifdef WINDOWS
-      if (ic_add_dup_string(base_dir, "\\var\\lib\\iclaustron\\"))
+      if (ic_add_dup_string(dir, "\\var\\lib\\"))
 #else
-      if (ic_add_dup_string(base_dir, "/var/lib/iclaustron/"))
+      if (ic_add_dup_string(dir, "/var/lib/"))
 #endif
         goto end;
     }
     else
     {
       const gchar *home_var= g_getenv("HOME");
-      if (ic_add_dup_string(base_dir, home_var))
+      if (ic_add_dup_string(dir, home_var))
         goto end;
-#ifdef WINDOWS
-      if (ic_add_dup_string(base_dir, "\\iclaustron_install\\"))
-#else
-      if (ic_add_dup_string(base_dir, "/iclaustron_install/"))
-#endif
+      if (add_dir_slash(dir))
         goto end;
     }
+    if (ic_add_dup_string(dir, default_dir))
+      goto end;
+    if (add_dir_slash(dir))
+      goto end;
   }
   else
   {
-    if (ic_add_dup_string(base_dir, input_base_dir))
+    if (ic_add_dup_string(dir, input_dir))
       goto end;
 #ifdef WINDOWS
     c_str= "\\";
 #else
     c_str= "/";
 #endif
-    if (base_dir->str[base_dir->len - 1] != c_str[0])
+    if (dir->str[dir->len - 1] != c_str[0])
     {
-      if (ic_add_dup_string(base_dir, c_str))
+      if (ic_add_dup_string(dir, c_str))
         goto end;
     }
   }
   error= 0;
 end:
   return error;
+}
+
+int
+ic_set_data_dir(IC_STRING *data_dir, const gchar *input_data_dir)
+{
+  return set_default_dir("iclaustron_data", data_dir,
+                         input_data_dir);
+}
+
+int
+ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
+{
+  return set_default_dir("iclaustron_install", base_dir,
+                         input_base_dir);
 }
 
 void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf)
@@ -157,17 +184,35 @@ void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf)
   ic_add_string(res_str, (const gchar *)MYSQL_VERSION_STRING);
 }
 
-void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
-                            gchar *buf, const gchar *version)
+void ic_set_relative_dir(IC_STRING *res_str, IC_STRING *dir,
+                         gchar *buf, const gchar *dir_name)
 {
   IC_INIT_STRING(res_str, buf, 0, TRUE);
-  ic_add_ic_string(res_str, base_dir);
-  ic_add_string(res_str, version);
+  ic_add_ic_string(res_str, dir);
+  ic_add_string(res_str, dir_name);
 #ifdef WINDOWS
   ic_add_string(res_str, "\\");
 #else
   ic_add_string(res_str, "/");
 #endif
+}
+
+/*
+ The default configuration directory is ICLAUSTRON_DATA_DIR/config
+*/
+int
+ic_set_config_path(IC_STRING *config_dir,
+                   gchar *config_path,
+                   gchar *buf)
+{
+  int error;
+  IC_STRING data_dir;
+  if ((error= ic_set_data_dir(&data_dir, config_path)))
+    return error;
+  ic_set_relative_dir(config_dir, &data_dir, buf,
+                      ic_config_string.str);
+  DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", config_dir->str));
+  return 0;
 }
 
 /*

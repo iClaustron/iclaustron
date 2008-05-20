@@ -16,12 +16,17 @@
 #include <ic_common.h>
 #include <ic_clmgr.h>
 
+/* Global variables */
+static IC_STRING glob_config_dir;
+static gchar *glob_process_name= "ic_clmgr";
+
+/* Option variables */
 static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
 static gchar *glob_cluster_server_ip= "127.0.0.1";
 static gchar *glob_cluster_server_port= "10006";
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
 static gchar *glob_cluster_mgr_port= "12003";
-static gchar *glob_config_file= "config.ini";
+static gchar *glob_config_path= NULL;
 static guint32 glob_node_id= 5;
 static guint32 glob_bootstrap_cs_id= 1;
 static gboolean glob_bootstrap= FALSE; 
@@ -49,8 +54,8 @@ static GOptionEntry entries[] =
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &glob_node_id,
     "Node id of Cluster Manager in all clusters", NULL},
-  { "cluster_config_file", 0, 0, G_OPTION_ARG_STRING,
-    &glob_config_file,
+  { "data_dir", 0, 0, G_OPTION_ARG_STRING,
+    &glob_config_path,
     "Specification of Clusters to manage for Cluster Manager with access info",
      NULL},
   { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
@@ -717,7 +722,8 @@ error:
 }
 
 static IC_API_CONFIG_SERVER*
-get_configuration(IC_API_CLUSTER_CONNECTION *apic)
+get_configuration(IC_API_CLUSTER_CONNECTION *apic,
+                  IC_STRING *config_dir)
 {
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   IC_API_CONFIG_SERVER *config_server_obj= NULL;
@@ -729,12 +735,14 @@ get_configuration(IC_API_CLUSTER_CONNECTION *apic)
     goto end;
   clu_conf_struct.perm_mc_ptr= mc_ptr;
 
+  if (!(clu_infos= ic_load_cluster_config_from_file(config_dir,
+                                                    (guint32)0,
+                                                    &clu_conf_struct)))
+    goto end;
+
   apic->num_cluster_servers= 1;
   apic->cluster_server_ips= &glob_cluster_server_ip;
   apic->cluster_server_ports= &glob_cluster_server_port;
-  if (!(clu_infos= ic_load_cluster_config_from_file(glob_config_file,
-                                                    &clu_conf_struct)))
-    goto end;
   if ((config_server_obj= ic_create_api_cluster(apic)))
   {
     if (config_server_obj->api_op.ic_get_config(config_server_obj,
@@ -763,13 +771,18 @@ int main(int argc,
   IC_CONNECTION *conn;
   IC_API_CLUSTER_CONNECTION apic;
   IC_API_CONFIG_SERVER *config_server_obj= NULL;
+  gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
 
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Manager")))
     return ret_code;
+  if ((ret_code= ic_set_config_path(&glob_config_dir,
+                                 glob_config_path,
+                                 config_path_buf)))
+    return ret_code;
   if (glob_bootstrap && (ret_code= bootstrap()))
     goto error;
-  if ((config_server_obj= get_configuration(&apic)))
+  if ((config_server_obj= get_configuration(&apic, &glob_config_dir)))
     goto error;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;

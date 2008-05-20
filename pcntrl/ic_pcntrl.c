@@ -260,11 +260,11 @@ int main(int argc, char *argv[])
   if ((ret_code= ic_set_base_dir(&glob_base_dir_string, glob_base_dir)))
     goto error;
   ic_make_iclaustron_version_string(&glob_ic_base_dir_string, tmp_buf);
-  ic_set_binary_base_dir(&glob_ic_base_dir_string, &glob_base_dir_string,
-                         iclaustron_buf, glob_ic_base_dir_string.str);
+  ic_set_relative_dir(&glob_ic_base_dir_string, &glob_base_dir_string,
+                      iclaustron_buf, glob_ic_base_dir_string.str);
   ic_make_mysql_version_string(&glob_mysql_base_dir_string, tmp_buf);
-  ic_set_binary_base_dir(&glob_mysql_base_dir_string, &glob_base_dir_string,
-                         mysql_buf, glob_mysql_base_dir_string.str);
+  ic_set_relative_dir(&glob_mysql_base_dir_string, &glob_base_dir_string,
+                      mysql_buf, glob_mysql_base_dir_string.str);
   DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
                               glob_base_dir_string.str));
   /*

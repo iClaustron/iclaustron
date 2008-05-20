@@ -317,6 +317,7 @@
 */
 
 gchar *ic_empty_string= "";
+gchar *ic_err_str= "Error:";
 /* Strings used in config version file */
 /*
   version_str is defined in section defining strings used in MGM API
@@ -6616,24 +6617,32 @@ static IC_CONFIG_OPERATIONS cluster_config_ops =
 };
 
 IC_CLUSTER_CONNECT_INFO**
-ic_load_cluster_config_from_file(gchar *cluster_config_file,
-                                IC_CONFIG_STRUCT *cluster_conf)
+ic_load_cluster_config_from_file(IC_STRING *config_dir,
+                                 guint32 config_version_number,
+                                 IC_CONFIG_STRUCT *cluster_conf)
 {
   gchar *conf_data_str;
   gsize conf_data_len;
   GError *loc_error= NULL;
   IC_STRING conf_data;
+  IC_STRING file_name_string;
   int ret_val;
   IC_CONFIG_ERROR err_obj;
   IC_CLUSTER_CONNECT_INFO **ret_ptr;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
   DEBUG_ENTRY("ic_load_cluster_config_from_file");
+
+  ic_create_config_file_name(&file_name_string,
+                             file_name,
+                             config_dir,
+                             &ic_config_string,
+                             config_version_number);
 
   cluster_conf->clu_conf_ops= &cluster_config_ops;
   cluster_conf->config_ptr.cluster_conf= NULL;
   DEBUG_PRINT(CONFIG_LEVEL, ("cluster_config_file = %s",
-                             cluster_config_file));
-  if (!cluster_config_file ||
-      !g_file_get_contents(cluster_config_file, &conf_data_str,
+                             file_name));
+  if (!g_file_get_contents(file_name, &conf_data_str,
                            &conf_data_len, &loc_error))
     goto file_open_error;
 
@@ -6646,6 +6655,8 @@ ic_load_cluster_config_from_file(gchar *cluster_config_file,
           "Error at Line number %u:\n%s\n", err_obj.line_number,
           ic_get_error_message(err_obj.err_num));
     ret_ptr= NULL;
+    printf("%s Failed to load the cluster configuration file %s\n",
+           ic_err_str, file_name);
   }
   else
   {
@@ -6655,12 +6666,8 @@ ic_load_cluster_config_from_file(gchar *cluster_config_file,
   DEBUG_RETURN(ret_ptr);
 
 file_open_error:
-  if (!cluster_config_file)
-    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "--config-file parameter required when using --bootstrap\n");
-  else
-    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Couldn't open file %s\n", cluster_config_file);
+  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+        "Failed reading cluster config file %s\n", file_name);
   DEBUG_RETURN(NULL);
 }
 /*

@@ -44,6 +44,7 @@
   value|= (1 << bit_number);
 
 extern gchar *ic_empty_string;
+extern gchar *ic_err_str;
 
 typedef unsigned char ic_bool;
 
@@ -300,8 +301,11 @@ typedef struct ic_string IC_STRING;
  * directories.
 */
 int ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir);
-void ic_set_binary_base_dir(IC_STRING *res_str, IC_STRING *base_dir,
-                            gchar *buf, const gchar *version);
+int ic_set_data_dir(IC_STRING *base_dir, const gchar *input_base_dir);
+void ic_set_relative_dir(IC_STRING *res_str, IC_STRING *dir,
+                         gchar *buf, const gchar *dir_name);
+int ic_set_config_path(IC_STRING *config_dir, gchar *config_path,
+                       gchar *config_path_buf);
 void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf);
 void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf);
 

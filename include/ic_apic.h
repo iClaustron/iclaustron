@@ -590,7 +590,8 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
                              IC_CLUSTER_CONFIG **clusters);
 
 IC_CLUSTER_CONNECT_INFO**
-ic_load_cluster_config_from_file(gchar *config_file_path,
+ic_load_cluster_config_from_file(IC_STRING *config_dir,
+                                 guint32 config_version_number,
                                  IC_CONFIG_STRUCT *cluster_conf);
 
 IC_CLUSTER_CONFIG*
