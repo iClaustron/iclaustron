@@ -1022,6 +1022,8 @@ ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len)
 {
   gchar *rev_str;
   guint32 str_len;
+  guint64 base= 1;
+  guint64 this_number;
   gchar end_char;
   gchar reverse_str[64];
   DEBUG_ENTRY("ic_conv_str_to_int");
@@ -1041,7 +1043,9 @@ ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len)
   ic_reverse_str(str, rev_str, end_char);
   while (*rev_str != end_char)
   {
-    *number= (*number * 10) + (*rev_str - '0');
+    this_number= (*rev_str - '0');
+    *number= *number + (this_number * base);
+    base *= 10;
     rev_str++;
   }
   return 0;

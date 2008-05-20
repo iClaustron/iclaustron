@@ -60,8 +60,10 @@ void ic_free(void *ret_obj);
 guint32 ic_get_own_pid();
 int ic_is_process_alive(guint32 pid, gchar *process_name, gchar **err_msg);
 /* iClaustron file routines */
-int ic_write_file(int file_ptr, const gchar *buf, size_t size);
-int ic_read_file(int file_ptr, gchar *buf, size_t size, guint32 *len);
+int ic_write_file(int file_ptr, const gchar *file_name, size_t size);
+int ic_read_file(int file_ptr, gchar *file_name, size_t size, guint32 *len);
+int ic_delete_file(const gchar *file_name);
+
 /* iClaustron Timer routines */
 void ic_sleep(int sleep_ms);
 

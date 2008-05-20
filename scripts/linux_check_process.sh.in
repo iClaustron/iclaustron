@@ -38,9 +38,11 @@ check_binaries()
 
 check_process_alive()
 {
-  LINES=`$PS -p $SEARCHED_PID -o cmd | \
+  echo "$PS $GREP $SEARCHED_PROCESS"
+  LINES=`$PS -p $SEARCHED_PID -o command | \
          $GREP $SEARCHED_PROCESS | \
          $WC -l`
+  EXIT_CODE="$LINES"
   return $LINES
 }
 
@@ -50,7 +52,7 @@ set_binaries()
   if test "x$WHICH" = "x" ; then
     WHICH="/usr/bin/which"
   fi
-  if test -x $WHICH ; then
+  if ! test -x $WHICH ; then
     PS="/bin/ps"
     GREP="/bin/grep"
     WC="/usr/bin/wc"
@@ -75,43 +77,6 @@ set_binaries()
   fi
 }
 
-read_options()
-{
-  ret=1
-  while test $# -gt 0
-  do
-    case $1 in
-    --process_name )
-      shift
-      if test "x$PROCESS_NAME" = "x1"
-        return $ret
-      fi
-      PROCESS_NAME="1"
-      SEARCHED_PROCESS="$1"
-      ;;
-    --pid )
-      shift
-      if test "x$PROCESS_PID" = "x1"
-        return $ret
-      fi
-      PROCESS_PID="1"
-      SEARCHED_PID="$1"
-      ;;
-    * )
-      return $ret
-    esac
-    shift
-  done
-  if test "x$PROCESS_NAME" = "x" ; then
-    return $ret
-  fi
-  if test "x$PROCESS_PID" = "x" ; then
-    return $ret
-  fi
-  ret=0
-  return $ret
-}
-
 WHICH=
 PS=
 GREP=
@@ -121,18 +86,47 @@ SEARCHED_PID=
 SEARCHED_PROCESS=
 PROCESS_NAME=
 PROCESS_PID=
+EXIT_CODE=2
 
-if read_options; then
-  EXIT_CODE=2
-  EXIT $EXIT_CODE
-fi
-set_binaries
-if check_binaries; then
-  if "x$FAULTY_PROCESS" != "echo"
-    $ECHO "Couldn't find a $FAULTY_PROCESS binary"
+  while test $# -gt 0
+  do
+    case $1 in
+    --process_name )
+      shift
+      if test "x$PROCESS_NAME" = "x1" ; then
+        exit $EXIT_CODE
+      fi
+      PROCESS_NAME="1"
+      SEARCHED_PROCESS="$1"
+      ;;
+    --pid )
+      shift
+      if test "x$PROCESS_PID" = "x1" ; then
+        exit $EXIT_CODE
+        return $ret
+      fi
+      PROCESS_PID="1"
+      SEARCHED_PID="$1"
+      ;;
+    * )
+      exit $EXIT_CODE
+    esac
+    shift
+  done
+  if test "x$PROCESS_NAME" = "x" ; then
+    exit $EXIT_CODE
   fi
-  EXIT_CODE=2
-else
-  EXIT_CODE=check_process_alive
-fi
-EXIT $EXIT_CODE
+  if test "x$PROCESS_PID" = "x" ; then
+    exit $EXIT_CODE
+  fi
+
+  set_binaries
+  if check_binaries; then
+    if "x$FAULTY_PROCESS" != "echo" ; then
+      $ECHO "Couldn't find a $FAULTY_PROCESS binary"
+    fi
+    EXIT_CODE=2
+  else
+    check_process_alive
+  fi
+  exit $EXIT_CODE

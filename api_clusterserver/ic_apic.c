@@ -1219,13 +1219,18 @@ init_config_parameters()
   "Initial value of watchdog timer before communication set-up";
 
   /* This is a cluster server parameter */
+/*
+  We currently don't use this variable since we might use the cluster
+  manager for logging rather.
+
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_EVENT_LOG, 67);
   IC_SET_CLUSTER_SERVER_STRING(conf_entry, cluster_server_event_log,
                                ic_empty_string, IC_INITIAL_NODE_RESTART);
   conf_entry->is_not_sent= TRUE;
   conf_entry->config_entry_description=
   "Type of cluster event log";
-  
+*/
+
   IC_SET_CONFIG_MAP(DATA_SERVER_VOLATILE_MODE, 68);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_volatile_mode, FALSE,
                         IC_ROLLING_UPGRADE_CHANGE);
@@ -5344,27 +5349,33 @@ cluster_config_end(__attribute__ ((unused)) void *ic_config)
   whereby we can change a configuration in a coherent manner.
 */
 
-static void
+static int
 remove_config_files(IC_STRING *config_dir,
                     IC_CLUSTER_CONNECT_INFO **clu_infos,
                     guint32 config_version)
 {
-  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  int error;
   IC_STRING file_name_string;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
 
   ic_create_config_file_name(&file_name_string, file_name,
                              config_dir, &ic_config_string,
                              config_version);
-  g_unlink((const gchar *)file_name);
+  if ((error= ic_delete_file((const gchar *)file_name)))
+    return error;
   while (*clu_infos)
   {
+    clu_info= *clu_infos;
+    clu_infos++;
     IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
     ic_create_config_file_name(&file_name_string, file_name, config_dir,
-                               &(*clu_infos)->cluster_name,
+                               &clu_info->cluster_name,
                                config_version);
-    g_unlink((const gchar *)file_name);
+    if ((error= ic_delete_file((const gchar *)file_name)))
+      return error;
   }
-  return;
+  return 0;
 }
 
 static guint64
@@ -5499,7 +5510,7 @@ write_cluster_config_file(IC_STRING *config_dir,
                              &ic_config_string,
                              config_version);
   /* We are writing a new file here */
-  file_ptr= g_creat((const gchar *)buf, S_IXUSR | S_IRUSR);
+  file_ptr= g_creat((const gchar *)buf, S_IWUSR | S_IRUSR);
   if (file_ptr == (int)-1)
   {
     error= errno;
@@ -6199,7 +6210,7 @@ write_one_cluster_config_file(IC_STRING *config_dir,
                              &clu_conf->clu_info.cluster_name,
                              config_version);
   /* We are writing a new file here */
-  file_ptr= g_creat((const gchar *)buf, S_IXUSR | S_IRUSR);
+  file_ptr= g_creat((const gchar *)buf, S_IWUSR | S_IRUSR);
   if (file_ptr == (int)-1)
   {
     error= errno;
@@ -6264,7 +6275,7 @@ cmp_config_version_line(IC_STRING *str, guint32 *len,
   guint32 value_len;
   guint32 loc_len= *len;
   gchar *loc_ptr= *ptr;
-  int error;
+  int error= 1;
 
   if (memcmp(loc_ptr, str->str, str->len) || loc_len < str->len)
     goto file_error;
@@ -6283,6 +6294,7 @@ cmp_config_version_line(IC_STRING *str, guint32 *len,
   loc_len-= (value_len + 1);
   *ptr= loc_ptr;
   *len= loc_len;
+  return 0;
 file_error:
   return error;
 }
@@ -6357,6 +6369,66 @@ insert_line_config_version_file(IC_STRING *str,
 }
 
 static int
+write_cv_file(IC_STRING *config_dir,
+              guint32 config_version,
+              guint32 state,
+              guint32 pid)
+{
+  int file_ptr, error;
+  IC_STRING file_name_string, str;
+  gchar buf[128];
+  gchar *ptr= buf;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("write_cv_file");
+
+  /*
+    Create a string like
+    version: <config_version><CR>
+    state: <state><CR>
+    pid: <pid><CR>
+
+    The version is the current version of the configuration
+    State is either idle if no one is currently running the
+    cluster server using this configuration, it's busy when
+    someone is running and isn't updating the configuration,
+    finally it can be in a number of states which is used
+    when the configuration is updated.
+  */
+  IC_INIT_STRING(&str, (gchar*)version_str, VERSION_REQ_LEN, TRUE);
+  insert_line_config_version_file(&str, &ptr, config_version);
+  IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
+  insert_line_config_version_file(&str, &ptr, state);
+  IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
+  insert_line_config_version_file(&str, &ptr, pid);
+
+  ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
+  if (config_version == (guint32)1)
+  {
+    /* This is the initial write of the file */
+    file_ptr= g_creat((const gchar *)file_name, S_IRUSR | S_IWUSR);
+    if (file_ptr == (int)-1)
+    {
+      error= errno;
+      goto file_error;
+    }
+    close(file_ptr);
+  }
+  /* Open config.version for writing */
+  file_ptr= g_open((const gchar *)file_name, O_WRONLY | O_SYNC, 0);
+  if (file_ptr == (int)-1)
+  {
+    error= errno;
+    goto file_error;
+  }
+  error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
+  close(file_ptr);
+  return error;
+
+file_error:
+  return error;
+}
+
+static int
 write_config_version_file(IC_STRING *config_dir,
                           guint32 config_version,
                           guint32 state,
@@ -6394,66 +6466,6 @@ write_config_version_file(IC_STRING *config_dir,
     error == 0 in this path.
   */
 error:
-  return error;
-}
-
-static int
-write_cv_file(IC_STRING *config_dir,
-              guint32 config_version,
-              guint32 state,
-              guint32 pid)
-{
-  int file_ptr, error;
-  IC_STRING file_name_string, str;
-  gchar buf[128];
-  gchar *ptr= buf;
-  gchar file_name[IC_MAX_FILE_NAME_SIZE];
-  DEBUG_ENTRY("write_config_version_file");
-
-  /*
-    Create a string like
-    version: <config_version><CR>
-    state: <state><CR>
-    pid: <pid><CR>
-
-    The version is the current version of the configuration
-    State is either idle if no one is currently running the
-    cluster server using this configuration, it's busy when
-    someone is running and isn't updating the configuration,
-    finally it can be in a number of states which is used
-    when the configuration is updated.
-  */
-  IC_INIT_STRING(&str, (gchar*)version_str, VERSION_REQ_LEN, TRUE);
-  insert_line_config_version_file(&str, &ptr, config_version);
-  IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
-  insert_line_config_version_file(&str, &ptr, state);
-  IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
-  insert_line_config_version_file(&str, &ptr, pid);
-
-  ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
-  if (config_version == (guint32)1)
-  {
-    /* This is the initial write of the file */
-    file_ptr= g_creat((const gchar *)file_name, S_IXUSR | S_IRUSR | S_IWUSR);
-    if (file_ptr == (int)-1)
-    {
-      error= errno;
-      goto file_error;
-    }
-    close(file_ptr);
-  }
-  /* Open config.version for writing */
-  file_ptr= g_open((const gchar *)file_name, O_WRONLY | O_SYNC, 0);
-  if (file_ptr == (int)-1)
-  {
-    error= errno;
-    goto file_error;
-  }
-  error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
-  close(file_ptr);
-  return error;
-
-file_error:
   return error;
 }
 
@@ -6510,6 +6522,16 @@ ic_load_config_version(IC_STRING *config_dir,
   return 0;
 }
 
+static int
+remove_config_version_file(IC_STRING *config_dir)
+{
+  IC_STRING file_name_string;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+
+  ic_create_config_version_file_name(&file_name_string, buf, config_dir);
+  return ic_delete_file((const gchar*)buf);
+}
+
 int
 ic_write_full_config_to_disk(IC_STRING *config_dir,
                              guint32 *old_config_version_number,
@@ -6553,7 +6575,11 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
   */
   own_pid= ic_get_own_pid();
   if (old_version > (guint32)1)
-    remove_config_files(config_dir, clu_infos, old_version - 1); /* Step 0 */
+  {
+    /* Step 0 */
+    if ((error= remove_config_files(config_dir, clu_infos, old_version - 1)))
+      return error;
+  }
   /* Step 1 */
   if ((error= write_config_files(config_dir, clu_infos, clusters,
                                  old_version + 1)))
@@ -6563,10 +6589,18 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
                                         own_pid)))
     goto error;
   if (old_version > 0)
-    remove_config_files(config_dir, clu_infos, old_version); /* Step 3 */
+  {
+    /* Step 3 */
+    if ((error= remove_config_files(config_dir, clu_infos, old_version)))
+      return error;
+  }
   return 0;
 error:
-  remove_config_files(config_dir, clu_infos, old_version + 1);
+  (void)remove_config_files(config_dir, clu_infos, old_version + 1);
+  if (old_version == 0)
+  {
+    remove_config_version_file(config_dir);
+  }
   return error;
 }
 

@@ -44,6 +44,7 @@ ic_get_own_pid()
   pid= getpid();
   return (guint32)pid;
 }
+
 int run_process(gchar **argv,
                 int *exit_status)
 {
@@ -102,6 +103,12 @@ ic_is_process_alive(guint32 pid,
     return 2;
   }
   return 0;
+}
+
+int
+ic_delete_file(const gchar *file_name)
+{
+  return g_unlink(file_name);
 }
 
 int

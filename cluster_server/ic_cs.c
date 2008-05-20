@@ -362,7 +362,6 @@ late_end:
 end:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  ic_free(glob_config_dir.str);
   ic_end();
   return error;
 }
