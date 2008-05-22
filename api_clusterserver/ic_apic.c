@@ -3162,8 +3162,8 @@ get_cluster_ids(IC_API_CONFIG_SERVER *apic,
                                  &size_curr_buf, sizeof(read_buf))))
   {
     DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
-    if (check_buf(read_buf, read_size, end_get_cluster_list_str,
-                  strlen(end_get_cluster_list_str)))
+    if (!check_buf(read_buf, read_size, end_get_cluster_list_str,
+                   strlen(end_get_cluster_list_str)))
       break;
     switch (state)
     {
