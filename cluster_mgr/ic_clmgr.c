@@ -23,7 +23,7 @@ static gchar *glob_process_name= "ic_clmgr";
 /* Option variables */
 static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
 static gchar *glob_cluster_server_ip= "127.0.0.1";
-static gchar *glob_cluster_server_port= "10006";
+static gchar *glob_cluster_server_port= "10203";
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
 static gchar *glob_cluster_mgr_port= "12003";
 static gchar *glob_config_path= NULL;

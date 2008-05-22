@@ -2048,7 +2048,7 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
                                  &size_curr_buf, sizeof(read_buf))))
   {
     DEBUG(CONFIG_LEVEL, ic_debug_print_rec_buf(read_buf, read_size));
-    if (!check_buf(read_buf, read_size, str,
+    if (check_buf(read_buf, read_size, str,
                    strlen(str)))
     {
       DEBUG_PRINT(CONFIG_LEVEL,
@@ -2628,18 +2628,20 @@ error:
 }
 
 static int
-set_up_cluster_server_connection(IC_CONNECTION *conn,
+set_up_cluster_server_connection(IC_CONNECTION **conn,
                                  gchar *server_name,
                                  gchar *server_port)
 {
   int error;
+  IC_CONNECTION *loc_conn;
 
-  if (!(conn= ic_create_socket_object(TRUE, FALSE, FALSE, FALSE,
-                                      NULL, NULL)))
+  if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE, FALSE,
+                                       NULL, NULL)))
     return MEM_ALLOC_ERROR;
-  conn->server_name= server_name;
-  conn->server_port= server_port;
-  if ((error= conn->conn_op.ic_set_up_connection(conn)))
+  loc_conn= *conn;
+  loc_conn->server_name= server_name;
+  loc_conn->server_port= server_port;
+  if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", error));
     return error;
@@ -3001,7 +3003,7 @@ disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
 
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
-    conn= apic->cluster_conn.cluster_srv_conns + i;
+    conn= apic->cluster_conn.cluster_srv_conns[i];
     conn->conn_op.ic_free_connection(conn);
   }
 }
@@ -3011,16 +3013,17 @@ connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
 {
   guint32 i;
   int error= 1;
-  IC_CONNECTION *conn;
+  IC_CONNECTION **conn_p;
 
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
-    conn= apic->cluster_conn.cluster_srv_conns + i;
-    if (!(error= set_up_cluster_server_connection(conn,
+    conn_p= (IC_CONNECTION**)(&apic->cluster_conn.cluster_srv_conns[i]);
+    if (!(error= set_up_cluster_server_connection(conn_p,
                   apic->cluster_conn.cluster_server_ips[i],
                   apic->cluster_conn.cluster_server_ports[i])))
     {
-      *conn_ptr= conn;
+      *conn_ptr= *conn_p;
+      apic->cluster_conn.current_conn= *conn_p;
       return 0;
     }
   }
@@ -3070,9 +3073,9 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   DEBUG_ENTRY("get_cs_config");
 
   num_clusters= count_clusters(clu_infos);
-  if (!(error= connect_api_connections(apic, &conn)))
+  if ((error= connect_api_connections(apic, &conn)))
     DEBUG_RETURN(error);
-  if (!(error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
+  if ((error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
     DEBUG_RETURN(error);
   for (i= 0; i < num_clusters; i++)
     max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
@@ -3342,9 +3345,9 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn)
       !(apic->cluster_conn.cluster_server_ports= (gchar**)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, num_cluster_servers *
                                   sizeof(gchar*))) ||
-      !(apic->cluster_conn.cluster_srv_conns= (IC_CONNECTION*)
+      !(apic->cluster_conn.cluster_srv_conns= (IC_CONNECTION**)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, num_cluster_servers *
-                                   sizeof(IC_CONNECTION))) ||
+                                   sizeof(IC_CONNECTION*))) ||
       !(apic->config_mutex= g_mutex_new()))
     goto error;
 
@@ -3825,10 +3828,7 @@ static void
 free_run_cluster(IC_RUN_CLUSTER_SERVER *run_obj)
 {
   if (run_obj)
-  {
     run_obj->run_conn->conn_op.ic_free_connection(run_obj->run_conn); 
-    ic_free(run_obj);
-  }
   return;
 }
 
@@ -4222,8 +4222,8 @@ run_handle_config_request(gpointer data)
                                  &size_curr_buf, sizeof(read_buf))))
   {
     g_mutex_lock(state_mutex);
-    if (check_buf(read_buf, read_size, get_nodeid_str,
-                  strlen(get_nodeid_str)))
+    if (!check_buf(read_buf, read_size, get_nodeid_str,
+                   strlen(get_nodeid_str)))
     {
       if (rcs_state->cs_started && rcs_state->cs_master)
       {
@@ -4246,8 +4246,8 @@ run_handle_config_request(gpointer data)
         ;
       }
     }
-    else if (check_buf(read_buf, read_size, get_cluster_list_str,
-                       strlen(get_cluster_list_str)))
+    else if (!check_buf(read_buf, read_size, get_cluster_list_str,
+                        strlen(get_cluster_list_str)))
     {
       if ((error= handle_get_cluster_list(run_obj, conn)))
       {
@@ -4256,8 +4256,8 @@ run_handle_config_request(gpointer data)
         goto error;
       }
     }
-    else if (check_buf(read_buf, read_size, get_mgmd_nodeid_str,
-                       strlen(get_mgmd_nodeid_str)))
+    else if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
+                        strlen(get_mgmd_nodeid_str)))
     {
       if ((error= handle_convert_transporter(conn, run_obj, &param)))
       {
