@@ -5059,7 +5059,6 @@ conf_init_end(void *ic_conf)
     */
     if (clu_conf->temp_mc_ptr)
       clu_conf->temp_mc_ptr->mc_ops.ic_mc_free(clu_conf->temp_mc_ptr);
-    clu_conf->temp_mc_ptr= NULL;
   }
   return;
 }
@@ -5099,6 +5098,7 @@ ic_load_config_server_from_files(gchar *config_file,
   int ret_val;
   IC_CONFIG_ERROR err_obj;
   IC_CLUSTER_CONFIG *ret_ptr;
+  gchar *ptr;
   DEBUG_ENTRY("ic_load_config_server_from_files");
 
   conf_server->clu_conf_ops= &config_server_ops;

@@ -20,78 +20,10 @@
 #include <ic_common_header.h>
 #include <errno.h>
 
-static gchar **alloc_array= NULL;
-static guint64 num_allocs= 0;
-static guint64 alloc_inx= 0;
-
-static int
-insert_malloc_stat(gchar *ptr)
-{
-  guint64 current_inx;
-  guint64 i;
-  gchar *new_alloc_array;
-
-  if (!alloc_array)
-  {
-    alloc_array= malloc(8192 * sizeof(gchar*));
-    if (!alloc_array)
-      return 1;
-    num_allocs= 8192;
-  }
-  /* Allocate array */
-  alloc_array[alloc_inx]= ptr;
-  alloc_inx++;
-  if (alloc_inx < 8192)
-    return 0;
-  /* Time for a reorganize */
-  current_inx= 0;
-  for (i= 0; i < num_allocs; i++)
-  {
-    if (alloc_array[i])
-    {
-      alloc_array[current_inx]= alloc_array[i];
-      current_inx++;
-    }
-  }
-  if (current_inx == (guint64)num_allocs)
-  {
-    new_alloc_array= malloc(2 * num_allocs * sizeof(gchar*));
-    if (!new_alloc_array)
-      return 1;
-    memcpy(new_alloc_array, alloc_array, num_allocs * sizeof(gchar*));
-    free(alloc_array);
-    num_allocs *= 2;
-  }
-  else
-  {
-    alloc_inx= current_inx;
-  }
-  return 0;
-}
-
-static int
-free_check(gchar *ptr)
-{
-  guint64 i;
-  for (i= 0; i < alloc_inx; i++)
-  {
-    if (alloc_array[i] == ptr)
-    {
-      alloc_array[i]= NULL;
-      return 0;
-    }
-  }
-  return 1;
-}
-
 gchar *
 ic_calloc(size_t size)
 {
   gchar *alloc_ptr= g_try_malloc0(size);
-#ifdef DEBUG
-  if (insert_malloc_stat(alloc_ptr))
-    abort();
-#endif
   return alloc_ptr;
 }
 
@@ -99,20 +31,12 @@ gchar *
 ic_malloc(size_t size)
 {
   gchar *alloc_ptr= g_try_malloc(size);
-#if 0
-  if (insert_malloc_stat(alloc_ptr))
-    abort();
-#endif
   return alloc_ptr;
 }
 
 void
 ic_free(void *ret_obj)
 {
-#if 0
-  if (free_check(ret_obj))
-    abort();
-#endif
   g_free(ret_obj);
 }
 

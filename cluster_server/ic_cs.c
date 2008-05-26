@@ -30,7 +30,7 @@
 #include <ic_apic.h>
 
 /* Global variables */
-static IC_STRING glob_config_dir;
+static IC_STRING glob_config_dir= { NULL, 0, TRUE};
 static gchar *glob_process_name= "ic_cs";
 
 /* Option variables */

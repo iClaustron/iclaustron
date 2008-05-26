@@ -108,7 +108,7 @@ static void
 ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
 {
   int no_delay, error, maxseg_size, rec_size, snd_size, reuse_addr;
-  socklen_t sock_len;
+  socklen_t sock_len= 0;
 #ifdef __APPLE__
   int no_sigpipe= 1;
   /*

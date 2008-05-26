@@ -17,7 +17,7 @@
 #include <ic_clmgr.h>
 
 /* Global variables */
-static IC_STRING glob_config_dir;
+static IC_STRING glob_config_dir= { NULL, 0, TRUE};
 static gchar *glob_process_name= "ic_clmgr";
 
 /* Option variables */
