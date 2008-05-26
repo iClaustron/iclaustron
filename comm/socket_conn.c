@@ -108,7 +108,7 @@ static void
 ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
 {
   int no_delay, error, maxseg_size, rec_size, snd_size, reuse_addr;
-  socklen_t sock_len= 0;
+  socklen_t sock_len= sizeof(int);
 #ifdef __APPLE__
   int no_sigpipe= 1;
   /*
@@ -141,10 +141,13 @@ ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
   }
   getsockopt(sockfd, IPPROTO_TCP, TCP_MAXSEG,
              (void*)&maxseg_size, &sock_len);
+  sock_len= sizeof(int);
   getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF,
              (void*)&rec_size, &sock_len);
+  sock_len= sizeof(int);
   getsockopt(sockfd, SOL_SOCKET, SO_SNDBUF,
              (void*)&snd_size, &sock_len);
+  sock_len= sizeof(int);
   DEBUG_PRINT(COMM_LEVEL, ("Default TCP_MAXSEG = %d", maxseg_size));
   DEBUG_PRINT(COMM_LEVEL, ("Default SO_RCVBUF = %d", rec_size));
   DEBUG_PRINT(COMM_LEVEL, ("Default SO_SNDBUF = %d", snd_size));
