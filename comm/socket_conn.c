@@ -132,10 +132,11 @@ ic_set_socket_options(IC_CONNECTION *conn, int sockfd)
     DEBUG_PRINT(COMM_LEVEL, ("Set TCP_NODELAY error: %d", error));
   }
   reuse_addr= 1;
-  if ((error= setsockopt(sockfd, IPPROTO_TCP, SO_REUSEADDR,
+  if ((error= setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR,
                          (const void*)&reuse_addr, sizeof(int))))
   {
     /* We will continue even with this error */
+    error= errno;
     DEBUG_PRINT(COMM_LEVEL, ("Set SO_REUSEADDR error: %d", error));
     reuse_addr= 0;
   }
