@@ -123,6 +123,7 @@ connection_test(gboolean use_ssl)
                                      loc_cert_path,
                                      &passwd_string,
                                      TRUE, FALSE, FALSE,
+                                     CONFIG_READ_BUF_SIZE,
                                      NULL, NULL)))
     {
       printf("Error creating SSL connection object\n");
@@ -136,10 +137,11 @@ connection_test(gboolean use_ssl)
   else
   {
     if (!(conn= ic_create_socket_object(glob_is_client, TRUE, FALSE, TRUE,
+                                        CONFIG_READ_BUF_SIZE,
                                         NULL, NULL)))
     {
       printf("Memory allocation error\n");
-      return MEM_ALLOC_ERROR;
+      return IC_ERROR_MEM_ALLOC;
     }
   }
   conn->server_name= glob_server_ip;
@@ -233,7 +235,7 @@ api_clusterserver_test()
   IC_INIT_STRING(&clu_info.password, kalle_pwd_str, strlen(kalle_pwd_str),
                  TRUE);
   clu_info.cluster_id= IC_MAX_UINT32;
-  srv_obj->api_op.ic_get_config(srv_obj, &clu_info_ptr[0], &node_id);
+  srv_obj->api_op.ic_get_config(srv_obj, &clu_info_ptr[0], node_id);
   srv_obj->api_op.ic_free_config(srv_obj);
   printf("Completing cluster server test\n");
   return 0;
@@ -252,29 +254,21 @@ api_clusterserver_test()
   configuration from the Cluster Server. After one such attempt
   the test will conclude.
 */
-/*  Methods to send and receive buffers with Carriage Return
-
-int ic_send_with_cr(IC_CONNECTION *conn, const char *buf);
-int ic_rec_with_cr(IC_CONNECTION *conn,
-                   gchar *rec_buf,
-                   guint32 *read_size,
-                   guint32 *size_curr_buf,
-                   guint32 buffer_size);*/
 
 static int
 test_pcntrl()
 {
+  gchar *read_buf;
+  guint32 read_size;
   int ret_code, error;
   IC_CONNECTION *conn;
-  gchar read_buf[256];
-  guint32 read_size=0;
-  guint32 size_curr_buf=0;
 
   if (!(conn= ic_create_socket_object(TRUE, TRUE, FALSE, TRUE,
+                                      CONFIG_READ_BUF_SIZE,
                                       NULL, NULL)))
   {
     printf("Memory allocation error\n");
-    return MEM_ALLOC_ERROR;
+    return IC_ERROR_MEM_ALLOC;
   }
   conn->server_name= glob_server_ip;
   conn->server_port= glob_server_port;
@@ -293,8 +287,7 @@ test_pcntrl()
     ic_print_error(error);
     goto end;
   }
-  if ((error= ic_rec_with_cr(conn, read_buf, &read_size,
-                             &size_curr_buf, sizeof(read_buf))))
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     ic_print_error(error);
     goto end;

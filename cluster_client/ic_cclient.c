@@ -36,10 +36,9 @@ static GOptionEntry entries[] =
 static int
 execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
 {
-  guint32 i, read_size;
-  guint32 size_curr_buf= 0;
+  gchar *read_buf;
+  guint32 read_size, i;
   int ret_code;
-  gchar rec_buf[2048];
 
   for (i= 0; i < num_lines; i++)
   {
@@ -48,13 +47,12 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
     if ((ret_code= ic_send_with_cr(conn, ic_empty_string)))
       goto error;
   }
-  while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
-                                    &size_curr_buf, sizeof(rec_buf))))
+  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (read_size == 0)
       break;
-    rec_buf[read_size]= 0;
-    printf("%s\n", rec_buf);
+    read_buf[read_size]= 0;
+    printf("%s\n", read_buf);
   }
   return ret_code;
 
@@ -199,6 +197,7 @@ connect_cluster_mgr(IC_CONNECTION **conn)
 
   if (!(loc_conn= ic_create_socket_object(TRUE, FALSE,
                                           FALSE, FALSE,
+                                          COMMAND_READ_BUF_SIZE,
                                           NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));

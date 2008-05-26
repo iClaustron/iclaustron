@@ -255,7 +255,7 @@ struct ic_api_cluster_operations
 {
   int (*ic_get_config) (struct ic_api_config_server *apic,
                         IC_CLUSTER_CONNECT_INFO **clu_info,
-                        guint32 *node_ids);
+                        guint32 node_id);
 
   int (*ic_get_cluster_ids) (struct ic_api_config_server *apic,
                             IC_CLUSTER_CONNECT_INFO **clu_infos);

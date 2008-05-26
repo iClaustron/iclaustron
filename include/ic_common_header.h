@@ -25,6 +25,9 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#define CONFIG_READ_BUF_SIZE 256
+#define COMMAND_READ_BUF_SIZE 2048
+
 #define IC_VERSION 0x000001
 #define MYSQL_VERSION 0x06030c
 #define MYSQL_VERSION_STRING "mysql-5.1.23-ndb-6.3.12"
@@ -62,8 +65,10 @@ guint32 ic_get_own_pid();
 int ic_is_process_alive(guint32 pid, gchar *process_name, gchar **err_msg);
 /* iClaustron file routines */
 int ic_write_file(int file_ptr, const gchar *file_name, size_t size);
-int ic_read_file(int file_ptr, gchar *file_name, size_t size, guint32 *len);
+int ic_read_file(int file_ptr, gchar *file_name, size_t size, guint64 *len);
 int ic_delete_file(const gchar *file_name);
+int ic_get_file_contents(const gchar *file, gchar **file_content,
+                         guint64 *file_size);
 
 /* iClaustron Timer routines */
 void ic_sleep(int sleep_ms);

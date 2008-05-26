@@ -594,7 +594,7 @@ write_socket_connection(IC_CONNECTION *conn,
   do
   {
     gssize ret_code;
-    gsize buf_size= size - write_size;
+    gint32 buf_size= size - write_size;
 
 #ifdef HAVE_SSL
     if (conn->is_ssl_used_for_data)
@@ -603,6 +603,7 @@ write_socket_connection(IC_CONNECTION *conn,
       ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
                      IC_MSG_NOSIGNAL);
 #else
+    printf("Writing %d bytes\n", buf_size);
     ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
                    IC_MSG_NOSIGNAL);
 #endif
@@ -766,7 +767,9 @@ read_socket_connection(IC_CONNECTION *conn,
     else
       ret_code= recv(conn->rw_sockfd, buf, buf_size, 0);
 #else
+    printf("recv start\n");
     ret_code= recv(conn->rw_sockfd, buf, buf_size, 0);
+    printf("received %d bytes\n", ret_code);
 #endif
     if (ret_code > 0)
     {
@@ -866,6 +869,8 @@ free_socket_connection(IC_CONNECTION *conn)
     freeaddrinfo(conn->ret_server_addrinfo);
   destroy_timers(conn);
   destroy_mutexes(conn);
+  if (conn->read_buf)
+    ic_free(conn->read_buf);
   ic_free(conn);
 }
 
@@ -1068,6 +1073,8 @@ fork_accept_connection(IC_CONNECTION *orig_conn,
                    sizeof(IC_SSL_CONNECTION) : sizeof(IC_CONNECTION);
   if ((fork_conn= (IC_CONNECTION*)ic_calloc(size_object)) == NULL)
     return NULL;
+  if ((fork_conn->read_buf= ic_calloc(orig_conn->read_buf_size)) == NULL)
+    return NULL;
   memcpy(fork_conn, orig_conn, size_object);
 
   init_connect_stat(fork_conn);
@@ -1111,6 +1118,7 @@ int_create_socket_object(gboolean is_client,
                          gboolean is_mutex_used,
                          gboolean is_connect_thread_used,
                          gboolean is_using_front_buffer,
+                         guint32 read_buf_size,
                          gboolean is_ssl,
                          gboolean is_ssl_used_for_data,
                          authenticate_func auth_func,
@@ -1120,7 +1128,13 @@ int_create_socket_object(gboolean is_client,
   IC_CONNECTION *conn;
 
   if ((conn= (IC_CONNECTION*)ic_calloc(size_object)) == NULL)
+    return NULL;
+  if (read_buf_size)
+  {
+    conn->read_buf_size= read_buf_size;
+    if ((conn->read_buf= ic_calloc(read_buf_size)) == NULL)
       return NULL;
+  }
 
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
   conn->conn_op.ic_accept_connection= accept_socket_connection;
@@ -1168,12 +1182,14 @@ ic_create_socket_object(gboolean is_client,
                         gboolean is_mutex_used,
                         gboolean is_connect_thread_used,
                         gboolean is_using_front_buffer,
+                        guint32  read_buf_size,
                         authenticate_func auth_func,
                         void *auth_obj)
 {
   return int_create_socket_object(is_client, is_mutex_used,
                                   is_connect_thread_used,
                                   is_using_front_buffer,
+                                  read_buf_size,
                                   FALSE, FALSE,
                                   auth_func, auth_obj);
 }
@@ -1533,6 +1549,7 @@ ic_create_ssl_object(gboolean is_client,
                      gboolean is_ssl_used_for_data,
                      gboolean is_connect_thread_used,
                      gboolean is_using_front_buffer,
+                     guint32 read_buf_size,
                      authenticate_func auth_func,
                      void *auth_obj)
 {
@@ -1543,6 +1560,7 @@ ic_create_ssl_object(gboolean is_client,
   if (!(conn= int_create_socket_object(is_client, FALSE,
                                        is_connect_thread_used,
                                        is_using_front_buffer,
+                                       read_buf_size,
                                        TRUE, is_ssl_used_for_data,
                                        auth_func, auth_obj)))
   {

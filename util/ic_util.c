@@ -105,11 +105,12 @@ set_default_dir(const gchar *default_dir, IC_STRING *dir,
   if (input_dir == NULL)
   {
     /*
-      The user specified no base directory himself, in this case we'll
+      The user specified no base/data directory himself, in this case we'll
       use $HOME/iclaustron_install as the base directory unless the user is
-      the root user, in this case we'll instead use /var/lib/iclaustron as
-      the default directory. This is also how the iClaustron will install
-      the software by default.
+      the root user, in this case we'll instead use
+      /var/lib/iclaustron_install as the default directory. This is also how
+      the iClaustron will install the software by default. (iclaustron_data
+      for data dir).
     */
     const gchar *user_name= g_get_user_name();
     if (strcmp(user_name, "root") == 0)
@@ -197,9 +198,7 @@ void ic_set_relative_dir(IC_STRING *res_str, IC_STRING *dir,
 #endif
 }
 
-/*
- The default configuration directory is ICLAUSTRON_DATA_DIR/config
-*/
+/* The default configuration directory is ICLAUSTRON_DATA_DIR/config */
 int
 ic_set_config_path(IC_STRING *config_dir,
                    gchar *config_path,
@@ -274,7 +273,7 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
     {
       /* We need to deallocate all buffers already allocated */
       release_dyn_buf(loop_dyn_buf->next_dyn_buf);
-      return MEM_ALLOC_ERROR;
+      return IC_ERROR_MEM_ALLOC;
     }
     curr->next_dyn_buf= new_simple_dyn_buf;
     dyn_array->sd_array.last_dyn_buf= new_simple_dyn_buf;
@@ -438,7 +437,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY *dyn_array,
     */
     if (!(new_dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
            sizeof(IC_DYNAMIC_ARRAY_INDEX))))
-      return MEM_ALLOC_ERROR;
+      return IC_ERROR_MEM_ALLOC;
     if (new_parent)
       *new_parent= new_dyn_index;
     if (dyn_index->parent_dyn_index)
@@ -473,7 +472,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY *dyn_array,
              sizeof(IC_DYNAMIC_ARRAY_INDEX))))
       {
         ic_free((void*)new_dyn_index);
-        return MEM_ALLOC_ERROR;
+        return IC_ERROR_MEM_ALLOC;
       }
       dyn_index->parent_dyn_index= new_parent_dyn_index;
       new_dyn_index->parent_dyn_index= new_parent_dyn_index;
@@ -1304,6 +1303,12 @@ int ic_build_config_data(IC_STRING *conf_data,
   IC_CONFIG_OPERATIONS *ic_conf_op= ic_config->clu_conf_ops;
   DEBUG_ENTRY("ic_build_config_data");
 
+  if (conf_data->len == 0)
+  {
+    err_obj->err_num= 1;
+    err_obj->line_number= 0;
+    return 1;
+  }
   for (pass= 0; pass < 2; pass++)
   {
     gchar *iter_data= conf_data->str;
@@ -1379,9 +1384,9 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   guint32 add_len= strlen(add_str);
   guint32 orig_len= dest_str->len;
   guint32 new_len= add_len + orig_len;
-  gchar *new_str= malloc(new_len + 1);
+  gchar *new_str= ic_malloc(new_len + 1);
   if (new_str == NULL)
-    return MEM_ALLOC_ERROR;
+    return IC_ERROR_MEM_ALLOC;
   if (orig_len > 0)
     memcpy(new_str, dest_str->str, orig_len);
   memcpy(new_str + orig_len, add_str, add_len);

@@ -109,7 +109,7 @@ ic_base64_encode(guint8 **dest,
   dst_len= 4*real_quads+no_crs;
   dst= (guint8*)ic_calloc(dst_len + 1);
   if (!dst)
-    return MEM_ALLOC_ERROR;
+    return IC_ERROR_MEM_ALLOC;
   *dest= dst;
   *dest_len= dst_len;
   end_dst= dst + dst_len + 1;
@@ -211,35 +211,41 @@ ic_send_with_cr(struct ic_connection *conn, const gchar *send_buf)
 
 int
 ic_rec_with_cr(struct ic_connection *conn,
-               gchar *rec_buf,
-               guint32 *read_size,
-               guint32 *size_curr_buf,
-               guint32 buffer_size)
+               gchar **rec_buf,
+               guint32 *read_size)
 {
   guint32 inx, size_to_read, size_read;
   int res;
-  char *end_line;
+  gchar *end_line;
+  guint32 buffer_size= conn->read_buf_size;
+  gchar *read_buf= conn->read_buf;
+  guint32 size_curr_buf= conn->size_curr_read_buf;
+  guint32 read_buf_pos;
 
-  if (*size_curr_buf > 0)
+  if (size_curr_buf > 0)
   {
-    *read_size+= 1; /* Take CR into account */
-    *size_curr_buf-= *read_size;
-    memmove(rec_buf, rec_buf + *read_size,
-            *size_curr_buf);
-    *read_size= 0;
+    read_buf_pos= conn->read_buf_pos;
+    size_curr_buf-= read_buf_pos;
+    memmove(read_buf, read_buf + read_buf_pos,
+            size_curr_buf);
+    conn->read_buf_pos= 0;
   }
   do
   {
-    if (*size_curr_buf > 0)
+    if (size_curr_buf > 0)
     {
-      for (end_line= rec_buf, inx= 0;
-           inx < *size_curr_buf && end_line[inx] != CARRIAGE_RETURN;
+      for (end_line= read_buf, inx= 0;
+           inx < size_curr_buf && end_line[inx] != CARRIAGE_RETURN;
            inx++)
         ;
-      if (inx != *size_curr_buf)
+      if (inx != size_curr_buf)
       {
         /* Found a line to report */
+        conn->size_curr_read_buf= size_curr_buf;
+        conn->read_buf_pos= inx + 1; /* Take CR into account */
+        DEBUG(COMM_LEVEL, ic_debug_print_rec_buf(read_buf, inx));
         *read_size= inx;
+        *rec_buf= read_buf;
         return 0;
       }
       /*
@@ -247,13 +253,13 @@ ic_rec_with_cr(struct ic_connection *conn,
         far.
       */
     }
-    size_to_read= buffer_size - *size_curr_buf;
+    size_to_read= buffer_size - size_curr_buf;
     if ((res= conn->conn_op.ic_read_connection(conn,
-                                               rec_buf + *size_curr_buf,
+                                               read_buf + size_curr_buf,
                                                size_to_read,
                                                &size_read)))
       return res;
-    *size_curr_buf+= size_read;
+    size_curr_buf+= size_read;
   } while (1);
   return 0;
 }

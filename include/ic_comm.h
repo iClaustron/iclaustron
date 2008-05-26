@@ -24,12 +24,11 @@
 #include <ic_common_header.h>
 #include <ic_ssl.h>
 
-#define MEM_ALLOC_ERROR 32767
-#define ACCEPT_ERROR 32766
-#define END_OF_FILE 32765
-#define PROTOCOL_ERROR 32764
-#define AUTHENTICATE_ERROR 32763
-#define SSL_ERROR 32762
+#define ACCEPT_ERROR 32767
+#define END_OF_FILE 32766
+#define PROTOCOL_ERROR 32765
+#define AUTHENTICATE_ERROR 32764
+#define SSL_ERROR 32763
 
 #ifdef USE_MSG_NOSIGNAL
 #define IC_MSG_NOSIGNAL MSG_NOSIGNAL
@@ -241,6 +240,10 @@ struct ic_connection
   GMutex *read_mutex;
   GMutex *write_mutex;
   GMutex *connect_mutex;
+  gchar *read_buf;
+  guint32 read_buf_size;
+  guint32 size_curr_read_buf;
+  guint32 read_buf_pos;
   struct connection_buffer *first_con_buf;
   struct connection_buffer *last_con_buf;
   int rw_sockfd;
@@ -489,6 +492,7 @@ IC_CONNECTION *ic_create_socket_object(gboolean is_client,
                                        gboolean is_mutex_used,
                                        gboolean is_connect_thread_used,
                                        gboolean is_using_front_buffer,
+                                       guint32 read_buf_size,
                                        authenticate_func func,
                                        void *auth_obj);
 
@@ -499,6 +503,7 @@ IC_CONNECTION *ic_create_ssl_object(gboolean is_client,
                                     gboolean is_ssl_used_for_data,
                                     gboolean is_connect_thread_used,
                                     gboolean is_using_front_buffer,
+                                    guint32 read_buf_size,
                                     authenticate_func func,
                                     void *auth_obj);
 
@@ -570,10 +575,8 @@ int ic_base64_decode(guint8 *dest, guint32 *dest_len,
 */
 int ic_send_with_cr(IC_CONNECTION *conn, const gchar *buf);
 int ic_rec_with_cr(IC_CONNECTION *conn,
-                   gchar *rec_buf,
-                   guint32 *read_size,
-                   guint32 *size_curr_buf,
-                   guint32 buffer_size);
+                   gchar **rec_buf,
+                   guint32 *read_size);
 
 /*
   Methods to handle conversion to integers from strings
@@ -581,6 +584,7 @@ int ic_rec_with_cr(IC_CONNECTION *conn,
 gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
                                        guint64 *ret_number);
 
+#define SPACE_CHAR (gchar)32
 #define CARRIAGE_RETURN (gchar)10
 #define LINE_FEED (gchar)13
 #define NULL_BYTE (gchar)0

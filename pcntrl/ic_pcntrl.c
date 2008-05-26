@@ -107,26 +107,20 @@ send_ok_reply(IC_CONNECTION *conn)
 static gpointer
 run_command_handler(gpointer data)
 {
+  gchar *read_buf;
+  guint32 read_size;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   GError *error= NULL;
   gchar *arg_vector[4];
-  gchar read_buf[256];
-  guint32 read_size= 0;
-  guint32 size_curr_buf= 0;
   guint32 items_received= 0;
   guint32 i;
   GPid child_pid;
   gchar *arg_str;
   int ret_code;
 
-  memset(read_buf, 0, sizeof(read_buf)); /* Zeroes in read_buf*/
   memset(arg_vector, 0, 4*sizeof(gchar*));
-
-  while (!(ret_code= ic_rec_with_cr(conn, read_buf, &read_size,
-                                    &size_curr_buf,
-                                    sizeof(read_buf))))
+  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    DEBUG(COMM_LEVEL, ic_print_buf(read_buf, read_size));
     if (read_size == 0)
     {
       arg_vector[items_received]= NULL;

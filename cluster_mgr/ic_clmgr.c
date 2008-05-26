@@ -110,37 +110,6 @@ get_node_id(IC_PARSE_DATA *parse_data)
 }
 
 static int
-set_up_server_connection(IC_CONNECTION **conn)
-{
-  IC_CONNECTION *loc_conn;
-  int ret_code;
-
-  if (!(loc_conn= ic_create_socket_object(FALSE, TRUE, FALSE, FALSE,
-                                          NULL, NULL)))
-  {
-    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
-    return 1;
-  }
-  DEBUG_PRINT(COMM_LEVEL,
-    ("Setting up server connection for Cluster Manager at %s:%s",
-     glob_cluster_mgr_ip, glob_cluster_mgr_port));
-  loc_conn->server_name= glob_cluster_mgr_ip;
-  loc_conn->server_port= glob_cluster_mgr_port;
-  loc_conn->is_listen_socket_retained= TRUE;
-  if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
-  {
-    DEBUG_PRINT(COMM_LEVEL,
-      ("Failed to set-up connection for Cluster Manager"));
-    loc_conn->conn_op.ic_free_connection(loc_conn);
-    return 1;
-  }
-  printf("Successfully set-up connection for Cluster Manager at %s:%s\n",
-         glob_cluster_mgr_ip, glob_cluster_mgr_port);
-  *conn= loc_conn;
-  return 0;
-}
-
-static int
 start_data_server_node(__attribute ((unused)) gchar *node_config,
                        __attribute ((unused)) guint32 cluster_id,
                        __attribute ((unused)) guint32 node_id,
@@ -393,13 +362,48 @@ ic_stop_cmd(IC_PARSE_DATA *parse_data)
   return;
 }
 
+/* Handle command LIST CLUSTERS */
 static void
 ic_list_cmd(IC_PARSE_DATA *parse_data)
 {
-  if (ic_send_with_cr(parse_data->conn, "LIST") ||
-      ic_send_with_cr(parse_data->conn, not_impl_string) ||
-      ic_send_with_cr(parse_data->conn, ic_empty_string))
-    parse_data->exit_flag= TRUE;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_API_CONFIG_SERVER *apic= parse_data->apic;
+  int error;
+  gchar *output_ptr;
+  gchar *cluster_name_ptr;
+  guint64 cluster_id;
+  guint32 cluster_id_size, cluster_name_len, space_len;
+  gchar output_buf[2048];
+
+  if ((error= ic_send_with_cr(parse_data->conn,
+  "CLUSTER_NAME                    CLUSTER_ID")))
+    goto error;
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
+    if (!clu_conf)
+      continue;
+    cluster_name_ptr= clu_conf->clu_info.cluster_name.str;
+    cluster_name_len= clu_conf->clu_info.cluster_name.len;
+    memcpy(output_buf, cluster_name_ptr, cluster_name_len);
+    if (cluster_name_len < 32)
+      space_len= 32 - cluster_name_len;
+    else
+      space_len= 1;
+    output_ptr= output_buf + cluster_name_len;
+    memset(output_ptr, SPACE_CHAR, space_len);
+    output_ptr+= space_len;
+    output_ptr= ic_guint64_str(cluster_id, output_ptr, &cluster_id_size);
+    output_ptr[cluster_id_size]= 0;
+    if ((error= ic_send_with_cr(parse_data->conn, output_buf)))
+      goto error;
+  }
+  if ((error= ic_send_with_cr(parse_data->conn, ic_empty_string)))
+    goto error;
+  return;
+error:
+  ic_print_error(error);
+  parse_data->exit_flag= TRUE;
   return;
 }
 
@@ -607,16 +611,15 @@ init_parse_data(IC_PARSE_DATA *parse_data)
 static gpointer
 run_handle_new_connection(gpointer data)
 {
-  int ret_code;
+  gchar *read_buf;
   guint32 read_size;
-  guint32 size_curr_buf= 0;
+  int ret_code;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_API_CONFIG_SERVER *apic= conn->param;
   gchar *parse_buf;
   guint32 parse_inx= 0;
   IC_PARSE_DATA parse_data;
-  gchar rec_buf[256];
 
   memset(&parse_data, sizeof(IC_PARSE_DATA), 0);
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
@@ -633,8 +636,7 @@ run_handle_new_connection(gpointer data)
   parse_data.apic= apic;
   parse_data.conn= conn;
   parse_data.current_cluster_id= IC_MAX_UINT32;
-  while (!(ret_code= ic_rec_with_cr(conn, rec_buf, &read_size,
-                                    &size_curr_buf, sizeof(rec_buf))))
+  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (read_size == 0)
     {
@@ -655,7 +657,7 @@ run_handle_new_connection(gpointer data)
     }
     else
     {
-      memcpy(parse_buf+parse_inx, rec_buf, read_size);
+      memcpy(parse_buf+parse_inx, read_buf, read_size);
       parse_inx+= read_size;
     }
   }
@@ -721,6 +723,38 @@ error:
   return ret_code;
 }
 
+static int
+set_up_server_connection(IC_CONNECTION **conn)
+{
+  IC_CONNECTION *loc_conn;
+  int ret_code;
+
+  if (!(loc_conn= ic_create_socket_object(FALSE, TRUE, FALSE, FALSE,
+                                          COMMAND_READ_BUF_SIZE,
+                                          NULL, NULL)))
+  {
+    DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
+    return 1;
+  }
+  DEBUG_PRINT(COMM_LEVEL,
+    ("Setting up server connection for Cluster Manager at %s:%s",
+     glob_cluster_mgr_ip, glob_cluster_mgr_port));
+  loc_conn->server_name= glob_cluster_mgr_ip;
+  loc_conn->server_port= glob_cluster_mgr_port;
+  loc_conn->is_listen_socket_retained= TRUE;
+  if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
+  {
+    DEBUG_PRINT(COMM_LEVEL,
+      ("Failed to set-up connection for Cluster Manager"));
+    loc_conn->conn_op.ic_free_connection(loc_conn);
+    return 1;
+  }
+  printf("Successfully set-up connection for Cluster Manager at %s:%s\n",
+         glob_cluster_mgr_ip, glob_cluster_mgr_port);
+  *conn= loc_conn;
+  return 0;
+}
+
 static IC_API_CONFIG_SERVER*
 get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                   IC_STRING *config_dir)
@@ -745,9 +779,9 @@ get_configuration(IC_API_CLUSTER_CONNECTION *apic,
   apic->cluster_server_ports= &glob_cluster_server_port;
   if ((config_server_obj= ic_create_api_cluster(apic)))
   {
-    if (config_server_obj->api_op.ic_get_config(config_server_obj,
-                                                clu_infos,
-                                                &node_id))
+    if (!config_server_obj->api_op.ic_get_config(config_server_obj,
+                                                 clu_infos,
+                                                 node_id))
       goto end;
     config_server_obj->api_op.ic_free_config(config_server_obj);
     config_server_obj= NULL;
@@ -777,12 +811,12 @@ int main(int argc,
            "- iClaustron Cluster Manager")))
     return ret_code;
   if ((ret_code= ic_set_config_path(&glob_config_dir,
-                                 glob_config_path,
-                                 config_path_buf)))
+                                    glob_config_path,
+                                    config_path_buf)))
     return ret_code;
   if (glob_bootstrap && (ret_code= bootstrap()))
     goto error;
-  if ((config_server_obj= get_configuration(&apic, &glob_config_dir)))
+  if (!(config_server_obj= get_configuration(&apic, &glob_config_dir)))
     goto error;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;

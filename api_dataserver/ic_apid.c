@@ -33,10 +33,9 @@ is_ds_conn_established(IC_DS_CONNECTION *ds_conn,
 static int
 authenticate_ds_connection(void *conn_obj)
 {
-  gchar buf[64];
+  gchar *read_buf;
+  guint32 read_size;
   gchar expected_buf[64];
-  guint32 read_size= 0;
-  guint32 size_curr_buf= 0;
   int error;
   IC_DS_CONNECTION *ds_conn= conn_obj;
   IC_CONNECTION *conn= ds_conn->conn_obj;
@@ -44,16 +43,14 @@ authenticate_ds_connection(void *conn_obj)
   ic_send_with_cr(conn, "ndbd");
   ic_send_with_cr(conn, "ndbd passwd");
   conn->conn_op.ic_flush_connection(conn);
-  if ((error= ic_rec_with_cr(conn, (gchar*)&buf, &read_size, &size_curr_buf,
-                             sizeof(buf))))
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
-  if (!strcmp(buf, "ok"))
+  if (!strcmp(read_buf, "ok"))
     return AUTHENTICATE_ERROR;
-  ic_send_with_cr(conn, buf);
-  if ((error= ic_rec_with_cr(conn, (gchar*)&buf, &read_size, &size_curr_buf,
-                             sizeof(buf))))
+  ic_send_with_cr(conn, read_buf);
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
-  if (!strcmp(buf, expected_buf))
+  if (!strcmp(read_buf, expected_buf))
     return AUTHENTICATE_ERROR;
   return 0;
 }
@@ -64,9 +61,10 @@ open_ds_connection(IC_DS_CONNECTION *ds_conn)
   int error;
   IC_CONNECTION *conn= ds_conn->conn_obj;
   if (!(conn= ic_create_socket_object(TRUE, TRUE, TRUE, TRUE,
+                                      CONFIG_READ_BUF_SIZE,
                                       authenticate_ds_connection,
                                       (void*)ds_conn)))
-    return MEM_ALLOC_ERROR;
+    return IC_ERROR_MEM_ALLOC;
   ds_conn->conn_obj= conn;
   if ((error= conn->conn_op.ic_set_up_connection(conn)))
     return error;
