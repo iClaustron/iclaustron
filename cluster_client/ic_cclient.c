@@ -15,7 +15,9 @@
 
 #include <ic_common.h>
 #include <stdio.h>
+#ifdef HAVE_READLINE
 #include <readline/readline.h>
+#endif
 
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_server_port= "12003";
