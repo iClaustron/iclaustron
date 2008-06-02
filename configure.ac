@@ -104,6 +104,9 @@ AC_CHECK_LIB(glib-2.0, g_list_append,,
  [AC_MSG_ERROR([No glib library installed])])
 
 AS_IF([test "x$with_readline" != "xno"],
+  [AC_CHECK_HEADERS([readline/readline.h],,
+    [AC_MSG_ERROR([Missing readline/readline.h])])])
+AS_IF([test "x$with_readline" != "xno"],
   [AC_CHECK_LIB([readline], [main],
     [AC_SUBST([LIBREADLINE], ["-lreadline -lncurses"])
      AC_DEFINE([HAVE_LIBREADLINE], [1], [Define if you have libreadline])
