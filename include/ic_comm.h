@@ -23,6 +23,7 @@
 #include <arpa/inet.h>
 #include <ic_common_header.h>
 #include <ic_ssl.h>
+#include <glib.h>
 
 #define ACCEPT_ERROR 32767
 #define END_OF_FILE 32766
@@ -526,37 +527,39 @@ struct ic_sock_buf;
 
 struct ic_sock_buf_operations
 {
-  gboolean (*ic_get_conn_buf) (struct ic_sock_buf *buf,
-                               struct ic_sock_buf_page **page);
-  gboolean (*ic_return_conn_buf) (struct ic_sock_buf *buf,
-                                  struct ic_sock_buf_page *page);
-  gboolean (*ic_increase_conn_buf) (guint32 no_of_pages);
+  struct ic_sock_buf_page* (*ic_get_sock_buf_page)
+      (struct ic_sock_buf *buf,
+       struct ic_sock_buf_page **free_pages,
+       guint32 num_pages);
+  void (*ic_return_sock_buf_page) (struct ic_sock_buf *buf,
+                                   struct ic_sock_buf_page *page);
+  int (*ic_inc_sock_buf) (struct ic_sock_buf *buf, guint64 no_of_pages);
+  void (*ic_free_sock_buf) (struct ic_sock_buf *buf);
 };
 typedef struct ic_sock_buf_operations IC_SOCK_BUF_OPERATIONS;
 
 struct ic_sock_buf_page
 {
-  char *prio_ref[PRIO_LEVELS];
-  guint32 prio_size[PRIO_LEVELS];
   struct ic_sock_buf_page *next_sock_buf_page;
-  struct ic_sock_buf_page *prev_sock_buf_page;
+  gchar *sock_buf_page;
+  guint32 size;
 };
 typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
 
 struct ic_sock_buf
 {
-  struct ic_sock_buf_operations sock_buf_op;
-  struct ic_sock_buf_page *first_page;
+  IC_SOCK_BUF_OPERATIONS sock_buf_op;
+  IC_SOCK_BUF_PAGE *first_page;
   guint32 page_size;
-  guint32 max_prio_size[PRIO_LEVELS];
   guint32 alloc_segments;
-  char *alloc_segments_ref[MAX_ALLOC_SEGMENTS];
+  gchar *alloc_segments_ref[MAX_ALLOC_SEGMENTS];
   GMutex *ic_buf_mutex;
 };
 typedef struct ic_sock_buf IC_SOCK_BUF;
 
-IC_SOCK_BUF *ic_create_socket_membuf(guint32 page_size,
-                                     guint32 no_of_pages);
+IC_SOCK_BUF*
+ic_create_socket_membuf(guint32 page_size,
+                        guint64 no_of_pages);
 
 /*
   Debug print-outs
@@ -589,4 +592,44 @@ gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
 #define LINE_FEED (gchar)13
 #define NULL_BYTE (gchar)0
 
+/*
+  Definitions used to handle NDB Protocol handling data structures.
+*/
+
+struct ic_ndb_receive_state
+{
+  IC_CONNECTION *conn;
+  IC_SOCK_BUF *rec_buf_pool;
+  IC_SOCK_BUF *message_pool;
+  IC_SOCK_BUF_PAGE *buf_page;
+  guint32 read_size;
+  gboolean read_header_flag;
+  guint32 cluster_id;
+  guint32 node_id;
+  /* 
+    Statistical info to track usage of this socket to enable proper
+    configuration of threads to handle NDB Protocol.
+  */
+  GMutex *ndb_rec_mutex;
+};
+typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
+
+struct ic_thread_connection
+{
+  IC_SOCK_BUF_PAGE *free_rec_pages;
+  IC_SOCK_BUF_PAGE *free_ndb_signals;
+};
+typedef struct ic_thread_connection IC_THREAD_CONNECTION;
+
+struct ic_ndb_signal
+{
+  guint32 signal_number;
+};
+typedef struct ic_ndb_signal IC_NDB_SIGNAL;
+
+struct ic_node_connection
+{
+  guint32 not_used;
+};
+typedef struct ic_node_connection IC_NODE_CONNECTION;
 #endif

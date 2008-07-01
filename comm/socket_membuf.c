@@ -14,62 +14,164 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_comm.h>
-static gboolean
-get_sock_buf_page(struct ic_sock_buf *buf,
-                  struct ic_sock_buf_page **page)
+
+static IC_SOCK_BUF_PAGE*
+get_sock_buf_page(IC_SOCK_BUF *buf,
+                  IC_SOCK_BUF_PAGE **free_rec_pages,
+                  guint32 num_pages)
 {
-  struct ic_sock_buf_page *first_page;
+  guint32 i;
+  IC_SOCK_BUF_PAGE *first_page, *next_page;
+
+  if (free_rec_pages)
+  {
+    if (*free_rec_pages)
+    {
+      /*
+        We allow the caller to provide a local linked list of free
+        objects and thus the caller can fetch objects from the
+        global list in batches.
+      */
+      first_page= *free_rec_pages;
+      *free_rec_pages= (*free_rec_pages)->next_sock_buf_page;
+      return first_page;
+    }
+  }
+  else
+    num_pages= 1; /* Ignore this parameter if no local free list provided */
+
   g_mutex_lock(buf->ic_buf_mutex);
-
-  /* Retrieve first object in a doubly linked list */
+  /* Retrieve objects in a linked list */
   first_page= buf->first_page;
-  if (!first_page)
-    return TRUE;
-  *page= first_page;
-  buf->first_page= first_page->next_sock_buf_page;
-  if (buf->first_page)
-    buf->first_page->prev_sock_buf_page= 0;
-
-  /* Initialise the returned page object */
-  first_page->prio_ref[0]= (char*)first_page;
-  first_page->prio_ref[1]= first_page->prio_ref[0] + HIGH_PRIO_BUF_SIZE;
-  first_page->prio_size[0]= first_page->prio_size[1]= 0;
-  first_page->next_sock_buf_page= 0;
-  first_page->prev_sock_buf_page= 0;
+  next_page= first_page;
+  for (i= 0; i < num_pages && next_page; i++)
+    next_page= next_page->next_sock_buf_page;
+  buf->first_page= next_page;
   g_mutex_unlock(buf->ic_buf_mutex);
-  return FALSE;
+
+  /* Initialise the returned page objects */
+  next_page= first_page;
+  for (i= 0; i < num_pages; i++)
+  {
+    next_page->size= 0;
+    next_page= next_page->next_sock_buf_page;
+  }
+  /* Initialise local free list */
+  if (free_rec_pages && first_page)
+    *free_rec_pages= first_page->next_sock_buf_page;
+  /* Unlink first page and last page */
+  if (first_page)
+    first_page->next_sock_buf_page= 0;
+  if (next_page)
+    next_page->next_sock_buf_page= 0;
+  return first_page;
 }
 
-static gboolean
-return_sock_buf_page(struct ic_sock_buf *buf,
-                     struct ic_sock_buf_page *page)
+
+static void
+return_sock_buf_page(IC_SOCK_BUF *buf,
+                     IC_SOCK_BUF_PAGE *page)
 {
-  struct ic_sock_buf_page *prev_first_page;
+  IC_SOCK_BUF_PAGE *prev_first_page;
+
   g_mutex_lock(buf->ic_buf_mutex);
-  /* Return page to doubly linked list at first page */
+  /* Return page to linked list at first page */
   prev_first_page= buf->first_page;
   buf->first_page= page;
   page->next_sock_buf_page= prev_first_page;
-  page->prev_sock_buf_page= 0;
-  if (prev_first_page)
-    prev_first_page->prev_sock_buf_page= page;
   g_mutex_unlock(buf->ic_buf_mutex);
-  return FALSE;
 }
 
-struct ic_sock_buf*
-ic_create_socket_membuf(guint32 page_size,
-                        guint32 no_of_pages)
+void
+free_sock_buf(IC_SOCK_BUF *buf)
 {
-  char *ptr;
-  struct ic_sock_buf *buf;
+  guint32 i;
+  guint32 alloc_segments= buf->alloc_segments;
 
-  /* WORK TODO LEFT */
-  buf= malloc(sizeof(struct ic_sock_buf));
-  ptr= malloc(page_size * no_of_pages +
-              (no_of_pages * sizeof(struct ic_sock_buf_page)));
-  buf->sock_buf_op.ic_get_conn_buf= get_sock_buf_page;
-  buf->sock_buf_op.ic_return_conn_buf= return_sock_buf_page;
-  return 0;
+  for (i= 0; i < alloc_segments; i++)
+    free(buf->alloc_segments_ref[i]);
+  free(buf);
+}
+
+/*
+  Build the linked list of pages we maintain for send and receive
+  buffers for iClaustron transporters.
+*/
+static IC_SOCK_BUF_PAGE*
+set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
+                            guint64 no_of_pages)
+{
+  gchar *loop_ptr, *buf_page_ptr, *new_buf_page_ptr;
+  IC_SOCK_BUF_PAGE *sock_buf_page_ptr;
+  guint64 i;
+
+  loop_ptr= ptr + (no_of_pages * sizeof(IC_SOCK_BUF_PAGE));
+  buf_page_ptr= ptr;
+  for (i= 0; i < no_of_pages; i++)
+  {
+    sock_buf_page_ptr= (IC_SOCK_BUF_PAGE*)buf_page_ptr;
+    sock_buf_page_ptr->sock_buf_page= loop_ptr;
+    new_buf_page_ptr= (buf_page_ptr + sizeof(IC_SOCK_BUF_PAGE));
+    sock_buf_page_ptr->next_sock_buf_page= (IC_SOCK_BUF_PAGE*)new_buf_page_ptr;
+    loop_ptr+= page_size;
+    buf_page_ptr= new_buf_page_ptr;
+  }
+  return sock_buf_page_ptr;
+}
+
+static int
+inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
+{
+  gchar *ptr;
+  guint32 page_size= buf->page_size;
+  IC_SOCK_BUF_PAGE *last_sock_buf_page;
+  int error= 0;
+
+  if (!(ptr= ic_malloc(no_of_pages * (page_size + sizeof(IC_SOCK_BUF_PAGE)))))
+    return 1;
+  last_sock_buf_page= set_up_pages_in_linked_list(ptr, page_size, no_of_pages);
+  g_mutex_lock(buf->ic_buf_mutex);
+  if (buf->alloc_segments == MAX_ALLOC_SEGMENTS)
+  {
+    last_sock_buf_page->next_sock_buf_page= buf->first_page;
+    buf->first_page= (IC_SOCK_BUF_PAGE*)ptr;
+    buf->alloc_segments_ref[buf->alloc_segments]= ptr;
+    buf->alloc_segments++;
+  }
+  else
+  {
+    free(ptr);
+    error= 1;
+  }
+  g_mutex_unlock(buf->ic_buf_mutex);
+  return error;
+}
+
+IC_SOCK_BUF*
+ic_create_socket_membuf(guint32 page_size,
+                        guint64 no_of_pages)
+{
+  gchar *ptr;
+  IC_SOCK_BUF *buf;
+  IC_SOCK_BUF_PAGE *last_sock_buf_page;
+
+  buf= (IC_SOCK_BUF*)ic_malloc(sizeof(IC_SOCK_BUF));
+  if (!(ptr= ic_malloc(page_size * no_of_pages +
+      (no_of_pages * sizeof(IC_SOCK_BUF_PAGE)))))
+  {
+    return NULL;
+  }
+  last_sock_buf_page= set_up_pages_in_linked_list(ptr, page_size, no_of_pages);
+  last_sock_buf_page->next_sock_buf_page= NULL;
+
+  buf->first_page= (IC_SOCK_BUF_PAGE*)ptr;
+  buf->alloc_segments_ref[0]= ptr;
+  buf->alloc_segments= 1;
+
+  buf->sock_buf_op.ic_get_sock_buf_page= get_sock_buf_page;
+  buf->sock_buf_op.ic_return_sock_buf_page= return_sock_buf_page;
+  buf->sock_buf_op.ic_inc_sock_buf= inc_sock_buf;
+  buf->sock_buf_op.ic_free_sock_buf= free_sock_buf;
+  return buf;
 }
 

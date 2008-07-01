@@ -1,13 +1,13 @@
 iClaustron is a tool package designed to enable non-DBMS applications to take
 advantage of the features developed for NDB Cluster. It features an API to
 connect applications to the NDB Data Servers. It contains an implementation of
-a Configuration Server. The Configuration Server manages configuration of many
+a Cluster Server. The Cluster Server manages configuration of many
 clusters. It also has an external interface that enables on-line changes to the
-configuration even in the presence of many Configuration Servers.
+configuration even in the presence of many Cluster Servers.
 
-The Cluster Server is a server that handles management commands. It implements
+The Cluster Manager is a server that handles management commands. It implements
 a number of management functions for the cluster. These are implemented either
-directly towards the Data Servers and/or by interacting with the Configuration
+directly towards the Data Servers and/or by interacting with the Cluster
 Servers.
 
 The Cluster Client tool is a command driven tool that acts as an interface for
@@ -21,27 +21,27 @@ to another cluster.
 
 Description of directories
 --------------------------
-config_server:
-Implements the iClaustron Configuration Server. A configuration can contain
+cluster_server:
+Implements the iClaustron Cluster Server. A configuration can contain
 one or several clusters. Each cluster is maintained in one configuration file.
 New clusters can be added on-line and there is an interface to change
 the configurations.
 
 cclient:
 This is the Cluster Client directory. It uses the API to the Cluster
-Server to implement management features as directed by the user. The
+Manager to implement management features as directed by the user. The
 user issues commands that are handled by a command parser. The command
 parser takes care of understanding the user objectives and then there is
 a set of functions to implement those features using the NDB API Protocol
-and the protocol towards the iClaustron Configuration Server.
+and the protocol towards the iClaustron Cluster Server.
 
-clusterserver:
-Implements the Cluster Server. It is controlled by issuing commands using
-the Cluster Server API and performs its action by using the API to the
+cluster_mgr:
+Implements the Cluster Manager. It is controlled by issuing commands using
+the Cluster Manager API and performs its action by using the API to the
 Data Servers. It controls a set of clusters where each such cluster has
-a configuration file that directs its start-up features. The Cluster Server
-controls changes to configuration and handles failures of a Cluster Server
-and failover to another Cluster Server. The Cluster Server uses an active-
+a configuration file that directs its start-up features. The Cluster Manager
+controls changes to configuration and handles failures of a Cluster Manager
+and failover to another Cluster Manager. The Cluster Manager uses an active-
 passive configuration but all changes to a configuration is written to all
 alive nodes before actually being changed.
 
@@ -73,8 +73,8 @@ a filesystem in userspace. FUSE can be used on Linux and FreeBSD.
 
 comm:
 This implements common functions to implement Communication Functions. It uses
-currently IPv4 sockets. However many cluster interconnects implement socket
-APIs that bypass the TCP/IP stack.
+currently IPv4 and IPv6 sockets. However many cluster interconnects implement
+socket APIs that bypass the TCP/IP stack. It also supports SSL connections.
 
 port:
 This is a portability library for iClaustron. In addition to this library,
