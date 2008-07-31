@@ -60,7 +60,7 @@ open_ds_connection(IC_DS_CONNECTION *ds_conn)
 {
   int error;
   IC_CONNECTION *conn= ds_conn->conn_obj;
-  if (!(conn= ic_create_socket_object(TRUE, TRUE, TRUE, TRUE,
+  if (!(conn= ic_create_socket_object(TRUE, TRUE, TRUE,
                                       CONFIG_READ_BUF_SIZE,
                                       authenticate_ds_connection,
                                       (void*)ds_conn)))

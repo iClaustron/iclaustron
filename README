@@ -79,3 +79,19 @@ socket APIs that bypass the TCP/IP stack. It also supports SSL connections.
 port:
 This is a portability library for iClaustron. In addition to this library,
 iClaustron uses glib for many common functions.
+
+Build prerequisites:
+--------------------
+Ubuntu:
+sudo apt-get install build-essential
+sudo apt-get install automake (if using bootstrap.sh.in)
+sudo apt-get install libtool (if using bootstrap.sh.in)
+sudo apt-get install libglib2.0-dev
+sudo apt-get install libreadline5-dev (if readline is used)
+sudo apt-get install libncurses5-dev (if readline is used)
+sudo apt-get install pkg-config
+sudo apt-get install flex
+sudo apt-get install bison
+sudo apt-get install openssl (if openssl is to be used)
+sudo apt-get install subversion (To get iClaustron tree from Subversion tree)
+

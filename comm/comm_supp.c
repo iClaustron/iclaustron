@@ -192,7 +192,7 @@ ic_send_with_cr(struct ic_connection *conn, const gchar *send_buf)
   buf[inx++]= CARRIAGE_RETURN;
   buf[inx]= NULL_BYTE;
   DEBUG_PRINT(COMM_LEVEL, ("Send: %s", buf));
-  res= conn->conn_op.ic_write_connection(conn, (const void*)buf, inx, 0, 1);
+  res= conn->conn_op.ic_write_connection(conn, (const void*)buf, inx, 1);
   return res;
 }
 

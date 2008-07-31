@@ -548,12 +548,6 @@ set_up_socket_connection(IC_CONNECTION *conn)
   return 0;
 }
 
-static int
-flush_socket_front_buffer(__attribute__ ((unused)) IC_CONNECTION *conn)
-{
-  return 0;
-}
-
 #ifdef HAVE_SSL
 static int
 ic_ssl_write(IC_CONNECTION *conn, const void *buf, guint32 buf_size)
@@ -581,116 +575,222 @@ ic_ssl_write(IC_CONNECTION *conn, const void *buf, guint32 buf_size)
 }
 #endif
 
-static int
-write_socket_connection(IC_CONNECTION *conn,
-                        const void *buf, guint32 size,
-                        __attribute__ ((unused)) guint32 prio_level,
-                        guint32 secs_to_try)
+struct ic_send_state
 {
-  GTimer *time_measure= 0;
-  gdouble secs_expired= 0;
-  gdouble next_sec_check= 0;
-  guint32 write_size= 0;
-  guint32 loop_count= 0;
-  guint32 secs_count= 0;
+  GTimer *time_measure;
+  gdouble secs_expired;
+  gdouble next_sec_check;
+  guint32 secs_count;
+  guint32 secs_to_try;
+  guint32 write_size;
+  guint32 loop_count;
+  guint32 buf_size;
+};
+typedef struct ic_send_state IC_SEND_STATE;
 
-  /* ICLAUSTRON_SEND_SOCKET(conn->rw_sockfd); */
-  do
+static int
+handle_return_write(IC_CONNECTION *conn, gssize ret_code, 
+                    IC_SEND_STATE *send_state)
+{
+  guint32 buf_size= send_state->buf_size;
+
+  if ((int)send_state->write_size == (int)buf_size)
   {
-    gssize ret_code;
-    gint32 buf_size= size - write_size;
+    unsigned i;
+    guint32 num_sent_buf_range;
+    guint64 num_sent_bufs= conn->conn_stat.num_sent_buffers;
+    guint64 num_sent_bytes= conn->conn_stat.num_sent_bytes;
+    guint64 num_sent_square= conn->conn_stat.num_sent_bytes_square_sum;
 
-#ifdef HAVE_SSL
-    if (conn->is_ssl_used_for_data)
-      ret_code= ic_ssl_write(conn, buf + write_size, buf_size);
+    i= ic_count_highest_bit(buf_size | 32);
+    i-= 6;
+    num_sent_buf_range= conn->conn_stat.num_sent_buf_range[i];
+    conn->error_code= 0;
+    conn->conn_stat.num_sent_buffers= num_sent_bufs + 1;
+    conn->conn_stat.num_sent_bytes= num_sent_bytes + buf_size;
+    conn->conn_stat.num_sent_bytes_square_sum=
+                             num_sent_square + (buf_size*buf_size);
+    conn->conn_stat.num_sent_buf_range[i]= num_sent_buf_range + 1;
+    if (send_state->loop_count && send_state->time_measure)
+      g_timer_destroy(send_state->time_measure);
+    return 0;
+  }
+  if (!send_state->loop_count)
+  {
+    send_state->time_measure= g_timer_new();
+    send_state->secs_expired= (gdouble)0;
+    send_state->next_sec_check= (gdouble)1;
+    send_state->secs_count= 0;
+  }
+  if (ret_code < 0)
+  {
+    int error;
+    if (!conn->is_ssl_used_for_data)
+      error= errno;
     else
-      ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
-                     IC_MSG_NOSIGNAL);
-#else
-    printf("Writing %d bytes\n", buf_size);
-    ret_code= send(conn->rw_sockfd, buf + write_size, buf_size,
-                   IC_MSG_NOSIGNAL);
-#endif
-    if (ret_code == (int)buf_size)
+      error= (-1) * ret_code;
+    if (error == EINTR)
     {
-      unsigned i;
-      guint32 num_sent_buf_range;
-      guint64 num_sent_bufs= conn->conn_stat.num_sent_buffers;
-      guint64 num_sent_bytes= conn->conn_stat.num_sent_bytes;
-      guint64 num_sent_square= conn->conn_stat.num_sent_bytes_square_sum;
-
-      i= ic_count_highest_bit(buf_size | 32);
-      i-= 6;
-      num_sent_buf_range= conn->conn_stat.num_sent_buf_range[i];
       conn->error_code= 0;
-      conn->conn_stat.num_sent_buffers= num_sent_bufs + 1;
-      conn->conn_stat.num_sent_bytes= num_sent_bytes + size;
-      conn->conn_stat.num_sent_bytes_square_sum=
-                               num_sent_square + (size*size);
-      conn->conn_stat.num_sent_buf_range[i]= num_sent_buf_range + 1;
-      if (loop_count && time_measure)
-        g_timer_destroy(time_measure);
-      return 0;
-    }
-    if (!loop_count)
-    {
-      time_measure= g_timer_new();
-      secs_expired= (gdouble)0;
-      next_sec_check= (gdouble)1;
-      secs_count= 0;
-    }
-    if (ret_code < 0)
-    {
-      int error;
-      if (!conn->is_ssl_used_for_data)
-        error= errno;
-      else
-        error= (-1) * ret_code;
-      if (error == EINTR)
-        continue;
-      conn->conn_stat.num_send_errors++;
-      conn->bytes_written_before_interrupt= write_size;
-      DEBUG_PRINT(COMM_LEVEL, ("write error: %d %s",
-                               errno, sys_errlist[errno]));
-      conn->error_code= error;
       return error;
     }
-    write_size+= ret_code;
-    if (loop_count)
+    conn->conn_stat.num_send_errors++;
+    conn->bytes_written_before_interrupt= send_state->write_size;
+    DEBUG_PRINT(COMM_LEVEL, ("write error: %d %s",
+                             errno, sys_errlist[errno]));
+    conn->error_code= error;
+    return error;
+  }
+  if (send_state->loop_count)
+  {
+    if ((send_state->time_measure &&
+        ((g_timer_elapsed(send_state->time_measure, NULL) +
+                          send_state->secs_expired) >
+         send_state->next_sec_check)) ||
+         send_state->loop_count == 1000)
     {
-      if ((time_measure &&
-          ((g_timer_elapsed(time_measure, NULL) + secs_expired) >
-          next_sec_check)) ||
-          loop_count == 1000)
+      send_state->next_sec_check+= (gdouble)1;
+      send_state->secs_count++;
+      if (send_state->secs_count >= send_state->secs_to_try)
       {
-        next_sec_check+= (gdouble)1;
-        secs_count++;
-        if (secs_count >= secs_to_try)
-        {
-          conn->conn_stat.num_send_timeouts++;
-          conn->bytes_written_before_interrupt= write_size;
-          conn->error_code= EINTR;
-          DEBUG_PRINT(COMM_LEVEL, ("timeout error on write"));
-          return EINTR;
-        }
-        loop_count= 1;
+        conn->conn_stat.num_send_timeouts++;
+        conn->bytes_written_before_interrupt= send_state->write_size;
+        conn->error_code= EINTR;
+        DEBUG_PRINT(COMM_LEVEL, ("timeout error on write"));
+        return EINTR;
       }
     }
-    if (loop_count)
-      g_usleep(1000); 
-    loop_count++;
+    send_state->loop_count= 1;
+  }
+  if (send_state->loop_count)
+    g_usleep(1000);
+  conn->error_code= 0;
+  return EINTR;
+}
+
+static int
+writev_socket_connection(IC_CONNECTION *conn,
+                         struct iovec *write_vector, guint32 iovec_size,
+                         guint32 tot_size,
+                         guint32 secs_to_try)
+{
+  IC_SEND_STATE send_state;
+  int error;
+  gssize ret_code;
+  guint32 iovec_index= 0;
+  guint32 vec_len;
+  guint32 write_len;
+  struct msghdr msg_hdr;
+
+  msg_hdr.msg_name= NULL;
+  msg_hdr.msg_namelen= 0;
+  msg_hdr.msg_control= NULL;
+  msg_hdr.msg_controllen= 0;
+  msg_hdr.msg_flags= 0;
+
+  send_state.time_measure= NULL;
+  send_state.write_size= 0;
+  send_state.loop_count= 0;
+  send_state.secs_to_try= secs_to_try;
+  do
+  {
+    msg_hdr.msg_iov= &write_vector[iovec_index];
+    msg_hdr.msg_iovlen= iovec_size - iovec_index;
+#ifdef HAVE_SSL
+    if (conn->is_ssl_used_for_data)
+    {
+      ret_code= ic_ssl_write(conn,
+                             write_vector[iovec_index].iov_base,
+                             write_vector[iovec_index].iov_len);
+    }
+    else
+    {
+      ret_code= sendmsg(conn->rw_sockfd,
+                        &msg_hdr,
+                        IC_MSG_NOSIGNAL);
+    }
+#else
+    ret_code= sendmsg(conn->rw_sockfd,
+                      &msg_hdr,
+                      IC_MSG_NOSIGNAL);
+#endif
+    if (ret_code > 0)
+    {
+      send_state.write_size+= ret_code;
+      if (send_state.write_size < tot_size)
+      {
+        /* We need to calculate where to start the next send */
+        do
+        {
+          vec_len= (guint32)write_vector[iovec_index].iov_len;
+          write_len= (guint32)ret_code;
+          if (write_len < vec_len)
+          {
+            write_vector[iovec_index].iov_len-= write_len;
+            write_vector[iovec_index].iov_base+= write_len;
+            break;
+          }
+          else
+          {
+            write_len-= write_vector[iovec_index].iov_len;
+            iovec_index++;
+          }
+        } while (1);
+      }
+    }
+    if (!(error= handle_return_write(conn, ret_code, &send_state) == 0))
+      return 0;
+    if (error != EINTR || conn->error_code != 0)
+      return error;
+    send_state.loop_count++;
   } while (1);
   return 0;
 }
 
 static int
-write_socket_front_buffer(IC_CONNECTION *conn,
-                          const void *buf, guint32 size,
-                          guint32 prio_level,
-                          guint32 secs_to_try)
+write_socket_connection(IC_CONNECTION *conn,
+                        const void *buf, guint32 size,
+                        guint32 secs_to_try)
 {
-  return write_socket_connection(conn, buf, size, prio_level,
-                                 secs_to_try);
+  IC_SEND_STATE send_state;
+  gssize ret_code;
+  int error;
+  gint32 buf_size;
+
+  send_state.time_measure= NULL;
+  send_state.write_size= 0;
+  send_state.loop_count= 0;
+  send_state.secs_to_try= secs_to_try;
+
+  do
+  {
+    buf_size= size - send_state.write_size;
+
+#ifdef HAVE_SSL
+    if (conn->is_ssl_used_for_data)
+      ret_code= ic_ssl_write(conn,
+                             buf + send_state.write_size,
+                             buf_size);
+    else
+      ret_code= send(conn->rw_sockfd,
+                     buf + send_state.write_size,
+                     buf_size,
+                     IC_MSG_NOSIGNAL);
+#else
+    ret_code= send(conn->rw_sockfd,
+                   buf + send_state.write_size,
+                   buf_size,
+                   IC_MSG_NOSIGNAL);
+#endif
+    if (ret_code > 0)
+      send_state.write_size+= ret_code;
+    if (!(error= handle_return_write(conn, ret_code, &send_state) == 0))
+      return 0;
+    if (error != EINTR || conn->error_code != 0)
+      return error;
+    send_state.loop_count++;
+  } while (1);
+  return 0;
 }
 
 static int
@@ -986,21 +1086,6 @@ create_timers(IC_CONNECTION *conn)
 }
 
 static void
-set_up_methods_front_buffer(IC_CONNECTION *conn)
-{
-  if (conn->is_using_front_buffer)
-  {
-    conn->conn_op.ic_write_connection= write_socket_front_buffer;
-    conn->conn_op.ic_flush_connection= flush_socket_front_buffer;
-  }
-  else
-  {
-    conn->conn_op.ic_write_connection= write_socket_connection;
-    conn->conn_op.ic_flush_connection= no_op_socket_method;
-  }
-}
-
-static void
 set_up_rw_methods_mutex(IC_CONNECTION *conn, gboolean is_mutex_used)
 {
   if (is_mutex_used)
@@ -1069,8 +1154,7 @@ init_connect_stat(IC_CONNECTION *conn)
 
 IC_CONNECTION*
 fork_accept_connection(IC_CONNECTION *orig_conn,
-                       gboolean use_mutex,
-                       gboolean use_front_buffer)
+                       gboolean use_mutex)
 {
   IC_CONNECTION *fork_conn;
   int size_object= orig_conn->is_ssl_connection ?
@@ -1098,10 +1182,10 @@ fork_accept_connection(IC_CONNECTION *orig_conn,
   fork_conn->is_mutex_used= FALSE;
   fork_conn->is_connect_thread_used= FALSE;
   fork_conn->is_mutex_used= use_mutex;
-  fork_conn->is_using_front_buffer= use_front_buffer;
   orig_conn->forked_connections++;
 
-  set_up_methods_front_buffer(fork_conn);
+  fork_conn->conn_op.ic_write_connection= write_socket_connection;
+  fork_conn->conn_op.ic_flush_connection= no_op_socket_method;
   set_up_rw_methods_mutex(fork_conn, fork_conn->is_mutex_used);
 
   if (create_mutexes(fork_conn))
@@ -1121,7 +1205,6 @@ IC_CONNECTION*
 int_create_socket_object(gboolean is_client,
                          gboolean is_mutex_used,
                          gboolean is_connect_thread_used,
-                         gboolean is_using_front_buffer,
                          guint32 read_buf_size,
                          gboolean is_ssl,
                          gboolean is_ssl_used_for_data,
@@ -1158,11 +1241,12 @@ int_create_socket_object(gboolean is_client,
   conn->is_client= is_client;
   conn->is_connect_thread_used= is_connect_thread_used;
   conn->backlog= 1;
-  conn->is_using_front_buffer= is_using_front_buffer;
   conn->is_mutex_used= is_mutex_used;
 
   set_up_rw_methods_mutex(conn, is_mutex_used);
-  set_up_methods_front_buffer(conn);
+  conn->conn_op.ic_write_connection= write_socket_connection;
+  conn->conn_op.ic_writev_connection= writev_socket_connection;
+  conn->conn_op.ic_flush_connection= no_op_socket_method;
 
   init_connect_stat(conn);
 
@@ -1185,14 +1269,12 @@ IC_CONNECTION*
 ic_create_socket_object(gboolean is_client,
                         gboolean is_mutex_used,
                         gboolean is_connect_thread_used,
-                        gboolean is_using_front_buffer,
                         guint32  read_buf_size,
                         authenticate_func auth_func,
                         void *auth_obj)
 {
   return int_create_socket_object(is_client, is_mutex_used,
                                   is_connect_thread_used,
-                                  is_using_front_buffer,
                                   read_buf_size,
                                   FALSE, FALSE,
                                   auth_func, auth_obj);
@@ -1470,8 +1552,7 @@ free_ssl_connection(IC_CONNECTION *in_conn)
 
 static IC_CONNECTION*
 fork_accept_ssl_connection(IC_CONNECTION *orig_conn,
-                           gboolean use_mutex,
-                           gboolean use_front_buffer)
+                           gboolean use_mutex)
 {
   IC_CONNECTION *new_conn;
   IC_SSL_CONNECTION *new_ssl_conn;
@@ -1479,8 +1560,7 @@ fork_accept_ssl_connection(IC_CONNECTION *orig_conn,
   DEBUG_ENTRY("fork_accept_ssl_connection");
 
   lock_connect_mutex(orig_conn);
-  if ((new_conn= fork_accept_connection(orig_conn, use_mutex,
-                                        use_front_buffer)))
+  if ((new_conn= fork_accept_connection(orig_conn, use_mutex)))
   {
     new_ssl_conn= (IC_SSL_CONNECTION*)new_conn;
     /* Assign SSL specific variables to new connection */
@@ -1520,8 +1600,9 @@ read_ssl_connection(IC_CONNECTION *conn, void *buf, guint32 buf_size,
 }
 
 static int
-write_ssl_connection(IC_CONNECTION *conn, const void *buf, guint32 size,
-                     guint32 prio_level, guint32 secs_to_try)
+write_ssl_connection(IC_CONNECTION *conn,
+                     const void *buf, guint32 size,
+                     guint32 secs_to_try)
 {
   int error;
   DEBUG_ENTRY("write_ssl_connection");
@@ -1533,14 +1614,17 @@ write_ssl_connection(IC_CONNECTION *conn, const void *buf, guint32 size,
 }
 
 static int
-write_ssl_front_buffer(IC_CONNECTION *conn, const void *buf, guint32 size,
-                       guint32 prio_level, guint32 secs_to_try)
+writev_ssl_connection(IC_CONNECTION *conn,
+                      struct iovec *write_vector, guint32 iovec_size,
+                      guint32 tot_size,
+                      guint32 secs_to_try)
 {
   int error;
-  DEBUG_ENTRY("write_ssl_connection");
+  DEBUG_ENTRY("writev_ssl_connection");
 
   lock_connect_mutex(conn);
-  error= write_socket_front_buffer(conn, buf, size, prio_level, secs_to_try);
+  error= writev_socket_connection(conn, write_vector, iovec_size,
+                                  tot_size, secs_to_try);
   unlock_connect_mutex(conn);
   DEBUG_RETURN(error);
 }
@@ -1552,7 +1636,6 @@ ic_create_ssl_object(gboolean is_client,
                      IC_STRING *passwd_string,
                      gboolean is_ssl_used_for_data,
                      gboolean is_connect_thread_used,
-                     gboolean is_using_front_buffer,
                      guint32 read_buf_size,
                      authenticate_func auth_func,
                      void *auth_obj)
@@ -1563,7 +1646,6 @@ ic_create_ssl_object(gboolean is_client,
 
   if (!(conn= int_create_socket_object(is_client, FALSE,
                                        is_connect_thread_used,
-                                       is_using_front_buffer,
                                        read_buf_size,
                                        TRUE, is_ssl_used_for_data,
                                        auth_func, auth_obj)))
@@ -1591,10 +1673,8 @@ ic_create_ssl_object(gboolean is_client,
     connection we define all methods requiring a mutex lock/unlock.
   */
   conn->conn_op.ic_read_connection= read_ssl_connection;
-  if (conn->is_using_front_buffer)
-    conn->conn_op.ic_write_connection= write_ssl_front_buffer;
-  else
-    conn->conn_op.ic_write_connection= write_ssl_connection;
+  conn->conn_op.ic_write_connection= write_ssl_connection;
+  conn->conn_op.ic_writev_connection= writev_ssl_connection;
 
   set_up_rw_methods_mutex(conn, FALSE);
   conn->conn_op.ic_fork_accept_connection= fork_accept_ssl_connection;

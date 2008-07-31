@@ -196,8 +196,7 @@ int start_connection_loop()
       }
       if (!(fork_conn= 
             conn->conn_op.ic_fork_accept_connection(conn,
-                                        FALSE,    /* No mutex */
-                                        FALSE)))  /* No front buffer */
+                                        FALSE)))  /* No mutex */
       {
         printf("Error %d received in fork accepted connection\n", ret_code);
         break;

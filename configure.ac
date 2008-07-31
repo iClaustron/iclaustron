@@ -82,8 +82,14 @@ AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 # Set compiler flags according to the user choice
 #
 
-AC_CHECK_FUNCS(bzero memset, break)
-AC_CHECK_FUNCS(socket bind connect listen accept getaddrinfo freeaddrinfo inet_ntop)
+AC_CHECK_FUNCS(bzero memset break gethrtime gettimeofday)
+AC_CHECK_FUNCS(socket bind connect listen accept getaddrinfo freeaddrinfo)
+AC_CHECK_FUNCS(inet_ntop sendmsg)
+AC_CHECK_LIB(rt, clock_gettime,
+  [LIBS="-lrt $LIBS"
+   AC_DEFINE(HAVE_CLOCK_GETTIME, 1,
+             [Define HAVE_CLOCK_GETTIME if clock_gettime function exists])])
+
 GLIB_PACKAGE="glib-2.0"
 GTHREAD_PACKAGE="gthread-2.0"
 GLIB_VERSION="2.10.2"

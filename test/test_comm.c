@@ -122,7 +122,7 @@ connection_test(gboolean use_ssl)
                                      &root_certificate_path,
                                      loc_cert_path,
                                      &passwd_string,
-                                     TRUE, FALSE, FALSE,
+                                     TRUE, FALSE,
                                      CONFIG_READ_BUF_SIZE,
                                      NULL, NULL)))
     {
@@ -136,7 +136,7 @@ connection_test(gboolean use_ssl)
   }
   else
   {
-    if (!(conn= ic_create_socket_object(glob_is_client, TRUE, FALSE, TRUE,
+    if (!(conn= ic_create_socket_object(glob_is_client, TRUE, FALSE,
                                         CONFIG_READ_BUF_SIZE,
                                         NULL, NULL)))
     {
@@ -181,7 +181,7 @@ connection_test(gboolean use_ssl)
     {
       if (conn->conn_op.ic_write_connection(conn,
                                             (const void*)buf,
-                                            sizeof(buf), 0,
+                                            sizeof(buf),
                                             2))
         break;
     }
@@ -263,7 +263,7 @@ test_pcntrl()
   int ret_code, error;
   IC_CONNECTION *conn;
 
-  if (!(conn= ic_create_socket_object(TRUE, TRUE, FALSE, TRUE,
+  if (!(conn= ic_create_socket_object(TRUE, TRUE, FALSE,
                                       CONFIG_READ_BUF_SIZE,
                                       NULL, NULL)))
   {

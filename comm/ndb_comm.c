@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_comm.h>
+#include <glib.h>
 
 /*
   We handle reception of NDB Signals in one or more separate threads, each
@@ -310,9 +311,48 @@ ndb_receive_one_socket(IC_NDB_RECEIVE_STATE *rec_state)
   return 0;
 }
 
+static void
+prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                           guint32 *send_size,
+                           struct iovec *write_vector,
+                           guint32 *iovec_size)
+{
+  IC_SOCK_BUF_PAGE *loc_last_send;
+  guint32 loc_send_size= 0, iovec_index= 0;
+  DEBUG_ENTRY("prepare_real_send_handling");
+
+  loc_last_send= send_node_conn->first_sbp;
+  do
+  {
+    write_vector[iovec_index].iov_base= loc_last_send->sock_buf_page;
+    write_vector[iovec_index].iov_len= loc_last_send->size;
+    iovec_index++;
+    loc_send_size+= loc_last_send->size;
+    loc_last_send= loc_last_send->next_sock_buf_page;
+  } while (loc_send_size < MAX_SEND_SIZE &&
+           iovec_index < MAX_SEND_BUFFERS &&
+           loc_last_send);
+  send_node_conn->first_sbp= loc_last_send;
+  if (!loc_last_send)
+    send_node_conn->last_sbp= NULL;
+  *iovec_size= iovec_index;
+  *send_size= loc_send_size;
+  send_node_conn->queued_bytes-= loc_send_size;
+  DEBUG_RETURN_EMPTY;
+}
+
+static int
+real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                   guint32 send_size,
+                   struct iovec *write_vector,
+                   guint32 iovec_size)
+{
+  return 0;
+}
+
 /*
   The application thread has prepared to send a number of items and is now
-  ready to send these set of pages. The IC_NODE_CONNECTION is the
+  ready to send these set of pages. The IC_SEND_NODE_CONNECTION is the
   protected data structure that contains the information about the node
   to which this communication is to be sent to.
 
@@ -321,16 +361,81 @@ ndb_receive_one_socket(IC_NDB_RECEIVE_STATE *rec_state)
   this node, how long time pages have been waiting to be sent.
 
   The workings of the sender is the following, the sender locks the
-  IC_NODE_CONNECTION object, then he puts the pages in the linked list of
+  IC_SEND_NODE_CONNECTION object, then he puts the pages in the linked list of
   pages to be sent here. Next step is to check if another thread is already
   active sending and hasn't flagged that he's not ready to continue
   sending. If there is a thread already sending we unlock and proceed.
 
 */
 static int
-ndb_send(IC_NODE_CONNECTION *node_conn,
-         IC_SOCK_BUF_PAGE *first_page_to_send)
+ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
+         IC_SOCK_BUF_PAGE *first_page_to_send,
+         gboolean force_send)
 {
+  IC_SOCK_BUF_PAGE *last_page_to_send;
+  IC_SOCK_BUF_PAGE *first_send, *last_send;
+  guint32 send_size= 0;
+  guint32 iovec_size;
+  struct iovec write_vector[MAX_SEND_BUFFERS];
+  gboolean return_imm= TRUE;
+  DEBUG_ENTRY("ndb_send");
+
+  /*
+    We start by calculating the last page to send and the total send size
+    before acquiring the mutex.
+  */
+  last_page_to_send= first_page_to_send;
+  send_size+= last_page_to_send->size;
+  while (last_page_to_send->next_sock_buf_page)
+  {
+    send_size+= last_page_to_send->size;
+    last_page_to_send= last_page_to_send->next_sock_buf_page;
+  }
+  /* Start critical section for sending */
+  g_mutex_lock(send_node_conn->mutex);
+  if (!send_node_conn->node_up)
+  {
+    g_mutex_unlock(send_node_conn->mutex);
+    return IC_ERROR_NODE_DOWN;
+  }
+  /* Link the buffers into the linked list of pages to send */
+  if (send_node_conn->last_sbp == NULL)
+  {
+    g_assert(send_node_conn->queued_bytes == 0);
+    send_node_conn->first_sbp= first_page_to_send;
+    send_node_conn->last_sbp= last_page_to_send;
+  }
+  else
+  {
+    send_node_conn->last_sbp->next_sock_buf_page= first_page_to_send;
+    send_node_conn->last_sbp= last_page_to_send;
+  }
+  send_node_conn->queued_bytes+= send_size;
+  if (!send_node_conn->send_active)
+  {
+    return_imm= FALSE;
+    send_node_conn->send_active= TRUE;
+    prepare_real_send_handling(send_node_conn, &send_size,
+                               write_vector, &iovec_size);
+  }
+  g_mutex_unlock(send_node_conn->mutex);
+  /* End critical section for sending */
+  if (return_imm)
+    return 0;
+  if (force_send)
+  {
+    /* We will send now */
+    send_node_conn->last_sent_timers[send_node_conn->last_sent_timer_index]=
+      ic_gethrtime();
+    send_node_conn->last_sent_timer_index++;
+    if (send_node_conn->last_sent_timer_index == MAX_SENT_TIMERS)
+      send_node_conn->last_sent_timer_index= 0;
+    real_send_handling(send_node_conn, send_size, write_vector, iovec_size);
+    /* Handle send done */
+    return 0;
+  }
+  /* Here we will insert adaptive send handling */
+  g_assert(FALSE);
   return 0;
 }
 

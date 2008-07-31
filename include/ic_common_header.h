@@ -51,6 +51,14 @@ extern gchar *ic_err_str;
 
 typedef unsigned char ic_bool;
 
+typedef guint64 IC_TIMER;
+#define UNDEFINED_TIME 0
+#define ic_check_defined_time(timer) (timer != UNDEFINED_TIME)
+IC_TIMER ic_gethrtime();
+IC_TIMER ic_nanos_elapsed(IC_TIMER start_time, IC_TIMER end_time);
+IC_TIMER ic_micros_elapsed(IC_TIMER start_time, IC_TIMER end_time);
+IC_TIMER ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time);
+
 /* SSL initialisation routines */
 int ic_ssl_init();
 void ic_ssl_end();

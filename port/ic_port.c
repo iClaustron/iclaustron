@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007, 2008 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -19,6 +19,80 @@
 #include <stdio.h>
 #include <ic_common_header.h>
 #include <errno.h>
+#ifdef HAVE_GETHRTIME
+#include <sys/time.h>
+#endif
+#ifdef HAVE_CLOCK_GETTIME
+#include <time.h>
+#endif
+#ifdef HAVE_GETTIMEOFDAY
+#include <sys/time.h>
+#endif
+
+IC_TIMER
+ic_nanos_elapsed(IC_TIMER start_time, IC_TIMER end_time)
+{
+#ifndef HAVE_GETHRTIME
+#ifdef HAVE_CLOCK_GETTIME
+#ifndef CLOCK_MONOTONIC
+  if (end_time < start_time)
+    return 0;
+#endif
+#else
+  if (end_time < start_time)
+    return 0;
+#endif
+#endif
+  return (end_time - start_time);
+}
+
+IC_TIMER
+ic_micros_elapsed(IC_TIMER start_time, IC_TIMER end_time)
+{
+  IC_TIMER timer= ic_nanos_elapsed(start_time, end_time);
+  return timer/1000;
+}
+
+IC_TIMER
+ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time)
+{
+  IC_TIMER timer= ic_nanos_elapsed(start_time, end_time);
+  return timer/1000000;
+}
+
+IC_TIMER
+ic_gethrtime()
+{
+  IC_TIMER timer;
+#ifdef HAVE_GETHRTIME
+  hrtime_t ghr_timer;
+  ghr_timer= gethrtime();
+  timer= (IC_TIMER)ghr_timer;
+#else
+#ifdef HAVE_CLOCK_GETTIME
+  struct timespec ts_timer;
+#ifdef CLOCK_MONOTONIC
+  clock_gettime(CLOCK_MONOTONIC, &ts_timer);
+#else
+  clock_gettime(CLOCK_REALTIME, &ts_timer);
+#endif
+  timer= 1000000000LL;
+  timer*= ts_timer.tv_sec;
+  timer+= ts_timer.tv_nsec;
+#else
+#ifdef HAVE_GETTIMEOFDAY
+  struct timeofday time_of_day;
+  gettimeofday(&time_of_day);
+  timer= 1000000000LL;
+  timer*= time_of_day.tv_sec;
+  timer+= (time_of_day.tv_usec * 1000);
+#else
+  No implementation of get time found
+#endif
+#endif
+#endif
+  return timer;
+}
 
 gchar *
 ic_calloc(size_t size)

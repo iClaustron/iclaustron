@@ -704,8 +704,7 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
     DEBUG_PRINT(PROGRAM_LEVEL,
       ("Cluster Manager has accepted a new connection"));
     if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
-                                              FALSE,   /* No mutex */
-                                              FALSE))) /* No front buffer */
+                                              FALSE))) /* No mutex */
     {
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Failed to fork a new connection from an accepted connection"));
@@ -729,7 +728,7 @@ set_up_server_connection(IC_CONNECTION **conn)
   IC_CONNECTION *loc_conn;
   int ret_code;
 
-  if (!(loc_conn= ic_create_socket_object(FALSE, TRUE, FALSE, FALSE,
+  if (!(loc_conn= ic_create_socket_object(FALSE, TRUE, FALSE,
                                           COMMAND_READ_BUF_SIZE,
                                           NULL, NULL)))
   {

@@ -2633,7 +2633,7 @@ set_up_cluster_server_connection(IC_CONNECTION **conn,
   int error;
   IC_CONNECTION *loc_conn;
 
-  if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE, FALSE,
+  if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
                                        CONFIG_READ_BUF_SIZE,
                                        NULL, NULL)))
     return IC_ERROR_MEM_ALLOC;
@@ -4050,7 +4050,7 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
       ic_send_with_cr(conn, content_encoding_str) ||
       ic_send_with_cr(conn, ic_empty_string) ||
       conn->conn_op.ic_write_connection(conn, (const void*)config_base64_str,
-                                        config_len, 0,1))
+                                        config_len, 1))
     error= conn->error_code;
   DEBUG_RETURN(error);
 }
@@ -4341,8 +4341,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
 ("Run cluster server has set up connection and has received a connection"));
     if (!(fork_conn=
            conn->conn_op.ic_fork_accept_connection(conn,
-                                          FALSE, /* No mutex */
-                                          FALSE))) /* No front buffer */
+                                          FALSE))) /* No mutex */
     {
       DEBUG_PRINT(COMM_LEVEL,
       ("Failed to fork a new connection from an accepted connection"));
@@ -4431,7 +4430,6 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
                             FALSE, /* Server connection */
                             FALSE, /* Don't use mutex */
                             FALSE, /* Don't use connect thread */
-                            FALSE, /* Don't use front buffer */
                             CONFIG_READ_BUF_SIZE,
                             NULL,  /* Don't use authentication function */
                             NULL))) /* No authentication object */
@@ -5098,7 +5096,6 @@ ic_load_config_server_from_files(gchar *config_file,
   int ret_val;
   IC_CONFIG_ERROR err_obj;
   IC_CLUSTER_CONFIG *ret_ptr;
-  gchar *ptr;
   DEBUG_ENTRY("ic_load_config_server_from_files");
 
   conf_server->clu_conf_ops= &config_server_ops;

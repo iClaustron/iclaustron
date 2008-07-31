@@ -49,8 +49,7 @@ struct ic_connect_operations
   */
   struct ic_connection* (*ic_fork_accept_connection)
                          (struct ic_connection *orig_conn,
-                          gboolean use_mutex,
-                          gboolean use_front_buffer);
+                          gboolean use_mutex);
   /*
     Set up a connection object, this can be either the server end or
     the client end of the connection. For server end it is possible
@@ -89,8 +88,6 @@ struct ic_connect_operations
     is_mutex_used : Is it necessary to protect all accesses by mutex
     is_connect_thread_used : Is it necessary to handle connects in a separate
                 thread.
-    is_using_front_buffer : Should the object buffer messages before
-                actually sending them.
     Finally an authenticate function and object can be provided in the
     create socket call.
   */
@@ -109,8 +106,12 @@ struct ic_connect_operations
                              guint32 *read_size);
   int (*ic_write_connection) (struct ic_connection *conn,
                               const void *buf, guint32 size,
-                              guint32 prio_level,
                               guint32 secs_to_try);
+  int (*ic_writev_connection) (struct ic_connection *conn,
+                               struct iovec *write_vector,
+                               guint32 iovec_size,
+                               guint32 tot_size,
+                               guint32 secs_to_try);
   int (*ic_flush_connection) (struct ic_connection *conn);
   /*
     In order to support multiple threads using the same connection
@@ -348,13 +349,6 @@ struct ic_connection
   */
   gboolean is_listen_socket_retained;
   /*
-    If this variable is set we will use a front memory buffer such
-    that before writing on the socket we will write into a buffer.
-    We will only write to the socket if the memory buffer is full.
-    We will also write to the socket when a flush call is made.
-  */
-  gboolean is_using_front_buffer;
-  /*
     If the connection is used in a multi-threaded environment
     we use a mutex before performing operations on the
     connection. There is a separate mutex for read and write
@@ -492,7 +486,6 @@ typedef struct ic_ssl_connection IC_SSL_CONNECTION;
 IC_CONNECTION *ic_create_socket_object(gboolean is_client,
                                        gboolean is_mutex_used,
                                        gboolean is_connect_thread_used,
-                                       gboolean is_using_front_buffer,
                                        guint32 read_buf_size,
                                        authenticate_func func,
                                        void *auth_obj);
@@ -503,7 +496,6 @@ IC_CONNECTION *ic_create_ssl_object(gboolean is_client,
                                     IC_STRING *passwd_string,
                                     gboolean is_ssl_used_for_data,
                                     gboolean is_connect_thread_used,
-                                    gboolean is_using_front_buffer,
                                     guint32 read_buf_size,
                                     authenticate_func func,
                                     void *auth_obj);
@@ -516,7 +508,7 @@ struct ic_connect_manager
 typedef struct ic_connect_manager IC_CONNECT_MANAGER;
 
 /*
-  Definitions for the front buffer pool on the connection objects
+  Definitions for the socket buffer pool
 */
 #define PRIO_LEVELS 2
 #define MAX_ALLOC_SEGMENTS 8
@@ -627,9 +619,36 @@ struct ic_ndb_signal
 };
 typedef struct ic_ndb_signal IC_NDB_SIGNAL;
 
-struct ic_node_connection
+struct ic_send_node_connection;
+struct ic_send_thread_state
 {
-  guint32 not_used;
+  struct ic_send_node_connection *send_node_conn;
+  GMutex *mutex;
+  guint32 active_node_id;
+  gboolean thread_active;
+  gboolean stop_ordered;
 };
-typedef struct ic_node_connection IC_NODE_CONNECTION;
+typedef struct ic_send_thread_state IC_SEND_THREAD_STATE;
+
+#define MAX_SENT_TIMERS 8
+#define MAX_SEND_SIZE 65535
+#define MAX_SEND_BUFFERS 16
+
+struct ic_send_node_connection
+{
+  IC_CONNECTION *conn;
+  GMutex *mutex;
+  IC_SOCK_BUF_PAGE *first_sbp;
+  IC_SOCK_BUF_PAGE *last_sbp;
+  guint32 queued_bytes;
+  gboolean send_active;
+  gboolean node_up;
+
+  IC_SEND_THREAD_STATE *send_thread_state;
+  IC_TIMER first_buffered_timer;
+  guint32 last_sent_timer_index;
+  IC_TIMER last_sent_timers[MAX_SENT_TIMERS];
+};
+typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
 #endif
+

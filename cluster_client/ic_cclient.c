@@ -197,8 +197,7 @@ connect_cluster_mgr(IC_CONNECTION **conn)
   IC_CONNECTION *loc_conn;
   int ret_code;
 
-  if (!(loc_conn= ic_create_socket_object(TRUE, FALSE,
-                                          FALSE, FALSE,
+  if (!(loc_conn= ic_create_socket_object(TRUE, FALSE, FALSE,
                                           COMMAND_READ_BUF_SIZE,
                                           NULL, NULL)))
   {

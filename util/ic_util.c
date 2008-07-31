@@ -1581,6 +1581,8 @@ ic_init_error_messages()
     "Provided client port isn't a legal port number";
   ic_error_str[IC_ERROR_INCONSISTENT_DATA - IC_FIRST_ERROR]=
     "Internal data structure error";
+  ic_error_str[IC_ERROR_NODE_DOWN - IC_FIRST_ERROR]=
+    "Node failure occurred";
 }
 
 void
