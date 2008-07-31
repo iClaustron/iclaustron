@@ -311,6 +311,12 @@ ndb_receive_one_socket(IC_NDB_RECEIVE_STATE *rec_state)
   return 0;
 }
 
+static int
+node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  return 0;
+}
+
 static void
 prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                            guint32 *send_size,
@@ -343,11 +349,63 @@ prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
 
 static int
 real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
-                   guint32 send_size,
-                   struct iovec *write_vector,
-                   guint32 iovec_size)
+                   struct iovec *write_vector, guint32 iovec_size,
+                   guint32 send_size)
 {
-  return 0;
+  int error;
+  IC_CONNECTION *conn= send_node_conn->conn;
+  DEBUG_ENTRY("real_send_handling");
+  send_node_conn->last_sent_timers[send_node_conn->last_sent_timer_index]=
+    ic_gethrtime();
+  send_node_conn->last_sent_timer_index++;
+  if (send_node_conn->last_sent_timer_index == MAX_SENT_TIMERS)
+    send_node_conn->last_sent_timer_index= 0;
+  error= conn->conn_op.ic_writev_connection(conn,
+                                            write_vector,
+                                            iovec_size,
+                                            send_size, 2);
+  if (error)
+  {
+    /*
+      We failed to send and in this case we need to invoke node failure
+      handling since either the connection was broken or it was slow to
+      the point of being similar to broken.
+    */
+    node_failure_handling(send_node_conn);
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
+}
+
+static int
+send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  gboolean signal_send_thread= FALSE;
+  int error;
+  DEBUG_ENTRY("send_done_handling");
+  /* Handle send done */
+  error= 0;
+  g_mutex_lock(send_node_conn->mutex);
+  if (!send_node_conn->node_up)
+    error= IC_ERROR_NODE_DOWN;
+  else if (send_node_conn->first_sbp)
+  {
+    /*
+      There are more buffers to send, we give this mission to the
+      send thread and return immediately
+    */
+    send_node_conn->starting_send_thread= TRUE;
+    signal_send_thread= TRUE;
+  }
+  else
+  {
+    /* All buffers have been sent, we can return immediately */
+    send_node_conn->send_active= FALSE;
+  }
+  g_mutex_unlock(send_node_conn->mutex);
+  if (signal_send_thread)
+    g_cond_signal(send_node_conn->cond);
+  DEBUG_RETURN(error);
 }
 
 /*
@@ -378,6 +436,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   guint32 iovec_size;
   struct iovec write_vector[MAX_SEND_BUFFERS];
   gboolean return_imm= TRUE;
+  int error;
   DEBUG_ENTRY("ndb_send");
 
   /*
@@ -425,17 +484,63 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   if (force_send)
   {
     /* We will send now */
-    send_node_conn->last_sent_timers[send_node_conn->last_sent_timer_index]=
-      ic_gethrtime();
-    send_node_conn->last_sent_timer_index++;
-    if (send_node_conn->last_sent_timer_index == MAX_SENT_TIMERS)
-      send_node_conn->last_sent_timer_index= 0;
-    real_send_handling(send_node_conn, send_size, write_vector, iovec_size);
-    /* Handle send done */
-    return 0;
+    if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
+                                   send_size)))
+      return error;
+    DEBUG_RETURN(send_done_handling(send_node_conn));
   }
   /* Here we will insert adaptive send handling */
   g_assert(FALSE);
   return 0;
+}
+
+static void
+run_send_thread(void *data)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+  gboolean more_data= FALSE;
+  int error;
+  guint32 send_size;
+  guint32 iovec_size;
+  struct iovec write_vector[MAX_SEND_BUFFERS];
+
+  g_mutex_lock(send_node_conn->mutex);
+  send_node_conn->starting_send_thread= FALSE;
+  do
+  {
+    send_node_conn->send_thread_active= FALSE;
+    if (!more_data)
+      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+    if (send_node_conn->stop_ordered)
+      return;
+    if (send_node_conn->node_up)
+      continue;
+    g_assert(send_node_conn->starting_send_thread);
+    g_assert(send_node_conn->send_active);
+    send_node_conn->starting_send_thread= FALSE;
+    send_node_conn->send_thread_active= TRUE;
+    prepare_real_send_handling(send_node_conn, &send_size,
+                               write_vector, &iovec_size);
+    g_mutex_unlock(send_node_conn->mutex);
+    if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
+                                   send_size)))
+      continue;
+    /* Handle send done */
+    error= 0;
+    g_mutex_lock(send_node_conn->mutex);
+    if (!send_node_conn->node_up)
+      error= IC_ERROR_NODE_DOWN;
+    else if (send_node_conn->first_sbp)
+    {
+      /* There are more buffers to send, we need to continue sending */
+      more_data= TRUE;
+    }
+    else
+    {
+      /* All buffers have been sent, we can go to sleep again */
+      more_data= FALSE;
+      send_node_conn->send_active= FALSE;
+    }
+  } while (1);
 }
 

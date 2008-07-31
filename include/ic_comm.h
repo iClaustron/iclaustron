@@ -619,34 +619,46 @@ struct ic_ndb_signal
 };
 typedef struct ic_ndb_signal IC_NDB_SIGNAL;
 
-struct ic_send_node_connection;
-struct ic_send_thread_state
-{
-  struct ic_send_node_connection *send_node_conn;
-  GMutex *mutex;
-  guint32 active_node_id;
-  gboolean thread_active;
-  gboolean stop_ordered;
-};
-typedef struct ic_send_thread_state IC_SEND_THREAD_STATE;
-
 #define MAX_SENT_TIMERS 8
 #define MAX_SEND_SIZE 65535
 #define MAX_SEND_BUFFERS 16
-
 struct ic_send_node_connection
 {
+  /* The connection object */
   IC_CONNECTION *conn;
+
+  /* Mutex protecting this struct */
   GMutex *mutex;
+  /* Condition used to wake up send thread when it's needed */
+  GCond *cond;
+
+  /* Linked list of send buffers awaiting sending */
   IC_SOCK_BUF_PAGE *first_sbp;
   IC_SOCK_BUF_PAGE *last_sbp;
+
+  /* How many bytes are in the send buffers awaiting sending */
   guint32 queued_bytes;
+  /* When any thread is actively sending already this boolean is set */
   gboolean send_active;
+  /* Indicates if node is up, if not it's no use sending */
   gboolean node_up;
 
-  IC_SEND_THREAD_STATE *send_thread_state;
+  /* Debug variable set when waking up send thread */
+  gboolean starting_send_thread;
+  /* Variable indicating send thread is awake and working */
+  gboolean send_thread_active;
+  /* Somebody ordered the node to stop */
+  gboolean stop_ordered;
+  /* The node id in the cluster of the receiving end */
+  guint32 active_node_id;
+  /* The cluster id this connection is used in */
+  guint32 cluster_id;
+
+  /* Timer set when the first buffer was linked and not sent */
   IC_TIMER first_buffered_timer;
+  /* Index into timer array */
   guint32 last_sent_timer_index;
+  /* Array of timers for the last 8 sends */
   IC_TIMER last_sent_timers[MAX_SENT_TIMERS];
 };
 typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
