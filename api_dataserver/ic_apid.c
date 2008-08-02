@@ -14,6 +14,104 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_apid.h>
+#include <ic_apic.h>
+
+IC_APID_GLOBAL*
+ic_init_apid(IC_API_CONFIG_SERVER *apic)
+{
+  IC_APID_GLOBAL *apid_global;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_CLUSTER_COMM *cluster_comm;
+  guint32 i, j;
+
+  if (!(apid_global= (IC_APID_GLOBAL*)ic_calloc(sizeof(IC_APID_GLOBAL))))
+    return NULL;
+  if (!(apid_global->grid_comm=
+       (IC_GRID_COMM*)ic_calloc(sizeof(IC_GRID_COMM))))
+    goto error;
+  if (!(apid_global->grid_comm->cluster_comm_array= (IC_CLUSTER_COMM**)
+        ic_calloc((IC_MAX_CLUSTER_ID + 1) * sizeof(IC_SEND_NODE_CONNECTION*))))
+    goto error;
+  if (!(apid_global->mem_buf_pool= ic_create_socket_membuf(IC_MEMBUF_SIZE,
+                                                           512)))
+    goto error;
+  if (!(apid_global->ndb_signal_pool= ic_create_socket_membuf(
+                                         sizeof(IC_NDB_SIGNAL), 2048)))
+    goto error;
+  for (i= 0; i <= apic->max_cluster_id; i++)
+  {
+    if ((clu_conf= apic->api_op.ic_get_cluster_config(apic,i)))
+    {
+      if (!(cluster_comm= (IC_CLUSTER_COMM*)
+                     ic_calloc(sizeof(IC_CLUSTER_COMM))))
+        goto error;
+      apid_global->grid_comm->cluster_comm_array[i]= cluster_comm;
+      if (!(cluster_comm->send_node_conn_array= (IC_SEND_NODE_CONNECTION**)
+            ic_calloc((IC_MAX_NODE_ID + 1)*sizeof(IC_SEND_NODE_CONNECTION*))))
+        goto error;
+      for (j= 0; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
+        {
+          if (!(send_node_conn= (IC_SEND_NODE_CONNECTION*)
+              ic_calloc(sizeof(IC_SEND_NODE_CONNECTION))))
+            goto error;
+          cluster_comm->send_node_conn_array[j]= send_node_conn;
+          if (!(send_node_conn->mutex= g_mutex_new()))
+            goto error;
+          if (!(send_node_conn->cond= g_cond_new()))
+            goto error;
+        }
+      }
+    }
+  }
+  return apid_global;
+error:
+  ic_end_apid(apid_global);
+  return NULL;
+}
+
+void
+ic_end_apid(IC_APID_GLOBAL *apid_global)
+{
+  IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
+  IC_SOCK_BUF *ndb_signal_pool= apid_global->ndb_signal_pool;
+  IC_GRID_COMM *grid_comm= apid_global->grid_comm;
+  IC_CLUSTER_COMM *cluster_comm;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  guint32 i, j;
+
+  if (mem_buf_pool)
+    mem_buf_pool->sock_buf_op.ic_free_sock_buf(mem_buf_pool);
+  if (ndb_signal_pool)
+    ndb_signal_pool->sock_buf_op.ic_free_sock_buf(ndb_signal_pool);
+  if (grid_comm)
+  {
+    if (grid_comm->cluster_comm_array)
+    {
+      for (i= 0; i <= IC_MAX_CLUSTER_ID; i++)
+      {
+        cluster_comm= grid_comm->cluster_comm_array[i];
+        if (cluster_comm == NULL)
+          continue;
+        for (j= 0; j <= IC_MAX_NODE_ID; i++)
+        {
+          send_node_conn= cluster_comm->send_node_conn_array[j];
+          if (send_node_conn == NULL)
+            continue;
+          if (send_node_conn->mutex)
+            g_mutex_free(send_node_conn->mutex);
+          if (send_node_conn->cond)
+            g_cond_free(send_node_conn->cond);
+          ic_free(send_node_conn);
+        }
+      }
+      ic_free(grid_comm->cluster_comm_array);
+    }
+    ic_free(grid_comm);
+  }
+}
 
 static int
 is_ds_conn_established(IC_DS_CONNECTION *ds_conn,

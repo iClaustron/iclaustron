@@ -44,27 +44,18 @@ static GOptionEntry entries[] =
 };
 
 static int
-run_file_server(IC_API_CONFIG_SERVER *apic)
+run_file_server(IC_API_CONFIG_SERVER *apic, IC_APID_GLOBAL *apid_global)
 {
-  guint32 i;
-  IC_CLUSTER_CONFIG *clu_conf;
-  for (i= 0; i <= apic->max_cluster_id; i++)
-  {
-    clu_conf= apic->api_op.ic_get_cluster_config(apic, i);
-    if (clu_conf)
-    {
-    }
-  }
   printf("Ready to start file server\n");
-  //ic_set_up_cluster_connections(co
   return 0;
 }
 
 int main(int argc, char *argv[])
 {
   int ret_code;
-  IC_API_CLUSTER_CONNECTION apic;
-  IC_API_CONFIG_SERVER *config_server_obj= NULL;
+  IC_API_CLUSTER_CONNECTION api_cluster_conn;
+  IC_API_CONFIG_SERVER *apic= NULL;
+  IC_APID_GLOBAL *apid_global= NULL;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
 
   if ((ret_code= ic_start_program(argc, argv, entries,
@@ -75,17 +66,21 @@ int main(int argc, char *argv[])
                                     config_path_buf)))
     return ret_code;
   ret_code= 1;
-  if (!(config_server_obj= ic_get_configuration(&apic,
-                                                &glob_config_dir,
-                                                glob_node_id,
-                                                glob_cluster_server_ip,
-                                                glob_cluster_server_port,
-                                                &ret_code)))
+  if (!(apic= ic_get_configuration(&api_cluster_conn,
+                                   &glob_config_dir,
+                                   glob_node_id,
+                                   glob_cluster_server_ip,
+                                   glob_cluster_server_port,
+                                   &ret_code)))
     goto error;
-  ret_code= run_file_server(config_server_obj);
+  if (!(apid_global= ic_init_apid(apic)))
+    return IC_ERROR_MEM_ALLOC;
+  ret_code= run_file_server(apic, apid_global);
 error:
-  if (config_server_obj)
-    config_server_obj->api_op.ic_free_config(config_server_obj);
+  if (apic)
+    apic->api_op.ic_free_config(apic);
+  if (apid_global)
+    ic_end_apid(apid_global);
   ic_end();
   return 1;
 }

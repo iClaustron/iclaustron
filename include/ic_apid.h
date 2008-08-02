@@ -17,6 +17,7 @@
 #define IC_APID_H
 #include <ic_comm.h>
 #include <ic_common.h>
+#include <ic_apic.h>
 
 struct ic_ds_connection;
 
@@ -44,6 +45,8 @@ typedef struct ic_ds_connection IC_DS_CONNECTION;
 /*
   Definitions used to handle NDB Protocol handling data structures.
 */
+
+#define IC_MEM_BUF_SIZE 32768
 
 struct ic_ndb_receive_state
 {
@@ -80,6 +83,8 @@ typedef struct ic_ndb_signal IC_NDB_SIGNAL;
 #define MAX_SENDS_TRACKED 8
 #define MAX_SEND_SIZE 65535
 #define MAX_SEND_BUFFERS 16
+#define IC_MEMBUF_SIZE 32768
+
 struct ic_send_node_connection
 {
   /* The connection object */
@@ -148,4 +153,17 @@ struct ic_grid_comm
 };
 typedef struct ic_grid_comm IC_GRID_COMM;
 
+struct ic_apid_global
+{
+  IC_SOCK_BUF *mem_buf_pool;
+  IC_SOCK_BUF *ndb_signal_pool;
+  IC_GRID_COMM *grid_comm;
+};
+typedef struct ic_apid_global IC_APID_GLOBAL;
+
+IC_APID_GLOBAL*
+ic_init_apid(IC_API_CONFIG_SERVER *apic);
+
+void
+ic_end_apid(IC_APID_GLOBAL *apid_global);
 #endif
