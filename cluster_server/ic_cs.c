@@ -43,7 +43,7 @@ static GOptionEntry entries[] =
 {
   { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
     "Is this bootstrap of a cluster", NULL},
-  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_path,
+  { "base_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_path,
     "Sets path to base directory, config files in subdirectory config", NULL},
   { "server_port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
     "Set Cluster Server connection Port", NULL},
@@ -142,7 +142,7 @@ load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
     if (!(cluster= ic_load_config_server_from_files(file_name,
                                                     conf_server_struct)))
     {
-      printf("Failed to load config file %s from disk\n",
+      printf("Failed when loading config file %s from disk\n",
              file_name_string.str);
       return 1;
     }

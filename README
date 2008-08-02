@@ -69,7 +69,8 @@ functions, such as emailing trace files to a Support Center.
 fileserver:
 This is an Application Server that implements the client part of the iClaustron
 Filesystem. This is a clustered filesystem that is implemented using FUSE,
-a filesystem in userspace. FUSE can be used on Linux and FreeBSD.
+a filesystem in userspace. FUSE can be used on Linux and FreeBSD. This process
+uses the C API to the Data Servers to store the file data in NDB Cluster.
 
 comm:
 This implements common functions to implement Communication Functions. It uses
@@ -84,14 +85,14 @@ Build prerequisites:
 --------------------
 Ubuntu:
 sudo apt-get install build-essential
-sudo apt-get install automake (if using bootstrap.sh.in)
-sudo apt-get install libtool (if using bootstrap.sh.in)
-sudo apt-get install libglib2.0-dev
-sudo apt-get install libreadline5-dev (if readline is used)
-sudo apt-get install libncurses5-dev (if readline is used)
 sudo apt-get install pkg-config
+sudo apt-get install libglib2.0-dev
 sudo apt-get install flex
 sudo apt-get install bison
+sudo apt-get install automake (if using bootstrap.sh.in)
+sudo apt-get install libtool (if using bootstrap.sh.in)
+sudo apt-get install libreadline5-dev (if readline is used)
+sudo apt-get install libncurses5-dev (if readline is used)
 sudo apt-get install openssl (if openssl is to be used)
 sudo apt-get install subversion (To get iClaustron tree from Subversion tree)
 
