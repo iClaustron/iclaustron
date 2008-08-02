@@ -653,6 +653,13 @@ struct ic_cluster_config_load
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 
 IC_API_CONFIG_SERVER*
+ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
+                     IC_STRING *config_dir,
+                     guint32 node_id,
+                     gchar *cluster_server_ip,
+                     gchar *cluster_server_port);
+
+IC_API_CONFIG_SERVER*
 ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn);
 
 IC_RUN_CLUSTER_SERVER*

@@ -23,6 +23,7 @@ ic_clmgr_SOURCES       = ic_clmgr.c ic_parser.y ic_lex.l
 ic_clmgr_LDADD = $(LDADD) ../comm/libic_comm.la \
                           ../util/libic_util.la \
                           ../port/libic_port.la \
-                          ../api_clusterserver/libic_apic.la
+                          ../api_clusterserver/libic_apic.la \
+			  ../api_dataserver/libic_apid.la
 AM_YFLAGS              = -d --verbose
 

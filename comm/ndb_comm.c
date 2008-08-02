@@ -317,6 +317,34 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   return 0;
 }
 
+/*
+  NDB Send handling
+  -----------------
+  To send messages using the NDB Protocol we have a new struct
+  IC_SEND_NODE_CONNECTION which is used by the application thread plus
+  one send thread per node.
+
+  Before invoking the send method, the application thread packs a number of
+  NDB Signals in the NDB Protocol format into a number of IC_SOCK_BUF_PAGE's.
+  The interface to the send method contains a linked list of such
+  IC_SOCK_BUF_PAGE's plus the IC_SEND_NODE_CONNECTION object and finally a
+  boolean that indicates whether it's necessary to send immediately or
+  whether an adaptive send algorithm is allowed.
+
+  The focus is on holding the send mutex for a short time and this means that
+  in the normal case there will be two mutex lock/unlocks. One when entering
+  to see if someone else is currently sending. If no one is sending one will
+  pack the proper number of buffers and release the mutex and then start the
+  sending. If one send is not enough to handle all the sending, then we will
+  simply wake up the send thread which will send until there are no more
+  buffers to send. Thus the send thread has a really easy task in most cases,
+  simply sleeping and then occasionally waking up and taking care of a set
+  of send operations.
+
+  The adaptive send algorithm is also handled outside the mutex, thus we will
+  set the send to active while deciding whether it's a good idea to wait with
+  sending. This will possibly change.
+*/
 static void
 prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                            guint32 *send_size,
@@ -355,11 +383,6 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
   int error;
   IC_CONNECTION *conn= send_node_conn->conn;
   DEBUG_ENTRY("real_send_handling");
-  send_node_conn->last_sent_timers[send_node_conn->last_sent_timer_index]=
-    ic_gethrtime();
-  send_node_conn->last_sent_timer_index++;
-  if (send_node_conn->last_sent_timer_index == MAX_SENT_TIMERS)
-    send_node_conn->last_sent_timer_index= 0;
   error= conn->conn_op.ic_writev_connection(conn,
                                             write_vector,
                                             iovec_size,
@@ -409,6 +432,136 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 }
 
 /*
+  Adaptive Send algorithm
+  -----------------------
+  The idea behind this algorithm is that we want to maintain a level
+  of buffering such that 95% of the sends do not have to wait more
+  than a configured amount of nanoseconds. Assuming a normal distribution
+  we can do statistical analysis of both real waits and waits that we
+  decided to not take to see where the appropriate level of buffering
+  occurs to meet at least 95% of the sends in the predefined timeframe.
+
+  The first method does the analysis of whether or not to wait or not
+  and the second routine gathers the statistics.
+*/
+static void
+adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 gboolean *will_wait,
+                                 IC_TIMER current_time)
+{
+  guint32 num_waits= send_node_conn->num_waits;
+  IC_TIMER first_buffered_timer= send_node_conn->first_buffered_timer;
+  /*
+    We start by checking whether it's allowed to wait any further based
+    on how many we already buffered. Then we check that we haven't
+    already waited for a longer time than allowed.
+  */
+  if (num_waits >= send_node_conn->max_num_waits)
+    goto no_wait;
+  if (!ic_check_defined_time(first_buffered_timer) &&
+      (ic_nanos_elapsed(first_buffered_timer, current_time) >
+       send_node_conn->max_wait_in_nanos))
+    goto no_wait;
+  /*
+    If we come here it means that we haven't waited long enough yet and
+    there is room for one more to wait according to the current state of
+    the adaptive algorithm. Thus we decide to wait.
+  */
+  if (num_waits == 0)
+    send_node_conn->first_buffered_timer= current_time;
+  send_node_conn->num_waits= num_waits + 1;
+  *will_wait= TRUE;
+  return;
+
+no_wait:
+  send_node_conn->first_buffered_timer= UNDEFINED_TIME;
+  send_node_conn->num_waits= 0;
+  *will_wait= FALSE;
+  return;
+}
+
+static void
+adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                   IC_TIMER current_time)
+{
+  guint32 new_send_timer_index, i;
+  guint32 last_send_timer_index= send_node_conn->last_send_timer_index;
+  guint32 max_num_waits, max_num_waits_plus_one, timer_index1, timer_index2;
+  guint32 num_stats;
+  IC_TIMER start_time1, start_time2, elapsed_time1, elapsed_time2;
+  IC_TIMER tot_curr_wait_time, tot_wait_time_plus_one;
+
+  max_num_waits= send_node_conn->max_num_waits;
+  max_num_waits_plus_one= max_num_waits + 1;
+  timer_index1= last_send_timer_index - max_num_waits;
+  timer_index2= last_send_timer_index - max_num_waits_plus_one;
+  start_time1= send_node_conn->last_send_timers[timer_index1];
+  start_time2= send_node_conn->last_send_timers[timer_index2];
+  elapsed_time1= current_time - start_time1;
+  elapsed_time2= current_time - start_time2;
+
+  tot_curr_wait_time= send_node_conn->tot_curr_wait_time;
+  tot_wait_time_plus_one= send_node_conn->tot_wait_time_plus_one;
+  send_node_conn->tot_curr_wait_time+= elapsed_time1;
+  send_node_conn->tot_wait_time_plus_one+= elapsed_time2;
+
+  num_stats= send_node_conn->num_stats;
+  send_node_conn->num_stats= num_stats + 1;
+  last_send_timer_index++;
+  if (last_send_timer_index == MAX_SEND_TIMERS)
+  {
+    /* Compress array into first 8 entries to free up new entries */
+    for (i= 0; i < MAX_SENDS_TRACKED; i++)
+    {
+      last_send_timer_index--;
+      new_send_timer_index= last_send_timer_index - MAX_SENDS_TRACKED;
+      send_node_conn->last_send_timers[new_send_timer_index]=
+        send_node_conn->last_send_timers[last_send_timer_index];
+    }
+  }
+  send_node_conn->last_send_timers[last_send_timer_index]= current_time;
+  send_node_conn->last_send_timer_index= last_send_timer_index;
+  return;
+}
+
+static void
+adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  guint64 mean_curr_wait_time, mean_wait_time_plus_one, limit;
+
+  g_mutex_lock(send_node_conn->mutex);
+  adaptive_send_algorithm_statistics(send_node_conn, ic_gethrtime());
+  limit= send_node_conn->max_wait_in_nanos / 2;
+  mean_curr_wait_time= send_node_conn->tot_curr_wait_time /
+                       send_node_conn->num_stats;
+  mean_wait_time_plus_one= send_node_conn->tot_wait_time_plus_one /
+                           send_node_conn->num_stats;
+  send_node_conn->tot_curr_wait_time= 0;
+  send_node_conn->tot_wait_time_plus_one= 0;
+  send_node_conn->num_stats= 0;
+  if (mean_curr_wait_time > limit)
+  {
+    /*
+      The mean waiting time is currently out of bounds, we need to
+      decrease it even further to adapt to the new conditions.
+    */
+    if (send_node_conn->max_num_waits > 0)
+      send_node_conn->max_num_waits--;
+  }
+  if (mean_wait_time_plus_one < limit)
+  {
+    /*
+      The mean waiting is within limits even if we increase the number
+      of waiters we can accept.
+    */
+    if (send_node_conn->max_num_waits < MAX_SENDS_TRACKED)
+      send_node_conn->max_num_waits++;
+  }
+  g_mutex_unlock(send_node_conn->mutex);
+  return;
+}
+
+/*
   The application thread has prepared to send a number of items and is now
   ready to send these set of pages. The IC_SEND_NODE_CONNECTION is the
   protected data structure that contains the information about the node
@@ -423,20 +576,20 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   pages to be sent here. Next step is to check if another thread is already
   active sending and hasn't flagged that he's not ready to continue
   sending. If there is a thread already sending we unlock and proceed.
-
 */
+
 static int
 ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
          IC_SOCK_BUF_PAGE *first_page_to_send,
          gboolean force_send)
 {
   IC_SOCK_BUF_PAGE *last_page_to_send;
-  IC_SOCK_BUF_PAGE *first_send, *last_send;
   guint32 send_size= 0;
   guint32 iovec_size;
   struct iovec write_vector[MAX_SEND_BUFFERS];
   gboolean return_imm= TRUE;
   int error;
+  IC_TIMER current_time;
   DEBUG_ENTRY("ndb_send");
 
   /*
@@ -470,28 +623,31 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
     send_node_conn->last_sbp= last_page_to_send;
   }
   send_node_conn->queued_bytes+= send_size;
+  current_time= ic_gethrtime();
   if (!send_node_conn->send_active)
   {
     return_imm= FALSE;
     send_node_conn->send_active= TRUE;
     prepare_real_send_handling(send_node_conn, &send_size,
                                write_vector, &iovec_size);
+    if (!force_send)
+    {
+      adaptive_send_algorithm_decision(send_node_conn,
+                                       &return_imm,
+                                       current_time);
+    }
   }
-  g_mutex_unlock(send_node_conn->mutex);
+  adaptive_send_algorithm_statistics(send_node_conn, current_time);
   /* End critical section for sending */
+  g_mutex_unlock(send_node_conn->mutex);
   if (return_imm)
     return 0;
-  if (force_send)
-  {
-    /* We will send now */
-    if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
-                                   send_size)))
-      return error;
-    DEBUG_RETURN(send_done_handling(send_node_conn));
-  }
-  /* Here we will insert adaptive send handling */
-  g_assert(FALSE);
-  return 0;
+  /* We will send now */
+  if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
+                                 send_size)))
+    return error;
+  /* Send done handling includes a new critical section for sending */
+  DEBUG_RETURN(send_done_handling(send_node_conn));
 }
 
 static void

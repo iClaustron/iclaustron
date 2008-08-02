@@ -6658,6 +6658,46 @@ file_open_error:
         "Failed reading cluster config file %s\n", file_name);
   DEBUG_RETURN(NULL);
 }
+
+IC_API_CONFIG_SERVER*
+ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
+                     IC_STRING *config_dir,
+                     guint32 node_id,
+                     gchar *cluster_server_ip,
+                     gchar *cluster_server_port)
+{
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
+  IC_API_CONFIG_SERVER *config_server_obj= NULL;
+  IC_CONFIG_STRUCT clu_conf_struct;
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
+
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    goto end;
+  clu_conf_struct.perm_mc_ptr= mc_ptr;
+
+  if (!(clu_infos= ic_load_cluster_config_from_file(config_dir,
+                                                    (guint32)0,
+                                                    &clu_conf_struct)))
+    goto end;
+
+  apic->num_cluster_servers= 1;
+  apic->cluster_server_ips= &cluster_server_ip;
+  apic->cluster_server_ports= &cluster_server_port;
+  if ((config_server_obj= ic_create_api_cluster(apic)))
+  {
+    if (!config_server_obj->api_op.ic_get_config(config_server_obj,
+                                                 clu_infos,
+                                                 node_id))
+      goto end;
+    config_server_obj->api_op.ic_free_config(config_server_obj);
+    config_server_obj= NULL;
+  }
+end:
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return config_server_obj;
+}
+
 /*
   iClaustron initialisation routine
   The ic_init routine must be called at the before using any other

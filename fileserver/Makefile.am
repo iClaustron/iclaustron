@@ -19,4 +19,8 @@
 
 bin_PROGRAMS = ic_fileserv
 ic_fileserv_SOURCES = ic_fileserv.c
-#ic_fileserv_LDADD = $(LDADD) ../comm/libic_apid.la
+ic_fileserv_LDADD = $(LDADD) ../comm/libic_comm.la \
+                             ../util/libic_util.la \
+			     ../port/libic_port.la \
+			     ../api_clusterserver/libic_apic.la \
+			     ../api_dataserver/libic_apid.la

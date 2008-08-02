@@ -20,4 +20,5 @@ lib_LTLIBRARIES = libic_apid.la
 
 libic_apid_la_SOURCES = ic_apid.c
 libic_apid_la_LIBADD = $(LDADD) ../comm/libic_comm.la \
-                                ../port/libic_port.la
+                                ../port/libic_port.la \
+				../api_clusterserver/libic_apic.la

@@ -54,7 +54,7 @@ static GOptionEntry entries[] =
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &glob_node_id,
     "Node id of Cluster Manager in all clusters", NULL},
-  { "data_dir", 0, 0, G_OPTION_ARG_STRING,
+  { "config_dir", 0, 0, G_OPTION_ARG_STRING,
     &glob_config_path,
     "Specification of Clusters to manage for Cluster Manager with access info",
      NULL},
@@ -754,43 +754,6 @@ set_up_server_connection(IC_CONNECTION **conn)
   return 0;
 }
 
-static IC_API_CONFIG_SERVER*
-get_configuration(IC_API_CLUSTER_CONNECTION *apic,
-                  IC_STRING *config_dir)
-{
-  IC_CLUSTER_CONNECT_INFO **clu_infos;
-  IC_API_CONFIG_SERVER *config_server_obj= NULL;
-  IC_CONFIG_STRUCT clu_conf_struct;
-  IC_MEMORY_CONTAINER *mc_ptr= NULL;
-  guint32 node_id= glob_node_id;
-
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
-    goto end;
-  clu_conf_struct.perm_mc_ptr= mc_ptr;
-
-  if (!(clu_infos= ic_load_cluster_config_from_file(config_dir,
-                                                    (guint32)0,
-                                                    &clu_conf_struct)))
-    goto end;
-
-  apic->num_cluster_servers= 1;
-  apic->cluster_server_ips= &glob_cluster_server_ip;
-  apic->cluster_server_ports= &glob_cluster_server_port;
-  if ((config_server_obj= ic_create_api_cluster(apic)))
-  {
-    if (!config_server_obj->api_op.ic_get_config(config_server_obj,
-                                                 clu_infos,
-                                                 node_id))
-      goto end;
-    config_server_obj->api_op.ic_free_config(config_server_obj);
-    config_server_obj= NULL;
-  }
-end:
-  if (mc_ptr)
-    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return config_server_obj;
-}
-
 static int
 bootstrap()
 {
@@ -800,7 +763,7 @@ bootstrap()
 int main(int argc,
          char *argv[])
 {
-  int ret_code= 1;
+  int ret_code;
   IC_CONNECTION *conn;
   IC_API_CLUSTER_CONNECTION apic;
   IC_API_CONFIG_SERVER *config_server_obj= NULL;
@@ -815,7 +778,12 @@ int main(int argc,
     return ret_code;
   if (glob_bootstrap && (ret_code= bootstrap()))
     goto error;
-  if (!(config_server_obj= get_configuration(&apic, &glob_config_dir)))
+  ret_code= 1;
+  if (!(config_server_obj= ic_get_configuration(&apic,
+                                                &glob_config_dir,
+                                                glob_node_id,
+                                                glob_cluster_server_ip,
+                                                glob_cluster_server_port)))
     goto error;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;

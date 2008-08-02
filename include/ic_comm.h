@@ -619,7 +619,8 @@ struct ic_ndb_signal
 };
 typedef struct ic_ndb_signal IC_NDB_SIGNAL;
 
-#define MAX_SENT_TIMERS 8
+#define MAX_SEND_TIMERS 16
+#define MAX_SENDS_TRACKED 8
 #define MAX_SEND_SIZE 65535
 #define MAX_SEND_BUFFERS 16
 struct ic_send_node_connection
@@ -656,10 +657,25 @@ struct ic_send_node_connection
 
   /* Timer set when the first buffer was linked and not sent */
   IC_TIMER first_buffered_timer;
+  /* Timer for how long we want the maximum wait to be */
+  IC_TIMER max_wait_in_nanos;
+  /*
+    num_waits keeps track of how many sends are currently already waiting
+    max_num_waits keeps track of how many are currently allowed to wait
+    at maximum, this is the current state of the adaptive send algorithm.
+  */
+  guint32 num_waits;
+  guint32 max_num_waits;
+  /* Number of statistical entries */
+  guint32 num_stats;
+  /* Sum of waits with current state */
+  IC_TIMER tot_curr_wait_time;
+  /* Sum of waits if we added one to the state */
+  IC_TIMER tot_wait_time_plus_one;
   /* Index into timer array */
-  guint32 last_sent_timer_index;
-  /* Array of timers for the last 8 sends */
-  IC_TIMER last_sent_timers[MAX_SENT_TIMERS];
+  guint32 last_send_timer_index;
+  /* Array of timers for the last 16 sends */
+  IC_TIMER last_send_timers[MAX_SEND_TIMERS];
 };
 typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
 #endif
