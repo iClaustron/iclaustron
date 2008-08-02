@@ -17,9 +17,9 @@
 # This directory is used to build the iClaustron Control Server
 #
 
-bin_PROGRAMS = ic_pcntrl
-ic_pcntrl_SOURCES = ic_pcntrl.c
-ic_pcntrl_LDADD = $(LDADD) \
+bin_PROGRAMS = ic_pcntrld
+ic_pcntrld_SOURCES = ic_pcntrl.c
+ic_pcntrld_LDADD = $(LDADD) \
                   ../api_dataserver/libic_apid.la \
                   ../api_clusterserver/libic_apic.la \
                   ../util/libic_util.la \

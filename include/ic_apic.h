@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007, 2008 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -253,25 +253,52 @@ struct ic_run_cluster_server;
 
 struct ic_api_cluster_operations
 {
+  /*
+    This function gets the configuration for a set of clusters from the
+    Cluster Server(s). It allocates the node id in each of those
+    clusters. Thus one process can be part of many clusters but it has
+    to allocate the same node id in all of them.
+  */
   int (*ic_get_config) (struct ic_api_config_server *apic,
                         IC_CLUSTER_CONNECT_INFO **clu_info,
                         guint32 node_id);
-
+  /*
+    Thus function gets a list of the clusters handled by the Cluster
+    Server(s) set up in the IC_API_CONFIG_SERVER struct. It fetches this
+    from the Cluster Server(s).
+  */
   int (*ic_get_cluster_ids) (struct ic_api_config_server *apic,
                             IC_CLUSTER_CONNECT_INFO **clu_infos);
 
+  /*
+    This method is intended to convert a connection to the Cluster
+    Server into a transporter connection.
+  */
   int (*ic_get_info_config_channels) (struct ic_api_config_server *apic);
 
+  /*
+    The following methods are used to retrieve information from the
+    configuration after a successful execution of the ic_get_config
+    method above such that the process has the entire configuration
+    at hand.
+
+    There is one method to get the struct describing a full cluster
+    configuration, there are also methods to retrieve the configuration
+    object of one node, either of any node type or by specified node
+    type.
+  */
   IC_CLUSTER_CONFIG* (*ic_get_cluster_config)
        (struct ic_api_config_server *apic, guint32 cluster_id);
 
   gchar* (*ic_get_node_object)
-       (struct ic_api_config_server *apic, guint32 cluster_id, guint32 node_id);
+       (struct ic_api_config_server *apic, guint32 cluster_id,
+        guint32 node_id);
 
   gchar* (*ic_get_typed_node_object)
        (struct ic_api_config_server *apic, guint32 cluster_id,
         guint32 node_id, IC_NODE_TYPES node_type);
 
+  /* Method used to release all memory allocated for the configuration */
   void (*ic_free_config) (struct ic_api_config_server *apic);
 };
 typedef struct ic_api_cluster_operations IC_API_CLUSTER_OPERATIONS;
@@ -657,7 +684,8 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      IC_STRING *config_dir,
                      guint32 node_id,
                      gchar *cluster_server_ip,
-                     gchar *cluster_server_port);
+                     gchar *cluster_server_port,
+                     int *error);
 
 IC_API_CONFIG_SERVER*
 ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn);

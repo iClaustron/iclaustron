@@ -1,4 +1,4 @@
-/* Copyight (C) 2007 iClaustron AB
+/* Copyight (C) 2007, 2008 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -3124,6 +3124,8 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   }
   apic->cluster_conn.current_conn= conn;  
 error:
+  if (error)
+    printf("Error: %d\n", error);
   DEBUG_RETURN(error);
 mem_alloc_error:
   DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
@@ -6664,13 +6666,16 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      IC_STRING *config_dir,
                      guint32 node_id,
                      gchar *cluster_server_ip,
-                     gchar *cluster_server_port)
+                     gchar *cluster_server_port,
+                     int *error)
 {
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   IC_API_CONFIG_SERVER *config_server_obj= NULL;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  int ret_code;
 
+  ret_code= 0;
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
     goto end;
   clu_conf_struct.perm_mc_ptr= mc_ptr;
@@ -6685,9 +6690,9 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
   apic->cluster_server_ports= &cluster_server_port;
   if ((config_server_obj= ic_create_api_cluster(apic)))
   {
-    if (!config_server_obj->api_op.ic_get_config(config_server_obj,
-                                                 clu_infos,
-                                                 node_id))
+    if (!(ret_code= config_server_obj->api_op.ic_get_config(config_server_obj,
+                                                            clu_infos,
+                                                            node_id)))
       goto end;
     config_server_obj->api_op.ic_free_config(config_server_obj);
     config_server_obj= NULL;
@@ -6695,6 +6700,7 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
 end:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  *error= ret_code;
   return config_server_obj;
 }
 

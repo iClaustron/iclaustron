@@ -17,9 +17,9 @@
 ## This directory is used to build the iClaustron File Server
 ##
 
-bin_PROGRAMS = ic_fileserv
-ic_fileserv_SOURCES = ic_fileserv.c
-ic_fileserv_LDADD = $(LDADD) ../comm/libic_comm.la \
+bin_PROGRAMS = ic_fsd
+ic_fsd_SOURCES = ic_fileserv.c
+ic_fsd_LDADD = $(LDADD) ../comm/libic_comm.la \
                              ../util/libic_util.la \
 			     ../port/libic_port.la \
 			     ../api_clusterserver/libic_apic.la \

@@ -871,9 +871,7 @@ read_socket_connection(IC_CONNECTION *conn,
     else
       ret_code= recv(conn->rw_sockfd, buf, buf_size, 0);
 #else
-    printf("recv start\n");
     ret_code= recv(conn->rw_sockfd, buf, buf_size, 0);
-    printf("received %d bytes\n", ret_code);
 #endif
     if (ret_code > 0)
     {

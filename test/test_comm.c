@@ -212,8 +212,6 @@ api_clusterserver_test()
   cluster_conn.cluster_server_ips= &glob_server_ip;
   cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
-  if ((srv_obj= ic_create_api_cluster(&cluster_conn)))
-    return 1;
   if (glob_test_type > 1)
   {
     printf("Testing print of config parameters\n");
@@ -229,6 +227,8 @@ api_clusterserver_test()
       ic_print_config_parameters(0xFFFFFFFF);
     return 0;
   }
+  if ((srv_obj= ic_create_api_cluster(&cluster_conn)))
+    return 1;
   clu_info_ptr[0]= &clu_info;
   clu_info_ptr[1]= NULL;
   IC_INIT_STRING(&clu_info.cluster_name, kalle_str, strlen(kalle_str), TRUE);

@@ -50,4 +50,8 @@ The examples directory contains examples of a kalle-cluster and a
 jocke-cluster. These files are always named cluster_name.ini, thus in the
 example case kalle.ini and jocke.ini.
 
-
+All configuration parameters and some elementary documentation of them
+can be obtained by running
+./test_comm --test_type 6
+For only data server config parameters use 2, for clients 3, for cluster
+server 4 and for communication parameters use 5, 6 means all are printed.

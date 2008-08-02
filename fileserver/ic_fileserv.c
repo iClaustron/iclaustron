@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007, 2008 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -44,9 +44,19 @@ static GOptionEntry entries[] =
 };
 
 static int
-run_file_server(IC_API_CONFIG_SERVER *config_server_obj)
+run_file_server(IC_API_CONFIG_SERVER *apic)
 {
+  guint32 i;
+  IC_CLUSTER_CONFIG *clu_conf;
+  for (i= 0; i <= apic->max_cluster_id; i++)
+  {
+    clu_conf= apic->api_op.ic_get_cluster_config(apic, i);
+    if (clu_conf)
+    {
+    }
+  }
   printf("Ready to start file server\n");
+  //ic_set_up_cluster_connections(co
   return 0;
 }
 
@@ -69,7 +79,8 @@ int main(int argc, char *argv[])
                                                 &glob_config_dir,
                                                 glob_node_id,
                                                 glob_cluster_server_ip,
-                                                glob_cluster_server_port)))
+                                                glob_cluster_server_port,
+                                                &ret_code)))
     goto error;
   ret_code= run_file_server(config_server_obj);
 error:

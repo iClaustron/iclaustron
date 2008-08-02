@@ -783,7 +783,8 @@ int main(int argc,
                                                 &glob_config_dir,
                                                 glob_node_id,
                                                 glob_cluster_server_ip,
-                                                glob_cluster_server_port)))
+                                                glob_cluster_server_port,
+                                                &ret_code)))
     goto error;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;
