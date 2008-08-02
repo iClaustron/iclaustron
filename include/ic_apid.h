@@ -13,6 +13,8 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+#ifndef IC_APID_H
+#define IC_APID_H
 #include <ic_comm.h>
 #include <ic_common.h>
 
@@ -39,3 +41,111 @@ struct ic_ds_connection
 };
 
 typedef struct ic_ds_connection IC_DS_CONNECTION;
+/*
+  Definitions used to handle NDB Protocol handling data structures.
+*/
+
+struct ic_ndb_receive_state
+{
+  IC_CONNECTION *conn;
+  IC_SOCK_BUF *rec_buf_pool;
+  IC_SOCK_BUF *message_pool;
+  IC_SOCK_BUF_PAGE *buf_page;
+  guint32 read_size;
+  gboolean read_header_flag;
+  guint32 cluster_id;
+  guint32 node_id;
+  /* 
+    Statistical info to track usage of this socket to enable proper
+    configuration of threads to handle NDB Protocol.
+  */
+  GMutex *ndb_rec_mutex;
+};
+typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
+
+struct ic_thread_connection
+{
+  IC_SOCK_BUF_PAGE *free_rec_pages;
+  IC_SOCK_BUF_PAGE *free_ndb_signals;
+};
+typedef struct ic_thread_connection IC_THREAD_CONNECTION;
+
+struct ic_ndb_signal
+{
+  guint32 signal_number;
+};
+typedef struct ic_ndb_signal IC_NDB_SIGNAL;
+
+#define MAX_SEND_TIMERS 16
+#define MAX_SENDS_TRACKED 8
+#define MAX_SEND_SIZE 65535
+#define MAX_SEND_BUFFERS 16
+struct ic_send_node_connection
+{
+  /* The connection object */
+  IC_CONNECTION *conn;
+
+  /* Mutex protecting this struct */
+  GMutex *mutex;
+  /* Condition used to wake up send thread when it's needed */
+  GCond *cond;
+
+  /* Linked list of send buffers awaiting sending */
+  IC_SOCK_BUF_PAGE *first_sbp;
+  IC_SOCK_BUF_PAGE *last_sbp;
+
+  /* How many bytes are in the send buffers awaiting sending */
+  guint32 queued_bytes;
+  /* When any thread is actively sending already this boolean is set */
+  gboolean send_active;
+  /* Indicates if node is up, if not it's no use sending */
+  gboolean node_up;
+
+  /* Debug variable set when waking up send thread */
+  gboolean starting_send_thread;
+  /* Variable indicating send thread is awake and working */
+  gboolean send_thread_active;
+  /* Somebody ordered the node to stop */
+  gboolean stop_ordered;
+  /* The node id in the cluster of the receiving end */
+  guint32 active_node_id;
+  /* The cluster id this connection is used in */
+  guint32 cluster_id;
+
+  /* Timer set when the first buffer was linked and not sent */
+  IC_TIMER first_buffered_timer;
+  /* Timer for how long we want the maximum wait to be */
+  IC_TIMER max_wait_in_nanos;
+  /*
+    num_waits keeps track of how many sends are currently already waiting
+    max_num_waits keeps track of how many are currently allowed to wait
+    at maximum, this is the current state of the adaptive send algorithm.
+  */
+  guint32 num_waits;
+  guint32 max_num_waits;
+  /* Number of statistical entries */
+  guint32 num_stats;
+  /* Sum of waits with current state */
+  IC_TIMER tot_curr_wait_time;
+  /* Sum of waits if we added one to the state */
+  IC_TIMER tot_wait_time_plus_one;
+  /* Index into timer array */
+  guint32 last_send_timer_index;
+  /* Array of timers for the last 16 sends */
+  IC_TIMER last_send_timers[MAX_SEND_TIMERS];
+};
+typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
+
+struct ic_cluster_comm
+{
+  IC_SEND_NODE_CONNECTION **send_node_conn_array;
+};
+typedef struct ic_cluster_comm IC_CLUSTER_COMM;
+
+struct ic_grid_comm
+{
+  IC_CLUSTER_COMM **cluster_comm_array;
+};
+typedef struct ic_grid_comm IC_GRID_COMM;
+
+#endif

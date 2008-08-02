@@ -22,7 +22,7 @@ DTRACEFILES= socket_conn.o
 
 lib_LTLIBRARIES = libic_comm.la
 
-libic_comm_la_SOURCES = socket_conn.c socket_membuf.c comm_supp.c ndb_comm.c
+libic_comm_la_SOURCES = socket_conn.c socket_membuf.c comm_supp.c
 
 if HAVE_DTRACE
   libic_comm_la_SOURCES += probes.d
