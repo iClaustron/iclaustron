@@ -79,9 +79,8 @@ int main(int argc, char *argv[])
 error:
   if (apic)
     apic->api_op.ic_free_config(apic);
-  if (apid_global)
-    ic_end_apid(apid_global);
+  ic_end_apid(apid_global);
   ic_end();
-  return 1;
+  return ret_code;
 }
 

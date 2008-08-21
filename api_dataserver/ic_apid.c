@@ -82,6 +82,8 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   IC_SEND_NODE_CONNECTION *send_node_conn;
   guint32 i, j;
 
+  if (!apid_global)
+    return;
   if (mem_buf_pool)
     mem_buf_pool->sock_buf_op.ic_free_sock_buf(mem_buf_pool);
   if (ndb_signal_pool)
@@ -106,11 +108,13 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
             g_cond_free(send_node_conn->cond);
           ic_free(send_node_conn);
         }
+        ic_free(cluster_comm);
       }
       ic_free(grid_comm->cluster_comm_array);
     }
     ic_free(grid_comm);
   }
+  ic_free(apid_global);
 }
 
 static int

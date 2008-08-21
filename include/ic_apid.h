@@ -158,6 +158,7 @@ struct ic_apid_global
   IC_SOCK_BUF *mem_buf_pool;
   IC_SOCK_BUF *ndb_signal_pool;
   IC_GRID_COMM *grid_comm;
+  IC_API_CONFIG_SERVER *apic;
 };
 typedef struct ic_apid_global IC_APID_GLOBAL;
 
