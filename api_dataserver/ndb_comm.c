@@ -357,8 +357,11 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
 {
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_CLUSTER_COMM *cluster_comm;
+  IC_GRID_COMM *grid_comm;
+  IC_API_CONFIG_SERVER *apic;
 
   grid_comm= apid_global->grid_comm;
+  apic= apid_global->apic;
   if (cluster_id > apic->max_cluster_id)
     goto error;
   cluster_comm= grid_comm->cluster_comm_array[cluster_id];
@@ -367,6 +370,8 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
   send_node_conn= cluster_comm->send_node_conn_array[node_id];
   if (!send_node_conn)
     goto error;
+error:
+  return 0;
 }
 
 static void

@@ -1237,7 +1237,6 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "In this mode all file writes are ignored and all starts becomes initial starts";
 
-
   IC_SET_CONFIG_MAP(DATA_SERVER_ORDERED_KEY_OBJECTS, 69);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_ordered_key_objects,
                        IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
@@ -1392,45 +1391,48 @@ init_config_parameters()
 
 /* Id 90-99 for configuration id 170-179 */
 #define DATA_SERVER_GROUP_COMMIT_DELAY 170
-#define DATA_SERVER_RT_SCHEDULER_THREADS 173
-#define DATA_SERVER_LOCK_MAIN_THREAD 174
-#define DATA_SERVER_LOCK_OTHER_THREADS 175
-#define DATA_SERVER_SCHEDULER_NO_SEND_TIME 176
-#define DATA_SERVER_SCHEDULER_NO_SLEEP_TIME 177
-/* 171-172 not used */
-/* 178-179 not used */
+#define DATA_SERVER_GROUP_COMMIT_TIMEOUT 171
+#define DATA_SERVER_BACKUP_COMPRESSION 172
+#define DATA_SERVER_LOCAL_CHECKPOINT_COMPRESSION 173
+#define DATA_SERVER_SCHEDULER_NO_SEND_TIME 174
+#define DATA_SERVER_SCHEDULER_NO_SLEEP_TIME 175
+#define DATA_SERVER_RT_SCHEDULER_THREADS 176
+#define DATA_SERVER_LOCK_MAIN_THREAD 177
+#define DATA_SERVER_LOCK_OTHER_THREADS 178
+#define DATA_SERVER_MAX_LOCAL_TRIGGERS 179
 
   IC_SET_CONFIG_MAP(DATA_SERVER_GROUP_COMMIT_DELAY, 90);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_group_commit_delay,
                        IC_UINT32, 100, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 32000);
   conf_entry->min_ndb_version_used= 0x60301;
   conf_entry->config_entry_description=
   "How long is the delay between each group commit started by the cluster";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_RT_SCHEDULER_THREADS, 93);
-  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_rt_scheduler_threads,
-                       FALSE, IC_ONLINE_CHANGE);
-  conf_entry->min_ndb_version_used= 0x60304;
+  IC_SET_CONFIG_MAP(DATA_SERVER_GROUP_COMMIT_TIMEOUT, 91);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_group_commit_timeout,
+                            IC_UINT32, 4000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 32000);
+  conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
-  "If set the data server is setting its thread in RT priority, requires root privileges";
+  "Maximum time group commit is allowed to take before node is shut down";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_MAIN_THREAD, 94);
-  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
-                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
-  conf_entry->min_ndb_version_used= 0x60304;
+  IC_SET_CONFIG_MAP(DATA_SERVER_BACKUP_COMPRESSION, 92);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_backup_compression,
+                             FALSE, IC_INITIAL_NODE_RESTART);
+  conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
-  "Lock Main Thread to a CPU id";
+  "Use zlib compression for NDB online backups";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_OTHER_THREADS, 95);
-  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
-                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
-  conf_entry->min_ndb_version_used= 0x60304;
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_CHECKPOINT_COMPRESSION, 93);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry,
+                             data_server_local_checkpoint_compression,
+                             FALSE, IC_INITIAL_NODE_RESTART);
+  conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
-  "Lock other threads to a CPU id";
+  "Use zlib compression for NDB local checkpoints";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SEND_TIME, 96);
+  IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SEND_TIME, 94);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_scheduler_no_send_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
@@ -1438,7 +1440,7 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "How long time can the scheduler execute without sending socket buffers";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SLEEP_TIME, 97);
+  IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SLEEP_TIME, 95);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_scheduler_no_sleep_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
@@ -1446,8 +1448,73 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "How long time can the scheduler execute without going to sleep";
 
+  IC_SET_CONFIG_MAP(DATA_SERVER_RT_SCHEDULER_THREADS, 96);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_rt_scheduler_threads,
+                             FALSE, IC_ONLINE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "If set the data server is setting its thread in RT priority, requires root privileges";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_MAIN_THREAD, 97);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
+                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "Lock Main Thread to a CPU id";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_OTHER_THREADS, 98);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
+                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "Lock other threads to a CPU id";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGERS, 99);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_local_triggers,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of local triggers that can be defined";
+
 /* Id 100-109 for configuration id 180-189 */
-/* 180-189 not used */
+#define DATA_SERVER_MAX_LOCAL_TRIGGER_USERS 180
+#define DATA_SERVER_MAX_LOCAL_TRIGGER_OPERATIONS 181
+#define DATA_SERVER_MAX_STORED_GROUP_COMMITS 182
+#define DATA_SERVER_LOCAL_TRIGGER_HANDOVER_TIMEOUT 183
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGER_USERS, 100);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_local_trigger_users,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of local trigger user nodes";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGER_OPERATIONS, 101);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry,
+                            data_server_max_local_trigger_operations,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of local trigger operations";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_STORED_GROUP_COMMITS, 102);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_stored_group_commits,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of group commits we will store information about";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_TRIGGER_HANDOVER_TIMEOUT, 103);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry,
+                            data_server_local_trigger_handover_timeout,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Maximum time to wait when performing a handover during local trigger definitions";
+
+/* 184-189 not used */
 
 /* Id 110-119 for configuration id 190-199 */
 /* 190-197 not used */

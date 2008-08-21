@@ -467,11 +467,19 @@ struct ic_data_server_config
   guint32 data_server_report_memory_frequency;
   guint32 data_server_backup_status_frequency;
   guint32 data_server_group_commit_delay;
+  guint32 data_server_group_commit_timeout;
+  guint32 data_server_max_local_triggers;
+  guint32 data_server_max_local_trigger_users;
+  guint32 data_server_max_local_trigger_operations;
+  guint32 data_server_max_stored_group_commits;
+  guint32 data_server_local_trigger_handover_timeout;
 
   gchar use_unswappable_memory;
   gchar data_server_automatic_restart;
   gchar data_server_volatile_mode;
   gchar data_server_rt_scheduler_threads;
+  gchar data_server_backup_compression;
+  gchar data_server_local_checkpoint_compression;
   gchar use_o_direct;
 };
 typedef struct ic_data_server_config IC_DATA_SERVER_CONFIG;
