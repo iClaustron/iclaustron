@@ -1583,6 +1583,10 @@ ic_init_error_messages()
     "Internal data structure error";
   ic_error_str[IC_ERROR_NODE_DOWN - IC_FIRST_ERROR]=
     "Node failure occurred";
+  ic_error_str[IC_ERROR_NO_SUCH_CLUSTER - IC_FIRST_ERROR]=
+    "No such cluster";
+  ic_error_str[IC_ERROR_NODE_DOWN - IC_FIRST_ERROR]=
+    "No such node exists in this cluster";
 }
 
 void

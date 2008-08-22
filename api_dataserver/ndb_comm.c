@@ -347,6 +347,8 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   sending. This will possibly change.
 */
 
+<<<<<<< .mine
+=======
 static int
 ic_send_handling(IC_APID_GLOBAL *apid_global,
                  guint32 cluster_id,
@@ -374,6 +376,7 @@ error:
   return 0;
 }
 
+>>>>>>> .r233
 static void
 prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                            guint32 *send_size,
@@ -698,8 +701,11 @@ run_send_thread(void *data)
       g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
     if (send_node_conn->stop_ordered)
       return;
-    if (send_node_conn->node_up)
+    if (!send_node_conn->node_up)
+    {
+      more_data= FALSE;
       continue;
+    }
     g_assert(send_node_conn->starting_send_thread);
     g_assert(send_node_conn->send_active);
     send_node_conn->starting_send_thread= FALSE;
@@ -707,14 +713,20 @@ run_send_thread(void *data)
     prepare_real_send_handling(send_node_conn, &send_size,
                                write_vector, &iovec_size);
     g_mutex_unlock(send_node_conn->mutex);
-    if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
-                                   send_size)))
-      continue;
-    /* Handle send done */
-    error= 0;
+    error= real_send_handling(send_node_conn, write_vector,
+                              iovec_size, send_size);
     g_mutex_lock(send_node_conn->mutex);
-    if (!send_node_conn->node_up)
+    if (error)
+    {
+      send_node_conn->node_up= FALSE;
+      node_failure_handling(send_node_conn);
+    }
+    /* Handle send done */
+    if (error || !send_node_conn->node_up)
+    {
       error= IC_ERROR_NODE_DOWN;
+      more_data= FALSE;
+    }
     else if (send_node_conn->first_sbp)
     {
       /* There are more buffers to send, we need to continue sending */
@@ -727,5 +739,33 @@ run_send_thread(void *data)
       send_node_conn->send_active= FALSE;
     }
   } while (1);
+}
+
+static int
+ic_send_handling(IC_APID_GLOBAL *apid_global,
+                 guint32 cluster_id,
+                 guint32 node_id,
+                 IC_SOCK_BUF_PAGE *first_page_to_send,
+                 gboolean force_send)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_CLUSTER_COMM *cluster_comm;
+  IC_API_CONFIG_SERVER *apic;
+  IC_GRID_COMM *grid_comm;
+  int error;
+
+  apic= apid_global->apic;
+  grid_comm= apid_global->grid_comm;
+  error= IC_ERROR_NO_SUCH_CLUSTER;
+  if (cluster_id > apic->max_cluster_id)
+    return error;
+  cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+  if (!cluster_comm)
+    return error;
+  error= IC_ERROR_NO_SUCH_NODE;
+  send_node_conn= cluster_comm->send_node_conn_array[node_id];
+  if (!send_node_conn)
+    return error;
+  return ndb_send(send_node_conn, first_page_to_send, force_send);
 }
 

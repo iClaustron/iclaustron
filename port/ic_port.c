@@ -81,8 +81,13 @@ ic_gethrtime()
   timer+= ts_timer.tv_nsec;
 #else
 #ifdef HAVE_GETTIMEOFDAY
+#ifndef MACOSX
+  struct timeval time_of_day;
+  gettimeofday(&time_of_day, NULL);
+#else
   struct timeofday time_of_day;
   gettimeofday(&time_of_day);
+#endif
   timer= 1000000000LL;
   timer*= time_of_day.tv_sec;
   timer+= (time_of_day.tv_usec * 1000);
