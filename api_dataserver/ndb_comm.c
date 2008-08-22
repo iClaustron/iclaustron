@@ -347,37 +347,6 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   sending. This will possibly change.
 */
 
-<<<<<<< .mine
-=======
-static int
-ic_send_handling(IC_APID_GLOBAL *apid_global,
-                 guint32 cluster_id,
-                 guint32 node_id,
-                 guint32 *send_size,
-                 struct iovec *write_vector,
-                 guint32 *iovec_size)
-{
-  IC_SEND_NODE_CONNECTION *send_node_conn;
-  IC_CLUSTER_COMM *cluster_comm;
-  IC_GRID_COMM *grid_comm;
-  IC_API_CONFIG_SERVER *apic;
-
-  grid_comm= apid_global->grid_comm;
-  apic= apid_global->apic;
-  if (cluster_id > apic->max_cluster_id)
-    goto error;
-  cluster_comm= grid_comm->cluster_comm_array[cluster_id];
-  if (!cluster_comm)
-    goto error;
-  send_node_conn= cluster_comm->send_node_conn_array[node_id];
-  if (!send_node_conn)
-    goto error;
-error:
-  return 0;
-}
-
->>>>>>> .r233
-static void
 prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                            guint32 *send_size,
                            struct iovec *write_vector,
