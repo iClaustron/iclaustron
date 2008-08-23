@@ -13,8 +13,9 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_apid.h>
+#include <ic_comm.h>
 #include <ic_apic.h>
+#include <ic_apid.h>
 
 IC_APID_GLOBAL*
 ic_init_apid(IC_API_CONFIG_SERVER *apic)
@@ -32,6 +33,10 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
     goto error;
   if (!(apid_global->grid_comm->cluster_comm_array= (IC_CLUSTER_COMM**)
         ic_calloc((IC_MAX_CLUSTER_ID + 1) * sizeof(IC_SEND_NODE_CONNECTION*))))
+    goto error;
+  if (!(apid_global->grid_comm->thread_conn_array= (IC_THREAD_CONNECTION**)
+        ic_calloc((IC_MAX_THREAD_CONNECTIONS + 1) *
+        sizeof(IC_THREAD_CONNECTION*))))
     goto error;
   if (!(apid_global->mem_buf_pool= ic_create_socket_membuf(IC_MEMBUF_SIZE,
                                                            512)))
@@ -111,6 +116,19 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
         ic_free(cluster_comm);
       }
       ic_free(grid_comm->cluster_comm_array);
+    }
+    if (grid_comm->thread_conn_array)
+    {
+      for (j= 0; j < IC_MAX_THREAD_CONNECTIONS; j++)
+      {
+        if (!grid_comm->thread_conn_array[j])
+          continue;
+        if (grid_comm->thread_conn_array[j]->mutex)
+          g_mutex_free(grid_comm->thread_conn_array[j]->mutex);
+        if (grid_comm->thread_conn_array[j]->cond)
+          g_cond_free(grid_comm->thread_conn_array[j]->cond);
+      }
+      ic_free(grid_comm->thread_conn_array);
     }
     ic_free(grid_comm);
   }

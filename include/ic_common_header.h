@@ -37,14 +37,10 @@
 #define IC_MAX_UINT32 0xFFFFFFFF
 #define IC_MAX_CLUSTER_ID 255
 #define IC_MAX_NODE_ID 255
+#define IC_MAX_THREAD_CONNECTIONS 256
 #define IC_MAX_CLUSTER_SERVERS 4
 #define IC_MAX_FILE_NAME_SIZE 255
 #define IC_MAX_INT_STRING 32
-
-#define ic_is_bit_set(value, bit_number) \
-  (((value | (1 << bit_number)) == 0) ? 0 : 1)
-#define ic_set_bit(value, bit_number) \
-  value|= (1 << bit_number);
 
 extern gchar *ic_empty_string;
 extern gchar *ic_err_str;
@@ -419,6 +415,35 @@ int ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len);
 
 /* Bit manipulation routines */
 guint32 ic_count_highest_bit(guint32 bit_var);
+#define ic_is_bit_set(value, bit_number) \
+  (((value | (1 << bit_number)) == 0) ? 0 : 1)
+#define ic_set_bit(value, bit_number) \
+  value|= (1 << bit_number);
+
+/* Bitmap routines */
+struct ic_bitmap
+{
+  guchar *bitmap_area;
+  guint32 num_bits;
+  gboolean alloced_bitmap;
+  gboolean alloced_bitmap_area;
+};
+typedef struct ic_bitmap IC_BITMAP;
+
+#define IC_BITMAP_SIZE(num_bits) ((4*(num_bits/32) + 4))
+#define IC_BITMAP_BIT(bit_number) (bit_number & 7)
+#define IC_BITMAP_BYTE(bit_number) (bit_number / 8)
+IC_BITMAP* ic_create_bitmap(IC_BITMAP* bitmap, guint32 num_bits);
+IC_BITMAP* ic_mc_create_bitmap(IC_MEMORY_CONTAINER *mc, guint32 num_bits);
+void ic_free_bitmap(IC_BITMAP* bitmap);
+#ifndef DEBUG_BUILD
+#define ic_bitmap_set_bit(bitmap, bit_number) \
+  (ic_set_bit((bitmap->bitmap_area[(IC_BITMAP_BYTE(bit_number))]), \
+               (IC_BITMAP_BIT(bit_number))))
+#define ic_is_bitmap_set(bitmap, bit_number) \
+  (ic_is_bit_set((bitmap->bitmap_area[IC_BITMAP_BYTE(bit_number)]), \
+                 (IC_BITMAP_BIT(bit_number))))
+#endif
 
 /*
   Error handling interface

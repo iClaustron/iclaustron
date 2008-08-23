@@ -1517,7 +1517,70 @@ ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
   return ic_mc_strdup(NULL, out_str, in_str);
 }
 
+/*
+  Bitmap routines
+  ---------------
+  This is a set of bitmap routines. There are methods available to
+  allocate the bitmap from the stack, using malloc and using the
+  IC_MEMORY_CONTAINER class. Independent of method used to allocate
+  the bitmap the routines used to read and manipulate it are the
+  same.
+*/
+IC_BITMAP*
+ic_create_bitmap(IC_BITMAP *bitmap, guint32 num_bits)
+{
+  IC_BITMAP *loc_bitmap= bitmap;
+  guint32 size= IC_BITMAP_SIZE(num_bits);
+  if (!loc_bitmap)
+  {
+    /* Bitmap wasn't allocated on stack so we need to allocate it. */
+    if (!(loc_bitmap= (IC_BITMAP*)ic_calloc(sizeof(IC_BITMAP))))
+      return NULL;
+    loc_bitmap->alloced_bitmap= TRUE;
+  }
+  if (!loc_bitmap->bitmap_area)
+  {
+    if (!(loc_bitmap->bitmap_area= (guchar*)ic_calloc(size)))
+    {
+      if (loc_bitmap->alloced_bitmap)
+        ic_free(loc_bitmap);
+      return NULL;
+    }
+    loc_bitmap->alloced_bitmap_area= TRUE;
+  }
+  loc_bitmap->num_bits= num_bits;
+  return loc_bitmap;
+}
 
+IC_BITMAP*
+ic_mc_create_bitmap(IC_MEMORY_CONTAINER *mc, guint32 num_bits)
+{
+  IC_BITMAP *loc_bitmap;
+  guint32 size= IC_BITMAP_SIZE(num_bits);
+  if (!(loc_bitmap= (IC_BITMAP*)
+        mc->mc_ops.ic_mc_calloc(mc, sizeof(IC_BITMAP))))
+    goto end;
+  if ((loc_bitmap->bitmap_area= (guchar*)mc->mc_ops.ic_mc_calloc(mc, size)))
+    return loc_bitmap;
+  loc_bitmap= NULL;
+end:
+  return loc_bitmap;
+}
+#ifdef DEBUG_BUILD
+void
+ic_bitmap_set_bit(IC_BITMAP *bitmap, guint32 bit_number)
+{
+  g_assert(bitmap->num_bits > bit_number);
+  ic_bitmap_set_bit(bitmap, bit_number);
+}
+
+gboolean
+ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
+{
+  g_assert(bitmap->num_bits > bit_number);
+  return (gboolean)ic_is_bitmap_set(bitmap, bit_number);
+}
+#endif
 /*
   Module for printing error codes and retrieving error messages
   given the error number.

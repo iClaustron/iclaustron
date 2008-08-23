@@ -66,18 +66,21 @@ struct ic_ndb_receive_state
 };
 typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 
-struct ic_thread_connection
-{
-  IC_SOCK_BUF_PAGE *free_rec_pages;
-  IC_SOCK_BUF_PAGE *free_ndb_signals;
-};
-typedef struct ic_thread_connection IC_THREAD_CONNECTION;
-
 struct ic_ndb_signal
 {
   guint32 signal_number;
 };
 typedef struct ic_ndb_signal IC_NDB_SIGNAL;
+
+struct ic_thread_connection
+{
+  IC_SOCK_BUF_PAGE *free_rec_pages;
+  IC_SOCK_BUF_PAGE *free_ndb_signals;
+  IC_NDB_SIGNAL *first_received_signal;
+  GMutex *mutex;
+  GCond *cond;
+};
+typedef struct ic_thread_connection IC_THREAD_CONNECTION;
 
 #define MAX_SEND_TIMERS 16
 #define MAX_SENDS_TRACKED 8
@@ -150,6 +153,7 @@ typedef struct ic_cluster_comm IC_CLUSTER_COMM;
 struct ic_grid_comm
 {
   IC_CLUSTER_COMM **cluster_comm_array;
+  IC_THREAD_CONNECTION **thread_conn_array;
 };
 typedef struct ic_grid_comm IC_GRID_COMM;
 
@@ -161,6 +165,20 @@ struct ic_apid_global
   IC_API_CONFIG_SERVER *apic;
 };
 typedef struct ic_apid_global IC_APID_GLOBAL;
+
+struct ic_apid_connection
+{
+  IC_APID_GLOBAL *apid_global;
+  IC_API_CONFIG_SERVER *apic;
+  IC_BITMAP *cluster_id_bitmap;
+  guint32 thread_id;
+  IC_THREAD_CONNECTION *thread_conn;
+};
+typedef struct ic_apid_connection IC_APID_CONNECTION;
+
+IC_APID_CONNECTION*
+ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
+                          IC_BITMAP *cluster_id_bitmap);
 
 IC_APID_GLOBAL*
 ic_init_apid(IC_API_CONFIG_SERVER *apic);
