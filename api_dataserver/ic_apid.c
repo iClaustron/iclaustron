@@ -44,6 +44,8 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   if (!(apid_global->ndb_signal_pool= ic_create_socket_membuf(
                                          sizeof(IC_NDB_SIGNAL), 2048)))
     goto error;
+  if (!(apid_global->thread_id_mutex= g_mutex_new()))
+    goto error;
   for (i= 0; i <= apic->max_cluster_id; i++)
   {
     if ((clu_conf= apic->api_op.ic_get_cluster_config(apic,i)))
@@ -132,7 +134,69 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
     }
     ic_free(grid_comm);
   }
+  if (apid_global->thread_id_mutex)
+    g_mutex_free(apid_global->thread_id_mutex);
   ic_free(apid_global);
+}
+
+static void
+apid_free(IC_APID_CONNECTION *apid_conn)
+{
+  IC_THREAD_CONNECTION *thread_conn= apid_conn->thread_conn;
+  IC_GRID_COMM *grid_comm;
+  IC_APID_GLOBAL *apid_global;
+  guint32 thread_id= apid_conn->thread_id;
+  DEBUG_ENTRY("apid_free");
+
+  apid_global= apid_conn->apid_global;
+  grid_comm= apid_global->grid_comm;
+  g_assert(grid_comm->thread_conn_array[thread_id] == thread_conn);
+  g_mutex_lock(apid_global->thread_id_mutex);
+  grid_comm->thread_conn_array[thread_id]= NULL;
+  g_mutex_unlock(apid_global->thread_id_mutex);
+  ic_free(apid_conn);
+  ic_free(thread_conn);
+}
+
+IC_APID_CONNECTION*
+ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
+                          IC_BITMAP *cluster_id_bitmap)
+{
+  guint32 thread_id;
+  IC_GRID_COMM *grid_comm;
+  IC_THREAD_CONNECTION *thread_conn;
+  IC_APID_CONNECTION *apid_conn;
+  guint32 i;
+  DEBUG_ENTRY("ic_create_apid_connection");
+
+  g_mutex_lock(apid_global->thread_id_mutex);
+  for (i= 0; i < IC_MAX_THREAD_CONNECTIONS; i++)
+  {
+    if (!grid_comm->thread_conn_array[i])
+    {
+      if (!(thread_conn= (IC_THREAD_CONNECTION*)
+                          ic_calloc(sizeof(IC_THREAD_CONNECTION))))
+        goto error;
+      if (!(apid_conn= (IC_APID_CONNECTION*)
+                        ic_calloc(sizeof(IC_APID_CONNECTION))))
+        goto error;
+      thread_id= i;
+      break;
+    }
+  }
+  grid_comm->thread_conn_array[thread_id]= thread_conn;
+  thread_conn->apid_conn= apid_conn;
+  apid_conn->thread_conn= thread_conn;
+  g_mutex_unlock(apid_global->thread_id_mutex);
+  /* Now initialise the method pointers for the Data API interface */
+  apid_conn->apid_ops.ic_free= apid_free;
+  return apid_conn;
+
+error:
+  if (thread_conn)
+    ic_free(thread_conn);
+  g_mutex_unlock(apid_global->thread_id_mutex);
+  return NULL;
 }
 
 static int

@@ -72,11 +72,13 @@ struct ic_ndb_signal
 };
 typedef struct ic_ndb_signal IC_NDB_SIGNAL;
 
+struct ic_apid_connection;
 struct ic_thread_connection
 {
   IC_SOCK_BUF_PAGE *free_rec_pages;
   IC_SOCK_BUF_PAGE *free_ndb_signals;
   IC_NDB_SIGNAL *first_received_signal;
+  struct ic_apid_connection *apid_conn;
   GMutex *mutex;
   GCond *cond;
 };
@@ -163,16 +165,25 @@ struct ic_apid_global
   IC_SOCK_BUF *ndb_signal_pool;
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
+  GMutex *thread_id_mutex;
 };
 typedef struct ic_apid_global IC_APID_GLOBAL;
 
+struct ic_apid_connection;
+struct ic_apid_connection_ops
+{
+  void (*ic_free) (struct ic_apid_connection* apid_conn);
+};
+typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
+
 struct ic_apid_connection
 {
+  IC_APID_CONNECTION_OPS apid_ops;
   IC_APID_GLOBAL *apid_global;
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_id_bitmap;
-  guint32 thread_id;
   IC_THREAD_CONNECTION *thread_conn;
+  guint32 thread_id;
 };
 typedef struct ic_apid_connection IC_APID_CONNECTION;
 
