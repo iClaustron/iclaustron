@@ -122,7 +122,7 @@ run_file_server(IC_APID_GLOBAL *apid_global)
   apid_global->num_threads_started= num_threads_started;
   while (1)
   {
-    g_cond_wait(apid_global->mutex, apid_global->cond);
+    g_cond_wait(apid_global->cond, apid_global->mutex);
     if (apid_global->num_threads_started == 0)
     {
       g_mutex_unlock(apid_global->mutex);
