@@ -38,6 +38,12 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
         ic_calloc((IC_MAX_THREAD_CONNECTIONS + 1) *
         sizeof(IC_THREAD_CONNECTION*))))
     goto error;
+  if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL, IC_MAX_CLUSTER_ID)))
+    goto error;
+  if (!(apid_global->mutex= g_mutex_new()))
+    goto error;
+  if (!(apid_global->cond= g_cond_new()))
+    goto error;
   if (!(apid_global->mem_buf_pool= ic_create_socket_membuf(IC_MEMBUF_SIZE,
                                                            512)))
     goto error;
@@ -91,10 +97,16 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
 
   if (!apid_global)
     return;
+  if (apid_global->cluster_bitmap)
+    ic_free_bitmap(apid_global->cluster_bitmap);
   if (mem_buf_pool)
     mem_buf_pool->sock_buf_op.ic_free_sock_buf(mem_buf_pool);
   if (ndb_signal_pool)
     ndb_signal_pool->sock_buf_op.ic_free_sock_buf(ndb_signal_pool);
+  if (apid_global->mutex)
+    g_mutex_free(apid_global->mutex);
+  if (apid_global->cond)
+    g_cond_free(apid_global->cond);
   if (grid_comm)
   {
     if (grid_comm->cluster_comm_array)
@@ -137,6 +149,12 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   if (apid_global->thread_id_mutex)
     g_mutex_free(apid_global->thread_id_mutex);
   ic_free(apid_global);
+}
+
+int
+ic_apid_connect(IC_APID_GLOBAL *apid_global)
+{
+  return 0;
 }
 
 static void

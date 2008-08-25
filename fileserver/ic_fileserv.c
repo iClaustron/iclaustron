@@ -24,9 +24,13 @@ static gchar *glob_cluster_server_ip= "127.0.0.1";
 static gchar *glob_cluster_server_port= "10203";
 static gchar *glob_config_path= NULL;
 static guint32 glob_node_id= 5;
+static guint32 glob_num_threads= 1;
 
 static GOptionEntry entries[] = 
 {
+  { "num_fs_threads", 0, 0, G_OPTION_ARG_INT,
+    &glob_num_threads,
+    "Number of threads executing in file server process", NULL},
   { "cluster_server_hostname", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_server_ip,
     "Set Server Hostname of Cluster Server", NULL},
@@ -43,11 +47,89 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-static int
-run_file_server(IC_API_CONFIG_SERVER *apic, IC_APID_GLOBAL *apid_global)
+static gpointer
+run_file_server_thread(gpointer data)
 {
-  printf("Ready to start file server\n");
+  IC_APID_GLOBAL *apid_global= (IC_APID_GLOBAL*)data;
+  IC_APID_CONNECTION *apid_conn;
+  gboolean stop_flag;
+  DEBUG_ENTRY("run_file_server_thread");
+
+  g_mutex_lock(apid_global->mutex);
+  stop_flag= apid_global->stop_flag;
+  g_mutex_unlock(apid_global->mutex);
+  if (stop_flag)
+    DEBUG_RETURN(NULL);
+  /*
+    Now start-up has completed and at this point in time we have connections
+    to all clusters already set-up. So all we need to do now is start a local
+    IC_APID_CONNECTION and start using it based on input from users
+  */
+  if (!(apid_conn= ic_create_apid_connection(apid_global,
+                                             apid_global->cluster_bitmap)))
+    goto error;
+  /*
+     We now have a local Data API connection and we are ready to issue
+     file system transactions to keep our local cache consistent with the
+     global NDB file system
+  */
+  /* Currently empty implementation */
+error:
+  g_mutex_lock(apid_global->mutex);
+  apid_global->num_threads_started--;
+  g_cond_signal(apid_global->cond);
+  g_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN(NULL);
+}
+
+static int
+start_file_server_thread(IC_APID_GLOBAL *apid_global)
+{
+  GError *error;
+  if (!g_thread_create_full(run_file_server_thread,
+                            (gpointer)apid_global,
+                            1024*1024,/* 1 MByte stack size */
+                            FALSE,    /* Not joinable */
+                            FALSE,    /* Not bound */
+                            G_THREAD_PRIORITY_NORMAL,
+                            &error))
+    return IC_ERROR_MEM_ALLOC;
   return 0;
+}
+
+static int
+run_file_server(IC_APID_GLOBAL *apid_global)
+{
+  int error;
+  guint32 i;
+  guint32 num_threads_started= 0;
+  DEBUG_ENTRY("run_file_server");
+
+  printf("Ready to start file server\n");
+  /* We'll start by setting up connections to all nodes in the clusters */
+  if ((error= ic_apid_connect(apid_global)))
+    DEBUG_RETURN(error);
+  g_mutex_lock(apid_global->mutex);
+  for (i= 0; i < glob_num_threads; i++)
+  {
+    if (!(error= start_file_server_thread(apid_global)))
+    {
+      apid_global->stop_flag= TRUE;
+      break;
+    }
+    num_threads_started++;
+  }
+  apid_global->num_threads_started= num_threads_started;
+  while (1)
+  {
+    g_cond_wait(apid_global->mutex, apid_global->cond);
+    if (apid_global->num_threads_started == 0)
+    {
+      g_mutex_unlock(apid_global->mutex);
+      break;
+    }
+  }
+  DEBUG_RETURN(error);
 }
 
 int main(int argc, char *argv[])
@@ -75,7 +157,7 @@ int main(int argc, char *argv[])
     goto error;
   if (!(apid_global= ic_init_apid(apic)))
     return IC_ERROR_MEM_ALLOC;
-  ret_code= run_file_server(apic, apid_global);
+  ret_code= run_file_server(apid_global);
 error:
   if (apic)
     apic->api_op.ic_free_config(apic);

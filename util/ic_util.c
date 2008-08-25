@@ -1552,6 +1552,15 @@ ic_create_bitmap(IC_BITMAP *bitmap, guint32 num_bits)
   return loc_bitmap;
 }
 
+void
+ic_free_bitmap(IC_BITMAP *bitmap)
+{
+  if (bitmap->alloced_bitmap_area)
+    ic_free(bitmap->bitmap_area);
+  if (bitmap->alloced_bitmap)
+    ic_free(bitmap);
+}
+
 IC_BITMAP*
 ic_mc_create_bitmap(IC_MEMORY_CONTAINER *mc, guint32 num_bits)
 {

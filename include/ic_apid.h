@@ -165,7 +165,12 @@ struct ic_apid_global
   IC_SOCK_BUF *ndb_signal_pool;
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
+  IC_BITMAP *cluster_bitmap;
   GMutex *thread_id_mutex;
+  GMutex *mutex;
+  GCond *cond;
+  gboolean stop_flag;
+  guint32 num_threads_started;
 };
 typedef struct ic_apid_global IC_APID_GLOBAL;
 
@@ -193,6 +198,8 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
 
 IC_APID_GLOBAL*
 ic_init_apid(IC_API_CONFIG_SERVER *apic);
+
+int ic_apid_connect(IC_APID_GLOBAL *apid_global);
 
 void
 ic_end_apid(IC_APID_GLOBAL *apid_global);
