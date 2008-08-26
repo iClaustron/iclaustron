@@ -154,6 +154,17 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
 int
 ic_apid_connect(IC_APID_GLOBAL *apid_global)
 {
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  DEBUG_ENTRY("ic_apid_connect");
+
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    if (!(clu_conf= apic->conf_objects[cluster_id]))
+      continue;
+    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+    {
+    }
+  }
   return 0;
 }
 

@@ -39,10 +39,10 @@ static GOptionEntry entries[] =
     "Set Server Port of Cluster Server", NULL},
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &glob_node_id,
-    "Node id of Cluster Manager in all clusters", NULL},
+    "Node id of file server in all clusters", NULL},
   { "config_dir", 0, 0, G_OPTION_ARG_STRING,
     &glob_config_path,
-    "Specification of Clusters to manage for Cluster Manager with access info",
+    "Specification of Clusters that file server will connect to with access info",
      NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
