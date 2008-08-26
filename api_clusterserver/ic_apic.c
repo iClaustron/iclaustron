@@ -3170,6 +3170,7 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
       goto error;
     apic->conf_objects[cluster_id]= clu_conf;
     apic->node_ids[cluster_id]= node_id;
+    clu_conf->my_node_id= node_id;
   }
 
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)

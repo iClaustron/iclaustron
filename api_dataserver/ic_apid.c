@@ -154,6 +154,8 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
 int
 ic_apid_connect(IC_APID_GLOBAL *apid_global)
 {
+  guint32 node_id, cluster_id;
+  IC_CLUSTER_CONFIG *clu_conf;
   IC_API_CONFIG_SERVER *apic= apid_global->apic;
   DEBUG_ENTRY("ic_apid_connect");
 

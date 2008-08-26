@@ -38,6 +38,7 @@ static gchar *glob_config_path= NULL;
 static gboolean glob_bootstrap= FALSE;
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= "10203";
+static gchar *glob_node_id= 1;
 
 static GOptionEntry entries[] = 
 {
@@ -49,6 +50,9 @@ static GOptionEntry entries[] =
     "Set Cluster Server connection Port", NULL},
   { "server_name", 0, 0, G_OPTION_ARG_STRING, &glob_server_name,
     "Set Cluster Server Hostname", NULL},
+  { "node_id", 0, 0, G_OPTION_ARG_INT,
+    &glob_node_id,
+    "Node id of Cluster Server in all clusters", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -158,6 +162,7 @@ load_config_files(IC_CLUSTER_CONNECT_INFO **clu_infos,
                      &clu_info->password))
       return 1;
     cluster->clu_info.cluster_id= clu_info->cluster_id;
+    cluster->my_node_id= glob_node_id;
 
     *clusters= cluster;
     clusters++;
