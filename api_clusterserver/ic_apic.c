@@ -500,18 +500,6 @@ get_iclaustron_protocol_version()
   return version_no;
 }
 
-/*
-static IC_SOCKET_LINK_CONFIG*
-get_communication_object(IC_CLUSTER_CONFIG *clu_conf,
-                         guint16 first_node_id, guint16 second_node_id)
-{
-  IC_SOCKET_LINK_CONFIG test1;
-  test1.first_node_id= first_node_id;
-  test1.second_node_id= second_node_id;
-  return (IC_SOCKET_LINK_CONFIG*)ic_hashtable_search(clu_conf->comm_hash,
-                                                     (void*)&test1);
-}
-*/
 
 static unsigned int
 ic_hash_comms(void *ptr)
@@ -1756,7 +1744,9 @@ init_config_parameters()
 #define SOCKET_KERNEL_WRITE_BUFFER_SIZE 458
 #define SOCKET_MAXSEG_SIZE 459
 #define SOCKET_BIND_ADDRESS 460
-/* Id 461-499 not used */
+#define SOCKET_MAX_WAIT_IN_NANOS 489
+/* Id 461-488 not used */
+/* Id 490-499 not used */
 
   IC_SET_CONFIG_MAP(SOCKET_SERVER_NODE_ID, 190);
   IC_SET_SOCKET_CONFIG(conf_entry, server_node_id,
@@ -1818,6 +1808,26 @@ init_config_parameters()
                         IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Bind to IP address of server";
+
+  /*
+    The parameter socket_max_wait_in_nanos is used in conjunction with
+    the adaptive send protocol. It's possible to set the maximum time
+    a message can be waiting for sending before it's being forced to
+    send as soon as discovered in this state. By setting it to zero one
+    effectively disables the adaptive send protocol.
+
+    This parameter is only used when the application has asked for a non-
+    forced send. Thus forced send will always be sent immediately and
+    non-forced sends will not wait for longer than this configured time.
+    This parameter can be changed at any time.
+  */
+  IC_SET_CONFIG_MAP(SOCKET_MAX_WAIT_IN_NANOS, 201);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_max_wait_in_nanos,
+                       IC_UINT32, 50 * 1000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MAX(conf_entry, 1000 * 1000 * 10);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_entry_description=
+  "Maximum time a message can wait before being sent in nanoseconds";
 
 /* Id 210-219 for configuration id 500-799 */
 /* Id 500-799 not used */
@@ -3342,7 +3352,7 @@ get_node_and_cluster_config(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
 
 static gchar*
 get_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
-                      guint32 node_id)
+                guint32 node_id)
 {
   IC_CLUSTER_CONFIG *clu_conf;
   return get_node_and_cluster_config(apic, cluster_id, node_id,
@@ -3361,6 +3371,21 @@ get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
       clu_conf->node_types[node_id] == node_type)
     return node_config;
   return NULL;
+}
+
+static IC_SOCKET_LINK_CONFIG*
+get_communication_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                         guint16 first_node_id, guint16 second_node_id)
+{
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_SOCKET_LINK_CONFIG test1;
+
+  if (!(clu_conf= get_cluster_config(apic, cluster_id)))
+    return NULL;
+  test1.first_node_id= first_node_id;
+  test1.second_node_id= second_node_id;
+  return (IC_SOCKET_LINK_CONFIG*)ic_hashtable_search(clu_conf->comm_hash,
+                                                     (void*)&test1);
 }
 
 /*
@@ -3402,6 +3427,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn)
   apic->api_op.ic_get_info_config_channels= get_info_config_channels;
   apic->api_op.ic_get_cluster_config= get_cluster_config;
   apic->api_op.ic_get_node_object= get_node_object;
+  apic->api_op.ic_get_communication_object= get_communication_object;
   apic->api_op.ic_get_typed_node_object= get_typed_node_object;
   apic->api_op.ic_free_config= free_cs_config;
 
@@ -6137,6 +6163,8 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
          comm_ptr->socket_kernel_read_buffer_size) ||
         (default_comm_ptr->socket_kernel_write_buffer_size !=
          comm_ptr->socket_kernel_write_buffer_size) ||
+        (default_comm_ptr->socket_max_wait_in_nanos !=
+         comm_ptr->socket_max_wait_in_nanos) ||
         (default_comm_ptr->socket_maxseg_size !=
          comm_ptr->socket_maxseg_size) ||
         (default_comm_ptr->use_message_id !=
@@ -6211,6 +6239,14 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
           &glob_conf_entry[SOCKET_KERNEL_READ_BUFFER_SIZE].config_entry_name,
           comm_ptr->socket_kernel_read_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_max_wait_in_nanos !=
+          default_comm_ptr->socket_max_wait_in_nanos)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &glob_conf_entry[SOCKET_MAXSEG_SIZE].config_entry_name,
+           comm_ptr->socket_max_wait_in_nanos)))
           goto error;
       }
       if (comm_ptr->socket_maxseg_size !=

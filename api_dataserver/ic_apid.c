@@ -154,17 +154,42 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
 int
 ic_apid_connect(IC_APID_GLOBAL *apid_global)
 {
-  guint32 node_id, cluster_id;
+  guint32 node_id, cluster_id, my_node_id;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  IC_SOCKET_LINK_CONFIG *link_config;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_GRID_COMM *grid_comm= apid_global->grid_comm;
+  IC_CLUSTER_COMM *cluster_comm;
   DEBUG_ENTRY("ic_apid_connect");
 
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
-    if (!(clu_conf= apic->conf_objects[cluster_id]))
+    if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
       continue;
+    cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+    g_assert(cluster_comm);
     for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
     {
+      if ((link_config= apic->api_op.ic_get_communication_object(apic,
+                            cluster_id,
+                            IC_MIN(node_id, my_node_id),
+                            IC_MAX(node_id, my_node_id))))
+      {
+        g_assert(clu_conf->node_config[node_id]);
+        send_node_conn= cluster_comm->send_node_conn_array[node_id];
+        g_assert(send_node_conn);
+        /* We have found a node to connect to, start connect thread */
+        send_node_conn->link_config= link_config;
+        send_node_conn->active_node_id= node_id;
+        send_node_conn->cluster_id= cluster_id;
+        send_node_conn->max_wait_in_nanos=
+               (IC_TIMER)link_config->socket_max_wait_in_nanos;
+      }
+      else
+      {
+        g_assert(!clu_conf->node_config[node_id]);
+      }
     }
   }
   return 0;

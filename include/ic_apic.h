@@ -251,7 +251,7 @@ typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 struct ic_api_cluster_connection;
 struct ic_api_config_server;
 struct ic_run_cluster_server;
-
+struct ic_socket_link_config;
 struct ic_api_cluster_operations
 {
   /*
@@ -298,6 +298,11 @@ struct ic_api_cluster_operations
   gchar* (*ic_get_typed_node_object)
        (struct ic_api_config_server *apic, guint32 cluster_id,
         guint32 node_id, IC_NODE_TYPES node_type);
+
+  struct ic_socket_link_config*
+    (*ic_get_communication_object)
+      (struct ic_api_config_server *apic, guint32 cluster_id,
+       guint32 first_node_id, guint32 second_node_id);
 
   /* Method used to release all memory allocated for the configuration */
   void (*ic_free_config) (struct ic_api_config_server *apic);
@@ -574,6 +579,7 @@ struct ic_socket_link_config
   guint32 socket_kernel_read_buffer_size;
   guint32 socket_kernel_write_buffer_size;
   guint32 socket_maxseg_size;
+  guint32 socket_max_wait_in_nanos;
 
   guint16 first_node_id;
   guint16 second_node_id;

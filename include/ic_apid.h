@@ -94,6 +94,8 @@ struct ic_send_node_connection
 {
   /* The connection object */
   IC_CONNECTION *conn;
+  /* The configuration for this connection */
+  IC_SOCKET_LINK_CONFIG *link_config;
 
   /* Mutex protecting this struct */
   GMutex *mutex;
