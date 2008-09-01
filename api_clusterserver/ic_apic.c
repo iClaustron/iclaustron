@@ -3375,7 +3375,7 @@ get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
 
 static IC_SOCKET_LINK_CONFIG*
 get_communication_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
-                         guint16 first_node_id, guint16 second_node_id)
+                         guint32 first_node_id, guint32 second_node_id)
 {
   IC_CLUSTER_CONFIG *clu_conf;
   IC_SOCKET_LINK_CONFIG test1;

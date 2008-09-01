@@ -107,7 +107,7 @@ run_file_server(IC_APID_GLOBAL *apid_global)
 
   printf("Ready to start file server\n");
   /* We'll start by setting up connections to all nodes in the clusters */
-  if ((error= ic_apid_connect(apid_global)))
+  if ((error= ic_apid_global_connect(apid_global)))
     DEBUG_RETURN(error);
   g_mutex_lock(apid_global->mutex);
   for (i= 0; i < glob_num_threads; i++)

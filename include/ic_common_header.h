@@ -430,19 +430,28 @@ struct ic_bitmap
 };
 typedef struct ic_bitmap IC_BITMAP;
 
-#define IC_BITMAP_SIZE(num_bits) ((4*(num_bits/32) + 4))
-#define IC_BITMAP_BIT(bit_number) (bit_number & 7)
-#define IC_BITMAP_BYTE(bit_number) (bit_number / 8)
+#define IC_BITMAP_SIZE(num_bits) ((4*((num_bits)/32) + 4))
+#define IC_BITMAP_BIT(bit_number) ((bit_number) & 7)
+#define IC_BITMAP_BYTE(bit_number) ((bit_number) / 8)
 IC_BITMAP* ic_create_bitmap(IC_BITMAP* bitmap, guint32 num_bits);
 IC_BITMAP* ic_mc_create_bitmap(IC_MEMORY_CONTAINER *mc, guint32 num_bits);
-void ic_free_bitmap(IC_BITMAP* bitmap);
+void ic_bitmap_free(IC_BITMAP* bitmap);
+#define ic_bitmap_get_num_bits(bitmap) (bitmap->num_bits)
+#define ic_bitmap_copy(dest_bitmap, src_bitmap) \
+{ \
+  g_assert(IC_BITMAP_SIZE((dest_bitmap)->num_bits) == \
+           IC_BITMAP_SIZE((src_bitmap)->num_bits)); \
+  memcpy((dest_bitmap)->bitmap_area, (src_bitmap)->bitmap_area, \
+         IC_BITMAP_SIZE((src_bitmap)->num_bits)); \
+}
+
 #ifndef DEBUG_BUILD
 #define ic_bitmap_set_bit(bitmap, bit_number) \
-  (ic_set_bit((bitmap->bitmap_area[(IC_BITMAP_BYTE(bit_number))]), \
-               (IC_BITMAP_BIT(bit_number))))
+  (ic_set_bit(((bitmap)->bitmap_area[(IC_BITMAP_BYTE((bit_number)))]), \
+               (IC_BITMAP_BIT((bit_number)))))
 #define ic_is_bitmap_set(bitmap, bit_number) \
-  (ic_is_bit_set((bitmap->bitmap_area[IC_BITMAP_BYTE(bit_number)]), \
-                 (IC_BITMAP_BIT(bit_number))))
+  (ic_is_bit_set(((bitmap)->bitmap_area[IC_BITMAP_BYTE((bit_number))]), \
+                 (IC_BITMAP_BIT((bit_number)))))
 #endif
 
 /*

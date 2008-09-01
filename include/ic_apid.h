@@ -119,6 +119,8 @@ struct ic_send_node_connection
   gboolean send_thread_active;
   /* Somebody ordered the node to stop */
   gboolean stop_ordered;
+  /* Is this a local connection to the same process */
+  gboolean local_connection;
   /* The node id in the cluster of the receiving end */
   guint32 active_node_id;
   /* The cluster id this connection is used in */
@@ -198,11 +200,9 @@ IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
 
-IC_APID_GLOBAL*
-ic_init_apid(IC_API_CONFIG_SERVER *apic);
+int ic_apid_global_connect(IC_APID_GLOBAL *apid_global);
+int ic_apid_global_disconnect(IC_APID_GLOBAL *apid_global);
 
-int ic_apid_connect(IC_APID_GLOBAL *apid_global);
-
-void
-ic_end_apid(IC_APID_GLOBAL *apid_global);
+IC_APID_GLOBAL* ic_init_apid(IC_API_CONFIG_SERVER *apic);
+void ic_end_apid(IC_APID_GLOBAL *apid_global);
 #endif
