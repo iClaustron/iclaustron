@@ -112,6 +112,8 @@ struct ic_send_node_connection
   gboolean send_active;
   /* Indicates if node is up, if not it's no use sending */
   gboolean node_up;
+  /* Indicates if the connection is up. */
+  gboolean connection_up;
 
   /* Debug variable set when waking up send thread */
   gboolean starting_send_thread;
@@ -119,8 +121,11 @@ struct ic_send_node_connection
   gboolean send_thread_active;
   /* Somebody ordered the node to stop */
   gboolean stop_ordered;
-  /* Is this a local connection to the same process */
-  gboolean local_connection;
+  /*
+    The node id we have in this cluster. If this node id is equal to
+    the receiving end, the link is a local connection.
+  */
+  guint32 my_node_id;
   /* The node id in the cluster of the receiving end */
   guint32 active_node_id;
   /* The cluster id this connection is used in */

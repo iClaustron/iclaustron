@@ -151,9 +151,76 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   ic_free(apid_global);
 }
 
+static gpointer
+run_send_thread(void *data)
+{
+  gboolean is_client_part;
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+  /*
+    First step is to create a connection object, then it's time to
+    start setting it up when told to do so by the main thread. We want
+    to ensure that all threads and other preparatory activities have
+    been done before we start connecting to the cluster. As soon as we
+    connect to the cluster we're immediately a real-time application and
+    must avoid to heavy activities such as starting 100's of threads.
+  */
+  is_client_part= (send_node_conn->my_node_id ==
+                   send_node_conn->link_config->server_node_id);
+  if (!(send_node_conn->conn= ic_create_socket_object(
+                       is_client_part,
+                       FALSE,  /* Mutex supplied by API code instead */
+                       FALSE,  /* This thread is already a connection thread */
+                       0,      /* No read buffer needed, we supply our own */
+                       NULL,   /* Authentication function */
+                       NULL))) /* Authentication object */
+    goto error;
+error:
+  g_mutex_lock(send_node_conn->mutex);
+  g_cond_signal(send_node_conn->cond);
+  g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+  /*
+    The main thread have started up all threads and all communication objects
+    have been created, it's now time to connect to the clusters.
+  */
+  return NULL;
+}
+
 int
 start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
+  GError *error;
+  if (send_node_conn->my_node_id == send_node_conn->active_node_id)
+  {
+    /*
+      This is a local connection, we don't need to start a send thread
+      since it isn't possible to overload a local connection and thus
+      we don't need a send thread and also there is no need for a
+      connection and thus no need for a thread to start the connection.
+    */
+    send_node_conn->node_up= TRUE;
+    return 0;
+  }
+  /*
+    We start the send thread, this thread is also used as the thread to
+    set-up the connection.
+  */
+  g_mutex_lock(send_node_conn->mutex);
+  if (!g_thread_create_full(run_send_thread,
+                            (gpointer)send_node_conn,
+                            16*1024, /* Stack size */
+                            FALSE,   /* Not joinable */
+                            FALSE,   /* Not bound */
+                            G_THREAD_PRIORITY_NORMAL,
+                            &error))
+  {
+    g_mutex_unlock(send_node_conn->mutex);
+    return IC_ERROR_MEM_ALLOC;
+  }
+  g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+  /*
+    The send thread is done with its start-up phase and we're ready to start
+    the next send thread.
+  */
   return 0;
 }
 
@@ -184,7 +251,8 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
     g_assert(cluster_comm);
     for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
     {
-      if ((link_config= apic->api_op.ic_get_communication_object(apic,
+      if (node_id == clu_conf->my_node_id ||
+          (link_config= apic->api_op.ic_get_communication_object(apic,
                             cluster_id,
                             IC_MIN(node_id, my_node_id),
                             IC_MAX(node_id, my_node_id))))
@@ -195,10 +263,10 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
         /* We have found a node to connect to, start connect thread */
         send_node_conn->link_config= link_config;
         send_node_conn->active_node_id= node_id;
+        send_node_conn->my_node_id= clu_conf->my_node_id;
         send_node_conn->cluster_id= cluster_id;
         send_node_conn->max_wait_in_nanos=
                (IC_TIMER)link_config->socket_max_wait_in_nanos;
-        send_node_conn->local_connection= (node_id == clu_conf->my_node_id);
         /* Start send thread */
         if ((error= start_send_thread(send_node_conn)))
           goto error;
@@ -206,6 +274,27 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
       else
       {
         g_assert(!clu_conf->node_config[node_id]);
+      }
+    }
+  }
+  /*
+    We are now ready to signal to all send threads that they can start up the
+    connect process to the other nodes in the cluster.
+  */
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
+      continue;
+    cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+    {
+      if (clu_conf->node_config[node_id] && node_id != clu_conf->my_node_id)
+      {
+        send_node_conn= cluster_comm->send_node_conn_array[node_id];
+        g_mutex_lock(send_node_conn->mutex);
+        /* Wake up send thread to connect */
+        g_cond_signal(send_node_conn->cond);
+        g_mutex_unlock(send_node_conn->mutex);
       }
     }
   }

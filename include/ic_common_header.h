@@ -435,7 +435,7 @@ typedef struct ic_bitmap IC_BITMAP;
 #define IC_BITMAP_BYTE(bit_number) ((bit_number) / 8)
 IC_BITMAP* ic_create_bitmap(IC_BITMAP* bitmap, guint32 num_bits);
 IC_BITMAP* ic_mc_create_bitmap(IC_MEMORY_CONTAINER *mc, guint32 num_bits);
-void ic_bitmap_free(IC_BITMAP* bitmap);
+void ic_free_bitmap(IC_BITMAP* bitmap);
 #define ic_bitmap_get_num_bits(bitmap) (bitmap->num_bits)
 #define ic_bitmap_copy(dest_bitmap, src_bitmap) \
 { \
