@@ -117,6 +117,8 @@ struct ic_send_node_connection
 
   /* Debug variable set when waking up send thread */
   gboolean starting_send_thread;
+  /* Variable indicating when send thread has exited */
+  gboolean send_thread_ended;
   /* Variable indicating send thread is awake and working */
   gboolean send_thread_active;
   /* Somebody ordered the node to stop */

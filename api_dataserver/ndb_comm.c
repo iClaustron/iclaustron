@@ -651,65 +651,6 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   DEBUG_RETURN(send_done_handling(send_node_conn));
 }
 
-static void
-run_send_thread(void *data)
-{
-  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
-  gboolean more_data= FALSE;
-  int error;
-  guint32 send_size;
-  guint32 iovec_size;
-  struct iovec write_vector[MAX_SEND_BUFFERS];
-
-  g_mutex_lock(send_node_conn->mutex);
-  send_node_conn->starting_send_thread= FALSE;
-  do
-  {
-    send_node_conn->send_thread_active= FALSE;
-    if (!more_data)
-      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
-    if (send_node_conn->stop_ordered)
-      return;
-    if (!send_node_conn->node_up)
-    {
-      more_data= FALSE;
-      continue;
-    }
-    g_assert(send_node_conn->starting_send_thread);
-    g_assert(send_node_conn->send_active);
-    send_node_conn->starting_send_thread= FALSE;
-    send_node_conn->send_thread_active= TRUE;
-    prepare_real_send_handling(send_node_conn, &send_size,
-                               write_vector, &iovec_size);
-    g_mutex_unlock(send_node_conn->mutex);
-    error= real_send_handling(send_node_conn, write_vector,
-                              iovec_size, send_size);
-    g_mutex_lock(send_node_conn->mutex);
-    if (error)
-    {
-      send_node_conn->node_up= FALSE;
-      node_failure_handling(send_node_conn);
-    }
-    /* Handle send done */
-    if (error || !send_node_conn->node_up)
-    {
-      error= IC_ERROR_NODE_DOWN;
-      more_data= FALSE;
-    }
-    else if (send_node_conn->first_sbp)
-    {
-      /* There are more buffers to send, we need to continue sending */
-      more_data= TRUE;
-    }
-    else
-    {
-      /* All buffers have been sent, we can go to sleep again */
-      more_data= FALSE;
-      send_node_conn->send_active= FALSE;
-    }
-  } while (1);
-}
-
 static int
 ic_send_handling(IC_APID_GLOBAL *apid_global,
                  guint32 cluster_id,

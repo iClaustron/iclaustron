@@ -151,6 +151,73 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   ic_free(apid_global);
 }
 
+static void
+run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  gboolean more_data= FALSE;
+  int error;
+  guint32 send_size;
+  guint32 iovec_size;
+  struct iovec write_vector[MAX_SEND_BUFFERS];
+
+  g_mutex_lock(send_node_conn->mutex);
+  send_node_conn->starting_send_thread= FALSE;
+  do
+  {
+    send_node_conn->send_thread_active= FALSE;
+    if (!more_data)
+      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+    if (send_node_conn->stop_ordered)
+      break;
+    if (!send_node_conn->node_up)
+    {
+      more_data= FALSE;
+      continue;
+    }
+    g_assert(send_node_conn->starting_send_thread);
+    g_assert(send_node_conn->send_active);
+    send_node_conn->starting_send_thread= FALSE;
+    send_node_conn->send_thread_active= TRUE;
+    prepare_real_send_handling(send_node_conn, &send_size,
+                               write_vector, &iovec_size);
+    g_mutex_unlock(send_node_conn->mutex);
+    error= real_send_handling(send_node_conn, write_vector,
+                              iovec_size, send_size);
+    g_mutex_lock(send_node_conn->mutex);
+    if (error)
+    {
+      send_node_conn->node_up= FALSE;
+      node_failure_handling(send_node_conn);
+      break;
+    }
+    /* Handle send done */
+    if (error || !send_node_conn->node_up)
+    {
+      error= IC_ERROR_NODE_DOWN;
+      more_data= FALSE;
+    }
+    else if (send_node_conn->first_sbp)
+    {
+      /* There are more buffers to send, we need to continue sending */
+      more_data= TRUE;
+    }
+    else
+    {
+      /* All buffers have been sent, we can go to sleep again */
+      more_data= FALSE;
+      send_node_conn->send_active= FALSE;
+    }
+  } while (1);
+  g_mutex_unlock(send_node_conn->mutex);
+  return;
+}
+
+static int
+connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  return 0;
+}
+
 static gpointer
 run_send_thread(void *data)
 {
@@ -166,22 +233,34 @@ run_send_thread(void *data)
   */
   is_client_part= (send_node_conn->my_node_id ==
                    send_node_conn->link_config->server_node_id);
-  if (!(send_node_conn->conn= ic_create_socket_object(
+  send_node_conn->conn= ic_create_socket_object(
                        is_client_part,
                        FALSE,  /* Mutex supplied by API code instead */
                        FALSE,  /* This thread is already a connection thread */
                        0,      /* No read buffer needed, we supply our own */
                        NULL,   /* Authentication function */
-                       NULL))) /* Authentication object */
-    goto error;
-error:
+                       NULL)));/* Authentication object */
   g_mutex_lock(send_node_conn->mutex);
   g_cond_signal(send_node_conn->cond);
+  if (send_node_conn == NULL)
+    send_node_conn->stop_ordered= TRUE;
   g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+  if (send_node_conn == NULL)
+    goto end;
   /*
     The main thread have started up all threads and all communication objects
     have been created, it's now time to connect to the clusters.
   */
+  while (!send_conn->stop_ordered)
+  {
+    if ((error= connect_by_send_thread(send_node_conn)))
+      goto end;
+    run_active_send_thread(send_node_conn);
+  }
+end:
+  g_mutex_lock(send_node_conn->mutex);
+  send_node_conn->send_thread_ended= TRUE;
+  g_mutex_unlock(send_node_conn->mutex);
   return NULL;
 }
 
@@ -221,13 +300,49 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     The send thread is done with its start-up phase and we're ready to start
     the next send thread.
   */
+  if (send_node_conn->stop_ordered)
+    return IC_ERROR_MEM_ALLOC;
   return 0;
 }
 
-int
-ic_apid_global_disconnect(IC_APID_GLOBAL *apid_global)
+static void
+start_connect_phase(IC_APID_GLOBAL *apid_global,
+                    gboolean stop_ordered,
+                    gboolean signal_flag)
 {
-  return 0;
+  guint32 node_id, cluster_id;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  IC_SOCKET_LINK_CONFIG *link_config;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_GRID_COMM *grid_comm= apid_global->grid_comm;
+  IC_CLUSTER_COMM *cluster_comm;
+  DEBUG_ENTRY("start_connect_phase");
+
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
+      continue;
+    cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+    {
+      if (clu_conf->node_config[node_id] && node_id != clu_conf->my_node_id)
+      {
+        send_node_conn= cluster_comm->send_node_conn_array[node_id];
+        if (send_node_conn)
+        {
+          g_mutex_lock(send_node_conn->mutex);
+          if (stop_ordered)
+            send_node_conn->stop_ordered= TRUE;
+          /* Wake up send thread to connect */
+          if (signal_flag)
+            g_cond_signal(send_node_conn->cond);
+          g_mutex_unlock(send_node_conn->mutex);
+        }
+      }
+    }
+  }
+  DEBUG_RETURN_EMPTY;
 }
 
 int
@@ -281,26 +396,18 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
     We are now ready to signal to all send threads that they can start up the
     connect process to the other nodes in the cluster.
   */
-  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
-  {
-    if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
-      continue;
-    cluster_comm= grid_comm->cluster_comm_array[cluster_id];
-    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
-    {
-      if (clu_conf->node_config[node_id] && node_id != clu_conf->my_node_id)
-      {
-        send_node_conn= cluster_comm->send_node_conn_array[node_id];
-        g_mutex_lock(send_node_conn->mutex);
-        /* Wake up send thread to connect */
-        g_cond_signal(send_node_conn->cond);
-        g_mutex_unlock(send_node_conn->mutex);
-      }
-    }
-  }
-  return 0;
+  start_connect_phase(apid_global, FALSE, TRUE);
+  DEBUG_RETURN(0);
 error:
-  return error;
+  start_connect_phase(apid_global, TRUE, TRUE);
+  DEBUG_RETURN(error);
+}
+
+int
+ic_apid_global_disconnect(IC_APID_GLOBAL *apid_global)
+{
+  start_connect_phase(apid_global, TRUE, FALSE);
+  return 0;
 }
 
 static void
@@ -460,5 +567,4 @@ ic_init_ds_connection(IC_DS_CONNECTION *ds_conn)
   ds_conn->operations.ic_set_up_ds_connection= open_ds_connection;
   ds_conn->operations.ic_close_ds_connection= close_ds_connection;
   ds_conn->operations.ic_is_conn_established= is_ds_conn_established;
-  ds_conn->operations.ic_authenticate_connection= authenticate_ds_connection;
-}
+  ds_conn->operations.ic_authenticate_connection= authenticate_ds_conn
