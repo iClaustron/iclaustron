@@ -42,6 +42,16 @@ enum ic_communication_type
 };
 typedef enum ic_communication_type IC_COMMUNICATION_TYPE;
 
+/*
+  A node type can always be mapped directly to a config type.
+  The opposite isn't true since one config type is the
+  IC_COMM_TYPE which represents communication configurations.
+  We need to be careful when communicating with NDB nodes
+  to map SQL Server, Replication Server, File Server, Cluster
+  Manager and Restore nodes to Client nodes since that's the
+  only node type except for data nodes and cluster servers
+  that the NDB nodes knows about.
+*/
 enum ic_config_types
 {
   IC_NO_CONFIG_TYPE = 3,

@@ -523,6 +523,13 @@ get_iclaustron_protocol_version()
   return version_no;
 }
 
+static gboolean
+is_iclaustron_version(guint64 version_number)
+{
+  if (ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
+    return TRUE;
+  return FALSE;
+}
 
 static unsigned int
 ic_hash_comms(void *ptr)
@@ -3635,7 +3642,23 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
   key= (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
        (sect_id << IC_CL_SECT_SHIFT) +
        config_id;
-  value= (config_type == IC_COMM_TYPE) ? 0 : (guint32)config_type;
+  switch (config_type)
+  {
+    case IC_COMM_TYPE:
+      value= 0;
+      break;
+    case IC_DATA_SERVER_TYPE:
+    case IC_CLUSTER_SERVER_TYPE:
+    /* config_type already contains the correct value */
+      value= config_type;
+      break;
+    default:
+      if (!is_iclaustron_version(version_number))
+        value= IC_CLIENT_TYPE;
+      else
+        value= config_type;
+      break;
+  }
   DEBUG_PRINT(CONFIG_LEVEL,
               ("sectid = %u, config_id = %u, value = %u",
                 sect_id, config_id, value));
