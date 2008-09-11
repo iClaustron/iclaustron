@@ -2693,11 +2693,12 @@ translate_config(IC_API_CONFIG_SERVER *apic,
       goto error;
   }
   error= 0;
-  goto error;
+  goto end;
 
 protocol_error:
   error= PROTOCOL_ERROR;
 error:
+end:
   ic_free(bin_buf);
   return error;
 }
@@ -2762,7 +2763,7 @@ send_get_nodeid(IC_CONNECTION *conn,
       ic_send_with_cr(conn, public_key_str) ||
       ic_send_with_cr(conn, endian_buf) ||
       ic_send_with_cr(conn, log_event_str) ||
-      ic_send_with_cr(conn, cluster_id_buf) ||
+//      ic_send_with_cr(conn, cluster_id_buf) ||
       ic_send_with_cr(conn, ic_empty_string))
     return conn->error_code;
   return 0;
@@ -3005,9 +3006,7 @@ rec_get_config(IC_CONNECTION *conn,
           DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding"));
           error= translate_config(apic, cluster_id,
                                   config_buf, config_size);
-          if (error)
-            goto end;
-          state= WAIT_LAST_EMPTY_RETURN_STATE;
+          goto end;
         }
         else if (read_size != CONFIG_LINE_LEN)
         {
@@ -3150,10 +3149,16 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   num_clusters= count_clusters(clu_infos);
   if ((error= connect_api_connections(apic, &conn)))
     DEBUG_RETURN(error);
+//TO BE ABLE TO CONNECT TO NDB_MGMD
+/*
   if ((error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
     DEBUG_RETURN(error);
   for (i= 0; i < num_clusters; i++)
     max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
+*/
+  num_clusters= 1;
+  max_cluster_id= 0;
+
 
   apic->max_cluster_id= max_cluster_id;
   if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
