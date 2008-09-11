@@ -18,6 +18,29 @@
 #include <glib/gstdio.h>
 #include <unistd.h>
 /*
+  This file contains the code to handle the Cluster Server protocols,
+  handling of configuration files. It's an important resource for all
+  iClaustron programs. Cluster Servers use the run_cluster_server
+  framework and most programs use the get configuration over the network
+  framework. Also many use the framework to read configuration files,
+  both the configuration files for a specific cluster and the configuration
+  file containing information about which clusters exist and security
+  information for those.
+
+  The iClaustron servers can coexist with two types of classic NDB nodes.
+  These are the ndbd nodes which contain the actual data and that handle
+  all the transaction algorithms. The second type is NDB API clients, these
+  could be classic NDB API programs or a MySQL Server using the NDB API.
+  The classic nodes have some limitations which iClaustron must handle.
+  These are:
+  1) No SSL connections
+  2) No security handling
+  3) Only one cluster can be handled (for ndbd it's likely we will patch
+     ndbd to send a cluster id to the iClaustron Cluster Server).
+  4) It knows only 3 node types, Data Servers, Cluster Servers and
+     Clients. Thus the Cluster Server must be aware of that it needs to
+     translate node types when communicating with classic NDB nodes.
+
   DESCRIPTION HOW TO ADD NEW CONFIGURATION VARIABLE:
   1) Add a new constant in this file e.g:
   #define DATA_SERVER_SCHEDULER_NO_SEND_TIME 166
@@ -516,7 +539,7 @@ ic_keys_equal_comms(void *ptr1, void *ptr2)
   if ((sock1->first_node_id == sock2->first_node_id &&
        sock1->second_node_id == sock2->second_node_id) ||
        (sock1->first_node_id == sock2->second_node_id &&
-        sock2->second_node_id == sock2->first_node_id))
+        sock2->second_node_id == sock1->first_node_id))
     return 1;
   return 0;
 }
@@ -2763,7 +2786,7 @@ send_get_nodeid(IC_CONNECTION *conn,
       ic_send_with_cr(conn, public_key_str) ||
       ic_send_with_cr(conn, endian_buf) ||
       ic_send_with_cr(conn, log_event_str) ||
-//      ic_send_with_cr(conn, cluster_id_buf) ||
+      ic_send_with_cr(conn, cluster_id_buf) ||
       ic_send_with_cr(conn, ic_empty_string))
     return conn->error_code;
   return 0;
@@ -3149,16 +3172,10 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   num_clusters= count_clusters(clu_infos);
   if ((error= connect_api_connections(apic, &conn)))
     DEBUG_RETURN(error);
-//TO BE ABLE TO CONNECT TO NDB_MGMD
-/*
   if ((error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
     DEBUG_RETURN(error);
   for (i= 0; i < num_clusters; i++)
     max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
-*/
-  num_clusters= 1;
-  max_cluster_id= 0;
-
 
   apic->max_cluster_id= max_cluster_id;
   if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
@@ -3208,7 +3225,9 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   apic->cluster_conn.current_conn= conn;  
 error:
   if (error)
-    printf("Error: %d\n", error);
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", error));
+  }
   DEBUG_RETURN(error);
 mem_alloc_error:
   DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
@@ -4302,8 +4321,7 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
   }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Converted configuration to a base64 representation"));
-  if (!(ret_code= send_config_reply(conn, config_base64_str, config_len)))
-    ret_code= ic_send_with_cr(conn, ic_empty_string);
+  ret_code= send_config_reply(conn, config_base64_str, config_len);
   ic_free(config_base64_str);
   DEBUG_RETURN(ret_code);
 }
