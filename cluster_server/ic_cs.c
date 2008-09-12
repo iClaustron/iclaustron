@@ -38,7 +38,7 @@ static gchar *glob_config_path= NULL;
 static gboolean glob_bootstrap= FALSE;
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= "10203";
-static gchar *glob_node_id= 1;
+static guint32 glob_node_id= 1;
 
 static GOptionEntry entries[] = 
 {
@@ -317,7 +317,7 @@ main(int argc, char *argv[])
                                 &config_version_number)))
     goto end;
   if (!(run_obj= ic_create_run_cluster(clusters, mc_ptr, glob_server_name,
-                                       glob_server_port)))
+                                       glob_server_port, glob_node_id)))
   {
     printf("%s Failed to initialise run_cluster object\n", ic_err_str);
     error= 1;

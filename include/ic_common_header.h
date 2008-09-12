@@ -416,9 +416,9 @@ int ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len);
 /* Bit manipulation routines */
 guint32 ic_count_highest_bit(guint32 bit_var);
 #define ic_is_bit_set(value, bit_number) \
-  (((value | (1 << bit_number)) == 0) ? 0 : 1)
+  (((value) >> (bit_number)) & 1)
 #define ic_set_bit(value, bit_number) \
-  value|= (1 << bit_number);
+  (value)|= (1 << (bit_number));
 
 /* Bitmap routines */
 struct ic_bitmap

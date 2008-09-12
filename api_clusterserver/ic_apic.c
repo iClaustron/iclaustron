@@ -608,14 +608,14 @@ ic_print_config_parameters(guint32 mask)
         case IC_UINT16:
           printf("Data type is 16-bit unsigned integer\n");
           break;
+        case IC_BOOLEAN:
+          printf("Data type is boolean\n");
+          break;
         case IC_UINT32:
           printf("Data type is 32-bit unsigned integer\n");
           break;
         case IC_UINT64:
           printf("Data type is 64-bit unsigned integer\n");
-          break;
-        case IC_BOOLEAN:
-          printf("Data type is boolean\n");
           break;
         default:
           printf("Data type set to non-existent type!!!\n");
@@ -1031,7 +1031,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_MEMORY_LOCKED, 34);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, use_unswappable_memory, FALSE,
-                        IC_ROLLING_UPGRADE_CHANGE);
+                             IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Setting this to 1 means that all memory is locked and will not be swapped out";
 
@@ -1108,7 +1108,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_DAEMON_RESTART_AT_ERROR, 44);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_automatic_restart, TRUE,
-                        IC_ONLINE_CHANGE);
+                             IC_ONLINE_CHANGE);
   conf_entry->config_entry_description=
   "If set, data server restarts automatically after a failure";
 
@@ -1251,7 +1251,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_VOLATILE_MODE, 68);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_volatile_mode, FALSE,
-                        IC_ROLLING_UPGRADE_CHANGE);
+                             IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "In this mode all file writes are ignored and all starts becomes initial starts";
 
@@ -1394,7 +1394,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_USE_O_DIRECT, 88);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, use_o_direct, TRUE,
-                        IC_ROLLING_UPGRADE_CHANGE);
+                             IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
   "Use O_DIRECT on file system of data servers";
@@ -1703,7 +1703,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_FIRST_NODE_ID, 180);
   IC_SET_SOCKET_CONFIG(conf_entry, first_node_id,
-                    IC_UINT16, 0, IC_NOT_CHANGEABLE);
+                       IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
   conf_entry->is_key= TRUE;
@@ -1713,7 +1713,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_SECOND_NODE_ID, 181);
   IC_SET_SOCKET_CONFIG(conf_entry, second_node_id,
-                    IC_UINT16, 0, IC_NOT_CHANGEABLE);
+                       IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
   conf_entry->is_key= TRUE;
@@ -1723,19 +1723,19 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_USE_MESSAGE_ID, 182);
   IC_SET_SOCKET_BOOLEAN(conf_entry, use_message_id,
-                     FALSE, IC_ROLLING_UPGRADE_CHANGE);
+                        FALSE, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Using message id can be a valuable resource to find problems related to distributed execution";
 
   IC_SET_CONFIG_MAP(SOCKET_USE_CHECKSUM, 183);
   IC_SET_SOCKET_BOOLEAN(conf_entry, use_checksum,
-                     FALSE, IC_ROLLING_UPGRADE_CHANGE);
+                        FALSE, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
   "Using checksum ensures that internal bugs doesn't corrupt data while data is placed in buffers";
 
   IC_SET_CONFIG_MAP(SOCKET_SERVER_PORT_NUMBER, 186);
   IC_SET_SOCKET_CONFIG(conf_entry, server_port_number,
-                    IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
+                       IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   conf_entry->is_mandatory= TRUE;
   conf_entry->is_derived_default= TRUE;
@@ -1757,7 +1757,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_GROUP, 189);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_group,
-                    IC_UINT32, 55, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT16, 55, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 55, 55);
   conf_entry->config_entry_description=
   "Group id of the connection";
@@ -1780,7 +1780,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_SERVER_NODE_ID, 190);
   IC_SET_SOCKET_CONFIG(conf_entry, server_node_id,
-                    IC_UINT32, 0, IC_NOT_CHANGEABLE);
+                       IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
   conf_entry->is_mandatory= TRUE;
   conf_entry->is_derived_default= TRUE;
@@ -1790,7 +1790,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_CLIENT_PORT_NUMBER, 193);
   IC_SET_SOCKET_CONFIG(conf_entry, client_port_number,
-                    IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
+                       IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   conf_entry->is_derived_default= TRUE;
   conf_entry->max_ndb_version_used= 1;
@@ -1800,35 +1800,35 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_WRITE_BUFFER_SIZE, 194);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_write_buffer_size,
-                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN(conf_entry, 128*1024);
   conf_entry->config_entry_description=
   "Size of write buffer in front of socket";
 
   IC_SET_CONFIG_MAP(SOCKET_READ_BUFFER_SIZE, 195);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_read_buffer_size,
-                    IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 64*1024);
   conf_entry->config_entry_description=
   "Size of read buffer in front of socket";
 
   IC_SET_CONFIG_MAP(SOCKET_KERNEL_READ_BUFFER_SIZE, 197);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_read_buffer_size,
-                    IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024);
   conf_entry->config_entry_description=
   "Size of receive buffer for socket in OS kernel";
 
   IC_SET_CONFIG_MAP(SOCKET_KERNEL_WRITE_BUFFER_SIZE, 198);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_write_buffer_size,
-                    IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024*1024);
   conf_entry->config_entry_description=
   "Size of send buffer of socket inside the OS kernel";
 
   IC_SET_CONFIG_MAP(SOCKET_MAXSEG_SIZE, 199);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_maxseg_size,
-                    IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MAX(conf_entry, 128*1024*1024);
   conf_entry->config_entry_description=
   "TCP_MAXSEG on socket";
@@ -2004,15 +2004,17 @@ ic_assign_config_value(int config_id, guint64 value,
   struct_ptr+= conf_entry->offset;
   if (data_type == IC_CL_INT32_TYPE)
   {
-    if (conf_entry->data_type == IC_CHAR)
-    {
-      *(gchar*)struct_ptr= (gchar)value;
-    }
+    /* TODO
     else if (conf_entry->data_type == IC_UINT16)
     {
       *(guint16*)struct_ptr= (guint16)value;
     }
-    else if (conf_entry->data_type == IC_UINT32)
+    if (conf_entry->data_type == IC_CHAR)
+    {
+      *(gchar*)struct_ptr= (gchar)value;
+    }
+    */
+    if (conf_entry->data_type == IC_UINT32)
     {
       *(guint32*)struct_ptr= (guint32)value;
     }
@@ -2079,6 +2081,12 @@ init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
       *var16_ptr= (guint16)conf_entry->default_value;
       break;
     }
+    case IC_BOOLEAN:
+    {
+      gchar *varboolean_ptr= (gchar*)var_ptr;
+      *varboolean_ptr= (gchar)conf_entry->default_value;
+      break;
+    }
     case IC_UINT32:
     {
       guint32 *var32_ptr= (guint32*)var_ptr;
@@ -2091,12 +2099,6 @@ init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
       *var64_ptr= (guint64)conf_entry->default_value;
       break;
     }
-    case IC_BOOLEAN:
-    {
-      gchar *varboolean_ptr= (gchar*)var_ptr;
-      *varboolean_ptr= (gchar)conf_entry->default_value;
-      break;
-    }
     default:
       abort();
       break;
@@ -2104,7 +2106,8 @@ init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
 }
 
 static void
-init_config_object(gchar *conf_object, IC_CONFIG_TYPES config_type)
+init_config_object(gchar *conf_object, guint32 size_struct,
+                   IC_CONFIG_TYPES config_type)
 {
   guint32 i;
   for (i= 1; i <= glob_max_config_id; i++)
@@ -2113,6 +2116,8 @@ init_config_object(gchar *conf_object, IC_CONFIG_TYPES config_type)
     if (conf_entry && conf_entry->config_types & (1 << config_type))
     {
       gchar *var_ptr= conf_object + conf_entry->offset;
+      if (conf_entry->offset >= size_struct)
+        abort();
       init_config_default_value(var_ptr, conf_entry);
     }
   }
@@ -2190,7 +2195,7 @@ allocate_mem_phase1(IC_CLUSTER_CONFIG *conf_obj)
 static int
 allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
 {
-  guint32 i;
+  guint32 i, size_struct;
   guint32 size_config_objects= 0;
   gchar *conf_obj_ptr, *string_mem;
   IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
@@ -2243,32 +2248,36 @@ allocate_mem_phase2(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   for (i= 0; i < conf_obj->num_nodes; i++)
   {
     conf_obj->node_config[i]= conf_obj_ptr;
-    init_config_object(conf_obj_ptr, conf_obj->node_types[i]);
+    size_struct= 0;
     switch (conf_obj->node_types[i])
     {
       case IC_DATA_SERVER_NODE:
-        conf_obj_ptr+= sizeof(IC_DATA_SERVER_CONFIG);
+        size_struct= sizeof(IC_DATA_SERVER_CONFIG);
         break;
       case IC_CLIENT_NODE:
-        conf_obj_ptr+= sizeof(IC_CLIENT_CONFIG);
+        size_struct= sizeof(IC_CLIENT_CONFIG);
         break;
       case IC_CLUSTER_SERVER_NODE:
-        conf_obj_ptr+= sizeof(IC_CLUSTER_SERVER_CONFIG);
+        size_struct= sizeof(IC_CLUSTER_SERVER_CONFIG);
         break;
       case IC_SQL_SERVER_NODE:
-        conf_obj_ptr+= sizeof(IC_SQL_SERVER_CONFIG);
+        size_struct= sizeof(IC_SQL_SERVER_CONFIG);
         break;
       case IC_REP_SERVER_NODE:
-        conf_obj_ptr+= sizeof(IC_REP_SERVER_CONFIG);
+        size_struct= sizeof(IC_REP_SERVER_CONFIG);
         break;
       default:
         g_assert(FALSE);
         break;
     }
+    init_config_object(conf_obj_ptr, size_struct,
+                       conf_obj->node_types[i]);
+    conf_obj_ptr+= size_struct;
   }
   for (i= 0; i < conf_obj->num_comms; i++)
   {
-    init_config_object(conf_obj_ptr, IC_COMM_TYPE);
+    init_config_object(conf_obj_ptr, sizeof(IC_COMM_LINK_CONFIG),
+                       IC_COMM_TYPE);
     conf_obj->comm_config[i]= conf_obj_ptr;
     conf_obj_ptr+= sizeof(IC_COMM_LINK_CONFIG);
   }
@@ -3494,6 +3503,17 @@ error:
   into a base64 representation which is how it is sent in the cluster server
   protocol.
 */
+
+static guint32
+ndb_mgm_str_word_len(guint32 str_len)
+{
+  guint32 word_len;
+  str_len++; /* To accomodate for final NULL */
+  str_len++; /* For bug compatability with NDB MGM Protocol */
+  word_len= (str_len+3)/4;
+  return word_len;
+}
+
 static guint32
 get_length_of_section(IC_CONFIG_TYPES config_type,
                       gchar *conf, guint64 version_number)
@@ -3523,7 +3543,7 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
           str_len= 0;
           if (*charptr)
             str_len= strlen(*charptr);
-          len+= ((str_len+4)/4); /* Also make place for final NULL */
+          len+= ndb_mgm_str_word_len(str_len);
           break;
         }
         default:
@@ -3603,14 +3623,15 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
              Adjust to number of words with one word removed and
              an extra null byte calculated for
            */
-          len= (value + 3)/4;
+          len= ndb_mgm_str_word_len(str_len);
           /* We don't need to copy null byte since we initialised to 0 */
           if (str_len)
             memcpy((gchar*)&assign_array[2],
                    *charptr,
                    str_len);
           DEBUG_PRINT(CONFIG_LEVEL,
-                      ("String value = %s", (gchar*)&assign_array[2]));
+                      ("String value = %s, str_len= %u",
+                       (gchar*)&assign_array[2], str_len));
           loc_key_value_array_len+= len;
           data_type= IC_CL_CHAR_TYPE;
           break;
@@ -3631,8 +3652,8 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
       assign_array[0]= g_htonl(key);
       assign_array[1]= g_htonl(value);
       DEBUG_PRINT(CONFIG_LEVEL,
-                  ("sectid = %u, config_id = %u, value = %u",
-                   sect_id, config_id, value));
+                  ("sectid = %u, data_type = %x, config_id = %u, value = %x",
+                   sect_id, data_type, config_id, value));
       loc_key_value_array_len+= 2;
     }
   }
@@ -3699,11 +3720,8 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
                            ic_hashtable_search(clu_conf->comm_hash,
                                                (void*)comm_section)))
     return local_comm_section;
-  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
-                           ic_hashtable_search(clu_conf->comm_hash,
-                                               (void*)comm_section)))
-    return local_comm_section;
-  init_config_object((gchar*)comm_section, IC_COMM_TYPE);
+  init_config_object((gchar*)comm_section, sizeof(IC_COMM_LINK_CONFIG),
+                     IC_COMM_TYPE);
   comm_section->first_node_id= node1;
   comm_section->second_node_id= node2;
   if (clu_conf->node_types[node1] == IC_DATA_SERVER_NODE ||
@@ -3738,7 +3756,6 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   guint32 *loc_key_value_array;
   guint32 loc_key_value_array_len= 0;
   int ret_code;
-  gboolean from_iclaustron= version_number > (guint64)0xFFFFFFFF;
   IC_SOCKET_LINK_CONFIG test1, *comm_section;
 
   /*
@@ -3778,7 +3795,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
           /* iClaustron uses a fully connected cluster */
           if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
                 clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
-                from_iclaustron)
+                ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
             continue;
           /* We have found two nodes needing a comm section */
           comm_section= get_comm_section(clu_conf, &test1, i, j);
@@ -3821,12 +3838,12 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   section_id= 0;
   comm_desc_section= 2 + clu_conf->num_nodes;
   node_desc_section= 1;
-  loc_key_value_array[2]= (3 << IC_CL_KEY_SHIFT) +
+  loc_key_value_array[2]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
                           (section_id << IC_CL_SECT_SHIFT) +
                           2000;
   loc_key_value_array[3]= node_desc_section << IC_CL_SECT_SHIFT;
 
-  loc_key_value_array[4]= (3 << IC_CL_KEY_SHIFT) +
+  loc_key_value_array[4]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
                           (section_id << IC_CL_SECT_SHIFT) +
                           3000;
   loc_key_value_array[5]= comm_desc_section << IC_CL_SECT_SHIFT;
@@ -3840,8 +3857,9 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   section_id= 1;
   for (i= 0; i < clu_conf->num_nodes; i++)
   {
-    loc_key_value_array[loc_key_value_array_len++]= (1 << IC_CL_KEY_SHIFT) +
-                                          (section_id << IC_CL_SECT_SHIFT) +
+    loc_key_value_array[loc_key_value_array_len++]=
+              (IC_UINT32 << IC_CL_KEY_SHIFT) +
+              (section_id << IC_CL_SECT_SHIFT) +
                                               i;
     loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
   }
@@ -3875,7 +3893,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   for (i= 0; i < num_comms; i++)
   {
     loc_key_value_array[loc_key_value_array_len++]= g_htonl(
-                                   (1 << IC_CL_KEY_SHIFT) +
+                                   (IC_UINT32 << IC_CL_KEY_SHIFT) +
                                    (comm_desc_section << IC_CL_SECT_SHIFT) +
                                    i);
     loc_key_value_array[loc_key_value_array_len++]= g_htonl(
@@ -3897,7 +3915,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
           /* iClaustron uses a fully connected cluster */
           if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
                clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
-               from_iclaustron)
+               ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
             continue;
           /* We have found two nodes needing a comm section */
           comm_section= get_comm_section(clu_conf, &test1, i, j);
@@ -4076,7 +4094,10 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
           DEBUG_RETURN(PROTOCOL_ERROR);
         }
         if (!ic_is_bit_set(*version_number, IC_PROTOCOL_BIT))
+        {
           state= EMPTY_LINE_REQ_STATE;
+          *cluster_id= 0;
+        }
         else
           state= CLUSTER_ID_REQ_STATE;
         break;
@@ -4193,7 +4214,8 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
       ic_send_with_cr(conn, content_encoding_str) ||
       ic_send_with_cr(conn, ic_empty_string) ||
       conn->conn_op.ic_write_connection(conn, (const void*)config_base64_str,
-                                        config_len, 1))
+                                        config_len, 1) ||
+      ic_send_with_cr(conn, ic_empty_string))
     error= conn->error_code;
   DEBUG_RETURN(error);
 }
@@ -4247,6 +4269,8 @@ wait_convert_transporter_req(IC_CONNECTION *conn,
 
   if ((error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
+      (error= ic_send_with_cr(conn, ic_empty_string)) ||
+      (error= rec_simple_str(conn, ic_empty_string)) ||
       (error= rec_simple_str(conn, set_connection_parameter_str)) ||
       (error= rec_simple_str(conn, client_nodeid_buf)) ||
       (error= rec_simple_str(conn, cs_nodeid_buf)) ||
@@ -4507,7 +4531,8 @@ IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
                       IC_MEMORY_CONTAINER *mc_ptr,
                       gchar *server_name,
-                      gchar *server_port)
+                      gchar *server_port,
+                      guint32 my_node_id)
 {
   IC_RUN_CLUSTER_SERVER *run_obj;
   IC_CONNECTION *conn;
@@ -4568,6 +4593,7 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
   }
   run_obj->conf_objects= cluster_array;
   run_obj->max_cluster_id= max_cluster_id;
+  run_obj->cs_nodeid= my_node_id;
   if (!(run_obj->run_conn= ic_create_socket_object(
                             FALSE, /* Server connection */
                             FALSE, /* Don't use mutex */
@@ -4807,29 +4833,44 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   }
 
   init_config_object((gchar*)&clu_conf->default_data_server_config,
+                     sizeof(clu_conf->default_data_server_config),
                      IC_DATA_SERVER_TYPE);
-  init_config_object((gchar*)&clu_conf->default_client_config, IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_client_config,
+                     sizeof(clu_conf->default_client_config),
+                     IC_CLIENT_TYPE);
   init_config_object((gchar*)&clu_conf->default_cluster_server_config,
+                     sizeof(clu_conf->default_cluster_server_config),
                      IC_CLUSTER_SERVER_TYPE);
   init_config_object((gchar*)&clu_conf->default_sql_server_config.client_conf,
+                     sizeof(clu_conf->default_sql_server_config.client_conf),
                      IC_CLIENT_TYPE);
   init_config_object((gchar*)&clu_conf->default_sql_server_config,
+                     sizeof(clu_conf->default_sql_server_config),
                      IC_SQL_SERVER_TYPE);
   init_config_object((gchar*)&clu_conf->default_rep_server_config.client_conf,
+                     sizeof(clu_conf->default_rep_server_config.client_conf),
                      IC_CLIENT_TYPE);
   init_config_object((gchar*)&clu_conf->default_rep_server_config,
+                     sizeof(clu_conf->default_rep_server_config),
                      IC_REP_SERVER_TYPE);
   init_config_object((gchar*)&clu_conf->default_file_server_config.client_conf,
+                     sizeof(clu_conf->default_file_server_config.client_conf),
                      IC_CLIENT_TYPE);
   init_config_object((gchar*)&clu_conf->default_file_server_config,
+                     sizeof(clu_conf->default_file_server_config),
                      IC_FILE_SERVER_TYPE);
   init_config_object((gchar*)&clu_conf->default_restore_config.client_conf,
+                     sizeof(clu_conf->default_restore_config.client_conf),
                      IC_CLIENT_TYPE);
   init_config_object((gchar*)&clu_conf->default_restore_config,
+                     sizeof(clu_conf->default_restore_config),
                      IC_RESTORE_TYPE);
   init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
+                     sizeof(clu_conf->default_cluster_mgr_config),
                      IC_CLUSTER_MGR_TYPE);
-  init_config_object((gchar*)&clu_conf->default_socket_config, IC_COMM_TYPE);
+  init_config_object((gchar*)&clu_conf->default_socket_config,
+                     sizeof(clu_conf->default_socket_config),
+                     IC_COMM_TYPE);
   DEBUG_RETURN(0);
 }
 
@@ -5126,7 +5167,7 @@ int conf_serv_add_key(void *ic_config,
       ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->max_value));
     DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
-  else if ((conf_entry->data_type == IC_UINT16 && value > 65535) ||
+  else if (/*(conf_entry->data_type == IC_UINT16 && value > 65535) || TODO */
            (conf_entry->data_type == IC_UINT32 && value >= num32_check))
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("Parameter %s is larger than its type",
@@ -5138,11 +5179,13 @@ int conf_serv_add_key(void *ic_config,
   /*
     Assign value of configuration variable according to its data type.
   */
+  /* TODO
   if (conf_entry->data_type == IC_CHAR)
     *(gchar*)struct_ptr= (gchar)value;
   else if (conf_entry->data_type == IC_UINT16)
     *(guint16*)struct_ptr= (guint16)value;
-  else if (conf_entry->data_type == IC_UINT32)
+  */
+  if (conf_entry->data_type == IC_UINT32)
     *(guint32*)struct_ptr= (guint32)value;
   else if (conf_entry->data_type == IC_UINT64)
     *(guint64*)struct_ptr= value;
@@ -5522,12 +5565,14 @@ get_node_data(const gchar *struct_ptr, guint32 offset,
   guint64 value= 0;
   switch (data_type)
   {
+    /* TODO 
     case IC_CHAR:
       value= (guint64)*(guint8*)(struct_ptr+offset);
       break;
     case IC_UINT16:
       value= (guint64)*(guint16*)(struct_ptr+offset);
       break;
+    */
     case IC_UINT32:
       value= (guint64)*(guint32*)(struct_ptr+offset);
       break;

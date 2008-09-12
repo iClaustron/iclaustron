@@ -82,12 +82,14 @@ typedef enum ic_config_entry_change IC_CONFIG_ENTRY_CHANGE;
 
 typedef enum ic_config_data_type
 {
-  IC_CHAR = 1,
-  IC_BOOLEAN = 1,
-  IC_UINT16 = 2,
-  IC_UINT32 = 3,
+  IC_NO_SUCH_CONFIG_DATA_TYPE = 0,
+  IC_UINT32 = 1,
+  IC_CHARPTR = 2,
+  IC_SECTION_TYPE = 3,
   IC_UINT64 = 4,
-  IC_CHARPTR = 5
+  IC_CHAR = 5,
+  IC_BOOLEAN = 6,
+  IC_UINT16 = 7
 } IC_CONFIG_DATA_TYPE;
 
 struct ic_config_entry
@@ -719,7 +721,8 @@ IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
                       IC_MEMORY_CONTAINER *mc_ptr,
                       gchar *server_name,
-                      gchar* server_port);
+                      gchar* server_port,
+                      guint32 my_nodeid);
 
 void ic_print_config_parameters();
 
