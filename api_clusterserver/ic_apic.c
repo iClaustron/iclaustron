@@ -445,6 +445,19 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 #define RECEIVE_CONFIG_STATE 9
 #define WAIT_LAST_EMPTY_RETURN_STATE 10
 
+/*
+  These states are used in the main routine that handles
+  the Cluster Server's run protocol.
+
+  In the initial state WAIT_GET_CLUSTER_LIST we're waiting for the
+  get cluster list request from iClaustron nodes.
+*/
+#define WAIT_GET_CLUSTER_LIST 0
+#define WAIT_GET_NODEID 1
+#define WAIT_GET_MGMD_NODEID 2
+#define WAIT_SET_CONNECTION 3
+#define WAIT_CONVERT_TRANSPORTER 4
+
 #define GET_NODEID_LEN 10
 #define GET_NODEID_REPLY_LEN 16
 #define NODEID_LEN 8
@@ -4398,43 +4411,96 @@ run_handle_config_request(gpointer data)
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_RUN_CLUSTER_SERVER *run_obj= (IC_RUN_CLUSTER_SERVER*)conn->param;
   int error;
+  int state= WAIT_GET_CLUSTER_LIST;
   IC_RC_PARAM param;
 
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (!check_buf(read_buf, read_size, get_nodeid_str,
-                   strlen(get_nodeid_str)))
+    switch (state)
     {
-      /* Handle a request to get configuration for a cluster */
-      if ((error= handle_config_request(run_obj, conn, &param)))
-      {
-        DEBUG_PRINT(CONFIG_LEVEL,
-          ("Error from handle_config_request, code = %u", error));
+      case WAIT_GET_CLUSTER_LIST:
+        if (!check_buf(read_buf, read_size, get_cluster_list_str,
+                       strlen(get_cluster_list_str)))
+        {
+          if ((error= handle_get_cluster_list(run_obj, conn)))
+          {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Error from handle_get_cluster_list, code = %u", error));
+            goto error;
+          }
+          state= WAIT_GET_NODEID;
+          break;
+        }
+        /*
+          Fall through, still ok for ndbd nodes to go directly at
+          get nodeid query.
+          Later on this feature will also be removed, so it's a
+          temporary thing.
+        */
+      case WAIT_GET_NODEID:
+        if (!check_buf(read_buf, read_size, get_nodeid_str,
+                       strlen(get_nodeid_str)))
+        {
+          /* Handle a request to get configuration for a cluster */
+          if ((error= handle_config_request(run_obj, conn, &param)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Error from handle_config_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_GET_MGMD_NODEID;
+          break;
+        }
         goto error;
-      }
-    }
-    else if (!check_buf(read_buf, read_size, get_cluster_list_str,
-                        strlen(get_cluster_list_str)))
-    {
-      if ((error= handle_get_cluster_list(run_obj, conn)))
-      {
-        DEBUG_PRINT(CONFIG_LEVEL,
-          ("Error from handle_get_cluster_list, code = %u", error));
+      case WAIT_GET_MGMD_NODEID:
+        if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
+                       strlen(get_mgmd_nodeid_str)))
+        {
+          if ((error= handle_get_mgmd_nodeid_request(run_obj, conn)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+            ("Error from handle_get_mgmd_nodeid_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_SET_CONNECTION;
+          break;
+        }
         goto error;
-      }
-    }
-    else if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
-                        strlen(get_mgmd_nodeid_str)))
-    {
-      if ((error= handle_convert_transporter(conn, run_obj, &param)))
-      {
-        DEBUG_PRINT(CONFIG_LEVEL,
-          ("Error from handle_convert_transporter, code = %u", error));
+      case WAIT_SET_CONNECTION:
+        if (!check_buf(read_buf, read_size, set_connection_parameter_str,
+                       strlen(set_connection_parameter_str)))
+        {
+          if ((error= handle_set_connection_parameter_request(run_obj, conn)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+    ("Error from handle_set_connection_parameter_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_CONVERT_TRANSPORTER;
+          break;
+        }
+        /*
+          Here it is ok to fall through, the WAIT_SET_CONNECTION is an
+          optional state.
+        */
+      case WAIT_CONVERT_TRANSPORTER:
+        if (!check_buf(read_buf, read_size, convert_transporter_str,
+                       strlen(convert_transporter_str)))
+        {
+          if ((error= handle_convert_transporter_request(run_obj, conn)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+        ("Error from handle_convert_transporter_request, code = %u", error));
+            goto error;
+          }
+          state= 100; /* Need more work, TODO */
+          break;
+        }
         goto error;
-      }
+      default:
+        abort();
+        break;
     }
-    else
-      goto error;
   }
   return NULL;
 error:
