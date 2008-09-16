@@ -4243,6 +4243,7 @@ handle_get_cluster_list(IC_RUN_CLUSTER_SERVER *run_obj,
   int error;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_STRING cluster_name;
+  DEBUG_ENTRY("handle_get_cluster_list");
 
   if ((error= ic_send_with_cr(conn, get_cluster_list_reply_str)))
     goto error;
@@ -4264,33 +4265,22 @@ handle_get_cluster_list(IC_RUN_CLUSTER_SERVER *run_obj,
     goto error;
   return 0;
 error:
-  return error;
+  DEBUG_PRINT(CONFIG_LEVEL,
+              ("Protocol error in get cluster list"));
+  DEBUG_RETURN(PROTOCOL_ERROR);
 }
 
 static int
-wait_convert_transporter_req(IC_CONNECTION *conn,
-                             guint32 cs_nodeid,
-                             guint32 client_nodeid)
+handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
 {
   int error;
   gchar cs_nodeid_buf[32];
-  gchar client_nodeid_buf[32];
-  DEBUG_ENTRY("wait_convert_transporter_req");
-
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
-  g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
+  DEBUG_ENTRY("handle_get_mgmd_nodeid_request");
 
   if ((error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
-      (error= ic_send_with_cr(conn, ic_empty_string)) ||
-      (error= rec_simple_str(conn, ic_empty_string)) ||
-      (error= rec_simple_str(conn, set_connection_parameter_str)) ||
-      (error= rec_simple_str(conn, client_nodeid_buf)) ||
-      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
-      (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
-      (error= ic_send_with_cr(conn, result_ok_str)) ||
-      (error= rec_simple_str(conn, convert_transporter_str)) ||
-      (error= rec_simple_str(conn, ic_empty_string)))
+      (error= ic_send_with_cr(conn, ic_empty_string)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));
@@ -4300,18 +4290,41 @@ wait_convert_transporter_req(IC_CONNECTION *conn,
 }
 
 static int
-wait_start_transporter_req(__attribute__ ((unused)) IC_CONNECTION *conn,
-                           __attribute__ ((unused)) guint32 cs_nodeid,
-                           __attribute__ ((unused)) guint32 client_nodeid)
+handle_set_connection_parameter_request(IC_CONNECTION *conn,
+                                        guint32 cs_nodeid,
+                                        guint32 client_nodeid)
 {
-  return 0;
+  int error;
+  gchar cs_nodeid_buf[32];
+  gchar client_nodeid_buf[32];
+  DEBUG_ENTRY("handle_set_connection_parameter_request");
+
+  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
+  g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
+  if ((error= rec_simple_str(conn, client_nodeid_buf)) ||
+      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
+      (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
+      (error= ic_send_with_cr(conn, result_ok_str)))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+                ("Protocol error in converting to transporter"));
+    DEBUG_RETURN(PROTOCOL_ERROR);
+  }
+  DEBUG_RETURN(0);
 }
 
 static int
-put_connection_in_change_queue(__attribute__ ((unused)) IC_CONNECTION *conn,
-                               __attribute__ ((unused)) guint64 node_type)
+handle_convert_transporter_request(IC_CONNECTION *conn)
 {
-  return 0;
+  int error;
+  DEBUG_ENTRY("handle_convert_transporter_request");
+  if ((error= rec_simple_str(conn, ic_empty_string)))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+                ("Protocol error in converting to transporter"));
+    DEBUG_RETURN(PROTOCOL_ERROR);
+  }
+  DEBUG_RETURN(0);
 }
 
 struct ic_rc_param
@@ -4386,23 +4399,6 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
   DEBUG_RETURN(ret_code);
 }
 
-static int
-handle_convert_transporter(IC_CONNECTION *conn,
-                           IC_RUN_CLUSTER_SERVER *run_obj,
-                           IC_RC_PARAM *param)
-{
-  int ret_code;
-  if ((ret_code= wait_convert_transporter_req(conn, run_obj->cs_nodeid,
-                                              param->client_nodeid)) ||
-      (ret_code= wait_start_transporter_req(conn, run_obj->cs_nodeid,
-                                            param->client_nodeid)) ||
-      (ret_code= put_connection_in_change_queue(conn, param->node_type)))
-  {
-    DEBUG_RETURN(ret_code);
-  }
-  DEBUG_RETURN(0);
-}
-
 static gpointer
 run_handle_config_request(gpointer data)
 {
@@ -4456,7 +4452,8 @@ run_handle_config_request(gpointer data)
         if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
                        strlen(get_mgmd_nodeid_str)))
         {
-          if ((error= handle_get_mgmd_nodeid_request(run_obj, conn)))
+          if ((error= handle_get_mgmd_nodeid_request(conn,
+                                                     run_obj->cs_nodeid)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
             ("Error from handle_get_mgmd_nodeid_request, code = %u", error));
@@ -4470,7 +4467,10 @@ run_handle_config_request(gpointer data)
         if (!check_buf(read_buf, read_size, set_connection_parameter_str,
                        strlen(set_connection_parameter_str)))
         {
-          if ((error= handle_set_connection_parameter_request(run_obj, conn)))
+          if ((error= handle_set_connection_parameter_request(
+                            conn,
+                            run_obj->cs_nodeid,
+                            (guint32)param.client_nodeid)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
     ("Error from handle_set_connection_parameter_request, code = %u", error));
@@ -4487,13 +4487,14 @@ run_handle_config_request(gpointer data)
         if (!check_buf(read_buf, read_size, convert_transporter_str,
                        strlen(convert_transporter_str)))
         {
-          if ((error= handle_convert_transporter_request(run_obj, conn)))
+          if ((error= handle_convert_transporter_request(conn)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
         ("Error from handle_convert_transporter_request, code = %u", error));
             goto error;
           }
           state= 100; /* Need more work, TODO */
+          abort();
           break;
         }
         goto error;
