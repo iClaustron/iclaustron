@@ -576,6 +576,7 @@ int ic_rec_with_cr(IC_CONNECTION *conn,
 /*
   Methods to handle conversion to integers from strings
 */
+guint32 ic_count_characters(gchar *str, guint32 max_chars);
 gboolean convert_str_to_int_fixed_size(char *str, guint32 num_chars,
                                        guint64 *ret_number);
 

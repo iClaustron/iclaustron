@@ -394,6 +394,10 @@ static const gchar *set_connection_parameter_str= "set connection parameter";
 static const gchar *set_connection_parameter_reply_str=
   "set connection parameter reply";
 static const gchar *convert_transporter_str= "transporter connect";
+static const gchar *report_event_str= "report event";
+static const gchar *report_event_reply_str= "report event reply";
+static const gchar *length_str= "length: ";
+static const gchar *data_str= "data:  ";
 
 static const gchar *get_nodeid_str= "get nodeid";
 static const gchar *get_nodeid_reply_str= "get nodeid reply";
@@ -452,7 +456,7 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
   In the initial state WAIT_GET_CLUSTER_LIST we're waiting for the
   get cluster list request from iClaustron nodes.
 */
-#define WAIT_GET_CLUSTER_LIST 0
+#define INITIAL_STATE 0
 #define WAIT_GET_NODEID 1
 #define WAIT_GET_MGMD_NODEID 2
 #define WAIT_SET_CONNECTION 3
@@ -495,6 +499,8 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 
 #define MAX_MAP_CONFIG_ID 1024
 #define MAX_CONFIG_ID 256
+
+#define IC_TCP_TRANSPORTER_TYPE 1
 
 static guint32 glob_max_config_id;
 IC_HASHTABLE *glob_conf_hash;
@@ -2148,6 +2154,38 @@ check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
       (memcmp(read_buf, str, str_len) != 0))
     return TRUE;
   return FALSE;
+}
+
+static gboolean
+check_buf_with_many_int(gchar *read_buf, guint32 read_size, const gchar *str,
+                        int str_len, guint32 num_elements,
+                        guint64 *number)
+{
+  gchar *ptr, *end_ptr;
+  guint32 i, num_chars;
+
+  if ((read_size < (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) == 0))
+  {
+    ptr= read_buf+str_len;
+    end_ptr= read_buf + read_size;
+    for (i= 0; i < num_elements; i++)
+    {
+      num_chars= ic_count_characters(ptr, end_ptr - ptr);
+      if (ptr + num_chars > end_ptr)
+        goto error;
+      if (convert_str_to_int_fixed_size(ptr, num_chars, &number[i]))
+        goto error;
+      ptr+= num_chars;
+      if (*ptr == ' ')
+        ptr++;
+      else if (*ptr != '\n' || i != (num_elements - 1))
+        goto error;
+    }
+  }
+  return FALSE;
+error:
+  return TRUE;
 }
 
 static gboolean
@@ -4278,7 +4316,8 @@ handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
   DEBUG_ENTRY("handle_get_mgmd_nodeid_request");
 
-  if ((error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
+  if ((error= rec_simple_str(conn, ic_empty_string)) ||
+      (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
       (error= ic_send_with_cr(conn, ic_empty_string)))
   {
@@ -4314,17 +4353,54 @@ handle_set_connection_parameter_request(IC_CONNECTION *conn,
 }
 
 static int
-handle_convert_transporter_request(IC_CONNECTION *conn)
+handle_convert_transporter_request(IC_CONNECTION *conn, guint32 client_nodeid)
 {
   int error;
+  int trp_type= IC_TCP_TRANSPORTER_TYPE;
+  gchar client_buf[32], cs_buf[32];
   DEBUG_ENTRY("handle_convert_transporter_request");
-  if ((error= rec_simple_str(conn, ic_empty_string)))
+
+  g_snprintf(client_buf, 64, "%d %d", client_nodeid, trp_type);
+  g_snprintf(cs_buf, 64, "%d %d", client_nodeid, trp_type);
+  if ((error= rec_simple_str(conn, ic_empty_string)) ||
+      (error= rec_simple_str(conn, client_buf)) ||
+      (error= ic_send_with_cr(conn, cs_buf)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));
     DEBUG_RETURN(PROTOCOL_ERROR);
   }
   DEBUG_RETURN(0);
+}
+
+static int
+handle_report_event(IC_RUN_CLUSTER_SERVER *run_obj, IC_CONNECTION *conn)
+{
+  guint64 num_array[32], length;
+  gchar *read_buf;
+  guint32 read_size, i;
+  int error;
+  DEBUG_ENTRY("handle_report_event");
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (check_buf_with_int(read_buf, read_size, length_str,
+                          strlen(length_str), &length)) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (check_buf_with_many_int(read_buf, read_size, data_str,
+                               strlen(data_str), (guint32)length,
+                               &num_array[0])))
+    goto error;
+  if ((error= rec_simple_str(conn, ic_empty_string)))
+    goto error;
+  for (i= 0; i < length; i++)
+    printf("Number[%u] = %u\n", i, (guint32)num_array[i]);
+  if ((error= ic_send_with_cr(conn, report_event_reply_str)) ||
+      (error= ic_send_with_cr(conn, result_ok_str)) ||
+      (error= ic_send_with_cr(conn, ic_empty_string)))
+    goto error;
+  DEBUG_RETURN(0);
+error:
+  DEBUG_RETURN(PROTOCOL_ERROR);
 }
 
 struct ic_rc_param
@@ -4407,14 +4483,14 @@ run_handle_config_request(gpointer data)
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_RUN_CLUSTER_SERVER *run_obj= (IC_RUN_CLUSTER_SERVER*)conn->param;
   int error;
-  int state= WAIT_GET_CLUSTER_LIST;
+  int state= INITIAL_STATE;
   IC_RC_PARAM param;
 
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     switch (state)
     {
-      case WAIT_GET_CLUSTER_LIST:
+      case INITIAL_STATE:
         if (!check_buf(read_buf, read_size, get_cluster_list_str,
                        strlen(get_cluster_list_str)))
         {
@@ -4427,12 +4503,32 @@ run_handle_config_request(gpointer data)
           state= WAIT_GET_NODEID;
           break;
         }
-        /*
-          Fall through, still ok for ndbd nodes to go directly at
-          get nodeid query.
-          Later on this feature will also be removed, so it's a
-          temporary thing.
-        */
+        if (!check_buf(read_buf, read_size, get_nodeid_str,
+                       strlen(get_nodeid_str)))
+        {
+          /* Handle a request to get configuration for a cluster */
+          if ((error= handle_config_request(run_obj, conn, &param)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Error from handle_config_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_GET_MGMD_NODEID;
+          break;
+        }
+        if (!check_buf(read_buf, read_size, report_event_str,
+                       strlen(report_event_str)))
+        {
+          /* Handle report event */
+          if ((error= handle_report_event(run_obj, conn)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Error from handle_report_event, code = %u", error));
+          }
+          break;
+          /* No change of state, still ready for more input */
+        }
+        goto error;
       case WAIT_GET_NODEID:
         if (!check_buf(read_buf, read_size, get_nodeid_str,
                        strlen(get_nodeid_str)))
@@ -4487,14 +4583,14 @@ run_handle_config_request(gpointer data)
         if (!check_buf(read_buf, read_size, convert_transporter_str,
                        strlen(convert_transporter_str)))
         {
-          if ((error= handle_convert_transporter_request(conn)))
+          if ((error= handle_convert_transporter_request(conn,
+                                          param.client_nodeid)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
         ("Error from handle_convert_transporter_request, code = %u", error));
             goto error;
           }
           state= 100; /* Need more work, TODO */
-          abort();
           break;
         }
         goto error;
@@ -4503,6 +4599,7 @@ run_handle_config_request(gpointer data)
         break;
     }
   }
+  DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
   return NULL;
 error:
   return NULL;

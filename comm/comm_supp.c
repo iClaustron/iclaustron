@@ -164,8 +164,23 @@ ic_base64_encode(guint8 **dest,
   return 0;
 }
 
+guint32
+ic_count_characters(gchar *str, guint32 max_chars)
+{
+  gchar *ptr= str;
+  guint32 num_chars= 0;
+
+  while ((num_chars < max_chars) &&
+         (!(*ptr == ' ' || *ptr == '\n' || *ptr == 0)))
+  {
+    num_chars++;
+    ptr++;
+  }
+  return num_chars;
+}
+
 gboolean
-convert_str_to_int_fixed_size(char *str, guint32 num_chars,
+convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
                               guint64 *ret_number)
 {
   char *end_ptr;
@@ -221,6 +236,7 @@ ic_rec_with_cr(struct ic_connection *conn,
   gchar *read_buf= conn->read_buf;
   guint32 size_curr_buf= conn->size_curr_read_buf;
   guint32 read_buf_pos;
+  DEBUG_ENTRY("ic_rec_with_cr");
 
   if (size_curr_buf > 0)
   {
@@ -246,21 +262,22 @@ ic_rec_with_cr(struct ic_connection *conn,
         DEBUG(COMM_LEVEL, ic_debug_print_rec_buf(read_buf, inx));
         *read_size= inx;
         *rec_buf= read_buf;
-        return 0;
+        DEBUG_RETURN(0);
       }
       /*
         We had no complete lines to read in the buffer received so
         far.
       */
+      DEBUG_PRINT(COMM_LEVEL, ("No complete lines to report yet"));
     }
     size_to_read= buffer_size - size_curr_buf;
     if ((res= conn->conn_op.ic_read_connection(conn,
                                                read_buf + size_curr_buf,
                                                size_to_read,
                                                &size_read)))
-      return res;
+      DEBUG_RETURN(res);
     size_curr_buf+= size_read;
   } while (1);
-  return 0;
+  DEBUG_RETURN(0);
 }
 
