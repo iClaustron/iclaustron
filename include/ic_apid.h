@@ -66,19 +66,91 @@ struct ic_ndb_receive_state
 };
 typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 
-struct ic_ndb_signal
+#define IC_MESSAGE_FRAGMENT_NONE 0
+#define IC_MESSAGE_FRAGMENT_FIRST_NOT_LAST 1
+#define IC_MESSAGE_FRAGMENT_INTERMEDIATE 2
+#define IC_MESSAGE_FRAGMENT_LAST 3
+
+struct ic_ndb_message_opaque_area
 {
-  guint32 signal_number;
+  guint32 message_offset;
+  guint32 sender_node_id;
+  guint32 receiver_node_id;
+  guint32 num_users_to_release;
 };
-typedef struct ic_ndb_signal IC_NDB_SIGNAL;
+typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA
+
+struct ic_ndb_message
+{
+  /*
+    We keep pointers to the message buffer where the actual message data
+    resides instead of copying. We also keep a pointer to the start of
+    the message to make it easy to release the IC_NDB_MESSAGE object.
+    We also need a pointer to the page from which this message is created.
+    This is needed to ensure that we can efficiently release the page when
+    all messages have been executed.
+  */
+  guint32 *short_data_ptr;
+  guint32 *segment_ptr[3];
+  guint32 *segment_size_ptr;
+
+  IC_SOCK_BUF_PAGE *buf_page;
+
+  /* Trace number and message id are mostly for debug information.  */
+  guint32 message_id;
+  guint8  trace_num;
+  /*
+     There can be up to 3 segments in a  message in addition to the always
+     existing short data part which can have a maximum 25 words.
+     There is a variable to keep track of number of segments, number of words
+     in the short data part. In order to handle really large messages we
+     use fragmentation bits to keep track of the message train that should
+     be treated as one message.
+     Messages also have priorities, currently there are only 2 really used,
+     Priority A and Priority B.
+
+     The offset to the short data is
+     message_header[header_size]
+     The offset to the segment sizes are
+     message_header[header_size + short_data_size]
+  */
+  guint8 num_segments;
+  guint8 short_data_size;
+  guint8 fragmentation_bits;
+  guint8 message_priority;
+  guint8 header_size;
+
+  /*
+    The message number is the actual number indicating which message this is.
+    A message number could indicate for example that this is a TCKEYCONF,
+    TRANSID_AI and other messages NDB sends. We also keep track of the
+    total message size mostly for debug purposes.
+  */
+  guint16 segment_offsets[3];
+  guint16 message_number;
+  guint16 tot_message_size;
+
+  /*
+    We need to keep track of Module id of both the sender and the receiver.
+    In reality the address of the sender and the receiver is identified by
+    the module id and the node id.
+  */
+  guint16 sender_module_id;
+  guint16 receiver_module_id;
+  guint16 sender_node_id;
+  guint16 receiver_node_id;
+};
+typedef struct ic_ndb_message IC_NDB_MESSAGE;
 
 struct ic_apid_connection;
 struct ic_thread_connection
 {
   IC_SOCK_BUF_PAGE *free_rec_pages;
-  IC_SOCK_BUF_PAGE *free_ndb_signals;
-  IC_NDB_SIGNAL *first_received_signal;
+  IC_SOCK_BUF_PAGE *free_ndb_messages;
+  IC_SOCK_BUF_PAGE *first_received_message;
+  IC_SOCK_BUF_PAGE *last_received_message;
   struct ic_apid_connection *apid_conn;
+  gboolean thread_wait_cond;
   GMutex *mutex;
   GCond *cond;
 };
@@ -173,7 +245,7 @@ typedef struct ic_grid_comm IC_GRID_COMM;
 struct ic_apid_global
 {
   IC_SOCK_BUF *mem_buf_pool;
-  IC_SOCK_BUF *ndb_signal_pool;
+  IC_SOCK_BUF *ndb_message_pool;
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_bitmap;
@@ -188,7 +260,8 @@ typedef struct ic_apid_global IC_APID_GLOBAL;
 struct ic_apid_connection;
 struct ic_apid_connection_ops
 {
-  void (*ic_free) (struct ic_apid_connection* apid_conn);
+  int (*ic_poll) (struct ic_apid_connection *apid_conn, glong wait_time);
+  void (*ic_free) (struct ic_apid_connection *apid_conn);
 };
 typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 

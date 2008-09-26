@@ -47,4 +47,5 @@ typedef struct ic_config_err IC_CONFIG_ERROR;
 #define IC_ERROR_NODE_DOWN 7021
 #define IC_ERROR_NO_SUCH_CLUSTER 7022
 #define IC_ERROR_NO_SUCH_NODE 7023
+#define IC_ERROR_MESSAGE_CHECKSUM 7024
 #endif

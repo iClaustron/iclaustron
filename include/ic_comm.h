@@ -113,6 +113,8 @@ struct ic_connect_operations
                                guint32 tot_size,
                                guint32 secs_to_try);
   int (*ic_flush_connection) (struct ic_connection *conn);
+  /* This call is used to check if there is data to be read on the socket */
+  gboolean (*ic_check_for_data) (struct ic_connection *conn);
   /*
     In order to support multiple threads using the same connection
     object at the same time we need to declare open and close of
@@ -530,11 +532,22 @@ struct ic_sock_buf_operations
 };
 typedef struct ic_sock_buf_operations IC_SOCK_BUF_OPERATIONS;
 
+/*
+  We want to ensure that the buffer is 64 bytes to avoid false cache sharing
+  on most platforms (there are some exceptions using 256 byte cache line sizes
+  that we will ignore).
+*/
+#define NOT_USED_AREA 64 - ((2*sizeof(struct ic_sock_buf_page*)) -
+        sizeof(gchar*) - (6 * sizeof(guint32)))
 struct ic_sock_buf_page
 {
   struct ic_sock_buf_page *next_sock_buf_page;
-  gchar *sock_buf_page;
+  struct ic_sock_buf_page *prev_sock_buf_page;
+  gchar *sock_buf;
   guint32 size;
+  guint32 num_users;
+  guint32 opaque_area[4];
+  guint8 not_used_area[NOT_USED_AREA];
 };
 typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
 

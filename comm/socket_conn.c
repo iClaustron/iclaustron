@@ -22,6 +22,7 @@
 #endif
 #include <errno.h>
 #include <ic_common.h>
+#include <poll.h>
 
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
@@ -30,6 +31,21 @@ static void destroy_timers(IC_CONNECTION *conn);
 static void destroy_mutexes(IC_CONNECTION *conn);
 
 static int close_socket_connection(IC_CONNECTION *conn);
+
+static gboolean
+check_for_data_on_connection(IC_CONNECTION *conn)
+{
+  struct pollfd poll_struct;
+  int ret_code;
+
+  poll_struct.events= POLLRDNORM;
+  poll_struct.fd= conn->rw_sockfd;
+  ret_code= poll(&poll_struct, 1, 0);
+  if (ret_code > 0)
+    return TRUE;
+  else
+    return FALSE;
+}
 
 static void
 lock_connect_mutex(IC_CONNECTION *conn)
@@ -1226,6 +1242,7 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_close_connection= close_socket_connection;
   conn->conn_op.ic_close_listen_connection= close_listen_socket_connection;
   conn->conn_op.ic_read_connection = read_socket_connection;
+  conn->conn_op.ic_check_for_data= check_for_data_on_connection;
   conn->conn_op.ic_free_connection= free_socket_connection;
   conn->conn_op.ic_read_stat_connection= read_stat_socket_connection;
   conn->conn_op.ic_safe_read_stat_connection= safe_read_stat_socket_conn;

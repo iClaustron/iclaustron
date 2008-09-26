@@ -1659,6 +1659,8 @@ ic_init_error_messages()
     "No such cluster";
   ic_error_str[IC_ERROR_NODE_DOWN - IC_FIRST_ERROR]=
     "No such node exists in this cluster";
+  ic_error_str[IC_ERROR_MESSAGE_CHECKSUM - IC_FIRST_ERROR]=
+    "Message received with wrong checksum";
 }
 
 void

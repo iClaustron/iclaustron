@@ -62,8 +62,8 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   if (!(apid_global->mem_buf_pool= ic_create_socket_membuf(IC_MEMBUF_SIZE,
                                                            512)))
     goto error;
-  if (!(apid_global->ndb_signal_pool= ic_create_socket_membuf(
-                                         sizeof(IC_NDB_SIGNAL), 2048)))
+  if (!(apid_global->ndb_message_pool= ic_create_socket_membuf(
+                                         sizeof(IC_NDB_MESSAGE), 2048)))
     goto error;
   if (!(apid_global->thread_id_mutex= g_mutex_new()))
     goto error;
@@ -104,7 +104,7 @@ void
 ic_end_apid(IC_APID_GLOBAL *apid_global)
 {
   IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
-  IC_SOCK_BUF *ndb_signal_pool= apid_global->ndb_signal_pool;
+  IC_SOCK_BUF *ndb_message_pool= apid_global->ndb_message_pool;
   IC_GRID_COMM *grid_comm= apid_global->grid_comm;
   IC_CLUSTER_COMM *cluster_comm;
   IC_SEND_NODE_CONNECTION *send_node_conn;
@@ -116,8 +116,8 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
     ic_free_bitmap(apid_global->cluster_bitmap);
   if (mem_buf_pool)
     mem_buf_pool->sock_buf_op.ic_free_sock_buf(mem_buf_pool);
-  if (ndb_signal_pool)
-    ndb_signal_pool->sock_buf_op.ic_free_sock_buf(ndb_signal_pool);
+  if (ndb_message_pool)
+    ndb_message_pool->sock_buf_op.ic_free_sock_buf(ndb_message_pool);
   if (apid_global->mutex)
     g_mutex_free(apid_global->mutex);
   if (apid_global->cond)
@@ -629,7 +629,7 @@ prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
   loc_last_send= send_node_conn->first_sbp;
   do
   {
-    write_vector[iovec_index].iov_base= loc_last_send->sock_buf_page;
+    write_vector[iovec_index].iov_base= loc_last_send->sock_buf;
     write_vector[iovec_index].iov_len= loc_last_send->size;
     iovec_index++;
     loc_send_size+= loc_last_send->size;
@@ -964,12 +964,12 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
   thread.
 
   The actual handling of the NDB Signal is handled by the application thread.
-  This thread receives a IC_NDB_SIGNAL struct which gives all information
+  This thread receives a IC_NDB_MESSAGE struct which gives all information
   about the signal, including a reference to the IC_SOCK_BUF_PAGE such that
   the last executer of a signal in a page can return the page to the free
   area.
 
-  We get IC_NDB_SIGNAL structs from a free list of IC_SOCK_BUF_PAGE which uses
+  We get IC_NDB_MESSAGE structs from a free list of IC_SOCK_BUF_PAGE which uses
   a size which is appropriate for the NDB Signal objects. In the same manner
   we allocate pages to receive into from a free list of IC_SOCK_BUF_PAGE with
   an appropriate page size for receiving into.
@@ -1000,10 +1000,10 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
   
   In addition as an extra security precaution we can have a thread that
   walks around the IC_THREAD_CONNECTION and if it finds a slow thread it
-  moves the signals from its buffers into packed buffers to avoid that
-  it holds up lots of memory to contain a short signal. Eventually we
+  moves the messages from its buffers into packed buffers to avoid that
+  it holds up lots of memory to contain a short message. Eventually we
   could also decide to kill the thread from an NDB point of view. This
-  would mean drop all signals and set the iClaustron Data Server API in
+  would mean drop all messages and set the iClaustron Data Server API in
   such a state that the only function allowed is to deallocate the objects
   allocated in this thread. This does also require a possibility to inform
   DBTC that this thread has been dropped.
@@ -1012,30 +1012,226 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
 #define NUM_RECEIVE_PAGES_ALLOC 2
 #define NUM_NDB_SIGNAL_ALLOC 32
 #define MIN_NDB_HEADER_SIZE 12
+#define NUM_THREAD_LISTS 16
+#define MAX_LOOP_CHECK 100000
+#define IC_MAX_TIME 10000000
 
-/*
-  We get a linked list of IC_SOCK_BUF_PAGE which each contain a reference
-  to a IC_NDB_SIGNALS object. We will ensure that these messages are posted
-  to the proper thread. They will be put in a linked list of NDB signals
-  waiting to be executed by this application thread.
-*/
 static void
-post_ndb_signal(IC_SOCK_BUF_PAGE *ndb_signal_pages,
-                IC_SOCK_BUF_PAGE *buf_page,
-                IC_THREAD_CONNECTION **thd_conn)
+set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn)
 {
+  thd_conn->first_received_message= NULL;
+  thd_conn->last_received_message= NULL;
+}
+
+static IC_SOCK_BUF_PAGE*
+get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time)
+{
+  GTimeVal stop_timer;
+  IC_THREAD_CONNECTION *thd_conn= apid->thread_conn;
+  IC_SOCK_BUF_PAGE *sock_buf_page;
+  g_mutex_lock(thd_conn->mutex);
+  sock_buf_page= thd_conn->first_received_message;
+  if (sock_buf_page)
+    set_sock_buf_page_empty(thd_conn);
+  else if (wait_time)
+  {
+    g_get_current_time(&stop_timer);
+    g_time_val_add(&stop_timer, wait_time);
+    thd_conn->thread_wait_cond= TRUE;
+    g_cond_timed_wait(thd_conn->mutex, thd_conn->cond, stop_timer);
+    sock_buf_page= thd_conn->first_received_message;
+    if (sock_buf_page)
+      set_sock_buf_page_empty(thd_conn);
+  }
+  g_mutex_unlock(thd_conn->mutex);
+  return sock_buf_page;
 }
 
 /*
-  A complete signal has been received and is pointed to by read_ptr, we will
-  now fill in the IC_NDB_SIGNALS object such that it is efficient to
+  We get a linked list of IC_SOCK_BUF_PAGE which each contain a reference
+  to a list of IC_NDB_MESSAGE object. We will ensure that these messages are
+  posted to the proper thread. They will be put in a linked list of NDB
+  messages waiting to be executed by this application thread.
+*/
+static int
+post_ndb_messages(IC_SOCK_BUF_PAGE **ndb_message_pages,
+                 IC_THREAD_CONNECTION *thd_conn,
+                 int min_hash_index,
+                 int max_hash_index)
+{
+  int i;
+  guint32 j, send_index, receiver_module_id, loop_count, temp;
+  guint32 num_sent[IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS];
+  gboolean signal_flag= FALSE;
+  IC_SOCK_BUF_PAGE *ndb_message_page, *next_ndb_message_page;
+  IC_NDB_MESSAGE *ndb_message;
+  IC_THREAD_CONNECTION *loc_thd_conn;
+
+  memset(&num_sent[0],
+         sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS), 0);
+  for (i= min_hash_index; i < max_hash_index; i++)
+  {
+    ndb_message_page= ndb_message_pages[i];
+    if (!ndb_message_page)
+      continue;
+    loop_count= 0;
+    do
+    {
+      ndb_message= (IC_NDB_MESSAGE*)ndb_message_page->sock_buf;
+      next_ndb_message_page= ndb_message_page->next_sock_buf_page;
+      receiver_module_id= ndb_message->receiver_module_id;
+      send_index= receiver_module_id / NUM_THREAD_LISTS;
+      temp= num_sent[send_index];
+      if (!temp)
+        g_mutex_lock(thd_conn[receiver_module_id].mutex);
+      num_sent[send_index]= temp + 1;
+      /* Link it into list on this thread connection object */
+      loc_thd_conn= &thd_conn[receiver_module_id];
+      if (loc_thd_conn->first_received_message)
+      {
+        /* Link signal into the queue last */
+        ndb_message_page->next_sock_buf_page= NULL;
+        loc_thd_conn->last_received_message->next_sock_buf_page=
+          ndb_message_page;
+        loc_thd_conn->last_received_message= ndb_message_page;
+      }
+      else
+      {
+        loc_thd_conn->first_received_message= ndb_message_page;
+        loc_thd_conn->last_received_message= ndb_message_page;
+      }
+      if (!next_ndb_message_page)
+        break;
+      g_assert(++loop_count > MAX_LOOP_CHECK);
+    } while (TRUE);
+    for (j= 0; j < NUM_THREAD_LISTS; j++)
+    {
+      if (already_locked[j])
+      {
+        if (thd_conn[j].thread_wait_cond)
+        {
+          thd_conn[j].thread_wait_cond= FALSE;
+          signal_flag= TRUE;
+        }
+        g_mutex_unlock(thd_conn[j].mutex);
+        if (signal_flag)
+        {
+          /* Thread is waiting for our wake-up signal, wake it up */
+          g_cond_signal(thd_conn[j].cond);
+          signal_flag= FALSE;
+        }
+        already_locked[j]= FALSE;
+      }
+    }
+  }
+  return 0;
+}
+
+/*
+  A complete message has been received and is pointed to by read_ptr, we will
+  now fill in the IC_NDB_MESSAGE object such that it is efficient to
   execute the query.
 */
 static int
-create_ndb_signal(gchar *read_ptr,
-                  guint32 message_size,
-                  IC_SOCK_BUF_PAGE *ndb_signal_page)
+create_ndb_message(gchar *read_ptr,
+                   guint32 message_size,
+                   guint32 receiver_node_id,
+                   guint32 sender_node_id,
+                   IC_SOCK_BUF_PAGE *buf_page,
+                   IC_NDB_MESSAGE *ndb_message)
 {
+  guint32 word1, word2, word3;
+  guint32 num_segments, fragmentation_bits, i;
+  guint32 *message_ptr= (guint32*)read_ptr;
+  guint32 chksum, message_id_used, chksum_used, start_segment_word;
+
+#ifdef HAVE_ENDIAN_SUPPORT
+  word1= message_ptr[0];
+  if ((word1 & 1) != glob_byte_order)
+  {
+    if ((word1 & 1) == 0)
+    {
+      /* Change byte order for entire message from low endian to big endian */
+      word1= g_htonl(word1);
+      for (i= 1; i < message_size; i++)
+        message_ptr[i]= g_htonl(message_ptr[i]);
+    }
+    else
+    {
+      /* Change byte order for entire message from big endian to low endian */
+      word1= g_ntohl(word1);
+      for (i= 1; i < message_size; i++)
+        message_ptr[i]= g_ntohl(message_ptr[i]);
+    }
+  }
+#endif
+  word1= message_ptr[0];
+  word2= message_ptr[1];
+  word3= message_ptr[2];
+
+  ndb_message->buf_page= buf_page;
+  ndb_message->message_header= (guint32*)read_ptr;
+  /* Get message priority from Bit 5-6 in word 1 */
+  ndb_message->message_priority= (word1 >> 5) & 3;
+  /* Get total message size from Bit 8-23 in word 1 */
+  ndb_message->tot_message_size= message_size;
+  /* Get fragmentation bits from bit 1 and bit 25 in word 1 */
+  fragmentation_bits= (word1 >> 1) & 1;
+  fragmentation_bits+= ((word1 >> 25) & 1) << 1;
+  ndb_message->fragmentation_bits= fragmentation_bits;
+  /* Get short data size from Bit 26-30 (Max 25 words) in word 1 */
+  ndb_message->short_data_size= (word1 >> 26) & 0x1F;
+  g_assert(ndb_message->short_data_size <= 25);
+
+  /* Get message number from Bit 0-19 in word 2 */
+  ndb_message->message_number= word2 & 0x7FFFF;
+  /* Get trace number from Bit 20-25 in word 2 */
+  ndb_message->trace_num= (word2 >> 20) & 0x3F;
+
+  ndb_message->receiver_node_id= receiver_node_id;
+  ndb_message->sender_node_id= sender_node_id;
+  /* Get senders module id from Bit 0-15 in word 3 */
+  ndb_message->sender_module_id= word3 & 0xFFFF;
+  /* Get receivers module id from Bit 16-31 in word 3 */
+  ndb_message->receiver_module_id= word3 >> 16;
+
+  ndb_message->segments[0]= NULL;
+  ndb_message->segments[1]= NULL;
+  ndb_message->segments[2]= NULL;
+  ndb_message->message_id= 0;
+  ndb_message->short_data_ptr= &message_ptr[3];
+
+  /* Get message id flag from Bit 2 in word 1 */
+  message_id_used= word1 & 4;
+  /* Get checksum used flag from Bit 4 in word 1 */
+  chksum_used= word1 & 0x10;
+  /* Get number of segments from Bit 26-27 in word 2 */
+  num_segments= (word2 >> 26) & 3;
+  ndb_message->num_segments= num_segments;
+  
+  start_segment_word= 3;
+  if (message_id_used)
+  {
+    ndb_message->short_data_ptr= &message_ptr[4];
+    ndb_message->message_id= message_ptr[3];
+    start_segment_word= 4;
+  }
+  start_segment_word+= ndb_message->short_data_size;
+  ndb_message->segment_size= &message_ptr[start_segment_word];
+  start_segment_word+= num_segments;
+  for (i= 0; i < num_segments; i++)
+  {
+    ndb_message->segments[i]= &message_ptr[start_segment_word];
+    start_segment_word+= ndb_message->segment_size[i];
+  }
+  if (!chksum_used)
+    return 0;
+  /* We need to check the checksum first, before handling the message. */
+  chksum= 0;
+  for (i= 0; i < message_size; i++)
+    chksum^= message_ptr[i];
+  if (chksum)
+    return IC_ERROR_MESSAGE_CHECKSUM;
   return 0;
 }
 
@@ -1059,158 +1255,195 @@ init_ndb_receiver(IC_NDB_RECEIVE_STATE *rec_state,
             &thd_conn->free_rec_pages,
             NUM_RECEIVE_PAGES_ALLOC)))
       return 1;
-    memcpy(buf_page->sock_buf_page, start_buf, start_size);
+    memcpy(buf_page->sock_buf, start_buf, start_size);
     rec_state->buf_page= buf_page;
   }
   return 0;
 }
 
 static int
-post_ndb_signals(IC_SOCK_BUF_PAGE *ndb_signals,
-                 IC_SOCK_BUF_PAGE *receive_page,
-                 IC_THREAD_CONNECTION *thd_conn)
-{
-  return 0;
-}
-
-static int
 read_message_size(gchar *read_ptr)
 {
-  return 0;
+  guint32 *message_ptr= (guint32*)read_ptr, word1;
+
+  word1= message_ptr[0];
+#ifdef HAVE_ENDIAN_SUPPORT
+  if ((word1 & 1) != glob_byte_order)
+  {
+    if ((word1 & 1) == 0)
+      word1= g_htonl(word1);
+    else
+      word1= g_ntohl(word1);
+  }
+#endif
+  return (word1 >> 8) & 0xFFFF;
 }
 
+#define MAX_NDB_RECEIVE_LOOPS 16
 int
 ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
+            guint32 my_node_id,
             IC_THREAD_CONNECTION *thd_conn)
 {
   IC_CONNECTION *conn= rec_state->conn;
   IC_SOCK_BUF *rec_buf_pool= rec_state->rec_buf_pool;
   IC_SOCK_BUF *message_pool= rec_state->message_pool;
-  guint32 read_size= rec_state->read_size;
+  guint32 read_size= rec_state->read_size, real_read_size;
   gboolean read_header_flag= rec_state->read_header_flag;
   gchar *read_ptr;
   guint32 page_size= rec_buf_pool->page_size;
   guint32 start_size, message_size;
+  int hash_index;
+  int min_hash_index= NUM_THREAD_LISTS;
+  int max_hash_index= (int)-1;
+  guint32 loop_count= 0;
   int ret_code;
-  gboolean any_signal_received= FALSE;
+  gboolean any_message_received= FALSE;
+  gboolean read_more;
   IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
-  IC_SOCK_BUF_PAGE *ndb_signal_page;
-  IC_SOCK_BUF_PAGE *first_ndb_signal_page= NULL;
-  IC_SOCK_BUF_PAGE *last_ndb_signal_page= NULL;
+  IC_SOCK_BUF_PAGE *ndb_message_page;
+  IC_NDB_MESSAGE *ndb_message;
+  IC_SOCK_BUF_PAGE *first_ndb_message_page[NUM_THREAD_LISTS];
+  IC_SOCK_BUF_PAGE *last_ndb_message_page[NUM_THREAD_LISTS];
 
-  g_assert(message_pool->page_size == sizeof(IC_NDB_SIGNAL));
+  g_assert(message_pool->page_size == sizeof(IC_NDB_MESSAGE));
 
+  memset(first_ndb_message_page,
+         sizeof(IC_SOCK_BUF_PAGE*)*NUM_THREAD_LISTS, 0);
+  memset(last_ndb_message_page,
+         sizeof(IC_SOCK_BUF_PAGE*)*NUM_THREAD_LISTS, 0);
   /*
     We get a receive buffer from the global pool of free buffers.
     This buffer will be returned to the free pool by the last
     thread that executes a message in this pool.
   */
-  if (read_size == 0)
+  while (1)
   {
-    if (!(buf_page= rec_buf_pool->sock_buf_op.ic_get_sock_buf_page(
-            rec_buf_pool,
-            &thd_conn->free_rec_pages,
-            NUM_RECEIVE_PAGES_ALLOC)))
-      goto mem_pool_error;
-  }
-  else
-    buf_page= rec_state->buf_page;
-  read_ptr= buf_page->sock_buf_page;
-  start_size= read_size;
-  ret_code= conn->conn_op.ic_read_connection(conn,
-                                             read_ptr + read_size,
-                                             page_size - read_size,
-                                             &read_size);
-  if (!ret_code)
-  {
-    /*
-      We received data in the NDB Protocol, now chunk it up in its
-      respective NDB Signals and send those NDB Signals to the
-      thread that expects them. The actual execution of the NDB
-      Signals happens in the thread that the NDB Signal is destined
-      for.
-    */
-    read_size+= start_size;
-    /*
-      Check that we have at least received the header of the next
-      NDB Signal first, this is at least 12 bytes in size in the
-      NDB Protocol.
-    */
-    while (read_size >= MIN_NDB_HEADER_SIZE)
+    if (read_size == 0)
     {
-      if (!read_header_flag)
-      {
-        message_size= read_message_size(read_ptr);
-        read_header_flag= TRUE;
-      }
-      if (message_size > read_size)
-        break;
-      if (!(ndb_signal_page= message_pool->sock_buf_op.ic_get_sock_buf_page(
-              message_pool,
-              &thd_conn->free_ndb_signals,
-              NUM_NDB_SIGNAL_ALLOC)))
+      if (!(buf_page= rec_buf_pool->sock_buf_op.ic_get_sock_buf_page(
+              rec_buf_pool,
+              &thd_conn->free_rec_pages,
+              NUM_RECEIVE_PAGES_ALLOC)))
         goto mem_pool_error;
-      if (!first_ndb_signal_page)
+    }
+    else
+      buf_page= rec_state->buf_page;
+    read_ptr= buf_page->sock_buf;
+    start_size= read_size;
+    ret_code= conn->conn_op.ic_read_connection(conn,
+                                               read_ptr + read_size,
+                                               page_size - read_size,
+                                               &real_read_size);
+    if (!ret_code)
+    {
+      /*
+        We received data in the NDB Protocol, now chunk it up in its
+        respective NDB messages and send those NDB messages to the
+        thread that expects them. The actual execution of the NDB
+        messages happens in the thread that the NDB message is destined
+        for.
+
+        We check to see if we read an entire page in which case we
+        might have more data to read.
+      */
+      read_size= start_size + real_read_size;
+      read_more= (read_size == page_size);
+      /*
+        Check that we have at least received the header of the next
+        NDB message first, this is at least 12 bytes in size in the
+        NDB Protocol.
+      */
+      while (read_size >= MIN_NDB_HEADER_SIZE)
       {
-        first_ndb_signal_page= ndb_signal_page;
-        last_ndb_signal_page= ndb_signal_page;
+        if (!read_header_flag)
+        {
+          message_size= read_message_size(read_ptr);
+          read_header_flag= TRUE;
+        }
+        if (message_size > read_size)
+          break;
+        if (!(ndb_message_page= message_pool->sock_buf_op.ic_get_sock_buf_page(
+                message_pool,
+                &thd_conn->free_ndb_messages,
+                NUM_NDB_SIGNAL_ALLOC)))
+          goto mem_pool_error;
+        ndb_message_page->sock_buf_page= (gchar*)buf_page;
+        ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*
+          &ndb_message_page->opaque_area[0];
+        ndb_message_opaque->message_offset= read_ptr - buf_page->sock_buf;
+        ndb_message_opaque->sender_node_id= rec_state->node_id;
+        ndb_message_opaque->receiver_node_id= my_node_id;
+        ndb_message_opaque->num_users_to_release= 0;
+        hash_index= ndb_message->receiver_module_id &
+                    (NUM_THREAD_LISTS - 1);
+        min_hash_index= IC_MIN(min_hash_index, hash_index);
+        max_hash_index= IC_MAX(max_hash_index, hash_index);
+        if (!first_ndb_message_page[hash_index])
+        {
+          first_ndb_message_page[hash_index]= ndb_message_page;
+          last_ndb_message_page[hash_index]= ndb_message_page;
+        }
+        else
+        {
+          ndb_message_page->next_sock_buf_page= NULL;
+          last_ndb_message_page[hash_index]->next_sock_buf_page=
+            ndb_message_page;
+          last_ndb_message_page[hash_index]= ndb_message_page;
+        }
+        any_message_received= TRUE;
+        read_header_flag= FALSE;
+        read_size-= message_size;
+        read_ptr+= message_size;
+      }
+      if (read_size > 0)
+      {
+        /* We received an incomplete NDB Signal */
+        if (any_message_received)
+        {
+          /*
+            At least one message was received and we need to post
+            these NDB Signals and thus we need to transfer the
+            incomplete message before posting the messages. When
+            the messages have been posted another thread can get
+            access to the socket buffer page and even release
+            it before we have transferred the incomplete message
+            if we post before we transfer the incomplete message.
+          */
+          if (!(new_buf_page= rec_buf_pool->sock_buf_op.ic_get_sock_buf_page(
+                  rec_buf_pool,
+                  &thd_conn->free_rec_pages,
+                  NUM_RECEIVE_PAGES_ALLOC)))
+            goto mem_pool_error;
+
+          memcpy(new_buf_page->sock_buf,
+                 buf_page->sock_buf,
+                 read_size);
+          rec_state->buf_page= new_buf_page;
+          rec_state->read_size= read_size;
+          rec_state->read_header_flag= read_header_flag;
+        }
       }
       else
       {
-        ndb_signal_page->next_sock_buf_page= last_ndb_signal_page;
-        last_ndb_signal_page= ndb_signal_page;
+        rec_state->buf_page= NULL;
+        rec_state->read_size= 0;
+        rec_state->read_header_flag= FALSE;
       }
-      if ((ret_code= create_ndb_signal(read_ptr,
-                                       message_size,
-                                       ndb_signal_page)))
-        goto end; /* Protocol error discovered */
-
-      any_signal_received= TRUE;
-      read_header_flag= FALSE;
-      read_size-= message_size;
-      read_ptr+= message_size;
+      if (read_more && loop_count++ < MAX_NDB_RECEIVE_LOOPS)
+        continue;
+      post_ndb_messages(&first_ndb_message_page[0],
+                        thd_conn,
+                        min_hash_index,
+                        max_hash_index);
+      return 0;
     }
-    if (read_size > 0)
-    {
-      /* We received an incomplete NDB Signal */
-      if (any_signal_received)
-      {
-        /*
-          At least one signal was received and we need to post
-          these NDB Signals and thus we need to transfer the
-          incomplete message before posting the signals. When
-          the signals have been posted another thread can get
-          access to the socket buffer page and even release
-          it before we have transferred the incomplete message
-          if we post before we transfer the incomplete message.
-        */
-        if (!(new_buf_page= rec_buf_pool->sock_buf_op.ic_get_sock_buf_page(
-                rec_buf_pool,
-                &thd_conn->free_rec_pages,
-                NUM_RECEIVE_PAGES_ALLOC)))
-          goto mem_pool_error;
-
-        memcpy(new_buf_page->sock_buf_page,
-               buf_page->sock_buf_page,
-               read_size);
-        post_ndb_signals(first_ndb_signal_page, buf_page, thd_conn);
-        rec_state->buf_page= new_buf_page;
-        rec_state->read_size= read_size;
-        rec_state->read_header_flag= read_header_flag;
-      }
-    }
-    else
-    {
-      post_ndb_signals(ndb_signal_page, buf_page, thd_conn);
-      rec_state->buf_page= NULL;
-      rec_state->read_size= 0;
-      rec_state->read_header_flag= FALSE;
-    }
-    return 0;
+    break;
   }
   if (ret_code == END_OF_FILE)
     ret_code= 0;
 end:
+/*
   while (thd_conn->free_rec_pages)
   {
     buf_page= thd_conn->free_rec_pages;
@@ -1218,20 +1451,22 @@ end:
     rec_buf_pool->sock_buf_op.ic_return_sock_buf_page(rec_buf_pool,
                                                       buf_page);
   }
-  while (thd_conn->free_ndb_signals)
+  while (thd_conn->free_ndb_messages)
   {
-    ndb_signal_page= thd_conn->free_ndb_signals;
-    thd_conn->free_ndb_signals= thd_conn->free_ndb_signals->next_sock_buf_page;
+    ndb_message_page= thd_conn->free_ndb_messages;
+    thd_conn->free_ndb_messages=
+      thd_conn->free_ndb_messages->next_sock_buf_page;
     message_pool->sock_buf_op.ic_return_sock_buf_page(message_pool,
-                                                      ndb_signal_page);
+                                                      ndb_message_page);
   }
-  while (first_ndb_signal_page)
+  while (first_ndb_message_page)
   {
-    ndb_signal_page= first_ndb_signal_page;
-    first_ndb_signal_page= first_ndb_signal_page->next_sock_buf_page;
+    ndb_message_page= first_ndb_message_page;
+    first_ndb_message_page= first_ndb_message_page->next_sock_buf_page;
     message_pool->sock_buf_op.ic_return_sock_buf_page(message_pool,
-                                                      ndb_signal_page);
+                                                      ndb_message_page);
   }
+*/
   return ret_code;
 mem_pool_error:
   ret_code= 1;

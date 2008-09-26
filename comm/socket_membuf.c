@@ -54,6 +54,7 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
   for (i= 0; i < num_pages; i++)
   {
     next_page->size= 0;
+    next_page->num_users= 0;
     next_page= next_page->next_sock_buf_page;
   }
   /* Initialise local free list */
@@ -110,7 +111,7 @@ set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
   for (i= 0; i < no_of_pages; i++)
   {
     sock_buf_page_ptr= (IC_SOCK_BUF_PAGE*)buf_page_ptr;
-    sock_buf_page_ptr->sock_buf_page= loop_ptr;
+    sock_buf_page_ptr->sock_buf= loop_ptr;
     new_buf_page_ptr= (buf_page_ptr + sizeof(IC_SOCK_BUF_PAGE));
     sock_buf_page_ptr->next_sock_buf_page= (IC_SOCK_BUF_PAGE*)new_buf_page_ptr;
     loop_ptr+= page_size;

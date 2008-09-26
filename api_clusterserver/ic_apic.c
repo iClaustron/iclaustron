@@ -4373,13 +4373,45 @@ handle_convert_transporter_request(IC_CONNECTION *conn, guint32 client_nodeid)
   DEBUG_RETURN(0);
 }
 
+/*
+  report event
+  ------------
+  This protocol is used by the ndbd nodes to report shutdown of their process.
+  The data contained in the protocol message is the same as the data sent in
+  a EVENT_REP signal used by the NDB Protocol but instead a separate NDB MGM
+  Protocol connection is opened up and used to report this special event.
+
+  Data[0]:
+  Bit 0-15 contains Event Type (always 27 in this case which means a shutdown
+           has been completed).
+  Bit 16-31 contains the node id of the node being shutdown.
+  Data[1]:
+  0:       Means it isn't restarting
+  1:       Means restart and not initial restart
+  2:       Means start from initial state
+  4:       Another variant of initial restart
+  Data[2]:
+  OS Signal which caused shutdown (e.g. 11 for segmentation fault)
+
+  If the shutdown was caused by an error there are three more words, for
+  graceful shutdown only the above words are set.
+
+  Data[4]:
+  Error number
+  Data[5]:
+  Start phase when error occurred
+  Data[6]:
+  Always equal to 0
+  TODO: Should direct output to file instead
+*/
 static int
-handle_report_event(IC_RUN_CLUSTER_SERVER *run_obj, IC_CONNECTION *conn)
+handle_report_event(IC_CONNECTION *conn)
 {
   guint64 num_array[32], length;
   gchar *read_buf;
-  guint32 read_size, i;
+  guint32 read_size;
   int error;
+  guint32 report_node_id, os_signal_num, error_num= 0, start_phase= 0;
   DEBUG_ENTRY("handle_report_event");
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
@@ -4392,12 +4424,32 @@ handle_report_event(IC_RUN_CLUSTER_SERVER *run_obj, IC_CONNECTION *conn)
     goto error;
   if ((error= rec_simple_str(conn, ic_empty_string)))
     goto error;
-  for (i= 0; i < length; i++)
-    printf("Number[%u] = %u\n", i, (guint32)num_array[i]);
   if ((error= ic_send_with_cr(conn, report_event_reply_str)) ||
       (error= ic_send_with_cr(conn, result_ok_str)) ||
       (error= ic_send_with_cr(conn, ic_empty_string)))
     goto error;
+  report_node_id= num_array[0] >> 16;
+  g_assert((num_array[0] & 0xFFFF) == 59);
+  if (num_array[1] == 0)
+    printf("Node %u has shutdown", report_node_id);
+  else if (num_array[1] == 1)
+    printf("Node %u has restarted", report_node_id);
+  else
+    printf("Node %u has performed initial restart", report_node_id);
+  if (length == (guint64)3)
+  {
+    printf(" due to graceful shutdown\n");
+  }
+  else
+  {
+    g_assert(length == (guint64)6);
+    g_assert(num_array[5] == 0);
+    os_signal_num= num_array[2];
+    error_num= num_array[3];
+    start_phase= num_array[4];
+    printf(" due to error %u, OS Signal %u in startphase %u\n",
+           error_num, os_signal_num, start_phase);
+  }
   DEBUG_RETURN(0);
 error:
   DEBUG_RETURN(PROTOCOL_ERROR);
@@ -4520,13 +4572,12 @@ run_handle_config_request(gpointer data)
                        strlen(report_event_str)))
         {
           /* Handle report event */
-          if ((error= handle_report_event(run_obj, conn)))
+          if ((error= handle_report_event(conn)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
               ("Error from handle_report_event, code = %u", error));
           }
-          break;
-          /* No change of state, still ready for more input */
+          break; /* The report event is always done in separate connection */
         }
         goto error;
       case WAIT_GET_NODEID:
@@ -4590,6 +4641,7 @@ run_handle_config_request(gpointer data)
         ("Error from handle_convert_transporter_request, code = %u", error));
             goto error;
           }
+          /* At this point the connection is turned into a NDB Protocol connection */
           state= 100; /* Need more work, TODO */
           break;
         }
