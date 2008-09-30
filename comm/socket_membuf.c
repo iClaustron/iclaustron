@@ -54,7 +54,7 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
   for (i= 0; i < num_pages; i++)
   {
     next_page->size= 0;
-    next_page->num_users= 0;
+    next_page->ref_count= 0;
     next_page= next_page->next_sock_buf_page;
   }
   /* Initialise local free list */

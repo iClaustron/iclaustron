@@ -71,14 +71,25 @@ typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 #define IC_MESSAGE_FRAGMENT_INTERMEDIATE 2
 #define IC_MESSAGE_FRAGMENT_LAST 3
 
+struct ic_message_error_object
+{
+  int error;
+  gchar *error_string;
+  int error_category;
+  int error_severity;
+};
+typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
+
 struct ic_ndb_message_opaque_area
 {
   guint32 message_offset;
   guint32 sender_node_id;
   guint32 receiver_node_id;
-  guint32 num_users_to_release;
+  guint32 ref_count_releases;
+  guint32 receiver_module_id;
+  guint32 version_num; /* Always 0 currently */
 };
-typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA
+typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA;
 
 struct ic_ndb_message
 {
@@ -90,15 +101,12 @@ struct ic_ndb_message
     This is needed to ensure that we can efficiently release the page when
     all messages have been executed.
   */
-  guint32 *short_data_ptr;
-  guint32 *segment_ptr[3];
-  guint32 *segment_size_ptr;
-
-  IC_SOCK_BUF_PAGE *buf_page;
+  guint32 *segment_ptr[4];
+  guint32 segment_size[4];
 
   /* Trace number and message id are mostly for debug information.  */
   guint32 message_id;
-  guint8  trace_num;
+  guint32 trace_num;
   /*
      There can be up to 3 segments in a  message in addition to the always
      existing short data part which can have a maximum 25 words.
@@ -114,11 +122,9 @@ struct ic_ndb_message
      The offset to the segment sizes are
      message_header[header_size + short_data_size]
   */
-  guint8 num_segments;
-  guint8 short_data_size;
-  guint8 fragmentation_bits;
-  guint8 message_priority;
-  guint8 header_size;
+  guint32 num_segments;
+  guint32 message_priority;
+  guint32 fragmentation_bits;
 
   /*
     The message number is the actual number indicating which message this is.
@@ -126,19 +132,16 @@ struct ic_ndb_message
     TRANSID_AI and other messages NDB sends. We also keep track of the
     total message size mostly for debug purposes.
   */
-  guint16 segment_offsets[3];
-  guint16 message_number;
-  guint16 tot_message_size;
 
   /*
     We need to keep track of Module id of both the sender and the receiver.
     In reality the address of the sender and the receiver is identified by
     the module id and the node id.
   */
-  guint16 sender_module_id;
-  guint16 receiver_module_id;
-  guint16 sender_node_id;
-  guint16 receiver_node_id;
+  guint32 sender_module_id;
+  guint32 receiver_module_id;
+  guint32 sender_node_id;
+  guint32 receiver_node_id;
 };
 typedef struct ic_ndb_message IC_NDB_MESSAGE;
 

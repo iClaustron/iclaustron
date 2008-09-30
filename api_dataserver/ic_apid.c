@@ -30,6 +30,20 @@ static int real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                               struct iovec *write_vector, guint32 iovec_size,
                               guint32 send_size);
 static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
+static int execute_message(IC_SOCK_BUF_PAGE *ndb_message_page);
+static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
+                              IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
+                              IC_NDB_MESSAGE *ndb_message,
+                              guint32 *message_id);
+static IC_SOCK_BUF_PAGE*
+get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time);
+
+struct link_message_anchors
+{
+  IC_SOCK_BUF_PAGE *first_ndb_message_page;
+  IC_SOCK_BUF_PAGE *last_ndb_message_page;
+};
+typedef struct link_message_anchors LINK_MESSAGE_ANCHORS;
 
 IC_APID_GLOBAL*
 ic_init_apid(IC_API_CONFIG_SERVER *apic)
@@ -1016,6 +1030,165 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
 #define MAX_LOOP_CHECK 100000
 #define IC_MAX_TIME 10000000
 
+struct ic_exec_message_func
+{
+  int (*ic_exec_message_func) (IC_NDB_MESSAGE *message,
+                               IC_MESSAGE_ERROR_OBJECT *error_object);
+};
+typedef struct ic_exec_message_func IC_EXEC_MESSAGE_FUNC;
+
+static IC_EXEC_MESSAGE_FUNC *ic_exec_message_func_array[2][1024];
+
+static int
+execSCAN_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                       IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execPRIMARY_KEY_OP_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execTRANSACTION_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
+                      IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execTRANSACTION_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                       IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execPRIMARY_KEY_OP_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execSCAN_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                      IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+#define IC_SCAN_TABLE_CONF 1
+#define IC_SCAN_TABLE_REF 2
+#define IC_PRIMARY_KEY_OP_CONF 3
+#define IC_PRIMARY_KEY_OP_REF 4
+#define IC_TRANSACTION_CONF 5
+#define IC_TRANSACTION_REF 6
+#define IC_ATTRIBUTE_INFO 7
+
+static void
+initialize_message_func_array()
+{
+  guint32 i;
+  for (i= 0; i < 1024; i++)
+  {
+    ic_exec_message_func_array[0][i]->ic_exec_message_func= NULL;
+    ic_exec_message_func_array[1][i]->ic_exec_message_func= NULL;
+  }
+  ic_exec_message_func_array[0][IC_SCAN_TABLE_CONF]->ic_exec_message_func=
+    execSCAN_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][IC_SCAN_TABLE_REF]->ic_exec_message_func=
+    execSCAN_TABLE_REF_v0;
+  ic_exec_message_func_array[0][IC_TRANSACTION_CONF]->ic_exec_message_func=
+    execTRANSACTION_CONF_v0;
+  ic_exec_message_func_array[0][IC_TRANSACTION_REF]->ic_exec_message_func=
+    execTRANSACTION_REF_v0;
+  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_CONF]->ic_exec_message_func=
+    execPRIMARY_KEY_OP_CONF_v0;
+  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_REF]->ic_exec_message_func=
+    execPRIMARY_KEY_OP_REF_v0;
+  ic_exec_message_func_array[0][IC_ATTRIBUTE_INFO]->ic_exec_message_func=
+    execATTRIBUTE_INFO_v0;
+}
+static IC_EXEC_MESSAGE_FUNC*
+get_exec_message_func(guint32 message_id, guint32 version_num)
+{
+  return ic_exec_message_func_array[0][message_id];
+}
+
+static int
+poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
+{
+  IC_SOCK_BUF_PAGE *ndb_message_page;
+  int error;
+
+  /*
+    We start by getting the messages waiting for us in the send queue, this
+    is the first step in putting together the new scheduler for message
+    handling in the iClaustron API.
+    If no messages are waiting we can wait for a small amount of time
+    before returning, if no messages arrive in this timeframe we'll
+    return anyways. As soon as messages arrive we'll wake up and
+    start executing them.
+  */
+  ndb_message_page= get_thread_messages(apid_conn, wait_time);
+  /*
+  */
+  while (ndb_message_page)
+  {
+    /* Execute one message received */
+    if ((error= execute_message(ndb_message_page)))
+    {
+      /* Error handling */
+      return error;
+    }
+    ndb_message_page= ndb_message_page->next_sock_buf_page;
+  }
+  return 0;
+}
+
+static int
+execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
+{
+  guint32 message_id;
+  IC_NDB_MESSAGE ndb_message;
+  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+  IC_EXEC_MESSAGE_FUNC *exec_message_func;
+  IC_MESSAGE_ERROR_OBJECT error_object;
+
+  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+    &ndb_message_page->opaque_area[0];
+  if (!create_ndb_message(ndb_message_page,
+                          ndb_message_opaque,
+                          &ndb_message,
+                          &message_id))
+  {
+    exec_message_func= get_exec_message_func(message_id,
+                                             ndb_message_opaque->version_num);
+    if (!exec_message_func)
+    {
+       if (exec_message_func->ic_exec_message_func
+             (&ndb_message, &error_object))
+       {
+         /* Handle error */
+         return error_object.error;
+       }
+    }
+    return 0;
+  }
+  return 1;
+}
+
 static void
 set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn)
 {
@@ -1038,7 +1211,7 @@ get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time)
     g_get_current_time(&stop_timer);
     g_time_val_add(&stop_timer, wait_time);
     thd_conn->thread_wait_cond= TRUE;
-    g_cond_timed_wait(thd_conn->mutex, thd_conn->cond, stop_timer);
+    g_cond_timed_wait(thd_conn->cond, thd_conn->mutex, &stop_timer);
     sock_buf_page= thd_conn->first_received_message;
     if (sock_buf_page)
       set_sock_buf_page_empty(thd_conn);
@@ -1054,32 +1227,35 @@ get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time)
   messages waiting to be executed by this application thread.
 */
 static int
-post_ndb_messages(IC_SOCK_BUF_PAGE **ndb_message_pages,
+post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
                  IC_THREAD_CONNECTION *thd_conn,
                  int min_hash_index,
                  int max_hash_index)
 {
   int i;
-  guint32 j, send_index, receiver_module_id, loop_count, temp;
+  guint32 j, send_index, receiver_module_id, loop_count, temp, module_id;
   guint32 num_sent[IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS];
   gboolean signal_flag= FALSE;
-  IC_SOCK_BUF_PAGE *ndb_message_page, *next_ndb_message_page;
-  IC_NDB_MESSAGE *ndb_message;
+  IC_SOCK_BUF_PAGE *ndb_message_page, *next_ndb_message_page, *first_message;
+  LINK_MESSAGE_ANCHORS *ndb_message_anchor;
+  IC_NDB_MESSAGE_OPAQUE_AREA *message_opaque;
   IC_THREAD_CONNECTION *loc_thd_conn;
 
   memset(&num_sent[0],
          sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS), 0);
   for (i= min_hash_index; i < max_hash_index; i++)
   {
-    ndb_message_page= ndb_message_pages[i];
+    ndb_message_anchor= &ndb_message_anchors[i];
+    ndb_message_page= ndb_message_anchor->first_ndb_message_page;
     if (!ndb_message_page)
       continue;
     loop_count= 0;
     do
     {
-      ndb_message= (IC_NDB_MESSAGE*)ndb_message_page->sock_buf;
       next_ndb_message_page= ndb_message_page->next_sock_buf_page;
-      receiver_module_id= ndb_message->receiver_module_id;
+      message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+        &ndb_message_page->opaque_area[0];
+      receiver_module_id= message_opaque->receiver_module_id;
       send_index= receiver_module_id / NUM_THREAD_LISTS;
       temp= num_sent[send_index];
       if (!temp)
@@ -1087,10 +1263,11 @@ post_ndb_messages(IC_SOCK_BUF_PAGE **ndb_message_pages,
       num_sent[send_index]= temp + 1;
       /* Link it into list on this thread connection object */
       loc_thd_conn= &thd_conn[receiver_module_id];
-      if (loc_thd_conn->first_received_message)
+      first_message= loc_thd_conn->first_received_message;
+      ndb_message_page->next_sock_buf_page= NULL;
+      if (first_message)
       {
         /* Link signal into the queue last */
-        ndb_message_page->next_sock_buf_page= NULL;
         loc_thd_conn->last_received_message->next_sock_buf_page=
           ndb_message_page;
         loc_thd_conn->last_received_message= ndb_message_page;
@@ -1106,13 +1283,17 @@ post_ndb_messages(IC_SOCK_BUF_PAGE **ndb_message_pages,
     } while (TRUE);
     for (j= 0; j < NUM_THREAD_LISTS; j++)
     {
-      if (already_locked[j])
+      module_id= (j * NUM_THREAD_LISTS) + i;
+      if (num_sent[j])
       {
         if (thd_conn[j].thread_wait_cond)
         {
           thd_conn[j].thread_wait_cond= FALSE;
           signal_flag= TRUE;
         }
+        message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+          &thd_conn[module_id].last_received_message->opaque_area[0];
+        message_opaque->ref_count_releases= num_sent[j];
         g_mutex_unlock(thd_conn[j].mutex);
         if (signal_flag)
         {
@@ -1120,7 +1301,7 @@ post_ndb_messages(IC_SOCK_BUF_PAGE **ndb_message_pages,
           g_cond_signal(thd_conn[j].cond);
           signal_flag= FALSE;
         }
-        already_locked[j]= FALSE;
+        num_sent[j]= 0;
       }
     }
   }
@@ -1133,16 +1314,15 @@ post_ndb_messages(IC_SOCK_BUF_PAGE **ndb_message_pages,
   execute the query.
 */
 static int
-create_ndb_message(gchar *read_ptr,
-                   guint32 message_size,
-                   guint32 receiver_node_id,
-                   guint32 sender_node_id,
-                   IC_SOCK_BUF_PAGE *buf_page,
-                   IC_NDB_MESSAGE *ndb_message)
+create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
+                   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
+                   IC_NDB_MESSAGE *ndb_message,
+                   guint32 *message_id)
 {
-  guint32 word1, word2, word3;
-  guint32 num_segments, fragmentation_bits, i;
-  guint32 *message_ptr= (guint32*)read_ptr;
+  guint32 word1, word2, word3, receiver_node_id, sender_node_id;
+  guint32 num_segments, fragmentation_bits, i, segment_size;
+  guint32 *segment_size_ptr, message_size;
+  guint32 *message_ptr= (guint32*)message_page->sock_buf;
   guint32 chksum, message_id_used, chksum_used, start_segment_word;
 
 #ifdef HAVE_ENDIAN_SUPPORT
@@ -1169,25 +1349,23 @@ create_ndb_message(gchar *read_ptr,
   word2= message_ptr[1];
   word3= message_ptr[2];
 
-  ndb_message->buf_page= buf_page;
-  ndb_message->message_header= (guint32*)read_ptr;
   /* Get message priority from Bit 5-6 in word 1 */
   ndb_message->message_priority= (word1 >> 5) & 3;
-  /* Get total message size from Bit 8-23 in word 1 */
-  ndb_message->tot_message_size= message_size;
   /* Get fragmentation bits from bit 1 and bit 25 in word 1 */
   fragmentation_bits= (word1 >> 1) & 1;
   fragmentation_bits+= ((word1 >> 25) & 1) << 1;
   ndb_message->fragmentation_bits= fragmentation_bits;
   /* Get short data size from Bit 26-30 (Max 25 words) in word 1 */
-  ndb_message->short_data_size= (word1 >> 26) & 0x1F;
-  g_assert(ndb_message->short_data_size <= 25);
+  ndb_message->segment_size[0]= (word1 >> 26) & 0x1F;
+  g_assert(ndb_message->segment_size[0] <= 25);
 
   /* Get message number from Bit 0-19 in word 2 */
-  ndb_message->message_number= word2 & 0x7FFFF;
+  *message_id= word2 & 0x7FFFF;
   /* Get trace number from Bit 20-25 in word 2 */
   ndb_message->trace_num= (word2 >> 20) & 0x3F;
 
+  receiver_node_id= ndb_message_opaque->receiver_node_id;
+  sender_node_id= ndb_message_opaque->sender_node_id;
   ndb_message->receiver_node_id= receiver_node_id;
   ndb_message->sender_node_id= sender_node_id;
   /* Get senders module id from Bit 0-15 in word 3 */
@@ -1195,11 +1373,11 @@ create_ndb_message(gchar *read_ptr,
   /* Get receivers module id from Bit 16-31 in word 3 */
   ndb_message->receiver_module_id= word3 >> 16;
 
-  ndb_message->segments[0]= NULL;
-  ndb_message->segments[1]= NULL;
-  ndb_message->segments[2]= NULL;
   ndb_message->message_id= 0;
-  ndb_message->short_data_ptr= &message_ptr[3];
+  ndb_message->segment_ptr[1]= NULL;
+  ndb_message->segment_ptr[2]= NULL;
+  ndb_message->segment_ptr[3]= NULL;
+  ndb_message->segment_ptr[0]= &message_ptr[3];
 
   /* Get message id flag from Bit 2 in word 1 */
   message_id_used= word1 & 4;
@@ -1207,27 +1385,30 @@ create_ndb_message(gchar *read_ptr,
   chksum_used= word1 & 0x10;
   /* Get number of segments from Bit 26-27 in word 2 */
   num_segments= (word2 >> 26) & 3;
-  ndb_message->num_segments= num_segments;
+  ndb_message->num_segments= num_segments + 1;
   
   start_segment_word= 3;
   if (message_id_used)
   {
-    ndb_message->short_data_ptr= &message_ptr[4];
+    ndb_message->segment_ptr[0]= &message_ptr[4];
     ndb_message->message_id= message_ptr[3];
     start_segment_word= 4;
   }
-  start_segment_word+= ndb_message->short_data_size;
-  ndb_message->segment_size= &message_ptr[start_segment_word];
+  start_segment_word+= ndb_message->segment_size[0];
+  segment_size_ptr= &message_ptr[start_segment_word];
   start_segment_word+= num_segments;
   for (i= 0; i < num_segments; i++)
   {
-    ndb_message->segments[i]= &message_ptr[start_segment_word];
-    start_segment_word+= ndb_message->segment_size[i];
+    segment_size= segment_size_ptr[i];
+    ndb_message->segment_size[i+1]= segment_size;
+    ndb_message->segment_ptr[i+1]= &message_ptr[start_segment_word];
+    start_segment_word+= segment_size;
   }
   if (!chksum_used)
     return 0;
   /* We need to check the checksum first, before handling the message. */
   chksum= 0;
+  message_size= (word2 >> 8) & 0xFFFF;
   for (i= 0; i < message_size; i++)
     chksum^= message_ptr[i];
   if (chksum)
@@ -1261,22 +1442,31 @@ init_ndb_receiver(IC_NDB_RECEIVE_STATE *rec_state,
   return 0;
 }
 
-static int
-read_message_size(gchar *read_ptr)
+static void
+read_message_early(gchar *read_ptr, guint32 *message_size,
+                   guint32 *receiver_module_id)
 {
-  guint32 *message_ptr= (guint32*)read_ptr, word1;
+  guint32 *message_ptr= (guint32*)read_ptr, word1, word3;
 
   word1= message_ptr[0];
+  word3= message_ptr[2];
 #ifdef HAVE_ENDIAN_SUPPORT
   if ((word1 & 1) != glob_byte_order)
   {
     if ((word1 & 1) == 0)
+    {
       word1= g_htonl(word1);
+      word3= g_htonl(word3);
+    }
     else
+    {
       word1= g_ntohl(word1);
+      word3= g_ntohl(word3);
+    }
   }
 #endif
-  return (word1 >> 8) & 0xFFFF;
+  *receiver_module_id= word3 >> 16;
+  *message_size= (word1 >> 8) & 0xFFFF;
 }
 
 #define MAX_NDB_RECEIVE_LOOPS 16
@@ -1292,7 +1482,7 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
   gboolean read_header_flag= rec_state->read_header_flag;
   gchar *read_ptr;
   guint32 page_size= rec_buf_pool->page_size;
-  guint32 start_size, message_size;
+  guint32 start_size, message_size, receiver_module_id;
   int hash_index;
   int min_hash_index= NUM_THREAD_LISTS;
   int max_hash_index= (int)-1;
@@ -1303,15 +1493,14 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
   IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
   IC_SOCK_BUF_PAGE *ndb_message_page;
   IC_NDB_MESSAGE *ndb_message;
-  IC_SOCK_BUF_PAGE *first_ndb_message_page[NUM_THREAD_LISTS];
-  IC_SOCK_BUF_PAGE *last_ndb_message_page[NUM_THREAD_LISTS];
+  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+  LINK_MESSAGE_ANCHORS *anchor;
+  LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
 
   g_assert(message_pool->page_size == sizeof(IC_NDB_MESSAGE));
 
-  memset(first_ndb_message_page,
-         sizeof(IC_SOCK_BUF_PAGE*)*NUM_THREAD_LISTS, 0);
-  memset(last_ndb_message_page,
-         sizeof(IC_SOCK_BUF_PAGE*)*NUM_THREAD_LISTS, 0);
+  memset(message_anchors,
+         sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS, 0);
   /*
     We get a receive buffer from the global pool of free buffers.
     This buffer will be returned to the free pool by the last
@@ -1358,7 +1547,8 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
       {
         if (!read_header_flag)
         {
-          message_size= read_message_size(read_ptr);
+          read_message_early(read_ptr, &message_size,
+                             &receiver_module_id);
           read_header_flag= TRUE;
         }
         if (message_size > read_size)
@@ -1368,28 +1558,30 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
                 &thd_conn->free_ndb_messages,
                 NUM_NDB_SIGNAL_ALLOC)))
           goto mem_pool_error;
-        ndb_message_page->sock_buf_page= (gchar*)buf_page;
-        ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*
+        ndb_message_page->sock_buf= (gchar*)buf_page;
+        ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
           &ndb_message_page->opaque_area[0];
         ndb_message_opaque->message_offset= read_ptr - buf_page->sock_buf;
         ndb_message_opaque->sender_node_id= rec_state->node_id;
         ndb_message_opaque->receiver_node_id= my_node_id;
-        ndb_message_opaque->num_users_to_release= 0;
+        ndb_message_opaque->ref_count_releases= 0;
+        ndb_message_opaque->receiver_module_id= receiver_module_id;
+        ndb_message_opaque->version_num= 0; /* Defined value although unused */
         hash_index= ndb_message->receiver_module_id &
                     (NUM_THREAD_LISTS - 1);
         min_hash_index= IC_MIN(min_hash_index, hash_index);
         max_hash_index= IC_MAX(max_hash_index, hash_index);
-        if (!first_ndb_message_page[hash_index])
+        anchor= &message_anchors[hash_index];
+        if (!anchor->first_ndb_message_page)
         {
-          first_ndb_message_page[hash_index]= ndb_message_page;
-          last_ndb_message_page[hash_index]= ndb_message_page;
+          anchor->first_ndb_message_page= ndb_message_page;
+          anchor->last_ndb_message_page= ndb_message_page;
         }
         else
         {
           ndb_message_page->next_sock_buf_page= NULL;
-          last_ndb_message_page[hash_index]->next_sock_buf_page=
-            ndb_message_page;
-          last_ndb_message_page[hash_index]= ndb_message_page;
+          anchor->last_ndb_message_page->next_sock_buf_page= ndb_message_page;
+          anchor->last_ndb_message_page= ndb_message_page;
         }
         any_message_received= TRUE;
         read_header_flag= FALSE;
@@ -1432,7 +1624,7 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
       }
       if (read_more && loop_count++ < MAX_NDB_RECEIVE_LOOPS)
         continue;
-      post_ndb_messages(&first_ndb_message_page[0],
+      post_ndb_messages(&message_anchors[0],
                         thd_conn,
                         min_hash_index,
                         max_hash_index);
