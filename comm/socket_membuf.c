@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007, 2008 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 static IC_SOCK_BUF_PAGE*
 get_sock_buf_page(IC_SOCK_BUF *buf,
                   IC_SOCK_BUF_PAGE **free_rec_pages,
-                  guint32 num_pages)
+                  guint32 num_pages_to_preallocate)
 {
   guint32 i;
   IC_SOCK_BUF_PAGE *first_page, *next_page;
@@ -38,20 +38,23 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
     }
   }
   else
-    num_pages= 1; /* Ignore this parameter if no local free list provided */
+  {
+    /* Ignore this parameter if no local free list provided */
+    num_pages_to_preallocate= 1;
+  }
 
   g_mutex_lock(buf->ic_buf_mutex);
   /* Retrieve objects in a linked list */
   first_page= buf->first_page;
   next_page= first_page;
-  for (i= 0; i < num_pages && next_page; i++)
+  for (i= 0; i < num_pages_to_preallocate && next_page; i++)
     next_page= next_page->next_sock_buf_page;
   buf->first_page= next_page;
   g_mutex_unlock(buf->ic_buf_mutex);
 
   /* Initialise the returned page objects */
   next_page= first_page;
-  for (i= 0; i < num_pages; i++)
+  for (i= 0; i < num_pages_to_preallocate; i++)
   {
     next_page->size= 0;
     next_page->ref_count= 0;
@@ -60,7 +63,7 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
   /* Initialise local free list */
   if (free_rec_pages && first_page)
     *free_rec_pages= first_page->next_sock_buf_page;
-  /* Unlink first page and last page */
+  /* Unlink first page and last page points to end of list */
   if (first_page)
     first_page->next_sock_buf_page= 0;
   if (next_page)
@@ -74,12 +77,18 @@ return_sock_buf_page(IC_SOCK_BUF *buf,
                      IC_SOCK_BUF_PAGE *page)
 {
   IC_SOCK_BUF_PAGE *prev_first_page;
+  IC_SOCK_BUF_PAGE *next_page= page->next_sock_buf_page;
 
   g_mutex_lock(buf->ic_buf_mutex);
-  /* Return page to linked list at first page */
-  prev_first_page= buf->first_page;
-  buf->first_page= page;
-  page->next_sock_buf_page= prev_first_page;
+  do
+  {
+    /* Return page to linked list at first page */
+    prev_first_page= buf->first_page;
+    buf->first_page= page;
+    page->next_sock_buf_page= prev_first_page;
+    page= next_page;
+    next_page= next_page->next_sock_buf_page;
+  } while (page != NULL);
   g_mutex_unlock(buf->ic_buf_mutex);
 }
 
@@ -108,6 +117,8 @@ set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
 
   loop_ptr= ptr + (no_of_pages * sizeof(IC_SOCK_BUF_PAGE));
   buf_page_ptr= ptr;
+  if (page_size == 0)
+    loop_ptr= NULL;
   for (i= 0; i < no_of_pages; i++)
   {
     sock_buf_page_ptr= (IC_SOCK_BUF_PAGE*)buf_page_ptr;

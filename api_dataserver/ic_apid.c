@@ -364,7 +364,7 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
   grid_comm->thread_conn_array[thread_id]= thread_conn;
   g_mutex_unlock(apid_global->thread_id_mutex);
   /* Now initialise the method pointers for the Data API interface */
-  apid_conn->apid_ops.ic_free= apid_free;
+  apid_conn->apid_conn_ops.ic_free= apid_free;
   return apid_conn;
 
 error:
@@ -602,14 +602,14 @@ ic_init_ds_connection(IC_DS_CONNECTION *ds_conn)
 }
 
 /*
-  NDB Send handling
-  -----------------
+  SEND MESSAGE MODULE
+  -------------------
   To send messages using the NDB Protocol we have a new struct
   IC_SEND_NODE_CONNECTION which is used by the application thread plus
   one send thread per node.
 
   Before invoking the send method, the application thread packs a number of
-  NDB Signals in the NDB Protocol format into a number of IC_SOCK_BUF_PAGE's.
+  NDB messages in the NDB Protocol format into a number of IC_SOCK_BUF_PAGE's.
   The interface to the send method contains a linked list of such
   IC_SOCK_BUF_PAGE's plus the IC_SEND_NODE_CONNECTION object and finally a
   boolean that indicates whether it's necessary to send immediately or
@@ -625,10 +625,99 @@ ic_init_ds_connection(IC_DS_CONNECTION *ds_conn)
   simply sleeping and then occasionally waking up and taking care of a set
   of send operations.
 
-  The adaptive send algorithm is also handled outside the mutex, thus we will
-  set the send to active while deciding whether it's a good idea to wait with
-  sending. This will possibly change.
+  The adaptive send algorithm is also handled inside the mutex, thus we will
+  set the send to active only after deciding whether it's a good idea to wait
+  with sending.
 */
+
+/*
+  The application thread has prepared to send a number of items and is now
+  ready to send these set of pages. The IC_SEND_NODE_CONNECTION is the
+  protected data structure that contains the information about the node
+  to which this communication is to be sent to.
+
+  This object keeps track of information which is required for the adaptive
+  algorithm to work. So it keeps track of how often we send information to
+  this node, how long time pages have been waiting to be sent.
+
+  The workings of the sender is the following, the sender locks the
+  IC_SEND_NODE_CONNECTION object, then he puts the pages in the linked list of
+  pages to be sent here. Next step is to check if another thread is already
+  active sending and hasn't flagged that he's not ready to continue
+  sending. If there is a thread already sending we unlock and proceed.
+*/
+
+static int
+ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
+         IC_SOCK_BUF_PAGE *first_page_to_send,
+         gboolean force_send)
+{
+  IC_SOCK_BUF_PAGE *last_page_to_send;
+  guint32 send_size= 0;
+  guint32 iovec_size;
+  struct iovec write_vector[MAX_SEND_BUFFERS];
+  gboolean return_imm= TRUE;
+  int error;
+  IC_TIMER current_time;
+  DEBUG_ENTRY("ndb_send");
+
+  /*
+    We start by calculating the last page to send and the total send size
+    before acquiring the mutex.
+  */
+  last_page_to_send= first_page_to_send;
+  send_size+= last_page_to_send->size;
+  while (last_page_to_send->next_sock_buf_page)
+  {
+    send_size+= last_page_to_send->size;
+    last_page_to_send= last_page_to_send->next_sock_buf_page;
+  }
+  /* Start critical section for sending */
+  g_mutex_lock(send_node_conn->mutex);
+  if (!send_node_conn->node_up)
+  {
+    g_mutex_unlock(send_node_conn->mutex);
+    return IC_ERROR_NODE_DOWN;
+  }
+  /* Link the buffers into the linked list of pages to send */
+  if (send_node_conn->last_sbp == NULL)
+  {
+    g_assert(send_node_conn->queued_bytes == 0);
+    send_node_conn->first_sbp= first_page_to_send;
+    send_node_conn->last_sbp= last_page_to_send;
+  }
+  else
+  {
+    send_node_conn->last_sbp->next_sock_buf_page= first_page_to_send;
+    send_node_conn->last_sbp= last_page_to_send;
+  }
+  send_node_conn->queued_bytes+= send_size;
+  current_time= ic_gethrtime();
+  if (!send_node_conn->send_active)
+  {
+    return_imm= FALSE;
+    send_node_conn->send_active= TRUE;
+    prepare_real_send_handling(send_node_conn, &send_size,
+                               write_vector, &iovec_size);
+    if (!force_send)
+    {
+      adaptive_send_algorithm_decision(send_node_conn,
+                                       &return_imm,
+                                       current_time);
+    }
+  }
+  adaptive_send_algorithm_statistics(send_node_conn, current_time);
+  /* End critical section for sending */
+  g_mutex_unlock(send_node_conn->mutex);
+  if (return_imm)
+    return 0;
+  /* We will send now */
+  if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
+                                 send_size)))
+    return error;
+  /* Send done handling includes a new critical section for sending */
+  DEBUG_RETURN(send_done_handling(send_node_conn));
+}
 
 static int
 prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
@@ -846,95 +935,6 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
   return;
 }
 
-/*
-  The application thread has prepared to send a number of items and is now
-  ready to send these set of pages. The IC_SEND_NODE_CONNECTION is the
-  protected data structure that contains the information about the node
-  to which this communication is to be sent to.
-
-  This object keeps track of information which is required for the adaptive
-  algorithm to work. So it keeps track of how often we send information to
-  this node, how long time pages have been waiting to be sent.
-
-  The workings of the sender is the following, the sender locks the
-  IC_SEND_NODE_CONNECTION object, then he puts the pages in the linked list of
-  pages to be sent here. Next step is to check if another thread is already
-  active sending and hasn't flagged that he's not ready to continue
-  sending. If there is a thread already sending we unlock and proceed.
-*/
-
-static int
-ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
-         IC_SOCK_BUF_PAGE *first_page_to_send,
-         gboolean force_send)
-{
-  IC_SOCK_BUF_PAGE *last_page_to_send;
-  guint32 send_size= 0;
-  guint32 iovec_size;
-  struct iovec write_vector[MAX_SEND_BUFFERS];
-  gboolean return_imm= TRUE;
-  int error;
-  IC_TIMER current_time;
-  DEBUG_ENTRY("ndb_send");
-
-  /*
-    We start by calculating the last page to send and the total send size
-    before acquiring the mutex.
-  */
-  last_page_to_send= first_page_to_send;
-  send_size+= last_page_to_send->size;
-  while (last_page_to_send->next_sock_buf_page)
-  {
-    send_size+= last_page_to_send->size;
-    last_page_to_send= last_page_to_send->next_sock_buf_page;
-  }
-  /* Start critical section for sending */
-  g_mutex_lock(send_node_conn->mutex);
-  if (!send_node_conn->node_up)
-  {
-    g_mutex_unlock(send_node_conn->mutex);
-    return IC_ERROR_NODE_DOWN;
-  }
-  /* Link the buffers into the linked list of pages to send */
-  if (send_node_conn->last_sbp == NULL)
-  {
-    g_assert(send_node_conn->queued_bytes == 0);
-    send_node_conn->first_sbp= first_page_to_send;
-    send_node_conn->last_sbp= last_page_to_send;
-  }
-  else
-  {
-    send_node_conn->last_sbp->next_sock_buf_page= first_page_to_send;
-    send_node_conn->last_sbp= last_page_to_send;
-  }
-  send_node_conn->queued_bytes+= send_size;
-  current_time= ic_gethrtime();
-  if (!send_node_conn->send_active)
-  {
-    return_imm= FALSE;
-    send_node_conn->send_active= TRUE;
-    prepare_real_send_handling(send_node_conn, &send_size,
-                               write_vector, &iovec_size);
-    if (!force_send)
-    {
-      adaptive_send_algorithm_decision(send_node_conn,
-                                       &return_imm,
-                                       current_time);
-    }
-  }
-  adaptive_send_algorithm_statistics(send_node_conn, current_time);
-  /* End critical section for sending */
-  g_mutex_unlock(send_node_conn->mutex);
-  if (return_imm)
-    return 0;
-  /* We will send now */
-  if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
-                                 send_size)))
-    return error;
-  /* Send done handling includes a new critical section for sending */
-  DEBUG_RETURN(send_done_handling(send_node_conn));
-}
-
 static int
 ic_send_handling(IC_APID_GLOBAL *apid_global,
                  guint32 cluster_id,
@@ -964,38 +964,33 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
 }
 
 /*
-  We handle reception of NDB Signals in one or more separate threads, each
+  We handle reception of NDB messages in one or more separate threads, each
   thread can handle one or more sockets. If there is only one socket to
   handle it can use socket read immediately, otherwise we can use either
   poll, or epoll on Linux or other similar variant on other operating
   system.
 
   This thread only handles reception of the lowest layer of the NDB Protocol.
-  Thus here we get all sections of data and their sizes, the Signal Number
-  received, the receiving module (thread in the API, block + thread in the
-  data nodes), we also handle any necessary conversion to the byte order
-  of our machine. Any tracing and debug information is handled in this
-  thread.
 
-  The actual handling of the NDB Signal is handled by the application thread.
+  We mainly transport a header about the message to enable a quick conversion
+  of the message to a IC_NDB_MESSAGE struct in the user thread. In this
+  struct we set up data, their sizes, message numbers, receiving module,
+  sender module, receiving node id, sender node id and various other data.
+
+  The actual handling of the NDB message is handled by the application thread.
   This thread receives a IC_NDB_MESSAGE struct which gives all information
   about the signal, including a reference to the IC_SOCK_BUF_PAGE such that
   the last executer of a signal in a page can return the page to the free
   area.
 
-  We get IC_NDB_MESSAGE structs from a free list of IC_SOCK_BUF_PAGE which uses
-  a size which is appropriate for the NDB Signal objects. In the same manner
-  we allocate pages to receive into from a free list of IC_SOCK_BUF_PAGE with
-  an appropriate page size for receiving into.
-
   In this manner we don't need to copy any data from the buffer we receive
-  the NDB Signal into with the exception of signals that comes from more
+  the NDB message into with the exception of messages that comes from more
   than one recv system call.
 
   Each application thread has a IC_THREAD_CONNECTION struct which is
   protected by a mutex such that this thread can easily transfer NDB
-  Signals to these threads. This thread will acquire the mutex, put the
-  signals into a linked list of signals waiting to be executed, check if
+  messages to these threads. This thread will acquire the mutex, put the
+  messages into a linked list of signals waiting to be executed, check if
   the application thread is hanging on the mutex and if so wake it up
   after releasing the mutex.
 
@@ -1004,7 +999,7 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
   and set their initial state to not used.
 
   One problem to resolve is what to do if a thread doesn't handle it's
-  signals for some reason. This could happen in an overload situation,
+  messages for some reason. This could happen in an overload situation,
   it could happen also due to programming errors from the application,
   the application might send requests asynchronously and then by mistake
   never call receive to handle the sent requests. To protect the system
@@ -1029,6 +1024,17 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
 #define NUM_THREAD_LISTS 16
 #define MAX_LOOP_CHECK 100000
 #define IC_MAX_TIME 10000000
+
+/*
+  MESSAGE LOGIC MODULE
+  --------------------
+  This module contains the code of all messages received in the Data Server
+  API. This code signals to the EXECUTE MESSAGE MODULE if there have been
+  events on the user level which needs to be taken care of. These user
+  level events are then usually handled by callbacks after handling all
+  messages received. It's of vital importance that the user thread doesn't
+  block for an extended period while executing messages.
+*/
 
 struct ic_exec_message_func
 {
@@ -1120,73 +1126,19 @@ initialize_message_func_array()
   ic_exec_message_func_array[0][IC_ATTRIBUTE_INFO]->ic_exec_message_func=
     execATTRIBUTE_INFO_v0;
 }
+
+/*
+  EXECUTE MESSAGE MODULE
+  ----------------------
+  This module contains the code executed in the user thread to execute
+  messages posted to this thread by the receiver thread. The actual
+  logic to handle the individual messages received is found in the
+  MESSAGE LOGIC MODULE.
+*/
 static IC_EXEC_MESSAGE_FUNC*
 get_exec_message_func(guint32 message_id, guint32 version_num)
 {
   return ic_exec_message_func_array[0][message_id];
-}
-
-static int
-poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
-{
-  IC_SOCK_BUF_PAGE *ndb_message_page;
-  int error;
-
-  /*
-    We start by getting the messages waiting for us in the send queue, this
-    is the first step in putting together the new scheduler for message
-    handling in the iClaustron API.
-    If no messages are waiting we can wait for a small amount of time
-    before returning, if no messages arrive in this timeframe we'll
-    return anyways. As soon as messages arrive we'll wake up and
-    start executing them.
-  */
-  ndb_message_page= get_thread_messages(apid_conn, wait_time);
-  /*
-  */
-  while (ndb_message_page)
-  {
-    /* Execute one message received */
-    if ((error= execute_message(ndb_message_page)))
-    {
-      /* Error handling */
-      return error;
-    }
-    ndb_message_page= ndb_message_page->next_sock_buf_page;
-  }
-  return 0;
-}
-
-static int
-execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
-{
-  guint32 message_id;
-  IC_NDB_MESSAGE ndb_message;
-  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
-  IC_EXEC_MESSAGE_FUNC *exec_message_func;
-  IC_MESSAGE_ERROR_OBJECT error_object;
-
-  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-    &ndb_message_page->opaque_area[0];
-  if (!create_ndb_message(ndb_message_page,
-                          ndb_message_opaque,
-                          &ndb_message,
-                          &message_id))
-  {
-    exec_message_func= get_exec_message_func(message_id,
-                                             ndb_message_opaque->version_num);
-    if (!exec_message_func)
-    {
-       if (exec_message_func->ic_exec_message_func
-             (&ndb_message, &error_object))
-       {
-         /* Handle error */
-         return error_object.error;
-       }
-    }
-    return 0;
-  }
-  return 1;
 }
 
 static void
@@ -1220,99 +1172,42 @@ get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time)
   return sock_buf_page;
 }
 
-/*
-  We get a linked list of IC_SOCK_BUF_PAGE which each contain a reference
-  to a list of IC_NDB_MESSAGE object. We will ensure that these messages are
-  posted to the proper thread. They will be put in a linked list of NDB
-  messages waiting to be executed by this application thread.
-*/
 static int
-post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
-                 IC_THREAD_CONNECTION *thd_conn,
-                 int min_hash_index,
-                 int max_hash_index)
+poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
 {
-  int i;
-  guint32 j, send_index, receiver_module_id, loop_count, temp, module_id;
-  guint32 num_sent[IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS];
-  gboolean signal_flag= FALSE;
-  IC_SOCK_BUF_PAGE *ndb_message_page, *next_ndb_message_page, *first_message;
-  LINK_MESSAGE_ANCHORS *ndb_message_anchor;
-  IC_NDB_MESSAGE_OPAQUE_AREA *message_opaque;
-  IC_THREAD_CONNECTION *loc_thd_conn;
+  IC_SOCK_BUF_PAGE *ndb_message_page;
+  int error;
 
-  memset(&num_sent[0],
-         sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS), 0);
-  for (i= min_hash_index; i < max_hash_index; i++)
+  /*
+    We start by getting the messages waiting for us in the send queue, this
+    is the first step in putting together the new scheduler for message
+    handling in the iClaustron API.
+    If no messages are waiting we can wait for a small amount of time
+    before returning, if no messages arrive in this timeframe we'll
+    return anyways. As soon as messages arrive we'll wake up and
+    start executing them.
+  */
+  ndb_message_page= get_thread_messages(apid_conn, wait_time);
+  /*
+  */
+  while (ndb_message_page)
   {
-    ndb_message_anchor= &ndb_message_anchors[i];
-    ndb_message_page= ndb_message_anchor->first_ndb_message_page;
-    if (!ndb_message_page)
-      continue;
-    loop_count= 0;
-    do
+    /* Execute one message received */
+    if ((error= execute_message(ndb_message_page)))
     {
-      next_ndb_message_page= ndb_message_page->next_sock_buf_page;
-      message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-        &ndb_message_page->opaque_area[0];
-      receiver_module_id= message_opaque->receiver_module_id;
-      send_index= receiver_module_id / NUM_THREAD_LISTS;
-      temp= num_sent[send_index];
-      if (!temp)
-        g_mutex_lock(thd_conn[receiver_module_id].mutex);
-      num_sent[send_index]= temp + 1;
-      /* Link it into list on this thread connection object */
-      loc_thd_conn= &thd_conn[receiver_module_id];
-      first_message= loc_thd_conn->first_received_message;
-      ndb_message_page->next_sock_buf_page= NULL;
-      if (first_message)
-      {
-        /* Link signal into the queue last */
-        loc_thd_conn->last_received_message->next_sock_buf_page=
-          ndb_message_page;
-        loc_thd_conn->last_received_message= ndb_message_page;
-      }
-      else
-      {
-        loc_thd_conn->first_received_message= ndb_message_page;
-        loc_thd_conn->last_received_message= ndb_message_page;
-      }
-      if (!next_ndb_message_page)
-        break;
-      g_assert(++loop_count > MAX_LOOP_CHECK);
-    } while (TRUE);
-    for (j= 0; j < NUM_THREAD_LISTS; j++)
-    {
-      module_id= (j * NUM_THREAD_LISTS) + i;
-      if (num_sent[j])
-      {
-        if (thd_conn[j].thread_wait_cond)
-        {
-          thd_conn[j].thread_wait_cond= FALSE;
-          signal_flag= TRUE;
-        }
-        message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-          &thd_conn[module_id].last_received_message->opaque_area[0];
-        message_opaque->ref_count_releases= num_sent[j];
-        g_mutex_unlock(thd_conn[j].mutex);
-        if (signal_flag)
-        {
-          /* Thread is waiting for our wake-up signal, wake it up */
-          g_cond_signal(thd_conn[j].cond);
-          signal_flag= FALSE;
-        }
-        num_sent[j]= 0;
-      }
+      /* Error handling */
+      return error;
     }
+    /*
+      Here we need to check if we should decrement the values from the
+      buffer page.
+    */
+    ndb_message_page= ndb_message_page->next_sock_buf_page;
   }
   return 0;
 }
 
-/*
-  A complete message has been received and is pointed to by read_ptr, we will
-  now fill in the IC_NDB_MESSAGE object such that it is efficient to
-  execute the query.
-*/
+/* Create a IC_NDB_MESSAGE for execution by the user thread.  */
 static int
 create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                    IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
@@ -1417,6 +1312,134 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
 }
 
 static int
+execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
+{
+  guint32 message_id;
+  IC_NDB_MESSAGE ndb_message;
+  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+  IC_EXEC_MESSAGE_FUNC *exec_message_func;
+  IC_MESSAGE_ERROR_OBJECT error_object;
+
+  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+    &ndb_message_page->opaque_area[0];
+  if (!create_ndb_message(ndb_message_page,
+                          ndb_message_opaque,
+                          &ndb_message,
+                          &message_id))
+  {
+    exec_message_func= get_exec_message_func(message_id,
+                                             ndb_message_opaque->version_num);
+    if (!exec_message_func)
+    {
+       if (exec_message_func->ic_exec_message_func
+             (&ndb_message, &error_object))
+       {
+         /* Handle error */
+         return error_object.error;
+       }
+    }
+    return 0;
+  }
+  return 1;
+}
+
+/*
+  RECEIVE THREAD MODULE:
+  ----------------------
+  This module contains the code that handles the receiver threads which takes
+  care of reading from the socket and directing the NDB message to the proper
+  user thread.
+*/
+
+/*
+  We get a linked list of IC_SOCK_BUF_PAGE which each contain a reference
+  to a list of IC_NDB_MESSAGE object. We will ensure that these messages are
+  posted to the proper thread. They will be put in a linked list of NDB
+  messages waiting to be executed by this application thread.
+*/
+static int
+post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
+                 IC_THREAD_CONNECTION *thd_conn,
+                 int min_hash_index,
+                 int max_hash_index)
+{
+  int i;
+  guint32 j, send_index, receiver_module_id, loop_count, temp, module_id;
+  guint32 num_sent[IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS];
+  gboolean signal_flag= FALSE;
+  IC_SOCK_BUF_PAGE *ndb_message_page, *next_ndb_message_page, *first_message;
+  LINK_MESSAGE_ANCHORS *ndb_message_anchor;
+  IC_NDB_MESSAGE_OPAQUE_AREA *message_opaque;
+  IC_THREAD_CONNECTION *loc_thd_conn;
+
+  memset(&num_sent[0],
+         sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS), 0);
+  for (i= min_hash_index; i < max_hash_index; i++)
+  {
+    ndb_message_anchor= &ndb_message_anchors[i];
+    ndb_message_page= ndb_message_anchor->first_ndb_message_page;
+    if (!ndb_message_page)
+      continue;
+    loop_count= 0;
+    do
+    {
+      next_ndb_message_page= ndb_message_page->next_sock_buf_page;
+      message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+        &ndb_message_page->opaque_area[0];
+      receiver_module_id= message_opaque->receiver_module_id;
+      send_index= receiver_module_id / NUM_THREAD_LISTS;
+      temp= num_sent[send_index];
+      if (!temp)
+        g_mutex_lock(thd_conn[receiver_module_id].mutex);
+      num_sent[send_index]= temp + 1;
+      /* Link it into list on this thread connection object */
+      loc_thd_conn= &thd_conn[receiver_module_id];
+      first_message= loc_thd_conn->first_received_message;
+      ndb_message_page->next_sock_buf_page= NULL;
+      if (first_message)
+      {
+        /* Link signal into the queue last */
+        loc_thd_conn->last_received_message->next_sock_buf_page=
+          ndb_message_page;
+        loc_thd_conn->last_received_message= ndb_message_page;
+      }
+      else
+      {
+        loc_thd_conn->first_received_message= ndb_message_page;
+        loc_thd_conn->last_received_message= ndb_message_page;
+      }
+      if (!next_ndb_message_page)
+        break;
+      g_assert(++loop_count > MAX_LOOP_CHECK);
+    } while (TRUE);
+    for (j= 0; j < NUM_THREAD_LISTS; j++)
+    {
+      module_id= (j * NUM_THREAD_LISTS) + i;
+      if (num_sent[j])
+      {
+        if (thd_conn[j].thread_wait_cond)
+        {
+          thd_conn[j].thread_wait_cond= FALSE;
+          signal_flag= TRUE;
+        }
+        message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+          &thd_conn[module_id].last_received_message->opaque_area[0];
+        message_opaque->ref_count_releases= num_sent[j];
+        g_mutex_unlock(thd_conn[j].mutex);
+        if (signal_flag)
+        {
+          /* Thread is waiting for our wake-up signal, wake it up */
+          g_cond_signal(thd_conn[j].cond);
+          signal_flag= FALSE;
+        }
+        num_sent[j]= 0;
+      }
+    }
+  }
+  return 0;
+}
+
+static int
 init_ndb_receiver(IC_NDB_RECEIVE_STATE *rec_state,
                   IC_THREAD_CONNECTION *thd_conn,
                   gchar *start_buf,
@@ -1497,7 +1520,7 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
   LINK_MESSAGE_ANCHORS *anchor;
   LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
 
-  g_assert(message_pool->page_size == sizeof(IC_NDB_MESSAGE));
+  g_assert(message_pool->page_size == 0);
 
   memset(message_anchors,
          sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS, 0);

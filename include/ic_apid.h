@@ -260,9 +260,120 @@ struct ic_apid_global
 };
 typedef struct ic_apid_global IC_APID_GLOBAL;
 
+struct ic_transaction_hint
+{
+  guint32 cluster_id;
+  guint32 node_id;
+};
+typedef struct ic_transaction_hint IC_TRANSACTION_HINT;
+
+struct ic_transaction_obj
+{
+  guint64 transaction_id;
+};
+typedef struct ic_transaction_obj IC_TRANSACTION_OBJ;
+
+enum ic_field_type
+{
+  UINT32_TYPE= 0
+};
+typedef enum ic_field_type IC_FIELD_TYPE;
+
+struct ic_field_def
+{
+  gchar *field_name;
+  guint32 field_id;
+  IC_FIELD_TYPE field_type;
+};
+typedef struct ic_field_def IC_FIELD_DEF;
+
+enum ic_apid_key_operation_type
+{
+  SIMPLE_KEY_READ= 0,
+  KEY_READ= 1,
+  EXCLUSIVE_KEY_READ= 2,
+  KEY_READ_COMMITTED= 3,
+  key_update= 4,
+  key_delete= 5,
+  key_write= 6,
+  key_insert= 7,
+  take_over_update= 8,
+  take_over_delete= 9
+};
+typedef enum ic_apid_key_operation_type IC_APID_KEY_OPERATION_TYPE;
+
+enum ic_apid_scan_operation_type
+{
+  SCAN_READ_COMMITTED= 0,
+  SCAN_READ_EXCLUSIVE= 1,
+  SCAN_HOLD_LOCK= 2,
+  SCAN_CONSISTENT_READ= 3
+};
+typedef enum ic_apid_scan_operation_type IC_APID_SCAN_OPERATION_TYPE;
+
+enum ic_instruction_type
+{
+  INST_LOAD_CONST32= 0
+};
+typedef enum ic_instruction_type IC_INSTRUCTION_TYPE;
+
+struct ic_instruction
+{
+  IC_INSTRUCTION_TYPE instr_type;
+  guint32 source_register1;
+  guint32 source_register2;
+  guint32 dest_register;
+};
+typedef struct ic_instruction IC_INSTRUCTION;
+
+struct ic_table_def
+{
+  gchar *table_name;
+  guint32 table_id;
+  guint32 num_fields;
+};
+typedef struct ic_table_def IC_TABLE_DEF;
+
+struct ic_metadata_bind_ops
+{
+  int (*ic_table_bind) (IC_TABLE_DEF *table_def);
+  int (*ic_field_bind) (IC_TABLE_DEF *table_def,
+                        IC_FIELD_DEF *field_def);
+};
+typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
+
+struct ic_apid_transaction_ops
+{
+  /*
+    ic_key_access is used for read, update, delete, insert and replace
+    operations. For all operations the key_def sets up the value of the
+    key fields (needs to be all of the fields in either a primary key
+    or in a unique key. For reads the field_def defines the placeholders
+    of the data to be read back. For updates, inserts and replace operations
+    it's the values to set and for deletes this pointer must be NULL.
+
+    table_def is a table definition which has been bound before this call.
+    A table could here either be a real table or a unique index table.
+    transaction_obj is a reference to the transaction to place this
+    operation into.
+    Finally apid_op contains information about the operation type.
+  */
+  int (*ic_key_access) (IC_TRANSACTION_OBJ *transaction_obj,
+                        IC_APID_KEY_OPERATION_TYPE apid_key_op_type,
+                        IC_TABLE_DEF *table_def,
+                        IC_FIELD_DEF **field_def,
+                        IC_FIELD_DEF **key_def);
+};
+typedef struct ic_apid_transaction_ops IC_APID_TRANSACTION_OPS;
+
 struct ic_apid_connection;
 struct ic_apid_connection_ops
 {
+  int (*ic_start_transaction) (struct ic_apid_connection *apid_conn,
+                               IC_TRANSACTION_OBJ **transaction_obj,
+                               IC_TRANSACTION_HINT *transaction_hint);
+  int (*ic_join_transaction) (struct ic_apid_connection *apid_connection,
+                              IC_TRANSACTION_OBJ transaction_obj);
   int (*ic_poll) (struct ic_apid_connection *apid_conn, glong wait_time);
   void (*ic_free) (struct ic_apid_connection *apid_conn);
 };
@@ -270,7 +381,9 @@ typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 
 struct ic_apid_connection
 {
-  IC_APID_CONNECTION_OPS apid_ops;
+  IC_APID_CONNECTION_OPS apid_conn_ops;
+  IC_APID_TRANSACTION_OPS apid_trans_ops;
+  IC_METADATA_BIND_OPS apid_metadata_ops;
   IC_APID_GLOBAL *apid_global;
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_id_bitmap;
