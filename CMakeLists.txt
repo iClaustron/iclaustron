@@ -4,11 +4,23 @@ set (iClaustron_VERSION_MAJOR 0)
 set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_BUILD 1)
 
+SET (SYSTEM_BINARY_PATH
+     /usr/bin /bin /sbin /usr/sbin /usr/local/bin /usr/sbin
+     /opt/bin /opt/local/bin)
+FIND_PROGRAM(FLEX_EXECUTABLE
+  NAMES flex
+  PATHS ${SYSTEM_BINARY_PATH}
+  DOC "flex executable")
+FIND_PROGRAM(BISON_EXECUTABLE
+  NAMES bison byacc
+  PATHS ${SYSTEM_BINARY_PATH}
+  DOC "Bison executable")
+
 configure_file (
-  "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
-  "${PROJECT_BINARY_DIR}/include/config.h"
+  "${iClaustron_SOURCE_DIR}/include/cmake_config.h.in"
+  "${iClaustron_BINARY_DIR}/include/config.h"
   )
-include_directories("${PROJECT_BINARY_DIR}")
+include_directories("${iClaustron_BINARY_DIR}")
 add_subdirectory (port)
 add_subdirectory (comm)
 add_subdirectory (api_clusterserver)
