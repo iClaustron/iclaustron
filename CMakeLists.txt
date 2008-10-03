@@ -17,12 +17,14 @@ FIND_PROGRAM(BISON_EXECUTABLE
   DOC "Bison executable")
 
 configure_file (
-  "${iClaustron_SOURCE_DIR}/include/cmake_config.h.in"
-  "${iClaustron_BINARY_DIR}/include/config.h"
+  "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
+  "${PROJECT_BINARY_DIR}/include/config.h"
   )
-include_directories("${iClaustron_BINARY_DIR}")
+include_directories("${PROJECT_BINARY_DIR}")
+
 add_subdirectory (port)
 add_subdirectory (comm)
+add_subdirectory (util)
 add_subdirectory (api_clusterserver)
 add_subdirectory (api_dataserver)
 add_subdirectory (cluster_client)
@@ -36,5 +38,4 @@ add_subdirectory (pcntrl)
 add_subdirectory (repserver)
 add_subdirectory (scripts)
 add_subdirectory (test)
-add_subdirectory (util)
 
