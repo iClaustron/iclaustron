@@ -27,11 +27,11 @@ ADD_CUSTOM_COMMAND(
       ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
       ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c)
 #Mark ic_parser.c and ic_lex.c as a generated file
-  SET_SOURCE_FILE_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
+  SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
                               GENERATED)
-  SET_SOURCE_FILE_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
+  SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
                               GENERATED)
-  SET_SOURCE_FILE_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
+  SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
                               GENERATED)
 #Include binary directory to ensure ic_lex.c is included as well
   INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
