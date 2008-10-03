@@ -17,6 +17,16 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
+static int send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
+static void
+adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn);
+static void
+adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                   IC_TIMER current_time);
+static void
+adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 gboolean *will_wait,
+                                 IC_TIMER current_time);
 static void apid_free(IC_APID_CONNECTION *apid_conn);
 static int start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
 static void start_connect_phase(IC_APID_GLOBAL *apid_global,
@@ -1173,6 +1183,59 @@ get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time)
 }
 
 static int
+execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
+{
+  guint32 message_id;
+  IC_NDB_MESSAGE ndb_message;
+  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+  IC_EXEC_MESSAGE_FUNC *exec_message_func;
+  IC_MESSAGE_ERROR_OBJECT error_object;
+  IC_SOCK_BUF_PAGE *message_page;
+  IC_SOCK_BUF *sock_buf_container;
+  gint release_count, ref_count;
+  volatile gint *ref_count_ptr;
+
+  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+    &ndb_message_page->opaque_area[0];
+  if (!create_ndb_message(ndb_message_page,
+                          ndb_message_opaque,
+                          &ndb_message,
+                          &message_id))
+  {
+    exec_message_func= get_exec_message_func(message_id,
+                                             ndb_message_opaque->version_num);
+    if (!exec_message_func)
+    {
+       if (exec_message_func->ic_exec_message_func
+             (&ndb_message, &error_object))
+       {
+         /* Handle error */
+         return error_object.error;
+       }
+    }
+    if (ndb_message_opaque->ref_count_releases > 0)
+    {
+      release_count= ndb_message_opaque->ref_count_releases;
+      message_page= (IC_SOCK_BUF_PAGE*)ndb_message_page->sock_buf;
+      ref_count_ptr= (volatile gint*)&message_page->ref_count;
+      ref_count= g_atomic_int_exchange_and_add(ref_count_ptr, release_count);
+      if (ref_count == release_count)
+      {
+        /*
+          This was the last message we executed on this page so we're now
+          ready to release the page where these messages were stored.
+        */
+        sock_buf_container= message_page->sock_buf_container;
+        sock_buf_container->sock_buf_op.ic_return_sock_buf_page(
+          sock_buf_container, message_page);
+      }
+    }
+    return 0;
+  }
+  return 1;
+}
+
+static int
 poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
 {
   IC_SOCK_BUF_PAGE *ndb_message_page;
@@ -1309,38 +1372,6 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   if (chksum)
     return IC_ERROR_MESSAGE_CHECKSUM;
   return 0;
-}
-
-static int
-execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
-{
-  guint32 message_id;
-  IC_NDB_MESSAGE ndb_message;
-  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
-  IC_EXEC_MESSAGE_FUNC *exec_message_func;
-  IC_MESSAGE_ERROR_OBJECT error_object;
-
-  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-    &ndb_message_page->opaque_area[0];
-  if (!create_ndb_message(ndb_message_page,
-                          ndb_message_opaque,
-                          &ndb_message,
-                          &message_id))
-  {
-    exec_message_func= get_exec_message_func(message_id,
-                                             ndb_message_opaque->version_num);
-    if (!exec_message_func)
-    {
-       if (exec_message_func->ic_exec_message_func
-             (&ndb_message, &error_object))
-       {
-         /* Handle error */
-         return error_object.error;
-       }
-    }
-    return 0;
-  }
-  return 1;
 }
 
 /*
@@ -1511,10 +1542,12 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
   int max_hash_index= (int)-1;
   guint32 loop_count= 0;
   int ret_code;
+  gint ref_count;
   gboolean any_message_received= FALSE;
   gboolean read_more;
   IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
   IC_SOCK_BUF_PAGE *ndb_message_page;
+  IC_SOCK_BUF_PAGE *anchor_first_page;
   IC_NDB_MESSAGE *ndb_message;
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
   LINK_MESSAGE_ANCHORS *anchor;
@@ -1581,30 +1614,33 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
                 &thd_conn->free_ndb_messages,
                 NUM_NDB_SIGNAL_ALLOC)))
           goto mem_pool_error;
-        ndb_message_page->sock_buf= (gchar*)buf_page;
         ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
           &ndb_message_page->opaque_area[0];
+        ndb_message_page->sock_buf= (gchar*)buf_page;
         ndb_message_opaque->message_offset= read_ptr - buf_page->sock_buf;
         ndb_message_opaque->sender_node_id= rec_state->node_id;
         ndb_message_opaque->receiver_node_id= my_node_id;
         ndb_message_opaque->ref_count_releases= 0;
         ndb_message_opaque->receiver_module_id= receiver_module_id;
         ndb_message_opaque->version_num= 0; /* Defined value although unused */
+        ref_count= buf_page->ref_count;
         hash_index= ndb_message->receiver_module_id &
                     (NUM_THREAD_LISTS - 1);
         min_hash_index= IC_MIN(min_hash_index, hash_index);
         max_hash_index= IC_MAX(max_hash_index, hash_index);
         anchor= &message_anchors[hash_index];
-        if (!anchor->first_ndb_message_page)
+        anchor_first_page= anchor->first_ndb_message_page;
+        buf_page->ref_count= ref_count + 1;
+        if (!anchor_first_page)
         {
           anchor->first_ndb_message_page= ndb_message_page;
           anchor->last_ndb_message_page= ndb_message_page;
         }
         else
         {
-          ndb_message_page->next_sock_buf_page= NULL;
-          anchor->last_ndb_message_page->next_sock_buf_page= ndb_message_page;
+          anchor->first_ndb_message_page->next_sock_buf_page= ndb_message_page;
           anchor->last_ndb_message_page= ndb_message_page;
+          ndb_message_page->next_sock_buf_page= NULL;
         }
         any_message_received= TRUE;
         read_header_flag= FALSE;
@@ -1656,7 +1692,14 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
     break;
   }
   if (ret_code == END_OF_FILE)
+  {
+    if (any_message_received)
+      post_ndb_messages(&message_anchors[0],
+                        thd_conn,
+                        min_hash_index,
+                        max_hash_index);
     ret_code= 0;
+  }
 end:
 /*
   while (thd_conn->free_rec_pages)

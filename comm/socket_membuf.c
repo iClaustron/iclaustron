@@ -109,13 +109,13 @@ free_sock_buf(IC_SOCK_BUF *buf)
 */
 static IC_SOCK_BUF_PAGE*
 set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
-                            guint64 no_of_pages)
+                            guint64 no_of_pages, guint32 sock_buf_page_size)
 {
   gchar *loop_ptr, *buf_page_ptr, *new_buf_page_ptr;
   IC_SOCK_BUF_PAGE *sock_buf_page_ptr;
   guint64 i;
 
-  loop_ptr= ptr + (no_of_pages * sizeof(IC_SOCK_BUF_PAGE));
+  loop_ptr= ptr + (no_of_pages * sock_buf_page_size);
   buf_page_ptr= ptr;
   if (page_size == 0)
     loop_ptr= NULL;
@@ -123,7 +123,7 @@ set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
   {
     sock_buf_page_ptr= (IC_SOCK_BUF_PAGE*)buf_page_ptr;
     sock_buf_page_ptr->sock_buf= loop_ptr;
-    new_buf_page_ptr= (buf_page_ptr + sizeof(IC_SOCK_BUF_PAGE));
+    new_buf_page_ptr= (buf_page_ptr + sock_buf_page_size);
     sock_buf_page_ptr->next_sock_buf_page= (IC_SOCK_BUF_PAGE*)new_buf_page_ptr;
     loop_ptr+= page_size;
     buf_page_ptr= new_buf_page_ptr;
@@ -138,10 +138,15 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
   guint32 page_size= buf->page_size;
   IC_SOCK_BUF_PAGE *last_sock_buf_page;
   int error= 0;
+  guint32 sock_buf_page_size;
 
-  if (!(ptr= ic_malloc(no_of_pages * (page_size + sizeof(IC_SOCK_BUF_PAGE)))))
+  sock_buf_page_size= IC_MAX(64, sizeof(IC_SOCK_BUF_PAGE)); 
+  if (!(ptr= ic_malloc(no_of_pages * (page_size + sock_buf_page_size))))
     return 1;
-  last_sock_buf_page= set_up_pages_in_linked_list(ptr, page_size, no_of_pages);
+  last_sock_buf_page= set_up_pages_in_linked_list(ptr,
+                                                  page_size,
+                                                  no_of_pages,
+                                                  sock_buf_page_size);
   g_mutex_lock(buf->ic_buf_mutex);
   if (buf->alloc_segments == MAX_ALLOC_SEGMENTS)
   {
@@ -166,14 +171,19 @@ ic_create_socket_membuf(guint32 page_size,
   gchar *ptr;
   IC_SOCK_BUF *buf;
   IC_SOCK_BUF_PAGE *last_sock_buf_page;
+  guint32 sock_buf_page_size;
 
+  sock_buf_page_size= IC_MAX(64, sizeof(IC_SOCK_BUF_PAGE)); 
   buf= (IC_SOCK_BUF*)ic_malloc(sizeof(IC_SOCK_BUF));
   if (!(ptr= ic_malloc(page_size * no_of_pages +
-      (no_of_pages * sizeof(IC_SOCK_BUF_PAGE)))))
+      (no_of_pages * sock_buf_page_size))))
   {
     return NULL;
   }
-  last_sock_buf_page= set_up_pages_in_linked_list(ptr, page_size, no_of_pages);
+  last_sock_buf_page= set_up_pages_in_linked_list(ptr,
+                                                  page_size,
+                                                  no_of_pages,
+                                                  sock_buf_page_size);
   last_sock_buf_page->next_sock_buf_page= NULL;
 
   buf->first_page= (IC_SOCK_BUF_PAGE*)ptr;

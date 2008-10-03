@@ -562,18 +562,16 @@ typedef struct ic_sock_buf_operations IC_SOCK_BUF_OPERATIONS;
   on most platforms (there are some exceptions using 256 byte cache line sizes
   that we will ignore).
 */
-#define NOT_USED_AREA 64 - ((2*sizeof(struct ic_sock_buf_page*)) - \
-        sizeof(gchar*) - (8 * sizeof(guint32)))
+#define IC_SOCK_BUF_PAGE_SIZE 64
 struct ic_sock_buf_page
 {
   struct ic_sock_buf_page *next_sock_buf_page;
-  struct ic_sock_buf_page *prev_sock_buf_page;
+  struct ic_sock_buf *sock_buf_container;
   gchar *sock_buf;
   guint32 size;
   /* This is an atomic counter used to keep track of reference count */
-  guint32 ref_count;
+  gint ref_count;
   guint32 opaque_area[6];
-  guint8 not_used_area[NOT_USED_AREA];
 };
 typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
 

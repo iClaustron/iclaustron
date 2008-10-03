@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <ic_common.h>
 #include <poll.h>
+#include <sys/poll.h>
 
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
@@ -38,7 +39,7 @@ check_for_data_on_connection(IC_CONNECTION *conn)
   struct pollfd poll_struct;
   int ret_code;
 
-  poll_struct.events= POLLRDNORM;
+  poll_struct.events= POLLIN;
   poll_struct.fd= conn->rw_sockfd;
   ret_code= poll(&poll_struct, 1, 0);
   if (ret_code > 0)
