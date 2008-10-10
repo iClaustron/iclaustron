@@ -18,9 +18,12 @@
 #
 # These variables contain the version of the MySQL and iClaustron
 # These are constants, the scripts are generated anew for each
-# new version of iClaustron
+# new version of iClaustron. There is also a DBT2 version available
+# such that this script can also be used to distribute DBT2 as
+# part of a MySQL-only package.
 MYSQL_VERSION="mysql-5.1.28-ndb-6.3.19"
 ICLAUSTRON_VERSION="iclaustron-0.0.1"
+DBT2_VERSION="dbt2-0.37.38"
 
 # This variable defines whether this script is used to install binaries
 # or whether it is a pure source build. SOURCE_BUILD="n" for binary
@@ -30,12 +33,13 @@ ICLAUSTRON_VERSION="iclaustron-0.0.1"
 # installation script.
 SOURCE_BUILD="y"
 
-#These variables define whether to include MySQL and iClaustron in the
-#build process. These variables are set properly before using the
+#These variables define whether to include MySQL and iClaustron and DBT2
+#in the build process. These variables are set properly before using the
 #script to create a self-extracting archive for MySQL and iClaustron
 #distribution.
 BUILD_ICLAUSTRON="n"
 BUILD_MYSQL="y"
+BUILD_DBT2="y"
 
 #Ensure all messages are sent both to the log file and to the terminal
 msg_to_log()
@@ -278,18 +282,35 @@ get_node_install()
 #Unpack the source tarballs into the SRC_INSTALL_DIR
 unpack_tarballs()
 {
-  if test "x$SOURCE_BUILD" = "xy" ; then
-    if test "x$BUILD_MYSQL" = "xy" ; then
-      COMMAND="tar xvfz ${MYSQL_VERSION}.tar.gz"
-      COMMAND="$COMMAND ${SRC_INSTALL_DIR}/${MYSQL_VERSION}"
-      exec_command $COMMAND
-    fi
-    if test "x$BUILD_ICLAUSTRON" = "xy" ; then
-      COMMAND="tar xvfz ${ICLAUSTRON_VERSION}.tar.gz"
-      COMMAND="$COMMAND ${SRC_INSTALL_DIR}/${ICLAUSTRON_VERSION}"
-      exec_command $COMMAND
-    fi
+  exec_command cd $SRC_INSTALL_DIR
+  if test "x$BUILD_MYSQL" = "xy" ; then
+    COMMAND="cp ${USER_PWD}/${MYSQL_VERSION}.tar.gz"
+    COMMAND="$COMMAND ${MYSQL_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="tar xvfz ${MYSQL_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="rm ${MYSQL_VERSION}.tar.gz"
+    exec_command $COMMAND
   fi
+  if test "x$BUILD_ICLAUSTRON" = "xy" ; then
+    COMMAND="cp ${USER_PWD}/${ICLAUSTRON_VERSION}.tar.gz"
+    COMMAND="$COMMAND ${ICLAUSTRON_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="tar xvfz ${ICLAUSTRON_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="rm ${ICLAUSTRON_VERSION}.tar.gz"
+    exec_command $COMMAND
+  fi
+  if test "x$BUILD_DBT2" = "xy" ; then
+    COMMAND="cp ${USER_PWD}/${DBT2_VERSION}.tar.gz"
+    COMMAND="$COMMAND ${DBT2_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="tar xvfz ${DBT2_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="rm ${DBT2_VERSION}.tar.gz"
+    exec_command $COMMAND
+  fi
+  exec_command cd ${USER_PWD}
 }
 
 # $1 is the node specification to which we are setting up SSH towards
@@ -299,7 +320,7 @@ setup_ssh_node()
   get_port $SSH_NODE
   SSH_PORT="$PORT_NUM"
   get_user_and_host $SSH_NODE
-  SSH_USER_HOST="USER_AND_HOST"
+  SSH_USER_HOST="$USER_AND_HOST"
   SSH="ssh -p $SSH_PORT $SSH_USER_HOST"
 }
 
@@ -307,7 +328,6 @@ build_local()
 {
   output_msg "Build local"
   unpack_tarballs
-  MYSQL_TARBALL="${MYSQL_VERSION}_binary.tar.gz"
   if test "x$BUILD_ICLAUSTRON" = "xy" ; then
     CREATE_DIR=${BIN_INSTALL_DIR}/${ICLAUSTRON_VERSION}
     ICLAUSTRON_INSTALL_DIR=$CREATE_DIR
@@ -333,11 +353,18 @@ build_local()
     exec_command make install
     exec_command cd ..
     output_msg "Successfully built and installed $MYSQL_VERSION"
+    if test "x$BUILD_DBT2" = "xy" ; then
+      output_msg "Building DBT2 version: $DBT2_VERSION"
+      exec_command cd ${SRC_INSTALL_DIR}/${DBT2_VERSION}
+      exec_command ./configure --with-mysql=${BIN_INSTALL_DIR}/${MYSQL_VERSION}
+      exec_command make
+      exec_command cd ..
+    fi
   fi
 #
-# Now that we've successfully built the MySQL and iClaustron source code
-# we'll create compressed tar-files of the binaries for later distribution
-# to other dependent nodes
+# Now that we've successfully built the MySQL and iClaustron and a potential
+# DBT2 source code we'll create compressed tar-files of the binaries for later
+# distribution to other dependent nodes
 #
   if test "x$BIN_TAR_FILES" = "xy" ; then
 # Verify that pwd works before using it
@@ -347,6 +374,13 @@ build_local()
       MYSQL_TARBALL="${MYSQL_VERSION}_binary.tar.gz"
       COMMAND="tar cfz ${MYSQL_VERSION}_binary.tar.gz $MYSQL_VERSION"
       exec_command $COMMAND
+      if test "x$BUILD_DBT2" = "xy" ; then
+        exec_command cd $SRC_INSTALL_DIR
+        DBT2_TARBALL="${DBT2_VERSION}_binary.tar.gz"
+        COMMAND="tar cfz ${DBT2_VERSION}_binary.tar.gz $DBT2_VERSION"
+        exec_command $COMMAND
+        exec_command cd $BIN_INSTALL_DIR
+      fi
     fi
     if test "x$BUILD_ICLAUSTRON" = "xy" ; then
       ICLAUSTRON_TARBALL="${ICLAUSTRON_VERSION}_binary.tar.gz"
@@ -362,6 +396,9 @@ remove_tar_files()
   output_msg "Remove tar files with binaries"
   if test "x$MYSQL_TARBALL" != "x" ; then
     exec_command rm ${BIN_INSTALL_DIR}/${MYSQL_TARBALL}
+    if test "x$DBT2_TARBALL" != "x" ; then
+      exec_command rm ${SRC_INSTALL_DIR}/${DBT2_TARBALL}
+    fi
   fi
   if test "x$ICLAUSTRON_TARBALL" != "x" ; then
     exec_command rm ${BIN_INSTALL_DIR}/${ICLAUSTRON_TARBALL}
@@ -377,6 +414,9 @@ remove_remote_tar_files()
   setup_ssh_node $LOCAL_NODE
   if test "x$MYSQL_TARBALL" != "x" ; then
     exec_command $SSH rm ${BIN_INSTALL_DIR}/${MYSQL_TARBALL}
+    if test "x$DBT2_TARBALL" != "x" ; then
+      exec_command $SSH rm ${SRC_INSTALL_DIR}/${DBT2_TARBALL}
+    fi
   fi
   if test "x$ICLAUSTRON_TARBALL" != "x" ; then
     exec_command $SSH rm ${BIN_INSTALL_DIR}/${ICLAUSTRON_TARBALL}
@@ -429,11 +469,18 @@ remote_install_binary()
   LOCAL_USER_HOST="$USER_AND_HOST"
 
   if test "x$MYSQL_TARBALL" != "x" ; then
+    setup_ssh_node $LOCAL_NODE
+    exec_command $SSH mkdir -p ${LOCAL_DIR}/${MYSQL_TARBALL}
     COMMAND="scp -P $LOCAL_PORT $MYSQL_TARBALL"
-    COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${MYSQL_TARBALL}"
+    COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}"
+    exec_command $COMMAND
+    setup_ssh_node $LOCAL_NODE
+    COMMAND="$SSH cd ${LOCAL_DIR} && tar xvfz $MYSQL_TARBALL"
     exec_command $COMMAND
   fi
   if test "x$ICLAUSTRON_TARBALL" != "x" ; then
+    setup_ssh_node $LOCAL_NODE
+    exec_command $SSH mkdir -p ${LOCAL_DIR}/${ICLAUSTRON_TARBALL}
     COMMAND="scp -P $LOCAL_PORT $ICLAUSTRON_TARBALL"
     COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${ICLAUSTRON_TARBALL}"
     exec_command $COMMAND
@@ -441,6 +488,35 @@ remote_install_binary()
     COMMAND="$SSH cd ${LOCAL_DIR} && tar xvfz $ICLAUSTRON_TARBALL"
     exec_command $COMMAND
   fi
+  exec_command cd ${USER_PWD}
+  return 0
+}
+
+# $1 contains the NODE specification where to install the binaries
+# $2 contains the directory on the remote node where to install
+remote_install_dbt2_binary()
+{
+  if test "x$BUILD_DBT2" != "xy" ; then
+    return 0
+  fi
+  LOCAL_NODE="$1"
+  LOCAL_DIR="$2"
+  output_msg "Install DBT2 binaries at $1 in directory $2"
+
+  exec_command cd $SRC_INSTALL_DIR
+  get_port $LOCAL_NODE
+  LOCAL_PORT="$PORT_NUM"
+  get_user_and_host $LOCAL_NODE
+  LOCAL_USER_HOST="$USER_AND_HOST"
+
+  setup_ssh_node $LOCAL_NODE
+  exec_command $SSH mkdir -p ${LOCAL_DIR}/${DBT2_TARBALL}
+  COMMAND="scp -P $LOCAL_PORT $DBT2_TARBALL"
+  COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${DBT2_TARBALL}"
+  exec_command $COMMAND
+  setup_ssh_node $LOCAL_NODE
+  COMMAND="$SSH cd ${LOCAL_DIR} && tar xvfz $DBT2_TARBALL"
+  exec_command $COMMAND
   exec_command cd ${USER_PWD}
   return 0
 }
@@ -641,6 +717,7 @@ if test "x$LOCAL_INSTALL" = "xy" ; then
     for NODE in $LOCAL_DEP_NODE_LIST
     do
       remote_install_binary $NODE $BIN_INSTALL_DIR
+      remote_install_dbt2_binary $NODE $SRC_INSTALL_DIR
       remove_remote_tar_files $NODE
     done
     remove_tar_files
