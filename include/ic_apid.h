@@ -167,6 +167,8 @@ typedef struct ic_thread_connection IC_THREAD_CONNECTION;
 
 struct ic_send_node_connection
 {
+  /* A pointer to the global struct */
+  struct ic_apid_global *apid_global;
   /* The connection object */
   IC_CONNECTION *conn;
   /* The configuration for this connection */

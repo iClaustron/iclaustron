@@ -90,7 +90,29 @@ struct ic_connect_operations
                 thread.
     Finally an authenticate function and object can be provided in the
     create socket call.
+    We've added a number of initialisation support routines which should
+    be used afyer ic_create_socket_object but before ic_set_up_connection.
+    For ic_prepare_extra_parameters all parameters are optional. To set the
+    default for optional parameters use NULL for pointers and 0 for 
+    integer parameters. These prepare functions return an error code if
+    the set-up used faulty parameters.
   */
+
+  int (*ic_prepare_server_connection) (gchar *server_name,
+                                      gchar *server_port,
+                                      gchar *client_name, /* Optional */
+                                      gchar *client_port, /* Optional */
+                                      int backlog,        /* Optional */
+                                      gboolean is_listen_socket_retained);
+  int (*ic_prepare_client_connection) (gchar *server_name,
+                                       gchar *server_port,
+                                       gchar *client_name, /* Optional */
+                                       gchar *client_port);/* Optional */
+  int (*ic_prepare_extra_parameters) (guint32 tcp_maxseg,
+                                      gboolean is_wan_connection,
+                                      guint32 tcp_receive_buffer_size,
+                                      guint32 tcp_send_buffer_size);
+
   int (*ic_set_up_connection) (struct ic_connection *conn);
   int (*ic_accept_connection) (struct ic_connection *conn);
   int (*ic_close_connection) (struct ic_connection *conn);

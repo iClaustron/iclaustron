@@ -2,7 +2,7 @@ project (iClaustron)
 cmake_minimum_required (VERSION 2.6)
 set (iClaustron_VERSION_MAJOR 0)
 set (iClaustron_VERSION_MINOR 0)
-set (iClaustron_VERSION_BUILD 1)
+set (iClaustron_VERSION_PATCH 1)
 
 SET (SYSTEM_BINARY_PATH
      /usr/bin /bin /sbin /usr/sbin /usr/local/bin /usr/sbin

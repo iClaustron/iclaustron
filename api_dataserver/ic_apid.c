@@ -45,8 +45,8 @@ static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                               IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
                               IC_NDB_MESSAGE *ndb_message,
                               guint32 *message_id);
-static IC_SOCK_BUF_PAGE*
-get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time);
+static IC_SOCK_BUF_PAGE* get_thread_messages(IC_APID_CONNECTION *apid,
+                                             glong wait_time);
 
 struct link_message_anchors
 {
@@ -86,8 +86,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   if (!(apid_global->mem_buf_pool= ic_create_socket_membuf(IC_MEMBUF_SIZE,
                                                            512)))
     goto error;
-  if (!(apid_global->ndb_message_pool= ic_create_socket_membuf(
-                                         sizeof(IC_NDB_MESSAGE), 2048)))
+  if (!(apid_global->ndb_message_pool= ic_create_socket_membuf(0, 2048)))
     goto error;
   if (!(apid_global->thread_id_mutex= g_mutex_new()))
     goto error;
@@ -222,6 +221,7 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
         send_node_conn= cluster_comm->send_node_conn_array[node_id];
         g_assert(send_node_conn);
         /* We have found a node to connect to, start connect thread */
+        send_node_conn->apid_global= apid_global;
         send_node_conn->link_config= link_config;
         send_node_conn->active_node_id= node_id;
         send_node_conn->my_node_id= my_node_id;
@@ -446,10 +446,103 @@ run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   return;
 }
 
+/*
+  This callback is called by the object connecting the server to the
+  client using the NDB Protocol. This method calls a method on the
+  IC_API_CONFIG_SERVER object implementing the server side of the set-up
+  of this protocol.
+*/
 static int
-connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+server_api_connect(void *data)
 {
   return 0;
+}
+
+/*
+  This callback is called by the object connecting the client to the
+  server using the NDB Protocol. This method calls a method on the
+  IC_API_CONFIG_SERVER object implementing the client side of the set-up
+  of this protocol.
+*/
+static int
+client_api_connect(void *data)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  return 0;
+}
+
+static int
+connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                       gboolean is_client_part)
+{
+  IC_CONNECTION *conn;
+  IC_SOCKET_LINK_CONFIG *link_config;
+  gchar server_port_buf[32], client_port_buf[32];
+  gchar *server_port_str, *client_port_str;
+  gchar *server_name, *client_name;
+  guint32 len;
+  int error;
+
+  if (is_client_part)
+  {
+    conn= send_node_conn->conn;
+    link_config= send_node_conn->link_config;
+    if (link_config->first_node_id == link_config->server_node_id)
+    {
+      server_name= link_config->first_hostname;
+      client_name= link_config->second_hostname;
+    }
+    else
+    {
+      server_name= link_config->second_hostname;
+      client_name= link_config->first_hostname;
+    }
+    server_port_str= ic_guint64_str(link_config->server_port_number,
+                                    server_port_buf, &len);
+    client_port_str= ic_guint64_str(link_config->client_port_number,
+                                    client_port_buf, &len);
+    if (!server_port_str || !client_port_str)
+      return IC_ERROR_INCONSISTENT_DATA;
+    if ((error= conn->conn_op.ic_prepare_client_connection(server_host,
+                                                           server_port,
+                                                           client_port_str,
+                                                           client_name)))
+      return error;
+    if ((error= conn->conn_op.ic_prepare_extra_parameters(
+             link_config->tcp_maxseg,
+             link_config->is_wan_connection,
+             link_config->tcp_receive_buffer_size,
+             link_config->tcp_send_buffer_size)))
+      return error;
+    if ((error= conn->conn_op.ic_set_up_connection(conn)))
+      return error;
+  }
+  else
+  {
+  }
+  return 0;
+}
+
+static gpointer
+run_server_connect_thread(void *data)
+{
+  IC_SERVER_CONNECT *serv_conn= (IC_SERVER_CONNECT*)data;
+  IC_CONNECT *conn= serv_conn->conn;
+  gchar *server_host= serv_conn->server_host;
+  gchar *server_port= serv_conn->server_port;
+
+  conn->server_name= server_host;
+  conn->server_port= server_port;
+  conn->client_name= NULL;
+  conn->client_port= NULL;
+  conn->backlog= 10;
+  conn->is_listen_socket_retained= TRUE;
+  conn->auth_func= server_api_connect;
+  conn_auth_obj= data;
+
+  if ((error= 
+  return NULL;
 }
 
 static gpointer
@@ -468,19 +561,25 @@ run_send_thread(void *data)
   */
   is_client_part= (send_node_conn->my_node_id ==
                    send_node_conn->link_config->server_node_id);
-  send_node_conn->conn= ic_create_socket_object(
+  if (is_client_part)
+  {
+    send_node_conn->conn= ic_create_socket_object(
                        is_client_part,
                        FALSE,  /* Mutex supplied by API code instead */
                        FALSE,  /* This thread is already a connection thread */
                        0,      /* No read buffer needed, we supply our own */
-                       NULL,   /* Authentication function */
-                       NULL);/* Authentication object */
-  g_mutex_lock(send_node_conn->mutex);
+                       client_api_connect,   /* Authentication function */
+                       (void*)send_node_conn);  /* Authentication object */
+    g_mutex_lock(send_node_conn->mutex);
+    if (send_node_conn->conn == NULL)
+      send_node_conn->stop_ordered= TRUE;
+  }
+  else
+  {
+  }
   g_cond_signal(send_node_conn->cond);
-  if (send_node_conn == NULL)
-    send_node_conn->stop_ordered= TRUE;
   g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
-  if (send_node_conn == NULL)
+  if (send_node_conn->conn == NULL)
     goto end;
   /*
     The main thread have started up all threads and all communication objects
@@ -488,7 +587,8 @@ run_send_thread(void *data)
   */
   while (!send_node_conn->stop_ordered)
   {
-    if ((error= connect_by_send_thread(send_node_conn)))
+    if ((error= connect_by_send_thread(send_node_conn,
+                                       is_client_part)))
       goto end;
     run_active_send_thread(send_node_conn);
   }
