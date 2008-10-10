@@ -41,6 +41,14 @@ BUILD_ICLAUSTRON="n"
 BUILD_MYSQL="y"
 BUILD_DBT2="y"
 
+#Check that no inconsistent setting has been set
+if test "x$BUILD_DBT2" = "xy" ; then
+  if test "x$BUILD_MYSQL" != "xy" ; then
+    echo "DBT2 only allowed together with MySQL"
+    exit 1
+  fi
+fi
+
 #Ensure all messages are sent both to the log file and to the terminal
 msg_to_log()
 {
@@ -470,7 +478,7 @@ remote_install_binary()
 
   if test "x$MYSQL_TARBALL" != "x" ; then
     setup_ssh_node $LOCAL_NODE
-    exec_command $SSH mkdir -p ${LOCAL_DIR}/${MYSQL_TARBALL}
+    exec_command $SSH mkdir -p ${LOCAL_DIR}
     COMMAND="scp -P $LOCAL_PORT $MYSQL_TARBALL"
     COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}"
     exec_command $COMMAND
@@ -480,7 +488,7 @@ remote_install_binary()
   fi
   if test "x$ICLAUSTRON_TARBALL" != "x" ; then
     setup_ssh_node $LOCAL_NODE
-    exec_command $SSH mkdir -p ${LOCAL_DIR}/${ICLAUSTRON_TARBALL}
+    exec_command $SSH mkdir -p ${LOCAL_DIR}
     COMMAND="scp -P $LOCAL_PORT $ICLAUSTRON_TARBALL"
     COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${ICLAUSTRON_TARBALL}"
     exec_command $COMMAND
@@ -510,7 +518,7 @@ remote_install_dbt2_binary()
   LOCAL_USER_HOST="$USER_AND_HOST"
 
   setup_ssh_node $LOCAL_NODE
-  exec_command $SSH mkdir -p ${LOCAL_DIR}/${DBT2_TARBALL}
+  exec_command $SSH mkdir -p ${LOCAL_DIR}
   COMMAND="scp -P $LOCAL_PORT $DBT2_TARBALL"
   COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${DBT2_TARBALL}"
   exec_command $COMMAND
