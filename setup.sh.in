@@ -295,7 +295,7 @@ unpack_tarballs()
     COMMAND="cp ${USER_PWD}/${MYSQL_VERSION}.tar.gz"
     COMMAND="$COMMAND ${MYSQL_VERSION}.tar.gz"
     exec_command $COMMAND
-    COMMAND="tar xvfz ${MYSQL_VERSION}.tar.gz"
+    COMMAND="tar xfz ${MYSQL_VERSION}.tar.gz"
     exec_command $COMMAND
     COMMAND="rm ${MYSQL_VERSION}.tar.gz"
     exec_command $COMMAND
@@ -304,7 +304,7 @@ unpack_tarballs()
     COMMAND="cp ${USER_PWD}/${ICLAUSTRON_VERSION}.tar.gz"
     COMMAND="$COMMAND ${ICLAUSTRON_VERSION}.tar.gz"
     exec_command $COMMAND
-    COMMAND="tar xvfz ${ICLAUSTRON_VERSION}.tar.gz"
+    COMMAND="tar xfz ${ICLAUSTRON_VERSION}.tar.gz"
     exec_command $COMMAND
     COMMAND="rm ${ICLAUSTRON_VERSION}.tar.gz"
     exec_command $COMMAND
@@ -313,7 +313,7 @@ unpack_tarballs()
     COMMAND="cp ${USER_PWD}/${DBT2_VERSION}.tar.gz"
     COMMAND="$COMMAND ${DBT2_VERSION}.tar.gz"
     exec_command $COMMAND
-    COMMAND="tar xvfz ${DBT2_VERSION}.tar.gz"
+    COMMAND="tar xfz ${DBT2_VERSION}.tar.gz"
     exec_command $COMMAND
     COMMAND="rm ${DBT2_VERSION}.tar.gz"
     exec_command $COMMAND
@@ -483,7 +483,7 @@ remote_install_binary()
     COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}"
     exec_command $COMMAND
     setup_ssh_node $LOCAL_NODE
-    COMMAND="$SSH cd ${LOCAL_DIR} && tar xvfz $MYSQL_TARBALL"
+    COMMAND="$SSH tar xfz ${LOCAL_DIR}/${MYSQL_TARBALL} -C ${LOCAL_DIR}"
     exec_command $COMMAND
   fi
   if test "x$ICLAUSTRON_TARBALL" != "x" ; then
@@ -493,7 +493,7 @@ remote_install_binary()
     COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${ICLAUSTRON_TARBALL}"
     exec_command $COMMAND
     setup_ssh_node $LOCAL_NODE
-    COMMAND="$SSH cd ${LOCAL_DIR} && tar xvfz $ICLAUSTRON_TARBALL"
+    COMMAND="$SSH tar xfz ${LOCAL_DIR}/${ICLAUSTRON_TARBALL} -C ${LOCAL_DIR}"
     exec_command $COMMAND
   fi
   exec_command cd ${USER_PWD}
@@ -518,12 +518,12 @@ remote_install_dbt2_binary()
   LOCAL_USER_HOST="$USER_AND_HOST"
 
   setup_ssh_node $LOCAL_NODE
-  exec_command $SSH mkdir -p ${LOCAL_DIR}
+  exec_command $SSH "mkdir -p ${LOCAL_DIR}"
   COMMAND="scp -P $LOCAL_PORT $DBT2_TARBALL"
   COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${DBT2_TARBALL}"
   exec_command $COMMAND
   setup_ssh_node $LOCAL_NODE
-  COMMAND="$SSH cd ${LOCAL_DIR} && tar xvfz $DBT2_TARBALL"
+  COMMAND="$SSH tar xfz ${LOCAL_DIR}/${DBT2_TARBALL} -C ${LOCAL_DIR}"
   exec_command $COMMAND
   exec_command cd ${USER_PWD}
   return 0
