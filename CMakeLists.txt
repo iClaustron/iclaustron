@@ -6,6 +6,8 @@ set (iClaustron_VERSION_MAJOR 0)
 set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_PATCH 1)
 
+set (ICLAUSTRON_LIBS "")
+set (READLINE_LIBS "")
 SET (SYSTEM_BINARY_PATH
      /usr/bin /bin /sbin /usr/sbin /usr/local/bin /usr/sbin
      /opt/bin /opt/local/bin)
@@ -50,13 +52,18 @@ option(WITH_CYASSL "Use CYassl package" OFF)
 find_package(PkgConfig REQUIRED)
 set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
 find_package(GLIB2 REQUIRED)
-include_directories(${GLIB_INCLUDE_DIRS})
+include_directories(${GLIB2_INCLUDE_DIRS})
+link_directories(${GLIB2_LIBRARIES})
+add_definitions(${GLIB2_DEFINITIONS})
+set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${GLIB2_LIBRARIES})
+message ("iClaustron libraries are ${ICLAUSTRON_LIBS}")
+message ("GLIB2 headers are ${GLIB2_INCLUDE_DIRS}")
 
 if (WITH_OPENSSL)
   include(FindOpenSSL)
   if (OPENSSL_INCLUDE_DIR)
     include_directories(${OPENSSL_INCLUDE_DIR})
-    #include_library(${OPENSSL_LIBRARIES})
+    set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${OPENSSL_LIBRARIES})
   endif(OPENSSL_INCLUDE_DIR)
 endif(WITH_OPENSSL)
 include(CheckFunctionExists)
@@ -93,7 +100,11 @@ if (WITH_READLINE)
   find_library(READLINE_LIB
                NAMES readline
                PATHS /usr/local/lib /usr/lib)
+  find_library(NCURSES_LIB
+               NAMES ncurses
+               PATHS /usr/local/lib /usr/lib)
   check_include_file(readline/readline.h HAVE_READLINE_H)
+  set (READLINE_LIBS ${READLINE_LIB} ${NCURSES_LIB})
 endif(WITH_READLINE)
 if (WITH_OPENSSL)
 endif(WITH_OPENSSL)
