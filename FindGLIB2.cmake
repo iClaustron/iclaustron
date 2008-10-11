@@ -39,19 +39,20 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
       ${_GLIB2_INCLUDE_DIRS}/include
     NO_DEFAULT_PATH
   )
-
-  find_path(GLIBCONFIG_INCLUDE_DIR
-    NAMES
-      glibconfig.h
-    PATHS
-      /opt/gnome/lib64/glib-2.0/include
-      /opt/gnome/lib/glib-2.0/include
-      /opt/lib/glib-2.0/include
-      /opt/local/lib/glib-2.0/include
-      /sw/lib/glib-2.0/include
-      /usr/lib64/glib-2.0/include
-      /usr/lib/glib-2.0/include
-  )
+  if (NOT GLIBCONFIG_INCLUDE_DIR)
+    find_path(GLIBCONFIG_INCLUDE_DIR
+      NAMES
+        glibconfig.h
+      PATHS
+        /opt/gnome/lib64/glib-2.0/include
+        /opt/gnome/lib/glib-2.0/include
+        /opt/lib/glib-2.0/include
+        /opt/local/lib/glib-2.0/include
+        /sw/lib/glib-2.0/include
+        /usr/lib64/glib-2.0/include
+        /usr/lib/glib-2.0/include
+    )
+  endif (NOT GLIBCONFIG_INCLUDE_DIR)
 
   set(GLIB2_DEFINITIONS ${_GLIB2_CFLAGS})
 
@@ -62,17 +63,18 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
       ${_GLIB2_INCLUDE_DIRS}
     NO_DEFAULT_PATH
   )
-
-  find_path(GLIB2_INCLUDE_DIR
-    NAMES
-      glib.h
-    PATHS
-      /opt/gnome/include/glib-2.0
-      /opt/local/include/glib-2.0
-      /sw/include/glib-2.0
-      /usr/include/glib-2.0
-      /usr/local/include/glib-2.0
-  )
+  if (NOT GLIB2_INCLUDE_DIR)
+    find_path(GLIB2_INCLUDE_DIR
+      NAMES
+        glib.h
+      PATHS
+        /opt/gnome/include/glib-2.0
+        /opt/local/include/glib-2.0
+        /sw/include/glib-2.0
+        /usr/include/glib-2.0
+        /usr/local/include/glib-2.0
+    )
+  endif (NOT GLIB2_INCLUDE_DIR)
 
   find_library(GLIB2_LIBRARY
     NAMES
@@ -82,16 +84,18 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
     NO_DEFAULT_PATH 
   )
 
-  find_library(GLIB2_LIBRARY
-    NAMES
-      glib-2.0
-    PATHS
-      /opt/gnome/lib
-      /opt/local/lib
-      /sw/lib
-      /usr/lib
-      /usr/local/lib
-  )
+  if (NOT GLIB2_LIBRARY)
+    find_library(GLIB2_LIBRARY
+      NAMES
+        glib-2.0
+      PATHS
+        /opt/gnome/lib
+        /opt/local/lib
+        /sw/lib
+        /usr/lib
+        /usr/local/lib
+    )
+  endif (NOT GLIB2_LIBRARY)
   ##
 
   ## GModule
@@ -108,16 +112,18 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
     NO_DEFAULT_PATH 
   )
 
-  find_path(GMODULE2_INCLUDE_DIR
-    NAMES
-      gmodule.h
-    PATHS
-      /opt/gnome/include/glib-2.0
-      /opt/local/include/glib-2.0
-      /sw/include/glib-2.0
-      /usr/include/glib-2.0
-      /usr/local/include/glib-2.0
-  )
+  if (NOT GMODULE2_INCLUDE_DIR)
+    find_path(GMODULE2_INCLUDE_DIR
+      NAMES
+        gmodule.h
+      PATHS
+        /opt/gnome/include/glib-2.0
+        /opt/local/include/glib-2.0
+        /sw/include/glib-2.0
+        /usr/include/glib-2.0
+        /usr/local/include/glib-2.0
+    )
+  endif (NOT GMODULE2_INCLUDE_DIR)
 
   find_library(GMODULE2_LIBRARY
     NAMES
@@ -127,16 +133,18 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
     NO_DEFAULT_PATH 
   )
 
-  find_library(GMODULE2_LIBRARY
-    NAMES
-      gmodule-2.0
-    PATHS
-      /opt/gnome/lib
-      /opt/local/lib
-      /sw/lib
-      /usr/lib
-      /usr/local/lib
-  )
+  if (NOT GMODULE2_LIBRARY)
+    find_library(GMODULE2_LIBRARY
+      NAMES
+        gmodule-2.0
+      PATHS
+        /opt/gnome/lib
+        /opt/local/lib
+        /sw/lib
+        /usr/lib
+        /usr/local/lib
+    )
+  endif (NOT GMODULE2_LIBRARY)
   if (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
     set(GMODULE2_FOUND TRUE)
   endif (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
@@ -158,18 +166,20 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
     NO_DEFAULT_PATH
   )
 
-  find_path(GTHREAD2_INCLUDE_DIR
-    NAMES
-      gthread.h
-    PATHS
-      /opt/gnome/include/glib-2.0
-      /opt/local/include/glib-2.0
-      /sw/include/glib-2.0
-      /usr/include/glib-2.0
-      /usr/local/include/glib-2.0
-    PATH_SUFFIXES
-      glib
-  )
+  if (NOT GTHREAD2_INCLUDE_DIR)
+    find_path(GTHREAD2_INCLUDE_DIR
+      NAMES
+        gthread.h
+      PATHS
+        /opt/gnome/include/glib-2.0
+        /opt/local/include/glib-2.0
+        /sw/include/glib-2.0
+        /usr/include/glib-2.0
+        /usr/local/include/glib-2.0
+      PATH_SUFFIXES
+        glib
+    )
+  endif (NOT GTHREAD2_INCLUDE_DIR)
 
   find_library(GTHREAD2_LIBRARY
     NAMES
@@ -179,16 +189,18 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
     NO_DEFAULT_PATH 
   )
 
-  find_library(GTHREAD2_LIBRARY
-    NAMES
-      gthread-2.0
-    PATHS
-      /opt/gnome/lib
-      /opt/local/lib
-      /sw/lib
-      /usr/lib
-      /usr/local/lib
-  )
+  if (NOT GTHREAD2_LIBRARY)
+    find_library(GTHREAD2_LIBRARY
+      NAMES
+        gthread-2.0
+      PATHS
+        /opt/gnome/lib
+        /opt/local/lib
+        /sw/lib
+        /usr/lib
+        /usr/local/lib
+    )
+  endif (NOT GTHREAD2_LIBRARY)
 
   if (GTHREAD2_LIBRARY AND GTHREAD2_INCLUDE_DIR)
     set(GTHREAD2_FOUND TRUE)
@@ -211,18 +223,20 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
     NO_DEFAULT_PATH 
   )
 
-  find_path(GOBJECT2_INCLUDE_DIR
-    NAMES
-      gobject.h
-    PATHS
-      /opt/gnome/include/glib-2.0
-      /opt/local/include/glib-2.0
-      /sw/include/glib-2.0
-      /usr/include/glib-2.0
-      /usr/local/include/glib-2.0
-    PATH_SUFFIXES
-      gobject
-  )
+  if (NOT GOBJECT2_INCLUDE_DIR)
+    find_path(GOBJECT2_INCLUDE_DIR
+      NAMES
+        gobject.h
+      PATHS
+        /opt/gnome/include/glib-2.0
+        /opt/local/include/glib-2.0
+        /sw/include/glib-2.0
+        /usr/include/glib-2.0
+        /usr/local/include/glib-2.0
+      PATH_SUFFIXES
+        gobject
+    )
+  endif (NOT GOBJECT2_INCLUDE_DIR)
 
   find_library(GOBJECT2_LIBRARY
     NAMES
@@ -232,16 +246,18 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS AND GLIB2_PUBLIC_LINK_FLAGS)
     NO_DEFAULT_PATH 
   )
 
-  find_library(GOBJECT2_LIBRARY
-    NAMES
-      gobject-2.0
-    PATHS
-      /opt/gnome/lib
-      /opt/local/lib
-      /sw/lib
-      /usr/lib
-      /usr/local/lib
-  )
+  if (NOT GOBJECT2_LIBRARY)
+    find_library(GOBJECT2_LIBRARY
+      NAMES
+        gobject-2.0
+      PATHS
+        /opt/gnome/lib
+        /opt/local/lib
+        /sw/lib
+        /usr/lib
+        /usr/local/lib
+    )
+  endif (NOT GOBJECT2_LIBRARY)
 
   if (GOBJECT2_LIBRARY AND GOBJECT2_INCLUDE_DIR)
     set(GOBJECT2_FOUND TRUE)
