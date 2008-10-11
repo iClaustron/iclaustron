@@ -144,14 +144,35 @@ connection_test(gboolean use_ssl)
       return IC_ERROR_MEM_ALLOC;
     }
   }
-  conn->server_name= glob_server_ip;
-  conn->server_port= glob_server_port;
-  conn->client_name= glob_client_ip;
-  conn->client_port= glob_client_port;
-  conn->is_wan_connection= glob_is_wan_connection;
-  conn->tcp_maxseg_size= glob_tcp_maxseg;
-  conn->tcp_receive_buffer_size= glob_tcp_rec_size;
-  conn->tcp_send_buffer_size= glob_tcp_snd_size;
+  if (glob_is_client)
+  {
+    if ((ret_code= conn->conn_op->ic_prepare_client_connection(
+         conn,
+         glob_server_ip,
+         glob_server_port,
+         glob_client_ip,
+         glob_client_port)))
+      goto conn_error;
+  }
+  else
+  {
+    if ((ret_code= conn->conn_op->ic_prepare_server_connection(
+         conn,
+         glob_server_ip,
+         glob_server_port,
+         glob_client_ip,
+         glob_client_port,
+         0, /* Defaut backlog */
+         FALSE /* Listen socket not retained */)))
+      goto conn_error;
+  }
+  if ((ret_code= conn->conn_op->ic_prepare_extra_parameters(
+       conn,
+       glob_tcp_maxseg,
+       glob_is_wan_connection,
+       glob_tcp_rec_size,
+       glob_tcp_snd_size)))
+    goto conn_error;
   ret_code= conn->conn_op.ic_set_up_connection(conn);
   if (ret_code != 0)
   {

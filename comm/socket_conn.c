@@ -1215,6 +1215,60 @@ error:
   return NULL;
 }
 
+static void
+prepare_client_connection(IC_CONNECTION *conn,
+                          gchar *server_name,
+                          gchar *server_port,
+                          gchar *client_name,
+                          gchar *client_port)
+{
+  conn->server_name= server_name;
+  conn->server_port= server_port;
+  conn->client_name= client_name;
+  conn->client_port= client_port;
+}
+
+static void
+prepare_server_connection(IC_CONNECTION *conn,
+                          gchar *server_name,
+                          gchar *server_port,
+                          gchar *client_name,
+                          gchar *client_port,
+                          int backlog,
+                          gboolean is_listen_socket_retained)
+{
+  prepare_client_connection(conn, server_name, server_port,
+                            client_name, client_port);
+  if (backlog == 0)
+    backlog= 10;
+  conn->backlog= backlog;
+  conn->is_listen_socket_retained= is_listen_socket_retained;
+}
+
+static void
+prepare_extra_parameters(IC_CONNECTION *conn,
+                         guint32 tcp_maxseg,
+                         gboolean is_wan_connection,
+                         guint32 tcp_receive_buffer_size,
+                         guint32 tcp_send_buffer_size)
+{
+  if (tcp_maxseg == 0)
+  {
+  }
+  else
+    conn->tcp_maxseg_size= tcp_maxseg;
+  conn->is_wan_connection= is_wan_connection;
+  if (tcp_receive_buffer_size == 0)
+  {
+  }
+  else
+    conn->tcp_receive_buffer_size= tcp_receive_buffer_size;
+  if (tcp_send_buffer_size == 0)
+  {
+  }
+  else
+    conn->tcp_send_buffer_size= tcp_send_buffer_size;
+}
 
 IC_CONNECTION*
 int_create_socket_object(gboolean is_client,
@@ -1251,6 +1305,9 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_read_stat_time= read_socket_stat_time;
   conn->conn_op.ic_write_stat_connection= write_stat_socket_connection;
   conn->conn_op.ic_fork_accept_connection= fork_accept_connection;
+  conn->conn_op.ic_prepare_server_connection= prepare_server_connection;
+  conn->conn_op.ic_prepare_client_connection= prepare_client_connection;
+  conn->conn_op.ic_prepare_extra_parameters= prepare_extra_parameters;
 
   conn->is_ssl_connection= is_ssl;
   conn->is_ssl_used_for_data= is_ssl_used_for_data;

@@ -98,20 +98,23 @@ struct ic_connect_operations
     the set-up used faulty parameters.
   */
 
-  int (*ic_prepare_server_connection) (gchar *server_name,
-                                      gchar *server_port,
-                                      gchar *client_name, /* Optional */
-                                      gchar *client_port, /* Optional */
-                                      int backlog,        /* Optional */
-                                      gboolean is_listen_socket_retained);
-  int (*ic_prepare_client_connection) (gchar *server_name,
-                                       gchar *server_port,
-                                       gchar *client_name, /* Optional */
-                                       gchar *client_port);/* Optional */
-  int (*ic_prepare_extra_parameters) (guint32 tcp_maxseg,
-                                      gboolean is_wan_connection,
-                                      guint32 tcp_receive_buffer_size,
-                                      guint32 tcp_send_buffer_size);
+  void (*ic_prepare_server_connection) (struct ic_connection *conn,
+                                        gchar *server_name,
+                                        gchar *server_port,
+                                        gchar *client_name, /* Optional */
+                                        gchar *client_port, /* Optional */
+                                        int backlog,        /* Optional */
+                                        gboolean is_listen_socket_retained);
+  void (*ic_prepare_client_connection) (struct ic_connection *conn,
+                                        gchar *server_name,
+                                        gchar *server_port,
+                                        gchar *client_name, /* Optional */
+                                        gchar *client_port);/* Optional */
+  void (*ic_prepare_extra_parameters) (struct ic_connection *conn,
+                                       guint32 tcp_maxseg,
+                                       gboolean is_wan_connection,
+                                       guint32 tcp_receive_buffer_size,
+                                       guint32 tcp_send_buffer_size);
 
   int (*ic_set_up_connection) (struct ic_connection *conn);
   int (*ic_accept_connection) (struct ic_connection *conn);

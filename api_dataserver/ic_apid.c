@@ -504,17 +504,17 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
                                     client_port_buf, &len);
     if (!server_port_str || !client_port_str)
       return IC_ERROR_INCONSISTENT_DATA;
-    if ((error= conn->conn_op.ic_prepare_client_connection(server_host,
-                                                           server_port,
-                                                           client_port_str,
-                                                           client_name)))
-      return error;
-    if ((error= conn->conn_op.ic_prepare_extra_parameters(
-             link_config->tcp_maxseg,
+    conn->conn_op.ic_prepare_client_connection(conn,
+                                               server_name,
+                                               server_port_str,
+                                               client_port_str,
+                                               client_name);
+    conn->conn_op.ic_prepare_extra_parameters(
+             conn,
+             link_config->socket_maxseg_size,
              link_config->is_wan_connection,
-             link_config->tcp_receive_buffer_size,
-             link_config->tcp_send_buffer_size)))
-      return error;
+             link_config->socket_read_buffer_size,
+             link_config->socket_write_buffer_size);
     if ((error= conn->conn_op.ic_set_up_connection(conn)))
       return error;
   }
