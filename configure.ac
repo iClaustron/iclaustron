@@ -126,7 +126,7 @@ LIBS="$LIBS $LIBREADLINE"
 # Next step is to check the existence of external header files.
 #
 AC_HEADER_STDC
-AC_CHECK_HEADERS([unistd.h netinet/in.h sys/types.h sys/socket.h netdb.h arpa/inet.h],,
+AC_CHECK_HEADERS([unistd.h poll.h sys/poll.h netinet/in.h sys/types.h sys/socket.h netdb.h arpa/inet.h],,
   [AC_MSG_ERROR([Common headers missing, e.g. socket.h])])
 AC_CHECK_HEADER(glib.h,,
   [AC_MSG_ERROR([GLib headers missing])])

@@ -1,5 +1,7 @@
 project (iClaustron)
+
 cmake_minimum_required (VERSION 2.6)
+
 set (iClaustron_VERSION_MAJOR 0)
 set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_PATCH 1)
@@ -20,8 +22,83 @@ configure_file (
   "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
   "${PROJECT_BINARY_DIR}/include/config.h"
   )
+
 include_directories("${PROJECT_BINARY_DIR}")
 include_directories("${PROJECT_SOURCE_DIR}/include")
+
+configure_file("${PROJECT_SOURCE_DIR}/bootstrap.sh.in"
+               "${PROJECT_BINARY_DIR}/bootstrap.sh")
+configure_file("${PROJECT_SOURCE_DIR}/setup.sh.in"
+               "${PROJECT_BINARY_DIR}/setup.sh")
+configure_file("${PROJECT_SOURCE_DIR}/count_line.sh.in"
+               "${PROJECT_BINARY_DIR}/count_line.sh")
+configure_file("${PROJECT_SOURCE_DIR}/scripts/linux_check_process.sh.in"
+               "${PROJECT_BINARY_DIR}/scripts/linux_check_process.sh")
+configure_file("${PROJECT_SOURCE_DIR}/scripts/macosx_check_process.sh.in"
+               "${PROJECT_BINARY_DIR}/scripts/macosx_check_process.sh")
+configure_file("${PROJECT_SOURCE_DIR}/scripts/solaris_check_process.sh.in"
+               "${PROJECT_BINARY_DIR}/scripts/solaris_check_process.sh")
+
+option(WITH_PRODUCTION "Build a production version" OFF)
+option(WITH_DEBUG "Build a debug version" OFF)
+option(WITH_READLINE "Use readline package" OFF)
+option(WITH_DTRACE "Use DTrace probes" OFF)
+option(WITH_OPENSSL "Use OpenSSL package" OFF)
+option(WITH_CYASSL "Use CYassl package" OFF)
+
+#We need PkgConfig to discover glib and other packages we need
+find_package(PkgConfig REQUIRED)
+set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
+find_package(GLIB2 REQUIRED)
+include_directories(${GLIB_INCLUDE_DIRS})
+
+if (WITH_OPENSSL)
+  include(FindOpenSSL)
+  if (OPENSSL_INCLUDE_DIR)
+    include_directories(${OPENSSL_INCLUDE_DIR})
+    #include_library(${OPENSSL_LIBRARIES})
+  endif(OPENSSL_INCLUDE_DIR)
+endif(WITH_OPENSSL)
+include(CheckFunctionExists)
+include(CheckIncludeFiles)
+include(CheckSymbolExists)
+include(CheckLibraryExists)
+include(CheckTypeSize)
+check_function_exists(bzero HAVE_BZERO)
+check_function_exists(memset HAVE_MEMSET)
+check_function_exists(break HAVE_BREAK)
+check_function_exists(gethrtime HAVE_GETHRTIME)
+check_function_exists(gettimeofday HAVE_GETTIMEOFDAY)
+check_function_exists(socket HAVE_SOCKET)
+check_function_exists(bind HAVE_BIND)
+check_function_exists(connect HAVE_CONNECT)
+check_function_exists(listen HAVE_LISTEN)
+check_function_exists(accept HAVE_ACCEPT)
+check_function_exists(getaddrinfo HAVE_GETADDRINFO)
+check_function_exists(freeaddrinfo HAVE_FREEADDRINFO)
+check_function_exists(inet_ntop HAVE_INET_NTOP)
+check_function_exists(sendmsg HAVE_SENDMSG)
+#check_library_exists(rt HAVE_RT)
+check_include_file(unistd.h HAVE_UNISTD_H)
+check_include_file(netinet/in.h HAVE_NETINET_IN_H)
+check_include_file(poll.h HAVE_POLL_H)
+check_include_file(sys/poll.h HAVE_SYS_POLL_H)
+check_include_file(sys/types.h HAVE_SYS_TYPES_H)
+check_include_file(sys/socket.h HAVE_SYS_SOCKET_H)
+check_include_file(netdb.h HAVE_NETDB_H)
+check_include_file(arpa/inet.h HAVE_ARPA_INET_H)
+check_include_file(glib.h HAVE_GLIB_H)
+
+if (WITH_READLINE)
+  find_library(READLINE_LIB
+               NAMES readline
+               PATHS /usr/local/lib /usr/lib)
+  check_include_file(readline/readline.h HAVE_READLINE_H)
+endif(WITH_READLINE)
+if (WITH_OPENSSL)
+endif(WITH_OPENSSL)
+if (WITH_CYASSL)
+endif(WITH_CYASSL)
 
 add_subdirectory (port)
 add_subdirectory (comm)
