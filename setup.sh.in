@@ -671,11 +671,6 @@ else
   BIN_INSTALL_DIR="$HOME/iclaustron_install"
   SRC_INSTALL_DIR="${HOME}/icl_src_installation"
 fi
-if test "x$SOURCE_BUILD" = "xy" ; then
-  LOG_DIR="${SRC_INSTALL_DIR}"
-else
-  LOG_DIR="${BIN_INSTALL_DIR}"
-fi
 if test "x$USER_BIN_INSTALL_DIR" != "x" ; then
   BIN_INSTALL_DIR="$USER_BIN_INSTALL_DIR"
 fi
@@ -684,6 +679,12 @@ if test "x$USER_SRC_INSTALL_DIR" != "x" ; then
 fi
 if test "x$USER_LOG_DIR" != "x" ; then
   LOG_DIR="$USER_LOG_DIR"
+else
+  if test "x$SOURCE_BUILD" = "xy" ; then
+    LOG_DIR="${SRC_INSTALL_DIR}"
+  else
+    LOG_DIR="${BIN_INSTALL_DIR}"
+  fi
 fi
 LOG_FILE="${LOG_DIR}/iclaustron_installation.log"
 
