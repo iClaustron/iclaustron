@@ -603,6 +603,7 @@ struct ic_socket_link_config
   gchar use_message_id;
   gchar use_checksum;
   gchar socket_bind_address;
+  gchar is_wan_connection;
   /* Ignore Connection Group for now */
 };
 typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;

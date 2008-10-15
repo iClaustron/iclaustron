@@ -527,21 +527,20 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
 static gpointer
 run_server_connect_thread(void *data)
 {
-  IC_SERVER_CONNECT *serv_conn= (IC_SERVER_CONNECT*)data;
+  /*IC_SERVER_CONNECT *serv_conn= (IC_*)data;
   IC_CONNECT *conn= serv_conn->conn;
   gchar *server_host= serv_conn->server_host;
   gchar *server_port= serv_conn->server_port;
 
   conn->server_name= server_host;
-  conn->server_port= server_port;
+  conn->server_port= server_port; 
   conn->client_name= NULL;
   conn->client_port= NULL;
   conn->backlog= 10;
   conn->is_listen_socket_retained= TRUE;
   conn->auth_func= server_api_connect;
   conn_auth_obj= data;
-
-  if ((error= 
+ */
   return NULL;
 }
 
