@@ -38,3 +38,4 @@ ADD_CUSTOM_COMMAND(
 
   add_executable(ic_clmgrd ${ClusterManagerSource})
   target_link_libraries(ic_clmgrd comm ic_util ic_port ic_apic ic_apid)
+  install (TARGETS ic_clmgrd DESTINATION bin)

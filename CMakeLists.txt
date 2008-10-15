@@ -128,3 +128,15 @@ add_subdirectory (repserver)
 #add_subdirectory (scripts)
 add_subdirectory (test)
 
+#Install scripts into bin directory
+install (PROGRAMS scripts/linux_check_process.sh.in DESTINATION bin
+         RENAME scripts/linux_check_process.sh)
+install (PROGRAMS scripts/macosx_check_process.sh.in DESTINATION bin
+         RENAME scripts/macosx_check_process.sh)
+install (PROGRAMS scripts/solaris_check_process.sh.in DESTINATION bin
+         RENAME scripts/solaris_check_process.sh)
+#Install examples directory into examples directory
+install (DIRECTORY examples DESTINATION examples)
+#Install doc directory into doc directory
+install (DIRECTORY doc DESTINATION doc)
+install (FILES README README-CONFIG AUTHORS DESTINATION NEWS INSTALL NEWS COPYING doc)
