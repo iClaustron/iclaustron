@@ -9,8 +9,8 @@ set (iClaustron_VERSION_PATCH 1)
 set (ICLAUSTRON_LIBS "")
 set (READLINE_LIBS "")
 SET (SYSTEM_BINARY_PATH
-     /usr/bin /bin /sbin /usr/sbin /usr/local/bin /usr/sbin
-     /opt/bin /opt/local/bin)
+     /usr/local/bin /opt/local/bin /bin /sbin /usr/bin /usr/sbin
+     /opt/bin)
 FIND_PROGRAM(FLEX_EXECUTABLE
   NAMES flex
   PATHS ${SYSTEM_BINARY_PATH}
@@ -111,33 +111,135 @@ endif(WITH_OPENSSL)
 if (WITH_CYASSL)
 endif(WITH_CYASSL)
 
-add_subdirectory (port)
-add_subdirectory (comm)
-add_subdirectory (util)
-add_subdirectory (api_clusterserver)
-add_subdirectory (api_dataserver)
-add_subdirectory (cluster_client)
-add_subdirectory (cluster_mgr)
-add_subdirectory (cluster_server)
-#add_subdirectory (doc) Nothing to build here yet
-#add_subdirectory (examples) Nothing to build here yet
-add_subdirectory (fileserver)
-add_subdirectory (include)
-add_subdirectory (pcntrl)
-add_subdirectory (repserver)
-#add_subdirectory (scripts)
-add_subdirectory (test)
+#Build library for iClaustron portability layer
+add_library(ic_port STATIC port/ic_port.c)
+
+#Build library for iClaustron utility functions
+add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c util/ic_util.c)
+target_link_libraries(ic_util ic_port)
+
+#Build library for communication utilities
+add_library(comm STATIC comm/socket_conn.c comm/socket_membuf.c comm/comm_supp.c)
+target_link_libraries(comm ic_port ic_util)
+
+#Build library to Cluster Server API
+add_library(ic_apic STATIC api_clusterserver/ic_apic.c)
+target_link_libraries(ic_apic ic_port ic_util comm)
+
+#Build library for Data Server API
+add_library(ic_apid STATIC api_dataserver/ic_apid.c)
+target_link_libraries(ic_apid ic_port ic_util comm ic_apic)
+#install(TARGETS ic_apid
+#        RUNTIME DESTINATION bin
+#        LIBRARY DESTINATION lib
+#        ARCHIVE DESTINATION lib/iClaustron)
+
+#Build test binary
+add_executable(test_comm test/test_comm.c)
+target_link_libraries(test_comm ic_port ic_util ic_apic ic_apid
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS test_comm DESTINATION bin)
+
+#Build Process Control Binary
+add_executable(ic_pcntrld pcntrl/ic_pcntrl.c)
+target_link_libraries(ic_pcntrld ic_port ic_util ic_apic ic_apid
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS ic_pcntrld DESTINATION bin)
+
+#Build Cluster client binary
+add_executable(ic_cclient cluster_client/ic_cclient.c)
+target_link_libraries(ic_cclient comm ic_util ic_port ic_apic
+                      ${READLINE_LIBS} ${ICLAUSTRON_LIBS})
+install (TARGETS ic_cclient DESTINATION bin)
+
+#Build Cluster Server binary
+add_executable(ic_csd cluster_server/ic_cs.c)
+target_link_libraries(ic_csd ic_port ic_util ic_apic ic_apid
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS ic_csd DESTINATION bin)
+
+#Build File Server binary
+add_executable(ic_fsd fileserver/ic_fileserv.c)
+target_link_libraries(ic_fsd ic_port ic_util ic_apic ic_apid
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS ic_fsd DESTINATION bin)
+
+#Build Replication Server binary
+add_executable(ic_repd repserver/ic_repserv.c)
+target_link_libraries(ic_repd ic_port ic_util ic_apic ic_apid
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS ic_repd DESTINATION bin)
+
+#Create target for the building of the parser of the Cluster Manager
+SET(ClusterManagerSource cluster_mgr/ic_clmgr.c)
+ADD_CUSTOM_TARGET(ClusterManagerParser echo "Creating ic_parser.c")
+
+ADD_CUSTOM_COMMAND(
+  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.l
+  COMMAND ${FLEX_EXECUTABLE}
+  ARGS -o${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.l
+  TARGET ClusterManagerParser
+  OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c)
+
+ADD_CUSTOM_COMMAND(
+  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
+  COMMAND ${BISON_EXECUTABLE}
+  ARGS -d
+       -y ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
+       -o ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
+  TARGET ClusterManagerParser
+  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
+  OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
+          ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h)
+
+#Add ic_parser.c to source files
+SET(ClusterManagerSource ${ClusterManagerSource}
+    ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
+    ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
+    ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c)
+#Mark ic_parser.c and ic_lex.c as a generated file
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
+                            GENERATED)
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
+                            GENERATED)
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
+                            GENERATED)
+#Include binary directory to ensure ic_lex.c is included as well
+INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
+
+add_executable(ic_clmgrd ${ClusterManagerSource})
+target_link_libraries(ic_clmgrd ic_port ic_util comm ic_apic ic_apid
+                      ${ICLAUSTRON_LIBS})
+install (TARGETS ic_clmgrd DESTINATION bin)
+
+#Install header files
+install (FILES
+         include/hashtable.h
+         include/hashtable_itr.h
+         include/hashtable_private.h
+         include/ic_apic.h
+         include/ic_apid.h
+         include/ic_clmgr.h
+         include/ic_comm.h
+         include/ic_common.h
+         include/ic_common_header.h
+         include/ic_err.h
+         include/ic_port.h
+         include/ic_ssl.h
+         include/ic_config.h
+         DESTINATION include)
 
 #Install scripts into bin directory
 install (PROGRAMS scripts/linux_check_process.sh.in DESTINATION bin
-         RENAME scripts/linux_check_process.sh)
+         RENAME linux_check_process.sh)
 install (PROGRAMS scripts/macosx_check_process.sh.in DESTINATION bin
-         RENAME scripts/macosx_check_process.sh)
+         RENAME macosx_check_process.sh)
 install (PROGRAMS scripts/solaris_check_process.sh.in DESTINATION bin
-         RENAME scripts/solaris_check_process.sh)
+         RENAME solaris_check_process.sh)
 #Install examples directory into examples directory
-install (DIRECTORY examples DESTINATION examples)
+install (DIRECTORY examples DESTINATION ${CMAKE_INSTALL_PREFIX})
 #Install doc directory into doc directory
-install (DIRECTORY doc DESTINATION doc)
+install (DIRECTORY doc DESTINATION ${CMAKE_INSTALL_PREFIX})
 install (FILES README README-CONFIG AUTHORS NEWS INSTALL COPYING AUTHORS
          DESTINATION doc)
