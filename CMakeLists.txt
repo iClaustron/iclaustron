@@ -139,4 +139,5 @@ install (PROGRAMS scripts/solaris_check_process.sh.in DESTINATION bin
 install (DIRECTORY examples DESTINATION examples)
 #Install doc directory into doc directory
 install (DIRECTORY doc DESTINATION doc)
-install (FILES README README-CONFIG AUTHORS DESTINATION NEWS INSTALL NEWS COPYING doc)
+install (FILES README README-CONFIG AUTHORS NEWS INSTALL COPYING AUTHORS
+         DESTINATION doc)
