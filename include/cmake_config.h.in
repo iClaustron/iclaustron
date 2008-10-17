@@ -33,5 +33,6 @@
 #cmakedefine HAVE_OPENSSL
 #cmakedefine HAVE_CYASSL
 #cmakedefine HAVE_SSL
+#cmakedefine HAVE_DTRACE
 
 

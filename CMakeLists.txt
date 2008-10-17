@@ -92,6 +92,15 @@ check_include_files(sys/socket.h HAVE_SYS_SOCKET_H)
 check_include_files(netdb.h HAVE_NETDB_H)
 check_include_files(arpa/inet.h HAVE_ARPA_INET_H)
 
+if (WITH_DTRACE)
+  FIND_PROGRAM(DTRACE_EXECUTABLE
+    NAMES dtrace 
+    PATHS ${SYSTEM_BINARY_PATH}
+    DOC "DTrace executable")
+  if (DTRACE_EXECUTABLE)
+    set (HAVE_DTRACE TRUE)
+  endif (DTRACE_EXECUTABLE)
+endif (WITH_DTRACE)
 if (WITH_READLINE)
   find_path(INCLUDE_READLINE_DIR readline/readline.h)
   find_library(READLINE_LIB
