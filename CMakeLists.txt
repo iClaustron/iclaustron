@@ -10,14 +10,25 @@ set (ICLAUSTRON_LIBS "")
 SET (SYSTEM_BINARY_PATH
      /usr/local/bin /opt/local/bin /bin /sbin /usr/bin /usr/sbin
      /opt/bin)
-FIND_PROGRAM(FLEX_EXECUTABLE
-  NAMES flex
-  PATHS ${SYSTEM_BINARY_PATH}
-  DOC "flex executable")
-FIND_PROGRAM(BISON_EXECUTABLE
-  NAMES bison byacc
-  PATHS ${SYSTEM_BINARY_PATH}
-  DOC "Bison executable")
+if (WIN32)
+  FIND_PROGRAM(FLEX_EXECUTABLE
+    NAMES flex
+    PATHS ${SYSTEM_BINARY_PATH}
+    DOC "flex executable")
+  FIND_PROGRAM(BISON_EXECUTABLE
+    NAMES bison byacc
+    PATHS ${SYSTEM_BINARY_PATH}
+    DOC "Bison executable")
+else (WIN32)
+  FIND_PROGRAM(FLEX_EXECUTABLE
+    NAMES flex
+    PATHS C:/Program Files/Flex
+    DOC "flex executable")
+  FIND_PROGRAM(BISON_EXECUTABLE
+    NAMES bison byacc
+    PATHS C:/Program Files/Bison C:/Program Files/Byacc
+    DOC "Bison executable")
+endif (WIN32)
 
 configure_file (
   "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
@@ -42,27 +53,22 @@ configure_file("${PROJECT_SOURCE_DIR}/scripts/solaris_check_process.sh.in"
 
 option(WITH_PRODUCTION "Build a production version" OFF)
 option(WITH_DEBUG "Build a debug version" OFF)
-option(WITH_READLINE "Use readline package" OFF)
+option(WITH_READLINE "Use readline package" ON)
 option(WITH_DTRACE "Use DTrace probes" OFF)
 option(WITH_OPENSSL "Use OpenSSL package" OFF)
 option(WITH_CYASSL "Use CYassl package" OFF)
 
 #We need PkgConfig to discover glib and other packages we need
+message("Checking for pkg-config")
 find_package(PkgConfig REQUIRED)
 set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
+message("Checking for glib-2.0")
 find_package(GLIB2 REQUIRED)
 include_directories(${GLIB2_INCLUDE_DIRS})
 link_directories(${GLIB2_LIBRARIES})
 add_definitions(${GLIB2_DEFINITIONS})
 set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${GLIB2_LIBRARIES})
 
-if (WITH_OPENSSL)
-  include(FindOpenSSL)
-  if (OPENSSL_INCLUDE_DIR)
-    include_directories(${OPENSSL_INCLUDE_DIR})
-    set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${OPENSSL_LIBRARIES})
-  endif(OPENSSL_INCLUDE_DIR)
-endif(WITH_OPENSSL)
 include(CheckFunctionExists)
 include(CheckIncludeFiles)
 include(CheckSymbolExists)
@@ -92,7 +98,17 @@ check_include_files(sys/socket.h HAVE_SYS_SOCKET_H)
 check_include_files(netdb.h HAVE_NETDB_H)
 check_include_files(arpa/inet.h HAVE_ARPA_INET_H)
 
-if (WITH_DTRACE)
+if (WIN32)
+  find_library(MATH_LIB
+               NAMES m
+               PATHS /usr/local/lib /usr/lib)
+else (WIN32)
+  find_library(MATH_LIB
+               NAMES m
+               PATHS C:/Program Files/Math)
+endif (WIN32)
+
+if (NOT WIN32 AND WITH_DTRACE) 
   FIND_PROGRAM(DTRACE_EXECUTABLE
     NAMES dtrace 
     PATHS ${SYSTEM_BINARY_PATH}
@@ -100,7 +116,7 @@ if (WITH_DTRACE)
   if (DTRACE_EXECUTABLE)
     set (HAVE_DTRACE TRUE)
   endif (DTRACE_EXECUTABLE)
-endif (WITH_DTRACE)
+endif (NOT WIN32 AND WITH_DTRACE)
 if (WITH_READLINE)
   find_path(INCLUDE_READLINE_DIR readline/readline.h)
   find_library(READLINE_LIB
@@ -121,23 +137,15 @@ if (WITH_READLINE)
   endif (INCLUDE_READLINE_DIR AND READLINE_LIB AND NCURSES_LIB)
 endif(WITH_READLINE)
 if (WITH_OPENSSL)
-  find_path(INCLUDE_OPENSSL_DIR openssl/ssl.h)
-  find_library(OPENSSL_LIB
-               NAMES ssl
-               PATHS /usr/local/lib /usr/lib)
-  find_library(CRYPTO_LIB
-               NAMES crypto
-               PATHS /usr/local/lib /usr/lib)
-  if (INCLUDE_OPENSSL_DIR AND OPENSSL_LIB AND CRYPTO_LIB)
+  message("Checking for OpenSSL")
+  include(FindOpenSSL)
+  if (INCLUDE_OPENSSL_DIR)
     set (HAVE_OPENSSL TRUE)
-    set (ICLAUSTRON_LIBS ${OPENSSL_LIB} ${CRYPTO_LIB})
-    include_directories(${INCLUDE_OPENSSL_DIR})
-  else (INCLUDE_OPENSSL_DIR AND OPENSSL_LIB AND CRYPTO_LIB)
-    if (NOT INCLUDE_OPENSSL_DIR)
-      message ("Could not find openssl/ssl.h")
-    endif (NOT INCLUDE_OPENSSL_DIR)
+    include_directories(${OPENSSL_INCLUDE_DIR})
+    set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${OPENSSL_LIBRARIES})
+  else (INCLUDE_OPENSSL_DIR)
     message ("Unsucessful in including openssl")
-  endif (INCLUDE_OPENSSL_DIR AND OPENSSL_LIB AND CRYPTO_LIB)
+  endif(INCLUDE_OPENSSL_DIR)
 endif(WITH_OPENSSL)
 if (NOT HAVE_OPENSSL AND WITH_CYASSL)
   find_path(INCLUDE_OPENSSL_DIR openssl/ssl.h)

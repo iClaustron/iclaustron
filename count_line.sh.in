@@ -1,4 +1,4 @@
 wc -l *.ac *.sh.in *.am */*.am api_clusterserver/*.[ch] api_dataserver/*.[ch] cluster_client/*.[ch] cluster_mgr/*.[yl] cluster_mgr/ic_clmgr.c cluster_server/*.[ch] comm/*.[ch] \
   fileserver/*.[ch] pcntrl/*.[ch] port/*.[ch] repserver/*.[ch] test/*.[ch] util/*.[ch] include/hash*.h include/ic*.h \
-  scripts/*.in README AUTHORS README-CONFIG NEWS \
+  scripts/*.sh.in README AUTHORS README-CONFIG NEWS \
   *.txt */*.txt FindGLIB2.cmake include/cmake_config.h.in
