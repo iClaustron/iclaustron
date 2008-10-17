@@ -7,7 +7,6 @@ set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_PATCH 1)
 
 set (ICLAUSTRON_LIBS "")
-set (READLINE_LIBS "")
 SET (SYSTEM_BINARY_PATH
      /usr/local/bin /opt/local/bin /bin /sbin /usr/bin /usr/sbin
      /opt/bin)
@@ -25,7 +24,7 @@ configure_file (
   "${PROJECT_BINARY_DIR}/include/config.h"
   )
 
-include_directories("${PROJECT_BINARY_DIR}")
+include_directories("${PROJECT_BINARY_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/include")
 
 configure_file("${PROJECT_SOURCE_DIR}/bootstrap.sh.in"
@@ -56,8 +55,6 @@ include_directories(${GLIB2_INCLUDE_DIRS})
 link_directories(${GLIB2_LIBRARIES})
 add_definitions(${GLIB2_DEFINITIONS})
 set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${GLIB2_LIBRARIES})
-message ("iClaustron libraries are ${ICLAUSTRON_LIBS}")
-message ("GLIB2 headers are ${GLIB2_INCLUDE_DIRS}")
 
 if (WITH_OPENSSL)
   include(FindOpenSSL)
@@ -86,30 +83,72 @@ check_function_exists(freeaddrinfo HAVE_FREEADDRINFO)
 check_function_exists(inet_ntop HAVE_INET_NTOP)
 check_function_exists(sendmsg HAVE_SENDMSG)
 #check_library_exists(rt HAVE_RT)
-check_include_file(unistd.h HAVE_UNISTD_H)
-check_include_file(netinet/in.h HAVE_NETINET_IN_H)
-check_include_file(poll.h HAVE_POLL_H)
-check_include_file(sys/poll.h HAVE_SYS_POLL_H)
-check_include_file(sys/types.h HAVE_SYS_TYPES_H)
-check_include_file(sys/socket.h HAVE_SYS_SOCKET_H)
-check_include_file(netdb.h HAVE_NETDB_H)
-check_include_file(arpa/inet.h HAVE_ARPA_INET_H)
-check_include_file(glib.h HAVE_GLIB_H)
+check_include_files(unistd.h HAVE_UNISTD_H)
+check_include_files(netinet/in.h HAVE_NETINET_IN_H)
+check_include_files(poll.h HAVE_POLL_H)
+check_include_files(sys/poll.h HAVE_SYS_POLL_H)
+check_include_files(sys/types.h HAVE_SYS_TYPES_H)
+check_include_files(sys/socket.h HAVE_SYS_SOCKET_H)
+check_include_files(netdb.h HAVE_NETDB_H)
+check_include_files(arpa/inet.h HAVE_ARPA_INET_H)
 
 if (WITH_READLINE)
+  find_path(INCLUDE_READLINE_DIR readline/readline.h)
   find_library(READLINE_LIB
                NAMES readline
                PATHS /usr/local/lib /usr/lib)
   find_library(NCURSES_LIB
                NAMES ncurses
                PATHS /usr/local/lib /usr/lib)
-  check_include_file(readline/readline.h HAVE_READLINE_H)
-  set (READLINE_LIBS ${READLINE_LIB} ${NCURSES_LIB})
+  if (INCLUDE_READLINE_DIR AND READLINE_LIB AND NCURSES_LIB)
+    set (HAVE_READLINE TRUE)
+    set (ICLAUSTRON_LIBS ${READLINE_LIB} ${NCURSES_LIB})
+    include_directories(${INCLUDE_READLINE_DIR})
+  else (INCLUDE_READLINE_DIR AND READLINE_LIB AND NCURSES_LIB)
+    if (NOT INCLUDE_READLINE_DIR)
+      message ("Could not find readline/readline.h")
+    endif (NOT_INCLUDE_READLINE_DIR)
+    message ("Unsucessful in including readline")
+  endif (INCLUDE_READLINE_DIR AND READLINE_LIB AND NCURSES_LIB)
 endif(WITH_READLINE)
 if (WITH_OPENSSL)
+  find_path(INCLUDE_OPENSSL_DIR openssl/ssl.h)
+  find_library(OPENSSL_LIB
+               NAMES ssl
+               PATHS /usr/local/lib /usr/lib)
+  find_library(CRYPTO_LIB
+               NAMES crypto
+               PATHS /usr/local/lib /usr/lib)
+  if (INCLUDE_OPENSSL_DIR AND OPENSSL_LIB AND CRYPTO_LIB)
+    set (HAVE_OPENSSL TRUE)
+    set (ICLAUSTRON_LIBS ${OPENSSL_LIB} ${CRYPTO_LIB})
+    include_directories(${INCLUDE_OPENSSL_DIR})
+  else (INCLUDE_OPENSSL_DIR AND OPENSSL_LIB AND CRYPTO_LIB)
+    if (NOT INCLUDE_OPENSSL_DIR)
+      message ("Could not find openssl/ssl.h")
+    endif (NOT INCLUDE_OPENSSL_DIR)
+    message ("Unsucessful in including openssl")
+  endif (INCLUDE_OPENSSL_DIR AND OPENSSL_LIB AND CRYPTO_LIB)
 endif(WITH_OPENSSL)
-if (WITH_CYASSL)
-endif(WITH_CYASSL)
+if (NOT HAVE_OPENSSL AND WITH_CYASSL)
+  find_path(INCLUDE_OPENSSL_DIR openssl/ssl.h)
+  find_library(CYASSL_LIB
+               NAMES cyassl
+               PATHS /usr/local/lib /usr/lib)
+  if (INCLUDE_OPENSSL_DIR AND CYASSL_LIB)
+    set (HAVE_CYASSL TRUE)
+    set (ICLAUSTRON_LIBS ${CYASSL_LIB})
+    include_directories(${INCLUDE_SSL_DIR})
+  else (INCLUDE_OPENSSL_DIR AND CYASSL_LIB)
+    if (NOT INCLUDE_OPENSSL_DIR)
+      message ("Could not find openssl/ssl.h")
+    endif (NOT INCLUDE_OPENSSL_DIR)
+    message ("Unsucessful in including cyassl")
+  endif (INCLUDE_OPENSSL_DIR AND CYASSL_LIB)
+endif(NOT HAVE_OPENSSL AND WITH_CYASSL)
+if (HAVE_OPENSSL OR HAVE_CYASSL)
+  set (HAVE_SSL TRUE)
+endif (HAVE_OPENSSL OR HAVE_CYASSL)
 
 #Build library for iClaustron portability layer
 add_library(ic_port STATIC port/ic_port.c)
