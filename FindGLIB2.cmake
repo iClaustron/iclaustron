@@ -27,6 +27,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   include(FindPkgConfig)
 
   ## Glib
+  message("Looking for glib-2.0")
   pkg_search_module(_GLIB2 REQUIRED glib-2.0>=2.10.2)
 
   # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
@@ -98,6 +99,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   ##
 
   ## GModule
+  message("Looking for gmodule-2.0")
   pkg_search_module(_GMODULE2 REQUIRED gmodule-2.0)
 
   set(GMODULE2_DEFINITIONS ${_GMODULE2_CFLAGS})
@@ -150,6 +152,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   ##
 
   ## GThread
+  message("Looking for gthread-2.0")
   pkg_search_module(_GTHREAD2 REQUIRED gthread-2.0)
 
   set(GTHREAD2_DEFINITIONS ${_GTHREAD2_CFLAGS})
@@ -207,6 +210,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   ##
 
   ## GObject
+  message("Looking for gobject-2.0")
   pkg_search_module(_GOBJECT2 REQUIRED gobject-2.0)
 
   set(GOBJECT2_DEFINITIONS ${_GOBJECT2_CFLAGS})
