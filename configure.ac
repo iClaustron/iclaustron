@@ -147,7 +147,7 @@ WARNING_FLAG="-W"
 
 if test "x$with_production" = "xyes"; then
   if test "x$with_debug" = "xyes"; then
-    CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $OPTIMIZER_FLAG"
+    CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $OPTIMIZER_FLAG $WARNING_FLAG"
   else
     CFLAGS="$WARNING_FLAG $OPTIMIZER_FLAG"
   fi

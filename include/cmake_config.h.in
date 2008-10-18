@@ -1,6 +1,8 @@
 #define iClaustron_VERSION_MAJOR @iClaustron_VERSION_MAJOR@
 #define iClaustron_VERSION_MINOR @iClaustron_VERSION_MINOR@
 #define iClaustron_VERSION_BUILD @iClaustron_VERSION_BUILD@
+#define PACKAGE "@ICLAUSTRON_PACKAGE_NAME@"
+#define VERSION "@ICLAUSTRON_VERSION@"
 #cmakedefine WITH_PRODUCTION
 #cmakedefine WITH_DEBUG
 #cmakedefine HAVE_READLINE
@@ -34,5 +36,4 @@
 #cmakedefine HAVE_CYASSL
 #cmakedefine HAVE_SSL
 #cmakedefine HAVE_DTRACE
-
 

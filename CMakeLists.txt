@@ -5,6 +5,9 @@ cmake_minimum_required (VERSION 2.6)
 set (iClaustron_VERSION_MAJOR 0)
 set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_PATCH 1)
+set (ICLAUSTRON_PACKAGE_NAME "iclaustron")
+set (ICLAUSTRON_VERSION "0.0.1")
+set (MYSQL_VERSION "mysql-5.1.28-ndb-6.3.19")
 
 set (ICLAUSTRON_LIBS "")
 SET (SYSTEM_BINARY_PATH
@@ -39,18 +42,25 @@ include_directories("${PROJECT_BINARY_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/include")
 
 configure_file("${PROJECT_SOURCE_DIR}/bootstrap.sh.in"
-               "${PROJECT_BINARY_DIR}/bootstrap.sh")
+               "${PROJECT_BINARY_DIR}/bootstrap.sh"
+               @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/setup.sh.in"
-               "${PROJECT_BINARY_DIR}/setup.sh")
+               "${PROJECT_BINARY_DIR}/setup.sh"
+               @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/count_line.sh.in"
-               "${PROJECT_BINARY_DIR}/count_line.sh")
+               "${PROJECT_BINARY_DIR}/count_line.sh"
+               @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/scripts/linux_check_process.sh.in"
-               "${PROJECT_BINARY_DIR}/scripts/linux_check_process.sh")
+               "${PROJECT_BINARY_DIR}/scripts/linux_check_process.sh"
+               @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/scripts/macosx_check_process.sh.in"
-               "${PROJECT_BINARY_DIR}/scripts/macosx_check_process.sh")
+               "${PROJECT_BINARY_DIR}/scripts/macosx_check_process.sh"
+               @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/scripts/solaris_check_process.sh.in"
-               "${PROJECT_BINARY_DIR}/scripts/solaris_check_process.sh")
+               "${PROJECT_BINARY_DIR}/scripts/solaris_check_process.sh"
+               @ONLY)
 
+option(WITH_UNIT_TEST "Build unit test programs" OFF)
 option(WITH_PRODUCTION "Build a production version" OFF)
 option(WITH_DEBUG "Build a debug version" OFF)
 option(WITH_READLINE "Use readline package" ON)
@@ -61,12 +71,14 @@ option(WITH_CYASSL "Use CYassl package" OFF)
 #We need PkgConfig to discover glib and other packages we need
 message("Checking for pkg-config")
 find_package(PkgConfig REQUIRED)
+message("Found pkg-config")
 set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
 message("Checking for glib-2.0")
 find_package(GLIB2 REQUIRED)
+message("Found glib-2.0")
 include_directories(${GLIB2_INCLUDE_DIRS})
-link_directories(${GLIB2_LIBRARIES})
 add_definitions(${GLIB2_DEFINITIONS})
+#Not necessary to do link_directories since libraries are full path
 set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${GLIB2_LIBRARIES})
 
 include(CheckFunctionExists)
@@ -108,16 +120,22 @@ else (WIN32)
                PATHS C:/Program Files/Math)
 endif (WIN32)
 
-if (NOT WIN32 AND WITH_DTRACE) 
+if (NOT WIN32 AND WITH_DTRACE)
+  message("Checking for DTrace")
   FIND_PROGRAM(DTRACE_EXECUTABLE
     NAMES dtrace 
     PATHS ${SYSTEM_BINARY_PATH}
     DOC "DTrace executable")
   if (DTRACE_EXECUTABLE)
+    message("Found DTrace")
     set (HAVE_DTRACE TRUE)
+  else (DTRACE_EXECUTABLE)
+    message("Couldn't find DTrace")
   endif (DTRACE_EXECUTABLE)
 endif (NOT WIN32 AND WITH_DTRACE)
+
 if (WITH_READLINE)
+  message("Checking for readline")
   find_path(INCLUDE_READLINE_DIR readline/readline.h)
   find_library(READLINE_LIB
                NAMES readline
@@ -126,8 +144,9 @@ if (WITH_READLINE)
                NAMES ncurses
                PATHS /usr/local/lib /usr/lib)
   if (INCLUDE_READLINE_DIR AND READLINE_LIB AND NCURSES_LIB)
+    message("Found readline")
     set (HAVE_READLINE TRUE)
-    set (ICLAUSTRON_LIBS ${READLINE_LIB} ${NCURSES_LIB})
+    set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${READLINE_LIB} ${NCURSES_LIB})
     include_directories(${INCLUDE_READLINE_DIR})
   else (INCLUDE_READLINE_DIR AND READLINE_LIB AND NCURSES_LIB)
     if (NOT INCLUDE_READLINE_DIR)
@@ -136,25 +155,30 @@ if (WITH_READLINE)
     message ("Unsucessful in including readline")
   endif (INCLUDE_READLINE_DIR AND READLINE_LIB AND NCURSES_LIB)
 endif(WITH_READLINE)
+
 if (WITH_OPENSSL)
   message("Checking for OpenSSL")
   include(FindOpenSSL)
-  if (INCLUDE_OPENSSL_DIR)
+  if (OPENSSL_INCLUDE_DIR)
+    message("Found OpenSSL")
     set (HAVE_OPENSSL TRUE)
     include_directories(${OPENSSL_INCLUDE_DIR})
     set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${OPENSSL_LIBRARIES})
-  else (INCLUDE_OPENSSL_DIR)
+  else (OPENSSL_INCLUDE_DIR)
     message ("Unsucessful in including openssl")
-  endif(INCLUDE_OPENSSL_DIR)
+  endif(OPENSSL_INCLUDE_DIR)
 endif(WITH_OPENSSL)
+
 if (NOT HAVE_OPENSSL AND WITH_CYASSL)
+  message("Checking for cyassl")
   find_path(INCLUDE_OPENSSL_DIR openssl/ssl.h)
   find_library(CYASSL_LIB
                NAMES cyassl
                PATHS /usr/local/lib /usr/lib)
   if (INCLUDE_OPENSSL_DIR AND CYASSL_LIB)
+    message("Found cyassl")
     set (HAVE_CYASSL TRUE)
-    set (ICLAUSTRON_LIBS ${CYASSL_LIB})
+    set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${CYASSL_LIB})
     include_directories(${INCLUDE_SSL_DIR})
   else (INCLUDE_OPENSSL_DIR AND CYASSL_LIB)
     if (NOT INCLUDE_OPENSSL_DIR)
@@ -166,6 +190,22 @@ endif(NOT HAVE_OPENSSL AND WITH_CYASSL)
 if (HAVE_OPENSSL OR HAVE_CYASSL)
   set (HAVE_SSL TRUE)
 endif (HAVE_OPENSSL OR HAVE_CYASSL)
+
+if (WITH_UNIT_TEST)
+  add_definitions(-DWITH_UNIT_TEST)
+endif (WITH_UNIT_TEST)
+
+if (WITH_DEBUG)
+  add_definitions(-DDEBUG_BUILD)
+  add_definitions(-g)
+endif (WITH_DEBUG)
+
+if (WITH_PRODUCTION)
+  add_definitions(-O2)
+  add_definitions(-W)
+else (WITH_PRODUCTION)
+  add_definitions(-W -Wall)
+endif (WITH_PRODUCTION)
 
 #Build library for iClaustron portability layer
 add_library(ic_port STATIC port/ic_port.c)

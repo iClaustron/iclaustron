@@ -99,6 +99,8 @@ get_node_id(IC_PARSE_DATA *parse_data)
     clu_conf= parse_data->apic->conf_objects[parse_data->cluster_id];
     node_id= translate_node_name(&parse_data->node_name, clu_conf);
   }
+  else
+    node_id= parse_data->node_id;
   if (!parse_data->apic->api_op.ic_get_node_object(parse_data->apic,
                                                    parse_data->cluster_id,
                                                    node_id))
@@ -764,7 +766,7 @@ int main(int argc,
          char *argv[])
 {
   int ret_code;
-  IC_CONNECTION *conn;
+  IC_CONNECTION *conn= NULL;
   IC_API_CLUSTER_CONNECTION apic;
   IC_API_CONFIG_SERVER *config_server_obj= NULL;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];

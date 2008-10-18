@@ -464,9 +464,11 @@ gchar *ic_get_error_message(guint32 error_number);
 int ic_init();
 void ic_end();
 
-#if !HAVE_BZERO && HAVE_MEMSET
-#define bzero(buf, bytes)  ((void) memset(buf, 0, bytes))
+#if defined(HAVE_BZERO) && !defined(HAVE_MEMSET)
+#define memset(buf, val, bytes)  ((void) bzero(buf, bytes))
 #endif
+#if !defined(HAVE_BZERO) && defined(HAVE_MEMSET)
+#define bzero(buf, bytes)  ((void) memset(buf, 0, bytes))
 #endif
 
 void ic_set_debug(guint32 val);
@@ -509,4 +511,5 @@ void ic_debug_close();
 #define DEBUG_OPEN
 #define DEBUG_CLOSE
 #define DEBUG_IC_STRING(level, a)
+#endif
 #endif
