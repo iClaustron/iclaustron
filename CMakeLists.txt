@@ -9,6 +9,7 @@ set (ICLAUSTRON_PACKAGE_NAME "iclaustron")
 set (ICLAUSTRON_VERSION "0.0.1")
 set (MYSQL_VERSION "mysql-5.1.28-ndb-6.3.19")
 
+SET (ICLAUSTRON_LIBS "")
 SET (SYSTEM_BINARY_PATH
      /usr/local/bin /opt/local/bin /bin /sbin /usr/bin /usr/sbin
      /opt/bin)
@@ -135,8 +136,7 @@ else (WIN32)
                NAMES m
                PATHS /usr/local/lib /usr/lib)
 endif (WIN32)
-
-set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} MATH_LIB)
+set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${MATH_LIB})
 
 message("Checking for MSG_NOSIGNAL in this platform")
 try_compile(USE_MSG_NO_SIGNAL
@@ -236,6 +236,7 @@ else (WITH_PRODUCTION)
   add_definitions(-W -Wall)
 endif (WITH_PRODUCTION)
 
+set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${CMAKE_REQUIRED_LIBRARIES})
 #Build library for iClaustron portability layer
 add_library(ic_port STATIC port/ic_port.c)
 
