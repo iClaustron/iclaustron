@@ -28,18 +28,18 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   include(FindPkgConfig)
 
 
-  set (WINDOWS_GLIB_INCLUDE C:\glib\include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\glib-2.0\include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\GTK\include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\Program\GTK\include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\Program Files\GTK\include)
+  set (WINDOWS_GLIB_INCLUDE C:/glib/include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/glib-2.0/include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/GTK/include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/Program/GTK/include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/Program Files/GTK/include)
   set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} ${MANUAL_GLIB_INCLUDE_DIR})
 
-  set (WINDOWS_GLIB_LIB C:\glib\bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\glib-2.0\bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\GTK\bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\Program\GTK\bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\Program Files\GTK\bin)
+  set (WINDOWS_GLIB_LIB C:/glib/bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/glib-2.0/bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/GTK/bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/Program/GTK/bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/Program Files/GTK/bin)
   set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} ${MANUAL_GLIB_LIB_DIR})
 
   set (UNIX_GLIB_LIB /opt/gnome/lib)
@@ -141,7 +141,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
           glib.h
         PATHS
           ${WINDOWS_GLIB_INCLUDE}
-        NO_DEFAULT_PATH
+        NO_DEFAULT_PATH)
     else (WIN32)
       find_path(GLIB2_INCLUDE_DIR
         NAMES
@@ -157,6 +157,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   endif (NOT GLIB2_INCLUDE_DIR)
 
   if (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR)
+    message("Found glib library and includes")
     set(GLIB2_FOUND TRUE)
   endif (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR)
 
@@ -215,7 +216,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
           ${WINDOWS_GLIB_INCLUDE}
         PATH_SUFFIXES
           glib
-        NO_DEFAULT_PATH
+        NO_DEFAULT_PATH)
     else (WIN32)
       find_path(GTHREAD2_INCLUDE_DIR
         NAMES
@@ -234,6 +235,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
 
   if (GTHREAD2_LIBRARY AND GTHREAD2_INCLUDE_DIR)
     set(GTHREAD2_FOUND TRUE)
+    message("Found gthread library and includes")
   endif (GTHREAD2_LIBRARY AND GTHREAD2_INCLUDE_DIR)
 
   ## GModule
@@ -287,7 +289,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
           gmodule.h
         PATHS
           ${WINDOWS_GLIB_INCLUDE}
-          NO_DEFAULT_PATH
+          NO_DEFAULT_PATH)
     else (WIN32)
       find_path(GMODULE2_INCLUDE_DIR
         NAMES
@@ -303,6 +305,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   endif (NOT GMODULE2_INCLUDE_DIR)
 
   if (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
+    message("Found gmodule library and includes")
     set(GMODULE2_FOUND TRUE)
   endif (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
 
@@ -361,7 +364,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
           ${WINDOWS_GLIB_INCLUDE}
         PATH_SUFFIXES
           gobject
-        NO_DEFAULT_PATH
+        NO_DEFAULT_PATH)
     else (WIN32)
       find_path(GOBJECT2_INCLUDE_DIR
         NAMES
@@ -379,6 +382,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   endif (NOT GOBJECT2_INCLUDE_DIR)
 
   if (GOBJECT2_LIBRARY AND GOBJECT2_INCLUDE_DIR)
+    message("Found gobject library and includes")
     set(GOBJECT2_FOUND TRUE)
   endif (GOBJECT2_LIBRARY AND GOBJECT2_INCLUDE_DIR)
 

@@ -10,8 +10,8 @@ set (ICLAUSTRON_VERSION "0.0.1")
 set (MYSQL_VERSION "mysql-5.1.28-ndb-6.3.19")
 
 SET (ICLAUSTRON_LIBS "")
-SET (MANUAL_GLIB_LIB_DIR C:\glib\bin)
-SET (MANUAL_GLIB_INCLUDE_DIR C:\glib\include)
+SET (MANUAL_GLIB_LIB_DIR C:/glib/bin)
+SET (MANUAL_GLIB_INCLUDE_DIR C:/glib/include)
 SET (SYSTEM_BINARY_PATH
      /usr/local/bin /opt/local/bin /bin /sbin /usr/bin /usr/sbin
      /opt/bin)
@@ -75,13 +75,8 @@ option(WITH_OPENSSL "Use OpenSSL package" OFF)
 option(WITH_CYASSL "Use CYassl package" OFF)
 
 #We need PkgConfig to discover glib and other packages we need
-message("Checking for pkg-config")
-find_package(PkgConfig REQUIRED)
-message("Found pkg-config")
 set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
-message("Checking for glib-2.0")
 find_package(GLIB2 REQUIRED)
-message("Found glib-2.0")
 include_directories(${GLIB2_INCLUDE_DIRS})
 add_definitions(${GLIB2_DEFINITIONS})
 #Not necessary to do link_directories since libraries are full path
