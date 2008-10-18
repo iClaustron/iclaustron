@@ -9,10 +9,13 @@ set (ICLAUSTRON_PACKAGE_NAME "iclaustron")
 set (ICLAUSTRON_VERSION "0.0.1")
 set (MYSQL_VERSION "mysql-5.1.28-ndb-6.3.19")
 
-set (ICLAUSTRON_LIBS "")
 SET (SYSTEM_BINARY_PATH
      /usr/local/bin /opt/local/bin /bin /sbin /usr/bin /usr/sbin
      /opt/bin)
+SET (SYSTEM_LIB_PATH
+     /usr/local/lib /opt/local/lib /usr/lib /usr/lib
+     /opt/lib)
+
 if (WIN32)
   FIND_PROGRAM(FLEX_EXECUTABLE
     NAMES flex
@@ -79,7 +82,7 @@ message("Found glib-2.0")
 include_directories(${GLIB2_INCLUDE_DIRS})
 add_definitions(${GLIB2_DEFINITIONS})
 #Not necessary to do link_directories since libraries are full path
-set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${GLIB2_LIBRARIES})
+set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${GLIB2_LIBRARIES})
 
 include(CheckFunctionExists)
 include(CheckIncludeFiles)
@@ -100,7 +103,6 @@ check_function_exists(getaddrinfo HAVE_GETADDRINFO)
 check_function_exists(freeaddrinfo HAVE_FREEADDRINFO)
 check_function_exists(inet_ntop HAVE_INET_NTOP)
 check_function_exists(sendmsg HAVE_SENDMSG)
-#check_library_exists(rt HAVE_RT)
 check_include_files(unistd.h HAVE_UNISTD_H)
 check_include_files(netinet/in.h HAVE_NETINET_IN_H)
 check_include_files(poll.h HAVE_POLL_H)
@@ -110,15 +112,42 @@ check_include_files(sys/socket.h HAVE_SYS_SOCKET_H)
 check_include_files(netdb.h HAVE_NETDB_H)
 check_include_files(arpa/inet.h HAVE_ARPA_INET_H)
 
+message("Check for clock_gettime function")
+find_library(RT_LIB
+             NAMES rt
+             PATHS ${SYSTEM_LIB_PATH})
+if (RT_LIB)
+  set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${RT_LIB})
+  check_function_exists(clock_gettime HAVE_CLOCK_GETTIME)
+endif (RT_LIB)
+if (HAVE_CLOCK_GETTIME)
+  message("Found clock_gettime function")
+else (HAVE_CLOCK_GETTIME)
+  message("No clock_gettime function")
+endif (HAVE_CLOCK_GETTIME)
+
 if (WIN32)
   find_library(MATH_LIB
                NAMES m
-               PATHS /usr/local/lib /usr/lib)
+               PATHS C:/Program Files/Math)
 else (WIN32)
   find_library(MATH_LIB
                NAMES m
-               PATHS C:/Program Files/Math)
+               PATHS /usr/local/lib /usr/lib)
 endif (WIN32)
+
+set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} MATH_LIB)
+
+message("Checking for MSG_NOSIGNAL in this platform")
+try_compile(USE_MSG_NO_SIGNAL
+            ${PROJECT_BINARY_DIR}/tmp
+            ${PROJECT_SOURCE_DIR}/build_test/test_msg_no_signal.c)
+if (USE_MSG_NO_SIGNAL)
+  message("Found MSG_NO_SIGNAL support")
+  add_definitions(-DUSE_MSG_NOSIGNAL)
+else (USE_MSG_NO_SIGNAL)
+  message("No MSG_NO_SIGNAL support")
+endif (USE_MSG_NO_SIGNAL)
 
 if (NOT WIN32 AND WITH_DTRACE)
   message("Checking for DTrace")
