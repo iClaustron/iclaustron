@@ -24,248 +24,363 @@ if (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
 else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   # use pkg-config to get the directories and then use these values
   # in the FIND_PATH() and FIND_LIBRARY() calls
+  set (GLIB2_DEFINITIONS "")
   include(FindPkgConfig)
 
+
+  set (WINDOWS_GLIB_INCLUDE C:\glib\include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\glib-2.0\include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\GTK\include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\Program\GTK\include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:\Program Files\GTK\include)
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} ${MANUAL_GLIB_INCLUDE_DIR})
+
+  set (WINDOWS_GLIB_LIB C:\glib\bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\glib-2.0\bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\GTK\bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\Program\GTK\bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:\Program Files\GTK\bin)
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} ${MANUAL_GLIB_LIB_DIR})
+
+  set (UNIX_GLIB_LIB /opt/gnome/lib)
+  set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /opt/local/lib)
+  set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /sw/lib)
+  set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /usr/lib)
+  set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /usr/local/lib)
+
+  set (UNIX_GLIB_INCLUDE /opt/gnome/include/glib-2.0)
+  set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /opt/gnome/include/glib-2.0)
+  set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /opt/local/include/glib-2.0)
+  set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /sw/include/glib-2.0)
+  set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /usr/include/glib-2.0)
+  set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /usr/local/include/glib-2.0)
+
   ## Glib
-  message("Looking for glib-2.0")
-  pkg_search_module(_GLIB2 REQUIRED glib-2.0>=2.10.2)
-
   # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
-  find_path(GLIBCONFIG_INCLUDE_DIR
-    NAMES
-      glibconfig.h
-    PATHS
-      ${_GLIB2_INCLUDE_DIRS}
-      ${_GLIB2_INCLUDE_DIRS}/include
-    NO_DEFAULT_PATH
-  )
-  if (NOT GLIBCONFIG_INCLUDE_DIR)
-    find_path(GLIBCONFIG_INCLUDE_DIR
-      NAMES
-        glibconfig.h
-      PATHS
-        /opt/gnome/lib64/glib-2.0/include
-        /opt/gnome/lib/glib-2.0/include
-        /opt/lib/glib-2.0/include
-        /opt/local/lib/glib-2.0/include
-        /sw/lib/glib-2.0/include
-        /usr/lib64/glib-2.0/include
-        /usr/lib/glib-2.0/include
-    )
-  endif (NOT GLIBCONFIG_INCLUDE_DIR)
-
-  set(GLIB2_DEFINITIONS ${_GLIB2_CFLAGS})
-
-  find_path(GLIB2_INCLUDE_DIR
-    NAMES
-      glib.h
-    PATHS
-      ${_GLIB2_INCLUDE_DIRS}
-    NO_DEFAULT_PATH
-  )
-  if (NOT GLIB2_INCLUDE_DIR)
-    find_path(GLIB2_INCLUDE_DIR
-      NAMES
-        glib.h
-      PATHS
-        /opt/gnome/include/glib-2.0
-        /opt/local/include/glib-2.0
-        /sw/include/glib-2.0
-        /usr/include/glib-2.0
-        /usr/local/include/glib-2.0
-    )
-  endif (NOT GLIB2_INCLUDE_DIR)
-
-  find_library(GLIB2_LIBRARY
-    NAMES
-      glib-2.0
-    PATHS
-      ${_GLIB2_LIBRARY_DIRS}
-    NO_DEFAULT_PATH 
-  )
-
-  if (NOT GLIB2_LIBRARY)
+  message("Looking for glib-2.0")
+  pkg_search_module(_GLIB2 glib-2.0>=2.10.2)
+  if (_GLIB2)
+    message("glib-2.0 found by pkg-config")
+    set(GLIB2_DEFINITIONS ${_GLIB2_CFLAGS})
     find_library(GLIB2_LIBRARY
       NAMES
         glib-2.0
       PATHS
-        /opt/gnome/lib
-        /opt/local/lib
-        /sw/lib
-        /usr/lib
-        /usr/local/lib
-    )
+        ${_GLIB2_LIBRARY_DIRS}
+      NO_DEFAULT_PATH) 
+    find_path(GLIBCONFIG_INCLUDE_DIR
+      NAMES
+        glibconfig.h
+      PATHS
+        ${_GLIB2_INCLUDE_DIRS}
+        ${_GLIB2_INCLUDE_DIRS}/include
+      NO_DEFAULT_PATH)
+    find_path(GLIB2_INCLUDE_DIR
+      NAMES
+        glib.h
+      PATHS
+        ${_GLIB2_INCLUDE_DIRS}
+      NO_DEFAULT_PATH)
+  else (_GLIB2)
+    message("glib-2.0 not found by pkg-config")
+  endif (_GLIB2)
+
+  if (NOT GLIB2_LIBRARY)
+    if (WIN32)
+      find_library(GLIB2_LIBRARY
+        NAMES glib-2.0
+        PATHS 
+          ${WINDOWS_GLIB_LIB}
+          NO_DEFAULT_PATH)
+    else (WIN32)
+      find_library(GLIB2_LIBRARY
+        NAMES
+          glib-2.0
+        PATHS
+          ${UNIX_GLIB_LIB}
+        NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GLIB2_LIBRARY)
+      find_library(GLIB2_LIBRARY
+                   NAMES glib-2.0)
+    endif (NOT GLIB2_LIBRARY)
   endif (NOT GLIB2_LIBRARY)
-  ##
 
-  ## GModule
-  message("Looking for gmodule-2.0")
-  pkg_search_module(_GMODULE2 REQUIRED gmodule-2.0)
+  if (NOT GLIBCONFIG_INCLUDE_DIR)
+    if (NOT WIN32)
+      find_path(GLIBCONFIG_INCLUDE_DIR
+        NAMES
+          glibconfig.h
+        PATHS
+          /opt/gnome/lib64/glib-2.0/include
+          /opt/gnome/lib/glib-2.0/include
+          /opt/lib/glib-2.0/include
+          /opt/local/lib/glib-2.0/include
+          /sw/lib/glib-2.0/include
+          /usr/lib64/glib-2.0/include
+          /usr/lib/glib-2.0/include
+        NO_DEFAULT_PATH)
+    else(NOT WIN32)
+      find_path(GLIBCONFIG_INCLUDE_DIR
+        NAMES
+          glibconfig.h
+        PATHS
+          ${WINDOWS_GLIB_INCLUDE}
+        NO_DEFAULT_PATH)
+    endif(NOT WIN32)
+    if (NOT GLIBCONFIG_INCLUDE_DIR)
+      find_path(GLIBCONFIG_INCLUDE_DIR
+                NAMES glibconfig.h)
+    endif (NOT GLIBCONFIG_INCLUDE_DIR)
+  endif (NOT GLIBCONFIG_INCLUDE_DIR)
 
-  set(GMODULE2_DEFINITIONS ${_GMODULE2_CFLAGS})
+  if (NOT GLIB2_INCLUDE_DIR)
+    if (WIN32)
+      find_path(GLIB2_INCLUDE_DIR
+        NAMES
+          glib.h
+        PATHS
+          ${WINDOWS_GLIB_INCLUDE}
+        NO_DEFAULT_PATH
+    else (WIN32)
+      find_path(GLIB2_INCLUDE_DIR
+        NAMES
+          glib.h
+        PATHS
+          ${UNIX_GLIB_INCLUDE}
+        NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GLIB2_INCLUDE_DIR)
+      find_path(GLIB2_INCLUDE_DIR
+                NAMES glib.h)
+    endif (NOT GLIB2_INCLUDE_DIR)
+  endif (NOT GLIB2_INCLUDE_DIR)
 
-  # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
-  find_path(GMODULE2_INCLUDE_DIR
-    NAMES
-      gmodule.h
-    PATHS
-      ${_GMODULE2_INCLUDE_DIRS}
-    NO_DEFAULT_PATH 
-  )
-
-  if (NOT GMODULE2_INCLUDE_DIR)
-    find_path(GMODULE2_INCLUDE_DIR
-      NAMES
-        gmodule.h
-      PATHS
-        /opt/gnome/include/glib-2.0
-        /opt/local/include/glib-2.0
-        /sw/include/glib-2.0
-        /usr/include/glib-2.0
-        /usr/local/include/glib-2.0
-    )
-  endif (NOT GMODULE2_INCLUDE_DIR)
-
-  find_library(GMODULE2_LIBRARY
-    NAMES
-      gmodule-2.0
-    PATHS
-      ${_GMODULE2_LIBRARY_DIRS}
-    NO_DEFAULT_PATH 
-  )
-
-  if (NOT GMODULE2_LIBRARY)
-    find_library(GMODULE2_LIBRARY
-      NAMES
-        gmodule-2.0
-      PATHS
-        /opt/gnome/lib
-        /opt/local/lib
-        /sw/lib
-        /usr/lib
-        /usr/local/lib
-    )
-  endif (NOT GMODULE2_LIBRARY)
-  if (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
-    set(GMODULE2_FOUND TRUE)
-  endif (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
-  ##
+  if (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR)
+    set(GLIB2_FOUND TRUE)
+  endif (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR)
 
   ## GThread
-  message("Looking for gthread-2.0")
-  pkg_search_module(_GTHREAD2 REQUIRED gthread-2.0)
-
-  set(GTHREAD2_DEFINITIONS ${_GTHREAD2_CFLAGS})
-
   # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
-  find_path(GTHREAD2_INCLUDE_DIR
-    NAMES
-      gthread.h
-    PATHS
-      ${_GTHREAD2_INCLUDE_DIRS}
-    PATH_SUFFIXES
-      glib
-    NO_DEFAULT_PATH
-  )
-
-  if (NOT GTHREAD2_INCLUDE_DIR)
-    find_path(GTHREAD2_INCLUDE_DIR
-      NAMES
-        gthread.h
-      PATHS
-        /opt/gnome/include/glib-2.0
-        /opt/local/include/glib-2.0
-        /sw/include/glib-2.0
-        /usr/include/glib-2.0
-        /usr/local/include/glib-2.0
-      PATH_SUFFIXES
-        glib
-    )
-  endif (NOT GTHREAD2_INCLUDE_DIR)
-
-  find_library(GTHREAD2_LIBRARY
-    NAMES
-      gthread-2.0
-    PATHS
-      ${_GTHREAD2_LIBRARY_DIRS}
-    NO_DEFAULT_PATH 
-  )
-
-  if (NOT GTHREAD2_LIBRARY)
+  message("Looking for gthread-2.0")
+  pkg_search_module(_GTHREAD2 gthread-2.0)
+  if (_GTHREAD2)
+    message("gthread-2.0 found by pkg-config")
+    set(GLIB2_DEFINITIONS ${GLIB2_DEFINITIONS}${_GTHREAD2_CFLAGS})
     find_library(GTHREAD2_LIBRARY
       NAMES
         gthread-2.0
       PATHS
-        /opt/gnome/lib
-        /opt/local/lib
-        /sw/lib
-        /usr/lib
-        /usr/local/lib
-    )
+        ${_GTHREAD2_LIBRARY_DIRS}
+      NO_DEFAULT_PATH) 
+    find_path(GTHREAD2_INCLUDE_DIR
+      NAMES
+        gthread.h
+      PATHS
+        ${_GTHREAD2_INCLUDE_DIRS}
+      PATH_SUFFIXES
+        glib
+      NO_DEFAULT_PATH)
+  else (_GTHREAD2)
+    message("gthread-2.0 not found by pkg-config")
+  endif (_GTHREAD2)
+
+  if (NOT GTHREAD2_LIBRARY)
+    if (WIN32)
+      find_library(GTHREAD2_LIBRARY
+        NAMES gthread-2.0
+        PATHS 
+          ${WINDOWS_GLIB_LIB}
+        NO_DEFAULT_PATH)
+    else (WIN32)
+      find_library(GTHREAD2_LIBRARY
+        NAMES
+          gthread-2.0
+        PATHS
+          ${UNIX_GLIB_LIB}
+        NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GTHREAD2_LIBRARY)
+      find_library(GTHREAD2_LIBRARY
+                   NAMES gthread-2.0)
+    endif (NOT GTHREAD2_LIBRARY)
   endif (NOT GTHREAD2_LIBRARY)
+
+  if (NOT GTHREAD2_INCLUDE_DIR)
+    if (WIN32)
+      find_path(GTHREAD2_INCLUDE_DIR
+        NAMES
+          gthread.h
+        PATHS
+          ${WINDOWS_GLIB_INCLUDE}
+        PATH_SUFFIXES
+          glib
+        NO_DEFAULT_PATH
+    else (WIN32)
+      find_path(GTHREAD2_INCLUDE_DIR
+        NAMES
+          gthread.h
+        PATHS
+          ${UNIX_GLIB_INCLUDE}
+        PATH_SUFFIXES
+          glib
+        NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GTHREAD2_INCLUDE_DIR)
+      find_path(GTHREAD2_INCLUDE_DIR
+                NAMES gthread.h)
+    endif (NOT GTHREAD2_INCLUDE_DIR)
+  endif (NOT GTHREAD2_INCLUDE_DIR)
 
   if (GTHREAD2_LIBRARY AND GTHREAD2_INCLUDE_DIR)
     set(GTHREAD2_FOUND TRUE)
   endif (GTHREAD2_LIBRARY AND GTHREAD2_INCLUDE_DIR)
-  ##
+
+  ## GModule
+  # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
+  message("Looking for gmodule-2.0")
+  pkg_search_module(_GMODULE2 gmodule-2.0)
+  if (_GMODULE2)
+    message("gmodule-2.0 found by pkg-config")
+    set(GLIB2_DEFINITIONS ${GLIB2_DEFINITIONS}${_GMODULE2_CFLAGS})
+    find_library(GMODULE2_LIBRARY
+      NAMES
+        gmodule-2.0
+      PATHS
+        ${_GMODULE2_LIBRARY_DIRS}
+      NO_DEFAULT_PATH) 
+    find_path(GMODULE2_INCLUDE_DIR
+      NAMES
+        gmodule.h
+      PATHS
+        ${_GMODULE2_INCLUDE_DIRS}
+      NO_DEFAULT_PATH)
+  else (_GMODULE2)
+    message("gmodule-2.0 not found by pkg-config")
+  endif (_GMODULE2)
+
+  if (NOT GMODULE2_LIBRARY)
+    if (WIN32)
+      find_library(GMODULE2_LIBRARY
+        NAMES gmodule-2.0
+        PATHS 
+          ${WINDOWS_GLIB_LIB}
+          NO_DEFAULT_PATH)
+    else (WIN32)
+      find_library(GMODULE2_LIBRARY
+        NAMES
+          gmodule-2.0
+        PATHS
+          ${UNIX_GLIB_LIB}
+          NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GMODULE2_LIBRARY)
+      find_library(GMODULE2_LIBRARY
+                   NAMES gmodule-2.0)
+    endif (NOT GMODULE2_LIBRARY)
+  endif (NOT GMODULE2_LIBRARY)
+
+  if (NOT GMODULE2_INCLUDE_DIR)
+    if (WIN32)
+      find_path(GMODULE2_INCLUDE_DIR
+        NAMES
+          gmodule.h
+        PATHS
+          ${WINDOWS_GLIB_INCLUDE}
+          NO_DEFAULT_PATH
+    else (WIN32)
+      find_path(GMODULE2_INCLUDE_DIR
+        NAMES
+          gmodule.h
+        PATHS
+          ${UNIX_GLIB_INCLUDE}
+          NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GMODULE2_INCLUDE_DIR)
+      find_path(GMODULE2_INCLUDE_DIR
+                NAMES gmodule.h)
+    endif (NOT GMODULE2_INCLUDE_DIR)
+  endif (NOT GMODULE2_INCLUDE_DIR)
+
+  if (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
+    set(GMODULE2_FOUND TRUE)
+  endif (GMODULE2_LIBRARY AND GMODULE2_INCLUDE_DIR)
 
   ## GObject
-  message("Looking for gobject-2.0")
-  pkg_search_module(_GOBJECT2 REQUIRED gobject-2.0)
-
-  set(GOBJECT2_DEFINITIONS ${_GOBJECT2_CFLAGS})
-
   # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
-  find_path(GOBJECT2_INCLUDE_DIR
-    NAMES
-      gobject.h
-    PATHS
-      ${_GOBJECT2_INCLUDE_DIRS}
-    PATH_SUFFIXES
-      gobject
-    NO_DEFAULT_PATH 
-  )
-
-  if (NOT GOBJECT2_INCLUDE_DIR)
-    find_path(GOBJECT2_INCLUDE_DIR
-      NAMES
-        gobject.h
-      PATHS
-        /opt/gnome/include/glib-2.0
-        /opt/local/include/glib-2.0
-        /sw/include/glib-2.0
-        /usr/include/glib-2.0
-        /usr/local/include/glib-2.0
-      PATH_SUFFIXES
-        gobject
-    )
-  endif (NOT GOBJECT2_INCLUDE_DIR)
-
-  find_library(GOBJECT2_LIBRARY
-    NAMES
-      gobject-2.0
-    PATHS
-      ${_GOBJECT2_LIBRARY_DIRS}
-    NO_DEFAULT_PATH 
-  )
-
-  if (NOT GOBJECT2_LIBRARY)
+  message("Looking for gobject-2.0")
+  pkg_search_module(_GOBJECT2 gobject-2.0)
+  if (_GOBJECT2)
+    message("gobject-2.0 found by pkg-config")
+    set(GLIB2_DEFINITIONS ${GLIB2_DEFINITIONS}${_GOBJECT2_CFLAGS})
     find_library(GOBJECT2_LIBRARY
       NAMES
         gobject-2.0
       PATHS
-        /opt/gnome/lib
-        /opt/local/lib
-        /sw/lib
-        /usr/lib
-        /usr/local/lib
-    )
+        ${_GOBJECT2_LIBRARY_DIRS}
+      NO_DEFAULT_PATH) 
+    find_path(GOBJECT2_INCLUDE_DIR
+      NAMES
+        gobject.h
+      PATHS
+        ${_GOBJECT2_INCLUDE_DIRS}
+      PATH_SUFFIXES
+        gobject
+      NO_DEFAULT_PATH)
+  else (_GOBJECT2)
+    message("gobject-2.0 not found by pkg-config")
+  endif (_GOBJECT2)
+
+  if (NOT GOBJECT2_LIBRARY)
+    if (WIN32)
+      find_library(GOBJECT2_LIBRARY
+        NAMES gobject-2.0
+        PATHS 
+          ${WINDOWS_GLIB_LIB}
+          NO_DEFAULT_PATH)
+    else (WIN32)
+      find_library(GOBJECT2_LIBRARY
+        NAMES
+          gobject-2.0
+        PATHS
+          ${UNIX_GLIB_LIB}
+          NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GOBJECT2_LIBRARY)
+      find_library(GOBJECT2_LIBRARY
+                   NAMES gobject-2.0)
+    endif (NOT GOBJECT2_LIBRARY)
   endif (NOT GOBJECT2_LIBRARY)
+
+  if (NOT GOBJECT2_INCLUDE_DIR)
+    if (WIN32)
+      find_path(GOBJECT2_INCLUDE_DIR
+        NAMES
+          gobject.h
+        PATHS
+          ${WINDOWS_GLIB_INCLUDE}
+        PATH_SUFFIXES
+          gobject
+        NO_DEFAULT_PATH
+    else (WIN32)
+      find_path(GOBJECT2_INCLUDE_DIR
+        NAMES
+          gobject.h
+        PATHS
+          ${UNIX_GLIB_INCLUDE}
+        PATH_SUFFIXES
+          gobject
+        NO_DEFAULT_PATH)
+    endif (WIN32)
+    if (NOT GOBJECT2_INCLUDE_DIR)
+      find_path(GOBJECT2_INCLUDE_DIR
+                NAMES gobject.h)
+    endif (NOT GOBJECT2_INCLUDE_DIR)
+  endif (NOT GOBJECT2_INCLUDE_DIR)
 
   if (GOBJECT2_LIBRARY AND GOBJECT2_INCLUDE_DIR)
     set(GOBJECT2_FOUND TRUE)
   endif (GOBJECT2_LIBRARY AND GOBJECT2_INCLUDE_DIR)
-  ##
 
   ## libintl
   find_path(LIBINTL_INCLUDE_DIR
@@ -330,6 +445,13 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   endif (LIBICONV_LIBRARY AND LIBICONV_INCLUDE_DIR)
   ##
 
+  if (NOT GLIB2_FOUND)
+    message(FATAL_ERROR "Need a glib-2.0 library, fatal error")
+  endif (NOT GLIB2_FOUND)
+  if (NOT GTHREAD2_FOUND)
+    message(FATAL_ERROR "Need a gthread-2.0 library, fatal error")
+  endif (NOT GTHREAD2_FOUND)
+
   set(GLIB2_INCLUDE_DIRS ${GLIB2_INCLUDE_DIR} ${GLIBCONFIG_INCLUDE_DIR})
   set (GLIB2_LIBRARIES ${GLIB2_LIBRARY})
 
@@ -357,19 +479,6 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
     set(GLIB2_LIBRARIES ${GLIB2_LIBRARIES} ${LIBICONV_LIBRARY})
     set(GLIB2_INCLUDE_DIRS ${GLIB2_INCLUDE_DIRS} ${LIBICONV_INCLUDE_DIR})
   endif (LIBICONV_FOUND)
-
-  if (GLIB2_INCLUDE_DIRS AND GLIB2_LIBRARIES)
-    set(GLIB2_FOUND TRUE)
-  endif (GLIB2_INCLUDE_DIRS AND GLIB2_LIBRARIES)
-
-  if (GLIB2_FOUND)
-    if (NOT GLIB2_FIND_QUIETLY)
-    endif (NOT GLIB2_FIND_QUIETLY)
-  else (GLIB2_FOUND)
-    if (GLIB2_FIND_REQUIRED)
-      message(FATAL_ERROR "Could not find GLib2")
-    endif (GLIB2_FIND_REQUIRED)
-  endif (GLIB2_FOUND)
 
   # show the GLIB2_INCLUDE_DIRS and GLIB2_LIBRARIES variables only in the advanced view
   mark_as_advanced(GLIB2_INCLUDE_DIRS GLIB2_LIBRARIES)
