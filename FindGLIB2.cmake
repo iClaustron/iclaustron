@@ -162,7 +162,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   if (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR AND GLIBCONFIG_INCLUDE_DIR)
     message("Found glib library and includes")
     set(GLIB2_FOUND TRUE)
-  endif (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR)
+  endif (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR AND GLIBCONFIG_INCLUDE_DIR)
 
   ## GThread
   # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
