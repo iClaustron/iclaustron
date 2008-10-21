@@ -172,7 +172,7 @@ struct ic_send_node_connection
   /* Hostname of the connection used by this thread */
   gchar *hostname;
   /* Port number of connection used by thread */
-  gchar *port_number
+  gchar *port_number;
   /* The connection object */
   IC_CONNECTION *conn;
   /* The configuration for this connection */
@@ -272,8 +272,9 @@ struct ic_apid_global
   GMutex *mutex;
   GCond *cond;
   gboolean stop_flag;
-  guint32 num_threads_started;
-  IC_LISTEN_SERVER_THREAD listen_server_thread[MAX_SERVER_PORTS_LISTEN];
+  guint32 num_user_threads_started;
+  guint32 max_listen_server_threads;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread[MAX_SERVER_PORTS_LISTEN];
 };
 typedef struct ic_apid_global IC_APID_GLOBAL;
 

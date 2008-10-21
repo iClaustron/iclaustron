@@ -1103,8 +1103,8 @@ create_timers(IC_CONNECTION *conn)
 static int
 cmp_hostname_and_port(IC_CONNECTION *conn, gchar *hostname, gchar *port)
 {
-  if ((strcmp(conn->hostname, hostname) == 0) &&
-	  (strcmp(conn->port_number, port) == 0))
+  if ((strcmp(conn->server_name, hostname) == 0) &&
+	  (strcmp(conn->server_port, port) == 0))
     return 0;
   return 1;
 }

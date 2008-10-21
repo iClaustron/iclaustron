@@ -76,7 +76,7 @@ run_file_server_thread(gpointer data)
   /* Currently empty implementation */
 error:
   g_mutex_lock(apid_global->mutex);
-  apid_global->num_threads_started--;
+  apid_global->num_user_threads_started--;
   g_cond_signal(apid_global->cond);
   g_mutex_unlock(apid_global->mutex);
   DEBUG_RETURN(NULL);
@@ -119,11 +119,11 @@ run_file_server(IC_APID_GLOBAL *apid_global)
     }
     num_threads_started++;
   }
-  apid_global->num_threads_started= num_threads_started;
+  apid_global->num_user_threads_started= num_threads_started;
   while (1)
   {
     g_cond_wait(apid_global->cond, apid_global->mutex);
-    if (apid_global->num_threads_started == 0)
+    if (apid_global->num_user_threads_started == 0)
     {
       g_mutex_unlock(apid_global->mutex);
       break;
