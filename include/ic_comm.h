@@ -140,6 +140,11 @@ struct ic_connect_operations
   int (*ic_flush_connection) (struct ic_connection *conn);
   /* This call is used to check if there is data to be read on the socket */
   gboolean (*ic_check_for_data) (struct ic_connection *conn);
+  /* This call is used to check if the hostname and port is the same as
+     the connection, 0 means equal, 1 non-equal */
+  int (*ic_cmp_connection) (struct ic_connection *conn,
+                                 gchar *hostname,
+								 gchar *port);
   /*
     In order to support multiple threads using the same connection
     object at the same time we need to declare open and close of

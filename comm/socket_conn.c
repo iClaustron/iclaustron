@@ -1100,6 +1100,15 @@ create_timers(IC_CONNECTION *conn)
   return FALSE;
 }
 
+static int
+cmp_hostname_and_port(IC_CONNECTION *conn, gchar *hostname, gchar *port)
+{
+  if ((strcmp(conn->hostname, hostname) == 0) &&
+	  (strcmp(conn->port_number, port) == 0))
+    return 0;
+  return 1;
+}
+
 static void
 set_up_rw_methods_mutex(IC_CONNECTION *conn, gboolean is_mutex_used)
 {
@@ -1298,6 +1307,7 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_close_listen_connection= close_listen_socket_connection;
   conn->conn_op.ic_read_connection = read_socket_connection;
   conn->conn_op.ic_check_for_data= check_for_data_on_connection;
+  conn->conn_op.ic_cmp_connection= cmp_hostname_and_port;
   conn->conn_op.ic_free_connection= free_socket_connection;
   conn->conn_op.ic_read_stat_connection= read_stat_socket_connection;
   conn->conn_op.ic_safe_read_stat_connection= safe_read_stat_socket_conn;

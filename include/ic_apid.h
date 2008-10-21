@@ -169,6 +169,10 @@ struct ic_send_node_connection
 {
   /* A pointer to the global struct */
   struct ic_apid_global *apid_global;
+  /* Hostname of the connection used by this thread */
+  gchar *hostname;
+  /* Port number of connection used by thread */
+  gchar *port_number
   /* The connection object */
   IC_CONNECTION *conn;
   /* The configuration for this connection */
@@ -247,6 +251,16 @@ struct ic_grid_comm
 };
 typedef struct ic_grid_comm IC_GRID_COMM;
 
+struct ic_listen_server_thread
+{
+  IC_CONNECTION *conn;
+  GMutex *mutex;
+  GCond *cond;
+  IC_SEND_NODE_CONNECTION *first_send_node_conn;
+};
+typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
+
+#define MAX_SERVER_PORTS_LISTEN 256
 struct ic_apid_global
 {
   IC_SOCK_BUF *mem_buf_pool;
@@ -259,6 +273,7 @@ struct ic_apid_global
   GCond *cond;
   gboolean stop_flag;
   guint32 num_threads_started;
+  IC_LISTEN_SERVER_THREAD listen_server_thread[MAX_SERVER_PORTS_LISTEN];
 };
 typedef struct ic_apid_global IC_APID_GLOBAL;
 
