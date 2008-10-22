@@ -13,6 +13,93 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+/*
+  The iClaustron Data API is an API to be able to access NDB Data nodes through
+  a C-based API. It uses a very flexible data structure making it possible to
+  describe very complex queries and allow the API to control the execution of
+  this query as described by the data structure defined.
+
+  The API can connect to one or many NDB Clusters. There is one socket
+  connection for each node in each cluster.
+
+  THREAD DESCRIPTIONS
+  -------------------
+  The implementation uses a wide range of threads to implement this API.
+
+  1. Receive threads
+  ------------------
+  At first there is a set of receive threads. There is at least one such
+  thread, but could potentially have up to one thread per node connection.
+  The important part here is that each connection is always mapped to one
+  and only one receiver thread. One receiver thread can however handle one
+  or many socket connections.
+
+  2. Send threads
+  ---------------
+  Each socket connection also has a send part, there is a one-to-one mapping
+  between send threads and socket connections.
+
+  3. Connect threads
+  ------------------
+  There is also a set of connection threads. The reason to have this is to
+  handle the socket connections that are a server part. This thread is
+  connected to the send thread as part of the connection set-up phase.
+  There is a mapping of each socket connection which is a server side of the
+  connection to one such connect thread. All server socket connections
+  sharing the same hostname and port will use the same connect thread.
+
+  4. User threads
+  ---------------
+  Finally there is a set of user threads. These are managed by the API user
+  and not by the API.
+
+  DATA STRUCTURE DESCRIPTIONS
+  ---------------------------
+  Each thread has a data structure connected to it. In addition there are
+  a number of other important data structures. All data structures
+  representing a thread always have one variable mutex and one variable
+  cond which represents the mutex protecting this data structure and the
+  condition used to communicate between threads using the data structure.
+
+  1. IC_THREAD_CONNECTION
+  -----------------------
+  This data structure is used to represent the user thread.
+
+  2. IC_APID_CONNECTION
+  ---------------------
+  This data structures also represents the user thread, however this data
+  structure focus on the API data structures and do not handle the
+  protection and the communication with other threads.
+
+  3. IC_SEND_NODE_CONNECTION
+  --------------------------
+  This data structure contains the data needed by the send thread. It does
+  also handle the socket connection phase for both server connections and
+  client connections.
+
+  4. IC_NDB_RECEIVE_STATE
+  -----------------------
+  This data structure represents the receive thread.
+
+  5. IC_LISTEN_SERVER_THREAD
+  --------------------------
+  This data structure represents the connection thread.
+
+  6. IC_NDB_MESSAGE
+  -----------------
+  This data structure represents one NDB message and is used in the user
+  API thread.
+
+  7. IC_NDB_MESSAGE_OPAQUE_AREA
+  -----------------------------
+  This data structure is filled in by the receiver thread and is used to
+  fill in the IC_NDB_MESSAGE data.
+
+  8. IC_MESSAGE_ERROR_OBJECT
+  --------------------------
+  This data structure is used to represent an error that occurred.
+*/
+
 #include <ic_comm.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
@@ -472,6 +559,14 @@ client_api_connect(void *data)
   return 0;
 }
 
+/*
+  The send thread has two cases, client connecting and server connecting.
+  In the client case the thread itself will connect.
+  In the server case there are many connections that uses the same server
+  port and to resolve this we use a special server connect thread. This
+  method simply waits for this thread to report any connections that
+  occurred.
+*/
 static int
 connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
                        gboolean is_client_part)
@@ -518,7 +613,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
     if ((error= conn->conn_op.ic_set_up_connection(conn)))
       return error;
   }
-  else
+  else /* Server connection */
   {
   }
   return 0;
@@ -575,7 +670,6 @@ run_send_thread(void *data)
                        0,      /* No read buffer needed, we supply our own */
                        client_api_connect,   /* Authentication function */
                        (void*)send_node_conn);  /* Authentication object */
-    g_mutex_lock(send_node_conn->mutex);
     if (send_node_conn->conn == NULL)
       send_node_conn->stop_ordered= TRUE;
   }
@@ -613,7 +707,8 @@ run_send_thread(void *data)
         /* Found a new hostname+port combination, we need another*/
         listen_inx= apid_global->max_listen_server_threads;
         if (!(apid_global->listen_server_thread[listen_inx]=
-  	  (IC_LISTEN_SERVER_THREAD*)ic_calloc(sizeof(IC_LISTEN_SERVER_THREAD))))
+  	  (IC_LISTEN_SERVER_THREAD*)
+            ic_calloc(sizeof(IC_LISTEN_SERVER_THREAD))))
           break;
         /* Successful allocation of memory */
         listen_server_thread= apid_global->listen_server_thread[listen_inx];
@@ -655,10 +750,9 @@ run_send_thread(void *data)
        /* Found an existing a new thread to use, need not start a new thread */
     }
   }
+  g_mutex_lock(send_node_conn->mutex);
   g_cond_signal(send_node_conn->cond);
   g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
-  if (send_node_conn->conn == NULL)
-    goto end;
   /*
     The main thread have started up all threads and all communication objects
     have been created, it's now time to connect to the clusters.

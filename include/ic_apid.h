@@ -254,6 +254,7 @@ typedef struct ic_grid_comm IC_GRID_COMM;
 struct ic_listen_server_thread
 {
   IC_CONNECTION *conn;
+  guint32 cluster_id;
   GMutex *mutex;
   GCond *cond;
   IC_SEND_NODE_CONNECTION *first_send_node_conn;
