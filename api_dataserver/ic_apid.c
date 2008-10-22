@@ -649,7 +649,7 @@ run_send_thread(void *data)
   IC_CONNECTION *send_conn;
   IC_APID_GLOBAL *apid_global;
   GError *error= NULL;
-  IC_LISTEN_SERVER_THREAD *listen_server_thread;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
   /*
     First step is to create a connection object, then it's time to
@@ -731,6 +731,10 @@ run_send_thread(void *data)
           break;
         if (!(listen_server_thread->cond= g_cond_new()))
           break;
+        if (!(listen_server_thread->first_send_node_conn=
+              g_list_prepend(NULL, (void*)send_node_conn)))
+          break;
+        g_mutex_lock(listen_server_thread->mutex);
         if (!g_thread_create_full(run_server_connect_thread,
                             (gpointer)listen_server_thread,
                             16*1024, /* Stack size */
@@ -738,16 +742,39 @@ run_send_thread(void *data)
                             FALSE,   /* Not bound */
                             G_THREAD_PRIORITY_NORMAL,
                             &error))
+        {
+          g_mutex_unlock(listen_server_thread->mutex);
           break;
-        /* Continue TODO here */
+        }
+        /* Wait for thread to be started */
+        g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
         ret_code= 0;
       } while (0);
       if (ret_code != 0)
+      {
+        /* Error handling */
         send_node_conn->stop_ordered= TRUE;
+        if (listen_server_thread)
+        {
+          if (listen_server_thread->mutex)
+            g_mutex_free(listen_server_thread->mutex);
+          if (listen_server_thread->cond)
+            g_cond_free(listen_server_thread->cond);
+          if (listen_server_thread->first_send_node_conn)
+            g_list_free(listen_server_thread->first_send_node_conn);
+        }
+      }
     }
     else
     {
        /* Found an existing a new thread to use, need not start a new thread */
+      g_mutex_lock(listen_server_thread->mutex);
+      if (!(listen_server_thread->first_send_node_conn=
+            g_list_prepend(listen_server_thread->first_send_node_conn,
+                           (void*)send_node_conn)))
+        send_node_conn->stop_ordered= TRUE;
+      g_mutex_unlock(listen_server_thread->mutex);
+       
     }
   }
   g_mutex_lock(send_node_conn->mutex);

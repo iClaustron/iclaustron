@@ -257,7 +257,7 @@ struct ic_listen_server_thread
   guint32 cluster_id;
   GMutex *mutex;
   GCond *cond;
-  IC_SEND_NODE_CONNECTION *first_send_node_conn;
+  GList *first_send_node_conn;
 };
 typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 
