@@ -622,20 +622,13 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
 static gpointer
 run_server_connect_thread(void *data)
 {
-  /*IC_SERVER_CONNECT *serv_conn= (IC_*)data;
-  IC_CONNECT *conn= serv_conn->conn;
-  gchar *server_host= serv_conn->server_host;
-  gchar *server_port= serv_conn->server_port;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread;
 
-  conn->server_name= server_host;
-  conn->server_port= server_port; 
-  conn->client_name= NULL;
-  conn->client_port= NULL;
-  conn->backlog= 10;
-  conn->is_listen_socket_retained= TRUE;
-  conn->auth_func= server_api_connect;
-  conn_auth_obj= data;
- */
+  /* We report start-up complete to the thread starting us */
+  g_mutex_lock(listen_server_thread->mutex);
+  g_cond_signal(listen_server_thread->cond);
+  g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
+  /* We have been asked to start listening and so we start listening */
   return NULL;
 }
 
