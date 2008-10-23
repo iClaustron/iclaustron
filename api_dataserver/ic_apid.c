@@ -578,7 +578,8 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   gchar *server_port_str, *client_port_str;
   gchar *server_name, *client_name;
   guint32 len;
-  int error;
+  gboolean stop_ordered= FALSE;
+  int ret_code= 0;
 
   if (is_client_part)
   {
@@ -611,30 +612,67 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
              link_config->is_wan_connection,
              link_config->socket_read_buffer_size,
              link_config->socket_write_buffer_size);
-    if ((error= conn->conn_op.ic_set_up_connection(conn)))
-      return error;
+    if ((ret_code= conn->conn_op.ic_set_up_connection(conn)))
+      return ret_code;
   }
   else /* Server connection */
   {
+    /*
+      The actual connection set-up is done by the listen server
+      thread. So all we need to do is to communicate with this
+      thread. We take mutexes in a careful manner to ensure we
+      don't create a mutex deadlock situation.
+
+      It is important here to check for connection being set-up,
+      checking if we need to start the listen server thread connect
+      phase and finally also checking if it's desired that we simply
+      stop the send thread due to stopping the API instance.
+    */
     g_mutex_lock(send_node_conn->mutex);
-    while (!send_node_conn->connection_up)
+    while (!send_node_conn->connection_up || send_node_conn->stop_ordered)
     {
+      if (send_node_conn->stop_ordered)
+        stop_ordered= TRUE;
       listen_server_thread= send_node_conn->listen_server_thread;
       g_mutex_unlock(send_node_conn->mutex);
       g_mutex_lock(listen_server_thread->mutex);
-      if (!listen_server_thread->started)
+      if (!stop_ordered)
       {
-        /* Start the listening on the server socket */
-        listen_server_thread->started= TRUE;
-        g_cond_signal(listen_server_thread->cond);
+        if (!listen_server_thread->started)
+        {
+          /* Start the listening on the server socket */
+          listen_server_thread->started= TRUE;
+          g_cond_signal(listen_server_thread->cond);
+        }
+      }
+      else /* stop_ordered == TRUE */
+      {
+        if (!listen_server_thread->stop_ordered)
+        {
+          /*
+            Nobody has started the stop of this listen server thread yet.
+            First one to see this will ensure that the listen server
+            thread is stopped, the other send threads can ignore this.
+          */
+          listen_server_thread->stop_ordered= TRUE;
+          send_node_conn->wait_listen_thread_die= TRUE;
+          g_cond_wait(listen_server_thread->cond,
+                      listen_server_thread->mutex);
+        }
       }
       g_mutex_unlock(listen_server_thread->mutex);
-
-      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+      g_mutex_lock(send_node_conn->mutex);
+      if (stop_ordered)
+      {
+        ret_code= 1;
+        break;
+      }
+      if (!send_node_conn->stop_ordered)
+        g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
     }
     g_mutex_unlock(send_node_conn->mutex);
   }
-  return 0;
+  return ret_code;
 }
 
 static gpointer

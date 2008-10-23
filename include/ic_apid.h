@@ -164,6 +164,7 @@ struct ic_listen_server_thread
   IC_CONNECTION *conn;
   guint32 cluster_id;
   gboolean started;
+  gboolean stop_ordered;
   GMutex *mutex;
   GCond *cond;
   GList *first_send_node_conn;
@@ -208,6 +209,8 @@ struct ic_send_node_connection
   gboolean node_up;
   /* Indicates if the connection is up. */
   gboolean connection_up;
+  /* A flag indicating we're waiting for listen server thread to stop */
+  gboolean wait_listen_thread_die;
 
   /* Debug variable set when waking up send thread */
   gboolean starting_send_thread;
