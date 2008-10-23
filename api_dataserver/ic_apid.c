@@ -679,12 +679,31 @@ static gpointer
 run_server_connect_thread(void *data)
 {
   IC_LISTEN_SERVER_THREAD *listen_server_thread;
+  IC_CONNECTION *fork_conn, *conn;
+  int ret_code;
 
   /* We report start-up complete to the thread starting us */
   g_mutex_lock(listen_server_thread->mutex);
   g_cond_signal(listen_server_thread->cond);
   g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
   /* We have been asked to start listening and so we start listening */
+  conn= listen_server_thread->conn;
+  while (!(ret_code= conn->conn_op.ic_set_up_connection(conn)))
+  {
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
+    {
+      break;
+    }
+    if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
+                                                     FALSE))) /* No mutex */
+    {
+      break;
+    }
+    /*
+       We have a new connection, deliver it to the send thread and
+       receive thread.
+     */
+  }
   return NULL;
 }
 
@@ -773,9 +792,9 @@ run_send_thread(void *data)
           listen_server_thread->conn,
           send_node_conn->hostname,
           send_node_conn->port_number,
-          NULL,
-          NULL,
-          0, 0);
+          NULL, NULL, /* Any client can connect, we check after connect */
+          0,          /* Default backlog */
+          TRUE);      /* Retain listen socket */
         if (!(listen_server_thread->mutex= g_mutex_new()))
           break;
         if (!(listen_server_thread->cond= g_cond_new()))

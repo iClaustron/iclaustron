@@ -740,9 +740,12 @@ set_up_server_connection(IC_CONNECTION **conn)
   DEBUG_PRINT(COMM_LEVEL,
     ("Setting up server connection for Cluster Manager at %s:%s",
      glob_cluster_mgr_ip, glob_cluster_mgr_port));
-  loc_conn->server_name= glob_cluster_mgr_ip;
-  loc_conn->server_port= glob_cluster_mgr_port;
-  loc_conn->is_listen_socket_retained= TRUE;
+  loc_conn->conn_op.ic_prepare_server_connection(conn,
+    glob_cluster_mgr_ip,
+    glob_cluster_mgr_port,
+    NULL, NULL,           /* Client can connect from anywhere */
+    0,                    /* Default backlog */
+    TRUE);                /* Listen socket retained */
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn)))
   {
     DEBUG_PRINT(COMM_LEVEL,
