@@ -159,6 +159,17 @@ struct ic_thread_connection
 };
 typedef struct ic_thread_connection IC_THREAD_CONNECTION;
 
+struct ic_listen_server_thread
+{
+  IC_CONNECTION *conn;
+  guint32 cluster_id;
+  gboolean started;
+  GMutex *mutex;
+  GCond *cond;
+  GList *first_send_node_conn;
+};
+typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
+
 #define MAX_SEND_TIMERS 16
 #define MAX_SENDS_TRACKED 8
 #define MAX_SEND_SIZE 65535
@@ -175,6 +186,8 @@ struct ic_send_node_connection
   gchar *port_number;
   /* The connection object */
   IC_CONNECTION *conn;
+  /* For server connections this is the link to the listen server thread */
+  IC_LISTEN_SERVER_THREAD *listen_server_thread;
   /* The configuration for this connection */
   IC_SOCKET_LINK_CONFIG *link_config;
 
@@ -250,16 +263,6 @@ struct ic_grid_comm
   IC_THREAD_CONNECTION **thread_conn_array;
 };
 typedef struct ic_grid_comm IC_GRID_COMM;
-
-struct ic_listen_server_thread
-{
-  IC_CONNECTION *conn;
-  guint32 cluster_id;
-  GMutex *mutex;
-  GCond *cond;
-  GList *first_send_node_conn;
-};
-typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 
 #define MAX_SERVER_PORTS_LISTEN 256
 struct ic_apid_global

@@ -573,6 +573,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   IC_CONNECTION *conn;
   IC_SOCKET_LINK_CONFIG *link_config;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread;
   gchar server_port_buf[32], client_port_buf[32];
   gchar *server_port_str, *client_port_str;
   gchar *server_name, *client_name;
@@ -615,6 +616,23 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   else /* Server connection */
   {
+    g_mutex_lock(send_node_conn->mutex);
+    while (!send_node_conn->connection_up)
+    {
+      listen_server_thread= send_node_conn->listen_server_thread;
+      g_mutex_unlock(send_node_conn->mutex);
+      g_mutex_lock(listen_server_thread->mutex);
+      if (!listen_server_thread->started)
+      {
+        /* Start the listening on the server socket */
+        listen_server_thread->started= TRUE;
+        g_cond_signal(listen_server_thread->cond);
+      }
+      g_mutex_unlock(listen_server_thread->mutex);
+
+      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+    }
+    g_mutex_unlock(send_node_conn->mutex);
   }
   return 0;
 }
@@ -727,6 +745,7 @@ run_send_thread(void *data)
         if (!(listen_server_thread->first_send_node_conn=
               g_list_prepend(NULL, (void*)send_node_conn)))
           break;
+        send_node_conn->listen_server_thread= listen_server_thread;
         g_mutex_lock(listen_server_thread->mutex);
         if (!g_thread_create_full(run_server_connect_thread,
                             (gpointer)listen_server_thread,
