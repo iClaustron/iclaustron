@@ -13,17 +13,35 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+#include <ic_common.h>
+#ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
+#endif
+#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
+#endif
+#ifdef HAVE_NETINET_TCP_H
 #include <netinet/tcp.h>
+#endif
+#ifdef HAVE_UNISTD_H
 #include <unistd.h>
+#endif
 #ifdef HAVE_TRACE
 #include <probes.h>
 #endif
 #include <errno.h>
-#include <ic_common.h>
+#ifdef HAVE_POLL_H
 #include <poll.h>
+#endif
+#ifdef HAVE_SYS_POLL_H
 #include <sys/poll.h>
+#endif
+#ifdef HAVE_SYS_TIMES_H
+#include <sys/times.h>
+#endif
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#endif
 
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
@@ -267,6 +285,8 @@ accept_socket_connection(IC_CONNECTION *conn, int ms_wait)
            (struct sockaddr_in6*)&client_address;
   struct sockaddr_in *ipv4_check_address;
   struct sockaddr_in6 *ipv6_check_address;
+  fd_set select_set;
+  struct timeval time_out;
 
   /*
     The socket used to listen to a port can be reused many times.
@@ -274,9 +294,17 @@ accept_socket_connection(IC_CONNECTION *conn, int ms_wait)
     write from.
   */
   addr_len= sizeof(client_address);
-  conn->ms_wait= ms_wait;
   DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s",
                            conn->conn_stat.server_ip_addr));
+  if (ms_wait > 0)
+  {
+    FD_SET(conn->listen_sockfd, &select_set);
+    select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
+    if (!(FD_ISSET(conn->listen_sockfd, &select_set)))
+    {
+      /* Return with timeout set */
+    }
+  }
   ret_sockfd= accept(conn->listen_sockfd,
                      (struct sockaddr *)&client_address,
                      &addr_len);
