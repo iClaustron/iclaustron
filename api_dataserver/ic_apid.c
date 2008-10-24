@@ -612,7 +612,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
              link_config->is_wan_connection,
              link_config->socket_read_buffer_size,
              link_config->socket_write_buffer_size);
-    if ((ret_code= conn->conn_op.ic_set_up_connection(conn)))
+    if ((ret_code= conn->conn_op.ic_set_up_connection(conn, 0)))
       return ret_code;
   }
   else /* Server connection */
@@ -681,6 +681,7 @@ run_server_connect_thread(void *data)
   IC_LISTEN_SERVER_THREAD *listen_server_thread;
   IC_CONNECTION *fork_conn, *conn;
   int ret_code;
+  int ms_wait= 1000; /* Milliseconds between each check of thread to die */
 
   /* We report start-up complete to the thread starting us */
   g_mutex_lock(listen_server_thread->mutex);
@@ -688,22 +689,25 @@ run_server_connect_thread(void *data)
   g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
   /* We have been asked to start listening and so we start listening */
   conn= listen_server_thread->conn;
-  while (!(ret_code= conn->conn_op.ic_set_up_connection(conn)))
+  if (!(ret_code= conn->conn_op.ic_set_up_connection(conn, ms_wait)))
+    goto error;
+  do
   {
-    if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
+    if (!(ret_code= conn->conn_op.ic_accept_connection(conn, ms_wait)))
     {
-      break;
-    }
-    if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
+      if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
                                                      FALSE))) /* No mutex */
-    {
-      break;
+      {
+        break;
+      }
+      /*
+         We have a new connection, deliver it to the send thread and
+         receive thread.
+      */
     }
-    /*
-       We have a new connection, deliver it to the send thread and
-       receive thread.
-     */
-  }
+  } while (1);
+  return NULL;
+error:
   return NULL;
 }
 
@@ -959,7 +963,7 @@ open_ds_connection(IC_DS_CONNECTION *ds_conn)
                                       (void*)ds_conn)))
     return IC_ERROR_MEM_ALLOC;
   ds_conn->conn_obj= conn;
-  if ((error= conn->conn_op.ic_set_up_connection(conn)))
+  if ((error= conn->conn_op.ic_set_up_connection(conn, 0)))
     return error;
   return 0;
 }

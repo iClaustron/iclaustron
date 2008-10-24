@@ -116,8 +116,8 @@ struct ic_connect_operations
                                        guint32 tcp_receive_buffer_size,
                                        guint32 tcp_send_buffer_size);
 
-  int (*ic_set_up_connection) (struct ic_connection *conn);
-  int (*ic_accept_connection) (struct ic_connection *conn);
+  int (*ic_set_up_connection) (struct ic_connection *conn, int ms_wait);
+  int (*ic_accept_connection) (struct ic_connection *conn, int ms_wait);
   int (*ic_close_connection) (struct ic_connection *conn);
   int (*ic_close_listen_connection) (struct ic_connection *conn);
   /*
@@ -282,6 +282,11 @@ struct ic_connection
   struct connection_buffer *last_con_buf;
   int rw_sockfd;
   int listen_sockfd;
+  /*
+    Milliseconds to wait until returning from connect attempt,
+    0 means wait forever
+  */
+  int ms_wait;
   guint32 node_id;
   /*
     We keep track of time that the connection has been up and a timer for how

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007, 2008 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -253,7 +253,7 @@ error:
 }
 
 static int
-accept_socket_connection(IC_CONNECTION *conn)
+accept_socket_connection(IC_CONNECTION *conn, int ms_wait)
 {
   gboolean not_accepted= FALSE;
   int ret_sockfd, ok, error;
@@ -274,6 +274,7 @@ accept_socket_connection(IC_CONNECTION *conn)
     write from.
   */
   addr_len= sizeof(client_address);
+  conn->ms_wait= ms_wait;
   DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s",
                            conn->conn_stat.server_ip_addr));
   ret_sockfd= accept(conn->listen_sockfd,
@@ -517,7 +518,7 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
     }
     conn->listen_sockfd= sockfd;
     if (!conn->is_listen_socket_retained)
-      return accept_socket_connection(conn);
+      return accept_socket_connection(conn, conn->ms_wait);
     else
       conn->listen_sockfd= sockfd;
   }
@@ -545,9 +546,10 @@ run_set_up_socket_connection(gpointer data)
 }
 
 static int
-set_up_socket_connection(IC_CONNECTION *conn)
+set_up_socket_connection(IC_CONNECTION *conn, int ms_wait)
 {
   GError *error= NULL;
+  conn->ms_wait= ms_wait;
   if (!conn->is_connect_thread_used)
     return int_set_up_socket_connection(conn);
 
@@ -1597,25 +1599,25 @@ error_handler:
   return 1;
 }
 static int
-set_up_ssl_connection(IC_CONNECTION *in_conn)
+set_up_ssl_connection(IC_CONNECTION *in_conn, int ms_wait)
 {
   int error= 1;
   DEBUG_ENTRY("set_up_ssl_connection");
 
   lock_connect_mutex(in_conn);
-  error= set_up_socket_connection(in_conn);
+  error= set_up_socket_connection(in_conn, ms_wait);
   unlock_connect_mutex(in_conn);
   DEBUG_RETURN(error);
 }
 
 static int
-accept_ssl_connection(IC_CONNECTION *conn)
+accept_ssl_connection(IC_CONNECTION *conn, int ms_wait)
 {
   int error;
   DEBUG_ENTRY("accept_ssl_connection");
 
   lock_connect_mutex(conn);
-  error= accept_socket_connection(conn);
+  error= accept_socket_connection(conn, ms_wait);
   unlock_connect_mutex(conn);
   DEBUG_RETURN(error);
 }

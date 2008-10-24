@@ -181,7 +181,7 @@ int start_connection_loop()
   conn->client_port= 0;
   conn->is_wan_connection= FALSE;
   conn->is_listen_socket_retained= TRUE;
-  ret_code= conn->conn_op.ic_set_up_connection(conn);
+  ret_code= conn->conn_op.ic_set_up_connection(conn, 0);
   if (ret_code)
     return ret_code;
   do
@@ -189,7 +189,7 @@ int start_connection_loop()
     do
     {
       /* Wait for someone to connect to us. */
-      if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
+      if ((ret_code= conn->conn_op.ic_accept_connection(conn, 0)))
       {
         printf("Error %d received in accept connection\n", ret_code);
         break;
