@@ -72,10 +72,18 @@ create_dir()
   if ! test -d $CREATE_DIR ; then
     mkdir -p $CREATE_DIR
     if ! test -d $CREATE_DIR ; then
-      output_msg "Failed to create $CREATE_DIR"
+      if test "x$LOG_FILE_CREATED" = "xy" ; then
+        output_msg "Failed to create $CREATE_DIR"
+      else
+        echo "Failed to create $CREATE_DIR"
+      fi
       exit 1
     fi
-    output_msg "Successfully created $CREATE_DIR"
+    if test "x$LOG_FILE_CREATED" = "xy" ; then
+      output_msg "Successfully created $CREATE_DIR"
+    else
+      echo "Successfully created $CREATE_DIR"
+    fi
   fi
 }
 
@@ -595,6 +603,7 @@ WITH_DEBUG=
 LOCAL_ONLY=
 LOCAL_INSTALL="n"
 REMOTE_INSTALL="n"
+LOG_FILE_CREATED="n"
 LOCAL_DEP_NODE_LIST=
 DEPENDENT_NODE_LIST=
 # DEP_ARRAY_NODE_LIST contains an array of arrays. It contains one array of
@@ -688,14 +697,16 @@ else
 fi
 LOG_FILE="${LOG_DIR}/iclaustron_installation.log"
 
+CREATE_DIR=$LOG_DIR
+create_dir
+echo "Message log created for iclaustron installation on $USE_DATE" > $LOG_FILE
+LOG_FILE_CREATED="y"
+
 CREATE_DIR=$BIN_INSTALL_DIR
 create_dir
 CREATE_DIR=$SRC_INSTALL_DIR
 create_dir
-CREATE_DIR=$LOG_DIR
-create_dir
 
-echo "Message log created for iclaustron installation on $USE_DATE" > $LOG_FILE
 if test "x$?" != "x0" ; then
   echo "Failed to write to $LOG_FILE"
   exit 1
