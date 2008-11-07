@@ -170,7 +170,7 @@ connection_test(gboolean use_ssl)
        glob_is_wan_connection,
        glob_tcp_rec_size,
        glob_tcp_snd_size);
-  ret_code= conn->conn_op.ic_set_up_connection(conn, 0);
+  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code != 0)
   {
     printf("Error in connection set-up: ret_code = %d\n", ret_code);
@@ -297,7 +297,7 @@ test_pcntrl()
   conn->tcp_maxseg_size= glob_tcp_maxseg;
   conn->tcp_receive_buffer_size= glob_tcp_rec_size;
   conn->tcp_send_buffer_size= glob_tcp_snd_size;
-  ret_code= conn->conn_op.ic_set_up_connection(conn, 0);
+  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if ((error= ic_send_with_cr(conn, "ls")) ||
       (error= ic_send_with_cr(conn, "-la")) ||
       (error= ic_send_with_cr(conn, "")))

@@ -106,9 +106,6 @@ run_file_server(IC_APID_GLOBAL *apid_global)
   DEBUG_ENTRY("run_file_server");
 
   printf("Ready to start file server\n");
-  /* We'll start by setting up connections to all nodes in the clusters */
-  if ((error= ic_apid_global_connect(apid_global)))
-    DEBUG_RETURN(error);
   g_mutex_lock(apid_global->mutex);
   for (i= 0; i < glob_num_threads; i++)
   {
@@ -155,13 +152,13 @@ int main(int argc, char *argv[])
                                    glob_cluster_server_port,
                                    &ret_code)))
     goto error;
-  if (!(apid_global= ic_init_apid(apic)))
+  if (!(apid_global= ic_connect_apid_global(apic)))
     return IC_ERROR_MEM_ALLOC;
   ret_code= run_file_server(apid_global);
 error:
   if (apic)
     apic->api_op.ic_free_config(apic);
-  ic_end_apid(apid_global);
+  ic_disconnect_apid_global(apid_global);
   ic_end();
   return ret_code;
 }

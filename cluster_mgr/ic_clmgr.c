@@ -701,7 +701,7 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
   IC_CONNECTION *fork_conn;
   do
   {
-    if ((ret_code= conn->conn_op.ic_accept_connection(conn, 0)))
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
       goto error;
     DEBUG_PRINT(PROGRAM_LEVEL,
       ("Cluster Manager has accepted a new connection"));
@@ -746,7 +746,7 @@ set_up_server_connection(IC_CONNECTION **conn)
     NULL, NULL,           /* Client can connect from anywhere */
     0,                    /* Default backlog */
     TRUE);                /* Listen socket retained */
-  if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn, 0)))
+  if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn, NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL,
       ("Failed to set-up connection for Cluster Manager"));

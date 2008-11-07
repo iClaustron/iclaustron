@@ -31,6 +31,7 @@
 #define IC_VERSION 0x000001
 #define MYSQL_VERSION 0x06030c
 #define MYSQL_VERSION_STRING "mysql-5.1.23-ndb-6.3.12"
+
 #define IC_VERSION_BIT_START 24
 #define IC_PROTOCOL_BIT 20
 

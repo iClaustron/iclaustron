@@ -37,6 +37,7 @@
 #define IC_MSG_NOSIGNAL 0
 #endif
 
+typedef int (*accept_timeout_func) (void*, int);
 typedef int (*authenticate_func) (void*);
 
 struct ic_connection;
@@ -116,8 +117,12 @@ struct ic_connect_operations
                                        guint32 tcp_receive_buffer_size,
                                        guint32 tcp_send_buffer_size);
 
-  int (*ic_set_up_connection) (struct ic_connection *conn, int ms_wait);
-  int (*ic_accept_connection) (struct ic_connection *conn, int ms_wait);
+  int (*ic_set_up_connection) (struct ic_connection *conn,
+                               accept_timeout_func timeout_func,
+                               void *timeout_obj);
+  int (*ic_accept_connection) (struct ic_connection *conn,
+                               accept_timeout_func timeout_func,
+                               void *timeout_obj);
   int (*ic_close_connection) (struct ic_connection *conn);
   int (*ic_close_listen_connection) (struct ic_connection *conn);
   /*
@@ -375,6 +380,17 @@ struct ic_connection
   */
   authenticate_func auth_func;
   void *auth_obj;
+
+  /*
+    When calling ic_set_up_connection on the server side we want to ensure
+    that we can stop the server connection by calling a callback function
+    defined here. It requires an object along with it, it the function will
+    also receive a counter of how many seconds we have been waiting. This
+    function will be called once a second when waiting for a client to
+    connect.
+  */
+  accept_timeout_func timeout_func;
+  void *timeout_obj;
 
   /*
     The normal way to use this connection API is to listen to a

@@ -167,6 +167,7 @@ struct ic_listen_server_thread
   gboolean stop_ordered;
   GMutex *mutex;
   GCond *cond;
+  GThread *thread;
   GList *first_send_node_conn;
 };
 typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
@@ -417,13 +418,33 @@ struct ic_apid_connection
 };
 typedef struct ic_apid_connection IC_APID_CONNECTION;
 
+/*
+  These two functions are used to connect/disconnect to/from the clusters
+  we have in the configuration. The connect function performs both the
+  initialisation of the Data API instance as well as setting up all the
+  necessary threads and start up the connections to the other cluster nodes.
+
+  Then before actually using this Data API instance it's a good idea to
+  call ic_wait_first_node_connect which is waiting for at least one connection
+  to be completed in a specified cluster (so this function only waits for
+  one cluster, to wait for all clusters it's necessary to create a loop with
+  calls to this function.
+
+  Finally before actually starting to use the Data API it's also necessary to
+  create one Data API connection. IMPORTANT: It's assumed that the user of
+  this Data API connection ensures that it isn't from several threads at the
+  same time. If it's used by several threads, each access must be protected
+  by the user through a mutex.
+
+  Once a Data API connection has been used the user can start using all the
+  operations as defined by the ic_apid_connection_ops and all other parts
+  of the Ds
+*/
+IC_APID_GLOBAL* ic_connect_apid_global(IC_API_CONFIG_SERVER *apic);
+int ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global);
+int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
+                               guint32 cluster_id);
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
-
-int ic_apid_global_connect(IC_APID_GLOBAL *apid_global);
-int ic_apid_global_disconnect(IC_APID_GLOBAL *apid_global);
-
-IC_APID_GLOBAL* ic_init_apid(IC_API_CONFIG_SERVER *apic);
-void ic_end_apid(IC_APID_GLOBAL *apid_global);
 #endif

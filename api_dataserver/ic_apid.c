@@ -134,6 +134,8 @@ static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                               guint32 *message_id);
 static IC_SOCK_BUF_PAGE* get_thread_messages(IC_APID_CONNECTION *apid,
                                              glong wait_time);
+static void
+close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread);
 
 struct link_message_anchors
 {
@@ -142,7 +144,22 @@ struct link_message_anchors
 };
 typedef struct link_message_anchors LINK_MESSAGE_ANCHORS;
 
-IC_APID_GLOBAL*
+/*
+  GLOBAL DATA API INITIALISATION MODULE
+  -------------------------------------
+  This module contains the code to initialise and set-up and tear down the
+  global part of the data part. This part contains all the threads required
+  to handle the Data API except the user threads which are created by the
+  user application.
+*/
+static void ic_end_apid(IC_APID_GLOBAL *apid_global);
+/*
+  This method is used to initialise all the data structures and allocate
+  memory for the various parts required on a global level for the Data
+  API. This method only allocates the memory and does not start any
+  threads, it must be called before any start thread handling can be done.
+*/
+static IC_APID_GLOBAL*
 ic_init_apid(IC_API_CONFIG_SERVER *apic)
 {
   IC_APID_GLOBAL *apid_global;
@@ -210,7 +227,12 @@ error:
   return NULL;
 }
 
-void
+/*
+  This method is called when shutting down a global Data API object. It requires
+  all the threads to have been stopped and is only releasing the memory on the
+  global Data API object.
+*/
+static void
 ic_end_apid(IC_APID_GLOBAL *apid_global)
 {
   IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
@@ -276,7 +298,13 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   ic_free(apid_global);
 }
 
-int
+/*
+  This is the method used to start up all the threads in the Data API,
+  including the send threads, the receive threads and the listen server
+  threads. It will also start connecting to the various clusters that
+  the Data API should be connected to.
+*/
+static int
 ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
 {
   guint32 node_id, cluster_id, my_node_id;
@@ -336,44 +364,16 @@ error:
   DEBUG_RETURN(error);
 }
 
-int
+/*
+  This method is used to tear down the global Data API part. It will
+  disconnect all the connections to all cluster nodes and stop all
+  Data API threads.
+*/
+static int
 ic_apid_global_disconnect(IC_APID_GLOBAL *apid_global)
 {
   start_connect_phase(apid_global, TRUE, FALSE);
   return 0;
-}
-
-static void
-apid_free(IC_APID_CONNECTION *apid_conn)
-{
-  IC_THREAD_CONNECTION *thread_conn= apid_conn->thread_conn;
-  IC_GRID_COMM *grid_comm;
-  IC_APID_GLOBAL *apid_global;
-  guint32 thread_id= apid_conn->thread_id;
-  DEBUG_ENTRY("apid_free");
-
-  apid_global= apid_conn->apid_global;
-  grid_comm= apid_global->grid_comm;
-  if (apid_conn)
-  {
-    if (apid_conn->cluster_id_bitmap)
-      ic_free_bitmap(apid_conn->cluster_id_bitmap);
-    ic_free(apid_conn);
-  }
-  if (thread_conn)
-  {
-    thread_id= apid_conn->thread_id;
-    if (thread_conn->mutex)
-      g_mutex_free(thread_conn->mutex);
-    if (thread_conn->cond)
-      g_cond_free(thread_conn->cond);
-    ic_free(thread_conn);
-  }
-  g_mutex_lock(apid_global->thread_id_mutex);
-  if (thread_conn &&
-      grid_comm->thread_conn_array[thread_id] == thread_conn)
-    grid_comm->thread_conn_array[thread_id]= NULL;
-  g_mutex_unlock(apid_global->thread_id_mutex);
 }
 
 static void
@@ -413,6 +413,75 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
     }
   }
   DEBUG_RETURN_EMPTY;
+}
+
+/*
+  External interface to GLOBAL DATA API INITIALISATION MODULE
+  -----------------------------------------------------------
+*/
+IC_APID_GLOBAL*
+ic_connect_apid_global(IC_API_CONFIG_SERVER *apic)
+{
+  IC_APID_GLOBAL *apid_global;
+  if (!(apid_global= ic_init_apid(apic)))
+    return NULL;
+  if (!(ic_apid_global_connect(apid_global)))
+  {
+    ic_end_apid(apid_global);
+    return NULL;
+  }
+  return apid_global;
+}
+
+int ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global)
+{
+  int ret_code;
+
+  if (!(ret_code= ic_apid_global_disconnect(apid_global)))
+    return ret_code;
+  ic_end_apid(apid_global);
+  return 0;
+}
+
+/*
+  DATA API Connection Module
+  --------------------------
+  This module contains all the methods that are part of the Data API
+  Connection interface. This interface contains methods to start
+  transactions and control execution of transactions. Each thread
+  should have its own Data API Connection module.
+*/
+static void
+apid_free(IC_APID_CONNECTION *apid_conn)
+{
+  IC_THREAD_CONNECTION *thread_conn= apid_conn->thread_conn;
+  IC_GRID_COMM *grid_comm;
+  IC_APID_GLOBAL *apid_global;
+  guint32 thread_id= apid_conn->thread_id;
+  DEBUG_ENTRY("apid_free");
+
+  apid_global= apid_conn->apid_global;
+  grid_comm= apid_global->grid_comm;
+  if (apid_conn)
+  {
+    if (apid_conn->cluster_id_bitmap)
+      ic_free_bitmap(apid_conn->cluster_id_bitmap);
+    ic_free(apid_conn);
+  }
+  if (thread_conn)
+  {
+    thread_id= apid_conn->thread_id;
+    if (thread_conn->mutex)
+      g_mutex_free(thread_conn->mutex);
+    if (thread_conn->cond)
+      g_cond_free(thread_conn->cond);
+    ic_free(thread_conn);
+  }
+  g_mutex_lock(apid_global->thread_id_mutex);
+  if (thread_conn &&
+      grid_comm->thread_conn_array[thread_id] == thread_conn)
+    grid_comm->thread_conn_array[thread_id]= NULL;
+  g_mutex_unlock(apid_global->thread_id_mutex);
 }
 
 IC_APID_CONNECTION*
@@ -471,7 +540,12 @@ end:
   return NULL;
 }
 
-/* Send thread Handling */
+/*
+  SEND THREAD MODULE
+  ------------------
+  This module contains the code to run the send thread and the supporting
+  methods to perform send operations through the Data API.
+*/
 static void
 run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
@@ -612,7 +686,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
              link_config->is_wan_connection,
              link_config->socket_read_buffer_size,
              link_config->socket_write_buffer_size);
-    if ((ret_code= conn->conn_op.ic_set_up_connection(conn, 0)))
+    if ((ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
       return ret_code;
   }
   else /* Server connection */
@@ -644,23 +718,26 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
           listen_server_thread->started= TRUE;
           g_cond_signal(listen_server_thread->cond);
         }
+        g_mutex_unlock(listen_server_thread->mutex);
       }
       else /* stop_ordered == TRUE */
       {
-        if (!listen_server_thread->stop_ordered)
+        listen_server_thread->first_send_node_conn=
+          g_list_remove(listen_server_thread->first_send_node_conn,
+                        (void*)send_node_conn);
+        if (listen_server_thread->first_send_node_conn == NULL)
         {
           /*
-            Nobody has started the stop of this listen server thread yet.
-            First one to see this will ensure that the listen server
-            thread is stopped, the other send threads can ignore this.
+            We are the last send thread to use this listen server
+            thread, this means we are responsible to stop this thread.
           */
           listen_server_thread->stop_ordered= TRUE;
-          send_node_conn->wait_listen_thread_die= TRUE;
-          g_cond_wait(listen_server_thread->cond,
-                      listen_server_thread->mutex);
+          g_cond_signal(listen_server_thread->cond);
+          g_mutex_unlock(listen_server_thread->mutex);
+          g_thread_join(listen_server_thread->thread);
+          close_listen_server_thread(listen_server_thread);
         }
       }
-      g_mutex_unlock(listen_server_thread->mutex);
       g_mutex_lock(send_node_conn->mutex);
       if (stop_ordered)
       {
@@ -675,25 +752,66 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   return ret_code;
 }
 
+static int
+check_timeout_func(void *timeout_obj, int timer)
+{
+  if (timer < 2)
+    return 0;
+  else
+    return 1;
+}
+
+static void
+close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread)
+{
+  IC_CONNECTION *conn;
+  if (listen_server_thread)
+  {
+    if ((conn= listen_server_thread->conn))
+      conn->conn_op.ic_free_connection(conn);
+    if (listen_server_thread->mutex)
+      g_mutex_free(listen_server_thread->mutex);
+    if (listen_server_thread->cond)
+      g_cond_free(listen_server_thread->cond);
+    if (listen_server_thread->first_send_node_conn)
+      g_list_free(listen_server_thread->first_send_node_conn);
+  }
+}
+
+static gboolean
+check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
+                 IC_CONNECTION *conn)
+{
+  return FALSE;
+}
+
 static gpointer
 run_server_connect_thread(void *data)
 {
   IC_LISTEN_SERVER_THREAD *listen_server_thread;
   IC_CONNECTION *fork_conn, *conn;
+  IC_SEND_NODE_CONNECTION *iter_send_node_conn;
+  GList *list_iterator;
+  gboolean stop_ordered;
   int ret_code;
-  int ms_wait= 1000; /* Milliseconds between each check of thread to die */
 
-  /* We report start-up complete to the thread starting us */
   g_mutex_lock(listen_server_thread->mutex);
+  conn= listen_server_thread->conn;
+  if ((ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
+    listen_server_thread->stop_ordered= TRUE;
+  /* We report start-up complete to the thread starting us */
   g_cond_signal(listen_server_thread->cond);
+  if (ret_code)
+  {
+    g_mutex_unlock(listen_server_thread->mutex);
+    return NULL;
+  }
   g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
   /* We have been asked to start listening and so we start listening */
-  conn= listen_server_thread->conn;
-  if (!(ret_code= conn->conn_op.ic_set_up_connection(conn, ms_wait)))
-    goto error;
   do
   {
-    if (!(ret_code= conn->conn_op.ic_accept_connection(conn, ms_wait)))
+    if (!(ret_code= conn->conn_op.ic_accept_connection(conn,
+                  check_timeout_func, (void*)listen_server_thread)))
     {
       if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
                                                      FALSE))) /* No mutex */
@@ -704,10 +822,59 @@ run_server_connect_thread(void *data)
          We have a new connection, deliver it to the send thread and
          receive thread.
       */
+      g_mutex_lock(listen_server_thread->mutex);
+      if (listen_server_thread->stop_ordered)
+      {
+        g_mutex_unlock(listen_server_thread->mutex);
+        break;
+      }
+      list_iterator= g_list_first(listen_server_thread->first_send_node_conn);
+      while (list_iterator)
+      {
+        iter_send_node_conn= (IC_SEND_NODE_CONNECTION*)list_iterator->data;
+        /*
+          Here we are doing something dangerous, we're locking a mutex
+          while already having one, this means that we're by no means
+          allowed to do the opposite, we must NEVER take a mutex on
+          listen_server_thread while holding a send_node_conn mutex.
+          This would lead to a deadlock situation.
+          To not do this would however instead lead to extremely complex
+          code which we want to avoid. It's necessary that the list of
+          send node connections are stable while we are searching for the
+          right one that uses this connection.
+        */
+        g_mutex_lock(iter_send_node_conn->mutex);
+        if (!check_connection(iter_send_node_conn, fork_conn))
+        {
+          /*
+            We have found the right send node connection, give the
+            connection over to the send thread and also start a
+            receiver thread for this node.
+          */
+          iter_send_node_conn->connection_up= TRUE;
+          g_cond_signal(iter_send_node_conn->cond);
+          g_mutex_unlock(iter_send_node_conn->mutex);
+          g_mutex_unlock(listen_server_thread->mutex);
+          continue;
+        }
+        g_mutex_unlock(iter_send_node_conn->mutex);
+        list_iterator= g_list_next(list_iterator);
+      }
+      g_mutex_unlock(listen_server_thread->mutex);
+    }
+    else
+    {
+      /*
+        We got a timeout, check if we're ordered to stop and if so
+        we will stop. Otherwise we'll simply continue.
+      */
+      g_mutex_lock(listen_server_thread->mutex);
+      stop_ordered= listen_server_thread->stop_ordered;
+      g_mutex_unlock(listen_server_thread->mutex);
+      if (stop_ordered)
+        break;
     }
   } while (1);
-  return NULL;
-error:
   return NULL;
 }
 
@@ -766,8 +933,9 @@ run_send_thread(void *data)
                                                   send_node_conn->hostname,
                                                   send_node_conn->port_number))
         {
-           found= TRUE;
-           break;
+          send_node_conn->listen_server_thread= listen_server_thread;
+          found= TRUE;
+          break;
         }
       }
     }
@@ -784,6 +952,7 @@ run_send_thread(void *data)
           break;
         /* Successful allocation of memory */
         listen_server_thread= apid_global->listen_server_thread[listen_inx];
+        send_node_conn->listen_server_thread= listen_server_thread;
         if (!(listen_server_thread->conn= ic_create_socket_object(
                        FALSE,  /* This is a server connection */
                        FALSE,  /* Mutex supplied by API code instead */
@@ -806,36 +975,36 @@ run_send_thread(void *data)
         if (!(listen_server_thread->first_send_node_conn=
               g_list_prepend(NULL, (void*)send_node_conn)))
           break;
-        send_node_conn->listen_server_thread= listen_server_thread;
         g_mutex_lock(listen_server_thread->mutex);
-        if (!g_thread_create_full(run_server_connect_thread,
-                            (gpointer)listen_server_thread,
-                            16*1024, /* Stack size */
-                            FALSE,   /* Not joinable */
-                            FALSE,   /* Not bound */
-                            G_THREAD_PRIORITY_NORMAL,
-                            &error))
+        if (!(listen_server_thread->thread=
+              g_thread_create_full(run_server_connect_thread,
+                                  (gpointer)listen_server_thread,
+                                  16*1024, /* Stack size */
+                                  FALSE,   /* Not joinable */
+                                  FALSE,   /* Not bound */
+                                  G_THREAD_PRIORITY_NORMAL,
+                                  &error)))
         {
           g_mutex_unlock(listen_server_thread->mutex);
           break;
         }
         /* Wait for thread to be started */
         g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
-        ret_code= 0;
+        if (!listen_server_thread->stop_ordered)
+        {
+          ret_code= 0;
+        }
+        else
+        {
+          g_thread_join(listen_server_thread->thread);
+          listen_server_thread->thread= NULL;
+        }
       } while (0);
       if (ret_code != 0)
       {
         /* Error handling */
         send_node_conn->stop_ordered= TRUE;
-        if (listen_server_thread)
-        {
-          if (listen_server_thread->mutex)
-            g_mutex_free(listen_server_thread->mutex);
-          if (listen_server_thread->cond)
-            g_cond_free(listen_server_thread->cond);
-          if (listen_server_thread->first_send_node_conn)
-            g_list_free(listen_server_thread->first_send_node_conn);
-        }
+        close_listen_server_thread(listen_server_thread);
       }
     }
     else
@@ -847,7 +1016,6 @@ run_send_thread(void *data)
                            (void*)send_node_conn)))
         send_node_conn->stop_ordered= TRUE;
       g_mutex_unlock(listen_server_thread->mutex);
-       
     }
   }
   g_mutex_lock(send_node_conn->mutex);
@@ -857,7 +1025,8 @@ run_send_thread(void *data)
     The main thread have started up all threads and all communication objects
     have been created, it's now time to connect to the clusters.
   */
-  while (!send_node_conn->stop_ordered)
+  g_mutex_unlock(send_node_conn->mutex);
+  while (1)
   {
     if ((ret_code= connect_by_send_thread(send_node_conn,
                                           is_client_part)))
@@ -866,6 +1035,7 @@ run_send_thread(void *data)
   }
 end:
   g_mutex_lock(send_node_conn->mutex);
+  close_listen_server_thread(listen_server_thread);
   send_node_conn->send_thread_ended= TRUE;
   g_mutex_unlock(send_node_conn->mutex);
   return NULL;
@@ -963,7 +1133,7 @@ open_ds_connection(IC_DS_CONNECTION *ds_conn)
                                       (void*)ds_conn)))
     return IC_ERROR_MEM_ALLOC;
   ds_conn->conn_obj= conn;
-  if ((error= conn->conn_op.ic_set_up_connection(conn, 0)))
+  if ((error= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
     return error;
   return 0;
 }

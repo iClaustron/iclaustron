@@ -1600,8 +1600,9 @@ ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7020
+#define IC_LAST_ERROR 7025
 #define IC_MAX_ERRORS 100
+
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
 void
@@ -1661,6 +1662,8 @@ ic_init_error_messages()
     "No such node exists in this cluster";
   ic_error_str[IC_ERROR_MESSAGE_CHECKSUM - IC_FIRST_ERROR]=
     "Message received with wrong checksum";
+  ic_error_str[IC_ERROR_ACCEPT_TIMEOUT - IC_FIRST_ERROR]=
+    "Timeout when waiting for connection to accept";
 }
 
 void

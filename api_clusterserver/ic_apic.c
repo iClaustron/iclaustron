@@ -2808,7 +2808,7 @@ set_up_cluster_server_connection(IC_CONNECTION **conn,
   loc_conn= *conn;
   loc_conn->server_name= server_name;
   loc_conn->server_port= server_port;
-  if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn, 0)))
+  if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn, NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", error));
     return error;
@@ -4704,7 +4704,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
   */
   conn= run_obj->run_conn;
   conn->is_listen_socket_retained= TRUE;
-  ret_code= conn->conn_op.ic_set_up_connection(conn, 0);
+  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
@@ -4713,7 +4713,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
   }
   do
   {
-    if ((ret_code= conn->conn_op.ic_accept_connection(conn, 0)))
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
     {
       DEBUG_PRINT(COMM_LEVEL,
         ("Failed to accept a new connection"));

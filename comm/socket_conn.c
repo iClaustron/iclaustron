@@ -271,7 +271,9 @@ error:
 }
 
 static int
-accept_socket_connection(IC_CONNECTION *conn, int ms_wait)
+accept_socket_connection(IC_CONNECTION *conn,
+                         accept_timeout_func timeout_func,
+                         void *timeout_obj)
 {
   gboolean not_accepted= FALSE;
   int ret_sockfd, ok, error;
@@ -287,6 +289,7 @@ accept_socket_connection(IC_CONNECTION *conn, int ms_wait)
   struct sockaddr_in6 *ipv6_check_address;
   fd_set select_set;
   struct timeval time_out;
+  int timer= 0;
 
   /*
     The socket used to listen to a port can be reused many times.
@@ -296,14 +299,28 @@ accept_socket_connection(IC_CONNECTION *conn, int ms_wait)
   addr_len= sizeof(client_address);
   DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s",
                            conn->conn_stat.server_ip_addr));
-  if (ms_wait > 0)
+  if (timeout_func != NULL)
   {
-    FD_SET(conn->listen_sockfd, &select_set);
-    select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
-    if (!(FD_ISSET(conn->listen_sockfd, &select_set)))
+    do
     {
-      /* Return with timeout set */
-    }
+      FD_SET(conn->listen_sockfd, &select_set);
+      select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
+      if (!(FD_ISSET(conn->listen_sockfd, &select_set)))
+      {
+        /*
+          Call timeout function, if return is non-zero we'll return with
+          a timeout error.
+        */
+        timer++;
+        if (conn->timeout_func(conn->timeout_obj, timer))
+        {
+          conn->error_code= IC_ERROR_ACCEPT_TIMEOUT;
+          return conn->error_code;
+        }
+      }
+      else
+        break;
+    } while (1);
   }
   ret_sockfd= accept(conn->listen_sockfd,
                      (struct sockaddr *)&client_address,
@@ -536,7 +553,7 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
   else
   {
     /*
-      Listen for incoming connect messages
+      Server: Listen for incoming connect messages
     */
     if ((listen(sockfd, conn->backlog) < 0))
     {
@@ -546,7 +563,9 @@ int_set_up_socket_connection(IC_CONNECTION *conn)
     }
     conn->listen_sockfd= sockfd;
     if (!conn->is_listen_socket_retained)
-      return accept_socket_connection(conn, conn->ms_wait);
+      return accept_socket_connection(conn,
+                                      conn->timeout_func,
+                                      conn->timeout_obj);
     else
       conn->listen_sockfd= sockfd;
   }
@@ -574,10 +593,13 @@ run_set_up_socket_connection(gpointer data)
 }
 
 static int
-set_up_socket_connection(IC_CONNECTION *conn, int ms_wait)
+set_up_socket_connection(IC_CONNECTION *conn,
+                         accept_timeout_func timeout_func,
+                         void *timeout_obj)
 {
   GError *error= NULL;
-  conn->ms_wait= ms_wait;
+  conn->timeout_func= timeout_func;
+  conn->timeout_obj= timeout_obj;
   if (!conn->is_connect_thread_used)
     return int_set_up_socket_connection(conn);
 
@@ -1627,25 +1649,29 @@ error_handler:
   return 1;
 }
 static int
-set_up_ssl_connection(IC_CONNECTION *in_conn, int ms_wait)
+set_up_ssl_connection(IC_CONNECTION *in_conn,
+                      accept_timeout_func timeout_func,
+                      void *timeout_obj)
 {
   int error= 1;
   DEBUG_ENTRY("set_up_ssl_connection");
 
   lock_connect_mutex(in_conn);
-  error= set_up_socket_connection(in_conn, ms_wait);
+  error= set_up_socket_connection(in_conn, timeout_func, timeout_obj);
   unlock_connect_mutex(in_conn);
   DEBUG_RETURN(error);
 }
 
 static int
-accept_ssl_connection(IC_CONNECTION *conn, int ms_wait)
+accept_ssl_connection(IC_CONNECTION *conn,
+                      accept_timeout_func timeout_func,
+                      void *timeout_obj)
 {
   int error;
   DEBUG_ENTRY("accept_ssl_connection");
 
   lock_connect_mutex(conn);
-  error= accept_socket_connection(conn, ms_wait);
+  error= accept_socket_connection(conn, timeout_func, timeout_obj);
   unlock_connect_mutex(conn);
   DEBUG_RETURN(error);
 }
