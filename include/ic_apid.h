@@ -193,6 +193,8 @@ struct ic_send_node_connection
   /* The configuration for this connection */
   IC_SOCKET_LINK_CONFIG *link_config;
 
+  /* Thread data structure for send thread */
+  GThread *thread;
   /* Mutex protecting this struct */
   GMutex *mutex;
   /* Condition used to wake up send thread when it's needed */
@@ -201,6 +203,8 @@ struct ic_send_node_connection
   /* Linked list of send buffers awaiting sending */
   IC_SOCK_BUF_PAGE *first_sbp;
   IC_SOCK_BUF_PAGE *last_sbp;
+  /* List of buffers to release after sending completed */
+  IC_SOCK_BUF_PAGE *release_sbp;
 
   /* How many bytes are in the send buffers awaiting sending */
   guint32 queued_bytes;
@@ -210,11 +214,9 @@ struct ic_send_node_connection
   gboolean node_up;
   /* Indicates if the connection is up. */
   gboolean connection_up;
-  /* A flag indicating we're waiting for listen server thread to stop */
-  gboolean wait_listen_thread_die;
 
   /* Debug variable set when waking up send thread */
-  gboolean starting_send_thread;
+  gboolean send_thread_is_sending;
   /* Variable indicating when send thread has exited */
   gboolean send_thread_ended;
   /* Variable indicating send thread is awake and working */
@@ -281,6 +283,7 @@ struct ic_apid_global
   GCond *cond;
   gboolean stop_flag;
   guint32 num_user_threads_started;
+  guint32 num_receive_threads;
   guint32 max_listen_server_threads;
   IC_LISTEN_SERVER_THREAD *listen_server_thread[MAX_SERVER_PORTS_LISTEN];
 };
@@ -440,7 +443,8 @@ typedef struct ic_apid_connection IC_APID_CONNECTION;
   operations as defined by the ic_apid_connection_ops and all other parts
   of the Ds
 */
-IC_APID_GLOBAL* ic_connect_apid_global(IC_API_CONFIG_SERVER *apic);
+IC_APID_GLOBAL* ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
+                                       guint32 num_receive_threads);
 int ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global);
 int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
                                guint32 cluster_id);

@@ -628,7 +628,7 @@ typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
 
 struct ic_sock_buf
 {
-  IC_SOCK_BUF_OPERATIONS sock_buf_op;
+  IC_SOCK_BUF_OPERATIONS sock_buf_ops;
   IC_SOCK_BUF_PAGE *first_page;
   guint32 page_size;
   guint32 alloc_segments;

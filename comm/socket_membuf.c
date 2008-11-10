@@ -190,10 +190,10 @@ ic_create_socket_membuf(guint32 page_size,
   buf->alloc_segments_ref[0]= ptr;
   buf->alloc_segments= 1;
 
-  buf->sock_buf_op.ic_get_sock_buf_page= get_sock_buf_page;
-  buf->sock_buf_op.ic_return_sock_buf_page= return_sock_buf_page;
-  buf->sock_buf_op.ic_inc_sock_buf= inc_sock_buf;
-  buf->sock_buf_op.ic_free_sock_buf= free_sock_buf;
+  buf->sock_buf_ops.ic_get_sock_buf_page= get_sock_buf_page;
+  buf->sock_buf_ops.ic_return_sock_buf_page= return_sock_buf_page;
+  buf->sock_buf_ops.ic_inc_sock_buf= inc_sock_buf;
+  buf->sock_buf_ops.ic_free_sock_buf= free_sock_buf;
   return buf;
 }
 

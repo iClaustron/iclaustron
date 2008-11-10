@@ -37,10 +37,12 @@
   2. Send threads
   ---------------
   Each socket connection also has a send part, there is a one-to-one mapping
-  between send threads and socket connections.
+  between send threads and socket connections. The send thread is responsible
+  for the connection set-up and tear-down, for server connections it is
+  assisted in this responsibility by the listen server threads.
 
-  3. Connect threads
-  ------------------
+  3. Connect threads (listen server threads)
+  ------------------------------------------
   There is also a set of connection threads. The reason to have this is to
   handle the socket connections that are a server part. This thread is
   connected to the send thread as part of the connection set-up phase.
@@ -60,6 +62,8 @@
   representing a thread always have one variable mutex and one variable
   cond which represents the mutex protecting this data structure and the
   condition used to communicate between threads using the data structure.
+  It has also a thread variable containing the thread data structure used
+  to wait for the thread to die.
 
   1. IC_THREAD_CONNECTION
   -----------------------
@@ -119,7 +123,7 @@ static int start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
 static void start_connect_phase(IC_APID_GLOBAL *apid_global,
                                 gboolean stop_ordered,
                                 gboolean signal_flag);
-static int prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+static void prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                                       guint32 *send_size,
                                       struct iovec *write_vector,
                                       guint32 *iovec_size);
@@ -160,7 +164,7 @@ static void ic_end_apid(IC_APID_GLOBAL *apid_global);
   threads, it must be called before any start thread handling can be done.
 */
 static IC_APID_GLOBAL*
-ic_init_apid(IC_API_CONFIG_SERVER *apic)
+ic_init_apid(IC_API_CONFIG_SERVER *apic, guint32 num_receive_threads)
 {
   IC_APID_GLOBAL *apid_global;
   IC_SEND_NODE_CONNECTION *send_node_conn;
@@ -171,6 +175,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   if (!(apid_global= (IC_APID_GLOBAL*)ic_calloc(sizeof(IC_APID_GLOBAL))))
     return NULL;
   apid_global->apic= apic;
+  apid_global->num_receive_threads= num_receive_threads;
   if (!(apid_global->grid_comm=
        (IC_GRID_COMM*)ic_calloc(sizeof(IC_GRID_COMM))))
     goto error;
@@ -247,9 +252,9 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   if (apid_global->cluster_bitmap)
     ic_free_bitmap(apid_global->cluster_bitmap);
   if (mem_buf_pool)
-    mem_buf_pool->sock_buf_op.ic_free_sock_buf(mem_buf_pool);
+    mem_buf_pool->sock_buf_ops.ic_free_sock_buf(mem_buf_pool);
   if (ndb_message_pool)
-    ndb_message_pool->sock_buf_op.ic_free_sock_buf(ndb_message_pool);
+    ndb_message_pool->sock_buf_ops.ic_free_sock_buf(ndb_message_pool);
   if (apid_global->mutex)
     g_mutex_free(apid_global->mutex);
   if (apid_global->cond)
@@ -389,6 +394,13 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
   IC_CLUSTER_COMM *cluster_comm;
   DEBUG_ENTRY("start_connect_phase");
 
+  /*
+    There is no protection of this array since there is only one
+    occasion when we remove things from it, this is when the
+    API is deallocated. We insert things by inserting pointers to
+    objects already fully prepared, also the size of the arrays are
+    prepared for the worst case and thus no array growth is needed.
+  */
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
     if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
@@ -402,11 +414,24 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
         if (send_node_conn)
         {
           g_mutex_lock(send_node_conn->mutex);
-          if (stop_ordered)
-            send_node_conn->stop_ordered= TRUE;
-          /* Wake up send thread to connect */
-          if (signal_flag)
-            g_cond_signal(send_node_conn->cond);
+          if (!send_node_conn->send_thread_ended)
+          {
+            if (stop_ordered)
+              send_node_conn->stop_ordered= TRUE;
+            /* Wake up send thread to connect/shutdown */
+            if (signal_flag)
+              g_cond_signal(send_node_conn->cond);
+            if (stop_ordered)
+            {
+              /*
+                In this we need to wait for send thread to stop before
+                we continue.
+              */
+              g_mutex_unlock(send_node_conn->mutex);
+              g_thread_join(send_node_conn->thread);
+              g_mutex_lock(send_node_conn->mutex);
+            }
+          }
           g_mutex_unlock(send_node_conn->mutex);
         }
       }
@@ -420,10 +445,11 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
   -----------------------------------------------------------
 */
 IC_APID_GLOBAL*
-ic_connect_apid_global(IC_API_CONFIG_SERVER *apic)
+ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
+                       guint32 num_receive_threads)
 {
   IC_APID_GLOBAL *apid_global;
-  if (!(apid_global= ic_init_apid(apic)))
+  if (!(apid_global= ic_init_apid(apic, num_receive_threads)))
     return NULL;
   if (!(ic_apid_global_connect(apid_global)))
   {
@@ -433,7 +459,8 @@ ic_connect_apid_global(IC_API_CONFIG_SERVER *apic)
   return apid_global;
 }
 
-int ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global)
+int
+ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global)
 {
   int ret_code;
 
@@ -549,30 +576,25 @@ end:
 static void
 run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
-  gboolean more_data= FALSE;
-  int error;
   guint32 send_size;
   guint32 iovec_size;
+  int error;
   struct iovec write_vector[MAX_SEND_BUFFERS];
 
   g_mutex_lock(send_node_conn->mutex);
-  send_node_conn->starting_send_thread= FALSE;
+  send_node_conn->send_thread_is_sending= FALSE;
+  send_node_conn->send_thread_active= TRUE;
   do
   {
-    send_node_conn->send_thread_active= FALSE;
-    if (!more_data)
-      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
     if (send_node_conn->stop_ordered)
       break;
     if (!send_node_conn->node_up)
     {
-      more_data= FALSE;
-      continue;
+      node_failure_handling(send_node_conn);
+      break;
     }
-    g_assert(send_node_conn->starting_send_thread);
+    g_assert(send_node_conn->send_thread_is_sending);
     g_assert(send_node_conn->send_active);
-    send_node_conn->starting_send_thread= FALSE;
-    send_node_conn->send_thread_active= TRUE;
     prepare_real_send_handling(send_node_conn, &send_size,
                                write_vector, &iovec_size);
     g_mutex_unlock(send_node_conn->mutex);
@@ -581,28 +603,32 @@ run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     g_mutex_lock(send_node_conn->mutex);
     if (error)
     {
-      send_node_conn->node_up= FALSE;
       node_failure_handling(send_node_conn);
       break;
     }
     /* Handle send done */
-    if (error || !send_node_conn->node_up)
+    if (send_node_conn->first_sbp)
     {
-      error= IC_ERROR_NODE_DOWN;
-      more_data= FALSE;
+      /* All buffers have been sent, we can go to sleep again */
+      send_node_conn->send_active= FALSE;
+      send_node_conn->send_thread_is_sending= FALSE;
+      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+      continue;
     }
-    else if (send_node_conn->first_sbp)
+    else if (send_node_conn->node_up)
     {
       /* There are more buffers to send, we need to continue sending */
-      more_data= TRUE;
+      continue;
     }
     else
     {
-      /* All buffers have been sent, we can go to sleep again */
-      more_data= FALSE;
-      send_node_conn->send_active= FALSE;
+      node_failure_handling(send_node_conn);
+      break;
     }
   } while (1);
+  send_node_conn->send_active= FALSE;
+  send_node_conn->send_thread_active= FALSE;
+  send_node_conn->send_thread_is_sending= FALSE;
   g_mutex_unlock(send_node_conn->mutex);
   return;
 }
@@ -709,9 +735,13 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
         stop_ordered= TRUE;
       listen_server_thread= send_node_conn->listen_server_thread;
       g_mutex_unlock(send_node_conn->mutex);
-      g_mutex_lock(listen_server_thread->mutex);
       if (!stop_ordered)
       {
+        /*
+          This is just to ensure that someone kicks the listen server
+          thread into action.
+        */
+        g_mutex_lock(listen_server_thread->mutex);
         if (!listen_server_thread->started)
         {
           /* Start the listening on the server socket */
@@ -722,6 +752,11 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
       }
       else /* stop_ordered == TRUE */
       {
+        /*
+          Remove our send node connection from the list on this listen
+          server thread.
+        */
+        g_mutex_lock(listen_server_thread->mutex);
         listen_server_thread->first_send_node_conn=
           g_list_remove(listen_server_thread->first_send_node_conn,
                         (void*)send_node_conn);
@@ -730,6 +765,10 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
           /*
             We are the last send thread to use this listen server
             thread, this means we are responsible to stop this thread.
+            We order the thread to stop, signal it in case it is
+            in a cond wait and finally wait for the thread to complete.
+            When the thread is completed we clean up everything in the
+            listen server thread.
           */
           listen_server_thread->stop_ordered= TRUE;
           g_cond_signal(listen_server_thread->cond);
@@ -737,13 +776,21 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
           g_thread_join(listen_server_thread->thread);
           close_listen_server_thread(listen_server_thread);
         }
+        else
+          g_mutex_unlock(listen_server_thread->mutex);
+        return 1;
       }
-      g_mutex_lock(send_node_conn->mutex);
       if (stop_ordered)
       {
+        /*
+          We have completed clean-up for our send node connection. We are now
+          ready to stop the send thread by returning with a non-zero return
+          code.
+        */
         ret_code= 1;
         break;
       }
+      g_mutex_lock(send_node_conn->mutex);
       if (!send_node_conn->stop_ordered)
         g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
     }
@@ -775,6 +822,11 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread)
       g_cond_free(listen_server_thread->cond);
     if (listen_server_thread->first_send_node_conn)
       g_list_free(listen_server_thread->first_send_node_conn);
+    listen_server_thread->conn= NULL;
+    listen_server_thread->mutex= NULL;
+    listen_server_thread->cond= NULL;
+    listen_server_thread->first_send_node_conn= NULL;
+    listen_server_thread->thread= NULL;
   }
 }
 
@@ -782,7 +834,12 @@ static gboolean
 check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                  IC_CONNECTION *conn)
 {
-  return FALSE;
+  if (!send_node_conn->connection_up)
+  {
+    return FALSE;
+  }
+  else
+    return TRUE;
 }
 
 static gpointer
@@ -792,7 +849,7 @@ run_server_connect_thread(void *data)
   IC_CONNECTION *fork_conn, *conn;
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
-  gboolean stop_ordered;
+  gboolean stop_ordered, found;
   int ret_code;
 
   g_mutex_lock(listen_server_thread->mutex);
@@ -807,6 +864,7 @@ run_server_connect_thread(void *data)
     return NULL;
   }
   g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
+  g_mutex_unlock(listen_server_thread->mutex);
   /* We have been asked to start listening and so we start listening */
   do
   {
@@ -815,9 +873,7 @@ run_server_connect_thread(void *data)
     {
       if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
                                                      FALSE))) /* No mutex */
-      {
         break;
-      }
       /*
          We have a new connection, deliver it to the send thread and
          receive thread.
@@ -828,6 +884,7 @@ run_server_connect_thread(void *data)
         g_mutex_unlock(listen_server_thread->mutex);
         break;
       }
+      found= FALSE;
       list_iterator= g_list_first(listen_server_thread->first_send_node_conn);
       while (list_iterator)
       {
@@ -851,16 +908,27 @@ run_server_connect_thread(void *data)
             connection over to the send thread and also start a
             receiver thread for this node.
           */
+          found= TRUE;
           iter_send_node_conn->connection_up= TRUE;
           g_cond_signal(iter_send_node_conn->cond);
           g_mutex_unlock(iter_send_node_conn->mutex);
-          g_mutex_unlock(listen_server_thread->mutex);
-          continue;
+          break;
         }
         g_mutex_unlock(iter_send_node_conn->mutex);
         list_iterator= g_list_next(list_iterator);
       }
       g_mutex_unlock(listen_server_thread->mutex);
+      if (!found)
+      {
+        /*
+          Somebody tried to connect and we weren't able to detect a node
+          which this would be a connection for, thus we will disconnect
+          and continue waiting for new connections. Freeing a socket in
+          the iClaustron Communication API also will close the socket
+          if it's still open.
+        */
+        fork_conn->conn_op.ic_free_connection(fork_conn);
+      }
     }
     else
     {
@@ -875,6 +943,29 @@ run_server_connect_thread(void *data)
         break;
     }
   } while (1);
+  /*
+    We got memory allocation failure most likely, it's not so easy to
+    continue in this case, so we tell all dependent send connections
+    that stop has been ordered. Those that are already connected will
+    remain so, they will be dropped as soon as their connection is
+    broken since the listen server thread has set stop_ordered also.
+  */
+  g_mutex_lock(listen_server_thread->mutex);
+  listen_server_thread->stop_ordered= TRUE;
+  list_iterator= g_list_first(listen_server_thread->first_send_node_conn);
+  while (list_iterator)
+  {
+    iter_send_node_conn= (IC_SEND_NODE_CONNECTION*)list_iterator->data;
+    g_mutex_lock(iter_send_node_conn->mutex);
+    if (!iter_send_node_conn->send_thread_active)
+    {
+      iter_send_node_conn->stop_ordered= TRUE;
+      g_cond_signal(iter_send_node_conn->cond);
+    }
+    g_mutex_unlock(iter_send_node_conn->mutex);
+    list_iterator= g_list_next(list_iterator);
+  }
+  g_mutex_unlock(listen_server_thread->mutex);
   return NULL;
 }
 
@@ -1061,13 +1152,14 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     set-up the connection.
   */
   g_mutex_lock(send_node_conn->mutex);
-  if (!g_thread_create_full(run_send_thread,
-                            (gpointer)send_node_conn,
-                            16*1024, /* Stack size */
-                            FALSE,   /* Not joinable */
-                            FALSE,   /* Not bound */
-                            G_THREAD_PRIORITY_NORMAL,
-                            &error))
+  if (!(send_node_conn->thread=
+        g_thread_create_full(run_send_thread,
+                             (gpointer)send_node_conn,
+                             16*1024, /* Stack size */
+                             FALSE,   /* Not joinable */
+                             FALSE,   /* Not bound */
+                             G_THREAD_PRIORITY_NORMAL,
+                             &error)))
   {
     g_mutex_unlock(send_node_conn->mutex);
     return IC_ERROR_MEM_ALLOC;
@@ -1272,35 +1364,55 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
 }
 
 static int
+node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
+  mem_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+    mem_buf_pool, send_node_conn->first_sbp);
+  return 0;
+}
+
+static void
 prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                            guint32 *send_size,
                            struct iovec *write_vector,
                            guint32 *iovec_size)
 {
-  IC_SOCK_BUF_PAGE *loc_last_send;
+  IC_SOCK_BUF_PAGE *loc_next_send, *loc_last_send;
   guint32 loc_send_size= 0, iovec_index= 0;
   DEBUG_ENTRY("prepare_real_send_handling");
 
-  loc_last_send= send_node_conn->first_sbp;
+  loc_next_send= send_node_conn->first_sbp;
+  loc_last_send= NULL;
   do
   {
-    write_vector[iovec_index].iov_base= loc_last_send->sock_buf;
-    write_vector[iovec_index].iov_len= loc_last_send->size;
+    write_vector[iovec_index].iov_base= loc_next_send->sock_buf;
+    write_vector[iovec_index].iov_len= loc_next_send->size;
     iovec_index++;
-    loc_send_size+= loc_last_send->size;
-    loc_last_send= loc_last_send->next_sock_buf_page;
+    loc_send_size+= loc_next_send->size;
+    loc_last_send= loc_next_send;
+    loc_next_send= loc_next_send->next_sock_buf_page;
   } while (loc_send_size < MAX_SEND_SIZE &&
            iovec_index < MAX_SEND_BUFFERS &&
-           loc_last_send);
-  send_node_conn->first_sbp= loc_last_send;
-  if (!loc_last_send)
+           loc_next_send);
+  send_node_conn->release_sbp= send_node_conn->first_sbp;
+  send_node_conn->first_sbp= loc_next_send;
+  loc_last_send->next_sock_buf_page= NULL;
+  if (!loc_next_send)
     send_node_conn->last_sbp= NULL;
   *iovec_size= iovec_index;
   *send_size= loc_send_size;
   send_node_conn->queued_bytes-= loc_send_size;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_EMPTY;
 }
 
+/*
+  real_send_handling is not executed with mutex protection, it is
+  however imperative that prepare_real_send_handling and real_send_handling
+  is executed in the same thread since the release_sbp is only used to
+  communicate between those two methods and therefore not protected.
+*/
 static int
 real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                    struct iovec *write_vector, guint32 iovec_size,
@@ -1308,11 +1420,19 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   int error;
   IC_CONNECTION *conn= send_node_conn->conn;
+  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
   DEBUG_ENTRY("real_send_handling");
   error= conn->conn_op.ic_writev_connection(conn,
                                             write_vector,
                                             iovec_size,
                                             send_size, 2);
+
+  /* Release memory buffers used in send */
+  mem_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+    mem_buf_pool, send_node_conn->release_sbp);
+  send_node_conn->release_sbp= NULL;
+
   if (error)
   {
     /*
@@ -1320,7 +1440,9 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
       handling since either the connection was broken or it was slow to
       the point of being similar to broken.
     */
+    g_mutex_lock(send_node_conn->mutex);
     node_failure_handling(send_node_conn);
+    g_mutex_unlock(send_node_conn->mutex);
     DEBUG_RETURN(error);
   }
   DEBUG_RETURN(0);
@@ -1343,7 +1465,7 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
       There are more buffers to send, we give this mission to the
       send thread and return immediately
     */
-    send_node_conn->starting_send_thread= TRUE;
+    send_node_conn->send_thread_is_sending= TRUE;
     signal_send_thread= TRUE;
   }
   else
@@ -1768,7 +1890,7 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
           ready to release the page where these messages were stored.
         */
         sock_buf_container= message_page->sock_buf_container;
-        sock_buf_container->sock_buf_op.ic_return_sock_buf_page(
+        sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
           sock_buf_container, message_page);
       }
     }
@@ -2027,7 +2149,7 @@ init_ndb_receiver(IC_NDB_RECEIVE_STATE *rec_state,
       bytes already in a previous read socket call. Initialise the buf_page
       with this information.
     */
-    if (!(buf_page= rec_buf_pool->sock_buf_op.ic_get_sock_buf_page(
+    if (!(buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
             rec_buf_pool,
             &thd_conn->free_rec_pages,
             NUM_RECEIVE_PAGES_ALLOC)))
@@ -2108,7 +2230,7 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
   {
     if (read_size == 0)
     {
-      if (!(buf_page= rec_buf_pool->sock_buf_op.ic_get_sock_buf_page(
+      if (!(buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
               rec_buf_pool,
               &thd_conn->free_rec_pages,
               NUM_RECEIVE_PAGES_ALLOC)))
@@ -2151,7 +2273,8 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
         }
         if (message_size > read_size)
           break;
-        if (!(ndb_message_page= message_pool->sock_buf_op.ic_get_sock_buf_page(
+        if (!(ndb_message_page=
+              message_pool->sock_buf_ops.ic_get_sock_buf_page(
                 message_pool,
                 &thd_conn->free_ndb_messages,
                 NUM_NDB_SIGNAL_ALLOC)))
@@ -2203,7 +2326,7 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
             it before we have transferred the incomplete message
             if we post before we transfer the incomplete message.
           */
-          if (!(new_buf_page= rec_buf_pool->sock_buf_op.ic_get_sock_buf_page(
+          if (!(new_buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
                   rec_buf_pool,
                   &thd_conn->free_rec_pages,
                   NUM_RECEIVE_PAGES_ALLOC)))
@@ -2248,7 +2371,7 @@ end:
   {
     buf_page= thd_conn->free_rec_pages;
     thd_conn->free_rec_pages= thd_conn->free_rec_pages->next_sock_buf_page;
-    rec_buf_pool->sock_buf_op.ic_return_sock_buf_page(rec_buf_pool,
+    rec_buf_pool->sock_buf_ops.ic_return_sock_buf_page(rec_buf_pool,
                                                       buf_page);
   }
   while (thd_conn->free_ndb_messages)
@@ -2256,14 +2379,14 @@ end:
     ndb_message_page= thd_conn->free_ndb_messages;
     thd_conn->free_ndb_messages=
       thd_conn->free_ndb_messages->next_sock_buf_page;
-    message_pool->sock_buf_op.ic_return_sock_buf_page(message_pool,
+    message_pool->sock_buf_ops.ic_return_sock_buf_page(message_pool,
                                                       ndb_message_page);
   }
   while (first_ndb_message_page)
   {
     ndb_message_page= first_ndb_message_page;
     first_ndb_message_page= first_ndb_message_page->next_sock_buf_page;
-    message_pool->sock_buf_op.ic_return_sock_buf_page(message_pool,
+    message_pool->sock_buf_ops.ic_return_sock_buf_page(message_pool,
                                                       ndb_message_page);
   }
 */
@@ -2275,12 +2398,6 @@ mem_pool_error:
 
 static int
 ndb_receive_one_socket(IC_NDB_RECEIVE_STATE *rec_state)
-{
-  return 0;
-}
-
-static int
-node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   return 0;
 }
