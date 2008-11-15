@@ -542,8 +542,8 @@ static int
 read_ordered_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array, guint64 pos,
                            guint64 size, gchar *ret_buf)
 {
-  IC_SIMPLE_DYNAMIC_BUF *dyn_buf;
-  guint64 buf_pos;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
+  guint64 buf_pos= 0;
   int ret_code;
 
   if ((ret_code= find_pos_ordered_dyn_array(dyn_array, pos,
@@ -1600,7 +1600,7 @@ ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7025
+#define IC_LAST_ERROR 7027
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -1664,6 +1664,10 @@ ic_init_error_messages()
     "Message received with wrong checksum";
   ic_error_str[IC_ERROR_ACCEPT_TIMEOUT - IC_FIRST_ERROR]=
     "Timeout when waiting for connection to accept";
+  ic_error_str[IC_ERROR_POLL_SET_FULL - IC_FIRST_ERROR]=
+    "Poll set is full, need to use another poll set";
+  ic_error_str[IC_ERROR_NOT_FOUND_IN_POLL_SET - IC_FIRST_ERROR]=
+    "The file descriptor wasn't found in this poll set";
 }
 
 void

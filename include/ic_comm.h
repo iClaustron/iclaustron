@@ -510,6 +510,47 @@ struct ic_ssl_connection
 };
 typedef struct ic_ssl_connection IC_SSL_CONNECTION;
 
+struct ic_poll_connection
+{
+  int fd;
+  guint32 index;
+  void *user_obj;
+};
+typedef struct ic_poll_connection IC_POLL_CONNECTION;
+
+struct ic_poll_set;
+struct ic_poll_operations
+{
+  int (*ic_poll_add_connection) (struct ic_poll_set *poll_set, IC_CONNECTION *conn);
+  int (*ic_poll_remove_connection) (struct ic_poll_set *poll_set, IC_CONNECTION *conn);
+  int (*ic_check_poll_set) (struct ic_poll_set *poll_set);
+  void* (*ic_get_next_connection) (struct ic_poll_set *poll_set);
+  void (*ic_free_poll_set) (struct ic_poll_set *poll_set);
+  gboolean (*ic_is_poll_set_full) (struct ic_poll_set *poll_set);
+};
+typedef struct ic_poll_operations IC_POLL_OPERATIONS;
+
+struct ic_poll_set
+{
+  IC_POLL_OPERATIONS poll_ops;
+  int poll_set_fd;
+  gboolean need_close_at_free;
+  gboolean poll_scan_ongoing;
+  IC_POLL_CONNECTION **poll_connections;
+  IC_POLL_CONNECTION **ready_connections;
+  /*
+    This variable contains the array of event handlers as needed by the various
+    implementations.
+  */
+  void *impl_specific_ptr;
+  guint32 num_poll_connections;
+  guint32 num_ready_connections;
+  guint32 num_allocated_connections;
+};
+typedef struct ic_poll_set IC_POLL_SET;
+/* Creates a new poll set */
+IC_POLL_SET* ic_create_poll_set();
+
 /*
   There are three levels in the connection set-up. The connection set-up will
   always start by performing a normal TCP/IP connection. When this connection

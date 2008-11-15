@@ -48,21 +48,30 @@ typedef struct ic_ds_connection IC_DS_CONNECTION;
 
 #define IC_MEM_BUF_SIZE 32768
 
+/*
+  This data structure contains the important information about the
+  receive thread and its state. It contains free pools of receive
+  pages containing signals and pools of containers to store NDB
+  messages in. Both of these are transported to the user thread and
+  will be released in the user thread to the global pool.
+*/
 struct ic_ndb_receive_state
 {
-  IC_CONNECTION *conn;
+  /* Local free pool of receive pages */
+  IC_SOCK_BUF_PAGE *free_rec_pages;
+  /* Local free pool of NDB messages */
+  IC_SOCK_BUF_PAGE *free_ndb_messages;
+  /* Reference to global pool of receive pages */
   IC_SOCK_BUF *rec_buf_pool;
+  /* Reference to global pool of NDB messages */
   IC_SOCK_BUF *message_pool;
-  IC_SOCK_BUF_PAGE *buf_page;
-  guint32 read_size;
-  gboolean read_header_flag;
-  guint32 cluster_id;
-  guint32 node_id;
   /* 
     Statistical info to track usage of this socket to enable proper
     configuration of threads to handle NDB Protocol.
   */
-  GMutex *ndb_rec_mutex;
+  GMutex *mutex;
+  GCond *cond;
+  GThread *thread;
 };
 typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 
@@ -148,8 +157,6 @@ typedef struct ic_ndb_message IC_NDB_MESSAGE;
 struct ic_apid_connection;
 struct ic_thread_connection
 {
-  IC_SOCK_BUF_PAGE *free_rec_pages;
-  IC_SOCK_BUF_PAGE *free_ndb_messages;
   IC_SOCK_BUF_PAGE *first_received_message;
   IC_SOCK_BUF_PAGE *last_received_message;
   struct ic_apid_connection *apid_conn;
@@ -177,6 +184,25 @@ typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 #define MAX_SEND_SIZE 65535
 #define MAX_SEND_BUFFERS 16
 #define IC_MEMBUF_SIZE 32768
+
+struct ic_receive_node_connection
+{
+  /* Reference to socket representation for this node */
+  IC_CONNECTION *conn;
+  /* The current page received into on this socket */
+  IC_SOCK_BUF_PAGE *buf_page;
+  /* How many bytes have been received into the current receive page */
+  guint32 read_size;
+  /* Have we received a full header of the NDB message in the receive page */
+  gboolean read_header_flag;
+  /* Cluster id of this connection */
+  guint32 cluster_id;
+  /* Node id of the node on the other end of the socket connection */
+  guint32 other_node_id;
+  /* Node id of myself on the socket connection */
+  guint32 my_node_id;
+};
+typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 
 struct ic_send_node_connection
 {
@@ -443,8 +469,7 @@ typedef struct ic_apid_connection IC_APID_CONNECTION;
   operations as defined by the ic_apid_connection_ops and all other parts
   of the Ds
 */
-IC_APID_GLOBAL* ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
-                                       guint32 num_receive_threads);
+IC_APID_GLOBAL* ic_connect_apid_global(IC_API_CONFIG_SERVER *apic);
 int ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global);
 int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
                                guint32 cluster_id);

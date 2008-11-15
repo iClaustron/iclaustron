@@ -140,13 +140,20 @@ static IC_SOCK_BUF_PAGE* get_thread_messages(IC_APID_CONNECTION *apid,
                                              glong wait_time);
 static void
 close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread);
-
 struct link_message_anchors
 {
   IC_SOCK_BUF_PAGE *first_ndb_message_page;
   IC_SOCK_BUF_PAGE *last_ndb_message_page;
 };
 typedef struct link_message_anchors LINK_MESSAGE_ANCHORS;
+static int
+ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
+                 IC_RECEIVE_NODE_CONNECTION *rec_node,
+                 int *min_hash_index,
+                 int *max_hash_index,
+                 LINK_MESSAGE_ANCHORS *message_anchors,
+                 IC_THREAD_CONNECTION *thd_conn);
+static void ic_end_apid(IC_APID_GLOBAL *apid_global);
 
 /*
   GLOBAL DATA API INITIALISATION MODULE
@@ -156,7 +163,6 @@ typedef struct link_message_anchors LINK_MESSAGE_ANCHORS;
   to handle the Data API except the user threads which are created by the
   user application.
 */
-static void ic_end_apid(IC_APID_GLOBAL *apid_global);
 /*
   This method is used to initialise all the data structures and allocate
   memory for the various parts required on a global level for the Data
@@ -164,7 +170,7 @@ static void ic_end_apid(IC_APID_GLOBAL *apid_global);
   threads, it must be called before any start thread handling can be done.
 */
 static IC_APID_GLOBAL*
-ic_init_apid(IC_API_CONFIG_SERVER *apic, guint32 num_receive_threads)
+ic_init_apid(IC_API_CONFIG_SERVER *apic)
 {
   IC_APID_GLOBAL *apid_global;
   IC_SEND_NODE_CONNECTION *send_node_conn;
@@ -175,7 +181,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic, guint32 num_receive_threads)
   if (!(apid_global= (IC_APID_GLOBAL*)ic_calloc(sizeof(IC_APID_GLOBAL))))
     return NULL;
   apid_global->apic= apic;
-  apid_global->num_receive_threads= num_receive_threads;
+  apid_global->num_receive_threads= 1;
   if (!(apid_global->grid_comm=
        (IC_GRID_COMM*)ic_calloc(sizeof(IC_GRID_COMM))))
     goto error;
@@ -445,11 +451,10 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
   -----------------------------------------------------------
 */
 IC_APID_GLOBAL*
-ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
-                       guint32 num_receive_threads)
+ic_connect_apid_global(IC_API_CONFIG_SERVER *apic)
 {
   IC_APID_GLOBAL *apid_global;
-  if (!(apid_global= ic_init_apid(apic, num_receive_threads)))
+  if (!(apid_global= ic_init_apid(apic)))
     return NULL;
   if (!(ic_apid_global_connect(apid_global)))
   {
@@ -2052,7 +2057,7 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   posted to the proper thread. They will be put in a linked list of NDB
   messages waiting to be executed by this application thread.
 */
-static int
+static void
 post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
                  IC_THREAD_CONNECTION *thd_conn,
                  int min_hash_index,
@@ -2083,12 +2088,12 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
         &ndb_message_page->opaque_area[0];
       receiver_module_id= message_opaque->receiver_module_id;
       send_index= receiver_module_id / NUM_THREAD_LISTS;
+      loc_thd_conn= &thd_conn[receiver_module_id];
       temp= num_sent[send_index];
       if (!temp)
-        g_mutex_lock(thd_conn[receiver_module_id].mutex);
+        g_mutex_lock(loc_thd_conn->mutex);
       num_sent[send_index]= temp + 1;
       /* Link it into list on this thread connection object */
-      loc_thd_conn= &thd_conn[receiver_module_id];
       first_message= loc_thd_conn->first_received_message;
       ndb_message_page->next_sock_buf_page= NULL;
       if (first_message)
@@ -2131,12 +2136,12 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
       }
     }
   }
-  return 0;
+  return;
 }
 
 static int
-init_ndb_receiver(IC_NDB_RECEIVE_STATE *rec_state,
-                  IC_THREAD_CONNECTION *thd_conn,
+init_ndb_receiver(IC_RECEIVE_NODE_CONNECTION *rec_node,
+                  IC_NDB_RECEIVE_STATE *rec_state,
                   gchar *start_buf,
                   guint32 start_size)
 {
@@ -2151,11 +2156,11 @@ init_ndb_receiver(IC_NDB_RECEIVE_STATE *rec_state,
     */
     if (!(buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
             rec_buf_pool,
-            &thd_conn->free_rec_pages,
+            &rec_state->free_rec_pages,
             NUM_RECEIVE_PAGES_ALLOC)))
       return 1;
     memcpy(buf_page->sock_buf, start_buf, start_size);
-    rec_state->buf_page= buf_page;
+    rec_node->buf_page= buf_page;
   }
   return 0;
 }
@@ -2187,26 +2192,173 @@ read_message_early(gchar *read_ptr, guint32 *message_size,
   *message_size= (word1 >> 8) & 0xFFFF;
 }
 
+static int
+handle_node_error(int ret_code,
+                  int min_hash_index,
+                  int max_hash_index,
+                  LINK_MESSAGE_ANCHORS *message_anchors,
+                  IC_THREAD_CONNECTION *thd_conn)
+{
+  if (ret_code == END_OF_FILE)
+  {
+    /*
+      A normal close down of the socket connection. We will stop the
+      node using the socket connection but will continue with all other
+      socket connections in a normal fashion
+    */
+    ret_code= 0;
+  }
+  else if (ret_code == IC_ERROR_MEM_ALLOC)
+  {
+    /*
+      Will be very hard to continue in a low-memory situation. In the
+      future we might add some code to get rid of memory not badly
+      needed but for now we simply stop this node entirely in a
+      controlled manner.
+    */
+    return 1;
+  }
+  else
+  {
+    /*
+      Any other fault happening will be treated as a close down of the
+      socket connection and allow us to continue operating in a normal
+      manner.
+    */
+    ret_code= 0;
+  }
+  post_ndb_messages(&message_anchors[0],
+                    thd_conn,
+                    min_hash_index,
+                    max_hash_index);
+  return ret_code;
+}
+
+static IC_RECEIVE_NODE_CONNECTION*
+get_first_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  return NULL;
+}
+
+static IC_RECEIVE_NODE_CONNECTION*
+get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  return NULL;
+}
+
+static gpointer
+run_receive_thread(void *data)
+{
+  IC_NDB_RECEIVE_STATE *rec_state= (IC_NDB_RECEIVE_STATE*)data;
+  LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
+  int min_hash_index= NUM_THREAD_LISTS;
+  int max_hash_index= (int)-1;
+  int ret_code;
+  IC_SOCK_BUF_PAGE *buf_page, *ndb_message;
+  IC_THREAD_CONNECTION *thd_conn;
+  IC_RECEIVE_NODE_CONNECTION *rec_node;
+
+  memset(message_anchors,
+         sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS, 0);
+
+
+  do
+  {
+    /* Check for which nodes to receive from */
+    /* Loop over each node to receive from */
+    rec_node= get_first_rec_node(rec_state);
+    while (rec_node)
+    {
+      if ((ret_code= ndb_receive_node(rec_state,
+                                      rec_node,
+                                      &min_hash_index,
+                                      &max_hash_index,
+                                      &message_anchors[0],
+                                      thd_conn)))
+      {
+        if (handle_node_error(ret_code,
+                          min_hash_index,
+                          max_hash_index,
+                          &message_anchors[0],
+                          thd_conn))
+          goto end;
+        min_hash_index= NUM_THREAD_LISTS;
+        max_hash_index= (int)-1;
+      }
+      /*
+        Here is the place where we need to employ some clever scheuling
+        principles. The question is simply put how often to post ndb
+        messages to the application threads. At first we simply post
+        ndb messages for each node we receive from.
+      */
+      post_ndb_messages(&message_anchors[0],
+                        thd_conn,
+                        min_hash_index,
+                        max_hash_index);
+      min_hash_index= NUM_THREAD_LISTS;
+      max_hash_index= (int)-1;
+      get_next_rec_node(rec_state);
+    }
+    g_mutex_lock(rec_state->mutex);
+    /*
+      We need to check for:
+      1) Someone ordering this node to stop, as part of this the
+      stop_ordered flag on the receive thread needs to be set.
+      2) Someone ordering a change of socket connections. This
+      means that a socket connection is moved from one receive
+      thread to another. This is ordered by setting the change_flag
+      on the receive thread data structure.
+      3) We also update all the statistics in this slot such that
+      the thread deciding on reorganization of socket connections
+      has statistics to use here.
+    */
+    g_mutex_unlock(rec_state->mutex);
+  } while (1);
+
+end:
+  while (rec_state->free_rec_pages)
+  {
+    buf_page= rec_state->free_rec_pages;
+    rec_state->free_rec_pages= rec_state->free_rec_pages->next_sock_buf_page;
+    rec_state->rec_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+      rec_state->rec_buf_pool,
+      buf_page);
+  }
+  while (rec_state->free_ndb_messages)
+  {
+    ndb_message= rec_state->free_ndb_messages;
+    rec_state->free_ndb_messages=
+      rec_state->free_ndb_messages->next_sock_buf_page;
+    rec_state->message_pool->sock_buf_ops.ic_return_sock_buf_page(
+      rec_state->message_pool,
+      ndb_message);
+  }
+  return NULL;
+}
 #define MAX_NDB_RECEIVE_LOOPS 16
 int
-ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
-            guint32 my_node_id,
-            IC_THREAD_CONNECTION *thd_conn)
+ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
+                 IC_RECEIVE_NODE_CONNECTION *rec_node,
+                 int *min_hash_index,
+                 int *max_hash_index,
+                 LINK_MESSAGE_ANCHORS *message_anchors,
+                 IC_THREAD_CONNECTION *thd_conn)
 {
-  IC_CONNECTION *conn= rec_state->conn;
+  IC_CONNECTION *conn= rec_node->conn;
   IC_SOCK_BUF *rec_buf_pool= rec_state->rec_buf_pool;
   IC_SOCK_BUF *message_pool= rec_state->message_pool;
-  guint32 read_size= rec_state->read_size, real_read_size;
-  gboolean read_header_flag= rec_state->read_header_flag;
+  guint32 read_size= rec_node->read_size;
+  guint32 real_read_size;
+  gboolean read_header_flag= rec_node->read_header_flag;
   gchar *read_ptr;
   guint32 page_size= rec_buf_pool->page_size;
   guint32 start_size, message_size, receiver_module_id;
   int hash_index;
-  int min_hash_index= NUM_THREAD_LISTS;
-  int max_hash_index= (int)-1;
   guint32 loop_count= 0;
   int ret_code;
   gint ref_count;
+  int loc_min_hash_index= *min_hash_index;
+  int loc_max_hash_index= *max_hash_index;
   gboolean any_message_received= FALSE;
   gboolean read_more;
   IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
@@ -2215,12 +2367,9 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
   IC_NDB_MESSAGE *ndb_message;
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
   LINK_MESSAGE_ANCHORS *anchor;
-  LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
 
   g_assert(message_pool->page_size == 0);
 
-  memset(message_anchors,
-         sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS, 0);
   /*
     We get a receive buffer from the global pool of free buffers.
     This buffer will be returned to the free pool by the last
@@ -2232,12 +2381,12 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
     {
       if (!(buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
               rec_buf_pool,
-              &thd_conn->free_rec_pages,
+              &rec_state->free_rec_pages,
               NUM_RECEIVE_PAGES_ALLOC)))
         goto mem_pool_error;
     }
     else
-      buf_page= rec_state->buf_page;
+      buf_page= rec_node->buf_page;
     read_ptr= buf_page->sock_buf;
     start_size= read_size;
     ret_code= conn->conn_op.ic_read_connection(conn,
@@ -2276,23 +2425,23 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
         if (!(ndb_message_page=
               message_pool->sock_buf_ops.ic_get_sock_buf_page(
                 message_pool,
-                &thd_conn->free_ndb_messages,
+                &rec_state->free_ndb_messages,
                 NUM_NDB_SIGNAL_ALLOC)))
           goto mem_pool_error;
         ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
           &ndb_message_page->opaque_area[0];
         ndb_message_page->sock_buf= (gchar*)buf_page;
         ndb_message_opaque->message_offset= read_ptr - buf_page->sock_buf;
-        ndb_message_opaque->sender_node_id= rec_state->node_id;
-        ndb_message_opaque->receiver_node_id= my_node_id;
+        ndb_message_opaque->sender_node_id= rec_node->other_node_id;
+        ndb_message_opaque->receiver_node_id= rec_node->my_node_id;
         ndb_message_opaque->ref_count_releases= 0;
         ndb_message_opaque->receiver_module_id= receiver_module_id;
         ndb_message_opaque->version_num= 0; /* Defined value although unused */
         ref_count= buf_page->ref_count;
         hash_index= ndb_message->receiver_module_id &
                     (NUM_THREAD_LISTS - 1);
-        min_hash_index= IC_MIN(min_hash_index, hash_index);
-        max_hash_index= IC_MAX(max_hash_index, hash_index);
+        loc_min_hash_index= IC_MIN(loc_min_hash_index, hash_index);
+        loc_max_hash_index= IC_MAX(loc_max_hash_index, hash_index);
         anchor= &message_anchors[hash_index];
         anchor_first_page= anchor->first_ndb_message_page;
         buf_page->ref_count= ref_count + 1;
@@ -2328,77 +2477,46 @@ ndb_receive(IC_NDB_RECEIVE_STATE *rec_state,
           */
           if (!(new_buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
                   rec_buf_pool,
-                  &thd_conn->free_rec_pages,
+                  &rec_state->free_rec_pages,
                   NUM_RECEIVE_PAGES_ALLOC)))
             goto mem_pool_error;
 
           memcpy(new_buf_page->sock_buf,
                  buf_page->sock_buf,
                  read_size);
-          rec_state->buf_page= new_buf_page;
-          rec_state->read_size= read_size;
-          rec_state->read_header_flag= read_header_flag;
+          rec_node->buf_page= new_buf_page;
+          rec_node->read_size= read_size;
+          rec_node->read_header_flag= read_header_flag;
         }
       }
       else
       {
-        rec_state->buf_page= NULL;
-        rec_state->read_size= 0;
-        rec_state->read_header_flag= FALSE;
+        rec_node->buf_page= NULL;
+        rec_node->read_size= 0;
+        rec_node->read_header_flag= FALSE;
       }
-      if (read_more && loop_count++ < MAX_NDB_RECEIVE_LOOPS)
-        continue;
-      post_ndb_messages(&message_anchors[0],
-                        thd_conn,
-                        min_hash_index,
-                        max_hash_index);
-      return 0;
+      if (!read_more || (loop_count++ >= MAX_NDB_RECEIVE_LOOPS))
+        break;
     }
-    break;
   }
   if (ret_code == END_OF_FILE)
   {
     if (any_message_received)
+    {
       post_ndb_messages(&message_anchors[0],
                         thd_conn,
-                        min_hash_index,
-                        max_hash_index);
-    ret_code= 0;
+                        loc_min_hash_index,
+                        loc_max_hash_index);
+      loc_min_hash_index= NUM_THREAD_LISTS;
+      loc_max_hash_index= (int)-1;
+    }
+    ret_code= END_OF_FILE;
   }
 end:
-/*
-  while (thd_conn->free_rec_pages)
-  {
-    buf_page= thd_conn->free_rec_pages;
-    thd_conn->free_rec_pages= thd_conn->free_rec_pages->next_sock_buf_page;
-    rec_buf_pool->sock_buf_ops.ic_return_sock_buf_page(rec_buf_pool,
-                                                      buf_page);
-  }
-  while (thd_conn->free_ndb_messages)
-  {
-    ndb_message_page= thd_conn->free_ndb_messages;
-    thd_conn->free_ndb_messages=
-      thd_conn->free_ndb_messages->next_sock_buf_page;
-    message_pool->sock_buf_ops.ic_return_sock_buf_page(message_pool,
-                                                      ndb_message_page);
-  }
-  while (first_ndb_message_page)
-  {
-    ndb_message_page= first_ndb_message_page;
-    first_ndb_message_page= first_ndb_message_page->next_sock_buf_page;
-    message_pool->sock_buf_ops.ic_return_sock_buf_page(message_pool,
-                                                      ndb_message_page);
-  }
-*/
+  *min_hash_index= loc_min_hash_index;
+  *max_hash_index= loc_max_hash_index;
   return ret_code;
 mem_pool_error:
-  ret_code= 1;
+  ret_code= IC_ERROR_MEM_ALLOC;
   goto end;
 }
-
-static int
-ndb_receive_one_socket(IC_NDB_RECEIVE_STATE *rec_state)
-{
-  return 0;
-}
-

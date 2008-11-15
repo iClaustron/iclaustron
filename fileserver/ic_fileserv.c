@@ -100,7 +100,7 @@ start_file_server_thread(IC_APID_GLOBAL *apid_global)
 static int
 run_file_server(IC_APID_GLOBAL *apid_global)
 {
-  int error;
+  int error= 0;
   guint32 i;
   guint32 num_threads_started= 0;
   DEBUG_ENTRY("run_file_server");

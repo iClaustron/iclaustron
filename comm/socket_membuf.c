@@ -112,13 +112,14 @@ set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
                             guint64 no_of_pages, guint32 sock_buf_page_size)
 {
   gchar *loop_ptr, *buf_page_ptr, *new_buf_page_ptr;
-  IC_SOCK_BUF_PAGE *sock_buf_page_ptr;
+  IC_SOCK_BUF_PAGE *sock_buf_page_ptr= NULL;
   guint64 i;
 
   loop_ptr= ptr + (no_of_pages * sock_buf_page_size);
   buf_page_ptr= ptr;
   if (page_size == 0)
     loop_ptr= NULL;
+  g_assert(no_of_pages);
   for (i= 0; i < no_of_pages; i++)
   {
     sock_buf_page_ptr= (IC_SOCK_BUF_PAGE*)buf_page_ptr;
