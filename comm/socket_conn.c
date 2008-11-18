@@ -1874,20 +1874,40 @@ mem_error:
 }
 
 static int
-add_poll_set_member(IC_POLL_SET *poll_set, int fd, void *user_obj)
+add_poll_set_member(IC_POLL_SET *poll_set, int fd, void *user_obj,
+                    guint32 *index)
 {
+  guint32 i;
+  guint32 loc_index= MAX_POLL_SET_CONNECTIONS;
   IC_POLL_CONNECTION *poll_conn;
 
   if (poll_set->num_poll_connections == poll_set->num_allocated_connections)
     return IC_ERROR_POLL_SET_FULL;
   if (!(poll_conn= (IC_POLL_CONNECTION*)ic_malloc(sizeof(IC_POLL_CONNECTION))))
     return IC_ERROR_MEM_ALLOC;
-  poll_set->poll_connections[poll_set->num_poll_connections]= poll_conn;
+  if (poll_set->use_compact_array)
+  {
+    loc_index= poll_set->num_poll_connections;
+  }
+  else
+  {
+    for (i= 0; i < poll_set->num_allocated_connections; i++)
+    {
+      if (poll_set->poll_connections == NULL)
+      {
+        /* Found an empty slot, let's use this slot */
+        loc_index= i;
+        break;
+      }
+    }
+  }
+  poll_set->poll_connections[loc_index]= poll_conn;
 
   poll_conn->fd= fd;
   poll_conn->user_obj= user_obj;
-  poll_conn->index= poll_set->num_poll_connections;
+  poll_conn->index= loc_index;
   poll_set->num_poll_connections++;
+  *index= loc_index;
   return 0;
 }
 
@@ -1919,10 +1939,10 @@ remove_poll_set_member(IC_POLL_SET *poll_set, int fd, guint32 *index_removed)
       }
     }
   }
-  for (i= 0; i < poll_set->num_poll_connections; i++)
+  for (i= 0; i < poll_set->num_allocated_connections; i++)
   {
     poll_conn= poll_set->poll_connections[i];
-    if (poll_conn->fd == fd)
+    if (poll_conn && poll_conn->fd == fd)
     {
       found_index= i;
       break;
@@ -1932,9 +1952,16 @@ remove_poll_set_member(IC_POLL_SET *poll_set, int fd, guint32 *index_removed)
     return IC_ERROR_NOT_FOUND_IN_POLL_SET;
   ic_free(poll_conn);
   poll_set->num_poll_connections--;
-  poll_set->poll_connections[found_index]=
-    poll_set->poll_connections[poll_set->num_poll_connections];
-  poll_set->poll_connections[poll_set->num_poll_connections]= NULL;
+  if (poll_set->use_compact_array)
+  {
+    poll_set->poll_connections[found_index]=
+      poll_set->poll_connections[poll_set->num_poll_connections];
+    poll_set->poll_connections[poll_set->num_poll_connections]= NULL;
+  }
+  else
+  {
+    poll_set->poll_connections[found_index]= NULL;
+  }
   *index_removed= found_index;
   return 0;
 }
@@ -1993,18 +2020,26 @@ epoll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
   return 0;
 }
 
-IC_POLL_SET* ic_create_poll_set(int max_connections)
+IC_POLL_SET* ic_create_poll_set()
 {
   IC_POLL_SET *poll_set;
   int epoll_fd;
 
-  if (!(epoll_fd= epoll_create(max_connections)))
+  if ((epoll_fd= epoll_create(MAX_POLL_SET_CONNECTIONS)) < 0)
+  {
+    printf("Failed to allocate an epoll fd\n");
     return NULL;
+  }
   if (alloc_pool_set(&poll_set))
   {
     close(epoll_fd);
     return NULL;
   }
+
+  /* epoll has state and a fd to close at free time */
+  poll_set->poll_set_fd= epoll_fd;
+  poll_set->need_close_at_free= TRUE;
+
   set_common_methods(poll_set);
   poll_set->poll_ops.ic_poll_set_add_connection=
     epoll_poll_set_add_connection;
@@ -2037,9 +2072,23 @@ eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_POLL_SET *poll_set;
+  int eventport_fd;
 
-  if (alloc_pool_set(&poll_set))
+  if ((eventport_fd= port_create()) < 0)
+  {
+    printf("Failed to allocate eventport fd\n");
     return NULL;
+  }
+  if (alloc_pool_set(&poll_set))
+  {
+    close(eventport_fd);
+    return NULL;
+  }
+
+  /* event_ports has state and a fd to close at free time */
+  poll_set->poll_set_fd= eventport_fd;
+  poll_set->need_close_at_free= TRUE;
+
   set_common_methods(poll_set);
   poll_set->poll_ops.ic_poll_set_add_connection=
     eventports_poll_set_add_connection;
@@ -2049,32 +2098,111 @@ IC_POLL_SET* ic_create_poll_set()
   return poll_set;
 }
 #else
-#undef HAVE_KQUEUE
 #ifdef HAVE_KQUEUE
+#include <sys/types.h>
+#include <sys/event.h>
+#include <sys/time.h>
 static int
 kqueue_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
+  int ret_code;
+  guint32 index= 0;
+  struct kevent add_event;
+
+  if ((ret_code= add_poll_set_member(poll_set, fd, user_obj, &index)))
+    return ret_code;
+  EV_SET(&add_event, fd, EVFILT_READ, EV_ADD, 0, 0, (void*)index);
+  if ((ret_code= kevent(poll_set->poll_set_fd,
+                        &add_event,
+                        1,
+                        NULL,
+                        0,
+                        NULL)) < 0)
+  {
+    ret_code= errno;
+    remove_poll_set_member(poll_set, fd, &index);
+    return ret_code;
+  }
   return 0;
 }
 
 static int
 kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  int ret_code;
+  guint32 index;
+  struct kevent delete_event;
+
+  if ((ret_code= remove_poll_set_member(poll_set, fd, &index)))
+    return ret_code;
+  EV_SET(&delete_event, fd, EVFILT_READ, EV_DELETE, 0, 0, (void*)NULL);
+  if ((ret_code= kevent(poll_set->poll_set_fd,
+                        &delete_event,
+                        1,
+                        NULL,
+                        0,
+                        NULL)) < 0)
+  {
+    /* Tricky situation, we have removed the fd already and for some
+       reason we were not successful in removing a connection from the
+       kqueue object. This is a serious error which should lead to a
+       drop of the entire poll set since it's no longer guaranteed to
+       function correctly. We start by putting in an abort as the
+       manner of handling this error.
+    */
+    ret_code= errno;
+    abort();
+    return ret_code;
+  }
   return 0;
 }
 
 static int
 kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
+  int ret_code;
+  struct timespec timeout;
+
+  timeout.tv_sec= 0;
+  timeout.tv_nsec= ms_time * 1000000;
+  if ((ret_code= kevent(poll_set->poll_set_fd,
+                        NULL,
+                        0,
+                        (struct kevent*)poll_set->impl_specific_ptr,
+                        (int)poll_set->num_allocated_connections,
+                        &timeout)) < 0)
+  {
+    ret_code= errno;
+    return ret_code;
+  }
+  /*
+    We need to go through all the received events and set up the internal
+    data structure such that we can handle get_next_connection calls
+    properly.
+  */
   return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set()
 {
+  int kqueue_fd;
   IC_POLL_SET *poll_set;
 
-  if (alloc_pool_set(&poll_set))
+  if ((kqueue_fd= kqueue()) < 0)
+  {
+    printf("Failed to allocate a kqueue fd\n");
     return NULL;
+  }
+  if (alloc_pool_set(&poll_set))
+  {
+    close(kqueue_fd);
+    return NULL;
+  }
+  /* event_ports has state and a fd to close at free time */
+  poll_set->poll_set_fd= kqueue_fd;
+  poll_set->need_close_at_free= TRUE;
+  poll_set->use_compact_array= FALSE;
+
   set_common_methods(poll_set);
   poll_set->poll_ops.ic_poll_set_add_connection=
     kqueue_poll_set_add_connection;
@@ -2124,11 +2252,12 @@ static int
 poll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
   int ret_code;
+  guint32 index= 0;
   struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
 
-  if ((ret_code= add_poll_set_member(poll_set, fd, user_obj)))
+  if ((ret_code= add_poll_set_member(poll_set, fd, user_obj, &index)))
     return ret_code;
-  poll_fd_array[poll_set->num_poll_connections - 1].fd= fd;
+  poll_fd_array[index].fd= fd;
   return 0;
 }
 
@@ -2223,6 +2352,8 @@ IC_POLL_SET* ic_create_poll_set()
   */
   poll_set->poll_set_fd= (int)-1;
   poll_set->need_close_at_free= FALSE;
+  poll_set->use_compact_array= TRUE;
+
   set_common_methods(poll_set);
   poll_set->poll_ops.ic_poll_set_add_connection=
     poll_poll_set_add_connection;
