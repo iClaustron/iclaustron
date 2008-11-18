@@ -1841,6 +1841,7 @@ static void
 free_poll_set(IC_POLL_SET *poll_set)
 {
   guint32 i;
+
   for (i= 0; i < poll_set->num_poll_connections; i++)
     ic_free(poll_set->poll_connections[i]);
   if (poll_set->poll_connections)
@@ -1893,10 +1894,31 @@ add_poll_set_member(IC_POLL_SET *poll_set, int fd, void *user_obj)
 static int
 remove_poll_set_member(IC_POLL_SET *poll_set, int fd, guint32 *index_removed)
 {
-  guint32 i;
+  guint32 i, num_ready_connections;
   guint32 found_index= MAX_POLL_SET_CONNECTIONS;
   IC_POLL_CONNECTION *poll_conn;
 
+  if (poll_set->poll_scan_ongoing)
+  {
+    num_ready_connections= poll_set->num_ready_connections;
+    for (i= 0; i < poll_set->num_ready_connections; i++)
+    {
+      poll_conn= poll_set->ready_connections[i];
+      if (poll_conn->fd == fd)
+      {
+        /*
+          The removed connection was in the ready set, however we're
+          removing it from the set and we don't want to report events
+          on a connection no longer covered.
+        */
+        poll_set->ready_connections[i]= 
+          poll_set->ready_connections[num_ready_connections - 1];
+        poll_set->ready_connections[num_ready_connections - 1]= NULL;
+        poll_set->num_ready_connections= num_ready_connections - 1;
+        break;
+      }
+    }
+  }
   for (i= 0; i < poll_set->num_poll_connections; i++)
   {
     poll_conn= poll_set->poll_connections[i];
@@ -1923,8 +1945,12 @@ get_next_connection(IC_POLL_SET *poll_set)
   IC_POLL_CONNECTION *poll_conn;
   guint32 num_ready_connections= poll_set->num_ready_connections;
 
+  g_assert(poll_set->poll_scan_ongoing);
   if (num_ready_connections == 0)
+  {
+    poll_set->poll_scan_ongoing= FALSE;
     return NULL;
+  }
   num_ready_connections--;
   poll_conn= poll_set->ready_connections[num_ready_connections];
   poll_set->num_ready_connections= num_ready_connections;
@@ -2128,6 +2154,7 @@ poll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
   struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
 
   poll_set->num_ready_connections= 0;
+  poll_set->poll_scan_ongoing= TRUE;
   do
   {
     if ((ret_code= poll((struct pollfd*)poll_set->impl_specific_ptr,
@@ -2144,6 +2171,7 @@ poll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
           poll_set->num_ready_connections= num_ready_connections + 1;
         }
       }
+      g_assert((int)poll_set->num_ready_connections == ret_code);
       return 0;
     }
     else if (ret_code == 0)
@@ -2157,7 +2185,10 @@ poll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
     else /* ret_code < 0 an error occurred */
     {
       if (ret_code != EINTR)
+      {
+        poll_set->poll_scan_ongoing= FALSE;
         return ret_code;
+      }
       /* Continue waiting some more if interrupted */
     }
   } while (1);
@@ -2185,6 +2216,13 @@ IC_POLL_SET* ic_create_poll_set()
     poll_fd_array[i].events= POLLIN;
     poll_fd_array[i].revents= 0;
   }
+  /*
+    There is no common file descriptor for the poll variant. We only
+    store a local state in this object and there are no file descriptors
+    to close when freeing this object.
+  */
+  poll_set->poll_set_fd= (int)-1;
+  poll_set->need_close_at_free= FALSE;
   set_common_methods(poll_set);
   poll_set->poll_ops.ic_poll_set_add_connection=
     poll_poll_set_add_connection;
