@@ -1891,7 +1891,7 @@ add_poll_set_member(IC_POLL_SET *poll_set, int fd, void *user_obj)
 }
 
 static int
-remove_poll_set_member(IC_POLL_SET *poll_set, int fd)
+remove_poll_set_member(IC_POLL_SET *poll_set, int fd, guint32 *index_removed)
 {
   guint32 i;
   guint32 found_index= MAX_POLL_SET_CONNECTIONS;
@@ -1913,6 +1913,7 @@ remove_poll_set_member(IC_POLL_SET *poll_set, int fd)
   poll_set->poll_connections[found_index]=
     poll_set->poll_connections[poll_set->num_poll_connections];
   poll_set->poll_connections[poll_set->num_poll_connections]= NULL;
+  *index_removed= found_index;
   return 0;
 }
 
@@ -1961,7 +1962,7 @@ epoll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-epoll_check_poll_set(IC_POLL_SET *poll_set)
+epoll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
   return 0;
 }
@@ -2002,7 +2003,7 @@ eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-eventports_check_poll_set(IC_POLL_SET *poll_set)
+eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
   return 0;
 }
@@ -2022,6 +2023,7 @@ IC_POLL_SET* ic_create_poll_set()
   return poll_set;
 }
 #else
+#undef HAVE_KQUEUE
 #ifdef HAVE_KQUEUE
 static int
 kqueue_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
@@ -2036,7 +2038,7 @@ kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-kqueue_check_poll_set(IC_POLL_SET *poll_set)
+kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
   return 0;
 }
@@ -2070,7 +2072,7 @@ io_comp_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-io_comp_check_poll_set(IC_POLL_SET *poll_set)
+io_comp_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
   return 0;
 }
@@ -2091,33 +2093,103 @@ IC_POLL_SET* ic_create_poll_set()
 }
 #else
 #ifdef HAVE_POLL
+#include <poll.h>
 static int
 poll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
+  int ret_code;
+  struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
+
+  if ((ret_code= add_poll_set_member(poll_set, fd, user_obj)))
+    return ret_code;
+  poll_fd_array[poll_set->num_poll_connections - 1].fd= fd;
   return 0;
 }
 
 static int
 poll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  int ret_code;
+  guint32 index= 0;
+  struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
+
+  if ((ret_code= remove_poll_set_member(poll_set, fd, &index)))
+    return ret_code;
+  poll_fd_array[index].fd= poll_fd_array[poll_set->num_poll_connections].fd;
+  poll_fd_array[poll_set->num_poll_connections].fd= 0;
   return 0;
 }
 
 static int
-poll_check_poll_set(IC_POLL_SET *poll_set)
+poll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
+  int ret_code;
+  guint32 i, num_ready_connections;
+  struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
+
+  poll_set->num_ready_connections= 0;
+  do
+  {
+    if ((ret_code= poll((struct pollfd*)poll_set->impl_specific_ptr,
+                        poll_set->num_poll_connections,
+                        ms_time)) > 0)
+    {
+      for (i= 0; i < poll_set->num_poll_connections; i++)
+      {
+        if (poll_fd_array[i].revents == POLLIN)
+        {
+          num_ready_connections= poll_set->num_ready_connections;
+          poll_set->ready_connections[num_ready_connections]=
+            poll_set->poll_connections[i];
+          poll_set->num_ready_connections= num_ready_connections + 1;
+        }
+      }
+      return 0;
+    }
+    else if (ret_code == 0)
+    {
+      /*
+        No events found, just return we already have initialised for this
+        event.
+      */
+      return 0;
+    }
+    else /* ret_code < 0 an error occurred */
+    {
+      if (ret_code != EINTR)
+        return ret_code;
+      /* Continue waiting some more if interrupted */
+    }
+  } while (1);
   return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_POLL_SET *poll_set;
+  struct pollfd *poll_fd_array;
+  guint32 i;
 
   if (alloc_pool_set(&poll_set))
     return NULL;
+  if (!(poll_set->impl_specific_ptr= ic_calloc(
+      sizeof(struct pollfd) * MAX_POLL_SET_CONNECTIONS)))
+  {
+    free_poll_set(poll_set);
+    return NULL;
+  }
+  poll_fd_array= (struct pollfd*)poll_set->impl_specific_ptr;
+  for (i= 0; i < MAX_POLL_SET_CONNECTIONS; i++)
+  {
+    poll_fd_array[i].fd= 0;
+    poll_fd_array[i].events= POLLIN;
+    poll_fd_array[i].revents= 0;
+  }
   set_common_methods(poll_set);
-  poll_set->poll_ops.ic_poll_set_add_connection= poll_poll_set_add_connection;
-  poll_set->poll_ops.ic_poll_set_remove_connection= poll_poll_set_remove_connection;
+  poll_set->poll_ops.ic_poll_set_add_connection=
+    poll_poll_set_add_connection;
+  poll_set->poll_ops.ic_poll_set_remove_connection=
+    poll_poll_set_remove_connection;
   poll_set->poll_ops.ic_check_poll_set= poll_check_poll_set;
   return poll_set;
 }
