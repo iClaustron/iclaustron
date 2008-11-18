@@ -84,7 +84,7 @@ AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 
 AC_CHECK_FUNCS(bzero memset break gethrtime gettimeofday)
 AC_CHECK_FUNCS(socket bind connect listen accept getaddrinfo freeaddrinfo)
-AC_CHECK_FUNCS(inet_ntop sendmsg)
+AC_CHECK_FUNCS(inet_ntop sendmsg epoll_create port_create kqueue poll)
 AC_CHECK_LIB(rt, clock_gettime,
   [LIBS="-lrt $LIBS"
    AC_DEFINE(HAVE_CLOCK_GETTIME, 1,

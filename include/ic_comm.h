@@ -521,11 +521,14 @@ typedef struct ic_poll_connection IC_POLL_CONNECTION;
 struct ic_poll_set;
 struct ic_poll_operations
 {
-  int (*ic_poll_add_connection) (struct ic_poll_set *poll_set, IC_CONNECTION *conn);
-  int (*ic_poll_remove_connection) (struct ic_poll_set *poll_set, IC_CONNECTION *conn);
+  int (*ic_poll_set_add_connection) (struct ic_poll_set *poll_set,
+                                     IC_CONNECTION *conn);
+  int (*ic_poll_set_remove_connection) (struct ic_poll_set *poll_set,
+                                        IC_CONNECTION *conn);
   int (*ic_check_poll_set) (struct ic_poll_set *poll_set);
   void* (*ic_get_next_connection) (struct ic_poll_set *poll_set);
   void (*ic_free_poll_set) (struct ic_poll_set *poll_set);
+  void (*ic_close_poll_set) (struct ic_poll_set *poll_set);
   gboolean (*ic_is_poll_set_full) (struct ic_poll_set *poll_set);
 };
 typedef struct ic_poll_operations IC_POLL_OPERATIONS;

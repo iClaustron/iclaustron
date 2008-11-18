@@ -1832,6 +1832,12 @@ void ic_ssl_end()
 #endif
 
 static void
+close_poll_set(IC_POLL_SET *poll_set)
+{
+  close(poll_set->poll_set_fd);
+}
+
+static void
 free_poll_set(IC_POLL_SET *poll_set)
 {
   guint32 i;
@@ -1842,7 +1848,7 @@ free_poll_set(IC_POLL_SET *poll_set)
   if (poll_set->ready_connections)
     ic_free(poll_set->ready_connections);
   if (poll_set->need_close_at_free)
-    close(poll_set->poll_set_fd);
+    poll_set->poll_ops.ic_close_poll_set(poll_set);
   if (poll_set->impl_specific_ptr)
     ic_free(poll_set->impl_specific_ptr);
   ic_free(poll_set);
@@ -1938,21 +1944,26 @@ set_common_methods(IC_POLL_SET *poll_set)
   poll_set->poll_ops.ic_get_next_connection= get_next_connection;
   poll_set->poll_ops.ic_free_poll_set= free_poll_set;
   poll_set->poll_ops.ic_is_poll_set_full= is_poll_set_full;
+  poll_set->poll_ops.ic_close_poll_set= close_poll_set;
 }
+
 #ifdef HAVE_EPOLL_CREATE
 static int
-poll_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+epoll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
+  return 0;
 }
 
 static int
-poll_remove_connection(IC_POLL_SET *poll_set, int fd)
+epoll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  return 0;
 }
 
 static int
-check_poll_set(IC_POLL_SET *poll_set)
+epoll_check_poll_set(IC_POLL_SET *poll_set)
 {
+  return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set(int max_connections)
@@ -1968,133 +1979,147 @@ IC_POLL_SET* ic_create_poll_set(int max_connections)
     return NULL;
   }
   set_common_methods(poll_set);
-  poll_set->poll_ops.ic_poll_add_connection= pool_add_connection;
-  poll_set->poll_ops.ic_poll_remove_connection= pool_remove_connection;
-  poll_set->poll_ops.ic_check_poll_set= check_pool_set;
+  poll_set->poll_ops.ic_poll_set_add_connection=
+    epoll_poll_set_add_connection;
+  poll_set->poll_ops.ic_poll_set_remove_connection=
+    epoll_poll_set_remove_connection;
+  poll_set->poll_ops.ic_check_poll_set= epoll_check_poll_set;
+  return poll_set;
 }
 #else
 #ifdef HAVE_PORT_CREATE
 static int
-poll_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+eventports_poll_set_add_connection(IC_POLL_SET *poll_set,
+                                   int fd, void *user_obj)
 {
+  return 0;
 }
 
 static int
-poll_remove_connection(IC_POLL_SET *poll_set, int fd)
+eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  return 0;
 }
 
 static int
-check_poll_set(IC_POLL_SET *poll_set)
+eventports_check_poll_set(IC_POLL_SET *poll_set)
 {
-}
-
-static void*
-get_next_connection(IC_POLL_SET *poll_set)
-{
+  return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_POLL_SET *poll_set;
 
+  if (alloc_pool_set(&poll_set))
+    return NULL;
   set_common_methods(poll_set);
-  poll_set->poll_ops.ic_poll_add_connection= pool_add_connection;
-  poll_set->poll_ops.ic_poll_remove_connection= pool_remove_connection;
-  poll_set->poll_ops.ic_check_poll_set= check_pool_set;
+  poll_set->poll_ops.ic_poll_set_add_connection=
+    eventports_poll_set_add_connection;
+  poll_set->poll_ops.ic_poll_set_remove_connection=
+    eventports_poll_set_remove_connection;
+  poll_set->poll_ops.ic_check_poll_set= eventports_check_pool_set;
+  return poll_set;
 }
 #else
 #ifdef HAVE_KQUEUE
 static int
-poll_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+kqueue_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
+  return 0;
 }
 
 static int
-poll_remove_connection(IC_POLL_SET *poll_set, int fd)
+kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  return 0;
 }
 
 static int
-check_poll_set(IC_POLL_SET *poll_set)
+kqueue_check_poll_set(IC_POLL_SET *poll_set)
 {
-}
-
-static void*
-get_next_connection(IC_POLL_SET *poll_set)
-{
+  return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_POLL_SET *poll_set;
 
+  if (alloc_pool_set(&poll_set))
+    return NULL;
   set_common_methods(poll_set);
-  poll_set->poll_ops.ic_poll_add_connection= pool_add_connection;
-  poll_set->poll_ops.ic_poll_remove_connection= pool_remove_connection;
-  poll_set->poll_ops.ic_check_poll_set= check_pool_set;
+  poll_set->poll_ops.ic_poll_set_add_connection=
+    kqueue_poll_set_add_connection;
+  poll_set->poll_ops.ic_poll_set_remove_connection=
+    kqueue_poll_set_remove_connection;
+  poll_set->poll_ops.ic_check_poll_set= kqueue_check_poll_set;
+  return poll_set;
 }
 #else
 #ifdef HAVE_IO_COMPLETION
 static int
-poll_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+io_comp_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
+  return 0;
 }
 
 static int
-poll_remove_connection(IC_POLL_SET *poll_set, int fd)
+io_comp_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  return 0;
 }
 
 static int
-check_poll_set(IC_POLL_SET *poll_set)
+io_comp_check_poll_set(IC_POLL_SET *poll_set)
 {
-}
-
-static void*
-get_next_connection(IC_POLL_SET *poll_set)
-{
+  return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_POLL_SET *poll_set;
 
+  if (alloc_pool_set(&poll_set))
+    return NULL;
   set_common_methods(poll_set);
-  poll_set->poll_ops.ic_poll_add_connection= pool_add_connection;
-  poll_set->poll_ops.ic_poll_remove_connection= pool_remove_connection;
-  poll_set->poll_ops.ic_check_poll_set= check_pool_set;
+  poll_set->poll_ops.ic_poll_set_add_connection=
+    io_comp_poll_set_add_connection;
+  poll_set->poll_ops.ic_poll_set_remove_connection=
+    io_comp_poll_set_remove_connection;
+  poll_set->poll_ops.ic_check_poll_set= io_comp_check_poll_set;
+  return poll_set;
 }
 #else
 #ifdef HAVE_POLL
 static int
-poll_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+poll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
+  return 0;
 }
 
 static int
-poll_remove_connection(IC_POLL_SET *poll_set, int fd)
+poll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  return 0;
 }
 
 static int
-check_poll_set(IC_POLL_SET *poll_set)
+poll_check_poll_set(IC_POLL_SET *poll_set)
 {
-}
-
-static void*
-get_next_connection(IC_POLL_SET *poll_set)
-{
+  return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_POLL_SET *poll_set;
 
+  if (alloc_pool_set(&poll_set))
+    return NULL;
   set_common_methods(poll_set);
-  poll_set->poll_ops.ic_poll_add_connection= pool_add_connection;
-  poll_set->poll_ops.ic_poll_remove_connection= pool_remove_connection;
-  poll_set->poll_ops.ic_check_poll_set= check_pool_set;
+  poll_set->poll_ops.ic_poll_set_add_connection= poll_poll_set_add_connection;
+  poll_set->poll_ops.ic_poll_set_remove_connection= poll_poll_set_remove_connection;
+  poll_set->poll_ops.ic_check_poll_set= poll_check_poll_set;
+  return poll_set;
 }
 #endif
 #endif
