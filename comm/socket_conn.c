@@ -2154,7 +2154,7 @@ eventports_poll_set_add_connection(IC_POLL_SET *poll_set,
                                 PORT_SOURCE_FD,
                                 fd,
                                 POLLIN,
-                                user_obj)) < 0)
+                                (void*)index)) < 0)
   {
     ret_code= errno;
     remove_poll_set_member(poll_set, fd, &index);
@@ -2197,6 +2197,57 @@ eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 static int
 eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
+  int ret_code, fd;
+  guint32 index;
+  timespec_t timeout;
+  uint_t num_events= 1, i; /* Wait for at least one event */
+  port_event_t *rec_event= (port_event_t*)poll_set->impl_specific_ptr;
+  IC_POLL_CONNECTION *poll_conn;
+
+  timeout.tv_sec= 0;
+  timeout.tv_nsec= ms_time * 1000000;
+  if ((ret_code= port_getn(poll_set->poll_set_fd,
+                           rec_event,
+                           (uint_t)poll_set->num_allocated_connections,
+                           &num_events,
+                           &timeout)) < 0)
+  {
+    ret_code= errno;
+    if (ret_code == EINTR || ret_code == ETIME)
+    {
+      /*
+        We were interrupted before anything arrived, report as nothing
+        received. Could also be a normal timeout.
+      */
+      num_events= 0;
+    }
+    else
+      return ret_code;
+  }
+  /*
+    We need to go through all the received events and set up the internal
+    data structure such that we can handle get_next_connection calls
+    properly. For eventports we also need to put back the socket connection
+    on the eventport, it needs a new port_associate for every time it
+    reports. This obviously creates a lot more headache for error handling.
+  */
+  for (i= 0; i < num_events; i++)
+  {
+    index= (guint32)rec_event[i].portev_user;
+    poll_conn= poll_set->poll_connections[index];
+    poll_set->ready_connections[i]= poll_conn;
+    if ((ret_code= port_associate(poll_set->poll_set_fd,
+                                  PORT_SOURCE_FD,
+                                  fd,
+                                  POLLIN,
+                                  (void*)index)) < 0)
+    {
+      ret_code= errno;
+      remove_poll_set_member(poll_set, fd, &index);
+      return ret_code;
+    }
+  }
+  poll_set->num_ready_connections= (guint32)ret_code;
   return 0;
 }
 
