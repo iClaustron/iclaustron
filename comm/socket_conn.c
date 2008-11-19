@@ -2160,15 +2160,18 @@ kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 static int
 kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
-  int ret_code;
+  int i, ret_code, fd;
+  guint32 index;
   struct timespec timeout;
+  struct kevent *rec_event= (struct kevent*)poll_set->impl_specific_ptr;
+  IC_POLL_CONNECTION *poll_conn;
 
   timeout.tv_sec= 0;
   timeout.tv_nsec= ms_time * 1000000;
   if ((ret_code= kevent(poll_set->poll_set_fd,
                         NULL,
                         0,
-                        (struct kevent*)poll_set->impl_specific_ptr,
+                        rec_event,
                         (int)poll_set->num_allocated_connections,
                         &timeout)) < 0)
   {
@@ -2180,6 +2183,16 @@ kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
     data structure such that we can handle get_next_connection calls
     properly.
   */
+  for (i= 0; i < ret_code; i++)
+  {
+    g_assert((int)rec_event[i].ident == EVFILT_READ);
+    fd= rec_event[i].filter;
+    index= (guint32)rec_event[i].udata;
+    poll_conn= poll_set->poll_connections[index];
+    poll_set->ready_connections[i]= poll_conn;
+    g_assert(poll_conn->fd == fd);
+  }
+  poll_set->num_ready_connections= (guint32)ret_code;
   return 0;
 }
 
@@ -2195,6 +2208,13 @@ IC_POLL_SET* ic_create_poll_set()
   }
   if (alloc_pool_set(&poll_set))
   {
+    close(kqueue_fd);
+    return NULL;
+  }
+  if (!(poll_set->impl_specific_ptr= ic_calloc(
+        sizeof(struct kevent) * MAX_POLL_SET_CONNECTIONS)))
+  {
+    free_poll_set(poll_set);
     close(kqueue_fd);
     return NULL;
   }
