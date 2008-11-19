@@ -2142,16 +2142,55 @@ IC_POLL_SET* ic_create_poll_set()
 }
 #else
 #ifdef HAVE_PORT_CREATE
+#include <port.h>
 static int
 eventports_poll_set_add_connection(IC_POLL_SET *poll_set,
                                    int fd, void *user_obj)
 {
+  if ((ret_code= add_poll_set_member(poll_set, fd, user_obj, &index)))
+    return ret_code;
+
+  if ((ret_code= port_associate(poll_set->poll_set_fd,
+                                PORT_SOURCE_FD,
+                                fd,
+                                POLLIN,
+                                user_obj)) < 0)
+  {
+    ret_code= errno;
+    remove_poll_set_member(poll_set, fd, &index);
+    return ret_code;
+  }
   return 0;
 }
 
 static int
 eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  if ((ret_code= remove_poll_set_member(poll_set, fd, &index)))
+    return ret_code;
+  if ((ret_code= port_dissociate(poll_set->poll_set_fd,
+                                 PORT_SOURCE_FD,
+                                 fd)) < 0)
+  {
+    ret_code= errno;
+    if (ret_code == ENOENT)
+    {
+      /*
+        Socket was already gone so purpose was achieved although in a
+        weird manner.
+      */
+      return 0;
+    }
+    /* Tricky situation, we have removed the fd already and for some
+       reason we were not successful in removing a connection from the
+       eventport object. This is a serious error which should lead to a
+       drop of the entire poll set since it's no longer guaranteed to
+       function correctly. We start by putting in an abort as the
+       manner of handling this error.
+    */
+    abort();
+    return ret_code;
+  }
   return 0;
 }
 
