@@ -2002,21 +2002,113 @@ set_common_methods(IC_POLL_SET *poll_set)
 }
 
 #ifdef HAVE_EPOLL_CREATE
+#include <sys/epoll.h>
 static int
 epoll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 {
+  int ret_code;
+  guint32 index= 0;
+  struct epoll_event add_event;
+
+  if ((ret_code= add_poll_set_member(poll_set, fd, user_obj, &index)))
+    return ret_code;
+
+  memset(&add_event, sizeof(struct epoll_event), 0);
+  add_event.events= EPOLLIN;
+  add_event.data.fd= fd;
+  add_event.data.u32= index;
+  if ((ret_code= epoll_ctl(poll_set->poll_set_fd,
+                           EPOLL_CTL_ADD, fd, &add_event)))
+  {
+    ret_code= errno;
+    remove_poll_set_member(poll_set, fd, &index);
+    return ret_code;
+  }
   return 0;
 }
 
 static int
 epoll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  int ret_code;
+  guint32 index;
+  struct epoll_event delete_event;
+
+  if ((ret_code= remove_poll_set_member(poll_set, fd, &index)))
+    return ret_code;
+  /*
+    epoll specific code, set-up data for epoll_ctl call and handle
+    error codes properly.
+  */
+  memset(&delete_event, sizeof(struct epoll_event), 0);
+  delete_event.events= EPOLLIN;
+  delete_event.data.u32= index;
+  delete_event.data.fd= fd;
+  if ((ret_code= epoll_ctl(poll_set->poll_set_fd,
+                           EPOLL_CTL_DEL, fd, &delete_event)))
+  {
+    ret_code= errno;
+    if (ret_code == ENOENT)
+    {
+      /*
+        Socket was already gone so purpose was achieved although in a
+        weird manner.
+      */
+      return 0;
+    }
+    /* Tricky situation, we have removed the fd already and for some
+       reason we were not successful in removing a connection from the
+       epoll object. This is a serious error which should lead to a
+       drop of the entire poll set since it's no longer guaranteed to
+       function correctly. We start by putting in an abort as the
+       manner of handling this error.
+    */
+    abort();
+    return ret_code;
+  }
   return 0;
 }
 
 static int
 epoll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
+  int i, ret_code, fd;
+  guint32 index;
+  struct epoll_event *rec_event=
+    (struct epoll_event*)poll_set->impl_specific_ptr;
+  IC_POLL_CONNECTION *poll_conn;
+
+  if ((ret_code= epoll_wait(poll_set->poll_set_fd,
+                            rec_event,
+                            (int)poll_set->num_allocated_connections,
+                            ms_time)))
+  {
+    ret_code= errno;
+    if (ret_code == EINTR)
+    {
+      /*
+        We were interrupted before anything arrived, report as nothing
+        received.
+      */
+      ret_code= 0;
+    }
+    else
+      return ret_code;
+  }
+  /*
+    We need to go through all the received events and set up the internal
+    data structure such that we can handle get_next_connection calls
+    properly.
+  */
+  for (i= 0; i < ret_code; i++)
+  {
+    fd= rec_event[i].data.fd;
+    index= (guint32)rec_event[i].data.u32;
+    poll_conn= poll_set->poll_connections[index];
+    poll_set->ready_connections[i]= poll_conn;
+    g_assert(poll_conn->fd == fd);
+  }
+  poll_set->num_ready_connections= (guint32)ret_code;
   return 0;
 }
 
@@ -2143,6 +2235,15 @@ kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
                         0,
                         NULL)) < 0)
   {
+    ret_code= errno;
+    if (ret_code == ENOENT)
+    {
+      /*
+        Socket was already gone so purpose was achieved although in a
+        weird manner.
+      */
+      return 0;
+    }
     /* Tricky situation, we have removed the fd already and for some
        reason we were not successful in removing a connection from the
        kqueue object. This is a serious error which should lead to a
@@ -2150,7 +2251,6 @@ kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
        function correctly. We start by putting in an abort as the
        manner of handling this error.
     */
-    ret_code= errno;
     abort();
     return ret_code;
   }
@@ -2176,7 +2276,16 @@ kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
                         &timeout)) < 0)
   {
     ret_code= errno;
-    return ret_code;
+    if (ret_code == EINTR)
+    {
+      /*
+        We were interrupted before anything arrived, report as nothing
+        received.
+      */
+      ret_code= 0;
+    }
+    else
+      return ret_code;
   }
   /*
     We need to go through all the received events and set up the internal
