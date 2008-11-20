@@ -82,13 +82,37 @@ AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 # Set compiler flags according to the user choice
 #
 
-AC_CHECK_FUNCS(bzero memset break gethrtime gettimeofday)
-AC_CHECK_FUNCS(socket bind connect listen accept getaddrinfo freeaddrinfo)
-AC_CHECK_FUNCS(inet_ntop sendmsg epoll_create port_create kqueue poll)
+AC_CHECK_FUNCS(bzero memset break gethrtime gettimeofday epoll_create)
+AC_CHECK_FUNCS(port_create kqueue poll)
 AC_CHECK_LIB(rt, clock_gettime,
   [LIBS="-lrt $LIBS"
    AC_DEFINE(HAVE_CLOCK_GETTIME, 1,
              [Define HAVE_CLOCK_GETTIME if clock_gettime function exists])])
+
+case "$host" in
+  *solaris*)
+    AC_CHECK_LIB(nsl, gethostbyname,
+      [LIBS="-lnsl $LIBS"
+      AC_DEFINE(HAVE_SOCKET, 1,
+             [Define HAVE_SOCKET if socket function exists])])
+    AC_CHECK_LIB(socket, socket,
+      [LIBS="-lsocket $LIBS"
+      AC_DEFINE(HAVE_SOCKET, 1,
+             [Define HAVE_SOCKET if socket function exists])])
+    AC_SEARCH_LIBS(bind, socket)
+    AC_SEARCH_LIBS(connect, socket)
+    AC_SEARCH_LIBS(listen, socket)
+    AC_SEARCH_LIBS(accept, socket)
+    AC_SEARCH_LIBS(getaddrinfo, socket)
+    AC_SEARCH_LIBS(freeaddrinfo, socket)
+    AC_SEARCH_LIBS(inet_ntop, socket)
+    AC_SEARCH_LIBS(sendmsg, socket)
+    ;;
+  *)
+    AC_CHECK_FUNCS(socket bind connect listen accept getaddrinfo freeaddrinfo)
+    AC_CHECK_FUNCS(inet_ntop sendmsg)
+    ;;
+esac
 
 GLIB_PACKAGE="glib-2.0"
 GTHREAD_PACKAGE="gthread-2.0"

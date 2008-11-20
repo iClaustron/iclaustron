@@ -422,7 +422,7 @@ translate_hostnames(IC_CONNECTION *conn)
     return IC_ERROR_ILLEGAL_SERVER_PORT;
   conn->server_port_num= (guint16)server_port;
   /* Get address information for Server part */
-  bzero(&hints, sizeof(struct addrinfo));
+  memset(&hints, sizeof(struct addrinfo), 0);
   hints.ai_flags= AI_PASSIVE;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
@@ -452,7 +452,7 @@ translate_hostnames(IC_CONNECTION *conn)
     return IC_ERROR_ILLEGAL_CLIENT_PORT;
   conn->client_port_num= (guint16)client_port;
   /* Get address information for Client part */
-  bzero(&hints, sizeof(struct addrinfo));
+  memset(&hints, sizeof(struct addrinfo), 0);
   hints.ai_flags= AI_CANONNAME;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
@@ -751,11 +751,7 @@ writev_socket_connection(IC_CONNECTION *conn,
   guint32 write_len;
   struct msghdr msg_hdr;
 
-  msg_hdr.msg_name= NULL;
-  msg_hdr.msg_namelen= 0;
-  msg_hdr.msg_control= NULL;
-  msg_hdr.msg_controllen= 0;
-  msg_hdr.msg_flags= 0;
+  memset(&msg_hdr, sizeof(struct msghdr), 0);
 
   send_state.time_measure= NULL;
   send_state.write_size= 0;
@@ -2147,6 +2143,9 @@ static int
 eventports_poll_set_add_connection(IC_POLL_SET *poll_set,
                                    int fd, void *user_obj)
 {
+  int ret_code;
+  guint32 index= 0;
+
   if ((ret_code= add_poll_set_member(poll_set, fd, user_obj, &index)))
     return ret_code;
 
@@ -2166,6 +2165,9 @@ eventports_poll_set_add_connection(IC_POLL_SET *poll_set,
 static int
 eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 {
+  int ret_code;
+  guint32 index= 0;
+
   if ((ret_code= remove_poll_set_member(poll_set, fd, &index)))
     return ret_code;
   if ((ret_code= port_dissociate(poll_set->poll_set_fd,
@@ -2197,7 +2199,7 @@ eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 static int
 eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
-  int ret_code, fd;
+  int ret_code;
   guint32 index;
   timespec_t timeout;
   uint_t num_events= 1, i; /* Wait for at least one event */
@@ -2238,12 +2240,12 @@ eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
     poll_set->ready_connections[i]= poll_conn;
     if ((ret_code= port_associate(poll_set->poll_set_fd,
                                   PORT_SOURCE_FD,
-                                  fd,
+                                  poll_conn->fd,
                                   POLLIN,
                                   (void*)index)) < 0)
     {
       ret_code= errno;
-      remove_poll_set_member(poll_set, fd, &index);
+      remove_poll_set_member(poll_set, poll_conn->fd, &index);
       return ret_code;
     }
   }
@@ -2276,7 +2278,7 @@ IC_POLL_SET* ic_create_poll_set()
     eventports_poll_set_add_connection;
   poll_set->poll_ops.ic_poll_set_remove_connection=
     eventports_poll_set_remove_connection;
-  poll_set->poll_ops.ic_check_poll_set= eventports_check_pool_set;
+  poll_set->poll_ops.ic_check_poll_set= eventports_check_poll_set;
   return poll_set;
 }
 #else
