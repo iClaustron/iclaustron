@@ -1827,11 +1827,6 @@ void ic_ssl_end()
 }
 #endif
 
-static void
-close_poll_set(IC_POLL_SET *poll_set)
-{
-  close(poll_set->poll_set_fd);
-}
 
 static void
 free_poll_set(IC_POLL_SET *poll_set)
@@ -1845,7 +1840,7 @@ free_poll_set(IC_POLL_SET *poll_set)
   if (poll_set->ready_connections)
     ic_free(poll_set->ready_connections);
   if (poll_set->need_close_at_free)
-    poll_set->poll_ops.ic_close_poll_set(poll_set);
+    close(poll_set->poll_set_fd);
   if (poll_set->impl_specific_ptr)
     ic_free(poll_set->impl_specific_ptr);
   ic_free(poll_set);
@@ -1962,7 +1957,7 @@ remove_poll_set_member(IC_POLL_SET *poll_set, int fd, guint32 *index_removed)
   return 0;
 }
 
-static void*
+static IC_POLL_CONNECTION*
 get_next_connection(IC_POLL_SET *poll_set)
 {
   IC_POLL_CONNECTION *poll_conn;
@@ -1977,7 +1972,7 @@ get_next_connection(IC_POLL_SET *poll_set)
   num_ready_connections--;
   poll_conn= poll_set->ready_connections[num_ready_connections];
   poll_set->num_ready_connections= num_ready_connections;
-  return poll_conn->user_obj;
+  return poll_conn;
 }
 
 static gboolean
@@ -1994,7 +1989,6 @@ set_common_methods(IC_POLL_SET *poll_set)
   poll_set->poll_ops.ic_get_next_connection= get_next_connection;
   poll_set->poll_ops.ic_free_poll_set= free_poll_set;
   poll_set->poll_ops.ic_is_poll_set_full= is_poll_set_full;
-  poll_set->poll_ops.ic_close_poll_set= close_poll_set;
 }
 
 #ifdef HAVE_EPOLL_CREATE
@@ -2068,7 +2062,7 @@ epoll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 static int
 epoll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 {
-  int i, ret_code, fd;
+  int i, ret_code;
   guint32 index;
   struct epoll_event *rec_event=
     (struct epoll_event*)poll_set->impl_specific_ptr;
@@ -2098,11 +2092,10 @@ epoll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
   */
   for (i= 0; i < ret_code; i++)
   {
-    fd= rec_event[i].data.fd;
     index= (guint32)rec_event[i].data.u32;
     poll_conn= poll_set->poll_connections[index];
     poll_set->ready_connections[i]= poll_conn;
-    g_assert(poll_conn->fd == fd);
+    poll_conn->ret_code= 0;
   }
   poll_set->num_ready_connections= (guint32)ret_code;
   return 0;
@@ -2245,9 +2238,10 @@ eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
                                   (void*)index)) < 0)
     {
       ret_code= errno;
-      remove_poll_set_member(poll_set, poll_conn->fd, &index);
-      return ret_code;
+      poll_conn->ret_code= ret_code;
     }
+    else
+      poll_conn->ret_code= 0;
   }
   poll_set->num_ready_connections= (guint32)ret_code;
   return 0;
@@ -2386,12 +2380,10 @@ kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
   */
   for (i= 0; i < ret_code; i++)
   {
-    g_assert((int)rec_event[i].ident == EVFILT_READ);
-    fd= rec_event[i].filter;
     index= (guint32)rec_event[i].udata;
     poll_conn= poll_set->poll_connections[index];
     poll_set->ready_connections[i]= poll_conn;
-    g_assert(poll_conn->fd == fd);
+    poll_conn->ret_code= 0;
   }
   poll_set->num_ready_connections= (guint32)ret_code;
   return 0;
@@ -2519,6 +2511,7 @@ poll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
           poll_set->ready_connections[num_ready_connections]=
             poll_set->poll_connections[i];
           poll_set->num_ready_connections= num_ready_connections + 1;
+          poll_set->poll_connections[i]->ret_code= 0;
         }
       }
       g_assert((int)poll_set->num_ready_connections == ret_code);
