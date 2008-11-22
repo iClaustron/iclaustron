@@ -15,7 +15,7 @@
 
 #ifndef IC_APID_H
 #define IC_APID_H
-#include <ic_comm.h>
+#include <ic_connection.h>
 #include <ic_common.h>
 #include <ic_apic.h>
 

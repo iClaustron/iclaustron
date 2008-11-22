@@ -288,15 +288,16 @@ test_pcntrl()
     printf("Memory allocation error\n");
     return IC_ERROR_MEM_ALLOC;
   }
-  conn->server_name= glob_server_ip;
-  conn->server_port= glob_server_port;
-  conn->client_name= glob_client_ip;
-  conn->client_port= glob_client_port;
-  conn->is_connect_thread_used= FALSE;
-  conn->is_wan_connection= glob_is_wan_connection;
-  conn->tcp_maxseg_size= glob_tcp_maxseg;
-  conn->tcp_receive_buffer_size= glob_tcp_rec_size;
-  conn->tcp_send_buffer_size= glob_tcp_snd_size;
+  conn->conn_op.ic_prepare_client_connection(conn,
+                                             glob_server_ip,
+                                             glob_server_port,
+                                             glob_client_ip,
+                                             glob_client_port);
+  conn->conn_op.ic_prepare_extra_parameters(conn,
+                                            glob_tcp_maxseg,
+                                            glob_is_wan_connection,
+                                            glob_tcp_rec_size,
+                                            glob_tcp_snd_size);
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if ((error= ic_send_with_cr(conn, "ls")) ||
       (error= ic_send_with_cr(conn, "-la")) ||

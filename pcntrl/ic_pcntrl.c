@@ -45,7 +45,7 @@
   the configuration file.
 */
 
-#include <ic_comm.h>
+#include <ic_connection.h>
 #include <ic_common.h>
 
 #define REC_PROG_NAME 0
@@ -175,12 +175,13 @@ int start_connection_loop()
   IC_CONNECTION *fork_conn;
   GError *error= NULL;
 
-  conn->server_name= glob_ip;
-  conn->server_port= glob_port;
-  conn->client_name= NULL;
-  conn->client_port= 0;
-  conn->is_wan_connection= FALSE;
-  conn->is_listen_socket_retained= TRUE;
+  conn->conn_op.ic_prepare_server_connection(conn,
+                                             glob_ip,
+                                             glob_port,
+                                             NULL,
+                                             NULL,
+                                             0,
+                                             TRUE);
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code)
     return ret_code;

@@ -2806,8 +2806,13 @@ set_up_cluster_server_connection(IC_CONNECTION **conn,
                                        NULL, NULL)))
     return IC_ERROR_MEM_ALLOC;
   loc_conn= *conn;
-  loc_conn->server_name= server_name;
-  loc_conn->server_port= server_port;
+  loc_conn->conn_op.ic_prepare_server_connection(loc_conn,
+                                                 server_name,
+                                                 server_port,
+                                                 NULL,
+                                                 NULL,
+                                                 0,
+                                                 FALSE);
   if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn, NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", error));
@@ -2855,7 +2860,7 @@ send_get_nodeid(IC_CONNECTION *conn,
       ic_send_with_cr(conn, log_event_str) ||
       ic_send_with_cr(conn, cluster_id_buf) ||
       ic_send_with_cr(conn, ic_empty_string))
-    return conn->error_code;
+    return conn->conn_op.ic_get_error_code(conn);
   return 0;
 }
 
@@ -2872,7 +2877,7 @@ send_get_config(IC_CONNECTION *conn)
   if (ic_send_with_cr(conn, get_config_str) ||
       ic_send_with_cr(conn, version_buf) ||
       ic_send_with_cr(conn, ic_empty_string))
-    return conn->error_code;
+    return conn->conn_op.ic_get_error_code(conn);
   return 0;
 }
 
@@ -3321,7 +3326,7 @@ get_cluster_ids(IC_API_CONFIG_SERVER *apic,
   num_clusters= count_clusters(clu_infos);
   if (ic_send_with_cr(conn, get_cluster_list_str))
   {
-    error= conn->error_code;
+    error= conn->conn_op.ic_get_error_code(conn);
     goto error;
   }
   if ((error= rec_simple_str(conn, get_cluster_list_reply_str)))
@@ -4193,7 +4198,7 @@ send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
       ic_send_with_cr(conn, nodeid_buf) ||
       ic_send_with_cr(conn, result_ok_str) ||
       ic_send_with_cr(conn, ic_empty_string))
-    error= conn->error_code;
+    error= conn->conn_op.ic_get_error_code(conn);
   DEBUG_RETURN(error);
 }
 
@@ -4267,7 +4272,7 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
       conn->conn_op.ic_write_connection(conn, (const void*)config_base64_str,
                                         config_len, 1) ||
       ic_send_with_cr(conn, ic_empty_string))
-    error= conn->error_code;
+    error= conn->conn_op.ic_get_error_code(conn);
   DEBUG_RETURN(error);
 }
 
@@ -4533,11 +4538,12 @@ run_handle_config_request(gpointer data)
   gchar *read_buf;
   guint32 read_size;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
-  IC_RUN_CLUSTER_SERVER *run_obj= (IC_RUN_CLUSTER_SERVER*)conn->param;
+  IC_RUN_CLUSTER_SERVER *run_obj;
   int error;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
 
+  run_obj= (IC_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     switch (state)
@@ -4662,10 +4668,10 @@ start_handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
                             IC_CONNECTION *conn)
 {
   GError *error= NULL;
-  conn->param= (void*)run_obj;
   int ret_code= 0;
   DEBUG_ENTRY("start_handle_config_request");
 
+  conn->conn_op.ic_set_param(conn, (void*)run_obj);
   if (!g_thread_create_full(run_handle_config_request,
                             (gpointer)conn,
                             1024*16, /* 16 kByte stack size */
@@ -4674,7 +4680,6 @@ start_handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
                             G_THREAD_PRIORITY_NORMAL,
                             &error))
   {
-    conn->error_code= 1;
     ret_code= 1;
   }
   DEBUG_RETURN(ret_code);
@@ -4703,7 +4708,6 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
     connection.
   */
   conn= run_obj->run_conn;
-  conn->is_listen_socket_retained= TRUE;
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code)
   {
@@ -4820,11 +4824,13 @@ ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
     goto error;
 
   conn= run_obj->run_conn;
-  conn->server_name= server_name;
-  conn->server_port= server_port;
-  conn->client_name= NULL;
-  conn->client_port= 0;
-  conn->is_wan_connection= FALSE;
+  conn->conn_op.ic_prepare_server_connection(conn,
+                                             server_name,
+                                             server_port,
+                                             NULL,
+                                             NULL,
+                                             0,
+                                             TRUE);
   run_obj->run_op.ic_run_cluster_server= run_cluster_server;
   run_obj->run_op.ic_free_run_cluster= free_run_cluster;
   DEBUG_RETURN(run_obj);

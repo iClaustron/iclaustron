@@ -43,6 +43,12 @@
 #define IC_MAX_FILE_NAME_SIZE 255
 #define IC_MAX_INT_STRING 32
 
+/* Define a number of constants used in various places */
+#define SPACE_CHAR (gchar)32
+#define CARRIAGE_RETURN (gchar)10
+#define LINE_FEED (gchar)13
+#define NULL_BYTE (gchar)0
+
 extern gchar *ic_empty_string;
 extern gchar *ic_err_str;
 

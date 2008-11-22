@@ -618,11 +618,12 @@ run_handle_new_connection(gpointer data)
   int ret_code;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
-  IC_API_CONFIG_SERVER *apic= conn->param;
+  IC_API_CONFIG_SERVER *apic;
   gchar *parse_buf;
   guint32 parse_inx= 0;
   IC_PARSE_DATA parse_data;
 
+  apic= (IC_API_CONFIG_SERVER*)conn->conn_op.ic_get_param(conn);
   memset(&parse_data, sizeof(IC_PARSE_DATA), 0);
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
   {
@@ -679,7 +680,8 @@ handle_new_connection(IC_CONNECTION *conn,
                       IC_API_CONFIG_SERVER *apic)
 {
   GError *error= NULL;
-  conn->param= apic;
+
+  conn->conn_op.ic_set_param(conn, (void*)apic);
   if (!g_thread_create_full(run_handle_new_connection,
                             (gpointer)conn,
                             1024*256, /* 256 kByte stack size */
@@ -688,7 +690,6 @@ handle_new_connection(IC_CONNECTION *conn,
                             G_THREAD_PRIORITY_NORMAL,
                             &error))
   {
-    conn->error_code= 1;
     return 1;
   }
   return 0;
@@ -740,7 +741,7 @@ set_up_server_connection(IC_CONNECTION **conn)
   DEBUG_PRINT(COMM_LEVEL,
     ("Setting up server connection for Cluster Manager at %s:%s",
      glob_cluster_mgr_ip, glob_cluster_mgr_port));
-  loc_conn->conn_op.ic_prepare_server_connection(conn,
+  loc_conn->conn_op.ic_prepare_server_connection(loc_conn,
     glob_cluster_mgr_ip,
     glob_cluster_mgr_port,
     NULL, NULL,           /* Client can connect from anywhere */

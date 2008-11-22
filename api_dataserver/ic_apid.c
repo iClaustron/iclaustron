@@ -104,7 +104,7 @@
   This data structure is used to represent an error that occurred.
 */
 
-#include <ic_comm.h>
+#include <ic_connection.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
 
@@ -1191,7 +1191,7 @@ is_ds_conn_established(IC_DS_CONNECTION *ds_conn,
   *is_connected= TRUE;
   if (conn->conn_op.ic_is_conn_connected(conn))
     return 0;
-  return conn->error_code;
+  return conn->conn_op.ic_get_error_code(conn);
 }
 
 static int

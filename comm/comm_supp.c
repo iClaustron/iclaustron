@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
+#include <ic_connection_int.h>
 
 void
 ic_print_buf(char *buf, guint32 size)
@@ -196,7 +197,7 @@ convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
 }
 
 int
-ic_send_with_cr(struct ic_connection *conn, const gchar *send_buf)
+ic_send_with_cr(IC_CONNECTION *conn, const gchar *send_buf)
 {
   guint32 inx;
   int res;
@@ -225,10 +226,11 @@ ic_send_with_cr(struct ic_connection *conn, const gchar *send_buf)
 */
 
 int
-ic_rec_with_cr(struct ic_connection *conn,
+ic_rec_with_cr(IC_CONNECTION *ext_conn,
                gchar **rec_buf,
                guint32 *read_size)
 {
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   guint32 inx, size_to_read, size_read;
   int res;
   gchar *end_line;
@@ -271,7 +273,7 @@ ic_rec_with_cr(struct ic_connection *conn,
       DEBUG_PRINT(COMM_LEVEL, ("No complete lines to report yet"));
     }
     size_to_read= buffer_size - size_curr_buf;
-    if ((res= conn->conn_op.ic_read_connection(conn,
+    if ((res= conn->conn_op.ic_read_connection((IC_CONNECTION*)conn,
                                                read_buf + size_curr_buf,
                                                size_to_read,
                                                &size_read)))

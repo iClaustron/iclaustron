@@ -207,8 +207,11 @@ connect_cluster_mgr(IC_CONNECTION **conn)
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Connecting to Cluster Manager at %s:%s",
      glob_server_ip, glob_server_port));
-  loc_conn->server_name= glob_server_ip;
-  loc_conn->server_port= glob_server_port;
+  loc_conn->conn_op.ic_prepare_client_connection(loc_conn,
+                                                 glob_server_ip,
+                                                 glob_server_port,
+                                                 NULL,
+                                                 NULL);
   if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn, NULL, NULL)))
   {
     DEBUG_PRINT(PROGRAM_LEVEL,

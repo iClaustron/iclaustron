@@ -40,7 +40,7 @@ free_poll_set(IC_POLL_SET *ext_poll_set)
 static int
 alloc_pool_set(IC_INT_POLL_SET **poll_set)
 {
-  if (!(*poll_set= (IC_POLL_SET*)ic_calloc(sizeof(IC_POLL_SET))))
+  if (!(*poll_set= (IC_INT_POLL_SET*)ic_calloc(sizeof(IC_INT_POLL_SET))))
     return IC_ERROR_MEM_ALLOC;
   (*poll_set)->num_allocated_connections= MAX_POLL_SET_CONNECTIONS;
   if (!((*poll_set)->poll_connections= (IC_POLL_CONNECTION**)
@@ -50,7 +50,7 @@ alloc_pool_set(IC_INT_POLL_SET **poll_set)
        ic_calloc(sizeof(IC_POLL_CONNECTION*) * MAX_POLL_SET_CONNECTIONS)))
     goto mem_error;
 mem_error:
-  free_poll_set(*poll_set);
+  free_poll_set((IC_POLL_SET*)*poll_set);
   return IC_ERROR_MEM_ALLOC;
 }
 

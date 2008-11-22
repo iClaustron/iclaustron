@@ -13,7 +13,10 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_comm.h>
+#include <ic_common_header.h>
+#include <ic_connection.h>
+/*#include <ic_sock_buf.h>
+#include <ic_sock_buf_int.h>*/
 
 static IC_SOCK_BUF_PAGE*
 get_sock_buf_page(IC_SOCK_BUF *buf,
