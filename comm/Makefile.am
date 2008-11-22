@@ -1,4 +1,4 @@
-## Copyright (C) 2007 iClaustron AB
+## Copyright (C) 2007, 2008 iClaustron AB
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation; version 2 of the License.
@@ -22,7 +22,8 @@ DTRACEFILES= socket_conn.o
 
 lib_LTLIBRARIES = libic_comm.la
 
-libic_comm_la_SOURCES = socket_conn.c socket_membuf.c comm_supp.c
+libic_comm_la_SOURCES = socket_conn.c socket_membuf.c comm_supp.c \
+                        ic_poll_set.c
 
 if HAVE_DTRACE
   libic_comm_la_SOURCES += probes.d
