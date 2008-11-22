@@ -18,9 +18,10 @@
 #include <unistd.h>
 
 static void
-free_poll_set(IC_POLL_SET *poll_set)
+free_poll_set(IC_POLL_SET *ext_poll_set)
 {
   guint32 i;
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
 
   for (i= 0; i < poll_set->num_poll_connections; i++)
     ic_free(poll_set->poll_connections[i]);
@@ -37,7 +38,7 @@ free_poll_set(IC_POLL_SET *poll_set)
 
 #define MAX_POLL_SET_CONNECTIONS 1024
 static int
-alloc_pool_set(IC_POLL_SET **poll_set)
+alloc_pool_set(IC_INT_POLL_SET **poll_set)
 {
   if (!(*poll_set= (IC_POLL_SET*)ic_calloc(sizeof(IC_POLL_SET))))
     return IC_ERROR_MEM_ALLOC;
@@ -54,7 +55,7 @@ mem_error:
 }
 
 static int
-add_poll_set_member(IC_POLL_SET *poll_set, int fd, void *user_obj,
+add_poll_set_member(IC_INT_POLL_SET *poll_set, int fd, void *user_obj,
                     guint32 *index)
 {
   guint32 i;
@@ -92,7 +93,7 @@ add_poll_set_member(IC_POLL_SET *poll_set, int fd, void *user_obj,
 }
 
 static int
-remove_poll_set_member(IC_POLL_SET *poll_set, int fd, guint32 *index_removed)
+remove_poll_set_member(IC_INT_POLL_SET *poll_set, int fd, guint32 *index_removed)
 {
   guint32 i, num_ready_connections;
   guint32 found_index= MAX_POLL_SET_CONNECTIONS;
@@ -147,9 +148,10 @@ remove_poll_set_member(IC_POLL_SET *poll_set, int fd, guint32 *index_removed)
 }
 
 static const IC_POLL_CONNECTION*
-get_next_connection(IC_POLL_SET *poll_set)
+get_next_connection(IC_POLL_SET *ext_poll_set)
 {
   IC_POLL_CONNECTION *poll_conn;
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   guint32 num_ready_connections= poll_set->num_ready_connections;
 
   g_assert(poll_set->poll_scan_ongoing);
@@ -165,15 +167,16 @@ get_next_connection(IC_POLL_SET *poll_set)
 }
 
 static gboolean
-is_poll_set_full(IC_POLL_SET *poll_set)
+is_poll_set_full(IC_POLL_SET *ext_poll_set)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   if (poll_set->num_allocated_connections <= poll_set->num_poll_connections)
     return TRUE;
   return FALSE;
 }
 
 static void
-set_common_methods(IC_POLL_SET *poll_set)
+set_common_methods(IC_INT_POLL_SET *poll_set)
 {
   poll_set->poll_ops.ic_get_next_connection= get_next_connection;
   poll_set->poll_ops.ic_free_poll_set= free_poll_set;
@@ -183,8 +186,9 @@ set_common_methods(IC_POLL_SET *poll_set)
 #ifdef HAVE_EPOLL_CREATE
 #include <sys/epoll.h>
 static int
-epoll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+epoll_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index= 0;
   struct epoll_event add_event;
@@ -207,8 +211,9 @@ epoll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 }
 
 static int
-epoll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
+epoll_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index;
   struct epoll_event delete_event;
@@ -249,8 +254,9 @@ epoll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-epoll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
+epoll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int i, ret_code;
   guint32 index;
   struct epoll_event *rec_event=
@@ -292,7 +298,7 @@ epoll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 
 IC_POLL_SET* ic_create_poll_set()
 {
-  IC_POLL_SET *poll_set;
+  IC_INT_POLL_SET *poll_set;
   int epoll_fd;
 
   if ((epoll_fd= epoll_create(MAX_POLL_SET_CONNECTIONS)) < 0)
@@ -316,15 +322,16 @@ IC_POLL_SET* ic_create_poll_set()
   poll_set->poll_ops.ic_poll_set_remove_connection=
     epoll_poll_set_remove_connection;
   poll_set->poll_ops.ic_check_poll_set= epoll_check_poll_set;
-  return poll_set;
+  return (IC_POLL_SET*)poll_set;
 }
 #else
 #ifdef HAVE_PORT_CREATE
 #include <port.h>
 static int
-eventports_poll_set_add_connection(IC_POLL_SET *poll_set,
+eventports_poll_set_add_connection(IC_POLL_SET *ext_poll_set,
                                    int fd, void *user_obj)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index= 0;
 
@@ -345,8 +352,9 @@ eventports_poll_set_add_connection(IC_POLL_SET *poll_set,
 }
 
 static int
-eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
+eventports_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index= 0;
 
@@ -379,8 +387,9 @@ eventports_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
+eventports_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index;
   timespec_t timeout;
@@ -438,7 +447,7 @@ eventports_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 
 IC_POLL_SET* ic_create_poll_set()
 {
-  IC_POLL_SET *poll_set;
+  IC_INT_POLL_SET *poll_set;
   int eventport_fd;
 
   if ((eventport_fd= port_create()) < 0)
@@ -462,7 +471,7 @@ IC_POLL_SET* ic_create_poll_set()
   poll_set->poll_ops.ic_poll_set_remove_connection=
     eventports_poll_set_remove_connection;
   poll_set->poll_ops.ic_check_poll_set= eventports_check_poll_set;
-  return poll_set;
+  return (IC_POLL_SET*)poll_set;
 }
 #else
 #ifdef HAVE_KQUEUE
@@ -470,8 +479,9 @@ IC_POLL_SET* ic_create_poll_set()
 #include <sys/event.h>
 #include <sys/time.h>
 static int
-kqueue_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+kqueue_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index= 0;
   struct kevent add_event;
@@ -494,8 +504,9 @@ kqueue_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 }
 
 static int
-kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
+kqueue_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index;
   struct kevent delete_event;
@@ -533,8 +544,9 @@ kqueue_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
+kqueue_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int i, ret_code;
   guint32 index;
   struct timespec timeout;
@@ -581,7 +593,7 @@ kqueue_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 IC_POLL_SET* ic_create_poll_set()
 {
   int kqueue_fd;
-  IC_POLL_SET *poll_set;
+  IC_INT_POLL_SET *poll_set;
 
   if ((kqueue_fd= kqueue()) < 0)
   {
@@ -611,31 +623,34 @@ IC_POLL_SET* ic_create_poll_set()
   poll_set->poll_ops.ic_poll_set_remove_connection=
     kqueue_poll_set_remove_connection;
   poll_set->poll_ops.ic_check_poll_set= kqueue_check_poll_set;
-  return poll_set;
+  return (IC_POLL_SET*)poll_set;
 }
 #else
 #ifdef HAVE_IO_COMPLETION
 static int
-io_comp_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+io_comp_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   return 0;
 }
 
 static int
-io_comp_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
+io_comp_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   return 0;
 }
 
 static int
-io_comp_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
+io_comp_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   return 0;
 }
 
 IC_POLL_SET* ic_create_poll_set()
 {
-  IC_POLL_SET *poll_set;
+  IC_INT_POLL_SET *poll_set;
 
   if (alloc_pool_set(&poll_set))
     return NULL;
@@ -645,14 +660,15 @@ IC_POLL_SET* ic_create_poll_set()
   poll_set->poll_ops.ic_poll_set_remove_connection=
     io_comp_poll_set_remove_connection;
   poll_set->poll_ops.ic_check_poll_set= io_comp_check_poll_set;
-  return poll_set;
+  return (IC_POLL_SET*)poll_set;
 }
 #else
 #ifdef HAVE_POLL
 #include <poll.h>
 static int
-poll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
+poll_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index= 0;
   struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
@@ -664,8 +680,9 @@ poll_poll_set_add_connection(IC_POLL_SET *poll_set, int fd, void *user_obj)
 }
 
 static int
-poll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
+poll_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 index= 0;
   struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
@@ -678,8 +695,9 @@ poll_poll_set_remove_connection(IC_POLL_SET *poll_set, int fd)
 }
 
 static int
-poll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
+poll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 {
+  IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 i, num_ready_connections;
   struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
@@ -729,7 +747,7 @@ poll_check_poll_set(IC_POLL_SET *poll_set, int ms_time)
 
 IC_POLL_SET* ic_create_poll_set()
 {
-  IC_POLL_SET *poll_set;
+  IC_INT_POLL_SET *poll_set;
   struct pollfd *poll_fd_array;
   guint32 i;
 
@@ -763,7 +781,7 @@ IC_POLL_SET* ic_create_poll_set()
   poll_set->poll_ops.ic_poll_set_remove_connection=
     poll_poll_set_remove_connection;
   poll_set->poll_ops.ic_check_poll_set= poll_check_poll_set;
-  return poll_set;
+  return (IC_POLL_SET*)poll_set;
 }
 #endif
 #endif

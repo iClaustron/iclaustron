@@ -83,4 +83,9 @@ typedef struct ic_poll_operations IC_POLL_OPERATIONS;
 
 /* Creates a new poll set */
 IC_POLL_SET* ic_create_poll_set();
+
+struct ic_poll_set
+{
+  IC_POLL_OPERATIONS poll_ops;
+};
 #endif

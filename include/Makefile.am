@@ -18,7 +18,7 @@ include_HEADERS = hashtable.h \
                   ic_apic.h \
                   ic_apid.h \
                   ic_clmgr.h \
-                  ic_comm.h \
+                  ic_connection.h \
                   ic_common.h \
                   ic_common_header.h \
                   ic_config.h \

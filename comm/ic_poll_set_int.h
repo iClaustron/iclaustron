@@ -18,7 +18,7 @@
 #include <ic_common.h>
 #include <ic_poll_set.h>
 
-struct ic_poll_set
+struct ic_int_poll_set
 {
   IC_POLL_OPERATIONS poll_ops;
   /* An array with a link to a description of the socket connection */
@@ -57,4 +57,5 @@ struct ic_poll_set
   */
   gboolean poll_scan_ongoing;
 };
+typedef struct ic_int_poll_set IC_INT_POLL_SET;
 #endif
