@@ -16,10 +16,9 @@
 #  BSD license.
 #  For details see the accompanying COPYING-CMAKE-SCRIPTS file.
 #
-
-
 if (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   # in cache already
+  message("glib in cache already")
   set(GLIB2_FOUND TRUE)
 else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   # use pkg-config to get the directories and then use these values
@@ -46,18 +45,20 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} ${MANUAL_GLIB_LIB_DIR})
 
   set (UNIX_GLIB_LIB /opt/gnome/lib)
+  set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /opt/gnome/lib64)
+  set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /opt/lib)
   set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /opt/local/lib)
   set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /sw/lib)
+  set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /usr/lib64)
   set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /usr/lib)
   set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /usr/local/lib)
 
   set (UNIX_GLIB_INCLUDE /opt/gnome/include/glib-2.0)
-  set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /opt/gnome/include/glib-2.0)
+  set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /opt/include/glib-2.0)
   set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /opt/local/include/glib-2.0)
   set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /sw/include/glib-2.0)
   set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /usr/include/glib-2.0)
   set (UNIX_GLIB_INCLUDE ${UNIX_GLIB_INCLUDE} /usr/local/include/glib-2.0)
-
   ## Glib
   # Prefer pkg-config results for custom builds found in PKG_CONFIG_PATH
   message("Looking for glib-2.0")
@@ -104,9 +105,19 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
         NO_DEFAULT_PATH)
     endif (WIN32)
     if (NOT GLIB2_LIBRARY)
+      message("Didn't find glib in standard places, trying default")
       find_library(GLIB2_LIBRARY
                    NAMES glib-2.0)
+    else (NOT GLIB2_LIBRARY)
+      message("Found glib-2.0 in standard place")
     endif (NOT GLIB2_LIBRARY)
+    if (NOT GLIB2_LIBRARY)
+      message(FATAL_ERROR "Need a glib-2.0 library, fatal error")
+    else (NOT GLIB2_LIBRARY)
+      message("Found glib in default place")
+    endif (NOT GLIB2_LIBRARY)
+  else (NOT GLIB2_LIBRARY)
+    message("glib-2.0 found in cache")
   endif (NOT GLIB2_LIBRARY)
 
   if (NOT GLIBCONFIG_INCLUDE_DIR)
@@ -122,6 +133,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
           /sw/lib/glib-2.0/include
           /usr/lib64/glib-2.0/include
           /usr/lib/glib-2.0/include
+          /usr/local/lib/glib-2.0/include
         NO_DEFAULT_PATH)
     else(NOT WIN32)
       find_path(GLIBCONFIG_INCLUDE_DIR
@@ -132,9 +144,19 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
         NO_DEFAULT_PATH)
     endif(NOT WIN32)
     if (NOT GLIBCONFIG_INCLUDE_DIR)
+      message("glibconfig.h not found in standard places")
       find_path(GLIBCONFIG_INCLUDE_DIR
                 NAMES glibconfig.h)
+    else (NOT GLIBCONFIG_INCLUDE_DIR)
+      message("glibconfig.h found in standard places")
     endif (NOT GLIBCONFIG_INCLUDE_DIR)
+    if (NOT GLIBCONFIG_INCLUDE_DIR)
+      message(FATAL_ERROR "glibconfig.h not found in default places, fatal error")
+    else (NOT GLIBCONFIG_INCLUDE_DIR)
+      message("glibconfig.h found in default places")
+    endif (NOT GLIBCONFIG_INCLUDE_DIR)
+  else (NOT GLIBCONFIG_INCLUDE_DIR)
+    message("glibconfig.h found in cache")
   endif (NOT GLIBCONFIG_INCLUDE_DIR)
 
   if (NOT GLIB2_INCLUDE_DIR)
@@ -154,9 +176,19 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
         NO_DEFAULT_PATH)
     endif (WIN32)
     if (NOT GLIB2_INCLUDE_DIR)
+      message("glib.h not found in standard places")
       find_path(GLIB2_INCLUDE_DIR
                 NAMES glib.h)
+    else (NOT GLIB2_INCLUDE_DIR)
+      message("glib.h found in standard places")
     endif (NOT GLIB2_INCLUDE_DIR)
+    if (NOT GLIB2_INCLUDE_DIR)
+      message(FATAL_ERROR "glib.h not found in default places, fatal error")
+    else (NOT GLIB2_INCLUDE_DIR)
+      message("glib.h found in default places")
+    endif (NOT GLIB2_INCLUDE_DIR)
+  else (NOT GLIB2_INCLUDE_DIR)
+    message("glib.h found in cache")
   endif (NOT GLIB2_INCLUDE_DIR)
 
   if (GLIB2_LIBRARY AND GLIB2_INCLUDE_DIR AND GLIBCONFIG_INCLUDE_DIR)
@@ -398,6 +430,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
       /opt/gnome/include/glib-2.0
       /opt/local/include/glib-2.0
       /opt/local/include
+      /opt/include
       /sw/include
       /usr/include/glib-2.0
       /usr/local/include/glib-2.0
@@ -410,9 +443,11 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
     PATHS
       /opt/gnome/lib
       /opt/local/lib
+      /opt/lib
       /sw/lib
-      /usr/local/lib
       /usr/lib
+      /usr/lib64
+      /usr/local/lib
   )
 
   if (LIBINTL_LIBRARY AND LIBINTL_INCLUDE_DIR)
@@ -429,6 +464,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
       /opt/gnome/include/glib-2.0
       /opt/local/include/glib-2.0
       /opt/local/include
+      /opt/include
       /sw/include
       /sw/include/glib-2.0
       /usr/local/include/glib-2.0
@@ -441,9 +477,12 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
     NO_DEFAULT_PATH
     PATHS
       /opt/gnome/lib
+      /opt/gnome/lib64
       /opt/local/lib
+      /opt/lib
       /sw/lib
       /usr/lib
+      /usr/lib64
       /usr/local/lib
   )
 
