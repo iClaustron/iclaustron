@@ -25,6 +25,8 @@ lib_LTLIBRARIES = libic_comm.la
 libic_comm_la_SOURCES = ic_connection.c socket_membuf.c comm_supp.c \
                         ic_poll_set.c
 
+EXTRA_DIST      = ic_poll_set_int.h
+
 if HAVE_DTRACE
   libic_comm_la_SOURCES += probes.d
 endif

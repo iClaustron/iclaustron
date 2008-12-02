@@ -77,7 +77,7 @@ unsigned int
 ic_hash_ptr(void *ptr)
 {
   unsigned int len= sizeof(void*);
-  unsigned int char_val;
+  unsigned int char_val, i;
   unsigned int hash= 0;
   guint64 val= (guint64)ptr;
   for (i= 0; i < len; i++)
