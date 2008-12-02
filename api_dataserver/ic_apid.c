@@ -108,6 +108,17 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
+/*
+  These static functions implements the local IC_TRANSLATION_OBJ.
+  For speed they're only declared as local objects such that they
+  can be inlined by the compiler if so decided.
+*/
+
+IC_TRANSLATION_OBJ *create_translation_object();
+int insert_object_in_translation(IC_TRANSLATION_OBJ *transl_obj,
+                                 void *object);
+void remove_object_from_translation(void *object);
+/* End definition of IC_TRANSLATION_OBJ functions */
 static int send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
 static void
 adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn);
@@ -1715,6 +1726,139 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
   block for an extended period while executing messages.
 */
 
+struct translation_entry
+{
+  union
+  {
+    void *object;
+    guint64 position;
+  }
+};
+typedef struct translation_entry TRANSLATION_ENTRY;
+
+IC_DYNAMIC_ARRAY*
+create_translation_object()
+{
+  IC_DYNAMIC_ARRAY *dyn_array;
+  TRANSLATION_ENTRY transl_entry;
+
+  if (!(dyn_array= ic_create_ordered_dynamic_array()))
+    return NULL;
+  transl_entry.object= (void*)0;
+  if ((dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
+                                         (const gchar*)&transl_entry,
+                                         sizeof(transl_entry))))
+  {
+    dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
+    return NULL;
+  }
+  return dyn_array;
+}
+
+int
+insert_object_in_translation(IC_DYNAMIC_ARRAY *dyn_array,
+                             guint64 *position,
+                             void *object)
+{
+  TRANSLATION_ENTRY transl_entry;
+  guint64 pos_first= (guint64)0;
+  guint64 entry_size= sizeof(TRANSLATION_ENTRY);
+
+  if (dyn_array->da_ops.ic_read_dynamic_array(transl_obj,
+                                              pos_first,
+                                              entry_size,
+                                              (gchar*)&transl_entry))
+    abort();
+  pos_first_free= transl_entry.position;
+  if (pos_first_free == (guint64)0)
+  {
+    /*
+      All entries were already used, we need to extend the
+      array
+    */
+    pos_first_free= dyn_array->da_ops.ic_get_current_size(dyn_array);
+    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
+                                                  (const gchar*)transl_entry,
+                                                  entry_size))
+    {
+      /* Memory allocation error */
+      return IC_ERROR_MEM_ALLOC;
+    }
+  }
+  else
+  {
+    /*
+      Use the free entry but also keep the free list up to date
+      by reading the next free from the first free.
+    */
+    if (dyn_array->da_ops.ic_read_dynamic_array(transl_obj,
+                                                pos_first_free,
+                                                entry_size,
+                                                (gchar*)&transl_entry))
+      abort();
+    first_entry.position= transl_entry.position;
+    if (dyn_array->da_ops.ic_write_dynamic_array(transl_obj,
+                                                 pos_first,
+                                                 entry_size,
+                                                 (gchar*)&first_entry))
+      abort();
+    transl_entry.object= object;
+    if (dyn_array->da_ops.ic_write_dynamic_array(transl_obj,
+                                                 pos_first_free,
+                                                 entry_size,
+                                                 (gchar*)&transl_entry))
+      abort();
+  }
+  *position= pos_first_free;
+  return 0;
+}
+
+void
+remove_object_from_translation(IC_DYNAMIC_ARRAY *transl_obj,
+                               guint32 index,
+                               void *object)
+{
+  TRANSLATION_ENTRY transl_entry;
+  guint64 pos_first= (guint64)0;
+  guint64 position= index * sizeof(TRANSLATION_ENTRY);
+  guint64 entry_size= sizeof(TRANSLATION_ENTRY);
+
+  if (dyn_array->da_ops.ic_read_dynamic_array(transl_obj,
+                                               position,
+                                               entry_size,
+                                               (gchar*)&transl_entry))
+  {
+    /* Serious error cannot find entry to remove */
+    abort();
+  }
+  if (transl_entry->object != object)
+  {
+    /* Serious error, wrong object where positioned */
+    abort();
+  }
+  if (dyn_array->da_ops.ic_read_dynamic_array(transl_obj,
+                                               pos_first,
+                                               entry_size,
+                                               (gchar*)&transl_entry))
+  {
+    /* Serious error cannot find entry to remove */
+    abort();
+  }
+  if (dyn_array->da_ops.ic_write_dynamic_array(transl_obj,
+                                               position,
+                                               entry_size,
+                                               (gchar*)&transl_entry))
+    abort();
+  transl_entry.object= (void*)position;
+  if (dyn_array->da_ops.ic_write_dynamic_array(transl_obj,
+                                               pos_first,
+                                               entry_size,
+                                               (gchar*)&transl_entry))
+    abort();
+  return;
+}
+
+int
 struct ic_exec_message_func
 {
   int (*ic_exec_message_func) (IC_NDB_MESSAGE *message,
@@ -1745,10 +1889,37 @@ execTRANSACTION_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+/*
+  Signal Format:
+  Word 0: Connection object
+  Word 1: Transaction id part 1
+  Word 2: Transaction id part 2
+  One segment which contains the actual ATTRINFO data
+*/
 static int
 execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
                       IC_MESSAGE_ERROR_OBJECT *error_object)
 {
+  guint32 *header_data= ndb_message->segment_ptr[0];
+  guint32 header_size= ndb_message->segment_size[0];
+  guint32 *attrinfo_data;
+  guint32 data_size;
+  guint32 connection_ptr= header_data[0];
+  guint32 transid_part1= header_data[1];
+  guint32 transid_part2= header_data[2];
+
+  if (ndb_message->num_segments == 1)
+  {
+    attrinfo_data= ndb_message->segment_size[1];
+    data_size= ndb_message->segment_size[1];
+    g_assert(header_size == 3);
+  }
+  else
+  {
+    attrinfo_data= &header_data[3];
+    g_assert(header_size <= 25);
+    data_size= header_size - 3;
+  }
   return 0;
 }
 

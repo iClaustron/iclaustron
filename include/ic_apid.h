@@ -397,6 +397,14 @@ struct ic_metadata_bind_ops
 };
 typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
 
+#define TRANSLATION_ARRAY_SIZE 256
+struct ic_translation_obj;
+typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
+struct ic_translation_obj
+{
+  IC_HASHTABLE *hash_table;
+};
+
 struct ic_apid_transaction_ops
 {
   /*
@@ -440,6 +448,8 @@ struct ic_apid_connection
   IC_APID_TRANSACTION_OPS apid_trans_ops;
   IC_METADATA_BIND_OPS apid_metadata_ops;
   IC_APID_GLOBAL *apid_global;
+  IC_TRANSLATION_OBJ *trans_bindings;
+  IC_TRANSLATION_OBJ *op_bindings;
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_id_bitmap;
   IC_THREAD_CONNECTION *thread_conn;
