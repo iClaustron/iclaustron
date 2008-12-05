@@ -25,6 +25,8 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include <ic_mc.h>
+
 #define CONFIG_READ_BUF_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
 
@@ -175,46 +177,6 @@ int
 ic_create_thread_fixed_size_pool_malloc(guint32 fixed_size,
                                         guint32 initial_pool_size,
                                         IC_MALLOC *glob_malloc_ptr);
-
-/*
-  A helpful support function to handle many memory allocations within one
-  container. This allocates a linked list of containers of base size (except
-  when allocations are larger than base size. When freeing it will free all
-  of those containers.
-
-  Reset means that we deallocate everything one container of base size.
-  Thus we're back to the situation after performing the first allocation of
-  the container. Reset will also set all bytes to 0 in container.
-*/
-#define MC_MIN_BASE_SIZE 128
-#define MC_DEFAULT_BASE_SIZE 8180
-struct ic_memory_container;
-struct ic_memory_container_ops
-{
-  gchar* (*ic_mc_alloc) (struct ic_memory_container *mc_ptr, guint32 size);
-  gchar* (*ic_mc_calloc) (struct ic_memory_container *mc_ptr, guint32 size);
-  void (*ic_mc_reset) (struct ic_memory_container *mc_ptr);
-  void (*ic_mc_free) (struct ic_memory_container *mc_ptr);
-};
-typedef struct ic_memory_container_ops IC_MEMORY_CONTAINER_OPS;
-
-struct ic_memory_container
-{
-  IC_MEMORY_CONTAINER_OPS mc_ops;
-  gchar *current_buf;
-  gchar **buf_array;
-  guint64 total_size;
-  guint64 max_size;
-  guint32 base_size;
-  guint32 buf_array_size;
-  guint32 current_buf_inx;
-  guint32 current_free_len;
-  guint32 first_buf_inx;
-};
-typedef struct ic_memory_container IC_MEMORY_CONTAINER;
-
-IC_MEMORY_CONTAINER*
-ic_create_memory_container(guint32 base_size, guint32 max_size);
 
 /*
   This function is used by all iClaustron programs to read program parameters

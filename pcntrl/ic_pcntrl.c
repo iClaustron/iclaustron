@@ -13,10 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <glib.h>
-#include <stdio.h>
-
-
+#include <ic_common.h>
 /*
   This program is also used to gather information from local log files as 
   part of any process to gather information about mishaps in the cluster(s).
@@ -45,8 +42,6 @@
   the configuration file.
 */
 
-#include <ic_connection.h>
-#include <ic_common.h>
 
 #define REC_PROG_NAME 0
 #define REC_PARAM 1

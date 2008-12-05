@@ -19,5 +19,5 @@
 lib_LTLIBRARIES = libic_util.la
 
 libic_util_la_SOURCES = ic_util.c hashtable.c hashtable_itr.c \
-                        ic_dyn_array.c
-EXTRA_DIST      = ic_dyn_array_int.h
+                        ic_dyn_array.c ic_mc.c
+EXTRA_DIST      = ic_dyn_array_int.h ic_mc_int.h

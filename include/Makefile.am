@@ -24,4 +24,6 @@ include_HEADERS = hashtable.h \
                   ic_config.h \
                   ic_dyn_array.h \
                   ic_err.h \
+                  ic_mc.h \
+                  ic_poll_set.h \
                   ic_port.h

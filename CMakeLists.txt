@@ -242,11 +242,14 @@ set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${CMAKE_REQUIRED_LIBRARIES})
 add_library(ic_port STATIC port/ic_port.c)
 
 #Build library for iClaustron utility functions
-add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c util/ic_util.c)
+add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c
+            util/ic_util.c util/ic_mc.c util/ic_dyn_array.c
+            util/ic_mc_int.h util/ic_dyn_array_int.h)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
-add_library(comm STATIC comm/socket_conn.c comm/socket_membuf.c comm/comm_supp.c)
+add_library(comm STATIC comm/ic_connection.c comm/socket_membuf.c
+            comm/comm_supp.c comm/ic_poll_set.c comm/ic_poll_set_int.h)
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API
@@ -348,10 +351,13 @@ install (FILES
          include/ic_apic.h
          include/ic_apid.h
          include/ic_clmgr.h
-         include/ic_comm.h
+         include/ic_connection.h
          include/ic_common.h
          include/ic_common_header.h
+         include/ic_dyn_array.h
          include/ic_err.h
+         include/ic_mc.h
+         include/ic_poll_set.h
          include/ic_port.h
          include/ic_ssl.h
          include/ic_config.h

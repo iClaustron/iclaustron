@@ -21,7 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include <ic_common_header.h>
+#include <ic_common.h>
 /*
 Credit for primes table: Aaron Krowne
  http://br.endernet.org/~akrowne/

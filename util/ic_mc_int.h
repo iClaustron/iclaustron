@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007, 2008 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -13,13 +13,22 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#ifndef IC_COMMON_H
-#define IC_COMMON_H
-#include <ic_common_header.h>
-#include <ic_connection.h>
-#include <ic_dyn_array.h>
-#include <ic_poll_set.h>
-#include <ic_mc.h>
-#include <ic_config.h>
-#include <hashtable.h>
+#ifndef IC_MC_INT_H
+#define IC_MC_INT_H
+#include <ic_common.h>
+
+struct ic_memory_container_int
+{
+  IC_MEMORY_CONTAINER_OPS mc_ops;
+  gchar *current_buf;
+  gchar **buf_array;
+  guint64 total_size;
+  guint64 max_size;
+  guint32 base_size;
+  guint32 buf_array_size;
+  guint32 current_buf_inx;
+  guint32 current_free_len;
+  guint32 first_buf_inx;
+};
+typedef struct ic_memory_container_int IC_MEMORY_CONTAINER_INT;
 #endif

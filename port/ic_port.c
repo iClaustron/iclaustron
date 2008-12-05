@@ -17,7 +17,7 @@
 #include <glib/gstdio.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <ic_common_header.h>
+#include <ic_common.h>
 #include <errno.h>
 #ifdef HAVE_GETHRTIME
 #include <sys/time.h>
