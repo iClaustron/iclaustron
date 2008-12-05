@@ -104,7 +104,7 @@
   This data structure is used to represent an error that occurred.
 */
 
-#include <ic_connection.h>
+#include <ic_common.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
 
@@ -1726,7 +1726,6 @@ ic_send_handling(IC_APID_GLOBAL *apid_global,
   block for an extended period while executing messages.
 */
 
-int
 struct ic_exec_message_func
 {
   int (*ic_exec_message_func) (IC_NDB_MESSAGE *message,

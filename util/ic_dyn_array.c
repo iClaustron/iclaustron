@@ -529,7 +529,7 @@ free_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans)
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
 
-  free_dynamic_ordered_array(dyn_array);
+  free_ordered_dynamic_array(dyn_array);
   ic_free((void*)dyn_trans);
 }
 

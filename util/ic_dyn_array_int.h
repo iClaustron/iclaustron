@@ -70,7 +70,7 @@ struct ic_translation_entry
   {
     void *object;
     guint64 position;
-  }
+  };
 };
 typedef struct ic_translation_entry IC_TRANSLATION_ENTRY;
 
