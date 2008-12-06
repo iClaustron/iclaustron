@@ -445,7 +445,7 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
 
-  if (read_orderde_dynamic_array(dyn_array,
+  if (read_ordered_dynamic_array(dyn_array,
                                  pos_first,
                                  entry_size,
                                  (gchar*)&transl_entry))
@@ -472,7 +472,7 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
       Use the free entry but also keep the free list up to date
       by reading the next free from the first free.
     */
-    if (read_orderde_dynamic_array(dyn_array,
+    if (read_ordered_dynamic_array(dyn_array,
                                    pos_first_free,
                                    entry_size,
                                    (gchar*)&transl_entry))
@@ -507,7 +507,7 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
 
-  if (read_orderde_dynamic_array(dyn_array,
+  if (read_ordered_dynamic_array(dyn_array,
                                  position,
                                  entry_size,
                                  (gchar*)&transl_entry))
@@ -520,7 +520,7 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     /* Serious error, wrong object where positioned */
     abort();
   }
-  if (read_orderde_dynamic_array(dyn_array,
+  if (read_ordered_dynamic_array(dyn_array,
                                  pos_first,
                                  entry_size,
                                  (gchar*)&transl_entry))
