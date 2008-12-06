@@ -376,14 +376,14 @@ typedef enum ic_apid_scan_operation_type IC_APID_SCAN_OPERATION_TYPE;
 struct ic_key_operation
 {
   guint32 operation_type;
-  IC_APID_KEY_OPERATION_TYPE;
+  IC_APID_KEY_OPERATION_TYPE key_op_type;
 };
 typedef struct ic_key_operation IC_KEY_OPERATION;
 
 struct ic_scan_operation
 {
   guint32 operation_type;
-  IC_APID_SCAN_OPERATION_TYPE;
+  IC_APID_SCAN_OPERATION_TYPE scan_op_type;
 };
 typedef struct ic_scan_operation IC_SCAN_OPERATION;
 

@@ -64,6 +64,7 @@ struct ic_dynamic_array_int
   IC_DYNAMIC_ARRAY_OPS da_ops;
   IC_SIMPLE_DYNAMIC_ARRAY sd_array;
   IC_ORDERED_DYNAMIC_ARRAY ord_array;
+  guint64 total_size_in_bytes;
 };
 typedef struct ic_dynamic_array_int IC_DYNAMIC_ARRAY_INT;
 

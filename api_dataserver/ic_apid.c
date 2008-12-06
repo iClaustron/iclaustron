@@ -1772,7 +1772,7 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   guint32 *attrinfo_data;
   void *connection_obj;
   IC_KEY_OPERATION *key_op;
-  IC_SCAN_OP *scan_op;
+  IC_SCAN_OPERATION *scan_op;
   IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
   guint32 data_size;
   guint64 connection_ptr= header_data[0];

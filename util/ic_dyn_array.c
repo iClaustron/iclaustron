@@ -87,6 +87,7 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   }
   memcpy(buf_ptr, buf, size_left_to_copy);
   sd_array->bytes_used= buf_ptr_start_pos + size_left_to_copy;
+  dyn_array->total_size_in_bytes+= size;
   return 0;
 }
 
@@ -238,12 +239,19 @@ write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *ext_dyn_array,
   return 0;
 }
 
-void
+static void
 free_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array)
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
   release_dyn_buf(dyn_array->sd_array.first_dyn_buf);
   ic_free((void*)dyn_array);
+}
+
+static guint64
+get_current_size(IC_DYNAMIC_ARRAY *ext_dyn_array)
+{
+  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+  return dyn_array->total_size_in_bytes;
 }
 
 IC_DYNAMIC_ARRAY*
@@ -272,6 +280,7 @@ ic_create_simple_dynamic_array()
   da_ops->ic_write_dynamic_array= write_simple_dynamic_array;
   da_ops->ic_write_dynamic_array_to_disk= write_simple_dynamic_array_to_disk;
   da_ops->ic_free_dynamic_array= free_simple_dynamic_array;
+  da_ops->ic_get_current_size= get_current_size;
   return (IC_DYNAMIC_ARRAY*)dyn_array;
 }
 
@@ -567,10 +576,11 @@ ic_create_ordered_dynamic_array()
   da_ops->ic_free_dynamic_array= free_ordered_dynamic_array;
   da_ops->ic_read_dynamic_array= read_ordered_dynamic_array;
   da_ops->ic_write_dynamic_array= write_ordered_dynamic_array;
+  da_ops->ic_get_current_size= get_current_size;
   return (IC_DYNAMIC_ARRAY*)dyn_array;
 }
 
-int
+static int
 insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                           guint64 *position,
                           void *object)
@@ -632,7 +642,29 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
   return 0;
 }
 
-void
+static int
+get_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
+                       guint64 index,
+                       void **object)
+{
+  IC_DYNAMIC_TRANSLATION_INT *dyn_trans=
+    (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
+  IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
+  IC_TRANSLATION_ENTRY transl_entry;
+  guint64 position= index * sizeof(IC_TRANSLATION_ENTRY);
+
+  if (read_dynamic_translation(dyn_array,
+                               position,
+                               sizeof(IC_TRANSLATION_ENTRY),
+                               (gchar*)&transl_entry))
+  {
+    return 1;
+  }
+  *object= transl_entry.object;
+  return 0;
+}
+
+static void
 remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                           guint64 index,
                           void *object)
@@ -718,6 +750,7 @@ create_translation_object()
   dyn_trans->dt_ops.ic_insert_translation_object= insert_translation_object;
   dyn_trans->dt_ops.ic_remove_translation_object= remove_translation_object;
   dyn_trans->dt_ops.ic_free_translation_object= free_translation_object;
+  dyn_trans->dt_ops.ic_get_object= get_translation_object;
   dyn_trans->dyn_array= dyn_array;
   return (IC_DYNAMIC_TRANSLATION*)dyn_trans;
 }
