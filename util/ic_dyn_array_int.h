@@ -20,6 +20,8 @@
 
 #define SIMPLE_DYNAMIC_ARRAY_BUF_SIZE 1024
 #define ORDERED_DYNAMIC_INDEX_SIZE 256
+#define LOG_SIMPLE_DYNAMIC_ARRAY_BUF_SIZE 10
+#define LOG_ORDERED_DYNAMIC_INDEX_SIZE 8
 
 struct ic_simple_dynamic_buf;
 struct ic_simple_dynamic_buf
@@ -53,6 +55,7 @@ struct ic_ordered_dynamic_array
   IC_DYNAMIC_ARRAY_INDEX *top_index;
   IC_DYNAMIC_ARRAY_INDEX *first_dyn_index;
   IC_DYNAMIC_ARRAY_INDEX *last_dyn_index;
+  guint32 index_levels;
 };
 typedef struct ic_ordered_dynamic_array IC_ORDERED_DYNAMIC_ARRAY;
 

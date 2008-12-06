@@ -342,6 +342,13 @@ struct ic_field_def
 };
 typedef struct ic_field_def IC_FIELD_DEF;
 
+enum ic_operation_type
+{
+  KEY_OPERATION= 0,
+  SCAN_OPERATION= 1
+};
+typedef enum ic_operation_type IC_OPERATION_TYPE;
+
 enum ic_apid_key_operation_type
 {
   SIMPLE_KEY_READ= 0,
@@ -365,6 +372,20 @@ enum ic_apid_scan_operation_type
   SCAN_CONSISTENT_READ= 3
 };
 typedef enum ic_apid_scan_operation_type IC_APID_SCAN_OPERATION_TYPE;
+
+struct ic_key_operation
+{
+  guint32 operation_type;
+  IC_APID_KEY_OPERATION_TYPE;
+};
+typedef struct ic_key_operation IC_KEY_OPERATION;
+
+struct ic_scan_operation
+{
+  guint32 operation_type;
+  IC_APID_SCAN_OPERATION_TYPE;
+};
+typedef struct ic_scan_operation IC_SCAN_OPERATION;
 
 enum ic_instruction_type
 {
@@ -423,6 +444,7 @@ struct ic_apid_transaction_ops
   */
   int (*ic_key_access) (IC_TRANSACTION_OBJ *transaction_obj,
                         IC_APID_KEY_OPERATION_TYPE apid_key_op_type,
+                        IC_KEY_OPERATION **key_op,
                         IC_TABLE_DEF *table_def,
                         IC_FIELD_DEF **field_def,
                         IC_FIELD_DEF **key_def);

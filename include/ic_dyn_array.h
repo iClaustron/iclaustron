@@ -23,7 +23,8 @@ typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;
 struct ic_dynamic_array_ops
 {
   int (*ic_insert_dynamic_array) (IC_DYNAMIC_ARRAY *dyn_array,
-                                  const gchar *buf, guint64 size);
+                                  const gchar *buf,
+                                  guint64 size);
   int (*ic_write_dynamic_array) (IC_DYNAMIC_ARRAY *dyn_array,
                                  guint64 position,
                                  guint64 size,
@@ -50,6 +51,9 @@ struct ic_dynamic_translation;
 typedef struct ic_dynamic_translation IC_DYNAMIC_TRANSLATION;
 struct ic_dynamic_translation_ops
 {
+  int (*ic_get_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
+                        guint64 index,
+                        void **object);
   int (*ic_insert_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
                                        guint64 *index,
                                        void *object);

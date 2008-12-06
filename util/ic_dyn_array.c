@@ -117,28 +117,58 @@ find_pos_simple_dyn_array(IC_DYNAMIC_ARRAY_INT *dyn_array, guint64 pos,
 }
 
 static int
-read_pos_simple_dynamic_array(IC_SIMPLE_DYNAMIC_BUF *dyn_buf, guint64 buf_pos,
-                              guint64 size, gchar *ret_buf)
+read_pos_simple_dynamic_array(IC_SIMPLE_DYNAMIC_BUF *dyn_buf,
+                              guint64 buf_pos,
+                              guint64 size,
+                              gchar *buf)
 {
-  guint64 read_size, already_read_size;
-  gchar *read_buf;
+  guint64 read_size;
+  guint64 already_read_size= 0;
+  const gchar *read_buf;
+  gchar *dest_buf= buf;
 
-  read_buf= (gchar*)&dyn_buf->buf[0];
-  read_buf+= buf_pos;
-  read_size= IC_MIN(size,
-                    (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - buf_pos));
-  memcpy(ret_buf, read_buf, read_size);
-  while (read_size < size)
+  do
   {
-    read_buf+= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
-    dyn_buf= dyn_buf->next_dyn_buf;
     if (dyn_buf == NULL)
       return 1;
-    already_read_size= read_size;
-    read_size= IC_MIN(size, (read_size + SIMPLE_DYNAMIC_ARRAY_BUF_SIZE));
     read_buf= (gchar*)&dyn_buf->buf[0];
-    memcpy(ret_buf, read_buf, (read_size - already_read_size));
-  }
+    read_size= IC_MIN((size - already_read_size),
+                       (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - buf_pos));
+    already_read_size+= read_size;
+    read_buf+= buf_pos;
+    memcpy(dest_buf, read_buf, read_size);
+    dest_buf+= read_size;
+    buf_pos= 0;
+    dyn_buf= dyn_buf->next_dyn_buf;
+  } while (already_read_size < size);
+  return 0;
+}
+
+static int
+write_pos_simple_dynamic_array(IC_SIMPLE_DYNAMIC_BUF *dyn_buf,
+                               guint64 buf_pos,
+                               guint64 size,
+                               const gchar *buf)
+{
+  guint64 write_size;
+  guint64 already_written_size= 0;
+  gchar *write_buf;
+  const gchar *source_buf= buf;
+
+  do
+  {
+    if (dyn_buf == NULL)
+      return 1;
+    write_buf= (gchar*)&dyn_buf->buf[0];
+    write_size= IC_MIN((size - already_written_size),
+                       (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - buf_pos));
+    already_written_size+= write_size;
+    write_buf+= buf_pos;
+    memcpy(write_buf, source_buf, write_size);
+    source_buf+= write_size;
+    buf_pos= 0;
+    dyn_buf= dyn_buf->next_dyn_buf;
+  } while (already_written_size < size);
   return 0;
 }
 
@@ -148,6 +178,16 @@ write_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
                            guint64 size,
                            const gchar *buf)
 {
+  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf;
+  guint64 buf_pos;
+  int ret_code;
+
+  if ((ret_code= find_pos_simple_dyn_array(dyn_array, position,
+                                           &dyn_buf, &buf_pos)) || 
+      (ret_code= write_pos_simple_dynamic_array(dyn_buf, buf_pos,
+                                                size, buf)))
+    return ret_code;
   return 0;
 }
 
@@ -236,7 +276,7 @@ ic_create_simple_dynamic_array()
 }
 
 static int
-insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY *ext_dyn_array,
+insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
                                     IC_DYNAMIC_ARRAY_INDEX *dyn_index,
                                     IC_DYNAMIC_ARRAY_INDEX **new_parent,
                                     void *child_ptr)
@@ -265,7 +305,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY *ext_dyn_array,
         dynamic array index buffer and insert a reference to it in our
         parent node.
       */
-      if ((ret_code= insert_buf_in_ordered_dynamic_index(ext_dyn_array,
+      if ((ret_code= insert_buf_in_ordered_dynamic_index(dyn_array,
                                                  dyn_index->parent_dyn_index,
                                                  &new_parent_dyn_index,
                                                  (void*)new_dyn_index)))
@@ -297,6 +337,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY *ext_dyn_array,
       new_parent_dyn_index->child_ptrs[0]= (void*)dyn_index;
       new_parent_dyn_index->child_ptrs[1]= (void*)new_dyn_index;
       new_parent_dyn_index->next_pos_to_insert= 2;
+      dyn_array->ord_array.index_levels++;
     }
     dyn_index= new_dyn_index;
     next_pos_to_insert= 0;
@@ -328,7 +369,7 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
     buf_size+= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
     g_assert(size <= buf_size);
     last_dyn_index= dyn_array->ord_array.last_dyn_index;
-    if ((ret_code= insert_buf_in_ordered_dynamic_index(ext_dyn_array,
+    if ((ret_code= insert_buf_in_ordered_dynamic_index(dyn_array,
                                                        last_dyn_index,
                                                        NULL,
                                                        (void*)loop_dyn_buf)))
@@ -348,34 +389,125 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
 }
 
 static int
-find_pos_ordered_dyn_array(
-__attribute__ ((unused)) IC_DYNAMIC_ARRAY_INT *dyn_array,
-__attribute__ ((unused)) guint64 pos,
-__attribute__ ((unused)) IC_SIMPLE_DYNAMIC_BUF **dyn_buf,
-__attribute__ ((unused)) guint64 *buf_pos)
+find_pos_ordered_dyn_array(IC_DYNAMIC_ARRAY_INT *dyn_array,
+                           guint64 pos,
+                           IC_SIMPLE_DYNAMIC_BUF **dyn_buf,
+                           guint64 *buf_pos)
 {
+  guint64 log_simple= LOG_SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
+  guint64 log_dynamic= LOG_ORDERED_DYNAMIC_INDEX_SIZE;
+  guint64 dynamic_size= ORDERED_DYNAMIC_INDEX_SIZE;
+  guint64 index, new_pos;
+  guint64 log_index;
+  guint32 i;
+  guint32 index_levels= dyn_array->ord_array.index_levels;
+  IC_DYNAMIC_ARRAY_INDEX *top_index= dyn_array->ord_array.top_index;
+  IC_DYNAMIC_ARRAY_INDEX *dyn_index;
+
+  /*
+    Calculate the index from top node and going down to the last
+    node. The lowest level always exist and this level has
+    LOG_SIMPLE_DYNAMIC_ARRAY_BUF_SIZE bits of the highest bits
+    in the position. The remaining levels have
+    LOG_ORDERED_DYNAMIC_INDEX_SIZE bits per level. This means that
+    e.g. for a 3-level tree we'll find index into highest index
+    in bit position 16 to 25 and the next level is bit 8 to 15
+    and the lowest level is bit 0-7.
+
+    We start with the full position and calculate the index in the
+    top index. Then we remove the starting position from the
+    provided position such that we get the new position for the
+    next level to be computed. Then we continue like this until
+    we have reached the bottom level.
+  */
+  log_index= log_simple + log_dynamic * (index_levels - 1);
+  new_pos= pos;
+  dyn_index= top_index;
+  for (i= 0; i < index_levels; i++)
+  {
+    index= new_pos >> log_index;
+    new_pos= pos - (index << log_index);
+    log_index-= log_dynamic;
+    if (index >= dynamic_size)
+      return 1;
+    dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)dyn_index->child_ptrs[index];
+  }
+  *buf_pos= new_pos;
+  *dyn_buf= (IC_SIMPLE_DYNAMIC_BUF*)dyn_index;
   return 0;
 }
 
 static int
-write_ordered_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
+write_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
                             guint64 position,
                             guint64 size,
                             const gchar *buf)
-{
-  return 0;
-}
-
-static int
-read_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array, guint64 pos,
-                           guint64 size, gchar *ret_buf)
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
   IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
   guint64 buf_pos= 0;
   int ret_code;
 
-  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, pos,
+  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
+                                            &dyn_buf, &buf_pos)) || 
+      (ret_code= write_pos_simple_dynamic_array(dyn_buf, buf_pos,
+                                                size, buf)))
+    return ret_code;
+  return 0;
+}
+
+static int
+read_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
+                         guint64 position,
+                         __attribute__((unused)) guint64 size,
+                         gchar *buf)
+{
+  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
+  guint64 buf_pos;
+  gchar **read_buf;
+  int ret_code;
+
+  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
+                                            &dyn_buf, &buf_pos)))
+    return ret_code;
+  read_buf= (gchar**)&dyn_buf->buf[buf_pos];
+  *(gchar**)buf= *read_buf;
+  return 0;
+}
+
+static int
+write_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
+                          guint64 position,
+                          __attribute__((unused)) guint64 size,
+                          const gchar *buf)
+{
+  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
+  guint64 buf_pos= 0;
+  gchar **write_buf;
+  int ret_code;
+
+  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
+                                            &dyn_buf, &buf_pos)))
+    return ret_code;
+  write_buf= (gchar**)&dyn_buf->buf[buf_pos];
+  *write_buf= *(gchar**)buf;
+  return 0;
+}
+
+static int
+read_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
+                           guint64 position,
+                           guint64 size,
+                           gchar *ret_buf)
+{
+  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
+  guint64 buf_pos= 0;
+  int ret_code;
+
+  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
                                             &dyn_buf, &buf_pos)) || 
       (ret_code= read_pos_simple_dynamic_array(dyn_buf, buf_pos,
                                                size, ret_buf)))
@@ -419,10 +551,16 @@ ic_create_ordered_dynamic_array()
     return NULL;
   }
 
+  /*
+    dyn_index_array don't need any initialisation, 0's are ok
+    as initialisation since NULL=0 and there is no next pointer,
+    no child pointers and initial size is 0.
+  */
   ord_array= &dyn_array->ord_array;
   ord_array->top_index= dyn_index_array;
   ord_array->first_dyn_index= dyn_index_array;
   ord_array->last_dyn_index= dyn_index_array;
+  ord_array->index_levels= 1;
 
   da_ops= &dyn_array->da_ops;
   da_ops->ic_insert_dynamic_array= insert_ordered_dynamic_array;
@@ -445,10 +583,10 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
 
-  if (read_ordered_dynamic_array(dyn_array,
-                                 pos_first,
-                                 entry_size,
-                                 (gchar*)&transl_entry))
+  if (read_dynamic_translation(dyn_array,
+                               pos_first,
+                               entry_size,
+                               (gchar*)&transl_entry))
     abort();
   pos_first_free= transl_entry.position;
   if (pos_first_free == (guint64)0)
@@ -472,22 +610,22 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
       Use the free entry but also keep the free list up to date
       by reading the next free from the first free.
     */
-    if (read_ordered_dynamic_array(dyn_array,
-                                   pos_first_free,
-                                   entry_size,
-                                   (gchar*)&transl_entry))
+    if (read_dynamic_translation(dyn_array,
+                                 pos_first_free,
+                                 entry_size,
+                                 (gchar*)&transl_entry))
       abort();
     first_entry.position= transl_entry.position;
-    if (write_ordered_dynamic_array(dyn_array,
-                                    pos_first,
-                                    entry_size,
-                                    (const gchar*)&first_entry))
+    if (write_dynamic_translation(dyn_array,
+                                  pos_first,
+                                  entry_size,
+                                  (const gchar*)&first_entry))
       abort();
     transl_entry.object= object;
-    if (write_ordered_dynamic_array(dyn_array,
-                                    pos_first_free,
-                                    entry_size,
-                                    (gchar*)&transl_entry))
+    if (write_dynamic_translation(dyn_array,
+                                  pos_first_free,
+                                  entry_size,
+                                  (gchar*)&transl_entry))
       abort();
   }
   *position= pos_first_free;
@@ -507,10 +645,10 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
 
-  if (read_ordered_dynamic_array(dyn_array,
-                                 position,
-                                 entry_size,
-                                 (gchar*)&transl_entry))
+  if (read_dynamic_translation(dyn_array,
+                               position,
+                               entry_size,
+                               (gchar*)&transl_entry))
   {
     /* Serious error cannot find entry to remove */
     abort();
@@ -520,24 +658,24 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     /* Serious error, wrong object where positioned */
     abort();
   }
-  if (read_ordered_dynamic_array(dyn_array,
-                                 pos_first,
-                                 entry_size,
-                                 (gchar*)&transl_entry))
+  if (read_dynamic_translation(dyn_array,
+                               pos_first,
+                               entry_size,
+                               (gchar*)&transl_entry))
   {
     /* Serious error cannot find entry to remove */
     abort();
   }
-  if (write_ordered_dynamic_array(dyn_array,
-                                  position,
-                                  entry_size,
-                                  (gchar*)&transl_entry))
+  if (write_dynamic_translation(dyn_array,
+                                position,
+                                entry_size,
+                                (gchar*)&transl_entry))
     abort();
   transl_entry.position= (guint64)index;
-  if (write_ordered_dynamic_array(dyn_array,
-                                  pos_first,
-                                  entry_size,
-                                  (gchar*)&transl_entry))
+  if (write_dynamic_translation(dyn_array,
+                                pos_first,
+                                entry_size,
+                                (gchar*)&transl_entry))
     abort();
   return;
 }

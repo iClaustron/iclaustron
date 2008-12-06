@@ -1770,11 +1770,22 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   guint32 *header_data= ndb_message->segment_ptr[0];
   guint32 header_size= ndb_message->segment_size[0];
   guint32 *attrinfo_data;
+  void *connection_obj;
+  IC_KEY_OPERATION *key_op;
+  IC_SCAN_OP *scan_op;
+  IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
   guint32 data_size;
-  guint32 connection_ptr= header_data[0];
+  guint64 connection_ptr= header_data[0];
   guint32 transid_part1= header_data[1];
   guint32 transid_part2= header_data[2];
 
+  if (dyn_trans->dt_ops.ic_get_object(dyn_trans,
+                                      connection_ptr,
+                                      &connection_obj))
+  {
+    return 1;
+  }
+  key_op= (IC_KEY_OPERATION*)connection_obj;
   if (ndb_message->num_segments == 1)
   {
     attrinfo_data= ndb_message->segment_size[1];
@@ -1787,6 +1798,8 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
     g_assert(header_size <= 25);
     data_size= header_size - 3;
   }
+  if (key_op->operation_type == SCAN_OPERATION)
+    scan_op= (IC_SCAN_OPERATION*)key_op;
   return 0;
 }
 
