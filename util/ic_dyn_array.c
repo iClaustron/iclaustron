@@ -143,6 +143,15 @@ read_pos_simple_dynamic_array(IC_SIMPLE_DYNAMIC_BUF *dyn_buf, guint64 buf_pos,
 }
 
 static int
+write_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
+                           guint64 position,
+                           guint64 size,
+                           const gchar *buf)
+{
+  return 0;
+}
+
+static int
 read_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array, guint64 pos,
                           guint64 size, gchar *ret_buf)
 {
@@ -220,6 +229,7 @@ ic_create_simple_dynamic_array()
   da_ops= &dyn_array->da_ops;
   da_ops->ic_insert_dynamic_array= insert_simple_dynamic_array;
   da_ops->ic_read_dynamic_array= read_simple_dynamic_array;
+  da_ops->ic_write_dynamic_array= write_simple_dynamic_array;
   da_ops->ic_write_dynamic_array_to_disk= write_simple_dynamic_array_to_disk;
   da_ops->ic_free_dynamic_array= free_simple_dynamic_array;
   return (IC_DYNAMIC_ARRAY*)dyn_array;
@@ -348,6 +358,15 @@ __attribute__ ((unused)) guint64 *buf_pos)
 }
 
 static int
+write_ordered_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array,
+                            guint64 position,
+                            guint64 size,
+                            const gchar *buf)
+{
+  return 0;
+}
+
+static int
 read_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array, guint64 pos,
                            guint64 size, gchar *ret_buf)
 {
@@ -409,6 +428,7 @@ ic_create_ordered_dynamic_array()
   da_ops->ic_insert_dynamic_array= insert_ordered_dynamic_array;
   da_ops->ic_free_dynamic_array= free_ordered_dynamic_array;
   da_ops->ic_read_dynamic_array= read_ordered_dynamic_array;
+  da_ops->ic_write_dynamic_array= write_ordered_dynamic_array;
   return (IC_DYNAMIC_ARRAY*)dyn_array;
 }
 
@@ -425,10 +445,10 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
 
-  if (dyn_array->da_ops.ic_read_dynamic_array(dyn_array,
-                                              pos_first,
-                                              entry_size,
-                                              (gchar*)&transl_entry))
+  if (read_orderde_dynamic_array(dyn_array,
+                                 pos_first,
+                                 entry_size,
+                                 (gchar*)&transl_entry))
     abort();
   pos_first_free= transl_entry.position;
   if (pos_first_free == (guint64)0)
@@ -438,9 +458,9 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
       array
     */
     pos_first_free= dyn_array->da_ops.ic_get_current_size(dyn_array);
-    if (dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                                  (const gchar*)&transl_entry,
-                                                  entry_size))
+    if (insert_ordered_dynamic_array(dyn_array,
+                                     (const gchar*)&transl_entry,
+                                     entry_size))
     {
       /* Memory allocation error */
       return IC_ERROR_MEM_ALLOC;
@@ -452,22 +472,22 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
       Use the free entry but also keep the free list up to date
       by reading the next free from the first free.
     */
-    if (dyn_array->da_ops.ic_read_dynamic_array(dyn_array,
-                                                pos_first_free,
-                                                entry_size,
-                                                (gchar*)&transl_entry))
+    if (read_orderde_dynamic_array(dyn_array,
+                                   pos_first_free,
+                                   entry_size,
+                                   (gchar*)&transl_entry))
       abort();
     first_entry.position= transl_entry.position;
-    if (dyn_array->da_ops.ic_write_dynamic_array(dyn_array,
-                                                 pos_first,
-                                                 entry_size,
-                                                 (const gchar*)&first_entry))
+    if (write_ordered_dynamic_array(dyn_array,
+                                    pos_first,
+                                    entry_size,
+                                    (const gchar*)&first_entry))
       abort();
     transl_entry.object= object;
-    if (dyn_array->da_ops.ic_write_dynamic_array(dyn_array,
-                                                 pos_first_free,
-                                                 entry_size,
-                                                 (gchar*)&transl_entry))
+    if (write_ordered_dynamic_array(dyn_array,
+                                    pos_first_free,
+                                    entry_size,
+                                    (gchar*)&transl_entry))
       abort();
   }
   *position= pos_first_free;
@@ -487,10 +507,10 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY *dyn_array= dyn_trans->dyn_array;
 
-  if (dyn_array->da_ops.ic_read_dynamic_array(dyn_array,
-                                               position,
-                                               entry_size,
-                                               (gchar*)&transl_entry))
+  if (read_orderde_dynamic_array(dyn_array,
+                                 position,
+                                 entry_size,
+                                 (gchar*)&transl_entry))
   {
     /* Serious error cannot find entry to remove */
     abort();
@@ -500,24 +520,24 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     /* Serious error, wrong object where positioned */
     abort();
   }
-  if (dyn_array->da_ops.ic_read_dynamic_array(dyn_array,
-                                               pos_first,
-                                               entry_size,
-                                               (gchar*)&transl_entry))
+  if (read_orderde_dynamic_array(dyn_array,
+                                 pos_first,
+                                 entry_size,
+                                 (gchar*)&transl_entry))
   {
     /* Serious error cannot find entry to remove */
     abort();
   }
-  if (dyn_array->da_ops.ic_write_dynamic_array(dyn_array,
-                                               position,
-                                               entry_size,
-                                               (gchar*)&transl_entry))
+  if (write_ordered_dynamic_array(dyn_array,
+                                  position,
+                                  entry_size,
+                                  (gchar*)&transl_entry))
     abort();
   transl_entry.position= (guint64)index;
-  if (dyn_array->da_ops.ic_write_dynamic_array(dyn_array,
-                                               pos_first,
-                                               entry_size,
-                                               (gchar*)&transl_entry))
+  if (write_ordered_dynamic_array(dyn_array,
+                                  pos_first,
+                                  entry_size,
+                                  (gchar*)&transl_entry))
     abort();
   return;
 }
@@ -549,12 +569,12 @@ create_translation_object()
     return NULL;
   }
   transl_entry.object= (void*)0;
-  if ((dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                         (const gchar*)&transl_entry,
-                                         sizeof(transl_entry))))
+  if (insert_ordered_dynamic_array(dyn_array,
+                                    (const gchar*)&transl_entry,
+                                    sizeof(transl_entry)))
   {
     ic_free((void*)dyn_trans);
-    dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
+    free_ordered_dynamic_array(dyn_array);
     return NULL;
   }
   dyn_trans->dt_ops.ic_insert_translation_object= insert_translation_object;
