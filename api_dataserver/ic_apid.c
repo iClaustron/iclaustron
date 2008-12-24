@@ -1205,31 +1205,90 @@ is_ds_conn_established(IC_DS_CONNECTION *ds_conn,
   return conn->conn_op.ic_get_error_code(conn);
 }
 
+/*
+  Protocol to start up a connection in the NDB Protocol.
+  Client:
+    Send "ndbd"<CR>
+    Send "ndbd passwd"<CR>
+  Server:
+    Send "ok"<CR>
+  Client:
+    Send "2 3"<CR> (2 is client node id and 3 is server node id
+  Server:
+    Send "1 1"<CR> (1 is transporter type for client/server
+  Connection is ready to send and receive NDB Protocol messages
+*/
 static int
-authenticate_ds_connection(void *conn_obj)
+authenticate_client_connection(IC_CONNECTION *conn,
+                               guint32 my_nodeid,
+                               guint32 server_nodeid)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  gchar send_buf[64];
+  int error;
+
+  g_snprintf(send_buf, "%u %u", my_nodeid, server_nodeid);
+  if ((error= ic_send_with_cr(conn, "ndbd")) ||
+      (error= ic_send_with_cr(conn, "ndbd passwd")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ok")) ||
+      (error= ic_send_with_cr(conn, send_buf)) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "1 1")))
+    return error;
+  return 0;
+}
+
+static int authenticate_server_connection(IC_CONNECTION *conn,
+                                          guint32 my_nodeid,
+                                          guint32 *client_nodeid)
 {
   gchar *read_buf;
   guint32 read_size;
   gchar expected_buf[64];
   int error;
-  IC_DS_CONNECTION *ds_conn= conn_obj;
-  IC_CONNECTION *conn= ds_conn->conn_obj;
+  guint64 my_id, client_id;
 
-  ic_send_with_cr(conn, "ndbd");
-  ic_send_with_cr(conn, "ndbd passwd");
-  conn->conn_op.ic_flush_connection(conn);
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  /* Retrieve client node id and verify that server is my node id */
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ndbd")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ndbd passwd")) ||
+      (error= ic_send_with_cr(conn, "ok")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
+      (read_buf[len] != ' ') ||
+      (len++, FALSE) ||
+      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
+      ((guint64)my_nodeid != my_id) ||
+      (client_id >= IC_MAX_NODE_ID)
+      (error= ic_send_with_cr(conn, "1 1")))
     return error;
-  if (!strcmp(read_buf, "ok"))
-    return AUTHENTICATE_ERROR;
-  ic_send_with_cr(conn, read_buf);
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
-  if (!strcmp(read_buf, expected_buf))
-    return AUTHENTICATE_ERROR;
   return 0;
+  if (ic_conv_str_to_int(read_buf, &client_id, &len))
+    goto end;
+  if (read_buf[len] != ' ')
+    goto end;
+  len++;
+  if (ic_conv_str_to_int(&read_buf[len], &my_id, &len))
+    goto end;
+  if ((guint64)my_nodeid != my_id)
+    goto end;
+  if (client_id >= IC_MAX_NODE_ID)
+    goto end;
+  if (error= ic_send_with_cr(conn, "ok")))
+    return error;
+  return 0;
+error:
+  return AUTHENTICATE_ERROR;
 }
-
+                                          
 static int
 open_ds_connection(IC_DS_CONNECTION *ds_conn)
 {
@@ -1756,6 +1815,24 @@ execTRANSACTION_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+static int
+handle_key_ai(IC_KEY_OPERATION *key_op,
+              guint32 *ai_data,
+              guint32 data_size,
+              IC_MESSAGE_ERROR_OBJECT *error_message)
+{
+  return 0;
+}
+
+static int
+handle_scan_ai(IC_SCAN_OPERATION *scan_op,
+               guint32 *ai_data,
+               guint32 data_size,
+               IC_MESSAGE_ERROR_OBJECT *error_message)
+{
+  return 0;
+}
+
 /*
   Signal Format:
   Word 0: Connection object
@@ -1799,8 +1876,17 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
     data_size= header_size - 3;
   }
   if (key_op->operation_type == SCAN_OPERATION)
+  {
     scan_op= (IC_SCAN_OPERATION*)key_op;
-  return 0;
+    return handle_scan_ai(scan_op,
+                          attrinfo_data,
+                          data_size,
+                          error_object);
+  }
+  return handle_key_ai(key_op,
+                       attrinfo_data,
+                       data_size,
+                       error_object);
 }
 
 static int

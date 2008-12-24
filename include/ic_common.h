@@ -20,6 +20,7 @@
 #include <ic_dyn_array.h>
 #include <ic_poll_set.h>
 #include <ic_mc.h>
+#include <ic_bitmap.h>
 #include <ic_config.h>
 #include <hashtable.h>
 #endif

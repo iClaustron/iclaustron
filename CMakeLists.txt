@@ -244,7 +244,8 @@ add_library(ic_port STATIC port/ic_port.c)
 #Build library for iClaustron utility functions
 add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c
             util/ic_util.c util/ic_mc.c util/ic_dyn_array.c
-            util/ic_mc_int.h util/ic_dyn_array_int.h)
+            util/ic_mc_int.h util/ic_dyn_array_int.h
+            util/ic_bitmap.c)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
@@ -358,6 +359,7 @@ install (FILES
          include/ic_err.h
          include/ic_mc.h
          include/ic_poll_set.h
+         include/ic_bitmap.h
          include/ic_port.h
          include/ic_ssl.h
          include/ic_config.h
