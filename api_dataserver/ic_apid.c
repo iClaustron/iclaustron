@@ -1213,9 +1213,9 @@ is_ds_conn_established(IC_DS_CONNECTION *ds_conn,
   Server:
     Send "ok"<CR>
   Client:
-    Send "2 3"<CR> (2 is client node id and 3 is server node id
+    Send "2 3"<CR> (2 is client node id and 3 is server node id)
   Server:
-    Send "1 1"<CR> (1 is transporter type for client/server
+    Send "1 1"<CR> (1 is transporter type for client/server)
   Connection is ready to send and receive NDB Protocol messages
 */
 static int
@@ -1268,58 +1268,19 @@ static int authenticate_server_connection(IC_CONNECTION *conn,
       (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
       ((guint64)my_nodeid != my_id) ||
       (client_id >= IC_MAX_NODE_ID)
-      (error= ic_send_with_cr(conn, "1 1")))
+      (error= ic_send_with_cr(conn, "1 1")) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
+      (read_buf[len] != ' ') ||
+      (len++, FALSE) ||
+      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
+      ((guint64)my_nodeid != my_id) ||
+      (client_id >= IC_MAX_NODE_ID) ||
+      (error= ic_send_with_cr(conn, "ok"))))
     return error;
   return 0;
-  if (ic_conv_str_to_int(read_buf, &client_id, &len))
-    goto end;
-  if (read_buf[len] != ' ')
-    goto end;
-  len++;
-  if (ic_conv_str_to_int(&read_buf[len], &my_id, &len))
-    goto end;
-  if ((guint64)my_nodeid != my_id)
-    goto end;
-  if (client_id >= IC_MAX_NODE_ID)
-    goto end;
-  if (error= ic_send_with_cr(conn, "ok")))
-    return error;
-  return 0;
-error:
-  return AUTHENTICATE_ERROR;
 }
                                           
-static int
-open_ds_connection(IC_DS_CONNECTION *ds_conn)
-{
-  int error;
-  IC_CONNECTION *conn= ds_conn->conn_obj;
-  if (!(conn= ic_create_socket_object(TRUE, TRUE, TRUE,
-                                      CONFIG_READ_BUF_SIZE,
-                                      authenticate_ds_connection,
-                                      (void*)ds_conn)))
-    return IC_ERROR_MEM_ALLOC;
-  ds_conn->conn_obj= conn;
-  if ((error= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
-    return error;
-  return 0;
-}
-
-static int
-close_ds_connection(__attribute__ ((unused)) IC_DS_CONNECTION *ds_conn)
-{
-  return 0;
-}
-
-void
-ic_init_ds_connection(IC_DS_CONNECTION *ds_conn)
-{
-  ds_conn->operations.ic_set_up_ds_connection= open_ds_connection;
-  ds_conn->operations.ic_close_ds_connection= close_ds_connection;
-  ds_conn->operations.ic_is_conn_established= is_ds_conn_established;
-  ds_conn->operations.ic_authenticate_connection= authenticate_ds_connection;
-}
-
 /*
   SEND MESSAGE MODULE
   -------------------
