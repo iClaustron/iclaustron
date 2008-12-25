@@ -324,9 +324,9 @@ typedef struct ic_transaction_hint IC_TRANSACTION_HINT;
 
 struct ic_transaction_obj
 {
-  guint64 transaction_id;
+  guint32 transaction_id[2];
 };
-typedef struct ic_transaction_obj IC_TRANSACTION_OBJ;
+typedef struct ic_transaction_obj IC_TRANSACTION;
 
 enum ic_field_type
 {
@@ -377,6 +377,7 @@ struct ic_key_operation
 {
   guint32 operation_type;
   IC_APID_KEY_OPERATION_TYPE key_op_type;
+  IC_TRANSACTION *transaction;
 };
 typedef struct ic_key_operation IC_KEY_OPERATION;
 
@@ -384,6 +385,7 @@ struct ic_scan_operation
 {
   guint32 operation_type;
   IC_APID_SCAN_OPERATION_TYPE scan_op_type;
+  IC_TRANSACTION *transaction;
 };
 typedef struct ic_scan_operation IC_SCAN_OPERATION;
 
@@ -442,7 +444,7 @@ struct ic_apid_transaction_ops
     operation into.
     Finally apid_op contains information about the operation type.
   */
-  int (*ic_key_access) (IC_TRANSACTION_OBJ *transaction_obj,
+  int (*ic_key_access) (IC_TRANSACTION *transaction_obj,
                         IC_APID_KEY_OPERATION_TYPE apid_key_op_type,
                         IC_KEY_OPERATION **key_op,
                         IC_TABLE_DEF *table_def,
@@ -455,10 +457,10 @@ struct ic_apid_connection;
 struct ic_apid_connection_ops
 {
   int (*ic_start_transaction) (struct ic_apid_connection *apid_conn,
-                               IC_TRANSACTION_OBJ **transaction_obj,
+                               IC_TRANSACTION **transaction_obj,
                                IC_TRANSACTION_HINT *transaction_hint);
   int (*ic_join_transaction) (struct ic_apid_connection *apid_connection,
-                              IC_TRANSACTION_OBJ transaction_obj);
+                              IC_TRANSACTION transaction_obj);
   int (*ic_poll) (struct ic_apid_connection *apid_conn, glong wait_time);
   void (*ic_free) (struct ic_apid_connection *apid_conn);
 };

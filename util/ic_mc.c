@@ -14,7 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
-#include <ic_mc_int.h>
+#include "ic_mc_int.h"
 /*
   MODULE: Memory Container
   Description:

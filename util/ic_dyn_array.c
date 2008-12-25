@@ -14,7 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
-#include <ic_dyn_array_int.h>
+#include "ic_dyn_array_int.h"
 
 /*
   Implementation of the dynamic array. A very simple variant

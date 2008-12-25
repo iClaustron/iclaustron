@@ -38,7 +38,7 @@ free_poll_set(IC_POLL_SET *ext_poll_set)
 
 #define MAX_POLL_SET_CONNECTIONS 1024
 static int
-alloc_pool_set(IC_INT_POLL_SET **poll_set)
+alloc_poll_set(IC_INT_POLL_SET **poll_set)
 {
   if (!(*poll_set= (IC_INT_POLL_SET*)ic_calloc(sizeof(IC_INT_POLL_SET))))
     return IC_ERROR_MEM_ALLOC;
@@ -306,7 +306,7 @@ IC_POLL_SET* ic_create_poll_set()
     printf("Failed to allocate an epoll fd\n");
     return NULL;
   }
-  if (alloc_pool_set(&poll_set))
+  if (alloc_poll_set(&poll_set))
   {
     close(epoll_fd);
     return NULL;
@@ -455,7 +455,7 @@ IC_POLL_SET* ic_create_poll_set()
     printf("Failed to allocate eventport fd\n");
     return NULL;
   }
-  if (alloc_pool_set(&poll_set))
+  if (alloc_poll_set(&poll_set))
   {
     close(eventport_fd);
     return NULL;
@@ -600,7 +600,7 @@ IC_POLL_SET* ic_create_poll_set()
     printf("Failed to allocate a kqueue fd\n");
     return NULL;
   }
-  if (alloc_pool_set(&poll_set))
+  if (alloc_poll_set(&poll_set))
   {
     close(kqueue_fd);
     return NULL;
@@ -652,7 +652,7 @@ IC_POLL_SET* ic_create_poll_set()
 {
   IC_INT_POLL_SET *poll_set;
 
-  if (alloc_pool_set(&poll_set))
+  if (alloc_poll_set(&poll_set))
     return NULL;
   set_common_methods(poll_set);
   poll_set->poll_ops.ic_poll_set_add_connection=
@@ -751,7 +751,7 @@ IC_POLL_SET* ic_create_poll_set()
   struct pollfd *poll_fd_array;
   guint32 i;
 
-  if (alloc_pool_set(&poll_set))
+  if (alloc_poll_set(&poll_set))
     return NULL;
   if (!(poll_set->impl_specific_ptr= ic_calloc(
       sizeof(struct pollfd) * MAX_POLL_SET_CONNECTIONS)))

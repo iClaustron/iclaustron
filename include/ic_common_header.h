@@ -72,6 +72,7 @@ void ic_ssl_end();
 */
 gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
+gchar *ic_realloc(gchar *ptr, size_t size);
 void ic_free(void *ret_obj);
 
 guint32 ic_get_own_pid();

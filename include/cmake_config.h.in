@@ -16,6 +16,11 @@
 #cmakedefine HAVE_GETHRTIME
 #cmakedefine HAVE_GETTIMEOFDAY
 #cmakedefine HAVE_SOCKET
+#cmakedefine HAVE_EPOLL_CREATE
+#cmakedefine HAVE_KQUEUE
+#cmakedefine HAVE_PORT_CREATE
+#cmakedefine HAVE_IO_COMPLETION
+#cmakedefine HAVE_POLL
 #cmakedefine HAVE_BIND
 #cmakedefine HAVE_CONNECT
 #cmakedefine HAVE_LISTEN
@@ -25,11 +30,14 @@
 #cmakedefine HAVE_INET_NTOP
 #cmakedefine HAVE_SENDMSG
 #cmakedefine HAVE_UNISTD_H
-#cmakedefine HAVE_NETINET_H
+#cmakedefine HAVE_NETINET_IN_H
+#cmakedefine HAVE_NETINET_TCP_H
 #cmakedefine HAVE_POLL_H
 #cmakedefine HAVE_SYS_POLL_H
 #cmakedefine HAVE_SYS_TYPES_H
+#cmakedefine HAVE_SYS_TIMES_H
 #cmakedefine HAVE_SYS_SOCKET_H
+#cmakedefine HAVE_SYS_SELECT_H
 #cmakedefine HAVE_NETDB_H
 #cmakedefine HAVE_ARPA_INET_H
 #cmakedefine HAVE_READLINE

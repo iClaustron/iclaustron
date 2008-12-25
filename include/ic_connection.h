@@ -300,7 +300,7 @@ IC_CONNECTION
   *ic_create_socket_object(gboolean is_client,
                            gboolean is_mutex_used,
                            gboolean is_connect_thread_used,
-                           guint32 read_buf_size,
+                           guint32  read_buf_size,
                            authenticate_func func,
                            void *auth_obj);
 
@@ -311,7 +311,7 @@ IC_CONNECTION
                         IC_STRING *passwd_string,
                         gboolean is_ssl_used_for_data,
                         gboolean is_connect_thread_used,
-                        guint32 read_buf_size,
+                        guint32  read_buf_size,
                         authenticate_func func,
                         void *auth_obj);
 

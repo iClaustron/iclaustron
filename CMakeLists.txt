@@ -39,10 +39,6 @@ else (WIN32)
     DOC "Bison executable")
 endif (WIN32)
 
-configure_file (
-  "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
-  "${PROJECT_BINARY_DIR}/include/config.h"
-  )
 
 include_directories("${PROJECT_BINARY_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/include")
@@ -107,10 +103,13 @@ check_function_exists(port_create HAVE_PORT_CREATE)
 check_function_exists(kqueue HAVE_KQUEUE)
 check_include_files(unistd.h HAVE_UNISTD_H)
 check_include_files(netinet/in.h HAVE_NETINET_IN_H)
+check_include_files(netinet/tcp.h HAVE_NETINET_TCP_H)
 check_include_files(poll.h HAVE_POLL_H)
 check_include_files(sys/poll.h HAVE_SYS_POLL_H)
 check_include_files(sys/types.h HAVE_SYS_TYPES_H)
+check_include_files(sys/times.h HAVE_SYS_TIMES_H)
 check_include_files(sys/socket.h HAVE_SYS_SOCKET_H)
+check_include_files(sys/select.h HAVE_SYS_SELECT_H)
 check_include_files(netdb.h HAVE_NETDB_H)
 check_include_files(arpa/inet.h HAVE_ARPA_INET_H)
 
@@ -378,3 +377,8 @@ install (DIRECTORY examples DESTINATION ${CMAKE_INSTALL_PREFIX})
 install (DIRECTORY doc DESTINATION ${CMAKE_INSTALL_PREFIX})
 install (FILES README README-CONFIG AUTHORS NEWS INSTALL COPYING AUTHORS
          DESTINATION doc)
+
+configure_file (
+  "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
+  "${PROJECT_BINARY_DIR}/include/config.h"
+  )

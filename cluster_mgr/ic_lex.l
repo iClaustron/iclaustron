@@ -38,6 +38,7 @@ int line_no= 1;
 
 %e 1200
 %option reentrant noyywrap bison-bridge nounput
+%option noyyalloc noyyrealloc noyyfree
 
 %%
 
@@ -146,6 +147,25 @@ VERSION                 { return VERSION_SYM;      }
 }
 
 %%
+
+void* yyalloc(yy_size_t size,
+              __attribute__ ((unused)) void *scanner)
+{
+  return (void*) ic_malloc((size_t)size);
+}
+
+void* yyrealloc(void *ptr,
+                yy_size_t size,
+                __attribute__ ((unused)) void *scanner)
+{
+  return (void*) ic_realloc((gchar*)ptr, (size_t)size);
+}
+
+void yyfree(void *ptr,
+            __attribute__ ((unused)) void *scanner)
+{
+  ic_free(ptr);
+}
 
 void
 yyerror(void *parse_data,

@@ -101,6 +101,14 @@ ic_calloc(size_t size)
   return alloc_ptr;
 }
 
+gchar*
+ic_realloc(gchar *ptr,
+           size_t size)
+{
+  gchar *alloc_ptr= g_try_realloc((gpointer)ptr, size);
+  return alloc_ptr;
+}
+
 gchar *
 ic_malloc(size_t size)
 {

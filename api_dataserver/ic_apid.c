@@ -650,6 +650,83 @@ run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 }
 
 /*
+  Protocol to start up a connection in the NDB Protocol.
+  Client:
+    Send "ndbd"<CR>
+    Send "ndbd passwd"<CR>
+  Server:
+    Send "ok"<CR>
+  Client:
+    Send "2 3"<CR> (2 is client node id and 3 is server node id)
+  Server:
+    Send "1 1"<CR> (1 is transporter type for client/server)
+  Connection is ready to send and receive NDB Protocol messages
+*/
+static int
+authenticate_client_connection(IC_CONNECTION *conn,
+                               guint32 my_nodeid,
+                               guint32 server_nodeid)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  gchar send_buf[64];
+  int error;
+
+  g_snprintf(send_buf, (int)64, "%u %u", my_nodeid, server_nodeid);
+  if ((error= ic_send_with_cr(conn, "ndbd")) ||
+      (error= ic_send_with_cr(conn, "ndbd passwd")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ok")) ||
+      (error= ic_send_with_cr(conn, send_buf)) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "1 1")))
+    return error;
+  return 0;
+}
+
+static int authenticate_server_connection(IC_CONNECTION *conn,
+                                          guint32 my_nodeid,
+                                          guint32 *client_nodeid)
+{
+  guint32 read_size;
+  gchar *read_buf;
+  int error;
+  guint32 len;
+  guint64 my_id, client_id;
+
+  /* Retrieve client node id and verify that server is my node id */
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ndbd")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ndbd passwd")) ||
+      (error= ic_send_with_cr(conn, "ok")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
+      (read_buf[len] != ' ') ||
+      (len= len + 1, FALSE) ||
+      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
+      ((guint64)my_nodeid != my_id) ||
+      (client_id >= IC_MAX_NODE_ID) ||
+      (error= ic_send_with_cr(conn, "1 1")) ||
+      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
+      (read_buf[len] != ' ') ||
+      (len++, FALSE) ||
+      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
+      ((guint64)my_nodeid != my_id) ||
+      (client_id >= IC_MAX_NODE_ID) ||
+      (error= ic_send_with_cr(conn, "ok")))
+    return error;
+  *client_nodeid= client_id;
+  return 0;
+}
+
+/*
   This callback is called by the object connecting the server to the
   client using the NDB Protocol. This method calls a method on the
   IC_API_CONFIG_SERVER object implementing the server side of the set-up
@@ -658,7 +735,10 @@ run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 static int
 server_api_connect(void *data)
 {
-  return 0;
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+  return authenticate_server_connection(send_node_conn->conn,
+                                        send_node_conn->my_node_id,
+                                        &send_node_conn->active_node_id);
 }
 
 /*
@@ -671,8 +751,9 @@ static int
 client_api_connect(void *data)
 {
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
-  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
-  return 0;
+  return authenticate_client_connection(send_node_conn->conn,
+                                        send_node_conn->my_node_id,
+                                        send_node_conn->active_node_id);
 }
 
 /*
@@ -816,7 +897,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
 }
 
 static int
-check_timeout_func(void *timeout_obj, int timer)
+check_timeout_func(__attribute__ ((unused)) void *timeout_obj, int timer)
 {
   if (timer < 2)
     return 0;
@@ -848,7 +929,7 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread)
 
 static gboolean
 check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
-                 IC_CONNECTION *conn)
+                 __attribute__ ((unused)) IC_CONNECTION *conn)
 {
   if (!send_node_conn->connection_up)
   {
@@ -861,7 +942,7 @@ check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
 static gpointer
 run_server_connect_thread(void *data)
 {
-  IC_LISTEN_SERVER_THREAD *listen_server_thread;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread= (IC_LISTEN_SERVER_THREAD*)data;
   IC_CONNECTION *fork_conn, *conn;
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
@@ -1010,12 +1091,12 @@ run_send_thread(void *data)
   if (is_client_part)
   {
     send_node_conn->conn= ic_create_socket_object(
-                       is_client_part,
-                       FALSE,  /* Mutex supplied by API code instead */
-                       FALSE,  /* This thread is already a connection thread */
-                       0,      /* No read buffer needed, we supply our own */
-                       client_api_connect,   /* Authentication function */
-                       (void*)send_node_conn);  /* Authentication object */
+                   is_client_part,
+                   FALSE,  /* Mutex supplied by API code instead */
+                   FALSE,  /* This thread is already a connection thread */
+                   CONFIG_READ_BUF_SIZE, /* Used by authentication function */
+                   client_api_connect,   /* Authentication function */
+                   (void*)send_node_conn);  /* Authentication object */
     if (send_node_conn->conn == NULL)
       send_node_conn->stop_ordered= TRUE;
   }
@@ -1061,12 +1142,12 @@ run_send_thread(void *data)
         listen_server_thread= apid_global->listen_server_thread[listen_inx];
         send_node_conn->listen_server_thread= listen_server_thread;
         if (!(listen_server_thread->conn= ic_create_socket_object(
-                       FALSE,  /* This is a server connection */
-                       FALSE,  /* Mutex supplied by API code instead */
-                       FALSE,  /* This thread is already a connection thread */
-                       0,      /* No read buffer needed, we supply our own */
-                       server_api_connect,   /* Authentication function */
-                       (void*)send_node_conn)))  /* Authentication object */
+                   FALSE,  /* This is a server connection */
+                   FALSE,  /* Mutex supplied by API code instead */
+                   FALSE,  /* This thread is already a connection thread */
+                   CONFIG_READ_BUF_SIZE, /* Used by authentication function */
+                   server_api_connect,   /* Authentication function */
+                   (void*)send_node_conn)))  /* Authentication object */
           break;
         listen_server_thread->conn->conn_op.ic_prepare_server_connection(
           listen_server_thread->conn,
@@ -1205,81 +1286,6 @@ is_ds_conn_established(IC_DS_CONNECTION *ds_conn,
   return conn->conn_op.ic_get_error_code(conn);
 }
 
-/*
-  Protocol to start up a connection in the NDB Protocol.
-  Client:
-    Send "ndbd"<CR>
-    Send "ndbd passwd"<CR>
-  Server:
-    Send "ok"<CR>
-  Client:
-    Send "2 3"<CR> (2 is client node id and 3 is server node id)
-  Server:
-    Send "1 1"<CR> (1 is transporter type for client/server)
-  Connection is ready to send and receive NDB Protocol messages
-*/
-static int
-authenticate_client_connection(IC_CONNECTION *conn,
-                               guint32 my_nodeid,
-                               guint32 server_nodeid)
-{
-  gchar *read_buf;
-  guint32 read_size;
-  gchar send_buf[64];
-  int error;
-
-  g_snprintf(send_buf, "%u %u", my_nodeid, server_nodeid);
-  if ((error= ic_send_with_cr(conn, "ndbd")) ||
-      (error= ic_send_with_cr(conn, "ndbd passwd")) ||
-      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
-      (!strcmp(read_buf, "ok")) ||
-      (error= ic_send_with_cr(conn, send_buf)) ||
-      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
-      (!strcmp(read_buf, "1 1")))
-    return error;
-  return 0;
-}
-
-static int authenticate_server_connection(IC_CONNECTION *conn,
-                                          guint32 my_nodeid,
-                                          guint32 *client_nodeid)
-{
-  gchar *read_buf;
-  guint32 read_size;
-  gchar expected_buf[64];
-  int error;
-  guint64 my_id, client_id;
-
-  /* Retrieve client node id and verify that server is my node id */
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
-      (!strcmp(read_buf, "ndbd")) ||
-      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
-      (!strcmp(read_buf, "ndbd passwd")) ||
-      (error= ic_send_with_cr(conn, "ok")) ||
-      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
-      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
-      (read_buf[len] != ' ') ||
-      (len++, FALSE) ||
-      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
-      ((guint64)my_nodeid != my_id) ||
-      (client_id >= IC_MAX_NODE_ID)
-      (error= ic_send_with_cr(conn, "1 1")) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
-      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
-      (read_buf[len] != ' ') ||
-      (len++, FALSE) ||
-      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
-      ((guint64)my_nodeid != my_id) ||
-      (client_id >= IC_MAX_NODE_ID) ||
-      (error= ic_send_with_cr(conn, "ok"))))
-    return error;
-  return 0;
-}
                                           
 /*
   SEND MESSAGE MODULE
@@ -1756,40 +1762,42 @@ typedef struct ic_exec_message_func IC_EXEC_MESSAGE_FUNC;
 static IC_EXEC_MESSAGE_FUNC *ic_exec_message_func_array[2][1024];
 
 static int
-execSCAN_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                       IC_MESSAGE_ERROR_OBJECT *error_object)
+execSCAN_TABLE_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-execPRIMARY_KEY_OP_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                           IC_MESSAGE_ERROR_OBJECT *error_object)
+execPRIMARY_KEY_OP_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-execTRANSACTION_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                        IC_MESSAGE_ERROR_OBJECT *error_object)
+execTRANSACTION_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-handle_key_ai(IC_KEY_OPERATION *key_op,
-              guint32 *ai_data,
-              guint32 data_size,
-              IC_MESSAGE_ERROR_OBJECT *error_message)
+handle_key_ai(__attribute__ ((unused)) IC_KEY_OPERATION *key_op,
+              __attribute__ ((unused)) IC_TRANSACTION *trans,
+              __attribute__ ((unused)) guint32 *ai_data,
+              __attribute__ ((unused)) guint32 data_size,
+              __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-handle_scan_ai(IC_SCAN_OPERATION *scan_op,
-               guint32 *ai_data,
-               guint32 data_size,
-               IC_MESSAGE_ERROR_OBJECT *error_message)
+handle_scan_ai(__attribute__ ((unused)) IC_SCAN_OPERATION *scan_op,
+               __attribute__ ((unused)) IC_TRANSACTION *trans,
+               __attribute__ ((unused)) guint32 *ai_data,
+               __attribute__ ((unused)) guint32 data_size,
+               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
@@ -1811,6 +1819,7 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   void *connection_obj;
   IC_KEY_OPERATION *key_op;
   IC_SCAN_OPERATION *scan_op;
+  IC_TRANSACTION *trans_op;
   IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
   guint32 data_size;
   guint64 connection_ptr= header_data[0];
@@ -1826,47 +1835,57 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   key_op= (IC_KEY_OPERATION*)connection_obj;
   if (ndb_message->num_segments == 1)
   {
-    attrinfo_data= ndb_message->segment_size[1];
+    attrinfo_data= ndb_message->segment_ptr[1];
     data_size= ndb_message->segment_size[1];
     g_assert(header_size == 3);
   }
   else
   {
-    attrinfo_data= &header_data[3];
+    g_assert(ndb_message->num_segments == 0);
     g_assert(header_size <= 25);
+    attrinfo_data= &header_data[3];
     data_size= header_size - 3;
+  }
+  trans_op= key_op->transaction;
+  if (trans_op->transaction_id[0] != transid_part1 ||
+      trans_op->transaction_id[1] != transid_part2)
+  {
+    g_assert(FALSE);
+    return 1;
   }
   if (key_op->operation_type == SCAN_OPERATION)
   {
     scan_op= (IC_SCAN_OPERATION*)key_op;
     return handle_scan_ai(scan_op,
+                          trans_op,
                           attrinfo_data,
                           data_size,
                           error_object);
   }
   return handle_key_ai(key_op,
+                       trans_op,
                        attrinfo_data,
                        data_size,
                        error_object);
 }
 
 static int
-execTRANSACTION_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                       IC_MESSAGE_ERROR_OBJECT *error_object)
+execTRANSACTION_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+             __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-execPRIMARY_KEY_OP_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                          IC_MESSAGE_ERROR_OBJECT *error_object)
+execPRIMARY_KEY_OP_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+             __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-execSCAN_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                      IC_MESSAGE_ERROR_OBJECT *error_object)
+execSCAN_TABLE_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+             __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
@@ -1913,7 +1932,8 @@ initialize_message_func_array()
   MESSAGE LOGIC MODULE.
 */
 static IC_EXEC_MESSAGE_FUNC*
-get_exec_message_func(guint32 message_id, guint32 version_num)
+get_exec_message_func(guint32 message_id,
+                      __attribute__ ((unused)) guint32 version_num)
 {
   return ic_exec_message_func_array[0][message_id];
 }
@@ -2333,13 +2353,13 @@ handle_node_error(int ret_code,
 }
 
 static IC_RECEIVE_NODE_CONNECTION*
-get_first_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
+get_first_rec_node(__attribute__ ((unused)) IC_NDB_RECEIVE_STATE *rec_state)
 {
   return NULL;
 }
 
 static IC_RECEIVE_NODE_CONNECTION*
-get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
+get_next_rec_node(__attribute__ ((unused)) IC_NDB_RECEIVE_STATE *rec_state)
 {
   return NULL;
 }

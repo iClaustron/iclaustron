@@ -42,7 +42,7 @@
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
-#include <ic_connection_int.h>
+#include "ic_connection_int.h"
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
 #endif
@@ -323,7 +323,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
           a timeout error.
         */
         timer++;
-        if (conn->timeout_func(conn->timeout_obj, timer))
+        if (conn->timeout_func(timeout_obj, timer))
         {
           conn->error_code= IC_ERROR_ACCEPT_TIMEOUT;
           return conn->error_code;
@@ -1282,8 +1282,12 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
                    sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
   if ((fork_conn= (IC_INT_CONNECTION*)ic_calloc(size_object)) == NULL)
     return NULL;
-  if ((fork_conn->read_buf= ic_calloc(orig_conn->read_buf_size)) == NULL)
-    return NULL;
+  if (orig_conn->read_buf_size)
+  {
+    fork_conn->read_buf_size= orig_conn->read_buf_size;
+    if ((fork_conn->read_buf= ic_calloc(orig_conn->read_buf_size)) == NULL)
+      return NULL;
+  }
   memcpy(fork_conn, orig_conn, size_object);
 
   init_connect_stat(fork_conn);
@@ -1399,6 +1403,7 @@ get_param(IC_CONNECTION *ext_conn)
 }
 
 /* Implements ic_get_error_code */
+int
 get_error_code(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
@@ -1409,9 +1414,9 @@ IC_CONNECTION*
 int_create_socket_object(gboolean is_client,
                          gboolean is_mutex_used,
                          gboolean is_connect_thread_used,
-                         guint32 read_buf_size,
                          gboolean is_ssl,
                          gboolean is_ssl_used_for_data,
+                         guint32 read_buf_size,
                          authenticate_func auth_func,
                          void *auth_obj)
 {
@@ -1427,7 +1432,6 @@ int_create_socket_object(gboolean is_client,
     if ((conn->read_buf= ic_calloc(read_buf_size)) == NULL)
       return NULL;
   }
-
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
   conn->conn_op.ic_accept_connection= accept_socket_connection;
   conn->conn_op.ic_close_connection= close_socket_connection;
@@ -1482,14 +1486,14 @@ IC_CONNECTION*
 ic_create_socket_object(gboolean is_client,
                         gboolean is_mutex_used,
                         gboolean is_connect_thread_used,
-                        guint32  read_buf_size,
+                        guint32 read_buf_size,
                         authenticate_func auth_func,
                         void *auth_obj)
 {
   return int_create_socket_object(is_client, is_mutex_used,
                                   is_connect_thread_used,
-                                  read_buf_size,
                                   FALSE, FALSE,
+                                  read_buf_size,
                                   auth_func, auth_obj);
 }
 
@@ -1879,8 +1883,8 @@ ic_create_ssl_object(gboolean is_client,
 
   if (!(ext_conn= int_create_socket_object(is_client, FALSE,
                                            is_connect_thread_used,
-                                           read_buf_size,
                                            TRUE, is_ssl_used_for_data,
+                                           read_buf_size,
                                            auth_func, auth_obj)))
   {
     DEBUG_RETURN(NULL);
