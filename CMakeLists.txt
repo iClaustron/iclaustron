@@ -2,6 +2,40 @@ project (iClaustron)
 
 cmake_minimum_required (VERSION 2.6)
 
+macro (find_bison _BISON_PATH)
+  FIND_PROGRAM(BISON_EXEC
+    NAMES bison byacc
+    PATHS ${_BISON_PATH}
+    DOC "Bison executable")
+ if (BISON_EXEC)
+   execute_process(COMMAND ${BISON_EXEC} --version
+                   OUTPUT_VARIABLE BISON_VERSION)
+   string (REGEX MATCH "[0-9]+\\.[0-9]++"
+           BISON_VERSION
+           "${_BISON_VERSION}")
+   if (BISON_VERSION GREATER 2.1)
+     set(BISON_EXECUTABLE ${BISON_EXEC})
+   endif (BISON_VERSION GREATER 2.1)
+ endif (BISON_EXEC)
+endmacro (find_bison)
+
+macro (find_flex _FLEX_PATH)
+  FIND_PROGRAM(FLEX_EXEC
+    NAMES flex
+    PATHS ${_FLEX_PATH}
+    DOC "Flex executable")
+ if (FLEX_EXEC)
+   execute_process(COMMAND ${FLEX_EXEC} --version
+                   OUTPUT_VARIABLE _FLEX_VERSION)
+   string (REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+"
+           FLEX_VERSION
+           "${_FLEX_VERSION}")
+   if (FLEX_VERSION GREATER 2.5.31)
+     set(FLEX_EXECUTABLE ${FLEX_EXEC})
+   endif (FLEX_VERSION GREATER 2.5.31)
+ endif (FLEX_EXEC)
+endmacro (find_flex)
+
 set (iClaustron_VERSION_MAJOR 0)
 set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_PATCH 1)
@@ -20,25 +54,43 @@ SET (SYSTEM_LIB_PATH
      /opt/lib)
 
 if (WIN32)
+  foreach (system_path
+           /usr/local/bin
+           /opt/local/bin
+           /bin
+           /sbin
+           /usr/bin
+           /usr/sbin
+           /opt/bin
+           )
+    if (NOT BISON_EXECUTABLE)
+      find_bison (system_path)
+    endif (NOT BISON_EXECUTABLE)
+    if (NOT FLEX_EXECUTABLE)
+      find_flex (system_path)
+    endif (NOT FLEX_EXECUTABLE)
+  endforeach (system_path)
   FIND_PROGRAM(FLEX_EXECUTABLE
     NAMES flex
     PATHS ${SYSTEM_BINARY_PATH}
     DOC "flex executable")
-  FIND_PROGRAM(BISON_EXECUTABLE
-    NAMES bison byacc
-    PATHS ${SYSTEM_BINARY_PATH}
-    DOC "Bison executable")
 else (WIN32)
-  FIND_PROGRAM(FLEX_EXECUTABLE
-    NAMES flex
-    PATHS C:/Program Files/Flex
-    DOC "flex executable")
-  FIND_PROGRAM(BISON_EXECUTABLE
-    NAMES bison byacc
-    PATHS C:/Program Files/Bison C:/Program Files/Byacc
-    DOC "Bison executable")
+  foreach (system_path
+           C:/Program Files/Bison
+           C:/Program Files/Byacc
+           )
+    if (NOT BISON_EXECUTABLE)
+      find_bison (system_path)
+    endif (NOT BISON_EXECUTABLE)
+  endforeach (system_path)
+  foreach (system_path
+           C:/Program Files/Flex
+           )
+    if (NOT FLEX_EXECUTABLE)
+      find_flex (system_path)
+    endif (NOT FLEX_EXECUTABLE)
+  endforeach (system_path)
 endif (WIN32)
-
 
 include_directories("${PROJECT_BINARY_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/include")
