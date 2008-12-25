@@ -608,7 +608,7 @@ IC_POLL_SET* ic_create_poll_set()
   if (!(poll_set->impl_specific_ptr= ic_calloc(
         sizeof(struct kevent) * MAX_POLL_SET_CONNECTIONS)))
   {
-    free_poll_set(poll_set);
+    free_poll_set((IC_POLL_SET*)poll_set);
     close(kqueue_fd);
     return NULL;
   }
