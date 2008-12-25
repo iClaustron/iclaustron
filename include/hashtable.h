@@ -79,7 +79,6 @@ typedef struct ic_hashtable IC_HASHTABLE;
 
 unsigned int ic_hash_nodeids(void *ptr);
 unsigned int ic_hash_str(void *ptr);
-unsigned int ic_hash_ptr(void *ptr);
 int ic_keys_equal_str(void *ptr1, void *ptr2);
 int ic_keys_equal_ptr(void *ptr1, void *ptr2);
 int ic_keys_equal_nodeids(void *ptr1, void *ptr2);
