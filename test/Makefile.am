@@ -17,10 +17,16 @@
 ## This directory is used to build the iClaustron Test Programs
 ##
 
-bin_PROGRAMS = test_comm
+bin_PROGRAMS = test_comm test_unit
 
 test_comm_SOURCES = test_comm.c
 test_comm_LDADD = $(LDADD) ../comm/libic_comm.la \
+                           ../port/libic_port.la \
+			   ../util/libic_util.la \
+                           ../api_clusterserver/libic_apic.la
+
+test_unit_SOURCES = test_unit.c
+test_unit_LDADD = $(LDADD) ../comm/libic_comm.la \
                            ../port/libic_port.la \
 			   ../util/libic_util.la \
                            ../api_clusterserver/libic_apic.la
