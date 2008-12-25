@@ -25,7 +25,7 @@ static GOptionEntry entries[] =
 };
 
 #define SIMPLE_BUF_SIZE 16*1024*1024
-#define ORDERED_BUF_SIZE 128*1024*1024
+#define ORDERED_BUF_SIZE 8*1024*1024
 static int
 do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                    gchar *compare_buf,

@@ -376,7 +376,7 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   {
     loop_dyn_buf= loop_dyn_buf->next_dyn_buf;
     buf_size+= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
-    g_assert(size <= buf_size);
+    g_assert(size + (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - 1) >= buf_size);
     last_dyn_index= dyn_array->ord_array.last_dyn_index;
     if ((ret_code= insert_buf_in_ordered_dynamic_index(dyn_array,
                                                        last_dyn_index,
