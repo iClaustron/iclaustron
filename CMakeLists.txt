@@ -10,7 +10,7 @@ macro (find_bison _BISON_PATH)
  if (BISON_EXEC)
    execute_process(COMMAND ${BISON_EXEC} --version
                    OUTPUT_VARIABLE BISON_VERSION)
-   string (REGEX MATCH "[0-9]+\\.[0-9]++"
+   string (REGEX MATCH "[0-9]+\\.[0-9]+"
            BISON_VERSION
            "${_BISON_VERSION}")
    if (BISON_VERSION GREATER 2.1)

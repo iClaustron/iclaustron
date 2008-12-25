@@ -76,10 +76,10 @@ ic_keys_equal_ptr(void *ptr1, void *ptr2)
 unsigned int
 ic_hash_ptr(void *ptr)
 {
-  unsigned int len= sizeof(void*);
+  unsigned int len= sizeof(guint32);
   unsigned int char_val, i;
   unsigned int hash= 0;
-  guint64 val= (guint64)ptr;
+  guint32 val= (guint32)ptr;
   for (i= 0; i < len; i++)
   {
     char_val= val & 255;
