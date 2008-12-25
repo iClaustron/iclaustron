@@ -2,41 +2,80 @@ project (iClaustron)
 
 cmake_minimum_required (VERSION 2.6)
 
-macro (find_bison _BISON_PATH)
-  FIND_PROGRAM(BISON_EXEC
+macro (find_bison)
+  FIND_PROGRAM(BISON_EXECUTABLE
     NAMES bison byacc
-    PATHS ${_BISON_PATH}
-    DOC "Bison executable")
- if (BISON_EXEC)
-   execute_process(COMMAND ${BISON_EXEC} --version
-                   OUTPUT_VARIABLE BISON_VERSION)
+    PATHS ${system_path}
+    DOC "Bison executable"
+    NO_DEFAULT_PATH)
+ if (BISON_EXECUTABLE)
+   execute_process(COMMAND ${BISON_EXECUTABLE} --version
+                   OUTPUT_VARIABLE _BISON_VERSION)
    string (REGEX MATCH "[0-9]+\\.[0-9]+"
            BISON_VERSION
            "${_BISON_VERSION}")
-   if (BISON_VERSION GREATER 2.1)
-     set(BISON_EXECUTABLE ${BISON_EXEC})
-     message("Found working Bison executable at " ${BISON_EXEC})
-   else (BISON_VERSION GREATER 2.1)
-     message("Found a too old Bison executable at" ${BISON_EXEC})
-   endif (BISON_VERSION GREATER 2.1)
- endif (BISON_EXEC)
+   string (REGEX MATCH "[0-9]+"
+           BISON_MAJOR_VERSION
+           "${_BISON_VERSION}")
+   string (REGEX MATCH "\\.[0-9]+"
+           _BISON_MINOR_VERSION
+           "${_BISON_VERSION}")
+   string (REGEX MATCH "[0-9]+"
+           BISON_MINOR_VERSION
+           "${_BISON_MINOR_VERSION}")
+   if (BISON_MAJOR_VERSION GREATER 1 AND BISON_MINOR_VERSION GREATER 0)
+     message("Found working Bison executable at " ${BISON_EXECUTABLE})
+     message("Bison version is " ${BISON_VERSION})
+   else (BISON_MAJOR_VERSION GREATER 1 AND BISON_MINOR_VERSION GREATER 0)
+     set(BISON_EXECUTABLE NOTFOUND)
+   endif (BISON_MAJOR_VERSION GREATER 1 AND BISON_MINOR_VERSION GREATER 0)
+ endif (BISON_EXECUTABLE)
 endmacro (find_bison)
 
-macro (find_flex _FLEX_PATH)
-  FIND_PROGRAM(FLEX_EXEC
+macro (find_flex)
+  FIND_PROGRAM(FLEX_EXECUTABLE
     NAMES flex
-    PATHS ${_FLEX_PATH}
-    DOC "Flex executable")
- if (FLEX_EXEC)
-   execute_process(COMMAND ${FLEX_EXEC} --version
+    PATHS ${system_path}
+    DOC "Flex executable"
+    NO_DEFAULT_PATH)
+ if (FLEX_EXECUTABLE)
+   execute_process(COMMAND ${FLEX_EXECUTABLE} --version
                    OUTPUT_VARIABLE _FLEX_VERSION)
    string (REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+"
            FLEX_VERSION
            "${_FLEX_VERSION}")
-   if (FLEX_VERSION GREATER 2.5.31)
-     set(FLEX_EXECUTABLE ${FLEX_EXEC})
-   endif (FLEX_VERSION GREATER 2.5.31)
- endif (FLEX_EXEC)
+   string (REGEX MATCH "[0-9]+"
+           FLEX_MAJOR_VERSION
+           "${FLEX_VERSION}")
+   string (REGEX MATCH "\\.[0-9]+\\.[0-9]+"
+           FLEX_TMP_VERSION
+           "${FLEX_VERSION}")
+   string (REGEX MATCH "[0-9]+\\.[0-9]+"
+           FLEX_MINOR_VERSIONS
+           "${FLEX_TMP_VERSION}")
+   string (REGEX MATCH "[0-9]+"
+           FLEX_MINOR_VERSION
+           "${FLEX_MINOR_VERSIONS}")
+   string (REGEX MATCH "\\.[0-9]+"
+           FLEX_TMP_VERSION
+           "${FLEX_MINOR_VERSIONS}")
+   string (REGEX MATCH "[0-9]+"
+           FLEX_PATCH_VERSION
+           "${FLEX_TMP_VERSION}")
+   set(FLEX_FOUND NOTFOUND)
+   if (FLEX_MAJOR_VERSION GREATER 1)
+     if (FLEX_MINOR_VERSION GREATER 4)
+       if (FLEX_PATCH_VERSION GREATER 30)
+         message("Found working flex version in" ${FLEX_EXECUTABLE})
+         message("flex version is " ${FLEX_VERSION})
+         set(FLEX_FOUND TRUE)
+       endif (FLEX_PATCH_VERSION GREATER 30)
+     endif (FLEX_MINOR_VERSION GREATER 4)
+   endif (FLEX_MAJOR_VERSION GREATER 1)
+   if (NOT FLEX_FOUND)
+     set(FLEX_EXECUTABLE NOTFOUND)
+   endif (NOT FLEX_FOUND)
+ endif (FLEX_EXECUTABLE)
 endmacro (find_flex)
 
 set (iClaustron_VERSION_MAJOR 0)
@@ -56,44 +95,42 @@ SET (SYSTEM_LIB_PATH
      /usr/local/lib /opt/local/lib /usr/lib /usr/lib
      /opt/lib)
 
-if (WIN32)
+set(BISON_EXECUTABLE NOTFOUND)
+set(FLEX_EXECUTABLE NOTFOUND)
+if (NOT WIN32)
   foreach (system_path
-           /usr/local/bin
-           /opt/local/bin
            /bin
            /sbin
            /usr/bin
            /usr/sbin
            /opt/bin
+           /usr/local/bin
+           /opt/local/bin
            )
     if (NOT BISON_EXECUTABLE)
-      find_bison (system_path)
+      find_bison()
     endif (NOT BISON_EXECUTABLE)
     if (NOT FLEX_EXECUTABLE)
-      find_flex (system_path)
+      find_flex()
     endif (NOT FLEX_EXECUTABLE)
   endforeach (system_path)
-  FIND_PROGRAM(FLEX_EXECUTABLE
-    NAMES flex
-    PATHS ${SYSTEM_BINARY_PATH}
-    DOC "flex executable")
-else (WIN32)
+else (NOT WIN32)
   foreach (system_path
            C:/Program Files/Bison
            C:/Program Files/Byacc
            )
     if (NOT BISON_EXECUTABLE)
-      find_bison (system_path)
+      find_bison()
     endif (NOT BISON_EXECUTABLE)
   endforeach (system_path)
   foreach (system_path
            C:/Program Files/Flex
            )
     if (NOT FLEX_EXECUTABLE)
-      find_flex (system_path)
+      find_flex()
     endif (NOT FLEX_EXECUTABLE)
   endforeach (system_path)
-endif (WIN32)
+endif (NOT WIN32)
 if (NOT BISON_EXECUTABLE)
   message(FATAL_ERROR "Found no working Bison executable")
 endif (NOT BISON_EXECUTABLE)
