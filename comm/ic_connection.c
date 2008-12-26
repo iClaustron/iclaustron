@@ -419,7 +419,7 @@ static int
 translate_hostnames(IC_INT_CONNECTION *conn)
 {
   struct addrinfo hints;
-  int n;
+  int ret_code;
   guint64 server_port= 0LL;
   guint64 client_port= 0LL;
 
@@ -437,11 +437,15 @@ translate_hostnames(IC_INT_CONNECTION *conn)
   hints.ai_flags= AI_PASSIVE;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
+  hints.ai_protocol= IPPROTO_TCP;
   DEBUG_PRINT(COMM_LEVEL, ("Server name = %s, service = %s",
               conn->server_name, conn->server_port));
-  if ((n= getaddrinfo(conn->server_name, conn->server_port,
+  if ((ret_code= getaddrinfo(conn->server_name, conn->server_port,
        &hints, &conn->server_addrinfo)) != 0)
+  {
+    conn->err_str= gai_strerror(ret_code);
     return IC_ERROR_GETADDRINFO;
+  }
   conn->ret_server_addrinfo= conn->server_addrinfo;
   /* Record a human-readable address for the server part of the connection */
   ic_sock_ntop(conn->server_addrinfo->ai_addr,
@@ -467,11 +471,15 @@ translate_hostnames(IC_INT_CONNECTION *conn)
   hints.ai_flags= AI_CANONNAME;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
+  hints.ai_protocol= IPPROTO_TCP;
   DEBUG_PRINT(COMM_LEVEL, ("Client name = %s, service = %s",
               conn->client_name, conn->client_port));
-  if ((n= getaddrinfo(conn->client_name, conn->client_port,
+  if ((ret_code= getaddrinfo(conn->client_name, conn->client_port,
        &hints, &conn->client_addrinfo)) != 0)
+  {
+    conn->err_str= gai_strerror(ret_code);
     return IC_ERROR_GETADDRINFO;
+  }
   conn->ret_client_addrinfo= conn->client_addrinfo;
   for (; conn->client_addrinfo;
        conn->client_addrinfo= conn->client_addrinfo->ai_next)
@@ -1403,11 +1411,18 @@ get_param(IC_CONNECTION *ext_conn)
 }
 
 /* Implements ic_get_error_code */
-int
+static int
 get_error_code(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   return conn->error_code;
+}
+
+static gchar*
+get_error_str(IC_CONNECTION *ext_conn)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  return conn->err_str;
 }
 
 IC_CONNECTION*
@@ -1445,6 +1460,7 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_read_connection_time= read_socket_connection_time;
   conn->conn_op.ic_read_stat_time= read_socket_stat_time;
   conn->conn_op.ic_write_stat_connection= write_stat_socket_connection;
+  conn->conn_op.ic_get_error_str= get_error_str;
   conn->conn_op.ic_fork_accept_connection= fork_accept_connection;
   conn->conn_op.ic_prepare_server_connection= prepare_server_connection;
   conn->conn_op.ic_prepare_client_connection= prepare_client_connection;

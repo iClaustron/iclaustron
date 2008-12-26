@@ -30,6 +30,7 @@ struct ic_int_connection
   void *param;
   /* This variable is set to the error code if an error occurs. */
   int error_code;
+  const gchar *err_str;
   IC_INT_CONNECTION *orig_conn;
   guint64 cpu_bindings;
   GMutex *read_mutex;

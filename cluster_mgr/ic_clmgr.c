@@ -771,35 +771,45 @@ int main(int argc,
 {
   int ret_code;
   IC_CONNECTION *conn= NULL;
-  IC_API_CLUSTER_CONNECTION apic;
-  IC_API_CONFIG_SERVER *config_server_obj= NULL;
+  IC_API_CLUSTER_CONNECTION api_cluster_conn;
+  IC_API_CONFIG_SERVER *apic= NULL;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
+  const gchar *err_str;
 
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Manager")))
-    return ret_code;
+    goto error;
   if ((ret_code= ic_set_config_path(&glob_config_dir,
                                     glob_config_path,
                                     config_path_buf)))
-    return ret_code;
+    goto error;
   if (glob_bootstrap && (ret_code= bootstrap()))
     goto error;
   ret_code= 1;
-  if (!(config_server_obj= ic_get_configuration(&apic,
-                                                &glob_config_dir,
-                                                glob_node_id,
-                                                glob_cluster_server_ip,
-                                                glob_cluster_server_port,
-                                                &ret_code)))
+  if (!(apic= ic_get_configuration(&api_cluster_conn,
+                                   &glob_config_dir,
+                                   glob_node_id,
+                                   glob_cluster_server_ip,
+                                   glob_cluster_server_port,
+                                   &ret_code,
+                                   &err_str)))
     goto error;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;
-  ret_code= wait_for_connections_and_fork(conn, config_server_obj);
+  ret_code= wait_for_connections_and_fork(conn, apic);
   conn->conn_op.ic_free_connection(conn);
-error:
-  if (config_server_obj)
-    config_server_obj->api_op.ic_free_config(config_server_obj);
+  if (ret_code)
+    goto error;
+end:
+  if (apic)
+    apic->api_op.ic_free_config(apic);
   ic_end();
   return ret_code;
+
+error:
+  if (err_str)
+    printf("%s\n", err_str);
+  ic_print_error(ret_code);
+  goto end;
 }
 

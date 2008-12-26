@@ -2794,7 +2794,8 @@ end:
 }
 
 static int
-set_up_cluster_server_connection(IC_CONNECTION **conn,
+set_up_cluster_server_connection(IC_API_CONFIG_SERVER *apic,
+                                 IC_CONNECTION **conn,
                                  gchar *server_name,
                                  gchar *server_port)
 {
@@ -2816,6 +2817,7 @@ set_up_cluster_server_connection(IC_CONNECTION **conn,
   if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn, NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", error));
+    apic->err_str= loc_conn->conn_op.ic_get_error_str(loc_conn);
     return error;
   }
   DEBUG_PRINT(COMM_LEVEL,
@@ -3187,7 +3189,7 @@ connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
   for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
   {
     conn_p= (IC_CONNECTION**)(&apic->cluster_conn.cluster_srv_conns[i]);
-    if (!(error= set_up_cluster_server_connection(conn_p,
+    if (!(error= set_up_cluster_server_connection(apic, conn_p,
                   apic->cluster_conn.cluster_server_ips[i],
                   apic->cluster_conn.cluster_server_ports[i])))
     {
@@ -3484,6 +3486,12 @@ get_communication_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
                                                      (void*)&test1);
 }
 
+static const gchar*
+get_error_str(IC_API_CONFIG_SERVER *apic)
+{
+  return apic->err_str;
+}
+
 /*
   This routine initialises the data structures needed for a configuration client.
   It sets the proper routines to get the configuration and to free the
@@ -3518,6 +3526,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn)
   apic->mc_ptr= mc_ptr;
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
 
+  apic->api_op.ic_get_error_str= get_error_str;
   apic->api_op.ic_get_config= get_cs_config;
   apic->api_op.ic_get_cluster_ids= get_cluster_ids;
   apic->api_op.ic_get_info_config_channels= get_info_config_channels;
@@ -7079,15 +7088,16 @@ file_open_error:
 }
 
 IC_API_CONFIG_SERVER*
-ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
+ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
                      IC_STRING *config_dir,
                      guint32 node_id,
                      gchar *cluster_server_ip,
                      gchar *cluster_server_port,
-                     int *error)
+                     int *error,
+                     const gchar **err_str)
 {
   IC_CLUSTER_CONNECT_INFO **clu_infos;
-  IC_API_CONFIG_SERVER *config_server_obj= NULL;
+  IC_API_CONFIG_SERVER *apic= NULL;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   int ret_code;
@@ -7102,23 +7112,24 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                                                     &clu_conf_struct)))
     goto end;
 
-  apic->num_cluster_servers= 1;
-  apic->cluster_server_ips= &cluster_server_ip;
-  apic->cluster_server_ports= &cluster_server_port;
-  if ((config_server_obj= ic_create_api_cluster(apic)))
+  api_cluster_conn->num_cluster_servers= 1;
+  api_cluster_conn->cluster_server_ips= &cluster_server_ip;
+  api_cluster_conn->cluster_server_ports= &cluster_server_port;
+  if ((apic= ic_create_api_cluster(api_cluster_conn)))
   {
-    if (!(ret_code= config_server_obj->api_op.ic_get_config(config_server_obj,
-                                                            clu_infos,
-                                                            node_id)))
+    if (!(ret_code= apic->api_op.ic_get_config(apic,
+                                               clu_infos,
+                                               node_id)))
       goto end;
-    config_server_obj->api_op.ic_free_config(config_server_obj);
-    config_server_obj= NULL;
+    *err_str= apic->api_op.ic_get_error_str(apic);
+    apic->api_op.ic_free_config(apic);
+    apic= NULL;
   }
 end:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   *error= ret_code;
-  return config_server_obj;
+  return apic;
 }
 
 /*

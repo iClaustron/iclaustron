@@ -266,6 +266,7 @@ struct ic_run_cluster_server;
 struct ic_socket_link_config;
 struct ic_api_cluster_operations
 {
+  const gchar* (*ic_get_error_str) (struct ic_api_config_server *apic);
   /*
     This function gets the configuration for a set of clusters from the
     Cluster Server(s). It allocates the node id in each of those
@@ -366,6 +367,7 @@ struct ic_api_config_server
   gchar *string_memory_to_return;
   gchar *end_string_memory;
   gchar *next_string_memory;
+  gchar *err_str;
 };
 typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 
@@ -713,7 +715,8 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      guint32 node_id,
                      gchar *cluster_server_ip,
                      gchar *cluster_server_port,
-                     int *error);
+                     int *error,
+                     const gchar **err_str);
 
 IC_API_CONFIG_SERVER*
 ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn);

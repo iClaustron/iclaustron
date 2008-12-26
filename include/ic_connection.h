@@ -187,10 +187,10 @@ struct ic_connect_operations
   void (*ic_safe_read_stat_connection) (IC_CONNECTION *conn,
                                         IC_CONNECT_STAT *stat,
                                         gboolean clear_stat_timer);
-  /*
-    Print statistics of the connection
-  */
+  /* Print statistics of the connection */
   void (*ic_write_stat_connection)     (IC_CONNECTION *conn);
+  /* Get error string if any */
+  gchar* (*ic_get_error_str)           (IC_CONNECTION *conn);
   /*
     These are two routines to read times in conjunction with this connect
     object.
