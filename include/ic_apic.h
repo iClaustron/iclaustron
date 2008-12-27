@@ -413,6 +413,7 @@ struct ic_data_server_config
 
   gchar *filesystem_path;
   gchar *data_server_checkpoint_path;
+  gchar *data_server_zero_redo_log;
 
   guint64 size_of_ram_memory;
   guint64 size_of_hash_memory;
@@ -493,6 +494,12 @@ struct ic_data_server_config
   guint32 data_server_max_local_trigger_operations;
   guint32 data_server_max_stored_group_commits;
   guint32 data_server_local_trigger_handover_timeout;
+  guint32 data_server_report_startup_frequency;
+  guint32 data_server_node_group;
+  guint32 data_server_threads;
+  guint32 data_server_local_db_threads;
+  guint32 data_server_local_db_workers;
+  guint32 data_server_file_thread_pool;
 
   gchar use_unswappable_memory;
   gchar data_server_automatic_restart;

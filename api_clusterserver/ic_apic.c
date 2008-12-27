@@ -1520,6 +1520,12 @@ init_config_parameters()
 #define DATA_SERVER_MAX_LOCAL_TRIGGER_OPERATIONS 181
 #define DATA_SERVER_MAX_STORED_GROUP_COMMITS 182
 #define DATA_SERVER_LOCAL_TRIGGER_HANDOVER_TIMEOUT 183
+#define DATA_SERVER_REPORT_STARTUP_FREQUENCY 184
+#define DATA_SERVER_NODE_GROUP 185
+#define DATA_SERVER_THREADS 186
+#define DATA_SERVER_LOCAL_DB_THREADS 187
+#define DATA_SERVER_LOCAL_DB_WORKERS 188
+#define DATA_SERVER_ZERO_REDO_LOG 189
 
   IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGER_USERS, 100);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_local_trigger_users,
@@ -1551,12 +1557,64 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Maximum time to wait when performing a handover during local trigger definitions";
 
-/* 184-189 not used */
+  IC_SET_CONFIG_MAP(DATA_SERVER_REPORT_STARTUP_FREQUENCY, 104);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_report_startup_frequency,
+                            IC_UINT32, 0, IC_ONLINE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "How often to issue status reports during startup of the ndb kernel";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_NODE_GROUP, 105);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_node_group,
+                            IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Node group of ndbd node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_THREADS, 106);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_threads,
+                            IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 3, 8);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of threads that can be used maximally for ndbd node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_THREADS, 107);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_threads,
+                            IC_UINT32, 4, IC_NODE_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of threads used by local database part in ndbd";
+  
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_WORKERS, 108);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_workers,
+                            IC_UINT32, 4, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of partitions used by local database part in ndbd";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_ZERO_REDO_LOG, 109);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_zero_redo_log,
+                            IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->default_string= "sparse";
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Initialise REDO log during initial start (sparse or full)";
 
 /* Id 110-119 for configuration id 190-199 */
-/* 190-197 not used */
+/* 191-197 not used */
+#define DATA_SERVER_FILE_THREAD_POOL 190
 #define DATA_SERVER_MEMORY_POOL 198
-/* 199 not used */
+/* 199 used, not for normal builds though */
+  IC_SET_CONFIG_MAP(DATA_SERVER_FILE_THREAD_POOL, 110);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_file_thread_pool,
+                            IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of threads used for Disk Data file threads";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_MEMORY_POOL, 118);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_memory_pool,
@@ -4485,7 +4543,7 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
                       IC_RC_PARAM *param)
 {
   int ret_code;
-  gchar *config_base64_str;
+  guint8 *config_base64_str;
   guint32 config_len;
   IC_RUN_CLUSTER_STATE *rcs_state= &run_obj->state;
   GMutex *state_mutex= rcs_state->protect_state;
@@ -4528,7 +4586,7 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
   if ((ret_code= send_get_nodeid_reply(conn, param->client_nodeid)) ||
       (ret_code= rec_get_config_req(conn, param->version_number)) ||
       (ret_code= ic_get_base64_config(run_obj->conf_objects[param->cluster_id],
-                                      (guint8**)&config_base64_str,
+                                      &config_base64_str,
                                       &config_len,
                                       param->version_number)))
   {
@@ -4536,8 +4594,8 @@ handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
   }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Converted configuration to a base64 representation"));
-  ret_code= send_config_reply(conn, config_base64_str, config_len);
-  ic_free(config_base64_str);
+  ret_code= send_config_reply(conn, (gchar*)config_base64_str, config_len);
+  ic_free((gchar*)config_base64_str);
   DEBUG_RETURN(ret_code);
 }
 
