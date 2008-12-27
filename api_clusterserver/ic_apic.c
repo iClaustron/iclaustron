@@ -535,10 +535,14 @@ static guint64 comm_mandatory_bits;
 #define DEF_PORT 1187
 
 static guint64
-get_iclaustron_protocol_version()
+get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server)
 {
-  guint64 version_no= (IC_VERSION << IC_VERSION_BIT_START) + MYSQL_VERSION;
-  ic_set_bit(version_no, IC_PROTOCOL_BIT);
+  guint64 version_no= MYSQL_VERSION;
+  if (use_iclaustron_cluster_server)
+  {
+    version_no+= (IC_VERSION << IC_VERSION_BIT_START);
+    ic_set_bit(version_no, IC_PROTOCOL_BIT);
+  }
   return version_no;
 }
 
@@ -2898,7 +2902,8 @@ send_get_nodeid(IC_CONNECTION *conn,
   guint64 version_no;
   guint32 node_id= apic->node_ids[cluster_id];
 
-  version_no= get_iclaustron_protocol_version();
+  version_no= get_iclaustron_protocol_version(
+    apic->api_op.ic_use_iclaustron_cluster_server(apic));
   g_snprintf(version_buf, 32, "%s%s", version_str, 
              ic_guint64_str(version_no, buf, NULL));
   g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
@@ -2918,20 +2923,22 @@ send_get_nodeid(IC_CONNECTION *conn,
       ic_send_with_cr(conn, public_key_str) ||
       ic_send_with_cr(conn, endian_buf) ||
       ic_send_with_cr(conn, log_event_str) ||
-      ic_send_with_cr(conn, cluster_id_buf) ||
+      (apic->api_op.ic_use_iclaustron_cluster_server(apic) &&
+      ic_send_with_cr(conn, cluster_id_buf)) ||
       ic_send_with_cr(conn, ic_empty_string))
     return conn->conn_op.ic_get_error_code(conn);
   return 0;
 }
 
 static int
-send_get_config(IC_CONNECTION *conn)
+send_get_config(IC_CONNECTION *conn,
+                gboolean use_iclaustron_cluster_server)
 {
   gchar version_buf[128];
   gchar buf[128];
   guint64 version_no;
 
-  version_no= get_iclaustron_protocol_version();
+  version_no= get_iclaustron_protocol_version(use_iclaustron_cluster_server);
   g_snprintf(version_buf, 32, "%s%s", version_str,
              ic_guint64_str(version_no, buf, NULL));
   if (ic_send_with_cr(conn, get_config_str) ||
@@ -3301,15 +3308,24 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
   IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
   DEBUG_ENTRY("get_cs_config");
 
-  num_clusters= count_clusters(clu_infos);
+  if (apic->use_ic_cs)
+    num_clusters= count_clusters(clu_infos);
+  else
+    num_clusters= 1;
   if ((error= connect_api_connections(apic, &conn)))
     DEBUG_RETURN(error);
-  if ((error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
-    DEBUG_RETURN(error);
-  for (i= 0; i < num_clusters; i++)
-    max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
-
-  apic->max_cluster_id= max_cluster_id;
+  if (apic->use_ic_cs)
+  {
+    if ((error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
+      DEBUG_RETURN(error);
+    for (i= 0; i < num_clusters; i++)
+      max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
+    apic->max_cluster_id= max_cluster_id;
+  }
+  else
+  {
+    apic->max_cluster_id= max_cluster_id= 0;
+  }
   if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
            (max_cluster_id + 1) * sizeof(IC_CLUSTER_CONFIG**))) ||
@@ -3320,7 +3336,10 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
 
   for (i= 0; i < num_clusters; i++)
   {
-    cluster_id= clu_infos[i]->cluster_id;
+    if (apic->use_ic_cs)
+      cluster_id= clu_infos[i]->cluster_id;
+    else
+      cluster_id= 0;
     if (!(clu_conf= (IC_CLUSTER_CONFIG*)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
       goto mem_alloc_error;
@@ -3342,7 +3361,8 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
     if (!apic->conf_objects[cluster_id] ||
        ((error= send_get_nodeid(conn, apic, cluster_id)) ||
         (error= rec_get_nodeid(conn, apic, cluster_id)) ||
-        (error= send_get_config(conn)) ||
+        (error= send_get_config(conn,
+         apic->api_op.ic_use_iclaustron_cluster_server(apic))) ||
         (error= rec_get_config(conn, apic, cluster_id))))
       continue;
   }
@@ -3550,13 +3570,19 @@ get_error_str(IC_API_CONFIG_SERVER *apic)
   return apic->err_str;
 }
 
+static gboolean
+use_ic_cs(IC_API_CONFIG_SERVER *apic)
+{
+  return apic->use_ic_cs;
+}
 /*
   This routine initialises the data structures needed for a configuration client.
   It sets the proper routines to get the configuration and to free the
   configuration.
 */
 IC_API_CONFIG_SERVER*
-ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn)
+ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
+                      gboolean use_ic_cs_var)
 {
   IC_MEMORY_CONTAINER *mc_ptr;
   IC_API_CONFIG_SERVER *apic= NULL;
@@ -3584,6 +3610,8 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn)
   apic->mc_ptr= mc_ptr;
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
 
+  apic->use_ic_cs= use_ic_cs_var;
+  apic->api_op.ic_use_iclaustron_cluster_server= use_ic_cs;
   apic->api_op.ic_get_error_str= get_error_str;
   apic->api_op.ic_get_config= get_cs_config;
   apic->api_op.ic_get_cluster_ids= get_cluster_ids;
@@ -7151,6 +7179,7 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
                      guint32 node_id,
                      gchar *cluster_server_ip,
                      gchar *cluster_server_port,
+                     gboolean use_iclaustron_cluster_server,
                      int *error,
                      const gchar **err_str)
 {
@@ -7173,7 +7202,8 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
   api_cluster_conn->num_cluster_servers= 1;
   api_cluster_conn->cluster_server_ips= &cluster_server_ip;
   api_cluster_conn->cluster_server_ports= &cluster_server_port;
-  if ((apic= ic_create_api_cluster(api_cluster_conn)))
+  if ((apic= ic_create_api_cluster(api_cluster_conn,
+                                   use_iclaustron_cluster_server)))
   {
     if (!(ret_code= apic->api_op.ic_get_config(apic,
                                                clu_infos,

@@ -30,6 +30,7 @@ static gchar *glob_config_path= NULL;
 static guint32 glob_node_id= 5;
 static guint32 glob_bootstrap_cs_id= 1;
 static gboolean glob_bootstrap= FALSE; 
+static guint32 glob_use_iclaustron_cluster_server= 1;
 
 static gchar *not_impl_string= "not implemented yet";
 static gchar *no_such_cluster_string=
@@ -45,6 +46,9 @@ static GOptionEntry entries[] =
   { "cluster_server_port", 0, 0, G_OPTION_ARG_STRING,
     &glob_cluster_server_port,
     "Set Server Port of Cluster Server", NULL},
+  { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
+     &glob_use_iclaustron_cluster_server,
+    "Use of iClaustron Cluster Server (default or NDB mgm server", NULL},
   { "cluster_manager_hostname", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_ip,
     "Set Server Hostname of Cluster Manager", NULL},
@@ -791,6 +795,7 @@ int main(int argc,
                                    glob_node_id,
                                    glob_cluster_server_ip,
                                    glob_cluster_server_port,
+                                   glob_use_iclaustron_cluster_server,
                                    &ret_code,
                                    &err_str)))
     goto error;

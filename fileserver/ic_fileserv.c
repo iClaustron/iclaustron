@@ -25,12 +25,16 @@ static gchar *glob_cluster_server_port= "10203";
 static gchar *glob_config_path= NULL;
 static guint32 glob_node_id= 5;
 static guint32 glob_num_threads= 1;
+static guint32 glob_use_iclaustron_cluster_server= 1;
 
 static GOptionEntry entries[] = 
 {
   { "num_fs_threads", 0, 0, G_OPTION_ARG_INT,
     &glob_num_threads,
     "Number of threads executing in file server process", NULL},
+  { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
+     &glob_use_iclaustron_cluster_server,
+    "Use of iClaustron Cluster Server (default or NDB mgm server", NULL},
   { "cluster_server_hostname", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_server_ip,
     "Set Server Hostname of Cluster Server", NULL},
@@ -42,7 +46,7 @@ static GOptionEntry entries[] =
     "Node id of file server in all clusters", NULL},
   { "config_dir", 0, 0, G_OPTION_ARG_STRING,
     &glob_config_path,
-    "Specification of Clusters that file server will connect to with access info",
+"Specification of Clusters that file server will connect to with access info",
      NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
@@ -151,6 +155,7 @@ int main(int argc, char *argv[])
                                    glob_node_id,
                                    glob_cluster_server_ip,
                                    glob_cluster_server_port,
+                                   glob_use_iclaustron_cluster_server,
                                    &ret_code,
                                    &error_str)))
     goto error;

@@ -260,20 +260,24 @@ struct ic_cluster_config
 };
 typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 
-struct ic_api_cluster_connection;
-struct ic_api_config_server;
-struct ic_run_cluster_server;
-struct ic_socket_link_config;
+typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
+typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;
 struct ic_api_cluster_operations
 {
-  const gchar* (*ic_get_error_str) (struct ic_api_config_server *apic);
+  /*
+     Check if we're running towards iClaustron Cluster Server or
+     towards NDB management server (mostly for debugging)
+  */
+  gboolean (*ic_use_iclaustron_cluster_server) (IC_API_CONFIG_SERVER *apic);
+  /* Get error string for special errors, not set for all errors */
+  const gchar* (*ic_get_error_str) (IC_API_CONFIG_SERVER *apic);
   /*
     This function gets the configuration for a set of clusters from the
     Cluster Server(s). It allocates the node id in each of those
     clusters. Thus one process can be part of many clusters but it has
     to allocate the same node id in all of them.
   */
-  int (*ic_get_config) (struct ic_api_config_server *apic,
+  int (*ic_get_config) (IC_API_CONFIG_SERVER *apic,
                         IC_CLUSTER_CONNECT_INFO **clu_info,
                         guint32 node_id);
   /*
@@ -281,14 +285,14 @@ struct ic_api_cluster_operations
     Server(s) set up in the IC_API_CONFIG_SERVER struct. It fetches this
     from the Cluster Server(s).
   */
-  int (*ic_get_cluster_ids) (struct ic_api_config_server *apic,
+  int (*ic_get_cluster_ids) (IC_API_CONFIG_SERVER *apic,
                             IC_CLUSTER_CONNECT_INFO **clu_infos);
 
   /*
     This method is intended to convert a connection to the Cluster
     Server into a transporter connection.
   */
-  int (*ic_get_info_config_channels) (struct ic_api_config_server *apic);
+  int (*ic_get_info_config_channels) (IC_API_CONFIG_SERVER *apic);
 
   /*
     The following methods are used to retrieve information from the
@@ -302,30 +306,29 @@ struct ic_api_cluster_operations
     type.
   */
   IC_CLUSTER_CONFIG* (*ic_get_cluster_config)
-       (struct ic_api_config_server *apic, guint32 cluster_id);
+       (IC_API_CONFIG_SERVER *apic, guint32 cluster_id);
 
   gchar* (*ic_get_node_object)
-       (struct ic_api_config_server *apic, guint32 cluster_id,
-        guint32 node_id);
+       (IC_API_CONFIG_SERVER *apic, guint32 cluster_id, guint32 node_id);
 
   gchar* (*ic_get_typed_node_object)
-       (struct ic_api_config_server *apic, guint32 cluster_id,
+       (IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
         guint32 node_id, IC_NODE_TYPES node_type);
 
-  struct ic_socket_link_config*
-    (*ic_get_communication_object)
-      (struct ic_api_config_server *apic, guint32 cluster_id,
+  IC_SOCKET_LINK_CONFIG* (*ic_get_communication_object)
+      (IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
        guint32 first_node_id, guint32 second_node_id);
 
   /* Method used to release all memory allocated for the configuration */
-  void (*ic_free_config) (struct ic_api_config_server *apic);
+  void (*ic_free_config) (IC_API_CONFIG_SERVER *apic);
 };
 typedef struct ic_api_cluster_operations IC_API_CLUSTER_OPERATIONS;
 
+typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
 struct ic_run_cluster_server_operations
 {
-  int (*ic_run_cluster_server) (struct ic_run_cluster_server *run_obj);
-  void (*ic_free_run_cluster) (struct ic_run_cluster_server *run_obj);
+  int (*ic_run_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
+  void (*ic_free_run_cluster) (IC_RUN_CLUSTER_SERVER *run_obj);
 };
 
 #define REC_BUF_SIZE 256
@@ -368,8 +371,8 @@ struct ic_api_config_server
   gchar *end_string_memory;
   gchar *next_string_memory;
   gchar *err_str;
+  gchar use_ic_cs;
 };
-typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 
 struct ic_run_cluster_state
 {
@@ -399,7 +402,6 @@ struct ic_run_cluster_server
   guint32 num_clusters;
   guint32 cs_nodeid;
 };
-typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
 
 struct ic_data_server_config
 {
@@ -615,7 +617,6 @@ struct ic_socket_link_config
   gchar is_wan_connection;
   /* Ignore Connection Group for now */
 };
-typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;
 
 struct ic_sci_comm_link_config
 {
@@ -722,11 +723,13 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      guint32 node_id,
                      gchar *cluster_server_ip,
                      gchar *cluster_server_port,
+                     gboolean use_iclaustron_cluster_server,
                      int *error,
                      const gchar **err_str);
 
 IC_API_CONFIG_SERVER*
-ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn);
+ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
+                      gboolean use_iclaustron_cluster_server);
 
 IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,

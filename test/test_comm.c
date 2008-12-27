@@ -245,7 +245,7 @@ api_clusterserver_test()
       ic_print_config_parameters(0xFFFFFFFF);
     return 0;
   }
-  if ((srv_obj= ic_create_api_cluster(&cluster_conn)))
+  if ((srv_obj= ic_create_api_cluster(&cluster_conn, TRUE)))
     return 1;
   clu_info_ptr[0]= &clu_info;
   clu_info_ptr[1]= NULL;
