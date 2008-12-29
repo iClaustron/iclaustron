@@ -411,6 +411,7 @@ struct ic_data_server_config
   guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
+  guint32 network_buffer_size;
   /* End common part */
 
   gchar *filesystem_path;
@@ -502,6 +503,8 @@ struct ic_data_server_config
   guint32 data_server_local_db_threads;
   guint32 data_server_local_db_workers;
   guint32 data_server_file_thread_pool;
+  guint32 reserved_send_buffer;
+  /* Reserving send buffer memory for ndbd traffic ignored for now */
 
   gchar use_unswappable_memory;
   gchar data_server_automatic_restart;
@@ -522,6 +525,7 @@ struct ic_client_config
   guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
+  guint32 network_buffer_size;
   /* End common part */
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
@@ -603,6 +607,8 @@ struct ic_socket_link_config
   guint32 socket_kernel_write_buffer_size;
   guint32 socket_maxseg_size;
   guint32 socket_max_wait_in_nanos;
+  guint32 socket_overload;
+  /* Ignore socket_overload for now */
 
   guint16 first_node_id;
   guint16 second_node_id;
@@ -610,12 +616,12 @@ struct ic_socket_link_config
   guint16 server_port_number;
   guint16 server_node_id;
   guint16 socket_group;
+  /* Ignore Connection Group for now */
 
   gchar use_message_id;
   gchar use_checksum;
   gchar socket_bind_address;
   gchar is_wan_connection;
-  /* Ignore Connection Group for now */
 };
 
 struct ic_sci_comm_link_config

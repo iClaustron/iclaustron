@@ -880,7 +880,8 @@ init_config_parameters()
 #define IC_NODE_HOST     5
 /* Id 6 not used */
 #define IC_NODE_DATA_PATH 7
-/* Id 8-9 not used */
+/* Id 8 not used */
+#define IC_NETWORK_BUFFER_SIZE 9
 
   IC_SET_CONFIG_MAP(DATA_SERVER_INJECT_FAULT, 1);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, inject_fault,
@@ -923,6 +924,16 @@ init_config_parameters()
                             (1 << IC_DATA_SERVER_TYPE);
   conf_entry->config_entry_description=
   "Data directory of the node";
+
+  IC_SET_CONFIG_MAP(IC_NETWORK_BUFFER_SIZE, 9);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, network_buffer_size, IC_UINT32,
+                            12 * 1024 * 1024,
+                            IC_ONLINE_CHANGE);
+  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
+                            (1 << IC_CLIENT_TYPE) +
+                            (1 << IC_DATA_SERVER_TYPE);
+  conf_entry->config_entry_description=
+  "The total size of the network buffers used in the node";
 
 /* Id 10-19 for configuration id 10-99 */
 /* Id 10-99 not used */
@@ -1571,7 +1582,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_NODE_GROUP, 105);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_node_group,
                             IC_UINT32, 0, IC_NOT_CHANGEABLE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_NODE_ID);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
   "Node group of ndbd node";
@@ -1630,21 +1641,31 @@ init_config_parameters()
 /* Id 120-129 for configuration id 200-209 */
 #define CLIENT_RESOLVE_RANK 200
 #define CLIENT_RESOLVE_TIMER 201
+#define RESERVED_SEND_BUFFER 202
 
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_RANK, 120);
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_rank,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
-  conf_entry->config_types= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->config_types= (1 << IC_CLIENT_TYPE) +
+                            (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->config_entry_description=
   "Rank in resolving network partition of the client";
 
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_TIMER, 121);
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_timer,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
-  conf_entry->config_types= (1 << IC_CLIENT_TYPE) + (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->config_types= (1 << IC_CLIENT_TYPE) +
+                            (1 << IC_CLUSTER_SERVER_TYPE);
   conf_entry->config_entry_description=
   "Time in ms waiting for resolve before crashing";
+
+  IC_SET_CONFIG_MAP(RESERVED_SEND_BUFFER, 122);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, reserved_send_buffer,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
+  conf_entry->config_entry_description=
+  "Send buffer memory reserved for ndbd traffic, not used";
 
 /* Id 130-139 for configuration id 210-249 */
 /* Id 210-249 not used */
@@ -1845,7 +1866,8 @@ init_config_parameters()
 
 /* Id 190-209 for configuration id 410-499 */
 #define SOCKET_SERVER_NODE_ID 410
-/* Id 411-419 not used */
+#define SOCKET_OVERLOAD 411
+/* Id 412-419 not used */
 #define SOCKET_CLIENT_PORT_NUMBER 420
 /* Id 421-453 not used */
 #define SOCKET_WRITE_BUFFER_SIZE 454
@@ -1868,6 +1890,13 @@ init_config_parameters()
   conf_entry->mandatory_bit= mandatory_bits++;
   conf_entry->config_entry_description=
   "Node id of node that is server part of connection";
+
+  IC_SET_CONFIG_MAP(SOCKET_OVERLOAD, 191);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_overload,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
+  conf_entry->config_entry_description=
+  "Number of bytes before overload declared, deprecated";
 
   IC_SET_CONFIG_MAP(SOCKET_CLIENT_PORT_NUMBER, 193);
   IC_SET_SOCKET_CONFIG(conf_entry, client_port_number,
@@ -2039,20 +2068,13 @@ static IC_CONFIG_ENTRY *get_config_entry(int config_id)
 }
 
 static int
-ic_assign_config_value(int config_id, guint64 value,
+ic_assign_config_value(IC_CONFIG_ENTRY *conf_entry, guint64 value,
                        IC_CONFIG_TYPES conf_type,
                       int data_type,
                       gchar *struct_ptr)
 {
-  IC_CONFIG_ENTRY *conf_entry= get_config_entry(config_id);
   gchar *char_ptr;
 
-  if (!conf_entry)
-  {
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Didn't find config entry for config_id = %d", config_id));
-    return PROTOCOL_ERROR;
-  }
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
     return 0;
   if (!(conf_entry->config_types & (1 << conf_type)) ||
@@ -2078,26 +2100,25 @@ ic_assign_config_value(int config_id, guint64 value,
     if (char_ptr)
     {
       DEBUG_PRINT(CONFIG_LEVEL,
-        ("Config value error config_id = %d. %s", config_id, char_ptr));
+        ("Config value error:  %s", char_ptr));
     }
     return PROTOCOL_ERROR;
   }
   struct_ptr+= conf_entry->offset;
   if (data_type == IC_CL_INT32_TYPE)
   {
-    /* TODO
+    if (conf_entry->data_type == IC_UINT32)
+    {
+      *(guint32*)struct_ptr= (guint32)value;
+    }
     else if (conf_entry->data_type == IC_UINT16)
     {
       *(guint16*)struct_ptr= (guint16)value;
     }
-    if (conf_entry->data_type == IC_CHAR)
+    else if (conf_entry->data_type == IC_CHAR ||
+             conf_entry->data_type == IC_BOOLEAN)
     {
-      *(gchar*)struct_ptr= (gchar)value;
-    }
-    */
-    if (conf_entry->data_type == IC_UINT32)
-    {
-      *(guint32*)struct_ptr= (guint32)value;
+      *(guint8*)struct_ptr= (guint8)value;
     }
     else
       return PROTOCOL_ERROR;
@@ -2431,12 +2452,13 @@ update_string_data(IC_API_CONFIG_SERVER *apic,
 
 static int
 analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
-                            guint32 sect_id, guint32 value, guint32 hash_key)
+                            guint32 node_index, guint32 value,
+                            guint32 hash_key)
 {
   if (hash_key == IC_NODE_TYPE)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-                ("Node type of section %u is %u", sect_id, value));
+                ("Node type of index %u is %u", node_index, value));
     switch (value)
     {
       case IC_DATA_SERVER_NODE:
@@ -2459,14 +2481,14 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
         DEBUG_PRINT(CONFIG_LEVEL, ("No such node type"));
         return PROTOCOL_ERROR;
     }
-    conf_obj->node_types[sect_id - 2]= (IC_NODE_TYPES)value;
+    conf_obj->node_types[node_index]= (IC_NODE_TYPES)value;
   }
   else if (hash_key == IC_NODE_ID)
   {
-    conf_obj->node_ids[sect_id - 2]= value;
+    conf_obj->node_ids[node_index]= value;
     conf_obj->max_node_id= MAX(value, conf_obj->max_node_id);
     DEBUG_PRINT(CONFIG_LEVEL,
-                ("Node id = %u for section %u", value, sect_id));
+                ("Node id = %u for index %u", value, node_index));
   }
   return 0;
 }
@@ -2474,7 +2496,7 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
 static int
 step_key_value(IC_API_CONFIG_SERVER *apic,
                guint32 key_type, guint32 **key_value,
-               guint32 value, guint32 *key_value_end, int pass)
+               guint32 value, guint32 *key_value_end)
 {
   guint32 len_words;
   switch (key_type)
@@ -2500,8 +2522,10 @@ step_key_value(IC_API_CONFIG_SERVER *apic,
         return PROTOCOL_ERROR;
       }
       (*key_value)+= len_words;
-      if (pass == 1)
-        apic->string_memory_size+= value;
+      DEBUG_PRINT(CONFIG_LEVEL,
+                  ("String value = %s, str_len= %u",
+                  (gchar*)(*key_value), value - 1));
+      apic->string_memory_size+= value;
       break;
    }
    default:
@@ -2565,7 +2589,7 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
   switch (key_type)
   {
     case IC_CL_INT32_TYPE:
-      if (ic_assign_config_value(hash_key, (guint64)value,
+      if (ic_assign_config_value(conf_entry, (guint64)value,
                                  node_type, key_type,
                                  (gchar*)node_config))
         return PROTOCOL_ERROR;
@@ -2573,7 +2597,7 @@ read_node_section(IC_CLUSTER_CONFIG *conf_obj,
     case IC_CL_INT64_TYPE:
     {
       guint64 long_val= get_64bit_value(value, key_value);
-      if (ic_assign_config_value(hash_key, long_val,
+      if (ic_assign_config_value(conf_entry, long_val,
                                  node_type,
                                  key_type,
                                  (gchar*)node_config))
@@ -2619,7 +2643,7 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
   {
     case IC_CL_INT32_TYPE:
     {
-      if (ic_assign_config_value(hash_key, (guint64)value, IC_COMM_TYPE,
+      if (ic_assign_config_value(conf_entry, (guint64)value, IC_COMM_TYPE,
                                  key_type, (gchar*)socket_conf))
         return PROTOCOL_ERROR;
       break;
@@ -2627,7 +2651,7 @@ read_comm_section(IC_CLUSTER_CONFIG *conf_obj,
     case IC_CL_INT64_TYPE:
     {
       guint64 long_val= get_64bit_value(value, key_value);
-      if (ic_assign_config_value(hash_key, long_val,
+      if (ic_assign_config_value(conf_entry, long_val,
                                  IC_COMM_TYPE,
                                  key_type,
                                  (gchar*)socket_conf))
@@ -2687,84 +2711,143 @@ arrange_node_arrays(IC_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
 }
 
 static int
-analyse_key_value(guint32 *key_value, guint32 len, int pass,
+analyse_key_value(guint32 *key_value, guint32 len,
                   IC_API_CONFIG_SERVER *apic,
                   guint32 cluster_id)
 {
+  guint32 *key_value_start= key_value;
   guint32 *key_value_end= key_value + len;
   IC_CLUSTER_CONFIG *conf_obj;
+  gboolean first= TRUE;
+  gboolean first_ndbd= TRUE;
   int error;
+  guint32 pass;
+  guint32 garbage_section= 0;
+  guint32 first_comm_section= 0;
+  guint32 first_ndbd_section= 0;
+  guint32 num_apis= 0;
+  guint32 node_section, node_index;
 
   conf_obj= apic->conf_objects[cluster_id];
-  if (pass == 1)
+  conf_obj->num_nodes= 0;
+  for (pass= 0; pass < 2; pass++)
   {
-    if ((error= allocate_mem_phase1(conf_obj)))
-      goto error;
-  }
-  else if (pass == 2)
-  {
-    if ((error= allocate_mem_phase2(apic, conf_obj)))
-      goto error;
-  }
-  while (key_value < key_value_end)
-  {
-    guint32 key= g_ntohl(key_value[0]);
-    guint32 value= g_ntohl(key_value[1]);
-    guint32 hash_key= key & IC_CL_KEY_MASK;
-    guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
-    guint32 key_type= key >> IC_CL_KEY_SHIFT;
-//    if (sect_id == 0 || sect_id == 1)
+    if (pass == 1)
+    {
+      if ((error= allocate_mem_phase2(apic, conf_obj)))
+        goto error;
+    }
+    key_value= key_value_start;
+    while (key_value < key_value_end)
+    {
+      guint32 key= g_ntohl(key_value[0]);
+      guint32 value= g_ntohl(key_value[1]);
+      guint32 hash_key= key & IC_CL_KEY_MASK;
+      guint32 sect_id= (key >> IC_CL_SECT_SHIFT) & IC_CL_SECT_MASK;
+      guint32 key_type= key >> IC_CL_KEY_SHIFT;
       DEBUG_PRINT(CONFIG_LEVEL,
       ("Section: %u, Config id: %u, Type: %u, value: %u", sect_id, hash_key,
        key_type, value));
-    if (pass == 0 && sect_id == 1)
-      conf_obj->num_nodes= MAX(conf_obj->num_nodes, hash_key + 1);
-    else if (pass == 1)
-    {
-      if (sect_id == (conf_obj->num_nodes + 2))
-        conf_obj->num_comms= MAX(conf_obj->num_comms, hash_key + 1);
-      if ((sect_id > 1 && sect_id < (conf_obj->num_nodes + 2)))
+      if (pass == 0)
       {
-        if ((error= analyse_node_section_phase1(conf_obj, sect_id,
-                                                value, hash_key)))
+        if (sect_id == 0)
+        {
+          if (hash_key == 1000)
+          {
+            garbage_section= (value >> IC_CL_SECT_SHIFT);
+            num_apis= garbage_section - 2;
+          }
+          else if (hash_key == 2000)
+          {
+            g_assert(value == 16384);
+          }
+          else if (hash_key == 3000)
+          {
+            first_comm_section= (value >> IC_CL_SECT_SHIFT) + 1;
+          }
+        } else if (sect_id == 1)
+        {
+          node_section= (value >> IC_CL_SECT_SHIFT);
+          if (node_section >= first_comm_section && first_ndbd)
+          {
+            first_ndbd= FALSE;
+            first_ndbd_section= node_section;
+            conf_obj->num_comms= first_ndbd_section - first_comm_section;
+          }
+          conf_obj->num_nodes++;
+        }
+        if (sect_id == 2 && first)
+        {
+          first= FALSE;
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("num_nodes = %u, num_comms = %u, garbage section = %u",
+            conf_obj->num_nodes, conf_obj->num_comms, garbage_section));
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("first comm = %u, first ndbd = %u",
+            first_comm_section, first_ndbd_section));
+          if ((error= allocate_mem_phase1(conf_obj)))
+            goto error;
+
+        }
+        if (sect_id >= 2 && sect_id < garbage_section)
+        {
+          node_index= sect_id - 2;
+          if ((error= analyse_node_section_phase1(conf_obj, node_index,
+                                                  value, hash_key)))
+            goto error;
+        }
+        else if (sect_id >= first_ndbd_section)
+        {
+          node_index= num_apis + (sect_id - first_ndbd_section);
+          if ((error= analyse_node_section_phase1(conf_obj,
+                                                  node_index,
+                                                  value, hash_key)))
+            goto error;
+        }
+      }
+      key_value+= 2;
+      if (pass == 0)
+      {
+        if ((error= step_key_value(apic, key_type, &key_value,
+                                   value, key_value_end)))
           goto error;
       }
-    }
-    key_value+= 2;
-    if (pass < 2)
-    {
-      if ((error= step_key_value(apic, key_type, &key_value,
-                                 value, key_value_end, pass)))
-        goto error;
-    }
-    else
-    {
-      if (sect_id > 1 && sect_id != (conf_obj->num_nodes + 2))
+      else /* Pass == 1 */
       {
-        if (sect_id < (conf_obj->num_nodes + 2))
+        guint32 node_sect_id;
+        if (sect_id >= 2 && sect_id < garbage_section)
         {
-          guint32 node_sect_id= sect_id - 2;
+          node_sect_id= sect_id - 2;
           if ((error= read_node_section(conf_obj, apic, key_type, &key_value,
                                         value, hash_key, node_sect_id)))
             goto error;
-        }
-        else
+        } else if (sect_id >= first_ndbd_section)
         {
-          guint32 comm_sect_id= sect_id - (conf_obj->num_nodes + 3);
+          node_sect_id= num_apis + (sect_id - first_ndbd_section);
+          if ((error= read_node_section(conf_obj, apic, key_type, &key_value,
+                                        value, hash_key, node_sect_id)))
+            goto error;
+        } else if (sect_id >= (garbage_section + 3))
+        {
+          guint32 comm_sect_id= sect_id - (garbage_section + 3);
           if ((error= read_comm_section(conf_obj, apic, key_type, &key_value,
                                         value, hash_key, comm_sect_id)))
             goto error;
         }
+        else
+        {
+          if ((error= step_key_value(apic, key_type, &key_value,
+                                     value, key_value_end)))
+            goto error;
+        }
       }
     }
   }
-  if (pass != 2)
-    return 0;
   if ((error= arrange_node_arrays(apic, conf_obj)))
     goto error;
   return 0;
 error:
-  if (pass == 1 || pass == 2)
+  if (!first)
   {
     if (conf_obj->node_types)
       ic_free(conf_obj->node_types);
@@ -2796,7 +2879,7 @@ translate_config(IC_API_CONFIG_SERVER *apic,
   gchar *bin_buf;
   guint32 bin_config_size, bin_config_size32, checksum, i;
   guint32 *bin_buf32, *key_value_ptr, key_value_len;
-  int error, pass;
+  int error;
 
   g_assert((config_size & 3) == 0);
   bin_config_size= (config_size >> 2) * 3;
@@ -2838,12 +2921,9 @@ translate_config(IC_API_CONFIG_SERVER *apic,
   }
   key_value_ptr= bin_buf32 + 2;
   key_value_len= bin_config_size32 - 3;
-  for (pass= 0; pass < 3; pass++)
-  {
-    if ((error= analyse_key_value(key_value_ptr, key_value_len, pass,
-                                  apic, cluster_id)))
-      goto error;
-  }
+  if ((error= analyse_key_value(key_value_ptr, key_value_len,
+                                apic, cluster_id)))
+    goto error;
   error= 0;
   goto end;
 
