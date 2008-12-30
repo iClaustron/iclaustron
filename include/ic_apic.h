@@ -64,7 +64,8 @@ enum ic_config_types
   IC_RESTORE_TYPE = 8,
   IC_CLUSTER_MGR_TYPE = 9,
   IC_COMM_TYPE = 5,
-  IC_NUMBER_OF_CONFIG_TYPES = 10
+  IC_SYSTEM_TYPE = 10,
+  IC_NUMBER_OF_CONFIG_TYPES = 11
 };
 typedef enum ic_config_types IC_CONFIG_TYPES;
 
@@ -118,6 +119,7 @@ struct ic_config_entry
   guint32 max_ndb_version_used;
   enum ic_config_entry_change change_variant;
   guint32 config_types;
+  guint32 config_id;
   gchar is_max_value_defined;
   gchar is_min_value_defined;
   gchar is_boolean;
@@ -149,6 +151,14 @@ struct ic_cluster_connect_info
   guint32 cluster_id;
 };
 typedef struct ic_cluster_connect_info IC_CLUSTER_CONNECT_INFO;
+
+struct ic_system_config
+{
+  guint32 system_primary_cs_node;
+  guint32 system_configuration_number;
+  gchar *system_name;
+};
+typedef struct ic_system_config IC_SYSTEM_CONFIG;
 
 /*
   The struct ic_cluster_config contains the configuration of one
@@ -218,6 +228,11 @@ struct ic_cluster_config
     configuration file. There is also a cluster id for each cluster.
   */
   IC_CLUSTER_CONNECT_INFO clu_info;
+  /*
+    As part of receiving the configuration we also receive information
+    about the cluster (system).
+  */
+  IC_SYSTEM_CONFIG sys_conf;
 
   /*
     We keep track of the number of nodes of various types, maximum node id
@@ -264,6 +279,13 @@ typedef struct ic_api_config_server IC_API_CONFIG_SERVER;
 typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;
 struct ic_api_cluster_operations
 {
+  /* Set error code and line number of error */
+  void (*ic_set_error_line) (IC_API_CONFIG_SERVER *apic,
+                             guint32 error_line);
+  /* Fill an error buffer with information about error */
+  gchar* (*ic_fill_error_buffer) (IC_API_CONFIG_SERVER *apic,
+                                  int error_code,
+                                  gchar *error_buffer);
   /*
      Check if we're running towards iClaustron Cluster Server or
      towards NDB management server (mostly for debugging)
@@ -370,7 +392,8 @@ struct ic_api_config_server
   gchar *string_memory_to_return;
   gchar *end_string_memory;
   gchar *next_string_memory;
-  gchar *err_str;
+  const gchar *err_str;
+  guint32 err_line;
   gchar use_ic_cs;
 };
 
@@ -756,7 +779,18 @@ void ic_print_config_parameters();
   conf_entry= &glob_conf_entry[id]; \
   if (conf_entry->config_entry_name.str) \
     id_already_used_aborting(id);   \
-  if (id > glob_max_config_id) glob_max_config_id= id;
+  if (id > glob_max_config_id) glob_max_config_id= id; \
+  conf_entry->config_id= name;
+
+#define IC_SET_SYSTEM_CONFIG(conf_entry, name, type, val, change) \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
+  (conf_entry)->default_value= (val); \
+  (conf_entry)->data_type= (type); \
+  (conf_entry)->offset= offsetof(IC_SYSTEM_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_SYSTEM_TYPE); \
+  (conf_entry)->change_variant= (change);
 
 #define IC_SET_DATA_SERVER_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name.str= #name; \
@@ -865,5 +899,61 @@ void ic_print_config_parameters();
   (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \
   (conf_entry)->config_types= (1 << IC_CLIENT_TYPE); \
   (conf_entry)->change_variant= (change);
+
+#define PROTOCOL_CHECK_GOTO(cond) \
+{ \
+  if (!(cond)) \
+  { \
+    apic->api_op.ic_set_error_line(apic, (guint32)__LINE__); \
+    error= PROTOCOL_ERROR; \
+    goto error; \
+  } \
+}
+
+#define PROTOCOL_CONN_CHECK_GOTO(cond) \
+{ \
+  if (!(cond)) \
+  { \
+    conn->conn_op.ic_set_error_line(conn, (guint32)__LINE__); \
+    error= PROTOCOL_ERROR; \
+    goto error; \
+  } \
+}
+
+#define PROTOCOL_CHECK_DEBUG_RETURN(cond) \
+{ \
+  if (!(cond)) \
+  { \
+    apic->api_op.ic_set_error_line(apic, (guint32)__LINE__); \
+    DEBUG_RETURN(PROTOCOL_ERROR); \
+    goto error; \
+  } \
+}
+
+#define PROTOCOL_CONN_CHECK_DEBUG_RETURN(cond) \
+{ \
+  if (!(cond)) \
+  { \
+    conn->conn_op.ic_set_error_line(conn, (guint32)__LINE__); \
+    DEBUG_RETURN(PROTOCOL_ERROR); \
+  } \
+}
+
+#define PROTOCOL_CHECK_RETURN(cond) \
+{ \
+  if (!(cond)) \
+  { \
+    apic->api_op.ic_set_error_line(apic, (guint32)__LINE__); \
+    return PROTOCOL_ERROR; \
+  } \
+}
+
+#define PROTOCOL_CONN_CHECK_ERROR_GOTO(error) \
+{ if ((error) == PROTOCOL_ERROR) PROTOCOL_CONN_CHECK_GOTO(FALSE) \
+else goto error; }
+
+#define PROTOCOL_CHECK_ERROR_GOTO(error) \
+{ if ((error) == PROTOCOL_ERROR) PROTOCOL_CHECK_GOTO(FALSE) \
+else goto error; }
 
 #endif

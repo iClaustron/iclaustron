@@ -157,7 +157,14 @@ struct ic_connect_operations
   int (*ic_cmp_connection)             (IC_CONNECTION *conn,
                                         gchar *hostname,
                                         gchar *port);
+  /* Error handling routines */
+  const gchar* (*ic_get_error_str)     (IC_CONNECTION *conn);
   int (*ic_get_error_code)             (IC_CONNECTION *conn);
+  void (*ic_set_error_line)            (IC_CONNECTION *conn,
+                                        guint32 error_line);
+  gchar* (*ic_fill_error_buffer)       (IC_CONNECTION *conn,
+                                        int error_code,
+                                        gchar *error_buffer);
   /*
     In order to support multiple threads using the same connection
     object at the same time we need to declare open and close of
@@ -189,8 +196,6 @@ struct ic_connect_operations
                                         gboolean clear_stat_timer);
   /* Print statistics of the connection */
   void (*ic_write_stat_connection)     (IC_CONNECTION *conn);
-  /* Get error string if any */
-  gchar* (*ic_get_error_str)           (IC_CONNECTION *conn);
   /*
     These are two routines to read times in conjunction with this connect
     object.

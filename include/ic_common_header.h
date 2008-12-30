@@ -324,8 +324,12 @@ int ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len);
 */
 #include <ic_err.h>
 void ic_init_error_messages();
-void ic_print_error(guint32 error_number);
-gchar *ic_get_error_message(guint32 error_number);
+void ic_print_error(int error_number);
+gchar *ic_get_error_message(int error_number);
+gchar *ic_common_fill_error_buffer(const gchar *error_message,
+                                   guint32 error_line,
+                                   int error_code,
+                                   gchar *error_buffer);
 int ic_init();
 void ic_end();
 

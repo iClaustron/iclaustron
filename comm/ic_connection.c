@@ -1418,11 +1418,30 @@ get_error_code(IC_CONNECTION *ext_conn)
   return conn->error_code;
 }
 
-static gchar*
+static const gchar*
 get_error_str(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   return conn->err_str;
+}
+
+static gchar*
+fill_error_buffer(IC_CONNECTION *ext_conn,
+                  int error_code,
+                  gchar *error_buffer)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  return ic_common_fill_error_buffer(conn->err_str,
+                                     conn->error_line,
+                                     error_code,
+                                     error_buffer);
+}
+
+static void
+set_error_line(IC_CONNECTION *ext_conn, guint32 error_line)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  conn->error_line= error_line;
 }
 
 IC_CONNECTION*
@@ -1468,6 +1487,9 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_set_param= set_param;
   conn->conn_op.ic_get_param= get_param;
   conn->conn_op.ic_get_error_code= get_error_code;
+  conn->conn_op.ic_get_error_str= get_error_str;
+  conn->conn_op.ic_fill_error_buffer= fill_error_buffer;
+  conn->conn_op.ic_set_error_line= set_error_line;
 
   conn->is_ssl_connection= is_ssl;
   conn->is_ssl_used_for_data= is_ssl_used_for_data;

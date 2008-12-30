@@ -1014,17 +1014,17 @@ ic_init_error_messages()
 }
 
 void
-ic_print_error(guint32 error_number)
+ic_print_error(int error_number)
 {
   if (error_number < IC_FIRST_ERROR ||
       error_number > IC_LAST_ERROR ||
       !ic_error_str[error_number - IC_FIRST_ERROR])
-    printf("%u: %s\n", error_number, no_such_error_str);
+    printf("%d: %s\n", error_number, no_such_error_str);
   else
     printf("%s\n", ic_error_str[error_number - IC_FIRST_ERROR]);
 }
 
-gchar *ic_get_error_message(guint32 error_number)
+gchar *ic_get_error_message(int error_number)
 {
   if (error_number < IC_FIRST_ERROR ||
       error_number > IC_LAST_ERROR ||
@@ -1032,6 +1032,46 @@ gchar *ic_get_error_message(guint32 error_number)
     return no_such_error_str;
   else
     return ic_error_str[error_number - IC_FIRST_ERROR];
+}
+
+gchar*
+ic_common_fill_error_buffer(const gchar *extra_error_message,
+                            guint32 error_line,
+                            int error_code,
+                            gchar *error_buffer)
+{
+  guint32 err_msg_len, err_str_len, err_buf_index;
+  guint32 protocol_err_str_len, line_buf_len;
+  gchar *protocol_err_msg= "Protocol error on line: ";
+  gchar *err_msg, *line_buf_ptr;
+  gchar line_buf[128];
+
+  err_msg= ic_get_error_message(error_code);
+  err_msg_len= strlen(err_msg);
+  memcpy(error_buffer, err_msg, err_msg_len);
+  error_buffer[err_msg_len]= CARRIAGE_RETURN;
+  if (extra_error_message)
+  {
+    err_str_len= strlen(extra_error_message);
+    memcpy(&error_buffer[err_msg_len + 1], extra_error_message,
+           err_str_len);
+    err_buf_index= err_msg_len + 1 + err_str_len;
+    error_buffer[err_buf_index]= CARRIAGE_RETURN;
+  }
+  if (error_code == PROTOCOL_ERROR)
+  {
+    protocol_err_str_len= strlen(protocol_err_msg);
+    memcpy(&error_buffer[err_buf_index + 1], protocol_err_msg,
+           protocol_err_str_len);
+    err_buf_index= err_buf_index + 1 + protocol_err_str_len;
+    memcpy(&error_buffer[err_buf_index + 1], line_buf,
+           line_buf_len);
+    line_buf_ptr= ic_guint64_str((guint64)error_line, line_buf,
+                                 &line_buf_len);
+    err_buf_index= err_buf_index + 1 + line_buf_len;
+    error_buffer[err_buf_index]= CARRIAGE_RETURN;
+  }
+  return error_buffer;  
 }
 
 static GOptionEntry debug_entries[] = 
