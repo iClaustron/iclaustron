@@ -943,7 +943,7 @@ ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7027
+#define IC_LAST_ERROR 7028
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -1011,6 +1011,8 @@ ic_init_error_messages()
     "Poll set is full, need to use another poll set";
   ic_error_str[IC_ERROR_NOT_FOUND_IN_POLL_SET - IC_FIRST_ERROR]=
     "The file descriptor wasn't found in this poll set";
+  ic_error_str[IC_ERROR_NODE_ALREADY_DEFINED - IC_FIRST_ERROR]=
+    "Can't use the same node id twice in a cluster";
 }
 
 void

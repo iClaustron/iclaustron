@@ -224,7 +224,8 @@ verify_grid_config(IC_CLUSTER_CONFIG **clusters)
   }
   return 0;
 error:
-  printf("%s Grids require cluster managers/servers to be on same nodeid in all clusters\n",
+  printf("%s Grids require cluster managers/servers to be on "
+         "same nodeid in all clusters\n",
          ic_err_str);
   return 1;
 }

@@ -5665,7 +5665,7 @@ int conf_serv_add_key(void *ic_config,
       {
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Trying to define node %u twice", (guint32)value));
-        DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS); /* TODO fix error value */
+        DEBUG_RETURN(IC_ERROR_NODE_ALREADY_DEFINED);
       }
       clu_conf->conf->node_config[value]= (gchar*)clu_conf->current_node_config;
       clu_conf->conf->node_types[value]= 
@@ -5686,7 +5686,9 @@ int conf_serv_add_key(void *ic_config,
       ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->max_value));
     DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
-  else if (/*(conf_entry->data_type == IC_UINT16 && value > 65535) || TODO */
+  else if ((conf_entry->data_type == IC_UINT16 && value > 65535) ||
+           (conf_entry->data_type == IC_CHAR && value > 255) ||
+           (conf_entry->data_type == IC_BOOLEAN && value > 1) ||
            (conf_entry->data_type == IC_UINT32 && value >= num32_check))
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("Parameter %s is larger than its type",
@@ -5695,16 +5697,13 @@ int conf_serv_add_key(void *ic_config,
   }
   if (pass == INITIAL_PASS)
     DEBUG_RETURN(0);
-  /*
-    Assign value of configuration variable according to its data type.
-  */
-  /* TODO
-  if (conf_entry->data_type == IC_CHAR)
-    *(gchar*)struct_ptr= (gchar)value;
+  /* Assign value of configuration variable according to its data type.  */
+  if (conf_entry->data_type == IC_CHAR ||
+      conf_entry->data_type == IC_BOOLEAN)
+    *(guint8*)struct_ptr= (guint8)value;
   else if (conf_entry->data_type == IC_UINT16)
     *(guint16*)struct_ptr= (guint16)value;
-  */
-  if (conf_entry->data_type == IC_UINT32)
+  else if (conf_entry->data_type == IC_UINT32)
     *(guint32*)struct_ptr= (guint32)value;
   else if (conf_entry->data_type == IC_UINT64)
     *(guint64*)struct_ptr= value;
@@ -6084,14 +6083,13 @@ get_node_data(const gchar *struct_ptr, guint32 offset,
   guint64 value= 0;
   switch (data_type)
   {
-    /* TODO 
+    case IC_BOOLEAN:
     case IC_CHAR:
       value= (guint64)*(guint8*)(struct_ptr+offset);
       break;
     case IC_UINT16:
       value= (guint64)*(guint16*)(struct_ptr+offset);
       break;
-    */
     case IC_UINT32:
       value= (guint64)*(guint32*)(struct_ptr+offset);
       break;
@@ -6560,6 +6558,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
       switch (conf_entry->data_type)
       {
         case IC_CHAR:
+        case IC_BOOLEAN:
           *(guint8*)data_ptr= (guint8)value;
           break;
         case IC_UINT16:
