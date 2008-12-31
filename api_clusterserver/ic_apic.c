@@ -3847,490 +3847,308 @@ error:
 }
 
 /*
-  The module below implements translation of a IC_CLUSTER_CONFIG object to a
-  an array of key-value pairs divided in sections according to cluster
-  server protocol. It also uses the ic_base64_encode routine to convert this
-  into a base64 representation which is how it is sent in the cluster server
-  protocol.
-*/
-
-static guint32
-ndb_mgm_str_word_len(guint32 str_len)
-{
-  guint32 word_len;
-  str_len++; /* To accomodate for final NULL */
-  str_len++; /* For bug compatability with NDB MGM Protocol */
-  word_len= (str_len+3)/4;
-  return word_len;
-}
-
-static guint32
-get_length_of_section(IC_CONFIG_TYPES config_type,
-                      gchar *conf, guint64 version_number)
-{
-  IC_CONFIG_ENTRY *conf_entry;
-  gchar **charptr;
-  guint32 len= 0, i, str_len;
-  for (i= 0; i < MAX_CONFIG_ID; i++)
-  {
-    conf_entry= &glob_conf_entry[i];
-    if ((conf_entry->config_types & (1 << ((guint32)config_type))) &&
-        (!conf_entry->is_not_sent) &&
-        is_entry_used_in_version(conf_entry, version_number))
-    {
-      switch (conf_entry->data_type)
-      {
-        case IC_BOOLEAN:
-        case IC_UINT16:
-        case IC_UINT32:
-          break;
-        case IC_UINT64:
-          len++;
-          break;
-        case IC_CHARPTR:
-        {
-          charptr= (gchar**)(conf+conf_entry->offset);
-          str_len= 0;
-          if (*charptr)
-            str_len= strlen(*charptr);
-          len+= ndb_mgm_str_word_len(str_len);
-          break;
-        }
-        default:
-          abort();
-          break;
-      }
-      len+= 2;
-    }
-  }
-  len+= 2; /* One key-value pair for node type */
-  len+= 2; /* One key-value pair for parent node id */
-  return len;
-}
-
-static int
-fill_key_value_section(IC_CONFIG_TYPES config_type,
-                       gchar *conf,
-                       guint32 sect_id,
-                       guint32 *key_value_array,
-                       guint32 *key_value_array_len,
-                       guint64 version_number)
-{
-  IC_CONFIG_ENTRY *conf_entry;
-  guint32 len= 0, i, key, config_id, value, data_type, str_len;
-  guint32 *assign_array;
-  gchar **charptr;
-  guint32 loc_key_value_array_len= *key_value_array_len;
-  for (i= 0; i < MAX_CONFIG_ID; i++)
-  {
-    conf_entry= &glob_conf_entry[i];
-    if ((conf_entry->config_types & (1 << ((guint32)config_type))) &&
-        (!conf_entry->is_not_sent) &&
-        is_entry_used_in_version(conf_entry, version_number))
-    {
-      assign_array= &key_value_array[loc_key_value_array_len];
-      switch (conf_entry->data_type)
-      {
-        case IC_BOOLEAN:
-        {
-          guint8 *entry= (guint8*)(conf+conf_entry->offset);
-          value= (guint32)*entry;
-          data_type= IC_CL_INT32_TYPE;
-          break;
-        }
-        case IC_UINT16:
-        {
-          guint16 *entry= (guint16*)(conf+conf_entry->offset);
-          value= (guint32)*entry;
-          data_type= IC_CL_INT32_TYPE;
-          break;
-        }
-        case IC_UINT32:
-        {
-          guint32 *entry= (guint32*)(conf+conf_entry->offset);
-          value= (guint32)*entry;
-          data_type= IC_CL_INT32_TYPE;
-          break;
-        }
-        case IC_UINT64:
-        {
-          guint64 *entry= (guint64*)(conf+conf_entry->offset);
-          value= (guint32)((guint64)(*entry >> 32));
-          assign_array[2]= g_htonl(value);
-          value= *entry & 0xFFFFFFFF;
-          loc_key_value_array_len++;
-          data_type= IC_CL_INT64_TYPE;
-          break;
-        }
-        case IC_CHARPTR:
-        {
-          charptr= (gchar**)(conf+conf_entry->offset);
-          str_len= 0;
-          if (*charptr)
-            str_len= strlen(*charptr);
-          value= str_len + 1; /* Reported length includes NULL byte */
-          /* 
-             Adjust to number of words with one word removed and
-             an extra null byte calculated for
-           */
-          len= ndb_mgm_str_word_len(str_len);
-          /* We don't need to copy null byte since we initialised to 0 */
-          if (str_len)
-            memcpy((gchar*)&assign_array[2],
-                   *charptr,
-                   str_len);
-          DEBUG_PRINT(CONFIG_LEVEL,
-                      ("String value = %s, str_len= %u",
-                       (gchar*)&assign_array[2], str_len));
-          loc_key_value_array_len+= len;
-          data_type= IC_CL_CHAR_TYPE;
-          break;
-        }
-        default:
-          return IC_ERROR_INCONSISTENT_DATA;
-      }
-      /*
-         Assign the key consisting of:
-         1) Data Type
-         2) Section id
-         3) Config id
-       */
-      config_id= map_inx_to_config_id[i];
-      key= (data_type << IC_CL_KEY_SHIFT) +
-           (sect_id << IC_CL_SECT_SHIFT) +
-           (config_id);
-      assign_array[0]= g_htonl(key);
-      assign_array[1]= g_htonl(value);
-      DEBUG_PRINT(CONFIG_LEVEL,
-                  ("sectid = %u, data_type = %x, config_id = %u, value = %x",
-                   sect_id, data_type, config_id, value));
-      loc_key_value_array_len+= 2;
-    }
-  }
-  /* Add node type for all sections */
-  assign_array= &key_value_array[loc_key_value_array_len];
-  config_id= IC_NODE_TYPE;
-  key= (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
-       (sect_id << IC_CL_SECT_SHIFT) +
-       config_id;
-  switch (config_type)
-  {
-    case IC_COMM_TYPE:
-      value= 0;
-      break;
-    case IC_DATA_SERVER_TYPE:
-    case IC_CLUSTER_SERVER_TYPE:
-    /* config_type already contains the correct value */
-      value= config_type;
-      break;
-    default:
-      if (!is_iclaustron_version(version_number))
-        value= IC_CLIENT_TYPE;
-      else
-        value= config_type;
-      break;
-  }
-  DEBUG_PRINT(CONFIG_LEVEL,
-              ("sectid = %u, config_id = %u, value = %u",
-                sect_id, config_id, value));
-  assign_array[0]= g_htonl(key);
-  assign_array[1]= g_htonl(value);
-  loc_key_value_array_len+= 2;
-
-  /* Add parent id == 0 for all sections */
-  assign_array= &key_value_array[loc_key_value_array_len];
-  config_id= IC_PARENT_ID;
-  key= (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
-       (sect_id << IC_CL_SECT_SHIFT) +
-       config_id;
-  value= (guint32)0;
-  DEBUG_PRINT(CONFIG_LEVEL,
-              ("sectid = %u, config_id = %u, value = %u",
-                sect_id, config_id, value));
-  assign_array[0]= g_htonl(key);
-  assign_array[1]= g_htonl(value);
-  loc_key_value_array_len+= 2;
-
-  *key_value_array_len= loc_key_value_array_len;
-  return 0;
-}
-
-/* This routine depends on that node1 < node2 */
-static IC_SOCKET_LINK_CONFIG*
-get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
-                 IC_SOCKET_LINK_CONFIG *comm_section,
-                 guint32 node1, guint32 node2)
-{
-  IC_SOCKET_LINK_CONFIG *local_comm_section;
-  IC_DATA_SERVER_CONFIG *server_conf;
-  IC_DATA_SERVER_CONFIG *client_conf;
-  comm_section->first_node_id= node1;
-  comm_section->second_node_id= node2;
-  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
-                           ic_hashtable_search(clu_conf->comm_hash,
-                                               (void*)comm_section)))
-    return local_comm_section;
-  init_config_object((gchar*)comm_section, sizeof(IC_COMM_LINK_CONFIG),
-                     IC_COMM_TYPE);
-  comm_section->first_node_id= node1;
-  comm_section->second_node_id= node2;
-  if (clu_conf->node_types[node1] == IC_DATA_SERVER_NODE ||
-      clu_conf->node_types[node2] != IC_DATA_SERVER_NODE)
-  {
-    comm_section->server_node_id= node1;
-    server_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node1];
-    client_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node2];
-  }
-  else
-  {
-    comm_section->server_node_id= node2;
-    server_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node2];
-    client_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node1];
-  }
-  comm_section->server_port_number= server_conf->port_number;
-  comm_section->client_port_number= client_conf->port_number;
-  comm_section->first_hostname= server_conf->hostname;
-  comm_section->second_hostname= client_conf->hostname;
-  return comm_section;
-}
-
-static int
-ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
-                                 guint32 **key_value_array,
-                                 guint32 *key_value_array_len,
-                                 guint64 version_number)
-{
-  guint32 len= 0, num_comms= 0;
-  guint32 node_sect_len, i, j, checksum;
-  guint32 section_id, comm_desc_section, node_desc_section;
-  guint32 *loc_key_value_array;
-  guint32 loc_key_value_array_len= 0;
-  int ret_code;
-  IC_SOCKET_LINK_CONFIG test1, *comm_section;
-
-  /*
-   * Add 2 words for verification string in beginning
-   * Add 2 key-value pairs for section 0
-   * Add one key-value pair for each node section
-   *   - This is section 1
-   */
-  len+= 2;
-  len+= 4;
-  len+= clu_conf->num_nodes * 2;
-  DEBUG_PRINT(CONFIG_LEVEL, ("1: len=%u", len));
-  for (i= 1; i <= clu_conf->max_node_id; i++)
-  {
-    /* Add length of each node section */
-    if (clu_conf->node_config[i])
-    {
-      node_sect_len= get_length_of_section(
-                          (IC_CONFIG_TYPES)clu_conf->node_types[i],
-                                           clu_conf->node_config[i],
-                                           version_number);
-      if (node_sect_len == 0)
-        return IC_ERROR_INCONSISTENT_DATA;
-      len+= node_sect_len;
-      DEBUG_PRINT(CONFIG_LEVEL, ("2: len=%u", len));
-    }
-  }
-  /* Add length of each comm section */
-  for (i= 1; i <= clu_conf->max_node_id; i++)
-  {
-    if (clu_conf->node_config[i])
-    {
-      for (j= i+1; j <= clu_conf->max_node_id; j++)
-      {
-        if (clu_conf->node_config[j])
-        {
-          /* iClaustron uses a fully connected cluster */
-          if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
-                clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
-                ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
-            continue;
-          /* We have found two nodes needing a comm section */
-          comm_section= get_comm_section(clu_conf, &test1, i, j);
-          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section,
-                                      version_number);
-          num_comms++;
-          DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u", len));
-        }
-      }
-    }
-  }
-  /*
-   * Add one key-value pair for each comm section
-   *   - This is section 2 + num_nodes
-   */
-  len+= num_comms * 2;
-  DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u", len));
-  /* Add 1 word for checksum at the end */
-  len+= 1;
-  DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u", len));
-
-  /*
-     Allocate memory for key-value pairs, this memory is only temporary for
-     this method and its caller, so memory will be freed soon again
-  */
-  if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
-    return IC_ERROR_MEM_ALLOC;
-  *key_value_array= loc_key_value_array;
-  /*
-    Put in verification section
-  */
-  memcpy((gchar*)loc_key_value_array, ver_string, 8);
-
-  /*
-    Fill Section 0
-      Id 2000 specifies section 1 as a section that specifies node sections
-      Id 3000 specifies section number of the section that describes the
-      communication sections
-  */
-  section_id= 0;
-  comm_desc_section= 2 + clu_conf->num_nodes;
-  node_desc_section= 1;
-  loc_key_value_array[2]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
-                          (section_id << IC_CL_SECT_SHIFT) +
-                          2000;
-  loc_key_value_array[3]= node_desc_section << IC_CL_SECT_SHIFT;
-
-  loc_key_value_array[4]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
-                          (section_id << IC_CL_SECT_SHIFT) +
-                          3000;
-  loc_key_value_array[5]= comm_desc_section << IC_CL_SECT_SHIFT;
-  loc_key_value_array_len= 6;
-
-  /*
-    Fill Section 1
-    One key-value for each section that specifies a node, starting at
-    section 2 and ending at section 2+num_nodes-1.
-  */
-  section_id= 1;
-  for (i= 0; i < clu_conf->num_nodes; i++)
-  {
-    loc_key_value_array[loc_key_value_array_len++]=
-              (IC_UINT32 << IC_CL_KEY_SHIFT) +
-              (section_id << IC_CL_SECT_SHIFT) +
-                                              i;
-    loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
-  }
-  DEBUG_PRINT(CONFIG_LEVEL,
-    ("1: fill_len=%u", loc_key_value_array_len));
-  for (i= 2; i < 6 + (2 * clu_conf->num_nodes); i++)
-    loc_key_value_array[i]= g_htonl(loc_key_value_array[i]);
-
-  /* Fill node sections */
-  section_id= 2;
-  for (i= 1; i <= clu_conf->max_node_id; i++)
-  {
-    if (clu_conf->node_config[i] &&
-        (ret_code= fill_key_value_section(clu_conf->node_types[i],
-                                          clu_conf->node_config[i],
-                                          section_id++,
-                                          loc_key_value_array,
-                                          &loc_key_value_array_len,
-                                          version_number)))
-      goto error;
-    DEBUG_PRINT(CONFIG_LEVEL, ("2: fill_len=%u", loc_key_value_array_len));
-  }
-
-  /*
-    Fill section 1 + 1 + no_of_nodes
-    This specifies the communication sections, one for each pair of nodes
-    that need to communicate
-  */
-  g_assert(comm_desc_section == section_id);
-  section_id= comm_desc_section;
-  for (i= 0; i < num_comms; i++)
-  {
-    loc_key_value_array[loc_key_value_array_len++]= g_htonl(
-                                   (IC_UINT32 << IC_CL_KEY_SHIFT) +
-                                   (comm_desc_section << IC_CL_SECT_SHIFT) +
-                                   i);
-    loc_key_value_array[loc_key_value_array_len++]= g_htonl(
-                              (comm_desc_section+i+1) << IC_CL_SECT_SHIFT);
-  }
-
-  DEBUG_PRINT(CONFIG_LEVEL,
-    ("3: fill_len=%u", loc_key_value_array_len));
-  /* Fill comm sections */
-  section_id= comm_desc_section + 1;
-  for (i= 1; i <= clu_conf->max_node_id; i++)
-  {
-    if (clu_conf->node_config[i])
-    {
-      for (j= i+1; j <= clu_conf->max_node_id; j++)
-      {
-        if (clu_conf->node_config[j])
-        {
-          /* iClaustron uses a fully connected cluster */
-          if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
-               clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
-               ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
-            continue;
-          /* We have found two nodes needing a comm section */
-          comm_section= get_comm_section(clu_conf, &test1, i, j);
-          if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
-                                                (gchar*)comm_section,
-                                                section_id++,
-                                                loc_key_value_array,
-                                                &loc_key_value_array_len,
-                                                version_number)))
-            goto error;
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("4: fill_len=%u", loc_key_value_array_len));
-        }
-      }
-    }
-  }
-  /* Calculate and fill out checksum */
-  checksum= 0;
-  for (i= 0; i < loc_key_value_array_len; i++)
-    checksum^= g_ntohl(loc_key_value_array[i]);
-  loc_key_value_array[loc_key_value_array_len++]= g_ntohl(checksum);
-  DEBUG_PRINT(CONFIG_LEVEL,
-    ("5: fill_len=%u", loc_key_value_array_len));
-  /* Perform final set of checks */
-  *key_value_array_len= loc_key_value_array_len;
-  if (len == loc_key_value_array_len)
-    return 0;
-
-  ret_code= IC_ERROR_INCONSISTENT_DATA;
-error:
-  ic_free(*key_value_array);
-  return ret_code;
-}
-
-static int
-ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
-                     guint8 **base64_array,
-                     guint32 *base64_array_len,
-                     guint64 version_number)
-{
-  guint32 *key_value_array;
-  guint32 key_value_array_len;
-  int ret_code;
-
-  *base64_array= 0;
-  if ((ret_code= ic_get_key_value_sections_config(clu_conf, &key_value_array,
-                                                  &key_value_array_len,
-                                                  version_number)))
-    return ret_code;
-  ret_code= ic_base64_encode(base64_array,
-                             base64_array_len,
-                             (const guint8*)key_value_array,
-                             key_value_array_len*4);
-  DEBUG_PRINT_BUF(CONFIG_LEVEL, *(gchar**)base64_array);
-  ic_free(key_value_array);
-  return ret_code;
-}
-
-/*
-  MODULE: CONFIGURATION SERVER
+  MODULE: RUN CLUSTER SERVER
   ----------------------------
     This is the module that provided with a configuration data structures
     ensures that anyone can request this configuration through a given
     socket and port.
+
+    The module implements the IC_RUN_CLUSTER_SERVER interface.
+    This interface has three methods:
+
+    ic_create_run_cluster: This creates the IC_RUN_CLUSTER_SERVER object
+    ic_run_cluster_server: This runs the cluster server, it is implemented
+                           in the routine run_cluster_server
+    ic_free_run_cluster:   This routine frees the IC_RUN_CLUSTER_SERVER
+                           object and all other data allocated by cluster
+                           server.
 */
+
+static void free_run_cluster(IC_RUN_CLUSTER_SERVER *run_obj);
+static int run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj);
+
+/*
+ * The RUN CLUSTER SERVER has a number of support methods internal to its
+ * implementation. The run_cluster_server method listens to the socket for
+ * the cluster server. As soon as someone connects, it creates a thread to
+ * service the client request. It's in this thread where most of the
+ * complexity of this module resides.
+ *
+ * To start the new thread the start_cluster_server_thread is used, using
+ * a socket object which was forked from the socket which was listened to
+ * in run_cluster_server.
+ *
+ * The new thread is executed in the run_cluster_server_thread method.
+ * This method implements the high level parts of the NDB Management Server
+ * protocol. For each action that is available there is a method handling
+ * that action. These are the handler routines:
+ * handle_get_cluster_list: Request to get a list of cluster id and names
+ * handle_report_event: Report an event from the client to the Cluster Server
+ * handle_get_mgmd_nodeid_request: Get node id of Cluster Server
+ * handle_convert_transporter_request: Convert socket to NDB Protocol
+ * handle_set_connection_parameter_request: Set connection parameters for new
+ *   new NDB Protocol socket
+ * handle_config_request: A request from the client to get a cluster
+ *   configuration
+ *
+ * One connection can contain a number of these protocol actions and the
+ * socket can as mentioned above also be converted to a NDB Protocol
+ * socket.
+ *
+ * The only routine above with some complexity is the handle_config_request.
+ * This is implemented through a number of subroutine levels.
+ * At first there is a set of methods to handle the protocol actions which
+ * is part of this piece of the protocol. These are:
+ * rec_get_nodeid_req: 
+ * send_get_nodeid_reply:
+ * rec_get_config_req:
+ * send_config_reply:
+ *
+ * All of the above protocol methods are fairly simple using the standard
+ * techniques used in the iClaustron protocol methods.
+ *
+ * The final routine is the method to get the base64-encoded configuration
+ * string. This is implemented in the routine:
+ * ic_get_base64_config
+ * This method in turn uses a routine that gets the configuration as a large
+ * of unsigned 32 bit values. This is implemented in the routine:
+ * ic_get_key_value_sections_config
+ *
+ * This routine firsts calculates the length of the array and this is 
+ * supported by the routines:
+ * get_length_of_section: Calculates length of a configuration section
+ * get_comm_section: Gets a communication section to calculate its length
+ * ndb_mgm_str_word_len: Calculates length of ?
+ * 
+ * Finally the array is filled in, this is supported by the method:
+ * fill_key_value_section: Fill in the key-value pairs for one section
+ * 
+ */
+struct ic_rc_param
+{
+  guint64 node_number;
+  guint64 version_number;
+  guint64 node_type;
+  guint64 cluster_id;
+  guint64 client_nodeid;
+};
+typedef struct ic_rc_param IC_RC_PARAM;
+
+static int start_cluster_server_thread(IC_RUN_CLUSTER_SERVER *run_obj,
+                                       IC_CONNECTION *conn);
+static gpointer run_cluster_server_thread(gpointer data);
+
+static int handle_get_cluster_list(IC_RUN_CLUSTER_SERVER *run_obj,
+                                   IC_CONNECTION *conn);
+static int handle_report_event(IC_CONNECTION *conn);
+static int handle_get_mgmd_nodeid_request(IC_CONNECTION *conn,
+                                          guint32 cs_nodeid);
+static int handle_set_connection_parameter_request(IC_CONNECTION *conn,
+                                                   guint32 cs_nodeid,
+                                                   guint32 client_nodeid);
+static int handle_convert_transporter_request(IC_CONNECTION *conn,
+                                              guint32 client_nodeid);
+static int handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
+                                 IC_CONNECTION *conn,
+                                 IC_RC_PARAM *param);
+
+static int rec_get_nodeid_req(IC_CONNECTION *conn,
+                              guint64 *node_number,
+                              guint64 *version_number,
+                              guint64 *node_type,
+                              guint64 *cluster_id);
+static int send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id);
+static int rec_get_config_req(IC_CONNECTION *conn, guint64 version_number);
+static int send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
+                             guint32 config_len);
+
+static int ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
+                                guint8 **base64_array,
+                                guint32 *base64_array_len,
+                                guint64 version_number);
+
+static int ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
+                                            guint32 **key_value_array,
+                                            guint32 *key_value_array_len,
+                                            guint64 version_number);
+
+static IC_SOCKET_LINK_CONFIG*
+get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
+                 IC_SOCKET_LINK_CONFIG *comm_section,
+                 guint32 node1, guint32 node2);
+
+static guint32 get_length_of_section(IC_CONFIG_TYPES config_type,
+                                     gchar *conf, guint64 version_number);
+static guint32 ndb_mgm_str_word_len(guint32 str_len);
+
+static int fill_key_value_section(IC_CONFIG_TYPES config_type,
+                                  gchar *conf,
+                                  guint32 sect_id,
+                                  guint32 *key_value_array,
+                                  guint32 *key_value_array_len,
+                                  guint64 version_number);
+
+/*
+ * Here starts the code part of the Run Cluster Server Module
+ ============================================================
+ */
+IC_RUN_CLUSTER_SERVER*
+ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
+                      IC_MEMORY_CONTAINER *mc_ptr,
+                      gchar *server_name,
+                      gchar *server_port,
+                      guint32 my_node_id)
+{
+  IC_RUN_CLUSTER_SERVER *run_obj;
+  IC_CONNECTION *conn;
+  guint32 max_cluster_id, cluster_id;
+  IC_CLUSTER_CONFIG **cluster_iterator;
+  IC_CLUSTER_CONFIG **cluster_array;
+  DEBUG_ENTRY("ic_create_run_cluster");
+
+  /*
+    Iterate over the clusters to find the maximum cluster id, this is later
+    used to build an index into the cluster configuration structs using
+    cluster id.
+  */
+  max_cluster_id= 0;
+  cluster_iterator= clusters;
+  while (*cluster_iterator)
+  {
+    max_cluster_id= IC_MAX(max_cluster_id,
+                           (*cluster_iterator)->clu_info.cluster_id);
+    cluster_iterator++;
+  }
+  if (!(run_obj= (IC_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
+                mc_ptr, sizeof(IC_RUN_CLUSTER_SERVER))))
+  {
+    DEBUG_RETURN(NULL);
+  }
+  if (!(cluster_array= (IC_CLUSTER_CONFIG**)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
+             sizeof(IC_CLUSTER_CONFIG*) * (max_cluster_id + 1))))
+  {
+    DEBUG_RETURN(NULL);
+  }
+
+  /*
+    Initialise the Cluster Server state, the state is protected by a mutex to
+    ensure when several connections receive requests only one at a time can
+    change the Cluster Server state.
+  */
+  if (!(run_obj->state.protect_state= g_mutex_new()))
+  {
+    DEBUG_RETURN(NULL);
+  }
+  run_obj->state.cs_master= FALSE;
+  run_obj->state.cs_started= FALSE;
+  run_obj->state.bootstrap= FALSE;
+  run_obj->state.config_dir= NULL;
+
+  cluster_iterator= clusters;
+  while (*cluster_iterator)
+  {
+    cluster_id= (*cluster_iterator)->clu_info.cluster_id;
+    if (cluster_array[cluster_id])
+    {
+      printf("Configured two clusters with same id\n");
+      DEBUG_RETURN(NULL);
+    }
+    cluster_array[cluster_id]= *cluster_iterator;
+    cluster_iterator++;
+  }
+  run_obj->conf_objects= cluster_array;
+  run_obj->max_cluster_id= max_cluster_id;
+  run_obj->cs_nodeid= my_node_id;
+  if (!(run_obj->run_conn= ic_create_socket_object(
+                            FALSE, /* Server connection */
+                            FALSE, /* Don't use mutex */
+                            FALSE, /* Don't use connect thread */
+                            CONFIG_READ_BUF_SIZE,
+                            NULL,  /* Don't use authentication function */
+                            NULL))) /* No authentication object */
+    goto error;
+
+  conn= run_obj->run_conn;
+  conn->conn_op.ic_prepare_server_connection(conn,
+                                             server_name,
+                                             server_port,
+                                             NULL,
+                                             NULL,
+                                             0,
+                                             TRUE);
+  run_obj->run_op.ic_run_cluster_server= run_cluster_server;
+  run_obj->run_op.ic_free_run_cluster= free_run_cluster;
+  DEBUG_RETURN(run_obj);
+
+error:
+  DEBUG_RETURN(NULL);
+}
+
+/*
+  Implements ic_run_cluster_server method.
+*/
+static int
+run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
+{
+  int ret_code= 0;
+  IC_CONNECTION *conn, *fork_conn;
+  DEBUG_ENTRY("run_cluster_server");
+
+  /*
+    Before we start-up our server connection to listen to incoming events
+    we first create some socket connections to connect to our fellow
+    Cluster Servers. In the start-up phase this is necessary to handle
+    synchronisation which Cluster Server becomes the master and who is to
+    deliver the current configuration state to the other Cluster Servers.
+
+    After the start-up phase these connections are maintained in an open
+    state to ensure we can communicate to the other Cluster Servers at all
+    times for changes of the configuration. If we don't manage to set-up
+    connections to a certain Cluster Server in the start-up phase we'll
+    close this client connection and wait for it to connect to our server
+    connection.
+  */
+  conn= run_obj->run_conn;
+  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
+  if (ret_code)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Failed to set-up listening connection"));
+    goto error;
+  }
+  do
+  {
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
+    {
+      DEBUG_PRINT(COMM_LEVEL,
+        ("Failed to accept a new connection"));
+      goto error;
+    }
+    DEBUG_PRINT(CONFIG_LEVEL,
+("Run cluster server has set up connection and has received a connection"));
+    if (!(fork_conn=
+           conn->conn_op.ic_fork_accept_connection(conn,
+                                          FALSE))) /* No mutex */
+    {
+      DEBUG_PRINT(COMM_LEVEL,
+      ("Failed to fork a new connection from an accepted connection"));
+      goto error;
+    }
+    if ((ret_code= start_cluster_server_thread(run_obj, fork_conn)))
+    {
+      DEBUG_PRINT(THREAD_LEVEL,
+        ("Start new thread to handle configuration request failed"));
+      goto error;
+    }
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Ready to accept a new connection"));
+  } while (1);
+
+error:
+  DEBUG_RETURN(ret_code);
+}
+
+/* Free IC_RUN_CLUSTER_SERVER object */
 static void
 free_run_cluster(IC_RUN_CLUSTER_SERVER *run_obj)
 {
@@ -4339,6 +4157,416 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *run_obj)
   return;
 }
 
+/* Start a new Cluster Server thread */
+static int
+start_cluster_server_thread(IC_RUN_CLUSTER_SERVER *run_obj,
+                            IC_CONNECTION *conn)
+{
+  GError *error= NULL;
+  int ret_code= 0;
+  DEBUG_ENTRY("start_handle_config_request");
+
+  conn->conn_op.ic_set_param(conn, (void*)run_obj);
+  if (!g_thread_create_full(run_cluster_server_thread,
+                            (gpointer)conn,
+                            1024*16, /* 16 kByte stack size */
+                            FALSE,   /* Not joinable        */
+                            FALSE,   /* Not bound           */
+                            G_THREAD_PRIORITY_NORMAL,
+                            &error))
+  {
+    ret_code= 1;
+  }
+  DEBUG_RETURN(ret_code);
+}
+
+/* Run a Cluster Server thread */
+static gpointer
+run_cluster_server_thread(gpointer data)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  IC_CONNECTION *conn= (IC_CONNECTION*)data;
+  IC_RUN_CLUSTER_SERVER *run_obj;
+  int error;
+  int state= INITIAL_STATE;
+  IC_RC_PARAM param;
+
+  run_obj= (IC_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
+  while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    switch (state)
+    {
+      case INITIAL_STATE:
+        if (!check_buf(read_buf, read_size, get_cluster_list_str,
+                       strlen(get_cluster_list_str)))
+        {
+          if ((error= handle_get_cluster_list(run_obj, conn)))
+          {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Error from handle_get_cluster_list, code = %u", error));
+            goto error;
+          }
+          state= WAIT_GET_NODEID;
+          break;
+        }
+        if (!check_buf(read_buf, read_size, get_nodeid_str,
+                       strlen(get_nodeid_str)))
+        {
+          /* Handle a request to get configuration for a cluster */
+          if ((error= handle_config_request(run_obj, conn, &param)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Error from handle_config_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_GET_MGMD_NODEID;
+          break;
+        }
+        if (!check_buf(read_buf, read_size, report_event_str,
+                       strlen(report_event_str)))
+        {
+          /* Handle report event */
+          if ((error= handle_report_event(conn)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Error from handle_report_event, code = %u", error));
+          }
+          break; /* The report event is always done in separate connection */
+        }
+        goto error;
+      case WAIT_GET_NODEID:
+        if (!check_buf(read_buf, read_size, get_nodeid_str,
+                       strlen(get_nodeid_str)))
+        {
+          /* Handle a request to get configuration for a cluster */
+          if ((error= handle_config_request(run_obj, conn, &param)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Error from handle_config_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_GET_MGMD_NODEID;
+          break;
+        }
+        goto error;
+      case WAIT_GET_MGMD_NODEID:
+        if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
+                       strlen(get_mgmd_nodeid_str)))
+        {
+          if ((error= handle_get_mgmd_nodeid_request(conn,
+                                                     run_obj->cs_nodeid)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+            ("Error from handle_get_mgmd_nodeid_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_SET_CONNECTION;
+          break;
+        }
+        goto error;
+      case WAIT_SET_CONNECTION:
+        if (!check_buf(read_buf, read_size, set_connection_parameter_str,
+                       strlen(set_connection_parameter_str)))
+        {
+          if ((error= handle_set_connection_parameter_request(
+                            conn,
+                            run_obj->cs_nodeid,
+                            (guint32)param.client_nodeid)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+    ("Error from handle_set_connection_parameter_request, code = %u", error));
+            goto error;
+          }
+          state= WAIT_CONVERT_TRANSPORTER;
+          break;
+        }
+        /*
+          Here it is ok to fall through, the WAIT_SET_CONNECTION is an
+          optional state.
+        */
+      case WAIT_CONVERT_TRANSPORTER:
+        if (!check_buf(read_buf, read_size, convert_transporter_str,
+                       strlen(convert_transporter_str)))
+        {
+          if ((error= handle_convert_transporter_request(conn,
+                                          param.client_nodeid)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+        ("Error from handle_convert_transporter_request, code = %u", error));
+            goto error;
+          }
+          /* At this point the connection is turned into a NDB Protocol connection */
+          state= 100; /* Need more work, TODO */
+          break;
+        }
+        goto error;
+      default:
+        abort();
+        break;
+    }
+  }
+  DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
+  return NULL;
+error:
+  return NULL;
+}
+
+/* Handle get cluster list protocol action in Cluster Server */
+static int
+handle_get_cluster_list(IC_RUN_CLUSTER_SERVER *run_obj,
+                        IC_CONNECTION *conn)
+{
+  gchar cluster_id_buf[32];
+  gchar cluster_name_buf[128];
+  guint32 i;
+  int error;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_STRING cluster_name;
+  DEBUG_ENTRY("handle_get_cluster_list");
+
+  if ((error= ic_send_with_cr(conn, get_cluster_list_reply_str)))
+    goto error;
+  for (i= 0; i <= run_obj->max_cluster_id; i++)
+  {
+    clu_conf= run_obj->conf_objects[i];
+    if (!clu_conf)
+      continue;
+    g_snprintf(cluster_id_buf, 32, "%s%u", cluster_id_str, i);
+    cluster_name_buf[0]= 0;
+    IC_INIT_STRING(&cluster_name, cluster_name_buf, 0, TRUE);
+    ic_add_string(&cluster_name, cluster_name_string);
+    ic_add_ic_string(&cluster_name, &clu_conf->clu_info.cluster_name);
+    if ((error= ic_send_with_cr(conn, cluster_name.str)) ||
+        (error= ic_send_with_cr(conn, cluster_id_buf)))
+      goto error;
+  }
+  if ((error= ic_send_with_cr(conn, end_get_cluster_list_str)))
+    goto error;
+  return 0;
+error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+              ("Protocol error in get cluster list"));
+  PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
+}
+
+/*
+  report event
+  ------------
+  This protocol is used by the ndbd nodes to report shutdown of their process.
+  The data contained in the protocol message is the same as the data sent in
+  a EVENT_REP signal used by the NDB Protocol but instead a separate NDB MGM
+  Protocol connection is opened up and used to report this special event.
+
+  Data[0]:
+  Bit 0-15 contains Event Type (always 27 in this case which means a shutdown
+           has been completed).
+  Bit 16-31 contains the node id of the node being shutdown.
+  Data[1]:
+  0:       Means it isn't restarting
+  1:       Means restart and not initial restart
+  2:       Means start from initial state
+  4:       Another variant of initial restart
+  Data[2]:
+  OS Signal which caused shutdown (e.g. 11 for segmentation fault)
+
+  If the shutdown was caused by an error there are three more words, for
+  graceful shutdown only the above words are set.
+
+  Data[4]:
+  Error number
+  Data[5]:
+  Start phase when error occurred
+  Data[6]:
+  Always equal to 0
+  TODO: Should direct output to file instead
+*/
+static int
+handle_report_event(IC_CONNECTION *conn)
+{
+  guint64 num_array[32], length;
+  gchar *read_buf;
+  guint32 read_size;
+  int error;
+  guint32 report_node_id, os_signal_num, error_num= 0, start_phase= 0;
+  DEBUG_ENTRY("handle_report_event");
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (check_buf_with_int(read_buf, read_size, length_str,
+                          strlen(length_str), &length)) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (check_buf_with_many_int(read_buf, read_size, data_str,
+                               strlen(data_str), (guint32)length,
+                               &num_array[0])))
+  {
+    error= error ? error : PROTOCOL_ERROR;
+    PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
+  }
+  if ((error= rec_simple_str(conn, ic_empty_string)))
+    PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
+  if ((error= ic_send_with_cr(conn, report_event_reply_str)) ||
+      (error= ic_send_with_cr(conn, result_ok_str)) ||
+      (error= ic_send_with_cr(conn, ic_empty_string)))
+    goto error;
+  report_node_id= num_array[0] >> 16;
+  g_assert((num_array[0] & 0xFFFF) == 59);
+  if (num_array[1] == 0)
+    printf("Node %u has shutdown", report_node_id);
+  else if (num_array[1] == 1)
+    printf("Node %u has restarted", report_node_id);
+  else
+    printf("Node %u has performed initial restart", report_node_id);
+  if (length == (guint64)3)
+  {
+    printf(" due to graceful shutdown\n");
+  }
+  else
+  {
+    g_assert(length == (guint64)6);
+    g_assert(num_array[5] == 0);
+    os_signal_num= num_array[2];
+    error_num= num_array[3];
+    start_phase= num_array[4];
+    printf(" due to error %u, OS Signal %u in startphase %u\n",
+           error_num, os_signal_num, start_phase);
+  }
+  DEBUG_RETURN(0);
+error:
+  DEBUG_RETURN(error);
+}
+
+/* Handle get mgmd nodeid request protocol action */
+static int
+handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
+{
+  int error;
+  gchar cs_nodeid_buf[32];
+  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
+  DEBUG_ENTRY("handle_get_mgmd_nodeid_request");
+
+  if ((error= rec_simple_str(conn, ic_empty_string)) ||
+      (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
+      (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
+      (error= ic_send_with_cr(conn, ic_empty_string)))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+                ("Protocol error in converting to transporter"));
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
+}
+
+/* Handle set connection parameter request protocol action */
+static int
+handle_set_connection_parameter_request(IC_CONNECTION *conn,
+                                        guint32 cs_nodeid,
+                                        guint32 client_nodeid)
+{
+  int error;
+  gchar cs_nodeid_buf[32];
+  gchar client_nodeid_buf[32];
+  DEBUG_ENTRY("handle_set_connection_parameter_request");
+
+  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
+  g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
+  if ((error= rec_simple_str(conn, client_nodeid_buf)) ||
+      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
+      (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
+      (error= ic_send_with_cr(conn, result_ok_str)))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+                ("Protocol error in converting to transporter"));
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
+}
+
+/* Handle convert transporter request protocol action */
+static int
+handle_convert_transporter_request(IC_CONNECTION *conn, guint32 client_nodeid)
+{
+  int error;
+  int trp_type= IC_TCP_TRANSPORTER_TYPE;
+  gchar client_buf[32], cs_buf[32];
+  DEBUG_ENTRY("handle_convert_transporter_request");
+
+  g_snprintf(client_buf, 64, "%d %d", client_nodeid, trp_type);
+  g_snprintf(cs_buf, 64, "%d %d", client_nodeid, trp_type);
+  if ((error= rec_simple_str(conn, ic_empty_string)) ||
+      (error= rec_simple_str(conn, client_buf)) ||
+      (error= ic_send_with_cr(conn, cs_buf)))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+                ("Protocol error in converting to transporter"));
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
+}
+
+/* Handle cluster configuration request */
+static int
+handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
+                      IC_CONNECTION *conn,
+                      IC_RC_PARAM *param)
+{
+  int ret_code;
+  guint8 *config_base64_str;
+  guint32 config_len;
+  IC_RUN_CLUSTER_STATE *rcs_state= &run_obj->state;
+  GMutex *state_mutex= rcs_state->protect_state;
+  DEBUG_ENTRY("handle_config_request");
+
+  if ((ret_code= rec_get_nodeid_req(conn,
+                                    &param->node_number,
+                                    &param->version_number,
+                                    &param->node_type,
+                                    &param->cluster_id)))
+  {
+    DEBUG_RETURN(ret_code);
+  }
+  g_mutex_lock(state_mutex);
+  if (rcs_state->cs_started && rcs_state->cs_master)
+  {
+    ;
+  }
+  else if (rcs_state->cs_started && !rcs_state->cs_master)
+  {
+    /* Send an error message to indicate we're not master */
+    ;
+  }
+  else
+  {
+    /* Send an error message to indicate we're still in start-up phase */
+    ;
+  }
+  g_mutex_unlock(state_mutex);
+  if (param->node_number == 0)
+  {
+    /* Here we need to discover which node id to use */
+    param->client_nodeid= 1; /* Fake for now */
+  }
+  else
+  {
+    /* Here we ensure that the requested node id is correct */
+    param->client_nodeid= 1;
+  }
+  if ((ret_code= send_get_nodeid_reply(conn, param->client_nodeid)) ||
+      (ret_code= rec_get_config_req(conn, param->version_number)) ||
+      (ret_code= ic_get_base64_config(run_obj->conf_objects[param->cluster_id],
+                                      &config_base64_str,
+                                      &config_len,
+                                      param->version_number)))
+  {
+    DEBUG_RETURN(ret_code);
+  }
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Converted configuration to a base64 representation"));
+  ret_code= send_config_reply(conn, (gchar*)config_base64_str, config_len);
+  ic_free((gchar*)config_base64_str);
+  DEBUG_RETURN(ret_code);
+}
+
+/* Handle receive of get node id request */
 static int
 rec_get_nodeid_req(IC_CONNECTION *conn,
                    guint64 *node_number,
@@ -4480,6 +4708,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
   DEBUG_RETURN(error);
 }
 
+/* Handle send get node id reply protocol part of get configuration */
 static int
 send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
 {
@@ -4496,6 +4725,7 @@ send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
   DEBUG_RETURN(error);
 }
 
+/* Handle receive get configuration request protocol action */
 static int
 rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
 {
@@ -4548,6 +4778,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
   DEBUG_RETURN(error);
 }
 
+/* Handle send configuration reply protocol action */
 static int
 send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
                   guint32 config_len)
@@ -4570,570 +4801,497 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
   DEBUG_RETURN(error);
 }
 
+/* Get base64 encoded string to send to client */
 static int
-handle_get_cluster_list(IC_RUN_CLUSTER_SERVER *run_obj,
-                        IC_CONNECTION *conn)
+ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
+                     guint8 **base64_array,
+                     guint32 *base64_array_len,
+                     guint64 version_number)
 {
-  gchar cluster_id_buf[32];
-  gchar cluster_name_buf[128];
-  guint32 i;
-  int error;
-  IC_CLUSTER_CONFIG *clu_conf;
-  IC_STRING cluster_name;
-  DEBUG_ENTRY("handle_get_cluster_list");
+  guint32 *key_value_array;
+  guint32 key_value_array_len;
+  int ret_code;
 
-  if ((error= ic_send_with_cr(conn, get_cluster_list_reply_str)))
-    goto error;
-  for (i= 0; i <= run_obj->max_cluster_id; i++)
-  {
-    clu_conf= run_obj->conf_objects[i];
-    if (!clu_conf)
-      continue;
-    g_snprintf(cluster_id_buf, 32, "%s%u", cluster_id_str, i);
-    cluster_name_buf[0]= 0;
-    IC_INIT_STRING(&cluster_name, cluster_name_buf, 0, TRUE);
-    ic_add_string(&cluster_name, cluster_name_string);
-    ic_add_ic_string(&cluster_name, &clu_conf->clu_info.cluster_name);
-    if ((error= ic_send_with_cr(conn, cluster_name.str)) ||
-        (error= ic_send_with_cr(conn, cluster_id_buf)))
-      goto error;
-  }
-  if ((error= ic_send_with_cr(conn, end_get_cluster_list_str)))
-    goto error;
-  return 0;
-error:
-  DEBUG_PRINT(CONFIG_LEVEL,
-              ("Protocol error in get cluster list"));
-  PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
-}
-
-static int
-handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
-{
-  int error;
-  gchar cs_nodeid_buf[32];
-  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
-  DEBUG_ENTRY("handle_get_mgmd_nodeid_request");
-
-  if ((error= rec_simple_str(conn, ic_empty_string)) ||
-      (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
-      (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
-      (error= ic_send_with_cr(conn, ic_empty_string)))
-  {
-    DEBUG_PRINT(CONFIG_LEVEL,
-                ("Protocol error in converting to transporter"));
-    DEBUG_RETURN(error);
-  }
-  DEBUG_RETURN(0);
-}
-
-static int
-handle_set_connection_parameter_request(IC_CONNECTION *conn,
-                                        guint32 cs_nodeid,
-                                        guint32 client_nodeid)
-{
-  int error;
-  gchar cs_nodeid_buf[32];
-  gchar client_nodeid_buf[32];
-  DEBUG_ENTRY("handle_set_connection_parameter_request");
-
-  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
-  g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
-  if ((error= rec_simple_str(conn, client_nodeid_buf)) ||
-      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
-      (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
-      (error= ic_send_with_cr(conn, result_ok_str)))
-  {
-    DEBUG_PRINT(CONFIG_LEVEL,
-                ("Protocol error in converting to transporter"));
-    DEBUG_RETURN(error);
-  }
-  DEBUG_RETURN(0);
-}
-
-static int
-handle_convert_transporter_request(IC_CONNECTION *conn, guint32 client_nodeid)
-{
-  int error;
-  int trp_type= IC_TCP_TRANSPORTER_TYPE;
-  gchar client_buf[32], cs_buf[32];
-  DEBUG_ENTRY("handle_convert_transporter_request");
-
-  g_snprintf(client_buf, 64, "%d %d", client_nodeid, trp_type);
-  g_snprintf(cs_buf, 64, "%d %d", client_nodeid, trp_type);
-  if ((error= rec_simple_str(conn, ic_empty_string)) ||
-      (error= rec_simple_str(conn, client_buf)) ||
-      (error= ic_send_with_cr(conn, cs_buf)))
-  {
-    DEBUG_PRINT(CONFIG_LEVEL,
-                ("Protocol error in converting to transporter"));
-    DEBUG_RETURN(error);
-  }
-  DEBUG_RETURN(0);
+  *base64_array= 0;
+  if ((ret_code= ic_get_key_value_sections_config(clu_conf, &key_value_array,
+                                                  &key_value_array_len,
+                                                  version_number)))
+    return ret_code;
+  ret_code= ic_base64_encode(base64_array,
+                             base64_array_len,
+                             (const guint8*)key_value_array,
+                             key_value_array_len*4);
+  DEBUG_PRINT_BUF(CONFIG_LEVEL, *(gchar**)base64_array);
+  ic_free(key_value_array);
+  return ret_code;
 }
 
 /*
-  report event
-  ------------
-  This protocol is used by the ndbd nodes to report shutdown of their process.
-  The data contained in the protocol message is the same as the data sent in
-  a EVENT_REP signal used by the NDB Protocol but instead a separate NDB MGM
-  Protocol connection is opened up and used to report this special event.
-
-  Data[0]:
-  Bit 0-15 contains Event Type (always 27 in this case which means a shutdown
-           has been completed).
-  Bit 16-31 contains the node id of the node being shutdown.
-  Data[1]:
-  0:       Means it isn't restarting
-  1:       Means restart and not initial restart
-  2:       Means start from initial state
-  4:       Another variant of initial restart
-  Data[2]:
-  OS Signal which caused shutdown (e.g. 11 for segmentation fault)
-
-  If the shutdown was caused by an error there are three more words, for
-  graceful shutdown only the above words are set.
-
-  Data[4]:
-  Error number
-  Data[5]:
-  Start phase when error occurred
-  Data[6]:
-  Always equal to 0
-  TODO: Should direct output to file instead
-*/
+ * This routine is used to create an array of guint32 values which
+ * can be base64-encoded for distribution to any node in an
+ * iClaustron grid.
+ *
+ * It's ok for several threads in the iClaustron Cluster Server to
+ * concurrently use this routine.
+ */
 static int
-handle_report_event(IC_CONNECTION *conn)
+ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
+                                 guint32 **key_value_array,
+                                 guint32 *key_value_array_len,
+                                 guint64 version_number)
 {
-  guint64 num_array[32], length;
-  gchar *read_buf;
-  guint32 read_size;
-  int error;
-  guint32 report_node_id, os_signal_num, error_num= 0, start_phase= 0;
-  DEBUG_ENTRY("handle_report_event");
-
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (check_buf_with_int(read_buf, read_size, length_str,
-                          strlen(length_str), &length)) ||
-      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (check_buf_with_many_int(read_buf, read_size, data_str,
-                               strlen(data_str), (guint32)length,
-                               &num_array[0])))
-  {
-    error= error ? error : PROTOCOL_ERROR;
-    PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
-  }
-  if ((error= rec_simple_str(conn, ic_empty_string)))
-    PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
-  if ((error= ic_send_with_cr(conn, report_event_reply_str)) ||
-      (error= ic_send_with_cr(conn, result_ok_str)) ||
-      (error= ic_send_with_cr(conn, ic_empty_string)))
-    goto error;
-  report_node_id= num_array[0] >> 16;
-  g_assert((num_array[0] & 0xFFFF) == 59);
-  if (num_array[1] == 0)
-    printf("Node %u has shutdown", report_node_id);
-  else if (num_array[1] == 1)
-    printf("Node %u has restarted", report_node_id);
-  else
-    printf("Node %u has performed initial restart", report_node_id);
-  if (length == (guint64)3)
-  {
-    printf(" due to graceful shutdown\n");
-  }
-  else
-  {
-    g_assert(length == (guint64)6);
-    g_assert(num_array[5] == 0);
-    os_signal_num= num_array[2];
-    error_num= num_array[3];
-    start_phase= num_array[4];
-    printf(" due to error %u, OS Signal %u in startphase %u\n",
-           error_num, os_signal_num, start_phase);
-  }
-  DEBUG_RETURN(0);
-error:
-  DEBUG_RETURN(error);
-}
-
-struct ic_rc_param
-{
-  guint64 node_number;
-  guint64 version_number;
-  guint64 node_type;
-  guint64 cluster_id;
-  guint64 client_nodeid;
-};
-typedef struct ic_rc_param IC_RC_PARAM;
-
-static int
-handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
-                      IC_CONNECTION *conn,
-                      IC_RC_PARAM *param)
-{
+  guint32 len= 0, num_comms= 0;
+  guint32 node_sect_len, i, j, checksum;
+  guint32 section_id, comm_desc_section, node_desc_section;
+  guint32 *loc_key_value_array;
+  guint32 loc_key_value_array_len= 0;
   int ret_code;
-  guint8 *config_base64_str;
-  guint32 config_len;
-  IC_RUN_CLUSTER_STATE *rcs_state= &run_obj->state;
-  GMutex *state_mutex= rcs_state->protect_state;
-  DEBUG_ENTRY("handle_config_request");
+  IC_SOCKET_LINK_CONFIG test1, *comm_section;
 
-  if ((ret_code= rec_get_nodeid_req(conn,
-                                    &param->node_number,
-                                    &param->version_number,
-                                    &param->node_type,
-                                    &param->cluster_id)))
+  /*
+   * Add 2 words for verification string in beginning
+   * Add 3 key-value pairs for section 0
+   * Add one key-value pair for each node section
+   *   - This is section 1
+   */
+  len+= 2;
+  len+= 6;
+  len+= clu_conf->num_nodes * 2;
+  DEBUG_PRINT(CONFIG_LEVEL, ("1: len=%u", len));
+  for (i= 1; i <= clu_conf->max_node_id; i++)
   {
-    DEBUG_RETURN(ret_code);
+    /* Add length of each node section */
+    if (clu_conf->node_config[i])
+    {
+      node_sect_len= get_length_of_section(
+                          (IC_CONFIG_TYPES)clu_conf->node_types[i],
+                                           clu_conf->node_config[i],
+                                           version_number);
+      if (node_sect_len == 0)
+        return IC_ERROR_INCONSISTENT_DATA;
+      len+= node_sect_len;
+      DEBUG_PRINT(CONFIG_LEVEL, ("2: len=%u", len));
+    }
   }
-  g_mutex_lock(state_mutex);
-  if (rcs_state->cs_started && rcs_state->cs_master)
+  /* Add length of each comm section */
+  for (i= 1; i <= clu_conf->max_node_id; i++)
   {
-    ;
+    if (clu_conf->node_config[i])
+    {
+      for (j= i+1; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
+        {
+          /* iClaustron uses a fully connected cluster */
+          if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
+                clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
+                ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
+            continue;
+          /* We have found two nodes needing a comm section */
+          comm_section= get_comm_section(clu_conf, &test1, i, j);
+          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section,
+                                      version_number);
+          num_comms++;
+          DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u", len));
+        }
+      }
+    }
   }
-  else if (rcs_state->cs_started && !rcs_state->cs_master)
+  /*
+   * Add one key-value pair for each comm section
+   *   - This is meta section for communication
+   */
+  len+= num_comms * 2;
+  DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u", len));
+  /*
+   * Add one word for meta section of system section
+   */
+  len+= 1;
+  /* Add 1 word for checksum at the end */
+  len+= 1;
+  /*
+   * Finally add length of the system section
+   */
+
+  DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u", len));
+  /*
+     Allocate memory for key-value pairs, this memory is only temporary for
+     this method and its caller, so memory will be freed soon again
+  */
+  if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
+    return IC_ERROR_MEM_ALLOC;
+  *key_value_array= loc_key_value_array;
+  /*
+    Put in verification section
+  */
+  memcpy((gchar*)loc_key_value_array, ver_string, 8);
+
+  /*
+    Fill Section 0
+      Id 2000 specifies section 1 as a section that specifies node sections
+      Id 3000 specifies section number of the section that describes the
+      communication sections
+  */
+  section_id= 0;
+  comm_desc_section= 2 + clu_conf->num_nodes;
+  node_desc_section= 1;
+  loc_key_value_array[2]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
+                          (section_id << IC_CL_SECT_SHIFT) +
+                          2000;
+  loc_key_value_array[3]= node_desc_section << IC_CL_SECT_SHIFT;
+
+  loc_key_value_array[4]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
+                          (section_id << IC_CL_SECT_SHIFT) +
+                          3000;
+  loc_key_value_array[5]= comm_desc_section << IC_CL_SECT_SHIFT;
+  loc_key_value_array_len= 6;
+
+  /*
+    Fill Section 1
+    One key-value for each section that specifies a node, starting at
+    section 2 and ending at section 2+num_nodes-1.
+  */
+  section_id= 1;
+  for (i= 0; i < clu_conf->num_nodes; i++)
   {
-    /* Send an error message to indicate we're not master */
-    ;
-  }
-  else
-  {
-    /* Send an error message to indicate we're still in start-up phase */
-    ;
-  }
-  g_mutex_unlock(state_mutex);
-  if (param->node_number == 0)
-  {
-    /* Here we need to discover which node id to use */
-    param->client_nodeid= 1; /* Fake for now */
-  }
-  else
-  {
-    /* Here we ensure that the requested node id is correct */
-    param->client_nodeid= 1;
-  }
-  if ((ret_code= send_get_nodeid_reply(conn, param->client_nodeid)) ||
-      (ret_code= rec_get_config_req(conn, param->version_number)) ||
-      (ret_code= ic_get_base64_config(run_obj->conf_objects[param->cluster_id],
-                                      &config_base64_str,
-                                      &config_len,
-                                      param->version_number)))
-  {
-    DEBUG_RETURN(ret_code);
+    loc_key_value_array[loc_key_value_array_len++]=
+              (IC_UINT32 << IC_CL_KEY_SHIFT) +
+              (section_id << IC_CL_SECT_SHIFT) +
+                                              i;
+    loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
   }
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("Converted configuration to a base64 representation"));
-  ret_code= send_config_reply(conn, (gchar*)config_base64_str, config_len);
-  ic_free((gchar*)config_base64_str);
-  DEBUG_RETURN(ret_code);
-}
+    ("1: fill_len=%u", loc_key_value_array_len));
+  for (i= 2; i < 6 + (2 * clu_conf->num_nodes); i++)
+    loc_key_value_array[i]= g_htonl(loc_key_value_array[i]);
 
-static gpointer
-run_handle_config_request(gpointer data)
-{
-  gchar *read_buf;
-  guint32 read_size;
-  IC_CONNECTION *conn= (IC_CONNECTION*)data;
-  IC_RUN_CLUSTER_SERVER *run_obj;
-  int error;
-  int state= INITIAL_STATE;
-  IC_RC_PARAM param;
-
-  run_obj= (IC_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
-  while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  /* Fill node sections */
+  section_id= 2;
+  for (i= 1; i <= clu_conf->max_node_id; i++)
   {
-    switch (state)
+    if (clu_conf->node_config[i] &&
+        (ret_code= fill_key_value_section(clu_conf->node_types[i],
+                                          clu_conf->node_config[i],
+                                          section_id++,
+                                          loc_key_value_array,
+                                          &loc_key_value_array_len,
+                                          version_number)))
+      goto error;
+    DEBUG_PRINT(CONFIG_LEVEL, ("2: fill_len=%u", loc_key_value_array_len));
+  }
+
+  /*
+    Fill section 1 + 1 + no_of_nodes
+    This specifies the communication sections, one for each pair of nodes
+    that need to communicate
+  */
+  g_assert(comm_desc_section == section_id);
+  section_id= comm_desc_section;
+  for (i= 0; i < num_comms; i++)
+  {
+    loc_key_value_array[loc_key_value_array_len++]= g_htonl(
+                                   (IC_UINT32 << IC_CL_KEY_SHIFT) +
+                                   (comm_desc_section << IC_CL_SECT_SHIFT) +
+                                   i);
+    loc_key_value_array[loc_key_value_array_len++]= g_htonl(
+                              (comm_desc_section+i+1) << IC_CL_SECT_SHIFT);
+  }
+
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("3: fill_len=%u", loc_key_value_array_len));
+  /* Fill comm sections */
+  section_id= comm_desc_section + 1;
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i])
     {
-      case INITIAL_STATE:
-        if (!check_buf(read_buf, read_size, get_cluster_list_str,
-                       strlen(get_cluster_list_str)))
+      for (j= i+1; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
         {
-          if ((error= handle_get_cluster_list(run_obj, conn)))
-          {
+          /* iClaustron uses a fully connected cluster */
+          if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
+               clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
+               ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
+            continue;
+          /* We have found two nodes needing a comm section */
+          comm_section= get_comm_section(clu_conf, &test1, i, j);
+          if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
+                                                (gchar*)comm_section,
+                                                section_id++,
+                                                loc_key_value_array,
+                                                &loc_key_value_array_len,
+                                                version_number)))
+            goto error;
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("Error from handle_get_cluster_list, code = %u", error));
-            goto error;
-          }
-          state= WAIT_GET_NODEID;
-          break;
+            ("4: fill_len=%u", loc_key_value_array_len));
         }
-        if (!check_buf(read_buf, read_size, get_nodeid_str,
-                       strlen(get_nodeid_str)))
-        {
-          /* Handle a request to get configuration for a cluster */
-          if ((error= handle_config_request(run_obj, conn, &param)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error from handle_config_request, code = %u", error));
-            goto error;
-          }
-          state= WAIT_GET_MGMD_NODEID;
-          break;
-        }
-        if (!check_buf(read_buf, read_size, report_event_str,
-                       strlen(report_event_str)))
-        {
-          /* Handle report event */
-          if ((error= handle_report_event(conn)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error from handle_report_event, code = %u", error));
-          }
-          break; /* The report event is always done in separate connection */
-        }
-        goto error;
-      case WAIT_GET_NODEID:
-        if (!check_buf(read_buf, read_size, get_nodeid_str,
-                       strlen(get_nodeid_str)))
-        {
-          /* Handle a request to get configuration for a cluster */
-          if ((error= handle_config_request(run_obj, conn, &param)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error from handle_config_request, code = %u", error));
-            goto error;
-          }
-          state= WAIT_GET_MGMD_NODEID;
-          break;
-        }
-        goto error;
-      case WAIT_GET_MGMD_NODEID:
-        if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
-                       strlen(get_mgmd_nodeid_str)))
-        {
-          if ((error= handle_get_mgmd_nodeid_request(conn,
-                                                     run_obj->cs_nodeid)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-            ("Error from handle_get_mgmd_nodeid_request, code = %u", error));
-            goto error;
-          }
-          state= WAIT_SET_CONNECTION;
-          break;
-        }
-        goto error;
-      case WAIT_SET_CONNECTION:
-        if (!check_buf(read_buf, read_size, set_connection_parameter_str,
-                       strlen(set_connection_parameter_str)))
-        {
-          if ((error= handle_set_connection_parameter_request(
-                            conn,
-                            run_obj->cs_nodeid,
-                            (guint32)param.client_nodeid)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-    ("Error from handle_set_connection_parameter_request, code = %u", error));
-            goto error;
-          }
-          state= WAIT_CONVERT_TRANSPORTER;
-          break;
-        }
-        /*
-          Here it is ok to fall through, the WAIT_SET_CONNECTION is an
-          optional state.
-        */
-      case WAIT_CONVERT_TRANSPORTER:
-        if (!check_buf(read_buf, read_size, convert_transporter_str,
-                       strlen(convert_transporter_str)))
-        {
-          if ((error= handle_convert_transporter_request(conn,
-                                          param.client_nodeid)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-        ("Error from handle_convert_transporter_request, code = %u", error));
-            goto error;
-          }
-          /* At this point the connection is turned into a NDB Protocol connection */
-          state= 100; /* Need more work, TODO */
-          break;
-        }
-        goto error;
-      default:
-        abort();
-        break;
+      }
     }
   }
-  DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
-  return NULL;
+  /* Calculate and fill out checksum */
+  checksum= 0;
+  for (i= 0; i < loc_key_value_array_len; i++)
+    checksum^= g_ntohl(loc_key_value_array[i]);
+  loc_key_value_array[loc_key_value_array_len++]= g_ntohl(checksum);
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("5: fill_len=%u", loc_key_value_array_len));
+  /* Perform final set of checks */
+  *key_value_array_len= loc_key_value_array_len;
+  if (len == loc_key_value_array_len)
+    return 0;
+
+  ret_code= IC_ERROR_INCONSISTENT_DATA;
 error:
-  return NULL;
+  ic_free(*key_value_array);
+  return ret_code;
 }
 
+/*
+ * Get communication section for calculation of its section length
+ * This routine depends on that node1 < node2
+ */
+static IC_SOCKET_LINK_CONFIG*
+get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
+                 IC_SOCKET_LINK_CONFIG *comm_section,
+                 guint32 node1, guint32 node2)
+{
+  IC_SOCKET_LINK_CONFIG *local_comm_section;
+  IC_DATA_SERVER_CONFIG *server_conf;
+  IC_DATA_SERVER_CONFIG *client_conf;
+  comm_section->first_node_id= node1;
+  comm_section->second_node_id= node2;
+  if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
+                           ic_hashtable_search(clu_conf->comm_hash,
+                                               (void*)comm_section)))
+    return local_comm_section;
+  init_config_object((gchar*)comm_section, sizeof(IC_COMM_LINK_CONFIG),
+                     IC_COMM_TYPE);
+  comm_section->first_node_id= node1;
+  comm_section->second_node_id= node2;
+  if (clu_conf->node_types[node1] == IC_DATA_SERVER_NODE ||
+      clu_conf->node_types[node2] != IC_DATA_SERVER_NODE)
+  {
+    comm_section->server_node_id= node1;
+    server_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node1];
+    client_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node2];
+  }
+  else
+  {
+    comm_section->server_node_id= node2;
+    server_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node2];
+    client_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node1];
+  }
+  comm_section->server_port_number= server_conf->port_number;
+  comm_section->client_port_number= client_conf->port_number;
+  comm_section->first_hostname= server_conf->hostname;
+  comm_section->second_hostname= client_conf->hostname;
+  return comm_section;
+}
+
+/* Special handling of string lengths in NDB Management Protocol */
+static guint32
+ndb_mgm_str_word_len(guint32 str_len)
+{
+  guint32 word_len;
+  str_len++; /* To accomodate for final NULL */
+  str_len++; /* For bug compatability with NDB MGM Protocol */
+  word_len= (str_len+3)/4;
+  return word_len;
+}
+
+/* Calculate length of a node, communication section */
+static guint32
+get_length_of_section(IC_CONFIG_TYPES config_type,
+                      gchar *conf, guint64 version_number)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  gchar **charptr;
+  guint32 len= 0, i, str_len;
+  for (i= 0; i < MAX_CONFIG_ID; i++)
+  {
+    conf_entry= &glob_conf_entry[i];
+    if ((conf_entry->config_types & (1 << ((guint32)config_type))) &&
+        (!conf_entry->is_not_sent) &&
+        is_entry_used_in_version(conf_entry, version_number))
+    {
+      switch (conf_entry->data_type)
+      {
+        case IC_BOOLEAN:
+        case IC_UINT16:
+        case IC_UINT32:
+          break;
+        case IC_UINT64:
+          len++;
+          break;
+        case IC_CHARPTR:
+        {
+          charptr= (gchar**)(conf+conf_entry->offset);
+          str_len= 0;
+          if (*charptr)
+            str_len= strlen(*charptr);
+          len+= ndb_mgm_str_word_len(str_len);
+          break;
+        }
+        default:
+          abort();
+          break;
+      }
+      len+= 2;
+    }
+  }
+  len+= 2; /* One key-value pair for node type */
+  len+= 2; /* One key-value pair for parent node id */
+  return len;
+}
+
+/* Fill in key-value pairs for a node or communication section */
 static int
-start_handle_config_request(IC_RUN_CLUSTER_SERVER *run_obj,
-                            IC_CONNECTION *conn)
+fill_key_value_section(IC_CONFIG_TYPES config_type,
+                       gchar *conf,
+                       guint32 sect_id,
+                       guint32 *key_value_array,
+                       guint32 *key_value_array_len,
+                       guint64 version_number)
 {
-  GError *error= NULL;
-  int ret_code= 0;
-  DEBUG_ENTRY("start_handle_config_request");
-
-  conn->conn_op.ic_set_param(conn, (void*)run_obj);
-  if (!g_thread_create_full(run_handle_config_request,
-                            (gpointer)conn,
-                            1024*16, /* 16 kByte stack size */
-                            FALSE,   /* Not joinable        */
-                            FALSE,   /* Not bound           */
-                            G_THREAD_PRIORITY_NORMAL,
-                            &error))
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 len= 0, i, key, config_id, value, data_type, str_len;
+  guint32 *assign_array;
+  gchar **charptr;
+  guint32 loc_key_value_array_len= *key_value_array_len;
+  for (i= 0; i < MAX_CONFIG_ID; i++)
   {
-    ret_code= 1;
-  }
-  DEBUG_RETURN(ret_code);
-}
-
-
-static int
-run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
-{
-  int ret_code= 0;
-  IC_CONNECTION *conn, *fork_conn;
-  DEBUG_ENTRY("run_cluster_server");
-
-  /*
-    Before we start-up our server connection to listen to incoming events
-    we first create some socket connections to connect to our fellow
-    Cluster Servers. In the start-up phase this is necessary to handle
-    synchronisation which Cluster Server becomes the master and who is to
-    deliver the current configuration state to the other Cluster Servers.
-
-    After the start-up phase these connections are maintained in an open
-    state to ensure we can communicate to the other Cluster Servers at all
-    times for changes of the configuration. If we don't manage to set-up
-    connections to a certain Cluster Server in the start-up phase we'll
-    close this client connection and wait for it to connect to our server
-    connection.
-  */
-  conn= run_obj->run_conn;
-  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
-  if (ret_code)
-  {
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Failed to set-up listening connection"));
-    goto error;
-  }
-  do
-  {
-    if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
+    conf_entry= &glob_conf_entry[i];
+    if ((conf_entry->config_types & (1 << ((guint32)config_type))) &&
+        (!conf_entry->is_not_sent) &&
+        is_entry_used_in_version(conf_entry, version_number))
     {
-      DEBUG_PRINT(COMM_LEVEL,
-        ("Failed to accept a new connection"));
-      goto error;
+      assign_array= &key_value_array[loc_key_value_array_len];
+      switch (conf_entry->data_type)
+      {
+        case IC_BOOLEAN:
+        case IC_CHAR:
+        {
+          guint8 *entry= (guint8*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT16:
+        {
+          guint16 *entry= (guint16*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT32:
+        {
+          guint32 *entry= (guint32*)(conf+conf_entry->offset);
+          value= (guint32)*entry;
+          data_type= IC_CL_INT32_TYPE;
+          break;
+        }
+        case IC_UINT64:
+        {
+          guint64 *entry= (guint64*)(conf+conf_entry->offset);
+          value= (guint32)((guint64)(*entry >> 32));
+          assign_array[2]= g_htonl(value);
+          value= *entry & 0xFFFFFFFF;
+          loc_key_value_array_len++;
+          data_type= IC_CL_INT64_TYPE;
+          break;
+        }
+        case IC_CHARPTR:
+        {
+          charptr= (gchar**)(conf+conf_entry->offset);
+          str_len= 0;
+          if (*charptr)
+            str_len= strlen(*charptr);
+          value= str_len + 1; /* Reported length includes NULL byte */
+          /* 
+             Adjust to number of words with one word removed and
+             an extra null byte calculated for
+           */
+          len= ndb_mgm_str_word_len(str_len);
+          /* We don't need to copy null byte since we initialised to 0 */
+          if (str_len)
+            memcpy((gchar*)&assign_array[2],
+                   *charptr,
+                   str_len);
+          DEBUG_PRINT(CONFIG_LEVEL,
+                      ("String value = %s, str_len= %u",
+                       (gchar*)&assign_array[2], str_len));
+          loc_key_value_array_len+= len;
+          data_type= IC_CL_CHAR_TYPE;
+          break;
+        }
+        default:
+          return IC_ERROR_INCONSISTENT_DATA;
+      }
+      /*
+         Assign the key consisting of:
+         1) Data Type
+         2) Section id
+         3) Config id
+       */
+      config_id= map_inx_to_config_id[i];
+      key= (data_type << IC_CL_KEY_SHIFT) +
+           (sect_id << IC_CL_SECT_SHIFT) +
+           (config_id);
+      assign_array[0]= g_htonl(key);
+      assign_array[1]= g_htonl(value);
+      DEBUG_PRINT(CONFIG_LEVEL,
+                  ("sectid = %u, data_type = %x, config_id = %u, value = %x",
+                   sect_id, data_type, config_id, value));
+      loc_key_value_array_len+= 2;
     }
-    DEBUG_PRINT(CONFIG_LEVEL,
-("Run cluster server has set up connection and has received a connection"));
-    if (!(fork_conn=
-           conn->conn_op.ic_fork_accept_connection(conn,
-                                          FALSE))) /* No mutex */
-    {
-      DEBUG_PRINT(COMM_LEVEL,
-      ("Failed to fork a new connection from an accepted connection"));
-      goto error;
-    }
-    if ((ret_code= start_handle_config_request(run_obj, fork_conn)))
-    {
-      DEBUG_PRINT(THREAD_LEVEL,
-        ("Start new thread to handle configuration request failed"));
-      goto error;
-    }
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Ready to accept a new connection"));
-  } while (1);
-
-error:
-  DEBUG_RETURN(ret_code);
-}
-
-IC_RUN_CLUSTER_SERVER*
-ic_create_run_cluster(IC_CLUSTER_CONFIG **clusters,
-                      IC_MEMORY_CONTAINER *mc_ptr,
-                      gchar *server_name,
-                      gchar *server_port,
-                      guint32 my_node_id)
-{
-  IC_RUN_CLUSTER_SERVER *run_obj;
-  IC_CONNECTION *conn;
-  guint32 max_cluster_id, cluster_id;
-  IC_CLUSTER_CONFIG **cluster_iterator;
-  IC_CLUSTER_CONFIG **cluster_array;
-  DEBUG_ENTRY("ic_create_run_cluster");
-
-  /*
-    Iterate over the clusters to find the maximum cluster id, this is later
-    used to build an index into the cluster configuration structs using
-    cluster id.
-  */
-  max_cluster_id= 0;
-  cluster_iterator= clusters;
-  while (*cluster_iterator)
-  {
-    max_cluster_id= IC_MAX(max_cluster_id,
-                           (*cluster_iterator)->clu_info.cluster_id);
-    cluster_iterator++;
   }
-  if (!(run_obj= (IC_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
-                mc_ptr, sizeof(IC_RUN_CLUSTER_SERVER))))
+  /* Add node type for all sections */
+  assign_array= &key_value_array[loc_key_value_array_len];
+  config_id= IC_NODE_TYPE;
+  key= (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
+       (sect_id << IC_CL_SECT_SHIFT) +
+       config_id;
+  switch (config_type)
   {
-    DEBUG_RETURN(NULL);
+    case IC_COMM_TYPE:
+      value= 0;
+      break;
+    case IC_DATA_SERVER_TYPE:
+    case IC_CLUSTER_SERVER_TYPE:
+    /* config_type already contains the correct value */
+      value= config_type;
+      break;
+    default:
+      if (!is_iclaustron_version(version_number))
+        value= IC_CLIENT_TYPE;
+      else
+        value= config_type;
+      break;
   }
-  if (!(cluster_array= (IC_CLUSTER_CONFIG**)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
-             sizeof(IC_CLUSTER_CONFIG*) * (max_cluster_id + 1))))
-  {
-    DEBUG_RETURN(NULL);
-  }
+  DEBUG_PRINT(CONFIG_LEVEL,
+              ("sectid = %u, config_id = %u, value = %u",
+                sect_id, config_id, value));
+  assign_array[0]= g_htonl(key);
+  assign_array[1]= g_htonl(value);
+  loc_key_value_array_len+= 2;
 
-  /*
-    Initialise the Cluster Server state, the state is protected by a mutex to
-    ensure when several connections receive requests only one at a time can
-    change the Cluster Server state.
-  */
-  if (!(run_obj->state.protect_state= g_mutex_new()))
-  {
-    DEBUG_RETURN(NULL);
-  }
-  run_obj->state.cs_master= FALSE;
-  run_obj->state.cs_started= FALSE;
-  run_obj->state.bootstrap= FALSE;
-  run_obj->state.config_dir= NULL;
+  /* Add parent id == 0 for all sections */
+  assign_array= &key_value_array[loc_key_value_array_len];
+  config_id= IC_PARENT_ID;
+  key= (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
+       (sect_id << IC_CL_SECT_SHIFT) +
+       config_id;
+  value= (guint32)0;
+  DEBUG_PRINT(CONFIG_LEVEL,
+              ("sectid = %u, config_id = %u, value = %u",
+                sect_id, config_id, value));
+  assign_array[0]= g_htonl(key);
+  assign_array[1]= g_htonl(value);
+  loc_key_value_array_len+= 2;
 
-  cluster_iterator= clusters;
-  while (*cluster_iterator)
-  {
-    cluster_id= (*cluster_iterator)->clu_info.cluster_id;
-    if (cluster_array[cluster_id])
-    {
-      printf("Configured two clusters with same id\n");
-      DEBUG_RETURN(NULL);
-    }
-    cluster_array[cluster_id]= *cluster_iterator;
-    cluster_iterator++;
-  }
-  run_obj->conf_objects= cluster_array;
-  run_obj->max_cluster_id= max_cluster_id;
-  run_obj->cs_nodeid= my_node_id;
-  if (!(run_obj->run_conn= ic_create_socket_object(
-                            FALSE, /* Server connection */
-                            FALSE, /* Don't use mutex */
-                            FALSE, /* Don't use connect thread */
-                            CONFIG_READ_BUF_SIZE,
-                            NULL,  /* Don't use authentication function */
-                            NULL))) /* No authentication object */
-    goto error;
-
-  conn= run_obj->run_conn;
-  conn->conn_op.ic_prepare_server_connection(conn,
-                                             server_name,
-                                             server_port,
-                                             NULL,
-                                             NULL,
-                                             0,
-                                             TRUE);
-  run_obj->run_op.ic_run_cluster_server= run_cluster_server;
-  run_obj->run_op.ic_free_run_cluster= free_run_cluster;
-  DEBUG_RETURN(run_obj);
-
-error:
-  DEBUG_RETURN(NULL);
+  *key_value_array_len= loc_key_value_array_len;
+  return 0;
 }
 
 /*
