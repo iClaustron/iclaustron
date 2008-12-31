@@ -32,6 +32,7 @@ struct ic_int_connection
   int error_code;
   const gchar *err_str;
   guint32 error_line;
+  gchar err_buf[128];
   IC_INT_CONNECTION *orig_conn;
   guint64 cpu_bindings;
   GMutex *read_mutex;

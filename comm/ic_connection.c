@@ -343,10 +343,13 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
   }
   if (ret_sockfd < 0)
   {
-    DEBUG_PRINT(COMM_LEVEL, ("accept error: %d %s",
-                             errno, sys_errlist[errno]));
     conn->error_code= errno;
-    return errno;
+    conn->err_str= ic_get_strerror(conn->error_code,
+                                   conn->err_buf,
+                                   (guint32)128);
+    DEBUG_PRINT(COMM_LEVEL, ("accept error: %d %s",
+                              conn->error_code, conn->err_str));
+    return conn->error_code;
   }
   if (conn->client_name)
   {
@@ -527,10 +530,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
   if ((sockfd= socket(conn->server_addrinfo->ai_family,
                       conn->server_addrinfo->ai_socktype,
                       conn->server_addrinfo->ai_protocol)) < 0)
-  {
-    conn->error_code= errno;
-    return errno;
-  }
+    goto error;
   ic_set_socket_options(conn, sockfd);
   if (((conn->is_client == FALSE) ||
        (conn->client_name != NULL)) &&
@@ -541,8 +541,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
       Bind the socket to an IP address and port on this box.  If the caller
       set port to "0" for a client connection an ephemeral port will be used.
     */
-    DEBUG_PRINT(COMM_LEVEL, ("bind error: %d %s",
-                 errno, sys_errlist[errno]));
+    DEBUG_PRINT(COMM_LEVEL, ("bind error"));
     goto error;
   }
   if (conn->is_client)
@@ -558,8 +557,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
       {
         if (errno == EINTR || errno == ECONNREFUSED)
           continue;
-        DEBUG_PRINT(COMM_LEVEL, ("connect error: %d %s",
-                     errno, sys_errlist[errno]));
+        DEBUG_PRINT(COMM_LEVEL, ("connect error"));
         goto error;
       }
       conn->rw_sockfd= sockfd;
@@ -576,8 +574,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
     */
     if ((listen(sockfd, conn->backlog) < 0))
     {
-      DEBUG_PRINT(COMM_LEVEL, ("listen error: %d %s",
-                  errno, sys_errlist[errno]));
+      DEBUG_PRINT(COMM_LEVEL, ("listen error"));
       goto error;
     }
     conn->listen_sockfd= sockfd;
@@ -592,11 +589,16 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
   return 0;
 
 error:
-   error= errno;
+  error= errno;
+  conn->err_str= ic_get_strerror(error,
+                                 conn->err_buf,
+                                 (guint32)128);
+  DEBUG_PRINT(COMM_LEVEL, ("Error code: %d, message: %s",
+                            error, conn->err_str));
 error2:
-   conn->error_code= error;
-   close(sockfd);
-   return error;
+  conn->error_code= error;
+  close(sockfd);
+  return error;
 }
 
 static gpointer
@@ -726,8 +728,12 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
     }
     conn->conn_stat.num_send_errors++;
     conn->bytes_written_before_interrupt= send_state->write_size;
+    conn->error_code= error;
+    conn->err_str= ic_get_strerror(conn->error_code,
+                                   conn->err_buf,
+                                   (guint32)128);
     DEBUG_PRINT(COMM_LEVEL, ("write error: %d %s",
-                             errno, sys_errlist[errno]));
+                error, conn->err_str));
     conn->error_code= error;
     return error;
   }
@@ -1007,9 +1013,12 @@ read_socket_connection(IC_CONNECTION *ext_conn,
       error= (-1) * ret_code;
   } while (error == EINTR);
   conn->conn_stat.num_rec_errors++;
+  conn->error_code= errno;
+  conn->err_str= ic_get_strerror(conn->error_code,
+                                 conn->err_buf,
+                                 (guint32)128);
   DEBUG_PRINT(COMM_LEVEL, ("read error: %d %s",
-                            errno, sys_errlist[errno]));
-  conn->error_code= error;
+                           error, conn->err_str));
   return error;
 }
 

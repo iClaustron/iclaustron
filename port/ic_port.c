@@ -13,6 +13,9 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+#define _XOPEN_SOURCE 600
+#include <string.h>
+
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <unistd.h>
@@ -28,6 +31,13 @@
 #ifdef HAVE_GETTIMEOFDAY
 #include <sys/time.h>
 #endif
+
+gchar*
+ic_get_strerror(int error_number, gchar *buf, guint32 buf_len)
+{
+  strerror_r(error_number, (char*)buf, (size_t)buf_len);
+  return buf;
+}
 
 IC_TIMER
 ic_nanos_elapsed(IC_TIMER start_time, IC_TIMER end_time)
