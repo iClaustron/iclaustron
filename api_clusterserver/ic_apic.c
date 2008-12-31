@@ -81,8 +81,17 @@
 
   Each node in the configuration has a separate section. These sections are
   listed in section 1. Each section then contains all the configuration
-  parameters of that node. After the last node section there is another
-  section used to describe which communication sections that exists.
+  parameters of that node. The node section are separated such that all
+  API node types are appearing from section 2 and onwards whereas the
+  ndbd node sections are put after all other sections.
+
+  After the last API node section there is another section used to describe
+  the system, this also has a meta section which always lists only one
+  section, the system (system is a synonym of cluster here).
+
+  After the system section the meta section of the communication section is
+  found after which the communication sections are listed.
+
   In the example case below there are 4 nodes and thus section 6 is the
   section describing which communication sections that exist.
   There is one communication section for each pair of nodes that require
@@ -92,15 +101,11 @@
   with the API and the cluster server. Thus a total of 5 communication
   sections.
 
-  All the values in the sections are sent as a more or less random list of
+  All the values in the sections are sent as a sorted list of
   key-value pairs. Each key-value pair contains section id, configuration
-  id, value type and the value. This means that we require to pass through
+  id, value type and the value. We need to pass through
   the list of key-value pairs one time in order to discover the number of
-  nodes of various types to understand the allocation requirements. This
-  further means that we require yet another pass to discover the number
-  of communication sections since we cannot interpret Section 6 properly
-  until we have discovered that this a descriptive section used to describe
-  which communication sections exists in the configuration.
+  nodes of various types to understand the allocation requirements.
 
   The key-value pairs are sent as two 32-bit words for most data types, 64-bit
   words require another 32-bit word and character strings require also more
@@ -128,32 +133,48 @@
 
   -------------------
   -                 -
-  -  Section 1      -
+  -  Section 0      -
   -                 -
   -------------------
-    |  |  |  |
-    |  |  |  |           Node Sections
-    |  |  |  ----------> ------------------
-    |  |  |              -  Section 2     -
-    |  |  |              ------------------
-    |  |  |
-    |  |  -------------> ------------------
-    |  |                 -  Section 3     -
-    |  |                 ------------------
-    |  |
-    |  ----------------> ------------------
-    |                    -  Section 4     -
-    |                    ------------------
-    |
-    -------------------> ------------------
-                         -  Section 5     -
-                         ------------------
-
-  -------------------
-  -                 -
-  -  Section 6      -
-  -                 -
-  -------------------
+  |  |
+  |  | -------------------
+  |  | -                 -
+  |  | -  Section 1      -
+  |  |  -                 -
+  |  |  -------------------
+  |  |   |  |  |  |
+  |  |   |  |  |  |           Node Sections
+  |  |   |  |  |  ----------> ------------------
+  |  |   |  |  |              -  Section 2     -
+  |  |   |  |  |              ------------------
+  |  |   |  |  |
+  |  |   |  |  -------------> ------------------
+  |  |   |  |                 -  Section 3     -
+  |  |   |  |                 ------------------
+  |  |   |  |
+  |  |   |  |                 ndbd nodes
+  |  |   |  ----------------> ------------------
+  |  |   |                    -  Section 12    -
+  |  |   |                    ------------------
+  |  |   |
+  |  |   -------------------> ------------------
+  |  |                        -  Section 13    -
+  |  |                        ------------------
+  |  |
+  |  -------------------
+  |  -                 -
+  |  -  Section 4      -
+  |  -                 -
+  |  -------------------
+  |    |                   System Section
+  |    |-----------------> ------------------
+  |                        - Section 5      -
+  |                        ------------------
+ -------------------
+ -                 -
+ -  Section 6      -
+ -                 -
+ -------------------
    | | | | |             Communication Sections
    | | | | ------------> ------------------
    | | | |               -  Section 7     -
@@ -200,10 +221,13 @@
 
      Version number is the version of the API, the version number is the
      hexadecimal notation of the version number (e.g. 5.1.12 = 0x5010c =
-     327948).
+     327948). We indicate it is an iClaustron node by setting bit 20 in
+     the version number.
 
      Nodetype is either 1 for API's to the data servers, for data servers
-     the nodetype is 0 and for cluster servers it is 2.
+     the nodetype is 0 and for cluster servers it is 2. There is a whole
+     range of various API node types for iClaustron nodes which for
+     NDB nodes are treated as API nodes.
 
      user, password and public key is preparation for future functionality
      so should always be mysqld, mysqld and a public key for API nodes.
