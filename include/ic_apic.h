@@ -792,6 +792,16 @@ void ic_print_config_parameters();
   (conf_entry)->config_types= (1 << IC_SYSTEM_TYPE); \
   (conf_entry)->change_variant= (change);
 
+#define IC_SET_SYSTEM_STRING(conf_entry, name, change) \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
+  (conf_entry)->data_type= IC_CHARPTR; \
+  (conf_entry)->is_string_type= TRUE; \
+  (conf_entry)->offset= offsetof(IC_SYSTEM_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_SYSTEM_TYPE); \
+  (conf_entry)->change_variant= (change);
+
 #define IC_SET_DATA_SERVER_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name.str= #name; \
   (conf_entry)->config_entry_name.len= strlen(#name); \

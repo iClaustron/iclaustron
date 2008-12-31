@@ -882,7 +882,17 @@ init_config_parameters()
   "Primary Cluster Server node in the grid";
 
   IC_SET_CONFIG_MAP(SYSTEM_CONFIGURATION_NUMBER, 11);
+  IC_SET_SYSTEM_CONFIG(conf_entry, system_configuration_number,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  conf_entry->config_entry_description=
+  "Configuration number of grid";
+
   IC_SET_CONFIG_MAP(SYSTEM_NAME, 12);
+  IC_SET_SYSTEM_STRING(conf_entry, system_name,
+                       IC_NOT_CHANGEABLE);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->config_entry_description=
+  "Cluster name";
 /*
   This is the data server node configuration section.
 */
@@ -2652,7 +2662,13 @@ assign_system_section(IC_CLUSTER_CONFIG *conf_obj,
 
   if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE)
     return 0; /* Ignore */
-  if (!(conf_entry= get_conf_entry(hash_key)))
+  /*
+    We have stored the system entries as 1001, 1002 and so forth
+    although in the protocol they are 1,2 and so forth. This is
+    to ensure that entries in the configuration entry hash are
+    unique.
+  */
+  if (!(conf_entry= get_conf_entry(hash_key + 1000)))
     PROTOCOL_CHECK_RETURN(FALSE);
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
     return 0; /* Ignore */
