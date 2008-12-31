@@ -2799,7 +2799,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
           }
           conf_obj->num_nodes++;
         }
-        if (sect_id == 2 && first)
+        else if (sect_id == 2 && first)
         {
           /* Verify we have at least one ndbd node */
           PROTOCOL_CHECK_GOTO(!first_ndbd);
@@ -2855,10 +2855,10 @@ analyse_key_value(guint32 *key_value, guint32 len,
           PROTOCOL_CHECK_GOTO(hash_key < conf_obj->num_nodes);
           if (hash_key < num_apis)
           {
-            PROTOCOL_CHECK_GOTO(value !=
+            PROTOCOL_CHECK_GOTO(value ==
                                 ((2 + hash_key) << IC_CL_SECT_SHIFT));
           } else {
-            PROTOCOL_CHECK_GOTO(value !=
+            PROTOCOL_CHECK_GOTO(value ==
               (((hash_key - num_apis) + first_ndbd_section)
                   << IC_CL_SECT_SHIFT));
           }
@@ -7343,14 +7343,16 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
                      gchar *cluster_server_port,
                      gboolean use_iclaustron_cluster_server,
                      int *error,
-                     const gchar **err_str)
+                     gchar **err_str)
 {
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   IC_API_CONFIG_SERVER *apic= NULL;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   int ret_code;
+  gchar *save_err_str= *err_str;
 
+  *err_str= NULL;
   ret_code= 0;
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
     goto end;
@@ -7371,7 +7373,8 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
                                                clu_infos,
                                                node_id)))
       goto end;
-    *err_str= apic->api_op.ic_get_error_str(apic);
+    *err_str= save_err_str;
+    *err_str= apic->api_op.ic_fill_error_buffer(apic, ret_code, *err_str);
     apic->api_op.ic_free_config(apic);
     apic= NULL;
   }

@@ -754,7 +754,7 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      gchar *cluster_server_port,
                      gboolean use_iclaustron_cluster_server,
                      int *error,
-                     const gchar **err_str);
+                     gchar **err_str);
 
 IC_API_CONFIG_SERVER*
 ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,

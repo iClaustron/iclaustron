@@ -778,7 +778,8 @@ int main(int argc,
   IC_API_CLUSTER_CONNECTION api_cluster_conn;
   IC_API_CONFIG_SERVER *apic= NULL;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
-  const gchar *err_str;
+  gchar error_str[ERROR_MESSAGE_SIZE];
+  gchar *err_str= error_str;
 
   if ((ret_code= ic_start_program(argc, argv, entries,
            "- iClaustron Cluster Manager")))
@@ -799,6 +800,7 @@ int main(int argc,
                                    &ret_code,
                                    &err_str)))
     goto error;
+  err_str= NULL;
   if ((ret_code= set_up_server_connection(&conn)))
     goto error;
   ret_code= wait_for_connections_and_fork(conn, apic);
@@ -813,8 +815,9 @@ end:
 
 error:
   if (err_str)
-    printf("%s\n", err_str);
-  ic_print_error(ret_code);
+    printf("%s", err_str);
+  else
+    ic_print_error(ret_code);
   goto end;
 }
 

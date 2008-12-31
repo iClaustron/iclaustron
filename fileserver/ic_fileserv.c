@@ -140,7 +140,8 @@ int main(int argc, char *argv[])
   IC_API_CONFIG_SERVER *apic= NULL;
   IC_APID_GLOBAL *apid_global= NULL;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
-  const gchar *error_str= NULL;
+  gchar error_str[ERROR_MESSAGE_SIZE];
+  gchar *err_str= error_str;
 
   if ((ret_code= ic_start_program(argc, argv, entries,
             "- iClaustron Cluster File Server")))
@@ -157,9 +158,9 @@ int main(int argc, char *argv[])
                                    glob_cluster_server_port,
                                    glob_use_iclaustron_cluster_server,
                                    &ret_code,
-                                   &error_str)))
+                                   &err_str)))
     goto error;
-  error_str= NULL;
+  err_str= NULL;
   if (!(apid_global= ic_connect_apid_global(apic)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
@@ -176,8 +177,9 @@ end:
   ic_end();
   return ret_code;
 error:
-  if (error_str)
-    printf("%s\n", error_str);
-  ic_print_error(ret_code);
+  if (err_str)
+    printf("%s", err_str);
+  else
+    ic_print_error(ret_code);
   goto end;
 }

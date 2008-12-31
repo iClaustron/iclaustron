@@ -1050,12 +1050,13 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
   err_msg_len= strlen(err_msg);
   memcpy(error_buffer, err_msg, err_msg_len);
   error_buffer[err_msg_len]= CARRIAGE_RETURN;
+  err_buf_index= err_msg_len;
   if (extra_error_message)
   {
     err_str_len= strlen(extra_error_message);
-    memcpy(&error_buffer[err_msg_len + 1], extra_error_message,
+    memcpy(&error_buffer[err_buf_index + 1], extra_error_message,
            err_str_len);
-    err_buf_index= err_msg_len + 1 + err_str_len;
+    err_buf_index= err_buf_index + 1 + err_str_len;
     error_buffer[err_buf_index]= CARRIAGE_RETURN;
   }
   if (error_code == PROTOCOL_ERROR)
@@ -1064,13 +1065,17 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
     memcpy(&error_buffer[err_buf_index + 1], protocol_err_msg,
            protocol_err_str_len);
     err_buf_index= err_buf_index + 1 + protocol_err_str_len;
-    memcpy(&error_buffer[err_buf_index + 1], line_buf,
-           line_buf_len);
     line_buf_ptr= ic_guint64_str((guint64)error_line, line_buf,
                                  &line_buf_len);
-    err_buf_index= err_buf_index + 1 + line_buf_len;
+    if (line_buf_ptr)
+    {
+      memcpy(&error_buffer[err_buf_index], line_buf_ptr,
+             line_buf_len);
+      err_buf_index= err_buf_index + line_buf_len;
+    }
     error_buffer[err_buf_index]= CARRIAGE_RETURN;
   }
+  error_buffer[err_buf_index + 1]= 0; /* Null-terminated string */
   return error_buffer;  
 }
 
