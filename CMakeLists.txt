@@ -342,7 +342,7 @@ add_library(ic_port STATIC port/ic_port.c)
 add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c
             util/ic_util.c util/ic_mc.c util/ic_dyn_array.c
             util/ic_mc_int.h util/ic_dyn_array_int.h
-            util/ic_debug.c util/ic_err.c
+            util/ic_debug.c util/ic_err.c util/ic_string.c
             util/ic_bitmap.c)
 target_link_libraries(ic_util ic_port)
 

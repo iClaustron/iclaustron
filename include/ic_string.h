@@ -64,6 +64,8 @@ void ic_create_config_file_name(IC_STRING *file_name,
 void ic_create_config_version_file_name(IC_STRING *file_name,
                                         gchar *buf,
                                         IC_STRING *config_dir);
+void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char);
+
 /*
   ic_get_ic_string
     Convert IC_STRING to normal NULL-terminated string
