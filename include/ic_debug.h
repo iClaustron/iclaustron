@@ -21,6 +21,11 @@
   Debug interface, mostly a set of macros calling a set of backend
   functions when compiled in debug mode and otherwise empty macros.
 */
+
+extern guint32 glob_debug;
+extern gchar *glob_debug_file;
+extern guint32 glob_debug_screen;
+
 void ic_set_debug(guint32 val);
 guint32 ic_get_debug();
 void ic_debug_print_char_buf(gchar *buf);
