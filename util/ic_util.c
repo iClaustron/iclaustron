@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
+#include <ic_apic.h>
 
 static guint32 glob_debug= 0;
 static gchar *glob_debug_file= "debug.log";
@@ -934,8 +935,11 @@ ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
 }
 
 /*
+  MODULE: iClaustron Error Handling
+  ---------------------------------
   Module for printing error codes and retrieving error messages
   given the error number.
+
   To add a new error number do the following:
   1) Change IC_LAST_ERROR
   2) Add a new entry in ic_init_error_messages
@@ -1108,6 +1112,24 @@ Current levels defined: \n\
   Level 4 (=16): Debugging of threads\n\
 ";
 
+/*
+  MODULE: iClaustron Initialise and End Functions
+  -----------------------------------------------
+  Every iClaustron program should start by calling ic_start_program
+  before using any of the iClaustron functionality and after
+  completing using the iClaustron API one should call ic_end().
+
+  ic_start_program will define automatically a set of debug options
+  for the program which are common to all iClaustron programs. The
+  program can also supply a set of options unique to this particular
+  program. In addition a start text should be provided.
+
+  So for most iClaustron programs this means calling these functions
+  at the start of the main function and at the end of the main
+  function.
+*/
+static int ic_init();
+
 int
 ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
                  gchar *start_text)
@@ -1143,4 +1165,36 @@ mem_error:
   goto error;
 error:
   return ret_code;
+}
+
+static int
+ic_init()
+{
+  int ret_value;
+  DEBUG_OPEN;
+  DEBUG_ENTRY("ic_init");
+  if (!g_thread_supported())
+    g_thread_init(NULL);
+  ic_init_error_messages();
+  if ((ret_value= ic_init_config_parameters()))
+  {
+    ic_end();
+    DEBUG_RETURN(ret_value);
+  }
+  if ((ret_value= ic_ssl_init()))
+  {
+    ic_end();
+    DEBUG_RETURN(ret_value);
+  }
+  DEBUG_RETURN(0);
+}
+
+void ic_end()
+{
+  DEBUG_ENTRY("ic_end");
+  if (glob_conf_hash)
+    ic_hashtable_destroy(glob_conf_hash);
+  glob_conf_entry_inited= FALSE;
+  ic_ssl_end();
+  DEBUG_CLOSE;
 }

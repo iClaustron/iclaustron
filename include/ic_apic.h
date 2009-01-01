@@ -17,6 +17,10 @@
 #define IC_APIC_H
 #include <ic_common.h>
 
+int ic_init_config_parameters();
+extern IC_HASHTABLE *glob_conf_hash;
+extern gboolean glob_conf_entry_inited;
+
 #define IC_VERSION_FILE_LEN 8
 #define NO_WAIT 0
 #define WAIT_LOCK_INFO 1

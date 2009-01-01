@@ -15,7 +15,6 @@
 
 #ifndef IC_CONFIG_H
 #define IC_CONFIG_H
-#include <ic_common_header.h>
 /*
   This struct contains generic operations for reading a configuration file.
   Configuration files can contain:

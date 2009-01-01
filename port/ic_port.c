@@ -20,7 +20,6 @@
 #include <glib/gstdio.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <ic_common.h>
 #include <errno.h>
 #ifdef HAVE_GETHRTIME
 #include <sys/time.h>
@@ -31,6 +30,7 @@
 #ifdef HAVE_GETTIMEOFDAY
 #include <sys/time.h>
 #endif
+#include <ic_common.h>
 
 gchar*
 ic_get_strerror(int error_number, gchar *buf, guint32 buf_len)

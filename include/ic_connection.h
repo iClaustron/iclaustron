@@ -319,6 +319,9 @@ IC_CONNECTION
                         guint32  read_buf_size,
                         authenticate_func func,
                         void *auth_obj);
+/* SSL initialisation routines */
+int ic_ssl_init();
+void ic_ssl_end();
 
 /*
   Definitions for the socket buffer pool

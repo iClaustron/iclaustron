@@ -22,9 +22,11 @@ include_HEADERS = hashtable.h \
                   ic_common.h \
                   ic_common_header.h \
                   ic_config.h \
+                  ic_debug.h \
                   ic_dyn_array.h \
                   ic_bitmap.h \
                   ic_err.h \
                   ic_mc.h \
                   ic_poll_set.h \
-                  ic_port.h
+                  ic_port.h \
+		  ic_string.h

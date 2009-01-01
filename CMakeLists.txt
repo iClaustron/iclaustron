@@ -449,9 +449,11 @@ install (FILES
          include/ic_apic.h
          include/ic_apid.h
          include/ic_clmgr.h
+         include/ic_config.h
          include/ic_connection.h
          include/ic_common.h
          include/ic_common_header.h
+         include/ic_debug.h
          include/ic_dyn_array.h
          include/ic_err.h
          include/ic_mc.h
@@ -459,7 +461,7 @@ install (FILES
          include/ic_bitmap.h
          include/ic_port.h
          include/ic_ssl.h
-         include/ic_config.h
+         include/ic_string.h
          DESTINATION include)
 
 #Install scripts into bin directory

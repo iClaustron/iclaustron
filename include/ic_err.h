@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -15,6 +15,19 @@
 
 #ifndef IC_ERR_H
 #define IC_ERR_H
+/*
+  HEADER MODULE: iClaustron Error Handling
+  ----------------------------------------
+  Error handling interface
+*/
+void ic_init_error_messages();
+void ic_print_error(int error_number);
+gchar *ic_get_error_message(int error_number);
+gchar *ic_common_fill_error_buffer(const gchar *error_message,
+                                   guint32 error_line,
+                                   int error_code,
+                                   gchar *error_buffer);
+gchar *ic_get_strerror(int error_number, gchar *buf, guint32 buf_len);
 
 struct ic_config_err
 {

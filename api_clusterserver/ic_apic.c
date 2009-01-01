@@ -528,7 +528,7 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 
 static guint32 glob_max_config_id;
 IC_HASHTABLE *glob_conf_hash;
-static gboolean glob_conf_entry_inited= FALSE;
+gboolean glob_conf_entry_inited= FALSE;
 static guint16 map_config_id_to_inx[MAX_MAP_CONFIG_ID];
 static guint16 map_inx_to_config_id[MAX_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
@@ -2079,8 +2079,7 @@ init_config_parameters()
   /* Parameters common for all node types */
 }
 
-static int
-ic_init_config_parameters()
+int ic_init_config_parameters()
 {
   DEBUG_ENTRY("ic_init_config_parameters");
 
@@ -7580,42 +7579,4 @@ end:
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   *error= ret_code;
   return apic;
-}
-
-/*
-  iClaustron initialisation routine
-  The ic_init routine must be called at the before using any other
-  function in the iClaustron API's. The ic_end must be called when
-  the iClaustron API's have been used to completion, normally at the
-  end of the program.
-*/
-int ic_init()
-{
-  int ret_value;
-  DEBUG_OPEN;
-  DEBUG_ENTRY("ic_init");
-  if (!g_thread_supported())
-    g_thread_init(NULL);
-  ic_init_error_messages();
-  if ((ret_value= ic_init_config_parameters()))
-  {
-    ic_end();
-    DEBUG_RETURN(ret_value);
-  }
-  if ((ret_value= ic_ssl_init()))
-  {
-    ic_end();
-    DEBUG_RETURN(ret_value);
-  }
-  DEBUG_RETURN(0);
-}
-
-void ic_end()
-{
-  DEBUG_ENTRY("ic_end");
-  if (glob_conf_hash)
-    ic_hashtable_destroy(glob_conf_hash);
-  glob_conf_entry_inited= FALSE;
-  ic_ssl_end();
-  DEBUG_CLOSE;
 }
