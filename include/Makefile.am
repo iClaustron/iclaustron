@@ -21,7 +21,7 @@ include_HEADERS = hashtable.h \
                   ic_connection.h \
                   ic_common.h \
                   ic_common_header.h \
-                  ic_config.h \
+                  ic_config_reader.h \
                   ic_debug.h \
                   ic_dyn_array.h \
                   ic_bitmap.h \

@@ -343,7 +343,7 @@ add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c
             util/ic_util.c util/ic_mc.c util/ic_dyn_array.c
             util/ic_mc_int.h util/ic_dyn_array_int.h
             util/ic_debug.c util/ic_err.c util/ic_string.c
-            util/ic_bitmap.c)
+            util/ic_bitmap.c util/ic_config_reader.c)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
@@ -450,7 +450,7 @@ install (FILES
          include/ic_apic.h
          include/ic_apid.h
          include/ic_clmgr.h
-         include/ic_config.h
+         include/ic_config_reader.h
          include/ic_connection.h
          include/ic_common.h
          include/ic_common_header.h
