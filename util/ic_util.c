@@ -16,10 +16,6 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 
-static guint32 glob_debug= 0;
-static gchar *glob_debug_file= "debug.log";
-static guint32 glob_debug_screen= 0;
-
 IC_STRING ic_version_file_string=
 {(gchar*)"_version", (guint32)8, (gboolean)TRUE};
 IC_STRING ic_config_string=
@@ -298,79 +294,6 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
   ic_reverse_str((gchar*)&buf, ptr, 0);
   return ptr;
 }
-
-#ifdef DEBUG_BUILD
-guint32
-ic_get_debug()
-{
-  return glob_debug;
-}
-
-void ic_set_debug(guint32 val)
-{
-  glob_debug= val;
-}
-
-static FILE *ic_fptr;
-void
-ic_debug_entry(const char *entry_point)
-{
-  if (glob_debug_screen)
-    printf("Entry into: %s\n", entry_point);
-  fprintf(ic_fptr, "Entry into: %s\n", entry_point);
-}
-
-int ic_debug_open()
-{
-  ic_fptr= fopen(glob_debug_file, "w");
-  if (ic_fptr == NULL)
-  {
-    printf("Failed to open %s\n", glob_debug_file);
-    return 1;
-  }
-  fprintf(ic_fptr, "Entry into: \n");
-  return 0;
-}
-
-void
-ic_debug_print_char_buf(gchar *buf)
-{
-  if (glob_debug_screen)
-    printf("%s\n", buf);
-  fprintf(ic_fptr, "%s\n", buf);
-}
-
-void
-ic_debug_print_rec_buf(char *buf, guint32 size)
-{
-  char p_buf[2049];
-  memcpy(p_buf, buf, size);
-  p_buf[size]= NULL_BYTE;
-  ic_debug_printf("Receive buffer, size %u:\n%s", size, p_buf);
-}
-
-void
-ic_debug_printf(const char *format,...)
-{
-  va_list args;
-  char buf[2049];
-
-  va_start(args, format);
-  vsprintf(buf, format, args);
-  if (glob_debug_screen)
-  {
-    printf("%s\n", buf);
-  }
-  fprintf(ic_fptr, "%s\n", buf);
-  va_end(args);
-}
-
-void
-ic_debug_close()
-{
-  fclose(ic_fptr);
-}
-#endif
 
 /*
   MODULE: GENERIC_CONFIG_READER
@@ -1084,6 +1007,10 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
   error_buffer[err_buf_index + 1]= 0; /* Null-terminated string */
   return error_buffer;  
 }
+
+static guint32 glob_debug= 0;
+static gchar *glob_debug_file= "debug.log";
+static guint32 glob_debug_screen= 0;
 
 static GOptionEntry debug_entries[] = 
 {
