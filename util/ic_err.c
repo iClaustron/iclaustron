@@ -27,7 +27,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7028
+#define IC_LAST_ERROR 7031
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -97,6 +97,12 @@ ic_init_error_messages()
     "The file descriptor wasn't found in this poll set";
   ic_error_str[IC_ERROR_NODE_ALREADY_DEFINED - IC_FIRST_ERROR]=
     "Can't use the same node id twice in a cluster";
+  ic_error_str[IC_ERROR_PROCESS_NOT_ALIVE - IC_FIRST_ERROR]=
+    "The process is not alive";
+  ic_error_str[IC_ERROR_COULD_NOT_LOCK_CONFIGURATION - IC_FIRST_ERROR]=
+    "The Cluster Server failed to lock the configuration";
+  ic_error_str[IC_ERROR_CHECK_PROCESS_SCRIPT - IC_FIRST_ERROR]=
+    "The check process script failed";
 }
 
 void

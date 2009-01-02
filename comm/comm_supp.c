@@ -165,37 +165,6 @@ ic_base64_encode(guint8 **dest,
   return 0;
 }
 
-guint32
-ic_count_characters(gchar *str, guint32 max_chars)
-{
-  gchar *ptr= str;
-  guint32 num_chars= 0;
-
-  while ((num_chars < max_chars) &&
-         (!(*ptr == ' ' || *ptr == '\n' || *ptr == 0)))
-  {
-    num_chars++;
-    ptr++;
-  }
-  return num_chars;
-}
-
-gboolean
-convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
-                              guint64 *ret_number)
-{
-  char *end_ptr;
-  if (num_chars == 0)
-    return TRUE;
-  *ret_number= g_ascii_strtoull(str, &end_ptr, (guint)10);
-  if (end_ptr == (str + num_chars))
-  {
-    if (*ret_number || (num_chars == 1 && (*str == '0')))
-      return FALSE;
-  }
-  return TRUE;
-}
-
 int
 ic_send_with_cr(IC_CONNECTION *conn, const gchar *send_buf)
 {

@@ -161,8 +161,7 @@ int run_process(gchar **argv,
 
 int
 ic_is_process_alive(guint32 pid,
-                    gchar *process_name,
-                    gchar **err_msg)
+                    gchar *process_name)
 {
   gchar *argv[5];
   gint exit_status;
@@ -189,15 +188,13 @@ ic_is_process_alive(guint32 pid,
   error= run_process(argv, &exit_status);
   if (error == (gint)1)
   {
-    *err_msg= "Process is still running";
-    return 1;
+    return 0; /* The process was alive */
   }
   else if (error == (gint)2)
   {
-    *err_msg= "Error in script finding process state";
-    return 2;
+    return IC_ERROR_CHECK_PROCESS_SCRIPT;
   }
-  return 0;
+  return IC_ERROR_PROCESS_NOT_ALIVE;
 }
 
 int

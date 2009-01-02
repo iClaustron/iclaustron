@@ -441,3 +441,34 @@ ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
   return ic_mc_strdup(NULL, out_str, in_str);
 }
 
+guint32
+ic_count_characters(gchar *str, guint32 max_chars)
+{
+  gchar *ptr= str;
+  guint32 num_chars= 0;
+
+  while ((num_chars < max_chars) &&
+         (!(*ptr == ' ' || *ptr == '\n' || *ptr == 0)))
+  {
+    num_chars++;
+    ptr++;
+  }
+  return num_chars;
+}
+
+gboolean
+ic_convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
+                                 guint64 *ret_number)
+{
+  char *end_ptr;
+  if (num_chars == 0)
+    return TRUE;
+  *ret_number= g_ascii_strtoull(str, &end_ptr, (guint)10);
+  if (end_ptr == (str + num_chars))
+  {
+    if (*ret_number || (num_chars == 1 && (*str == '0')))
+      return FALSE;
+  }
+  return TRUE;
+}
+
