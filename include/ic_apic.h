@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2008 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -307,12 +307,6 @@ struct ic_api_cluster_operations
                         IC_CLUSTER_CONNECT_INFO **clu_info,
                         guint32 node_id);
   /*
-    This method is intended to convert a connection to the Cluster
-    Server into a transporter connection.
-  */
-  int (*ic_get_info_config_channels) (IC_API_CONFIG_SERVER *apic);
-
-  /*
     The following methods are used to retrieve information from the
     configuration after a successful execution of the ic_get_config
     method above such that the process has the entire configuration
@@ -341,13 +335,6 @@ struct ic_api_cluster_operations
   void (*ic_free_config) (IC_API_CONFIG_SERVER *apic);
 };
 typedef struct ic_api_cluster_operations IC_API_CLUSTER_OPERATIONS;
-
-typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
-struct ic_run_cluster_server_operations
-{
-  int (*ic_run_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
-  void (*ic_free_run_cluster) (IC_RUN_CLUSTER_SERVER *run_obj);
-};
 
 #define REC_BUF_SIZE 256
 struct ic_api_cluster_connection
@@ -393,20 +380,40 @@ struct ic_api_config_server
   gchar use_ic_cs;
 };
 
+/*
+  Access to the state of the Run Cluster Server object needs to be
+  done with mutex protection in the threads handling the Cluster
+  Server requests. The Run Cluster Server object contains read-only
+  parameters that are set during start-up of the Cluster Server and
+  cannot currently be changed in the middle of operation.
+*/
 struct ic_run_cluster_state
 {
+  IC_MEMORY_CONTAINER *mc_ptr;
+
   gboolean cs_master;
   gboolean cs_started;
-  gboolean bootstrap;
-
-  guint8 num_cluster_servers;
-  guint8 num_cluster_servers_connected;
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
+
+  guint32 cs_master_nodeid;
   guint32 config_version_number;
-  IC_STRING *config_dir;
+  guint32 num_cluster_servers;
+  guint32 num_cluster_servers_connected;
+
   GMutex *protect_state;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
+
+typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
+struct ic_run_cluster_server_operations
+{
+  int (*ic_start_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj,
+                                  gboolean bootstrap);
+  int (*ic_run_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
+  int (*ic_stop_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
+  void (*ic_free_run_cluster) (IC_RUN_CLUSTER_SERVER *run_obj);
+};
+
 /*
   The struct ic_run_cluster_server represents the configuration of
   all clusters that the Cluster Server maintains.
@@ -414,12 +421,17 @@ typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 struct ic_run_cluster_server
 {
   struct ic_run_cluster_server_operations run_op;
-  struct ic_cluster_config **conf_objects;
+  struct ic_cluster_config *conf_objects[IC_MAX_CLUSTER_ID];
   IC_RUN_CLUSTER_STATE state;
-  IC_CONNECTION *run_conn;
+  IC_CONNECTION *conn;
+  IC_STRING *config_dir;
   guint32 max_cluster_id;
   guint32 num_clusters;
   guint32 cs_nodeid;
+  const gchar *process_name;
+  gboolean locked_configuration;
+  IC_CONFIG_STRUCT conf_server_struct;
+  IC_CONFIG_STRUCT cluster_conf_struct;
 };
 
 struct ic_data_server_config
@@ -670,24 +682,6 @@ struct ic_comm_link_config
 };
 typedef struct ic_comm_link_config IC_COMM_LINK_CONFIG;
 
-int ic_load_config_version(IC_STRING *config_dir,
-                           const gchar *process_name,
-                           guint32 *version_number);
-int
-ic_write_full_config_to_disk(IC_STRING *config_dir,
-                             guint32 *old_version_number,
-                             IC_CLUSTER_CONNECT_INFO **clu_infos,
-                             IC_CLUSTER_CONFIG **clusters);
-
-IC_CLUSTER_CONNECT_INFO**
-ic_load_cluster_config_from_file(IC_STRING *config_dir,
-                                 guint32 config_version_number,
-                                 IC_CONFIG_STRUCT *cluster_conf);
-
-IC_CLUSTER_CONFIG*
-ic_load_config_server_from_files(gchar *config_file_path,
-                                 IC_CONFIG_STRUCT *conf_server);
-
 struct ic_cs_conf_comment
 {
   guint32 num_comments;
@@ -757,11 +751,11 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                       gboolean use_iclaustron_cluster_server);
 
 IC_RUN_CLUSTER_SERVER*
-ic_create_run_cluster(IC_CLUSTER_CONFIG **conf_objs,
-                      IC_MEMORY_CONTAINER *mc_ptr,
+ic_create_run_cluster(IC_STRING *config_dir,
+                      const gchar *process_name,
                       gchar *server_name,
-                      gchar* server_port,
-                      guint32 my_nodeid);
+                      gchar *server_port,
+                      guint32 my_node_id);
 
 void ic_print_config_parameters();
 

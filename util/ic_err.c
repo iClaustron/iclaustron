@@ -27,7 +27,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7031
+#define IC_LAST_ERROR 7034
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -103,6 +103,12 @@ ic_init_error_messages()
     "The Cluster Server failed to lock the configuration";
   ic_error_str[IC_ERROR_CHECK_PROCESS_SCRIPT - IC_FIRST_ERROR]=
     "The check process script failed";
+  ic_error_str[IC_ERROR_BOOTSTRAP_ALREADY_PERFORMED - IC_FIRST_ERROR]=
+    "Bootstrap on Cluster Server already performed";
+  ic_error_str[IC_ERROR_CONFLICTING_CLUSTER_IDS - IC_FIRST_ERROR]=
+    "Cluster ids must be unique in configuration";
+  ic_error_str[IC_ERROR_FAILED_LOADING_CLUSTER - IC_FIRST_ERROR]=
+    "Failed loading configuration from configuration files";
 }
 
 void
