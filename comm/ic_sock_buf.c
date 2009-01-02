@@ -14,8 +14,6 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
-/*#include <ic_sock_buf.h>
-#include <ic_sock_buf_int.h>*/
 
 static IC_SOCK_BUF_PAGE*
 get_sock_buf_page(IC_SOCK_BUF *buf,
@@ -199,4 +197,3 @@ ic_create_socket_membuf(guint32 page_size,
   buf->sock_buf_ops.ic_free_sock_buf= free_sock_buf;
   return buf;
 }
-

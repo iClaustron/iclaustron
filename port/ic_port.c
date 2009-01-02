@@ -16,6 +16,7 @@
 #define _XOPEN_SOURCE 600
 #include <string.h>
 
+#include <ic_common.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <unistd.h>
@@ -30,7 +31,6 @@
 #ifdef HAVE_GETTIMEOFDAY
 #include <sys/time.h>
 #endif
-#include <ic_common.h>
 
 gchar*
 ic_get_strerror(int error_number, gchar *buf, guint32 buf_len)
@@ -161,7 +161,7 @@ int run_process(gchar **argv,
 
 int
 ic_is_process_alive(guint32 pid,
-                    gchar *process_name)
+                    const gchar *process_name)
 {
   gchar *argv[5];
   gint exit_status;
@@ -181,7 +181,7 @@ ic_is_process_alive(guint32 pid,
   argv[0]= "solaris_check_process.sh";
 #endif
   argv[1]= "--process_name";
-  argv[2]= process_name;
+  argv[2]= (gchar*)process_name;
   argv[3]= "--pid";
   argv[4]= pid_number_str;
 

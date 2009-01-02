@@ -347,8 +347,9 @@ add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
-add_library(comm STATIC comm/ic_connection.c comm/socket_membuf.c
-            comm/comm_supp.c comm/ic_poll_set.c comm/ic_poll_set_int.h)
+add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
+            comm/comm_supp.c comm/ic_poll_set.c comm/ic_poll_set_int.h
+            comm/ic_base64.c)
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API
@@ -449,6 +450,7 @@ install (FILES
          include/hashtable_private.h
          include/ic_apic.h
          include/ic_apid.h
+         include/ic_base64.h
          include/ic_clmgr.h
          include/ic_config_reader.h
          include/ic_connection.h
@@ -461,6 +463,7 @@ install (FILES
          include/ic_poll_set.h
          include/ic_bitmap.h
          include/ic_port.h
+         include/ic_sock_buf.h
          include/ic_ssl.h
          include/ic_string.h
          DESTINATION include)

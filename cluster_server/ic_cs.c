@@ -31,7 +31,7 @@
 
 /* Global variables */
 static IC_STRING glob_config_dir= { NULL, 0, TRUE};
-static gchar *glob_process_name= "ic_cs";
+static const gchar *glob_process_name= "ic_csd";
 
 /* Option variables */
 static gchar *glob_config_path= NULL;
@@ -179,7 +179,7 @@ verify_grid_config(IC_CLUSTER_CONFIG **clusters)
   gboolean first_cs_or_cm= FALSE;
   gboolean first;
   IC_CLUSTER_CONFIG **cluster_iter= clusters;
-  IC_NODE_TYPES node_type;
+  IC_NODE_TYPES node_type= IC_NOT_EXIST_NODE_TYPE;
 
   while (*cluster_iter)
   {
@@ -248,7 +248,7 @@ load_local_config(IC_MEMORY_CONTAINER *mc_ptr,
     return 1;
   }
   if ((error= ic_load_config_version(&glob_config_dir,
-                                     (gchar*)glob_process_name,
+                                     glob_process_name,
                                      config_version_number)))
     goto error;
   if (glob_bootstrap && *config_version_number)
@@ -300,7 +300,8 @@ main(int argc, char *argv[])
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
   guint32 config_version_number;
 
-  if ((error= ic_start_program(argc, argv, entries,
+  printf("Starting %s program\n", glob_process_name);
+  if ((error= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Cluster Server")))
     return error;
   if ((error= ic_set_config_path(&glob_config_dir,

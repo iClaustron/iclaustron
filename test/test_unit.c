@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 
+static const gchar *glob_process_name= "test_unit";
 static int glob_test_type= 0;
 static GOptionEntry entries[] = 
 {
@@ -238,7 +239,7 @@ int main(int argc, char *argv[])
 {
   int ret_code= 1;
 
-  if ((ret_code= ic_start_program(argc, argv, entries,
+  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- Unit test program")))
     return ret_code;
   switch (glob_test_type)

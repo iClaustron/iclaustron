@@ -307,14 +307,6 @@ struct ic_api_cluster_operations
                         IC_CLUSTER_CONNECT_INFO **clu_info,
                         guint32 node_id);
   /*
-    Thus function gets a list of the clusters handled by the Cluster
-    Server(s) set up in the IC_API_CONFIG_SERVER struct. It fetches this
-    from the Cluster Server(s).
-  */
-  int (*ic_get_cluster_ids) (IC_API_CONFIG_SERVER *apic,
-                            IC_CLUSTER_CONNECT_INFO **clu_infos);
-
-  /*
     This method is intended to convert a connection to the Cluster
     Server into a transporter connection.
   */
@@ -679,7 +671,7 @@ struct ic_comm_link_config
 typedef struct ic_comm_link_config IC_COMM_LINK_CONFIG;
 
 int ic_load_config_version(IC_STRING *config_dir,
-                           gchar *process_name,
+                           const gchar *process_name,
                            guint32 *version_number);
 int
 ic_write_full_config_to_disk(IC_STRING *config_dir,
@@ -942,6 +934,7 @@ void ic_print_config_parameters();
     DEBUG_RETURN(PROTOCOL_ERROR); \
     goto error; \
   } \
+  DEBUG_RETURN(0); \
 }
 
 #define PROTOCOL_CONN_CHECK_DEBUG_RETURN(cond) \
@@ -951,6 +944,7 @@ void ic_print_config_parameters();
     conn->conn_op.ic_set_error_line(conn, (guint32)__LINE__); \
     DEBUG_RETURN(PROTOCOL_ERROR); \
   } \
+  DEBUG_RETURN(0); \
 }
 
 #define PROTOCOL_CHECK_RETURN(cond) \
@@ -960,6 +954,7 @@ void ic_print_config_parameters();
     apic->api_op.ic_set_error_line(apic, (guint32)__LINE__); \
     return PROTOCOL_ERROR; \
   } \
+  return 0; \
 }
 
 #define PROTOCOL_CONN_CHECK_ERROR_GOTO(error) \

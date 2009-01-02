@@ -25,6 +25,8 @@
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_connection.h>
+#include <ic_sock_buf.h>
+#include <ic_base64.h>
 #include <ic_config_reader.h>
 #include <hashtable.h>
 #endif

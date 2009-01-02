@@ -324,98 +324,9 @@ int ic_ssl_init();
 void ic_ssl_end();
 
 /*
-  Definitions for the socket buffer pool
-*/
-#define PRIO_LEVELS 2
-#define MAX_ALLOC_SEGMENTS 8
-#define HIGH_PRIO_BUF_SIZE 128
-struct ic_sock_buf_operations;
-struct ic_sock_buf_page;
-struct ic_sock_buf;
-
-struct ic_sock_buf_operations
-{
-  /*
-    This function retrieves one socket buffer page from the free list.
-    It does so by using a local free list provided in the free_pages
-    variable, this variable is purely local to the thread and need no
-    extra mutex protection. When this free list is empty a page is
-    retrieved from the global free list. This allocation actually
-    allocates as many pages as is requested in the num_pages variable.
-    Thus if num_pages is 10, this routine will use the local free_pages
-    free list 90% of the time and every 10th time the function is called
-    it will allocate 10 socket buffer pages from the global free list.
-  */
-  struct ic_sock_buf_page* (*ic_get_sock_buf_page)
-      (struct ic_sock_buf *buf,
-       struct ic_sock_buf_page **free_pages,
-       guint32 num_pages);
-  /*
-    This routine is used return socket buffer pages to the global free list.
-    It will treat the pointer to the first socket buffer page as the first
-    page in a linked list of pages. Thus more than one page at a time can
-    be returned to the global free list.
-  */
-  void (*ic_return_sock_buf_page) (struct ic_sock_buf *buf,
-                                   struct ic_sock_buf_page *page);
-  /*
-    If the socket buffer page global free list turns out to be too small,
-    it is possible to increase the size by allocating more socket buffer
-    pages. This is done in increments rather than reallocating everything.
-  */
-  int (*ic_inc_sock_buf) (struct ic_sock_buf *buf, guint64 no_of_pages);
-  /*
-    This routine frees all socket buffer pages allocated to this global pool.
-  */
-  void (*ic_free_sock_buf) (struct ic_sock_buf *buf);
-};
-typedef struct ic_sock_buf_operations IC_SOCK_BUF_OPERATIONS;
-
-/*
-  We want to ensure that the buffer is 64 bytes to avoid false cache sharing
-  on most platforms (there are some exceptions using 256 byte cache line sizes
-  that we will ignore).
-*/
-#define IC_SOCK_BUF_PAGE_SIZE 64
-struct ic_sock_buf_page
-{
-  struct ic_sock_buf_page *next_sock_buf_page;
-  struct ic_sock_buf *sock_buf_container;
-  gchar *sock_buf;
-  guint32 size;
-  /* This is an atomic counter used to keep track of reference count */
-  gint ref_count;
-  guint32 opaque_area[6];
-};
-typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
-
-struct ic_sock_buf
-{
-  IC_SOCK_BUF_OPERATIONS sock_buf_ops;
-  IC_SOCK_BUF_PAGE *first_page;
-  guint32 page_size;
-  guint32 alloc_segments;
-  gchar *alloc_segments_ref[MAX_ALLOC_SEGMENTS];
-  GMutex *ic_buf_mutex;
-};
-typedef struct ic_sock_buf IC_SOCK_BUF;
-
-IC_SOCK_BUF*
-ic_create_socket_membuf(guint32 page_size,
-                        guint64 no_of_pages);
-
-/*
   Debug print-outs
 */
 void ic_print_buf(char *buf, guint32 size);
-/*
-  Methods to encode and decode base64 data
-*/
-int ic_base64_encode(guint8 **dest, guint32 *dest_len,
-                     const guint8 *src, guint32 src_len);
-int ic_base64_decode(guint8 *dest, guint32 *dest_len,
-                     const guint8 *src, guint32 src_len);
-
 /*
   Methods to send and receive buffers with Carriage Return
 */

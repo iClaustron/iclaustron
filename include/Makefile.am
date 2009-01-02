@@ -17,6 +17,7 @@ include_HEADERS = hashtable.h \
                   hashtable_private.h \
                   ic_apic.h \
                   ic_apid.h \
+                  ic_base64.h \
                   ic_clmgr.h \
                   ic_connection.h \
                   ic_common.h \
@@ -29,4 +30,5 @@ include_HEADERS = hashtable.h \
                   ic_mc.h \
                   ic_poll_set.h \
                   ic_port.h \
+                  ic_sock_buf.h \
 		  ic_string.h

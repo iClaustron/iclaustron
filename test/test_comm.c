@@ -16,6 +16,7 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 
+static const gchar *glob_process_name= "test_comm";
 static gboolean glob_is_client= FALSE;
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_client_ip= "127.0.0.1";
@@ -320,7 +321,7 @@ int main(int argc, char *argv[])
 {
   int ret_code= 1;
 
-  if ((ret_code= ic_start_program(argc, argv, entries,
+  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- Basic test program communication module")))
     return ret_code;
   printf("Server ip = %s, Client ip = %s\n", glob_server_ip, glob_client_ip);

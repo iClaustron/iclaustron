@@ -3181,65 +3181,223 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   DEBUG_RETURN(error);
 }
 
-static guint64
-get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server)
-{
-  guint64 version_no= MYSQL_VERSION;
-  if (use_iclaustron_cluster_server)
-  {
-    version_no+= (IC_VERSION << IC_VERSION_BIT_START);
-    ic_set_bit(version_no, IC_PROTOCOL_BIT);
-  }
-  return version_no;
-}
-
 /*
   CONFIGURATION TRANSLATE KEY DATA TO CONFIGURATION OBJECTS MODULE
   ----------------------------------------------------------------
 */
 
 /*
-  CONFIGURATION RETRIEVE MODULE
-  -----------------------------
-  This module contains the code to retrieve the configuration for a given
-  cluster from the cluster server.
+  This method connects to one of the provided cluster servers. Then it
+  retrieves the configuration from this cluster server. In a successful
+  case we keep this connection so that it can be kept for other usage
+  such that we can stay informed about changes of the configuration.
+  The configuration is by default locked in the sense that the configuration
+  cannot be changed until the connection is converted to a information
+  channel where the requester of the configuration also is informed of
+  any changes to the configuration in proper order.
 */
+static int get_cluster_ids(IC_API_CONFIG_SERVER *apic,
+                           IC_CLUSTER_CONNECT_INFO **clu_infos);
+static int send_get_nodeid(IC_API_CONFIG_SERVER *apic,
+                           IC_CONNECTION *conn,
+                           guint32 cluster_id);
+static int send_get_config(IC_API_CONFIG_SERVER *apic,
+                           IC_CONNECTION *conn);
+static int rec_get_config(IC_API_CONFIG_SERVER *apic,
+                          IC_CONNECTION *conn,
+                          guint32 cluster_id);
+static int rec_get_nodeid(IC_API_CONFIG_SERVER *apic,
+                          IC_CONNECTION *conn,
+                          guint32 cluster_id);
+
+static int connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr);
+static int set_up_cluster_server_connection(IC_API_CONFIG_SERVER *apic,
+                                            IC_CONNECTION **conn,
+                                            gchar *server_name,
+                                            gchar *server_port);
+static guint64 get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server);
+static guint32 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos);
 
 static int
-set_up_cluster_server_connection(IC_API_CONFIG_SERVER *apic,
-                                 IC_CONNECTION **conn,
-                                 gchar *server_name,
-                                 gchar *server_port)
+get_cs_config(IC_API_CONFIG_SERVER *apic,
+              IC_CLUSTER_CONNECT_INFO **clu_infos,
+              guint32 node_id)
 {
-  int error;
-  IC_CONNECTION *loc_conn;
+  guint32 i, max_cluster_id= 0;
+  guint32 cluster_id, num_clusters;
+  int error= END_OF_FILE;
+  IC_CONNECTION *conn= NULL;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
+  DEBUG_ENTRY("get_cs_config");
 
-  if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
-                                       CONFIG_READ_BUF_SIZE,
-                                       NULL, NULL)))
-    return IC_ERROR_MEM_ALLOC;
-  loc_conn= *conn;
-  loc_conn->conn_op.ic_prepare_server_connection(loc_conn,
-                                                 server_name,
-                                                 server_port,
-                                                 NULL,
-                                                 NULL,
-                                                 0,
-                                                 FALSE);
-  if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn, NULL, NULL)))
+  if (apic->use_ic_cs)
+    num_clusters= count_clusters(clu_infos);
+  else
+    num_clusters= 1;
+  if ((error= connect_api_connections(apic, &conn)))
+    DEBUG_RETURN(error);
+  if (apic->use_ic_cs)
   {
-    DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", error));
-    apic->err_str= loc_conn->conn_op.ic_get_error_str(loc_conn);
-    return error;
+    if ((error= get_cluster_ids(apic, clu_infos)))
+      DEBUG_RETURN(error);
+    for (i= 0; i < num_clusters; i++)
+      max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
+    apic->max_cluster_id= max_cluster_id;
   }
-  DEBUG_PRINT(COMM_LEVEL,
-              ("Successfully set-up connection to cluster server"));
-  return 0;
+  else
+  {
+    apic->max_cluster_id= max_cluster_id= 0;
+  }
+  if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+           (max_cluster_id + 1) * sizeof(IC_CLUSTER_CONFIG**))) ||
+      !(apic->node_ids= (guint32*)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+            sizeof(guint32) * (max_cluster_id + 1))))
+    goto mem_alloc_error;
+
+  for (i= 0; i < num_clusters; i++)
+  {
+    if (apic->use_ic_cs)
+      cluster_id= clu_infos[i]->cluster_id;
+    else
+      cluster_id= 0;
+    if (!(clu_conf= (IC_CLUSTER_CONFIG*)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
+      goto mem_alloc_error;
+    if (ic_mc_strdup(mc_ptr, &clu_conf->clu_info.cluster_name,
+                       &clu_infos[i]->cluster_name) ||
+        ic_mc_strdup(mc_ptr, &clu_conf->clu_info.password,
+                       &clu_infos[i]->password))
+      goto mem_alloc_error;
+    clu_conf->clu_info.cluster_id= cluster_id;
+    if (apic->conf_objects[cluster_id])
+      goto error;
+    apic->conf_objects[cluster_id]= clu_conf;
+    apic->node_ids[cluster_id]= node_id;
+    clu_conf->my_node_id= node_id;
+  }
+
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    if (!apic->conf_objects[cluster_id] ||
+       ((error= send_get_nodeid(apic, conn, cluster_id)) ||
+        (error= rec_get_nodeid(apic, conn, cluster_id)) ||
+        (error= send_get_config(apic, conn)) ||
+        (error= rec_get_config(apic, conn, cluster_id))))
+      continue;
+  }
+  if (error)
+    goto error;
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    if (clu_conf && build_hash_on_comms(clu_conf))
+      goto mem_alloc_error;
+  }
+  apic->cluster_conn.current_conn= conn;  
+error:
+  if (error)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", error));
+  }
+  DEBUG_RETURN(error);
+mem_alloc_error:
+  DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+}
+
+#define RECEIVE_CLUSTER_NAME 1
+#define RECEIVE_CLUSTER_ID 2
+
+static int
+get_cluster_ids(IC_API_CONFIG_SERVER *apic,
+                IC_CLUSTER_CONNECT_INFO **clu_infos)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  guint32 state, num_clusters_found= 0;
+  guint32 num_clusters= 0;
+  guint64 cluster_id;
+  IC_CLUSTER_CONNECT_INFO *found_clu_info= NULL;
+  IC_CLUSTER_CONNECT_INFO **clu_info_iter, *clu_info;
+  int error;
+  IC_CONNECTION *conn= apic->cluster_conn.current_conn;
+  DEBUG_ENTRY("get_cluster_ids");
+
+  num_clusters= count_clusters(clu_infos);
+  if (ic_send_with_cr(conn, get_cluster_list_str))
+  {
+    error= conn->conn_op.ic_get_error_code(conn);
+    goto error;
+  }
+  if ((error= rec_simple_str(conn, get_cluster_list_reply_str)))
+    PROTOCOL_CHECK_ERROR_GOTO(error);
+  state= RECEIVE_CLUSTER_NAME;
+  while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    if (!check_buf(read_buf, read_size, end_get_cluster_list_str,
+                   strlen(end_get_cluster_list_str)))
+      break;
+    switch (state)
+    {
+      case RECEIVE_CLUSTER_NAME:
+        if ((read_size < CLUSTER_NAME_REQ_LEN) ||
+            (memcmp(read_buf, cluster_name_string, CLUSTER_NAME_REQ_LEN) != 0))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in receive cluster name state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        found_clu_info= NULL;
+        clu_info_iter= clu_infos;
+        while (*clu_info_iter)
+        {
+          clu_info= *clu_info_iter;
+          if ((clu_info->cluster_name.len ==
+               (read_size - CLUSTER_NAME_REQ_LEN)) &&
+              (memcmp(clu_info->cluster_name.str,
+                      read_buf+CLUSTER_NAME_REQ_LEN,
+                      clu_info->cluster_name.len) == 0))
+          {
+            found_clu_info= clu_info;
+            break;
+          }
+          clu_info_iter++;
+        }
+        state= RECEIVE_CLUSTER_ID;
+        break;
+      case RECEIVE_CLUSTER_ID:
+        if (check_buf_with_int(read_buf, read_size, cluster_id_str,
+                               CLUSTER_ID_REQ_LEN, &cluster_id))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in receive cluster id state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        PROTOCOL_CHECK_GOTO(cluster_id <= IC_MAX_CLUSTER_ID);
+        if (found_clu_info)
+        {
+          found_clu_info->cluster_id= cluster_id;
+          num_clusters_found++;
+        }
+        state= RECEIVE_CLUSTER_NAME;
+        break;
+      default:
+        g_assert(FALSE);
+    }
+  }
+  error= 1;
+  if (num_clusters_found != num_clusters)
+    goto error;
+  DEBUG_RETURN(0);
+error:
+  DEBUG_RETURN(error);
 }
 
 static int
-send_get_nodeid(IC_CONNECTION *conn,
-                IC_API_CONFIG_SERVER *apic,
+send_get_nodeid(IC_API_CONFIG_SERVER *apic,
+                IC_CONNECTION *conn,
                 guint32 cluster_id)
 {
   gchar version_buf[128];
@@ -3281,14 +3439,14 @@ send_get_nodeid(IC_CONNECTION *conn,
 }
 
 static int
-send_get_config(IC_CONNECTION *conn,
-                gboolean use_iclaustron_cluster_server)
+send_get_config(IC_API_CONFIG_SERVER *apic,
+                IC_CONNECTION *conn)
 {
   gchar version_buf[128];
   gchar buf[128];
   guint64 version_no;
 
-  version_no= get_iclaustron_protocol_version(use_iclaustron_cluster_server);
+  version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
   g_snprintf(version_buf, 32, "%s%s", version_str,
              ic_guint64_str(version_no, buf, NULL));
   if (ic_send_with_cr(conn, get_config_str) ||
@@ -3299,8 +3457,8 @@ send_get_config(IC_CONNECTION *conn,
 }
 
 static int
-rec_get_nodeid(IC_CONNECTION *conn,
-               IC_API_CONFIG_SERVER *apic,
+rec_get_nodeid(IC_API_CONFIG_SERVER *apic,
+               IC_CONNECTION *conn,
                guint32 cluster_id)
 {
   gchar *read_buf;
@@ -3383,8 +3541,8 @@ rec_get_nodeid(IC_CONNECTION *conn,
 }
 
 static int
-rec_get_config(IC_CONNECTION *conn,
-               IC_API_CONFIG_SERVER *apic,
+rec_get_config(IC_API_CONFIG_SERVER *apic,
+               IC_CONNECTION *conn,
                guint32 cluster_id)
 {
   gchar *read_buf;
@@ -3540,6 +3698,93 @@ end:
   return error;
 }
 
+static int
+connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
+{
+  guint32 i;
+  int error= 1;
+  IC_CONNECTION **conn_p;
+
+  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+  {
+    conn_p= (IC_CONNECTION**)(&apic->cluster_conn.cluster_srv_conns[i]);
+    if (!(error= set_up_cluster_server_connection(apic, conn_p,
+                  apic->cluster_conn.cluster_server_ips[i],
+                  apic->cluster_conn.cluster_server_ports[i])))
+    {
+      *conn_ptr= *conn_p;
+      apic->cluster_conn.current_conn= *conn_p;
+      return 0;
+    }
+  }
+  return error;
+}
+
+static int
+set_up_cluster_server_connection(IC_API_CONFIG_SERVER *apic,
+                                 IC_CONNECTION **conn,
+                                 gchar *server_name,
+                                 gchar *server_port)
+{
+  int error;
+  IC_CONNECTION *loc_conn;
+
+  if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
+                                       CONFIG_READ_BUF_SIZE,
+                                       NULL, NULL)))
+    return IC_ERROR_MEM_ALLOC;
+  loc_conn= *conn;
+  loc_conn->conn_op.ic_prepare_server_connection(loc_conn,
+                                                 server_name,
+                                                 server_port,
+                                                 NULL,
+                                                 NULL,
+                                                 0,
+                                                 FALSE);
+  if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn, NULL, NULL)))
+  {
+    DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", error));
+    apic->err_str= loc_conn->conn_op.ic_get_error_str(loc_conn);
+    return error;
+  }
+  DEBUG_PRINT(COMM_LEVEL,
+              ("Successfully set-up connection to cluster server"));
+  return 0;
+}
+
+static guint64
+get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server)
+{
+  guint64 version_no= MYSQL_VERSION;
+  if (use_iclaustron_cluster_server)
+  {
+    version_no+= (IC_VERSION << IC_VERSION_BIT_START);
+    ic_set_bit(version_no, IC_PROTOCOL_BIT);
+  }
+  return version_no;
+}
+
+static guint32
+count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
+{
+  IC_CLUSTER_CONNECT_INFO **clu_info_iter;
+  guint32 num_clusters= 0;
+  clu_info_iter= clu_infos;
+  while (*clu_info_iter)
+  {
+    num_clusters++;
+    clu_info_iter++;
+  }
+  return num_clusters;
+}
+
+/*
+  CONFIGURATION RETRIEVE MODULE
+  -----------------------------
+  This module contains the code to retrieve the configuration for a given
+  cluster from the cluster server.
+*/
+
 /*
   MODULE: CONFIGURATION CLIENT
   ----------------------------
@@ -3584,232 +3829,9 @@ disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
 }
 
 static int
-connect_api_connections(IC_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
-{
-  guint32 i;
-  int error= 1;
-  IC_CONNECTION **conn_p;
-
-  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
-  {
-    conn_p= (IC_CONNECTION**)(&apic->cluster_conn.cluster_srv_conns[i]);
-    if (!(error= set_up_cluster_server_connection(apic, conn_p,
-                  apic->cluster_conn.cluster_server_ips[i],
-                  apic->cluster_conn.cluster_server_ports[i])))
-    {
-      *conn_ptr= *conn_p;
-      apic->cluster_conn.current_conn= *conn_p;
-      return 0;
-    }
-  }
-  return error;
-}
-
-static int
 get_info_config_channels(__attribute__ ((unused)) IC_API_CONFIG_SERVER *apic)
 {
   return 0;
-}
-
-static guint32
-count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
-{
-  IC_CLUSTER_CONNECT_INFO **clu_info_iter;
-  guint32 num_clusters= 0;
-  clu_info_iter= clu_infos;
-  while (*clu_info_iter)
-  {
-    num_clusters++;
-    clu_info_iter++;
-  }
-  return num_clusters;
-}
-
-/*
-  This method connects to one of the provided cluster servers. Then it
-  retrieves the configuration from this cluster server. In a successful
-  case we keep this connection so that it can be kept for other usage
-  such that we can stay informed about changes of the configuration.
-  The configuration is by default locked in the sense that the configuration
-  cannot be changed until the connection is converted to a information
-  channel where the requester of the configuration also is informed of
-  any changes to the configuration in proper order.
-*/
-static int
-get_cs_config(IC_API_CONFIG_SERVER *apic,
-              IC_CLUSTER_CONNECT_INFO **clu_infos,
-              guint32 node_id)
-{
-  guint32 i, max_cluster_id= 0;
-  guint32 cluster_id, num_clusters;
-  int error= END_OF_FILE;
-  IC_CONNECTION *conn= NULL;
-  IC_CLUSTER_CONFIG *clu_conf;
-  IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
-  DEBUG_ENTRY("get_cs_config");
-
-  if (apic->use_ic_cs)
-    num_clusters= count_clusters(clu_infos);
-  else
-    num_clusters= 1;
-  if ((error= connect_api_connections(apic, &conn)))
-    DEBUG_RETURN(error);
-  if (apic->use_ic_cs)
-  {
-    if ((error= apic->api_op.ic_get_cluster_ids(apic, clu_infos)))
-      DEBUG_RETURN(error);
-    for (i= 0; i < num_clusters; i++)
-      max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
-    apic->max_cluster_id= max_cluster_id;
-  }
-  else
-  {
-    apic->max_cluster_id= max_cluster_id= 0;
-  }
-  if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
-        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
-           (max_cluster_id + 1) * sizeof(IC_CLUSTER_CONFIG**))) ||
-      !(apic->node_ids= (guint32*)
-        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
-            sizeof(guint32) * (max_cluster_id + 1))))
-    goto mem_alloc_error;
-
-  for (i= 0; i < num_clusters; i++)
-  {
-    if (apic->use_ic_cs)
-      cluster_id= clu_infos[i]->cluster_id;
-    else
-      cluster_id= 0;
-    if (!(clu_conf= (IC_CLUSTER_CONFIG*)
-        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
-      goto mem_alloc_error;
-    if (ic_mc_strdup(mc_ptr, &clu_conf->clu_info.cluster_name,
-                       &clu_infos[i]->cluster_name) ||
-        ic_mc_strdup(mc_ptr, &clu_conf->clu_info.password,
-                       &clu_infos[i]->password))
-      goto mem_alloc_error;
-    clu_conf->clu_info.cluster_id= cluster_id;
-    if (apic->conf_objects[cluster_id])
-      goto error;
-    apic->conf_objects[cluster_id]= clu_conf;
-    apic->node_ids[cluster_id]= node_id;
-    clu_conf->my_node_id= node_id;
-  }
-
-  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
-  {
-    if (!apic->conf_objects[cluster_id] ||
-       ((error= send_get_nodeid(conn, apic, cluster_id)) ||
-        (error= rec_get_nodeid(conn, apic, cluster_id)) ||
-        (error= send_get_config(conn, apic->use_ic_cs)) ||
-        (error= rec_get_config(conn, apic, cluster_id))))
-      continue;
-  }
-  if (error)
-    goto error;
-  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
-  {
-    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
-    if (clu_conf && build_hash_on_comms(clu_conf))
-      goto mem_alloc_error;
-  }
-  apic->cluster_conn.current_conn= conn;  
-error:
-  if (error)
-  {
-    DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", error));
-  }
-  DEBUG_RETURN(error);
-mem_alloc_error:
-  DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
-}
-
-#define RECEIVE_CLUSTER_NAME 1
-#define RECEIVE_CLUSTER_ID 2
-
-static int
-get_cluster_ids(IC_API_CONFIG_SERVER *apic,
-                IC_CLUSTER_CONNECT_INFO **clu_infos)
-{
-  gchar *read_buf;
-  guint32 read_size;
-  guint32 state, num_clusters_found= 0;
-  guint32 num_clusters= 0;
-  guint64 cluster_id;
-  IC_CLUSTER_CONNECT_INFO *found_clu_info= NULL;
-  IC_CLUSTER_CONNECT_INFO **clu_info_iter, *clu_info;
-  int error;
-  IC_CONNECTION *conn= apic->cluster_conn.current_conn;
-  DEBUG_ENTRY("get_cluster_ids");
-
-  num_clusters= count_clusters(clu_infos);
-  if (ic_send_with_cr(conn, get_cluster_list_str))
-  {
-    error= conn->conn_op.ic_get_error_code(conn);
-    goto error;
-  }
-  if ((error= rec_simple_str(conn, get_cluster_list_reply_str)))
-    PROTOCOL_CHECK_ERROR_GOTO(error);
-  state= RECEIVE_CLUSTER_NAME;
-  while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-  {
-    if (!check_buf(read_buf, read_size, end_get_cluster_list_str,
-                   strlen(end_get_cluster_list_str)))
-      break;
-    switch (state)
-    {
-      case RECEIVE_CLUSTER_NAME:
-        if ((read_size < CLUSTER_NAME_REQ_LEN) ||
-            (memcmp(read_buf, cluster_name_string, CLUSTER_NAME_REQ_LEN) != 0))
-        {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in receive cluster name state"));
-          PROTOCOL_CHECK_GOTO(FALSE);
-        }
-        found_clu_info= NULL;
-        clu_info_iter= clu_infos;
-        while (*clu_info_iter)
-        {
-          clu_info= *clu_info_iter;
-          if ((clu_info->cluster_name.len ==
-               (read_size - CLUSTER_NAME_REQ_LEN)) &&
-              (memcmp(clu_info->cluster_name.str,
-                      read_buf+CLUSTER_NAME_REQ_LEN,
-                      clu_info->cluster_name.len) == 0))
-          {
-            found_clu_info= clu_info;
-            break;
-          }
-          clu_info_iter++;
-        }
-        state= RECEIVE_CLUSTER_ID;
-        break;
-      case RECEIVE_CLUSTER_ID:
-        if (check_buf_with_int(read_buf, read_size, cluster_id_str,
-                               CLUSTER_ID_REQ_LEN, &cluster_id))
-        {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in receive cluster id state"));
-          PROTOCOL_CHECK_GOTO(FALSE);
-        }
-        PROTOCOL_CHECK_GOTO(cluster_id <= IC_MAX_CLUSTER_ID);
-        if (found_clu_info)
-        {
-          found_clu_info->cluster_id= cluster_id;
-          num_clusters_found++;
-        }
-        state= RECEIVE_CLUSTER_NAME;
-        break;
-      default:
-        g_assert(FALSE);
-    }
-  }
-  error= 1;
-  if (num_clusters_found != num_clusters)
-    goto error;
-  DEBUG_RETURN(0);
-error:
-  DEBUG_RETURN(error);
 }
 
 static void
@@ -3970,7 +3992,6 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   apic->api_op.ic_fill_error_buffer= fill_error_buffer;
   apic->api_op.ic_get_error_str= get_error_str;
   apic->api_op.ic_get_config= get_cs_config;
-  apic->api_op.ic_get_cluster_ids= get_cluster_ids;
   apic->api_op.ic_get_info_config_channels= get_info_config_channels;
   apic->api_op.ic_get_cluster_config= get_cluster_config;
   apic->api_op.ic_get_node_object= get_node_object;
@@ -4363,8 +4384,8 @@ run_cluster_server_thread(gpointer data)
         {
           if ((error= handle_get_cluster_list(run_obj, conn)))
           {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Error from handle_get_cluster_list, code = %u", error));
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Error from handle_get_cluster_list, code = %u", error));
             goto error;
           }
           state= WAIT_GET_NODEID;
@@ -4503,7 +4524,7 @@ handle_get_cluster_list(IC_RUN_CLUSTER_SERVER *run_obj,
   }
   if ((error= ic_send_with_cr(conn, end_get_cluster_list_str)))
     goto error;
-  return 0;
+  DEBUG_RETURN(0);
 error:
   DEBUG_PRINT(CONFIG_LEVEL,
               ("Protocol error in get cluster list"));
@@ -4969,7 +4990,7 @@ ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
                      guint64 version_number)
 {
   guint32 *key_value_array;
-  guint32 key_value_array_len;
+  guint32 key_value_array_len= 0;
   int ret_code;
 
   *base64_array= 0;
@@ -6566,7 +6587,7 @@ file_open_error:
 
 int
 ic_load_config_version(IC_STRING *config_dir,
-                       gchar *process_name,
+                       const gchar *process_name,
                        guint32 *config_version)
   
   When starting the Cluster Server it's necessary to lock the configuration
@@ -6777,7 +6798,7 @@ error:
 
 int
 ic_load_config_version(IC_STRING *config_dir,
-                       gchar *process_name,
+                       const gchar *process_name,
                        guint32 *config_version)
 {
   guint32 state, pid;

@@ -18,7 +18,7 @@
 #include <ic_apid.h>
 
 static IC_STRING glob_config_dir= { NULL, 0, TRUE};
-static gchar *glob_process_name= "ic_fsd";
+static const gchar *glob_process_name= "ic_fsd";
 
 static gchar *glob_cluster_server_ip= "127.0.0.1";
 static gchar *glob_cluster_server_port= "10203";
@@ -143,7 +143,7 @@ int main(int argc, char *argv[])
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= error_str;
 
-  if ((ret_code= ic_start_program(argc, argv, entries,
+  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
             "- iClaustron Cluster File Server")))
     goto error;
   if ((ret_code= ic_set_config_path(&glob_config_dir,

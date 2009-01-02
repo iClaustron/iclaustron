@@ -86,6 +86,7 @@ static int ic_init();
 
 int
 ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+                 const gchar *program_name,
                  gchar *start_text)
 {
   int ret_code= 1;
@@ -93,6 +94,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   GOptionGroup *debug_group;
   GOptionContext *context;
 
+  printf("Starting %s program\n", program_name);
   context= g_option_context_new(start_text);
   if (!context)
     goto mem_error;

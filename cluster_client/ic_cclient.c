@@ -19,6 +19,7 @@
 #include <readline/readline.h>
 #endif
 
+static const gchar *glob_process_name= "ic_cclient";
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_server_port= "12003";
 static guint32 glob_history_size= 100;
@@ -229,7 +230,7 @@ int main(int argc, char *argv[])
   int ret_code= 1;
   IC_CONNECTION *conn;
 
-  if ((ret_code= ic_start_program(argc, argv, entries,
+  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Command Client")))
     return ret_code;
 #ifdef HAVE_LIBREADLINE

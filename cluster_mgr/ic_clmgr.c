@@ -18,7 +18,7 @@
 
 /* Global variables */
 static IC_STRING glob_config_dir= { NULL, 0, TRUE};
-static gchar *glob_process_name= "ic_clmgr";
+static const gchar *glob_process_name= "ic_clmgrd";
 
 /* Option variables */
 static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
@@ -781,7 +781,7 @@ int main(int argc,
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= error_str;
 
-  if ((ret_code= ic_start_program(argc, argv, entries,
+  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Cluster Manager")))
     goto error;
   if ((ret_code= ic_set_config_path(&glob_config_dir,

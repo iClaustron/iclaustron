@@ -96,6 +96,7 @@
   iClaustron program.
 */
 int ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+                     const gchar *program_name,
                      gchar *start_text);
 void ic_end();
 #endif

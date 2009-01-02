@@ -53,6 +53,7 @@ static gchar *glob_port= "10002";
 static gchar *glob_base_dir= NULL;
 
 /* Global variables */
+static const gchar *glob_process_name= "ic_pcntrld";
 static guint32 glob_stop_flag= FALSE;
 static IC_STRING glob_base_dir_string;
 static IC_STRING glob_ic_base_dir_string;
@@ -166,7 +167,7 @@ mem_error:
 int start_connection_loop()
 {
   int ret_code;
-  IC_CONNECTION *conn;
+  IC_CONNECTION *conn= NULL;
   IC_CONNECTION *fork_conn;
   GError *error= NULL;
 
@@ -225,7 +226,7 @@ int main(int argc, char *argv[])
   gchar iclaustron_buf[IC_MAX_FILE_NAME_SIZE];
   gchar mysql_buf[IC_MAX_FILE_NAME_SIZE];
  
-  if ((ret_code= ic_start_program(argc, argv, entries,
+  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Control Server")))
     return ret_code;
   ret_code= 1;
