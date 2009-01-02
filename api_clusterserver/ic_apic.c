@@ -3624,6 +3624,7 @@ count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
   }
   return num_clusters;
 }
+
 /*
   This method connects to one of the provided cluster servers. Then it
   retrieves the configuration from this cluster server. In a successful
@@ -3700,8 +3701,7 @@ get_cs_config(IC_API_CONFIG_SERVER *apic,
     if (!apic->conf_objects[cluster_id] ||
        ((error= send_get_nodeid(conn, apic, cluster_id)) ||
         (error= rec_get_nodeid(conn, apic, cluster_id)) ||
-        (error= send_get_config(conn,
-         apic->api_op.ic_use_iclaustron_cluster_server(apic))) ||
+        (error= send_get_config(conn, apic->use_ic_cs)) ||
         (error= rec_get_config(conn, apic, cluster_id))))
       continue;
   }
