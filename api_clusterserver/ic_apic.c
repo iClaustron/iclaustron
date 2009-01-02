@@ -2153,8 +2153,8 @@ int ic_init_config_parameters()
 }
 
 /*
- * MODULE: Translate configuration from bas64-encoded string
- * ---------------------------------------------------------
+  MODULE: Configuration reader client, Translate Part
+  ---------------------------------------------------
  * This module implements one method which is used as part of the client
  * retrieving the cluster configuration from a cluster server. This
  * method is called immediately after reading all the lines of the base64
@@ -3182,11 +3182,11 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
 }
 
 /*
-  CONFIGURATION TRANSLATE KEY DATA TO CONFIGURATION OBJECTS MODULE
-  ----------------------------------------------------------------
-*/
+  MODULE: Configuration reader client, Protocol Part
+  --------------------------------------------------
+  This module implements one of the methods in the IC_API_CONFIG_SERVER
+  interface. It is the get_cs_config method.
 
-/*
   This method connects to one of the provided cluster servers. Then it
   retrieves the configuration from this cluster server. In a successful
   case we keep this connection so that it can be kept for other usage
@@ -3195,6 +3195,32 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   cannot be changed until the connection is converted to a information
   channel where the requester of the configuration also is informed of
   any changes to the configuration in proper order.
+
+  This module makes use of the other Configuration reader client module
+  which translates the received base64 encoded string into a cluster
+  configuration. In addition it makes heavy use of the Support module for
+  NDB Management Protocol support.
+
+  The method implemented is the:
+  get_cs_config
+
+  This method first calls the connect_api_connection to set-up the socket
+  connections to the Cluster Server through help of the method:
+    connect_api_connection
+    set_up_server_connection
+
+  After connection has been set-up the client asks for the cluster id
+  information using the method:
+  get_cluster_ids
+
+  The final step is the actual protocol part to retrieve the configuration
+  which are implemented by the protocol support methods:
+    send_get_nodeid
+    send_get_config
+    rec_get_nodeid
+    rec_get_config
+  As part of the rec_get_config method we call the translate_config method
+  which is implemented in the other Configuration reader client module.
 */
 static int get_cluster_ids(IC_API_CONFIG_SERVER *apic,
                            IC_CLUSTER_CONNECT_INFO **clu_infos);
@@ -3217,6 +3243,7 @@ static int set_up_cluster_server_connection(IC_API_CONFIG_SERVER *apic,
                                             gchar *server_port);
 static guint64 get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server);
 static guint32 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos);
+
 
 static int
 get_cs_config(IC_API_CONFIG_SERVER *apic,
@@ -3779,59 +3806,125 @@ count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
 }
 
 /*
-  CONFIGURATION RETRIEVE MODULE
-  -----------------------------
-  This module contains the code to retrieve the configuration for a given
-  cluster from the cluster server.
+  MODULE: Cluster Configuration Data Structure interface
+  ------------------------------------------------------
+  This module implements the IC_API_CONFIG_SERVER interface. The routine to
+  create the IC_API_CONFIG_SERVER data structures is the get_cs_config
+  method which is implemented in a few of the previous modules.
+
+  This module is mainly an interface towards the grid configuration data.
+  The actual configuration of each node, communication section and so forth
+  is in structs where all data members are public. However there are a number
+  of service routines to find the address of these structs and also a routine
+  to release the memory attachd to it.
+
+  The below routines implements the interface except for the methods:
+    disconnect_api_connections
+    get_node_and_cluster_config
+  which are support methods to the above
+  There is also the create method of the interface:
+    ic_create_api_cluster
 */
 
-/*
-  MODULE: CONFIGURATION CLIENT
-  ----------------------------
-    This module makes use of a lot of methods above to fetch configuration
-    from a configuration server.
+static gboolean use_ic_cs(IC_API_CONFIG_SERVER *apic);
+static void set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line);
+static gchar* fill_error_buffer(IC_API_CONFIG_SERVER *apic,
+                                int error_code,
+                                gchar *error_buffer);
+static const gchar* get_error_str(IC_API_CONFIG_SERVER *apic);
+static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *apic,
+                                             guint32 cluster_id);
+static gchar* get_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                              guint32 node_id);
+static IC_SOCKET_LINK_CONFIG*
+get_communication_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                         guint32 first_node_id, guint32 second_node_id);
+static gchar*
+get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                      guint32 node_id, IC_NODE_TYPES node_type);
+static void free_cs_config(IC_API_CONFIG_SERVER *apic);
 
-  This is the routine that is used to read a configuration from a
-  cluster server. It receives a struct that contains a list of configuration
-  servers to connect to. It tries to connect to any of the configuration
-  servers in this list. If successful it goes on to fetch the configuration
-  from this configuration server. There can be many clusters handled by
-  this set of configuration servers, however the configuration is fetched
-  for one configuration at a time.
-  
-  Any retry logic is placed outside of this routine. If this routine returns
-  0 all cluster configurations have been successfully fetched and also
-  successfully parsed and all necessary data structures have been initialised.
+static void disconnect_api_connections(IC_API_CONFIG_SERVER *apic);
 
-  After a successful retrieval of the configuration one can either drop the
-  connection, one can convert the connection to a transporter channel. To
-  convert it into a transporter channel is the normal behaviour.
+static gchar*
+get_node_and_cluster_config(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                            guint32 node_id,
+                            IC_CLUSTER_CONFIG **clu_conf);
 
-  Through the transporter channel the cluster server can inform the
-  configuration client can ensure that it is informed of all changes to
-  the configuration. In this manner we can ensure that the configuration
-  database is kept up-to-date. Thus each client becomes an entity that will be
-  involved in any changes to the configuration. It is enough to be involved in
-  the changes of the clusters the client is a part of.
-*/
-
-static void
-disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
+static gboolean
+use_ic_cs(IC_API_CONFIG_SERVER *apic)
 {
-  guint32 i;
-  IC_CONNECTION *conn;
-
-  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
-  {
-    conn= apic->cluster_conn.cluster_srv_conns[i];
-    conn->conn_op.ic_free_connection(conn);
-  }
+  return apic->use_ic_cs;
 }
 
-static int
-get_info_config_channels(__attribute__ ((unused)) IC_API_CONFIG_SERVER *apic)
+static void
+set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line)
 {
-  return 0;
+  apic->err_line= error_line;
+}
+
+static gchar*
+fill_error_buffer(IC_API_CONFIG_SERVER *apic,
+                  int error_code,
+                  gchar *error_buffer)
+{
+  return ic_common_fill_error_buffer(apic->err_str,
+                                     apic->err_line,
+                                     error_code,
+                                     error_buffer);
+}
+
+static const gchar*
+get_error_str(IC_API_CONFIG_SERVER *apic)
+{
+  return apic->err_str;
+}
+
+static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *apic,
+                                             guint32 cluster_id)
+{
+  if (!apic->conf_objects ||
+      cluster_id > apic->max_cluster_id)
+    return NULL;
+  return apic->conf_objects[cluster_id];
+}
+
+static gchar*
+get_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                guint32 node_id)
+{
+  IC_CLUSTER_CONFIG *clu_conf;
+  return get_node_and_cluster_config(apic, cluster_id, node_id,
+                                     &clu_conf);
+}
+
+static IC_SOCKET_LINK_CONFIG*
+get_communication_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                         guint32 first_node_id, guint32 second_node_id)
+{
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_SOCKET_LINK_CONFIG test1;
+
+  if (!(clu_conf= get_cluster_config(apic, cluster_id)))
+    return NULL;
+  test1.first_node_id= first_node_id;
+  test1.second_node_id= second_node_id;
+  return (IC_SOCKET_LINK_CONFIG*)ic_hashtable_search(clu_conf->comm_hash,
+                                                     (void*)&test1);
+}
+
+static gchar*
+get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
+                      guint32 node_id, IC_NODE_TYPES node_type)
+{
+  IC_CLUSTER_CONFIG *clu_conf= NULL;
+  gchar *node_config= get_node_and_cluster_config(apic, cluster_id,
+                                                  node_id,
+                                                  &clu_conf);
+  if (clu_conf &&
+      clu_conf->node_types[node_id] == node_type)
+    return node_config;
+  return NULL;
 }
 
 static void
@@ -3860,15 +3953,6 @@ free_cs_config(IC_API_CONFIG_SERVER *apic)
   return;
 }
 
-static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *apic,
-                                             guint32 cluster_id)
-{
-  if (!apic->conf_objects ||
-      cluster_id > apic->max_cluster_id)
-    return NULL;
-  return apic->conf_objects[cluster_id];
-}
-
 static gchar*
 get_node_and_cluster_config(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
                             guint32 node_id,
@@ -3884,78 +3968,19 @@ get_node_and_cluster_config(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
   return node_config;
 }
 
-static gchar*
-get_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
-                guint32 node_id)
-{
-  IC_CLUSTER_CONFIG *clu_conf;
-  return get_node_and_cluster_config(apic, cluster_id, node_id,
-                                     &clu_conf);
-}
-
-static gchar*
-get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
-                      guint32 node_id, IC_NODE_TYPES node_type)
-{
-  IC_CLUSTER_CONFIG *clu_conf= NULL;
-  gchar *node_config= get_node_and_cluster_config(apic, cluster_id,
-                                                  node_id,
-                                                  &clu_conf);
-  if (clu_conf &&
-      clu_conf->node_types[node_id] == node_type)
-    return node_config;
-  return NULL;
-}
-
-static IC_SOCKET_LINK_CONFIG*
-get_communication_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
-                         guint32 first_node_id, guint32 second_node_id)
-{
-  IC_CLUSTER_CONFIG *clu_conf;
-  IC_SOCKET_LINK_CONFIG test1;
-
-  if (!(clu_conf= get_cluster_config(apic, cluster_id)))
-    return NULL;
-  test1.first_node_id= first_node_id;
-  test1.second_node_id= second_node_id;
-  return (IC_SOCKET_LINK_CONFIG*)ic_hashtable_search(clu_conf->comm_hash,
-                                                     (void*)&test1);
-}
-
-static const gchar*
-get_error_str(IC_API_CONFIG_SERVER *apic)
-{
-  return apic->err_str;
-}
-
-static gboolean
-use_ic_cs(IC_API_CONFIG_SERVER *apic)
-{
-  return apic->use_ic_cs;
-}
-
-static gchar*
-fill_error_buffer(IC_API_CONFIG_SERVER *apic,
-                  int error_code,
-                  gchar *error_buffer)
-{
-  return ic_common_fill_error_buffer(apic->err_str,
-                                     apic->err_line,
-                                     error_code,
-                                     error_buffer);
-}
-
 static void
-set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line)
+disconnect_api_connections(IC_API_CONFIG_SERVER *apic)
 {
-  apic->err_line= error_line;
+  guint32 i;
+  IC_CONNECTION *conn;
+
+  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+  {
+    conn= apic->cluster_conn.cluster_srv_conns[i];
+    conn->conn_op.ic_free_connection(conn);
+  }
 }
 
-/*
-  This routine initialises the data structures needed for a configuration client.
-  It sets the proper routines to get the configuration and to free the
-  configuration.
-*/
 IC_API_CONFIG_SERVER*
 ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                       gboolean use_ic_cs_var)
@@ -3985,14 +4010,14 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   }
   apic->mc_ptr= mc_ptr;
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
-
   apic->use_ic_cs= use_ic_cs_var;
+
+  /* Set-up function pointers */
+  apic->api_op.ic_get_config= get_cs_config;
   apic->api_op.ic_use_iclaustron_cluster_server= use_ic_cs;
   apic->api_op.ic_set_error_line= set_error_line;
   apic->api_op.ic_fill_error_buffer= fill_error_buffer;
   apic->api_op.ic_get_error_str= get_error_str;
-  apic->api_op.ic_get_config= get_cs_config;
-  apic->api_op.ic_get_info_config_channels= get_info_config_channels;
   apic->api_op.ic_get_cluster_config= get_cluster_config;
   apic->api_op.ic_get_node_object= get_node_object;
   apic->api_op.ic_get_communication_object= get_communication_object;
