@@ -64,7 +64,9 @@ static GOptionEntry entries[] =
 int
 main(int argc, char *argv[])
 {
-  int error;
+  int error, stop_error;
+  gchar *err_str;
+  gchar error_buffer[ERROR_MESSAGE_SIZE];
   IC_RUN_CLUSTER_SERVER *run_obj;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
 
@@ -88,7 +90,7 @@ main(int argc, char *argv[])
     ("Starting the iClaustron Cluster Server"));
   if ((error= run_obj->run_op.ic_start_cluster_server(run_obj,
                                                       glob_bootstrap)))
-    goto error;
+    goto start_error;
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Running the iClaustron Cluster Server"));
   if ((error= run_obj->run_op.ic_run_cluster_server(run_obj)))
@@ -97,13 +99,21 @@ main(int argc, char *argv[])
 end:
   if (run_obj)
   {
-    run_obj->run_op.ic_stop_cluster_server(run_obj);
+    if ((stop_error= run_obj->run_op.ic_stop_cluster_server(run_obj)))
+    {
+      printf("Failed to stop cluster server with error:\n");
+      ic_print_error(stop_error);
+    }
     run_obj->run_op.ic_free_run_cluster(run_obj);
   }
   ic_end();
   return error;
 error:
   ic_print_error(error);
+  goto end;
+start_error:
+  err_str= run_obj->run_op.ic_fill_error_buffer(run_obj, error, error_buffer);
+  printf("%s", err_str);
   goto end;
 }
 

@@ -409,6 +409,9 @@ struct ic_run_cluster_server_operations
 {
   int (*ic_start_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj,
                                   gboolean bootstrap);
+  gchar* (*ic_fill_error_buffer) (IC_RUN_CLUSTER_SERVER *run_obj,
+                                  int error_code,
+                                  gchar *error_buffer);
   int (*ic_run_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
   int (*ic_stop_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
   void (*ic_free_run_cluster) (IC_RUN_CLUSTER_SERVER *run_obj);
@@ -430,6 +433,7 @@ struct ic_run_cluster_server
   guint32 cs_nodeid;
   const gchar *process_name;
   gboolean locked_configuration;
+  IC_CONFIG_ERROR err_obj;
   IC_CONFIG_STRUCT conf_server_struct;
   IC_CONFIG_STRUCT cluster_conf_struct;
 };

@@ -107,8 +107,8 @@ ic_init_error_messages()
     "Bootstrap on Cluster Server already performed";
   ic_error_str[IC_ERROR_CONFLICTING_CLUSTER_IDS - IC_FIRST_ERROR]=
     "Cluster ids must be unique in configuration";
-  ic_error_str[IC_ERROR_FAILED_LOADING_CLUSTER - IC_FIRST_ERROR]=
-    "Failed loading configuration from configuration files";
+  ic_error_str[IC_ERROR_FAILED_TO_OPEN_FILE - IC_FIRST_ERROR]=
+    "Failed to open file";
 }
 
 void
@@ -139,11 +139,17 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
                             gchar *error_buffer)
 {
   guint32 err_msg_len, err_str_len, err_buf_index;
-  guint32 protocol_err_str_len, line_buf_len;
+  guint32 line_err_str_len, line_buf_len;
+  gchar *line_err_msg= NULL;
   gchar *protocol_err_msg= "Protocol error on line: ";
+  gchar *line_number_msg= "Error on line: ";
   gchar *err_msg, *line_buf_ptr;
   gchar line_buf[128];
 
+  if (error_code == PROTOCOL_ERROR)
+    line_err_msg= protocol_err_msg;
+  else if (error_code != 0 && error_line != 0)
+    line_err_msg= line_number_msg;
   err_msg= ic_get_error_message(error_code);
   err_msg_len= strlen(err_msg);
   memcpy(error_buffer, err_msg, err_msg_len);
@@ -157,12 +163,12 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
     err_buf_index= err_buf_index + 1 + err_str_len;
     error_buffer[err_buf_index]= CARRIAGE_RETURN;
   }
-  if (error_code == PROTOCOL_ERROR)
+  if (line_err_msg)
   {
-    protocol_err_str_len= strlen(protocol_err_msg);
-    memcpy(&error_buffer[err_buf_index + 1], protocol_err_msg,
-           protocol_err_str_len);
-    err_buf_index= err_buf_index + 1 + protocol_err_str_len;
+    line_err_str_len= strlen(line_err_msg);
+    memcpy(&error_buffer[err_buf_index + 1], line_err_msg,
+           line_err_str_len);
+    err_buf_index= err_buf_index + 1 + line_err_str_len;
     line_buf_ptr= ic_guint64_str((guint64)error_line, line_buf,
                                  &line_buf_len);
     if (line_buf_ptr)

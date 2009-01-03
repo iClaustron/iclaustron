@@ -3820,7 +3820,8 @@ count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
 */
 static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
-                                 IC_CONFIG_STRUCT *conf_server);
+                                 IC_CONFIG_STRUCT *conf_server,
+                                 IC_CONFIG_ERROR *err_obj);
 
 static IC_CONFIG_ENTRY*
 get_config_entry_mandatory(guint32 bit_id,
@@ -4479,13 +4480,13 @@ static IC_CONFIG_OPERATIONS config_server_ops =
 
 static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
-                                 IC_CONFIG_STRUCT *conf_server)
+                                 IC_CONFIG_STRUCT *conf_server,
+                                 IC_CONFIG_ERROR *err_obj)
 {
   gchar *conf_data_str;
   guint64 conf_data_len;
   IC_STRING conf_data;
   int ret_val;
-  IC_CONFIG_ERROR err_obj;
   IC_CLUSTER_CONFIG *ret_ptr;
   DEBUG_ENTRY("ic_load_config_server_from_files");
 
@@ -4497,13 +4498,15 @@ ic_load_config_server_from_files(gchar *config_file,
     goto file_open_error;
 
   IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
-  ret_val= ic_build_config_data(&conf_data, conf_server, &err_obj);
+  ret_val= ic_build_config_data(&conf_data, conf_server, err_obj);
   ic_free(conf_data.str);
   if (ret_val == 1)
   {
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Error at Line number %u:\n%s\n", err_obj.line_number,
-          ic_get_error_message(err_obj.err_num));
+          "Error at Line number %u in file %s:\n%s\n",
+          err_obj->line_number,
+          config_file,
+          ic_get_error_message(err_obj->err_num));
     ret_ptr= NULL;
   }
   else
@@ -4512,6 +4515,7 @@ ic_load_config_server_from_files(gchar *config_file,
     if (build_hash_on_comms(ret_ptr))
     {
       conf_serv_end(conf_server);
+      err_obj->err_num= IC_ERROR_MEM_ALLOC;
       ret_ptr= NULL;
     }
   }
@@ -4521,6 +4525,7 @@ ic_load_config_server_from_files(gchar *config_file,
 file_open_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
         "Couldn't open file %s\n", config_file);
+  err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
   DEBUG_RETURN(NULL);
 }
 
@@ -6040,7 +6045,8 @@ file_error:
 static IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(IC_STRING *config_dir,
                                  guint32 config_version_number,
-                                 IC_CONFIG_STRUCT *cluster_conf);
+                                 IC_CONFIG_STRUCT *cluster_conf,
+                                 IC_CONFIG_ERROR *err_obj);
 
 static void
 init_cluster_params(IC_CLUSTER_CONFIG_TEMP *temp)
@@ -6262,14 +6268,14 @@ static IC_CONFIG_OPERATIONS cluster_config_ops =
 static IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(IC_STRING *config_dir,
                                  guint32 config_version_number,
-                                 IC_CONFIG_STRUCT *cluster_conf)
+                                 IC_CONFIG_STRUCT *cluster_conf,
+                                 IC_CONFIG_ERROR *err_obj)
 {
   gchar *conf_data_str;
   guint64 conf_data_len;
   IC_STRING conf_data;
   IC_STRING file_name_string;
   int ret_val;
-  IC_CONFIG_ERROR err_obj;
   IC_CLUSTER_CONNECT_INFO **ret_ptr;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   DEBUG_ENTRY("ic_load_cluster_config_from_file");
@@ -6289,13 +6295,13 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
     goto file_open_error;
 
   IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
-  ret_val= ic_build_config_data(&conf_data, cluster_conf, &err_obj);
+  ret_val= ic_build_config_data(&conf_data, cluster_conf, err_obj);
   ic_free(conf_data.str);
   if (ret_val == 1)
   {
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Error at Line number %u:\n%s\n", err_obj.line_number,
-          ic_get_error_message(err_obj.err_num));
+          "Error at Line number %u:\n%s\n", err_obj->line_number,
+          ic_get_error_message(err_obj->err_num));
     ret_ptr= NULL;
     printf("%s Failed to load the cluster configuration file %s\n",
            ic_err_str, file_name);
@@ -6310,6 +6316,7 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
 file_open_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
         "Failed reading cluster config file %s\n", file_name);
+  err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
   DEBUG_RETURN(NULL);
 }
 
@@ -6654,6 +6661,26 @@ unlock_cv_file(IC_RUN_CLUSTER_SERVER *run_obj)
   The only parameter thus needed for the Cluster Server is which directory
   those files are stored in. The remaining information is always the same
   or provided in configuration files.
+
+  The implementation starts by locking the configuration and retrieving the
+  configuration version number by using the ic_load_config_version from
+  another module.
+
+  The next step is to load the configuration files from disk by using the
+  method:
+    load_local_config
+  This method uses the ic_load_cluster_config_from_file to retrieve the
+  grid configuration, this resides in another module. Then it uses the
+    load_config_files
+   method to load each cluster configuration, this method loops over all
+   the clusters and loads each cluster configuration using the method
+   ic_load_config_server_from files which also resides in another module.
+
+   After initialising the data structures the configuration is verified using
+   the method verify_grid_config.
+
+   In a bootstrap situation it does also write version 1 of the configuration
+   using the method ic_write_full_config_to_disk from another module.
 */
 
 static int load_local_config(IC_RUN_CLUSTER_SERVER *run_obj,
@@ -6701,7 +6728,8 @@ load_local_config(IC_RUN_CLUSTER_SERVER *run_obj,
 
   if (!(clu_infos= ic_load_cluster_config_from_file(run_obj->config_dir,
                                        run_obj->state.config_version_number,
-                                       &run_obj->cluster_conf_struct)))
+                                       &run_obj->cluster_conf_struct,
+                                       &run_obj->err_obj)))
     return error;
   if ((error= load_config_files(run_obj, clu_infos)) ||
       (error= verify_grid_config(run_obj)))
@@ -6742,8 +6770,9 @@ load_config_files(IC_RUN_CLUSTER_SERVER *run_obj,
       convert it into a IC_CLUSTER_CONFIG struct.
     */
     if (!(cluster= ic_load_config_server_from_files(file_name,
-                                              &run_obj->conf_server_struct)))
-      return IC_ERROR_FAILED_LOADING_CLUSTER;
+                                              &run_obj->conf_server_struct,
+                                              &run_obj->err_obj)))
+      return run_obj->err_obj.err_num;
     /*
       Copy information from cluster configuration file which isn't set in
       the configuration and ensure it's allocated on the proper memory
@@ -6848,8 +6877,16 @@ error:
     This interface has three methods:
 
     ic_create_run_cluster: This creates the IC_RUN_CLUSTER_SERVER object
+    ic_start_cluster_server: This starts the cluster server, implemented in
+                           the routine start_cluster_server
+                           Implemented in the start cluster server module.
+    ic_fill_error_buffer:  This creates an error message in error cases.
+                           Implemented in rcs_fill_error_buffer.
     ic_run_cluster_server: This runs the cluster server, it is implemented
                            in the routine run_cluster_server
+    ic_stop_cluster_server: Stops the cluster server in an orderly manner.
+                            Implemented in stop cluster server
+                            Implemented in the stop cluster server module.
     ic_free_run_cluster:   This routine frees the IC_RUN_CLUSTER_SERVER
                            object and all other data allocated by cluster
                            server.
@@ -6857,6 +6894,9 @@ error:
 
 static void free_run_cluster(IC_RUN_CLUSTER_SERVER *run_obj);
 static int run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj);
+static gchar* rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *run_obj,
+                                    int error_code,
+                                    gchar *error_buffer);
 
 /*
  * The RUN CLUSTER SERVER has a number of support methods internal to its
@@ -7020,6 +7060,8 @@ ic_create_run_cluster(IC_STRING *config_dir,
   run_obj->locked_configuration= FALSE;
   run_obj->max_cluster_id= 0;
   run_obj->num_clusters= 0;
+  run_obj->err_obj.err_num= 0;
+  run_obj->err_obj.line_number= 0;
 
   /* Create the socket object for the Cluster Server */
   if (!(run_obj->conn= ic_create_socket_object(
@@ -7041,6 +7083,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
                                              TRUE);
 
   run_obj->run_op.ic_start_cluster_server= start_cluster_server;
+  run_obj->run_op.ic_fill_error_buffer= rcs_fill_error_buffer;
   run_obj->run_op.ic_run_cluster_server= run_cluster_server;
   run_obj->run_op.ic_stop_cluster_server= stop_cluster_server;
   run_obj->run_op.ic_free_run_cluster= free_run_cluster;
@@ -7061,9 +7104,29 @@ error:
   DEBUG_RETURN(NULL);
 }
 
-/*
-  Implements ic_run_cluster_server method.
-*/
+/* Implements the ic_fill_error_buffer method */
+static gchar*
+rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *run_obj,
+                      int error_code,
+                      gchar *error_buffer)
+{
+  gchar *extra_err_str= NULL;
+  guint32 err_line= 0;
+
+  if (error_code != run_obj->err_obj.err_num &&
+      run_obj->err_obj.err_num != 0)
+  {
+    extra_err_str= ic_get_error_message(error_code);
+    err_line= run_obj->err_obj.line_number;
+    error_code= run_obj->err_obj.err_num;
+  }
+  return ic_common_fill_error_buffer(extra_err_str,
+                                     err_line,
+                                     error_code,
+                                     error_buffer);
+}
+
+/* Implements ic_run_cluster_server method.  */
 static int
 run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj)
 {
@@ -8316,6 +8379,7 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
   IC_API_CONFIG_SERVER *apic= NULL;
   IC_CONFIG_STRUCT clu_conf_struct;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  IC_CONFIG_ERROR err_obj;
   int ret_code;
   gchar *save_err_str= *err_str;
 
@@ -8327,8 +8391,16 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
 
   if (!(clu_infos= ic_load_cluster_config_from_file(config_dir,
                                                     (guint32)0,
-                                                    &clu_conf_struct)))
+                                                    &clu_conf_struct,
+                                                    &err_obj)))
+  {
+    *err_str= ic_common_fill_error_buffer(NULL,
+                                          err_obj.line_number,
+                                          err_obj.err_num,
+                                          *err_str);
+    ret_code= err_obj.err_num;
     goto end;
+  }
 
   api_cluster_conn->num_cluster_servers= 1;
   api_cluster_conn->cluster_server_ips= &cluster_server_ip;

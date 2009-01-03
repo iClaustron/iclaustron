@@ -31,7 +31,7 @@ gchar *ic_get_strerror(int error_number, gchar *buf, guint32 buf_len);
 
 struct ic_config_err
 {
-  guint32 err_num;
+  int err_num;
   guint32 line_number;
 };
 typedef struct ic_config_err IC_CONFIG_ERROR;
@@ -70,5 +70,5 @@ typedef struct ic_config_err IC_CONFIG_ERROR;
 #define IC_ERROR_CHECK_PROCESS_SCRIPT 7031
 #define IC_ERROR_BOOTSTRAP_ALREADY_PERFORMED 7032
 #define IC_ERROR_CONFLICTING_CLUSTER_IDS 7033
-#define IC_ERROR_FAILED_LOADING_CLUSTER 7034
+#define IC_ERROR_FAILED_TO_OPEN_FILE 7034
 #endif
