@@ -21,3 +21,4 @@ lib_LTLIBRARIES = libic_apic.la
 libic_apic_la_SOURCES = ic_apic.c
 libic_apic_la_LIBADD = $(LDADD) ../comm/libic_comm.la \
                                 ../port/libic_port.la
+EXTRA_DIST =                    ic_apic_int.h

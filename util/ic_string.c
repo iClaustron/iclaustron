@@ -366,7 +366,27 @@ void ic_print_ic_string(IC_STRING *str)
   }
 }
 
-int ic_cmp_null_term_str(const gchar *null_term_str, IC_STRING *cmp_str)
+int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str)
+{
+  guint32 iter_len= 0;
+  guint32 first_len= first_str->len;
+  guint32 second_len= second_str->len;
+  gchar *first_char= first_str->str;
+  gchar *second_char= second_str->str;
+  if (first_len != second_len)
+    return 1;
+  while (iter_len < first_len)
+  {
+    if (*first_char != *second_char)
+      return 1;
+    first_char++;
+    second_char++;
+    iter_len++;
+  }
+  return 0;
+}
+
+int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
 {
   guint32 iter_len= 0;
   gchar *cmp_char= cmp_str->str;

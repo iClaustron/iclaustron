@@ -353,7 +353,7 @@ add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API
-add_library(ic_apic STATIC api_clusterserver/ic_apic.c)
+add_library(ic_apic STATIC api_clusterserver/ic_apic.c api_clusterserver/ic_apic_int.h)
 target_link_libraries(ic_apic ic_port ic_util comm)
 
 #Build library for Data Server API

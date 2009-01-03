@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -97,11 +97,13 @@ static int
 get_node_id(IC_PARSE_DATA *parse_data)
 {
   guint32 node_id;
+  IC_API_CONFIG_SERVER *apic= parse_data->apic;
+
   if (parse_data->node_id == IC_MAX_UINT32)
   {
-    IC_CLUSTER_CONFIG *clu_conf;
-    clu_conf= parse_data->apic->conf_objects[parse_data->cluster_id];
-    node_id= translate_node_name(&parse_data->node_name, clu_conf);
+    node_id= apic->api_op.ic_get_node_id_from_name(apic,
+                                                   parse_data->cluster_id,
+                                                   &parse_data->node_name);
   }
   else
     node_id= parse_data->node_id;
