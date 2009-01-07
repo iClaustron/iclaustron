@@ -4755,7 +4755,8 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       guint32 *config_version);
+                       guint32 *config_version,
+                       gboolean bootstrap);
 static int
 remove_config_files(IC_STRING *config_dir,
                     IC_CLUSTER_CONNECT_INFO **clu_infos,
@@ -4918,7 +4919,8 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
                                  old_version + 1)))
     goto error;
   /* Step 2 */
-  if ((error= write_config_version_file(config_dir, old_version + 1, 0,
+  if ((error= write_config_version_file(config_dir, old_version + 1,
+                                        CONFIG_STATE_BUSY,
                                         own_pid)))
     goto error;
   if (old_version > 0)
@@ -4940,7 +4942,8 @@ error:
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       guint32 *config_version)
+                       guint32 *config_version,
+                       gboolean bootstrap)
 {
   guint32 state, pid;
   int error;
@@ -4961,6 +4964,8 @@ ic_load_config_version(IC_STRING *config_dir,
         We write the configuration version with our pid to ensure that we
         have locked the ownership of the grid configuration.
       */
+      if (*config_version == 0 && !bootstrap)
+        return IC_ERROR_BOOTSTRAP_NEEDED;
       if ((error= write_config_version_file(config_dir,
                                             *config_version,
                                             CONFIG_STATE_BUSY,
@@ -4982,6 +4987,8 @@ ic_load_config_version(IC_STRING *config_dir,
     }
     g_assert(IC_ERROR_PROCESS_NOT_ALIVE);
     error= 0;
+    if (*config_version == 0 && !bootstrap)
+      return IC_ERROR_BOOTSTRAP_NEEDED;
     if ((error= write_config_version_file(config_dir,
                                           *config_version,
                                           CONFIG_STATE_BUSY,
@@ -6008,7 +6015,7 @@ write_cv_file(IC_STRING *config_dir,
   insert_line_config_version_file(&str, &ptr, pid);
 
   ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
-  if (config_version == (guint32)1)
+  if (config_version == (guint32)0)
   {
     /* This is the initial write of the file */
     file_ptr= g_creat((const gchar *)file_name, S_IRUSR | S_IWUSR);
@@ -6749,10 +6756,10 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   int error= 0;
   if (run_obj->locked_configuration)
   {
-    error= write_cv_file(run_obj->config_dir,
-                         run_obj->state.config_version_number,
-                         CONFIG_STATE_IDLE,
-                         (guint32)0);
+    error= write_config_version_file(run_obj->config_dir,
+                                     run_obj->state.config_version_number,
+                                     CONFIG_STATE_IDLE,
+                                     (guint32)0);
   }
   return error;
 }
@@ -6863,7 +6870,8 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj,
   /* Try to lock the configuration and get configuration version */
   if ((error= ic_load_config_version(run_obj->config_dir,
                                      run_obj->process_name,
-                                     &run_obj->state.config_version_number)))
+                                     &run_obj->state.config_version_number,
+                                     bootstrap)))
     goto error;
   run_obj->locked_configuration= TRUE;
   if (bootstrap && run_obj->state.config_version_number)

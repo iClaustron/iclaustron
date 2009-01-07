@@ -27,7 +27,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7034
+#define IC_LAST_ERROR 7035
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -109,6 +109,8 @@ ic_init_error_messages()
     "Cluster ids must be unique in configuration";
   ic_error_str[IC_ERROR_FAILED_TO_OPEN_FILE - IC_FIRST_ERROR]=
     "Failed to open file";
+  ic_error_str[IC_ERROR_BOOTSTRAP_NEEDED - IC_FIRST_ERROR]=
+    "Starting Cluster Server for the first time without bootstrap flag set";
 }
 
 void
