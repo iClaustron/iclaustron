@@ -297,7 +297,7 @@ struct ic_data_server_config
   guint32 data_server_local_db_workers;
   guint32 data_server_file_thread_pool;
   guint32 reserved_send_buffer;
-  /* Reserving send buffer memory for ndbd traffic ignored for now */
+  /* Reserving send buffer memory for data server traffic ignored for now */
 
   gchar use_unswappable_memory;
   gchar data_server_automatic_restart;

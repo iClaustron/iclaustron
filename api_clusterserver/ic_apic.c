@@ -29,15 +29,18 @@
   information for those.
 
   The iClaustron servers can coexist with two types of classic NDB nodes.
-  These are the ndbd nodes which contain the actual data and that handle
-  all the transaction algorithms. The second type is NDB API clients, these
-  could be classic NDB API programs or a MySQL Server using the NDB API.
+  These are the data server (ndbd and ndbmtd) nodes which contain the actual
+  data and that handle all the transaction algorithms. The second type is
+  NDB API clients, these could be classic NDB API programs or a MySQL Server
+  using the NDB API.
+
   The classic nodes have some limitations which iClaustron must handle.
   These are:
   1) No SSL connections
   2) No security handling
-  3) Only one cluster can be handled (for ndbd it's likely we will patch
-     ndbd to send a cluster id to the iClaustron Cluster Server).
+  3) Only one cluster can be handled (for data server nodes it's likely we
+     will patch NDB data server nodes to send a cluster id to the iClaustron
+     Cluster Server).
   4) It knows only 3 node types, Data Servers, Cluster Servers and
      Clients. Thus the Cluster Server must be aware of that it needs to
      translate node types when communicating with classic NDB nodes.
@@ -84,7 +87,7 @@
   listed in section 1. Each section then contains all the configuration
   parameters of that node. The node section are separated such that all
   API node types are appearing from section 2 and onwards whereas the
-  ndbd node sections are put after all other sections.
+  data server node sections are put after all other sections.
 
   After the last API node section there is another section used to describe
   the system, this also has a meta section which always lists only one
@@ -153,7 +156,7 @@
   |  |   |  |                 -  Section 3     -
   |  |   |  |                 ------------------
   |  |   |  |
-  |  |   |  |                 ndbd nodes
+  |  |   |  |                 Data Server nodes
   |  |   |  ----------------> ------------------
   |  |   |                    -  Section 12    -
   |  |   |                    ------------------
@@ -1758,7 +1761,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_NODE_ID);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
-  "Node group of ndbd node";
+  "Node group of Data Server node";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_THREADS, 106);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_threads,
@@ -1766,7 +1769,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, 3, 8);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
-  "Number of threads that can be used maximally for ndbd node";
+  "Number of threads that can be used maximally for Data Server node";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_THREADS, 107);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_threads,
@@ -1774,7 +1777,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
-  "Number of threads used by local database part in ndbd";
+  "Number of threads used by local database part in Data Server";
   
   IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_WORKERS, 108);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_workers,
@@ -1782,7 +1785,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
-  "Number of partitions used by local database part in ndbd";
+  "Number of partitions used by local database part in Data Server";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_ZERO_REDO_LOG, 109);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_zero_redo_log,
@@ -1838,7 +1841,7 @@ init_config_parameters()
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
   conf_entry->config_entry_description=
-  "Send buffer memory reserved for ndbd traffic, not used";
+  "Send buffer memory reserved for Data Server traffic, not used";
 
 /* Id 130-139 for configuration id 210-249 */
 /* Id 210-249 not used */
@@ -2416,12 +2419,12 @@ analyse_key_value(guint32 *key_value, guint32 len,
   guint32 *key_value_end= key_value + len;
   IC_CLUSTER_CONFIG *conf_obj;
   gboolean first= TRUE;
-  gboolean first_ndbd= TRUE;
+  gboolean first_data_server= TRUE;
   int error;
   guint32 pass;
   guint32 system_section= 0;
   guint32 first_comm_section= 0;
-  guint32 first_ndbd_section= 0;
+  guint32 first_data_server_section= 0;
   guint32 num_apis= 0;
   guint32 node_section, node_index;
 
@@ -2468,25 +2471,26 @@ analyse_key_value(guint32 *key_value, guint32 len,
         } else if (sect_id == 1)
         {
           node_section= (value >> IC_CL_SECT_SHIFT);
-          if (node_section >= first_comm_section && first_ndbd)
+          if (node_section >= first_comm_section && first_data_server)
           {
-            first_ndbd= FALSE;
-            first_ndbd_section= node_section;
-            conf_obj->num_comms= first_ndbd_section - first_comm_section;
+            first_data_server= FALSE;
+            first_data_server_section= node_section;
+            conf_obj->num_comms= first_data_server_section -
+                                 first_comm_section;
           }
           conf_obj->num_nodes++;
         }
         else if (sect_id == 2 && first)
         {
-          /* Verify we have at least one ndbd node */
-          PROTOCOL_CHECK_GOTO(!first_ndbd);
+          /* Verify we have at least one data server node */
+          PROTOCOL_CHECK_GOTO(!first_data_server);
           first= FALSE;
           DEBUG_PRINT(CONFIG_LEVEL,
             ("num_nodes = %u, num_comms = %u, garbage section = %u",
             conf_obj->num_nodes, conf_obj->num_comms, system_section));
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("first comm = %u, first ndbd = %u",
-            first_comm_section, first_ndbd_section));
+            ("first comm = %u, first data server = %u",
+            first_comm_section, first_data_server_section));
           if ((error= allocate_mem_phase1(conf_obj)))
             goto error;
 
@@ -2498,9 +2502,9 @@ analyse_key_value(guint32 *key_value, guint32 len,
                                                   value, hash_key)))
             goto error;
         }
-        else if (sect_id >= first_ndbd_section)
+        else if (sect_id >= first_data_server_section)
         {
-          node_index= num_apis + (sect_id - first_ndbd_section);
+          node_index= num_apis + (sect_id - first_data_server_section);
           if ((error= analyse_node_section_phase1(conf_obj, apic,
                                                   node_index,
                                                   value, hash_key)))
@@ -2536,7 +2540,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
                                 ((2 + hash_key) << IC_CL_SECT_SHIFT));
           } else {
             PROTOCOL_CHECK_GOTO(value ==
-              (((hash_key - num_apis) + first_ndbd_section)
+              (((hash_key - num_apis) + first_data_server_section)
                   << IC_CL_SECT_SHIFT));
           }
         } else if (sect_id >= 2 && sect_id < system_section)
@@ -2567,7 +2571,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
                               hash_key < conf_obj->num_comms &&
                               (first_comm_section + hash_key) ==
                                 (value >> IC_CL_SECT_SHIFT));
-        } else if (sect_id < first_ndbd_section)
+        } else if (sect_id < first_data_server_section)
         {
           guint32 comm_sect_id= sect_id - first_comm_section;
           if ((error= assign_comm_section(conf_obj, apic,
@@ -2576,7 +2580,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
             goto error;
         } else
         {
-          node_sect_id= num_apis + (sect_id - first_ndbd_section);
+          node_sect_id= num_apis + (sect_id - first_data_server_section);
           PROTOCOL_CHECK_GOTO(node_sect_id < conf_obj->num_nodes);
           if ((error= assign_node_section(conf_obj, apic,
                                           key_type, &key_value,
@@ -7378,7 +7382,7 @@ start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 {
   GError *error= NULL;
   int ret_code= 0;
-  DEBUG_ENTRY("start_handle_config_request");
+  DEBUG_ENTRY("start_cluster_server_thread");
 
   conn->conn_op.ic_set_param(conn, (void*)run_obj);
   if (!g_thread_create_full(run_cluster_server_thread,
@@ -7521,8 +7525,8 @@ run_cluster_server_thread(gpointer data)
     }
   }
   DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
-  return NULL;
 error:
+   conn->conn_op.ic_free_connection(conn);
   return NULL;
 }
 
@@ -7567,7 +7571,9 @@ error:
 /*
   report event
   ------------
-  This protocol is used by the ndbd nodes to report shutdown of their process.
+  This protocol is used by the data server nodes to report shutdown of their
+  process.
+
   The data contained in the protocol message is the same as the data sent in
   a EVENT_REP signal used by the NDB Protocol but instead a separate NDB MGM
   Protocol connection is opened up and used to report this special event.
@@ -8054,9 +8060,10 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                  guint32 *key_value_array_len,
                                  guint64 version_number)
 {
-  guint32 len= 0, num_comms= 0;
-  guint32 node_sect_len, i, j, checksum;
-  guint32 section_id, comm_desc_section, node_desc_section;
+  guint32 len= 0, num_comms= 0, api_nodes= 0;
+  guint32 node_sect_len, i, j, checksum, system_len, data_server_section;
+  guint32 section_id, comm_meta_section, node_meta_section;
+  guint32 system_meta_section, data_server_start_section;
   guint32 *loc_key_value_array;
   guint32 loc_key_value_array_len= 0;
   int ret_code;
@@ -8085,6 +8092,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
         return IC_ERROR_INCONSISTENT_DATA;
       len+= node_sect_len;
       DEBUG_PRINT(CONFIG_LEVEL, ("2: len=%u", len));
+      if (clu_conf->node_types[i] != IC_DATA_SERVER_NODE)
+        api_nodes++;
     }
   }
   /* Add length of each comm section */
@@ -8106,28 +8115,31 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
           len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section,
                                       version_number);
           num_comms++;
-          DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u", len));
+          DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u", len));
         }
       }
     }
   }
+  /* Add one key-value pair for meta section of system section */
+  len+= 2;
+  /* Add length of the system section */
+  system_len= get_length_of_section(IC_SYSTEM_TYPE,
+                                    (gchar*)&clu_conf->sys_conf,
+                                    version_number);
+  if (system_len == 0)
+    return IC_ERROR_INCONSISTENT_DATA;
+  len+= system_len;
+  DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u", len));
   /*
    * Add one key-value pair for each comm section
    *   - This is meta section for communication
    */
   len+= num_comms * 2;
-  DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u", len));
-  /*
-   * Add one word for meta section of system section
-   */
-  len+= 1;
-  /* Add 1 word for checksum at the end */
-  len+= 1;
-  /*
-   * Finally add length of the system section
-   */
-
   DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u", len));
+  /* Finally add 1 word for checksum at the end */
+  len+= 1;
+
+  DEBUG_PRINT(CONFIG_LEVEL, ("6: len=%u", len));
   /*
      Allocate memory for key-value pairs, this memory is only temporary for
      this method and its caller, so memory will be freed soon again
@@ -8147,43 +8159,63 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
       communication sections
   */
   section_id= 0;
-  comm_desc_section= 2 + clu_conf->num_nodes;
-  node_desc_section= 1;
+  node_meta_section= 1;
+  system_meta_section= 2 + api_nodes;
+  comm_meta_section= 2 + system_meta_section;
   loc_key_value_array[2]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
                           (section_id << IC_CL_SECT_SHIFT) +
-                          2000;
-  loc_key_value_array[3]= node_desc_section << IC_CL_SECT_SHIFT;
-
+                          1000;
+  loc_key_value_array[3]= system_meta_section << IC_CL_SECT_SHIFT;
   loc_key_value_array[4]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
                           (section_id << IC_CL_SECT_SHIFT) +
+                          2000;
+  loc_key_value_array[5]= node_meta_section << IC_CL_SECT_SHIFT;
+
+  loc_key_value_array[6]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
+                          (section_id << IC_CL_SECT_SHIFT) +
                           3000;
-  loc_key_value_array[5]= comm_desc_section << IC_CL_SECT_SHIFT;
-  loc_key_value_array_len= 6;
+  loc_key_value_array[7]= comm_meta_section << IC_CL_SECT_SHIFT;
+  loc_key_value_array_len= 8;
 
   /*
     Fill Section 1
     One key-value for each section that specifies a node, starting at
-    section 2 and ending at section 2+num_nodes-1.
+    section 2 and ending at section 2+num_nodes-1. First fill in
+    API nodes and then the ones for Data Server nodes.
   */
   section_id= 1;
-  for (i= 0; i < clu_conf->num_nodes; i++)
+  for (i= 0; i < api_nodes; i++)
   {
     loc_key_value_array[loc_key_value_array_len++]=
-              (IC_UINT32 << IC_CL_KEY_SHIFT) +
+              (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
               (section_id << IC_CL_SECT_SHIFT) +
                                               i;
     loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
   }
+  data_server_section= comm_meta_section + num_comms;
+  if (num_comms)
+    data_server_section+= 1;
+  data_server_start_section= data_server_section;
+  for (i= api_nodes; i < clu_conf->num_nodes; i++)
+  {
+    loc_key_value_array[loc_key_value_array_len++]=
+              (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
+              (section_id << IC_CL_SECT_SHIFT) +
+                                              i;
+    loc_key_value_array[loc_key_value_array_len++]=
+      (data_server_section++) << IC_CL_SECT_SHIFT;
+  }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("1: fill_len=%u", loc_key_value_array_len));
-  for (i= 2; i < 6 + (2 * clu_conf->num_nodes); i++)
+  for (i= 2; i < 6 + (2 * api_nodes); i++)
     loc_key_value_array[i]= g_htonl(loc_key_value_array[i]);
 
-  /* Fill node sections */
+  /* Fill API node sections */
   section_id= 2;
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
     if (clu_conf->node_config[i] &&
+        clu_conf->node_types[i] != IC_DATA_SERVER_NODE &&
         (ret_code= fill_key_value_section(clu_conf->node_types[i],
                                           clu_conf->node_config[i],
                                           section_id++,
@@ -8194,27 +8226,51 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     DEBUG_PRINT(CONFIG_LEVEL, ("2: fill_len=%u", loc_key_value_array_len));
   }
 
+  /* Fill system meta section */
+  g_assert(system_meta_section == section_id);
+  loc_key_value_array[loc_key_value_array_len++]=
+                          (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
+                          ((system_meta_section) << IC_CL_SECT_SHIFT);
+  loc_key_value_array[loc_key_value_array_len++]=
+                          (system_meta_section + 1) << IC_CL_SECT_SHIFT;
+  for (i= 0; i < 2; i++)
+  {
+    loc_key_value_array[loc_key_value_array_len + i]=
+      g_htonl(loc_key_value_array[loc_key_value_array_len + i]);
+  }
+  section_id++;
+  DEBUG_PRINT(CONFIG_LEVEL, ("3: fill_len=%u", loc_key_value_array_len));
+  /* Fill system section */
+  if ((ret_code= fill_key_value_section(IC_SYSTEM_TYPE,
+                                        (gchar*)&clu_conf->sys_conf,
+                                        section_id,
+                                        loc_key_value_array,
+                                        &loc_key_value_array_len,
+                                        version_number)))
+    goto error;
+  section_id++;
+  DEBUG_PRINT(CONFIG_LEVEL, ("4: fill_len=%u", loc_key_value_array_len));
   /*
-    Fill section 1 + 1 + no_of_nodes
-    This specifies the communication sections, one for each pair of nodes
-    that need to communicate
+    Fill the communication sections, one for each pair of nodes
+    that need to communicate and one meta section with pointers to
+    each communication section.
   */
-  g_assert(comm_desc_section == section_id);
-  section_id= comm_desc_section;
+  g_assert(comm_meta_section == section_id);
   for (i= 0; i < num_comms; i++)
   {
     loc_key_value_array[loc_key_value_array_len++]= g_htonl(
                                    (IC_UINT32 << IC_CL_KEY_SHIFT) +
-                                   (comm_desc_section << IC_CL_SECT_SHIFT) +
+                                   (comm_meta_section << IC_CL_SECT_SHIFT) +
                                    i);
     loc_key_value_array[loc_key_value_array_len++]= g_htonl(
-                              (comm_desc_section+i+1) << IC_CL_SECT_SHIFT);
+                              (comm_meta_section+i+1) << IC_CL_SECT_SHIFT);
   }
 
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("3: fill_len=%u", loc_key_value_array_len));
+    ("5: fill_len=%u", loc_key_value_array_len));
+  if (num_comms)
+    section_id++;
   /* Fill comm sections */
-  section_id= comm_desc_section + 1;
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
     if (clu_conf->node_config[i])
@@ -8238,10 +8294,25 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                                 version_number)))
             goto error;
           DEBUG_PRINT(CONFIG_LEVEL,
-            ("4: fill_len=%u", loc_key_value_array_len));
+            ("6: fill_len=%u", loc_key_value_array_len));
         }
       }
     }
+  }
+  /* Fill in Data Server node sections */
+  g_assert(data_server_start_section == section_id);
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i] &&
+        clu_conf->node_types[i] == IC_DATA_SERVER_NODE &&
+        (ret_code= fill_key_value_section(clu_conf->node_types[i],
+                                          clu_conf->node_config[i],
+                                          section_id++,
+                                          loc_key_value_array,
+                                          &loc_key_value_array_len,
+                                          version_number)))
+      goto error;
+    DEBUG_PRINT(CONFIG_LEVEL, ("7: fill_len=%u", loc_key_value_array_len));
   }
   /* Calculate and fill out checksum */
   checksum= 0;
@@ -8249,7 +8320,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     checksum^= g_ntohl(loc_key_value_array[i]);
   loc_key_value_array[loc_key_value_array_len++]= g_ntohl(checksum);
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("5: fill_len=%u", loc_key_value_array_len));
+    ("8: fill_len=%u", loc_key_value_array_len));
   /* Perform final set of checks */
   *key_value_array_len= loc_key_value_array_len;
   if (len == loc_key_value_array_len)
