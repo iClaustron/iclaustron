@@ -549,8 +549,64 @@ static guint64 comm_mandatory_bits;
 static void set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line);
 
 /*
-  CONFIGURATION PARAMETER MODULE
-  ------------------------------
+  List of modules in the API for the Cluster Server
+  -------------------------------------------------
+  1.  Configuration parameter definitions
+      This module contains the definition of all configuration entries and
+      some helper methods around this.
+
+  2.  Configuration reader client, Translate Part
+      This module takes a base64-encoded string and translates it into a data
+      structure containing the configuration.
+
+  3.  Protocol support module
+      This module contains a number of common helper functions for protocol
+      handling of the NDB Management Protocol.
+
+  4.  Configuration reader client, Protocol Part
+      This module handles the protocol part of the clients retrieving the
+      configuration from a Cluster Server. This module implements the
+      ic_get_cs_config part of the IC_API_CONFIG_SERVER interface.
+
+  5.  iClauster Cluster Configuration File Reader
+      This module implements reading the Cluster Configuration files (there
+      is one such file per cluster in the grid and is named kalle.ini if
+      the cluster name is kalle). It reads the file into a data structure
+      containing the configuration.
+      
+  6.  iClaustron Configuration Writer
+      This module contains the logic needed to write a configuration of an
+      entire grid, it includes writing both cluster configuration files,
+      grid configuration file and configuration version file and making
+      sure this write is done atomically.
+
+  7.  iClaustron Grid Configuration file reader
+      This module implements the reading of the grid configuration file into
+      a data structure describing the clusters involved in the grid.
+
+  8.  Cluster Configuration Data Structure interface
+      This module contains the implementation of the IC_API_CONFIG_SERVER
+      interface except for get ic_get_cs_config method which is implemented
+      by the modules to read configuration from network.
+
+  9.  Stop Cluster Server
+      This module implements the method to stop a cluster server.
+
+  10. Start Cluster Server
+      This module implements the method to start a cluster server using a set
+      of modules listed here.
+
+  11. Run Cluster Server
+      This module implements running a multithreaded cluster server.
+
+  12. Read Configuration from network
+      This module implements a single method interface to get a grid
+      configuration.
+*/
+
+/*
+  MODULE: Configuration Parameters
+  --------------------------------
 
   This module contains all definitions of the configuration parameters.
   They are only used in this file, the rest of the code can only get hold
@@ -3086,27 +3142,26 @@ key_type_error(IC_INT_API_CONFIG_SERVER *apic,
 }
 
 /*
- * MODULE: Protocol support module
- * -------------------------------
- *  This module implements a number of routines useful for the NDB
- *  Management Protocol.
- *
- *    - check_buf
- *      For the cases when we expect a static string we use check_buf
- *
- *    - check_buf_with_many_int
- *      For a rare case where multiple integers are expected we use
- *      this routine to get all the integers in one routine
- *
- *    - check_buf_with_int
- *      For the cases when we expect a static string and an integer we
- *      use check_buf_with_int
- *
- *    - rec_simple_str
- *      When we expect a static string and nothing more we use this routine
- *      as a way to simplify the code.
- *
- */
+ MODULE: Protocol support module
+ -------------------------------
+  This module implements a number of routines useful for the NDB
+  Management Protocol.
+
+    - check_buf
+      For the cases when we expect a static string we use check_buf
+
+    - check_buf_with_many_int
+      For a rare case where multiple integers are expected we use
+      this routine to get all the integers in one routine
+
+    - check_buf_with_int
+      For the cases when we expect a static string and an integer we
+      use check_buf_with_int
+
+    - rec_simple_str
+      When we expect a static string and nothing more we use this routine
+      as a way to simplify the code.
+*/
 static gboolean
 check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len);
 static gboolean
@@ -6971,8 +7026,8 @@ error:
 }
 
 /*
-  MODULE: RUN CLUSTER SERVER
-  ----------------------------
+  MODULE: Run Cluster Server
+  --------------------------
     This is the module that provided with a configuration data structures
     ensures that anyone can request this configuration through a given
     socket and port.
