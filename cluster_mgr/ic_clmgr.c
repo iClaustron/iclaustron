@@ -80,13 +80,6 @@ report_error(IC_PARSE_DATA *parse_data, gchar *error_str)
 }
 
 static int
-translate_node_name(__attribute ((unused)) IC_STRING *cluster_name,
-                    __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
-{
-  return IC_MAX_UINT32;
-}
-
-static int
 translate_cluster_name(__attribute ((unused)) IC_STRING *cluster_name,
                        __attribute ((unused)) guint64 *cluster_id)
 {
@@ -509,19 +502,25 @@ static void
 ic_use_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
   gchar buf[256];
+  guint32 cluster_id;
+  IC_API_CONFIG_SERVER *apic= parse_data->apic;
   printf("len= %u, str= %s\n", (guint32)parse_data->cluster_name.len,
          parse_data->cluster_name.str);
   if (parse_data->cluster_name.str)
   {
-    if (translate_cluster_name(&parse_data->cluster_name,
-                               &parse_data->cluster_id))
+    cluster_id= apic->api_op.ic_get_cluster_id_from_name(apic,
+                                               &parse_data->cluster_name);
+    if (cluster_id == IC_MAX_UINT32)
     {
       if (ic_send_with_cr(parse_data->conn, no_such_cluster_string) ||
           ic_send_with_cr(parse_data->conn, ic_empty_string))
         parse_data->exit_flag= TRUE;
     }
+    else
+      parse_data->cluster_id= cluster_id;
   }
-  g_snprintf(buf, 128, "Cluster id set to %u", (guint32)parse_data->cluster_id);
+  g_snprintf(buf, 128, "Cluster id set to %u",
+             (guint32)parse_data->cluster_id);
   if (ic_send_with_cr(parse_data->conn, buf) ||
       ic_send_with_cr(parse_data->conn, ic_empty_string))
     parse_data->exit_flag= TRUE;

@@ -2,6 +2,41 @@ project (iClaustron)
 
 cmake_minimum_required (VERSION 2.6)
 
+if (WIN32)
+  set(WINDOWS 1)
+else (WIN32)
+  execute_process(COMMAND uname -s
+                  OUTPUT_VARIABLE OS_NAME)
+  string (REGEX MATCH "[L][i][n][u][x]"
+          LINUX_NAME 
+          "${OS_NAME}")
+  if (LINUX_NAME STREQUAL Linux)
+    message("Linux OS found")
+    set(LINUX 1)
+  endif (LINUX_NAME STREQUAL Linux)
+  string (REGEX MATCH "[D][a][r][w][i][n]"
+          MACOSX_NAME 
+          "${OS_NAME}")
+  if (MACOSX_NAME STREQUAL Darwin)
+    message("MacOSX found")
+    set(MACOSX 1)
+  endif (MACOSX_NAME STREQUAL Darwin)
+  string (REGEX MATCH "[S][o][l][a][r][i][s]"
+          SOLARIS_NAME 
+          "${OS_NAME}")
+  if (SOLARIS_NAME STREQUAL Solaris)
+    set(SOLARIS 1)
+  endif (SOLARIS_NAME STREQUAL Solaris)
+  string (REGEX MATCH "[B][S][D]"
+          BSD_NAME 
+          "${OS_NAME}")
+  if (BSD_NAME STREQUAL BSD)
+    set(FREEBSD 1)
+  endif (BSD_NAME STREQUAL BSD)
+  if (NOT LINUX AND NOT MACOSX AND NOT SOLARIS AND NOT FREEBSD)
+    message(FATAL_ERROR OS isn't supported)
+  endif (NOT LINUX AND NOT MACOSX AND NOT SOLARIS AND NOT FREEBSD)
+endif (WIN32)
 macro (find_bison)
   FIND_PROGRAM(BISON_EXECUTABLE
     NAMES bison byacc
@@ -158,6 +193,9 @@ configure_file("${PROJECT_SOURCE_DIR}/scripts/macosx_check_process.sh.in"
                @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/scripts/solaris_check_process.sh.in"
                "${PROJECT_BINARY_DIR}/scripts/solaris_check_process.sh"
+               @ONLY)
+configure_file("${PROJECT_SOURCE_DIR}/scripts/windows_check_process.sh.in"
+               "${PROJECT_BINARY_DIR}/scripts/windows_check_process.sh"
                @ONLY)
 
 option(WITH_UNIT_TEST "Build unit test programs" OFF)

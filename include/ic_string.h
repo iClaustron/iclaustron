@@ -50,7 +50,13 @@ int ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir);
 int ic_set_data_dir(IC_STRING *base_dir, const gchar *input_base_dir);
 void ic_set_relative_dir(IC_STRING *res_str, IC_STRING *dir,
                          gchar *buf, const gchar *dir_name);
-int ic_set_config_path(IC_STRING *config_dir, gchar *config_path,
+int ic_set_base_path(IC_STRING *base_dir, gchar *base_path,
+                     gchar *version,
+                     gchar *base_path_buf);
+int ic_set_binary_path(IC_STRING *binary_dir, gchar *base_path,
+                       gchar *version,
+                       gchar *binary_path_buf);
+int ic_set_config_path(IC_STRING *config_dir, gchar *data_path,
                        gchar *config_path_buf);
 void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf);
 void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf);

@@ -36,10 +36,14 @@
 
 /* Global variables */
 static IC_STRING glob_config_dir= { NULL, 0, TRUE};
+static IC_STRING glob_base_dir= { NULL, 0, TRUE};
+static IC_STRING glob_binary_dir= { NULL, 0, TRUE};
 static const gchar *glob_process_name= "ic_csd";
 
 /* Option variables */
-static gchar *glob_config_path= NULL;
+static gchar *glob_version= "iclaustron-0.0.1";
+static gchar *glob_data_path= NULL;
+static gchar *glob_base_path= NULL;
 static gboolean glob_bootstrap= FALSE;
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= "10203";
@@ -49,7 +53,13 @@ static GOptionEntry entries[] =
 {
   { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
     "Is this bootstrap of a cluster", NULL},
-  { "base_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_config_path,
+  { "base_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_base_path,
+    "Sets path to base directory of installation", NULL},
+  { "version", 0, 0, G_OPTION_ARG_FILENAME, &glob_version,
+    "iClaustron version (e.g. iclaustron-0.0.1) executed,"
+    " used to derive base directory",
+    NULL},
+  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_data_path,
     "Sets path to base directory, config files in subdirectory config", NULL},
   { "server_port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
     "Set Cluster Server connection Port", NULL},
@@ -69,14 +79,28 @@ main(int argc, char *argv[])
   gchar error_buffer[ERROR_MESSAGE_SIZE];
   IC_RUN_CLUSTER_SERVER *run_obj;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
+  gchar base_path_buf[IC_MAX_FILE_NAME_SIZE];
+  gchar binary_path_buf[IC_MAX_FILE_NAME_SIZE];
 
   if ((error= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Cluster Server")))
     return error;
   if ((error= ic_set_config_path(&glob_config_dir,
-                                 glob_config_path,
+                                 glob_data_path,
                                  config_path_buf)))
     return error;
+  if ((error= ic_set_base_path(&glob_base_dir,
+                               glob_base_path,
+                               glob_version,
+                               base_path_buf)))
+    return error;
+  if ((error= ic_set_binary_path(&glob_binary_dir,
+                                 glob_base_path,
+                                 glob_version,
+                                 binary_path_buf)))
+    return error;
+  ic_port_set_binary_dir(glob_binary_dir.str);
+
   if (!(run_obj= ic_create_run_cluster(&glob_config_dir,
                                        glob_process_name,
                                        glob_server_name,

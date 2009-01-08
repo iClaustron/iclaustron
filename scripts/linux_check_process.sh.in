@@ -28,22 +28,24 @@ check_binaries()
     FAULTY_PROCESS="wc"
     return $ret
   fi
-  if test -x $ECHO ; then
-    FAULTY_PROCESS="echo"
-    return $ret
-  fi
   ret=0
   return $ret
 }
 
 check_process_alive()
 {
-  echo "$PS $GREP $SEARCHED_PROCESS"
   LINES=`$PS -p $SEARCHED_PID -o command | \
          $GREP $SEARCHED_PROCESS | \
          $WC -l`
-  EXIT_CODE="$LINES"
-  return $LINES
+  if test "x$LINES" = "x0" ; then
+    EXIT_CODE=0
+  else
+    if test "x$LINES" = "x1" ; then
+      EXIT_CODE=1
+    else
+      EXIT_CODE=2
+    fi
+  fi
 }
 
 set_binaries()
@@ -56,12 +58,10 @@ set_binaries()
     PS="/bin/ps"
     GREP="/bin/grep"
     WC="/usr/bin/wc"
-    ECHO="/bin/echo"
   else
     PS=`$WHICH ps`
     GREP=`$WHICH grep`
     WC=`$WHICH wc`
-    ECHO=`$WHICH echo`
   fi
   if test "x$PS" = "x" ; then
     PS="/bin/ps"
@@ -71,9 +71,6 @@ set_binaries()
   fi
   if test "x$WC" = "x" ; then
     WC="/bin/wc"
-  fi
-  if test "x$ECHO" = "x" ; then
-    WC="/bin/echo"
   fi
 }
 
@@ -87,7 +84,6 @@ SEARCHED_PROCESS=
 PROCESS_NAME=
 PROCESS_PID=
 EXIT_CODE=2
-
   while test $# -gt 0
   do
     case $1 in
@@ -103,7 +99,6 @@ EXIT_CODE=2
       shift
       if test "x$PROCESS_PID" = "x1" ; then
         exit $EXIT_CODE
-        return $ret
       fi
       PROCESS_PID="1"
       SEARCHED_PID="$1"
@@ -122,10 +117,7 @@ EXIT_CODE=2
 
   set_binaries
   if check_binaries; then
-    if "x$FAULTY_PROCESS" != "echo" ; then
-      $ECHO "Couldn't find a $FAULTY_PROCESS binary"
-    fi
-    EXIT_CODE=2
+    exit $EXIT_CODE
   else
     check_process_alive
   fi

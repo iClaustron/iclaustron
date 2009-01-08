@@ -19,4 +19,5 @@
 
 dist_bin_SCRIPTS = linux_check_process.sh \
                    macosx_check_process.sh \
+                   windows_check_process.sh \
                    solaris_check_process.sh

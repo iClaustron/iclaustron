@@ -32,6 +32,14 @@
 #include <sys/time.h>
 #endif
 
+static const gchar *port_binary_dir;
+
+void
+ic_port_set_binary_dir(const gchar *binary_dir)
+{
+  port_binary_dir= binary_dir;
+}
+
 gchar*
 ic_get_strerror(int error_number, gchar *buf, guint32 buf_len)
 {
@@ -143,47 +151,71 @@ ic_get_own_pid()
 int run_process(gchar **argv,
                 int *exit_status)
 {
-  GError *error;
-  if (g_spawn_sync(NULL,
-                   argv,
-                   NULL,
-                   G_SPAWN_FILE_AND_ARGV_ZERO | G_SPAWN_SEARCH_PATH,
-                   NULL,
-                   NULL,
-                   NULL,
-                   NULL,
-                   exit_status,
-                   &error))
+  GError *error= NULL;
+  if (!g_spawn_sync(NULL,
+                    argv,
+                    NULL,
+                    0,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    exit_status,
+                    &error))
+  {
+    printf("Failed to run script, error: %s", error->message);
     return 0;
-  printf("Exit status %d", *exit_status);
-  return *exit_status;
+  }
+  if (exit_status)
+  {
+    printf("Exit status %d", *exit_status);
+    if (*exit_status < 0 || *exit_status > 2)
+      *exit_status= 2;
+    return *exit_status;
+  }
+  return 0;
 }
 
 int
 ic_is_process_alive(guint32 pid,
                     const gchar *process_name)
 {
-  gchar *argv[5];
+  gchar *argv[6];
   gint exit_status;
   guint64 value= (guint64)pid;
   gchar *pid_number_str;
+  IC_STRING script_string;
+  gchar *script_name;
   int error;
   gchar buf[64];
+  gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
 
   pid_number_str= ic_guint64_str(value, buf, NULL);
 #ifdef LINUX
-  argv[0]= "linux_check_process.sh";
+  script_name= "linux_check_process.sh";
 #endif
 #ifdef MACOSX
-  argv[0]= "macosx_check_process.sh";
+  script_name= "macosx_check_process.sh";
 #endif
 #ifdef SOLARIS
-  argv[0]= "solaris_check_process.sh";
+  script_name= "solaris_check_process.sh";
 #endif
+#ifdef FREEBSD
+  script_name= "linux_check_process.sh";
+#endif
+#ifdef WINDOWS
+  script_name= "windows_check_process.sh";
+#endif
+  IC_INIT_STRING(&script_string, full_script_name, 0, TRUE);
+  ic_add_string(&script_string, port_binary_dir);
+  ic_add_string(&script_string, script_name);
+
+  argv[0]= script_string.str;
   argv[1]= "--process_name";
   argv[2]= (gchar*)process_name;
   argv[3]= "--pid";
   argv[4]= pid_number_str;
+  argv[5]= NULL;
 
   error= run_process(argv, &exit_status);
   if (error == (gint)1)

@@ -15,6 +15,8 @@
 
 #ifndef PORT_H
 #define PORT_H
+/* Set reference to binary directory */
+void ic_port_set_binary_dir(const gchar *binary_dir);
 /*
   HEADER MODULE: iClaustron Portability Layer
   ------------------------------------

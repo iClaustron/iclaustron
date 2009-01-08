@@ -4974,7 +4974,7 @@ ic_load_config_version(IC_STRING *config_dir,
       return 0;
     }
     error= ic_is_process_alive(pid, process_name);
-    if (error == 0 || error == IC_ERROR_CHECK_PROCESS_SCRIPT)
+    if (error == 0)
     {
       /*
         Another process is still running a Cluster Server on the same
@@ -4985,6 +4985,8 @@ ic_load_config_version(IC_STRING *config_dir,
         error= IC_ERROR_COULD_NOT_LOCK_CONFIGURATION;
       return error;
     }
+    if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)
+      return error;
     g_assert(IC_ERROR_PROCESS_NOT_ALIVE);
     error= 0;
     if (*config_version == 0 && !bootstrap)

@@ -3,6 +3,11 @@
 #define iClaustron_VERSION_BUILD @iClaustron_VERSION_BUILD@
 #define PACKAGE "@ICLAUSTRON_PACKAGE_NAME@"
 #define VERSION "@ICLAUSTRON_VERSION@"
+#cmakedefine LINUX
+#cmakedefine MACOSX
+#cmakedefine SOLARIS
+#cmakedefine FREEBSD
+#cmakedefine WINDOWS
 #cmakedefine HAVE_CLOCK_GETTIME
 #cmakedefine WITH_PRODUCTION
 #cmakedefine WITH_DEBUG

@@ -28,6 +28,8 @@ IC_STRING ic_config_string=
 {(gchar*)"config", (guint32)6, (gboolean)TRUE};
 IC_STRING ic_config_ending_string=
 {(gchar*)".ini", (guint32)4, (gboolean)TRUE};
+IC_STRING ic_binary_string=
+{(gchar*)"bin", (guint32)3, (gboolean)TRUE};
 
 /*
   A couple of functions to set references to directories in the iClaustron
@@ -193,23 +195,63 @@ void ic_set_relative_dir(IC_STRING *res_str, IC_STRING *dir,
 {
   IC_INIT_STRING(res_str, buf, 0, TRUE);
   ic_add_ic_string(res_str, dir);
-  ic_add_string(res_str, dir_name);
+  if (dir_name)
+  {
+    ic_add_string(res_str, dir_name);
 #ifdef WINDOWS
-  ic_add_string(res_str, "\\");
+    ic_add_string(res_str, "\\");
 #else
-  ic_add_string(res_str, "/");
+    ic_add_string(res_str, "/");
 #endif
+  }
+}
+
+/* The default base directory is ICLAUSTRON_BASE_DIR */
+int
+ic_set_base_path(IC_STRING *base_dir,
+                 gchar *base_path,
+                 gchar *version,
+                 gchar *buf)
+{
+  int error;
+  IC_STRING loc_base_dir;
+  if ((error= ic_set_base_dir(&loc_base_dir, base_path)))
+    return error;
+  ic_set_relative_dir(base_dir, &loc_base_dir, buf,
+                      version);
+  DEBUG_PRINT(CONFIG_LEVEL, ("Base dir: %s", base_dir->str));
+  return 0;
+}
+
+/* The default binary directory is ICLAUSTRON_BASE_DIR/bin */
+int
+ic_set_binary_path(IC_STRING *binary_dir,
+                   gchar *base_path,
+                   gchar *version,
+                   gchar *buf)
+{
+  int error;
+  IC_STRING base_dir;
+  IC_STRING version_dir;
+  if ((error= ic_set_base_dir(&base_dir, base_path)))
+    return error;
+  ic_set_relative_dir(&version_dir, &base_dir, buf,
+                      version);
+  ic_set_relative_dir(binary_dir, &version_dir, buf,
+                      ic_binary_string.str);
+  DEBUG_PRINT(CONFIG_LEVEL, ("Binary dir: %s", binary_dir->str));
+  return 0;
 }
 
 /* The default configuration directory is ICLAUSTRON_DATA_DIR/config */
 int
 ic_set_config_path(IC_STRING *config_dir,
-                   gchar *config_path,
+                   gchar *data_path,
                    gchar *buf)
 {
   int error;
   IC_STRING data_dir;
-  if ((error= ic_set_data_dir(&data_dir, config_path)))
+  if ((error= ic_set_data_dir(&data_dir, data_path)))
     return error;
   ic_set_relative_dir(config_dir, &data_dir, buf,
                       ic_config_string.str);

@@ -7,7 +7,7 @@
 AC_PREREQ(2.59)
 AC_INIT
 AC_CONFIG_AUX_DIR(config)
-AC_CANONICAL_TARGET
+AC_CANONICAL_SYSTEM
 AM_INIT_AUTOMAKE(iclaustron, 0.0.1)
 AM_CONFIG_HEADER(include/config.h)
 AC_LANG(C)
@@ -75,6 +75,7 @@ AC_CONFIG_FILES([count_line.sh], [chmod +x count_line.sh])
 AC_CONFIG_FILES([scripts/linux_check_process.sh], [chmod +x scripts/linux_check_process.sh])
 AC_CONFIG_FILES([scripts/macosx_check_process.sh], [chmod +x scripts/macosx_check_process.sh])
 AC_CONFIG_FILES([scripts/solaris_check_process.sh], [chmod +x scripts/solaris_check_process.sh])
+AC_CONFIG_FILES([scripts/windows_check_process.sh], [chmod +x scripts/windows_check_process.sh])
 
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 
@@ -88,6 +89,28 @@ AC_CHECK_LIB(rt, clock_gettime,
   [LIBS="-lrt $LIBS"
    AC_DEFINE(HAVE_CLOCK_GETTIME, 1,
              [Define HAVE_CLOCK_GETTIME if clock_gettime function exists])])
+
+case "$target_os"
+  *Linux* | *linux* )
+    AC_DEFINE(LINUX, 1,
+              [Define LINUX when OS is Linux])
+    ;;
+  *sunos* )
+    AC_DEFINE(SOLARIS, 1,
+              [Define SOLARIS when OS is Solaris])
+    ;;
+  *freebsd* )
+    AC_DEFINE(FREEBSD, 1,
+              [Define FREEBSD when OS is FreeBSD])
+    ;;
+  *darwin* )
+    AC_DEFINE(MACOSX, 1,
+              [Define MACOSX when OS is Mac OS X])
+    ;;
+  *)
+    AC_MSG_ERROR([OS isn't supported])
+    ;;
+esac
 
 case "$host" in
   *solaris*)
