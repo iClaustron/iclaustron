@@ -22,7 +22,7 @@ static const gchar *glob_process_name= "ic_fsd";
 
 static gchar *glob_cluster_server_ip= "127.0.0.1";
 static gchar *glob_cluster_server_port= "10203";
-static gchar *glob_config_path= NULL;
+static gchar *glob_data_path= NULL;
 static guint32 glob_node_id= 5;
 static guint32 glob_num_threads= 1;
 static guint32 glob_use_iclaustron_cluster_server= 1;
@@ -44,10 +44,8 @@ static GOptionEntry entries[] =
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &glob_node_id,
     "Node id of file server in all clusters", NULL},
-  { "config_dir", 0, 0, G_OPTION_ARG_STRING,
-    &glob_config_path,
-"Specification of Clusters that file server will connect to with access info",
-     NULL},
+  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_data_path,
+    "Sets path to data directory, config files in subdirectory config", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -144,10 +142,10 @@ int main(int argc, char *argv[])
   gchar *err_str= error_str;
 
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
-            "- iClaustron Cluster File Server")))
+            "- iClaustron File Server")))
     goto error;
   if ((ret_code= ic_set_config_path(&glob_config_dir,
-                                    glob_config_path,
+                                    glob_data_path,
                                     config_path_buf)))
     goto error;
   ret_code= 1;

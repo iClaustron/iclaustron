@@ -781,6 +781,7 @@ ic_print_config_parameters(guint32 mask)
       printf("Entry %u:\n", i);
       printf("Name: %s\n", conf_entry->config_entry_name.str);
       printf("Comment: %s\n", conf_entry->config_entry_description);
+      printf("ConfigId: %u\n", conf_entry->config_id);
       switch (conf_entry->data_type)
       {
         case IC_CHARPTR:
@@ -851,6 +852,8 @@ ic_print_config_parameters(guint32 mask)
         printf("This config variable is used in a cluster manager\n");
       if (conf_entry->config_types & (1 << IC_COMM_TYPE))
         printf("This config variable is used in connections\n");
+      if (conf_entry->config_types & (1 << IC_SYSTEM_TYPE))
+        printf("This config variable is used in System (Cluster) section\n");
 
       if (conf_entry->is_mandatory)
         printf("Entry is mandatory and has no default value\n");
@@ -1016,6 +1019,8 @@ init_config_parameters()
 #define SYSTEM_NAME 1003
 
   IC_SET_CONFIG_MAP(SYSTEM_PRIMARY_CS_NODE, 10);
+  conf_entry->config_id= SYSTEM_PRIMARY_CS_NODE - 1000;
+  map_inx_to_config_id[10]= SYSTEM_PRIMARY_CS_NODE - 1000;
   IC_SET_SYSTEM_CONFIG(conf_entry, system_primary_cs_node,
                        IC_UINT16, 0, IC_NOT_CHANGEABLE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_NODE_ID);
@@ -1023,12 +1028,16 @@ init_config_parameters()
   "Primary Cluster Server node in the grid";
 
   IC_SET_CONFIG_MAP(SYSTEM_CONFIGURATION_NUMBER, 11);
+  conf_entry->config_id= SYSTEM_CONFIGURATION_NUMBER - 1000;
+  map_inx_to_config_id[11]= SYSTEM_CONFIGURATION_NUMBER - 1000;
   IC_SET_SYSTEM_CONFIG(conf_entry, system_configuration_number,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
   conf_entry->config_entry_description=
   "Configuration number of grid";
 
   IC_SET_CONFIG_MAP(SYSTEM_NAME, 12);
+  conf_entry->config_id= SYSTEM_NAME - 1000;
+  map_inx_to_config_id[12]= SYSTEM_NAME - 1000;
   IC_SET_SYSTEM_STRING(conf_entry, system_name,
                        IC_NOT_CHANGEABLE);
   conf_entry->default_string= (gchar*)ic_empty_string;
@@ -2421,7 +2430,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
   gboolean first= TRUE;
   gboolean first_data_server= TRUE;
   int error;
-  guint32 pass;
+  gboolean comm_section_exists= TRUE;
+  guint32 pass, expected_sect_id;
   guint32 system_section= 0;
   guint32 first_comm_section= 0;
   guint32 first_data_server_section= 0;
@@ -2438,6 +2448,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
         goto error;
     }
     key_value= key_value_start;
+    expected_sect_id= 0;
     while (key_value < key_value_end)
     {
       guint32 key= g_ntohl(key_value[0]);
@@ -2448,6 +2459,11 @@ analyse_key_value(guint32 *key_value, guint32 len,
       DEBUG_PRINT(CONFIG_LEVEL,
       ("Section: %u, Config id: %u, Type: %u, value: %u", sect_id, hash_key,
        key_type, value));
+      if (sect_id != expected_sect_id)
+      {
+        expected_sect_id++;
+        PROTOCOL_CHECK_GOTO(sect_id == expected_sect_id);
+      }
       if (pass == 0)
       {
         if (sect_id == 0)
@@ -2470,6 +2486,11 @@ analyse_key_value(guint32 *key_value, guint32 len,
           }
         } else if (sect_id == 1)
         {
+          if (first_comm_section == 0)
+          {
+            comm_section_exists= FALSE;
+            first_comm_section= system_section + 2;
+          }
           node_section= (value >> IC_CL_SECT_SHIFT);
           if (node_section >= first_comm_section && first_data_server)
           {
@@ -2523,6 +2544,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
         guint32 node_sect_id;
         if (sect_id == 0)
         {
+          /* Initial section */
           PROTOCOL_CHECK_GOTO(
             (hash_key == 1000 &&
               (value == (system_section << IC_CL_SECT_SHIFT))) ||
@@ -2532,6 +2554,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
           PROTOCOL_CHECK_GOTO(key_type == IC_CL_SECT_TYPE);
         } else if (sect_id == 1)
         {
+          /* Node meta section */
           PROTOCOL_CHECK_GOTO(key_type == IC_CL_INT32_TYPE);
           PROTOCOL_CHECK_GOTO(hash_key < conf_obj->num_nodes);
           if (hash_key < num_apis)
@@ -2545,6 +2568,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
           }
         } else if (sect_id >= 2 && sect_id < system_section)
         {
+          /* API node sections */
           node_sect_id= sect_id - 2;
           if ((error= assign_node_section(conf_obj, apic,
                                           key_type, &key_value,
@@ -2552,6 +2576,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
             goto error;
         } else if (sect_id == system_section)
         {
+          /* System meta section */
           PROTOCOL_CHECK_GOTO(hash_key == 0 &&
                               key_type == IC_CL_INT32_TYPE &&
                value == ((system_section + 1) << IC_CL_SECT_SHIFT));
@@ -2565,14 +2590,19 @@ analyse_key_value(guint32 *key_value, guint32 len,
                                             key_type, &key_value,
                                             value, hash_key)))
             goto error;
-        } else if (sect_id == (system_section + 2))
+        } else if ((sect_id == (system_section + 2)) && comm_section_exists)
         {
+          /*
+             This is the communication meta section. In communication
+             to iClaustron this section can be ignored.
+           */
           PROTOCOL_CHECK_GOTO(key_type == IC_CL_INT32_TYPE &&
                               hash_key < conf_obj->num_comms &&
                               (first_comm_section + hash_key) ==
                                 (value >> IC_CL_SECT_SHIFT));
         } else if (sect_id < first_data_server_section)
         {
+          /* Communication sections */
           guint32 comm_sect_id= sect_id - first_comm_section;
           if ((error= assign_comm_section(conf_obj, apic,
                                           key_type, &key_value,
@@ -2580,6 +2610,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
             goto error;
         } else
         {
+          /* Data Server node sections */
           node_sect_id= num_apis + (sect_id - first_data_server_section);
           PROTOCOL_CHECK_GOTO(node_sect_id < conf_obj->num_nodes);
           if ((error= assign_node_section(conf_obj, apic,
@@ -3277,8 +3308,10 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   get_cs_config
 
   This method first calls the connect_api_connection to set-up the socket
-  connections to the Cluster Server through help of the method:
+  connections to the Cluster Server through help of the methods
+  (disconnect_api_connection for error handling and used by other modules):
     connect_api_connection
+    disconnect_api_connection
     set_up_server_connection
 
   After connection has been set-up the client asks for the cluster id
@@ -3316,6 +3349,8 @@ static int set_up_cluster_server_connection(IC_INT_API_CONFIG_SERVER *apic,
                                             gchar *server_port);
 static guint64 get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server);
 static guint32 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos);
+
+static void disconnect_api_connections(IC_INT_API_CONFIG_SERVER *apic);
 
 
 static int
@@ -3374,7 +3409,10 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
       goto mem_alloc_error;
     clu_conf->clu_info.cluster_id= cluster_id;
     if (apic->conf_objects[cluster_id])
+    {
+      error= IC_ERROR_CONFLICTING_CLUSTER_IDS;
       goto error;
+    }
     apic->conf_objects[cluster_id]= clu_conf;
     apic->node_ids[cluster_id]= node_id;
     clu_conf->my_node_id= node_id;
@@ -3382,30 +3420,27 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
 
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
-    if (!apic->conf_objects[cluster_id] ||
-       ((error= send_get_nodeid(apic, conn, cluster_id)) ||
+    if (!apic->conf_objects[cluster_id])
+      continue;
+    if ((error= send_get_nodeid(apic, conn, cluster_id)) ||
         (error= rec_get_nodeid(apic, conn, cluster_id)) ||
         (error= send_get_config(apic, conn)) ||
-        (error= rec_get_config(apic, conn, cluster_id))))
-      continue;
+        (error= rec_get_config(apic, conn, cluster_id)))
+      goto error;
   }
-  if (error)
-    goto error;
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
     IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
     if (clu_conf && build_hash_on_comms(clu_conf))
       goto mem_alloc_error;
   }
-  apic->cluster_conn.current_conn= conn;  
-error:
-  if (error)
-  {
-    DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", error));
-  }
-  DEBUG_RETURN(error);
+  apic->cluster_conn.current_conn= conn;
+  DEBUG_RETURN(0);
 mem_alloc_error:
-  DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  error= IC_ERROR_MEM_ALLOC;
+error:
+  DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", error));
+  DEBUG_RETURN(error);
 }
 
 #define RECEIVE_CLUSTER_NAME 1
@@ -3573,8 +3608,8 @@ rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
     {
       case GET_NODEID_REPLY_STATE:
         /*
-          The protocol is decoded in the order of the case statements in the switch
-          statements.
+          The protocol is decoded in the order of the case statements in
+          the switch statements.
         
           Receive:
           get nodeid reply<CR>
@@ -3592,7 +3627,8 @@ rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
         /*
           Receive:
           nodeid: __nodeid<CR>
-          Where __nodeid is an integer giving the nodeid of the starting process
+          Where __nodeid is an integer giving the nodeid of the starting
+          process
         */
         if (check_buf_with_int(read_buf, read_size, nodeid_str, NODEID_LEN,
                                &node_number) ||
@@ -3776,7 +3812,9 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding"));
           error= translate_config(apic, cluster_id,
                                   config_buf, config_size);
-          goto end;
+          if (error)
+            goto end;
+          state= WAIT_LAST_EMPTY_RETURN_STATE;
         }
         else if (read_size != CONFIG_LINE_LEN)
         {
@@ -3818,6 +3856,19 @@ connect_api_connections(IC_INT_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr
     }
   }
   return error;
+}
+
+static void
+disconnect_api_connections(IC_INT_API_CONFIG_SERVER *apic)
+{
+  guint32 i;
+  IC_CONNECTION *conn;
+
+  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+  {
+    conn= apic->cluster_conn.cluster_srv_conns[i];
+    conn->conn_op.ic_free_connection(conn);
+  }
 }
 
 static int
@@ -6451,7 +6502,6 @@ file_open_error:
   to release the memory attachd to it.
 
   The below routines implements the interface except for the methods:
-    disconnect_api_connections
     get_node_and_cluster_config
   which are support methods to the above
   There is also the create method of the interface:
@@ -6476,7 +6526,6 @@ get_typed_node_object(IC_API_CONFIG_SERVER *apic, guint32 cluster_id,
                       guint32 node_id, IC_NODE_TYPES node_type);
 static void free_cs_config(IC_API_CONFIG_SERVER *apic);
 
-static void disconnect_api_connections(IC_INT_API_CONFIG_SERVER *apic);
 
 static gchar*
 get_node_and_cluster_config(IC_INT_API_CONFIG_SERVER *apic, guint32 cluster_id,
@@ -6648,19 +6697,6 @@ get_node_and_cluster_config(IC_INT_API_CONFIG_SERVER *apic, guint32 cluster_id,
   if (!node_config)
     return NULL;
   return node_config;
-}
-
-static void
-disconnect_api_connections(IC_INT_API_CONFIG_SERVER *apic)
-{
-  guint32 i;
-  IC_CONNECTION *conn;
-
-  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
-  {
-    conn= apic->cluster_conn.cluster_srv_conns[i];
-    conn->conn_op.ic_free_connection(conn);
-  }
 }
 
 IC_API_CONFIG_SERVER*
@@ -8143,8 +8179,12 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   /*
    * Add one key-value pair for each comm section
    *   - This is meta section for communication
+   * If there is no communication section we will
+   * also remove the entry in section 0 about it.
    */
   len+= num_comms * 2;
+  if (!num_comms)
+    len-= 2;
   DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u", len));
   /* Finally add 1 word for checksum at the end */
   len+= 1;
@@ -8172,20 +8212,28 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   node_meta_section= 1;
   system_meta_section= 2 + api_nodes;
   comm_meta_section= 2 + system_meta_section;
-  loc_key_value_array[2]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
-                          (section_id << IC_CL_SECT_SHIFT) +
-                          1000;
-  loc_key_value_array[3]= system_meta_section << IC_CL_SECT_SHIFT;
-  loc_key_value_array[4]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
-                          (section_id << IC_CL_SECT_SHIFT) +
-                          2000;
-  loc_key_value_array[5]= node_meta_section << IC_CL_SECT_SHIFT;
+  loc_key_value_array[2]= 
+     g_htonl((IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
+             (section_id << IC_CL_SECT_SHIFT) +
+             1000);
+  loc_key_value_array[3]= g_htonl(system_meta_section << IC_CL_SECT_SHIFT);
+  loc_key_value_array[4]= 
+     g_htonl((IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
+             (section_id << IC_CL_SECT_SHIFT) +
+             2000);
+  loc_key_value_array[5]= g_htonl(node_meta_section << IC_CL_SECT_SHIFT);
 
-  loc_key_value_array[6]= (IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
-                          (section_id << IC_CL_SECT_SHIFT) +
-                          3000;
-  loc_key_value_array[7]= comm_meta_section << IC_CL_SECT_SHIFT;
-  loc_key_value_array_len= 8;
+  if (num_comms)
+  {
+    loc_key_value_array[6]= 
+      g_htonl((IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
+              (section_id << IC_CL_SECT_SHIFT) +
+              3000);
+    loc_key_value_array[7]= g_htonl(comm_meta_section << IC_CL_SECT_SHIFT);
+    loc_key_value_array_len= 8;
+  }
+  else
+    loc_key_value_array_len= 6;
 
   /*
     Fill Section 1
@@ -8193,14 +8241,15 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     section 2 and ending at section 2+num_nodes-1. First fill in
     API nodes and then the ones for Data Server nodes.
   */
-  section_id= 1;
+  section_id++;
   for (i= 0; i < api_nodes; i++)
   {
     loc_key_value_array[loc_key_value_array_len++]=
-              (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
-              (section_id << IC_CL_SECT_SHIFT) +
-                                              i;
-    loc_key_value_array[loc_key_value_array_len++]= (2+i) << IC_CL_SECT_SHIFT;
+              g_htonl((IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
+                      (section_id << IC_CL_SECT_SHIFT) +
+                      i);
+    loc_key_value_array[loc_key_value_array_len++]=
+              g_htonl((2+i) << IC_CL_SECT_SHIFT);
   }
   data_server_section= comm_meta_section + num_comms;
   if (num_comms)
@@ -8209,19 +8258,18 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   for (i= api_nodes; i < clu_conf->num_nodes; i++)
   {
     loc_key_value_array[loc_key_value_array_len++]=
-              (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
-              (section_id << IC_CL_SECT_SHIFT) +
-                                              i;
+              g_htonl((IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
+                      (section_id << IC_CL_SECT_SHIFT) +
+                      i);
     loc_key_value_array[loc_key_value_array_len++]=
-      (data_server_section++) << IC_CL_SECT_SHIFT;
+      g_htonl(data_server_section << IC_CL_SECT_SHIFT);
+    data_server_section++;
   }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("1: fill_len=%u", loc_key_value_array_len));
-  for (i= 2; i < 6 + (2 * api_nodes); i++)
-    loc_key_value_array[i]= g_htonl(loc_key_value_array[i]);
 
   /* Fill API node sections */
-  section_id= 2;
+  section_id++;
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
     if (clu_conf->node_config[i] &&
@@ -8239,15 +8287,11 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   /* Fill system meta section */
   g_assert(system_meta_section == section_id);
   loc_key_value_array[loc_key_value_array_len++]=
-                          (IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
-                          ((system_meta_section) << IC_CL_SECT_SHIFT);
+                  g_htonl((IC_CL_INT32_TYPE << IC_CL_KEY_SHIFT) +
+                          ((system_meta_section) << IC_CL_SECT_SHIFT));
   loc_key_value_array[loc_key_value_array_len++]=
-                          (system_meta_section + 1) << IC_CL_SECT_SHIFT;
-  for (i= 0; i < 2; i++)
-  {
-    loc_key_value_array[loc_key_value_array_len + i]=
-      g_htonl(loc_key_value_array[loc_key_value_array_len + i]);
-  }
+                  g_htonl((system_meta_section + 1) << IC_CL_SECT_SHIFT);
+
   section_id++;
   DEBUG_PRINT(CONFIG_LEVEL, ("3: fill_len=%u", loc_key_value_array_len));
   /* Fill system section */

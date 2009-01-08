@@ -60,7 +60,7 @@ static GOptionEntry entries[] =
     " used to derive base directory",
     NULL},
   { "data_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_data_path,
-    "Sets path to base directory, config files in subdirectory config", NULL},
+    "Sets path to data directory, config files in subdirectory config", NULL},
   { "server_port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
     "Set Cluster Server connection Port", NULL},
   { "server_name", 0, 0, G_OPTION_ARG_STRING, &glob_server_name,
