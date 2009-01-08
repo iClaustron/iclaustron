@@ -13,6 +13,25 @@
 ## along with this program; if not, write to the Free Software
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
+check_os()
+{
+  OS_NAME=`$UNAME -s`
+  case $OS_NAME in
+    *Linux* )
+      TARGET_OS="Linux"
+      ;;
+    *Solaris* )
+      TARGET_OS="Solaris"
+      ;;
+    *Darwin* )
+      TARGET_OS="MacOSX"
+      ;;
+    * )
+      TARGET_OS="Linux"
+      ;;
+  esac
+}
+
 check_binaries()
 {
   ret=1
@@ -28,15 +47,25 @@ check_binaries()
     FAULTY_PROCESS="wc"
     return $ret
   fi
+  if test -x $UNAME ; then
+    FAULTY_PROCESS="uname"
+    return $ret
+  fi
   ret=0
   return $ret
 }
 
 check_process_alive()
 {
-  LINES=`$PS -p $SEARCHED_PID -o command | \
-         $GREP $SEARCHED_PROCESS | \
-         $WC -l`
+  if test "x$TARGET_OS" = "xSolaris" ; then
+    LINES=`$PS -p $SEARCHED_PID -o comm | \
+           $GREP $SEARCHED_PROCESS | \
+           $WC -l`
+  else
+    LINES=`$PS -p $SEARCHED_PID -o command | \
+           $GREP $SEARCHED_PROCESS | \
+           $WC -l`
+  fi
   if test "x$LINES" = "x0" ; then
     EXIT_CODE=0
   else
@@ -58,10 +87,12 @@ set_binaries()
     PS="/bin/ps"
     GREP="/bin/grep"
     WC="/usr/bin/wc"
+    UNAME="/bin/uname"
   else
     PS=`$WHICH ps`
     GREP=`$WHICH grep`
     WC=`$WHICH wc`
+    UNAME=`$WHICH uname`
   fi
   if test "x$PS" = "x" ; then
     PS="/bin/ps"
@@ -72,17 +103,22 @@ set_binaries()
   if test "x$WC" = "x" ; then
     WC="/bin/wc"
   fi
+  if test "x$UNAME" = "x" ; then
+    UNAME="/bin/uname"
+  fi
 }
 
 WHICH=
 PS=
 GREP=
 WC=
+UNAME=
 LINES=
 SEARCHED_PID=
 SEARCHED_PROCESS=
 PROCESS_NAME=
 PROCESS_PID=
+TARGET_OS=
 EXIT_CODE=2
   while test $# -gt 0
   do
@@ -119,6 +155,7 @@ EXIT_CODE=2
   if check_binaries; then
     exit $EXIT_CODE
   else
+    check_os
     check_process_alive
   fi
   exit $EXIT_CODE

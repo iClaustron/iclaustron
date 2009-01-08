@@ -192,16 +192,16 @@ ic_is_process_alive(guint32 pid,
 
   pid_number_str= ic_guint64_str(value, buf, NULL);
 #ifdef LINUX
-  script_name= "linux_check_process.sh";
+  script_name= "check_process.sh";
 #endif
 #ifdef MACOSX
-  script_name= "macosx_check_process.sh";
+  script_name= "check_process.sh";
 #endif
 #ifdef SOLARIS
-  script_name= "solaris_check_process.sh";
+  script_name= "check_process.sh";
 #endif
 #ifdef FREEBSD
-  script_name= "linux_check_process.sh";
+  script_name= "check_process.sh";
 #endif
 #ifdef WINDOWS
   script_name= "windows_check_process.sh";

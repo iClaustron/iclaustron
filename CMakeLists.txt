@@ -185,14 +185,8 @@ configure_file("${PROJECT_SOURCE_DIR}/setup.sh.in"
 configure_file("${PROJECT_SOURCE_DIR}/count_line.sh.in"
                "${PROJECT_BINARY_DIR}/count_line.sh"
                @ONLY)
-configure_file("${PROJECT_SOURCE_DIR}/scripts/linux_check_process.sh.in"
-               "${PROJECT_BINARY_DIR}/scripts/linux_check_process.sh"
-               @ONLY)
-configure_file("${PROJECT_SOURCE_DIR}/scripts/macosx_check_process.sh.in"
-               "${PROJECT_BINARY_DIR}/scripts/macosx_check_process.sh"
-               @ONLY)
-configure_file("${PROJECT_SOURCE_DIR}/scripts/solaris_check_process.sh.in"
-               "${PROJECT_BINARY_DIR}/scripts/solaris_check_process.sh"
+configure_file("${PROJECT_SOURCE_DIR}/scripts/check_process.sh.in"
+               "${PROJECT_BINARY_DIR}/scripts/check_process.sh"
                @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/scripts/windows_check_process.sh.in"
                "${PROJECT_BINARY_DIR}/scripts/windows_check_process.sh"
@@ -507,12 +501,10 @@ install (FILES
          DESTINATION include)
 
 #Install scripts into bin directory
-install (PROGRAMS scripts/linux_check_process.sh.in DESTINATION bin
-         RENAME linux_check_process.sh)
-install (PROGRAMS scripts/macosx_check_process.sh.in DESTINATION bin
-         RENAME macosx_check_process.sh)
-install (PROGRAMS scripts/solaris_check_process.sh.in DESTINATION bin
-         RENAME solaris_check_process.sh)
+install (PROGRAMS scripts/check_process.sh.in DESTINATION bin
+         RENAME check_process.sh)
+install (PROGRAMS scripts/windows_check_process.sh.in DESTINATION bin
+         RENAME windows_check_process.sh)
 #Install examples directory into examples directory
 install (DIRECTORY examples DESTINATION ${CMAKE_INSTALL_PREFIX})
 #Install doc directory into doc directory

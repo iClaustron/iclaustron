@@ -17,7 +17,5 @@
 ## This directory is used to build iClaustron Portability Functions
 ##
 
-dist_bin_SCRIPTS = linux_check_process.sh \
-                   macosx_check_process.sh \
-                   windows_check_process.sh \
-                   solaris_check_process.sh
+dist_bin_SCRIPTS = check_process.sh \
+                   windows_check_process.sh
