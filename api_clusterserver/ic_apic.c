@@ -7122,6 +7122,8 @@ static gchar* rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *run_obj,
  * This method implements the high level parts of the NDB Management Server
  * protocol. For each action that is available there is a method handling
  * that action. These are the handler routines:
+ * check_config_request: Check for configuration request and call
+ *                       handle_config_request in case it is
  * handle_get_cluster_list: Request to get a list of cluster id and names
  * handle_report_event: Report an event from the client to the Cluster Server
  * handle_get_mgmd_nodeid_request: Get node id of Cluster Server
@@ -7179,6 +7181,14 @@ typedef struct ic_rc_param IC_RC_PARAM;
 static int start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                        IC_CONNECTION *conn);
 static gpointer run_cluster_server_thread(gpointer data);
+
+static int check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                               IC_CONNECTION *conn,
+                               IC_RC_PARAM *param,
+                               gchar *read_buf,
+                               guint32 read_size,
+                               int *state,
+                               gboolean *handled_request);
 
 static int handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                    IC_CONNECTION *conn);
@@ -7452,7 +7462,8 @@ run_cluster_server_thread(gpointer data)
   guint32 read_size;
   IC_CONNECTION *conn= (IC_CONNECTION*)data;
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
-  int error;
+  int error, error_line;
+  gboolean handled_request;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
 
@@ -7474,19 +7485,12 @@ run_cluster_server_thread(gpointer data)
           state= WAIT_GET_NODEID;
           break;
         }
-        if (!check_buf(read_buf, read_size, get_nodeid_str,
-                       strlen(get_nodeid_str)))
-        {
-          /* Handle a request to get configuration for a cluster */
-          if ((error= handle_config_request(run_obj, conn, &param)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error from handle_config_request, code = %u", error));
-            goto error;
-          }
-          state= WAIT_GET_MGMD_NODEID;
+        if ((error= check_config_request(run_obj, conn, &param,
+                                         read_buf, read_size, &state,
+                                         &handled_request)))
+          goto error;
+        if (handled_request)
           break;
-        }
         if (!check_buf(read_buf, read_size, report_event_str,
                        strlen(report_event_str)))
         {
@@ -7498,21 +7502,16 @@ run_cluster_server_thread(gpointer data)
           }
           break; /* The report event is always done in separate connection */
         }
+        error_line= __LINE__;
         goto error;
       case WAIT_GET_NODEID:
-        if (!check_buf(read_buf, read_size, get_nodeid_str,
-                       strlen(get_nodeid_str)))
-        {
-          /* Handle a request to get configuration for a cluster */
-          if ((error= handle_config_request(run_obj, conn, &param)))
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error from handle_config_request, code = %u", error));
-            goto error;
-          }
-          state= WAIT_GET_MGMD_NODEID;
+        if ((error= check_config_request(run_obj, conn, &param,
+                                         read_buf, read_size, &state,
+                                         &handled_request)))
+          goto error;
+        if (handled_request)
           break;
-        }
+        error_line= __LINE__;
         goto error;
       case WAIT_GET_MGMD_NODEID:
         if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
@@ -7528,6 +7527,13 @@ run_cluster_server_thread(gpointer data)
           state= WAIT_SET_CONNECTION;
           break;
         }
+        if ((error= check_config_request(run_obj, conn, &param,
+                                         read_buf, read_size, &state,
+                                         &handled_request)))
+          goto error;
+        if (handled_request)
+          break;
+        error_line= __LINE__;
         goto error;
       case WAIT_SET_CONNECTION:
         if (!check_buf(read_buf, read_size, set_connection_parameter_str,
@@ -7564,6 +7570,7 @@ run_cluster_server_thread(gpointer data)
           state= 100; /* Need more work, TODO */
           break;
         }
+        error_line= __LINE__;
         goto error;
       default:
         abort();
@@ -7571,11 +7578,44 @@ run_cluster_server_thread(gpointer data)
     }
   }
   DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
-error:
+end:
    conn->conn_op.ic_free_connection(conn);
   return NULL;
+error:
+  read_buf[read_size]= 0;
+  printf("Protocol error line %d\n", error_line);
+  printf("Protocol message: %s\n", read_buf);
+  goto end;
 }
 
+/* Check for configuration request, possible in multiple states */
+static int
+check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                     IC_CONNECTION *conn,
+                     IC_RC_PARAM *param,
+                     gchar *read_buf,
+                     guint32 read_size,
+                     int *state,
+                     gboolean *handled_request)
+{
+  int error;
+
+  *handled_request= FALSE;
+  if (!check_buf(read_buf, read_size, get_nodeid_str,
+                 strlen(get_nodeid_str)))
+  {
+    /* Handle a request to get configuration for a cluster */
+    if ((error= handle_config_request(run_obj, conn, param)))
+    {
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Error from handle_config_request, code = %u", error));
+      return error;
+    }
+    *handled_request= TRUE;
+    *state= WAIT_GET_MGMD_NODEID;
+  }
+  return 0;
+}
 /* Handle get cluster list protocol action in Cluster Server */
 static int
 handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
