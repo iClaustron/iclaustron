@@ -249,6 +249,20 @@ error:
   return NULL;
 }
 
+static void
+free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  if (send_node_conn == NULL)
+    return;
+  if (send_node_conn->mutex)
+    g_mutex_free(send_node_conn->mutex);
+  if (send_node_conn->cond)
+    g_cond_free(send_node_conn->cond);
+  if (send_node_conn->string_memory)
+    ic_free(send_node_conn->string_memory);
+  ic_free(send_node_conn);
+}
+
 /*
   This method is called when shutting down a global Data API object. It requires
   all the threads to have been stopped and is only releasing the memory on the
@@ -261,7 +275,6 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   IC_SOCK_BUF *ndb_message_pool= apid_global->ndb_message_pool;
   IC_GRID_COMM *grid_comm= apid_global->grid_comm;
   IC_CLUSTER_COMM *cluster_comm;
-  IC_SEND_NODE_CONNECTION *send_node_conn;
   guint32 i, j;
 
   if (!apid_global)
@@ -286,16 +299,7 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
         if (cluster_comm == NULL)
           continue;
         for (j= 0; j <= IC_MAX_NODE_ID; i++)
-        {
-          send_node_conn= cluster_comm->send_node_conn_array[j];
-          if (send_node_conn == NULL)
-            continue;
-          if (send_node_conn->mutex)
-            g_mutex_free(send_node_conn->mutex);
-          if (send_node_conn->cond)
-            g_cond_free(send_node_conn->cond);
-          ic_free(send_node_conn);
-        }
+          free_send_node_conn(cluster_comm->send_node_conn_array[j]);
         ic_free(cluster_comm);
       }
       ic_free(grid_comm->cluster_comm_array);
@@ -318,6 +322,103 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   if (apid_global->thread_id_mutex)
     g_mutex_free(apid_global->thread_id_mutex);
   ic_free(apid_global);
+}
+
+static int
+set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
+                      IC_SOCKET_LINK_CONFIG *link_config,
+                      guint32 my_node_id)
+{
+  gchar *copy_ptr;
+  guint32 first_hostname_len, second_hostname_len;
+  guint32 tot_string_len, server_port_len, client_port_len;
+  gchar *server_port_str, *client_port_str;
+  gchar server_port[64], client_port[64];
+  /*
+    We store hostname for both side of the connections on the
+    send node connection object. Also strings for the port
+    part.
+  */
+  first_hostname_len= strlen(link_config->first_hostname) + 1;
+  second_hostname_len= strlen(link_config->first_hostname) + 1;
+  tot_string_len= first_hostname_len;
+  tot_string_len= second_hostname_len;
+  server_port_str= ic_guint64_str((guint64)link_config->server_port_number,
+                                  server_port, &server_port_len);
+  server_port_len++; /* Room for NULL byte */
+  if (link_config->client_port_number != 0)
+  {
+    client_port_str= ic_guint64_str((guint64)link_config->client_port_number,
+                                    client_port, &client_port_len);
+    client_port_len++; /* Room for NULL byte */
+  } else
+    client_port_len= 0;
+  tot_string_len+= server_port_len;
+  tot_string_len+= client_port_len;
+  if ((send_node_conn->string_memory= ic_calloc(tot_string_len)))
+    return IC_ERROR_MEM_ALLOC;
+  copy_ptr= send_node_conn->string_memory;
+  if (link_config->first_node_id == my_node_id)
+  {
+    send_node_conn->my_hostname= copy_ptr;
+    copy_ptr+= first_hostname_len;
+    memcpy(send_node_conn->my_hostname,
+           link_config->first_hostname,
+           first_hostname_len);
+    send_node_conn->other_hostname= copy_ptr;
+    copy_ptr+= second_hostname_len;
+    memcpy(send_node_conn->other_hostname,
+          link_config->second_hostname,
+          second_hostname_len);
+  }
+  else
+  {
+    send_node_conn->my_hostname= copy_ptr;
+    copy_ptr+= second_hostname_len;
+    memcpy(send_node_conn->my_hostname,
+           link_config->second_hostname,
+           second_hostname_len);
+    send_node_conn->other_hostname= copy_ptr;
+    copy_ptr+= first_hostname_len;
+    memcpy(send_node_conn->other_hostname,
+           link_config->first_hostname,
+           first_hostname_len);
+  }
+  if (link_config->server_node_id == my_node_id)
+  {
+    send_node_conn->my_port_number= copy_ptr;
+    copy_ptr+= server_port_len;
+    memcpy(send_node_conn->my_port_number,
+           server_port_str,
+           server_port_len);
+    if (client_port_len == 0)
+      send_node_conn->other_port_number= NULL;
+    else
+    {
+      send_node_conn->other_port_number= copy_ptr;
+      memcpy(send_node_conn->other_port_number,
+             client_port_str,
+             client_port_len);
+    }
+  }
+  else
+  {
+    send_node_conn->other_port_number= copy_ptr;
+    copy_ptr+= server_port_len;
+    memcpy(send_node_conn->other_port_number,
+           server_port_str,
+           server_port_len);
+    if (client_port_len == 0)
+      send_node_conn->my_port_number= NULL;
+    else
+    {
+      send_node_conn->my_port_number= copy_ptr;
+      memcpy(send_node_conn->my_port_number,
+             client_port_str,
+             client_port_len);
+    }
+  }
+  return 0;
 }
 
 /*
@@ -358,10 +459,14 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
         send_node_conn= cluster_comm->send_node_conn_array[node_id];
         g_assert(send_node_conn);
         /* We have found a node to connect to, start connect thread */
+        if ((error= set_hostname_and_port(send_node_conn,
+                                          link_config,
+                                          my_node_id)))
+          goto error;
         send_node_conn->apid_global= apid_global;
         send_node_conn->link_config= link_config;
-        send_node_conn->active_node_id= node_id;
         send_node_conn->my_node_id= my_node_id;
+        send_node_conn->other_node_id= node_id;
         send_node_conn->cluster_id= cluster_id;
         send_node_conn->max_wait_in_nanos=
                (IC_TIMER)link_config->socket_max_wait_in_nanos;
@@ -738,7 +843,7 @@ server_api_connect(void *data)
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
   return authenticate_server_connection(send_node_conn->conn,
                                         send_node_conn->my_node_id,
-                                        &send_node_conn->active_node_id);
+                                        &send_node_conn->other_node_id);
 }
 
 /*
@@ -753,7 +858,7 @@ client_api_connect(void *data)
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
   return authenticate_client_connection(send_node_conn->conn,
                                         send_node_conn->my_node_id,
-                                        send_node_conn->active_node_id);
+                                        send_node_conn->other_node_id);
 }
 
 /*
@@ -771,38 +876,20 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_CONNECTION *conn;
   IC_SOCKET_LINK_CONFIG *link_config;
   IC_LISTEN_SERVER_THREAD *listen_server_thread;
-  gchar server_port_buf[32], client_port_buf[32];
-  gchar *server_port_str, *client_port_str;
-  gchar *server_name, *client_name;
-  guint32 len;
   gboolean stop_ordered= FALSE;
   int ret_code= 0;
 
   if (is_client_part)
   {
     conn= send_node_conn->conn;
-    link_config= send_node_conn->link_config;
-    if (link_config->first_node_id == link_config->server_node_id)
-    {
-      server_name= link_config->first_hostname;
-      client_name= link_config->second_hostname;
-    }
-    else
-    {
-      server_name= link_config->second_hostname;
-      client_name= link_config->first_hostname;
-    }
-    server_port_str= ic_guint64_str(link_config->server_port_number,
-                                    server_port_buf, &len);
-    client_port_str= ic_guint64_str(link_config->client_port_number,
-                                    client_port_buf, &len);
-    if (!server_port_str || !client_port_str)
+    if (!send_node_conn->other_port_number ||
+        !send_node_conn->my_port_number)
       return IC_ERROR_INCONSISTENT_DATA;
     conn->conn_op.ic_prepare_client_connection(conn,
-                                               server_name,
-                                               server_port_str,
-                                               client_port_str,
-                                               client_name);
+                                         send_node_conn->other_hostname,
+                                         send_node_conn->other_port_number,
+                                         send_node_conn->my_hostname,
+                                         send_node_conn->my_port_number);
     conn->conn_op.ic_prepare_extra_parameters(
              conn,
              link_config->socket_maxseg_size,
@@ -932,9 +1019,7 @@ check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                  __attribute__ ((unused)) IC_CONNECTION *conn)
 {
   if (!send_node_conn->connection_up)
-  {
     return FALSE;
-  }
   else
     return TRUE;
 }
@@ -1118,8 +1203,8 @@ run_send_thread(void *data)
       if (listen_server_thread)
       {
         if (!send_conn->conn_op.ic_cmp_connection(listen_server_thread->conn,
-                                                  send_node_conn->hostname,
-                                                  send_node_conn->port_number))
+                                            send_node_conn->my_hostname,
+                                            send_node_conn->my_port_number))
         {
           send_node_conn->listen_server_thread= listen_server_thread;
           found= TRUE;
@@ -1151,8 +1236,8 @@ run_send_thread(void *data)
           break;
         listen_server_thread->conn->conn_op.ic_prepare_server_connection(
           listen_server_thread->conn,
-          send_node_conn->hostname,
-          send_node_conn->port_number,
+          send_node_conn->my_hostname,
+          send_node_conn->my_port_number,
           NULL, NULL, /* Any client can connect, we check after connect */
           0,          /* Default backlog */
           TRUE);      /* Retain listen socket */
@@ -1233,7 +1318,7 @@ static int
 start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   GError *error;
-  if (send_node_conn->my_node_id == send_node_conn->active_node_id)
+  if (send_node_conn->my_node_id == send_node_conn->other_node_id)
   {
     /*
       This is a local connection, we don't need to start a send thread
@@ -1271,22 +1356,6 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   return 0;
 }
 
-static int
-is_ds_conn_established(IC_DS_CONNECTION *ds_conn,
-                       gboolean *is_connected)
-{
-  IC_CONNECTION *conn= ds_conn->conn_obj;
-
-  *is_connected= FALSE;
-  if (conn->conn_op.ic_is_conn_thread_active(conn))
-    return 0;
-  *is_connected= TRUE;
-  if (conn->conn_op.ic_is_conn_connected(conn))
-    return 0;
-  return conn->conn_op.ic_get_error_code(conn);
-}
-
-                                          
 /*
   SEND MESSAGE MODULE
   -------------------

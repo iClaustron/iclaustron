@@ -2430,7 +2430,6 @@ analyse_key_value(guint32 *key_value, guint32 len,
   gboolean first= TRUE;
   gboolean first_data_server= TRUE;
   int error;
-  gboolean comm_section_exists= TRUE;
   guint32 pass, expected_sect_id;
   guint32 system_section= 0;
   guint32 first_comm_section= 0;
@@ -2486,11 +2485,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
           }
         } else if (sect_id == 1)
         {
-          if (first_comm_section == 0)
-          {
-            comm_section_exists= FALSE;
-            first_comm_section= system_section + 2;
-          }
+          PROTOCOL_CHECK_GOTO(first_comm_section != 0);
+          PROTOCOL_CHECK_GOTO(num_apis > 0);
           node_section= (value >> IC_CL_SECT_SHIFT);
           if (node_section >= first_comm_section && first_data_server)
           {
@@ -2590,7 +2586,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
                                             key_type, &key_value,
                                             value, hash_key)))
             goto error;
-        } else if ((sect_id == (system_section + 2)) && comm_section_exists)
+        } else if (sect_id == (system_section + 2))
         {
           /*
              This is the communication meta section. In communication
@@ -7854,7 +7850,7 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   else
   {
     /* Here we ensure that the requested node id is correct */
-    param->client_nodeid= 1;
+    param->client_nodeid= param->node_number;
   }
   if ((ret_code= send_get_nodeid_reply(conn, param->client_nodeid)) ||
       (ret_code= rec_get_config_req(conn, param->version_number)) ||
@@ -8192,16 +8188,17 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
         if (clu_conf->node_config[j])
         {
           /* iClaustron uses a fully connected cluster */
-          if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
-                clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
-                ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
-            continue;
-          /* We have found two nodes needing a comm section */
-          comm_section= get_comm_section(clu_conf, &test1, i, j);
-          len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section,
-                                      version_number);
-          num_comms++;
-          DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u", len));
+          if (clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
+              clu_conf->node_types[j] == IC_DATA_SERVER_NODE ||
+              ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
+          {
+            /* We have found two nodes needing a comm section */
+            comm_section= get_comm_section(clu_conf, &test1, i, j);
+            len+= get_length_of_section(IC_COMM_TYPE, (gchar*)comm_section,
+                                        version_number);
+            num_comms++;
+            DEBUG_PRINT(CONFIG_LEVEL, ("3: len=%u", len));
+          }
         }
       }
     }
@@ -8219,12 +8216,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   /*
    * Add one key-value pair for each comm section
    *   - This is meta section for communication
-   * If there is no communication section we will
-   * also remove the entry in section 0 about it.
    */
   len+= num_comms * 2;
-  if (!num_comms)
-    len-= 2;
   DEBUG_PRINT(CONFIG_LEVEL, ("5: len=%u", len));
   /* Finally add 1 word for checksum at the end */
   len+= 1;
@@ -8234,6 +8227,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
      Allocate memory for key-value pairs, this memory is only temporary for
      this method and its caller, so memory will be freed soon again
   */
+  if (!num_comms)
+    abort();
   if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
     return IC_ERROR_MEM_ALLOC;
   *key_value_array= loc_key_value_array;
@@ -8263,17 +8258,12 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
              2000);
   loc_key_value_array[5]= g_htonl(node_meta_section << IC_CL_SECT_SHIFT);
 
-  if (num_comms)
-  {
-    loc_key_value_array[6]= 
-      g_htonl((IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
-              (section_id << IC_CL_SECT_SHIFT) +
-              3000);
-    loc_key_value_array[7]= g_htonl(comm_meta_section << IC_CL_SECT_SHIFT);
-    loc_key_value_array_len= 8;
-  }
-  else
-    loc_key_value_array_len= 6;
+  loc_key_value_array[6]= 
+    g_htonl((IC_SECTION_TYPE << IC_CL_KEY_SHIFT) +
+            (section_id << IC_CL_SECT_SHIFT) +
+            3000);
+  loc_key_value_array[7]= g_htonl(comm_meta_section << IC_CL_SECT_SHIFT);
+  loc_key_value_array_len= 8;
 
   /*
     Fill Section 1
@@ -8291,9 +8281,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
     loc_key_value_array[loc_key_value_array_len++]=
               g_htonl((2+i) << IC_CL_SECT_SHIFT);
   }
-  data_server_section= comm_meta_section + num_comms;
-  if (num_comms)
-    data_server_section+= 1;
+  data_server_section= comm_meta_section + num_comms + 1;
   data_server_start_section= data_server_section;
   for (i= api_nodes; i < clu_conf->num_nodes; i++)
   {
@@ -8362,8 +8350,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
 
   DEBUG_PRINT(CONFIG_LEVEL,
     ("5: fill_len=%u", loc_key_value_array_len));
-  if (num_comms)
-    section_id++;
+  section_id++;
   /* Fill comm sections */
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
@@ -8374,21 +8361,22 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
         if (clu_conf->node_config[j])
         {
           /* iClaustron uses a fully connected cluster */
-          if ((!(clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
-               clu_conf->node_types[j] == IC_DATA_SERVER_NODE)) ||
-               ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
-            continue;
-          /* We have found two nodes needing a comm section */
-          comm_section= get_comm_section(clu_conf, &test1, i, j);
-          if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
-                                                (gchar*)comm_section,
-                                                section_id++,
-                                                loc_key_value_array,
-                                                &loc_key_value_array_len,
-                                                version_number)))
-            goto error;
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("6: fill_len=%u", loc_key_value_array_len));
+          if (clu_conf->node_types[i] == IC_DATA_SERVER_NODE ||
+              clu_conf->node_types[j] == IC_DATA_SERVER_NODE ||
+              ic_is_bit_set(version_number, IC_PROTOCOL_BIT))
+          {
+            /* We have found two nodes needing a comm section */
+            comm_section= get_comm_section(clu_conf, &test1, i, j);
+            if ((ret_code= fill_key_value_section(IC_COMM_TYPE,
+                                                  (gchar*)comm_section,
+                                                  section_id++,
+                                                  loc_key_value_array,
+                                                  &loc_key_value_array_len,
+                                                  version_number)))
+              goto error;
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("6: fill_len=%u", loc_key_value_array_len));
+          }
         }
       }
     }

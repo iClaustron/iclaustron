@@ -19,32 +19,7 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 
-struct ic_ds_connection;
-
-void ic_create_ds_connection(struct ic_ds_connection *conn);
-
-struct ic_ds_operations
-{
-  int (*ic_set_up_ds_connection) (struct ic_ds_connection *ds_conn);
-  int (*ic_close_ds_connection) (struct ic_ds_connection *ds_conn);
-  int (*ic_is_conn_established) (struct ic_ds_connection *ds_conn,
-                                 gboolean *is_established);
-  int (*ic_authenticate_connection) (void *conn_obj);
-};
-
-struct ic_ds_connection
-{
-  guint32 dest_node_id;
-  guint32 source_node_id;
-  guint32 socket_group;
-  struct ic_connection *conn_obj;
-  struct ic_ds_operations operations;
-};
-
-typedef struct ic_ds_connection IC_DS_CONNECTION;
-/*
-  Definitions used to handle NDB Protocol handling data structures.
-*/
+/* Definitions used to handle NDB Protocol handling data structures. */
 
 #define IC_MEM_BUF_SIZE 32768
 
@@ -208,10 +183,20 @@ struct ic_send_node_connection
 {
   /* A pointer to the global struct */
   struct ic_apid_global *apid_global;
-  /* Hostname of the connection used by this thread */
-  gchar *hostname;
-  /* Port number of connection used by thread */
-  gchar *port_number;
+  /* My hostname of the connection used by this thread */
+  gchar *my_hostname;
+  /* My port number of connection used by thread */
+  gchar *my_port_number;
+  /* Hostname on other side of the connection used by this thread */
+  gchar *other_hostname;
+  /* Port number of other side of connection used by thread */
+  gchar *other_port_number;
+  /*
+     Allocated string memory where strings for my_hostname,
+     other_hostname, my_port_number and other_port_number
+     are stored.
+  */
+  gchar *string_memory;
   /* The connection object */
   IC_CONNECTION *conn;
   /* For server connections this is the link to the listen server thread */
@@ -255,7 +240,7 @@ struct ic_send_node_connection
   */
   guint32 my_node_id;
   /* The node id in the cluster of the receiving end */
-  guint32 active_node_id;
+  guint32 other_node_id;
   /* The cluster id this connection is used in */
   guint32 cluster_id;
 

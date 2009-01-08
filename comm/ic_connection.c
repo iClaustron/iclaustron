@@ -1082,9 +1082,9 @@ free_socket_connection(IC_CONNECTION *ext_conn)
   if (!conn)
     return;
   close_socket_connection(ext_conn);
-  if (conn->client_addrinfo)
+  if (conn->ret_client_addrinfo)
     freeaddrinfo(conn->ret_client_addrinfo);
-  if (conn->server_addrinfo)
+  if (conn->ret_server_addrinfo)
     freeaddrinfo(conn->ret_server_addrinfo);
   destroy_timers(conn);
   destroy_mutexes(conn);

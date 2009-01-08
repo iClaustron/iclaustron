@@ -395,6 +395,7 @@ struct ic_socket_link_config
   gchar *second_hostname;
 
   guint64 mandatory_bits;
+
   guint32 socket_write_buffer_size;
   guint32 socket_read_buffer_size;
   guint32 socket_kernel_read_buffer_size;

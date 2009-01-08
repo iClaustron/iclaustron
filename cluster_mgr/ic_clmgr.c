@@ -80,13 +80,6 @@ report_error(IC_PARSE_DATA *parse_data, gchar *error_str)
 }
 
 static int
-translate_cluster_name(__attribute ((unused)) IC_STRING *cluster_name,
-                       __attribute ((unused)) guint64 *cluster_id)
-{
-  return IC_MAX_UINT32;
-}
-
-static int
 get_node_id(IC_PARSE_DATA *parse_data)
 {
   guint32 node_id;
