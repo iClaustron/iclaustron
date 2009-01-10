@@ -35,6 +35,10 @@ struct ic_int_connection
   gchar err_buf[128];
   IC_INT_CONNECTION *orig_conn;
   guint64 cpu_bindings;
+  GThread *thread;
+  /* stop_flag is used to flag to connect thread to quit */
+  gboolean stop_flag;
+
   GMutex *read_mutex;
   GMutex *write_mutex;
   GMutex *connect_mutex;

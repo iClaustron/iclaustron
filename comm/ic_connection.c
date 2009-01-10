@@ -112,12 +112,24 @@ is_mutex_conn_connected(IC_CONNECTION *ext_conn)
   return is_connected;
 }
 
+static void
+join_connect_thread(IC_INT_CONNECTION *conn, gboolean thread_active)
+{
+  if (!thread_active && conn->thread)
+  {
+    g_thread_join(conn->thread);
+    conn->thread= NULL;
+  }
+}
+
 /* Implements ic_is_conn_thread_active */
 static gboolean
 is_conn_thread_active(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  return conn->conn_stat.is_connect_thread_active;
+  gboolean thread_active= conn->conn_stat.is_connect_thread_active;
+  join_connect_thread(conn, thread_active);
+  return thread_active;
 }
 
 /* Implements ic_is_conn_thread_active */
@@ -129,6 +141,7 @@ is_mutex_conn_thread_active(IC_CONNECTION *ext_conn)
   g_mutex_lock(conn->connect_mutex);
   is_thread_active= conn->conn_stat.is_connect_thread_active;
   g_mutex_unlock(conn->connect_mutex);
+  join_connect_thread(conn, is_thread_active);
   return is_thread_active;
 }
 
@@ -310,29 +323,28 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
   addr_len= sizeof(client_address);
   DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s",
                            conn->conn_stat.server_ip_addr));
-  if (timeout_func != NULL)
+  do
   {
-    do
+    FD_SET(conn->listen_sockfd, &select_set);
+    select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
+    if (conn->stop_flag)
+      return IC_ERROR_CONNECT_THREAD_STOPPED;
+    if (!(FD_ISSET(conn->listen_sockfd, &select_set)))
     {
-      FD_SET(conn->listen_sockfd, &select_set);
-      select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
-      if (!(FD_ISSET(conn->listen_sockfd, &select_set)))
+      /*
+        Call timeout function, if return is non-zero we'll return with
+        a timeout error.
+      */
+      timer++;
+      if (timeout_func && timeout_func(timeout_obj, timer))
       {
-        /*
-          Call timeout function, if return is non-zero we'll return with
-          a timeout error.
-        */
-        timer++;
-        if (conn->timeout_func(timeout_obj, timer))
-        {
-          conn->error_code= IC_ERROR_ACCEPT_TIMEOUT;
-          return conn->error_code;
-        }
+        conn->error_code= IC_ERROR_ACCEPT_TIMEOUT;
+        return conn->error_code;
       }
-      else
-        break;
-    } while (1);
-  }
+    }
+    else
+      break;
+  } while (1);
   ret_sockfd= accept(conn->listen_sockfd,
                      (struct sockaddr *)&client_address,
                      &addr_len);
@@ -621,22 +633,25 @@ set_up_socket_connection(IC_CONNECTION *ext_conn,
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   GError *error= NULL;
+  GThread *thread;
+
   conn->timeout_func= timeout_func;
   conn->timeout_obj= timeout_obj;
   if (!conn->is_connect_thread_used)
     return int_set_up_socket_connection(conn);
 
-  if (!g_thread_create_full(run_set_up_socket_connection,
-                            (gpointer)conn,
-                            IC_SMALL_STACK_SIZE,  /* Stack size */
-                            TRUE,                 /* Joinable */
-                            TRUE,                 /* Bound */
-                            G_THREAD_PRIORITY_NORMAL,
-                            &error))
+  if (!(thread= g_thread_create_full(run_set_up_socket_connection,
+                               (gpointer)conn,
+                               IC_SMALL_STACK_SIZE,  /* Stack size */
+                               TRUE,                 /* Joinable */
+                               TRUE,                 /* Bound */
+                               G_THREAD_PRIORITY_NORMAL,
+                               &error)))
   {
     conn->error_code= 1;
     return 1; /* Should write proper error handling code here */
   }
+  conn->thread= thread;
   return 0;
 }
 
@@ -1081,6 +1096,12 @@ free_socket_connection(IC_CONNECTION *ext_conn)
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   if (!conn)
     return;
+  if (conn->thread)
+  {
+    conn->stop_flag= TRUE;
+    g_thread_join(conn->thread);
+    conn->thread= NULL;
+  }
   close_socket_connection(ext_conn);
   if (conn->ret_client_addrinfo)
     freeaddrinfo(conn->ret_client_addrinfo);

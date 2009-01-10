@@ -27,7 +27,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7035
+#define IC_LAST_ERROR 7036
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -111,6 +111,8 @@ ic_init_error_messages()
     "Failed to open file";
   ic_error_str[IC_ERROR_BOOTSTRAP_NEEDED - IC_FIRST_ERROR]=
     "Starting Cluster Server for the first time without bootstrap flag set";
+  ic_error_str[IC_ERROR_CONNECT_THREAD_STOPPED - IC_FIRST_ERROR]=
+    "Connect thread stopped";
 }
 
 void
