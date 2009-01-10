@@ -195,10 +195,13 @@ typedef struct ic_int_api_config_server IC_INT_API_CONFIG_SERVER;
   parameters that are set during start-up of the Cluster Server and
   cannot currently be changed in the middle of operation.
 */
+typedef struct ic_int_run_cluster_server IC_INT_RUN_CLUSTER_SERVER;
+
 #define IC_MAX_CLUSTER_SERVER_THREADS 4096
 struct ic_run_cluster_thread
 {
-  g_thread thread;
+  GThread *thread;
+  IC_INT_RUN_CLUSTER_SERVER *run_obj;
   gboolean stopped;
   gboolean free;
 };
@@ -213,7 +216,7 @@ struct ic_run_cluster_state
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
 
   IC_RUN_CLUSTER_THREAD thread_state[IC_MAX_CLUSTER_SERVER_THREADS];
-  guint32 max_thread_id;
+  guint32 max_thread_id_plus_one;
   guint32 cs_master_nodeid;
   guint32 config_version_number;
   guint32 num_cluster_servers;
@@ -235,11 +238,11 @@ struct ic_int_run_cluster_server
   guint32 cs_nodeid;
   const gchar *process_name;
   gboolean locked_configuration;
+  gboolean stop_flag;
   IC_CONFIG_ERROR err_obj;
   IC_CONFIG_STRUCT conf_server_struct;
   IC_CONFIG_STRUCT cluster_conf_struct;
 };
-typedef struct ic_int_run_cluster_server IC_INT_RUN_CLUSTER_SERVER;
 
 #define IC_SET_CONFIG_MAP(name, id) \
   if (name >= MAX_MAP_CONFIG_ID) \

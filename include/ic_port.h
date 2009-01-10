@@ -45,4 +45,6 @@ IC_TIMER ic_gethrtime();
 IC_TIMER ic_nanos_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 IC_TIMER ic_micros_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 IC_TIMER ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time);
+
+void ic_sleep(guint32 seconds_to_sleep);
 #endif

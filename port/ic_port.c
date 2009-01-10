@@ -112,6 +112,12 @@ ic_gethrtime()
   return timer;
 }
 
+void
+ic_sleep(guint32 seconds_to_sleep)
+{
+  sleep(seconds_to_sleep);
+}
+
 gchar *
 ic_calloc(size_t size)
 {
