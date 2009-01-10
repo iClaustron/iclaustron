@@ -37,6 +37,14 @@
 #define CONFIG_READ_BUF_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
 
+/*
+  Define stack sizes of our thread implementation, most of them are
+  really lightweight and 64 kBytes should be sufficient for our
+  means. 0 means default size which usually is around 1 MByte.
+*/
+#define IC_SMALL_STACK_SIZE (64 * 1024 + PTHREAD_STACK_MIN)
+#define IC_MEDIUM_STACK_SIZE 0
+
 #define ERROR_MESSAGE_SIZE 512
 #define IC_VERSION 0x000001
 #define MYSQL_VERSION 0x060401

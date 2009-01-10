@@ -204,9 +204,9 @@ int start_connection_loop()
       */
       if (!g_thread_create_full(run_command_handler,
                                 (gpointer)fork_conn,
-                                1024*32,      /* 32 kByte stack */
-                                FALSE,        /* Not joinable */
-                                FALSE,        /* Not bound */
+                                IC_SMALL_STACK_SIZE,   /* stack size */
+                                TRUE,                  /* Joinable */
+                                TRUE,                  /* Bound */
                                 G_THREAD_PRIORITY_NORMAL,
                                 &error))
       {

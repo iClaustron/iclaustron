@@ -1252,9 +1252,9 @@ run_send_thread(void *data)
         if (!(listen_server_thread->thread=
               g_thread_create_full(run_server_connect_thread,
                                   (gpointer)listen_server_thread,
-                                  16*1024, /* Stack size */
-                                  FALSE,   /* Not joinable */
-                                  FALSE,   /* Not bound */
+                                  IC_SMALL_STACK_SIZE, /* Stack size */
+                                  TRUE,                /* Joinable */
+                                  TRUE,                /* Bound */
                                   G_THREAD_PRIORITY_NORMAL,
                                   &error)))
         {
@@ -1337,9 +1337,9 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   if (!(send_node_conn->thread=
         g_thread_create_full(run_send_thread,
                              (gpointer)send_node_conn,
-                             16*1024, /* Stack size */
-                             FALSE,   /* Not joinable */
-                             FALSE,   /* Not bound */
+                             IC_SMALL_STACK_SIZE, /* Stack size */
+                             TRUE,                /* Joinable */
+                             TRUE,                /* Bound */
                              G_THREAD_PRIORITY_NORMAL,
                              &error)))
   {

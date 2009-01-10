@@ -7342,6 +7342,21 @@ rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *ext_run_obj,
                                      error_buffer);
 }
 
+static int
+check_rcs_threads(void *obj, int not_used)
+{
+  IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)obj;
+
+  g_mutex_lock(run_obj->state.protect_state);
+  for (i= 0; i <= run_obj->max_cluster_id; i++)
+  {
+    if (run_obj->state.thread_state[i].stopped)
+    {
+
+    }
+  }
+  g_mutex_unlock(run_obj->state.protect_state);
+}
 /* Implements ic_run_cluster_server method.  */
 static int
 run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
@@ -7439,9 +7454,9 @@ start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   conn->conn_op.ic_set_param(conn, (void*)run_obj);
   if (!g_thread_create_full(run_cluster_server_thread,
                             (gpointer)conn,
-                            1024*16, /* 16 kByte stack size */
-                            FALSE,   /* Not joinable        */
-                            FALSE,   /* Not bound           */
+                            IC_SMALL_STACK_SIZE, /* stack size */
+                            TRUE,                /* Joinable        */
+                            TRUE,                /* Bound           */
                             G_THREAD_PRIORITY_NORMAL,
                             &error))
   {

@@ -195,6 +195,15 @@ typedef struct ic_int_api_config_server IC_INT_API_CONFIG_SERVER;
   parameters that are set during start-up of the Cluster Server and
   cannot currently be changed in the middle of operation.
 */
+#define IC_MAX_CLUSTER_SERVER_THREADS 4096
+struct ic_run_cluster_thread
+{
+  g_thread thread;
+  gboolean stopped;
+  gboolean free;
+};
+typedef struct ic_run_cluster_thread IC_RUN_CLUSTER_THREAD;
+
 struct ic_run_cluster_state
 {
   IC_MEMORY_CONTAINER *mc_ptr;
@@ -203,6 +212,8 @@ struct ic_run_cluster_state
   gboolean cs_started;
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
 
+  IC_RUN_CLUSTER_THREAD thread_state[IC_MAX_CLUSTER_SERVER_THREADS];
+  guint32 max_thread_id;
   guint32 cs_master_nodeid;
   guint32 config_version_number;
   guint32 num_cluster_servers;

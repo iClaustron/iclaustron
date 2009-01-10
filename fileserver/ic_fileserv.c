@@ -90,9 +90,9 @@ start_file_server_thread(IC_APID_GLOBAL *apid_global)
   GError *error;
   if (!g_thread_create_full(run_file_server_thread,
                             (gpointer)apid_global,
-                            1024*1024,/* 1 MByte stack size */
-                            FALSE,    /* Not joinable */
-                            FALSE,    /* Not bound */
+                            IC_MEDIUM_STACK_SIZE, /* stack size */
+                            TRUE,                 /* Joinable */
+                            TRUE,                 /* Bound */
                             G_THREAD_PRIORITY_NORMAL,
                             &error))
     return IC_ERROR_MEM_ALLOC;

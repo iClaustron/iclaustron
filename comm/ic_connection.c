@@ -628,9 +628,9 @@ set_up_socket_connection(IC_CONNECTION *ext_conn,
 
   if (!g_thread_create_full(run_set_up_socket_connection,
                             (gpointer)conn,
-                            8192, /* Stack size */
-                            FALSE, /* Not joinable */
-                            FALSE, /* Not bound */
+                            IC_SMALL_STACK_SIZE,  /* Stack size */
+                            TRUE,                 /* Joinable */
+                            TRUE,                 /* Bound */
                             G_THREAD_PRIORITY_NORMAL,
                             &error))
   {
