@@ -7353,8 +7353,10 @@ static int
 run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
+  IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
   int ret_code= 0;
   guint32 index;
+  guint32 thread_id;
   IC_CONNECTION *conn, *fork_conn;
   DEBUG_ENTRY("run_cluster_server");
 
@@ -7382,11 +7384,10 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   }
   do
   {
-    check_for_stopped_rcs_threads((void*)run_obj, 0);
-    while (find_rcs_thread(run_obj, &index))
+    while (tp_state.tp_ops.ic_threadpool_get_thread_id(tp_state, &thread_id))
     {
       ic_sleep(1); /* Sleep one second waiting for a thread to finish */
-      check_for_stopped_rcs_threads((void*)run_obj, 0);
+      tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
     }
     if ((ret_code= conn->conn_op.ic_accept_connection(conn,
                                         check_for_stopped_rcs_threads,
@@ -7487,14 +7488,14 @@ run_cluster_server_thread(gpointer data)
   int error, error_line;
   gboolean handled_request;
   int state= INITIAL_STATE;
-  IC_RUN_CLUSTER_THREAD *thread_state;
+  IC_THREAD_STATE *thread_state;
   IC_RC_PARAM param;
 
-  thread_state= (IC_RUN_CLUSTER_THREAD*)conn->conn_op.ic_get_param(conn);
+  thread_state= (IC_THREAD_STATE*)conn->conn_op.ic_get_param(conn);
   run_obj= thread_state->run_obj;
 
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) &&
-         !run_obj->stop_flag)
+         !thread_state->stop_flag)
   {
     switch (state)
     {
@@ -7606,9 +7607,7 @@ run_cluster_server_thread(gpointer data)
   DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
 end:
    conn->conn_op.ic_free_connection(conn);
-   g_mutex_lock(run_obj->state.protect_state);
-   thread_state->stopped= TRUE;
-   g_mutex_unlock(run_obj->state.protect_state);
+   ic_threadpool_thread_stops(thread_state, run_obj->state.protect_state);
   return NULL;
 
 error:
@@ -7616,76 +7615,6 @@ error:
   printf("Protocol error line %d\n", error_line);
   printf("Protocol message: %s\n", read_buf);
   goto end;
-}
-
-static void
-free_run_cluster_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                        guint32 index)
-{
-  run_obj->state.thread_state[index].free= TRUE;
-  run_obj->state.thread_state[index].thread= NULL;
-  if (index == (run_obj->state.max_thread_id_plus_one - 1))
-    run_obj->state.max_thread_id_plus_one--;
-
-}
-
-static int
-find_rcs_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj, guint32 *index)
-{
-  IC_RUN_CLUSTER_THREAD *thread_state;
-  guint32 i;
-
-  g_mutex_lock(run_obj->state.protect_state);
-  for (i= 0; i < run_obj->state.max_thread_id_plus_one; i++)
-  {
-    thread_state= &run_obj->state.thread_state[i];
-    if (thread_state->free)
-    {
-      *index= i;
-      goto end;
-    }
-  }
-  if (run_obj->state.max_thread_id_plus_one < IC_MAX_CLUSTER_SERVER_THREADS)
-  {
-    *index= run_obj->state.max_thread_id_plus_one;
-    run_obj->state.max_thread_id_plus_one++;
-    thread_state= &run_obj->state.thread_state[*index];
-    goto end;
-  }
-  else
-    goto error;
-end:
-  thread_state->free= FALSE;
-  g_mutex_unlock(run_obj->state.protect_state);
-  return 0;
-error:
-  g_mutex_unlock(run_obj->state.protect_state);
-  return 1;
-}
-
-static int
-check_for_stopped_rcs_threads(void *obj, int not_used)
-{
-  IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)obj;
-  IC_RUN_CLUSTER_THREAD *thread_state;
-  guint32 i;
-
-  (void) not_used;
-  g_mutex_lock(run_obj->state.protect_state);
-  for (i= 0; i < run_obj->state.max_thread_id_plus_one; i++)
-  {
-    thread_state= &run_obj->state.thread_state[i];
-    if (thread_state->stopped)
-    {
-      thread_state->stopped= FALSE;
-      g_mutex_unlock(run_obj->state.protect_state);
-      g_thread_join(thread_state->thread);
-      g_mutex_lock(run_obj->state.protect_state);
-      free_run_cluster_thread(run_obj, i);
-    }
-  }
-  g_mutex_unlock(run_obj->state.protect_state);
-  return 0;
 }
 
 /* Check for configuration request, possible in multiple states */

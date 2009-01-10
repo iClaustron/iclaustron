@@ -215,8 +215,6 @@ struct ic_run_cluster_state
   gboolean cs_started;
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
 
-  IC_RUN_CLUSTER_THREAD thread_state[IC_MAX_CLUSTER_SERVER_THREADS];
-  guint32 max_thread_id_plus_one;
   guint32 cs_master_nodeid;
   guint32 config_version_number;
   guint32 num_cluster_servers;
@@ -231,6 +229,9 @@ struct ic_int_run_cluster_server
   IC_RUN_CLUSTER_SERVER_OPERATIONS run_op;
   struct ic_cluster_config *conf_objects[IC_MAX_CLUSTER_ID];
   IC_RUN_CLUSTER_STATE state;
+
+  IC_THREADPOOL_STATE *tp_state;
+
   IC_CONNECTION *conn;
   IC_STRING *config_dir;
   guint32 max_cluster_id;

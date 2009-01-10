@@ -27,7 +27,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7036
+#define IC_LAST_ERROR 7038
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -113,6 +113,10 @@ ic_init_error_messages()
     "Starting Cluster Server for the first time without bootstrap flag set";
   ic_error_str[IC_ERROR_CONNECT_THREAD_STOPPED - IC_FIRST_ERROR]=
     "Connect thread stopped";
+  ic_error_str[IC_ERROR_THREADPOOL_FULL - IC_FIRST_ERROR]=
+    "Threadpool is full";
+  ic_error_str[IC_ERROR_START_THREAD_FAILED - IC_FIRST_ERROR]=
+    "Start thread failed";
 }
 
 void

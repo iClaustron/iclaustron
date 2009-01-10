@@ -72,9 +72,7 @@ AC_CONFIG_FILES([Makefile scripts/Makefile include/Makefile port/Makefile util/M
 AC_CONFIG_FILES([bootstrap.sh], [chmod +x bootstrap.sh])
 AC_CONFIG_FILES([setup.sh], [chmod +x setup.sh])
 AC_CONFIG_FILES([count_line.sh], [chmod +x count_line.sh])
-AC_CONFIG_FILES([scripts/linux_check_process.sh], [chmod +x scripts/linux_check_process.sh])
-AC_CONFIG_FILES([scripts/macosx_check_process.sh], [chmod +x scripts/macosx_check_process.sh])
-AC_CONFIG_FILES([scripts/solaris_check_process.sh], [chmod +x scripts/solaris_check_process.sh])
+AC_CONFIG_FILES([scripts/check_process.sh], [chmod +x scripts/check_process.sh])
 AC_CONFIG_FILES([scripts/windows_check_process.sh], [chmod +x scripts/windows_check_process.sh])
 
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
@@ -90,7 +88,7 @@ AC_CHECK_LIB(rt, clock_gettime,
    AC_DEFINE(HAVE_CLOCK_GETTIME, 1,
              [Define HAVE_CLOCK_GETTIME if clock_gettime function exists])])
 
-case "$target_os"
+case "$target_os" in
   *Linux* | *linux* )
     AC_DEFINE(LINUX, 1,
               [Define LINUX when OS is Linux])

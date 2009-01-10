@@ -31,4 +31,5 @@ include_HEADERS = hashtable.h \
                   ic_poll_set.h \
                   ic_port.h \
                   ic_sock_buf.h \
-		  ic_string.h
+		  ic_string.h \
+		  ic_threadpool.h

@@ -13,21 +13,27 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#ifndef IC_COMMON_H
-#define IC_COMMON_H
-#include <ic_common_header.h>
-#include <ic_string.h>
-#include <ic_port.h>
-#include <ic_bitmap.h>
-#include <ic_mc.h>
-#include <ic_dyn_array.h>
-#include <ic_poll_set.h>
-#include <ic_threadpool.h>
-#include <ic_err.h>
-#include <ic_debug.h>
-#include <ic_connection.h>
-#include <ic_sock_buf.h>
-#include <ic_base64.h>
-#include <ic_config_reader.h>
-#include <hashtable.h>
-#endif
+#define IC_MAX_WAIT_THREADPOOL_STOP 30
+typedef struct ic_int_threadpool_state IC_INT_THREADPOOL_STATE;
+typedef struct ic_int_thread_state IC_INT_THREAD_STATE;
+
+struct ic_int_thread_state
+{
+  IC_THREAD_STATE_OPS ts_ops;
+  guint32 stop_flag;
+  guint32 stopped;
+  guint32 free;
+  guint32 not_used;
+  GThread *thread;
+  IC_INT_THREADPOOL_STATE *tp_state;
+};
+
+struct ic_int_threadpool_state
+{
+  IC_THREADPOOL_OPS tp_ops;
+  guint32 max_thread_id_plus_one;
+  guint32 threadpool_size;
+  GMutex *mutex;
+  IC_INT_THREAD_STATE **thread_state;
+  gchar *thread_state_allocation;
+};
