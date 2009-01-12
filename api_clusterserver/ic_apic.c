@@ -7174,9 +7174,9 @@ struct ic_rc_param
 };
 typedef struct ic_rc_param IC_RC_PARAM;
 
-static int start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                                       IC_CONNECTION *conn,
-                                       guint32 index);
+static int start_cluster_server_thread(IC_CONNECTION *conn,
+                                       IC_THREADPOOL_STATE *tp_state,
+                                       guint32 thread_id);
 static gpointer run_cluster_server_thread(gpointer data);
 
 static int check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -7187,10 +7187,7 @@ static int check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                int *state,
                                gboolean *handled_request);
 
-static int find_rcs_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj, guint32 *index);
 static int check_for_stopped_rcs_threads(void *obj, int not_used);
-static void free_run_cluster_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                                    guint32 index);
 
 static int handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                    IC_CONNECTION *conn);
@@ -7348,6 +7345,15 @@ rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *ext_run_obj,
                                      error_buffer);
 }
 
+static int
+check_for_stopped_rcs_threads(void *object, int not_used)
+{
+  IC_THREADPOOL_STATE *tp_state= (IC_THREADPOOL_STATE*)object;
+  (void) not_used;
+
+  tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
+  return 0;
+}
 /* Implements ic_run_cluster_server method.  */
 static int
 run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
@@ -7355,7 +7361,6 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
   IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
   int ret_code= 0;
-  guint32 index;
   guint32 thread_id;
   IC_CONNECTION *conn, *fork_conn;
   DEBUG_ENTRY("run_cluster_server");
@@ -7384,7 +7389,9 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   }
   do
   {
-    while (tp_state.tp_ops.ic_threadpool_get_thread_id(tp_state, &thread_id))
+    while (tp_state->tp_ops.ic_threadpool_get_thread_id(tp_state,
+                                                        (void*)run_obj,
+                                                        &thread_id))
     {
       ic_sleep(1); /* Sleep one second waiting for a thread to finish */
       tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
@@ -7407,7 +7414,9 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       ("Failed to fork a new connection from an accepted connection"));
       goto error;
     }
-    if ((ret_code= start_cluster_server_thread(run_obj, fork_conn, index)))
+    if ((ret_code= start_cluster_server_thread(fork_conn,
+                                               tp_state,
+                                               thread_id)))
     {
       DEBUG_PRINT(THREAD_LEVEL,
         ("Start new thread to handle configuration request failed"));
@@ -7445,36 +7454,24 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 
 /* Start a new Cluster Server thread */
 static int
-start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                            IC_CONNECTION *conn,
-                            guint32 index)
+start_cluster_server_thread(IC_CONNECTION *conn,
+                            IC_THREADPOOL_STATE *tp_state,
+                            guint32 thread_id)
 {
-  GError *error= NULL;
-  int ret_code= 0;
-  GThread *thread;
-  IC_RUN_CLUSTER_THREAD *thread_state= &run_obj->state.thread_state[index];
+  int error;
+  IC_THREAD_STATE *thread_state;
   DEBUG_ENTRY("start_cluster_server_thread");
 
+  thread_state= tp_state->tp_ops.ic_threadpool_get_thread_state(
+       tp_state, thread_id);
   conn->conn_op.ic_set_param(conn, (void*)thread_state);
-  g_mutex_lock(run_obj->state.protect_state);
-  thread= g_thread_create_full(run_cluster_server_thread,
-                            (gpointer)conn,
-                            IC_SMALL_STACK_SIZE, /* stack size */
-                            TRUE,                /* Joinable        */
-                            TRUE,                /* Bound           */
-                            G_THREAD_PRIORITY_NORMAL,
-                            &error);
-  if (thread)
-  {
-    run_obj->state.thread_state[index].thread= thread;
-  }
-  else
-  {
-    free_run_cluster_thread(run_obj, index);
-    ret_code= 1;
-  }
-  g_mutex_unlock(run_obj->state.protect_state);
-  DEBUG_RETURN(ret_code);
+  error= tp_state->tp_ops.ic_threadpool_start_thread(
+                                              tp_state,
+                                              thread_id,
+                                              run_cluster_server_thread,
+                                              conn,
+                                              IC_SMALL_STACK_SIZE);
+  DEBUG_RETURN(error);
 }
 
 /* Run a Cluster Server thread */
@@ -7492,7 +7489,7 @@ run_cluster_server_thread(gpointer data)
   IC_RC_PARAM param;
 
   thread_state= (IC_THREAD_STATE*)conn->conn_op.ic_get_param(conn);
-  run_obj= thread_state->run_obj;
+  run_obj= (IC_INT_RUN_CLUSTER_SERVER*)thread_state->object;
 
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) &&
          !thread_state->stop_flag)
@@ -7607,7 +7604,7 @@ run_cluster_server_thread(gpointer data)
   DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
 end:
    conn->conn_op.ic_free_connection(conn);
-   ic_threadpool_thread_stops(thread_state, run_obj->state.protect_state);
+   thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 
 error:

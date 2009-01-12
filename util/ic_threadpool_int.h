@@ -20,6 +20,7 @@ typedef struct ic_int_thread_state IC_INT_THREAD_STATE;
 struct ic_int_thread_state
 {
   IC_THREAD_STATE_OPS ts_ops;
+  void *object;
   guint32 stop_flag;
   guint32 stopped;
   guint32 free;

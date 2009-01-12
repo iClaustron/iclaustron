@@ -28,6 +28,7 @@ typedef struct ic_thread_state_ops IC_THREAD_STATE_OPS;
 struct ic_thread_state
 {
   IC_THREAD_STATE_OPS ts_ops;
+  void *object;
   guint32 stop_flag;
 };
 
@@ -38,7 +39,11 @@ struct ic_threadpool_ops
                                       GThreadFunc thread_func,
                                       gpointer thread_obj,
                                       gulong stack_size);
+  IC_THREAD_STATE* (*ic_threadpool_get_thread_state)
+                                      (IC_THREADPOOL_STATE *tp_state,
+                                       guint32 thread_id);
   int  (*ic_threadpool_get_thread_id) (IC_THREADPOOL_STATE *tp_state,
+                                       void *object,
                                        guint32 *thread_id);
   void (*ic_threadpool_check_threads) (IC_THREADPOOL_STATE *tp_state);
   void (*ic_threadpool_stop) (IC_THREADPOOL_STATE *tp_state);
