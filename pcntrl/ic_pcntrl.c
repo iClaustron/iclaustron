@@ -59,6 +59,7 @@ static IC_STRING glob_base_dir_string;
 static IC_STRING glob_ic_base_dir_string;
 static IC_STRING glob_mysql_base_dir_string;
 GMutex *action_loop_lock= NULL;
+static IC_THREADPOOL_STATE *glob_tp_state;
 
 static GOptionEntry entries[] = 
 {
@@ -113,8 +114,11 @@ run_command_handler(gpointer data)
   GPid child_pid;
   gchar *arg_str;
   int ret_code;
+  IC_THREAD_STATE *thread_state;
 
   memset(arg_vector, 0, 4*sizeof(gchar*));
+  thread_state= conn->conn_op.ic_get_param(conn);
+
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (read_size == 0)
@@ -152,6 +156,7 @@ run_command_handler(gpointer data)
   printf("Anrop gjort child_pid = %d\n", child_pid);
   ic_send_with_cr(conn, "Ok");
   conn->conn_op.ic_free_connection(conn);
+  thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 mem_error:
 
@@ -161,15 +166,17 @@ mem_error:
       ic_free(arg_vector[i]);
   }
   conn->conn_op.ic_free_connection(conn);
+  thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
 
 int start_connection_loop()
 {
   int ret_code;
+  guint32 thread_id;
   IC_CONNECTION *conn= NULL;
   IC_CONNECTION *fork_conn;
-  GError *error= NULL;
+  IC_THREAD_STATE *thread_state;
 
   conn->conn_op.ic_prepare_server_connection(conn,
                                              glob_ip,
@@ -185,6 +192,7 @@ int start_connection_loop()
   {
     do
     {
+      glob_tp_state->tp_ops.ic_threadpool_check_threads(glob_tp_state);
       /* Wait for someone to connect to us. */
       if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
       {
@@ -202,13 +210,20 @@ int start_connection_loop()
         We have an active connection, we'll handle the connection in a
         separate thread.
       */
-      if (!g_thread_create_full(run_command_handler,
-                                (gpointer)fork_conn,
-                                IC_SMALL_STACK_SIZE,   /* stack size */
-                                TRUE,                  /* Joinable */
-                                TRUE,                  /* Bound */
-                                G_THREAD_PRIORITY_NORMAL,
-                                &error))
+      if ((!(ret_code= glob_tp_state->tp_ops.ic_threadpool_get_thread_id(
+                 glob_tp_state,
+                 NULL,
+                 &thread_id))) ||
+          (!(thread_state=
+              glob_tp_state->tp_ops.ic_threadpool_get_thread_state(
+                 glob_tp_state, thread_id))) ||
+          (conn->conn_op.ic_set_param(conn, (void*)thread_state), FALSE) ||
+          (!(glob_tp_state->tp_ops.ic_threadpool_start_thread(
+                 glob_tp_state,
+                 thread_id,
+                 run_command_handler,
+                 fork_conn,
+                 IC_SMALL_STACK_SIZE))))
       {
         printf("Failed to create thread after forking accept connection\n");
         fork_conn->conn_op.ic_free_connection(fork_conn);
@@ -230,6 +245,9 @@ int main(int argc, char *argv[])
            "- iClaustron Control Server")))
     return ret_code;
   ret_code= 1;
+  if (!(glob_tp_state=
+        ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+    return IC_ERROR_MEM_ALLOC;
   /*
     First step is to set-up path to where the binaries reside. All binaries
     we control will reside under this directory. Under this directory the
@@ -271,6 +289,7 @@ int main(int argc, char *argv[])
   */
   ret_code= start_connection_loop();
 error:
+  glob_tp_state->tp_ops.ic_threadpool_stop(glob_tp_state);
   ic_free(glob_base_dir_string.str);
   return ret_code;
 }

@@ -6781,6 +6781,8 @@ static int
 stop_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
+
+  run_obj->tp_state->tp_ops.ic_threadpool_stop(run_obj->tp_state);
   return unlock_cv_file(run_obj);
 }
 
@@ -7254,9 +7256,12 @@ ic_create_run_cluster(IC_STRING *config_dir,
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   IC_CONNECTION *conn;
   IC_MEMORY_CONTAINER *mc_ptr;
+  IC_THREADPOOL_STATE *tp_state;
   DEBUG_ENTRY("ic_create_run_cluster");
 
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    goto error;
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
     goto error;
   if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_RUN_CLUSTER_SERVER))))
@@ -7280,6 +7285,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
   run_obj->num_clusters= 0;
   run_obj->err_obj.err_num= 0;
   run_obj->err_obj.line_number= 0;
+  run_obj->tp_state= tp_state;
 
   /* Create the socket object for the Cluster Server */
   if (!(run_obj->conn= ic_create_socket_object(
@@ -7310,6 +7316,8 @@ ic_create_run_cluster(IC_STRING *config_dir,
 error:
   if (mc_ptr)
   {
+    if (tp_state)
+      tp_state->tp_ops.ic_threadpool_stop(tp_state);
     if (run_obj)
     {
       if (run_obj->state.protect_state)
