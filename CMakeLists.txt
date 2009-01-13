@@ -269,15 +269,15 @@ endif (WIN32)
 set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${MATH_LIB})
 
 message("Checking for MSG_NOSIGNAL in this platform")
-try_compile(USE_MSG_NO_SIGNAL
+try_compile(USE_MSG_NOSIGNAL
             ${PROJECT_BINARY_DIR}/tmp
             ${PROJECT_SOURCE_DIR}/build_test/test_msg_no_signal.c)
-if (USE_MSG_NO_SIGNAL)
-  message("Found MSG_NO_SIGNAL support")
+if (USE_MSG_NOSIGNAL)
+  message("Found MSG_NOSIGNAL support")
   add_definitions(-DUSE_MSG_NOSIGNAL)
-else (USE_MSG_NO_SIGNAL)
-  message("No MSG_NO_SIGNAL support")
-endif (USE_MSG_NO_SIGNAL)
+else (USE_MSG_NOSIGNAL)
+  message("No MSG_NOSIGNAL support")
+endif (USE_MSG_NOSIGNAL)
 
 if (NOT WIN32 AND WITH_DTRACE)
   message("Checking for DTrace")
