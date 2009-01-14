@@ -550,7 +550,8 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
         if (send_node_conn)
         {
           g_mutex_lock(send_node_conn->mutex);
-          if (!send_node_conn->send_thread_ended)
+          if (send_node_conn->thread &&
+              !send_node_conn->send_thread_ended)
           {
             if (stop_ordered)
               send_node_conn->stop_ordered= TRUE;
@@ -584,9 +585,11 @@ IC_APID_GLOBAL*
 ic_connect_apid_global(IC_API_CONFIG_SERVER *apic)
 {
   IC_APID_GLOBAL *apid_global;
+  int error;
+
   if (!(apid_global= ic_init_apid(apic)))
     return NULL;
-  if (!(ic_apid_global_connect(apid_global)))
+  if ((error= ic_apid_global_connect(apid_global)))
   {
     ic_end_apid(apid_global);
     return NULL;

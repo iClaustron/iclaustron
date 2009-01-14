@@ -205,7 +205,10 @@ struct ic_send_node_connection
   /* The configuration for this connection */
   IC_SOCKET_LINK_CONFIG *link_config;
 
-  /* Thread data for send thread (id and state) */
+  /*
+     Thread data for send thread, presence of thread_state set to
+     non-NULL value also indicates thread has started.
+  */
   GThread *thread;
   IC_THREAD_STATE *thread_state;
   guint32 thread_id;

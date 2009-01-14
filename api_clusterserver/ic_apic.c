@@ -6781,9 +6781,10 @@ static int
 stop_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
+  DEBUG_ENTRY("stop_cluster_server");
 
   run_obj->tp_state->tp_ops.ic_threadpool_stop(run_obj->tp_state);
-  return unlock_cv_file(run_obj);
+  DEBUG_RETURN(unlock_cv_file(run_obj));
 }
 
 static int
@@ -7362,6 +7363,7 @@ check_for_stopped_rcs_threads(void *object, int not_used)
   tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
   return 0;
 }
+
 /* Implements ic_run_cluster_server method.  */
 static int
 run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
@@ -7406,7 +7408,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     }
     if ((ret_code= conn->conn_op.ic_accept_connection(conn,
                                         check_for_stopped_rcs_threads,
-                                        (void*)run_obj)))
+                                        (void*)tp_state)))
     {
       DEBUG_PRINT(COMM_LEVEL,
         ("Failed to accept a new connection"));
