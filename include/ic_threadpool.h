@@ -45,6 +45,8 @@ struct ic_threadpool_ops
   int  (*ic_threadpool_get_thread_id) (IC_THREADPOOL_STATE *tp_state,
                                        void *object,
                                        guint32 *thread_id);
+  void (*ic_threadpool_join) (IC_THREADPOOL_STATE *tp_state,
+                              guint32 thread_id);
   void (*ic_threadpool_check_threads) (IC_THREADPOOL_STATE *tp_state);
   void (*ic_threadpool_stop) (IC_THREADPOOL_STATE *tp_state);
 };

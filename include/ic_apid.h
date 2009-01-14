@@ -145,11 +145,12 @@ struct ic_listen_server_thread
 {
   IC_CONNECTION *conn;
   guint32 cluster_id;
+  guint32 thread_id;
   gboolean started;
   gboolean stop_ordered;
   GMutex *mutex;
   GCond *cond;
-  GThread *thread;
+  IC_THREAD_STATE *thread_state;
   GList *first_send_node_conn;
 };
 typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
@@ -204,8 +205,10 @@ struct ic_send_node_connection
   /* The configuration for this connection */
   IC_SOCKET_LINK_CONFIG *link_config;
 
-  /* Thread data structure for send thread */
+  /* Thread data for send thread (id and state) */
   GThread *thread;
+  IC_THREAD_STATE *thread_state;
+  guint32 thread_id;
   /* Mutex protecting this struct */
   GMutex *mutex;
   /* Condition used to wake up send thread when it's needed */
@@ -282,6 +285,7 @@ struct ic_grid_comm
 typedef struct ic_grid_comm IC_GRID_COMM;
 
 #define MAX_SERVER_PORTS_LISTEN 256
+#define IC_MAX_RECEIVE_THREADS 64
 struct ic_apid_global
 {
   IC_SOCK_BUF *mem_buf_pool;
@@ -289,6 +293,8 @@ struct ic_apid_global
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_bitmap;
+  IC_THREADPOOL_STATE *rec_thread_pool;
+  IC_THREADPOOL_STATE *send_thread_pool;
   GMutex *thread_id_mutex;
   GMutex *mutex;
   GCond *cond;

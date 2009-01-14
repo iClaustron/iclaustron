@@ -180,6 +180,28 @@ stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
   free_threadpool(tp_state);
 }
 
+static void
+join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
+{
+  IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
+  IC_INT_THREAD_STATE *thread_state;
+
+  g_mutex_lock(tp_state->mutex);
+  thread_state= tp_state->thread_state[thread_id];
+  if (!thread_state)
+    abort();
+  g_assert(!thread_state->free);
+  g_mutex_unlock(tp_state->mutex);
+  g_thread_join(thread_state->thread);
+  g_mutex_lock(tp_state->mutex);
+  g_assert(thread_state->stopped);
+  free_thread(thread_state,
+              &tp_state->max_thread_id_plus_one,
+              thread_id);
+  thread_state->stopped= FALSE;
+  g_mutex_unlock(tp_state->mutex);
+}
+
 static IC_THREAD_STATE*
 get_thread_state(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 {
@@ -228,6 +250,7 @@ ic_create_threadpool(guint32 pool_size)
   tp_state->tp_ops.ic_threadpool_start_thread= start_thread;
   tp_state->tp_ops.ic_threadpool_get_thread_id= get_thread_id;
   tp_state->tp_ops.ic_threadpool_get_thread_state= get_thread_state;
+  tp_state->tp_ops.ic_threadpool_join= join_thread;
   tp_state->tp_ops.ic_threadpool_check_threads= check_threads;
   tp_state->tp_ops.ic_threadpool_stop= stop_threadpool;
 

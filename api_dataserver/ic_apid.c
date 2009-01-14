@@ -32,14 +32,18 @@
   thread, but could potentially have up to one thread per node connection.
   The important part here is that each connection is always mapped to one
   and only one receiver thread. One receiver thread can however handle one
-  or many socket connections.
+  or many socket connections. The receive threads share a thread pool to
+  make sure we can control the use of CPU cores and memory allocation for
+  receive threads.
 
   2. Send threads
   ---------------
   Each socket connection also has a send part, there is a one-to-one mapping
   between send threads and socket connections. The send thread is responsible
   for the connection set-up and tear-down, for server connections it is
-  assisted in this responsibility by the listen server threads.
+  assisted in this responsibility by the listen server threads. The send
+  threads and the connect threads share another thread pool to control its
+  use of CPU cores and memory allocation.
 
   3. Connect threads (listen server threads)
   ------------------------------------------
@@ -191,6 +195,11 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
 
   if (!(apid_global= (IC_APID_GLOBAL*)ic_calloc(sizeof(IC_APID_GLOBAL))))
     return NULL;
+  if (!(apid_global->rec_thread_pool= ic_create_threadpool(IC_MAX_RECEIVE_THREADS)))
+    goto error;
+  if (!(apid_global->send_thread_pool= ic_create_threadpool(
+                        IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+    goto error;
   apid_global->apic= apic;
   apid_global->num_receive_threads= 1;
   if (!(apid_global->grid_comm=
@@ -279,6 +288,11 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
 
   if (!apid_global)
     return;
+  if (apid_global->rec_thread_pool)
+    apid_global->rec_thread_pool->tp_ops.ic_threadpool_stop(apid_global->rec_thread_pool);
+  if (apid_global->send_thread_pool)
+    apid_global->send_thread_pool->tp_ops.ic_threadpool_stop(
+                  apid_global->send_thread_pool);
   if (apid_global->cluster_bitmap)
     ic_free_bitmap(apid_global->cluster_bitmap);
   if (mem_buf_pool)
@@ -877,6 +891,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_SOCKET_LINK_CONFIG *link_config;
   IC_LISTEN_SERVER_THREAD *listen_server_thread;
   gboolean stop_ordered= FALSE;
+  IC_THREADPOOL_STATE *tp_state;
   int ret_code= 0;
 
   if (is_client_part)
@@ -956,8 +971,9 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
           */
           listen_server_thread->stop_ordered= TRUE;
           g_cond_signal(listen_server_thread->cond);
-          g_mutex_unlock(listen_server_thread->mutex);
-          g_thread_join(listen_server_thread->thread);
+          tp_state= send_node_conn->apid_global->send_thread_pool;
+          tp_state->tp_ops.ic_threadpool_join(tp_state,
+                                              listen_server_thread->thread_id);
           close_listen_server_thread(listen_server_thread);
         }
         else
@@ -1010,7 +1026,8 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread)
     listen_server_thread->mutex= NULL;
     listen_server_thread->cond= NULL;
     listen_server_thread->first_send_node_conn= NULL;
-    listen_server_thread->thread= NULL;
+    listen_server_thread->thread_state= NULL;
+    listen_server_thread->thread_id= IC_MAX_UINT32;
   }
 }
 
@@ -1032,6 +1049,7 @@ run_server_connect_thread(void *data)
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
   gboolean stop_ordered, found;
+  IC_THREAD_STATE *thread_state= listen_server_thread->thread_state;
   int ret_code;
 
   g_mutex_lock(listen_server_thread->mutex);
@@ -1043,6 +1061,7 @@ run_server_connect_thread(void *data)
   if (ret_code)
   {
     g_mutex_unlock(listen_server_thread->mutex);
+    thread_state->ts_ops.ic_thread_stops(thread_state);
     return NULL;
   }
   g_cond_wait(listen_server_thread->cond, listen_server_thread->mutex);
@@ -1160,7 +1179,7 @@ run_send_thread(void *data)
   guint32 i, listen_inx;
   IC_CONNECTION *send_conn;
   IC_APID_GLOBAL *apid_global;
-  GError *error= NULL;
+  IC_THREADPOOL_STATE *send_tp;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
   /*
@@ -1196,6 +1215,7 @@ run_send_thread(void *data)
       mode, so we don't need to protect things through mutexes.
     */
     apid_global= send_node_conn->apid_global;
+    send_tp= apid_global->send_thread_pool;
     send_conn= send_node_conn->conn;
     for (i= 0; i < apid_global->max_listen_server_threads; i++)
     {
@@ -1249,14 +1269,21 @@ run_send_thread(void *data)
               g_list_prepend(NULL, (void*)send_node_conn)))
           break;
         g_mutex_lock(listen_server_thread->mutex);
-        if (!(listen_server_thread->thread=
-              g_thread_create_full(run_server_connect_thread,
+        if ((ret_code= send_tp->tp_ops.ic_threadpool_get_thread_id(
+                                  send_tp,
+                                  NULL,
+                                  &listen_server_thread->thread_id)) ||
+            (listen_server_thread->thread_state=
+                send_tp->tp_ops.ic_threadpool_get_thread_state(
+                                  send_tp,
+                                  listen_server_thread->thread_id)) ||
+            (ret_code= send_tp->tp_ops.ic_threadpool_start_thread(
+                                  send_tp,
+                                  listen_server_thread->thread_id,
+                                  run_server_connect_thread,
                                   (gpointer)listen_server_thread,
-                                  IC_SMALL_STACK_SIZE, /* Stack size */
-                                  TRUE,                /* Joinable */
-                                  TRUE,                /* Bound */
-                                  G_THREAD_PRIORITY_NORMAL,
-                                  &error)))
+                                  IC_SMALL_STACK_SIZE)))
+                                  
         {
           g_mutex_unlock(listen_server_thread->mutex);
           break;
@@ -1269,15 +1296,15 @@ run_send_thread(void *data)
         }
         else
         {
-          g_thread_join(listen_server_thread->thread);
-          listen_server_thread->thread= NULL;
+          send_tp->tp_ops.ic_threadpool_join(send_tp, listen_server_thread->thread_id);
+          listen_server_thread->thread_state= NULL;
         }
       } while (0);
       if (ret_code != 0)
       {
         /* Error handling */
         send_node_conn->stop_ordered= TRUE;
-        close_listen_server_thread(listen_server_thread);
+        g_mutex_unlock(listen_server_thread->mutex);
       }
     }
     else
@@ -1293,6 +1320,11 @@ run_send_thread(void *data)
   }
   g_mutex_lock(send_node_conn->mutex);
   g_cond_signal(send_node_conn->cond);
+  if (send_node_conn->stop_ordered)
+  {
+    g_mutex_unlock(send_node_conn->mutex);
+    goto end;
+  }
   g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
   /*
     The main thread have started up all threads and all communication objects
@@ -1318,6 +1350,8 @@ static int
 start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   GError *error;
+  int ret_code;
+
   if (send_node_conn->my_node_id == send_node_conn->other_node_id)
   {
     /*
@@ -1351,9 +1385,11 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     The send thread is done with its start-up phase and we're ready to start
     the next send thread.
   */
+  ret_code= 0;
   if (send_node_conn->stop_ordered)
-    return IC_ERROR_MEM_ALLOC;
-  return 0;
+    ret_code= IC_ERROR_MEM_ALLOC;
+  g_mutex_unlock(send_node_conn->mutex);
+  return ret_code;
 }
 
 /*
