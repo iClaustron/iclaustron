@@ -195,7 +195,8 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
 
   if (!(apid_global= (IC_APID_GLOBAL*)ic_calloc(sizeof(IC_APID_GLOBAL))))
     return NULL;
-  if (!(apid_global->rec_thread_pool= ic_create_threadpool(IC_MAX_RECEIVE_THREADS)))
+  if (!(apid_global->rec_thread_pool= ic_create_threadpool(
+                        IC_MAX_RECEIVE_THREADS)))
     goto error;
   if (!(apid_global->send_thread_pool= ic_create_threadpool(
                         IC_DEFAULT_MAX_THREADPOOL_SIZE)))
@@ -212,7 +213,8 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
         ic_calloc((IC_MAX_THREAD_CONNECTIONS + 1) *
         sizeof(IC_THREAD_CONNECTION*))))
     goto error;
-  if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL, IC_MAX_CLUSTER_ID)))
+  if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL,
+                                                      IC_MAX_CLUSTER_ID)))
     goto error;
   if (!(apid_global->mutex= g_mutex_new()))
     goto error;
@@ -236,7 +238,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
       if (!(cluster_comm->send_node_conn_array= (IC_SEND_NODE_CONNECTION**)
             ic_calloc((IC_MAX_NODE_ID + 1)*sizeof(IC_SEND_NODE_CONNECTION*))))
         goto error;
-      for (j= 0; j <= clu_conf->max_node_id; j++)
+      for (j= 1; j <= clu_conf->max_node_id; j++)
       {
         if (clu_conf->node_config[j])
         {
@@ -312,7 +314,7 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
         cluster_comm= grid_comm->cluster_comm_array[i];
         if (cluster_comm == NULL)
           continue;
-        for (j= 0; j <= IC_MAX_NODE_ID; i++)
+        for (j= 0; j <= IC_MAX_NODE_ID; j++)
           free_send_node_conn(cluster_comm->send_node_conn_array[j]);
         ic_free(cluster_comm);
       }
@@ -354,9 +356,9 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
     part.
   */
   first_hostname_len= strlen(link_config->first_hostname) + 1;
-  second_hostname_len= strlen(link_config->first_hostname) + 1;
+  second_hostname_len= strlen(link_config->second_hostname) + 1;
   tot_string_len= first_hostname_len;
-  tot_string_len= second_hostname_len;
+  tot_string_len+= second_hostname_len;
   server_port_str= ic_guint64_str((guint64)link_config->server_port_number,
                                   server_port, &server_port_len);
   server_port_len++; /* Room for NULL byte */
@@ -369,7 +371,7 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
     client_port_len= 0;
   tot_string_len+= server_port_len;
   tot_string_len+= client_port_len;
-  if ((send_node_conn->string_memory= ic_calloc(tot_string_len)))
+  if (!(send_node_conn->string_memory= ic_calloc(tot_string_len)))
     return IC_ERROR_MEM_ALLOC;
   copy_ptr= send_node_conn->string_memory;
   if (link_config->first_node_id == my_node_id)
@@ -380,7 +382,7 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
            link_config->first_hostname,
            first_hostname_len);
     send_node_conn->other_hostname= copy_ptr;
-    copy_ptr+= second_hostname_len;
+    copy_ptr+= (second_hostname_len + 1);
     memcpy(send_node_conn->other_hostname,
           link_config->second_hostname,
           second_hostname_len);
@@ -410,6 +412,7 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
     else
     {
       send_node_conn->other_port_number= copy_ptr;
+      copy_ptr+= client_port_len;
       memcpy(send_node_conn->other_port_number,
              client_port_str,
              client_port_len);
@@ -427,11 +430,13 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
     else
     {
       send_node_conn->my_port_number= copy_ptr;
+      copy_ptr+= client_port_len;
       memcpy(send_node_conn->my_port_number,
              client_port_str,
              client_port_len);
     }
   }
+  g_assert((copy_ptr - send_node_conn->string_memory) == tot_string_len);
   return 0;
 }
 
@@ -582,19 +587,30 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
   -----------------------------------------------------------
 */
 IC_APID_GLOBAL*
-ic_connect_apid_global(IC_API_CONFIG_SERVER *apic)
+ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
+                       int *ret_code,
+                       gchar **err_str)
 {
   IC_APID_GLOBAL *apid_global;
+  gchar *err_string;
   int error;
 
   if (!(apid_global= ic_init_apid(apic)))
-    return NULL;
+  {
+    *ret_code= IC_ERROR_MEM_ALLOC;
+    goto error;
+  }
   if ((error= ic_apid_global_connect(apid_global)))
   {
     ic_end_apid(apid_global);
-    return NULL;
+    *ret_code= error;
+    goto error;
   }
   return apid_global;
+error:
+  err_string= ic_common_fill_error_buffer(NULL, 0, *ret_code, *err_str);
+  g_assert(err_string == *err_str);
+  return NULL;
 }
 
 int

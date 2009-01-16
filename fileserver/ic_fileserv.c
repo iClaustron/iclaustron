@@ -26,6 +26,7 @@ static gchar *glob_data_path= NULL;
 static guint32 glob_node_id= 5;
 static guint32 glob_num_threads= 1;
 static guint32 glob_use_iclaustron_cluster_server= 1;
+static IC_THREADPOOL_STATE *glob_tp_state= NULL;
 
 static GOptionEntry entries[] = 
 {
@@ -52,7 +53,8 @@ static GOptionEntry entries[] =
 static gpointer
 run_file_server_thread(gpointer data)
 {
-  IC_APID_GLOBAL *apid_global= (IC_APID_GLOBAL*)data;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_APID_GLOBAL *apid_global= (IC_APID_GLOBAL*)thread_state->object;
   IC_APID_CONNECTION *apid_conn;
   gboolean stop_flag;
   DEBUG_ENTRY("run_file_server_thread");
@@ -87,20 +89,30 @@ error:
 static int
 start_file_server_thread(IC_APID_GLOBAL *apid_global)
 {
-  GError *error;
-  if (!g_thread_create_full(run_file_server_thread,
-                            (gpointer)apid_global,
-                            IC_MEDIUM_STACK_SIZE, /* stack size */
-                            TRUE,                 /* Joinable */
-                            TRUE,                 /* Bound */
-                            G_THREAD_PRIORITY_NORMAL,
-                            &error))
-    return IC_ERROR_MEM_ALLOC;
+  int error;
+  guint32 thread_id;
+  IC_THREAD_STATE *thread_state;
+
+  if ((error= glob_tp_state->tp_ops.ic_threadpool_get_thread_id(
+                            glob_tp_state,
+                            (void*)apid_global,
+                            &thread_id)) ||
+      (error= IC_ERROR_MEM_ALLOC, FALSE) ||
+      (!(thread_state= glob_tp_state->tp_ops.ic_threadpool_get_thread_state(
+                            glob_tp_state,
+                            thread_id))) ||
+      (error= glob_tp_state->tp_ops.ic_threadpool_start_thread(
+                            glob_tp_state,
+                            thread_id,
+                            run_file_server_thread,
+                            (gpointer)thread_state,
+                            IC_MEDIUM_STACK_SIZE)))
+    return error;
   return 0;
 }
 
 static int
-run_file_server(IC_APID_GLOBAL *apid_global)
+run_file_server(IC_APID_GLOBAL *apid_global, gchar **err_str)
 {
   int error= 0;
   guint32 i;
@@ -143,11 +155,17 @@ int main(int argc, char *argv[])
 
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
             "- iClaustron File Server")))
-    goto error;
+    goto early_error;
+  if (!(glob_tp_state=
+          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+  {
+    ret_code= IC_ERROR_MEM_ALLOC;
+    goto early_error;
+  }
   if ((ret_code= ic_set_config_path(&glob_config_dir,
                                     glob_data_path,
                                     config_path_buf)))
-    goto error;
+    goto early_error;
   ret_code= 1;
   if (!(apic= ic_get_configuration(&api_cluster_conn,
                                    &glob_config_dir,
@@ -158,14 +176,9 @@ int main(int argc, char *argv[])
                                    &ret_code,
                                    &err_str)))
     goto error;
-  err_str= NULL;
-  if (!(apid_global= ic_connect_apid_global(apic)))
-  {
-    ret_code= IC_ERROR_MEM_ALLOC;
+  if (!(apid_global= ic_connect_apid_global(apic, &ret_code, &err_str)))
     goto error;
-  }
-  ret_code= run_file_server(apid_global);
-  if (ret_code)
+  if ((ret_code= run_file_server(apid_global, &err_str)))
     goto error;
 end:
   if (apic)
@@ -174,6 +187,9 @@ end:
     ic_disconnect_apid_global(apid_global);
   ic_end();
   return ret_code;
+
+early_error:
+  err_str= NULL;
 error:
   if (err_str)
     printf("%s", err_str);

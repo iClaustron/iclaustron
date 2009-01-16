@@ -154,6 +154,8 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
   gchar *err_msg, *line_buf_ptr;
   gchar line_buf[128];
 
+  if (!error_buffer)
+    return NULL;
   if (error_code == PROTOCOL_ERROR)
     line_err_msg= protocol_err_msg;
   else if (error_code != 0 && error_line != 0)

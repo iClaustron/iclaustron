@@ -29,12 +29,12 @@ gchar *ic_common_fill_error_buffer(const gchar *error_message,
                                    gchar *error_buffer);
 gchar *ic_get_strerror(int error_number, gchar *buf, guint32 buf_len);
 
-struct ic_config_err
+struct ic_config_error
 {
   int err_num;
   guint32 line_number;
 };
-typedef struct ic_config_err IC_CONFIG_ERROR;
+typedef struct ic_config_error IC_CONFIG_ERROR;
 
 #define IC_ERROR_CONFIG_LINE_TOO_LONG 7000
 #define IC_ERROR_CONFIG_BRACKET 7001
