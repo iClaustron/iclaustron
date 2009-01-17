@@ -134,6 +134,7 @@ adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  gboolean *will_wait,
                                  IC_TIMER current_time);
 static void apid_free(IC_APID_CONNECTION *apid_conn);
+static int start_receive_thread(IC_APID_GLOBAL *apid_global);
 static int start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
 static void start_connect_phase(IC_APID_GLOBAL *apid_global,
                                 gboolean stop_ordered,
@@ -220,10 +221,10 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
     goto error;
   if (!(apid_global->cond= g_cond_new()))
     goto error;
-  if (!(apid_global->mem_buf_pool= ic_create_socket_membuf(IC_MEMBUF_SIZE,
-                                                           512)))
+  if (!(apid_global->mem_buf_pool= ic_create_sock_buf(IC_MEMBUF_SIZE,
+                                                      512)))
     goto error;
-  if (!(apid_global->ndb_message_pool= ic_create_socket_membuf(0, 2048)))
+  if (!(apid_global->ndb_message_pool= ic_create_sock_buf(0, 2048)))
     goto error;
   if (!(apid_global->thread_id_mutex= g_mutex_new()))
     goto error;
@@ -291,7 +292,8 @@ ic_end_apid(IC_APID_GLOBAL *apid_global)
   if (!apid_global)
     return;
   if (apid_global->rec_thread_pool)
-    apid_global->rec_thread_pool->tp_ops.ic_threadpool_stop(apid_global->rec_thread_pool);
+    apid_global->rec_thread_pool->tp_ops.ic_threadpool_stop(
+                  apid_global->rec_thread_pool);
   if (apid_global->send_thread_pool)
     apid_global->send_thread_pool->tp_ops.ic_threadpool_stop(
                   apid_global->send_thread_pool);
@@ -507,6 +509,8 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
       }
     }
   }
+  if ((error= start_receive_thread(apid_global)))
+    goto error;
   /*
     We are now ready to signal to all send threads that they can start up the
     connect process to the other nodes in the cluster.
@@ -541,6 +545,7 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_GRID_COMM *grid_comm= apid_global->grid_comm;
   IC_CLUSTER_COMM *cluster_comm;
+  IC_THREADPOOL_STATE *send_tp_state= apid_global->send_thread_pool;
   DEBUG_ENTRY("start_connect_phase");
 
   /*
@@ -578,8 +583,9 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
                 we continue.
               */
               g_mutex_unlock(send_node_conn->mutex);
-              g_thread_join(send_node_conn->thread);
-              g_mutex_lock(send_node_conn->mutex);
+              send_tp_state->tp_ops.ic_threadpool_join(send_tp_state,
+                                                       send_node_conn->thread_id);
+              continue;
             }
           }
           g_mutex_unlock(send_node_conn->mutex);
@@ -1210,7 +1216,9 @@ run_send_thread(void *data)
   IC_APID_GLOBAL *apid_global;
   IC_THREADPOOL_STATE *send_tp;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
-  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_SEND_NODE_CONNECTION *send_node_conn=
+      (IC_SEND_NODE_CONNECTION*)thread_state->object;
   /*
     First step is to create a connection object, then it's time to
     start setting it up when told to do so by the main thread. We want
@@ -1317,7 +1325,8 @@ run_send_thread(void *data)
         }
         else
         {
-          send_tp->tp_ops.ic_threadpool_join(send_tp, listen_server_thread->thread_id);
+          send_tp->tp_ops.ic_threadpool_join(send_tp,
+                                             listen_server_thread->thread_id);
         }
       } while (0);
       if (ret_code != 0)
@@ -1363,14 +1372,16 @@ end:
   close_listen_server_thread(listen_server_thread);
   send_node_conn->send_thread_ended= TRUE;
   g_mutex_unlock(send_node_conn->mutex);
+  thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
 
 static int
 start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
-  GError *error;
   int ret_code;
+  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_THREADPOOL_STATE *tp_state= apid_global->send_thread_pool;
 
   if (send_node_conn->my_node_id == send_node_conn->other_node_id)
   {
@@ -1388,17 +1399,15 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     set-up the connection.
   */
   g_mutex_lock(send_node_conn->mutex);
-  if (!(send_node_conn->thread=
-        g_thread_create_full(run_send_thread,
-                             (gpointer)send_node_conn,
-                             IC_SMALL_STACK_SIZE, /* Stack size */
-                             TRUE,                /* Joinable */
-                             TRUE,                /* Bound */
-                             G_THREAD_PRIORITY_NORMAL,
-                             &error)))
+  if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
+                              tp_state,
+                              &send_node_conn->thread_id,
+                              run_send_thread,
+                              (gpointer)send_node_conn,
+                              IC_SMALL_STACK_SIZE)))
   {
     g_mutex_unlock(send_node_conn->mutex);
-    return IC_ERROR_MEM_ALLOC;
+    return ret_code;
   }
   g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
   /*
@@ -1407,7 +1416,10 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   */
   ret_code= 0;
   if (send_node_conn->stop_ordered)
+  {
+    tp_state->tp_ops.ic_threadpool_join(tp_state, send_node_conn->thread_id);
     ret_code= IC_ERROR_MEM_ALLOC;
+  }
   g_mutex_unlock(send_node_conn->mutex);
   return ret_code;
 }
@@ -2294,6 +2306,36 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   user thread.
 */
 
+static gpointer run_receive_thread(void *data);
+
+static int
+start_receive_thread(IC_APID_GLOBAL *apid_global)
+{
+  IC_THREADPOOL_STATE *tp_state= apid_global->rec_thread_pool;
+  IC_NDB_RECEIVE_STATE *rec_state;
+  int ret_code= IC_ERROR_MEM_ALLOC;
+
+  if (!(rec_state=
+         (IC_NDB_RECEIVE_STATE*)ic_calloc(sizeof(IC_NDB_RECEIVE_STATE))))
+    return ret_code;
+  rec_state->rec_buf_pool= apid_global->mem_buf_pool;
+  rec_state->message_pool= apid_global->ndb_message_pool;
+  if (!((rec_state->poll_set= ic_create_poll_set()) &&
+        (ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
+                        tp_state,
+                        &rec_state->thread_id,
+                        run_receive_thread,
+                        (gpointer)rec_state,
+                        IC_MEDIUM_STACK_SIZE))))
+    goto error;
+  return 0;
+error:
+  if (rec_state->poll_set)
+    rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
+  ic_free((void*)rec_state);
+  return ret_code;
+}
+
 /*
   We get a linked list of IC_SOCK_BUF_PAGE which each contain a reference
   to a list of IC_NDB_MESSAGE object. We will ensure that these messages are
@@ -2607,7 +2649,6 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
   IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
   IC_SOCK_BUF_PAGE *ndb_message_page;
   IC_SOCK_BUF_PAGE *anchor_first_page;
-  IC_NDB_MESSAGE *ndb_message;
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
   LINK_MESSAGE_ANCHORS *anchor;
 
@@ -2681,8 +2722,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         ndb_message_opaque->receiver_module_id= receiver_module_id;
         ndb_message_opaque->version_num= 0; /* Defined value although unused */
         ref_count= buf_page->ref_count;
-        hash_index= ndb_message->receiver_module_id &
-                    (NUM_THREAD_LISTS - 1);
+        hash_index= receiver_module_id & (NUM_THREAD_LISTS - 1);
         loc_min_hash_index= IC_MIN(loc_min_hash_index, hash_index);
         loc_max_hash_index= IC_MAX(loc_max_hash_index, hash_index);
         anchor= &message_anchors[hash_index];

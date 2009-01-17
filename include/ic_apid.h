@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 
 #define IC_MEM_BUF_SIZE 32768
 
+typedef struct ic_apid_global IC_APID_GLOBAL;
 /*
   This data structure contains the important information about the
   receive thread and its state. It contains free pools of receive
@@ -32,6 +33,8 @@
 */
 struct ic_ndb_receive_state
 {
+  /* Global data for Data Server API */
+  IC_APID_GLOBAL *apid_global;
   /* Local free pool of receive pages */
   IC_SOCK_BUF_PAGE *free_rec_pages;
   /* Local free pool of NDB messages */
@@ -40,13 +43,18 @@ struct ic_ndb_receive_state
   IC_SOCK_BUF *rec_buf_pool;
   /* Reference to global pool of NDB messages */
   IC_SOCK_BUF *message_pool;
+  /* Poll set used by this receive thread */
+  IC_POLL_SET *poll_set;
   /* 
     Statistical info to track usage of this socket to enable proper
     configuration of threads to handle NDB Protocol.
+    Not created yet.
   */
+  /* Thread id in receive thread pool of receiver thread */
+  guint32 thread_id;
+
   GMutex *mutex;
   GCond *cond;
-  GThread *thread;
 };
 typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 
@@ -182,7 +190,7 @@ typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 struct ic_send_node_connection
 {
   /* A pointer to the global struct */
-  struct ic_apid_global *apid_global;
+  IC_APID_GLOBAL *apid_global;
   /* My hostname of the connection used by this thread */
   gchar *my_hostname;
   /* My port number of connection used by thread */
@@ -306,7 +314,6 @@ struct ic_apid_global
   guint32 max_listen_server_threads;
   IC_LISTEN_SERVER_THREAD *listen_server_thread[MAX_SERVER_PORTS_LISTEN];
 };
-typedef struct ic_apid_global IC_APID_GLOBAL;
 
 struct ic_transaction_hint
 {
