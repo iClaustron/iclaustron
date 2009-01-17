@@ -176,7 +176,6 @@ int start_connection_loop()
   guint32 thread_id;
   IC_CONNECTION *conn= NULL;
   IC_CONNECTION *fork_conn;
-  IC_THREAD_STATE *thread_state;
 
   conn->conn_op.ic_prepare_server_connection(conn,
                                              glob_ip,
