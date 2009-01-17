@@ -89,26 +89,13 @@ error:
 static int
 start_file_server_thread(IC_APID_GLOBAL *apid_global)
 {
-  int error;
   guint32 thread_id;
-  IC_THREAD_STATE *thread_state;
-
-  if ((error= glob_tp_state->tp_ops.ic_threadpool_get_thread_id(
+  return glob_tp_state->tp_ops.ic_threadpool_start_thread(
                             glob_tp_state,
-                            (void*)apid_global,
-                            &thread_id)) ||
-      (error= IC_ERROR_MEM_ALLOC, FALSE) ||
-      (!(thread_state= glob_tp_state->tp_ops.ic_threadpool_get_thread_state(
-                            glob_tp_state,
-                            thread_id))) ||
-      (error= glob_tp_state->tp_ops.ic_threadpool_start_thread(
-                            glob_tp_state,
-                            thread_id,
+                            &thread_id,
                             run_file_server_thread,
-                            (gpointer)thread_state,
-                            IC_MEDIUM_STACK_SIZE)))
-    return error;
-  return 0;
+                            (gpointer)apid_global,
+                            IC_MEDIUM_STACK_SIZE);
 }
 
 static int
@@ -119,6 +106,7 @@ run_file_server(IC_APID_GLOBAL *apid_global, gchar **err_str)
   guint32 num_threads_started= 0;
   DEBUG_ENTRY("run_file_server");
 
+  *err_str= NULL;
   printf("Ready to start file server\n");
   g_mutex_lock(apid_global->mutex);
   for (i= 0; i < glob_num_threads; i++)

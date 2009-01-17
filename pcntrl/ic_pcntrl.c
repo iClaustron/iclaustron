@@ -210,20 +210,12 @@ int start_connection_loop()
         We have an active connection, we'll handle the connection in a
         separate thread.
       */
-      if ((!(ret_code= glob_tp_state->tp_ops.ic_threadpool_get_thread_id(
+      if (glob_tp_state->tp_ops.ic_threadpool_start_thread(
                  glob_tp_state,
-                 NULL,
-                 &thread_id))) ||
-          (!(thread_state=
-              glob_tp_state->tp_ops.ic_threadpool_get_thread_state(
-                 glob_tp_state, thread_id))) ||
-          (conn->conn_op.ic_set_param(conn, (void*)thread_state), FALSE) ||
-          (!(glob_tp_state->tp_ops.ic_threadpool_start_thread(
-                 glob_tp_state,
-                 thread_id,
+                 &thread_id,
                  run_command_handler,
                  fork_conn,
-                 IC_SMALL_STACK_SIZE))))
+                 IC_SMALL_STACK_SIZE))
       {
         printf("Failed to create thread after forking accept connection\n");
         fork_conn->conn_op.ic_free_connection(fork_conn);

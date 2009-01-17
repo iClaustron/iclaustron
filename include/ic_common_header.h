@@ -43,8 +43,12 @@
   means. 0 means default size which usually is around 1 MByte.
 */
 #define IC_SMALL_STACK_SIZE (64 * 1024 + PTHREAD_STACK_MIN)
-#define IC_MEDIUM_STACK_SIZE 0
+#define IC_MEDIUM_STACK_SIZE (256 * 1024 + PTHREAD_STACK_MIN)
+#define IC_NORMAL_STACK_SIZE (0)
+
 #define IC_STD_CACHE_LINE_SIZE 128
+
+#define IC_MAX_THREAD_WAIT_TIME 60
 
 #define ERROR_MESSAGE_SIZE 512
 #define IC_VERSION 0x000001

@@ -34,20 +34,39 @@ struct ic_thread_state
 
 struct ic_threadpool_ops
 {
+  /* Start thread when it's ok that thread id allocation fails */
   int  (*ic_threadpool_start_thread) (IC_THREADPOOL_STATE *tp_state,
+                                      guint32 *thread_id,
+                                      GThreadFunc thread_func,
+                                      gpointer thread_obj,
+                                      gulong stack_size);
+  /*
+    Start thread when thread already allocated, at failure thread_id is
+    deallocated.
+  */
+  int  (*ic_threadpool_start_thread_with_thread_id) (
+                                      IC_THREADPOOL_STATE *tp_state,
                                       guint32 thread_id,
                                       GThreadFunc thread_func,
                                       gpointer thread_obj,
                                       gulong stack_size);
+  /* Get thread state, this state is always sent to a starting thread */
   IC_THREAD_STATE* (*ic_threadpool_get_thread_state)
                                       (IC_THREADPOOL_STATE *tp_state,
                                        guint32 thread_id);
+  /*
+     Get thread id when it's necessary to verify we don't start too
+     many threads at the same time.
+  */
   int  (*ic_threadpool_get_thread_id) (IC_THREADPOOL_STATE *tp_state,
-                                       void *object,
-                                       guint32 *thread_id);
+                                       guint32 *thread_id,
+                                       guint32 time_out_seconds);
+  /* Wait for thread to explicitly have released all its resources */
   void (*ic_threadpool_join) (IC_THREADPOOL_STATE *tp_state,
                               guint32 thread_id);
+  /* Check for any threads that have stopped and released all their resources */
   void (*ic_threadpool_check_threads) (IC_THREADPOOL_STATE *tp_state);
+  /* Stop threadpool and release all its resources */
   void (*ic_threadpool_stop) (IC_THREADPOOL_STATE *tp_state);
 };
 typedef struct ic_threadpool_ops IC_THREADPOOL_OPS;

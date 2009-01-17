@@ -17,6 +17,7 @@
 #include "ic_threadpool_int.h"
 
 static void free_threadpool(IC_INT_THREADPOOL_STATE *tp_state);
+static void check_threads(IC_THREADPOOL_STATE *ext_tp_state);
 
 static void
 free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
@@ -32,7 +33,6 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
 
 static int
 get_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
-              void *object,
               guint32 *thread_id)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
@@ -62,12 +62,32 @@ get_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
     goto error;
 end:
   thread_state->free= FALSE;
-  thread_state->object= object;
   g_mutex_unlock(mutex);
   return 0;
 error:
   g_mutex_unlock(mutex);
   return IC_ERROR_THREADPOOL_FULL;
+}
+
+static int
+get_thread_id_wait(IC_THREADPOOL_STATE *ext_tp_state,
+                   guint32 *thread_id,
+                   guint32 time_out_seconds)
+{
+  guint32 loc_thread_id= 0;
+  guint32 loop_count= 0;
+  int ret_code;
+
+  while ((ret_code= get_thread_id(ext_tp_state,
+                                  &loc_thread_id)) &&
+         loop_count < time_out_seconds)
+  {
+    ic_sleep(1); /* Sleep one second waiting for a thread to finish */
+    check_threads(ext_tp_state);
+    loop_count++;
+  }
+  *thread_id= loc_thread_id;
+  return ret_code;
 }
 
 void
@@ -82,14 +102,15 @@ thread_stops(IC_THREAD_STATE *ext_thread_state)
 }
 
 static void
-free_thread(IC_INT_THREAD_STATE *thread_state,
-            guint32 *max_thread_id_plus_one,
-            guint32 index)
+free_thread(IC_INT_THREADPOOL_STATE *tp_state,
+            IC_INT_THREAD_STATE *thread_state,
+            guint32 thread_id)
 {
   thread_state->free= TRUE;
   thread_state->thread= NULL;
-  if (index == ((*max_thread_id_plus_one) - 1))
-    (*max_thread_id_plus_one)--;
+  thread_state->stopped= FALSE;
+  if (thread_id == (tp_state->max_thread_id_plus_one - 1))
+    tp_state->max_thread_id_plus_one--;
 }
 
 static void
@@ -111,16 +132,14 @@ check_threads(IC_THREADPOOL_STATE *ext_tp_state)
       g_mutex_unlock(mutex);
       g_thread_join(thread_state->thread);
       g_mutex_lock(mutex);
-      free_thread(thread_state,
-                  &tp_state->max_thread_id_plus_one,
-                  i);
+      free_thread(tp_state, thread_state, i);
     }
   }
   g_mutex_unlock(mutex);
 }
 
 static int
-start_thread(IC_THREADPOOL_STATE *ext_tp_state,
+start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
              guint32 thread_id,
              GThreadFunc thread_func,
              gpointer thread_obj,
@@ -135,8 +154,9 @@ start_thread(IC_THREADPOOL_STATE *ext_tp_state,
 
   thread_state= tp_state->thread_state[thread_id];
   g_mutex_lock(mutex);
+  thread_state->object= thread_obj;
   thread= g_thread_create_full(thread_func,
-                               thread_obj,
+                               (gpointer)thread_state,
                                stack_size,
                                TRUE,     /* Joinable */
                                TRUE,     /* Bound    */
@@ -149,12 +169,36 @@ start_thread(IC_THREADPOOL_STATE *ext_tp_state,
   }
   else
   {
+    free_thread(tp_state, thread_state, thread_id);
     ret_code= IC_ERROR_START_THREAD_FAILED;
   }
   g_mutex_unlock(mutex);
   return ret_code;
 }
 
+static int
+start_thread(IC_THREADPOOL_STATE *ext_tp_state,
+             guint32 *thread_id,
+             GThreadFunc thread_func,
+             gpointer thread_obj,
+             gulong stack_size)
+{
+  guint32 loc_thread_id;
+  int ret_code;
+
+  if ((ret_code= get_thread_id(ext_tp_state, &loc_thread_id)) ||
+      (ret_code= start_thread_with_thread_id(ext_tp_state,
+                                             loc_thread_id,
+                                             thread_func,
+                                             thread_obj,
+                                             stack_size)))
+  {
+    return ret_code;
+  }
+  *thread_id= loc_thread_id;
+  return 0;
+}
+  
 static void
 stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
 {
@@ -195,10 +239,7 @@ join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
   g_thread_join(thread_state->thread);
   g_mutex_lock(tp_state->mutex);
   g_assert(thread_state->stopped);
-  free_thread(thread_state,
-              &tp_state->max_thread_id_plus_one,
-              thread_id);
-  thread_state->stopped= FALSE;
+  free_thread(tp_state, thread_state, thread_id);
   g_mutex_unlock(tp_state->mutex);
 }
 
@@ -248,7 +289,7 @@ ic_create_threadpool(guint32 pool_size)
     thread_state->ts_ops.ic_thread_stops= thread_stops;
   }
   tp_state->tp_ops.ic_threadpool_start_thread= start_thread;
-  tp_state->tp_ops.ic_threadpool_get_thread_id= get_thread_id;
+  tp_state->tp_ops.ic_threadpool_get_thread_id= get_thread_id_wait;
   tp_state->tp_ops.ic_threadpool_get_thread_state= get_thread_state;
   tp_state->tp_ops.ic_threadpool_join= join_thread;
   tp_state->tp_ops.ic_threadpool_check_threads= check_threads;

@@ -7177,7 +7177,8 @@ struct ic_rc_param
 };
 typedef struct ic_rc_param IC_RC_PARAM;
 
-static int start_cluster_server_thread(IC_CONNECTION *conn,
+static int start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER* run_obj,
+                                       IC_CONNECTION *conn,
                                        IC_THREADPOOL_STATE *tp_state,
                                        guint32 thread_id);
 static gpointer run_cluster_server_thread(gpointer data);
@@ -7254,10 +7255,10 @@ ic_create_run_cluster(IC_STRING *config_dir,
                       gchar *server_port,
                       guint32 my_node_id)
 {
-  IC_INT_RUN_CLUSTER_SERVER *run_obj;
+  IC_INT_RUN_CLUSTER_SERVER *run_obj= NULL;
   IC_CONNECTION *conn;
   IC_MEMORY_CONTAINER *mc_ptr;
-  IC_THREADPOOL_STATE *tp_state;
+  IC_THREADPOOL_STATE *tp_state= NULL;
   DEBUG_ENTRY("ic_create_run_cluster");
 
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
@@ -7399,13 +7400,10 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   }
   do
   {
-    while (tp_state->tp_ops.ic_threadpool_get_thread_id(tp_state,
-                                                        (void*)run_obj,
-                                                        &thread_id))
-    {
-      ic_sleep(1); /* Sleep one second waiting for a thread to finish */
-      tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
-    }
+    if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id(tp_state,
+                                                     &thread_id,
+                                                     IC_MAX_THREAD_WAIT_TIME)))
+      goto error;
     if ((ret_code= conn->conn_op.ic_accept_connection(conn,
                                         check_for_stopped_rcs_threads,
                                         (void*)tp_state)))
@@ -7424,7 +7422,8 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       ("Failed to fork a new connection from an accepted connection"));
       goto error;
     }
-    if ((ret_code= start_cluster_server_thread(fork_conn,
+    if ((ret_code= start_cluster_server_thread(run_obj,
+                                               fork_conn,
                                                tp_state,
                                                thread_id)))
     {
@@ -7464,18 +7463,16 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 
 /* Start a new Cluster Server thread */
 static int
-start_cluster_server_thread(IC_CONNECTION *conn,
+start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER* run_obj,
+                            IC_CONNECTION *conn,
                             IC_THREADPOOL_STATE *tp_state,
                             guint32 thread_id)
 {
   int error;
-  IC_THREAD_STATE *thread_state;
   DEBUG_ENTRY("start_cluster_server_thread");
 
-  thread_state= tp_state->tp_ops.ic_threadpool_get_thread_state(
-       tp_state, thread_id);
-  conn->conn_op.ic_set_param(conn, (void*)thread_state);
-  error= tp_state->tp_ops.ic_threadpool_start_thread(
+  conn->conn_op.ic_set_param(conn, (void*)run_obj);
+  error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                                               tp_state,
                                               thread_id,
                                               run_cluster_server_thread,
@@ -7488,19 +7485,17 @@ start_cluster_server_thread(IC_CONNECTION *conn,
 static gpointer
 run_cluster_server_thread(gpointer data)
 {
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   gchar *read_buf;
   guint32 read_size;
-  IC_CONNECTION *conn= (IC_CONNECTION*)data;
+  IC_CONNECTION *conn= (IC_CONNECTION*)thread_state->object;
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   int error, error_line;
   gboolean handled_request;
   int state= INITIAL_STATE;
-  IC_THREAD_STATE *thread_state;
   IC_RC_PARAM param;
 
-  thread_state= (IC_THREAD_STATE*)conn->conn_op.ic_get_param(conn);
-  run_obj= (IC_INT_RUN_CLUSTER_SERVER*)thread_state->object;
-
+  run_obj= (IC_INT_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) &&
          !thread_state->stop_flag)
   {
@@ -7514,6 +7509,7 @@ run_cluster_server_thread(gpointer data)
           {
             DEBUG_PRINT(CONFIG_LEVEL,
               ("Error from handle_get_cluster_list, code = %u", error));
+            error_line= __LINE__;
             goto error;
           }
           state= WAIT_GET_NODEID;
@@ -7522,7 +7518,10 @@ run_cluster_server_thread(gpointer data)
         if ((error= check_config_request(run_obj, conn, &param,
                                          read_buf, read_size, &state,
                                          &handled_request)))
+        {
+          error_line= __LINE__;
           goto error;
+        }
         if (handled_request)
           break;
         if (!check_buf(read_buf, read_size, report_event_str,
@@ -7533,6 +7532,8 @@ run_cluster_server_thread(gpointer data)
           {
             DEBUG_PRINT(CONFIG_LEVEL,
               ("Error from handle_report_event, code = %u", error));
+            error_line= __LINE__;
+            goto error;
           }
           break; /* The report event is always done in separate connection */
         }
@@ -7542,7 +7543,10 @@ run_cluster_server_thread(gpointer data)
         if ((error= check_config_request(run_obj, conn, &param,
                                          read_buf, read_size, &state,
                                          &handled_request)))
+        {
+          error_line= __LINE__;
           goto error;
+        }
         if (handled_request)
           break;
         error_line= __LINE__;
@@ -7556,6 +7560,7 @@ run_cluster_server_thread(gpointer data)
           {
             DEBUG_PRINT(CONFIG_LEVEL,
             ("Error from handle_get_mgmd_nodeid_request, code = %u", error));
+            error_line= __LINE__;
             goto error;
           }
           state= WAIT_SET_CONNECTION;
@@ -7564,7 +7569,10 @@ run_cluster_server_thread(gpointer data)
         if ((error= check_config_request(run_obj, conn, &param,
                                          read_buf, read_size, &state,
                                          &handled_request)))
+        {
+          error_line= __LINE__;
           goto error;
+        }
         if (handled_request)
           break;
         error_line= __LINE__;
@@ -7580,6 +7588,7 @@ run_cluster_server_thread(gpointer data)
           {
             DEBUG_PRINT(CONFIG_LEVEL,
     ("Error from handle_set_connection_parameter_request, code = %u", error));
+            error_line= __LINE__;
             goto error;
           }
           state= WAIT_CONVERT_TRANSPORTER;
@@ -7598,6 +7607,7 @@ run_cluster_server_thread(gpointer data)
           {
             DEBUG_PRINT(CONFIG_LEVEL,
         ("Error from handle_convert_transporter_request, code = %u", error));
+            error_line= __LINE__;
             goto error;
           }
           /* At this point the connection is turned into a NDB Protocol connection */

@@ -19,9 +19,16 @@
 /* Global variables */
 static IC_STRING glob_config_dir= { NULL, 0, TRUE};
 static const gchar *glob_process_name= "ic_clmgrd";
+static IC_THREADPOOL_STATE *glob_tp_state= NULL;
+static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
+
+static gchar *not_impl_string= "not implemented yet";
+static gchar *no_such_cluster_string=
+"The specified cluster name doesn't exist in this grid";
+static gchar *wrong_node_type= "Node id not of specified type";
+static gchar *no_such_node_str="There is no such node in this cluster";
 
 /* Option variables */
-static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
 static gchar *glob_cluster_server_ip= "127.0.0.1";
 static gchar *glob_cluster_server_port= "10203";
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
@@ -31,12 +38,6 @@ static guint32 glob_node_id= 5;
 static guint32 glob_bootstrap_cs_id= 1;
 static gboolean glob_bootstrap= FALSE; 
 static guint32 glob_use_iclaustron_cluster_server= 1;
-
-static gchar *not_impl_string= "not implemented yet";
-static gchar *no_such_cluster_string=
-"The specified cluster name doesn't exist in this grid";
-static gchar *wrong_node_type= "Node id not of specified type";
-static gchar *no_such_node_str="There is no such node in this cluster";
 
 static GOptionEntry entries[] = 
 {
@@ -614,7 +615,8 @@ run_handle_new_connection(gpointer data)
   gchar *read_buf;
   guint32 read_size;
   int ret_code;
-  IC_CONNECTION *conn= (IC_CONNECTION*)data;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_CONNECTION *conn= (IC_CONNECTION*)thread_state->object;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_API_CONFIG_SERVER *apic;
   gchar *parse_buf;
@@ -675,21 +677,19 @@ error:
 
 static int
 handle_new_connection(IC_CONNECTION *conn,
-                      IC_API_CONFIG_SERVER *apic)
+                      IC_API_CONFIG_SERVER *apic,
+                      guint32 thread_id)
 {
-  GError *error= NULL;
+  int ret_code;
 
   conn->conn_op.ic_set_param(conn, (void*)apic);
-  if (!g_thread_create_full(run_handle_new_connection,
+  if ((ret_code= glob_tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                            glob_tp_state,
+                            thread_id,
+                            run_handle_new_connection,
                             (gpointer)conn,
-                            1024*256, /* 256 kByte stack size */
-                            FALSE,   /* Not joinable        */
-                            FALSE,   /* Not bound           */
-                            G_THREAD_PRIORITY_NORMAL,
-                            &error))
-  {
-    return 1;
-  }
+                            IC_MEDIUM_STACK_SIZE)))
+    return ret_code;
   return 0;
 }
 static int
@@ -697,9 +697,15 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
                               IC_API_CONFIG_SERVER *apic)
 {
   int ret_code;
+  guint32 thread_id;
   IC_CONNECTION *fork_conn;
   do
   {
+    if ((ret_code= glob_tp_state->tp_ops.ic_threadpool_get_thread_id(
+                                                     glob_tp_state,
+                                                     &thread_id,
+                                                     IC_MAX_THREAD_WAIT_TIME)))
+      goto error;
     if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
       goto error;
     DEBUG_PRINT(PROGRAM_LEVEL,
@@ -711,7 +717,7 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
         ("Failed to fork a new connection from an accepted connection"));
       goto error;
     }
-    if ((ret_code= handle_new_connection(fork_conn, apic)))
+    if ((ret_code= handle_new_connection(fork_conn, apic, thread_id)))
     {
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Failed to start new Cluster Manager thread"));
@@ -778,6 +784,8 @@ int main(int argc,
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Cluster Manager")))
     goto error;
+  if ((glob_tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+    goto error;
   if ((ret_code= ic_set_config_path(&glob_config_dir,
                                     glob_config_path,
                                     config_path_buf)))
@@ -804,6 +812,8 @@ int main(int argc,
 end:
   if (apic)
     apic->api_op.ic_free_config(apic);
+  if (glob_tp_state)
+    glob_tp_state->tp_ops.ic_threadpool_stop(glob_tp_state);
   ic_end();
   return ret_code;
 
@@ -814,4 +824,3 @@ error:
     ic_print_error(ret_code);
   goto end;
 }
-

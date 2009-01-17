@@ -348,7 +348,8 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   gchar *copy_ptr;
   guint32 first_hostname_len, second_hostname_len;
   guint32 tot_string_len, server_port_len, client_port_len;
-  gchar *server_port_str, *client_port_str;
+  gchar *server_port_str= NULL;
+  gchar *client_port_str= NULL;
   gchar server_port[64], client_port[64];
   /*
     We store hostname for both side of the connections on the
@@ -436,7 +437,8 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
              client_port_len);
     }
   }
-  g_assert((copy_ptr - send_node_conn->string_memory) == tot_string_len);
+  g_assert(((guint32)(copy_ptr - send_node_conn->string_memory)) ==
+            tot_string_len);
   return 0;
 }
 
@@ -468,6 +470,7 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
     g_assert(cluster_comm);
     for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
     {
+      link_config= NULL;
       if (node_id == my_node_id ||
           (link_config= apic->api_op.ic_get_communication_object(apic,
                             cluster_id,
@@ -478,17 +481,22 @@ ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
         send_node_conn= cluster_comm->send_node_conn_array[node_id];
         g_assert(send_node_conn);
         /* We have found a node to connect to, start connect thread */
-        if ((error= set_hostname_and_port(send_node_conn,
-                                          link_config,
-                                          my_node_id)))
-          goto error;
+        if (node_id != my_node_id)
+        {
+          if ((error= set_hostname_and_port(send_node_conn,
+                                            link_config,
+                                            my_node_id)))
+            goto error;
+          send_node_conn->max_wait_in_nanos=
+                 (IC_TIMER)link_config->socket_max_wait_in_nanos;
+        }
+        else
+          send_node_conn->max_wait_in_nanos= 0;
         send_node_conn->apid_global= apid_global;
         send_node_conn->link_config= link_config;
         send_node_conn->my_node_id= my_node_id;
         send_node_conn->other_node_id= node_id;
         send_node_conn->cluster_id= cluster_id;
-        send_node_conn->max_wait_in_nanos=
-               (IC_TIMER)link_config->socket_max_wait_in_nanos;
         /* Start send thread */
         if ((error= start_send_thread(send_node_conn)))
           goto error;
@@ -677,6 +685,7 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
   DEBUG_ENTRY("ic_create_apid_connection");
 
   g_mutex_lock(apid_global->thread_id_mutex);
+  grid_comm= apid_global->grid_comm;
   for (i= 0; i < IC_MAX_THREAD_CONNECTIONS; i++)
   {
     if (!grid_comm->thread_conn_array[i])
@@ -916,6 +925,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   if (is_client_part)
   {
     conn= send_node_conn->conn;
+    link_config= send_node_conn->link_config;
     if (!send_node_conn->other_port_number ||
         !send_node_conn->my_port_number)
       return IC_ERROR_INCONSISTENT_DATA;
@@ -1045,7 +1055,6 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread)
     listen_server_thread->mutex= NULL;
     listen_server_thread->cond= NULL;
     listen_server_thread->first_send_node_conn= NULL;
-    listen_server_thread->thread_state= NULL;
     listen_server_thread->thread_id= IC_MAX_UINT32;
   }
 }
@@ -1063,12 +1072,13 @@ check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
 static gpointer
 run_server_connect_thread(void *data)
 {
-  IC_LISTEN_SERVER_THREAD *listen_server_thread= (IC_LISTEN_SERVER_THREAD*)data;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread=
+      (IC_LISTEN_SERVER_THREAD*)thread_state->object;
   IC_CONNECTION *fork_conn, *conn;
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
   gboolean stop_ordered, found;
-  IC_THREAD_STATE *thread_state= listen_server_thread->thread_state;
   int ret_code;
 
   g_mutex_lock(listen_server_thread->mutex);
@@ -1288,17 +1298,9 @@ run_send_thread(void *data)
               g_list_prepend(NULL, (void*)send_node_conn)))
           break;
         g_mutex_lock(listen_server_thread->mutex);
-        if ((ret_code= send_tp->tp_ops.ic_threadpool_get_thread_id(
+        if ((ret_code= send_tp->tp_ops.ic_threadpool_start_thread(
                                   send_tp,
-                                  NULL,
-                                  &listen_server_thread->thread_id)) ||
-            (listen_server_thread->thread_state=
-                send_tp->tp_ops.ic_threadpool_get_thread_state(
-                                  send_tp,
-                                  listen_server_thread->thread_id)) ||
-            (ret_code= send_tp->tp_ops.ic_threadpool_start_thread(
-                                  send_tp,
-                                  listen_server_thread->thread_id,
+                                  &listen_server_thread->thread_id,
                                   run_server_connect_thread,
                                   (gpointer)listen_server_thread,
                                   IC_SMALL_STACK_SIZE)))
@@ -1316,7 +1318,6 @@ run_send_thread(void *data)
         else
         {
           send_tp->tp_ops.ic_threadpool_join(send_tp, listen_server_thread->thread_id);
-          listen_server_thread->thread_state= NULL;
         }
       } while (0);
       if (ret_code != 0)

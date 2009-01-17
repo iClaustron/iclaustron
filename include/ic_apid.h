@@ -150,7 +150,6 @@ struct ic_listen_server_thread
   gboolean stop_ordered;
   GMutex *mutex;
   GCond *cond;
-  IC_THREAD_STATE *thread_state;
   GList *first_send_node_conn;
 };
 typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
