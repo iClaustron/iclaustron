@@ -166,8 +166,8 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
 }
 
 IC_SOCK_BUF*
-ic_create_socket_membuf(guint32 page_size,
-                        guint64 no_of_pages)
+ic_create_sock_buf(guint32 page_size,
+                   guint64 no_of_pages)
 {
   gchar *ptr;
   IC_SOCK_BUF *buf;
