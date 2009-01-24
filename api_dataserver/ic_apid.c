@@ -168,7 +168,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                  int *min_hash_index,
                  int *max_hash_index,
                  LINK_MESSAGE_ANCHORS *message_anchors,
-                 IC_THREAD_CONNECTION *thd_conn);
+                 IC_THREAD_CONNECTION **thd_conn);
 static void ic_end_apid(IC_APID_GLOBAL *apid_global);
 
 /*
@@ -2344,9 +2344,9 @@ error:
 */
 static void
 post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
-                 IC_THREAD_CONNECTION *thd_conn,
-                 int min_hash_index,
-                 int max_hash_index)
+                  IC_THREAD_CONNECTION **thd_conn,
+                  int min_hash_index,
+                  int max_hash_index)
 {
   int i;
   guint32 j, send_index, receiver_module_id, loop_count, temp, module_id;
@@ -2373,7 +2373,7 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
         &ndb_message_page->opaque_area[0];
       receiver_module_id= message_opaque->receiver_module_id;
       send_index= receiver_module_id / NUM_THREAD_LISTS;
-      loc_thd_conn= &thd_conn[receiver_module_id];
+      loc_thd_conn= thd_conn[receiver_module_id];
       temp= num_sent[send_index];
       if (!temp)
         g_mutex_lock(loc_thd_conn->mutex);
@@ -2402,19 +2402,19 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
       module_id= (j * NUM_THREAD_LISTS) + i;
       if (num_sent[j])
       {
-        if (thd_conn[j].thread_wait_cond)
+        if (thd_conn[j]->thread_wait_cond)
         {
-          thd_conn[j].thread_wait_cond= FALSE;
+          thd_conn[j]->thread_wait_cond= FALSE;
           signal_flag= TRUE;
         }
         message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-          &thd_conn[module_id].last_received_message->opaque_area[0];
+          &thd_conn[module_id]->last_received_message->opaque_area[0];
         message_opaque->ref_count_releases= num_sent[j];
-        g_mutex_unlock(thd_conn[j].mutex);
+        g_mutex_unlock(thd_conn[j]->mutex);
         if (signal_flag)
         {
           /* Thread is waiting for our wake-up signal, wake it up */
-          g_cond_signal(thd_conn[j].cond);
+          g_cond_signal(thd_conn[j]->cond);
           signal_flag= FALSE;
         }
         num_sent[j]= 0;
@@ -2482,7 +2482,7 @@ handle_node_error(int ret_code,
                   int min_hash_index,
                   int max_hash_index,
                   LINK_MESSAGE_ANCHORS *message_anchors,
-                  IC_THREAD_CONNECTION *thd_conn)
+                  IC_THREAD_CONNECTION **thd_conn)
 {
   if (ret_code == END_OF_FILE)
   {
@@ -2520,15 +2520,27 @@ handle_node_error(int ret_code,
 }
 
 static IC_RECEIVE_NODE_CONNECTION*
-get_first_rec_node(__attribute__ ((unused)) IC_NDB_RECEIVE_STATE *rec_state)
+get_first_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
 {
-  return NULL;
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  const IC_POLL_CONNECTION *poll_conn;
+  int ret_code;
+
+  if ((ret_code= poll_set->poll_ops.ic_check_poll_set(poll_set, (int)10)) ||
+      (!(poll_conn= poll_set->poll_ops.ic_get_next_connection(poll_set))))
+    return NULL;
+  return poll_conn->user_obj;
 }
 
 static IC_RECEIVE_NODE_CONNECTION*
-get_next_rec_node(__attribute__ ((unused)) IC_NDB_RECEIVE_STATE *rec_state)
+get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
 {
-  return NULL;
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  const IC_POLL_CONNECTION *poll_conn;
+
+  if (!(poll_conn= poll_set->poll_ops.ic_get_next_connection(poll_set)))
+    return NULL;
+  return poll_conn->user_obj;
 }
 
 static gpointer
@@ -2540,7 +2552,8 @@ run_receive_thread(void *data)
   int max_hash_index= (int)-1;
   int ret_code;
   IC_SOCK_BUF_PAGE *buf_page, *ndb_message;
-  IC_THREAD_CONNECTION *thd_conn;
+  IC_APID_GLOBAL *apid_global= rec_state->apid_global;
+  IC_THREAD_CONNECTION **thd_conn= apid_global->grid_comm->thread_conn_array;
   IC_RECEIVE_NODE_CONNECTION *rec_node;
 
   memset(message_anchors,
@@ -2627,7 +2640,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                  int *min_hash_index,
                  int *max_hash_index,
                  LINK_MESSAGE_ANCHORS *message_anchors,
-                 IC_THREAD_CONNECTION *thd_conn)
+                 IC_THREAD_CONNECTION **thd_conn)
 {
   IC_CONNECTION *conn= rec_node->conn;
   IC_SOCK_BUF *rec_buf_pool= rec_state->rec_buf_pool;
@@ -2637,7 +2650,9 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
   gboolean read_header_flag= rec_node->read_header_flag;
   gchar *read_ptr;
   guint32 page_size= rec_buf_pool->page_size;
-  guint32 start_size, message_size, receiver_module_id;
+  guint32 start_size;
+  guint32 message_size= 0;
+  guint32 receiver_module_id= IC_MAX_THREAD_CONNECTIONS;
   int hash_index;
   guint32 loop_count= 0;
   int ret_code;
@@ -2720,7 +2735,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         ndb_message_opaque->receiver_node_id= rec_node->my_node_id;
         ndb_message_opaque->ref_count_releases= 0;
         ndb_message_opaque->receiver_module_id= receiver_module_id;
-        ndb_message_opaque->version_num= 0; /* Defined value although unused */
+        ndb_message_opaque->version_num= 0; /* Define value although unused */
         ref_count= buf_page->ref_count;
         hash_index= receiver_module_id & (NUM_THREAD_LISTS - 1);
         loc_min_hash_index= IC_MIN(loc_min_hash_index, hash_index);
