@@ -743,7 +743,7 @@ end:
   methods to perform send operations through the Data API.
 */
 static void
-run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   guint32 send_size;
   guint32 iovec_size;
@@ -755,13 +755,17 @@ run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   send_node_conn->send_thread_active= TRUE;
   do
   {
-    if (send_node_conn->stop_ordered)
+    if (send_node_conn->stop_ordered || !send_node_conn->node_up)
       break;
-    if (!send_node_conn->node_up)
+    if (!send_node_conn->first_sbp)
     {
-      node_failure_handling(send_node_conn);
-      break;
+      /* All buffers have been sent, we can go to sleep again */
+      send_node_conn->send_active= FALSE;
+      send_node_conn->send_thread_is_sending= FALSE;
+      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
     }
+    if (send_node_conn->stop_ordered || !send_node_conn->node_up)
+      break;
     g_assert(send_node_conn->send_thread_is_sending);
     g_assert(send_node_conn->send_active);
     prepare_real_send_handling(send_node_conn, &send_size,
@@ -771,30 +775,10 @@ run_active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
                               iovec_size, send_size);
     g_mutex_lock(send_node_conn->mutex);
     if (error)
-    {
-      node_failure_handling(send_node_conn);
-      break;
-    }
-    /* Handle send done */
-    if (send_node_conn->first_sbp)
-    {
-      /* All buffers have been sent, we can go to sleep again */
-      send_node_conn->send_active= FALSE;
-      send_node_conn->send_thread_is_sending= FALSE;
-      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
-      continue;
-    }
-    else if (send_node_conn->node_up)
-    {
-      /* There are more buffers to send, we need to continue sending */
-      continue;
-    }
-    else
-    {
-      node_failure_handling(send_node_conn);
-      break;
-    }
+      send_node_conn->node_up= FALSE;
   } while (1);
+  if (!send_node_conn->node_up)
+    node_failure_handling(send_node_conn);
   send_node_conn->send_active= FALSE;
   send_node_conn->send_thread_active= FALSE;
   send_node_conn->send_thread_is_sending= FALSE;
@@ -1015,16 +999,6 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
           g_mutex_unlock(listen_server_thread->mutex);
         return 1;
       }
-      if (stop_ordered)
-      {
-        /*
-          We have completed clean-up for our send node connection. We are now
-          ready to stop the send thread by returning with a non-zero return
-          code.
-        */
-        ret_code= 1;
-        break;
-      }
       g_mutex_lock(send_node_conn->mutex);
       if (!send_node_conn->stop_ordered)
         g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
@@ -1076,7 +1050,7 @@ check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
 }
 
 static gpointer
-run_server_connect_thread(void *data)
+run_listen_thread(void *data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_LISTEN_SERVER_THREAD *listen_server_thread=
@@ -1309,7 +1283,7 @@ run_send_thread(void *data)
         if ((ret_code= send_tp->tp_ops.ic_threadpool_start_thread(
                                   send_tp,
                                   &listen_server_thread->thread_id,
-                                  run_server_connect_thread,
+                                  run_listen_thread,
                                   (gpointer)listen_server_thread,
                                   IC_SMALL_STACK_SIZE)))
                                   
@@ -1365,7 +1339,7 @@ run_send_thread(void *data)
     if ((ret_code= connect_by_send_thread(send_node_conn,
                                           is_client_part)))
       goto end;
-    run_active_send_thread(send_node_conn);
+    active_send_thread(send_node_conn);
   }
 end:
   g_mutex_lock(send_node_conn->mutex);
