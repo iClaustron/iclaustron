@@ -2595,7 +2595,7 @@ run_receive_thread(void *data)
                         max_hash_index);
       min_hash_index= NUM_THREAD_LISTS;
       max_hash_index= (int)-1;
-      get_next_rec_node(rec_state);
+      rec_node= get_next_rec_node(rec_state);
     }
     g_mutex_lock(rec_state->mutex);
     /*
@@ -2633,6 +2633,7 @@ end:
   }
   return NULL;
 }
+
 #define MAX_NDB_RECEIVE_LOOPS 16
 int
 ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,

@@ -50,6 +50,23 @@ static void destroy_mutexes(IC_INT_CONNECTION *conn);
 
 static int close_socket_connection(IC_CONNECTION *conn);
 
+static void
+close_socket(int sockfd)
+{
+  int error;
+#ifdef WINDOWS
+  if (closesocket(sockfd))
+    error= WSAGetLastError();
+#else
+  do
+  {
+    error= 0;
+    if (close(sockfd))
+      error= errno;
+  } while (error == EINTR);
+#endif
+  DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", error));
+}
 /* Implements ic_check_for_data */
 static gboolean
 check_for_data_on_connection(IC_CONNECTION *ext_conn)
@@ -418,7 +435,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
   } while (1);
   if (!conn->is_listen_socket_retained)
   {
-    close(conn->listen_sockfd);
+    close_socket(conn->listen_sockfd);
     conn->listen_sockfd= 0;
   }
   if (ret_sockfd < 0)
@@ -486,7 +503,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
                    conn->conn_stat.client_ip_addr));
     }
     conn->error_code= ACCEPT_ERROR;
-    close(ret_sockfd);
+    close_socket(ret_sockfd);
     return ACCEPT_ERROR;
   }
   conn->rw_sockfd= ret_sockfd;
@@ -496,7 +513,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
   set_is_connected(conn);
   return 0;
 error:
-  close(ret_sockfd);
+  close_socket(ret_sockfd);
   return error;
 }
 
@@ -679,7 +696,7 @@ error:
                             error, conn->err_str));
 error2:
   conn->error_code= error;
-  close(sockfd);
+  close_socket(sockfd);
   return error;
 }
 
@@ -982,12 +999,12 @@ close_socket_connection(IC_CONNECTION *ext_conn)
   lock_connect_mutex(conn);
   if (conn->listen_sockfd)
   {
-    close(conn->listen_sockfd);
+    close_socket(conn->listen_sockfd);
     conn->listen_sockfd= 0;
   }
   if (conn->rw_sockfd)
   {
-    close(conn->rw_sockfd);
+    close_socket(conn->rw_sockfd);
     conn->rw_sockfd= 0;
   }
   conn->error_code= 0;
@@ -1003,7 +1020,7 @@ close_listen_socket_connection(IC_CONNECTION *ext_conn)
   lock_connect_mutex(conn);
   if (conn->listen_sockfd)
   {
-    close(conn->listen_sockfd);
+    close_socket(conn->listen_sockfd);
     conn->listen_sockfd= 0;
   }
   conn->error_code= 0;
