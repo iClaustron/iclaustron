@@ -38,6 +38,8 @@ struct ic_int_connection
   GThread *thread;
   /* stop_flag is used to flag to connect thread to quit */
   gboolean stop_flag;
+  /* Should connection be nonblocking */
+  gboolean is_nonblocking;
 
   GMutex *read_mutex;
   GMutex *write_mutex;

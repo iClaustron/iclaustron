@@ -118,6 +118,11 @@ struct ic_connect_operations
                                         gboolean is_wan_connection,
                                         guint32 tcp_receive_buffer_size,
                                         guint32 tcp_send_buffer_size);
+  /*
+    Use this to set the socket to nonblocking mode, inherited to a forked
+    socket after successful accept.
+  */
+  void (*ic_set_nonblocking)           (IC_CONNECTION *conn);
   void (*ic_set_param)                 (IC_CONNECTION *conn,
                                         void *param);
   void* (*ic_get_param)                (IC_CONNECTION *conn);

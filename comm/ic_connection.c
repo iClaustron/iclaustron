@@ -161,7 +161,47 @@ set_option_size(int sockfd, int size, int old_size,
 }
 
 static void
-ic_set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
+set_socket_nonblocking(int sockfd, gboolean flag)
+{
+#ifdef WINDOWS
+  unsigned long nonblocking_flag= (unsigned long)flag;
+  if (ioctlsocket(sockfd, FIONBIO, &nonblocking_flag))
+  {
+    DEBUG_PRINT(COMM_LEVEL, ("fcntl F_GETFL error: %d", WSAGetLastError()));
+  }
+#else
+  int flags, error;
+  int nonblocking_flag;
+
+  if ((flags= fcntl(sockfd, F_GETFL) < 0))
+  {
+    error= errno;
+    DEBUG_PRINT(COMM_LEVEL, ("fcntl F_GETFL error: %d", error));
+    return; /* Failed to set socket nonblocking */
+  }
+#ifdef O_NONBLOCK
+  nonblocking_flag= O_NONBLOCK;
+#else
+#ifdef O_NDELAY
+  nonblocking_flag= O_NDELAY;
+#else
+  No proper nonblocking flag to use
+#endif
+#endif
+  if (flag)
+    flags|= nonblocking_flag;
+  else
+    flags&= ~nonblocking_flag;
+  if ((flags= fcntl(sockfd, F_SETFL, (long)flags) < 0))
+  {
+    error= errno;
+    DEBUG_PRINT(COMM_LEVEL, ("fcntl F_SETFL error: %d", error));
+  }
+#endif
+}
+
+static void
+set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
 {
   int no_delay, error, maxseg_size, rec_size, snd_size, reuse_addr;
   socklen_t sock_len= sizeof(int);
@@ -322,8 +362,10 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
   addr_len= sizeof(client_address);
   DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s",
                            conn->conn_stat.server_ip_addr));
+  set_socket_nonblocking(conn->listen_sockfd, TRUE);
   do
   {
+    FD_ZERO(&select_set);
     FD_SET(conn->listen_sockfd, &select_set);
     select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
     if (conn->stop_flag)
@@ -342,11 +384,38 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
       }
     }
     else
+    {
+      ret_sockfd= accept(conn->listen_sockfd,
+                         (struct sockaddr *)&client_address,
+                         &addr_len);
+      if (ret_sockfd < 0)
+      {
+        error= errno;
+        if (error == EAGAIN ||
+            error == ECONNABORTED ||
+            error == EPROTO ||
+            error == EWOULDBLOCK ||
+            error == EINTR)
+        {
+          /*
+             EAGAIN/EWOULDBLOCK happens when no connections are yet
+             ready (could happen e.g. when first phase of connect
+             phase has occurred, but we're still waiting for ACK on
+             our SYN ACK message.
+             ECONNABORTED/EPROTO happens when a connection is aborted
+             before the connection is established or before we got
+             to the accept call.
+             EINTR happens if a signal is caught in the middle of
+             execution of the accept
+             In all those cases we decide to simply wait for a while
+             longer for a connection.
+          */
+          continue;
+        }
+      }
       break;
+    }
   } while (1);
-  ret_sockfd= accept(conn->listen_sockfd,
-                     (struct sockaddr *)&client_address,
-                     &addr_len);
   if (!conn->is_listen_socket_retained)
   {
     close(conn->listen_sockfd);
@@ -362,6 +431,8 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
                               conn->error_code, conn->err_str));
     return conn->error_code;
   }
+  set_socket_options(conn, ret_sockfd);
+  set_socket_nonblocking(ret_sockfd, conn->is_nonblocking);
   if (conn->client_name)
   {
     /*
@@ -542,7 +613,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
                       conn->server_addrinfo->ai_socktype,
                       conn->server_addrinfo->ai_protocol)) < 0)
     goto error;
-  ic_set_socket_options(conn, sockfd);
+  set_socket_options(conn, sockfd);
   if (((conn->is_client == FALSE) ||
        (conn->client_name != NULL)) &&
        (bind(sockfd, (struct sockaddr *)loc_addrinfo->ai_addr,
@@ -1329,6 +1400,7 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
 
   init_connect_stat(fork_conn);
   fork_conn->orig_conn= orig_conn;
+  fork_conn->is_nonblocking= orig_conn->is_nonblocking;
   fork_conn->forked_connections= 0;
   fork_conn->read_mutex= NULL;
   fork_conn->write_mutex= NULL;
@@ -1473,6 +1545,13 @@ set_error_line(IC_CONNECTION *ext_conn, guint32 error_line)
   conn->error_line= error_line;
 }
 
+static void
+set_nonblocking_flag(IC_CONNECTION *ext_conn)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  conn->is_nonblocking= TRUE;
+}
+
 IC_CONNECTION*
 int_create_socket_object(gboolean is_client,
                          gboolean is_mutex_used,
@@ -1519,6 +1598,7 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_get_error_str= get_error_str;
   conn->conn_op.ic_fill_error_buffer= fill_error_buffer;
   conn->conn_op.ic_set_error_line= set_error_line;
+  conn->conn_op.ic_set_nonblocking= set_nonblocking_flag;
 
   conn->is_ssl_connection= is_ssl;
   conn->is_ssl_used_for_data= is_ssl_used_for_data;
