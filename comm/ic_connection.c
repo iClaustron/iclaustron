@@ -1569,6 +1569,13 @@ set_nonblocking_flag(IC_CONNECTION *ext_conn)
   conn->is_nonblocking= TRUE;
 }
 
+static int
+get_fd(IC_CONNECTION *ext_conn)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  return conn->rw_sockfd;
+}
+
 IC_CONNECTION*
 int_create_socket_object(gboolean is_client,
                          gboolean is_mutex_used,
@@ -1616,6 +1623,7 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_fill_error_buffer= fill_error_buffer;
   conn->conn_op.ic_set_error_line= set_error_line;
   conn->conn_op.ic_set_nonblocking= set_nonblocking_flag;
+  conn->conn_op.ic_get_fd= get_fd;
 
   conn->is_ssl_connection= is_ssl;
   conn->is_ssl_used_for_data= is_ssl_used_for_data;

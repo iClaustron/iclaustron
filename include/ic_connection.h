@@ -123,6 +123,7 @@ struct ic_connect_operations
     socket after successful accept.
   */
   void (*ic_set_nonblocking)           (IC_CONNECTION *conn);
+  int  (*ic_get_fd)                    (IC_CONNECTION *conn);
   void (*ic_set_param)                 (IC_CONNECTION *conn,
                                         void *param);
   void* (*ic_get_param)                (IC_CONNECTION *conn);

@@ -2517,6 +2517,85 @@ get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
   return poll_conn->user_obj;
 }
 
+static void
+add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  IC_CONNECTION *conn;
+  IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_add_node;
+  int conn_fd, error;
+
+  while (send_node_conn)
+  {
+    g_mutex_lock(send_node_conn->mutex);
+    send_node_conn= send_node_conn->next_add_node;
+    send_node_conn->next_add_node= NULL;
+    if (send_node_conn->node_up && !send_node_conn->stop_ordered)
+    {
+      conn= send_node_conn->conn;
+      conn_fd= conn->conn_op.ic_get_fd(conn);
+      if ((error= poll_set->poll_ops.ic_poll_set_add_connection(poll_set,
+                                                    conn_fd,
+                                                    &send_node_conn->rec_node)))
+      {
+        send_node_conn->node_up= FALSE;
+        node_failure_handling(send_node_conn);
+      }
+    }
+    g_mutex_unlock(send_node_conn->mutex);
+  }
+}
+
+static void
+rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  IC_CONNECTION *conn;
+  IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_rem_node;
+  int conn_fd, error;
+
+  while (send_node_conn)
+  {
+    g_mutex_lock(send_node_conn->mutex);
+    send_node_conn= send_node_conn->next_rem_node;
+    send_node_conn->next_rem_node= NULL;
+    if (send_node_conn->node_up && !send_node_conn->stop_ordered)
+    {
+      conn= send_node_conn->conn;
+      conn_fd= conn->conn_op.ic_get_fd(conn);
+      if ((error= poll_set->poll_ops.ic_poll_set_remove_connection(poll_set,
+                                                    conn_fd)))
+      {
+        send_node_conn->node_up= FALSE;
+        node_failure_handling(send_node_conn);
+      }
+    }
+    g_mutex_unlock(send_node_conn->mutex);
+  }
+}
+
+static void
+check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  g_mutex_lock(rec_state->mutex);
+  /*
+    We need to check for:
+    1) Someone ordering this node to stop, as part of this the
+    stop_ordered flag on the receive thread needs to be set.
+    2) Someone ordering a change of socket connections. This
+    means that a socket connection is moved from one receive
+    thread to another. This is ordered by setting the change_flag
+    on the receive thread data structure.
+    3) We also update all the statistics in this slot such that
+    the thread deciding on reorganization of socket connections
+    has statistics to use here.
+  */
+  add_node_receive_thread(rec_state);
+  rem_node_receive_thread(rec_state);
+  rec_state->first_add_node= NULL;
+  rec_state->first_rem_node= NULL;
+  g_mutex_unlock(rec_state->mutex);
+}
 static gpointer
 run_receive_thread(void *data)
 {
@@ -2571,20 +2650,7 @@ run_receive_thread(void *data)
       max_hash_index= (int)-1;
       rec_node= get_next_rec_node(rec_state);
     }
-    g_mutex_lock(rec_state->mutex);
-    /*
-      We need to check for:
-      1) Someone ordering this node to stop, as part of this the
-      stop_ordered flag on the receive thread needs to be set.
-      2) Someone ordering a change of socket connections. This
-      means that a socket connection is moved from one receive
-      thread to another. This is ordered by setting the change_flag
-      on the receive thread data structure.
-      3) We also update all the statistics in this slot such that
-      the thread deciding on reorganization of socket connections
-      has statistics to use here.
-    */
-    g_mutex_unlock(rec_state->mutex);
+    check_for_reorg_receive_threads(rec_state);
   } while (1);
 
 end:

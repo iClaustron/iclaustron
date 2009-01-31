@@ -31,6 +31,7 @@ typedef struct ic_apid_global IC_APID_GLOBAL;
   messages in. Both of these are transported to the user thread and
   will be released in the user thread to the global pool.
 */
+typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
 struct ic_ndb_receive_state
 {
   /* Global data for Data Server API */
@@ -45,6 +46,13 @@ struct ic_ndb_receive_state
   IC_SOCK_BUF *message_pool;
   /* Poll set used by this receive thread */
   IC_POLL_SET *poll_set;
+  /*
+    Linked lists of connections to other nodes which should be added or
+    removed to/from this receive thread handling this NDB receive state.
+    Both those lists are protected the mutex on this record.
+  */
+  IC_SEND_NODE_CONNECTION *first_add_node;
+  IC_SEND_NODE_CONNECTION *first_rem_node;
   /* 
     Statistical info to track usage of this socket to enable proper
     configuration of threads to handle NDB Protocol.
@@ -191,6 +199,8 @@ struct ic_send_node_connection
 {
   /* A pointer to the global struct */
   IC_APID_GLOBAL *apid_global;
+  /* Receive node object */
+  IC_RECEIVE_NODE_CONNECTION rec_node;
   /* My hostname of the connection used by this thread */
   gchar *my_hostname;
   /* My port number of connection used by thread */
@@ -276,10 +286,17 @@ struct ic_send_node_connection
   IC_TIMER tot_wait_time_plus_one;
   /* Index into timer array */
   guint32 last_send_timer_index;
+  /*
+     Next pointers for lists on IC_NDB_RECEIVE_STATE for add/remove
+     this connection to the receive thread
+     Both those variables are protected by both the receive thread
+     mutex and the send node connection mutex.
+  */
+  IC_SEND_NODE_CONNECTION *next_add_node;
+  IC_SEND_NODE_CONNECTION *next_rem_node;
   /* Array of timers for the last 16 sends */
   IC_TIMER last_send_timers[MAX_SEND_TIMERS];
 };
-typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
 
 struct ic_cluster_comm
 {
