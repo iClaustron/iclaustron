@@ -170,6 +170,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                  LINK_MESSAGE_ANCHORS *message_anchors,
                  IC_THREAD_CONNECTION **thd_conn);
 static void ic_end_apid(IC_APID_GLOBAL *apid_global);
+static void ic_initialize_message_func_array();
 
 /*
   GLOBAL DATA API INITIALISATION MODULE
@@ -194,6 +195,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   IC_CLUSTER_COMM *cluster_comm;
   guint32 i, j;
 
+  ic_initialize_message_func_array();
   if (!(apid_global= (IC_APID_GLOBAL*)ic_calloc(sizeof(IC_APID_GLOBAL))))
     return NULL;
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
@@ -2045,7 +2047,7 @@ execSCAN_TABLE_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
 #define IC_ATTRIBUTE_INFO 7
 
 /* Initialize function pointer array for messages */
-void
+static void
 ic_initialize_message_func_array()
 {
   guint32 i;

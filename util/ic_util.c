@@ -15,7 +15,6 @@
 
 #include <ic_common.h>
 #include <ic_apic.h>
-#include <ic_apid.h>
 
 /*
   Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
@@ -133,7 +132,6 @@ ic_init()
   if (!g_thread_supported())
     g_thread_init(NULL);
   ic_init_error_messages();
-  ic_initialize_message_func_array();
   if ((ret_value= ic_init_config_parameters()))
   {
     ic_end();

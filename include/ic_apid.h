@@ -612,6 +612,4 @@ int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
-
-void ic_initialize_message_func_array();
 #endif
