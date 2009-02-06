@@ -15,6 +15,7 @@
 
 #include <ic_common.h>
 #include <ic_apic.h>
+#include <ic_apid.h>
 
 /*
   Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
