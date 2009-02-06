@@ -69,7 +69,7 @@ close_socket(int sockfd)
 }
 /* Implements ic_check_for_data */
 static gboolean
-check_for_data_on_connection(IC_CONNECTION *ext_conn)
+check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   struct pollfd poll_struct;
@@ -77,7 +77,7 @@ check_for_data_on_connection(IC_CONNECTION *ext_conn)
 
   poll_struct.events= POLLIN;
   poll_struct.fd= conn->rw_sockfd;
-  ret_code= poll(&poll_struct, 1, 0);
+  ret_code= poll(&poll_struct, 1, timeout_in_ms);
   if (ret_code > 0)
     return TRUE;
   else
@@ -320,16 +320,18 @@ ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
 }
 
 static int
-security_handler_at_connect(IC_INT_CONNECTION *conn)
+login_connection(IC_CONNECTION *ext_conn)
 {
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   int error;
   gboolean save_ssl_used_for_data;
+
 #ifdef HAVE_SSL
   IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
   if (conn->is_ssl_connection &&
       (error= ssl_create_connection(ssl_conn)))
   {
-    conn->error_code= SSL_ERROR;
+    error= SSL_ERROR;
     goto error;
   }
 #endif
@@ -342,9 +344,11 @@ security_handler_at_connect(IC_INT_CONNECTION *conn)
     if (error)
       goto error;
   }
+  conn->error_code= 0;
   return 0;
 error:
   /* error handler */
+  conn->error_code= error;
   return error;
 }
 
@@ -370,6 +374,9 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
   fd_set select_set;
   struct timeval time_out;
   int timer= 0;
+
+  time_out.tv_usec= 0;
+  time_out.tv_sec= 1; /* Timeout is 1 second */
 
   /*
     The socket used to listen to a port can be reused many times.
@@ -508,13 +515,8 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
   }
   conn->rw_sockfd= ret_sockfd;
   conn->error_code= 0;
-  if ((error= security_handler_at_connect(conn)))
-    goto error;
   set_is_connected(conn);
   return 0;
-error:
-  close_socket(ret_sockfd);
-  return error;
 }
 
 static int
@@ -610,6 +612,9 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
 {
   int error, sockfd;
   struct addrinfo *loc_addrinfo;
+  fd_set read_set, write_set;
+  struct timeval time_out;
+  int timer= 0;
 
   DEBUG_PRINT(COMM_LEVEL, ("Translating hostnames"));
   if ((error= translate_hostnames(conn)))
@@ -626,6 +631,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
   /*
     Create a socket for the connection
   */
+renew_connect:
   if ((sockfd= socket(conn->server_addrinfo->ai_family,
                       conn->server_addrinfo->ai_socktype,
                       conn->server_addrinfo->ai_protocol)) < 0)
@@ -644,7 +650,8 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
     goto error;
   }
   if (conn->is_client)
-  { 
+  {
+    set_socket_nonblocking(conn->listen_sockfd, TRUE);
     do
     {
       /*
@@ -656,13 +663,47 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
       {
         if (errno == EINTR || errno == ECONNREFUSED)
           continue;
+        if (errno == EINPROGRESS)
+        {
+          /* We successfully a CONNECT request, still waiting for reply */
+          while (1)
+          {
+            time_out.tv_usec= 0;
+            time_out.tv_sec= 1; /* Timeout is 5 second */
+            FD_ZERO(&read_set);
+            FD_ZERO(&write_set);
+            FD_SET(sockfd, &read_set);
+            select(sockfd + 1, &read_set, &write_set, NULL, &time_out);
+            if (!((FD_ISSET(sockfd, &read_set)) &&
+                  (FD_ISSET(sockfd, &write_set))))
+            {
+              /*
+                We timed out, we will callback to the user and every 10
+                seconds we will renew the connect message if the user is
+                still waiting for a successful connect.
+              */
+              timer++;
+              if (conn->timeout_func &&
+                  conn->timeout_func(conn->timeout_obj, timer))
+              {
+                 conn->error_code= IC_ERROR_CONNECT_TIMEOUT;
+                 return conn->error_code;
+              }
+              if ((timer % 10) == 0)
+              {
+                /* Time to send a new connect message */
+                close_socket(conn);
+                goto renew_connect;
+              }
+            }
+          }
+        }
         DEBUG_PRINT(COMM_LEVEL, ("connect error"));
         goto error;
       }
       conn->rw_sockfd= sockfd;
-      if ((error= security_handler_at_connect(conn)))
-        goto error2;
       set_is_connected(conn);
+      set_socket_nonblocking(sockfd, conn->is_nonblocking);
       break;
     } while (1);
   }
@@ -694,7 +735,6 @@ error:
                                  (guint32)128);
   DEBUG_PRINT(COMM_LEVEL, ("Error code: %d, message: %s",
                             error, conn->err_str));
-error2:
   conn->error_code= error;
   close_socket(sockfd);
   return error;
@@ -1599,6 +1639,7 @@ int_create_socket_object(gboolean is_client,
       return NULL;
   }
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
+  conn->conn_op.ic_login_connection= login_connection;
   conn->conn_op.ic_accept_connection= accept_socket_connection;
   conn->conn_op.ic_close_connection= close_socket_connection;
   conn->conn_op.ic_close_listen_connection= close_listen_socket_connection;

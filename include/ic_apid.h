@@ -53,6 +53,7 @@ struct ic_ndb_receive_state
   */
   IC_SEND_NODE_CONNECTION *first_add_node;
   IC_SEND_NODE_CONNECTION *first_rem_node;
+  IC_SEND_NODE_CONNECTION *first_send_node;
   /* 
     Statistical info to track usage of this socket to enable proper
     configuration of threads to handle NDB Protocol.
@@ -294,6 +295,7 @@ struct ic_send_node_connection
   */
   IC_SEND_NODE_CONNECTION *next_add_node;
   IC_SEND_NODE_CONNECTION *next_rem_node;
+  IC_SEND_NODE_CONNECTION *next_send_node;
   /* Array of timers for the last 16 sends */
   IC_TIMER last_send_timers[MAX_SEND_TIMERS];
 };
@@ -311,8 +313,9 @@ struct ic_grid_comm
 };
 typedef struct ic_grid_comm IC_GRID_COMM;
 
-#define MAX_SERVER_PORTS_LISTEN 256
+#define IC_MAX_SERVER_PORTS_LISTEN 256
 #define IC_MAX_RECEIVE_THREADS 64
+
 struct ic_apid_global
 {
   IC_SOCK_BUF *mem_buf_pool;
@@ -329,7 +332,8 @@ struct ic_apid_global
   guint32 num_user_threads_started;
   guint32 num_receive_threads;
   guint32 max_listen_server_threads;
-  IC_LISTEN_SERVER_THREAD *listen_server_thread[MAX_SERVER_PORTS_LISTEN];
+  IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];
+  IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];
 };
 
 struct ic_transaction_hint
@@ -345,19 +349,98 @@ struct ic_transaction_obj
 };
 typedef struct ic_transaction_obj IC_TRANSACTION;
 
+/* For efficiency reasons the structs are part of the public API.  */
+
+typedef struct ic_field_def IC_FIELD_DEF;
+struct ic_field_bind
+{
+  guint32 no_fields;
+  guint32 buffer_size;
+  gchar *buffer_ptr;
+  guint8 *bit_array;
+  IC_FIELD_DEF *field_defs;
+};
+typedef struct ic_field_bind IC_FIELD_BIND;
+
+/*
+  We only handle the basic types here. This means that we manage
+  all integer types of various sorts, the bit type, fixed size
+  character strings, the variable sized character strings. We also
+  handle the new NDB type BLOB type which can store up to e.g.
+  16MB or more on the actual record. User level blobs are handled
+  on a higher level by using many records to accomodate for large
+  BLOB's. A user level BLOB is allowed to be spread among many
+  nodes and node groups within one cluster, but it cannot span
+  many clusters. The new BLOB type is essentially an array of
+  unsigned 8 bit values.
+*/
 enum ic_field_type
 {
-  UINT32_TYPE= 0
+  IC_API_UINT32_TYPE= 0,
+  IC_API_UINT64_TYPE= 1,
+  IC_API_UINT16_TYPE= 2,
+  IC_API_UINT8_TYPE= 3,
+  IC_API_INT32_TYPE= 4,
+  IC_API_INT64_TYPE= 5,
+  IC_API_INT16_TYPE= 6,
+  IC_API_INT8_TYPE= 7,
+  IC_API_BIT_TYPE= 8,
+  IC_API_FIXED_SIZE_CHAR= 9,
+  IC_API_VARIABLE_SIZE_CHAR= 10,
+  IC_API_BLOB_TYPE= 11
 };
 typedef enum ic_field_type IC_FIELD_TYPE;
 
 struct ic_field_def
 {
-  gchar *field_name;
-  guint32 field_id;
+  /*
+    Reference to the data, in the read case this is set-up by the
+    API and the memory referenced here is maintained by the API.
+    The caller must explicitly set it up. The caller can also
+    provide a buffer for each record in which case this pointer is
+    pointing into some place in this buffer.
+    In the write case this is a reference to the data to be written
+    and this memory is always maintained by the caller and must be
+    maintained until an execute call has been made,
+  */
+  guint32 data_offset;
+  /*
+    The data length is fllled in by the caller for a write and by the
+    API for a read.
+  */
+  guint32 data_length;
+  /*
+    The field can be specified either by field name or by field id.
+    Which to use is set on operation or more level.
+    This data is set by caller and never changed by API, only read.
+  */
+  union
+  {
+    gchar *field_name;
+    guint32 field_id;
+  } field_ref;
+  /*
+    For readers the field_type is the type of the data in NDB.
+    For writers it is the field type of the data sent to the
+    API, if there is a mismatch between this type and the
+    field type in the database we will apply a conversion
+    method to convert it to the proper data type.
+    If there is another data type s
+  */
   IC_FIELD_TYPE field_type;
+  /* Null indicator set by caller for writes and by API for reads.  */
+  gboolean is_null;
+  /*
+    This part is only used for variable sized fields
+    The variable is_allocate_indicator is set only in writes where we
+    allocate a zero-filled buffer of variable size in the field.
+    start_pos and end_pos indicates where the data is put into
+    or read from for variable fields.
+  */
+  gboolean is_allocate_indicator;
+  guint32 start_pos;
+  guint32 end_pos;
 };
-typedef struct ic_field_def IC_FIELD_DEF;
 
 enum ic_operation_type
 {
@@ -529,4 +612,6 @@ int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
+
+void ic_initialize_message_func_array();
 #endif

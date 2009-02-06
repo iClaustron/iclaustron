@@ -27,7 +27,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7038
+#define IC_LAST_ERROR 7040
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -117,6 +117,10 @@ ic_init_error_messages()
     "Threadpool is full";
   ic_error_str[IC_ERROR_START_THREAD_FAILED - IC_FIRST_ERROR]=
     "Start thread failed";
+  ic_error_str[IC_ERROR_RECEIVE_TIMEOUT - IC_FIRST_ERROR]=
+    "Timeout in receiving line in NDB Management Protocol";
+  ic_error_str[IC_ERROR_ACCEPT_TIMEOUT - IC_FIRST_ERROR]=
+    "Timeout when waiting for connect on client side";
 }
 
 void

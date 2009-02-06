@@ -1179,6 +1179,24 @@ run_listen_thread(void *data)
   return NULL;
 }
 
+static void
+move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_NDB_RECEIVE_STATE *rec_state= apid_global->receive_threads[0];
+
+  /*
+    At this point in time the send node connection object is only handled
+    by the send thread. As soon as we have delivered the object to the
+    receive thread we need to protect this object since it's handled
+    by multiple threads.
+  */
+  g_mutex_lock(rec_state->mutex);
+  send_node_conn->next_add_node= rec_state->first_add_node;
+  rec_state->first_add_node= send_node_conn;
+  g_mutex_unlock(rec_state->mutex);
+}
+
 static gpointer
 run_send_thread(void *data)
 {
@@ -1188,6 +1206,7 @@ run_send_thread(void *data)
   guint32 i, listen_inx;
   IC_CONNECTION *send_conn;
   IC_APID_GLOBAL *apid_global;
+  IC_CONNECTION *conn;
   IC_THREADPOOL_STATE *send_tp;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
@@ -1339,6 +1358,14 @@ run_send_thread(void *data)
     if ((ret_code= connect_by_send_thread(send_node_conn,
                                           is_client_part)))
       goto end;
+    conn= send_node_conn->conn;
+    /*
+      The send thread needs to perform the login function before moving onto
+      the NDB Protocol phase.
+    */
+    if ((ret_code= conn->conn_op.ic_login_connection(conn)))
+      goto end;
+    move_node_to_receive_thread(send_node_conn);
     active_send_thread(send_node_conn);
   }
 end:
@@ -1730,8 +1757,13 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   guint64 mean_curr_wait_time, mean_wait_time_plus_one, limit;
 
-  g_mutex_lock(send_node_conn->mutex);
   adaptive_send_algorithm_statistics(send_node_conn, ic_gethrtime());
+  /*
+    We assume a gaussian distribution which requires us to be 1.96*mean
+    value to be within 95% confidence interval and we approximate this
+    by 2. Thus to keep 95% within max_wait_in_nanos the mean value
+    should be max_wait_in_nanos/1.96.
+  */
   limit= send_node_conn->max_wait_in_nanos / 2;
   mean_curr_wait_time= send_node_conn->tot_curr_wait_time /
                        send_node_conn->num_stats;
@@ -1758,10 +1790,13 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
     if (send_node_conn->max_num_waits < MAX_SENDS_TRACKED)
       send_node_conn->max_num_waits++;
   }
-  g_mutex_unlock(send_node_conn->mutex);
-  return;
 }
 
+/*
+  This is the internal method used to actually send the gathered signals.
+  It essentially finds the proper IC_SEND_NODE_CONNECTION object and calls
+  ndb_send which handles the details of sending.
+*/
 static int
 ic_send_handling(IC_APID_GLOBAL *apid_global,
                  guint32 cluster_id,
@@ -2009,8 +2044,9 @@ execSCAN_TABLE_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
 #define IC_TRANSACTION_REF 6
 #define IC_ATTRIBUTE_INFO 7
 
-static void
-initialize_message_func_array()
+/* Initialize function pointer array for messages */
+void
+ic_initialize_message_func_array()
 {
   guint32 i;
   for (i= 0; i < 1024; i++)
@@ -2133,6 +2169,12 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
   return 1;
 }
 
+/*
+  This is the method where we wait for messages to be executed by NDB and
+  our return messages to arrive for processing. It is executed in the 
+  user thread upon a call to the iClaustron Data API which requires a
+  message to be received from another node.
+*/
 static int
 poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
 {
@@ -2292,6 +2334,7 @@ start_receive_thread(IC_APID_GLOBAL *apid_global)
   if (!(rec_state=
          (IC_NDB_RECEIVE_STATE*)ic_calloc(sizeof(IC_NDB_RECEIVE_STATE))))
     return ret_code;
+  rec_state->apid_global= apid_global;
   rec_state->rec_buf_pool= apid_global->mem_buf_pool;
   rec_state->message_pool= apid_global->ndb_message_pool;
   if (!((rec_state->poll_set= ic_create_poll_set()) &&
@@ -2302,6 +2345,8 @@ start_receive_thread(IC_APID_GLOBAL *apid_global)
                         (gpointer)rec_state,
                         IC_MEDIUM_STACK_SIZE))))
     goto error;
+  apid_global->receive_threads[apid_global->num_receive_threads]= rec_state;
+  apid_global->num_receive_threads++;
   return 0;
 error:
   if (rec_state->poll_set)
@@ -2357,7 +2402,7 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
       ndb_message_page->next_sock_buf_page= NULL;
       if (first_message)
       {
-        /* Link signal into the queue last */
+        /* Link message into the queue last */
         loc_thd_conn->last_received_message->next_sock_buf_page=
           ndb_message_page;
         loc_thd_conn->last_received_message= ndb_message_page;
@@ -2396,32 +2441,6 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
     }
   }
   return;
-}
-
-static int
-init_ndb_receiver(IC_RECEIVE_NODE_CONNECTION *rec_node,
-                  IC_NDB_RECEIVE_STATE *rec_state,
-                  gchar *start_buf,
-                  guint32 start_size)
-{
-  IC_SOCK_BUF_PAGE *buf_page;
-  IC_SOCK_BUF *rec_buf_pool= rec_state->rec_buf_pool;
-  if (start_size)
-  {
-    /*
-      Before starting the NDB Protocol we might have received the first
-      bytes already in a previous read socket call. Initialise the buf_page
-      with this information.
-    */
-    if (!(buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
-            rec_buf_pool,
-            &rec_state->free_rec_pages,
-            NUM_RECEIVE_PAGES_ALLOC)))
-      return 1;
-    memcpy(buf_page->sock_buf, start_buf, start_size);
-    rec_node->buf_page= buf_page;
-  }
-  return 0;
 }
 
 static void
@@ -2523,12 +2542,14 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
   IC_POLL_SET *poll_set= rec_state->poll_set;
   IC_CONNECTION *conn;
   IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_add_node;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
   int conn_fd, error;
 
   while (send_node_conn)
   {
     g_mutex_lock(send_node_conn->mutex);
-    send_node_conn= send_node_conn->next_add_node;
+    /* move to next node to add */
+    next_send_node_conn= send_node_conn->next_add_node;
     send_node_conn->next_add_node= NULL;
     if (send_node_conn->node_up && !send_node_conn->stop_ordered)
     {
@@ -2541,7 +2562,14 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
         send_node_conn->node_up= FALSE;
         node_failure_handling(send_node_conn);
       }
+      else
+      {
+        /* Add node to list of send node connections on this receive thread */
+        send_node_conn->next_send_node= rec_state->first_send_node;
+        rec_state->first_send_node= send_node_conn;
+      }
     }
+    send_node_conn= next_send_node_conn;
     g_mutex_unlock(send_node_conn->mutex);
   }
 }
@@ -2596,6 +2624,33 @@ check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
   rec_state->first_rem_node= NULL;
   g_mutex_unlock(rec_state->mutex);
 }
+
+static void
+check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_send_node;
+  gboolean wake_send_thread;
+
+  while (send_node_conn)
+  {
+    wake_send_thread= FALSE;
+    g_mutex_lock(send_node_conn->mutex);
+    adaptive_send_algorithm_adjust(send_node_conn);
+    if (send_node_conn->first_sbp)
+    {
+      /*
+        Someone has left buffers around waiting for a sender, we need to
+        wake the send thread to handle this sending in this case.
+      */
+      wake_send_thread= TRUE;
+    }
+    send_node_conn= send_node_conn->next_send_node;
+    g_mutex_unlock(send_node_conn->mutex);
+    if (wake_send_thread)
+      g_cond_signal(send_node_conn->cond);
+  }
+}
+
 static gpointer
 run_receive_thread(void *data)
 {
@@ -2651,6 +2706,7 @@ run_receive_thread(void *data)
       rec_node= get_next_rec_node(rec_state);
     }
     check_for_reorg_receive_threads(rec_state);
+    check_send_buffers(rec_state);
   } while (1);
 
 end:

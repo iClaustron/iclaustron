@@ -132,6 +132,7 @@ ic_init()
   if (!g_thread_supported())
     g_thread_init(NULL);
   ic_init_error_messages();
+  ic_initialize_message_func_array();
   if ((ret_value= ic_init_config_parameters()))
   {
     ic_end();

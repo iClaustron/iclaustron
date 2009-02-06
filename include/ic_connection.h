@@ -128,6 +128,7 @@ struct ic_connect_operations
                                         void *param);
   void* (*ic_get_param)                (IC_CONNECTION *conn);
 
+  int (*ic_login_connection)           (IC_CONNECTION *conn);
   int (*ic_set_up_connection)          (IC_CONNECTION *conn,
                                         accept_timeout_func timeout_func,
                                         void *timeout_obj);
@@ -157,7 +158,8 @@ struct ic_connect_operations
                                         guint32 secs_to_try);
   int (*ic_flush_connection)           (IC_CONNECTION *conn);
   /* This call is used to check if there is data to be read on the socket */
-  gboolean (*ic_check_for_data)        (IC_CONNECTION *conn);
+  gboolean (*ic_check_for_data)        (IC_CONNECTION *conn,
+                                        int timeout_in_ms);
   /* This call is used to check if the hostname and port is the same as
      the connection, 0 means equal, 1 non-equal */
   int (*ic_cmp_connection)             (IC_CONNECTION *conn,

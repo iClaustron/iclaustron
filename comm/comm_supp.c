@@ -102,6 +102,11 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
       DEBUG_PRINT(COMM_LEVEL, ("No complete lines to report yet"));
     }
     size_to_read= buffer_size - size_curr_buf;
+    if (!conn->conn_op.ic_check_for_data((IC_CONNECTION*)conn, 10000))
+    {
+      /* No data arrived in 10 seconds, we report this as an error */
+      return IC_ERROR_RECEIVE_TIMEOUT;
+    }
     if ((res= conn->conn_op.ic_read_connection((IC_CONNECTION*)conn,
                                                read_buf + size_curr_buf,
                                                size_to_read,
