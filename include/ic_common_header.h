@@ -37,6 +37,10 @@
 #define CONFIG_READ_BUF_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
 
+#ifndef PTHREAD_STACK_MIN
+#define PTHREAD_STACK_MIN 64*1024
+#endif
+
 /*
   Define stack sizes of our thread implementation, most of them are
   really lightweight and 64 kBytes should be sufficient for our

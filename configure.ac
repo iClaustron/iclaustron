@@ -87,13 +87,12 @@ AC_CHECK_LIB(rt, clock_gettime,
   [LIBS="-lrt $LIBS"
    AC_DEFINE(HAVE_CLOCK_GETTIME, 1,
              [Define HAVE_CLOCK_GETTIME if clock_gettime function exists])])
-
 case "$target_os" in
   *Linux* | *linux* )
     AC_DEFINE(LINUX, 1,
               [Define LINUX when OS is Linux])
     ;;
-  *sunos* )
+  *sunos* | *solaris* )
     AC_DEFINE(SOLARIS, 1,
               [Define SOLARIS when OS is Solaris])
     ;;
@@ -106,7 +105,7 @@ case "$target_os" in
               [Define MACOSX when OS is Mac OS X])
     ;;
   *)
-    AC_MSG_ERROR([OS isn't supported])
+    AC_MSG_ERROR([OS ${target_os} isn't supported])
     ;;
 esac
 
