@@ -417,6 +417,28 @@ struct ic_write_field_bind
 };
 typedef struct ic_write_field_bind IC_WRITE_FIELD_BIND;
 
+typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
+struct ic_key_field_bind
+{
+  /* Number of fields in bit_array and field_defs array */
+  guint32 no_fields;
+  /*
+    For writes the user needs to supply a buffer, data is referenced
+    offset from the buffer pointer. The user needs to supply both a
+    buffer pointer and a size of the buffer. The buffer is maintained
+    by the user of the API and won't be touched by the API other than
+    for reading its data.
+  */
+  guint32 buffer_size;
+  gchar *buffer_ptr;
+  /*
+    An array of pointers to IC_KEY_FIELD_DEF objects describing
+    fields to use in key.
+  */
+  IC_KEY_FIELD_DEF **field_defs;
+};
+typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
+
 /*
   We only handle the basic types here. This means that we manage
   all integer types of various sorts, the bit type, fixed size
@@ -523,9 +545,26 @@ struct ic_write_field_def
   gboolean allocate_field_size;
 };
 
-typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
-
-typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
+struct ic_key_field_def
+{
+  /*
+    All fields in this struct is set by caller and the struct is
+    read-only in the API.
+  */
+  /* The field can be specified by field id. */
+  guint32 field_id;
+  /* Reference inside the buffer of the data we're writing */
+  guint32 data_offset;
+  /* Length of field, no BLOBs allowed here */
+  guint32 data_length;
+  /*
+    This is the field type of the data sent to the API, if there is a
+    mismatch between this type and the field type in the database
+    we will apply a conversion method to convert it to the proper
+    data type.
+  */
+  IC_FIELD_TYPE field_type;
+};
 
 enum ic_read_key_op
 {
