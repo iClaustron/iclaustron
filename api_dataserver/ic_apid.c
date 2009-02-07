@@ -1931,7 +1931,7 @@ execTRANSACTION_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-handle_key_ai(__attribute__ ((unused)) IC_KEY_OPERATION *key_op,
+handle_key_ai(__attribute__ ((unused)) IC_APID_OPERATION *apid_op,
               __attribute__ ((unused)) IC_TRANSACTION *trans,
               __attribute__ ((unused)) guint32 *ai_data,
               __attribute__ ((unused)) guint32 data_size,
@@ -1941,7 +1941,7 @@ handle_key_ai(__attribute__ ((unused)) IC_KEY_OPERATION *key_op,
 }
 
 static int
-handle_scan_ai(__attribute__ ((unused)) IC_SCAN_OPERATION *scan_op,
+handle_scan_ai(__attribute__ ((unused)) IC_APID_OPERATION *apid_op,
                __attribute__ ((unused)) IC_TRANSACTION *trans,
                __attribute__ ((unused)) guint32 *ai_data,
                __attribute__ ((unused)) guint32 data_size,
@@ -1965,8 +1965,7 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   guint32 header_size= ndb_message->segment_size[0];
   guint32 *attrinfo_data;
   void *connection_obj;
-  IC_KEY_OPERATION *key_op;
-  IC_SCAN_OPERATION *scan_op;
+  IC_APID_OPERATION *apid_op;
   IC_TRANSACTION *trans_op;
   IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
   guint32 data_size;
@@ -1977,10 +1976,10 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   if (dyn_trans->dt_ops.ic_get_object(dyn_trans,
                                       connection_ptr,
                                       &connection_obj))
-  {
+  { 
     return 1;
   }
-  key_op= (IC_KEY_OPERATION*)connection_obj;
+  apid_op= (IC_APID_OPERATION*)connection_obj;
   if (ndb_message->num_segments == 1)
   {
     attrinfo_data= ndb_message->segment_ptr[1];
@@ -1994,23 +1993,22 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
     attrinfo_data= &header_data[3];
     data_size= header_size - 3;
   }
-  trans_op= key_op->transaction;
+  trans_op= apid_op->trans_obj;
   if (trans_op->transaction_id[0] != transid_part1 ||
       trans_op->transaction_id[1] != transid_part2)
   {
     g_assert(FALSE);
     return 1;
   }
-  if (key_op->operation_type == SCAN_OPERATION)
+  if (apid_op->op_type == SCAN_OPERATION)
   {
-    scan_op= (IC_SCAN_OPERATION*)key_op;
-    return handle_scan_ai(scan_op,
+    return handle_scan_ai(apid_op,
                           trans_op,
                           attrinfo_data,
                           data_size,
                           error_object);
   }
-  return handle_key_ai(key_op,
+  return handle_key_ai(apid_op,
                        trans_op,
                        attrinfo_data,
                        data_size,

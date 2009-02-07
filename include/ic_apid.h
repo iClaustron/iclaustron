@@ -351,16 +351,71 @@ typedef struct ic_transaction_obj IC_TRANSACTION;
 
 /* For efficiency reasons the structs are part of the public API.  */
 
-typedef struct ic_field_def IC_FIELD_DEF;
-struct ic_field_bind
+/*
+  When performing a read operation we always supply a IC_READ_FIELD_BIND
+  object. This object specifies the fields we want to read.
+*/
+typedef struct ic_read_field_def IC_READ_FIELD_DEF;
+struct ic_read_field_bind
 {
+  /* Number of fields in bit_array and field_defs array */
   guint32 no_fields;
+  /* If a buffer_ptr is provided a buffer_size also is required. */
+  guint32 buffer_size;
+  /* User supplied buffer to use for returned results. */
+  gchar *buffer_ptr;
+  /*
+    Reference to the buffer where results are returned. If the user
+    supplied a buffer it will be the same buffer as he supplied,
+    otherwise a buffer allocated by the API. This buffer is released
+    when operation is released or transaction ended. So reference
+    to the buffer is only safe until this call to the API. If the user
+    supplied the buffer the reference to the buffer is safe until
+    calling the API to get the next record of a scan. For key reads the
+    buffer is stable until the user decides otherwise.
+  */
+  gchar *returned_buffer_ptr;
+  /*
+    The bit_array field makes it possible to reuse this structure for many
+    different reads on the same table. We will only read those fields that
+    have their bit set in the bit_array.
+  */
+  guint8 *bit_array;
+  /*
+    An array of pointers to IC_READ_FIELD_DEF objects describing
+    fields to read.
+  */
+  IC_READ_FIELD_DEF **field_defs;
+};
+typedef struct ic_read_field_bind IC_READ_FIELD_BIND;
+
+typedef struct ic_write_field_def IC_WRITE_FIELD_DEF;
+struct ic_write_field_bind
+{
+  /* Number of fields in bit_array and field_defs array */
+  guint32 no_fields;
+  /*
+    For writes the user needs to supply a buffer, data is referenced
+    offset from the buffer pointer. The user needs to supply both a
+    buffer pointer and a size of the buffer. The buffer is maintained
+    by the user of the API and won't be touched by the API other than
+    for reading its data.
+  */
   guint32 buffer_size;
   gchar *buffer_ptr;
+  /*
+    The bit_array field makes it possible to reuse this structure for many
+    different writes on the same table. We will only write those fields that
+    have their bit set in the bit_array.
+  */
   guint8 *bit_array;
-  IC_FIELD_DEF *field_defs;
+  /*
+    An array of pointers to IC_WRITE_FIELD_DEF objects describing
+    fields to write.
+  */
+  IC_WRITE_FIELD_DEF **field_defs;
 };
-typedef struct ic_field_bind IC_FIELD_BIND;
+typedef struct ic_write_field_bind IC_WRITE_FIELD_BIND;
 
 /*
   We only handle the basic types here. This means that we manage
@@ -378,116 +433,126 @@ enum ic_field_type
 {
   IC_API_UINT32_TYPE= 0,
   IC_API_UINT64_TYPE= 1,
-  IC_API_UINT16_TYPE= 2,
-  IC_API_UINT8_TYPE= 3,
-  IC_API_INT32_TYPE= 4,
-  IC_API_INT64_TYPE= 5,
-  IC_API_INT16_TYPE= 6,
-  IC_API_INT8_TYPE= 7,
-  IC_API_BIT_TYPE= 8,
-  IC_API_FIXED_SIZE_CHAR= 9,
-  IC_API_VARIABLE_SIZE_CHAR= 10,
-  IC_API_BLOB_TYPE= 11
+  IC_API_UINT24_TYPE= 2,
+  IC_API_UINT16_TYPE= 3,
+  IC_API_UINT8_TYPE= 4,
+  IC_API_INT32_TYPE= 5,
+  IC_API_INT64_TYPE= 6,
+  IC_API_INT24_TYPE= 7,
+  IC_API_INT16_TYPE= 8,
+  IC_API_INT8_TYPE= 9,
+  IC_API_BIT_TYPE= 10,
+  IC_API_FIXED_SIZE_CHAR= 11,
+  IC_API_VARIABLE_SIZE_CHAR= 12,
+  IC_API_BLOB_TYPE= 13
 };
 typedef enum ic_field_type IC_FIELD_TYPE;
 
-struct ic_field_def
+struct ic_read_field_def
 {
-  /*
-    Reference to the data, in the read case this is set-up by the
-    API and the memory referenced here is maintained by the API.
-    The caller must explicitly set it up. The caller can also
-    provide a buffer for each record in which case this pointer is
-    pointing into some place in this buffer.
-    In the write case this is a reference to the data to be written
-    and this memory is always maintained by the caller and must be
-    maintained until an execute call has been made,
-  */
+  /* Fields set by caller */
+  /* The field can be specified by field id.  */
+  guint32 field_id;
+  /* Reference to the data within the buffer: This is set-up by caller */
   guint32 data_offset;
   /*
-    The data length is fllled in by the caller for a write and by the
-    API for a read.
+    For variable length it is possible to specify a starting byte position
+    and an end position. The actual data read will always start at
+    start_pos, the actual length read is returned in data_length. If zero
+    then there was no data at start_pos or beyond.
+
+    The start_pos and end_pos is set by caller and not changed by API.
+
+    The special case of start_pos= end_pos= 0 means that we're interested
+    in the length of the complete field. In this case the data type
+    returned is always IC_API_UINT32 and the length is returned at
+    data_offset and data_length is 4 (size of UINT32).
+    
+    To read all data in a field set start_pos to 0 and end_pos at
+    least as big as the maximum size of the field. However it isn't
+    possible to read more than 8 kBytes per read. It is however
+    possible to send many parallel reads reading different portions
+    of the field for very long fields. This distinction is only relevant
+    for BLOB fields.
   */
-  guint32 data_length;
-  /*
-    The field can be specified either by field name or by field id.
-    Which to use is set on operation or more level.
-    This data is set by caller and never changed by API, only read.
-  */
-  union
-  {
-    gchar *field_name;
-    guint32 field_id;
-  } field_ref;
-  /*
-    For readers the field_type is the type of the data in NDB.
-    For writers it is the field type of the data sent to the
-    API, if there is a mismatch between this type and the
-    field type in the database we will apply a conversion
-    method to convert it to the proper data type.
-    If there is another data type s
-  */
-  IC_FIELD_TYPE field_type;
-  /* Null indicator set by caller for writes and by API for reads.  */
-  gboolean is_null;
-  /*
-    This part is only used for variable sized fields
-    The variable is_allocate_indicator is set only in writes where we
-    allocate a zero-filled buffer of variable size in the field.
-    start_pos and end_pos indicates where the data is put into
-    or read from for variable fields.
-  */
-  gboolean is_allocate_indicator;
   guint32 start_pos;
   guint32 end_pos;
+
+  /* Fields set by API */
+  /* The actual length of the field, set by API */
+  guint32 data_length;
+  /* The field type, set by API */
+  IC_FIELD_TYPE field_type;
+  /* Null indicator set by API */
+  gboolean is_null;
 };
 
-enum ic_operation_type
+struct ic_write_field_def
 {
-  KEY_OPERATION= 0,
-  SCAN_OPERATION= 1
+  /*
+    All fields in this struct is set by caller and the struct is
+    read-only in the API.
+  */
+  /* The field can be specified by field id. */
+  guint32 field_id;
+  /* Reference inside the buffer of the data we're writing */
+  guint32 data_offset;
+  /*
+    For fixed size fields the start_pos and end_pos is ignored.
+    For variable sized fields it indicates the starting position
+    to write from and the end position to write into. For normal
+    writes of the full field we set start_pos to 0 and end_pos to
+    size of the field.
+  */
+  guint32 start_pos;
+  guint32 end_pos;
+  /*
+    This is the field type of the data sent to the API, if there is a
+    mismatch between this type and the field type in the database
+    we will apply a conversion method to convert it to the proper
+    data type.
+  */
+  IC_FIELD_TYPE field_type;
+  /* TRUE if we're writing NULL to the field */
+  gboolean is_null;
+  /*
+    TRUE if we're writing zero's from start_pos to end_pos,
+    Thus no need to send data since we're setting everything
+    to zero's.
+  */
+  gboolean allocate_field_size;
 };
-typedef enum ic_operation_type IC_OPERATION_TYPE;
 
-enum ic_apid_key_operation_type
+typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
+
+typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
+
+enum ic_read_key_op
 {
   SIMPLE_KEY_READ= 0,
   KEY_READ= 1,
   EXCLUSIVE_KEY_READ= 2,
-  KEY_READ_COMMITTED= 3,
-  key_update= 4,
-  key_delete= 5,
-  key_write= 6,
-  key_insert= 7,
-  take_over_update= 8,
-  take_over_delete= 9
+  COMMITTED_KEY_READ= 3
 };
-typedef enum ic_apid_key_operation_type IC_APID_KEY_OPERATION_TYPE;
+typedef enum ic_read_key_op IC_READ_KEY_OP;
 
-enum ic_apid_scan_operation_type
+enum ic_write_key_op
+{
+  KEY_UPDATE= 0,
+  KEY_WRITE= 1,
+  KEY_INSERT= 2,
+  KEY_DELETE= 3
+};
+typedef enum ic_write_key_op IC_WRITE_KEY_OP;
+
+enum ic_scan_op
 {
   SCAN_READ_COMMITTED= 0,
   SCAN_READ_EXCLUSIVE= 1,
   SCAN_HOLD_LOCK= 2,
   SCAN_CONSISTENT_READ= 3
 };
-typedef enum ic_apid_scan_operation_type IC_APID_SCAN_OPERATION_TYPE;
-
-struct ic_key_operation
-{
-  guint32 operation_type;
-  IC_APID_KEY_OPERATION_TYPE key_op_type;
-  IC_TRANSACTION *transaction;
-};
-typedef struct ic_key_operation IC_KEY_OPERATION;
-
-struct ic_scan_operation
-{
-  guint32 operation_type;
-  IC_APID_SCAN_OPERATION_TYPE scan_op_type;
-  IC_TRANSACTION *transaction;
-};
-typedef struct ic_scan_operation IC_SCAN_OPERATION;
+typedef enum ic_scan_op IC_SCAN_OP;
 
 enum ic_instruction_type
 {
@@ -506,17 +571,22 @@ typedef struct ic_instruction IC_INSTRUCTION;
 
 struct ic_table_def
 {
-  gchar *table_name;
   guint32 table_id;
-  guint32 num_fields;
+  guint32 index_id;
+  gboolean use_index;
 };
 typedef struct ic_table_def IC_TABLE_DEF;
 
 struct ic_metadata_bind_ops
 {
-  int (*ic_table_bind) (IC_TABLE_DEF *table_def);
-  int (*ic_field_bind) (IC_TABLE_DEF *table_def,
-                        IC_FIELD_DEF *field_def);
+  int (*ic_table_bind) (IC_TABLE_DEF *table_def,
+                        const gchar *table_name);
+  int (*ic_index_bind) (IC_TABLE_DEF *table_def,
+                        const gchar *index_name,
+                        const gchar *table_name);
+  int (*ic_field_bind) (guint32 table_id,
+                        guint32* field_id,
+                        const gchar *field_name);
 };
 typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
 
@@ -528,48 +598,68 @@ struct ic_translation_obj
   IC_HASHTABLE *hash_table;
 };
 
-struct ic_apid_transaction_ops
+enum ic_apid_operation_type
 {
-  /*
-    ic_key_access is used for read, update, delete, insert and replace
-    operations. For all operations the key_def sets up the value of the
-    key fields (needs to be all of the fields in either a primary key
-    or in a unique key. For reads the field_def defines the placeholders
-    of the data to be read back. For updates, inserts and replace operations
-    it's the values to set and for deletes this pointer must be NULL.
-
-    table_def is a table definition which has been bound before this call.
-    A table could here either be a real table or a unique index table.
-    transaction_obj is a reference to the transaction to place this
-    operation into.
-    Finally apid_op contains information about the operation type.
-  */
-  int (*ic_key_access) (IC_TRANSACTION *transaction_obj,
-                        IC_APID_KEY_OPERATION_TYPE apid_key_op_type,
-                        IC_KEY_OPERATION **key_op,
-                        IC_TABLE_DEF *table_def,
-                        IC_FIELD_DEF **field_def,
-                        IC_FIELD_DEF **key_def);
+  SCAN_OPERATION= 0,
+  KEY_READ_OPERATION= 1,
+  KEY_WRITE_OPERATION= 2
 };
-typedef struct ic_apid_transaction_ops IC_APID_TRANSACTION_OPS;
+typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
 
-struct ic_apid_connection;
+struct ic_apid_error
+{
+  int error_code;
+  gchar *error_msg;
+};
+typedef struct ic_apid_error IC_APID_ERROR;
+
+struct ic_apid_operation
+{
+  IC_TRANSACTION *trans_obj;
+  IC_READ_FIELD_BIND *read_fields;
+  IC_TABLE_DEF *table_def;
+  IC_APID_ERROR *error;
+  IC_APID_OPERATION_TYPE op_type;
+  void *user_reference;
+};
+typedef struct ic_apid_operation IC_APID_OPERATION;
+
+typedef struct ic_apid_connection IC_APID_CONNECTION;
 struct ic_apid_connection_ops
 {
-  int (*ic_start_transaction) (struct ic_apid_connection *apid_conn,
+  int (*ic_read_key_access)
+               (IC_APID_CONNECTION *apid_conn,
+                IC_TRANSACTION *transaction_obj,
+                IC_READ_FIELD_BIND *read_fields,
+                IC_KEY_FIELD_BIND *key_fields,
+                IC_TABLE_DEF *table_def,
+                IC_READ_KEY_OP read_key_op,
+                void *user_reference);
+
+  int (*ic_write_key_access)
+               (IC_APID_CONNECTION *apid_conn,
+                IC_TRANSACTION *transaction_obj,
+                IC_WRITE_FIELD_BIND *write_fields,
+                IC_KEY_FIELD_BIND *key_fields,
+                IC_TABLE_DEF *table_def,
+                IC_WRITE_KEY_OP write_key_op,
+                void *user_reference);
+
+  int (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
                                IC_TRANSACTION **transaction_obj,
                                IC_TRANSACTION_HINT *transaction_hint);
-  int (*ic_join_transaction) (struct ic_apid_connection *apid_connection,
+  int (*ic_join_transaction) (IC_APID_CONNECTION *apid_conn,
                               IC_TRANSACTION transaction_obj);
-  int (*ic_poll) (struct ic_apid_connection *apid_conn, glong wait_time);
-  void (*ic_free) (struct ic_apid_connection *apid_conn);
+  int (*ic_poll) (IC_APID_CONNECTION *apid_conn, glong wait_time);
+  IC_APID_OPERATION* (*ic_get_next_completed_operation)
+                              (IC_APID_CONNECTION *apid_conn);
+  void (*ic_free) (IC_APID_CONNECTION *apid_conn);
 };
 typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 
 struct ic_apid_connection
 {
   IC_APID_CONNECTION_OPS apid_conn_ops;
-  IC_APID_TRANSACTION_OPS apid_trans_ops;
   IC_METADATA_BIND_OPS apid_metadata_ops;
   IC_APID_GLOBAL *apid_global;
   IC_TRANSLATION_OBJ *trans_bindings;
@@ -579,7 +669,6 @@ struct ic_apid_connection
   IC_THREAD_CONNECTION *thread_conn;
   guint32 thread_id;
 };
-typedef struct ic_apid_connection IC_APID_CONNECTION;
 
 /*
   These two functions are used to connect/disconnect to/from the clusters
