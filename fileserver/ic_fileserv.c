@@ -59,9 +59,8 @@ run_file_server_thread(gpointer data)
   gboolean stop_flag;
   DEBUG_ENTRY("run_file_server_thread");
 
-  g_mutex_lock(apid_global->mutex);
-  stop_flag= apid_global->stop_flag;
-  g_mutex_unlock(apid_global->mutex);
+  apid_global->apid_global_ops.ic_add_user_thread(apid_global);
+  stop_flag= apid_global->apid_global_ops.ic_get_stop_flag(apid_global);
   if (stop_flag)
     DEBUG_RETURN(NULL);
   /*
@@ -79,10 +78,7 @@ run_file_server_thread(gpointer data)
   */
   /* Currently empty implementation */
 error:
-  g_mutex_lock(apid_global->mutex);
-  apid_global->num_user_threads_started--;
-  g_cond_signal(apid_global->cond);
-  g_mutex_unlock(apid_global->mutex);
+  apid_global->apid_global_ops.ic_remove_user_thread(apid_global);
   DEBUG_RETURN(NULL);
 }
 
@@ -108,23 +104,19 @@ run_file_server(IC_APID_GLOBAL *apid_global, gchar **err_str)
 
   *err_str= NULL;
   printf("Ready to start file server\n");
-  g_mutex_lock(apid_global->mutex);
   for (i= 0; i < glob_num_threads; i++)
   {
     if (!(error= start_file_server_thread(apid_global)))
     {
-      apid_global->stop_flag= TRUE;
+      apid_global->apid_global_ops.ic_set_stop_flag(apid_global);
       break;
     }
-    num_threads_started++;
   }
-  apid_global->num_user_threads_started= num_threads_started;
   while (1)
   {
-    g_cond_wait(apid_global->cond, apid_global->mutex);
-    if (apid_global->num_user_threads_started == 0)
+    apid_global->apid_global_ops.ic_cond_wait(apid_global);
+    if (apid_global->apid_global_ops.ic_get_num_user_threads(apid_global) == 0)
     {
-      g_mutex_unlock(apid_global->mutex);
       break;
     }
   }

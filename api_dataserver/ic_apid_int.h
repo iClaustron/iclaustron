@@ -37,11 +37,12 @@ typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 typedef struct ic_grid_comm IC_GRID_COMM;
 typedef struct ic_internal_apid_error IC_INTERNAL_APID_ERROR;
 typedef struct ic_internal_apid_connection IC_INTERNAL_APID_CONNECTION;
+typedef struct ic_internal_apid_global IC_INTERNAL_APID_GLOBAL;
 
 struct ic_ndb_receive_state
 {
   /* Global data for Data Server API */
-  IC_APID_GLOBAL *apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global;
   /* Local free pool of receive pages */
   IC_SOCK_BUF_PAGE *free_rec_pages;
   /* Local free pool of NDB messages */
@@ -154,7 +155,7 @@ struct ic_internal_apid_connection
 {
   IC_APID_CONNECTION_OPS apid_conn_ops;
   IC_METADATA_BIND_OPS apid_metadata_ops;
-  IC_APID_GLOBAL *apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global;
   IC_TRANSLATION_OBJ *trans_bindings;
   IC_TRANSLATION_OBJ *op_bindings;
   IC_API_CONFIG_SERVER *apic;
@@ -203,7 +204,7 @@ struct ic_receive_node_connection
 struct ic_send_node_connection
 {
   /* A pointer to the global struct */
-  IC_APID_GLOBAL *apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global;
   /* Receive node object */
   IC_RECEIVE_NODE_CONNECTION rec_node;
   /* My hostname of the connection used by this thread */
@@ -335,20 +336,21 @@ struct ic_translation_obj
   IC_HASHTABLE *hash_table;
 };
 
-struct ic_apid_global
+struct ic_internal_apid_global
 {
+  IC_APID_GLOBAL_OPS apid_global_ops;
+  IC_BITMAP *cluster_bitmap;
+  GMutex *mutex;
+  GCond *cond;
+  guint32 num_user_threads_started;
+  gboolean stop_flag;
   IC_SOCK_BUF *mem_buf_pool;
   IC_SOCK_BUF *ndb_message_pool;
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
-  IC_BITMAP *cluster_bitmap;
   IC_THREADPOOL_STATE *rec_thread_pool;
   IC_THREADPOOL_STATE *send_thread_pool;
   GMutex *thread_id_mutex;
-  GMutex *mutex;
-  GCond *cond;
-  gboolean stop_flag;
-  guint32 num_user_threads_started;
   guint32 num_receive_threads;
   guint32 max_listen_server_threads;
   IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];

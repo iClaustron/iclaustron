@@ -135,9 +135,9 @@ adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  gboolean *will_wait,
                                  IC_TIMER current_time);
 static void apid_free(IC_APID_CONNECTION *apid_conn);
-static int start_receive_thread(IC_APID_GLOBAL *apid_global);
+static int start_receive_thread(IC_INTERNAL_APID_GLOBAL *apid_global);
 static int start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
-static void start_connect_phase(IC_APID_GLOBAL *apid_global,
+static void start_connect_phase(IC_INTERNAL_APID_GLOBAL *apid_global,
                                 gboolean stop_ordered,
                                 gboolean signal_flag);
 static void prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
@@ -170,7 +170,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                  int *max_hash_index,
                  LINK_MESSAGE_ANCHORS *message_anchors,
                  IC_THREAD_CONNECTION **thd_conn);
-static void ic_end_apid(IC_APID_GLOBAL *apid_global);
+static void ic_end_apid(IC_INTERNAL_APID_GLOBAL *apid_global);
 static void ic_initialize_message_func_array();
 
 /*
@@ -187,17 +187,18 @@ static void ic_initialize_message_func_array();
   API. This method only allocates the memory and does not start any
   threads, it must be called before any start thread handling can be done.
 */
-static IC_APID_GLOBAL*
+static IC_INTERNAL_APID_GLOBAL*
 ic_init_apid(IC_API_CONFIG_SERVER *apic)
 {
-  IC_APID_GLOBAL *apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global;
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CLUSTER_COMM *cluster_comm;
   guint32 i, j;
 
   ic_initialize_message_func_array();
-  if (!(apid_global= (IC_APID_GLOBAL*)ic_calloc(sizeof(IC_APID_GLOBAL))))
+  if (!(apid_global= (IC_INTERNAL_APID_GLOBAL*)
+       ic_calloc(sizeof(IC_INTERNAL_APID_GLOBAL))))
     return NULL;
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
                         IC_MAX_RECEIVE_THREADS)))
@@ -284,7 +285,7 @@ free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
   global Data API object.
 */
 static void
-ic_end_apid(IC_APID_GLOBAL *apid_global)
+ic_end_apid(IC_INTERNAL_APID_GLOBAL *apid_global)
 {
   IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
   IC_SOCK_BUF *ndb_message_pool= apid_global->ndb_message_pool;
@@ -454,7 +455,7 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   the Data API should be connected to.
 */
 static int
-ic_apid_global_connect(IC_APID_GLOBAL *apid_global)
+ic_apid_global_connect(IC_INTERNAL_APID_GLOBAL *apid_global)
 {
   guint32 node_id, cluster_id, my_node_id;
   IC_CLUSTER_CONFIG *clu_conf;
@@ -531,14 +532,14 @@ error:
   Data API threads.
 */
 static int
-ic_apid_global_disconnect(IC_APID_GLOBAL *apid_global)
+ic_apid_global_disconnect(IC_INTERNAL_APID_GLOBAL *apid_global)
 {
   start_connect_phase(apid_global, TRUE, FALSE);
   return 0;
 }
 
 static void
-start_connect_phase(IC_APID_GLOBAL *apid_global,
+start_connect_phase(IC_INTERNAL_APID_GLOBAL *apid_global,
                     gboolean stop_ordered,
                     gboolean signal_flag)
 {
@@ -599,6 +600,70 @@ start_connect_phase(IC_APID_GLOBAL *apid_global,
   DEBUG_RETURN_EMPTY;
 }
 
+void
+apid_global_cond_wait(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
+  g_cond_wait(apid_global->cond, apid_global->mutex);
+  g_mutex_unlock(apid_global->mutex);
+}
+
+void
+apid_global_set_stop(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
+  g_mutex_lock(apid_global->mutex);
+  apid_global->stop_flag= TRUE;
+  g_mutex_unlock(apid_global->mutex);
+}
+
+gboolean
+apid_global_get_stop(IC_APID_GLOBAL *ext_apid_global)
+{
+  gboolean stop_flag;
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
+  g_mutex_lock(apid_global->mutex);
+  stop_flag= apid_global->stop_flag;
+  g_mutex_unlock(apid_global->mutex);
+  return stop_flag;
+}
+
+guint32
+apid_global_get_num_user_threads(IC_APID_GLOBAL *ext_apid_global)
+{
+  guint32 num_user_threads;
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
+  g_mutex_lock(apid_global->mutex);
+  num_user_threads= apid_global->num_user_threads_started;
+  g_mutex_unlock(apid_global->mutex);
+  return num_user_threads;
+}
+
+void
+apid_global_add_user_thread(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
+  g_mutex_lock(apid_global->mutex);
+  apid_global->num_user_threads_started++;
+  g_mutex_unlock(apid_global->mutex);
+}
+
+void
+apid_global_remove_user_thread(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
+  g_mutex_lock(apid_global->mutex);
+  apid_global->num_user_threads_started--;
+  g_cond_signal(apid_global->cond);
+  g_mutex_unlock(apid_global->mutex);
+}
+
 /*
   External interface to GLOBAL DATA API INITIALISATION MODULE
   -----------------------------------------------------------
@@ -608,7 +673,7 @@ ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
                        int *ret_code,
                        gchar **err_str)
 {
-  IC_APID_GLOBAL *apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global;
   gchar *err_string;
   int error;
 
@@ -623,7 +688,16 @@ ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
     *ret_code= error;
     goto error;
   }
-  return apid_global;
+  apid_global->apid_global_ops.ic_cond_wait= apid_global_cond_wait;
+  apid_global->apid_global_ops.ic_set_stop_flag= apid_global_set_stop;
+  apid_global->apid_global_ops.ic_get_stop_flag= apid_global_get_stop;
+  apid_global->apid_global_ops.ic_get_num_user_threads=
+    apid_global_get_num_user_threads;
+  apid_global->apid_global_ops.ic_add_user_thread=
+    apid_global_add_user_thread;
+  apid_global->apid_global_ops.ic_remove_user_thread=
+    apid_global_remove_user_thread;
+  return (IC_APID_GLOBAL*)apid_global;
 error:
   err_string= ic_common_fill_error_buffer(NULL, 0, *ret_code, *err_str);
   g_assert(err_string == *err_str);
@@ -631,8 +705,10 @@ error:
 }
 
 int
-ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global)
+ic_disconnect_apid_global(IC_APID_GLOBAL *ext_apid_global)
 {
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
   int ret_code;
 
   if (!(ret_code= ic_apid_global_disconnect(apid_global)))
@@ -656,7 +732,7 @@ apid_free(IC_APID_CONNECTION *ext_apid_conn)
     (IC_INTERNAL_APID_CONNECTION*)ext_apid_conn;
   IC_THREAD_CONNECTION *thread_conn= apid_conn->thread_conn;
   IC_GRID_COMM *grid_comm;
-  IC_APID_GLOBAL *apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global;
   guint32 thread_id= apid_conn->thread_id;
   DEBUG_ENTRY("apid_free");
 
@@ -685,9 +761,11 @@ apid_free(IC_APID_CONNECTION *ext_apid_conn)
 }
 
 IC_APID_CONNECTION*
-ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
+ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
                           IC_BITMAP *cluster_id_bitmap)
 {
+  IC_INTERNAL_APID_GLOBAL *apid_global=
+    (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
   guint32 thread_id= IC_MAX_THREAD_CONNECTIONS;
   IC_GRID_COMM *grid_comm;
   IC_THREAD_CONNECTION *thread_conn;
@@ -1187,7 +1265,7 @@ run_listen_thread(void *data)
 static void
 move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
-  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_NDB_RECEIVE_STATE *rec_state= apid_global->receive_threads[0];
 
   /*
@@ -1210,7 +1288,7 @@ run_send_thread(void *data)
   int ret_code;
   guint32 i, listen_inx;
   IC_CONNECTION *send_conn;
-  IC_APID_GLOBAL *apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global;
   IC_CONNECTION *conn;
   IC_THREADPOOL_STATE *send_tp;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
@@ -1386,7 +1464,7 @@ static int
 start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   int ret_code;
-  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_THREADPOOL_STATE *tp_state= apid_global->send_thread_pool;
 
   if (send_node_conn->my_node_id == send_node_conn->other_node_id)
@@ -1551,7 +1629,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
 static int
 node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
-  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
   mem_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
     mem_buf_pool, send_node_conn->first_sbp);
@@ -1605,7 +1683,7 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   int error;
   IC_CONNECTION *conn= send_node_conn->conn;
-  IC_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
   DEBUG_ENTRY("real_send_handling");
   error= conn->conn_op.ic_writev_connection(conn,
@@ -1803,7 +1881,7 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
   ndb_send which handles the details of sending.
 */
 static int
-ic_send_handling(IC_APID_GLOBAL *apid_global,
+ic_send_handling(IC_INTERNAL_APID_GLOBAL *apid_global,
                  guint32 cluster_id,
                  guint32 node_id,
                  IC_SOCK_BUF_PAGE *first_page_to_send,
@@ -2330,7 +2408,7 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
 static gpointer run_receive_thread(void *data);
 
 static int
-start_receive_thread(IC_APID_GLOBAL *apid_global)
+start_receive_thread(IC_INTERNAL_APID_GLOBAL *apid_global)
 {
   IC_THREADPOOL_STATE *tp_state= apid_global->rec_thread_pool;
   IC_NDB_RECEIVE_STATE *rec_state;
@@ -2665,7 +2743,7 @@ run_receive_thread(void *data)
   int max_hash_index= (int)-1;
   int ret_code;
   IC_SOCK_BUF_PAGE *buf_page, *ndb_message;
-  IC_APID_GLOBAL *apid_global= rec_state->apid_global;
+  IC_INTERNAL_APID_GLOBAL *apid_global= rec_state->apid_global;
   IC_THREAD_CONNECTION **thd_conn= apid_global->grid_comm->thread_conn_array;
   IC_RECEIVE_NODE_CONNECTION *rec_node;
 

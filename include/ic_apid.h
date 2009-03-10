@@ -16,11 +16,11 @@
 #ifndef IC_APID_H
 #define IC_APID_H
 
-#include <ic_connection.h>
 #include <ic_common.h>
 #include <ic_apic.h>
 
 typedef struct ic_apid_global IC_APID_GLOBAL;
+typedef struct ic_apid_global_ops IC_APID_GLOBAL_OPS;
 typedef struct ic_read_field_def IC_READ_FIELD_DEF;
 typedef struct ic_read_field_bind IC_READ_FIELD_BIND;
 typedef struct ic_write_field_def IC_WRITE_FIELD_DEF;
@@ -57,26 +57,18 @@ typedef enum ic_error_category IC_ERROR_CATEGORY;
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_where_condition IC_WHERE_CONDITION;
 
+/*
+  The hidden header file contains parts of the interface which are
+  public but which should not be used by API user. They are public
+  for performance reasons and should not be trusted as being stable
+  between releases.
+
+  The data types header file contains a number of data types definition
+  which are public and will remain stable except possibly for additional
+  entries in the enum's and struct's at the end.
+*/
 #include <ic_apid_datatypes.h>
 #include <ic_apid_hidden.h>
-
-static inline IC_COMMIT_STATE
-ic_get_commit_state(IC_TRANSACTION_STATE *trans_state)
-{
-  return trans_state->commit_state;
-}
-
-static inline IC_SAVEPOINT_ID
-ic_get_stable_savepoint(IC_TRANSACTION_STATE *trans_state)
-{
-  return trans_state->savepoint_stable;
-}
-
-static inline IC_SAVEPOINT_ID
-ic_get_requested_savepoint(IC_TRANSACTION_STATE *trans_state)
-{
-  return trans_state->savepoint_requested;
-}
 
 struct ic_metadata_bind_ops
 {
@@ -92,10 +84,17 @@ struct ic_metadata_bind_ops
 
 struct ic_apid_error_ops
 {
+  /* Get error code */
   int (*ic_get_apid_error_code) (IC_APID_ERROR *apid_error);
+
+  /* Get error string */
   const gchar* (*ic_get_apid_error_msg) (IC_APID_ERROR *apid_error);
+
+  /* Get severity level of the error */
   IC_ERROR_SEVERITY_LEVEL
     (*ic_get_apid_error_severity) (IC_APID_ERROR *apid_error);
+
+  /* Get category of error */
   IC_ERROR_CATEGORY (*ic_get_apid_error_category) (IC_APID_ERROR *apid_error);
 };
 
@@ -104,6 +103,9 @@ struct ic_apid_error
   IC_APID_ERROR_OPS error_ops;
 };
 
+/*
+  This part is common for all operations towards the iClaustron Data API.
+*/
 struct ic_apid_operation
 {
   IC_APID_OPERATION_TYPE op_type;
@@ -381,6 +383,23 @@ struct ic_apid_connection
   operations as defined by the ic_apid_connection_ops and all other parts
   of the Data API.
 */
+
+struct ic_apid_global_ops
+{
+  void (*ic_cond_wait) (IC_APID_GLOBAL *apid_global);
+  gboolean (*ic_get_stop_flag) (IC_APID_GLOBAL *apid_global);
+  void (*ic_set_stop_flag) (IC_APID_GLOBAL *apid_global);
+  guint32 (*ic_get_num_user_threads) (IC_APID_GLOBAL *apid_global);
+  void (*ic_add_user_thread) (IC_APID_GLOBAL *apid_global);
+  void (*ic_remove_user_thread) (IC_APID_GLOBAL *apid_global);
+};
+
+struct ic_apid_global
+{
+  IC_APID_GLOBAL_OPS apid_global_ops;
+  IC_BITMAP *cluster_bitmap;
+};
+
 IC_APID_GLOBAL* ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
                                        int *ret_code,
                                        gchar **err_str);
@@ -390,4 +409,6 @@ int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
+
+#include <ic_apid_inline.h>
 #endif

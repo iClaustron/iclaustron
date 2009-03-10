@@ -14,6 +14,17 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 /*
+  The basic operation types we support are scan, read using key
+  and the write using a key.
+*/
+enum ic_apid_operation_type
+{
+  SCAN_OPERATION= 0,
+  KEY_READ_OPERATION= 1,
+  KEY_WRITE_OPERATION= 2
+};
+
+/*
   We only handle the basic types here. This means that we manage
   all integer types of various sorts, the bit type, fixed size
   character strings, the variable sized character strings. We also
@@ -234,6 +245,10 @@ enum ic_commit_state
   ROLLBACK_SAVEPOINT_REQUESTED = 5
 };
 
+/*
+  Read key operation have different locking semantics. There is a variant
+  which locks the key before reading it but also immediately releases
+*/
 enum ic_read_key_op
 {
   SIMPLE_KEY_READ= 0,
@@ -261,13 +276,6 @@ enum ic_scan_op
 enum ic_instruction_type
 {
   INST_LOAD_CONST32= 0
-};
-
-enum ic_apid_operation_type
-{
-  SCAN_OPERATION= 0,
-  KEY_READ_OPERATION= 1,
-  KEY_WRITE_OPERATION= 2
 };
 
 enum ic_error_severity_level
