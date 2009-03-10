@@ -22,3 +22,4 @@ libic_apid_la_SOURCES = ic_apid.c
 libic_apid_la_LIBADD = $(LDADD) ../comm/libic_comm.la \
                                 ../port/libic_port.la \
 				../api_clusterserver/libic_apic.la
+EXTRA_DIST = ic_apid_int.h

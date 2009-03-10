@@ -111,6 +111,7 @@
 #include <ic_common.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
+#include "ic_apid_int.h"
 
 /*
   These static functions implements the local IC_TRANSLATION_OBJ.
@@ -649,8 +650,10 @@ ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global)
   should have its own Data API Connection module.
 */
 static void
-apid_free(IC_APID_CONNECTION *apid_conn)
+apid_free(IC_APID_CONNECTION *ext_apid_conn)
 {
+  IC_INTERNAL_APID_CONNECTION *apid_conn=
+    (IC_INTERNAL_APID_CONNECTION*)ext_apid_conn;
   IC_THREAD_CONNECTION *thread_conn= apid_conn->thread_conn;
   IC_GRID_COMM *grid_comm;
   IC_APID_GLOBAL *apid_global;
@@ -688,7 +691,7 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
   guint32 thread_id= IC_MAX_THREAD_CONNECTIONS;
   IC_GRID_COMM *grid_comm;
   IC_THREAD_CONNECTION *thread_conn;
-  IC_APID_CONNECTION *apid_conn;
+  IC_INTERNAL_APID_CONNECTION *apid_conn;
   guint32 i;
   DEBUG_ENTRY("ic_create_apid_connection");
 
@@ -699,8 +702,8 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
     if (!grid_comm->thread_conn_array[i])
     {
       /* Initialise the APID connection object */
-      if (!(apid_conn= (IC_APID_CONNECTION*)
-                        ic_calloc(sizeof(IC_APID_CONNECTION))))
+      if (!(apid_conn= (IC_INTERNAL_APID_CONNECTION*)
+                        ic_calloc(sizeof(IC_INTERNAL_APID_CONNECTION))))
         goto end;
       apid_conn->apid_global= apid_global;
       apid_conn->thread_id= thread_id;
@@ -729,10 +732,10 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
   g_mutex_unlock(apid_global->thread_id_mutex);
   /* Now initialise the method pointers for the Data API interface */
   apid_conn->apid_conn_ops.ic_free= apid_free;
-  return apid_conn;
+  return (IC_APID_CONNECTION*)apid_conn;
 
 error:
-  apid_free(apid_conn);
+  apid_free((IC_APID_CONNECTION*)apid_conn);
 end:
   g_mutex_unlock(apid_global->thread_id_mutex);
   return NULL;
@@ -2093,10 +2096,12 @@ set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn)
 }
 
 static IC_SOCK_BUF_PAGE*
-get_thread_messages(IC_APID_CONNECTION *apid, glong wait_time)
+get_thread_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
 {
   GTimeVal stop_timer;
-  IC_THREAD_CONNECTION *thd_conn= apid->thread_conn;
+  IC_INTERNAL_APID_CONNECTION *apid_conn=
+    (IC_INTERNAL_APID_CONNECTION*)ext_apid_conn;
+  IC_THREAD_CONNECTION *thd_conn= apid_conn->thread_conn;
   IC_SOCK_BUF_PAGE *sock_buf_page;
   g_mutex_lock(thd_conn->mutex);
   sock_buf_page= thd_conn->first_received_message;

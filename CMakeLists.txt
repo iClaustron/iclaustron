@@ -386,11 +386,13 @@ add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API
-add_library(ic_apic STATIC api_clusterserver/ic_apic.c api_clusterserver/ic_apic_int.h)
+add_library(ic_apic STATIC api_clusterserver/ic_apic.c
+            api_clusterserver/ic_apic_int.h)
 target_link_libraries(ic_apic ic_port ic_util comm)
 
 #Build library for Data Server API
-add_library(ic_apid STATIC api_dataserver/ic_apid.c)
+add_library(ic_apid STATIC api_dataserver/ic_apid.c
+            api_dataserver/ic_apid_int.h)
 target_link_libraries(ic_apid ic_port ic_util comm ic_apic)
 #install(TARGETS ic_apid
 #        RUNTIME DESTINATION bin
@@ -483,6 +485,7 @@ install (FILES
          include/hashtable_private.h
          include/ic_apic.h
          include/ic_apid.h
+         include/ic_apid_hidden.h
          include/ic_base64.h
          include/ic_clmgr.h
          include/ic_config_reader.h
