@@ -485,7 +485,9 @@ install (FILES
          include/hashtable_private.h
          include/ic_apic.h
          include/ic_apid.h
+         include/ic_apid_datatypes.h
          include/ic_apid_hidden.h
+         include/ic_apid_inline.h
          include/ic_base64.h
          include/ic_clmgr.h
          include/ic_config_reader.h
