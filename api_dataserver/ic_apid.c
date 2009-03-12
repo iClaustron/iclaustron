@@ -725,6 +725,40 @@ ic_disconnect_apid_global(IC_APID_GLOBAL *ext_apid_global)
   transactions and control execution of transactions. Each thread
   should have its own Data API Connection module.
 */
+IC_APID_GLOBAL*
+get_apid_global(IC_APID_CONNECTION *ext_apid_conn)
+{
+  IC_INTERNAL_APID_CONNECTION *apid_conn=
+    (IC_INTERNAL_APID_CONNECTION*)ext_apid_conn;
+  return (IC_APID_GLOBAL*)apid_conn->apid_global;
+}
+
+IC_API_CONFIG_SERVER*
+get_api_config_server(IC_APID_CONNECTION *ext_apid_conn)
+{
+  IC_INTERNAL_APID_CONNECTION *apid_conn=
+    (IC_INTERNAL_APID_CONNECTION*)ext_apid_conn;
+  return apid_conn->apic;
+}
+
+IC_APID_OPERATION*
+get_next_executed_operation(IC_APID_CONNECTION *ext_apid_conn)
+{
+  IC_INTERNAL_APID_CONNECTION *apid_conn=
+    (IC_INTERNAL_APID_CONNECTION*)ext_apid_conn;
+  IC_APID_OPERATION *ret_op= apid_conn->first_executed_operation;
+  IC_APID_OPERATION *first_completed_op= apid_conn->first_completed_operation;
+
+  if (ret_op == NULL)
+    return NULL;
+  g_assert(ret_op->list_type == IN_EXECUTED_LIST);
+  apid_conn->first_executed_operation= ret_op->next_conn_op;
+  apid_conn->first_completed_operation= ret_op;
+  ret_op->next_conn_op= first_completed_op;
+  ret_op->list_type= IN_COMPLETED_LIST;
+  return ret_op;
+}
+
 static void
 apid_free(IC_APID_CONNECTION *ext_apid_conn)
 {
@@ -773,49 +807,57 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   guint32 i;
   DEBUG_ENTRY("ic_create_apid_connection");
 
-  g_mutex_lock(apid_global->thread_id_mutex);
+  /* Initialise the APID connection object */
+  if (!(apid_conn= (IC_INTERNAL_APID_CONNECTION*)
+                    ic_calloc(sizeof(IC_INTERNAL_APID_CONNECTION))))
+    goto end;
+  apid_conn->apid_global= apid_global;
+  apid_conn->thread_id= thread_id;
+  apid_conn->apid_global= apid_global;
+  apid_conn->apic= apid_global->apic;
+  if (!(apid_conn->cluster_id_bitmap= ic_create_bitmap(NULL,
+                        ic_bitmap_get_num_bits(cluster_id_bitmap))))
+    goto error;
+  ic_bitmap_copy(apid_conn->cluster_id_bitmap, cluster_id_bitmap);
+  /* Initialise Thread Connection object */
+  if (!(thread_conn= apid_conn->thread_conn= (IC_THREAD_CONNECTION*)
+                      ic_calloc(sizeof(IC_THREAD_CONNECTION))))
+    goto error;
+  thread_conn->apid_conn= apid_conn;
+  if (!(thread_conn->mutex= g_mutex_new()))
+    goto error;
+  if (!(thread_conn->cond= g_cond_new()))
+    goto error;
+
   grid_comm= apid_global->grid_comm;
+  g_mutex_lock(apid_global->thread_id_mutex);
   for (i= 0; i < IC_MAX_THREAD_CONNECTIONS; i++)
   {
     if (!grid_comm->thread_conn_array[i])
     {
-      /* Initialise the APID connection object */
-      if (!(apid_conn= (IC_INTERNAL_APID_CONNECTION*)
-                        ic_calloc(sizeof(IC_INTERNAL_APID_CONNECTION))))
-        goto end;
-      apid_conn->apid_global= apid_global;
-      apid_conn->thread_id= thread_id;
-      apid_conn->apid_global= apid_global;
-      apid_conn->apic= apid_global->apic;
-      if (!(apid_conn->cluster_id_bitmap= ic_create_bitmap(NULL,
-                            ic_bitmap_get_num_bits(cluster_id_bitmap))))
-        goto error;
-      ic_bitmap_copy(apid_conn->cluster_id_bitmap, cluster_id_bitmap);
-      /* Initialise Thread Connection object */
-      if (!(thread_conn= apid_conn->thread_conn= (IC_THREAD_CONNECTION*)
-                          ic_calloc(sizeof(IC_THREAD_CONNECTION))))
-        goto error;
-      thread_conn->apid_conn= apid_conn;
-      if (!(thread_conn->mutex= g_mutex_new()))
-        goto error;
-      if (!(thread_conn->cond= g_cond_new()))
-        goto error;
       thread_id= i;
       break;
     }
   }
   if (thread_id == IC_MAX_THREAD_CONNECTIONS)
-    goto end;
+  {
+    g_mutex_unlock(apid_global->thread_id_mutex);
+    goto error;
+  }
   grid_comm->thread_conn_array[thread_id]= thread_conn;
   g_mutex_unlock(apid_global->thread_id_mutex);
   /* Now initialise the method pointers for the Data API interface */
   apid_conn->apid_conn_ops.ic_free= apid_free;
+  apid_conn->apid_conn_ops.ic_get_apid_global= get_apid_global;
+  apid_conn->apid_conn_ops.ic_get_api_config_server= get_api_config_server;
+  apid_conn->apid_conn_ops.ic_get_next_executed_operation= 
+    get_next_executed_operation;
+  /* TODO many more methods */
   return (IC_APID_CONNECTION*)apid_conn;
 
 error:
   apid_free((IC_APID_CONNECTION*)apid_conn);
 end:
-  g_mutex_unlock(apid_global->thread_id_mutex);
   return NULL;
 }
 

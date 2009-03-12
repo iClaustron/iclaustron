@@ -44,9 +44,6 @@ typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
 typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
 typedef struct ic_apid_error IC_APID_ERROR;
 typedef struct ic_apid_operation IC_APID_OPERATION;
-typedef struct ic_read_key_operation IC_READ_KEY_OPERATION;
-typedef struct ic_write_key_operation IC_WRITE_KEY_OPERATION;
-typedef struct ic_scan_operation IC_SCAN_OPERATION;
 typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
 typedef struct ic_transaction_hint_ops IC_TRANSACTION_HINT_OPS;
@@ -101,44 +98,7 @@ struct ic_apid_error_ops
 struct ic_apid_error
 {
   IC_APID_ERROR_OPS error_ops;
-};
-
-/*
-  This part is common for all operations towards the iClaustron Data API.
-*/
-struct ic_apid_operation
-{
-  IC_APID_OPERATION_TYPE op_type;
-  IC_APID_CONNECTION *apid_conn;
-  IC_TRANSACTION *trans_obj;
-  IC_TABLE_DEF *table_def;
-  IC_APID_ERROR *error;
-  void *user_reference;
-};
-
-struct ic_read_key_operation
-{
-  IC_APID_OPERATION apid_op;
-  IC_READ_FIELD_BIND *read_fields;
-  IC_KEY_FIELD_BIND *key_fields;
-  IC_READ_KEY_OP read_key_op;
-};
-
-struct ic_write_key_operation
-{
-  IC_APID_OPERATION apid_op;
-  IC_WRITE_FIELD_BIND *write_fields;
-  IC_KEY_FIELD_BIND *key_fields;
-  IC_READ_KEY_OP write_key_op;
-};
-
-struct ic_scan_operation
-{
-  IC_APID_OPERATION apid_op;
-  IC_READ_FIELD_BIND *read_fields;
-  IC_RANGE_CONDITION *range_cond;
-  IC_WHERE_CONDITION *where_cond;
-  IC_SCAN_OP scan_op;
+  gboolean any_error;
 };
 
 struct ic_apid_connection_ops
@@ -302,10 +262,21 @@ struct ic_apid_connection_ops
     After returning 0 from flush or poll we use this iterator to get
     all operations that have completed.
   */
-  IC_APID_OPERATION* (*ic_get_next_completed_operation)
+  IC_APID_OPERATION* (*ic_get_next_executed_operation)
+                              (IC_APID_CONNECTION *apid_conn);
+  /* Get global data object for Data API */
+  IC_APID_GLOBAL* (*ic_get_apid_global) (IC_APID_CONNECTION *apid_conn);
+  /* Get config client object */
+  IC_API_CONFIG_SERVER* (*ic_get_api_config_server)
                               (IC_APID_CONNECTION *apid_conn);
   /* Free all objects connected to this connection.  */
   void (*ic_free) (IC_APID_CONNECTION *apid_conn);
+};
+
+struct ic_apid_connection
+{
+  IC_APID_CONNECTION_OPS apid_conn_ops;
+  IC_METADATA_BIND_OPS apid_metadata_ops;
 };
 
 struct ic_transaction_ops
@@ -353,13 +324,6 @@ struct ic_transaction_obj
   guint32 transaction_id[2];
 };
 
-struct ic_apid_connection
-{
-  IC_APID_CONNECTION_OPS apid_conn_ops;
-  IC_METADATA_BIND_OPS apid_metadata_ops;
-  IC_APID_GLOBAL *apid_global;
-  IC_API_CONFIG_SERVER *apic;
-};
 
 /*
   These two functions are used to connect/disconnect to/from the clusters

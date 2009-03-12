@@ -99,7 +99,6 @@ run_file_server(IC_APID_GLOBAL *apid_global, gchar **err_str)
 {
   int error= 0;
   guint32 i;
-  guint32 num_threads_started= 0;
   DEBUG_ENTRY("run_file_server");
 
   *err_str= NULL;

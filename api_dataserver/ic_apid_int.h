@@ -23,9 +23,6 @@
 
 #ifndef IC_APID_INT_H
 #define IC_APID_INT_H
-
-#include <ic_common.h>
-
 typedef struct ic_cluster_comm IC_CLUSTER_COMM;
 typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA;
@@ -162,6 +159,30 @@ struct ic_internal_apid_connection
   IC_BITMAP *cluster_id_bitmap;
   IC_THREAD_CONNECTION *thread_conn;
   guint32 thread_id;
+  /*
+    The operations pass through a set of lists from start to end.
+
+    It starts in the defined list. This list is a normal single linked list.
+
+    When the user sends the operation to the cluster they enter the
+    executing list. This list is a doubly linked list since they can leave
+    this list in any order.
+
+    When all messages of the operation have been received the operation enter
+    the executed list. This is again a single linked list.
+
+    When the user asks for the next executed operation the operation enters
+    the last list which is the completed operations. This is also a singly
+    linked list.
+  */
+  IC_APID_OPERATION *first_defined_operation;
+  IC_APID_OPERATION *last_defined_operation;
+  IC_APID_OPERATION *first_executing_list;
+  IC_APID_OPERATION *last_executing_list;
+  IC_APID_OPERATION *first_completed_operation;
+  IC_APID_OPERATION *last_completed_operation;
+  IC_APID_OPERATION *first_executed_operation;
+  IC_APID_OPERATION *last_executed_operation;
 };
 
 struct ic_listen_server_thread

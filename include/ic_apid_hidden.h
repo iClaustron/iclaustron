@@ -19,7 +19,12 @@
 #include <ic_common.h>
 #include <ic_apid.h>
 
+typedef struct ic_read_key_operation IC_READ_KEY_OPERATION;
+typedef struct ic_write_key_operation IC_WRITE_KEY_OPERATION;
+typedef struct ic_scan_operation IC_SCAN_OPERATION;
 typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
+typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
+
 /*
   This is part of the external interface for efficiency reasons.
   However this part is defined to not be stable. The stable interface
@@ -66,5 +71,73 @@ struct ic_range_condition
 struct ic_where_condition
 {
   guint32 not_used;
+};
+
+/*
+  This part is common for all operations towards the iClaustron Data API.
+*/
+
+enum ic_apid_operation_list_type
+{
+  NO_LIST = 0,
+  IN_DEFINED_LIST = 1,
+  IN_EXECUTING_LIST = 2,
+  IN_EXECUTED_LIST = 3,
+  IN_COMPLETED_LIST = 4
+};
+
+struct ic_apid_operation
+{
+  IC_APID_OPERATION_TYPE op_type;
+  IC_APID_CONNECTION *apid_conn;
+  IC_TRANSACTION *trans_obj;
+  IC_TABLE_DEF *table_def;
+  IC_APID_ERROR *error;
+  void *user_reference;
+  IC_APID_OPERATION *next_trans_op;
+  IC_APID_OPERATION *prev_trans_op;
+  IC_APID_OPERATION *next_conn_op;
+  IC_APID_OPERATION *prev_conn_op;
+  IC_APID_OPERATION_LIST_TYPE list_type;
+};
+
+/*
+  Read key operations have a definition of fields read, a definition of the
+  key fields and finally a definition of the type of read operation.
+*/
+struct ic_read_key_operation
+{
+  IC_APID_OPERATION apid_op;
+  IC_READ_FIELD_BIND *read_fields;
+  IC_KEY_FIELD_BIND *key_fields;
+  IC_WHERE_CONDITION *where_cond;
+  IC_READ_KEY_OP read_key_op;
+};
+
+/*
+  Write key operations have a definition of fields written, a definition of
+  the key fields and finally a definition of the write operation type.
+*/
+struct ic_write_key_operation
+{
+  IC_APID_OPERATION apid_op;
+  IC_WRITE_FIELD_BIND *write_fields;
+  IC_KEY_FIELD_BIND *key_fields;
+  IC_WHERE_CONDITION *where_cond;
+  IC_WRITE_KEY_OP write_key_op;
+};
+
+/*
+  Scan operations also have a definition of fields read, it has a range
+  condition in the cases when there is a scan of an index (will be NULL
+  for scan table operation). There is also a generic where condition.
+*/
+struct ic_scan_operation
+{
+  IC_APID_OPERATION apid_op;
+  IC_READ_FIELD_BIND *read_fields;
+  IC_RANGE_CONDITION *range_cond;
+  IC_WHERE_CONDITION *where_cond;
+  IC_SCAN_OP scan_op;
 };
 #endif
