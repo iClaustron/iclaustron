@@ -253,7 +253,6 @@ struct ic_send_node_connection
      Thread data for send thread, presence of thread_state set to
      non-NULL value also indicates thread has started.
   */
-  GThread *thread;
   IC_THREAD_STATE *thread_state;
   guint32 thread_id;
   /* Mutex protecting this struct */

@@ -49,6 +49,7 @@ alloc_poll_set(IC_INT_POLL_SET **poll_set)
   if (!((*poll_set)->ready_connections= (IC_POLL_CONNECTION**)
        ic_calloc(sizeof(IC_POLL_CONNECTION*) * MAX_POLL_SET_CONNECTIONS)))
     goto mem_error;
+  return 0;
 mem_error:
   free_poll_set((IC_POLL_SET*)*poll_set);
   return IC_ERROR_MEM_ALLOC;
@@ -278,7 +279,10 @@ epoll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
       ret_code= 0;
     }
     else
+    {
+      poll_set->poll_scan_ongoing= FALSE;
       return ret_code;
+    }
   }
   /*
     We need to go through all the received events and set up the internal
@@ -293,6 +297,7 @@ epoll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
     poll_conn->ret_code= 0;
   }
   poll_set->num_ready_connections= (guint32)ret_code;
+  poll_set->poll_scan_ongoing= TRUE;
   return 0;
 }
 
@@ -415,7 +420,10 @@ eventports_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
       num_events= 0;
     }
     else
+    {
+      poll_set->poll_scan_ongoing= FALSE;
       return ret_code;
+    }
   }
   /*
     We need to go through all the received events and set up the internal
@@ -441,6 +449,7 @@ eventports_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
     else
       poll_conn->ret_code= 0;
   }
+  poll_set->poll_scan_ongoing= TRUE;
   poll_set->num_ready_connections= (guint32)ret_code;
   return 0;
 }
@@ -572,7 +581,10 @@ kqueue_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
       ret_code= 0;
     }
     else
+    {
+      poll_set->poll_scan_ongoing= FALSE;
       return ret_code;
+    }
   }
   /*
     We need to go through all the received events and set up the internal
@@ -587,6 +599,7 @@ kqueue_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
     poll_conn->ret_code= 0;
   }
   poll_set->num_ready_connections= (guint32)ret_code;
+  poll_set->poll_scan_ongoing= TRUE;
   return 0;
 }
 

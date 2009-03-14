@@ -389,7 +389,7 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
            link_config->first_hostname,
            first_hostname_len);
     send_node_conn->other_hostname= copy_ptr;
-    copy_ptr+= (second_hostname_len + 1);
+    copy_ptr+= second_hostname_len;
     memcpy(send_node_conn->other_hostname,
           link_config->second_hostname,
           second_hostname_len);
@@ -477,6 +477,7 @@ ic_apid_global_connect(IC_INTERNAL_APID_GLOBAL *apid_global)
     for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
     {
       link_config= NULL;
+      send_node_conn= cluster_comm->send_node_conn_array[node_id];
       if (node_id == my_node_id ||
           (link_config= apic->api_op.ic_get_communication_object(apic,
                             cluster_id,
@@ -484,7 +485,6 @@ ic_apid_global_connect(IC_INTERNAL_APID_GLOBAL *apid_global)
                             my_node_id)))
       {
         g_assert(clu_conf->node_config[node_id]);
-        send_node_conn= cluster_comm->send_node_conn_array[node_id];
         g_assert(send_node_conn);
         /* We have found a node to connect to, start connect thread */
         if (node_id != my_node_id)
@@ -527,6 +527,9 @@ ic_apid_global_connect(IC_INTERNAL_APID_GLOBAL *apid_global)
           /* In iClaustron all nodes are connected */
           g_assert(!clu_conf->node_config[node_id]);
         }
+        /* Indicate we have no send thread here */
+        if (send_node_conn)
+          send_node_conn->send_thread_ended= TRUE;
       }
     }
   }
@@ -589,8 +592,7 @@ start_connect_phase(IC_INTERNAL_APID_GLOBAL *apid_global,
         if (send_node_conn)
         {
           g_mutex_lock(send_node_conn->mutex);
-          if (send_node_conn->thread &&
-              !send_node_conn->send_thread_ended)
+          if (!send_node_conn->send_thread_ended)
           {
             if (stop_ordered)
               send_node_conn->stop_ordered= TRUE;
@@ -605,7 +607,7 @@ start_connect_phase(IC_INTERNAL_APID_GLOBAL *apid_global,
               */
               g_mutex_unlock(send_node_conn->mutex);
               send_tp_state->tp_ops.ic_threadpool_join(send_tp_state,
-                                                       send_node_conn->thread_id);
+                                                 send_node_conn->thread_id);
               continue;
             }
           }
@@ -1045,7 +1047,7 @@ client_api_connect(void *data)
 */
 static int
 connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
-                       gboolean is_client_part)
+                       gboolean is_server_part)
 {
   IC_CONNECTION *conn;
   IC_SOCKET_LINK_CONFIG *link_config;
@@ -1054,28 +1056,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_THREADPOOL_STATE *tp_state;
   int ret_code= 0;
 
-  if (is_client_part)
-  {
-    conn= send_node_conn->conn;
-    link_config= send_node_conn->link_config;
-    if (!send_node_conn->other_port_number ||
-        !send_node_conn->my_port_number)
-      return IC_ERROR_INCONSISTENT_DATA;
-    conn->conn_op.ic_prepare_client_connection(conn,
-                                         send_node_conn->other_hostname,
-                                         send_node_conn->other_port_number,
-                                         send_node_conn->my_hostname,
-                                         send_node_conn->my_port_number);
-    conn->conn_op.ic_prepare_extra_parameters(
-             conn,
-             link_config->socket_maxseg_size,
-             link_config->is_wan_connection,
-             link_config->socket_read_buffer_size,
-             link_config->socket_write_buffer_size);
-    if ((ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
-      return ret_code;
-  }
-  else /* Server connection */
+  if (is_server_part)
   {
     /*
       The actual connection set-up is done by the listen server
@@ -1146,6 +1127,27 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
         g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
     }
     g_mutex_unlock(send_node_conn->mutex);
+  }
+  else /* Client connection */
+  {
+    conn= send_node_conn->conn;
+    link_config= send_node_conn->link_config;
+    if (!send_node_conn->other_port_number ||
+        !send_node_conn->my_port_number)
+      return IC_ERROR_INCONSISTENT_DATA;
+    conn->conn_op.ic_prepare_client_connection(conn,
+                                         send_node_conn->other_hostname,
+                                         send_node_conn->other_port_number,
+                                         send_node_conn->my_hostname,
+                                         send_node_conn->my_port_number);
+    conn->conn_op.ic_prepare_extra_parameters(
+             conn,
+             link_config->socket_maxseg_size,
+             link_config->is_wan_connection,
+             link_config->socket_read_buffer_size,
+             link_config->socket_write_buffer_size);
+    if ((ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
+      return ret_code;
   }
   return ret_code;
 }
@@ -1342,7 +1344,7 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 static gpointer
 run_send_thread(void *data)
 {
-  gboolean is_client_part;
+  gboolean is_server_part;
   gboolean found= FALSE;
   int ret_code;
   guint32 i, listen_inx;
@@ -1362,21 +1364,9 @@ run_send_thread(void *data)
     connect to the cluster we're immediately a real-time application and
     must avoid to heavy activities such as starting 100's of threads.
   */
-  is_client_part= (send_node_conn->my_node_id ==
+  is_server_part= (send_node_conn->my_node_id ==
                    send_node_conn->link_config->server_node_id);
-  if (is_client_part)
-  {
-    send_node_conn->conn= ic_create_socket_object(
-                   is_client_part,
-                   FALSE,  /* Mutex supplied by API code instead */
-                   FALSE,  /* This thread is already a connection thread */
-                   CONFIG_READ_BUF_SIZE, /* Used by authentication function */
-                   client_api_connect,   /* Authentication function */
-                   (void*)send_node_conn);  /* Authentication object */
-    if (send_node_conn->conn == NULL)
-      send_node_conn->stop_ordered= TRUE;
-  }
-  else
+  if (is_server_part)
   {
     /*
       Here we need to ensure there is a thread handling this server
@@ -1482,6 +1472,18 @@ run_send_thread(void *data)
       g_mutex_unlock(listen_server_thread->mutex);
     }
   }
+  else
+  {
+    send_node_conn->conn= ic_create_socket_object(
+                   TRUE,   /* is client */
+                   FALSE,  /* Mutex supplied by API code instead */
+                   FALSE,  /* This thread is already a connection thread */
+                   CONFIG_READ_BUF_SIZE, /* Used by authentication function */
+                   client_api_connect,   /* Authentication function */
+                   (void*)send_node_conn);  /* Authentication object */
+    if (send_node_conn->conn == NULL)
+      send_node_conn->stop_ordered= TRUE;
+  }
   g_mutex_lock(send_node_conn->mutex);
   g_cond_signal(send_node_conn->cond);
   if (send_node_conn->stop_ordered)
@@ -1498,7 +1500,7 @@ run_send_thread(void *data)
   while (1)
   {
     if ((ret_code= connect_by_send_thread(send_node_conn,
-                                          is_client_part)))
+                                          is_server_part)))
       goto end;
     conn= send_node_conn->conn;
     /*
@@ -2476,16 +2478,18 @@ start_receive_thread(IC_INTERNAL_APID_GLOBAL *apid_global)
   if (!(rec_state=
          (IC_NDB_RECEIVE_STATE*)ic_calloc(sizeof(IC_NDB_RECEIVE_STATE))))
     return ret_code;
+  if (!(rec_state->mutex= g_mutex_new()))
+    goto error;
   rec_state->apid_global= apid_global;
   rec_state->rec_buf_pool= apid_global->mem_buf_pool;
   rec_state->message_pool= apid_global->ndb_message_pool;
-  if (!((rec_state->poll_set= ic_create_poll_set()) &&
-        (ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
+  if ((!(rec_state->poll_set= ic_create_poll_set())) ||
+      (ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
                         tp_state,
                         &rec_state->thread_id,
                         run_receive_thread,
                         (gpointer)rec_state,
-                        IC_MEDIUM_STACK_SIZE))))
+                        IC_MEDIUM_STACK_SIZE)))
     goto error;
   apid_global->receive_threads[apid_global->num_receive_threads]= rec_state;
   apid_global->num_receive_threads++;
@@ -2493,6 +2497,8 @@ start_receive_thread(IC_INTERNAL_APID_GLOBAL *apid_global)
 error:
   if (rec_state->poll_set)
     rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
+  if (rec_state->mutex)
+    g_mutex_free(rec_state->mutex);
   ic_free((void*)rec_state);
   return ret_code;
 }
@@ -2796,7 +2802,8 @@ check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state)
 static gpointer
 run_receive_thread(void *data)
 {
-  IC_NDB_RECEIVE_STATE *rec_state= (IC_NDB_RECEIVE_STATE*)data;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_NDB_RECEIVE_STATE *rec_state= (IC_NDB_RECEIVE_STATE*)thread_state->object;
   LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
   int min_hash_index= NUM_THREAD_LISTS;
   int max_hash_index= (int)-1;
