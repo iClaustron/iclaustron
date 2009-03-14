@@ -12,10 +12,7 @@
 ## along with this program; if not, write to the Free Software
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
-include_HEADERS = hashtable.h \
-                  hashtable_itr.h \
-                  hashtable_private.h \
-                  ic_apic.h \
+include_HEADERS = ic_apic.h \
                   ic_apid.h \
                   ic_apid_datatypes.h \
                   ic_apid_hidden.h \
@@ -35,3 +32,7 @@ include_HEADERS = hashtable.h \
                   ic_sock_buf.h \
 		  ic_string.h \
 		  ic_threadpool.h
+
+noinst_HEADERS    = hashtable.h \
+                    hashtable_itr.h \
+		    hashtable_private.h

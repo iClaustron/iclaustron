@@ -19,9 +19,7 @@
 
 int ic_init_config_parameters();
 void ic_print_config_parameters(guint32 mask);
-
-extern IC_HASHTABLE *glob_conf_hash;
-extern gboolean glob_conf_entry_inited;
+void ic_destroy_conf_hash();
 
 /*
   A node type can always be mapped directly to a config type.
