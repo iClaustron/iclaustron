@@ -26,4 +26,4 @@ ic_clmgrd_LDADD = $(LDADD) ../comm/libic_comm.la \
                            ../api_clusterserver/libic_apic.la \
                            ../api_dataserver/libic_apid.la
 AM_YFLAGS              = -d --verbose
-
+EXTRA_DIST             = ic_clmgr.h
