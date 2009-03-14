@@ -2170,6 +2170,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lcp_poll_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 600);
+  conf_entry->min_ndb_version_used= 0x60404;
   conf_entry->config_entry_description=
   "Busy poll for LCP mutex before going to lock queue";
 

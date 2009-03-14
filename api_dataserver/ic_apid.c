@@ -509,7 +509,24 @@ ic_apid_global_connect(IC_INTERNAL_APID_GLOBAL *apid_global)
       }
       else
       {
-        g_assert(!clu_conf->node_config[node_id]);
+        if (!apic->api_op.ic_use_iclaustron_cluster_server(apic))
+        {
+          /*
+            In NDB, API's don't need to connect to other API's and
+            to management server
+          */
+          if (clu_conf->node_config[node_id])
+          {
+            g_assert(clu_conf->node_types[my_node_id] == IC_CLIENT_TYPE);
+            g_assert(clu_conf->node_types[node_id] == IC_CLIENT_TYPE ||
+                     clu_conf->node_types[node_id] == IC_CLUSTER_SERVER_TYPE);
+          }
+        }
+        else
+        {
+          /* In iClaustron all nodes are connected */
+          g_assert(!clu_conf->node_config[node_id]);
+        }
       }
     }
   }
@@ -2030,7 +2047,7 @@ struct ic_exec_message_func
 };
 typedef struct ic_exec_message_func IC_EXEC_MESSAGE_FUNC;
 
-static IC_EXEC_MESSAGE_FUNC *ic_exec_message_func_array[2][1024];
+static IC_EXEC_MESSAGE_FUNC ic_exec_message_func_array[2][1024];
 
 static int
 execSCAN_TABLE_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
@@ -2174,22 +2191,22 @@ ic_initialize_message_func_array()
   guint32 i;
   for (i= 0; i < 1024; i++)
   {
-    ic_exec_message_func_array[0][i]->ic_exec_message_func= NULL;
-    ic_exec_message_func_array[1][i]->ic_exec_message_func= NULL;
+    ic_exec_message_func_array[0][i].ic_exec_message_func= NULL;
+    ic_exec_message_func_array[1][i].ic_exec_message_func= NULL;
   }
-  ic_exec_message_func_array[0][IC_SCAN_TABLE_CONF]->ic_exec_message_func=
+  ic_exec_message_func_array[0][IC_SCAN_TABLE_CONF].ic_exec_message_func=
     execSCAN_TABLE_CONF_v0;
-  ic_exec_message_func_array[0][IC_SCAN_TABLE_REF]->ic_exec_message_func=
+  ic_exec_message_func_array[0][IC_SCAN_TABLE_REF].ic_exec_message_func=
     execSCAN_TABLE_REF_v0;
-  ic_exec_message_func_array[0][IC_TRANSACTION_CONF]->ic_exec_message_func=
+  ic_exec_message_func_array[0][IC_TRANSACTION_CONF].ic_exec_message_func=
     execTRANSACTION_CONF_v0;
-  ic_exec_message_func_array[0][IC_TRANSACTION_REF]->ic_exec_message_func=
+  ic_exec_message_func_array[0][IC_TRANSACTION_REF].ic_exec_message_func=
     execTRANSACTION_REF_v0;
-  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_CONF]->ic_exec_message_func=
+  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_CONF].ic_exec_message_func=
     execPRIMARY_KEY_OP_CONF_v0;
-  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_REF]->ic_exec_message_func=
+  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_REF].ic_exec_message_func=
     execPRIMARY_KEY_OP_REF_v0;
-  ic_exec_message_func_array[0][IC_ATTRIBUTE_INFO]->ic_exec_message_func=
+  ic_exec_message_func_array[0][IC_ATTRIBUTE_INFO].ic_exec_message_func=
     execATTRIBUTE_INFO_v0;
 }
 
@@ -2205,7 +2222,7 @@ static IC_EXEC_MESSAGE_FUNC*
 get_exec_message_func(guint32 message_id,
                       __attribute__ ((unused)) guint32 version_num)
 {
-  return ic_exec_message_func_array[0][message_id];
+  return &ic_exec_message_func_array[0][message_id];
 }
 
 static void
