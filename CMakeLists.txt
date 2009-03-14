@@ -376,7 +376,9 @@ add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c
             util/ic_mc_int.h util/ic_dyn_array_int.h
             util/ic_threadpool_int.h util/ic_threadpool.c
             util/ic_debug.c util/ic_err.c util/ic_string.c
-            util/ic_bitmap.c util/ic_config_reader.c)
+            util/ic_bitmap.c util/ic_config_reader.c
+            include/hashtable.h include/hashtable_itr.h
+            include/hashtable_private.h)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
@@ -473,16 +475,14 @@ SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
 #Include binary directory to ensure ic_lex.c is included as well
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
-add_executable(ic_clmgrd ${ClusterManagerSource})
+add_executable(ic_clmgrd ${ClusterManagerSource}
+               cluster_mgr/ic_clmgr.h)
 target_link_libraries(ic_clmgrd ic_port ic_util comm ic_apic ic_apid
                       ${ICLAUSTRON_LIBS})
 install (TARGETS ic_clmgrd DESTINATION bin)
 
 #Install header files
 install (FILES
-         include/hashtable.h
-         include/hashtable_itr.h
-         include/hashtable_private.h
          include/ic_apic.h
          include/ic_apid.h
          include/ic_apid_datatypes.h
@@ -516,7 +516,7 @@ install (PROGRAMS scripts/windows_check_process.sh.in DESTINATION bin
 install (DIRECTORY examples DESTINATION ${CMAKE_INSTALL_PREFIX})
 #Install doc directory into doc directory
 install (DIRECTORY doc DESTINATION ${CMAKE_INSTALL_PREFIX})
-install (FILES README README-CONFIG AUTHORS NEWS INSTALL COPYING AUTHORS
+install (FILES README README-CONFIG AUTHORS NEWS AUTHORS
          DESTINATION doc)
 
 configure_file (

@@ -531,8 +531,8 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 #define IC_TCP_TRANSPORTER_TYPE 1
 
 static guint32 glob_max_config_id;
-IC_HASHTABLE *glob_conf_hash;
-gboolean glob_conf_entry_inited= FALSE;
+static IC_HASHTABLE *glob_conf_hash;
+static gboolean glob_conf_entry_inited= FALSE;
 static guint16 map_config_id_to_inx[MAX_MAP_CONFIG_ID];
 static guint16 map_inx_to_config_id[MAX_CONFIG_ID];
 static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
@@ -977,6 +977,14 @@ build_config_name_hash()
     }
   }
   return 0;
+}
+
+void
+ic_destroy_conf_hash()
+{
+  if (glob_conf_hash)
+    ic_hashtable_destroy(glob_conf_hash);
+  glob_conf_entry_inited= FALSE;
 }
 
 static void

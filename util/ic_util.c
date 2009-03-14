@@ -148,9 +148,7 @@ ic_init()
 void ic_end()
 {
   DEBUG_ENTRY("ic_end");
-  if (glob_conf_hash)
-    ic_hashtable_destroy(glob_conf_hash);
-  glob_conf_entry_inited= FALSE;
+  ic_destroy_conf_hash();
   ic_ssl_end();
   DEBUG_CLOSE;
 }
