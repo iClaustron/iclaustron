@@ -295,6 +295,7 @@ struct ic_data_server_config
   guint32 data_server_local_db_workers;
   guint32 data_server_file_thread_pool;
   guint32 reserved_send_buffer;
+  guint32 data_server_lcp_poll_time;
   /* Reserving send buffer memory for data server traffic ignored for now */
 
   gchar use_unswappable_memory;

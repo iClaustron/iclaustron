@@ -23,7 +23,7 @@ install-data-hook:
 	cp -p $(srcdir)/examples/config.ini $(prefix)/examples
 	cp -p $(srcdir)/examples/kalle.ini $(prefix)/examples
 	cp -p $(srcdir)/examples/jocke.ini $(prefix)/examples
-	mkdir $(prefix)/doc
+	mkdir -p $(prefix)/doc
 	cp -p $(srcdir)/README $(prefix)/doc
 	cp -p $(srcdir)/README-CONFIG $(prefix)/doc
 	cp -p $(srcdir)/AUTHORS $(prefix)/doc

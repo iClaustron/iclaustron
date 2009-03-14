@@ -1783,7 +1783,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_THREADS, 106);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_threads,
                             IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 3, 8);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 2, 8);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
   "Number of threads that can be used maximally for Data Server node";
@@ -2163,7 +2163,15 @@ init_config_parameters()
   "Maximum time a message can wait before being sent in nanoseconds";
 
 /* Id 210-219 for configuration id 500-799 */
-/* Id 500-799 not used */
+/* Id 500-604 and 606-799 not used */
+#define DATA_SERVER_LCP_POLL_TIME 605
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LCP_POLL_TIME, 210);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lcp_poll_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 600);
+  conf_entry->config_entry_description=
+  "Busy poll for LCP mutex before going to lock queue";
 
 /* Id 220-229 for configuration id 800-809 */
 /* This is the client configuration section*/
@@ -3781,7 +3789,11 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
         state= WAIT_EMPTY_RETURN_STATE;
         break;
       case WAIT_EMPTY_RETURN_STATE:
+      /*
       case WAIT_LAST_EMPTY_RETURN_STATE:
+        This state is currently not used,
+        removed from NDB Management Protocol
+      */
         /*
           Receive:
           <CR>
@@ -3816,9 +3828,7 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding"));
           error= translate_config(apic, cluster_id,
                                   config_buf, config_size);
-          if (error)
-            goto end;
-          state= WAIT_LAST_EMPTY_RETURN_STATE;
+          goto end;
         }
         else if (read_size != CONFIG_LINE_LEN)
         {
@@ -8155,8 +8165,7 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
       ic_send_with_cr(conn, content_encoding_str) ||
       ic_send_with_cr(conn, ic_empty_string) ||
       conn->conn_op.ic_write_connection(conn, (const void*)config_base64_str,
-                                        config_len, 1) ||
-      ic_send_with_cr(conn, ic_empty_string))
+                                        config_len, 1))
     error= conn->conn_op.ic_get_error_code(conn);
   DEBUG_RETURN(error);
 }
