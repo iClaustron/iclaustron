@@ -16,7 +16,7 @@
 %{
 #include <ic_common.h>
 #include <ic_apic.h>
-#include "ic_clmgr.h"
+#include "ic_clmgr_int.h"
 #include "ic_parser.h"
 #include <string.h>
 int line_no= 1;

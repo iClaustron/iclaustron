@@ -477,7 +477,7 @@ SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(ic_clmgrd ${ClusterManagerSource}
-               cluster_mgr/ic_clmgr.h)
+               cluster_mgr/ic_clmgr_int.h)
 target_link_libraries(ic_clmgrd ic_port ic_util comm ic_apic ic_apid
                       ${ICLAUSTRON_LIBS})
 install (TARGETS ic_clmgrd DESTINATION bin)
@@ -489,7 +489,6 @@ install (FILES
          include/ic_apid_datatypes.h
          include/ic_apid_hidden.h
          include/ic_apid_inline.h
-         include/ic_clmgr.h
          include/ic_connection.h
          include/ic_common.h
          include/ic_common_header.h

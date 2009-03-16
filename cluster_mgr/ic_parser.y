@@ -16,7 +16,7 @@
 %{
 #include <ic_common.h>
 #include <ic_apic.h>
-#include "ic_clmgr.h"
+#include "ic_clmgr_int.h"
 int yylex(void *parse_data, void *scanner);
 %}
 %union{

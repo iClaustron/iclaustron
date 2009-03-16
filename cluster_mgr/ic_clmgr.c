@@ -15,7 +15,7 @@
 
 #include <ic_common.h>
 #include <ic_apic.h>
-#include "ic_clmgr.h"
+#include "ic_clmgr_int.h"
 
 /* Global variables */
 static IC_STRING glob_config_dir= { NULL, 0, TRUE};
