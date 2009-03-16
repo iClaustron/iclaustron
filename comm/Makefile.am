@@ -22,7 +22,7 @@ DTRACEFILES= socket_conn.o
 
 lib_LTLIBRARIES = libic_comm.la
 
-libic_comm_la_SOURCES = ic_connection.c ic_sock_buf.c comm_supp.c \
+libic_comm_la_SOURCES = ic_connection.c ic_sock_buf.c ic_connection_supp.c \
                         ic_poll_set.c ic_base64.c
 
 EXTRA_DIST      = ic_poll_set_int.h

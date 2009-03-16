@@ -384,7 +384,7 @@ target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
 add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
-            comm/comm_supp.c comm/ic_poll_set.c comm/ic_poll_set_int.h
+            comm/ic_connection_supp.c comm/ic_poll_set.c comm/ic_poll_set_int.h
             comm/ic_base64.c)
 target_link_libraries(comm ic_port ic_util)
 
