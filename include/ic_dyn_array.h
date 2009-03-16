@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2008 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -15,8 +15,6 @@
 
 #ifndef IC_DYNAMIC_ARRAY_H
 #define IC_DYNAMIC_ARRAY_H
-#include <ic_common.h>
-
 struct ic_dynamic_array;
 typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;
 

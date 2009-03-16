@@ -15,8 +15,6 @@
 
 #ifndef IC_APIC_INT_H
 #define IC_APIC_INT_H
-#include <ic_common.h>
-#include <ic_apic.h>
 
 #define IC_VERSION_FILE_LEN 8
 #define NO_WAIT 0

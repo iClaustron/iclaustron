@@ -16,9 +16,6 @@
 
 #ifndef IC_APID_HIDDEN_H
 #define IC_APID_HIDDEN_H
-#include <ic_common.h>
-#include <ic_apid.h>
-
 typedef struct ic_read_key_operation IC_READ_KEY_OPERATION;
 typedef struct ic_write_key_operation IC_WRITE_KEY_OPERATION;
 typedef struct ic_scan_operation IC_SCAN_OPERATION;

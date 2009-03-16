@@ -15,7 +15,6 @@
 
 #ifndef IC_STRING_H
 #define IC_STRING_H
-#include <ic_mc.h>
 /*
   HEADER MODULE: iClaustron String handling
   -----------------------------------------

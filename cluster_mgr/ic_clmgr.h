@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -13,9 +13,8 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
-#include <ic_apic.h>
-
+#ifndef IC_CLMGR_INT_H
+#define IC_CLMGR_INT_H
 void ic_call_parser(char *parse_string, int str_len, void *some_data);
 
 enum ic_parse_commands
@@ -96,3 +95,4 @@ void yyerror(void *parse_data, void*, char *s);
 int yyparse(IC_PARSE_DATA *parse_data, void *);
 
 #define PARSE_DATA ((IC_PARSE_DATA*)parse_data)
+#endif

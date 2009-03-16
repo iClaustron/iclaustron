@@ -15,8 +15,6 @@
 
 #ifndef IC_APID_INLINE_H
 #define IC_APID_INLINE_H
-#include <ic_common.h>
-
 /*
   MODULE: Inline functions for IC_TRANSACTION_STATE object
   --------------------------------------------------------

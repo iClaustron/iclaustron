@@ -14,8 +14,6 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 #ifndef IC_THREADPOOL_H
 #define IC_THREADPOOL_H
-#include <ic_common.h>
-
 typedef struct ic_thread_state IC_THREAD_STATE;
 typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
@@ -81,4 +79,3 @@ struct ic_threadpool_state
 IC_THREADPOOL_STATE*
 ic_create_threadpool(guint32 pool_size);
 #endif
-

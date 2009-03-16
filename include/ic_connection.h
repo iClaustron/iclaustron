@@ -16,13 +16,11 @@
 #ifndef IC_CONNECTION_H
 #define IC_CONNECTION_H
 
-#include <ic_common_header.h>
 #ifdef WIN32
 #include <winsock.h>
 #else
 #include <netdb.h>
 #endif
-#include <ic_ssl.h>
 
 #define ACCEPT_ERROR 32767
 #define END_OF_FILE 32766

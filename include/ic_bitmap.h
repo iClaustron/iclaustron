@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2008 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -13,8 +13,8 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
-
+#ifndef IC_BITMAP_H
+#define IC_BITMAP_H
 /* Bit manipulation routines */
 guint32 ic_count_highest_bit(guint32 bit_var);
 #define ic_is_bit_set(value, bit_number) \
@@ -58,4 +58,4 @@ void ic_free_bitmap(IC_BITMAP* bitmap);
 void ic_bitmap_set_bit(IC_BITMAP *bitmap, guint32 bit_number);
 gboolean ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number);
 #endif
-
+#endif
