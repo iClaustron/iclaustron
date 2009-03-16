@@ -16,18 +16,33 @@
 #ifndef IC_COMMON_H
 #define IC_COMMON_H
 #include <ic_common_header.h>
-#include <ic_string.h>
+/*
+  The following are header files which are not required in the
+  external applications. Those header files are however available
+  for use externally if the application so desires. They are part
+  of the installation.
+*/
 #include <ic_port.h>
 #include <ic_bitmap.h>
-#include <ic_mc.h>
 #include <ic_dyn_array.h>
 #include <ic_poll_set.h>
 #include <ic_threadpool.h>
-#include <ic_err.h>
-#include <ic_debug.h>
-#include <ic_connection.h>
+
+/* The following header files are header files only used internally
+   and we don't install them for applications to reuse. They can
+   only be reused from their open source licensing scheme.
+*/
 #include <ic_sock_buf.h>
 #include <ic_base64.h>
 #include <ic_config_reader.h>
-#include <hashtable.h>
+
+/*
+  The following header are common C header files we often require.
+  So we include them in all the iClaustron source files.
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <errno.h>
 #endif

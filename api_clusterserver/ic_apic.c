@@ -15,7 +15,6 @@
 
 #include <ic_apic.h>
 #include "ic_apic_int.h"
-#include <hashtable.h>
 #include <glib/gstdio.h>
 #include <unistd.h>
 /*

@@ -22,6 +22,12 @@
 #ifdef HAVE_NETINET_TCP_H
 #include <netinet/tcp.h>
 #endif
+#ifdef HAVE_NETINET_IN_H
+#include <netinet/in.h>
+#endif
+#ifdef AVE_ARPA_INET_H
+#include <arpa/inet.h>
+#endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -42,6 +48,7 @@
 #include <sys/select.h>
 #endif
 #include "ic_connection_int.h"
+
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
 #endif

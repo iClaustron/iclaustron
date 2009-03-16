@@ -25,14 +25,25 @@
 #ifndef IC_COMMON_HEADER_H
 #define IC_COMMON_HEADER_H
 
+/* GLib header files contains all data type definitions */
 #include <glib.h>
 #include <glib/gprintf.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+/* Configure definitions are needed also in header files */
 #include <config.h>
-#include <fcntl.h>
-#include <errno.h>
+
+/*
+  Memory Container, String, Hashtable and the Communication
+  module are all part of the external interface. Error definitions
+  are also an important part of the external interface. We also
+  include the debug interface to enable debugging of application
+  and API together.
+*/
+#include <ic_mc.h>
+#include <ic_string.h>
+#include <ic_hashtable.h>
+#include <ic_connection.h>
+#include <ic_err.h>
+#include <ic_debug.h>
 
 #define CONFIG_READ_BUF_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -15,8 +15,8 @@
 
 /* Copyright (C) 2004 Christopher Clark <firstname.lastname@cl.cam.ac.uk> */
 
-#include <hashtable.h>
-#include <hashtable_private.h>
+#include <ic_hashtable.h>
+#include <ic_hashtable_private.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

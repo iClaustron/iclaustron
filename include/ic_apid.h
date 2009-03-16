@@ -16,7 +16,6 @@
 #ifndef IC_APID_H
 #define IC_APID_H
 
-#include <ic_common.h>
 #include <ic_apic.h>
 
 typedef struct ic_apid_global IC_APID_GLOBAL;

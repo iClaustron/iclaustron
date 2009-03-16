@@ -17,11 +17,8 @@ include_HEADERS = ic_apic.h \
                   ic_apid_datatypes.h \
                   ic_apid_hidden.h \
                   ic_apid_inline.h \
-                  ic_base64.h \
                   ic_connection.h \
-                  ic_common.h \
                   ic_common_header.h \
-                  ic_config_reader.h \
                   ic_debug.h \
                   ic_dyn_array.h \
                   ic_bitmap.h \
@@ -29,10 +26,14 @@ include_HEADERS = ic_apic.h \
                   ic_mc.h \
                   ic_poll_set.h \
                   ic_port.h \
-                  ic_sock_buf.h \
+		  ic_ssl.h \
 		  ic_string.h \
-		  ic_threadpool.h
+		  ic_threadpool.h \
+                  ic_hashtable.h
 
-noinst_HEADERS    = hashtable.h \
-                    hashtable_itr.h \
-		    hashtable_private.h
+noinst_HEADERS    = ic_base64.h \
+                    ic_common.h \
+                    ic_config_reader.h \
+                    ic_sock_buf.h \
+                    ic_hashtable_itr.h \
+		    ic_hashtable_private.h

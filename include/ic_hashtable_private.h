@@ -18,7 +18,7 @@
 #ifndef __HASHTABLE_PRIVATE_CWC22_H__
 #define __HASHTABLE_PRIVATE_CWC22_H__
 
-#include "hashtable.h"
+#include "ic_hashtable.h"
 
 /*****************************************************************************/
 struct entry

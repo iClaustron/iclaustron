@@ -371,14 +371,15 @@ set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${CMAKE_REQUIRED_LIBRARIES})
 add_library(ic_port STATIC port/ic_port.c)
 
 #Build library for iClaustron utility functions
-add_library(ic_util STATIC util/hashtable.c util/hashtable_itr.c
+add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
             util/ic_util.c util/ic_mc.c util/ic_dyn_array.c
             util/ic_mc_int.h util/ic_dyn_array_int.h
             util/ic_threadpool_int.h util/ic_threadpool.c
             util/ic_debug.c util/ic_err.c util/ic_string.c
             util/ic_bitmap.c util/ic_config_reader.c
-            include/hashtable.h include/hashtable_itr.h
-            include/hashtable_private.h)
+            include/hashtable_itr.h include/hashtable_private.h
+            include/ic_base64.h include/ic_config_reader.h
+            include/ic_sock_buf.h)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
@@ -488,20 +489,18 @@ install (FILES
          include/ic_apid_datatypes.h
          include/ic_apid_hidden.h
          include/ic_apid_inline.h
-         include/ic_base64.h
          include/ic_clmgr.h
-         include/ic_config_reader.h
          include/ic_connection.h
          include/ic_common.h
          include/ic_common_header.h
          include/ic_debug.h
          include/ic_dyn_array.h
          include/ic_err.h
+         include/ic_hashtable.h
          include/ic_mc.h
          include/ic_poll_set.h
          include/ic_bitmap.h
          include/ic_port.h
-         include/ic_sock_buf.h
          include/ic_ssl.h
          include/ic_string.h
          include/ic_threadpool.h
