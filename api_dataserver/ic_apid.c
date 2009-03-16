@@ -2920,6 +2920,7 @@ end:
       rec_state->message_pool,
       ndb_message);
   }
+  thread_state->ic_thread_stops(thread_state);
   return NULL;
 }
 

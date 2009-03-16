@@ -19,7 +19,19 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
 struct ic_thread_state_ops
 {
+  /*
+    This method must be called immediately before stopping the thread by
+    returning from the method invoked at start of thread.
+  */
   void (*ic_thread_stops) (IC_THREAD_STATE *thread_state);
+  /*
+    This method should be called when the start-up part of the thread is
+    completed and there is a need to synchronize with other threads in the
+    thread pool. Return from this method doesn't happen until the
+    controlling thread calls the method indicating it's ok for the thread
+    to enter its running algorithm.
+  */
+  void (*ic_thread_startup_done) (IC_THREAD_STATE *thread_state);
 };
 typedef struct ic_thread_state_ops IC_THREAD_STATE_OPS;
 
