@@ -1,9 +1,9 @@
-iClaustron is a tool package designed to enable non-DBMS applications to take
-advantage of the features developed for NDB Cluster. It features an API to
-connect applications to the NDB Data Servers. It contains an implementation of
-a Cluster Server. The Cluster Server manages configuration of many
-clusters. It also has an external interface that enables on-line changes to the
-configuration even in the presence of many Cluster Servers.
+iClaustron is a tool package designed to enable also non-DBMS applications
+to take advantage of the features developed for NDB Cluster. It features
+an API to connect applications to the NDB Data Servers. It contains an
+implementation of a Cluster Server. The Cluster Server manages configuration
+of many clusters. It also has an external interface that enables on-line
+changes to the configuration even in the presence of many Cluster Servers.
 
 The Cluster Manager is a server that handles management commands. It implements
 a number of management functions for the cluster. These are implemented either
@@ -17,69 +17,149 @@ A graphical tool to manage the clusters would use the Cluster Client as
 interface or could have a Cluster Client integrated.
 
 The Replication Server is used to handle parallel replication from one cluster
-to another cluster. 
+to another cluster.
+
+The File Server is used to implement a FUSE API client, thus implementing
+a user-space file system implementation for a number of operating systems.
+
+Long-term goal is to also be able to use the iClaustron Data API to
+implement a file system inside Linux and/or Solaris with even better
+characteristics compared to the iClaustron FUSE implementation. This is
+one of the reasons for implementing iClaustron entirely in C.
 
 Description of directories
 --------------------------
 cluster_server:
+---------------
 Implements the iClaustron Cluster Server. A configuration can contain
 one or several clusters. Each cluster is maintained in one configuration file.
 New clusters can be added on-line and there is an interface to change
-the configurations.
+the configurations. The user interacts with this protocol through the
+iClaustron Cluster Manager. A set of cluster servers act as a distributed
+database for the configuration. Changes will be made atomically in all
+cluster servers.
+
+The iClaustron Cluster Server binary is called ic_csd and will eventually
+be a daemon.
 
 cclient:
-This is the Cluster Client directory. It uses the API to the Cluster
+--------
+This is the Cluster Client directory. It uses the Protocol to the Cluster
 Manager to implement management features as directed by the user. The
-user issues commands that are handled by a command parser. The command
-parser takes care of understanding the user objectives and then there is
-a set of functions to implement those features using the NDB API Protocol
-and the protocol towards the iClaustron Cluster Server.
+user issues commands that are handled by a command parser.
+
+The iClaustron Cluster Client binary is called ic_cclient.
 
 cluster_mgr:
+------------
 Implements the Cluster Manager. It is controlled by issuing commands using
-the Cluster Manager API and performs its action by using the API to the
-Data Servers. It controls a set of clusters where each such cluster has
-a configuration file that directs its start-up features. The Cluster Manager
-controls changes to configuration and handles failures of a Cluster Manager
-and failover to another Cluster Manager. The Cluster Manager uses an active-
-passive configuration but all changes to a configuration is written to all
-alive nodes before actually being changed.
+the Cluster Manager Protocol and performs its action by using the API to the
+Data Servers and to the iClaustron Cluster Servers and the other iClaustron
+Managers and also all iClaustron clients using the iClaustron Data API.
+
+It manages a set of clusters where each such cluster has a configuration file
+that directs its start-up features. The Cluster Manager handles changes to
+
+The Cluster Manager Protocol is text based and it reads commands from the
+network and parses them and executes them by communicating with
+- Cluster Servers
+- Data Nodes of NDB
+- iClaustron clients
+- Other Cluster Managers
+
+The iClaustron Cluster Manager binary is called ic_clmgrd. It will eventually
+become a daemon.
 
 api_clusterserver:
+------------------
 This is the C API to the Cluster Server. It is used by any application that
-need to interact with the Cluster Server.
+need to interact with the Cluster Server. It requires include of the
+ic_apic.h to the application using this API.
 
 api_dataserver:
+---------------
 This is the C API to the Data Servers. The data servers are the storage nodes
 in NDB Cluster. In iClaustron those are called Data Servers. Any application
 that uses the Data Server to store data needs to use this API to implement
-its functionality.
+its functionality. It requires include of the ic_apid.h to the application
+using the API. In addition this API is dependent on the API for the
+API to the Cluster Server, so also ic_apic.h needs to be included when using
+this API.
 
 repserver:
-This is the Replication Server, this server receives information about changes
-from the Data Servers and implements functions to replicate those changes to
-another cluster. It is only used for asynchronous replication. Synchronous
-replication is handled between the Data Servers.
+----------
+This is the iClaustron Replication Server, this server receives information
+about changes from the Data Servers and implements functions to replicate
+those changes to another cluster. It is only used for asynchronous replication.
+Synchronous replication is handled between the Data Servers.
+
+The iClaustron Replication Server binary will be called ic_repd. It will
+eventually become a daemon.
 
 pcntrl:
-The Control Server is an aid to ensure that the Cluster Client also can control
-start and stop of iClaustron processes. It is also used to handle some support
-functions, such as emailing trace files to a Support Center.
+-------
+The iClaustron Control Server is an aid to ensure that the Cluster Client
+also can control start and stop of iClaustron processes. It is also used
+to handle some support functions, such as emailing trace files to a
+Support Center.
+
+The iClaustron Control Server will be called ic_pcntrld and is intended
+to become a daemon.
 
 fileserver:
+-----------
 This is an Application Server that implements the client part of the iClaustron
 Filesystem. This is a clustered filesystem that is implemented using FUSE,
 a filesystem in userspace. FUSE can be used on Linux and FreeBSD. This process
 uses the C API to the Data Servers to store the file data in NDB Cluster.
 
+The iClaustron File Server will be called ic_fsd and is intended to
+become a daemon.
+
 comm:
+-----
 This implements common functions to implement Communication Functions. It uses
 currently IPv4 and IPv6 sockets. However many cluster interconnects implement
 socket APIs that bypass the TCP/IP stack. It also supports SSL connections.
 
 port:
+-----
 This is a portability library for iClaustron. In addition to this library,
 iClaustron uses glib for many common functions.
+
+util:
+-----
+This directory contains implementations of many support libraries needed by
+iClaustron for various parts. It contains a bitmap implementation, a poll
+set (to handle epoll, kqueue, eventports and IO completion in a portable
+manner), a dynamic array, a memory container, a string class, a base64
+implementation of encode and decode to/from base64 (base64 is used by
+NDB Management Protocol), a thread pool library and configuration reader
+library.
+
+test:
+-----
+Functional test programs and Unit test programs.
+
+scripts:
+--------
+This directory contains a set of scripts to handle some support functions
+such as discovering if a certain process is running on the machine.
+
+examples:
+---------
+This contains an example of 3 configuration files used for a 2-cluster
+case.
+
+build_test:
+-----------
+This contains C files used by CMake and/or configure scripts to discover
+support for various features on the machine.
+
+include:
+--------
+Contains all common header files, only internal header files are stored
+in the directories of the source files.
 
 Build prerequisites:
 --------------------
@@ -96,3 +176,7 @@ sudo apt-get install libncurses5-dev (if readline is used)
 sudo apt-get install openssl (if openssl is to be used)
 sudo apt-get install subversion (To get iClaustron tree from Subversion tree)
 
+In addition it is required to install CMake 2.6 if building using
+CMake instead of autotools. Since there is a requirement on the
+version of CMake here (>= 2.6), it is usually a good idea to download the
+CMake from www.cmake.org.

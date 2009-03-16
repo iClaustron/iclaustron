@@ -13,6 +13,14 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+/*
+  This header file is used internally in all iClaustron source files
+  as a lazy manner of getting all needed things included from one
+  header file. It isn't designed for use by external users of the
+  iClaustron API's since it also includes header files not part of
+  the iClaustron installation.
+*/
+
 #ifndef IC_COMMON_H
 #define IC_COMMON_H
 #include <ic_common_header.h>
