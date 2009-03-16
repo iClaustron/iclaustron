@@ -207,7 +207,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
                         IC_DEFAULT_MAX_THREADPOOL_SIZE)))
     goto error;
   apid_global->apic= apic;
-  apid_global->num_receive_threads= 1;
+  apid_global->num_receive_threads= 0;
   if (!(apid_global->grid_comm=
        (IC_GRID_COMM*)ic_calloc(sizeof(IC_GRID_COMM))))
     goto error;
@@ -542,20 +542,9 @@ ic_apid_global_connect(IC_INTERNAL_APID_GLOBAL *apid_global)
   start_connect_phase(apid_global, FALSE, TRUE);
   DEBUG_RETURN(0);
 error:
+  apid_global->stop_flag= TRUE;
   start_connect_phase(apid_global, TRUE, TRUE);
   DEBUG_RETURN(error);
-}
-
-/*
-  This method is used to tear down the global Data API part. It will
-  disconnect all the connections to all cluster nodes and stop all
-  Data API threads.
-*/
-static int
-ic_apid_global_disconnect(IC_INTERNAL_APID_GLOBAL *apid_global)
-{
-  start_connect_phase(apid_global, TRUE, FALSE);
-  return 0;
 }
 
 static void
@@ -563,13 +552,15 @@ start_connect_phase(IC_INTERNAL_APID_GLOBAL *apid_global,
                     gboolean stop_ordered,
                     gboolean signal_flag)
 {
-  guint32 node_id, cluster_id;
+  guint32 node_id, cluster_id, i, thread_id;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_API_CONFIG_SERVER *apic= apid_global->apic;
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_GRID_COMM *grid_comm= apid_global->grid_comm;
   IC_CLUSTER_COMM *cluster_comm;
   IC_THREADPOOL_STATE *send_tp_state= apid_global->send_thread_pool;
+  IC_THREADPOOL_STATE *rec_tp_state= apid_global->rec_thread_pool;
+  IC_NDB_RECEIVE_STATE *rec_state;
   DEBUG_ENTRY("start_connect_phase");
 
   /*
@@ -614,6 +605,38 @@ start_connect_phase(IC_INTERNAL_APID_GLOBAL *apid_global,
           g_mutex_unlock(send_node_conn->mutex);
         }
       }
+    }
+  }
+  if (signal_flag)
+  {
+    /* Wake all receive threads in start position */
+    g_mutex_lock(apid_global->mutex);
+    for (i= 0; i < apid_global->num_receive_threads; i++)
+    {
+      rec_state= apid_global->receive_threads[i];
+      g_mutex_lock(rec_state->mutex);
+      g_cond_signal(rec_state->cond);
+      g_mutex_unlock(rec_state->mutex);
+    }
+    g_mutex_unlock(apid_global->mutex);
+  }
+  if (stop_ordered)
+  {
+    /* Wait for all receive threads to have exited */
+    while (1)
+    {
+      g_mutex_lock(apid_global->mutex);
+      if (apid_global->num_receive_threads == 0)
+      {
+        g_mutex_unlock(apid_global->mutex);
+        break;
+      }
+      thread_id= apid_global->num_receive_threads - 1;
+      rec_state= apid_global->receive_threads[thread_id];
+      apid_global->num_receive_threads--;
+      g_mutex_unlock(apid_global->mutex);
+      rec_tp_state->tp_ops.ic_threadpool_join(rec_tp_state,
+                                              rec_state->thread_id);
     }
   }
   DEBUG_RETURN_EMPTY;
@@ -723,17 +746,21 @@ error:
   return NULL;
 }
 
-int
+/*
+  This method is used to tear down the global Data API part. It will
+  disconnect all the connections to all cluster nodes and stop all
+  Data API threads.
+*/
+void
 ic_disconnect_apid_global(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INTERNAL_APID_GLOBAL *apid_global=
     (IC_INTERNAL_APID_GLOBAL*)ext_apid_global;
-  int ret_code;
 
-  if (!(ret_code= ic_apid_global_disconnect(apid_global)))
-    return ret_code;
+  apid_global->stop_flag= TRUE;
+  start_connect_phase(apid_global, TRUE, FALSE);
   ic_end_apid(apid_global);
-  return 0;
+  return;
 }
 
 /*
@@ -2480,9 +2507,12 @@ start_receive_thread(IC_INTERNAL_APID_GLOBAL *apid_global)
     return ret_code;
   if (!(rec_state->mutex= g_mutex_new()))
     goto error;
+  if (!(rec_state->cond= g_cond_new()))
+    goto error;
   rec_state->apid_global= apid_global;
   rec_state->rec_buf_pool= apid_global->mem_buf_pool;
   rec_state->message_pool= apid_global->ndb_message_pool;
+  g_mutex_lock(rec_state->mutex);
   if ((!(rec_state->poll_set= ic_create_poll_set())) ||
       (ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
                         tp_state,
@@ -2490,15 +2520,24 @@ start_receive_thread(IC_INTERNAL_APID_GLOBAL *apid_global)
                         run_receive_thread,
                         (gpointer)rec_state,
                         IC_MEDIUM_STACK_SIZE)))
-    goto error;
+    goto start_error;
+  /* Wait for receive threads to complete start-up */
+  g_cond_wait(rec_state->cond, rec_state->mutex);
+  g_mutex_unlock(rec_state->mutex);
+  g_mutex_lock(apid_global->mutex);
   apid_global->receive_threads[apid_global->num_receive_threads]= rec_state;
   apid_global->num_receive_threads++;
+  g_mutex_unlock(apid_global->mutex);
   return 0;
+start_error:
+  g_mutex_unlock(rec_state->mutex);
 error:
   if (rec_state->poll_set)
     rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
   if (rec_state->mutex)
     g_mutex_free(rec_state->mutex);
+  if (rec_state->cond)
+    g_cond_free(rec_state->cond);
   ic_free((void*)rec_state);
   return ret_code;
 }
@@ -2816,8 +2855,13 @@ run_receive_thread(void *data)
   memset(message_anchors,
          sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS, 0);
 
+  g_mutex_lock(rec_state->mutex);
+  g_cond_signal(rec_state->cond); /* Flag start-up done */
+  /* Wait for start order */
+  g_cond_wait(rec_state->cond, rec_state->mutex);
+  g_mutex_unlock(rec_state->mutex);
 
-  do
+  while (!apid_global->stop_flag)
   {
     /* Check for which nodes to receive from */
     /* Loop over each node to receive from */
@@ -2856,7 +2900,7 @@ run_receive_thread(void *data)
     }
     check_for_reorg_receive_threads(rec_state);
     check_send_buffers(rec_state);
-  } while (1);
+  }
 
 end:
   while (rec_state->free_rec_pages)

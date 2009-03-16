@@ -62,7 +62,7 @@ run_file_server_thread(gpointer data)
   apid_global->apid_global_ops.ic_add_user_thread(apid_global);
   stop_flag= apid_global->apid_global_ops.ic_get_stop_flag(apid_global);
   if (stop_flag)
-    DEBUG_RETURN(NULL);
+    goto error;
   /*
     Now start-up has completed and at this point in time we have connections
     to all clusters already set-up. So all we need to do now is start a local
@@ -160,10 +160,10 @@ int main(int argc, char *argv[])
   if ((ret_code= run_file_server(apid_global, &err_str)))
     goto error;
 end:
-  if (apic)
-    apic->api_op.ic_free_config(apic);
   if (apid_global)
     ic_disconnect_apid_global(apid_global);
+  if (apic)
+    apic->api_op.ic_free_config(apic);
   ic_end();
   return ret_code;
 
