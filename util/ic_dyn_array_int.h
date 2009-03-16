@@ -15,8 +15,6 @@
 
 #ifndef IC_DYN_ARRAY_INT_H
 #define IC_DYN_ARRAY_INT_H
-#include <ic_common.h>
-#include <ic_dyn_array.h>
 
 #define SIMPLE_DYNAMIC_ARRAY_BUF_SIZE 1024
 #define ORDERED_DYNAMIC_INDEX_SIZE 256

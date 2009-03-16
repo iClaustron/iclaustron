@@ -14,7 +14,9 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_common.h>
+#ifndef DEBUG_BUILD
 int debug_dummy; /* To avoid silly linker errors */
+#endif
 
 #ifdef DEBUG_BUILD
 guint32

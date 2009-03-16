@@ -15,7 +15,6 @@
 
 #ifndef IC_MC_INT_H
 #define IC_MC_INT_H
-#include <ic_common.h>
 
 struct ic_memory_container_int
 {

@@ -14,12 +14,12 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #ifdef LINUX
+/* Portability fix for Linux */
 #define _XOPEN_SOURCE 600
 #endif
 #include <string.h>
 
 #include <ic_common.h>
-#include <glib.h>
 #include <glib/gstdio.h>
 #include <unistd.h>
 #include <stdio.h>
