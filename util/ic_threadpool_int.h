@@ -17,15 +17,32 @@
 typedef struct ic_int_threadpool_state IC_INT_THREADPOOL_STATE;
 typedef struct ic_int_thread_state IC_INT_THREAD_STATE;
 
+enum ic_thread_object_state
+{
+  /* Initial state, thread object ready for new thread */
+  FREE_THREAD = 0,
+  /* Thread has been started, it's running in some run state */
+  RUNNING_THREAD = 1,
+  /* Thread has been stopped, it hasn't been joined yet */
+  STOPPED_THREAD = 2,
+  /* Thread is joining and will soon be a free thread object again */
+  JOINING_THREAD = 3
+};
+typedef enum ic_thread_object_state IC_THREAD_OBJECT_STATE;
+
 struct ic_int_thread_state
 {
   IC_THREAD_STATE_OPS ts_ops;
   void *object;
   guint32 stop_flag;
+  IC_THREAD_OBJECT_STATE object_state;
   guint32 stopped;
+  guint32 started;
   guint32 free;
-  guint32 not_used;
+  guint32 synch_startup;
   GThread *thread;
+  GMutex *mutex;
+  GCond *cond;
   IC_INT_THREADPOOL_STATE *tp_state;
 };
 

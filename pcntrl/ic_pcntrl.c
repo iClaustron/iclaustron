@@ -214,7 +214,8 @@ int start_connection_loop()
                  &thread_id,
                  run_command_handler,
                  fork_conn,
-                 IC_SMALL_STACK_SIZE))
+                 IC_SMALL_STACK_SIZE,
+                 FALSE))
       {
         printf("Failed to create thread after forking accept connection\n");
         fork_conn->conn_op.ic_free_connection(fork_conn);

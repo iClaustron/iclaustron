@@ -7496,7 +7496,8 @@ start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER* run_obj,
                                               thread_id,
                                               run_cluster_server_thread,
                                               conn,
-                                              IC_SMALL_STACK_SIZE);
+                                              IC_SMALL_STACK_SIZE,
+                                              FALSE);
   DEBUG_RETURN(error);
 }
 
