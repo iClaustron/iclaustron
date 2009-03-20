@@ -121,6 +121,8 @@ ic_init_error_messages()
     "Timeout in receiving line in NDB Management Protocol";
   ic_error_str[IC_ERROR_ACCEPT_TIMEOUT - IC_FIRST_ERROR]=
     "Timeout when waiting for connect on client side";
+  ic_error_str[IC_ERROR_STOP_ORDERED - IC_FIRST_ERROR]=
+    "Stop ordered in send thread";
 }
 
 void

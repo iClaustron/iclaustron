@@ -63,7 +63,13 @@ struct ic_thread_state
 
 struct ic_threadpool_ops
 {
-  /* Start thread when it's ok that thread id allocation fails */
+  /*
+    Start thread when it's ok that thread id allocation fails
+    ---------------------------------------------------------
+    Description: Calls first get_thread_id and start_thread_with_thread_id
+    Parameters: See ic_threadpool_start_with_thread_id, except thread_id
+    which is an OUT parameter where the thread id is delivered.
+  */
   int  (*ic_threadpool_start_thread) (IC_THREADPOOL_STATE *tp_state,
                                       guint32 *thread_id,
                                       GThreadFunc thread_func,
@@ -72,8 +78,19 @@ struct ic_threadpool_ops
                                       gboolean synch_startup);
 
   /*
-    Start thread when thread already allocated, at failure thread_id is
-    deallocated.
+    Start thread when thread already allocated
+    ------------------------------------------
+    Description: Start a thread using a thread id which already have been
+    allocated, at failure thread_id is deallocated.
+    Parameters:
+      tp_state                Threadpool object
+      thread_id               Reference to a thread object using an id
+      thread_func             The function called at thread start
+      thread_obj              User specified object delivered to thread
+      stack_size              Stack size of thread
+      synch_startup           Wait for startup thread handling
+    
+    All parameters are IN parameters
   */
   int  (*ic_threadpool_start_thread_with_thread_id) (
                                       IC_THREADPOOL_STATE *tp_state,
@@ -88,13 +105,14 @@ struct ic_threadpool_ops
                                       (IC_THREADPOOL_STATE *tp_state,
                                        guint32 thread_id);
 
-  /*
-     Get thread id when it's necessary to verify we don't start too
-     many threads at the same time.
-  */
+  /* Get thread object by id */
   int  (*ic_threadpool_get_thread_id) (IC_THREADPOOL_STATE *tp_state,
-                                       guint32 *thread_id,
-                                       guint32 time_out_seconds);
+                                       guint32 *thread_id);
+
+  /* Get thread object by id, wait for a while if no free objects */
+  int  (*ic_threadpool_get_thread_id_wait) (IC_THREADPOOL_STATE *tp_state,
+                                            guint32 *thread_id,
+                                            guint32 time_out_seconds);
 
   /* Wait for thread to explicitly have released all its resources */
   void (*ic_threadpool_join) (IC_THREADPOOL_STATE *tp_state,
@@ -103,7 +121,15 @@ struct ic_threadpool_ops
   /* Check for any threads that have stopped and released all their resources*/
   void (*ic_threadpool_check_threads) (IC_THREADPOOL_STATE *tp_state);
 
-  /* Wake thread waiting for run command after startup phase */
+  /*
+    Wake thread waiting for run command after startup phase
+    -------------------------------------------------------
+    Description: When starting a thread using the synch_startup, the
+    thread will call ic_thread_startup_done when ready with the
+    startup phase. It will then wait in this call until the
+    management thread calls this function to start the thread
+    activitity again.
+  */
   void (*ic_threadpool_run_thread) (IC_THREADPOOL_STATE *tp_state,
                                     guint32 thread_id);
 
@@ -114,9 +140,16 @@ struct ic_threadpool_ops
     It can be done at any time but if running thread is waiting for
     synchronization at startup we need to signal running thread to
     wake up as well.
+
+    There is two variants of this call, one waits for join thread to
+    be handled and the other returns immediately after stopping the
+    thread without waiting for the thread to actually stop.
   */
   void (*ic_threadpool_stop_thread) (IC_THREADPOOL_STATE *tp_state,
                                      guint32 thread_id);
+
+  void (*ic_threadpool_stop_thread_wait) (IC_THREADPOOL_STATE *tp_state,
+                                          guint32 thread_id);
 
   /* Stop threadpool and release all its resources */
   void (*ic_threadpool_stop) (IC_THREADPOOL_STATE *tp_state);

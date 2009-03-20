@@ -7419,7 +7419,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   }
   do
   {
-    if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id(tp_state,
+    if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(tp_state,
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))
       goto error;
@@ -7515,6 +7515,7 @@ run_cluster_server_thread(gpointer data)
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
 
+  thread_state->ts_ops.ic_thread_started(thread_state);
   run_obj= (IC_INT_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) &&
          !thread_state->stop_flag)

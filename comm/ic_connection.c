@@ -355,6 +355,7 @@ login_connection(IC_CONNECTION *ext_conn)
   return 0;
 error:
   /* error handler */
+  close_socket_connection(conn);
   conn->error_code= error;
   return error;
 }

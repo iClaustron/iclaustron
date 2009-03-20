@@ -17,41 +17,60 @@
 typedef struct ic_int_threadpool_state IC_INT_THREADPOOL_STATE;
 typedef struct ic_int_thread_state IC_INT_THREAD_STATE;
 
-enum ic_thread_object_state
-{
-  /* Initial state, thread object ready for new thread */
-  FREE_THREAD = 0,
-  /* Thread has been started, it's running in some run state */
-  RUNNING_THREAD = 1,
-  /* Thread has been stopped, it hasn't been joined yet */
-  STOPPED_THREAD = 2,
-  /* Thread is joining and will soon be a free thread object again */
-  JOINING_THREAD = 3
-};
-typedef enum ic_thread_object_state IC_THREAD_OBJECT_STATE;
-
 struct ic_int_thread_state
 {
   IC_THREAD_STATE_OPS ts_ops;
+  /* User object for use when starting thread */
   void *object;
+  /* Flag used to check for stop of thread from thread pool */
   guint32 stop_flag;
-  IC_THREAD_OBJECT_STATE object_state;
+  /* Thread have been stopped, not yet joined */
   guint32 stopped;
+  /* Debug variable, shows whether thread has started */
   guint32 started;
+  /* Thread object is in the free list, ready for use */
   guint32 free;
+  /* Synchronisation of startup was requested */
   guint32 synch_startup;
+  /* This is my thread id */
+  guint32 thread_id;
+  /* This is the next link when the thread is in either free or stopped list */
+  guint32 next_thread_id;
+  /* This is the prev link when the thread is in the stopped list */
+  guint32 prev_thread_id;
+  /* GLib Thread object */
   GThread *thread;
+  /* The mutex and condition is mainly used for startup synchronisation.  */
   GMutex *mutex;
   GCond *cond;
+  /* Reference to thread pool object */
   IC_INT_THREADPOOL_STATE *tp_state;
 };
 
 struct ic_int_threadpool_state
 {
   IC_THREADPOOL_OPS tp_ops;
-  guint32 max_thread_id_plus_one;
+  /* Keep track of number of free threads for easy stop */
+  guint32 num_free_threads;
+  /* Pointer to first free thread object */
+  guint32 first_free_thread_id;
+  /* Pointer to first stopped thread waiting to be joined */
+  guint32 first_stopped_thread_id;
+  /* Keep track of total thread pool size */
   guint32 threadpool_size;
+  /*
+    The thread pool contains a number of shared resources. It has a list
+    of free thread objects, it has a list of stopped threads and there
+    is local information on each thread object. Currently most of this
+    information is protected by this one mutex. A simple more scalable
+    approach if the thread pool becomes a scalability issue is to
+    separate those parts into separate mutexes for protecting different
+    things. At the moment the thread pool is used for rare occasions of
+    starting and stopping threads, so should not be a scalability issue.
+  */
   GMutex *mutex;
+  /* Thread state objects */
   IC_INT_THREAD_STATE **thread_state;
+  /* Memory allocation variable for all the thread state objects */
   gchar *thread_state_allocation;
 };

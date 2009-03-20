@@ -32,14 +32,14 @@ typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
 typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 typedef struct ic_grid_comm IC_GRID_COMM;
-typedef struct ic_internal_apid_error IC_INTERNAL_APID_ERROR;
-typedef struct ic_internal_apid_connection IC_INTERNAL_APID_CONNECTION;
-typedef struct ic_internal_apid_global IC_INTERNAL_APID_GLOBAL;
+typedef struct ic_int_apid_error IC_INT_APID_ERROR;
+typedef struct ic_int_apid_connection IC_INT_APID_CONNECTION;
+typedef struct ic_int_apid_global IC_INT_APID_GLOBAL;
 
 struct ic_ndb_receive_state
 {
   /* Global data for Data Server API */
-  IC_INTERNAL_APID_GLOBAL *apid_global;
+  IC_INT_APID_GLOBAL *apid_global;
   /* Local free pool of receive pages */
   IC_SOCK_BUF_PAGE *free_rec_pages;
   /* Local free pool of NDB messages */
@@ -142,17 +142,17 @@ struct ic_thread_connection
 {
   IC_SOCK_BUF_PAGE *first_received_message;
   IC_SOCK_BUF_PAGE *last_received_message;
-  IC_INTERNAL_APID_CONNECTION *apid_conn;
+  IC_INT_APID_CONNECTION *apid_conn;
   gboolean thread_wait_cond;
   GMutex *mutex;
   GCond *cond;
 };
 
-struct ic_internal_apid_connection
+struct ic_int_apid_connection
 {
   IC_APID_CONNECTION_OPS apid_conn_ops;
   IC_METADATA_BIND_OPS apid_metadata_ops;
-  IC_INTERNAL_APID_GLOBAL *apid_global;
+  IC_INT_APID_GLOBAL *apid_global;
   IC_TRANSLATION_OBJ *trans_bindings;
   IC_TRANSLATION_OBJ *op_bindings;
   IC_API_CONFIG_SERVER *apic;
@@ -190,6 +190,7 @@ struct ic_listen_server_thread
   IC_CONNECTION *conn;
   guint32 cluster_id;
   guint32 thread_id;
+  guint32 index;
   gboolean started;
   gboolean stop_ordered;
   GMutex *mutex;
@@ -225,7 +226,7 @@ struct ic_receive_node_connection
 struct ic_send_node_connection
 {
   /* A pointer to the global struct */
-  IC_INTERNAL_APID_GLOBAL *apid_global;
+  IC_INT_APID_GLOBAL *apid_global;
   /* Receive node object */
   IC_RECEIVE_NODE_CONNECTION rec_node;
   /* My hostname of the connection used by this thread */
@@ -343,7 +344,7 @@ struct ic_grid_comm
 
 #define IC_MEM_BUF_SIZE 32768
 
-struct ic_internal_apid_error
+struct ic_int_apid_error
 {
   IC_APID_ERROR_OPS error_ops;
   int error_code;
@@ -356,7 +357,7 @@ struct ic_translation_obj
   IC_HASHTABLE *hash_table;
 };
 
-struct ic_internal_apid_global
+struct ic_int_apid_global
 {
   IC_APID_GLOBAL_OPS apid_global_ops;
   IC_BITMAP *cluster_bitmap;
@@ -372,7 +373,7 @@ struct ic_internal_apid_global
   IC_THREADPOOL_STATE *send_thread_pool;
   GMutex *thread_id_mutex;
   guint32 num_receive_threads;
-  guint32 max_listen_server_threads;
+  guint32 num_listen_server_threads;
   IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];
   IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];
 };

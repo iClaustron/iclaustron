@@ -106,7 +106,8 @@ run_command_handler(gpointer data)
 {
   gchar *read_buf;
   guint32 read_size;
-  IC_CONNECTION *conn= (IC_CONNECTION*)data;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_CONNECTION *conn= (IC_CONNECTION*)thread_state->object;
   GError *error= NULL;
   gchar *arg_vector[4];
   guint32 items_received= 0;
@@ -114,7 +115,8 @@ run_command_handler(gpointer data)
   GPid child_pid;
   gchar *arg_str;
   int ret_code;
-  IC_THREAD_STATE *thread_state;
+
+  thread_state->ts_ops.ic_thread_started(thread_state);
 
   memset(arg_vector, 0, 4*sizeof(gchar*));
   thread_state= conn->conn_op.ic_get_param(conn);
@@ -221,7 +223,7 @@ int start_connection_loop()
         fork_conn->conn_op.ic_free_connection(fork_conn);
         break;
       }
-    } while (1);
+    } while (0);
   } while (!glob_stop_flag);
   return 0;
 }

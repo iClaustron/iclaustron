@@ -624,6 +624,7 @@ run_handle_new_connection(gpointer data)
   guint32 parse_inx= 0;
   IC_PARSE_DATA parse_data;
 
+  thread_state->ts_ops.ic_thread_started(thread_state);
   apic= (IC_API_CONFIG_SERVER*)conn->conn_op.ic_get_param(conn);
   memset(&parse_data, sizeof(IC_PARSE_DATA), 0);
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
@@ -673,6 +674,7 @@ error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   conn->conn_op.ic_free_connection(conn);
+  thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
 
@@ -689,7 +691,8 @@ handle_new_connection(IC_CONNECTION *conn,
                             thread_id,
                             run_handle_new_connection,
                             (gpointer)conn,
-                            IC_MEDIUM_STACK_SIZE)))
+                            IC_MEDIUM_STACK_SIZE,
+                            FALSE)))
     return ret_code;
   return 0;
 }
@@ -702,7 +705,7 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
   IC_CONNECTION *fork_conn;
   do
   {
-    if ((ret_code= glob_tp_state->tp_ops.ic_threadpool_get_thread_id(
+    if ((ret_code= glob_tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
                                                      glob_tp_state,
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))

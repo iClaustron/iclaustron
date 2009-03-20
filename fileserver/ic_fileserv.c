@@ -59,6 +59,7 @@ run_file_server_thread(gpointer data)
   gboolean stop_flag;
   DEBUG_ENTRY("run_file_server_thread");
 
+  thread_state->ts_ops.ic_thread_started(thread_state);
   apid_global->apid_global_ops.ic_add_user_thread(apid_global);
   stop_flag= apid_global->apid_global_ops.ic_get_stop_flag(apid_global);
   if (stop_flag)
@@ -71,6 +72,8 @@ run_file_server_thread(gpointer data)
   if (!(apid_conn= ic_create_apid_connection(apid_global,
                                              apid_global->cluster_bitmap)))
     goto error;
+  if (thread_state->ts_ops.ic_thread_startup_done(thread_state))
+    goto error;
   /*
      We now have a local Data API connection and we are ready to issue
      file system transactions to keep our local cache consistent with the
@@ -79,45 +82,48 @@ run_file_server_thread(gpointer data)
   /* Currently empty implementation */
 error:
   apid_global->apid_global_ops.ic_remove_user_thread(apid_global);
+  thread_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_RETURN(NULL);
 }
 
 static int
-start_file_server_thread(IC_APID_GLOBAL *apid_global)
+start_file_server_thread(IC_APID_GLOBAL *apid_global, guint32 *thread_id)
 {
-  guint32 thread_id;
   return glob_tp_state->tp_ops.ic_threadpool_start_thread(
                             glob_tp_state,
-                            &thread_id,
+                            thread_id,
                             run_file_server_thread,
                             (gpointer)apid_global,
-                            IC_MEDIUM_STACK_SIZE);
+                            IC_MEDIUM_STACK_SIZE,
+                            TRUE);
 }
 
 static int
 run_file_server(IC_APID_GLOBAL *apid_global, gchar **err_str)
 {
   int error= 0;
-  guint32 i;
+  guint32 i, thread_id;
   DEBUG_ENTRY("run_file_server");
 
   *err_str= NULL;
   printf("Ready to start file server\n");
   for (i= 0; i < glob_num_threads; i++)
   {
-    if (!(error= start_file_server_thread(apid_global)))
+    if (!(error= start_file_server_thread(apid_global, &thread_id)))
     {
       apid_global->apid_global_ops.ic_set_stop_flag(apid_global);
       break;
     }
+    glob_tp_state->tp_ops.ic_threadpool_run_thread(glob_tp_state, thread_id);
   }
   while (1)
   {
-    apid_global->apid_global_ops.ic_cond_wait(apid_global);
     if (apid_global->apid_global_ops.ic_get_num_user_threads(apid_global) == 0)
     {
       break;
     }
+    apid_global->apid_global_ops.ic_cond_wait(apid_global);
+    glob_tp_state->tp_ops.ic_threadpool_check_threads(glob_tp_state);
   }
   DEBUG_RETURN(error);
 }
