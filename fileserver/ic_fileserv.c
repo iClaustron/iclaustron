@@ -109,7 +109,7 @@ run_file_server(IC_APID_GLOBAL *apid_global, gchar **err_str)
   printf("Ready to start file server\n");
   for (i= 0; i < glob_num_threads; i++)
   {
-    if (!(error= start_file_server_thread(apid_global, &thread_id)))
+    if ((error= start_file_server_thread(apid_global, &thread_id)))
     {
       apid_global->apid_global_ops.ic_set_stop_flag(apid_global);
       break;
@@ -125,6 +125,7 @@ run_file_server(IC_APID_GLOBAL *apid_global, gchar **err_str)
     apid_global->apid_global_ops.ic_cond_wait(apid_global);
     glob_tp_state->tp_ops.ic_threadpool_check_threads(glob_tp_state);
   }
+  glob_tp_state->tp_ops.ic_threadpool_check_threads(glob_tp_state);
   DEBUG_RETURN(error);
 }
 

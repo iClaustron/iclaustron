@@ -654,7 +654,9 @@ void
 apid_global_cond_wait(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
-  g_cond_wait(apid_global->cond, apid_global->mutex);
+  g_mutex_lock(apid_global->mutex);
+  if (apid_global->num_user_threads_started > 0)
+    g_cond_wait(apid_global->cond, apid_global->mutex);
   g_mutex_unlock(apid_global->mutex);
 }
 
@@ -1093,6 +1095,17 @@ remove_send_thread_from_listen_thread(
     g_mutex_unlock(listen_server_thread->mutex);
 }
 
+static int
+check_thread_state(void *timeout_obj,
+                   __attribute__ ((unused))int timer)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)timeout_obj;
+
+  if (thread_state->stop_flag)
+    return 1;
+  return 0;
+}
+
 /*
   The send thread has two cases, client connecting and server connecting.
   In the client case the thread itself will connect.
@@ -1103,6 +1116,7 @@ remove_send_thread_from_listen_thread(
 */
 static int
 connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                       IC_THREAD_STATE *thread_state,
                        gboolean is_server_part)
 {
   IC_CONNECTION *conn;
@@ -1169,7 +1183,9 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
              link_config->is_wan_connection,
              link_config->socket_read_buffer_size,
              link_config->socket_write_buffer_size);
-    if ((ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
+    if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
+                                                      check_thread_state,
+                                                      (void*)thread_state)))
       return ret_code;
   }
   return ret_code;
@@ -1227,7 +1243,7 @@ run_listen_thread(void *data)
   IC_CONNECTION *fork_conn, *conn;
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
-  gboolean stop_ordered, found;
+  gboolean found;
   int ret_code;
 
   thread_state->ts_ops.ic_thread_started(thread_state);
@@ -1311,10 +1327,7 @@ run_listen_thread(void *data)
         We got a timeout, check if we're ordered to stop and if so
         we will stop. Otherwise we'll simply continue.
       */
-      g_mutex_lock(listen_server_thread->mutex);
-      stop_ordered= listen_server_thread->stop_ordered;
-      g_mutex_unlock(listen_server_thread->mutex);
-      if (stop_ordered)
+      if (thread_state->stop_flag)
         break;
     }
   } while (1);
@@ -1530,6 +1543,7 @@ run_send_thread(void *data)
       ic_sleep(3);
     }
     if ((ret_code= connect_by_send_thread(send_node_conn,
+                                          thread_state,
                                           is_server_part)))
       continue;
     conn= send_node_conn->conn;

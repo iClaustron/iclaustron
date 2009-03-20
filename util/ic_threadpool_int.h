@@ -26,12 +26,16 @@ struct ic_int_thread_state
   guint32 stop_flag;
   /* Thread have been stopped, not yet joined */
   guint32 stopped;
+  /* Indicator if thread state is initiated, for debug purposes */
+  guint32 inited;
   /* Debug variable, shows whether thread has started */
   guint32 started;
   /* Thread object is in the free list, ready for use */
   guint32 free;
   /* Synchronisation of startup was requested */
   guint32 synch_startup;
+  /* Flag used when stopping thread to wait for it to complete stop */
+  guint32 wait_for_stop;
   /* This is my thread id */
   guint32 thread_id;
   /* This is the next link when the thread is in either free or stopped list */
