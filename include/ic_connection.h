@@ -22,12 +22,6 @@
 #include <netdb.h>
 #endif
 
-#define ACCEPT_ERROR 32767
-#define END_OF_FILE 32766
-#define PROTOCOL_ERROR 32765
-#define AUTHENTICATE_ERROR 32764
-#define SSL_ERROR 32763
-
 #ifdef USE_MSG_NOSIGNAL
 #define IC_MSG_NOSIGNAL MSG_NOSIGNAL
 #else

@@ -27,7 +27,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7040
+#define IC_LAST_ERROR 7046
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -123,6 +123,16 @@ ic_init_error_messages()
     "Timeout when waiting for connect on client side";
   ic_error_str[IC_ERROR_STOP_ORDERED - IC_FIRST_ERROR]=
     "Stop ordered in send thread";
+  ic_error_str[IC_ACCEPT_ERROR - IC_FIRST_ERROR]=
+    "Accept error on socket";
+  ic_error_str[IC_END_OF_FILE - IC_FIRST_ERROR]=
+    "Unexpected end of file";
+  ic_error_str[IC_PROTOCOL_ERROR - IC_FIRST_ERROR]=
+    "Protocol error in NDB MGM Protocol";
+  ic_error_str[IC_AUTHENTICATE_ERROR - IC_FIRST_ERROR]=
+    "Authentication error at connection setup";
+  ic_error_str[IC_SSL_ERROR - IC_FIRST_ERROR]=
+    "SSL error on socket";
 }
 
 void
@@ -162,7 +172,7 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
 
   if (!error_buffer)
     return NULL;
-  if (error_code == PROTOCOL_ERROR)
+  if (error_code == IC_PROTOCOL_ERROR)
     line_err_msg= protocol_err_msg;
   else if (error_code != 0 && error_line != 0)
     line_err_msg= line_number_msg;

@@ -982,11 +982,11 @@ authenticate_client_connection(IC_CONNECTION *conn,
   if ((error= ic_send_with_cr(conn, "ndbd")) ||
       (error= ic_send_with_cr(conn, "ndbd passwd")) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, "ok")) ||
       (error= ic_send_with_cr(conn, send_buf)) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, "1 1")))
     return error;
   return 0;
@@ -1004,14 +1004,14 @@ static int authenticate_server_connection(IC_CONNECTION *conn,
 
   /* Retrieve client node id and verify that server is my node id */
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, "ndbd")) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, "ndbd passwd")) ||
       (error= ic_send_with_cr(conn, "ok")) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
       (read_buf[len] != ' ') ||
       (len= len + 1, FALSE) ||
@@ -1019,7 +1019,7 @@ static int authenticate_server_connection(IC_CONNECTION *conn,
       ((guint64)my_nodeid != my_id) ||
       (client_id >= IC_MAX_NODE_ID) ||
       (error= ic_send_with_cr(conn, "1 1")) ||
-      (error= AUTHENTICATE_ERROR, FALSE) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
       (read_buf[len] != ' ') ||
       (len++, FALSE) ||
@@ -1101,7 +1101,7 @@ check_thread_state(void *timeout_obj,
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)timeout_obj;
 
-  if (thread_state->stop_flag)
+  if (thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
     return 1;
   return 0;
 }
@@ -1238,8 +1238,8 @@ static gpointer
 run_listen_thread(void *data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_LISTEN_SERVER_THREAD *listen_server_thread=
-      (IC_LISTEN_SERVER_THREAD*)thread_state->object;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread= (IC_LISTEN_SERVER_THREAD*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
   IC_CONNECTION *fork_conn, *conn;
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
@@ -1327,7 +1327,7 @@ run_listen_thread(void *data)
         We got a timeout, check if we're ordered to stop and if so
         we will stop. Otherwise we'll simply continue.
       */
-      if (thread_state->stop_flag)
+      if (thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
         break;
     }
   } while (1);
@@ -1390,8 +1390,8 @@ run_send_thread(void *data)
   IC_THREADPOOL_STATE *send_tp;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_SEND_NODE_CONNECTION *send_node_conn=
-      (IC_SEND_NODE_CONNECTION*)thread_state->object;
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
   /*
     First step is to create a connection object, then it's time to
     start setting it up when told to do so by the main thread. We want
@@ -1531,7 +1531,7 @@ run_send_thread(void *data)
     have been created, it's now time to connect to the clusters.
   */
   ret_code= 0;
-  while (!thread_state->stop_flag)
+  while (!thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     if (ret_code)
     {
@@ -2677,7 +2677,7 @@ handle_node_error(int ret_code,
                   LINK_MESSAGE_ANCHORS *message_anchors,
                   IC_THREAD_CONNECTION **thd_conn)
 {
-  if (ret_code == END_OF_FILE)
+  if (ret_code == IC_END_OF_FILE)
   {
     /*
       A normal close down of the socket connection. We will stop the
@@ -2855,7 +2855,8 @@ static gpointer
 run_receive_thread(void *data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_NDB_RECEIVE_STATE *rec_state= (IC_NDB_RECEIVE_STATE*)thread_state->object;
+  IC_NDB_RECEIVE_STATE *rec_state= (IC_NDB_RECEIVE_STATE*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
   LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
   int min_hash_index= NUM_THREAD_LISTS;
   int max_hash_index= (int)-1;
@@ -2872,7 +2873,7 @@ run_receive_thread(void *data)
   /* Flag start-up done and wait for start order */
   thread_state->ts_ops.ic_thread_startup_done(thread_state);
 
-  while (!thread_state->stop_flag)
+  while (!thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     /* Check for which nodes to receive from */
     /* Loop over each node to receive from */
@@ -3099,7 +3100,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         break;
     }
   }
-  if (ret_code == END_OF_FILE)
+  if (ret_code == IC_END_OF_FILE)
   {
     if (any_message_received)
     {
@@ -3110,7 +3111,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
       loc_min_hash_index= NUM_THREAD_LISTS;
       loc_max_hash_index= (int)-1;
     }
-    ret_code= END_OF_FILE;
+    ret_code= IC_END_OF_FILE;
   }
 end:
   *min_hash_index= loc_min_hash_index;

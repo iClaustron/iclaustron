@@ -389,7 +389,7 @@ struct ic_int_run_cluster_server
   if (!(cond)) \
   { \
     set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__); \
-    error= PROTOCOL_ERROR; \
+    error= IC_PROTOCOL_ERROR; \
     goto error; \
   } \
 }
@@ -399,7 +399,7 @@ struct ic_int_run_cluster_server
   if (!(cond)) \
   { \
     conn->conn_op.ic_set_error_line(conn, (guint32)__LINE__); \
-    error= PROTOCOL_ERROR; \
+    error= IC_PROTOCOL_ERROR; \
     goto error; \
   } \
 }
@@ -409,7 +409,7 @@ struct ic_int_run_cluster_server
   if (!(cond)) \
   { \
     set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__); \
-    DEBUG_RETURN(PROTOCOL_ERROR); \
+    DEBUG_RETURN(IC_PROTOCOL_ERROR); \
     goto error; \
   } \
   DEBUG_RETURN(0); \
@@ -420,7 +420,7 @@ struct ic_int_run_cluster_server
   if (!(cond)) \
   { \
     conn->conn_op.ic_set_error_line(conn, (guint32)__LINE__); \
-    DEBUG_RETURN(PROTOCOL_ERROR); \
+    DEBUG_RETURN(IC_PROTOCOL_ERROR); \
   } \
   DEBUG_RETURN(0); \
 }
@@ -430,16 +430,16 @@ struct ic_int_run_cluster_server
   if (!(cond)) \
   { \
     set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__); \
-    return PROTOCOL_ERROR; \
+    return IC_PROTOCOL_ERROR; \
   } \
   return 0; \
 }
 
 #define PROTOCOL_CONN_CHECK_ERROR_GOTO(error) \
-{ if ((error) == PROTOCOL_ERROR) PROTOCOL_CONN_CHECK_GOTO(FALSE) \
+{ if ((error) == IC_PROTOCOL_ERROR) PROTOCOL_CONN_CHECK_GOTO(FALSE) \
 else goto error; }
 
 #define PROTOCOL_CHECK_ERROR_GOTO(error) \
-{ if ((error) == PROTOCOL_ERROR) PROTOCOL_CHECK_GOTO(FALSE) \
+{ if ((error) == IC_PROTOCOL_ERROR) PROTOCOL_CHECK_GOTO(FALSE) \
 else goto error; }
 #endif

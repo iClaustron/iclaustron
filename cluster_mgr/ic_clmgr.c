@@ -617,7 +617,8 @@ run_handle_new_connection(gpointer data)
   guint32 read_size;
   int ret_code;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_CONNECTION *conn= (IC_CONNECTION*)thread_state->object;
+  IC_CONNECTION *conn= (IC_CONNECTION*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_API_CONFIG_SERVER *apic;
   gchar *parse_buf;

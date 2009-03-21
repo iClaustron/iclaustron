@@ -51,14 +51,15 @@ struct ic_thread_state_ops
     Returns TRUE if the thread has been asked to stop
   */
   gboolean (*ic_thread_startup_done) (IC_THREAD_STATE *thread_state);
+  
+  void* (*ic_thread_get_object) (IC_THREAD_STATE *thread_state);
+  gboolean (*ic_thread_get_stop_flag) (IC_THREAD_STATE *thread_state);
 };
 typedef struct ic_thread_state_ops IC_THREAD_STATE_OPS;
 
 struct ic_thread_state
 {
   IC_THREAD_STATE_OPS ts_ops;
-  void *object;
-  guint32 stop_flag;
 };
 
 struct ic_threadpool_ops

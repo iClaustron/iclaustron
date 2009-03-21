@@ -20,47 +20,81 @@ typedef struct ic_int_thread_state IC_INT_THREAD_STATE;
 struct ic_int_thread_state
 {
   IC_THREAD_STATE_OPS ts_ops;
-  /* User object for use when starting thread */
-  void *object;
-  /* Flag used to check for stop of thread from thread pool */
-  guint32 stop_flag;
-  /* Thread have been stopped, not yet joined */
-  guint32 stopped;
-  /* Indicator if thread state is initiated, for debug purposes */
-  guint32 inited;
-  /* Debug variable, shows whether thread has started */
-  guint32 started;
-  /* Thread object is in the free list, ready for use */
-  guint32 free;
-  /* Synchronisation of startup was requested */
-  guint32 synch_startup;
-  /* Flag used when stopping thread to wait for it to complete stop */
-  guint32 wait_for_stop;
+  /*
+    The following variables are static and set once and never changed
+    and thus require no protection.
+  */
   /* This is my thread id */
   guint32 thread_id;
+  /* Indicator if thread state is initiated, for debug purposes */
+  guint32 inited;
+  /* Reference to thread pool object */
+  IC_INT_THREADPOOL_STATE *tp_state;
+
+  /*
+    The following variables are always set after allocating the thread
+    object, they are set by the thread starting the thread and reset
+    when the thread is stopped and put back into the free list, so
+    implicitly they are protected by free list
+
+   User object for use when starting thread
+   GLib Thread object
+  */
+  void *object;
+  GThread *thread;
+
+  /* The following variables are protected by the mutex on this object */
+
+  /* Flag used to check for stop of thread from thread pool */
+  guint32 stop_flag;
+  /* Debug variable, shows whether thread has started */
+  guint32 started;
+  /* Synchronisation of startup was requested */
+  guint32 synch_startup;
+
+  /*
+    Thread have been stopped, not yet joined 
+    Flag used when stopping thread to wait for it to complete stop
+    Protected by stop list mutex
+  */
+  guint32 stopped;
+  guint32 wait_for_stop;
+  /*
+     Thread object is in the free list, ready for use
+     Protected by free list mutex
+   */
+  guint32 free;
+
   /* This is the next link when the thread is in either free or stopped list */
   guint32 next_thread_id;
   /* This is the prev link when the thread is in the stopped list */
   guint32 prev_thread_id;
-  /* GLib Thread object */
-  GThread *thread;
+
   /* The mutex and condition is mainly used for startup synchronisation.  */
   GMutex *mutex;
   GCond *cond;
-  /* Reference to thread pool object */
-  IC_INT_THREADPOOL_STATE *tp_state;
 };
 
 struct ic_int_threadpool_state
 {
   IC_THREADPOOL_OPS tp_ops;
-  /* Keep track of number of free threads for easy stop */
+  /* 
+    Keep track of number of free threads for easy stop, protected by free
+    list mutex
+  */
   guint32 num_free_threads;
-  /* Pointer to first free thread object */
+  /* Pointer to first free thread object, protected by free list mutex */
   guint32 first_free_thread_id;
-  /* Pointer to first stopped thread waiting to be joined */
+
+  /*
+    Pointer to first stopped thread waiting to be joined
+    Number of stopped threads in list
+    Protected by stop list mutex
+  */
   guint32 first_stopped_thread_id;
-  /* Keep track of total thread pool size */
+  guint32 num_stopped_threads;
+
+  /* Keep track of total thread pool size, set once, not protected */
   guint32 threadpool_size;
   /*
     The thread pool contains a number of shared resources. It has a list
@@ -72,8 +106,24 @@ struct ic_int_threadpool_state
     things. At the moment the thread pool is used for rare occasions of
     starting and stopping threads, so should not be a scalability issue.
   */
-  GMutex *mutex;
-  /* Thread state objects */
+  /*
+    The stop list mutex protects the stop list, this means the first
+    pointer and the next and prev pointers on all thread objects that
+    is included in this list. There is also a condition used to wait
+    on stopped threads.
+  */
+  GMutex *stop_list_mutex;
+  GCond *stop_list_cond;
+
+  /*
+    The free list mutex protects the free list, this means the first
+    pointer and the next pointer on all thread objects in the list.
+    Also the free variable in the thread objects which is merely a
+    debug variable.
+  */
+  GMutex *free_list_mutex;
+
+  /* Thread state objects, set once, not protected */
   IC_INT_THREAD_STATE **thread_state;
   /* Memory allocation variable for all the thread state objects */
   gchar *thread_state_allocation;

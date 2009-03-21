@@ -107,7 +107,8 @@ run_command_handler(gpointer data)
   gchar *read_buf;
   guint32 read_size;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_CONNECTION *conn= (IC_CONNECTION*)thread_state->object;
+  IC_CONNECTION *conn= (IC_CONNECTION*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
   GError *error= NULL;
   gchar *arg_vector[4];
   guint32 items_received= 0;

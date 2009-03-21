@@ -54,7 +54,8 @@ static gpointer
 run_file_server_thread(gpointer data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_APID_GLOBAL *apid_global= (IC_APID_GLOBAL*)thread_state->object;
+  IC_APID_GLOBAL *apid_global= (IC_APID_GLOBAL*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
   IC_APID_CONNECTION *apid_conn;
   gboolean stop_flag;
   DEBUG_ENTRY("run_file_server_thread");

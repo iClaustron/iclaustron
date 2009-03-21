@@ -3290,7 +3290,7 @@ rec_simple_str(IC_CONNECTION *conn, const gchar *str)
     {
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Protocol error in waiting for %s", str));
-      DEBUG_RETURN(PROTOCOL_ERROR);
+      DEBUG_RETURN(IC_PROTOCOL_ERROR);
     }
     DEBUG_RETURN(0);
   }
@@ -3374,7 +3374,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
   guint32 i, max_cluster_id= 0;
   guint32 cluster_id, num_clusters;
-  int error= END_OF_FILE;
+  int error= IC_END_OF_FILE;
   IC_CONNECTION *conn= NULL;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
@@ -7508,7 +7508,8 @@ run_cluster_server_thread(gpointer data)
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   gchar *read_buf;
   guint32 read_size;
-  IC_CONNECTION *conn= (IC_CONNECTION*)thread_state->object;
+  IC_CONNECTION *conn= (IC_CONNECTION*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   int error, error_line;
   gboolean handled_request;
@@ -7518,7 +7519,7 @@ run_cluster_server_thread(gpointer data)
   thread_state->ts_ops.ic_thread_started(thread_state);
   run_obj= (IC_INT_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) &&
-         !thread_state->stop_flag)
+         !thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     switch (state)
     {
@@ -7772,7 +7773,7 @@ handle_report_event(IC_CONNECTION *conn)
                                strlen(data_str), (guint32)length,
                                &num_array[0])))
   {
-    error= error ? error : PROTOCOL_ERROR;
+    error= error ? error : IC_PROTOCOL_ERROR;
     PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
   }
   if ((error= rec_simple_str(conn, ic_empty_string)))

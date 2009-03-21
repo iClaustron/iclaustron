@@ -338,7 +338,7 @@ login_connection(IC_CONNECTION *ext_conn)
   if (conn->is_ssl_connection &&
       (error= ssl_create_connection(ssl_conn)))
   {
-    error= SSL_ERROR;
+    error= IC_SSL_ERROR;
     goto error;
   }
 #endif
@@ -517,9 +517,9 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
                   ("Client connect from a disallowed address, ip=%s",
                    conn->conn_stat.client_ip_addr));
     }
-    conn->error_code= ACCEPT_ERROR;
+    conn->error_code= IC_ACCEPT_ERROR;
     close_socket(ret_sockfd);
-    return ACCEPT_ERROR;
+    return IC_ACCEPT_ERROR;
   }
   conn->rw_sockfd= ret_sockfd;
   conn->error_code= 0;
@@ -622,7 +622,9 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
   struct addrinfo *loc_addrinfo;
   fd_set read_set, write_set;
   struct timeval time_out;
-  int timer= 0;
+  int timer= 0, ret_select;
+  socklen_t len;
+  gboolean first= TRUE;
 
   DEBUG_PRINT(COMM_LEVEL, ("Translating hostnames"));
   if ((error= translate_hostnames(conn)))
@@ -640,6 +642,24 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
     Create a socket for the connection
   */
 renew_connect:
+  if (!first)
+  {
+    /*
+      We timed out, we will callback to the user and every 10
+      seconds we will renew the connect message if the user is
+      still waiting for a successful connect.
+    */
+    close_socket(conn);
+    timer++;
+    if (conn->timeout_func &&
+        conn->timeout_func(conn->timeout_obj, timer))
+    {
+      conn->error_code= IC_ERROR_CONNECT_TIMEOUT;
+      return conn->error_code;
+    }
+    /* Time to send a new connect message */
+  }
+  first= FALSE;
   if ((sockfd= socket(conn->server_addrinfo->ai_family,
                       conn->server_addrinfo->ai_socktype,
                       conn->server_addrinfo->ai_protocol)) < 0)
@@ -659,7 +679,7 @@ renew_connect:
   }
   if (conn->is_client)
   {
-    set_socket_nonblocking(conn->listen_sockfd, TRUE);
+    set_socket_nonblocking(sockfd, TRUE);
     do
     {
       /*
@@ -673,47 +693,39 @@ renew_connect:
           continue;
         if (errno == EINPROGRESS)
         {
-          /* We successfully a CONNECT request, still waiting for reply */
-          while (1)
+          /* We successfully sent a CONNECT request, still waiting for reply */
+          time_out.tv_sec= 3; /* Timeout is 3 seconds */
+          time_out.tv_usec= 0;
+          FD_ZERO(&read_set);
+          FD_SET(sockfd, &read_set);
+          write_set= read_set;
+          if ((ret_select= select(sockfd + 1, &read_set, &write_set,
+                                   NULL, &time_out)) == 0)
+            goto renew_connect;
+          if ((FD_ISSET(sockfd, &read_set)) || 
+              (FD_ISSET(sockfd, &write_set)))
           {
-            time_out.tv_usec= 0;
-            time_out.tv_sec= 1; /* Timeout is 5 second */
-            FD_ZERO(&read_set);
-            FD_ZERO(&write_set);
-            FD_SET(sockfd, &read_set);
-            select(sockfd + 1, &read_set, &write_set, NULL, &time_out);
-            if (!((FD_ISSET(sockfd, &read_set)) &&
-                  (FD_ISSET(sockfd, &write_set))))
-            {
-              /*
-                We timed out, we will callback to the user and every 10
-                seconds we will renew the connect message if the user is
-                still waiting for a successful connect.
-              */
-              timer++;
-              if (conn->timeout_func &&
-                  conn->timeout_func(conn->timeout_obj, timer))
-              {
-                 conn->error_code= IC_ERROR_CONNECT_TIMEOUT;
-                 return conn->error_code;
-              }
-              if ((timer % 10) == 0)
-              {
-                /* Time to send a new connect message */
-                close_socket(conn);
-                goto renew_connect;
-              }
-            }
+#ifdef SOLARIS
+            len= sizeof(error);
+            if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+               goto renew_connect;
+#endif
+             break;
+          }
+          else
+          {
+            printf("sockfd not set at connect\n");
+            abort();
           }
         }
         DEBUG_PRINT(COMM_LEVEL, ("connect error"));
         goto error;
       }
-      conn->rw_sockfd= sockfd;
-      set_is_connected(conn);
-      set_socket_nonblocking(sockfd, conn->is_nonblocking);
       break;
     } while (1);
+    conn->rw_sockfd= sockfd;
+    set_is_connected(conn);
+    set_socket_nonblocking(sockfd, conn->is_nonblocking);
   }
   else
   {
@@ -1154,8 +1166,8 @@ read_socket_connection(IC_CONNECTION *ext_conn,
     if (ret_code == 0)
     {
       DEBUG_PRINT(COMM_LEVEL, ("End of file received"));
-      conn->error_code= END_OF_FILE;
-      return END_OF_FILE;
+      conn->error_code= IC_END_OF_FILE;
+      return IC_END_OF_FILE;
     }
     if (!conn->is_ssl_used_for_data)
       error= errno;
