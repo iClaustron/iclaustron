@@ -15,7 +15,6 @@
 
 #ifndef IC_POLL_SET_INT_H
 #define IC_POLL_SET_INT_H
-#include <ic_common.h>
 #include <ic_poll_set.h>
 
 struct ic_int_poll_set

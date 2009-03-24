@@ -15,6 +15,8 @@
 
 #ifndef IC_ERR_H
 #define IC_ERR_H
+/* Basic system error handling header file */
+#include <errno.h>
 /*
   HEADER MODULE: iClaustron Error Handling
   ----------------------------------------

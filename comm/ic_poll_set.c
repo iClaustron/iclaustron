@@ -13,9 +13,12 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
+#include <ic_base_header.h>
+#include <ic_port.h>
+#include <ic_err.h>
 #include <ic_poll_set.h>
 #include "ic_poll_set_int.h"
+/* System header files */
 #include <unistd.h>
 
 static void

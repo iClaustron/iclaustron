@@ -17,6 +17,7 @@ include_HEADERS = ic_apic.h \
                   ic_apid_datatypes.h \
                   ic_apid_hidden.h \
                   ic_apid_inline.h \
+                  ic_base_header.h \
                   ic_connection.h \
                   ic_common_header.h \
                   ic_debug.h \

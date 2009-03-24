@@ -489,6 +489,7 @@ install (FILES
          include/ic_apid_datatypes.h
          include/ic_apid_hidden.h
          include/ic_apid_inline.h
+         include/ic_base_header.h
          include/ic_connection.h
          include/ic_common.h
          include/ic_common_header.h
