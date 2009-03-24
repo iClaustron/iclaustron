@@ -13,7 +13,10 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
+#include <ic_base_header.h>
+#include <ic_port.h>
+#include <ic_mc.h>
+#include <ic_bitmap.h>
 
 /*
   Bitmap routines
@@ -87,4 +90,24 @@ ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
   g_assert(bitmap->num_bits > bit_number);
   return (gboolean)ic_is_bitmap_set(bitmap, bit_number);
 }
+
+/*
+  Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
+  no bit set is reported 0, thus we report one more than the bit index
+  of the highest bit set
+*/
+
+guint32
+ic_count_highest_bit(guint32 bit_var)
+{
+  guint32 i;
+  guint32 bit_inx= 0;
+  for (i= 0; i < 32; i++)
+  {
+    if (bit_var | (1 << i))
+      bit_inx= i+1;
+  }
+  return bit_inx;
+}
+
 #endif

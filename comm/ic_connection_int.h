@@ -248,7 +248,6 @@ struct ic_int_connection
 };
 
 #define IC_SSL_SUCCESS 1
-#define IC_SSL_ERROR -1
 #define IC_SSL_INDICATION 0
 
 struct ic_ssl_connection

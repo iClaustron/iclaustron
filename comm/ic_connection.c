@@ -12,7 +12,17 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
-#include <ic_common.h>
+#include <ic_base_header.h>
+#include <ic_err.h>
+#include <ic_debug.h>
+#include <ic_mc.h>
+#include <ic_string.h>
+#include <ic_bitmap.h>
+#include <ic_port.h>
+#include <ic_connection.h>
+#include "ic_connection_int.h"
+
+#include <fcntl.h>
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
 #endif
@@ -25,7 +35,7 @@
 #ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
 #endif
-#ifdef AVE_ARPA_INET_H
+#ifdef HAVE_ARPA_INET_H
 #include <arpa/inet.h>
 #endif
 #ifdef HAVE_UNISTD_H
@@ -355,7 +365,7 @@ login_connection(IC_CONNECTION *ext_conn)
   return 0;
 error:
   /* error handler */
-  close_socket_connection(conn);
+  close_socket_connection(ext_conn);
   conn->error_code= error;
   return error;
 }
@@ -623,7 +633,6 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
   fd_set read_set, write_set;
   struct timeval time_out;
   int timer= 0, ret_select;
-  socklen_t len;
   gboolean first= TRUE;
 
   DEBUG_PRINT(COMM_LEVEL, ("Translating hostnames"));
@@ -649,7 +658,7 @@ renew_connect:
       seconds we will renew the connect message if the user is
       still waiting for a successful connect.
     */
-    close_socket(conn);
+    close_socket(sockfd);
     timer++;
     if (conn->timeout_func &&
         conn->timeout_func(conn->timeout_obj, timer))

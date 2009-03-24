@@ -13,7 +13,11 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
+#include <ic_base_header.h>
+#include <ic_port.h>
+#include <ic_err.h>
+#include <ic_debug.h>
+#include <ic_threadpool.h>
 #include "ic_threadpool_int.h"
 
 static void check_threads(IC_THREADPOOL_STATE *ext_tp_state);
@@ -215,7 +219,9 @@ free_thread(IC_INT_THREADPOOL_STATE *tp_state,
   guint32 first_free_thread_id;
 
   if (thread_state->inited)
+  {
     DEBUG_PRINT(THREAD_LEVEL, ("free thread with id = %d", thread_id));
+  }
   thread_state->inited= TRUE;
   thread_state->thread= NULL;
   thread_state->object= NULL;

@@ -13,7 +13,14 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
+#include <ic_base_header.h>
+#include <ic_err.h>
+#include <ic_debug.h>
+#include <ic_port.h>
+#include <ic_mc.h>
+#include <ic_string.h>
+#include <ic_config_reader.h>
+
 /*
   MODULE: GENERIC_CONFIG_READER
   This module is a generic reader of configuration files.

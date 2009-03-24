@@ -13,7 +13,11 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
+#include <ic_base_header.h>
+#include <ic_port.h>
+#include <ic_err.h>
+#include <ic_debug.h>
+
 /* Decode map from ASCII(43) = '+' to ASCII(122) = 'z' */
 static guint8
 decode_table[80]= {62, 65, 65, 65, 63, 52, 53, 54, 55, 56,

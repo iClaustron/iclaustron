@@ -30,8 +30,10 @@
 #include <glib/gprintf.h>
 /* Configure definitions are needed also in header files */
 #include <config.h>
-/* Very basic header file */
+/* Very basic header files */
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #define CONFIG_READ_BUF_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
