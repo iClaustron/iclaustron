@@ -1,9 +1,8 @@
+dnl A configure.ac file needs to start by defining tree name and version
+dnl of the tree.
+dnl After that invoking automake (AM_INIT_AUTOMAKE) and then creating the
+dnl portability header file config.h
 
-# A configure.ac file needs to start by defining tree name and version
-# of the tree.
-# After that invoking automake (AM_INIT_AUTOMAKE) and then creating the
-# portability header file config.h
-#
 AC_PREREQ(2.59)
 AC_INIT
 AC_CONFIG_AUX_DIR(config)
@@ -15,11 +14,11 @@ AC_LANG(C)
 m4_ifdef([LT_INIT],
          [LT_INIT],
          [AC_PROG_LIBTOOL])
-#
-# Next step is to define all the ./configure options. This usually starts
-# with a AC_ARG_ENABLE followed by a number of tests of various sorts to
-# handle dependencies among different options.
-#
+
+dnl Next step is to define all the ./configure options. This usually starts
+dnl with a AC_ARG_ENABLE followed by a number of tests of various sorts to
+dnl handle dependencies among different options.
+
 AC_ARG_WITH(unit-test,
          [  --with-unit-test     Build unit test programs],
          [with_unit_testn=$withval],
@@ -59,10 +58,9 @@ AC_ARG_WITH(cyassl,
          [cyassl_dir=$withval],
          [cyassl_dir=no])
 
-#
-# Next step is to check for all the programs needed by the configure process.
-# These include usage of macros such as AC_CHECK_PROG and AC_PATH_TOOL.
-#
+dnl Next step is to check for all the programs needed by the configure process.
+dnl These include usage of macros such as AC_CHECK_PROG and AC_PATH_TOOL.
+
 AC_PROG_CC
 AC_PROG_YACC
 AM_PROG_LEX
@@ -77,9 +75,8 @@ AC_CONFIG_FILES([scripts/windows_check_process.sh], [chmod +x scripts/windows_ch
 
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)
 
-#
-# Set compiler flags according to the user choice
-#
+dnl We check for all specific functions to be used by the tree.
+dnl Set up operating system
 
 AC_CHECK_FUNCS(bzero memset break gethrtime gettimeofday epoll_create)
 AC_CHECK_FUNCS(port_create kqueue poll)
@@ -87,6 +84,7 @@ AC_CHECK_LIB(rt, clock_gettime,
   [LIBS="-lrt $LIBS"
    AC_DEFINE(HAVE_CLOCK_GETTIME, 1,
              [Define HAVE_CLOCK_GETTIME if clock_gettime function exists])])
+
 case "$target_os" in
   *Linux* | *linux* )
     AC_DEFINE(LINUX, 1,
@@ -134,6 +132,9 @@ case "$host" in
     ;;
 esac
 
+dnl Set up library and includes for GLib
+dnl Check for certain libraries such as readline
+
 GLIB_PACKAGE="glib-2.0"
 GTHREAD_PACKAGE="gthread-2.0"
 GLIB_VERSION="2.10.2"
@@ -148,7 +149,6 @@ LIBS="$LIBS $GLIB_LIB"
 LIBS="$LIBS $GTHREAD_LIB"
 IDIR="$IDIR $GLIB_INCLUDE"
 CFLAGS="$CFLAGS $GLIB_INCLUDE"
-#CPPFLAGS="$CPPFLAGS $GLIB_INCLUDE"
 
 AC_CHECK_LIB(glib-2.0, g_list_append,,
  [AC_MSG_ERROR([No glib library installed])])
@@ -166,23 +166,19 @@ AS_IF([test "x$with_readline" != "xno"],
     [-lcurses])])
 
 LIBS="$LIBS $LIBREADLINE"
-#
-# Next step is to check the existence of external header files.
-#
+
+dnl Next step is to check the existence of external header files.
+
 AC_HEADER_STDC
 AC_CHECK_HEADERS([unistd.h poll.h sys/poll.h netinet/tcp.h netinet/in.h sys/types.h sys/socket.h netdb.h arpa/inet.h],,
   [AC_MSG_ERROR([Common headers missing, e.g. socket.h])])
 AC_CHECK_HEADER(glib.h,,
   [AC_MSG_ERROR([GLib headers missing])])
 
-#
-# Next step is to check for specific typedefs and structures found in the
-# external headers.
-#
+dnl Next step is to check for specific typedefs and structures found in the
+dnl external headers.
 
-#
-# We check for all specific functions to be used by the tree.
-#
+dnl Set compiler flags according to the user choice
 
 DEBUG_FLAG="-g"
 OPTIMIZER_FLAG="-O2"
@@ -191,28 +187,26 @@ WARNING_FLAG="-W"
 
 if test "x$with_production" = "xyes"; then
   if test "x$with_debug" = "xyes"; then
-    CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $OPTIMIZER_FLAG $WARNING_FLAG"
+    CFLAGS="$CFLAGS -DDEBUG_BUILD $DEBUG_FLAG $OPTIMIZER_FLAG $WARNING_FLAG"
   else
-    CFLAGS="$WARNING_FLAG $OPTIMIZER_FLAG"
+    CFLAGS="$CFLAGS $WARNING_FLAG $OPTIMIZER_FLAG"
   fi
 else
   if test "x$with_debug" = "xyes"; then
-    CFLAGS="-DDEBUG_BUILD $DEBUG_FLAG $WALL_FLAGS"
+    CFLAGS="$CFLAGS -DDEBUG_BUILD $DEBUG_FLAG $WALL_FLAGS"
   else
-    CFLAGS="$WALL_FLAGS $DEBUG_FLAG $OPTIMIZER_FLAG"
+    CFLAGS="$CFLAGS $WALL_FLAGS $DEBUG_FLAG $OPTIMIZER_FLAG"
   fi
 fi
 if test "x$with_unit_test" = "xyes" ; then
   CFLAGS="$CFLAGS -DWITH_UNIT_TEST"
 fi
-CFLAGS="$CFLAGS $GLIB_INCLUDE"
 LIBS="$LIBS -lm"
 
-#
-# Check how to implement MSG_NOSIGNAL
-# Linux supports it but not Mac OS X and Solaris
-# Mac OS X instead supports SO_NOSIGPIPE
-#
+dnl Check how to implement MSG_NOSIGNAL
+dnl Linux supports it but not Mac OS X and Solaris
+dnl Mac OS X instead supports SO_NOSIGPIPE
+
 AC_MSG_CHECKING(whether we have MSG_NOSIGNAL in this platform)
 AC_TRY_COMPILE([#include <sys/socket.h>],
 [
@@ -221,17 +215,15 @@ int main()
  int f=MSG_NOSIGNAL;
 }
 ],
-# It was supported
+dnl It was supported
 [ AC_MSG_RESULT(yes)
  CFLAGS="$CFLAGS -DUSE_MSG_NOSIGNAL"
 ],
-# Don't use it
+dnl Don't use it
 AC_MSG_RESULT(no)
 )
 
-#
-# Checking for DTrace support
-#
+dnl Checking for DTrace support
 
 if test "x$with_dtrace" != "xno" ; then
   AC_CHECK_PROGS(DTRACE, dtrace)
@@ -247,10 +239,9 @@ fi
 AM_CONDITIONAL([HAVE_DTRACE],
                [ test "x$with_dtrace" != "xno" ])
 
-#
-# Checking for SSL support, we can use any of openssl or
-# cyassl. We prefer openssl first, then cyassl
-#
+dnl Checking for SSL support, we can use any of openssl or
+dnl cyassl. We prefer openssl first, then cyassl
+
 have_ssl="no"
 
 case "$openssl_dir" in
@@ -292,10 +283,8 @@ case "$cyassl_dir" in
     ;;
 esac
 
-#
-# Next step is to check for all libraries such that the resulting programs
-# can be linked properly due to external dependencies.
-#
+dnl Next step is to check for all libraries such that the resulting programs
+dnl can be linked properly due to external dependencies for SSL.
 
 if test "x$have_ssl" = "xyes" ; then
   save_LIBS="$LIBS"
@@ -323,7 +312,6 @@ AS_IF([test "x$have_cyassl" = "xyes"],
     [AC_DEFINE([HAVE_CYASSL], [1],
      [Defined by configure, using cyassl for SSL.])])
 
-#
-# Produce the output of the configure process.
-#
+dnl Produce the output of the configure process.
+
 AC_OUTPUT
