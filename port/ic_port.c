@@ -14,16 +14,24 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #ifdef LINUX
-/* Portability fix for Linux */
+/*
+  Portability fix for Linux
+  We need to include before ic_base_header.h since it
+  will include string.h without define.
+*/
 #define _XOPEN_SOURCE 600
 #endif
 #include <string.h>
 
-#include <ic_common.h>
+#include <ic_base_header.h>
+#include <ic_port.h>
+#include <ic_err.h>
+#include <ic_debug.h>
+#include <ic_mc.h>
+#include <ic_string.h>
 #include <glib/gstdio.h>
 #include <unistd.h>
-#include <stdio.h>
-#include <errno.h>
+#include <fcntl.h>
 #ifdef HAVE_GETHRTIME
 #include <sys/time.h>
 #endif

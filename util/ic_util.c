@@ -14,7 +14,12 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_base_header.h>
+#include <ic_err.h>
 #include <ic_debug.h>
+#include <ic_mc.h>
+#include <ic_string.h>
+#include <ic_hashtable.h>
+#include <ic_connection.h>
 #include <ic_apic.h>
 
 guint32 glob_debug= 0;

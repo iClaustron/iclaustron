@@ -15,7 +15,6 @@
 
 #ifndef IC_CONNECTION_INT_H
 #define IC_CONNECTION_INT_H
-#include <ic_common_header.h>
 
 struct ic_int_connection;
 typedef struct ic_int_connection IC_INT_CONNECTION;

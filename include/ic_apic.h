@@ -15,7 +15,6 @@
 
 #ifndef IC_APIC_H
 #define IC_APIC_H
-#include <ic_common_header.h>
 
 int ic_init_config_parameters();
 void ic_print_config_parameters(guint32 mask);

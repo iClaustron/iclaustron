@@ -16,8 +16,6 @@
 #ifndef IC_APID_H
 #define IC_APID_H
 
-#include <ic_apic.h>
-
 typedef struct ic_apid_global IC_APID_GLOBAL;
 typedef struct ic_apid_global_ops IC_APID_GLOBAL_OPS;
 typedef struct ic_read_field_def IC_READ_FIELD_DEF;

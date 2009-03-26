@@ -57,7 +57,6 @@
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
-#include "ic_connection_int.h"
 
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);

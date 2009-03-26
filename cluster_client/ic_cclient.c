@@ -13,8 +13,13 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <ic_common.h>
-#include <stdio.h>
+#include <ic_base_header.h>
+#include <ic_err.h>
+#include <ic_debug.h>
+#include <ic_port.h>
+#include <ic_mc.h>
+#include <ic_string.h>
+#include <ic_connection.h>
 #ifdef HAVE_READLINE
 #include <readline/readline.h>
 #endif
