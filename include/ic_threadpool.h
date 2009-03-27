@@ -15,7 +15,6 @@
 #ifndef IC_THREADPOOL_H
 #define IC_THREADPOOL_H
 typedef struct ic_thread_state IC_THREAD_STATE;
-typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
 /*
   This object is the object used by the threads managed by the thread pool.

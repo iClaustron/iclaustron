@@ -15,8 +15,6 @@
 
 #ifndef IC_DYNAMIC_ARRAY_H
 #define IC_DYNAMIC_ARRAY_H
-struct ic_dynamic_array;
-typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;
 
 struct ic_dynamic_array_ops
 {

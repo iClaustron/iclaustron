@@ -24,8 +24,6 @@ struct ic_poll_connection
 };
 typedef struct ic_poll_connection IC_POLL_CONNECTION;
 
-struct ic_poll_set;
-typedef struct ic_poll_set IC_POLL_SET;
 struct ic_poll_operations
 {
   /*

@@ -35,6 +35,16 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+typedef struct ic_bitmap IC_BITMAP;
+typedef struct ic_connection IC_CONNECTION;
+typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;
+typedef struct ic_hashtable IC_HASHTABLE;
+typedef struct ic_memory_container IC_MEMORY_CONTAINER;
+typedef struct ic_poll_set IC_POLL_SET;
+typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
+typedef struct ic_string IC_STRING;
+typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
+
 #define CONFIG_READ_BUF_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
 

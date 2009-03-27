@@ -30,7 +30,6 @@ struct ic_bitmap
   gboolean alloced_bitmap;
   gboolean alloced_bitmap_area;
 };
-typedef struct ic_bitmap IC_BITMAP;
 
 #define IC_BITMAP_SIZE(num_bits) ((4*((num_bits)/32) + 4))
 #define IC_BITMAP_BIT(bit_number) ((bit_number) & 7)

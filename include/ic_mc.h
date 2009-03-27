@@ -28,8 +28,6 @@
 
 #define MC_MIN_BASE_SIZE 128
 #define MC_DEFAULT_BASE_SIZE 8180
-struct ic_memory_container;
-typedef struct ic_memory_container IC_MEMORY_CONTAINER;
 struct ic_memory_container_ops
 {
   gchar* (*ic_mc_alloc) (IC_MEMORY_CONTAINER *mc_ptr, guint32 size);

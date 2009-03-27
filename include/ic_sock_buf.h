@@ -22,7 +22,6 @@
 #define MAX_ALLOC_SEGMENTS 8
 #define HIGH_PRIO_BUF_SIZE 128
 typedef struct ic_sock_buf_operations IC_SOCK_BUF_OPERATIONS;
-typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
 typedef struct ic_sock_buf IC_SOCK_BUF;
 
 struct ic_sock_buf_operations

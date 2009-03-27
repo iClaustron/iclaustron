@@ -27,7 +27,6 @@ struct ic_string
   guint32 len;
   gboolean is_null_terminated;
 };
-typedef struct ic_string IC_STRING;
 
 /* Macro to quickly initialise an IC_STRING */
 #define IC_INIT_STRING(obj, a, b, c) \

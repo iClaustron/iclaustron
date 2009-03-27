@@ -31,8 +31,6 @@
 typedef int (*accept_timeout_func) (void*, int);
 typedef int (*authenticate_func) (void*);
 
-struct ic_connection;
-typedef struct ic_connection IC_CONNECTION;
 struct ic_connect_stat;
 typedef struct ic_connect_stat IC_CONNECT_STAT;
 struct ic_connect_operations
