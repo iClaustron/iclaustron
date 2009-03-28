@@ -15,7 +15,6 @@
 
 #include <ic_base_header.h>
 #include <ic_debug.h>
-#include <ic_mc.h>
 #include <ic_string.h>
 #include <ic_err.h>
 
@@ -37,6 +36,7 @@
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
+
 void
 ic_init_error_messages()
 {

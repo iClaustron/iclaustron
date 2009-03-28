@@ -1,4 +1,4 @@
-/* Copyright (C) 2008 iClaustron AB
+/* Copyright (C) 2008-2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -15,7 +15,6 @@
 
 #ifndef IC_POLL_SET_INT_H
 #define IC_POLL_SET_INT_H
-#include <ic_poll_set.h>
 
 struct ic_int_poll_set
 {

@@ -18,6 +18,10 @@
 typedef struct ic_read_key_operation IC_READ_KEY_OPERATION;
 typedef struct ic_write_key_operation IC_WRITE_KEY_OPERATION;
 typedef struct ic_scan_operation IC_SCAN_OPERATION;
+typedef struct ic_record_operation IC_RECORD_OPERATION;
+typedef struct ic_key_operation IC_KEY_OPERATION;
+typedef struct ic_apid_operation IC_COMMIT_OPERATION;
+typedef struct ic_apid_operation IC_ROLLBACK_OPERATION;
 typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
 typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
 
@@ -87,7 +91,6 @@ struct ic_apid_operation
   IC_APID_OPERATION_TYPE op_type;
   IC_APID_CONNECTION *apid_conn;
   IC_TRANSACTION *trans_obj;
-  IC_TABLE_DEF *table_def;
   IC_APID_ERROR *error;
   void *user_reference;
   IC_APID_OPERATION *next_trans_op;
@@ -97,16 +100,27 @@ struct ic_apid_operation
   IC_APID_OPERATION_LIST_TYPE list_type;
 };
 
+struct ic_record_operation
+{
+  IC_APID_OPERATION op;
+  IC_TABLE_DEF *table_def;
+  IC_WHERE_CONDITION *where_cond;
+};
+
+struct ic_key_operation
+{
+  IC_RECORD_OPERATION rec_op;
+  IC_KEY_FIELD_BIND *key_fields;
+};
+
 /*
   Read key operations have a definition of fields read, a definition of the
   key fields and finally a definition of the type of read operation.
 */
 struct ic_read_key_operation
 {
-  IC_APID_OPERATION apid_op;
+  IC_KEY_OPERATION apid_op;
   IC_READ_FIELD_BIND *read_fields;
-  IC_KEY_FIELD_BIND *key_fields;
-  IC_WHERE_CONDITION *where_cond;
   IC_READ_KEY_OP read_key_op;
 };
 
@@ -116,10 +130,8 @@ struct ic_read_key_operation
 */
 struct ic_write_key_operation
 {
-  IC_APID_OPERATION apid_op;
+  IC_KEY_OPERATION apid_op;
   IC_WRITE_FIELD_BIND *write_fields;
-  IC_KEY_FIELD_BIND *key_fields;
-  IC_WHERE_CONDITION *where_cond;
   IC_WRITE_KEY_OP write_key_op;
 };
 
@@ -130,10 +142,31 @@ struct ic_write_key_operation
 */
 struct ic_scan_operation
 {
-  IC_APID_OPERATION apid_op;
+  IC_RECORD_OPERATION apid_op;
   IC_READ_FIELD_BIND *read_fields;
   IC_RANGE_CONDITION *range_cond;
-  IC_WHERE_CONDITION *where_cond;
   IC_SCAN_OP scan_op;
+};
+
+/*
+  Commit and rollback operations don't need any extra information outside of
+  IC_APID_OPERATION object. Thus we define IC_COMMIT_OPERATION to be of
+  type struct ic_apid_operation and the same for IC_ABORT_OPERATION.
+*/
+
+/*
+  Create/Rollback savepoint operation requires a note about savepoint id
+  in addition to the fields in the IC_APID_OPERATION object.
+*/
+struct ic_create_savepoint_operation
+{
+  IC_APID_OPERATION apid_op;
+  IC_SAVEPOINT_ID savepoint_id;
+};
+
+struct ic_rollback_savepoint_operation
+{
+  IC_APID_OPERATION apid_op;
+  IC_SAVEPOINT_ID savepoint_id;
 };
 #endif

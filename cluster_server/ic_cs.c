@@ -35,9 +35,7 @@
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_port.h>
-#include <ic_mc.h>
 #include <ic_string.h>
-#include <ic_hashtable.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
 

@@ -62,7 +62,10 @@ ic_get_transaction_from_operation(IC_APID_OPERATION *apid_op)
 static inline IC_TABLE_DEF*
 ic_get_table_definition_from_operation(IC_APID_OPERATION *apid_op)
 {
-  return apid_op->table_def;
+  g_assert(apid_op->op_type == KEY_READ_OPERATION ||
+           apid_op->op_type == SCAN_OPERATION ||
+           apid_op->op_type == KEY_WRITE_OPERATION);
+  return ((IC_RECORD_OPERATION*)apid_op)->table_def;
 }
 
 static inline IC_APID_ERROR*
@@ -102,7 +105,7 @@ ic_get_key_fields_from_operation(IC_APID_OPERATION *apid_op)
 {
   g_assert(apid_op->op_type == KEY_WRITE_OPERATION ||
            apid_op->op_type == KEY_READ_OPERATION);
-  return ((IC_WRITE_KEY_OPERATION*)apid_op)->key_fields;
+  return ((IC_KEY_OPERATION*)apid_op)->key_fields;
 }
 
 static inline IC_READ_KEY_OP
@@ -132,12 +135,13 @@ ic_get_range_condition(IC_APID_OPERATION *apid_op)
   g_assert(apid_op->op_type == SCAN_OPERATION);
   return ((IC_SCAN_OPERATION*)apid_op)->range_cond;
 }
+
 static inline IC_WHERE_CONDITION*
 ic_get_where_condition(IC_APID_OPERATION *apid_op)
 {
   g_assert(apid_op->op_type == SCAN_OPERATION ||
            apid_op->op_type == KEY_READ_OPERATION ||
            apid_op->op_type == KEY_WRITE_OPERATION);
-  return ((IC_SCAN_OPERATION*)apid_op)->where_cond;
+  return ((IC_RECORD_OPERATION*)apid_op)->where_cond;
 }
 #endif

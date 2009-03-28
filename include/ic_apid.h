@@ -40,7 +40,6 @@ typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
 typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
 typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
 typedef struct ic_apid_error IC_APID_ERROR;
-typedef struct ic_apid_operation IC_APID_OPERATION;
 typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
 typedef struct ic_transaction_hint_ops IC_TRANSACTION_HINT_OPS;
@@ -50,6 +49,17 @@ typedef enum ic_error_severity_level IC_ERROR_SEVERITY_LEVEL;
 typedef enum ic_error_category IC_ERROR_CATEGORY;
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_where_condition IC_WHERE_CONDITION;
+
+/*
+  Names of operation objects returned from ic_get_next_executed_operation.
+  The information from these objects should be retrieved using the inline
+  functions defined in ic_apid_inline.h. The structs are defined in the
+  header file ic_apid_hidden.h which isn't safe to use, it will be changed
+  from version to version.
+*/
+typedef struct ic_apid_operation IC_APID_OPERATION;
+typedef struct ic_create_savepoint_operation IC_CREATE_SAVEPOINT_OPERATION;
+typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
 
 /*
   The hidden header file contains parts of the interface which are
@@ -103,7 +113,7 @@ struct ic_apid_connection_ops
   /*
     The table operation part of the iClaustron Data API have 4 parts.
     1) Normal key and scan operations
-    2) Transaction start, join, commit and abort
+    2) Transaction start, join, commit and rollback
     3) Send and poll connections to NDB
     4) Iterate through received operations from NDB
   */
@@ -111,7 +121,7 @@ struct ic_apid_connection_ops
     Insert, Update, Delete and Write operation
     This method is used to send a primary key or unique key operation
     towards NDB. It will not actually send the operation, it will only
-    defin the operation for later sending and execution.
+    define the operation for later sending and execution.
    */
   int (*ic_write_key_access)
                 /* Our thread representation */
@@ -171,17 +181,25 @@ struct ic_apid_connection_ops
     that is used to hint which NDB node to place the transaction
     coordinator in. If this object isn't used (== NULL) then a round
     robin scheme will be used.
+
+    Start transaction is performed immediately, the transaction object can
+    be used immediately. The actual transaction start happens in the NDB
+    kernel, this will however happen as part of the first operation of the
+    transaction.
   */
   int (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
                                IC_TRANSACTION **transaction_obj,
                                IC_TRANSACTION_HINT *transaction_hint,
                                gboolean joinable);
+
   /*
     To be able to use a transaction with this Data API connection we need
     to specifically join the transaction.
   */
   int (*ic_join_transaction) (IC_APID_CONNECTION *apid_conn,
-                              IC_TRANSACTION *transaction_obj);
+                              IC_TRANSACTION *transaction_obj,
+                              void *user_reference);
+
   /*
     Commit the transaction
     This merely indicates a wish to commit the transaction. The actual
@@ -190,7 +208,8 @@ struct ic_apid_connection_ops
     transaction.
   */
   int (*ic_commit_transaction) (IC_APID_CONNECTION *apid_conn,
-                                IC_TRANSACTION *transaction_obj);
+                                IC_TRANSACTION *transaction_obj,
+                                void *user_reference);
 
   /*
     Abort the transaction
@@ -198,8 +217,9 @@ struct ic_apid_connection_ops
     since the transaction is only committed if specifically committed and
     the commit was successful.
   */
-  int (*ic_abort_transaction) (IC_APID_CONNECTION *apid_conn,
-                              IC_TRANSACTION *transaction_obj);
+  int (*ic_rollback_transaction) (IC_APID_CONNECTION *apid_conn,
+                                  IC_TRANSACTION *transaction_obj,
+                                  void *user_reference);
 
   /*
     Create a savepoint in the transaction
@@ -209,7 +229,8 @@ struct ic_apid_connection_ops
   */
   int (*ic_create_savepoint) (IC_APID_CONNECTION *apid_conn,
                               IC_TRANSACTION *transaction_obj,
-                              IC_SAVEPOINT_ID *savepoint_id);
+                              IC_SAVEPOINT_ID *savepoint_id,
+                              void *user_reference);
 
   /*
     Rollback to savepoint.
@@ -220,7 +241,8 @@ struct ic_apid_connection_ops
   */
   int (*ic_rollback_savepoint) (IC_APID_CONNECTION *apid_conn,
                                 IC_TRANSACTION *transaction_obj,
-                                IC_SAVEPOINT_ID savepoint_id);
+                                IC_SAVEPOINT_ID savepoint_id,
+                                void *user_reference);
 
   int (*ic_check_transaction_state) (IC_APID_CONNECTION *apid_conn,
                                      IC_TRANSACTION *transaction_obj,
@@ -257,7 +279,9 @@ struct ic_apid_connection_ops
 
   /*
     After returning 0 from flush or poll we use this iterator to get
-    all operations that have completed.
+    all operations that have completed. It will return one IC_APID_OPERATION
+    object at a time until it returns NULL after which no more operations
+    exists to report from the poll/flush call.
   */
   IC_APID_OPERATION* (*ic_get_next_executed_operation)
                               (IC_APID_CONNECTION *apid_conn);

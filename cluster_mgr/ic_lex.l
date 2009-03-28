@@ -20,11 +20,11 @@
 #include <ic_port.h>
 #include <ic_mc.h>
 #include <ic_string.h>
-#include <ic_hashtable.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
 #include "ic_clmgr_int.h"
 #include "ic_parser.h"
+
 int line_no= 1;
 #define LEX_DATA ((IC_PARSE_DATA*)yyget_extra(yyscanner))
 

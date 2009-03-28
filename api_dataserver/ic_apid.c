@@ -112,11 +112,9 @@
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_port.h>
-#include <ic_mc.h>
 #include <ic_string.h>
 #include <ic_bitmap.h>
 #include <ic_dyn_array.h>
-#include <ic_hashtable.h>
 #include <ic_connection.h>
 #include <ic_sock_buf.h>
 #include <ic_poll_set.h>
@@ -800,6 +798,9 @@ get_api_config_server(IC_APID_CONNECTION *ext_apid_conn)
   return apid_conn->apic;
 }
 
+/*
+  This method is only called after a successful call to flush or poll
+*/
 IC_APID_OPERATION*
 get_next_executed_operation(IC_APID_CONNECTION *ext_apid_conn)
 {
@@ -875,6 +876,7 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
                         ic_bitmap_get_num_bits(cluster_id_bitmap))))
     goto error;
   ic_bitmap_copy(apid_conn->cluster_id_bitmap, cluster_id_bitmap);
+
   /* Initialise Thread Connection object */
   if (!(thread_conn= apid_conn->thread_conn= (IC_THREAD_CONNECTION*)
                       ic_calloc(sizeof(IC_THREAD_CONNECTION))))
@@ -884,6 +886,7 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
     goto error;
   if (!(thread_conn->cond= g_cond_new()))
     goto error;
+
 
   grid_comm= apid_global->grid_comm;
   g_mutex_lock(apid_global->thread_id_mutex);
@@ -898,6 +901,8 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   if (thread_id == IC_MAX_THREAD_CONNECTIONS)
   {
     g_mutex_unlock(apid_global->thread_id_mutex);
+    ic_free(apid_conn->thread_conn);
+    apid_conn->thread_conn= NULL;
     goto error;
   }
   grid_comm->thread_conn_array[thread_id]= thread_conn;

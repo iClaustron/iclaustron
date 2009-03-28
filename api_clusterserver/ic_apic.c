@@ -28,6 +28,7 @@
 #include <ic_connection.h>
 #include <ic_apic.h>
 #include "ic_apic_int.h"
+/* System includes */
 #include <glib/gstdio.h>
 #include <unistd.h>
 #include <fcntl.h>

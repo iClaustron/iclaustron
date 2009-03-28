@@ -15,6 +15,7 @@
 
 #ifndef IC_CLMGR_INT_H
 #define IC_CLMGR_INT_H
+
 void ic_call_parser(char *parse_string, int str_len, void *some_data);
 
 enum ic_parse_commands

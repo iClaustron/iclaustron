@@ -16,7 +16,6 @@
 /* Copyright (C) 2004 Christopher Clark <firstname.lastname@cl.cam.ac.uk> */
 
 #include <ic_base_header.h>
-#include <ic_mc.h>
 #include <ic_string.h>
 #include <ic_hashtable.h>
 #include <ic_hashtable_private.h>
