@@ -16,6 +16,7 @@
 #include <ic_base_header.h>
 #include <ic_err.h>
 #include <ic_debug.h>
+#include <ic_check_buf.h>
 #include <ic_port.h>
 #include <ic_mc.h>
 #include <ic_string.h>
@@ -3204,114 +3205,6 @@ key_type_error(IC_INT_API_CONFIG_SERVER *apic,
 }
 
 /*
- MODULE: Protocol support module
- -------------------------------
-  This module implements a number of routines useful for the NDB
-  Management Protocol.
-
-    - check_buf
-      For the cases when we expect a static string we use check_buf
-
-    - check_buf_with_many_int
-      For a rare case where multiple integers are expected we use
-      this routine to get all the integers in one routine
-
-    - check_buf_with_int
-      For the cases when we expect a static string and an integer we
-      use check_buf_with_int
-
-    - rec_simple_str
-      When we expect a static string and nothing more we use this routine
-      as a way to simplify the code.
-*/
-static gboolean
-check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len);
-static gboolean
-check_buf_with_many_int(gchar *read_buf, guint32 read_size, const gchar *str,
-                        int str_len, guint32 num_elements,
-                        guint64 *number);
-static gboolean
-check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
-                   int str_len, guint64 *number);
-static int
-rec_simple_str(IC_CONNECTION *conn, const gchar *str);
-
-/* Here is the source code of this module */
-static gboolean
-check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
-{
-  if ((read_size != (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0))
-    return TRUE;
-  return FALSE;
-}
-
-static gboolean
-check_buf_with_many_int(gchar *read_buf, guint32 read_size, const gchar *str,
-                        int str_len, guint32 num_elements,
-                        guint64 *number)
-{
-  gchar *ptr, *end_ptr;
-  guint32 i, num_chars;
-
-  if ((read_size < (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) == 0))
-  {
-    ptr= read_buf+str_len;
-    end_ptr= read_buf + read_size;
-    for (i= 0; i < num_elements; i++)
-    {
-      num_chars= ic_count_characters(ptr, end_ptr - ptr);
-      if (ptr + num_chars > end_ptr)
-        goto error;
-      if (ic_convert_str_to_int_fixed_size(ptr, num_chars, &number[i]))
-        goto error;
-      ptr+= num_chars;
-      if (*ptr == ' ')
-        ptr++;
-      else if (*ptr != '\n' || i != (num_elements - 1))
-        goto error;
-    }
-  }
-  return FALSE;
-error:
-  return TRUE;
-}
-
-static gboolean
-check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
-                   int str_len, guint64 *number)
-{
-  if ((read_size < (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0) ||
-      (ic_convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
-                                        number)))
-    return TRUE;
-  return FALSE;
-}
-
-static int
-rec_simple_str(IC_CONNECTION *conn, const gchar *str)
-{
-  gchar *read_buf;
-  guint32 read_size;
-  int error;
-
-  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-  {
-    if (check_buf(read_buf, read_size, str,
-                   strlen(str)))
-    {
-      DEBUG_PRINT(CONFIG_LEVEL,
-        ("Protocol error in waiting for %s", str));
-      DEBUG_RETURN(IC_PROTOCOL_ERROR);
-    }
-    DEBUG_RETURN(0);
-  }
-  DEBUG_RETURN(error);
-}
-
-/*
   MODULE: Configuration reader client, Protocol Part
   --------------------------------------------------
   This module implements one of the methods in the IC_API_CONFIG_SERVER
@@ -3494,13 +3387,13 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
     error= conn->conn_op.ic_get_error_code(conn);
     goto error;
   }
-  if ((error= rec_simple_str(conn, get_cluster_list_reply_str)))
+  if ((error= ic_rec_simple_str(conn, get_cluster_list_reply_str)))
     PROTOCOL_CHECK_ERROR_GOTO(error);
   state= RECEIVE_CLUSTER_NAME;
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (!check_buf(read_buf, read_size, end_get_cluster_list_str,
-                   strlen(end_get_cluster_list_str)))
+    if (!ic_check_buf(read_buf, read_size, end_get_cluster_list_str,
+                      strlen(end_get_cluster_list_str)))
       break;
     switch (state)
     {
@@ -3531,8 +3424,8 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
         state= RECEIVE_CLUSTER_ID;
         break;
       case RECEIVE_CLUSTER_ID:
-        if (check_buf_with_int(read_buf, read_size, cluster_id_str,
-                               CLUSTER_ID_REQ_LEN, &cluster_id))
+        if (ic_check_buf_with_int(read_buf, read_size, cluster_id_str,
+                                  CLUSTER_ID_REQ_LEN, &cluster_id))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in receive cluster id state"));
@@ -3641,8 +3534,8 @@ rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           get nodeid reply<CR>
         */
-        if (check_buf(read_buf, read_size, get_nodeid_reply_str,
-                      GET_NODEID_REPLY_LEN))
+        if (ic_check_buf(read_buf, read_size, get_nodeid_reply_str,
+                         GET_NODEID_REPLY_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in Get nodeid reply state"));
@@ -3657,8 +3550,8 @@ rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
           Where __nodeid is an integer giving the nodeid of the starting
           process
         */
-        if (check_buf_with_int(read_buf, read_size, nodeid_str, NODEID_LEN,
-                               &node_number) ||
+        if (ic_check_buf_with_int(read_buf, read_size, nodeid_str, NODEID_LEN,
+                                  &node_number) ||
             (node_number > IC_MAX_NODE_ID))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -3674,7 +3567,7 @@ rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           result: Ok<CR>
         */
-        if (check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
+        if (ic_check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in result ok state"));
@@ -3729,8 +3622,8 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           get config reply<CR>
         */
-        if (check_buf(read_buf, read_size, get_config_reply_str,
-                      GET_CONFIG_REPLY_LEN))
+        if (ic_check_buf(read_buf, read_size, get_config_reply_str,
+                         GET_CONFIG_REPLY_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in get config reply state"));
@@ -3743,7 +3636,7 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           result: Ok<CR>
         */
-        if (check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
+        if (ic_check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in result ok state"));
@@ -3757,8 +3650,8 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           Content-Length: __length<CR>
           Where __length is a decimal-coded number indicating length in bytes
         */
-        if (check_buf_with_int(read_buf, read_size, content_len_str,
-                               CONTENT_LENGTH_LEN, &content_length) ||
+        if (ic_check_buf_with_int(read_buf, read_size, content_len_str,
+                                  CONTENT_LENGTH_LEN, &content_length) ||
             (content_length > MAX_CONTENT_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -3772,7 +3665,8 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           Content-Type: ndbconfig/octet-stream<CR>
         */
-        if (check_buf(read_buf, read_size, octet_stream_str, OCTET_STREAM_LEN))
+        if (ic_check_buf(read_buf, read_size, octet_stream_str,
+                         OCTET_STREAM_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in octet stream state"));
@@ -3785,7 +3679,7 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           Content-Transfer-Encoding: base64
         */
-        if (check_buf(read_buf, read_size, content_encoding_str,
+        if (ic_check_buf(read_buf, read_size, content_encoding_str,
                       CONTENT_ENCODING_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -7538,8 +7432,8 @@ run_cluster_server_thread(gpointer data)
     switch (state)
     {
       case INITIAL_STATE:
-        if (!check_buf(read_buf, read_size, get_cluster_list_str,
-                       strlen(get_cluster_list_str)))
+        if (!ic_check_buf(read_buf, read_size, get_cluster_list_str,
+                          strlen(get_cluster_list_str)))
         {
           if ((error= handle_get_cluster_list(run_obj, conn)))
           {
@@ -7560,8 +7454,8 @@ run_cluster_server_thread(gpointer data)
         }
         if (handled_request)
           break;
-        if (!check_buf(read_buf, read_size, report_event_str,
-                       strlen(report_event_str)))
+        if (!ic_check_buf(read_buf, read_size, report_event_str,
+                          strlen(report_event_str)))
         {
           /* Handle report event */
           if ((error= handle_report_event(conn)))
@@ -7588,8 +7482,8 @@ run_cluster_server_thread(gpointer data)
         error_line= __LINE__;
         goto error;
       case WAIT_GET_MGMD_NODEID:
-        if (!check_buf(read_buf, read_size, get_mgmd_nodeid_str,
-                       strlen(get_mgmd_nodeid_str)))
+        if (!ic_check_buf(read_buf, read_size, get_mgmd_nodeid_str,
+                          strlen(get_mgmd_nodeid_str)))
         {
           if ((error= handle_get_mgmd_nodeid_request(conn,
                                                      run_obj->cs_nodeid)))
@@ -7614,8 +7508,8 @@ run_cluster_server_thread(gpointer data)
         error_line= __LINE__;
         goto error;
       case WAIT_SET_CONNECTION:
-        if (!check_buf(read_buf, read_size, set_connection_parameter_str,
-                       strlen(set_connection_parameter_str)))
+        if (!ic_check_buf(read_buf, read_size, set_connection_parameter_str,
+                          strlen(set_connection_parameter_str)))
         {
           if ((error= handle_set_connection_parameter_request(
                             conn,
@@ -7635,8 +7529,8 @@ run_cluster_server_thread(gpointer data)
           optional state.
         */
       case WAIT_CONVERT_TRANSPORTER:
-        if (!check_buf(read_buf, read_size, convert_transporter_str,
-                       strlen(convert_transporter_str)))
+        if (!ic_check_buf(read_buf, read_size, convert_transporter_str,
+                          strlen(convert_transporter_str)))
         {
           if ((error= handle_convert_transporter_request(conn,
                                           param.client_nodeid)))
@@ -7683,8 +7577,8 @@ check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   int error;
 
   *handled_request= FALSE;
-  if (!check_buf(read_buf, read_size, get_nodeid_str,
-                 strlen(get_nodeid_str)))
+  if (!ic_check_buf(read_buf, read_size, get_nodeid_str,
+                    strlen(get_nodeid_str)))
   {
     /* Handle a request to get configuration for a cluster */
     if ((error= handle_config_request(run_obj, conn, param)))
@@ -7780,17 +7674,17 @@ handle_report_event(IC_CONNECTION *conn)
   DEBUG_ENTRY("handle_report_event");
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (check_buf_with_int(read_buf, read_size, length_str,
-                          strlen(length_str), &length)) ||
+      (ic_check_buf_with_int(read_buf, read_size, length_str,
+                             strlen(length_str), &length)) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (check_buf_with_many_int(read_buf, read_size, data_str,
-                               strlen(data_str), (guint32)length,
-                               &num_array[0])))
+      (ic_check_buf_with_many_int(read_buf, read_size, data_str,
+                                  strlen(data_str), (guint32)length,
+                                  &num_array[0])))
   {
     error= error ? error : IC_PROTOCOL_ERROR;
     PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
   }
-  if ((error= rec_simple_str(conn, ic_empty_string)))
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
     PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
   if ((error= ic_send_with_cr(conn, report_event_reply_str)) ||
       (error= ic_send_with_cr(conn, result_ok_str)) ||
@@ -7832,7 +7726,7 @@ handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
   DEBUG_ENTRY("handle_get_mgmd_nodeid_request");
 
-  if ((error= rec_simple_str(conn, ic_empty_string)) ||
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
       (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
       (error= ic_send_with_cr(conn, ic_empty_string)))
@@ -7857,8 +7751,8 @@ handle_set_connection_parameter_request(IC_CONNECTION *conn,
 
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
   g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
-  if ((error= rec_simple_str(conn, client_nodeid_buf)) ||
-      (error= rec_simple_str(conn, cs_nodeid_buf)) ||
+  if ((error= ic_rec_simple_str(conn, client_nodeid_buf)) ||
+      (error= ic_rec_simple_str(conn, cs_nodeid_buf)) ||
       (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
       (error= ic_send_with_cr(conn, result_ok_str)))
   {
@@ -7880,8 +7774,8 @@ handle_convert_transporter_request(IC_CONNECTION *conn, guint32 client_nodeid)
 
   g_snprintf(client_buf, 64, "%d %d", client_nodeid, trp_type);
   g_snprintf(cs_buf, 64, "%d %d", client_nodeid, trp_type);
-  if ((error= rec_simple_str(conn, ic_empty_string)) ||
-      (error= rec_simple_str(conn, client_buf)) ||
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
+      (error= ic_rec_simple_str(conn, client_buf)) ||
       (error= ic_send_with_cr(conn, cs_buf)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
@@ -7973,8 +7867,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
     switch (state)
     {
       case VERSION_REQ_STATE:
-        if (check_buf_with_int(read_buf, read_size, version_str,
-                               VERSION_REQ_LEN, version_number))
+        if (ic_check_buf_with_int(read_buf, read_size, version_str,
+                                  VERSION_REQ_LEN, version_number))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in version request state"));
@@ -7983,8 +7877,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= NODETYPE_REQ_STATE;
         break;
       case NODETYPE_REQ_STATE:
-        if (check_buf_with_int(read_buf, read_size, nodetype_str,
-                               NODETYPE_REQ_LEN, node_type))
+        if (ic_check_buf_with_int(read_buf, read_size, nodetype_str,
+                                  NODETYPE_REQ_LEN, node_type))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in nodetype request state"));
@@ -7993,8 +7887,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= NODEID_REQ_STATE;
         break;
       case NODEID_REQ_STATE:
-        if (check_buf_with_int(read_buf, read_size, nodeid_str,
-                               NODEID_LEN, node_number) ||
+        if (ic_check_buf_with_int(read_buf, read_size, nodeid_str,
+                                  NODEID_LEN, node_number) ||
             (*node_number > IC_MAX_NODE_ID))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -8004,7 +7898,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= USER_REQ_STATE;
         break;
       case USER_REQ_STATE:
-        if (check_buf(read_buf, read_size, user_str, USER_REQ_LEN))
+        if (ic_check_buf(read_buf, read_size, user_str, USER_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in user request state"));
@@ -8013,7 +7907,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= PASSWORD_REQ_STATE;
         break;
       case PASSWORD_REQ_STATE:
-        if (check_buf(read_buf, read_size, password_str, PASSWORD_REQ_LEN))
+        if (ic_check_buf(read_buf, read_size, password_str, PASSWORD_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in password request state"));
@@ -8022,8 +7916,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= PUBLIC_KEY_REQ_STATE;
         break;
       case PUBLIC_KEY_REQ_STATE:
-        if (check_buf(read_buf, read_size, public_key_str,
-                      PUBLIC_KEY_REQ_LEN))
+        if (ic_check_buf(read_buf, read_size, public_key_str,
+                         PUBLIC_KEY_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in public key request state"));
@@ -8053,7 +7947,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= LOG_EVENT_REQ_STATE;
         break;
       case LOG_EVENT_REQ_STATE:
-        if (check_buf(read_buf, read_size, log_event_str, LOG_EVENT_REQ_LEN))
+        if (ic_check_buf(read_buf, read_size, log_event_str,
+                         LOG_EVENT_REQ_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in log_event request state"));
@@ -8068,8 +7963,8 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
           state= CLUSTER_ID_REQ_STATE;
         break;
       case CLUSTER_ID_REQ_STATE:
-        if (check_buf_with_int(read_buf, read_size, cluster_id_str,
-                               CLUSTER_ID_REQ_LEN, cluster_id))
+        if (ic_check_buf_with_int(read_buf, read_size, cluster_id_str,
+                                  CLUSTER_ID_REQ_LEN, cluster_id))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in cluster id request state"));
@@ -8129,7 +8024,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
     switch(state)
     {
       case GET_CONFIG_REQ_STATE:
-        if (check_buf(read_buf, read_size, get_config_str, GET_CONFIG_LEN))
+        if (ic_check_buf(read_buf, read_size, get_config_str, GET_CONFIG_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in get config request state"));
@@ -8138,8 +8033,8 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
         state= VERSION_REQ_STATE;
         break;
       case VERSION_REQ_STATE:
-        if (check_buf_with_int(read_buf, read_size, version_str,
-                               VERSION_REQ_LEN, &read_version_num) ||
+        if (ic_check_buf_with_int(read_buf, read_size, version_str,
+                                  VERSION_REQ_LEN, &read_version_num) ||
             (version_number != read_version_num))
         {
           DEBUG_PRINT(CONFIG_LEVEL,

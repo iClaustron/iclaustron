@@ -16,6 +16,7 @@
 #include <ic_base_header.h>
 #include <ic_err.h>
 #include <ic_debug.h>
+#include <ic_check_buf.h>
 #include <ic_port.h>
 #include <ic_string.h>
 #include <ic_connection.h>
@@ -52,6 +53,13 @@
 #define REC_PROG_NAME 0
 #define REC_PARAM 1
 #define REC_FINAL_CR 2
+
+/* Protocol strings */
+static const gchar *start_str= "start";
+static const gchar *stop_str= "stop";
+static const gchar *kill_str= "kill";
+static const gchar *list_str= "list";
+static const gchar *check_status_str= "check status";
 
 /* Configurable variables */
 static gchar *glob_ip= NULL;
@@ -107,6 +115,141 @@ send_ok_reply(IC_CONNECTION *conn)
   return 0;
 }
 
+/*
+  The command handler is a thread that is executed on behalf of one of the
+  Cluster Managers in a Grid.
+
+  The Cluster Manager can ask the iClaustron Process Controller for 4 tasks.
+  1) It can ask to get a node started
+  2) It can ask to stop a node gracefully (kill)
+  3) It can ask to stop a node in a hard manner (kill -9)
+  4) It can also ask for a list of the programs currently running in the Grid
+
+  GENERIC PROTOCOL
+  ----------------
+  The protocol between the iClaustron Process Controller and the Cluster
+  Manager is entirely half-duplex and it is always the Cluster Manager
+  asking for services from the Process Controller. The only action the
+  Process Controller performs automatically is to restart a program if
+  it discovers it has died when the autorestart flag is set to true in
+  the start command.
+
+  START PROTOCOL
+  --------------
+  The protocol for starting node is:
+  Line 1: start
+  Line 2: Version string (either an iClaustron version or a MySQL version string)
+  Line 3: Grid Name
+  Line 4: Cluster Name
+  Line 5: Node name
+  Line 6: Program Name
+  Line 7: autorestart true OR autorestart false
+  Line 8 - Line x: Program Parameters on the format:
+    Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
+  Line x+1: Empty line to indicate end of message
+
+  The successful response is:
+  Line 1: ok
+  Line 2: Process Id
+  Line 3: Empty line
+
+  The unsuccessful response is:
+  Line 1: error
+  Line 2: message
+
+  STOP/KILL PROTOCOL
+  ------------------
+  The protocol for stopping/killing a node is:
+  Line 1: stop/kill
+  Line 2: Grid Name
+  Line 3: Cluster Name
+  Line 4: Node name
+  Line 5: Empty line
+
+  The successful response is:
+  Line 1: ok
+  Line 2: Empty Line
+
+  The unsuccessful response is:
+  Line 1: error
+  Line 2: message
+
+  LIST PROTOCOL
+  -------------
+  The protocol for listing nodes is:
+  Line 1: list [full]
+  Line 2: Grid Name
+  Line 3: Cluster Name (optional)
+  Line 4: Node Name (optional)
+  Line 5: Empty Line
+
+  Only Grid Name is required, if Cluster Name is provided, only programs in this
+  cluster will be provided, if Node Name is also provided then only a program
+  running this node will be provided.
+
+  The response is a set of program descriptions as:
+  NOTE: It is very likely this list will be expanded with more data on the
+  state of the process, such as use of CPU, use of memory, disk and so forth.
+  Line 1: list node
+  Line 2: Grid Name
+  Line 3: Cluster Name
+  Line 4: Node Name
+  Line 5: Program Name
+  Line 6: Version string
+  Line 7: Start Time
+  Line 8: Process Id
+  Line 9 - Line x: Parameter in same format as when starting (only if list full)
+  The protocol to check status is:
+  Line x+1: Empty Line
+
+  After receiving one such line the Cluster Manager responds with either
+  list next or list stop to stop the listing as:
+  Line 1: list next
+  Line 2: Empty Line
+  or
+  Line 1: list stop
+  Line 2: Empty Line
+
+  After list next a new node will be sent, when there are no more nodes to
+  send the Process Controller will respond with:
+  Line 1: list stop
+  Line 2: Empty Line
+
+  CHECK STATUS PROTOCOL
+  ---------------------
+  The Cluster Manager can also ask the Process Controller if any events of
+  interest has occurred since last time the Cluster Manager contacted the
+  Process Controller. At this moment the only interesting event to report
+  is a program that has stopped.
+
+  The protocol is:
+  Line 1: check status
+  Line 2: Grid Name
+  Line 3: Empty Line
+
+  The response is:
+  Line 1: no
+  Line 2: Empty Line
+  when no new events have occurred
+
+  Line 1: node stopped
+  Line 2: Grid Name
+  Line 3: Cluster Name
+  Line 4: Node Name
+  Line 5: Program Name
+  Line 6: Version string
+  Line 7: Empty Line
+*/
+
+/* Protocol states */
+#define INITIAL_MESSAGE_STATE 0
+#define INITIAL_STATE 0
+#define START_STATE 1
+#define STOP_STATE 2
+#define KILL_STATE 3
+#define LIST_STATE 4
+#define CHECK_STATUS_STATE 5
+
 static gpointer
 run_command_handler(gpointer data)
 {
@@ -122,6 +265,8 @@ run_command_handler(gpointer data)
   GPid child_pid;
   gchar *arg_str;
   int ret_code;
+  int protocol_state= INITIAL_STATE;
+  int message_state= INITIAL_MESSAGE_STATE;
 
   thread_state->ts_ops.ic_thread_started(thread_state);
 
@@ -130,6 +275,37 @@ run_command_handler(gpointer data)
 
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
+    switch (protocol_state)
+    {
+      case INITIAL_STATE:
+      {
+        if (ic_check_buf(read_buf, read_size, start_str,
+                      strlen(start_str)))
+        break;
+      }
+      case START_STATE:
+      {
+        break;
+      }
+      case STOP_STATE:
+      {
+        break;
+      }
+      case KILL_STATE:
+      {
+        ;
+      }
+      case LIST_STATE:
+      {
+        break;
+      }
+      case CHECK_STATUS_STATE:
+      {
+        break;
+      }
+      default:
+        goto protocol_error;
+    }
     if (read_size == 0)
     {
       arg_vector[items_received]= NULL;
@@ -167,6 +343,7 @@ run_command_handler(gpointer data)
   conn->conn_op.ic_free_connection(conn);
   thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
+protocol_error:
 mem_error:
 
   for (i= 0; i < items_received; i++)
@@ -245,7 +422,6 @@ int main(int argc, char *argv[])
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Control Server")))
     return ret_code;
-  ret_code= 1;
   if (!(glob_tp_state=
         ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
     return IC_ERROR_MEM_ALLOC;
@@ -257,14 +433,24 @@ int main(int argc, char *argv[])
     or
     ICLAUSTRON_VERSION/bin
     and libraries will be in either
-    MYSQL_VERSION/lib
+    MYSQL_VERSION/lib/mysql
     or
     ICLAUSTRON_VERSION/lib
+
+    The default directory is $HOME/iclaustron_install if we're not running this
+    as root, if we're running as root, then the default directory is
+    /var/lib/iclaustron_install.
 
     The resulting base directory is stored in the global variable
     glob_base_dir_string. We set up the default strings for the
     version we've compiled, the protocol to the process controller
     enables the Cluster Manager to specify which version to use.
+
+    This program will have it's state in memory but will also checkpoint this
+    state to a file. This is to ensure that we are able to connect to processes
+    again even after we had to restart this program. This file is stored in
+    the iclaustron_data placed beside the iclaustron_install directory. The file
+    is called pcntrl_state.
   */
   if ((ret_code= ic_set_base_dir(&glob_base_dir_string, glob_base_dir)))
     goto error;
@@ -277,16 +463,16 @@ int main(int argc, char *argv[])
   DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
                               glob_base_dir_string.str));
   /*
-    Next step is to wait for Cluster Servers to connect to us, after they
+    Next step is to wait for Cluster Managers to connect to us, after they
     have connected they can request action from us as well. Any server can
-    connect us a Cluster Server, but they have to provide the proper
+    connect as a Cluster Manager, but they have to provide the proper
     password in order to get connected.
 
     We will always be ready to receive new connections.
 
     The manner to stop this program is by performing a kill -15 operation
-    such that the program receives a SIGKILL signal. The program cannot
-    be started and stopped from a Cluster Server for security reasons.
+    such that the program receives a SIGKILL signal. This program cannot
+    be started and stopped from a Cluster Manager for security reasons.
   */
   ret_code= start_connection_loop();
 error:
