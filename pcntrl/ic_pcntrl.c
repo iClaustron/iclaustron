@@ -16,7 +16,7 @@
 #include <ic_base_header.h>
 #include <ic_err.h>
 #include <ic_debug.h>
-#include <ic_check_buf.h>
+#include <ic_protocol_support.h>
 #include <ic_port.h>
 #include <ic_string.h>
 #include <ic_connection.h>
@@ -212,14 +212,23 @@ send_node_stopped(IC_CONNECTION *conn,
     Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
   Line x+1: Empty line to indicate end of message
 
+  Example: start\nversion: iclaustron-0.0.1\ngrid: my_grid\n
+           cluster: my_cluster\nnode: my_node\nprogram: ic_fsd\n
+           autorestart: true\n
+           parameter: data_dir string /home/mikael/iclaustron\n\n
+
   The successful response is:
   Line 1: ok
   Line 2: Process Id
   Line 3: Empty line
 
+  Example: ok\npid: 1234\n\n
+
   The unsuccessful response is:
   Line 1: error
   Line 2: message
+
+  Example: error:\nerror: Failed to start process\n\n
 
   STOP/KILL PROTOCOL
   ------------------

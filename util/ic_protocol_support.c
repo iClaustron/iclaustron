@@ -107,7 +107,7 @@ ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   DEBUG_RETURN(error);
 }
 
-static int
+int
 ic_send_key(IC_CONNECTION *conn,
             const gchar *grid_name,
             const gchar *cluster_name,
@@ -129,7 +129,7 @@ ic_send_key(IC_CONNECTION *conn,
   return 0;
 }
 
-static int
+int
 ic_send_version(IC_CONNECTION *conn,
                 const gchar *version_string)
 {
@@ -142,7 +142,7 @@ ic_send_version(IC_CONNECTION *conn,
   return 0;
 }
 
-static int
+int
 ic_send_program(IC_CONNECTION *conn,
                 const gchar *program_name)
 {
@@ -155,7 +155,7 @@ ic_send_program(IC_CONNECTION *conn,
   return 0;
 }
 
-static int
+int
 ic_send_error(IC_CONNECTION *conn,
               const gchar *error_message)
 {
@@ -168,7 +168,7 @@ ic_send_error(IC_CONNECTION *conn,
   return 0;
 }
 
-static int
+int
 ic_send_pid(IC_CONNECTION *conn,
             const GPid pid)
 {
@@ -183,7 +183,7 @@ ic_send_pid(IC_CONNECTION *conn,
   return 0;
 }
 
-static int
+int
 ic_send_empty_line(IC_CONNECTION *conn)
 {
   int error;
@@ -192,3 +192,19 @@ ic_send_empty_line(IC_CONNECTION *conn)
     return error;
   return 0;
 }
+
+int
+ic_receive_key(IC_CONNECTION *conn,
+               gchar *read_buf,
+               IC_STRING *grid_name,
+               IC_STRING *cluster_name,
+               IC_STRING *node_name)
+{
+  int error;
+  guint32 read_size;
+
+  if (!(error= ic_rec_with_cr(conn, read_buf, &read_size)))
+  {
+  }
+}
+
