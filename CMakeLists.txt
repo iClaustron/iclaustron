@@ -377,9 +377,10 @@ add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
             util/ic_threadpool_int.h util/ic_threadpool.c
             util/ic_debug.c util/ic_err.c util/ic_string.c
             util/ic_bitmap.c util/ic_config_reader.c
+            util/ic_protocol_support.c
             include/hashtable_itr.h include/hashtable_private.h
             include/ic_base64.h include/ic_config_reader.h
-            include/ic_check_buf.h include/ic_sock_buf.h)
+            include/ic_protocol_support.h include/ic_sock_buf.h)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
