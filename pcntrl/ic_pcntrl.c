@@ -85,32 +85,96 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-/*
 static int 
-kill_process(GPid pid)
+kill_process(GPid pid, gboolean hard_kill)
 {
   gchar buf[128];
   gchar *arg_vector[4];
-  GError *error; 
-  ic_guint64_str((guint64)pid,buf);
-  printf("Kill process %s\n", buf);
-  arg_vector[0]="kill";
-  arg_vector[1]="-9";
-  arg_vector[2]=buf;
-  arg_vector[3]=NULL;
+  GError *error;
+  int i= 0;
+  guint32 len;
+
+  ic_guint64_str((guint64)pid,buf, &len);
+  DEBUG_PRINT(CONFIG_LEVEL, ("Kill process %s\n", buf));
+  arg_vector[i++]="kill";
+  if (hard_kill)
+    arg_vector[i++]="-9";
+  arg_vector[i++]=buf;
+  arg_vector[i]=NULL;
   g_spawn_async(NULL,&arg_vector[0], NULL,
                 G_SPAWN_SEARCH_PATH,
                 NULL,NULL,&pid,&error);
   return 0;
 }
-*/
+
+static int
+send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
+{
+  int error;
+  if ((error= ic_send_with_cr(conn, "error")) ||
+      (error= ic_send_with_cr(conn, error_message)) ||
+      (error= ic_send_empty_line(conn)))
+    return error;
+  return 0;
+}
 
 static int
 send_ok_reply(IC_CONNECTION *conn)
 {
   int error;
-  if ((error= ic_send_with_cr(conn, "Ok")) ||
-      (error= ic_send_with_cr(conn, "")))
+  if ((error= ic_send_with_cr(conn, "ok")) ||
+      (error= ic_send_empty_line(conn)))
+    return error;
+  return 0;
+}
+
+static int
+send_ok_pid_reply(IC_CONNECTION *conn, GPid pid)
+{
+  int error;
+
+  if ((error= ic_send_with_cr(conn, "ok")) ||
+      (error= ic_send_pid(conn, pid)) ||
+      (error= ic_send_empty_line(conn)))
+    return error;
+  return 0;
+}
+
+static int
+send_no_reply(IC_CONNECTION *conn)
+{
+  int error;
+  if ((error= ic_send_with_cr(conn, "no")) ||
+      (error= ic_send_empty_line(conn)))
+    return error;
+  return 0;
+}
+
+static int
+send_list_stop_reply(IC_CONNECTION *conn)
+{
+  int error;
+  if ((error= ic_send_with_cr(conn, "list stop")) ||
+      (error= ic_send_empty_line(conn)))
+    return error;
+  return 0;
+}
+
+static int
+send_node_stopped(IC_CONNECTION *conn,
+                  const gchar *grid_name,
+                  const gchar *cluster_name,
+                  const gchar *node_name,
+                  const gchar *program_name,
+                  const gchar *version_string)
+{
+  int error;
+
+  if ((error= ic_send_with_cr(conn, "node stopped")) ||
+      (error= ic_send_key(conn, grid_name, cluster_name, node_name)) ||
+      (error= ic_send_program(conn, program_name)) ||
+      (error= ic_send_version(conn, version_string)) ||
+      (error= ic_send_empty_line(conn)))
     return error;
   return 0;
 }

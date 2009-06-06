@@ -18,9 +18,9 @@
 #include <ic_debug.h>
 #include <ic_string.h>
 #include <ic_connection.h>
-#include <ic_check_buf.h>
+#include <ic_protocol_support.h>
 
-gboolean
+int
 ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
 {
   if ((read_size != (guint32)str_len) ||
@@ -29,7 +29,7 @@ ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
   return FALSE;
 }
 
-gboolean
+int
 ic_check_buf_with_many_int(gchar *read_buf, guint32 read_size, const gchar *str,
                         int str_len, guint32 num_elements,
                         guint64 *number)
@@ -61,7 +61,7 @@ error:
   return TRUE;
 }
 
-gboolean
+int
 ic_check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
                    int str_len, guint64 *number)
 {
@@ -70,6 +70,19 @@ ic_check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
       (ic_convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
                                         number)))
     return TRUE;
+  return FALSE;
+}
+
+int
+ic_check_buf_with_string(gchar *read_buf, guint32 read_size, const gchar *str,
+                         int str_len, IC_STRING **string)
+{
+  if ((read_size < (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) != 0))
+    return TRUE;
+  (*string)->len= read_size - str_len;
+  (*string)->str= read_buf+str_len;
+  (*string)->is_null_terminated= FALSE;
   return FALSE;
 }
 
@@ -94,4 +107,88 @@ ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   DEBUG_RETURN(error);
 }
 
+static int
+ic_send_key(IC_CONNECTION *conn,
+            const gchar *grid_name,
+            const gchar *cluster_name,
+            const gchar *node_name)
+{
+  int error;
+  gchar grid_line[256], cluster_line[256], node_line[256];
 
+  g_snprintf(grid_line, 256, "grid name: %s", grid_name);
+  g_assert(!(!cluster_name && node_name));
+  if (cluster_name)
+    g_snprintf(cluster_line, 256, "cluster name: %s", cluster_name);
+  if (node_name)
+    g_snprintf(node_line, 256, "node name: %s", node_name);
+  if ((error= ic_send_with_cr(conn, grid_line)) ||
+      (cluster_name && (error= ic_send_with_cr(conn, cluster_line))) ||
+      (node_name && (error= ic_send_with_cr(conn, node_line))))
+    return error;
+  return 0;
+}
+
+static int
+ic_send_version(IC_CONNECTION *conn,
+                const gchar *version_string)
+{
+  int error;
+  gchar version_line[256];
+
+  g_snprintf(version_line, 256, "version: %s", version_string);
+  if ((error= ic_send_with_cr(conn, version_line)))
+    return error;
+  return 0;
+}
+
+static int
+ic_send_program(IC_CONNECTION *conn,
+                const gchar *program_name)
+{
+  int error;
+  gchar program_line[256];
+
+  g_snprintf(program_line, 256, "program: %s", program_name);
+  if ((error= ic_send_with_cr(conn, program_line)))
+    return error;
+  return 0;
+}
+
+static int
+ic_send_error(IC_CONNECTION *conn,
+              const gchar *error_message)
+{
+  int error;
+  gchar error_line[256];
+
+  g_snprintf(error_line, 256, "error: %s", error_message);
+  if ((error= ic_send_with_cr(conn, error_line)))
+    return error;
+  return 0;
+}
+
+static int
+ic_send_pid(IC_CONNECTION *conn,
+            const GPid pid)
+{
+  int error;
+  guint32 len;
+  gchar pid_buf[128], pid_line[140];
+
+  ic_guint64_str((guint64)pid, pid_buf, &len);
+  g_snprintf(pid_line, 140, "pid: %s", pid_buf);
+  if ((error= ic_send_with_cr(conn, pid_line)))
+    return error;
+  return 0;
+}
+
+static int
+ic_send_empty_line(IC_CONNECTION *conn)
+{
+  int error;
+
+  if ((error= ic_send_with_cr(conn, "")))
+    return error;
+  return 0;
+}
