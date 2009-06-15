@@ -21,6 +21,7 @@
 #include <ic_string.h>
 #include <ic_connection.h>
 #include <ic_threadpool.h>
+#include <ic_hashtable.h>
 /*
   This program is also used to gather information from local log files as 
   part of any process to gather information about mishaps in the cluster(s).
@@ -386,7 +387,7 @@ rec_optional_key_message(IC_CONNECTION *conn,
     only need to fill in key parameters. All key parameters are optional
     here.
   */
-  if ((error= init_pc_struct(&mc_ptr, pc_find)))
+  if ((error= init_pc_find(&mc_ptr, pc_find)))
     goto error;
   if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.grid_name)))
     goto error;
@@ -407,6 +408,41 @@ error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   return error;
+}
+
+static unsigned int
+ic_pc_hash_key(void *ptr)
+{
+  IC_PC_KEY *pc_key= ptr;
+  IC_STRING *str;
+  unsigned int hash1, hash2, hash3;
+
+  str= &pc_key->grid_name;
+  hash1= ic_hash_str((void*)str);
+  str= &pc_key->cluster_name;
+  hash2= ic_hash_str((void*)str);
+  str= &pc_key->node_name;
+  hash3= ic_hash_str((void*)str);
+  return (hash1 ^ hash2 ^ hash3);
+}
+
+static int
+ic_pc_key_equal(void *ptr1, void *ptr2)
+{
+  IC_PC_KEY *pc_key1= ptr1;
+  IC_PC_KEY *pc_key2= ptr2;
+
+  if ((ic_cmp_str(&pc_key1->grid_name, &pc_key2->grid_name)) ||
+      (ic_cmp_str(&pc_key1->cluster_name, &pc_key2->cluster_name)) ||
+      (ic_cmp_str(&pc_key1->node_name, &pc_key2->node_name)))
+    return 1;
+  return 0;
+}
+
+IC_HASHTABLE*
+create_pc_hash()
+{
+  return ic_create_hashtable(4096, ic_pc_hash_key, ic_pc_key_equal);
 }
 
 /*

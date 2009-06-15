@@ -422,15 +422,7 @@ int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str)
   gchar *second_char= second_str->str;
   if (first_len != second_len)
     return 1;
-  while (iter_len < first_len)
-  {
-    if (*first_char != *second_char)
-      return 1;
-    first_char++;
-    second_char++;
-    iter_len++;
-  }
-  return 0;
+  return (memcmp(first_char, second_char, first_len));
 }
 
 int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
