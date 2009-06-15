@@ -60,6 +60,7 @@ static const gchar *start_str= "start";
 static const gchar *stop_str= "stop";
 static const gchar *kill_str= "kill";
 static const gchar *list_str= "list";
+static const gchar *list_full_str= "list full";
 static const gchar *check_status_str= "check status";
 static const gchar *auto_restart_true_str= "autorestart: true";
 static const gchar *auto_restart_false_str= "autorestart: false";
@@ -197,10 +198,10 @@ get_optional_str(IC_CONNECTION *conn,
     return error;
   if (read_size == 0)
     return 0;
-  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, read_size)))
+  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
-  IC_INIT_STRING(str, str_ptr, read_size, FALSE);
+  IC_INIT_STRING(str, str_ptr, read_size, TRUE);
 }
 
 static int
@@ -217,10 +218,10 @@ get_str(IC_CONNECTION *conn,
     return error;
   if (read_size == 0)
     return IC_PROTOCOL_ERROR;
-  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, read_size)))
+  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
-  IC_INIT_STRING(str, str_ptr, read_size, FALSE);
+  IC_INIT_STRING(str, str_ptr, read_size, TRUE);
 }
 
 static int
@@ -445,6 +446,79 @@ create_pc_hash()
   return ic_create_hashtable(4096, ic_pc_hash_key, ic_pc_key_equal);
 }
 
+static int
+handle_start(IC_CONNECTION *conn)
+{
+  gchar **arg_vector;
+  int ret_code;
+  guint32 i;
+  GError *error= NULL;
+  IC_STRING working_dir;
+  IC_PC_START *pc_start;
+
+  IC_INIT_STRING(&working_dir, NULL, 0, FALSE);
+  if ((ret_code= rec_start_message(conn, &pc_start)))
+    return ret_code;
+  if ((arg_vector= (gchar**)pc_start->mc_ptr->mc_ops.ic_mc_calloc(
+                   pc_start->mc_ptr,
+                   (pc_start->num_parameters+2) * sizeof(gchar*))))
+    goto mem_error;
+  arg_vector[0]= pc_start->program_name.str;
+  for (i= 0; i < pc_start->num_parameters; i++)
+  {
+    arg_vector[i+1]= pc_start->parameters[i].str;
+  }
+  if ((ret_code= ic_set_base_path(&working_dir,
+                                  glob_base_dir,
+                                  pc_start->version_string.str,
+                                  NULL)))
+    goto error;
+  if (g_spawn_async_with_pipes(working_dir.str,
+                               &arg_vector[0],
+                               NULL, /* environment */
+                               0,    /* Flags */
+                               NULL, NULL, /* Child setup stuff */
+                               &pc_start->pid, /* Pid of program started */
+                               NULL, /* stdin */
+                               NULL, /* stdout */
+                               NULL, /* stderr */
+                               &error)) /* Error object */
+  {
+    /* Unsuccessful start */
+    ret_code= 1;
+    goto error;
+  }
+  if (working_dir.str)
+    ic_free(working_dir.str);
+  /* Insert into hash keeping track of programs */
+  return 0;
+mem_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
+error:
+  if (working_dir.str)
+    ic_free(working_dir.str);
+  pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
+  return ret_code;
+}
+
+static int
+handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
+{
+  return 0;
+}
+
+static int
+handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
+{
+  return 0;
+}
+
+static int
+handle_check_status(IC_CONNECTION *conn)
+{
+  return 0;
+}
+
 /*
   The command handler is a thread that is executed on behalf of one of the
   Cluster Managers in a Grid.
@@ -584,15 +658,6 @@ create_pc_hash()
   Line 7: Empty Line
 */
 
-/* Protocol states */
-#define INITIAL_MESSAGE_STATE 0
-#define INITIAL_STATE 0
-#define START_STATE 1
-#define STOP_STATE 2
-#define KILL_STATE 3
-#define LIST_STATE 4
-#define CHECK_STATUS_STATE 5
-
 static gpointer
 run_command_handler(gpointer data)
 {
@@ -601,98 +666,55 @@ run_command_handler(gpointer data)
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_CONNECTION *conn= (IC_CONNECTION*)
     thread_state->ts_ops.ic_thread_get_object(thread_state);
-  GError *error= NULL;
-  gchar *arg_vector[4];
-  guint32 items_received= 0;
   guint32 i;
-  GPid child_pid;
-  gchar *arg_str;
   int ret_code;
-  int protocol_state= INITIAL_STATE;
-  int message_state= INITIAL_MESSAGE_STATE;
 
   thread_state->ts_ops.ic_thread_started(thread_state);
-
-  memset(arg_vector, 0, 4*sizeof(gchar*));
   thread_state= conn->conn_op.ic_get_param(conn);
 
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    switch (protocol_state)
+    if (ic_check_buf(read_buf, read_size, start_str,
+                     strlen(start_str)))
     {
-      case INITIAL_STATE:
-      {
-        if (ic_check_buf(read_buf, read_size, start_str,
-                      strlen(start_str)))
+      if ((ret_code= handle_start(conn)))
         break;
-      }
-      case START_STATE:
-      {
-        break;
-      }
-      case STOP_STATE:
-      {
-        break;
-      }
-      case KILL_STATE:
-      {
-        ;
-      }
-      case LIST_STATE:
-      {
-        break;
-      }
-      case CHECK_STATUS_STATE:
-      {
-        break;
-      }
-      default:
-        goto protocol_error;
     }
-    if (read_size == 0)
+    else if (ic_check_buf(read_buf, read_size, stop_str,
+                          strlen(stop_str)))
     {
-      arg_vector[items_received]= NULL;
+      if ((ret_code= handle_stop(conn, FALSE)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size, kill_str,
+                          strlen(kill_str)))
+    {
+      if ((ret_code= handle_stop(conn, TRUE)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size, list_str,
+                          strlen(list_str)))
+    {
+      if ((ret_code= handle_list(conn, FALSE)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size, check_status_str,
+                          strlen(check_status_str)))
+    {
+      if ((ret_code= handle_list(conn, TRUE)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size, list_full_str,
+                          strlen(list_full_str)))
+    {
+      if ((ret_code= handle_check_status(conn)))
+        break;
+    }
+    else if (read_size)
+    {
+      ret_code= 0;
       break;
     }
-    arg_str= ic_malloc(read_size+1); /*allocate memory, even for extra NULL*/
-    if (arg_str == NULL)
-      goto mem_error;
-    memcpy(arg_str, read_buf, read_size);/*copy buffer to memory arg_str*/
-    printf("memcpy\n");
-    arg_str[read_size]= 0; /* add NULL */
-    printf("Add NULL\n");
-    
-    arg_vector[items_received]=arg_str;
-     
-    if (0==strcmp("",arg_str))
-    {
-      send_ok_reply(conn);
-      break;
-    }
-    items_received++;
-   
-  }
-  for(i=0; i < items_received; i++)
-    printf("arg_vector[%u] = %s\n", i, arg_vector[i]);
-
-  printf("anrop av g-spawn-async\n");
-  g_spawn_async_with_pipes(NULL,&arg_vector[0],
-                           NULL, G_SPAWN_SEARCH_PATH,
-                           NULL,NULL,&child_pid,
-                           NULL, NULL, NULL,
-                           &error);
-  printf("Anrop gjort child_pid = %d\n", child_pid);
-  ic_send_with_cr(conn, "Ok");
-  conn->conn_op.ic_free_connection(conn);
-  thread_state->ts_ops.ic_thread_stops(thread_state);
-  return NULL;
-protocol_error:
-mem_error:
-
-  for (i= 0; i < items_received; i++)
-  {
-    if (arg_vector[i])
-      ic_free(arg_vector[i]);
   }
   conn->conn_op.ic_free_connection(conn);
   thread_state->ts_ops.ic_thread_stops(thread_state);

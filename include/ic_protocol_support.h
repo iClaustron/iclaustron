@@ -74,6 +74,7 @@ struct ic_pc_start
   IC_STRING program_name;
   IC_STRING *parameters;
   IC_MEMORY_CONTAINER *mc_ptr;
+  GPid pid;
   guint32 num_parameters;
   gboolean autorestart;
 };
