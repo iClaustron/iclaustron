@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_base_header.h>
+#include <ic_mc.h>
 #include <ic_string.h>
 
 /*
@@ -57,3 +58,31 @@ int ic_send_version(IC_CONNECTION *conn, const gchar *version);
 int ic_send_program(IC_CONNECTION *conn, const gchar *program_name);
 int ic_send_pid(IC_CONNECTION *conn, GPid pid);
 int ic_send_empty_line(IC_CONNECTION *conn);
+
+struct ic_pc_key
+{
+  IC_STRING grid_name;
+  IC_STRING cluster_name;
+  IC_STRING node_name;
+};
+typedef struct ic_pc_key IC_PC_KEY;
+
+struct ic_pc_start
+{
+  IC_STRING version_string;
+  IC_PC_KEY key;
+  IC_STRING program_name;
+  IC_STRING *parameters;
+  IC_MEMORY_CONTAINER *mc_ptr;
+  guint32 num_parameters;
+  gboolean autorestart;
+};
+typedef struct ic_pc_start IC_PC_START;
+
+struct ic_pc_find
+{
+  IC_PC_KEY key;
+  IC_MEMORY_CONTAINER *mc_ptr;
+};
+typedef struct ic_pc_find IC_PC_FIND;
+

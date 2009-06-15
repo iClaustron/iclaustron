@@ -60,6 +60,9 @@ static const gchar *stop_str= "stop";
 static const gchar *kill_str= "kill";
 static const gchar *list_str= "list";
 static const gchar *check_status_str= "check status";
+static const gchar *auto_restart_true_str= "autorestart: true";
+static const gchar *auto_restart_false_str= "autorestart: false";
+static const gchar *num_parameters_str= "num parameters: ";
 
 /* Configurable variables */
 static gchar *glob_ip= NULL;
@@ -179,6 +182,226 @@ send_node_stopped(IC_CONNECTION *conn,
   return 0;
 }
 
+static int
+get_optional_str(IC_CONNECTION *conn,
+                 IC_MEMORY_CONTAINER *mc_ptr,
+                 IC_STRING *str)
+{
+  int error;
+  guint32 read_size;
+  gchar *str_ptr;
+  gchar *read_buf;
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return error;
+  if (read_size == 0)
+    return 0;
+  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, read_size)))
+    return IC_ERROR_MEM_ALLOC;
+  memcpy(str_ptr, read_buf, read_size);
+  IC_INIT_STRING(str, str_ptr, read_size, FALSE);
+}
+
+static int
+get_str(IC_CONNECTION *conn,
+        IC_MEMORY_CONTAINER *mc_ptr,
+        IC_STRING *str)
+{
+  int error;
+  guint32 read_size;
+  gchar *str_ptr;
+  gchar *read_buf;
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return error;
+  if (read_size == 0)
+    return IC_PROTOCOL_ERROR;
+  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, read_size)))
+    return IC_ERROR_MEM_ALLOC;
+  memcpy(str_ptr, read_buf, read_size);
+  IC_INIT_STRING(str, str_ptr, read_size, FALSE);
+}
+
+static int
+get_key(IC_CONNECTION *conn,
+        IC_MEMORY_CONTAINER *mc_ptr,
+        IC_PC_KEY *pc_key)
+{
+  int error;
+
+  if ((error= get_str(conn, mc_ptr, &pc_key->grid_name)) ||
+      (error= get_str(conn, mc_ptr, &pc_key->cluster_name)) ||
+      (error= get_str(conn, mc_ptr, &pc_key->node_name)))
+    return error;
+  return 0;
+}
+
+static int
+get_autorestart(IC_CONNECTION *conn,
+                gboolean *auto_restart)
+{
+  int error;
+  guint32 read_size;
+  gchar *read_buf;
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return error;
+  if (read_size == strlen(auto_restart_true_str) &&
+      !memcmp(read_buf, auto_restart_true_str, read_size))
+  {
+    *auto_restart= 1;
+    return 0;
+  }
+  else if (read_size == strlen(auto_restart_false_str) &&
+           !memcmp(read_buf, auto_restart_false_str, read_size))
+  {
+    *auto_restart= 0;
+    return 0;
+  }
+  else
+    return IC_PROTOCOL_ERROR;
+}
+
+static int
+get_num_parameters(IC_CONNECTION *conn,
+                   guint32 *num_parameters)
+{
+  int error;
+  guint32 read_size;
+  guint64 loc_num_params;
+  guint32 num_param_len= strlen(num_parameters_str);
+  guint32 len;
+  gchar *read_buf;
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return error;
+  if (memcmp(read_buf, num_parameters_str, read_size))
+    return IC_PROTOCOL_ERROR;
+  if ((read_size <= num_param_len) ||
+      (ic_conv_str_to_int(read_buf+num_param_len, &loc_num_params, &len)) ||
+      (loc_num_params >= IC_MAX_UINT32))
+    return IC_PROTOCOL_ERROR;
+  *num_parameters= (guint32)loc_num_params;
+  return 0;
+}
+
+static int
+rec_start_message(IC_CONNECTION *conn,
+                  IC_PC_START **pc_start)
+{
+  IC_MEMORY_CONTAINER *mc_ptr;
+  IC_PC_START *loc_pc_start;
+  guint32 i;
+  int error;
+
+  /*
+    When we come here we have already received the start string, we now
+    receive the rest of the start package.
+    We put the data into an IC_PC_START struct which is self-contained
+    and also contains a memory container for all the memory allocated.
+  */
+  if ((mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0)))
+    return IC_ERROR_MEM_ALLOC;
+  if ((*pc_start= (IC_PC_START*)
+       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_START))))
+    goto mem_error;
+  loc_pc_start= *pc_start;
+  loc_pc_start->mc_ptr= mc_ptr;
+
+  if ((error= get_str(conn, mc_ptr, &loc_pc_start->version_string)) ||
+      (error= get_key(conn, mc_ptr, &loc_pc_start->key)) ||
+      (error= get_str(conn, mc_ptr, &loc_pc_start->program_name)) ||
+      (error= get_autorestart(conn, &loc_pc_start->autorestart)) ||
+      (error= get_num_parameters(conn, &loc_pc_start->num_parameters)))
+    goto error;
+  if ((loc_pc_start->parameters= (IC_STRING*)
+       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_STRING)*
+         loc_pc_start->num_parameters)))
+    goto mem_error;
+  for (i= 0; i < loc_pc_start->num_parameters; i++)
+  {
+    if ((error= get_str(conn, mc_ptr, &loc_pc_start->parameters[i])))
+      goto error;
+  }
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+    goto error;
+  return 0;
+mem_error:
+  error= IC_ERROR_MEM_ALLOC;
+error:
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return error;
+}
+
+static int
+rec_stop_message(IC_CONNECTION *conn,
+                 IC_PC_FIND **pc_find)
+{
+  IC_MEMORY_CONTAINER *mc_ptr;
+  int error;
+
+  /*
+    When we come here we already received the stop/kill string and we only
+    need to fill in the key parameters (grid, cluster and node name).
+  */
+  if ((mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0)))
+    return IC_ERROR_MEM_ALLOC;
+  if ((*pc_find= (IC_PC_FIND*)
+       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_FIND))))
+    goto mem_error;
+  if ((error= get_key(conn, mc_ptr, &(*pc_find)->key)))
+    goto error;
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+    goto error;
+  (*pc_find)->mc_ptr= mc_ptr;
+  return 0;
+mem_error:
+  error= IC_ERROR_MEM_ALLOC;
+error:
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return error;
+}
+
+static int
+rec_list_message(IC_CONNECTION *conn,
+                 IC_PC_FIND **pc_find)
+{
+  IC_MEMORY_CONTAINER *mc_ptr;
+  int error;
+
+  /*
+    When we come here we already received the list [full] string and we
+    only need to fill in key parameters. All key parameters are optional
+    here.
+  */
+  if ((mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0)))
+    return IC_ERROR_MEM_ALLOC;
+  if ((*pc_find= (IC_PC_FIND*)
+       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_FIND))))
+    goto mem_error;
+  (*pc_find)->mc_ptr= mc_ptr;
+  if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.grid_name)))
+    goto error;
+  if ((*pc_find)->key.grid_name.len == 0)
+    return 0; /* No grid name provided, list all programs */
+  if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.cluster_name)))
+    goto error;
+  if ((*pc_find)->key.cluster_name.len == 0)
+    return 0; /* No cluster name provided, list all programs in grid */
+  if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.node_name)))
+    goto error;
+  if ((*pc_find)->key.node_name.len == 0)
+    return 0; /* No node name provided, list all programs in cluster */
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+    goto error;
+  return 0;
+mem_error:
+  error= IC_ERROR_MEM_ALLOC;
+error:
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return error;
+}
+
 /*
   The command handler is a thread that is executed on behalf of one of the
   Cluster Managers in a Grid.
@@ -208,13 +431,14 @@ send_node_stopped(IC_CONNECTION *conn,
   Line 5: Node name
   Line 6: Program Name
   Line 7: autorestart true OR autorestart false
-  Line 8 - Line x: Program Parameters on the format:
+  Line 8: Number of parameters
+  Line 9 - Line x: Program Parameters on the format:
     Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
   Line x+1: Empty line to indicate end of message
 
   Example: start\nversion: iclaustron-0.0.1\ngrid: my_grid\n
            cluster: my_cluster\nnode: my_node\nprogram: ic_fsd\n
-           autorestart: true\n
+           autorestart: true\nnum parameters: 2\n
            parameter: data_dir string /home/mikael/iclaustron\n\n
 
   The successful response is:
@@ -271,7 +495,8 @@ send_node_stopped(IC_CONNECTION *conn,
   Line 6: Version string
   Line 7: Start Time
   Line 8: Process Id
-  Line 9 - Line x: Parameter in same format as when starting (only if list full)
+  Line 9: Number of parameters
+  Line 10 - Line x: Parameter in same format as when starting (only if list full)
   The protocol to check status is:
   Line x+1: Empty Line
 
