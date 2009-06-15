@@ -363,10 +363,22 @@ error:
 }
 
 static int
-rec_list_message(IC_CONNECTION *conn,
-                 IC_PC_FIND **pc_find)
+init_pc_find(IC_MEMORY_CONTAINER **mc_ptr,
+             IC_PC_FIND **pc_find)
 {
-  IC_MEMORY_CONTAINER *mc_ptr;
+  if (((*mc_ptr)= ic_create_memory_container((guint32)1024, (guint32) 0)))
+    return IC_ERROR_MEM_ALLOC;
+  if (((*pc_find)= (IC_PC_FIND*)
+       (*mc_ptr)->mc_ops.ic_mc_calloc((*mc_ptr), sizeof(IC_PC_FIND))))
+    return IC_ERROR_MEM_ALLOC;
+  (*pc_find)->mc_ptr= (*mc_ptr);
+}
+
+static int
+rec_optional_key_message(IC_CONNECTION *conn,
+                         IC_PC_FIND **pc_find)
+{
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
   int error;
 
   /*
@@ -374,12 +386,8 @@ rec_list_message(IC_CONNECTION *conn,
     only need to fill in key parameters. All key parameters are optional
     here.
   */
-  if ((mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0)))
-    return IC_ERROR_MEM_ALLOC;
-  if ((*pc_find= (IC_PC_FIND*)
-       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_FIND))))
-    goto mem_error;
-  (*pc_find)->mc_ptr= mc_ptr;
+  if ((error= init_pc_struct(&mc_ptr, pc_find)))
+    goto error;
   if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.grid_name)))
     goto error;
   if ((*pc_find)->key.grid_name.len == 0)
@@ -395,10 +403,9 @@ rec_list_message(IC_CONNECTION *conn,
   if ((error= ic_rec_simple_str(conn, ic_empty_string)))
     goto error;
   return 0;
-mem_error:
-  error= IC_ERROR_MEM_ALLOC;
 error:
-  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   return error;
 }
 
@@ -475,7 +482,7 @@ error:
   -------------
   The protocol for listing nodes is:
   Line 1: list [full]
-  Line 2: Grid Name
+  Line 2: Grid Name (optional)
   Line 3: Cluster Name (optional)
   Line 4: Node Name (optional)
   Line 5: Empty Line
@@ -522,8 +529,10 @@ error:
 
   The protocol is:
   Line 1: check status
-  Line 2: Grid Name
-  Line 3: Empty Line
+  Line 2: Grid Name (optional)
+  Line 3: Cluster Name (optional)
+  Line 4: Node Name (optional)
+  Line 5: Empty Line
 
   The response is:
   Line 1: no
