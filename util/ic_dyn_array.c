@@ -204,6 +204,8 @@ read_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array, guint64 pos,
   guint64 buf_pos;
   int ret_code;
 
+  if ((pos + size) > dyn_array->total_size_in_bytes)
+    return 1;
   if ((ret_code= find_pos_simple_dyn_array(dyn_array, pos,
                                            &dyn_buf, &buf_pos)) || 
       (ret_code= read_pos_simple_dynamic_array(dyn_buf, buf_pos,

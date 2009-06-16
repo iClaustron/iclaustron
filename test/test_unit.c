@@ -39,8 +39,7 @@ do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                    int buf_size,
                    GRand *random)
 {
-  guint32 start;
-  gint32 rand_size, remaining_size;
+  guint32 start, rand_size, remaining_size;
   int ret_code;
 
   start= 0;

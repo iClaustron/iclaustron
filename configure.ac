@@ -148,7 +148,7 @@ GTHREAD_LIB="`$PKG_CONFIG --libs $GTHREAD_PACKAGE`"
 LIBS="$LIBS $GLIB_LIB"
 LIBS="$LIBS $GTHREAD_LIB"
 IDIR="$IDIR $GLIB_INCLUDE"
-CFLAGS="$CFLAGS $GLIB_INCLUDE"
+CFLAGS="$GLIB_INCLUDE"
 
 AC_CHECK_LIB(glib-2.0, g_list_append,,
  [AC_MSG_ERROR([No glib library installed])])
@@ -313,5 +313,4 @@ AS_IF([test "x$have_cyassl" = "xyes"],
      [Defined by configure, using cyassl for SSL.])])
 
 dnl Produce the output of the configure process.
-
 AC_OUTPUT

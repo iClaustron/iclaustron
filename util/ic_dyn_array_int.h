@@ -33,8 +33,11 @@ struct ic_simple_dynamic_array
 {
   IC_SIMPLE_DYNAMIC_BUF *first_dyn_buf;
   IC_SIMPLE_DYNAMIC_BUF *last_dyn_buf;
+  /*
+    bytes_used is the number of bytes not yet used in the last dynamic
+    buffer.
+  */
   guint64 bytes_used;
-  guint64 total_size;
 };
 typedef struct ic_simple_dynamic_array IC_SIMPLE_DYNAMIC_ARRAY;
 
