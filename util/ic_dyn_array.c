@@ -289,6 +289,15 @@ ic_create_simple_dynamic_array()
   return (IC_DYNAMIC_ARRAY*)dyn_array;
 }
 
+static void
+insert_dyn_index_list(IC_DYNAMIC_ARRAY_INT *dyn_array,
+                      IC_DYNAMIC_ARRAY_INDEX *dyn_index)
+{
+  IC_DYNAMIC_ARRAY_INDEX *prev_dyn_index= dyn_array->ord_array.last_dyn_index;
+  dyn_array->ord_array.last_dyn_index= dyn_index;
+  prev_dyn_index->next_dyn_index= dyn_index;
+}
+
 static int
 insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
                                     IC_DYNAMIC_ARRAY_INDEX *dyn_index,
@@ -296,12 +305,13 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
                                     void *child_ptr)
 {
   IC_DYNAMIC_ARRAY_INDEX *new_dyn_index;
-  guint32 next_pos_to_insert= dyn_index->next_pos_to_insert;
-  IC_DYNAMIC_ARRAY_INDEX *new_parent_dyn_index= NULL;
+  guint32 next_index_to_insert= dyn_index->next_index_to_insert;
+  IC_DYNAMIC_ARRAY_INDEX *new_parent_dyn_index;
   int ret_code;
 
-  if (next_pos_to_insert == ORDERED_DYNAMIC_INDEX_SIZE)
+  if (next_index_to_insert == ORDERED_DYNAMIC_INDEX_SIZE)
   {
+    new_parent_dyn_index= NULL;
     /*
        We have filled a dynamic array index buffer and we need to
        add another buffer. We use a recursive call to implement
@@ -327,6 +337,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
         ic_free((void*)new_dyn_index);
         return ret_code;
       }
+      insert_dyn_index_list(dyn_array, new_dyn_index);
       if (!new_parent_dyn_index)
       {
         /* The new node has the same parent as this node */
@@ -346,18 +357,21 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
         ic_free((void*)new_dyn_index);
         return IC_ERROR_MEM_ALLOC;
       }
+      insert_dyn_index_list(dyn_array, new_dyn_index);
+      insert_dyn_index_list(dyn_array, new_parent_dyn_index);
       dyn_index->parent_dyn_index= new_parent_dyn_index;
       new_dyn_index->parent_dyn_index= new_parent_dyn_index;
       new_parent_dyn_index->child_ptrs[0]= (void*)dyn_index;
       new_parent_dyn_index->child_ptrs[1]= (void*)new_dyn_index;
-      new_parent_dyn_index->next_pos_to_insert= 2;
+      new_parent_dyn_index->next_index_to_insert= 2;
       dyn_array->ord_array.index_levels++;
+      dyn_array->ord_array.top_dyn_index= new_parent_dyn_index;
     }
     dyn_index= new_dyn_index;
-    next_pos_to_insert= 0;
+    next_index_to_insert= 0;
   }
-  dyn_index->child_ptrs[next_pos_to_insert]= child_ptr;
-  dyn_index->next_pos_to_insert= ++next_pos_to_insert;
+  dyn_index->child_ptrs[next_index_to_insert]= child_ptr;
+  dyn_index->next_index_to_insert= ++next_index_to_insert;
   return 0;
 }
 
@@ -415,7 +429,7 @@ find_pos_ordered_dyn_array(IC_DYNAMIC_ARRAY_INT *dyn_array,
   guint64 log_index;
   guint32 i;
   guint32 index_levels= dyn_array->ord_array.index_levels;
-  IC_DYNAMIC_ARRAY_INDEX *top_index= dyn_array->ord_array.top_index;
+  IC_DYNAMIC_ARRAY_INDEX *top_dyn_index= dyn_array->ord_array.top_dyn_index;
   IC_DYNAMIC_ARRAY_INDEX *dyn_index;
 
   /*
@@ -436,7 +450,7 @@ find_pos_ordered_dyn_array(IC_DYNAMIC_ARRAY_INT *dyn_array,
   */
   log_index= log_simple + log_dynamic * (index_levels - 1);
   new_pos= pos;
-  dyn_index= top_index;
+  dyn_index= top_dyn_index;
   for (i= 0; i < index_levels; i++)
   {
     index= new_pos >> log_index;
@@ -521,6 +535,8 @@ read_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   guint64 buf_pos= 0;
   int ret_code;
 
+  if ((position + size) > dyn_array->total_size_in_bytes)
+    return 1;
   if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
                                             &dyn_buf, &buf_pos)) || 
       (ret_code= read_pos_simple_dynamic_array(dyn_buf, buf_pos,
@@ -571,10 +587,13 @@ ic_create_ordered_dynamic_array()
     no child pointers and initial size is 0.
   */
   ord_array= &dyn_array->ord_array;
-  ord_array->top_index= dyn_index_array;
+  ord_array->top_dyn_index= dyn_index_array;
   ord_array->first_dyn_index= dyn_index_array;
   ord_array->last_dyn_index= dyn_index_array;
   ord_array->index_levels= 1;
+
+  dyn_index_array->child_ptrs[0]= dyn_array->sd_array.first_dyn_buf;
+  dyn_index_array->next_index_to_insert= 1;
 
   da_ops= &dyn_array->da_ops;
   da_ops->ic_insert_dynamic_array= insert_ordered_dynamic_array;

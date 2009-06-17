@@ -32,7 +32,7 @@ static GOptionEntry entries[] =
 };
 
 #define SIMPLE_BUF_SIZE 16*1024*1024
-#define ORDERED_BUF_SIZE 8*1024*1024
+#define ORDERED_BUF_SIZE 128*1024*1024
 static int
 do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                    gchar *compare_buf,
@@ -258,7 +258,7 @@ int main(int argc, char *argv[])
       ret_code= unit_test_simple_dynamic_array();
       break;
     case 2:
-      printf("Executing Unit test of Simple Dynamic Array\n");
+      printf("Executing Unit test of Ordered Dynamic Array\n");
       ret_code= unit_test_ordered_dynamic_array();
       break;
     default:

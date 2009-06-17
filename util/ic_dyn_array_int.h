@@ -46,14 +46,14 @@ struct ic_dynamic_array_index
 {
   struct ic_dynamic_array_index *next_dyn_index;
   struct ic_dynamic_array_index *parent_dyn_index;
-  guint64 next_pos_to_insert;
+  guint64 next_index_to_insert;
   void* child_ptrs[ORDERED_DYNAMIC_INDEX_SIZE];
 };
 typedef struct ic_dynamic_array_index IC_DYNAMIC_ARRAY_INDEX;
 
 struct ic_ordered_dynamic_array
 {
-  IC_DYNAMIC_ARRAY_INDEX *top_index;
+  IC_DYNAMIC_ARRAY_INDEX *top_dyn_index;
   IC_DYNAMIC_ARRAY_INDEX *first_dyn_index;
   IC_DYNAMIC_ARRAY_INDEX *last_dyn_index;
   guint32 index_levels;
