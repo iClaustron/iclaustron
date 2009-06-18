@@ -17,7 +17,7 @@
 #define IC_DYN_ARRAY_INT_H
 
 #define SIMPLE_DYNAMIC_ARRAY_BUF_SIZE 1024
-#define ORDERED_DYNAMIC_INDEX_SIZE 256
+#define ORDERED_DYNAMIC_INDEX_SIZE 128
 #define LOG_SIMPLE_DYNAMIC_ARRAY_BUF_SIZE 10
 #define LOG_ORDERED_DYNAMIC_INDEX_SIZE 8
 
@@ -47,7 +47,7 @@ struct ic_dynamic_array_index
   struct ic_dynamic_array_index *next_dyn_index;
   struct ic_dynamic_array_index *parent_dyn_index;
   guint64 next_index_to_insert;
-  void* child_ptrs[ORDERED_DYNAMIC_INDEX_SIZE];
+  void *child_ptrs[ORDERED_DYNAMIC_INDEX_SIZE];
 };
 typedef struct ic_dynamic_array_index IC_DYNAMIC_ARRAY_INDEX;
 

@@ -357,8 +357,8 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
         ic_free((void*)new_dyn_index);
         return IC_ERROR_MEM_ALLOC;
       }
-      insert_dyn_index_list(dyn_array, new_dyn_index);
       insert_dyn_index_list(dyn_array, new_parent_dyn_index);
+      insert_dyn_index_list(dyn_array, new_dyn_index);
       dyn_index->parent_dyn_index= new_parent_dyn_index;
       new_dyn_index->parent_dyn_index= new_parent_dyn_index;
       new_parent_dyn_index->child_ptrs[0]= (void*)dyn_index;
