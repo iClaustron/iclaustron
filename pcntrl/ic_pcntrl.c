@@ -78,6 +78,8 @@ static IC_STRING glob_base_dir_string;
 static IC_STRING glob_ic_base_dir_string;
 static IC_STRING glob_mysql_base_dir_string;
 GMutex *action_loop_lock= NULL;
+GMutex *pc_hash_mutex= NULL;
+IC_HASHTABLE *glob_pc_hash= NULL;
 static IC_THREADPOOL_STATE *glob_tp_state;
 
 static GOptionEntry entries[] = 
@@ -473,23 +475,16 @@ handle_start(IC_CONNECTION *conn)
                                   pc_start->version_string.str,
                                   NULL)))
     goto error;
-  if (g_spawn_async_with_pipes(working_dir.str,
-                               &arg_vector[0],
-                               NULL, /* environment */
-                               0,    /* Flags */
-                               NULL, NULL, /* Child setup stuff */
-                               &pc_start->pid, /* Pid of program started */
-                               NULL, /* stdin */
-                               NULL, /* stdout */
-                               NULL, /* stderr */
-                               &error)) /* Error object */
-  {
-    /* Unsuccessful start */
-    ret_code= 1;
+  if ((ret_code= start_process(&arg_vector[0],
+                               working_dir.str,
+                               &pc_start->pid)))
     goto error;
-  }
   if (working_dir.str)
     ic_free(working_dir.str);
+  g_mutex_lock(pc_hash_mutex);
+  ret_code= ic_hashtable_insert(glob_pc_hash,
+                                (void*)pc_start, (void*)pc_start);
+  g_mutex_unlock(pc_hash_mutex);
   /* Insert into hash keeping track of programs */
   return 0;
 mem_error:
@@ -790,6 +785,10 @@ int main(int argc, char *argv[])
   if (!(glob_tp_state=
         ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
     return IC_ERROR_MEM_ALLOC;
+  if (!(glob_pc_hash= create_pc_hash()))
+    goto error;
+  if (!(pc_hash_mutex= g_mutex_new()))
+    goto error;
   /*
     First step is to set-up path to where the binaries reside. All binaries
     we control will reside under this directory. Under this directory the
@@ -842,6 +841,11 @@ int main(int argc, char *argv[])
   ret_code= start_connection_loop();
 error:
   glob_tp_state->tp_ops.ic_threadpool_stop(glob_tp_state);
-  ic_free(glob_base_dir_string.str);
+  if (glob_pc_hash)
+    ic_hashtable_destroy(glob_pc_hash);
+  if (pc_hash_mutex)
+    g_mutex_free(pc_hash_mutex);
+  if (glob_base_dir_string.str)
+    ic_free(glob_base_dir_string.str);
   return ret_code;
 }

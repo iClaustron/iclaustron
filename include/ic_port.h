@@ -30,6 +30,8 @@ void ic_free(void *ret_obj);
 
 guint32 ic_get_own_pid();
 int ic_is_process_alive(guint32 pid, const gchar *process_name);
+
+int start_process(gchar **argv, gchar *working_dir, GPid *pid);
 /* iClaustron file routines */
 int ic_write_file(int file_ptr, const gchar *file_name, size_t size);
 int ic_read_file(int file_ptr, gchar *file_name, size_t size, guint64 *len);

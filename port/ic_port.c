@@ -163,6 +163,29 @@ ic_get_own_pid()
   return (guint32)pid;
 }
 
+int start_process(gchar **argv,
+                  gchar *working_dir,
+                  GPid *pid)
+{
+  GError *error;
+
+  if (g_spawn_async_with_pipes(working_dir,
+                               argv,
+                               NULL, /* environment */
+                               0,    /* Flags */
+                               NULL, NULL, /* Child setup stuff */
+                               pid, /* Pid of program started */
+                               NULL, /* stdin */
+                               NULL, /* stdout */
+                               NULL, /* stderr */
+                               &error)) /* Error object */
+  {
+    /* Unsuccessful start */
+    return 1;
+  }
+  return 0;
+}
+
 int run_process(gchar **argv,
                 int *exit_status)
 {
