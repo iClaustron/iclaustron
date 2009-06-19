@@ -449,11 +449,88 @@ create_pc_hash()
 }
 
 static int
+book_process(IC_PC_START *pc_start)
+{
+  IC_PC_START *pc_start_found, *pc_start_check;
+  int ret_code= 0;
+  /*
+    Insert the memory describing the started process in the hash table
+    of all programs we have started, the key is the grid name, the cluster
+    name and the node name. We can also iterate over this hashtable to
+    check all entries. Since there can be multiple threads accessing this
+    hash table concurrently we have to protect access by a mutex.
+    At this point we need to verify that there isn't already a process
+    running with this key, if such a process is already running we
+    need to verify it is still running. Only if no process is running
+    with this key will we continue to process the start of the program.
+  */
+  g_mutex_lock(pc_hash_mutex);
+  if ((pc_start_found= (IC_PC_START*)
+       ic_hashtable_search(glob_pc_hash, (void*)pc_start)))
+  {
+    /*
+      We found a process with the same key, it could be a process which
+      has already stopped so we first verify that the process is still
+      running.
+    */
+    if (!pc_start_found->pid)
+    {
+      /* Someone is already trying to start, we won't continue or attempt */
+      ret_code= IC_ERROR_PC_START_ALREADY_ONGOING;
+    }
+    else
+    {
+      /*
+        Verify that the process is still alive, we retain the mutex since
+        if we come back and the process isn't running, someone else might
+        try to do same thing in parallel and we'll come into a weird
+        situation that requires some complex logic to handle. So since it
+        isn't likely that this mutex is a hotspot we'll retain it for
+        now.
+      */
+      if ((ret_code= ic_is_process_alive(pc_start_found->pid,
+                                         pc_start_found->program_name.str)))
+      {
+        /*
+          Process is dead, we can safely remove it from hash and insert
+          ourselves into the hash.
+        */
+        pc_start_check= ic_hashtable_remove(glob_pc_hash,
+                                            (void*)pc_start_found);
+        g_assert(pc_start_check == pc_start_found);
+        ret_code= ic_hashtable_insert(glob_pc_hash,
+                                      (void*)pc_start, (void*)pc_start);
+        /* Release memory associated with the process */
+        pc_start_found->mc_ptr->mc_ops.ic_mc_free(pc_start_found->mc_ptr);
+      }
+      else
+      {
+        /* Process is still alive, so no use for us to continue */
+        ret_code= IC_ERROR_PC_PROCESS_ALREADY_RUNNING;
+      }
+    }
+  }
+  else
+  {
+    /*
+      No similar process found, we'll insert it into the hash at this point
+      to make sure no one else is attempting to start the process while we
+      are trying.
+    */
+    ret_code= ic_hashtable_insert(glob_pc_hash,
+                                  (void*)pc_start, (void*)pc_start);
+  }
+  g_mutex_unlock(pc_hash_mutex);
+  return ret_code;
+}
+
+static int
 handle_start(IC_CONNECTION *conn)
 {
   gchar **arg_vector;
   int ret_code;
   guint32 i;
+  GPid pid;
   GError *error= NULL;
   IC_STRING working_dir;
   IC_PC_START *pc_start;
@@ -465,27 +542,54 @@ handle_start(IC_CONNECTION *conn)
                    pc_start->mc_ptr,
                    (pc_start->num_parameters+2) * sizeof(gchar*))))
     goto mem_error;
+  /*
+    Prepare the argument vector, first program name and then all the
+    parameters passed to the program.
+  */
   arg_vector[0]= pc_start->program_name.str;
   for (i= 0; i < pc_start->num_parameters; i++)
   {
     arg_vector[i+1]= pc_start->parameters[i].str;
   }
+  /* Book the process in the hash table */
+  if ((ret_code= book_process(pc_start)))
+    goto error;
+  /*
+    Create the working directory which is the base directory
+    (iclaustron_install) with the version number appended and
+    the bin directory where the binaries are placed.
+  */
   if ((ret_code= ic_set_base_path(&working_dir,
                                   glob_base_dir,
                                   pc_start->version_string.str,
                                   NULL)))
     goto error;
+  /*
+    Start the actual using the program name, its arguments and the binary
+    placed in the working bin directory, return the PID of the started
+    process.
+  */
   if ((ret_code= start_process(&arg_vector[0],
                                working_dir.str,
-                               &pc_start->pid)))
+                               &pid)))
+    goto error;
+  /*
+    Verify that a process with this PID still exists and that it's using
+    the correct program name.
+  */
+  if ((ret_code= ic_is_process_alive(pid,
+                                     pc_start->program_name.str)))
     goto error;
   if (working_dir.str)
     ic_free(working_dir.str);
   g_mutex_lock(pc_hash_mutex);
-  ret_code= ic_hashtable_insert(glob_pc_hash,
-                                (void*)pc_start, (void*)pc_start);
+  /*
+    pc_start struct is protected by mutex, as soon as the pid is nonzero
+    anyone can remove it from hash table and release the memory. Thus
+    need to be careful with updating the value from zero.
+  */
+  pc_start->pid= pid;
   g_mutex_unlock(pc_hash_mutex);
-  /* Insert into hash keeping track of programs */
   return 0;
 mem_error:
   ret_code= IC_ERROR_MEM_ALLOC;

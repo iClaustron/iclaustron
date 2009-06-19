@@ -225,10 +225,10 @@ ic_is_process_alive(guint32 pid,
   IC_STRING script_string;
   gchar *script_name;
   int error;
-  gchar buf[64];
+  gchar pid_buf[64];
   gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
 
-  pid_number_str= ic_guint64_str(value, buf, NULL);
+  pid_number_str= ic_guint64_str(value, pid_buf, NULL);
 #ifdef LINUX
   script_name= "check_process.sh";
 #endif

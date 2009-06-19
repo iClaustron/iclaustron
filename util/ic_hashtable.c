@@ -20,6 +20,7 @@
 #include <ic_hashtable.h>
 #include <ic_hashtable_private.h>
 #include <ic_port.h>
+#include <ic_err.h>
 /* System headers */
 #include <math.h>
 /*
@@ -206,7 +207,7 @@ ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v)
     ic_hashtable_expand(h);
   }
   e = (struct entry *)ic_malloc(sizeof(struct entry));
-  if (NULL == e) { --(h->entrycount); return 1; } /*oom*/
+  if (NULL == e) { --(h->entrycount); return IC_ERROR_MEM_ALLOC; } /*oom*/
   e->h = hash(h,k);
   index = indexFor(h->tablelength,e->h);
   e->k = k;

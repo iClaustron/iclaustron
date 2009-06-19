@@ -415,7 +415,6 @@ void ic_print_ic_string(IC_STRING *str)
 
 int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str)
 {
-  guint32 iter_len= 0;
   guint32 first_len= first_str->len;
   guint32 second_len= second_str->len;
   gchar *first_char= first_str->str;
