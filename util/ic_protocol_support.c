@@ -156,19 +156,6 @@ ic_send_program(IC_CONNECTION *conn,
 }
 
 int
-ic_send_error(IC_CONNECTION *conn,
-              const gchar *error_message)
-{
-  int error;
-  gchar error_line[256];
-
-  g_snprintf(error_line, 256, "error: %s", error_message);
-  if ((error= ic_send_with_cr(conn, error_line)))
-    return error;
-  return 0;
-}
-
-int
 ic_send_pid(IC_CONNECTION *conn,
             const GPid pid)
 {

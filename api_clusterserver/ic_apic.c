@@ -4848,7 +4848,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
 {
   int error= 0;
   guint32 old_version= *old_config_version_number;
-  guint32 own_pid;
+  GPid own_pid;
   DEBUG_ENTRY("ic_write_full_config_to_disk");
   /*
    The first step before writing anything is to ensure that the previous
@@ -4943,7 +4943,7 @@ ic_load_config_version(IC_STRING *config_dir,
       if ((error= write_config_version_file(config_dir,
                                             *config_version,
                                             CONFIG_STATE_BUSY,
-                                            ic_get_own_pid())))
+                                            (guint32)ic_get_own_pid())))
         return error;
       return 0;
     }
@@ -4968,7 +4968,7 @@ ic_load_config_version(IC_STRING *config_dir,
     if ((error= write_config_version_file(config_dir,
                                           *config_version,
                                           CONFIG_STATE_BUSY,
-                                          ic_get_own_pid())))
+                                          (guint32)ic_get_own_pid())))
       return error;
     return 0;
   }

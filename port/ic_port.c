@@ -155,17 +155,38 @@ ic_free(void *ret_obj)
   g_free(ret_obj);
 }
 
-guint32
+GPid
 ic_get_own_pid()
 {
-  pid_t pid;
+  GPid pid;
   pid= getpid();
-  return (guint32)pid;
+  return (GPid)pid;
 }
 
-int start_process(gchar **argv,
-                  gchar *working_dir,
-                  GPid *pid)
+void 
+ic_kill_process(GPid pid, gboolean hard_kill)
+{
+  gchar buf[128];
+  gchar *arg_vector[4];
+  GError *error;
+  int i= 0;
+  guint32 len;
+
+  ic_guint64_str((guint64)pid,buf, &len);
+  DEBUG_PRINT(CONFIG_LEVEL, ("Kill process %s\n", buf));
+  arg_vector[i++]="kill";
+  if (hard_kill)
+    arg_vector[i++]="-9";
+  arg_vector[i++]=buf;
+  arg_vector[i]=NULL;
+  g_spawn_async(NULL,&arg_vector[0], NULL,
+                G_SPAWN_SEARCH_PATH,
+                NULL,NULL,&pid,&error);
+}
+
+int ic_start_process(gchar **argv,
+                     gchar *working_dir,
+                     GPid *pid)
 {
   GError *error;
 

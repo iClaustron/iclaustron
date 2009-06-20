@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7048
+#define IC_LAST_ERROR 7050
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -140,8 +140,10 @@ ic_init_error_messages()
     "SSL error on socket";
   ic_error_str[IC_ERROR_PC_START_ALREADY_ONGOING - IC_FIRST_ERROR]=
     "An attempt to start this process is already ongoing";
-  ic_error_str[IC_ERROR_PC_PROCESS_ALREADY_RUNNING - IC_FIRST_ERROR]=
-    "The process is already running, cannot start it";
+  ic_error_str[IC_ERROR_FAILED_TO_STOP_PROCESS - IC_FIRST_ERROR]=
+    "Failed to stop/kill process";
+  ic_error_str[IC_ERROR_PROCESS_STUCK_IN_START_PHASE - IC_FIRST_ERROR]=
+    "Failed to stop/kill process, process stuck in start phase";
 }
 
 void
