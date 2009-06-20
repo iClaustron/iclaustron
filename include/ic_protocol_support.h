@@ -67,20 +67,22 @@ struct ic_pc_key
 };
 typedef struct ic_pc_key IC_PC_KEY;
 
+struct ic_pc_start;
+typedef struct ic_pc_start IC_PC_START;
 struct ic_pc_start
 {
-  IC_STRING version_string;
   IC_PC_KEY key;
+  IC_STRING version_string;
   IC_STRING program_name;
   IC_STRING *parameters;
   IC_MEMORY_CONTAINER *mc_ptr;
+  IC_PC_START *next_pc_start;
   GPid pid;
   guint64 start_id;
   guint64 dyn_trans_index;
   guint32 num_parameters;
   gboolean autorestart;
 };
-typedef struct ic_pc_start IC_PC_START;
 
 struct ic_pc_find
 {

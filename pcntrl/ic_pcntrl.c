@@ -62,6 +62,8 @@ static const gchar *stop_str= "stop";
 static const gchar *kill_str= "kill";
 static const gchar *list_str= "list";
 static const gchar *list_full_str= "list full";
+static const gchar *list_next_str= "list next";
+static const gchar *list_stop_str= "list stop";
 static const gchar *check_status_str= "check status";
 static const gchar *auto_restart_true_str= "autorestart: true";
 static const gchar *auto_restart_false_str= "autorestart: false";
@@ -78,7 +80,6 @@ static guint32 glob_stop_flag= FALSE;
 static IC_STRING glob_base_dir_string;
 static IC_STRING glob_ic_base_dir_string;
 static IC_STRING glob_mysql_base_dir_string;
-static GMutex *action_loop_lock= NULL;
 static GMutex *pc_hash_mutex= NULL;
 static IC_HASHTABLE *glob_pc_hash= NULL;
 static IC_THREADPOOL_STATE *glob_tp_state;
@@ -138,6 +139,22 @@ send_no_reply(IC_CONNECTION *conn)
   return 0;
 }
 
+static IC_PC_START*
+copy_pc_start(IC_PC_START *pc_start,
+              IC_MEMORY_CONTAINER *mc_ptr,
+              gboolean list_full_flag)
+{
+  return NULL;
+}
+
+static int
+send_list_entry(IC_CONNECTION *conn,
+                IC_PC_START *pc_start,
+                gboolean list_full_flag)
+{
+  return 0;
+}
+
 static int
 send_list_stop_reply(IC_CONNECTION *conn)
 {
@@ -185,6 +202,7 @@ get_optional_str(IC_CONNECTION *conn,
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
   IC_INIT_STRING(str, str_ptr, read_size, TRUE);
+  return 0;
 }
 
 static int
@@ -205,6 +223,7 @@ get_str(IC_CONNECTION *conn,
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
   IC_INIT_STRING(str, str_ptr, read_size, TRUE);
+  return 0;
 }
 
 static int
@@ -734,16 +753,79 @@ error:
                           ic_get_error_message(error));
 }
 
+static gboolean
+is_list_match(IC_PC_START *pc_start, IC_PC_FIND *pc_find)
+{
+  return TRUE;
+}
+
 static int
 handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
 {
   IC_PC_FIND *pc_find= NULL;
   int error;
+  IC_PC_START *first_pc_start= NULL;
+  IC_PC_START *last_pc_start= NULL;
+  IC_PC_START *pc_start, *loop_pc_start, *new_pc_start;
+  guint64 current_index, max_index;
+  IC_MEMORY_CONTAINER *mc_ptr;
+  guint32 read_size;
+  gchar read_buf[128];
 
+  if (!(mc_ptr= ic_create_memory_container(32768, 0)))
+    goto mem_error;
   if ((error= rec_optional_key_message(conn, &pc_find)))
     goto error;
-  return 0;
+  
+  g_mutex_lock(pc_hash_mutex);
+  max_index= glob_dyn_trans->dt_ops.ic_get_max_index(glob_dyn_trans);
+  for (current_index= 0; current_index < max_index; current_index++)
+  {
+    if ((error= glob_dyn_trans->dt_ops.ic_get_object(glob_dyn_trans,
+                                                        current_index,
+                                                        (void**)&pc_start)))
+      goto error;
+    if (pc_start && is_list_match(pc_start, pc_find))
+    {
+      if (!(new_pc_start= copy_pc_start(pc_start, mc_ptr, list_full_flag)))
+        goto mem_error;
+      if (!first_pc_start)
+        first_pc_start= new_pc_start;
+      else
+        last_pc_start->next_pc_start= new_pc_start;
+      last_pc_start= new_pc_start;
+    }
+  }
+  g_mutex_unlock(pc_hash_mutex);
+  loop_pc_start= first_pc_start;
+  while (loop_pc_start)
+  {
+    if ((error= send_list_entry(conn, loop_pc_start, list_full_flag)))
+      goto error;
+    if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    {
+      if (ic_check_buf(read_buf, read_size, list_stop_str,
+                       strlen(list_stop_str)))
+        break;
+      if (!(ic_check_buf(read_buf, read_size, list_next_str,
+                         strlen(list_next_str))))
+        goto protocol_error;
+    }
+    loop_pc_start= loop_pc_start->next_pc_start;
+  }
+  if (!(ic_rec_simple_str(conn, ic_empty_string)))
+    goto protocol_error;
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return send_list_stop_reply(conn);
+
+protocol_error:
+  error= IC_PROTOCOL_ERROR;
+  goto error;
+mem_error:
+  error= IC_ERROR_MEM_ALLOC;
 error:
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   return send_error_reply(conn,
                           ic_get_error_message(error));
 }
@@ -901,7 +983,6 @@ run_command_handler(gpointer data)
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_CONNECTION *conn= (IC_CONNECTION*)
     thread_state->ts_ops.ic_thread_get_object(thread_state);
-  guint32 i;
   int ret_code;
 
   thread_state->ts_ops.ic_thread_started(thread_state);

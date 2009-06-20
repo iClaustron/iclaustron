@@ -82,7 +82,7 @@ typedef struct ic_translation_entry IC_TRANSLATION_ENTRY;
 struct ic_dynamic_translation_int
 {
   IC_DYNAMIC_TRANSLATION_OPS dt_ops;
-  IC_DYNAMIC_ARRAY *dyn_array;
+  IC_DYNAMIC_ARRAY_INT *dyn_array;
 };
 typedef struct ic_dynamic_translation_int IC_DYNAMIC_TRANSLATION_INT;
 #endif
