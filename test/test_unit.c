@@ -37,7 +37,8 @@ static int
 do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                    gchar *compare_buf,
                    int buf_size,
-                   GRand *random)
+                   GRand *random,
+                   gchar *read_buf)
 {
   guint32 start, rand_size, remaining_size;
   int ret_code;
@@ -54,6 +55,14 @@ do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                                                        compare_buf+start);
     if (ret_code != 0)
       return ret_code;
+    ret_code= dyn_array->da_ops.ic_read_dynamic_array(dyn_array,
+                                                      start,
+                                                      rand_size,
+                                                      read_buf);
+    if (ret_code != 0)
+      return ret_code;
+    if (memcmp(compare_buf+start, read_buf, rand_size))
+      return 1;
     start+= rand_size;
   }
   return 0;
@@ -63,7 +72,8 @@ static int
 do_insert_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                     gchar *compare_buf,
                     int buf_size,
-                    GRand *random)
+                    GRand *random,
+                    gchar *read_buf)
 {
   guint32 start;
   guint64 curr_size;
@@ -84,6 +94,14 @@ do_insert_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                                                         rand_size);
     if (ret_code != 0)
       return ret_code;
+    ret_code= dyn_array->da_ops.ic_read_dynamic_array(dyn_array,
+                                                      start,
+                                                      rand_size,
+                                                      read_buf);
+    if (ret_code != 0)
+      return ret_code;
+    if (memcmp(compare_buf+start, read_buf, rand_size))
+      return 1;
     start+= rand_size;
   }
   return 0;
@@ -140,7 +158,8 @@ test_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array, int buf_size)
   ret_code= do_insert_dyn_array(dyn_array,
                                 compare_buf,
                                 buf_size,
-                                random);
+                                random,
+                                read_buf);
   if (ret_code)
     goto error;
 
@@ -158,7 +177,8 @@ test_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array, int buf_size)
   ret_code= do_write_dyn_array(dyn_array,
                                compare_buf,
                                buf_size,
-                               random);
+                               random,
+                               read_buf);
   if (ret_code)
     goto error;
 
