@@ -454,7 +454,7 @@ find_pos_ordered_dyn_array(IC_DYNAMIC_ARRAY_INT *dyn_array,
   for (i= 0; i < index_levels; i++)
   {
     index= new_pos >> log_index;
-    new_pos= pos - (index << log_index);
+    new_pos= new_pos - (index << log_index);
     log_index-= log_dynamic;
     if (index >= dynamic_size)
       return 1;
