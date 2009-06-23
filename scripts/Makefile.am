@@ -1,4 +1,4 @@
-## Copyright (C) 2007 iClaustron AB
+## Copyright (C) 2007-2009 iClaustron AB
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation; version 2 of the License.
@@ -14,7 +14,7 @@
 
 ##
 ## This file is used to produce the Makefile.in for this directory
-## This directory is used to build iClaustron Portability Functions
+## This directory is used to build iClaustron Scripts
 ##
 
 dist_bin_SCRIPTS = check_process.sh \

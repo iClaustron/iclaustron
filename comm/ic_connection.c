@@ -864,7 +864,7 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
     guint64 num_sent_bytes= conn->conn_stat.num_sent_bytes;
     guint64 num_sent_square= conn->conn_stat.num_sent_bytes_square_sum;
 
-    i= ic_count_highest_bit(buf_size | 32);
+    i= ic_count_highest_bit((guint32)(buf_size | 32));
     i-= 6;
     num_sent_buf_range= conn->conn_stat.num_sent_buf_range[i];
     conn->error_code= 0;

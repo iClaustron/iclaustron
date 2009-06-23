@@ -91,12 +91,12 @@ ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
   return (gboolean)ic_is_bitmap_set(bitmap, bit_number);
 }
 
+#endif
 /*
   Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and
   no bit set is reported 0, thus we report one more than the bit index
   of the highest bit set
 */
-
 guint32
 ic_count_highest_bit(guint32 bit_var)
 {
@@ -109,5 +109,3 @@ ic_count_highest_bit(guint32 bit_var)
   }
   return bit_inx;
 }
-
-#endif

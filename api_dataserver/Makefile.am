@@ -1,4 +1,4 @@
-## Copyright (C) 2007 iClaustron AB
+## Copyright (C) 2007-2009 iClaustron AB
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation; version 2 of the License.
@@ -19,7 +19,11 @@
 lib_LTLIBRARIES = libic_apid.la
 
 libic_apid_la_SOURCES = ic_apid.c
-libic_apid_la_LIBADD = $(LDADD) ../comm/libic_comm.la \
-                                ../port/libic_port.la \
+
+libic_apid_la_LIBADD = $(LDADD) \
+				../port/libic_port.la \
+				../util/libic_util.la \
+				../comm/libic_comm.la \
 				../api_clusterserver/libic_apic.la
+
 EXTRA_DIST = ic_apid_int.h

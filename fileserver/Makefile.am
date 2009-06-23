@@ -1,4 +1,4 @@
-## Copyright (C) 2007 iClaustron AB
+## Copyright (C) 2007-2009 iClaustron AB
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation; version 2 of the License.
@@ -19,8 +19,9 @@
 
 bin_PROGRAMS = ic_fsd
 ic_fsd_SOURCES = ic_fileserv.c
-ic_fsd_LDADD = $(LDADD) ../comm/libic_comm.la \
-                             ../util/libic_util.la \
-			     ../port/libic_port.la \
-			     ../api_clusterserver/libic_apic.la \
-			     ../api_dataserver/libic_apid.la
+ic_fsd_LDADD = $(LDADD) \
+			../port/libic_port.la \
+			../util/libic_util.la \
+			../comm/libic_comm.la \
+			../api_clusterserver/libic_apic.la \
+			../api_dataserver/libic_apid.la

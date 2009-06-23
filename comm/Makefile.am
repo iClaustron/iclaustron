@@ -1,4 +1,4 @@
-## Copyright (C) 2007, 2008 iClaustron AB
+## Copyright (C) 2007-2009 iClaustron AB
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation; version 2 of the License.
@@ -24,6 +24,10 @@ lib_LTLIBRARIES = libic_comm.la
 
 libic_comm_la_SOURCES = ic_connection.c ic_sock_buf.c ic_connection_supp.c \
                         ic_poll_set.c ic_base64.c
+
+libic_comm_la_LIBADD = $(LDADD) \
+				../port/libic_port.la \
+				../util/libic_util.la
 
 EXTRA_DIST      = ic_poll_set_int.h
 
