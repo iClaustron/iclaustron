@@ -58,12 +58,15 @@
 #define REC_FINAL_CR 2
 
 /* Protocol strings */
+static const gchar *ok_str= "ok";
+static const gchar *no_str= "no";
 static const gchar *start_str= "start";
 static const gchar *stop_str= "stop";
 static const gchar *kill_str= "kill";
 static const gchar *list_str= "list";
 static const gchar *list_full_str= "list full";
 static const gchar *list_next_str= "list next";
+static const gchar *list_node_str= "list node";
 static const gchar *list_stop_str= "list stop";
 static const gchar *check_status_str= "check status";
 static const gchar *auto_restart_true_str= "autorestart: true";
@@ -112,7 +115,7 @@ static int
 send_ok_reply(IC_CONNECTION *conn)
 {
   int error;
-  if ((error= ic_send_with_cr(conn, "ok")) ||
+  if ((error= ic_send_with_cr(conn, ok_str)) ||
       (error= ic_send_empty_line(conn)))
     return error;
   return 0;
@@ -123,7 +126,7 @@ send_ok_pid_reply(IC_CONNECTION *conn, GPid pid)
 {
   int error;
 
-  if ((error= ic_send_with_cr(conn, "ok")) ||
+  if ((error= ic_send_with_cr(conn, ok_str)) ||
       (error= ic_send_pid(conn, pid)) ||
       (error= ic_send_empty_line(conn)))
     return error;
@@ -134,18 +137,10 @@ static int
 send_no_reply(IC_CONNECTION *conn)
 {
   int error;
-  if ((error= ic_send_with_cr(conn, "no")) ||
+  if ((error= ic_send_with_cr(conn, no_str)) ||
       (error= ic_send_empty_line(conn)))
     return error;
   return 0;
-}
-
-static IC_PC_START*
-copy_pc_start(IC_PC_START *pc_start,
-              IC_MEMORY_CONTAINER *mc_ptr,
-              gboolean list_full_flag)
-{
-  return NULL;
 }
 
 static int
@@ -153,6 +148,44 @@ send_list_entry(IC_CONNECTION *conn,
                 IC_PC_START *pc_start,
                 gboolean list_full_flag)
 {
+  gchar start_time_buf[64];
+  gchar process_id_buf[64];
+  gchar num_param_buf[64];
+  gchar *start_time_ptr, *process_id_ptr, *num_param_ptr;
+  guint32 start_time_len, process_id_len, num_param_len;
+  guint32 i;
+  int error;
+
+  start_time_ptr= ic_guint64_str(pc_start->start_id,
+                                 start_time_buf,
+                                 &start_time_len);
+  process_id_ptr= ic_guint64_str((guint64)pc_start->pid,
+                                 process_id_buf,
+                                 &process_id_len);
+  num_param_ptr= ic_guint64_str((guint64)pc_start->num_parameters,
+                                num_param_buf,
+                                &num_param_len);
+
+  if ((error= ic_send_with_cr(conn, list_node_str)) ||
+      (error= ic_send_with_cr(conn, pc_start->key.grid_name.str)) ||
+      (error= ic_send_with_cr(conn, pc_start->key.cluster_name.str)) ||
+      (error= ic_send_with_cr(conn, pc_start->key.node_name.str)) ||
+      (error= ic_send_with_cr(conn, pc_start->program_name.str)) ||
+      (error= ic_send_with_cr(conn, pc_start->version_string.str)) ||
+      (error= ic_send_with_cr(conn, start_time_ptr)) ||
+      (error= ic_send_with_cr(conn, process_id_ptr)) ||
+      (error= ic_send_with_cr(conn, num_param_ptr)))
+    return error;
+  if (list_full_flag)
+  {
+    for (i= 0; i < pc_start->num_parameters; i++)
+    {
+      if ((error= ic_send_with_cr(conn, pc_start->parameters[i].str)))
+        return error;
+    }
+  }
+  if ((error= ic_send_empty_line(conn)))
+    return error;
   return 0;
 }
 
@@ -757,7 +790,101 @@ error:
 static gboolean
 is_list_match(IC_PC_START *pc_start, IC_PC_FIND *pc_find)
 {
+  if (pc_find->key.grid_name.str == NULL)
+    return TRUE;
+  if (pc_find->key.grid_name.len != pc_start->key.grid_name.len ||
+      memcmp(pc_find->key.grid_name.str,
+             pc_start->key.grid_name.str,
+             pc_find->key.grid_name.len) != 0)
+    return FALSE;
+  /* Grid names were equal */
+  if (pc_find->key.cluster_name.str == NULL)
+    return TRUE;
+  if (pc_find->key.cluster_name.len != pc_start->key.cluster_name.len ||
+      memcmp(pc_find->key.cluster_name.str,
+             pc_start->key.cluster_name.str,
+             pc_find->key.cluster_name.len) != 0)
+    return FALSE;
+  /* Cluster names were equal */
+  if (pc_find->key.node_name.str == NULL)
+    return TRUE;
+  if (pc_find->key.node_name.len != pc_start->key.node_name.len ||
+      memcmp(pc_find->key.node_name.str,
+             pc_start->key.node_name.str,
+             pc_find->key.node_name.len) != 0)
+    return FALSE;
+  /* Node names were equal */
   return TRUE;
+}
+
+static IC_PC_START*
+copy_pc_start(IC_PC_START *pc_start,
+              IC_MEMORY_CONTAINER *mc_ptr,
+              gboolean list_full_flag)
+{
+  IC_PC_START *new_pc_start;
+  guint32 i;
+
+  if ((new_pc_start= (IC_PC_START*)
+        mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_PC_START))))
+    goto mem_error;
+  memcpy(new_pc_start, pc_start, sizeof(IC_PC_START));
+  if ((new_pc_start->key.grid_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
+       mc_ptr, new_pc_start->key.grid_name.len + 1)) ||
+      (new_pc_start->key.cluster_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
+       mc_ptr, new_pc_start->key.cluster_name.len + 1)) ||
+      (new_pc_start->key.node_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
+       mc_ptr, new_pc_start->key.node_name.len + 1)) ||
+      (new_pc_start->version_string.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
+       mc_ptr, new_pc_start->version_string.len + 1)) ||
+      (new_pc_start->program_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
+       mc_ptr, new_pc_start->program_name.len + 1)))
+    goto mem_error;
+  memcpy(new_pc_start->key.grid_name.str,
+         pc_start->key.grid_name.str,
+         pc_start->key.grid_name.len);
+  new_pc_start->key.grid_name.is_null_terminated= TRUE;
+
+  memcpy(new_pc_start->key.cluster_name.str,
+         pc_start->key.cluster_name.str,
+         pc_start->key.cluster_name.len);
+  new_pc_start->key.cluster_name.is_null_terminated= TRUE;
+
+  memcpy(new_pc_start->key.node_name.str,
+         pc_start->key.node_name.str,
+         pc_start->key.node_name.len);
+  new_pc_start->key.node_name.is_null_terminated= TRUE;
+
+  memcpy(new_pc_start->version_string.str,
+         pc_start->version_string.str,
+         pc_start->version_string.len);
+  new_pc_start->version_string.is_null_terminated= TRUE;
+
+  memcpy(new_pc_start->program_name.str,
+         pc_start->program_name.str,
+         pc_start->program_name.len);
+  new_pc_start->program_name.is_null_terminated= TRUE;
+
+  if (list_full_flag)
+  {
+    if ((new_pc_start->parameters= (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(
+         mc_ptr, pc_start->num_parameters * sizeof(IC_STRING))))
+      goto mem_error;
+    for (i= 0; i < pc_start->num_parameters; i++)
+    {
+      if ((new_pc_start->parameters[i].str= mc_ptr->mc_ops.ic_mc_calloc(
+           mc_ptr, pc_start->parameters[i].len + 1)))
+        goto mem_error;
+      memcpy(new_pc_start->parameters[i].str,
+             pc_start->parameters[i].str,
+             pc_start->parameters[i].len);
+      new_pc_start->parameters[i].is_null_terminated= TRUE;
+    }
+  }
+  return new_pc_start;
+
+mem_error:
+  return NULL;
 }
 
 static int
@@ -771,7 +898,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   guint64 current_index, max_index;
   IC_MEMORY_CONTAINER *mc_ptr;
   guint32 read_size;
-  gchar read_buf[128];
+  gchar *read_buf;
 
   if (!(mc_ptr= ic_create_memory_container(32768, 0)))
     goto mem_error;
@@ -783,8 +910,8 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   for (current_index= 0; current_index < max_index; current_index++)
   {
     if ((error= glob_dyn_trans->dt_ops.ic_get_object(glob_dyn_trans,
-                                                        current_index,
-                                                        (void**)&pc_start)))
+                                                     current_index,
+                                                     (void**)&pc_start)))
       goto error;
     if (pc_start && is_list_match(pc_start, pc_find))
     {
