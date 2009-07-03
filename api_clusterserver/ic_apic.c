@@ -306,17 +306,42 @@
   4) The fourth step is to set dynamic connection parameters for all
      connections the node is to use. The main use here is to set
      parameter 406 which is the server port number to use. This port
-     number is dynamically allocated by the cluster server.
+     number is dynamically allocated by the server part of a connection
+     using dynamic ports.
+
+     This protocol part is only used when a new dynamic port has been
+     selected.
+
+     What happens here is that the starting node binds to all sockets
+     it is to use, for those where a dynamic port is specified by
+     having server port set to 0, the dynamic port selected needs to
+     be communicated back to the cluster server. This is only required
+     for connections where the node is the server part, the clients
+     needs to have information about this dynamic port to be able to
+     connect to this node.
+
+     In MySQL Cluster only NDB nodes are server nodes and in the case of
+     a connection between two NDB nodes the node with the higher node
+     number is the server part.
+
+     However in iClaustron also clients can communicate and thus also
+     the clients can be server parts. The same principle is still true that
+     the node with the higher node number becomes the server part.
 
      set connection parameter<CR>
+     cluster_id: 0<CR>  This part isn't sent by NDB nodes currently
      node1: 3<CR>
      node2: 4<CR>
      param: 406<CR>
-     value: -4 5024<CR>
+     value: -45024<CR>
      <CR>
 
-     The -4 indicates that it is node number 4 and the minus sign indicates ??,
-     5024 is the port number to use for the client to connect to.
+     The -45024 indicates that the port number to use is 45024, the minus sign
+     is there due to an internal implementation detail in NDB where dynamic
+     port numbers are represented as negative numbers.
+
+     This is currently only used to set parameter 406 Server port of the
+     transporter connection.
 
      send connection parameter reply<CR>
      message: <CR>
@@ -325,6 +350,20 @@
 
      The above is repeated once for each node the starting node is to
      connect to.
+
+     The use of dynamic ports can be advantegous in some networks, it has
+     however two main drawbacks. The first is that in networks with firewalls
+     it is not possible to specify rules of which ports that can be held open
+     for communication to NDB nodes and between iClaustron nodes. The second
+     problem is that a restarted node gets a new port number assigned and
+     thus requires that all nodes are informed of the new port number.
+
+     The solution with static port number has the disadvantage that if this
+     port is used by another application the cluster won't start.
+
+     So thus in the case of a cluster setup with firewalls one should use
+     static port numbers on all nodes and in the case of an open network
+     one should use dynamic ports.
 
   5) The final step is to convert the connection to a NDB API connection.
 
@@ -339,7 +378,36 @@
 
      1 and 1 indicates it is a TCP connection.
 
-  After this the connection is a NDB API connection and follows the NDB API protocol.
+  After this the connection is a NDB API connection and follows the NDB API
+  protocol.
+
+  A node that starts up its connections needs to know the dynamic ports assigned
+  to nodes it needs to connect to. This is required for all connections where the
+  node is the client part. The client part tries to connect to the server part
+  at certain intervals. If this is unsuccessful and we use dynamic ports, we will
+  get the port using the get connection parameter request to the Cluster Server.
+  This will be done on a new cluster server connection if required.
+
+  We will need to adapt the ndbd process here to handle multiple clusters, the
+  problem is that it needs to also send its cluster id to the cluster server in
+  a number of the vital NDB MGM protocol actions, the get connection is one
+  such occurrence.
+
+  The protocol actions to get a dynamic port by using get connection
+  parameter is as follows:
+
+     get connection parameter<CR>
+     cluster_id: 0<CR>  This part isn't sent by NDB nodes currently
+     node1: 3<CR>       The first node is the server part
+     node2: 4<CR>       The second node is the client part
+     param: 406<CR>
+     <CR>
+
+     In response to this message the cluster server will respond as follows:
+     get connection parameter reply<CR>
+     value: -45024<CR>   A negative number indicates a dynamic port
+     result: Ok<CR>
+     <CR>
 
   General description of architecture of Cluster Servers
   ------------------------------------------------------
@@ -488,6 +556,7 @@ static const gchar *get_mgmd_nodeid_reply_str= "get mgmd nodeid reply";
 static const gchar *set_connection_parameter_str= "set connection parameter";
 static const gchar *set_connection_parameter_reply_str=
   "set connection parameter reply";
+static const gchar *message_str= "message: ";
 static const gchar *convert_transporter_str= "transporter connect";
 static const gchar *report_event_str= "report event";
 static const gchar *report_event_reply_str= "report event reply";
@@ -7080,14 +7149,14 @@ static gchar* rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *run_obj,
  * This method implements the high level parts of the NDB Management Server
  * protocol. For each action that is available there is a method handling
  * that action. These are the handler routines:
- * check_config_request: Check for configuration request and call
- *                       handle_config_request in case it is
+ * check_config_req: Check for configuration request and call
+ *                   handle_config_request in case it is
  * handle_get_cluster_list: Request to get a list of cluster id and names
  * handle_report_event: Report an event from the client to the Cluster Server
- * handle_get_mgmd_nodeid_request: Get node id of Cluster Server
+ * handle_get_mgmd_nodeid_req: Get node id of Cluster Server
  * handle_convert_transporter_request: Convert socket to NDB Protocol
- * handle_set_connection_parameter_request: Set connection parameters for new
- *   new NDB Protocol socket
+ * handle_set_connection_parameter_req: Set connection parameters for new
+ *   NDB Protocol socket
  * handle_config_request: A request from the client to get a cluster
  *   configuration
  *
@@ -7142,24 +7211,23 @@ static int start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER* run_obj,
                                        guint32 thread_id);
 static gpointer run_cluster_server_thread(gpointer data);
 
-static int check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                               IC_CONNECTION *conn,
-                               IC_RC_PARAM *param,
-                               gchar *read_buf,
-                               guint32 read_size,
-                               int *state,
-                               gboolean *handled_request);
+static int check_config_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                            IC_CONNECTION *conn,
+                            IC_RC_PARAM *param,
+                            gchar *read_buf,
+                            guint32 read_size,
+                            gboolean *handled_request);
 
 static int check_for_stopped_rcs_threads(void *obj, int not_used);
 
 static int handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                    IC_CONNECTION *conn);
 static int handle_report_event(IC_CONNECTION *conn);
-static int handle_get_mgmd_nodeid_request(IC_CONNECTION *conn,
+static int handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
                                           guint32 cs_nodeid);
-static int handle_set_connection_parameter_request(IC_CONNECTION *conn,
-                                                   guint32 cs_nodeid,
-                                                   guint32 client_nodeid);
+static int handle_set_connection_parameter_req(IC_CONNECTION *conn,
+                                               guint32 cs_nodeid,
+                                               guint32 client_nodeid);
 static int handle_convert_transporter_request(IC_CONNECTION *conn,
                                               guint32 client_nodeid);
 static int handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -7478,15 +7546,18 @@ run_cluster_server_thread(gpointer data)
           state= WAIT_GET_NODEID;
           break;
         }
-        if ((error= check_config_request(run_obj, conn, &param,
-                                         read_buf, read_size, &state,
-                                         &handled_request)))
+        /* NDB nodes will not ask for a Cluster list first */
+        if ((error= check_config_req(run_obj, conn, &param,
+                                     read_buf, read_size, &handled_request)))
         {
           error_line= __LINE__;
           goto error;
         }
         if (handled_request)
+        {
+          state= WAIT_GET_MGMD_NODEID;
           break;
+        }
         if (!ic_check_buf(read_buf, read_size, report_event_str,
                           strlen(report_event_str)))
         {
@@ -7503,54 +7574,62 @@ run_cluster_server_thread(gpointer data)
         error_line= __LINE__;
         goto error;
       case WAIT_GET_NODEID:
-        if ((error= check_config_request(run_obj, conn, &param,
-                                         read_buf, read_size, &state,
-                                         &handled_request)))
+        if ((error= check_config_req(run_obj, conn, &param,
+                                     read_buf, read_size, &handled_request)))
         {
           error_line= __LINE__;
           goto error;
         }
         if (handled_request)
+        {
+          state= WAIT_GET_MGMD_NODEID;
           break;
+        }
         error_line= __LINE__;
         goto error;
       case WAIT_GET_MGMD_NODEID:
         if (!ic_check_buf(read_buf, read_size, get_mgmd_nodeid_str,
                           strlen(get_mgmd_nodeid_str)))
         {
-          if ((error= handle_get_mgmd_nodeid_request(conn,
-                                                     run_obj->cs_nodeid)))
+          if ((error= handle_get_mgmd_nodeid_req(conn,
+                                                 run_obj->cs_nodeid)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
-            ("Error from handle_get_mgmd_nodeid_request, code = %u", error));
+            ("Error from handle_get_mgmd_nodeid_req, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
           state= WAIT_SET_CONNECTION;
           break;
         }
-        if ((error= check_config_request(run_obj, conn, &param,
-                                         read_buf, read_size, &state,
-                                         &handled_request)))
+        /*
+          iClaustron nodes can ask for more than one Cluster config before
+           proceeding to get management node part of the protocol
+        */
+        if ((error= check_config_req(run_obj, conn, &param,
+                                     read_buf, read_size, &handled_request)))
         {
           error_line= __LINE__;
           goto error;
         }
         if (handled_request)
+        {
+          state= WAIT_GET_MGMD_NODEID;
           break;
+        }
         error_line= __LINE__;
         goto error;
       case WAIT_SET_CONNECTION:
         if (!ic_check_buf(read_buf, read_size, set_connection_parameter_str,
                           strlen(set_connection_parameter_str)))
         {
-          if ((error= handle_set_connection_parameter_request(
+          if ((error= handle_set_connection_parameter_req(
                             conn,
                             run_obj->cs_nodeid,
                             (guint32)param.client_nodeid)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
-    ("Error from handle_set_connection_parameter_request, code = %u", error));
+    ("Error from handle_set_connection_parameter_req, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
@@ -7599,13 +7678,12 @@ error:
 
 /* Check for configuration request, possible in multiple states */
 static int
-check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                     IC_CONNECTION *conn,
-                     IC_RC_PARAM *param,
-                     gchar *read_buf,
-                     guint32 read_size,
-                     int *state,
-                     gboolean *handled_request)
+check_config_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                 IC_CONNECTION *conn,
+                 IC_RC_PARAM *param,
+                 gchar *read_buf,
+                 guint32 read_size,
+                 gboolean *handled_request)
 {
   int error;
 
@@ -7621,7 +7699,6 @@ check_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       return error;
     }
     *handled_request= TRUE;
-    *state= WAIT_GET_MGMD_NODEID;
   }
   return 0;
 }
@@ -7752,12 +7829,12 @@ error:
 
 /* Handle get mgmd nodeid request protocol action */
 static int
-handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
+handle_get_mgmd_nodeid_req(IC_CONNECTION *conn, guint32 cs_nodeid)
 {
   int error;
   gchar cs_nodeid_buf[32];
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
-  DEBUG_ENTRY("handle_get_mgmd_nodeid_request");
+  DEBUG_ENTRY("handle_get_mgmd_nodeid_req");
 
   if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
       (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
@@ -7773,26 +7850,31 @@ handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
 
 /* Handle set connection parameter request protocol action */
 static int
-handle_set_connection_parameter_request(IC_CONNECTION *conn,
-                                        guint32 cs_nodeid,
-                                        guint32 client_nodeid)
+handle_set_connection_parameter_req(IC_CONNECTION *conn,
+                                    guint32 cs_nodeid,
+                                    guint32 client_nodeid)
 {
   int error;
   gchar cs_nodeid_buf[32];
   gchar client_nodeid_buf[32];
-  DEBUG_ENTRY("handle_set_connection_parameter_request");
+  DEBUG_ENTRY("handle_set_connection_parameter_req");
 
   g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
   g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
   if ((error= ic_rec_simple_str(conn, client_nodeid_buf)) ||
       (error= ic_rec_simple_str(conn, cs_nodeid_buf)) ||
       (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
+      (error= ic_send_with_cr(conn, message_str)) ||
       (error= ic_send_with_cr(conn, result_ok_str)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));
     DEBUG_RETURN(error);
   }
+  /*
+    We have now received a new port number to use for the nodes the
+    starting node will communicate with.
+  */
   DEBUG_RETURN(0);
 }
 
