@@ -59,7 +59,6 @@
 
 /* Protocol strings */
 static const gchar *ok_str= "ok";
-static const gchar *no_str= "no";
 static const gchar *start_str= "start";
 static const gchar *stop_str= "stop";
 static const gchar *kill_str= "kill";
@@ -68,7 +67,6 @@ static const gchar *list_full_str= "list full";
 static const gchar *list_next_str= "list next";
 static const gchar *list_node_str= "list node";
 static const gchar *list_stop_str= "list stop";
-static const gchar *check_status_str= "check status";
 static const gchar *auto_restart_true_str= "autorestart: true";
 static const gchar *auto_restart_false_str= "autorestart: false";
 static const gchar *num_parameters_str= "num parameters: ";
@@ -134,16 +132,6 @@ send_ok_pid_reply(IC_CONNECTION *conn, GPid pid)
 }
 
 static int
-send_no_reply(IC_CONNECTION *conn)
-{
-  int error;
-  if ((error= ic_send_with_cr(conn, no_str)) ||
-      (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
-}
-
-static int
 send_list_entry(IC_CONNECTION *conn,
                 IC_PC_START *pc_start,
                 gboolean list_full_flag)
@@ -194,25 +182,6 @@ send_list_stop_reply(IC_CONNECTION *conn)
 {
   int error;
   if ((error= ic_send_with_cr(conn, "list stop")) ||
-      (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
-}
-
-static int
-send_node_stopped(IC_CONNECTION *conn,
-                  const gchar *grid_name,
-                  const gchar *cluster_name,
-                  const gchar *node_name,
-                  const gchar *program_name,
-                  const gchar *version_string)
-{
-  int error;
-
-  if ((error= ic_send_with_cr(conn, "node stopped")) ||
-      (error= ic_send_key(conn, grid_name, cluster_name, node_name)) ||
-      (error= ic_send_program(conn, program_name)) ||
-      (error= ic_send_version(conn, version_string)) ||
       (error= ic_send_empty_line(conn)))
     return error;
   return 0;
@@ -385,7 +354,7 @@ init_pc_find(IC_MEMORY_CONTAINER **mc_ptr,
 }
 
 static int
-rec_stop_message(IC_CONNECTION *conn,
+rec_key_message(IC_CONNECTION *conn,
                  IC_PC_FIND **pc_find)
 {
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
@@ -702,7 +671,7 @@ handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
   int loop_count= 0;
   gchar *program_name;
 
-  if ((error= rec_stop_message(conn, &pc_find)))
+  if ((error= rec_key_message(conn, &pc_find)))
     goto error;
 
 try_again:
@@ -897,6 +866,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   IC_PC_START *pc_start, *loop_pc_start, *new_pc_start;
   guint64 current_index, max_index;
   IC_MEMORY_CONTAINER *mc_ptr;
+  void *void_pc_start;
   guint32 read_size;
   gchar *read_buf;
 
@@ -911,8 +881,9 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   {
     if ((error= glob_dyn_trans->dt_ops.ic_get_object(glob_dyn_trans,
                                                      current_index,
-                                                     (void**)&pc_start)))
+                                                     &void_pc_start)))
       goto error;
+    pc_start= (IC_PC_START*)void_pc_start;
     if (pc_start && is_list_match(pc_start, pc_find))
     {
       if (!(new_pc_start= copy_pc_start(pc_start, mc_ptr, list_full_flag)))
@@ -958,12 +929,6 @@ error:
                           ic_get_error_message(error));
 }
 
-static int
-handle_check_status(IC_CONNECTION *conn)
-{
-  return 0;
-}
-
 /*
   The command handler is a thread that is executed on behalf of one of the
   Cluster Managers in a Grid.
@@ -982,6 +947,9 @@ handle_check_status(IC_CONNECTION *conn)
   Process Controller performs automatically is to restart a program if
   it discovers it has died when the autorestart flag is set to true in
   the start command.
+
+  Cluster Servers use the Cluster Name * to indicate that they are part
+  of all clusters inside a grid. The same goes for Cluster Managers.
 
   START PROTOCOL
   --------------
@@ -1074,33 +1042,6 @@ handle_check_status(IC_CONNECTION *conn)
   send the Process Controller will respond with:
   Line 1: list stop
   Line 2: Empty Line
-
-  CHECK STATUS PROTOCOL
-  ---------------------
-  The Cluster Manager can also ask the Process Controller if any events of
-  interest has occurred since last time the Cluster Manager contacted the
-  Process Controller. At this moment the only interesting event to report
-  is a program that has stopped.
-
-  The protocol is:
-  Line 1: check status
-  Line 2: Grid Name (optional)
-  Line 3: Cluster Name (optional)
-  Line 4: Node Name (optional)
-  Line 5: Empty Line
-
-  The response is:
-  Line 1: no
-  Line 2: Empty Line
-  when no new events have occurred
-
-  Line 1: node stopped
-  Line 2: Grid Name
-  Line 3: Cluster Name
-  Line 4: Node Name
-  Line 5: Program Name
-  Line 6: Version string
-  Line 7: Empty Line
 */
 
 static gpointer
@@ -1142,24 +1083,23 @@ run_command_handler(gpointer data)
       if ((ret_code= handle_list(conn, FALSE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, check_status_str,
-                          strlen(check_status_str)))
+    else if (ic_check_buf(read_buf, read_size, list_full_str,
+                          strlen(list_full_str)))
     {
       if ((ret_code= handle_list(conn, TRUE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, list_full_str,
-                          strlen(list_full_str)))
-    {
-      if ((ret_code= handle_check_status(conn)))
-        break;
-    }
     else if (read_size)
     {
-      ret_code= 0;
+      read_buf[read_size]= 0;
+      printf("Received a message not expected: %s\n", read_buf);
+      ret_code= IC_PROTOCOL_ERROR;
+      /* Closing connection */
       break;
     }
   }
+  if (ret_code)
+    ic_print_error(ret_code);
   conn->conn_op.ic_free_connection(conn);
   thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;

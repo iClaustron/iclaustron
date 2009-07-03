@@ -275,6 +275,7 @@
 
      get config<CR>
      version: 327948<CR>
+     nodetype: 1<CR>
      <CR>
 
      In response to this the cluster server will send the configuration
@@ -288,6 +289,57 @@
      Content-Transfer-Encoding: base64<CR>
      <CR>
      base64-encoded string with length as provided above
+     <CR>
+
+  3) The third step is to get the node id of the management server.
+
+     get mgmd nodeid<CR>
+     <CR>
+
+     In response to this the cluster server responds with its nodeid
+     in the following manner:
+
+     get mgmd nodeid reply<CR>
+     nodeid: 1<CR>
+     <CR>
+
+  4) The fourth step is to set dynamic connection parameters for all
+     connections the node is to use. The main use here is to set
+     parameter 406 which is the server port number to use. This port
+     number is dynamically allocated by the cluster server.
+
+     set connection parameter<CR>
+     node1: 3<CR>
+     node2: 4<CR>
+     param: 406<CR>
+     value: -4 5024<CR>
+     <CR>
+
+     The -4 indicates that it is node number 4 and the minus sign indicates ??,
+     5024 is the port number to use for the client to connect to.
+
+     send connection parameter reply<CR>
+     message: <CR>
+     result: Ok<CR>
+     <CR>
+
+     The above is repeated once for each node the starting node is to
+     connect to.
+
+  5) The final step is to convert the connection to a NDB API connection.
+
+     transporter connect<CR>
+     3 1<CR>
+     <CR>
+     
+     3 and 1 here are the node ids involved in the connection.
+
+     Response:
+     1 1<CR>
+
+     1 and 1 indicates it is a TCP connection.
+
+  After this the connection is a NDB API connection and follows the NDB API protocol.
 
   General description of architecture of Cluster Servers
   ------------------------------------------------------
@@ -1028,6 +1080,16 @@ name_out_of_range(int id)
   variable only accessible from a few methods in this file.
 */
 
+#define ALL_CLIENT_TYPES    ((1 << IC_CLUSTER_SERVER_TYPE) + \
+                            (1 << IC_CLIENT_TYPE) + \
+                            (1 << IC_CLUSTER_MGR_TYPE) + \
+                            (1 << IC_SQL_SERVER_TYPE) + \
+                            (1 << IC_REP_SERVER_TYPE) + \
+                            (1 << IC_FILE_SERVER_TYPE) + \
+                            (1 << IC_RESTORE_TYPE))
+
+#define ALL_NODE_TYPES (ALL_CLIENT_TYPES + (1 << IC_DATA_SERVER_TYPE))
+
 static void
 init_config_parameters()
 {
@@ -1095,9 +1157,7 @@ init_config_parameters()
                        0, IC_NOT_CHANGEABLE);
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
-  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
-                            (1 << IC_CLIENT_TYPE) +
-                            (1 << IC_DATA_SERVER_TYPE);
+  conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->config_entry_description=
   "Node id";
 
@@ -1106,9 +1166,7 @@ init_config_parameters()
   conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
-  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
-                            (1 << IC_CLIENT_TYPE) +
-                            (1 << IC_DATA_SERVER_TYPE);
+  conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->config_entry_description=
   "Hostname of the node";
 
@@ -1118,8 +1176,7 @@ init_config_parameters()
   conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
-  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
-                            (1 << IC_DATA_SERVER_TYPE);
+  conf_entry->config_types= (1 << IC_DATA_SERVER_TYPE);
   conf_entry->config_entry_description=
   "Data directory of the node";
 
@@ -1127,9 +1184,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry, network_buffer_size, IC_UINT32,
                             12 * 1024 * 1024,
                             IC_ONLINE_CHANGE);
-  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
-                            (1 << IC_CLIENT_TYPE) +
-                            (1 << IC_DATA_SERVER_TYPE);
+  conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->config_entry_description=
   "The total size of the network buffers used in the node";
 
@@ -1138,9 +1193,8 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(IC_NODE_NAME, 16);
   IC_SET_DATA_SERVER_STRING(conf_entry, node_name, IC_CLUSTER_RESTART_CHANGE);
   conf_entry->is_only_iclaustron= TRUE;
-  conf_entry->config_types= (1 << IC_CLUSTER_SERVER_TYPE) +
-                            (1 << IC_CLIENT_TYPE) +
-                            (1 << IC_DATA_SERVER_TYPE);
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->is_derived_default= TRUE;
   conf_entry->config_entry_description=
   "Node name";
 
@@ -1855,16 +1909,14 @@ init_config_parameters()
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_rank,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
-  conf_entry->config_types= (1 << IC_CLIENT_TYPE) +
-                            (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->config_types= ALL_CLIENT_TYPES;
   conf_entry->config_entry_description=
   "Rank in resolving network partition of the client";
 
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_TIMER, 121);
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_timer,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
-  conf_entry->config_types= (1 << IC_CLIENT_TYPE) +
-                            (1 << IC_CLUSTER_SERVER_TYPE);
+  conf_entry->config_types= ALL_CLIENT_TYPES;
   conf_entry->config_entry_description=
   "Time in ms waiting for resolve before crashing";
 
@@ -2232,9 +2284,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, port_number, IC_UINT32,
                        DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
-  conf_entry->config_types= (1 << IC_CLIENT_TYPE) +
-                            (1 << IC_CLUSTER_SERVER_TYPE) +
-                            (1 << IC_DATA_SERVER_TYPE);
+  conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->is_not_sent= TRUE;
   conf_entry->config_entry_description=
   "Port number";
@@ -3240,26 +3290,27 @@ key_type_error(IC_INT_API_CONFIG_SERVER *apic,
 
   The final step is the actual protocol part to retrieve the configuration
   which are implemented by the protocol support methods:
-    send_get_nodeid
-    send_get_config
-    rec_get_nodeid
-    rec_get_config
-  As part of the rec_get_config method we call the translate_config method
-  which is implemented in the other Configuration reader client module.
+    send_get_nodeid_req
+    send_get_config_req
+    rec_get_nodeid_reply
+    rec_get_config_reply
+  As part of the rec_get_config_reply method we call the translate_config
+  method which is implemented in the other Configuration reader client
+  module.
 */
 static int get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
                            IC_CLUSTER_CONNECT_INFO **clu_infos);
-static int send_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
-                           IC_CONNECTION *conn,
-                           guint32 cluster_id);
-static int send_get_config(IC_INT_API_CONFIG_SERVER *apic,
-                           IC_CONNECTION *conn);
-static int rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
-                          IC_CONNECTION *conn,
-                          guint32 cluster_id);
-static int rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
-                          IC_CONNECTION *conn,
-                          guint32 cluster_id);
+static int send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
+                               IC_CONNECTION *conn,
+                               guint32 cluster_id);
+static int send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
+                               IC_CONNECTION *conn);
+static int rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                IC_CONNECTION *conn,
+                              guint32 cluster_id);
+static int rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                IC_CONNECTION *conn,
+                                guint32 cluster_id);
 
 static int connect_api_connections(IC_INT_API_CONFIG_SERVER *apic,
                                    IC_CONNECTION **conn_ptr);
@@ -3342,10 +3393,10 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   {
     if (!apic->conf_objects[cluster_id])
       continue;
-    if ((error= send_get_nodeid(apic, conn, cluster_id)) ||
-        (error= rec_get_nodeid(apic, conn, cluster_id)) ||
-        (error= send_get_config(apic, conn)) ||
-        (error= rec_get_config(apic, conn, cluster_id)))
+    if ((error= send_get_nodeid_req(apic, conn, cluster_id)) ||
+        (error= rec_get_nodeid_reply(apic, conn, cluster_id)) ||
+        (error= send_get_config_req(apic, conn)) ||
+        (error= rec_get_config_reply(apic, conn, cluster_id)))
       goto error;
   }
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
@@ -3452,9 +3503,9 @@ error:
 }
 
 static int
-send_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
-                IC_CONNECTION *conn,
-                guint32 cluster_id)
+send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
+                    IC_CONNECTION *conn,
+                    guint32 cluster_id)
 {
   gchar version_buf[128];
   gchar nodeid_buf[32];
@@ -3488,33 +3539,37 @@ send_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
       ic_send_with_cr(conn, log_event_str) ||
       (apic->use_ic_cs &&
       ic_send_with_cr(conn, cluster_id_buf)) ||
-      ic_send_with_cr(conn, ic_empty_string))
+      ic_send_empty_line(conn))
     return conn->conn_op.ic_get_error_code(conn);
   return 0;
 }
 
 static int
-send_get_config(IC_INT_API_CONFIG_SERVER *apic,
-                IC_CONNECTION *conn)
+send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
+                    IC_CONNECTION *conn)
 {
-  gchar version_buf[128];
-  gchar buf[128];
   guint64 version_no;
+  guint32 node_type= 1;
+  gchar nodetype_buf[64];
+  gchar version_buf[64];
+  gchar buf[64];
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
-  g_snprintf(version_buf, 32, "%s%s", version_str,
+  g_snprintf(version_buf, 64, "%s%s", version_str,
              ic_guint64_str(version_no, buf, NULL));
+  g_snprintf(nodetype_buf, 64, "%s%u", nodetype_str, node_type);
   if (ic_send_with_cr(conn, get_config_str) ||
       ic_send_with_cr(conn, version_buf) ||
-      ic_send_with_cr(conn, ic_empty_string))
+      ic_send_with_cr(conn, nodetype_buf) ||
+      ic_send_empty_line(conn))
     return conn->conn_op.ic_get_error_code(conn);
   return 0;
 }
 
 static int
-rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
-               IC_CONNECTION *conn,
-               guint32 cluster_id)
+rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                     IC_CONNECTION *conn,
+                     guint32 cluster_id)
 {
   gchar *read_buf;
   guint32 read_size;
@@ -3597,9 +3652,9 @@ rec_get_nodeid(IC_INT_API_CONFIG_SERVER *apic,
 }
 
 static int
-rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
-               IC_CONNECTION *conn,
-               guint32 cluster_id)
+rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
+                     IC_CONNECTION *conn,
+                     guint32 cluster_id)
 {
   gchar *read_buf;
   guint32 read_size;
@@ -3698,11 +3753,6 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
         state= WAIT_EMPTY_RETURN_STATE;
         break;
       case WAIT_EMPTY_RETURN_STATE:
-      /*
-      case WAIT_LAST_EMPTY_RETURN_STATE:
-        This state is currently not used,
-        removed from NDB Management Protocol
-      */
         /*
           Receive:
           <CR>
@@ -3737,7 +3787,7 @@ rec_get_config(IC_INT_API_CONFIG_SERVER *apic,
           DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding"));
           error= translate_config(apic, cluster_id,
                                   config_buf, config_size);
-          goto end;
+          state= WAIT_LAST_EMPTY_RETURN_STATE;
         }
         else if (read_size != CONFIG_LINE_LEN)
         {
@@ -3865,7 +3915,7 @@ count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
   It is an implementation of the configuration reader interface which is
   implemented by a set of methods defined below.
 */
-static int check_node_name(void *current_config, IC_MEMORY_CONTAINER *mc_ptr);
+static int ensure_node_name_set(void *current_config, IC_MEMORY_CONTAINER *mc_ptr);
 
 static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
@@ -3926,40 +3976,22 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
       if (data_server_conf->data_server_checkpoint_path == NULL)
         data_server_conf->data_server_checkpoint_path=
           data_server_conf->filesystem_path;
-      if ((error= check_node_name(current_config, ic_conf->perm_mc_ptr)))
+      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
         return error;
       break;
     }
     case IC_CLIENT_TYPE:
+    case IC_CLUSTER_SERVER_TYPE:
+    case IC_FILE_SERVER_TYPE:
+    case IC_REP_SERVER_TYPE:
+    case IC_SQL_SERVER_TYPE:
+    case IC_RESTORE_TYPE:
+    case IC_CLUSTER_MGR_TYPE:
       mandatory_bits= client_mandatory_bits;
       if (((IC_CLIENT_CONFIG*)current_config)->mandatory_bits !=
           client_mandatory_bits)
         goto mandatory_error;
-      if ((error= check_node_name(current_config, ic_conf->perm_mc_ptr)))
-        return error;
-      break;
-    case IC_CLUSTER_SERVER_TYPE:
-      mandatory_bits= cluster_server_mandatory_bits;
-      if (((IC_CLUSTER_SERVER_CONFIG*)current_config)->mandatory_bits !=
-          cluster_server_mandatory_bits)
-        goto mandatory_error;
-      if ((error= check_node_name(current_config, ic_conf->perm_mc_ptr)))
-        return error;
-      break;
-    case IC_REP_SERVER_TYPE:
-      mandatory_bits= rep_server_mandatory_bits;
-      if (((IC_REP_SERVER_CONFIG*)current_config)->client_conf.mandatory_bits
-          != rep_server_mandatory_bits)
-        goto mandatory_error;
-      if ((error= check_node_name(current_config, ic_conf->perm_mc_ptr)))
-        return error;
-      break;
-    case IC_SQL_SERVER_TYPE:
-      mandatory_bits= sql_server_mandatory_bits;
-      if (((IC_SQL_SERVER_CONFIG*)current_config)->client_conf.mandatory_bits
-            != sql_server_mandatory_bits)
-        goto mandatory_error;
-      if ((error= check_node_name(current_config, ic_conf->perm_mc_ptr)))
+      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
         return error;
       break;
     case IC_COMM_TYPE:
@@ -4013,7 +4045,7 @@ mandatory_error:
 }
 
 static int
-check_node_name(void *current_config, IC_MEMORY_CONTAINER *mc_ptr)
+ensure_node_name_set(void *current_config, IC_MEMORY_CONTAINER *mc_ptr)
 {
   IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
   gchar node_name_buffer[128];
@@ -7070,7 +7102,7 @@ static gchar* rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *run_obj,
  * rec_get_nodeid_req: 
  * send_get_nodeid_reply:
  * rec_get_config_req:
- * send_config_reply:
+ * send_get_config_reply:
  *
  * All of the above protocol methods are fairly simple using the standard
  * techniques used in the iClaustron protocol methods.
@@ -7140,9 +7172,10 @@ static int rec_get_nodeid_req(IC_CONNECTION *conn,
                               guint64 *node_type,
                               guint64 *cluster_id);
 static int send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id);
-static int rec_get_config_req(IC_CONNECTION *conn, guint64 version_number);
-static int send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
-                             guint32 config_len);
+static int rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
+                              guint64 node_type);
+static int send_get_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
+                                 guint32 config_len);
 
 static int ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
                                 guint8 **base64_array,
@@ -7688,7 +7721,7 @@ handle_report_event(IC_CONNECTION *conn)
     PROTOCOL_CONN_CHECK_ERROR_GOTO(error);
   if ((error= ic_send_with_cr(conn, report_event_reply_str)) ||
       (error= ic_send_with_cr(conn, result_ok_str)) ||
-      (error= ic_send_with_cr(conn, ic_empty_string)))
+      (error= ic_send_empty_line(conn)))
     goto error;
   report_node_id= num_array[0] >> 16;
   g_assert((num_array[0] & 0xFFFF) == 59);
@@ -7729,7 +7762,7 @@ handle_get_mgmd_nodeid_request(IC_CONNECTION *conn, guint32 cs_nodeid)
   if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
       (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
-      (error= ic_send_with_cr(conn, ic_empty_string)))
+      (error= ic_send_empty_line(conn)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));
@@ -7833,7 +7866,8 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     param->client_nodeid= param->node_number;
   }
   if ((ret_code= send_get_nodeid_reply(conn, param->client_nodeid)) ||
-      (ret_code= rec_get_config_req(conn, param->version_number)) ||
+      (ret_code= rec_get_config_req(conn, param->version_number,
+                                    param->node_type)) ||
       (ret_code= ic_get_base64_config(run_obj->conf_objects[param->cluster_id],
                                       &config_base64_str,
                                       &config_len,
@@ -7843,7 +7877,7 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Converted configuration to a base64 representation"));
-  ret_code= send_config_reply(conn, (gchar*)config_base64_str, config_len);
+  ret_code= send_get_config_reply(conn, (gchar*)config_base64_str, config_len);
   ic_free((gchar*)config_base64_str);
   DEBUG_RETURN(ret_code);
 }
@@ -8003,19 +8037,21 @@ send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
   if (ic_send_with_cr(conn, get_nodeid_reply_str) ||
       ic_send_with_cr(conn, nodeid_buf) ||
       ic_send_with_cr(conn, result_ok_str) ||
-      ic_send_with_cr(conn, ic_empty_string))
+      ic_send_empty_line(conn))
     error= conn->conn_op.ic_get_error_code(conn);
   DEBUG_RETURN(error);
 }
 
 /* Handle receive get configuration request protocol action */
 static int
-rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
+rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
+                   guint64 node_type)
 {
   gchar *read_buf;
   guint32 read_size;
   guint32 state= GET_CONFIG_REQ_STATE;
   guint64 read_version_num;
+  guint64 read_node_type;
   int error;
   DEBUG_ENTRY("rec_get_config_req");
 
@@ -8041,6 +8077,17 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
             ("Protocol error in version request state"));
           PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
         }
+        state= NODETYPE_REQ_STATE;
+        break;
+      case NODETYPE_REQ_STATE:
+        if (ic_check_buf_with_int(read_buf, read_size, nodetype_str,
+                                  NODETYPE_REQ_LEN, &read_node_type) ||
+            (node_type != read_node_type))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in nodetype request state"));
+          PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
+        }
         state= EMPTY_STATE;
         break;
       case EMPTY_STATE:
@@ -8063,12 +8110,12 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number)
 
 /* Handle send configuration reply protocol action */
 static int
-send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
-                  guint32 config_len)
+send_get_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
+                      guint32 config_len)
 {
   gchar content_buf[64];
   int error= 0;
-  DEBUG_ENTRY("send_config_reply");
+  DEBUG_ENTRY("send_get_config_reply");
  
   g_snprintf(content_buf, 64, "%s%u", content_len_str, config_len);
   if (ic_send_with_cr(conn, get_config_reply_str) ||
@@ -8076,9 +8123,10 @@ send_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
       ic_send_with_cr(conn, content_buf) ||
       ic_send_with_cr(conn, octet_stream_str) ||
       ic_send_with_cr(conn, content_encoding_str) ||
-      ic_send_with_cr(conn, ic_empty_string) ||
+      ic_send_empty_line(conn) ||
       conn->conn_op.ic_write_connection(conn, (const void*)config_base64_str,
-                                        config_len, 1))
+                                        config_len, 1) ||
+      ic_send_empty_line(conn))
     error= conn->conn_op.ic_get_error_code(conn);
   DEBUG_RETURN(error);
 }

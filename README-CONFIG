@@ -3,7 +3,7 @@ directory where configuration files are stored, where binaries
 are stored and where it is supposed to store its data.
 
 The default is to store configuration files in
-ICLAUSTRON_INSTALL_DIR/config
+ICLAUSTRON_DATA_DIR/config
 The default is to store binaries in
 ICLAUSTRON_INSTALL_DIR/iclaustron-version-number
 using the directories bin, include and lib
@@ -19,6 +19,9 @@ Carrier Grade Edition, there will most likely be some requirements
 on which version is compatible with a certain iClaustron version.
 
 Data for binaries are stored by default in ICLAUSTRON_DATA_DIR.
+However the data for the ndbd binary is stored as specified in
+the configuration file. It's recommended however to use
+ICLAUSTRON_DATA_DIR/ndb as the place to store these files.
 
 If the user doesn't supply the ICLAUSTRON_INSTALL_DIR (--base_dir) then
 the default selection is $HOME/iclaustron_install except when running as
@@ -28,13 +31,14 @@ Similarly for ICLAUSTRON_DATA_DIR (--data_dir) when it isn't supplied it
 is by default selected to be in $HOME/iclaustron_data and for root and
 lroot users in /var/lib/iclaustron_data.
 
-In ICLAUSTRON_INSTALL_DIR one always expects to find a cluster configuration
-file. This should always be named config.ini. It should contain a section
-for each cluster the process is to connect to (for the cluster server it
-should contain a section for all clusters in this grid). Each section
-contains a name, id and a password for each cluster. The password needs to
-be the same password as in the cluster server otherwise the process won't be
-able to connect to the cluster.
+In ICLAUSTRON_DATA_DIR/config one always expects to find a cluster
+configuration file. This should always be named config.ini. It should
+contain a section for each cluster the process is to connect to (for the
+cluster server it should contain a section for all clusters in this grid).
+
+Each section contains a name, id and a password for each cluster.
+The password needs to be the same password as in the cluster server
+otherwise the process won't be able to connect to the cluster.
 
 This means that the config.ini file should also be placed without read
 privileges to anyone else than the user using the file. It's an important
@@ -43,8 +47,9 @@ cluster.
 
 Example of a config.ini file is provided in examples/config.ini where two
 clusters kalle and jocke are used.
+
 In the cluster server there needs to be one configuration file per cluster
-also in the ICLAUSTRON_INSTALL_DIR/config-directory. This provides the
+also in the ICLAUSTRON_DATA_DIR/config directory. This provides the
 full configuration of each cluster except for its name, id and password.
 The examples directory contains examples of a kalle-cluster and a
 jocke-cluster. These files are always named cluster_name.ini, thus in the
