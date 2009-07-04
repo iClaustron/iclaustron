@@ -578,6 +578,8 @@ static const gchar *little_endian_str= "little";
 static const gchar *big_endian_str= "big";
 static const gchar *log_event_str= "log_event: 0";
 static const gchar *result_ok_str= "result: Ok";
+static const gchar *result_str= "result: ";
+static const gchar *ok_str= "Ok";
 static const gchar *content_len_str= "Content-Length: ";
 static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
@@ -2382,6 +2384,40 @@ int ic_init_config_parameters()
   init_config_parameters();
   calculate_mandatory_bits();
   DEBUG_RETURN(build_config_name_hash());
+}
+
+/*
+  MODULE: Configuration protocol support functions
+  ------------------------------------------------
+  This module has a number of support functions often used in protocol
+  actions.
+*/
+static int
+ic_send_cluster_id(IC_CONNECTION *conn, guint32 cluster_id,
+                   gboolean use_cluster_id)
+{
+  gchar cluster_id_buf[32];
+
+  if (!use_cluster_id)
+    return FALSE;
+  g_snprintf(cluster_id_buf, 32 "%s%u", cluster_id_str, cluster_id);
+  return ic_send_with_cr(conn, cluster_id_buf);
+}
+
+/*
+  In all iClaustron protocols where cluster id is possible to use it is
+  also ok to not specify the cluster id, this always means that cluster
+  id is equal to 0.
+
+  This makes it easier to interoperate with non-iClaustron converted NDB
+  binaries. However there is an obvious limitation to using such binaries
+  since there is only one cluster possible to maintain for iClaustron.
+*/
+static int
+ic_rec_cluster_id(IC_CONNECTION *conn,
+                  guint32 *cluster_id)
+{
+  return ic_rec_opt_number(conn, cluster_id_str, cluster_id);
 }
 
 /*
@@ -7855,17 +7891,36 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
                                     guint32 client_nodeid)
 {
   int error;
-  gchar cs_nodeid_buf[32];
-  gchar client_nodeid_buf[32];
+  guint32 cluster_id, client_node_id, cs_nodeid;
+  int value;
+  gchar *the_result_str, *the_message_str;
   DEBUG_ENTRY("handle_set_connection_parameter_req");
 
-  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
-  g_snprintf(client_nodeid_buf, 32, "%s%u", nodeid_str, client_nodeid);
-  if ((error= ic_rec_simple_str(conn, client_nodeid_buf)) ||
-      (error= ic_rec_simple_str(conn, cs_nodeid_buf)) ||
-      (error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
-      (error= ic_send_with_cr(conn, message_str)) ||
-      (error= ic_send_with_cr(conn, result_ok_str)))
+  if ((error= ic_rec_cluster_id(conn, &cluster_id)) ||
+      (error= ic_rec_number(conn, node1_str, &server_nodeid)) ||
+      (error= ic_rec_number(conn, node2_str, &client_nodeid)) ||
+      (error= ic_rec_number(conn, param_str, &param)) ||
+      (error= ic_rec_int_number(conn, value_str, &value)) ||
+      (error= ic_rec_empty_line(conn)))
+    return error;
+  /*
+    We received a correct set connection parameter protocol message.
+    Now we need to verify also that the data is reasonable and also
+    perform the action associated with it.
+  */
+ 
+  the_message_str= ic_empty_string;
+  the_result_str= ok_str;
+  if ((param != SOCKET_SERVER_PORT_NUMBER))
+  {
+    /* TODO handle errors */
+  }
+
+  /* Now it's time to send the prepared response */
+  if ((error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
+      (error= ic_send_with_cr_with_two_strings(conn, message_str,
+                                               the_message_str)) ||
+      (error= ic_send_with_cr_with_two_strings(conn, result_str, ok_str)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));

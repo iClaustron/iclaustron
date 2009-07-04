@@ -46,6 +46,19 @@ ic_send_with_cr(IC_CONNECTION *conn, const gchar *send_buf)
 }
 
 /*
+  ic_step_back_rec_with_cr
+  This puts back the just read line to simplify programming interface
+  such that ic_rec_with_cr can be used many times on the same line in
+  cases where the protocol contains optional parts such as cluster id.
+*/
+void
+ic_step_back_rec_with_cr(IC_CONNECTION *ext_conn, guint32 read_size)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  conn->read_buf_pos-= (read_size + 1);
+}
+
+/*
   ic_rec_with_cr:
   Receive a line ended with CARRIAGE RETURN from connection
   Parameters:

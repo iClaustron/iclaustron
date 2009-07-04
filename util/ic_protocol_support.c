@@ -107,6 +107,55 @@ ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   DEBUG_RETURN(error);
 }
 
+/*
+  Receive a protocol string like "node1: 12"
+  Here str contains "node1: " and 12 is returned in id.
+  If optional is set the line is optional and ok will
+  be returned even if there is no such line.
+*/
+static int
+ic_rec_number_impl(IC_CONNECTION *conn,
+                   const gchar *str,
+                   guint32 *id,
+                   gboolean optional)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  int error;
+  guint64 local_id;
+
+  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    if (!ic_check_buf_with_int(read_buf, read_size, str,
+                               strlen(str),
+                               &local_id))
+    {
+      if (local_id >= IC_MAX_UINT32)
+        return IC_PROTOCOL_ERROR;
+      *id= (guint32)local_id;
+      return 0;
+    }
+    if (!optional)
+      return IC_PROTOCOL_ERROR;
+    ic_step_back_rec_with_cr(conn, read_size);
+    *id= 0;
+    return 0;
+  }
+  return error;
+}
+
+int
+ic_rec_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
+{
+  return ic_rec_number_impl(conn, str, number, FALSE);
+}
+
+int
+ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
+{
+  return ic_rec_number_impl(conn, str, number, TRUE);
+}
+
 int
 ic_send_key(IC_CONNECTION *conn,
             const gchar *grid_name,
@@ -171,6 +220,12 @@ ic_send_pid(IC_CONNECTION *conn,
 }
 
 int
+ic_rec_empty_line(IC_CONNECTION *conn)
+{
+  return ic_rec_simple_str(conn, "");
+}
+
+int
 ic_send_empty_line(IC_CONNECTION *conn)
 {
   int error;
@@ -181,8 +236,39 @@ ic_send_empty_line(IC_CONNECTION *conn)
 }
 
 int
+ic_send_with_cr_composed(IC_CONNECTION *conn,
+                         gchar **buf,
+                         guint32 num_strings)
+{
+  gchar local_buf[256];
+  guint32 local_pos= 0;
+  guint32 i, len;
+
+  for (i= 0; i < num_strings; i++)
+  {
+    len= strlen(buf[i]);
+    memcpy(local_buf, buf[i], len);
+    local_pos+= len;
+  }
+  local_buf[local_pos]= 0;
+  return ic_send_with_cr(conn, local_buf);
+}
+
+int
+ic_send_with_cr_two_strings(IC_CONNECTION *conn,
+                            gchar *buf1,
+                            gchar *buf2)
+{
+  gchar *buf[2];
+  gchar **local_buf= &buf[0];
+  buf[0]= buf1;
+  buf[1]= buf2;
+  return ic_send_with_cr_composed(conn, local_buf, (guint32)2);
+}
+
+int
 ic_receive_key(IC_CONNECTION *conn,
-               gchar *read_buf,
+               gchar **read_buf,
                IC_STRING *grid_name,
                IC_STRING *cluster_name,
                IC_STRING *node_name)
@@ -193,5 +279,6 @@ ic_receive_key(IC_CONNECTION *conn,
   if (!(error= ic_rec_with_cr(conn, read_buf, &read_size)))
   {
   }
+  return 0;
 }
 
