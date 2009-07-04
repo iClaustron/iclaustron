@@ -568,6 +568,10 @@ static const gchar *get_nodeid_reply_str= "get nodeid reply";
 static const gchar *get_config_str= "get config";
 static const gchar *get_config_reply_str= "get config reply";
 static const gchar *nodeid_str= "nodeid: ";
+static const gchar *node1_str= "node1: ";
+static const gchar *node2_str= "node2: ";
+static const gchar *param_str= "param: ";
+static const gchar *value_str= "value: ";
 static const gchar *version_str= "version: ";
 static const gchar *nodetype_str= "nodetype: ";
 static const gchar *user_str= "user: mysqld";
@@ -580,6 +584,7 @@ static const gchar *log_event_str= "log_event: 0";
 static const gchar *result_ok_str= "result: Ok";
 static const gchar *result_str= "result: ";
 static const gchar *ok_str= "Ok";
+static const gchar *error_str= "Error";
 static const gchar *content_len_str= "Content-Length: ";
 static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
@@ -2400,7 +2405,7 @@ ic_send_cluster_id(IC_CONNECTION *conn, guint32 cluster_id,
 
   if (!use_cluster_id)
     return FALSE;
-  g_snprintf(cluster_id_buf, 32 "%s%u", cluster_id_str, cluster_id);
+  g_snprintf(cluster_id_buf, 32, "%s%u", cluster_id_str, cluster_id);
   return ic_send_with_cr(conn, cluster_id_buf);
 }
 
@@ -7262,7 +7267,6 @@ static int handle_report_event(IC_CONNECTION *conn);
 static int handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
                                           guint32 cs_nodeid);
 static int handle_set_connection_parameter_req(IC_CONNECTION *conn,
-                                               guint32 cs_nodeid,
                                                guint32 client_nodeid);
 static int handle_convert_transporter_request(IC_CONNECTION *conn,
                                               guint32 client_nodeid);
@@ -7661,7 +7665,6 @@ run_cluster_server_thread(gpointer data)
         {
           if ((error= handle_set_connection_parameter_req(
                             conn,
-                            run_obj->cs_nodeid,
                             (guint32)param.client_nodeid)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
@@ -7669,12 +7672,13 @@ run_cluster_server_thread(gpointer data)
             error_line= __LINE__;
             goto error;
           }
-          state= WAIT_CONVERT_TRANSPORTER;
           break;
         }
         /*
           Here it is ok to fall through, the WAIT_SET_CONNECTION is an
-          optional state.
+          optional state. We can receive zero or many set connection
+          messages. At any time we can also receive a convert transporter
+          message.
         */
       case WAIT_CONVERT_TRANSPORTER:
         if (!ic_check_buf(read_buf, read_size, convert_transporter_str,
@@ -7887,18 +7891,17 @@ handle_get_mgmd_nodeid_req(IC_CONNECTION *conn, guint32 cs_nodeid)
 /* Handle set connection parameter request protocol action */
 static int
 handle_set_connection_parameter_req(IC_CONNECTION *conn,
-                                    guint32 cs_nodeid,
                                     guint32 client_nodeid)
 {
   int error;
-  guint32 cluster_id, client_node_id, cs_nodeid;
+  guint32 cluster_id, node1_id, node2_id, param;
   int value;
-  gchar *the_result_str, *the_message_str;
+  const gchar *the_result_str, *the_message_str;
   DEBUG_ENTRY("handle_set_connection_parameter_req");
 
   if ((error= ic_rec_cluster_id(conn, &cluster_id)) ||
-      (error= ic_rec_number(conn, node1_str, &server_nodeid)) ||
-      (error= ic_rec_number(conn, node2_str, &client_nodeid)) ||
+      (error= ic_rec_number(conn, node1_str, &node1_id)) ||
+      (error= ic_rec_number(conn, node2_str, &node2_id)) ||
       (error= ic_rec_number(conn, param_str, &param)) ||
       (error= ic_rec_int_number(conn, value_str, &value)) ||
       (error= ic_rec_empty_line(conn)))
@@ -7909,18 +7912,47 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
     perform the action associated with it.
   */
  
-  the_message_str= ic_empty_string;
-  the_result_str= ok_str;
-  if ((param != SOCKET_SERVER_PORT_NUMBER))
+  if (param != SOCKET_SERVER_PORT_NUMBER)
   {
-    /* TODO handle errors */
+    error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_PARAM;
   }
-
+  else if (node1_id != client_nodeid)
+  {
+    error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES;
+  }
+  if (error)
+  {
+    the_result_str= error_str;
+    the_message_str= ic_get_error_message(error);
+  }
+  else
+  {
+    the_message_str= ic_empty_string;
+    the_result_str= ok_str;
+    /*
+      We have received information about a dynamic port assignment.
+      We need to spread this information to all other cluster servers
+      in the grid, otherwise they cannot assist nodes starting up.
+      We also need to update the configuration in memory in the cluster
+      server, this is done by accessing the communication object and
+      updating it.
+      
+      We also update the configuration information on disk to ensure
+      a cluster server crash doesn't lose important information. However
+      it is important to synchronize this information with any alive
+      cluster server at start since this information can be changed also
+      when not all cluster servers are up and running. It cannot be changed
+      however when no cluster server is up since no node can start without
+      a cluster server to read configuration information from.
+      TODO: Not implemented yet.
+    */
+  }
   /* Now it's time to send the prepared response */
   if ((error= ic_send_with_cr(conn, set_connection_parameter_reply_str)) ||
-      (error= ic_send_with_cr_with_two_strings(conn, message_str,
-                                               the_message_str)) ||
-      (error= ic_send_with_cr_with_two_strings(conn, result_str, ok_str)))
+      (error= ic_send_with_cr_two_strings(conn, message_str,
+                                          the_message_str)) ||
+      (error= ic_send_with_cr_two_strings(conn, result_str,
+                                          the_result_str)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));

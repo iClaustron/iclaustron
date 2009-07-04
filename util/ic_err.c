@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7050
+#define IC_LAST_ERROR 7052
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -144,6 +144,10 @@ ic_init_error_messages()
     "Failed to stop/kill process";
   ic_error_str[IC_ERROR_PROCESS_STUCK_IN_START_PHASE - IC_FIRST_ERROR]=
     "Failed to stop/kill process, process stuck in start phase";
+  ic_error_str[IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_PARAM - IC_FIRST_ERROR]=
+    "Set/Get connection parameter only supports set/get Server Port Parameter";
+  ic_error_str[IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES - IC_FIRST_ERROR]=
+    "Set/Get connection parameter only supports client node as server side";
 }
 
 void

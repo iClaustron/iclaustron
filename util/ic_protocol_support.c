@@ -62,6 +62,25 @@ error:
 }
 
 int
+ic_check_buf_with_signed_int(gchar *read_buf, guint32 read_size,
+                             const gchar *str,
+                             int str_len,
+                             guint64 *number,
+                             int *sign_flag)
+{
+  *sign_flag= FALSE;
+  if ((read_size < (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) != 0) ||
+      ((str_len= (read_buf[str_len] == '-') ? str_len+1 : str_len), FALSE) ||
+      (ic_convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
+                                        number)))
+    return TRUE;
+  if (read_buf[str_len] == '-')
+    *sign_flag= TRUE;
+  return FALSE;
+}
+
+int
 ic_check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
                    int str_len, guint64 *number)
 {
@@ -154,6 +173,35 @@ int
 ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
 {
   return ic_rec_number_impl(conn, str, number, TRUE);
+}
+
+int
+ic_rec_int_number(IC_CONNECTION *conn,
+                  const gchar *str,
+                  int *id)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  int error;
+  gboolean sign_flag;
+  guint64 local_id;
+
+  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    if (!ic_check_buf_with_signed_int(read_buf, read_size, str,
+                                      strlen(str),
+                                      &local_id, &sign_flag))
+    {
+      if (local_id >= IC_MAX_UINT32)
+        return IC_PROTOCOL_ERROR;
+      *id= (guint32)local_id;
+      if (sign_flag)
+        *id= -(*id);
+      return 0;
+    }
+    return IC_PROTOCOL_ERROR;
+  }
+  return error;
 }
 
 int
@@ -256,29 +304,12 @@ ic_send_with_cr_composed(IC_CONNECTION *conn,
 
 int
 ic_send_with_cr_two_strings(IC_CONNECTION *conn,
-                            gchar *buf1,
-                            gchar *buf2)
+                            const gchar *buf1,
+                            const gchar *buf2)
 {
-  gchar *buf[2];
-  gchar **local_buf= &buf[0];
+  const gchar *buf[2];
+  const gchar **local_buf= &buf[0];
   buf[0]= buf1;
   buf[1]= buf2;
   return ic_send_with_cr_composed(conn, local_buf, (guint32)2);
 }
-
-int
-ic_receive_key(IC_CONNECTION *conn,
-               gchar **read_buf,
-               IC_STRING *grid_name,
-               IC_STRING *cluster_name,
-               IC_STRING *node_name)
-{
-  int error;
-  guint32 read_size;
-
-  if (!(error= ic_rec_with_cr(conn, read_buf, &read_size)))
-  {
-  }
-  return 0;
-}
-

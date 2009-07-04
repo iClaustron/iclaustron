@@ -51,6 +51,7 @@ int ic_check_buf_with_string(gchar *read_buf, guint32 read_size,
 int ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str);
 int ic_rec_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
 int ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
+int ic_rec_int_number(IC_CONNECTION *conn, const gchar *str, int *number);
 int ic_rec_empty_line(IC_CONNECTION *conn);
 
 int ic_send_key(IC_CONNECTION *conn,
@@ -63,8 +64,9 @@ int ic_send_pid(IC_CONNECTION *conn, GPid pid);
 int ic_send_empty_line(IC_CONNECTION *conn);
 int ic_send_with_cr_composed(IC_CONNECTION *conn, gchar **buf,
                              guint32 num_strings);
-int ic_send_with_cr_two_strings(IC_CONNECTION *conn, gchar *buf1,
-                                gchar *buf2);
+int ic_send_with_cr_two_strings(IC_CONNECTION *conn,
+                                const gchar *buf1,
+                                const gchar *buf2);
 
 struct ic_pc_key
 {
