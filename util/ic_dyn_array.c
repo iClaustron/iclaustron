@@ -73,7 +73,8 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
     memcpy(buf_ptr, buf, size_in_buffer);
     size_left_to_copy-= size_in_buffer;
     buf+= size_in_buffer;
-    if (!(new_simple_dyn_buf=
+    if (IC_ERROR_INJECT(1) ||  
+        !(new_simple_dyn_buf=
       (IC_SIMPLE_DYNAMIC_BUF*) ic_calloc(sizeof(IC_SIMPLE_DYNAMIC_BUF))))
     {
       /* We need to deallocate all buffers already allocated */
@@ -266,10 +267,12 @@ ic_create_simple_dynamic_array()
   IC_DYNAMIC_ARRAY_OPS *da_ops;
   IC_SIMPLE_DYNAMIC_BUF *dyn_buf;
 
-  if (!(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_calloc(
+  if (IC_ERROR_INJECT(2) ||
+      !(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_calloc(
         sizeof(IC_DYNAMIC_ARRAY_INT))))
     return NULL;
-  if (!(dyn_buf= (IC_SIMPLE_DYNAMIC_BUF*)ic_calloc(
+  if (IC_ERROR_INJECT(3) ||
+      !(dyn_buf= (IC_SIMPLE_DYNAMIC_BUF*)ic_calloc(
          sizeof(IC_SIMPLE_DYNAMIC_BUF))))
   {
     ic_free((void*)dyn_array);
@@ -314,9 +317,10 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
     /*
        We have filled a dynamic array index buffer and we need to
        add another buffer. We use a recursive call to implement
-       this functionality.
+       this functionality. 
     */
-    if (!(new_dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
+    if (IC_ERROR_INJECT(4) ||
+        !(new_dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
            sizeof(IC_DYNAMIC_ARRAY_INDEX))))
       return IC_ERROR_MEM_ALLOC;
     if (new_parent)
@@ -350,7 +354,8 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
         We need to handle the top node in a special manner. The top node
         needs a link to the full node and the new empty node.
       */
-      if (!(new_parent_dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
+      if (IC_ERROR_INJECT(5) ||
+          !(new_parent_dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
              sizeof(IC_DYNAMIC_ARRAY_INDEX))))
       {
         ic_free((void*)new_dyn_index);
@@ -571,7 +576,8 @@ ic_create_ordered_dynamic_array()
   IC_DYNAMIC_ARRAY_INDEX *dyn_index_array;
   IC_ORDERED_DYNAMIC_ARRAY *ord_array;
 
-  if (!(dyn_index_array= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
+  if (IC_ERROR_INJECT(6) ||
+      !(dyn_index_array= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
            sizeof(IC_DYNAMIC_ARRAY_INDEX))))
     return NULL;
   if (!(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_create_simple_dynamic_array()))

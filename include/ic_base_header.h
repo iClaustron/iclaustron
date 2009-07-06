@@ -35,6 +35,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+/*
+  Error inject declarations
+*/
+extern guint32 error_inject;
+#ifdef DEBUG_BUILD
+#define IC_ERROR_INJECT(a) \
+  (error_inject == a)
+#else
+#define IC_ERROR_INJECT(a) FALSE
+#endif
+
 typedef struct ic_bitmap IC_BITMAP;
 typedef struct ic_connection IC_CONNECTION;
 typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;

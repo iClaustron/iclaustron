@@ -46,6 +46,7 @@
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
 static GMutex *mem_mutex= NULL;
+guint32 error_inject= 0;
 #endif
 static const gchar *port_binary_dir;
 

@@ -28,6 +28,10 @@ static GOptionEntry entries[] =
 {
   { "test_type", 0, 0, G_OPTION_ARG_INT, &glob_test_type,
     "Set test type", NULL},
+#ifdef DEBUG_BUILD
+  { "error_inject", 0, 0, G_OPTION_ARG_INT, &error_inject,
+    "Set error_inject", NULL},
+#endif
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
