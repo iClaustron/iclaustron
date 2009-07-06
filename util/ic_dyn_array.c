@@ -43,7 +43,6 @@ release_dyn_buf(IC_SIMPLE_DYNAMIC_BUF *loop_dyn_buf)
 {
   IC_SIMPLE_DYNAMIC_BUF *free_dyn_buf;
 
-  loop_dyn_buf= loop_dyn_buf->next_dyn_buf;
   while (loop_dyn_buf)
   {
     free_dyn_buf= loop_dyn_buf;

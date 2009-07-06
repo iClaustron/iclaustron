@@ -31,7 +31,7 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-#define SIMPLE_BUF_SIZE 16*1024
+#define SIMPLE_BUF_SIZE 4*1024
 #define ORDERED_BUF_SIZE 128*1024
 static int
 do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
@@ -192,18 +192,18 @@ test_dynamic_array(IC_DYNAMIC_ARRAY *dyn_array, int buf_size)
 
   ret_code= 0;
 end:
-  dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
-  return ret_code;
-
-mem_alloc_error:
-  ret_code= IC_ERROR_MEM_ALLOC;
-error:
   if (compare_buf)
     ic_free(compare_buf);
   if (read_buf)
     ic_free(read_buf);
   if (random)
     g_rand_free(random);
+  dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
+  return ret_code;
+
+mem_alloc_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
+error:
   goto end;
 }
 
