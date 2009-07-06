@@ -235,7 +235,7 @@ int main(int argc, char *argv[])
   IC_CONNECTION *conn;
 
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
-           "- iClaustron Command Client")))
+           "- iClaustron Command Client", TRUE)))
     return ret_code;
 #ifdef HAVE_LIBREADLINE
   using_history();

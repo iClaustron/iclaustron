@@ -328,7 +328,7 @@ int main(int argc, char *argv[])
   int ret_code= 1;
 
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
-           "- Basic test program communication module")))
+           "- Basic test program communication module", TRUE)))
     return ret_code;
   printf("Server ip = %s, Client ip = %s\n", glob_server_ip, glob_client_ip);
   printf("Server port = %s, Client port = %s\n",

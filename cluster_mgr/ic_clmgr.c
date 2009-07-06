@@ -794,7 +794,7 @@ int main(int argc,
   gchar *err_str= error_str;
 
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
-           "- iClaustron Cluster Manager")))
+           "- iClaustron Cluster Manager", TRUE)))
     goto error;
   if ((glob_tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
     goto error;

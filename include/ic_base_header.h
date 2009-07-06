@@ -125,6 +125,6 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 */
 int ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
                      const gchar *program_name,
-                     gchar *start_text);
+                     gchar *start_text, gboolean use_config);
 void ic_end();
 #endif

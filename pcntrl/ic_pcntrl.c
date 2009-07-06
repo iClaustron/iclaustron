@@ -1169,7 +1169,7 @@ int main(int argc, char *argv[])
   gchar mysql_buf[IC_MAX_FILE_NAME_SIZE];
  
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
-           "- iClaustron Control Server")))
+           "- iClaustron Control Server", TRUE)))
     return ret_code;
   if (!(glob_tp_state=
         ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))

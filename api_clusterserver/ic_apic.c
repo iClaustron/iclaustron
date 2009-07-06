@@ -8981,11 +8981,13 @@ Current levels defined: \n\
   Level 3 (= 8): Debugging specific to the currently executing program\n\
   Level 4 (=16): Debugging of threads\n\
 ";
+static int use_config_vars;
 
 int
 ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
                  const gchar *program_name,
-                 gchar *start_text)
+                 gchar *start_text,
+                 gboolean use_config)
 {
   int ret_code= 1;
   GError *error= NULL;
@@ -8993,6 +8995,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   GOptionContext *context;
 
   printf("Starting %s program\n", program_name);
+  use_config_vars= use_config; /* TRUE for Unit test programs */
   context= g_option_context_new(start_text);
   if (!context)
     goto mem_error;
@@ -9032,10 +9035,13 @@ ic_init()
     g_thread_init(NULL);
   ic_mem_init();
   ic_init_error_messages();
-  if ((ret_value= ic_init_config_parameters()))
+  if (use_config_vars)
   {
-    ic_end();
-    DEBUG_RETURN(ret_value);
+    if ((ret_value= ic_init_config_parameters()))
+    {
+      ic_end();
+      DEBUG_RETURN(ret_value);
+    }
   }
   if ((ret_value= ic_ssl_init()))
   {
@@ -9049,8 +9055,9 @@ void ic_end()
 {
   DEBUG_ENTRY("ic_end");
 
-  ic_mem_end();
-  ic_destroy_conf_hash();
+  if (use_config_vars)
+    ic_destroy_conf_hash();
   ic_ssl_end();
   DEBUG_CLOSE;
+  ic_mem_end();
 }

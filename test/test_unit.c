@@ -31,8 +31,8 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-#define SIMPLE_BUF_SIZE 16*1024*1024
-#define ORDERED_BUF_SIZE 128*1024*1024
+#define SIMPLE_BUF_SIZE 16*1024
+#define ORDERED_BUF_SIZE 128*1024
 static int
 do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                    gchar *compare_buf,
@@ -265,7 +265,7 @@ int main(int argc, char *argv[])
   int ret_code= 1;
 
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
-           "- Unit test program")))
+           "- Unit test program", FALSE)))
     return ret_code;
   switch (glob_test_type)
   {
