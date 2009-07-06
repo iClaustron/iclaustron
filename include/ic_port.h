@@ -23,6 +23,8 @@ void ic_port_set_binary_dir(const gchar *binary_dir);
   iClaustron interface to memory allocation routines and various other
   portability interfaces.
 */
+void ic_mem_init(); /* Debug support */
+void ic_mem_end();  /* Debug support */
 gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
 gchar *ic_realloc(gchar *ptr, size_t size);

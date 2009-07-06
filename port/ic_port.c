@@ -22,7 +22,9 @@
 #define _XOPEN_SOURCE 600
 #endif
 #include <string.h>
-
+#ifdef DEBUG_BUILD
+#include <stdio.h>
+#endif
 #include <ic_base_header.h>
 #include <ic_port.h>
 #include <ic_err.h>
@@ -41,8 +43,28 @@
 #include <sys/time.h>
 #endif
 
+#ifdef DEBUG_BUILD
+static guint64 num_mem_allocs= 0;
+static GMutex *mem_mutex= NULL;
+#endif
 static const gchar *port_binary_dir;
 
+void
+ic_mem_init()
+{
+#ifdef DEBUG_BUILD
+  mem_mutex= g_mutex_new();
+#endif
+}
+
+void ic_mem_end()
+{
+#ifdef DEBUG_BUILD
+  printf("num_mem_allocs = %u\n", (guint32)num_mem_allocs);
+  if (num_mem_allocs != (guint64)0)
+    printf("Memory leak found\n");
+#endif
+}
 void
 ic_port_set_binary_dir(const gchar *binary_dir)
 {
@@ -130,6 +152,11 @@ ic_sleep(guint32 seconds_to_sleep)
 gchar *
 ic_calloc(size_t size)
 {
+#ifdef DEBUG_BUILD
+  g_mutex_lock(mem_mutex);
+  num_mem_allocs++;
+  g_mutex_unlock(mem_mutex);
+#endif
   gchar *alloc_ptr= g_try_malloc0(size);
   return alloc_ptr;
 }
@@ -145,6 +172,11 @@ ic_realloc(gchar *ptr,
 gchar *
 ic_malloc(size_t size)
 {
+#ifdef DEBUG_BUILD
+  g_mutex_lock(mem_mutex);
+  num_mem_allocs++;
+  g_mutex_unlock(mem_mutex);
+#endif
   gchar *alloc_ptr= g_try_malloc(size);
   return alloc_ptr;
 }
@@ -152,6 +184,11 @@ ic_malloc(size_t size)
 void
 ic_free(void *ret_obj)
 {
+#ifdef DEBUG_BUILD
+  g_mutex_lock(mem_mutex);
+  num_mem_allocs--;
+  g_mutex_unlock(mem_mutex);
+#endif
   g_free(ret_obj);
 }
 

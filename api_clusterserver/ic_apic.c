@@ -9027,8 +9027,10 @@ ic_init()
   int ret_value;
   DEBUG_OPEN;
   DEBUG_ENTRY("ic_init");
+
   if (!g_thread_supported())
     g_thread_init(NULL);
+  ic_mem_init();
   ic_init_error_messages();
   if ((ret_value= ic_init_config_parameters()))
   {
@@ -9046,6 +9048,8 @@ ic_init()
 void ic_end()
 {
   DEBUG_ENTRY("ic_end");
+
+  ic_mem_end();
   ic_destroy_conf_hash();
   ic_ssl_end();
   DEBUG_CLOSE;
