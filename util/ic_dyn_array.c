@@ -536,14 +536,15 @@ read_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
   IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
   guint64 buf_pos;
-  gchar **read_buf;
+  gchar *read_buf;
   int ret_code;
 
   if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
                                             &dyn_buf, &buf_pos)))
     return ret_code;
-  read_buf= (gchar**)&dyn_buf->buf[buf_pos];
-  *(gchar**)buf= *read_buf;
+  read_buf= (gchar*)&dyn_buf->buf[0];
+  read_buf+= buf_pos;
+  memcpy(buf, read_buf, sizeof(IC_TRANSLATION_ENTRY));
   return 0;
 }
 
@@ -556,14 +557,15 @@ write_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
   IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
   guint64 buf_pos= 0;
-  gchar **write_buf;
+  gchar *write_buf;
   int ret_code;
 
   if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
                                             &dyn_buf, &buf_pos)))
     return ret_code;
-  write_buf= (gchar**)&dyn_buf->buf[buf_pos];
-  *write_buf= *(gchar**)buf;
+  write_buf= (gchar*)&dyn_buf->buf[0];
+  write_buf+= buf_pos;
+  memcpy(write_buf, buf, sizeof(IC_TRANSLATION_ENTRY));
   return 0;
 }
 
@@ -668,6 +670,7 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     */
     pos_first_free= dyn_array->da_ops.ic_get_current_size(
       (IC_DYNAMIC_ARRAY*)dyn_array);
+    transl_entry.object= object;
     if (insert_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array,
                                      (const gchar*)&transl_entry,
                                      entry_size))

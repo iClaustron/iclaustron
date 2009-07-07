@@ -259,9 +259,9 @@ test_dynamic_translation(IC_DYNAMIC_TRANSLATION *dyn_trans)
   }
   for (i=0; i < 5; i++)
   {
-    dyn_trans->dt_ops.ic_remove_translation_object(
+    dyn_trans->dt_ops.ic_insert_translation_object(
                         dyn_trans,
-                        index,
+                        &index,
                         (void*)&void_object);
       goto error;
     if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(dyn_trans,
