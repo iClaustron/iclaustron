@@ -2177,9 +2177,9 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   guint32 transid_part1= header_data[1];
   guint32 transid_part2= header_data[2];
 
-  if (dyn_trans->dt_ops.ic_get_object(dyn_trans,
-                                      connection_ptr,
-                                      &connection_obj))
+  if (dyn_trans->dt_ops.ic_get_translation_object(dyn_trans,
+                                                  connection_ptr,
+                                                  &connection_obj))
   { 
     return 1;
   }

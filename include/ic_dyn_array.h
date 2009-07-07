@@ -47,9 +47,9 @@ struct ic_dynamic_translation;
 typedef struct ic_dynamic_translation IC_DYNAMIC_TRANSLATION;
 struct ic_dynamic_translation_ops
 {
-  int (*ic_get_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
-                        guint64 index,
-                        void **object);
+  int (*ic_get_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
+                                    guint64 index,
+                                    void **object);
   int (*ic_insert_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
                                        guint64 *index,
                                        void *object);
@@ -66,5 +66,5 @@ struct ic_dynamic_translation
   IC_DYNAMIC_TRANSLATION_OPS dt_ops;
 };
 
-IC_DYNAMIC_TRANSLATION* ic_create_translation_object();
+IC_DYNAMIC_TRANSLATION* ic_create_dynamic_translation_object();
 #endif

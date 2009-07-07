@@ -879,9 +879,10 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   max_index= glob_dyn_trans->dt_ops.ic_get_max_index(glob_dyn_trans);
   for (current_index= 0; current_index < max_index; current_index++)
   {
-    if ((error= glob_dyn_trans->dt_ops.ic_get_object(glob_dyn_trans,
-                                                     current_index,
-                                                     &void_pc_start)))
+    if ((error= glob_dyn_trans->dt_ops.ic_get_translation_object(
+                              glob_dyn_trans,
+                              current_index,
+                              &void_pc_start)))
       goto error;
     pc_start= (IC_PC_START*)void_pc_start;
     if (pc_start && is_list_match(pc_start, pc_find))
@@ -1178,7 +1179,7 @@ int main(int argc, char *argv[])
     goto error;
   if (!(pc_hash_mutex= g_mutex_new()))
     goto error;
-  if (!(glob_dyn_trans= ic_create_translation_object()))
+  if (!(glob_dyn_trans= ic_create_dynamic_translation_object()))
     goto error;
   /*
     First step is to set-up path to where the binaries reside. All binaries

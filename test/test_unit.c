@@ -236,6 +236,60 @@ unit_test_simple_dynamic_array()
 }
 
 static int
+test_dynamic_translation(IC_DYNAMIC_TRANSLATION *dyn_trans)
+{
+  guint64 index;
+  int void_object= 1;
+  int ret_object;
+  int ret_code;
+  guint32 i;
+  
+  for (i= 0; i < 5; i++)
+  {
+    if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(
+                       dyn_trans,
+                       &index,
+                       (void*)&void_object)))
+      goto error;
+    dyn_trans->dt_ops.ic_remove_translation_object(
+                       dyn_trans,
+                       index,
+                       (void*)&void_object);
+      goto error;
+  }
+  for (i=0; i < 5; i++)
+  {
+    dyn_trans->dt_ops.ic_remove_translation_object(
+                        dyn_trans,
+                        index,
+                        (void*)&void_object);
+      goto error;
+    if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(dyn_trans,
+                                                   index,
+                                                   (void*)&ret_object)))
+      goto error;
+
+    if ((ret_code= dyn_trans->dt_ops.ic_get_max_index(dyn_trans)))
+      goto error;
+  }
+  dyn_trans->dt_ops.ic_free_translation_object(dyn_trans);
+  return 0;
+error:
+  return ret_code;
+}
+
+static int
+unit_test_dynamic_translation()
+{
+  IC_DYNAMIC_TRANSLATION *dyn_trans;
+
+  dyn_trans= ic_create_dynamic_translation_object();
+  if (dyn_trans == NULL)
+    return IC_ERROR_MEM_ALLOC;
+  return test_dynamic_translation(dyn_trans);
+}
+
+static int
 unit_test_mc()
 {
   IC_MEMORY_CONTAINER *mc_ptr;
@@ -284,6 +338,10 @@ int main(int argc, char *argv[])
     case 2:
       printf("Executing Unit test of Ordered Dynamic Array\n");
       ret_code= unit_test_ordered_dynamic_array();
+      break;
+    case 3:
+      printf("Executing Unit test of Dynamic translation\n");
+      ret_code= unit_test_dynamic_translation();
       break;
     default:
       break;
