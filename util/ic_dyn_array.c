@@ -51,6 +51,18 @@ release_dyn_buf(IC_SIMPLE_DYNAMIC_BUF *loop_dyn_buf)
   }
 }
 
+static void
+release_dyn_index(IC_DYNAMIC_ARRAY_INDEX *dyn_index)
+{
+  IC_DYNAMIC_ARRAY_INDEX *next_dyn_index;
+  while (dyn_index)
+  {
+    next_dyn_index= dyn_index->next_dyn_index;
+    ic_free((void*)dyn_index);
+    dyn_index= next_dyn_index;
+  }
+}
+
 static int
 insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
                             const gchar *buf, guint64 size)
@@ -73,7 +85,7 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
     memcpy(buf_ptr, buf, size_in_buffer);
     size_left_to_copy-= size_in_buffer;
     buf+= size_in_buffer;
-    if (IC_ERROR_INJECT(1) ||  
+    if (IC_ERROR_INJECT(12) ||  
         !(new_simple_dyn_buf=
       (IC_SIMPLE_DYNAMIC_BUF*) ic_calloc(sizeof(IC_SIMPLE_DYNAMIC_BUF))))
     {
@@ -267,11 +279,11 @@ ic_create_simple_dynamic_array()
   IC_DYNAMIC_ARRAY_OPS *da_ops;
   IC_SIMPLE_DYNAMIC_BUF *dyn_buf;
 
-  if (IC_ERROR_INJECT(2) ||
+  if (IC_ERROR_INJECT(10) ||
       !(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_calloc(
         sizeof(IC_DYNAMIC_ARRAY_INT))))
     return NULL;
-  if (IC_ERROR_INJECT(3) ||
+  if (IC_ERROR_INJECT(11) ||
       !(dyn_buf= (IC_SIMPLE_DYNAMIC_BUF*)ic_calloc(
          sizeof(IC_SIMPLE_DYNAMIC_BUF))))
   {
@@ -319,7 +331,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
        add another buffer. We use a recursive call to implement
        this functionality. 
     */
-    if (IC_ERROR_INJECT(4) ||
+    if (IC_ERROR_INJECT(20) ||
         !(new_dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
            sizeof(IC_DYNAMIC_ARRAY_INDEX))))
       return IC_ERROR_MEM_ALLOC;
@@ -354,7 +366,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
         We need to handle the top node in a special manner. The top node
         needs a link to the full node and the new empty node.
       */
-      if (IC_ERROR_INJECT(5) ||
+      if (IC_ERROR_INJECT(21) ||
           !(new_parent_dyn_index= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
              sizeof(IC_DYNAMIC_ARRAY_INDEX))))
       {
@@ -388,8 +400,22 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   IC_SIMPLE_DYNAMIC_BUF *old_dyn_buf= dyn_array->sd_array.last_dyn_buf;
   IC_SIMPLE_DYNAMIC_BUF *new_last_dyn_buf, *loop_dyn_buf;
   IC_DYNAMIC_ARRAY_INDEX *last_dyn_index;
+  IC_DYNAMIC_ARRAY_INDEX *old_top_dyn_index= dyn_array->ord_array.top_dyn_index;
+  IC_DYNAMIC_ARRAY_INDEX *old_last_dyn_index= dyn_array->ord_array.last_dyn_index;
+  IC_DYNAMIC_ARRAY_INDEX *loop_dyn_index= old_last_dyn_index;
   guint64 buf_size= 0;
   guint32 ins_buf_count= 0, i;
+  guint64 old_bytes_used= dyn_array->sd_array.bytes_used;
+  guint32 old_index_levels= dyn_array->ord_array.index_levels;
+
+  /* Save next_index_to_insert to make restore possible */
+  loop_dyn_index= old_last_dyn_index;
+  while (loop_dyn_index != NULL)
+  {
+    loop_dyn_index->old_next_index_to_insert=
+      loop_dyn_index->next_index_to_insert;
+    loop_dyn_index= loop_dyn_index->parent_dyn_index;
+  }
 
   if ((ret_code= insert_simple_dynamic_array(ext_dyn_array, buf, size)))
     return ret_code;
@@ -407,12 +433,25 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
                                                        (void*)loop_dyn_buf)))
     {
       loop_dyn_buf= old_dyn_buf->next_dyn_buf;
+      old_dyn_buf->next_dyn_buf= NULL;
+      dyn_array->sd_array.last_dyn_buf= old_dyn_buf;
+      dyn_array->sd_array.bytes_used= old_bytes_used;
       release_dyn_buf(loop_dyn_buf);
-      for (i= 0; i < ins_buf_count; i++)
+
+      dyn_array->ord_array.last_dyn_index= old_last_dyn_index;
+      dyn_array->ord_array.top_dyn_index= old_top_dyn_index;
+      dyn_array->ord_array.index_levels= old_index_levels;
+
+      loop_dyn_index= old_last_dyn_index;
+      while (loop_dyn_index != NULL)
       {
-        loop_dyn_buf= loop_dyn_buf->next_dyn_buf;
-        release_dyn_buf(loop_dyn_buf);
+         loop_dyn_index->next_index_to_insert=
+           loop_dyn_index->old_next_index_to_insert;
+         loop_dyn_index= loop_dyn_index->parent_dyn_index;
       }
+      release_dyn_index(old_last_dyn_index->next_dyn_index);
+      old_last_dyn_index->next_dyn_index= NULL;
+      old_top_dyn_index->parent_dyn_index= NULL;
       return ret_code;
     }
     ins_buf_count++;
@@ -555,15 +594,8 @@ free_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array)
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
   /* Free ordered index part first */
   IC_ORDERED_DYNAMIC_ARRAY *ord_array= &dyn_array->ord_array;
-  IC_DYNAMIC_ARRAY_INDEX *dyn_array_index, *next_dyn_array_index;
 
-  dyn_array_index= ord_array->first_dyn_index;
-  while (dyn_array_index)
-  {
-    next_dyn_array_index= dyn_array_index->next_dyn_index;
-    ic_free((void*)dyn_array_index);
-    dyn_array_index= next_dyn_array_index;
-  }
+  release_dyn_index(ord_array->first_dyn_index);
   /* Now we can free the simple dynamic array part */
   free_simple_dynamic_array(ext_dyn_array);
 }
@@ -576,7 +608,7 @@ ic_create_ordered_dynamic_array()
   IC_DYNAMIC_ARRAY_INDEX *dyn_index_array;
   IC_ORDERED_DYNAMIC_ARRAY *ord_array;
 
-  if (IC_ERROR_INJECT(6) ||
+  if (IC_ERROR_INJECT(22) ||
       !(dyn_index_array= (IC_DYNAMIC_ARRAY_INDEX*)ic_calloc(
            sizeof(IC_DYNAMIC_ARRAY_INDEX))))
     return NULL;
@@ -772,7 +804,8 @@ ic_create_translation_object()
   IC_TRANSLATION_ENTRY transl_entry;
   IC_DYNAMIC_TRANSLATION_INT *dyn_trans;
 
-  if (!(dyn_trans= (IC_DYNAMIC_TRANSLATION_INT*)ic_malloc(
+  if (IC_ERROR_INJECT(30) ||
+      !(dyn_trans= (IC_DYNAMIC_TRANSLATION_INT*)ic_calloc(
                       sizeof(IC_DYNAMIC_TRANSLATION_INT))))
     return NULL;
   if (!(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_create_ordered_dynamic_array()))

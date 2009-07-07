@@ -47,6 +47,7 @@ struct ic_dynamic_array_index
   struct ic_dynamic_array_index *next_dyn_index;
   struct ic_dynamic_array_index *parent_dyn_index;
   guint64 next_index_to_insert;
+  guint64 old_next_index_to_insert; /* Temporary for error handling */
   void *child_ptrs[ORDERED_DYNAMIC_INDEX_SIZE];
 };
 typedef struct ic_dynamic_array_index IC_DYNAMIC_ARRAY_INDEX;
