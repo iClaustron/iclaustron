@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7052
+#define IC_LAST_ERROR 7054
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -148,6 +148,10 @@ ic_init_error_messages()
     "Set/Get connection parameter only supports set/get Server Port Parameter";
   ic_error_str[IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES - IC_FIRST_ERROR]=
     "Set/Get connection parameter only supports client node as server side";
+  ic_error_str[IC_ERROR_INDEX_ZERO_NOT_ALLOWED - IC_FIRST_ERROR]=
+    "Index 0 isn't allowed in dynamic translations";
+  ic_error_str[IC_ERROR_TRANSLATION_INDEX_OUT_OF_BOUND - IC_FIRST_ERROR]=
+    "Index out of bound in dynamic translation";
 }
 
 void

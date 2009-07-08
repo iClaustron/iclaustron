@@ -703,7 +703,7 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                                   (gchar*)&transl_entry))
       abort();
   }
-  *position= (pos_first_free/sizeof(IC_TRANSLATION_ENTRY));
+  *position= pos_first_free/sizeof(IC_TRANSLATION_ENTRY);
   return 0;
 }
 
@@ -723,7 +723,7 @@ get_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                                sizeof(IC_TRANSLATION_ENTRY),
                                (gchar*)&transl_entry))
   {
-    return 1;
+    return IC_ERROR_TRANSLATION_INDEX_OUT_OF_BOUND;
   }
   *object= transl_entry.object;
   return 0;
@@ -742,6 +742,8 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
   IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_trans->dyn_array;
 
+  if (index == (guint64)0)
+    return IC_ERROR_INDEX_ZERO_NOT_ALLOWED;
   if (read_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
                                position,
                                entry_size,
@@ -768,7 +770,7 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                                 entry_size,
                                 (gchar*)&transl_entry))
     abort();
-  transl_entry.position= (guint64)index;
+  transl_entry.position= position;
   if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
                                 pos_first,
                                 entry_size,

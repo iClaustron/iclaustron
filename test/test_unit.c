@@ -243,6 +243,7 @@ test_dynamic_translation(IC_DYNAMIC_TRANSLATION *dyn_trans)
   int ret_object;
   int ret_code;
   guint32 i;
+  guint64 max_index;
   
   for (i= 0; i < 5; i++)
   {
@@ -255,22 +256,21 @@ test_dynamic_translation(IC_DYNAMIC_TRANSLATION *dyn_trans)
                        dyn_trans,
                        index,
                        (void*)&void_object);
-      goto error;
   }
   for (i=0; i < 5; i++)
   {
-    dyn_trans->dt_ops.ic_insert_translation_object(
+    if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(
                         dyn_trans,
                         &index,
-                        (void*)&void_object);
+                        (void*)&void_object)))
       goto error;
-    if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(dyn_trans,
-                                                   index,
-                                                   (void*)&ret_object)))
+    if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(
+                        dyn_trans,
+                        index,
+                        (void*)&ret_object)))
       goto error;
 
-    if ((ret_code= dyn_trans->dt_ops.ic_get_max_index(dyn_trans)))
-      goto error;
+    max_index= dyn_trans->dt_ops.ic_get_max_index(dyn_trans);
   }
   dyn_trans->dt_ops.ic_free_translation_object(dyn_trans);
   return 0;
