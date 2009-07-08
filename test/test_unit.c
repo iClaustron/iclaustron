@@ -21,6 +21,7 @@
 #include <ic_dyn_array.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
+#include <ic_bitmap.h>
 
 static const gchar *glob_process_name= "test_unit";
 static int glob_test_type= 0;
@@ -37,6 +38,7 @@ static GOptionEntry entries[] =
 
 #define SIMPLE_BUF_SIZE 16*1024*1024
 #define ORDERED_BUF_SIZE 128*1024*1024
+
 static int
 do_write_dyn_array(IC_DYNAMIC_ARRAY *dyn_array,
                    gchar *compare_buf,
@@ -295,6 +297,7 @@ unit_test_mc()
   IC_MEMORY_CONTAINER *mc_ptr;
   guint32 i, j, k, max_alloc_size, no_allocs;
   gboolean large;
+
   for (i= 1; i < 1000; i++)
   {
     srandom(i);
@@ -316,6 +319,41 @@ unit_test_mc()
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   }
   return 0;
+}
+
+static int
+unit_test_bitmap()
+{
+  int i;
+  guint32 bitmap_size;
+  IC_BITMAP *bitmap_ptr;
+  guint32 bit_set;
+  guint32 j;
+
+  for (i= 0; i < 15; i++)
+  {
+    srandom(i);
+    bitmap_size= random() % 5000;
+    bitmap_ptr= ic_create_bitmap(NULL, bitmap_size);
+    
+    for (j= 0; j < bitmap_size; j++)
+    {
+      bit_set= random() % 1;
+      if (bit_set != 0)
+      {
+        ic_bitmap_set_bit(bitmap_ptr, j);
+        if (!ic_is_bitmap_set(bitmap_ptr, j))
+          goto error;
+      }
+      else
+        if (ic_is_bitmap_set(bitmap_ptr, j))
+          goto error;
+    }
+    ic_free_bitmap(bitmap_ptr);
+  }
+  return 0;
+error:
+  return 1;
 }
 
 int main(int argc, char *argv[])
@@ -343,6 +381,10 @@ int main(int argc, char *argv[])
       printf("Executing Unit test of Dynamic translation\n");
       ret_code= unit_test_dynamic_translation();
       break;
+    case 4:
+      printf("Executing Unit test of Bitmap\n");
+      ret_code= unit_test_bitmap();
+      break;      
     default:
       break;
    }
@@ -350,4 +392,3 @@ int main(int argc, char *argv[])
    printf("iClaustron Test return code: %d\n", ret_code);
    return ret_code;
 }
-

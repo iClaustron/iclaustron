@@ -76,21 +76,21 @@ ic_mc_create_bitmap(IC_MEMORY_CONTAINER *mc, guint32 num_bits)
 end:
   return loc_bitmap;
 }
+
 #ifdef DEBUG_BUILD
 void
 ic_bitmap_set_bit(IC_BITMAP *bitmap, guint32 bit_number)
 {
-  g_assert(bitmap->num_bits > bit_number);
-  ic_bitmap_set_bit(bitmap, bit_number);
+  g_assert(bit_number < bitmap->num_bits);
+  macro_ic_bitmap_set_bit(bitmap, bit_number);
 }
 
 gboolean
 ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
 {
-  g_assert(bitmap->num_bits > bit_number);
-  return (gboolean)ic_is_bitmap_set(bitmap, bit_number);
+  g_assert(bit_number < bitmap->num_bits);
+  return macro_ic_is_bitmap_set(bitmap, bit_number);
 }
-
 #endif
 /*
   Return highest bit set in a 32-bit integer, bit 0 is reported as 1 and

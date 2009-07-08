@@ -70,8 +70,10 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
   IC_SIMPLE_DYNAMIC_ARRAY *sd_array= &dyn_array->sd_array;
   IC_SIMPLE_DYNAMIC_BUF *curr= sd_array->last_dyn_buf;
+  IC_SIMPLE_DYNAMIC_BUF *old_last_dyn_buf= sd_array->last_dyn_buf;
   IC_SIMPLE_DYNAMIC_BUF *loop_dyn_buf= curr;
   guint64 bytes_used= sd_array->bytes_used;
+  guint64 old_bytes_used= sd_array->bytes_used;
   gchar *buf_ptr= (gchar*)&curr->buf[0];
   guint64 size_left_to_copy= size;
   guint64 buf_ptr_start_pos;
@@ -91,6 +93,9 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
     {
       /* We need to deallocate all buffers already allocated */
       release_dyn_buf(loop_dyn_buf->next_dyn_buf);
+      loop_dyn_buf->next_dyn_buf= NULL;
+      sd_array->last_dyn_buf= old_last_dyn_buf;
+      sd_array->bytes_used= old_bytes_used;
       return IC_ERROR_MEM_ALLOC;
     }
     curr->next_dyn_buf= new_simple_dyn_buf;
@@ -432,11 +437,10 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
                                                        NULL,
                                                        (void*)loop_dyn_buf)))
     {
-      loop_dyn_buf= old_dyn_buf->next_dyn_buf;
-      old_dyn_buf->next_dyn_buf= NULL;
       dyn_array->sd_array.last_dyn_buf= old_dyn_buf;
       dyn_array->sd_array.bytes_used= old_bytes_used;
-      release_dyn_buf(loop_dyn_buf);
+      release_dyn_buf(old_dyn_buf->next_dyn_buf);
+      old_dyn_buf->next_dyn_buf= NULL;
 
       dyn_array->ord_array.last_dyn_index= old_last_dyn_index;
       dyn_array->ord_array.top_dyn_index= old_top_dyn_index;
