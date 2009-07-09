@@ -1569,8 +1569,22 @@ run_send_thread(void *data)
       the NDB Protocol phase.
     */
     if ((ret_code= conn->conn_op.ic_login_connection(conn)))
+    {
+      ic_print_error(ret_code);
+      ic_sleep(3);
       continue;
+    }
+    /*
+      We have successfully connected to another node in this send thread.
+      It is now time to move the receive part to the proper receive
+      thread.
+    */
     move_node_to_receive_thread(send_node_conn);
+    /*
+      Now this thread is only handling the send_thread part which is
+      taken care by active_send_thread, it returns when the connection
+      for some reason have been dropped or a stop has been ordered.
+    */
     active_send_thread(send_node_conn);
   }
 end:
@@ -1589,6 +1603,7 @@ end:
   }
   send_node_conn->send_thread_ended= TRUE;
   g_mutex_unlock(send_node_conn->mutex);
+  /* Thread is ready to stop */
   thread_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
