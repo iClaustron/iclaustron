@@ -4025,7 +4025,8 @@ count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
   It is an implementation of the configuration reader interface which is
   implemented by a set of methods defined below.
 */
-static int ensure_node_name_set(void *current_config, IC_MEMORY_CONTAINER *mc_ptr);
+static int ensure_node_name_set(void *current_config,
+                                IC_MEMORY_CONTAINER *mc_ptr);
 
 static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,

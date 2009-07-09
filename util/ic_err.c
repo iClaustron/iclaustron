@@ -160,7 +160,11 @@ ic_print_error(int error_number)
   if (error_number < IC_FIRST_ERROR ||
       error_number > IC_LAST_ERROR ||
       !ic_error_str[error_number - IC_FIRST_ERROR])
+  {
     printf("%d: %s\n", error_number, no_such_error_str);
+    if (sys_errlist[error_number])
+      perror(sys_errlist[error_number]);
+  }
   else
     printf("%s\n", ic_error_str[error_number - IC_FIRST_ERROR]);
 }

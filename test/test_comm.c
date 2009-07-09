@@ -60,36 +60,6 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-#ifdef WITH_UNIT_TEST
-static void
-unit_test_mc()
-{
-  IC_MEMORY_CONTAINER *mc_ptr;
-  guint32 i, j, k, max_alloc_size, no_allocs;
-  gboolean large;
-  for (i= 1; i < 1000; i++)
-  {
-    srandom(i);
-    mc_ptr= ic_create_memory_container(313*i, 0);
-    no_allocs= random() & 255;
-    for (j= 0; j < 4; j++)
-    {
-      for (k= 0; k < no_allocs; k++)
-      {
-        large= ((random() & 3) == 1); /* 25% of allocations are large */
-        if (large)
-          max_alloc_size= 32767;
-        else
-          max_alloc_size= 511;
-        mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, random() & max_alloc_size);
-      }
-      mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
-    }
-    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  }
-}
-#endif
-
 static int
 connection_test(gboolean use_ssl)
 {
@@ -168,7 +138,7 @@ connection_test(gboolean use_ssl)
          glob_server_port,
          glob_client_ip,
          glob_client_port,
-         0, /* Defaut backlog */
+         0, /* Default backlog */
          FALSE /* Listen socket not retained */);
   }
   conn->conn_op.ic_prepare_extra_parameters(
@@ -181,17 +151,19 @@ connection_test(gboolean use_ssl)
   if (ret_code != 0)
   {
     printf("Error in connection set-up: ret_code = %d\n", ret_code);
-    return 1;
+    return ret_code;
   }
   if (glob_is_client)
   {
     guint32 read_size;
     printf("Start reading\n");
-    while (!conn->conn_op.ic_read_connection(conn,
-                                             (void*)buf,
-                                             sizeof(buf),
-                                             &read_size))
+    while (!(ret_code= conn->conn_op.ic_read_connection(conn,
+                                                        (void*)buf,
+                                                        sizeof(buf),
+                                                        &read_size)))
       ;
+    if (ret_code)
+      ic_print_error(ret_code);
   }
   else
   {
@@ -326,19 +298,28 @@ end:
 int main(int argc, char *argv[])
 {
   int ret_code= 1;
+  int i;
 
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- Basic test program communication module", TRUE)))
     return ret_code;
-  printf("Server ip = %s, Client ip = %s\n", glob_server_ip, glob_client_ip);
+  if (glob_test_type == 1)
+  {
+    glob_client_ip= NULL;
+    glob_client_port= NULL;
+  }
+  printf("Server ip = %s, Client ip = %s\n", glob_server_ip,
+         glob_client_ip != NULL ? glob_client_ip : "NULL");
   printf("Server port = %s, Client port = %s\n",
-         glob_server_port, glob_client_port);
+         glob_server_port,
+         glob_client_port != NULL ? glob_client_port : "NULL");
   switch (glob_test_type)
   {
     case 0:
-      ret_code= connection_test(FALSE);
-      break;
     case 1:
+      for (i= 0; i < 4; i++)
+        ret_code= connection_test(FALSE);
+      break;
     case 2:
     case 3:
     case 4:
@@ -352,11 +333,6 @@ int main(int argc, char *argv[])
     case 8:
       test_pcntrl();
       break;
-#ifdef WITH_UNIT_TEST
-    case 9:
-      unit_test_mc();
-      break;
-#endif
     case 10:
       ret_code= connection_test(TRUE);
       break;
