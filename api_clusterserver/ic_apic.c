@@ -7269,7 +7269,8 @@ static int handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
 static int handle_set_connection_parameter_req(IC_CONNECTION *conn,
                                                guint32 client_nodeid);
 static int handle_convert_transporter_request(IC_CONNECTION *conn,
-                                              guint32 client_nodeid);
+                                              guint32 client_nodeid,
+                                              guint32 cs_nodeid);
 static int handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                  IC_CONNECTION *conn,
                                  IC_RC_PARAM *param);
@@ -7685,7 +7686,8 @@ run_cluster_server_thread(gpointer data)
                           strlen(convert_transporter_str)))
         {
           if ((error= handle_convert_transporter_request(conn,
-                                          param.client_nodeid)))
+                                          param.client_nodeid,
+                                          run_obj->cs_nodeid)))
           {
             DEBUG_PRINT(CONFIG_LEVEL,
         ("Error from handle_convert_transporter_request, code = %u", error));
@@ -7843,11 +7845,11 @@ handle_report_event(IC_CONNECTION *conn)
   report_node_id= num_array[0] >> 16;
   g_assert((num_array[0] & 0xFFFF) == 59);
   if (num_array[1] == 0)
-    printf("Node %u has shutdown", report_node_id);
+    printf("Node %u has shutdown\n", report_node_id);
   else if (num_array[1] == 1)
-    printf("Node %u has restarted", report_node_id);
+    printf("Node %u has restarted\n", report_node_id);
   else
-    printf("Node %u has performed initial restart", report_node_id);
+    printf("Node %u has performed initial restart\n", report_node_id);
   if (length == (guint64)3)
   {
     printf(" due to graceful shutdown\n");
@@ -7967,7 +7969,9 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
 
 /* Handle convert transporter request protocol action */
 static int
-handle_convert_transporter_request(IC_CONNECTION *conn, guint32 client_nodeid)
+handle_convert_transporter_request(IC_CONNECTION *conn,
+                                   guint32 client_nodeid,
+                                   guint32 cs_nodeid)
 {
   int error;
   int trp_type= IC_TCP_TRANSPORTER_TYPE;
@@ -7975,7 +7979,7 @@ handle_convert_transporter_request(IC_CONNECTION *conn, guint32 client_nodeid)
   DEBUG_ENTRY("handle_convert_transporter_request");
 
   g_snprintf(client_buf, 64, "%d %d", client_nodeid, trp_type);
-  g_snprintf(cs_buf, 64, "%d %d", client_nodeid, trp_type);
+  g_snprintf(cs_buf, 64, "%d %d", cs_nodeid, trp_type);
   if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
       (error= ic_rec_simple_str(conn, client_buf)) ||
       (error= ic_send_with_cr(conn, cs_buf)))

@@ -263,9 +263,9 @@ int run_process(gchar **argv,
     printf("Failed to run script, error: %s", error->message);
     return 0;
   }
-  if (exit_status)
+  if (*exit_status)
   {
-    printf("Exit status %d", *exit_status);
+    printf("Exit status %d\n", *exit_status);
     if (*exit_status < 0 || *exit_status > 2)
       *exit_status= 2;
     return *exit_status;
