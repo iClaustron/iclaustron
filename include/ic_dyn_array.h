@@ -53,8 +53,8 @@ struct ic_dynamic_translation_ops
   int (*ic_insert_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
                                        guint64 *index,
                                        void *object);
-  void (*ic_remove_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
-                                        guint64 index,
+  int (*ic_remove_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
+                                       guint64 index,
                                         void *object);
   guint64 (*ic_get_max_index) (IC_DYNAMIC_TRANSLATION *dyn_trans);
   void (*ic_free_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans);

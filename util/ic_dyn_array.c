@@ -409,7 +409,7 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   IC_DYNAMIC_ARRAY_INDEX *old_last_dyn_index= dyn_array->ord_array.last_dyn_index;
   IC_DYNAMIC_ARRAY_INDEX *loop_dyn_index= old_last_dyn_index;
   guint64 buf_size= 0;
-  guint32 ins_buf_count= 0, i;
+  guint32 ins_buf_count= 0;
   guint64 old_bytes_used= dyn_array->sd_array.bytes_used;
   guint32 old_index_levels= dyn_array->ord_array.index_levels;
 
@@ -733,7 +733,7 @@ get_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
   return 0;
 }
 
-static void
+static int
 remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                           guint64 index,
                           void *object)
@@ -780,7 +780,7 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                                 entry_size,
                                 (gchar*)&transl_entry))
     abort();
-  return;
+  return 0;
 }
 
 static void

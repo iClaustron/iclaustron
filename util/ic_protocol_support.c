@@ -227,6 +227,18 @@ ic_send_key(IC_CONNECTION *conn,
 }
 
 int
+ic_send_with_cr_with_num(IC_CONNECTION *conn,
+                         const gchar *in_buf,
+                         guint64 number)
+{
+  gchar out_buf[128], buf[64];
+
+  g_snprintf(out_buf, 128, "%s%s", in_buf,
+             ic_guint64_str(number, buf, NULL));
+  return ic_send_with_cr(conn, out_buf);
+}
+
+int
 ic_send_version(IC_CONNECTION *conn,
                 const gchar *version_string)
 {

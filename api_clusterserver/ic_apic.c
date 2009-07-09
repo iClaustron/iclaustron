@@ -2397,17 +2397,6 @@ int ic_init_config_parameters()
   This module has a number of support functions often used in protocol
   actions.
 */
-static int
-ic_send_cluster_id(IC_CONNECTION *conn, guint32 cluster_id,
-                   gboolean use_cluster_id)
-{
-  gchar cluster_id_buf[32];
-
-  if (!use_cluster_id)
-    return FALSE;
-  g_snprintf(cluster_id_buf, 32, "%s%u", cluster_id_str, cluster_id);
-  return ic_send_with_cr(conn, cluster_id_buf);
-}
 
 /*
   In all iClaustron protocols where cluster id is possible to use it is
@@ -3617,38 +3606,28 @@ send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
                     IC_CONNECTION *conn,
                     guint32 cluster_id)
 {
-  gchar version_buf[128];
-  gchar nodeid_buf[32];
   gchar endian_buf[32];
-  gchar nodetype_buf[32];
-  gchar cluster_id_buf[32];
-  gchar buf[128];
-  guint32 node_type= 1;
+  guint64 node_type= 1;
   guint64 version_no;
   guint32 node_id= apic->node_ids[cluster_id];
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
-  g_snprintf(version_buf, 32, "%s%s", version_str, 
-             ic_guint64_str(version_no, buf, NULL));
-  g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
-  g_snprintf(cluster_id_buf, 32, "%s%u", cluster_id_str, cluster_id);
-  g_snprintf(nodetype_buf, 32, "%s%u", nodetype_str, node_type);
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
   g_snprintf(endian_buf, 32, "%s%s", endian_str, little_endian_str);
 #else
   g_snprintf(endian_buf, 32, "%s%s", endian_str, big_endian_str);
 #endif
   if (ic_send_with_cr(conn, get_nodeid_str) ||
-      ic_send_with_cr(conn, version_buf) ||
-      ic_send_with_cr(conn, nodetype_buf) ||
-      ic_send_with_cr(conn, nodeid_buf) ||
+      ic_send_with_cr_with_num(conn, version_str, version_no) ||
+      ic_send_with_cr_with_num(conn, nodetype_str, node_type) ||
+      ic_send_with_cr_with_num(conn, nodeid_str, (guint64)node_id) ||
       ic_send_with_cr(conn, user_str) ||
       ic_send_with_cr(conn, password_str) ||
       ic_send_with_cr(conn, public_key_str) ||
       ic_send_with_cr(conn, endian_buf) ||
       ic_send_with_cr(conn, log_event_str) ||
       (apic->use_ic_cs &&
-      ic_send_with_cr(conn, cluster_id_buf)) ||
+      ic_send_with_cr_with_num(conn, cluster_id_str, (guint64)cluster_id)) ||
       ic_send_empty_line(conn))
     return conn->conn_op.ic_get_error_code(conn);
   return 0;
@@ -3659,18 +3638,12 @@ send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
                     IC_CONNECTION *conn)
 {
   guint64 version_no;
-  guint32 node_type= 1;
-  gchar nodetype_buf[64];
-  gchar version_buf[64];
-  gchar buf[64];
+  guint64 node_type= 1;
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
-  g_snprintf(version_buf, 64, "%s%s", version_str,
-             ic_guint64_str(version_no, buf, NULL));
-  g_snprintf(nodetype_buf, 64, "%s%u", nodetype_str, node_type);
   if (ic_send_with_cr(conn, get_config_str) ||
-      ic_send_with_cr(conn, version_buf) ||
-      ic_send_with_cr(conn, nodetype_buf) ||
+      ic_send_with_cr_with_num(conn, version_str, version_no) ||
+      ic_send_with_cr_with_num(conn, nodetype_str, node_type) ||
       ic_send_empty_line(conn))
     return conn->conn_op.ic_get_error_code(conn);
   return 0;
@@ -7750,7 +7723,6 @@ static int
 handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                         IC_CONNECTION *conn)
 {
-  gchar cluster_id_buf[32];
   gchar cluster_name_buf[128];
   guint32 i;
   int error;
@@ -7765,13 +7737,12 @@ handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     clu_conf= run_obj->conf_objects[i];
     if (!clu_conf)
       continue;
-    g_snprintf(cluster_id_buf, 32, "%s%u", cluster_id_str, i);
     cluster_name_buf[0]= 0;
     IC_INIT_STRING(&cluster_name, cluster_name_buf, 0, TRUE);
     ic_add_string(&cluster_name, cluster_name_string);
     ic_add_ic_string(&cluster_name, &clu_conf->clu_info.cluster_name);
     if ((error= ic_send_with_cr(conn, cluster_name.str)) ||
-        (error= ic_send_with_cr(conn, cluster_id_buf)))
+        (error= ic_send_with_cr_with_num(conn, cluster_id_str, (guint64)i)))
       goto error;
   }
   if ((error= ic_send_with_cr(conn, end_get_cluster_list_str)))
@@ -7875,13 +7846,12 @@ static int
 handle_get_mgmd_nodeid_req(IC_CONNECTION *conn, guint32 cs_nodeid)
 {
   int error;
-  gchar cs_nodeid_buf[32];
-  g_snprintf(cs_nodeid_buf, 32, "%s%u", nodeid_str, cs_nodeid);
   DEBUG_ENTRY("handle_get_mgmd_nodeid_req");
 
   if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
       (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
-      (error= ic_send_with_cr(conn, cs_nodeid_buf)) ||
+      (error= ic_send_with_cr_with_num(conn, nodeid_str,
+                                       (guint64)cs_nodeid)) ||
       (error= ic_send_empty_line(conn)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
@@ -8203,13 +8173,11 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
 static int
 send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
 {
-  gchar nodeid_buf[32];
   int error= 0;
   DEBUG_ENTRY("send_get_nodeid_reply");
 
-  g_snprintf(nodeid_buf, 32, "%s%u", nodeid_str, node_id);
   if (ic_send_with_cr(conn, get_nodeid_reply_str) ||
-      ic_send_with_cr(conn, nodeid_buf) ||
+      ic_send_with_cr_with_num(conn, nodeid_str, (guint64)node_id) ||
       ic_send_with_cr(conn, result_ok_str) ||
       ic_send_empty_line(conn))
     error= conn->conn_op.ic_get_error_code(conn);
