@@ -784,7 +784,7 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
 }
 
 static void
-free_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans)
+free_dynamic_translation(IC_DYNAMIC_TRANSLATION *ext_dyn_trans)
 {
   IC_DYNAMIC_TRANSLATION_INT *dyn_trans=
     (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
@@ -807,7 +807,7 @@ get_max_index(IC_DYNAMIC_TRANSLATION *ext_dyn_trans)
 }
 
 IC_DYNAMIC_TRANSLATION*
-ic_create_dynamic_translation_object()
+ic_create_dynamic_translation()
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array;
   IC_TRANSLATION_ENTRY transl_entry;
@@ -833,7 +833,7 @@ ic_create_dynamic_translation_object()
   }
   dyn_trans->dt_ops.ic_insert_translation_object= insert_translation_object;
   dyn_trans->dt_ops.ic_remove_translation_object= remove_translation_object;
-  dyn_trans->dt_ops.ic_free_translation_object= free_translation_object;
+  dyn_trans->dt_ops.ic_free_dynamic_translation= free_dynamic_translation;
   dyn_trans->dt_ops.ic_get_translation_object= get_translation_object;
   dyn_trans->dt_ops.ic_get_max_index= get_max_index;
   dyn_trans->dyn_array= dyn_array;

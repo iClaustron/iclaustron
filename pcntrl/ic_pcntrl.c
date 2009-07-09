@@ -1179,7 +1179,7 @@ int main(int argc, char *argv[])
     goto error;
   if (!(pc_hash_mutex= g_mutex_new()))
     goto error;
-  if (!(glob_dyn_trans= ic_create_dynamic_translation_object()))
+  if (!(glob_dyn_trans= ic_create_dynamic_translation()))
     goto error;
   /*
     First step is to set-up path to where the binaries reside. All binaries
@@ -1240,6 +1240,6 @@ error:
   if (glob_base_dir_string.str)
     ic_free(glob_base_dir_string.str);
   if (glob_dyn_trans)
-    glob_dyn_trans->dt_ops.ic_free_translation_object(glob_dyn_trans);
+    glob_dyn_trans->dt_ops.ic_free_dynamic_translation(glob_dyn_trans);
   return ret_code;
 }

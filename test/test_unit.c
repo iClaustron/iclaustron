@@ -237,47 +237,66 @@ unit_test_simple_dynamic_array()
   return test_dynamic_array(dyn_array, buf_size);
 }
 
+struct ic_test_dyn_trans
+{
+  int object;
+  gboolean in_dyn_trans;
+  guint64 index;
+};
+typedef struct ic_test_dyn_trans IC_TEST_DYN_TRANS;
+#define IC_NUM_TEST_DYN_TRANS_OBJECTS 4000000
+
 static int
 test_dynamic_translation(IC_DYNAMIC_TRANSLATION *dyn_trans)
 {
-  guint64 index;
-  int void_object= 1;
-  int ret_object;
+  void *ret_object;
   int ret_code;
   guint32 i;
   guint64 max_index;
-  
-  for (i= 0; i < 5; i++)
-  {
-    if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(
-                       dyn_trans,
-                       &index,
-                       (void*)&void_object)))
-      goto error;
-    dyn_trans->dt_ops.ic_remove_translation_object(
-                       dyn_trans,
-                       index,
-                       (void*)&void_object);
-  }
-  for (i=0; i < 5; i++)
-  {
-    if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(
-                        dyn_trans,
-                        &index,
-                        (void*)&void_object)))
-      goto error;
-    if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(
-                        dyn_trans,
-                        index,
-                        (void*)&ret_object)))
-      goto error;
+  IC_TEST_DYN_TRANS *test_dyn_trans= (IC_TEST_DYN_TRANS*)
+    ic_calloc(sizeof(IC_TEST_DYN_TRANS)*IC_NUM_TEST_DYN_TRANS_OBJECTS);
 
+  if (!test_dyn_trans)
+    abort();
+  for (i= 0; i < IC_NUM_TEST_DYN_TRANS_OBJECTS; i++)
+  {
+    test_dyn_trans[i].object= i;
+  }
+
+  for (i= 0; i < 4; i++) 
+  {
+    if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(
+                       dyn_trans,
+                       &test_dyn_trans[i].index,
+                       (void*)&test_dyn_trans[i].object)))
+      goto error;
+    test_dyn_trans[i].in_dyn_trans= TRUE;
+  }
+  for (i= 0; i < 2; i++)
+  {
+     dyn_trans->dt_ops.ic_remove_translation_object(
+                       dyn_trans,
+                       test_dyn_trans[i].index,
+                       (void*)&test_dyn_trans[i].object);
+     test_dyn_trans[i].in_dyn_trans= FALSE;
+  }
+  for (i= 2; i < 4; i++)
+  {
+    if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(
+                       dyn_trans,
+                       test_dyn_trans[i].index,
+                       (void**)&ret_object)))
+      goto error;
+    if (ret_object != (void*)&test_dyn_trans[i].object)
+      return 1;
     max_index= dyn_trans->dt_ops.ic_get_max_index(dyn_trans);
   }
-  dyn_trans->dt_ops.ic_free_translation_object(dyn_trans);
+  dyn_trans->dt_ops.ic_free_dynamic_translation(dyn_trans);
+  ic_free(test_dyn_trans);
   return 0;
 error:
   return ret_code;
+  
 }
 
 static int
@@ -285,7 +304,7 @@ unit_test_dynamic_translation()
 {
   IC_DYNAMIC_TRANSLATION *dyn_trans;
 
-  dyn_trans= ic_create_dynamic_translation_object();
+  dyn_trans= ic_create_dynamic_translation();
   if (dyn_trans == NULL)
     return IC_ERROR_MEM_ALLOC;
   return test_dynamic_translation(dyn_trans);
