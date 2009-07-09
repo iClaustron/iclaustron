@@ -534,7 +534,7 @@ write_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
 static int
 read_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
                          guint64 position,
-                         __attribute__((unused)) guint64 size,
+                         guint64 size,
                          gchar *buf)
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
@@ -548,7 +548,7 @@ read_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
     return ret_code;
   read_buf= (gchar*)&dyn_buf->buf[0];
   read_buf+= buf_pos;
-  memcpy(buf, read_buf, sizeof(IC_TRANSLATION_ENTRY));
+  memcpy(buf, read_buf, size);
   return 0;
 }
 
@@ -822,7 +822,7 @@ ic_create_dynamic_translation_object()
     ic_free((void*)dyn_trans);
     return NULL;
   }
-  transl_entry.object= (void*)0;
+  transl_entry.position= (guint64)0;
   if (insert_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array,
                                     (const gchar*)&transl_entry,
                                     sizeof(transl_entry)))
