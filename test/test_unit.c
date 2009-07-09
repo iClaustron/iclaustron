@@ -274,10 +274,11 @@ test_dynamic_translation(IC_DYNAMIC_TRANSLATION *dyn_trans)
   }
   for (i= 0; i < 2; i++)
   {
-     dyn_trans->dt_ops.ic_remove_translation_object(
+     if ((ret_code= dyn_trans->dt_ops.ic_remove_translation_object(
                        dyn_trans,
                        test_dyn_trans[i].index,
-                       (void*)&test_dyn_trans[i].object);
+                       (void*)&test_dyn_trans[i].object)))
+       goto error;
      test_dyn_trans[i].in_dyn_trans= FALSE;
   }
   for (i= 2; i < 4; i++)
