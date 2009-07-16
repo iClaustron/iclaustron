@@ -57,20 +57,6 @@
 #define REC_PARAM 1
 #define REC_FINAL_CR 2
 
-/* Protocol strings */
-static const gchar *ok_str= "ok";
-static const gchar *start_str= "start";
-static const gchar *stop_str= "stop";
-static const gchar *kill_str= "kill";
-static const gchar *list_str= "list";
-static const gchar *list_full_str= "list full";
-static const gchar *list_next_str= "list next";
-static const gchar *list_node_str= "list node";
-static const gchar *list_stop_str= "list stop";
-static const gchar *auto_restart_true_str= "autorestart: true";
-static const gchar *auto_restart_false_str= "autorestart: false";
-static const gchar *num_parameters_str= "num parameters: ";
-
 /* Configurable variables */
 static gchar *glob_ip= NULL;
 static gchar *glob_port= "10002";
@@ -113,7 +99,7 @@ static int
 send_ok_reply(IC_CONNECTION *conn)
 {
   int error;
-  if ((error= ic_send_with_cr(conn, ok_str)) ||
+  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
       (error= ic_send_empty_line(conn)))
     return error;
   return 0;
@@ -124,8 +110,8 @@ send_ok_pid_reply(IC_CONNECTION *conn, GPid pid)
 {
   int error;
 
-  if ((error= ic_send_with_cr(conn, ok_str)) ||
-      (error= ic_send_pid(conn, pid)) ||
+  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
       (error= ic_send_empty_line(conn)))
     return error;
   return 0;
@@ -154,7 +140,7 @@ send_list_entry(IC_CONNECTION *conn,
                                 num_param_buf,
                                 &num_param_len);
 
-  if ((error= ic_send_with_cr(conn, list_node_str)) ||
+  if ((error= ic_send_with_cr(conn, ic_list_node_str)) ||
       (error= ic_send_with_cr(conn, pc_start->key.grid_name.str)) ||
       (error= ic_send_with_cr(conn, pc_start->key.cluster_name.str)) ||
       (error= ic_send_with_cr(conn, pc_start->key.node_name.str)) ||
@@ -250,23 +236,27 @@ get_autorestart(IC_CONNECTION *conn,
   int error;
   guint32 read_size;
   gchar *read_buf;
+  guint32 auto_restart_size= strlen(ic_auto_restart_str);
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
-  if (read_size == strlen(auto_restart_true_str) &&
-      !memcmp(read_buf, auto_restart_true_str, read_size))
-  {
+  if (read_size <= auto_restart_size)
+    goto protocol_error;
+  if (!memcmp(read_buf, ic_auto_restart_str, auto_restart_size))
+    goto protocol_error;
+  read_size-= auto_restart_size;
+  read_buf+= auto_restart_size;
+  if (read_size == strlen(ic_true_str) &&
+      !memcmp(read_buf, ic_true_str, read_size))
     *auto_restart= 1;
-    return 0;
-  }
-  else if (read_size == strlen(auto_restart_false_str) &&
-           !memcmp(read_buf, auto_restart_false_str, read_size))
-  {
+  else if (read_size == strlen(ic_false_str) &&
+           !memcmp(read_buf, ic_false_str, read_size))
     *auto_restart= 0;
-    return 0;
-  }
   else
-    return IC_PROTOCOL_ERROR;
+    goto protocol_error;
+  return 0;
+protocol_error:
+  return IC_PROTOCOL_ERROR;
 }
 
 static int
@@ -276,13 +266,14 @@ get_num_parameters(IC_CONNECTION *conn,
   int error;
   guint32 read_size;
   guint64 loc_num_params;
-  guint32 num_param_len= strlen(num_parameters_str);
+  guint32 num_param_len= strlen(ic_num_parameters_str);
   guint32 len;
   gchar *read_buf;
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
-  if (memcmp(read_buf, num_parameters_str, read_size))
+  if (read_size <= num_param_len ||
+      memcmp(read_buf, ic_num_parameters_str, read_size))
     return IC_PROTOCOL_ERROR;
   if ((read_size <= num_param_len) ||
       (ic_conv_str_to_int(read_buf+num_param_len, &loc_num_params, &len)) ||
@@ -904,11 +895,11 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
       goto error;
     if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     {
-      if (ic_check_buf(read_buf, read_size, list_stop_str,
-                       strlen(list_stop_str)))
+      if (ic_check_buf(read_buf, read_size, ic_list_stop_str,
+                       strlen(ic_list_stop_str)))
         break;
-      if (!(ic_check_buf(read_buf, read_size, list_next_str,
-                         strlen(list_next_str))))
+      if (!(ic_check_buf(read_buf, read_size, ic_list_next_str,
+                         strlen(ic_list_next_str))))
         goto protocol_error;
     }
     loop_pc_start= loop_pc_start->next_pc_start;
@@ -973,15 +964,16 @@ error:
            parameter: data_dir string /home/mikael/iclaustron\n\n
 
   The successful response is:
-  Line 1: ok
+  Line 1: Ok
   Line 2: Process Id
   Line 3: Empty line
 
   Example: ok\npid: 1234\n\n
 
   The unsuccessful response is:
-  Line 1: error
+  Line 1: Error
   Line 2: message
+  Line 3: empty line
 
   Example: error:\nerror: Failed to start process\n\n
 
@@ -1060,32 +1052,32 @@ run_command_handler(gpointer data)
 
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (ic_check_buf(read_buf, read_size, start_str,
-                     strlen(start_str)))
+    if (ic_check_buf(read_buf, read_size, ic_start_str,
+                     strlen(ic_start_str)))
     {
       if ((ret_code= handle_start(conn)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, stop_str,
-                          strlen(stop_str)))
+    else if (ic_check_buf(read_buf, read_size, ic_stop_str,
+                          strlen(ic_stop_str)))
     {
       if ((ret_code= handle_stop(conn, FALSE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, kill_str,
-                          strlen(kill_str)))
+    else if (ic_check_buf(read_buf, read_size, ic_kill_str,
+                          strlen(ic_kill_str)))
     {
       if ((ret_code= handle_stop(conn, TRUE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, list_str,
-                          strlen(list_str)))
+    else if (ic_check_buf(read_buf, read_size, ic_list_str,
+                          strlen(ic_list_str)))
     {
       if ((ret_code= handle_list(conn, FALSE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, list_full_str,
-                          strlen(list_full_str)))
+    else if (ic_check_buf(read_buf, read_size, ic_list_full_str,
+                          strlen(ic_list_full_str)))
     {
       if ((ret_code= handle_list(conn, TRUE)))
         break;

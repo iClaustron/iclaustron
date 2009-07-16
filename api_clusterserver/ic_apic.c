@@ -572,7 +572,6 @@ static const gchar *node1_str= "node1: ";
 static const gchar *node2_str= "node2: ";
 static const gchar *param_str= "param: ";
 static const gchar *value_str= "value: ";
-static const gchar *version_str= "version: ";
 static const gchar *nodetype_str= "nodetype: ";
 static const gchar *user_str= "user: mysqld";
 static const gchar *password_str= "password: mysqld";
@@ -583,11 +582,26 @@ static const gchar *big_endian_str= "big";
 static const gchar *log_event_str= "log_event: 0";
 static const gchar *result_ok_str= "result: Ok";
 static const gchar *result_str= "result: ";
-static const gchar *ok_str= "Ok";
-static const gchar *error_str= "Error";
 static const gchar *content_len_str= "Content-Length: ";
 static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
+
+const gchar *ic_ok_str= "Ok";
+const gchar *ic_version_str= "version: ";
+const gchar *ic_error_str= "Error";
+const gchar *ic_start_str= "start";
+const gchar *ic_stop_str= "stop";
+const gchar *ic_kill_str= "kill";
+const gchar *ic_list_str= "list";
+const gchar *ic_list_full_str= "list full";
+const gchar *ic_list_next_str= "list next";
+const gchar *ic_list_node_str= "list node";
+const gchar *ic_list_stop_str= "list stop";
+const gchar *ic_true_str= "true";
+const gchar *ic_false_str= "false";
+const gchar *ic_auto_restart_str= "autorestart: ";
+const gchar *ic_num_parameters_str= "num parameters: ";
+const gchar *ic_pid_str= "pid: ";
 
 #define MIN_PORT 0
 #define MAX_PORT 65535
@@ -3618,7 +3632,7 @@ send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
   g_snprintf(endian_buf, 32, "%s%s", endian_str, big_endian_str);
 #endif
   if (ic_send_with_cr(conn, get_nodeid_str) ||
-      ic_send_with_cr_with_num(conn, version_str, version_no) ||
+      ic_send_with_cr_with_num(conn, ic_version_str, version_no) ||
       ic_send_with_cr_with_num(conn, nodetype_str, node_type) ||
       ic_send_with_cr_with_num(conn, nodeid_str, (guint64)node_id) ||
       ic_send_with_cr(conn, user_str) ||
@@ -3642,7 +3656,7 @@ send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
   if (ic_send_with_cr(conn, get_config_str) ||
-      ic_send_with_cr_with_num(conn, version_str, version_no) ||
+      ic_send_with_cr_with_num(conn, ic_version_str, version_no) ||
       ic_send_with_cr_with_num(conn, nodetype_str, node_type) ||
       ic_send_empty_line(conn))
     return conn->conn_op.ic_get_error_code(conn);
@@ -6099,7 +6113,7 @@ write_cv_file(IC_STRING *config_dir,
     finally it can be in a number of states which is used
     when the configuration is updated.
   */
-  IC_INIT_STRING(&str, (gchar*)version_str, VERSION_REQ_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)ic_version_str, VERSION_REQ_LEN, TRUE);
   insert_line_config_version_file(&str, &ptr, config_version);
   IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
   insert_line_config_version_file(&str, &ptr, state);
@@ -6182,7 +6196,7 @@ read_config_version_file(IC_STRING *config_dir,
     state: <state><CR>
     pid: <pid><CR>
   */
-  IC_INIT_STRING(&str, (gchar*)version_str, VERSION_REQ_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)ic_version_str, VERSION_REQ_LEN, TRUE);
   if ((error= cmp_config_version_line(&str, &len, config_version, &ptr)))
     goto file_error;
   IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
@@ -7895,13 +7909,13 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
   }
   if (error)
   {
-    the_result_str= error_str;
+    the_result_str= ic_error_str;
     the_message_str= ic_get_error_message(error);
   }
   else
   {
     the_message_str= ic_empty_string;
-    the_result_str= ok_str;
+    the_result_str= ic_ok_str;
     /*
       We have received information about a dynamic port assignment.
       We need to spread this information to all other cluster servers
@@ -8045,7 +8059,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
     switch (state)
     {
       case VERSION_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, version_str,
+        if (ic_check_buf_with_int(read_buf, read_size, ic_version_str,
                                   VERSION_REQ_LEN, version_number))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -8211,7 +8225,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
         state= VERSION_REQ_STATE;
         break;
       case VERSION_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, version_str,
+        if (ic_check_buf_with_int(read_buf, read_size, ic_version_str,
                                   VERSION_REQ_LEN, &read_version_num) ||
             (version_number != read_version_num))
         {

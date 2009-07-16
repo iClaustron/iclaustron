@@ -239,47 +239,6 @@ ic_send_with_cr_with_num(IC_CONNECTION *conn,
 }
 
 int
-ic_send_version(IC_CONNECTION *conn,
-                const gchar *version_string)
-{
-  int error;
-  gchar version_line[256];
-
-  g_snprintf(version_line, 256, "version: %s", version_string);
-  if ((error= ic_send_with_cr(conn, version_line)))
-    return error;
-  return 0;
-}
-
-int
-ic_send_program(IC_CONNECTION *conn,
-                const gchar *program_name)
-{
-  int error;
-  gchar program_line[256];
-
-  g_snprintf(program_line, 256, "program: %s", program_name);
-  if ((error= ic_send_with_cr(conn, program_line)))
-    return error;
-  return 0;
-}
-
-int
-ic_send_pid(IC_CONNECTION *conn,
-            const GPid pid)
-{
-  int error;
-  guint32 len;
-  gchar pid_buf[128], pid_line[140];
-
-  ic_guint64_str((guint64)pid, pid_buf, &len);
-  g_snprintf(pid_line, 140, "pid: %s", pid_buf);
-  if ((error= ic_send_with_cr(conn, pid_line)))
-    return error;
-  return 0;
-}
-
-int
 ic_rec_empty_line(IC_CONNECTION *conn)
 {
   return ic_rec_simple_str(conn, "");

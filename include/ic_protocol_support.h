@@ -58,9 +58,6 @@ int ic_send_key(IC_CONNECTION *conn,
                 const gchar *grid_name,
                 const gchar *cluster_name,
                 const gchar *node_name);
-int ic_send_version(IC_CONNECTION *conn, const gchar *version);
-int ic_send_program(IC_CONNECTION *conn, const gchar *program_name);
-int ic_send_pid(IC_CONNECTION *conn, GPid pid);
 int ic_send_empty_line(IC_CONNECTION *conn);
 int ic_send_with_cr_with_num(IC_CONNECTION *conn, const gchar *buf,
                              guint64 number);

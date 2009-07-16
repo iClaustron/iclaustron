@@ -16,6 +16,26 @@
 #ifndef IC_APIC_H
 #define IC_APIC_H
 
+/* Strings used in MGM API protocols */
+extern const gchar *ic_ok_str;
+extern const gchar *ic_error_str;
+extern const gchar *ic_version_str;
+extern const gchar *ic_program_str;
+extern const gchar *ic_start_str;
+extern const gchar *ic_stop_str;
+extern const gchar *ic_kill_str;
+extern const gchar *ic_list_str;
+extern const gchar *ic_list_full_str;
+extern const gchar *ic_list_next_str;
+extern const gchar *ic_list_node_str;
+extern const gchar *ic_list_stop_str;
+extern const gchar *ic_true_str;
+extern const gchar *ic_false_str;
+extern const gchar *ic_auto_restart_str;
+extern const gchar *ic_num_parameters_str;
+extern const gchar *ic_pid_str;
+
+/* Initialisation of configuration parameters */
 int ic_init_config_parameters();
 void ic_print_config_parameters(guint32 mask);
 void ic_destroy_conf_hash();

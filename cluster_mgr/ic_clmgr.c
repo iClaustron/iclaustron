@@ -22,6 +22,7 @@
 #include <ic_threadpool.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
+#include <ic_protocol_support.h>
 #include "ic_clmgr_int.h"
 
 /* Global variables */
@@ -182,6 +183,69 @@ start_cluster_mgr_node(__attribute ((unused)) gchar *node_config,
                        __attribute ((unused)) gboolean initial_flag)
 {
   return 0;
+}
+
+static int
+start_node(IC_CONNECTION *conn,
+           gchar *grid_name,
+           gchar *cluster_name,
+           gchar *node_name,
+           gchar *program_name,
+           gchar *version_name,
+           gchar **parameters,
+           guint32 num_params,
+           gboolean autorestart_flag)
+{
+  int ret_code;
+  gchar *read_buf;
+  guint32 read_size;
+  guint32 i;
+  guint32 pid;
+
+  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
+      (ret_code= ic_send_with_cr(conn, version_name)) ||
+      (ret_code= ic_send_with_cr(conn, grid_name)) ||
+      (ret_code= ic_send_with_cr(conn, cluster_name)) ||
+      (ret_code= ic_send_with_cr(conn, node_name)) ||
+      (ret_code= ic_send_with_cr(conn, program_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_auto_restart_str,
+                 autorestart_flag ? ic_true_str : ic_false_str)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_num_parameters_str,
+                                          num_params)))
+    goto error;
+  for (i= 0; i < num_params; i++)
+  {
+    if ((ret_code= ic_send_with_cr(conn, parameters[i])))
+      goto error;
+  }
+  if ((ret_code= ic_send_empty_line(conn)))
+    goto error;
+  /* Completed send of start message, now wait for response */
+  if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    goto error;
+  if (ic_check_buf(read_buf, read_size, ic_ok_str, strlen(ic_ok_str)))
+  {
+    /* Received an ok message */
+    if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)))
+      goto error;
+  }
+  else if (ic_check_buf(read_buf, read_size, ic_error_str,
+                        strlen(ic_error_str)))
+  {
+    /* Received an error message */
+  }
+  else
+  {
+    ret_code= IC_PROTOCOL_ERROR;
+    goto error;
+  }
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
+  return 0;
+error:
+  return ret_code;
 }
 
 static int
