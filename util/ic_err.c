@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7054
+#define IC_LAST_ERROR 7055
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -152,6 +152,8 @@ ic_init_error_messages()
     "Index 0 isn't allowed in dynamic translations";
   ic_error_str[IC_ERROR_TRANSLATION_INDEX_OUT_OF_BOUND - IC_FIRST_ERROR]=
     "Index out of bound in dynamic translation";
+  ic_error_str[IC_ERROR_TRANSLATION_INDEX_ERROR - IC_FIRST_ERROR]=
+    "Trying to read non-existent entry in dynamic translation";
 }
 
 void

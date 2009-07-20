@@ -647,6 +647,7 @@ ic_create_ordered_dynamic_array()
   return (IC_DYNAMIC_ARRAY*)dyn_array;
 }
 
+#define HIGHEST_BIT_SET (guint64)((guint64)1 << 63)
 static int
 insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                           guint64 *position,
@@ -694,7 +695,9 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                                  entry_size,
                                  (gchar*)&transl_entry))
       abort();
-    first_entry.position= transl_entry.position;
+    if (transl_entry.position < HIGHEST_BIT_SET)
+      abort();
+    first_entry.position= transl_entry.position - HIGHEST_BIT_SET;
     if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
                                   pos_first,
                                   entry_size,
@@ -729,6 +732,8 @@ get_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
   {
     return IC_ERROR_TRANSLATION_INDEX_OUT_OF_BOUND;
   }
+  if (transl_entry.position >= HIGHEST_BIT_SET)
+    return IC_ERROR_TRANSLATION_INDEX_ERROR;
   *object= transl_entry.object;
   return 0;
 }
@@ -738,7 +743,7 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
                           guint64 index,
                           void *object)
 {
-  IC_TRANSLATION_ENTRY transl_entry;
+  IC_TRANSLATION_ENTRY transl_entry, first_pos_transl_entry;
   guint64 pos_first= (guint64)0;
   guint64 position= index * sizeof(IC_TRANSLATION_ENTRY);
   guint64 entry_size= sizeof(IC_TRANSLATION_ENTRY);
@@ -769,6 +774,8 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     /* Serious error cannot find entry to remove */
     abort();
   }
+  first_pos_transl_entry= transl_entry;
+  transl_entry.position+= HIGHEST_BIT_SET;
   if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
                                 position,
                                 entry_size,
@@ -778,7 +785,7 @@ remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
   if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
                                 pos_first,
                                 entry_size,
-                                (gchar*)&transl_entry))
+                                (gchar*)&first_pos_transl_entry))
     abort();
   return 0;
 }
