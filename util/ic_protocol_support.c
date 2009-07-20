@@ -205,28 +205,6 @@ ic_rec_int_number(IC_CONNECTION *conn,
 }
 
 int
-ic_send_key(IC_CONNECTION *conn,
-            const gchar *grid_name,
-            const gchar *cluster_name,
-            const gchar *node_name)
-{
-  int error;
-  gchar grid_line[256], cluster_line[256], node_line[256];
-
-  g_snprintf(grid_line, 256, "grid name: %s", grid_name);
-  g_assert(!(!cluster_name && node_name));
-  if (cluster_name)
-    g_snprintf(cluster_line, 256, "cluster name: %s", cluster_name);
-  if (node_name)
-    g_snprintf(node_line, 256, "node name: %s", node_name);
-  if ((error= ic_send_with_cr(conn, grid_line)) ||
-      (cluster_name && (error= ic_send_with_cr(conn, cluster_line))) ||
-      (node_name && (error= ic_send_with_cr(conn, node_line))))
-    return error;
-  return 0;
-}
-
-int
 ic_send_with_cr_with_num(IC_CONNECTION *conn,
                          const gchar *in_buf,
                          guint64 number)

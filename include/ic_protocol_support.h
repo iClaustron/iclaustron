@@ -54,10 +54,6 @@ int ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
 int ic_rec_int_number(IC_CONNECTION *conn, const gchar *str, int *number);
 int ic_rec_empty_line(IC_CONNECTION *conn);
 
-int ic_send_key(IC_CONNECTION *conn,
-                const gchar *grid_name,
-                const gchar *cluster_name,
-                const gchar *node_name);
 int ic_send_empty_line(IC_CONNECTION *conn);
 int ic_send_with_cr_with_num(IC_CONNECTION *conn, const gchar *buf,
                              guint64 number);

@@ -34,6 +34,11 @@ extern const gchar *ic_false_str;
 extern const gchar *ic_auto_restart_str;
 extern const gchar *ic_num_parameters_str;
 extern const gchar *ic_pid_str;
+extern const gchar *ic_grid_str;
+extern const gchar *ic_cluster_str;
+extern const gchar *ic_node_str;
+extern const gchar *ic_program_str;
+extern const gchar *ic_start_time_str;
 
 /* Initialisation of configuration parameters */
 int ic_init_config_parameters();

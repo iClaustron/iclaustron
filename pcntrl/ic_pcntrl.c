@@ -88,7 +88,7 @@ static int
 send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
 {
   int error;
-  if ((error= ic_send_with_cr(conn, "error")) ||
+  if ((error= ic_send_with_cr(conn, ic_error_str)) ||
       (error= ic_send_with_cr(conn, error_message)) ||
       (error= ic_send_empty_line(conn)))
     return error;
@@ -122,33 +122,34 @@ send_list_entry(IC_CONNECTION *conn,
                 IC_PC_START *pc_start,
                 gboolean list_full_flag)
 {
-  gchar start_time_buf[64];
-  gchar process_id_buf[64];
-  gchar num_param_buf[64];
-  gchar *start_time_ptr, *process_id_ptr, *num_param_ptr;
-  guint32 start_time_len, process_id_len, num_param_len;
   guint32 i;
   int error;
 
-  start_time_ptr= ic_guint64_str(pc_start->start_id,
-                                 start_time_buf,
-                                 &start_time_len);
-  process_id_ptr= ic_guint64_str((guint64)pc_start->pid,
-                                 process_id_buf,
-                                 &process_id_len);
-  num_param_ptr= ic_guint64_str((guint64)pc_start->num_parameters,
-                                num_param_buf,
-                                &num_param_len);
-
   if ((error= ic_send_with_cr(conn, ic_list_node_str)) ||
-      (error= ic_send_with_cr(conn, pc_start->key.grid_name.str)) ||
-      (error= ic_send_with_cr(conn, pc_start->key.cluster_name.str)) ||
-      (error= ic_send_with_cr(conn, pc_start->key.node_name.str)) ||
-      (error= ic_send_with_cr(conn, pc_start->program_name.str)) ||
-      (error= ic_send_with_cr(conn, pc_start->version_string.str)) ||
-      (error= ic_send_with_cr(conn, start_time_ptr)) ||
-      (error= ic_send_with_cr(conn, process_id_ptr)) ||
-      (error= ic_send_with_cr(conn, num_param_ptr)))
+      (error= ic_send_with_cr_two_strings(conn,
+                                          ic_grid_str,
+                                          pc_start->key.grid_name.str)) ||
+      (error= ic_send_with_cr_two_strings(conn,
+                                          ic_cluster_str,
+                                          pc_start->key.cluster_name.str)) ||
+      (error= ic_send_with_cr_two_strings(conn,
+                                          ic_node_str,
+                                          pc_start->key.node_name.str)) ||
+      (error= ic_send_with_cr_two_strings(conn,
+                                          ic_program_str,
+                                          pc_start->program_name.str)) ||
+      (error= ic_send_with_cr_two_strings(conn,
+                                          ic_version_str,
+                                          pc_start->version_string.str)) ||
+      (error= ic_send_with_cr_with_num(conn,
+                                       ic_start_time_str,
+                                       pc_start->start_id)) ||
+      (error= ic_send_with_cr_with_num(conn,
+                                       ic_pid_str,
+                                       (guint64)pc_start->pid)) ||
+      (error= ic_send_with_cr_with_num(conn,
+                                       ic_num_parameters_str,
+                                       (guint64)pc_start->num_parameters)))
     return error;
   if (list_full_flag)
   {
@@ -167,7 +168,7 @@ static int
 send_list_stop_reply(IC_CONNECTION *conn)
 {
   int error;
-  if ((error= ic_send_with_cr(conn, "list stop")) ||
+  if ((error= ic_send_with_cr(conn, ic_list_stop_str)) ||
       (error= ic_send_empty_line(conn)))
     return error;
   return 0;
@@ -176,17 +177,30 @@ send_list_stop_reply(IC_CONNECTION *conn)
 static int
 get_optional_str(IC_CONNECTION *conn,
                  IC_MEMORY_CONTAINER *mc_ptr,
+                 const gchar *head_str,
                  IC_STRING *str)
 {
   int error;
   guint32 read_size;
   gchar *str_ptr;
   gchar *read_buf;
+  guint32 head_len= 0;
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
   if (read_size == 0)
+  {
+    IC_INIT_STRING(str, NULL, 0, FALSE);
     return 0;
+  }
+  if (head_str)
+    head_len= strlen(head_str);
+  if (read_size <= head_len)
+    return IC_PROTOCOL_ERROR;
+  if (head_len && memcmp(read_buf, head_str, head_len))
+    return IC_PROTOCOL_ERROR;
+  read_buf+= head_len;
+  read_size-= head_len;
   if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
@@ -197,17 +211,25 @@ get_optional_str(IC_CONNECTION *conn,
 static int
 get_str(IC_CONNECTION *conn,
         IC_MEMORY_CONTAINER *mc_ptr,
+        const gchar *head_str,
         IC_STRING *str)
 {
   int error;
   guint32 read_size;
   gchar *str_ptr;
   gchar *read_buf;
+  guint32 head_len= 0;
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
-  if (read_size == 0)
+  if (head_str)
+    head_len= strlen(head_str);
+  if (read_size <= head_len)
     return IC_PROTOCOL_ERROR;
+  if (head_len && memcmp(read_buf, head_str, head_len))
+    return IC_PROTOCOL_ERROR;
+  read_buf+= head_len;
+  read_size-= head_len;
   if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
@@ -222,9 +244,9 @@ get_key(IC_CONNECTION *conn,
 {
   int error;
 
-  if ((error= get_str(conn, mc_ptr, &pc_key->grid_name)) ||
-      (error= get_str(conn, mc_ptr, &pc_key->cluster_name)) ||
-      (error= get_str(conn, mc_ptr, &pc_key->node_name)))
+  if ((error= get_str(conn, mc_ptr, ic_grid_str, &pc_key->grid_name)) ||
+      (error= get_str(conn, mc_ptr, ic_cluster_str, &pc_key->cluster_name)) ||
+      (error= get_str(conn, mc_ptr, ic_node_str, &pc_key->node_name)))
     return error;
   return 0;
 }
@@ -306,9 +328,11 @@ rec_start_message(IC_CONNECTION *conn,
   loc_pc_start= *pc_start;
   loc_pc_start->mc_ptr= mc_ptr;
 
-  if ((error= get_str(conn, mc_ptr, &loc_pc_start->version_string)) ||
+  if ((error= get_str(conn, mc_ptr, ic_version_str,
+                      &loc_pc_start->version_string)) ||
       (error= get_key(conn, mc_ptr, &loc_pc_start->key)) ||
-      (error= get_str(conn, mc_ptr, &loc_pc_start->program_name)) ||
+      (error= get_str(conn, mc_ptr, ic_program_str,
+                      &loc_pc_start->program_name)) ||
       (error= get_autorestart(conn, &loc_pc_start->autorestart)) ||
       (error= get_num_parameters(conn, &loc_pc_start->num_parameters)))
     goto error;
@@ -318,7 +342,7 @@ rec_start_message(IC_CONNECTION *conn,
     goto mem_error;
   for (i= 0; i < loc_pc_start->num_parameters; i++)
   {
-    if ((error= get_str(conn, mc_ptr, &loc_pc_start->parameters[i])))
+    if ((error= get_str(conn, mc_ptr, NULL, &loc_pc_start->parameters[i])))
       goto error;
   }
   if ((error= ic_rec_simple_str(conn, ic_empty_string)))
@@ -382,15 +406,18 @@ rec_optional_key_message(IC_CONNECTION *conn,
   */
   if ((error= init_pc_find(&mc_ptr, pc_find)))
     goto error;
-  if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.grid_name)))
+  if ((error= get_optional_str(conn, mc_ptr, ic_grid_str,
+                               &(*pc_find)->key.grid_name)))
     goto error;
   if ((*pc_find)->key.grid_name.len == 0)
     return 0; /* No grid name provided, list all programs */
-  if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.cluster_name)))
+  if ((error= get_optional_str(conn, mc_ptr, ic_cluster_str,
+                               &(*pc_find)->key.cluster_name)))
     goto error;
   if ((*pc_find)->key.cluster_name.len == 0)
     return 0; /* No cluster name provided, list all programs in grid */
-  if ((error= get_optional_str(conn, mc_ptr, &(*pc_find)->key.node_name)))
+  if ((error= get_optional_str(conn, mc_ptr, ic_node_str,
+                               &(*pc_find)->key.node_name)))
     goto error;
   if ((*pc_find)->key.node_name.len == 0)
     return 0; /* No node name provided, list all programs in cluster */
@@ -947,13 +974,14 @@ error:
   --------------
   The protocol for starting node is:
   Line 1: start
-  Line 2: Version string (either an iClaustron version or a MySQL version string)
-  Line 3: Grid Name
-  Line 4: Cluster Name
-  Line 5: Node name
-  Line 6: Program Name
+  Line 2: version: Version string
+          (either an iClaustron version or a MySQL version string)
+  Line 3: grid: Grid Name
+  Line 4: cluster: Cluster Name
+  Line 5: node: Node name
+  Line 6: program: Program Name
   Line 7: autorestart true OR autorestart false
-  Line 8: Number of parameters
+  Line 8: num parameters: Number of parameters
   Line 9 - Line x: Program Parameters on the format:
     Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
   Line x+1: Empty line to indicate end of message
@@ -965,14 +993,14 @@ error:
 
   The successful response is:
   Line 1: Ok
-  Line 2: Process Id
+  Line 2: pid: Process Id
   Line 3: Empty line
 
   Example: ok\npid: 1234\n\n
 
   The unsuccessful response is:
   Line 1: Error
-  Line 2: message
+  Line 2: error: message
   Line 3: empty line
 
   Example: error:\nerror: Failed to start process\n\n
@@ -981,9 +1009,9 @@ error:
   ------------------
   The protocol for stopping/killing a node is:
   Line 1: stop/kill
-  Line 2: Grid Name
-  Line 3: Cluster Name
-  Line 4: Node name
+  Line 2: grid: Grid Name
+  Line 3: cluster: Cluster Name
+  Line 4: node: Node name
   Line 5: Empty line
 
   The successful response is:
@@ -992,15 +1020,15 @@ error:
 
   The unsuccessful response is:
   Line 1: error
-  Line 2: message
+  Line 2: error: message
 
   LIST PROTOCOL
   -------------
   The protocol for listing nodes is:
   Line 1: list [full]
-  Line 2: Grid Name (optional)
-  Line 3: Cluster Name (optional)
-  Line 4: Node Name (optional)
+  Line 2: grid: Grid Name (optional)
+  Line 3: cluster: Cluster Name (optional)
+  Line 4: node: Node Name (optional)
   Line 5: Empty Line
 
   Only Grid Name is required, if Cluster Name is provided, only programs in this
@@ -1011,13 +1039,13 @@ error:
   NOTE: It is very likely this list will be expanded with more data on the
   state of the process, such as use of CPU, use of memory, disk and so forth.
   Line 1: list node
-  Line 2: Grid Name
-  Line 3: Cluster Name
-  Line 4: Node Name
-  Line 5: Program Name
-  Line 6: Version string
-  Line 7: Start Time
-  Line 8: Process Id
+  Line 2: grid: Grid Name
+  Line 3: cluster: Cluster Name
+  Line 4: node: Node Name
+  Line 5: program: Program Name
+  Line 6: version: Version string
+  Line 7: start time: Start Time
+  Line 8: pid: Process Id
   Line 9: Number of parameters
   Line 10 - Line x: Parameter in same format as when starting (only if list full)
   The protocol to check status is:

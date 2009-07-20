@@ -203,11 +203,21 @@ start_node(IC_CONNECTION *conn,
   guint32 pid;
 
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
-      (ret_code= ic_send_with_cr(conn, version_name)) ||
-      (ret_code= ic_send_with_cr(conn, grid_name)) ||
-      (ret_code= ic_send_with_cr(conn, cluster_name)) ||
-      (ret_code= ic_send_with_cr(conn, node_name)) ||
-      (ret_code= ic_send_with_cr(conn, program_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_version_str,
+                                             version_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_grid_str,
+                                             grid_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_cluster_str,
+                                             cluster_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_node_str,
+                                             node_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_program_str,
+                                             program_name)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_auto_restart_str,
                  autorestart_flag ? ic_true_str : ic_false_str)) ||

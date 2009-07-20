@@ -588,6 +588,11 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 
 const gchar *ic_ok_str= "Ok";
 const gchar *ic_version_str= "version: ";
+const gchar *ic_grid_str= "grid: ";
+const gchar *ic_cluster_str= "cluster: ";
+const gchar *ic_node_str= "node: ";
+const gchar *ic_program_str= "program: ";
+const gchar *ic_start_time_str= "start time: ";
 const gchar *ic_error_str= "Error";
 const gchar *ic_start_str= "start";
 const gchar *ic_stop_str= "stop";
