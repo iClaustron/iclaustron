@@ -597,4 +597,12 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      gboolean use_iclaustron_cluster_server,
                      int *error,
                      gchar **err_str);
+
+/* iClaustron Protocol Support */
+int ic_send_start_info(IC_CONNECTION *conn,
+                       gchar *program_name,
+                       gchar *version_name,
+                       gchar *grid_name,
+                       gchar *cluster_name,
+                       gchar *node_name);
 #endif

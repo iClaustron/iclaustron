@@ -8929,6 +8929,39 @@ end:
 }
 
 /*
+  MODULE: Support for iClaustron Protocols
+  ----------------------------------------
+*/
+int
+ic_send_start_info(IC_CONNECTION *conn,
+                   gchar *program_name,
+                   gchar *version_name,
+                   gchar *grid_name,
+                   gchar *cluster_name,
+                   gchar *node_name)
+{
+  int ret_code;
+
+  if ((ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_program_str,
+                                             program_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_version_str,
+                                             version_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_grid_str,
+                                             grid_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_cluster_str,
+                                             cluster_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_node_str,
+                                             node_name)))
+    return ret_code;
+  return 0;
+}
+
+/*
   MODULE: iClaustron Initialise and End Functions
   -----------------------------------------------
   Every iClaustron program should start by calling ic_start_program

@@ -974,20 +974,20 @@ error:
   --------------
   The protocol for starting node is:
   Line 1: start
-  Line 2: version: Version string
+  Line 2: program: Program Name
+  Line 3: version: Version string
           (either an iClaustron version or a MySQL version string)
-  Line 3: grid: Grid Name
-  Line 4: cluster: Cluster Name
-  Line 5: node: Node name
-  Line 6: program: Program Name
+  Line 4: grid: Grid Name
+  Line 5: cluster: Cluster Name
+  Line 6: node: Node name
   Line 7: autorestart true OR autorestart false
   Line 8: num parameters: Number of parameters
   Line 9 - Line x: Program Parameters on the format:
     Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
   Line x+1: Empty line to indicate end of message
 
-  Example: start\nversion: iclaustron-0.0.1\ngrid: my_grid\n
-           cluster: my_cluster\nnode: my_node\nprogram: ic_fsd\n
+  Example: start\nversion: iclaustron-0.0.1\nprogram: ic_fsd\n
+           grid: my_grid\ncluster: my_cluster\nnode: my_node\n
            autorestart: true\nnum parameters: 2\n
            parameter: data_dir string /home/mikael/iclaustron\n\n
 
@@ -1039,11 +1039,11 @@ error:
   NOTE: It is very likely this list will be expanded with more data on the
   state of the process, such as use of CPU, use of memory, disk and so forth.
   Line 1: list node
-  Line 2: grid: Grid Name
-  Line 3: cluster: Cluster Name
-  Line 4: node: Node Name
-  Line 5: program: Program Name
-  Line 6: version: Version string
+  Line 2: program: Program Name
+  Line 3: version: Version string
+  Line 4: grid: Grid Name
+  Line 5: cluster: Cluster Name
+  Line 6: node: Node Name
   Line 7: start time: Start Time
   Line 8: pid: Process Id
   Line 9: Number of parameters

@@ -186,7 +186,8 @@ start_cluster_mgr_node(__attribute ((unused)) gchar *node_config,
 }
 
 static int
-start_node(IC_CONNECTION *conn,
+start_node(IC_PARSE_DATA *parse_data,
+           IC_CONNECTION *conn,
            gchar *grid_name,
            gchar *cluster_name,
            gchar *node_name,
@@ -203,21 +204,9 @@ start_node(IC_CONNECTION *conn,
   guint32 pid;
 
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_version_str,
-                                             version_name)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_grid_str,
-                                             grid_name)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_cluster_str,
-                                             cluster_name)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_node_str,
-                                             node_name)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_program_str,
-                                             program_name)) ||
+      (ret_code= ic_send_start_info(conn,
+                                    program_name, version_name,
+                                    grid_name, cluster_name, node_name)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_auto_restart_str,
                  autorestart_flag ? ic_true_str : ic_false_str)) ||
@@ -240,19 +229,48 @@ start_node(IC_CONNECTION *conn,
     /* Received an ok message */
     if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)))
       goto error;
+    if ((ret_code= ic_rec_empty_line(conn)))
+      goto error;
+    /*
+      Send response to client with information about our successful
+      start of a node.
+    */
+    if ((ret_code= ic_send_with_cr(parse_data->conn,
+                                   "Successfully started node:")) ||
+        (ret_code= ic_send_start_info(parse_data->conn,
+                                      program_name, version_name,
+                                      grid_name, cluster_name,
+                                      node_name)) ||
+        (ret_code= ic_send_with_cr_with_num(parse_data->conn,
+                                            ic_pid_str,
+                                            pid)) ||
+        (ret_code= ic_send_empty_line(parse_data->conn)))
+      goto error;
   }
   else if (ic_check_buf(read_buf, read_size, ic_error_str,
                         strlen(ic_error_str)))
   {
     /* Received an error message */
+    read_buf[read_size]= 0; /* Null terminate error message */
+    if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+      goto error;
+    if ((ret_code= ic_rec_empty_line(conn)))
+      goto error;
+    if ((ret_code= ic_send_with_cr(parse_data->conn,
+                                   "Failed to start node:")) ||
+        (ret_code= ic_send_start_info(parse_data->conn,
+                                      program_name, version_name,
+                                      grid_name, cluster_name, node_name)) ||
+        (ret_code= ic_send_with_cr(parse_data->conn, ic_error_str)) ||
+        (ret_code= ic_send_with_cr(parse_data->conn, read_buf)) ||
+        (ret_code= ic_send_empty_line(parse_data->conn)))
+      goto error;
   }
   else
   {
     ret_code= IC_PROTOCOL_ERROR;
     goto error;
   }
-  if ((ret_code= ic_rec_empty_line(conn)))
-    goto error;
   return 0;
 error:
   return ret_code;
