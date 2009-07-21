@@ -328,11 +328,11 @@ rec_start_message(IC_CONNECTION *conn,
   loc_pc_start= *pc_start;
   loc_pc_start->mc_ptr= mc_ptr;
 
-  if ((error= get_str(conn, mc_ptr, ic_version_str,
+  if ((error= get_str(conn, mc_ptr, ic_program_str,
+                      &loc_pc_start->program_name)) ||
+      (error= get_str(conn, mc_ptr, ic_version_str,
                       &loc_pc_start->version_string)) ||
       (error= get_key(conn, mc_ptr, &loc_pc_start->key)) ||
-      (error= get_str(conn, mc_ptr, ic_program_str,
-                      &loc_pc_start->program_name)) ||
       (error= get_autorestart(conn, &loc_pc_start->autorestart)) ||
       (error= get_num_parameters(conn, &loc_pc_start->num_parameters)))
     goto error;
@@ -986,7 +986,7 @@ error:
     Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
   Line x+1: Empty line to indicate end of message
 
-  Example: start\nversion: iclaustron-0.0.1\nprogram: ic_fsd\n
+  Example: start\nprogram: ic_fsd¿\nversion: iclaustron-0.0.1\n
            grid: my_grid\ncluster: my_cluster\nnode: my_node\n
            autorestart: true\nnum parameters: 2\n
            parameter: data_dir string /home/mikael/iclaustron\n\n

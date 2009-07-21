@@ -108,13 +108,14 @@ VERSION                 { return VERSION_SYM;      }
 
   if (!(ic_str_ptr=
         (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
-      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, yyleng)))
+      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, yyleng+1)))
   {
     yyerror((void*)ic_parse_data, yyscanner, "Memory allocation failure");
     return 0;
   }
   memcpy(buf_ptr, yytext, yyleng);
-  IC_INIT_STRING(ic_str_ptr, buf_ptr, yyleng, FALSE);
+  buf_ptr[yyleng]= 0;
+  IC_INIT_STRING(ic_str_ptr, buf_ptr, yyleng, TRUE);
   yylval->ic_str= ic_str_ptr;
   return VERSION_IDENTIFIER;
 }
@@ -127,13 +128,14 @@ VERSION                 { return VERSION_SYM;      }
 
   if (!(ic_str_ptr=
         (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
-      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, yyleng)))
+      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, yyleng+1)))
   {
     yyerror((void*)ic_parse_data, yyscanner, "Memory allocation failure");
     return 0;
   }
   memcpy(buf_ptr, yytext, yyleng);
-  IC_INIT_STRING(ic_str_ptr, buf_ptr, yyleng, FALSE);
+  buf_ptr[yyleng]= 0;
+  IC_INIT_STRING(ic_str_ptr, buf_ptr, yyleng, TRUE);
   yylval->ic_str= ic_str_ptr;
   return IDENTIFIER;
 }
