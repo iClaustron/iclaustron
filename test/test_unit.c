@@ -22,6 +22,7 @@
 #include <ic_connection.h>
 #include <ic_apic.h>
 #include <ic_bitmap.h>
+#include <ic_hashtable.h>
 
 static const gchar *glob_process_name= "test_unit";
 static int glob_test_type= 0;
@@ -296,7 +297,7 @@ test_translation_object(IC_DYNAMIC_TRANSLATION *dyn_trans,
   }
   return 0;
 error:
-  return ret_code;
+return ret_code;
 }
 
 static void
@@ -321,7 +322,10 @@ test_dynamic_translation(guint32 num_inserts, guint32 num_removes)
          num_inserts, num_removes);
   dyn_trans= ic_create_dynamic_translation();
   if (dyn_trans == NULL)
+  {
+    ic_free(test_dyn_trans);
     return IC_ERROR_MEM_ALLOC;
+  }
   if (!test_dyn_trans)
     abort();
   init_test_dyn_trans(test_dyn_trans, num_inserts);
@@ -330,12 +334,10 @@ test_dynamic_translation(guint32 num_inserts, guint32 num_removes)
                                          num_inserts,
                                          num_removes)))
     goto error;
+error:
   dyn_trans->dt_ops.ic_free_dynamic_translation(dyn_trans);
   ic_free(test_dyn_trans);
-  return 0;
-error:
   return ret_code;
-  
 }
 
 static int
@@ -356,6 +358,7 @@ unit_test_dynamic_translation()
     goto error;
   if ((ret_code= test_dynamic_translation(128*128*128+1, 128*128*128+1)))
     goto error;
+  return 0;
 error:
   return ret_code;
 }
@@ -425,6 +428,147 @@ error:
   return 1;
 }
 
+struct ic_test_hashtable
+{
+  guint64 object;
+  gboolean in_hashtable;
+};
+
+typedef struct ic_test_hashtable IC_TEST_HASHTABLE;
+
+static int
+test_hashtable_one_test(IC_HASHTABLE *hashtable,
+                        IC_TEST_HASHTABLE *test_hashtable,
+                        guint32 num_inserts,
+                        guint32 num_removes)
+{
+  guint32 i;
+  int ret_code;
+  void *ret_object;
+
+  for (i= 0; i < num_inserts; i++) 
+  {
+    if ((ret_code= ic_hashtable_insert(hashtable,
+                                       (void*)&test_hashtable[i].object,
+                                       (void*)&test_hashtable[i].object)))
+      goto error;
+    test_hashtable[i].in_hashtable= TRUE;
+  }
+  for (i= 0; i < num_removes; i++)
+  {
+     if (!(ret_object= ic_hashtable_remove(hashtable,
+                                           (void*)&test_hashtable[i].object)))
+       goto error;
+     test_hashtable[i].in_hashtable= FALSE;
+  }
+  for (i= num_removes; i < num_inserts; i++)
+  {
+    if (!(ret_object= ic_hashtable_search(hashtable, 
+                                         (void*)&test_hashtable[i].object)))
+      goto error;
+  }
+  for (i= 0; i < num_removes; i++)
+  {
+    if ((ret_object= ic_hashtable_search(hashtable,
+                                         (void*)&test_hashtable[i].object)))
+    {
+      ret_code= 1;
+      goto error;
+    }
+  }
+  return 0;
+error:
+  return ret_code;
+}
+
+static unsigned int
+hash_function(void *key)
+{
+  gchar *val_str= (gchar*)key;
+  unsigned int hash_value= 23;
+  guint32 i;
+
+  for (i= 0; i < 8; i++)
+    hash_value= ((147*hash_value) + val_str[i]);
+  return hash_value;
+}
+
+static int
+equal_function(void *key1, void* key2)
+{
+  guint64 *val_ptr1= (guint64*)key1;
+  guint64 *val_ptr2= (guint64*)key2;
+  guint64 val1= *val_ptr1;
+  guint64 val2= *val_ptr2;
+
+  if (val1 == val2)
+    return 1;
+  return 0;
+}
+
+static void
+init_test_hashtable(IC_TEST_HASHTABLE *test_hashtable,
+                    guint32 num_inserts)
+{
+  guint32 i;
+
+  for (i= 0; i < num_inserts; i++)
+    test_hashtable[i].object= i;
+}
+
+static int
+test_hashtable(guint32 num_inserts, guint32 num_removes)
+{
+  int ret_code;
+  IC_HASHTABLE *hashtable;
+  IC_TEST_HASHTABLE *test_hashtable= (IC_TEST_HASHTABLE*)
+    ic_calloc(sizeof(IC_TEST_HASHTABLE)*num_inserts);
+
+  printf("Testing with %u number of inserts and %u number of removes\n",
+         num_inserts, num_removes);
+  hashtable= ic_create_hashtable(4096, hash_function, equal_function);
+  if (hashtable == NULL)
+  {
+    ic_free(test_hashtable);
+    return IC_ERROR_MEM_ALLOC;
+  }
+  if (!test_hashtable)
+    abort();
+  init_test_hashtable(test_hashtable, num_inserts);
+  if ((ret_code= test_hashtable_one_test(hashtable,
+                                         test_hashtable,
+                                         num_inserts,
+                                         num_removes)))
+    goto error;
+error:
+  ic_hashtable_destroy(hashtable);
+  ic_free(test_hashtable);
+  return ret_code;
+}
+
+static int
+unit_test_hashtable()
+{
+  int ret_code;
+  if ((ret_code= test_hashtable(128, 2)))
+    goto error;
+  if ((ret_code= test_hashtable(129, 2)))
+    goto error;
+  if ((ret_code= test_hashtable(128*128, 2)))
+    goto error;
+  if ((ret_code= test_hashtable(128*128+1, 2)))
+    goto error;
+  if ((ret_code= test_hashtable(128*128*128, 2)))
+    goto error;
+  if ((ret_code= test_hashtable(128*128*128+1, 2)))
+    goto error;
+  if ((ret_code= test_hashtable(128*128*128+1, 128*128*128+1)))
+    goto error;
+  return 0;
+error:
+  return ret_code;
+}
+
 int main(int argc, char *argv[])
 {
   int ret_code= 1;
@@ -453,6 +597,10 @@ int main(int argc, char *argv[])
     case 4:
       printf("Executing Unit test of Bitmap\n");
       ret_code= unit_test_bitmap();
+      break;      
+    case 5:
+      printf("Executing Unit test of hashtable\n");
+      ret_code= unit_test_hashtable();
       break;      
     default:
       break;
