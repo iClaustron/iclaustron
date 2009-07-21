@@ -114,88 +114,16 @@ get_node_id(IC_PARSE_DATA *parse_data)
 }
 
 static int
-start_data_server_node(__attribute ((unused)) gchar *node_config,
-                       __attribute ((unused)) guint32 cluster_id,
-                       __attribute ((unused)) guint32 node_id,
-                       __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
-start_client_node(__attribute ((unused)) gchar *node_config,
-                  __attribute ((unused)) guint32 cluster_id,
-                  __attribute ((unused)) guint32 node_id,
-                  __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
-start_cluster_server_node(__attribute ((unused)) gchar *node_config,
-                          __attribute ((unused)) guint32 cluster_id,
-                          __attribute ((unused)) guint32 node_id,
-                          __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
-start_sql_server_node(__attribute ((unused)) gchar *node_config,
-                      __attribute ((unused)) guint32 cluster_id,
-                      __attribute ((unused)) guint32 node_id,
-                      __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
-start_rep_server_node(__attribute ((unused)) gchar *node_config,
-                      __attribute ((unused)) guint32 cluster_id,
-                      __attribute ((unused)) guint32 node_id,
-                      __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
-start_file_server_node(__attribute ((unused)) gchar *node_config,
-                       __attribute ((unused)) guint32 cluster_id,
-                       __attribute ((unused)) guint32 node_id,
-                       __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
-start_restore_node(__attribute ((unused)) gchar *node_config,
-                   __attribute ((unused)) guint32 cluster_id,
-                   __attribute ((unused)) guint32 node_id,
-                   __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
-start_cluster_mgr_node(__attribute ((unused)) gchar *node_config,
-                       __attribute ((unused)) guint32 cluster_id,
-                       __attribute ((unused)) guint32 node_id,
-                       __attribute ((unused)) gboolean initial_flag)
-{
-  return 0;
-}
-
-static int
 start_node(IC_PARSE_DATA *parse_data,
            IC_CONNECTION *conn,
-           gchar *grid_name,
-           gchar *cluster_name,
-           gchar *node_name,
-           gchar *program_name,
-           gchar *version_name,
-           gchar **parameters,
-           guint32 num_params,
-           gboolean autorestart_flag)
+           const gchar *grid_name,
+           const gchar *cluster_name,
+           const gchar *node_name,
+           const gchar *program_name,
+           const gchar *version_name,
+           const guint32 num_params,
+           const gchar **parameters,
+           const gboolean autorestart_flag)
 {
   int ret_code;
   gchar *read_buf;
@@ -277,6 +205,99 @@ error:
 }
 
 static int
+start_data_server_node(IC_PARSE_DATA *parse_data,
+                       gchar *node_config,
+                       guint32 cluster_id,
+                       guint32 node_id,
+                       gboolean initial_flag)
+{
+  IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)node_config;
+  guint32 num_parameters= 0;
+  IC_CONNECTION *conn= NULL;
+
+  return start_node(parse_data,
+                    conn,
+                    ic_def_grid_str,
+                    parse_data->cluster_name.str,
+                    ds_conf->node_name,
+                    ic_data_server_program_str,
+                    parse_data->ndb_version_name.str,
+                    num_parameters,
+                    NULL,
+                    FALSE);
+}
+
+static int
+start_client_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
+                  __attribute ((unused)) gchar *node_config,
+                  __attribute ((unused)) guint32 cluster_id,
+                  __attribute ((unused)) guint32 node_id,
+                  __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_cluster_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
+                          __attribute ((unused)) gchar *node_config,
+                          __attribute ((unused)) guint32 cluster_id,
+                          __attribute ((unused)) guint32 node_id,
+                          __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_sql_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
+                       __attribute ((unused)) gchar *node_config,
+                      __attribute ((unused)) guint32 cluster_id,
+                      __attribute ((unused)) guint32 node_id,
+                      __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_rep_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
+                      __attribute ((unused)) gchar *node_config,
+                      __attribute ((unused)) guint32 cluster_id,
+                      __attribute ((unused)) guint32 node_id,
+                      __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_file_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
+                       __attribute ((unused)) gchar *node_config,
+                       __attribute ((unused)) guint32 cluster_id,
+                       __attribute ((unused)) guint32 node_id,
+                       __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_restore_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
+                   __attribute ((unused)) gchar *node_config,
+                   __attribute ((unused)) guint32 cluster_id,
+                   __attribute ((unused)) guint32 node_id,
+                   __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
+start_cluster_mgr_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
+                       __attribute ((unused)) gchar *node_config,
+                       __attribute ((unused)) guint32 cluster_id,
+                       __attribute ((unused)) guint32 node_id,
+                       __attribute ((unused)) gboolean initial_flag)
+{
+  return 0;
+}
+
+static int
 start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
                     IC_API_CONFIG_SERVER *apic, IC_PARSE_DATA *parse_data,
                     guint32 cluster_id, guint32 node_id)
@@ -301,43 +322,74 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
   {
     case IC_DATA_SERVER_NODE:
     {
-      start_data_server_node(node_config, cluster_id, node_id, initial_flag);
+      return start_data_server_node(parse_data,
+                                    node_config,
+                                    cluster_id,
+                                    node_id,
+                                    initial_flag);
       break;
     }
     case IC_CLIENT_NODE:
     {
-      start_client_node(node_config, cluster_id, node_id, initial_flag);
+      return start_client_node(parse_data,
+                               node_config,
+                               cluster_id,
+                               node_id,
+                               initial_flag);
       break;
     }
     case IC_CLUSTER_SERVER_NODE:
     {
-      start_cluster_server_node(node_config, cluster_id,
-                                node_id, initial_flag);
+      return start_cluster_server_node(parse_data,
+                                       node_config,
+                                       cluster_id,
+                                       node_id,
+                                       initial_flag);
       break;
     }
     case IC_SQL_SERVER_NODE:
     {
-      start_sql_server_node(node_config, cluster_id, node_id, initial_flag);
+      return start_sql_server_node(parse_data,
+                                   node_config,
+                                   cluster_id,
+                                   node_id,
+                                   initial_flag);
       break;
     }
     case IC_REP_SERVER_NODE:
     {
-      start_rep_server_node(node_config, cluster_id, node_id, initial_flag);
+      return start_rep_server_node(parse_data,
+                                   node_config,
+                                   cluster_id,
+                                   node_id,
+                                   initial_flag);
        break;
     }
     case IC_FILE_SERVER_NODE:
     {
-      start_file_server_node(node_config, cluster_id, node_id, initial_flag);
+      return start_file_server_node(parse_data,
+                                    node_config,
+                                    cluster_id,
+                                    node_id,
+                                    initial_flag);
        break;
     }
     case IC_RESTORE_NODE:
     {
-      start_restore_node(node_config, cluster_id, node_id, initial_flag);
+      return start_restore_node(parse_data,
+                                node_config,
+                                cluster_id,
+                                node_id,
+                                initial_flag);
       break;
     }
     case IC_CLUSTER_MGR_NODE:
     {
-      start_cluster_mgr_node(node_config, cluster_id, node_id, initial_flag);
+      return start_cluster_mgr_node(parse_data,
+                                    node_config,
+                                    cluster_id,
+                                    node_id,
+                                    initial_flag);
       break;
     }
     default:
@@ -642,6 +694,26 @@ ic_top_cmd(IC_PARSE_DATA *parse_data)
 }
 
 static void
+ic_use_ndb_version_cmd(IC_PARSE_DATA *parse_data)
+{
+  if (ic_send_with_cr(parse_data->conn, "NDB version identifier set to:") ||
+      ic_send_with_cr(parse_data->conn, parse_data->ndb_version_name.str) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return;
+}
+
+static void
+ic_use_iclaustron_version_cmd(IC_PARSE_DATA *parse_data)
+{
+  if (ic_send_with_cr(parse_data->conn, "USE VERSION ICLAUSTRON") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_with_cr(parse_data->conn, ic_empty_string))
+    parse_data->exit_flag= TRUE;
+  return;
+}
+
+static void
 ic_execute(IC_PARSE_DATA *parse_data)
 {
   switch (parse_data->command)
@@ -688,6 +760,10 @@ ic_execute(IC_PARSE_DATA *parse_data)
       return ic_display_stats_cmd(parse_data);
     case IC_TOP_CMD:
       return ic_top_cmd(parse_data);
+    case IC_USE_VERSION_NDB_CMD:
+      return ic_use_ndb_version_cmd(parse_data);
+    case IC_USE_VERSION_ICLAUSTRON_CMD:
+      return ic_use_iclaustron_version_cmd(parse_data);
     default:
       return report_error(parse_data, not_impl_string);
   }

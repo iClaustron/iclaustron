@@ -41,6 +41,8 @@ enum ic_parse_commands
   IC_USE_CLUSTER_CMD = 18,
   IC_DISPLAY_STATS_CMD = 19,
   IC_TOP_CMD = 20,
+  IC_USE_VERSION_NDB_CMD = 21,
+  IC_USE_VERSION_ICLAUSTRON_CMD = 22,
   IC_NO_SUCH_CMD = 999
 };
 typedef enum ic_parse_commands IC_PARSE_COMMANDS;
@@ -73,6 +75,10 @@ struct ic_parse_data
   gboolean binary_type_flag;
   IC_NODE_TYPES binary_type;
 
+  /* Current NDB version name */
+  IC_STRING ndb_version_name;
+  /* Current iClaustron version name */
+  IC_STRING iclaustron_version_name;
   /* Current cluster reference */
   guint64   current_cluster_id;
 

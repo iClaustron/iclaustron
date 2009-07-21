@@ -443,7 +443,7 @@ test_hashtable_one_test(IC_HASHTABLE *hashtable,
                         guint32 num_removes)
 {
   guint32 i;
-  int ret_code;
+  int ret_code= 0;
   void *ret_object;
 
   for (i= 0; i < num_inserts; i++) 

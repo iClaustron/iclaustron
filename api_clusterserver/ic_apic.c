@@ -608,6 +608,15 @@ const gchar *ic_auto_restart_str= "autorestart: ";
 const gchar *ic_num_parameters_str= "num parameters: ";
 const gchar *ic_pid_str= "pid: ";
 
+const gchar *ic_def_grid_str= "iclaustron";
+const gchar *ic_data_server_program_str= "ndbmtd";
+const gchar *ic_file_server_program_str= "ic_fsd";
+const gchar *ic_rep_server_program_str= "ic_repd";
+const gchar *ic_sql_server_program_str= "mysqld";
+const gchar *ic_cluster_manager_program_str= "ic_clmgrd";
+const gchar *ic_cluster_server_program_str= "ic_csd";
+const gchar *ic_restore_program_str= "ndb_restore";
+
 #define MIN_PORT 0
 #define MAX_PORT 65535
 
@@ -8934,11 +8943,11 @@ end:
 */
 int
 ic_send_start_info(IC_CONNECTION *conn,
-                   gchar *program_name,
-                   gchar *version_name,
-                   gchar *grid_name,
-                   gchar *cluster_name,
-                   gchar *node_name)
+                   const gchar *program_name,
+                   const gchar *version_name,
+                   const gchar *grid_name,
+                   const gchar *cluster_name,
+                   const gchar *node_name)
 {
   int ret_code;
 

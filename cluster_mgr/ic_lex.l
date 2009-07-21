@@ -63,6 +63,7 @@ DISPLAY                 { return DISPLAY_SYM;      }
 FILE                    { return FILE_SYM;         }
 FROM                    { return FROM_SYM;         }
 GROUP                   { return GROUP_SYM;        }
+ICLAUSTRON              { return ICLAUSTRON_SYM;   }
 INITIAL                 { return INITIAL_SYM;      }
 KILL                    { return KILL_SYM;         }
 LIST                    { return LIST_SYM;         }
@@ -70,6 +71,7 @@ LISTEN                  { return LISTEN_SYM;       }
 MANAGER                 { return MANAGER_SYM;      }
 MEMORY                  { return MEMORY_SYM;       }
 MOVE                    { return MOVE_SYM;         }
+NDB                     { return NDB_SYM;         }
 NODE                    { return NODE_SYM;         }
 NODEGROUP               { return NODEGROUP_SYM;    }
 NODEGROUPS              { return NODEGROUPS_SYM;   }

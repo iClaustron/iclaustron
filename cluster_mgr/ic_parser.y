@@ -44,6 +44,7 @@ int yylex(void *parse_data, void *scanner);
 %token FILE_SYM
 %token FROM_SYM
 %token GROUP_SYM
+%token ICLAUSTRON_SYM
 %token INITIAL_SYM
 %token KILL_SYM
 %token LIST_SYM
@@ -51,8 +52,7 @@ int yylex(void *parse_data, void *scanner);
 %token MANAGER_SYM
 %token MEMORY_SYM
 %token MOVE_SYM
-%token MYSQLD_SYM
-%token MYSQLD_SAFE_SYM
+%token NDB_SYM
 %token NODE_SYM
 %token NODEGROUP_SYM
 %token NODEGROUPS_SYM
@@ -228,8 +228,30 @@ set_command:
     ;
 
 use_command:
+    use_cluster_command
+    | use_version_ndb_command
+    | use_version_iclaustron_command
+    ;
+
+use_cluster_command:
     USE_SYM CLUSTER_SYM one_cluster_reference
     { PARSE_DATA->command= IC_USE_CLUSTER_CMD; }
+    ;
+
+use_version_ndb_command:
+    USE_SYM VERSION_SYM NDB_SYM VERSION_IDENTIFIER
+    {
+      memcpy(&PARSE_DATA->ndb_version_name,&$4,sizeof(IC_STRING));
+      PARSE_DATA->command= IC_USE_VERSION_NDB_CMD;
+    }
+    ;
+
+use_version_iclaustron_command:
+    USE_SYM VERSION_SYM ICLAUSTRON_SYM VERSION_IDENTIFIER
+    {
+      memcpy(&PARSE_DATA->iclaustron_version_name,&$4,sizeof(IC_STRING));
+      PARSE_DATA->command= IC_USE_VERSION_ICLAUSTRON_CMD;
+    }
     ;
 
 display_command:

@@ -40,6 +40,14 @@ extern const gchar *ic_node_str;
 extern const gchar *ic_program_str;
 extern const gchar *ic_start_time_str;
 
+extern const gchar *ic_def_grid_str;
+extern const gchar *ic_data_server_program_str;
+extern const gchar *ic_file_server_program_str;
+extern const gchar *ic_sql_server_program_str;
+extern const gchar *ic_rep_server_program_str;
+extern const gchar *ic_cluster_manager_program_str;
+extern const gchar *ic_cluster_server_program_str;
+
 /* Initialisation of configuration parameters */
 int ic_init_config_parameters();
 void ic_print_config_parameters(guint32 mask);
@@ -600,9 +608,9 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
 
 /* iClaustron Protocol Support */
 int ic_send_start_info(IC_CONNECTION *conn,
-                       gchar *program_name,
-                       gchar *version_name,
-                       gchar *grid_name,
-                       gchar *cluster_name,
-                       gchar *node_name);
+                       const gchar *program_name,
+                       const gchar *version_name,
+                       const gchar *grid_name,
+                       const gchar *cluster_name,
+                       const gchar *node_name);
 #endif
