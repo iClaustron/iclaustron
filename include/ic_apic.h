@@ -52,6 +52,9 @@ extern const gchar *ic_ndb_node_id_str;
 extern const gchar *ic_ndb_connectstring_str;
 extern const gchar *ic_initial_flag_str;
 extern const gchar *ic_cluster_id_str;
+extern const gchar *ic_node_id_str;
+extern const gchar *ic_server_name_str;
+extern const gchar *ic_server_port_str;
 
 /* Initialisation of configuration parameters */
 int ic_init_config_parameters();

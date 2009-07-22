@@ -621,6 +621,9 @@ const gchar *ic_ndb_node_id_str= " --ndb-node-id=";
 const gchar *ic_ndb_connectstring_str= " --ndb-connectstring=";
 const gchar *ic_initial_flag_str= " --initial";
 const gchar *ic_cluster_id_str= " --cluster-id=";
+const gchar *ic_node_id_str= " --node_id=";
+const gchar *ic_server_name_str= " --server_name=";
+const gchar *ic_server_port_str=" --server_port=";
 
 #define MIN_PORT 0
 #define MAX_PORT 65535

@@ -119,7 +119,7 @@ static gchar*
 add_param_num(IC_PARSE_DATA *parse_data, const gchar *param_str,
               guint32 number)
 {
-  IC_STRING dest_str;
+IC_STRING dest_str;
   IC_STRING number_str;
   guint32 len;
   gchar *number_ptr;
@@ -129,6 +129,19 @@ add_param_num(IC_PARSE_DATA *parse_data, const gchar *param_str,
   IC_INIT_STRING(&number_str, number_ptr, len, TRUE);
   IC_INIT_STRING(&dest_str, (gchar*)param_str, strlen(param_str), TRUE);
   if (ic_mc_add_ic_string(parse_data->mc_ptr, &dest_str, &number_str))
+    return NULL;
+  return dest_str.str;
+}
+
+static gchar*
+add_param_string(IC_PARSE_DATA *parse_data, const gchar *param_str,
+                 gchar *param_value)
+{
+  IC_STRING dest_str;
+  IC_STRING value_str;
+  IC_INIT_STRING(&dest_str, (gchar*)param_str, strlen(param_str), TRUE);
+  IC_INIT_STRING(&value_str, param_value, strlen(param_value), TRUE);
+  if (ic_mc_add_ic_string(parse_data->mc_ptr, &dest_str, &value_str))
     return NULL;
   return dest_str.str;
 }
@@ -373,7 +386,7 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
   return start_node(parse_data,
                     node_config,
                     ic_def_grid_str,
-                    parse_data->cluster_name.str,
+                    clu_conf->clu_info.cluster_name.str,
                     ds_conf->node_name,
                     ic_data_server_program_str,
                     parse_data->ndb_version_name.str,
@@ -395,6 +408,43 @@ start_cluster_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                           __attribute ((unused)) gchar *node_config,
                           __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
+  IC_CLUSTER_SERVER_CONFIG *cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
+  guint32 num_params= 0;
+  gchar *param_array[8];
+
+  /*
+    We can set the following parameters when we start the cluster server.
+    1) --node_id
+      The node id of the cluster server
+    2) --server_nmae
+      The hostname of the cluster server
+    3) --server_port
+      The port number of the cluster server
+    4) --data_dir
+      The path to the data directory where config files will be in the
+      subdirectory config
+  */
+  if (!(param_array[num_params++]= add_param_num(parse_data,
+                                                 ic_node_id_str,
+                                                 cs_conf->node_id)) ||
+      !(param_array[num_params++]= add_param_string(parse_data,
+                                                    ic_server_name_str,
+                                                    cs_conf->hostname)) ||
+      !(param_array[num_params++]= add_param_num(parse_data,
+                                                 ic_server_port_str,
+                                                 cs_conf->port_number)))
+    return IC_ERROR_MEM_ALLOC;
+
+  return start_node(parse_data,
+                    node_config,
+                    ic_def_grid_str,
+                    clu_conf->clu_info.cluster_name.str,
+                    cs_conf->node_name,
+                    ic_cluster_server_program_str,
+                    parse_data->iclaustron_version_name.str,
+                    num_params,
+                    (const gchar**)&param_array[0],
+                    parse_data->restart_flag);
   return 0;
 }
 
