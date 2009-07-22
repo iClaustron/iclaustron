@@ -115,6 +115,80 @@ error:
   return ret_code;
 }
 
+static gchar*
+add_param_num(IC_PARSE_DATA *parse_data, const gchar *param_str,
+              guint32 number)
+{
+  IC_STRING dest_str;
+  IC_STRING number_str;
+  guint32 len;
+  gchar *number_ptr;
+  gchar number_buf[32];
+
+  number_ptr= ic_guint64_str((guint64)number, number_buf, &len);
+  IC_INIT_STRING(&number_str, number_ptr, len, TRUE);
+  IC_INIT_STRING(&dest_str, (gchar*)param_str, strlen(param_str), TRUE);
+  if (ic_mc_add_ic_string(parse_data->mc_ptr, &dest_str, &number_str))
+    return NULL;
+  return dest_str.str;
+}
+
+/*
+  Create a string like:
+  "--ndb-connectstring=myhost1:port1,myhost2:port2"
+  myhost1 and myhost2 are in this case the two hosts where we have
+  cluster servers in this cluster and their respective port numbers
+  port1 and port2. We don't provide the port numbers if they are
+  the standard port number 1186 used for MySQL Cluster Managers.
+*/
+static gchar*
+add_ndb_connectstring(IC_PARSE_DATA *parse_data, const gchar *param_str,
+                      IC_CLUSTER_CONFIG *clu_conf)
+{
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  IC_STRING host_str, number_str, dest_str;
+  guint32 found= 0;
+  guint32 len, i;
+  gchar *number_ptr, *buf_ptr;
+  gchar number_buf[32];
+  gchar buf[512];
+
+  IC_INIT_STRING(&dest_str, (gchar*)param_str, strlen(param_str), TRUE);
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_types[i] == IC_CLUSTER_SERVER_NODE)
+    {
+      buf_ptr= buf;
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)clu_conf->node_config[i];
+      len= strlen(cs_conf->hostname);
+      if (found)
+      {
+        buf[0]= ',';
+        buf_ptr++;
+        len++;
+      }
+      memcpy(buf_ptr, cs_conf->hostname, strlen(cs_conf->hostname)+1);
+      IC_INIT_STRING(&host_str, buf, len, TRUE);
+      if (cs_conf->port_number != IC_DEF_PORT)
+      {
+        host_str.str[host_str.len]= ':';
+        host_str.len++;
+        number_ptr= ic_guint64_str((guint64)cs_conf->port_number,
+                                   number_buf, &len);
+        IC_INIT_STRING(&number_str, number_ptr, len, TRUE);
+        ic_add_ic_string(&host_str, &number_str);
+      }
+      if (ic_mc_add_ic_string(parse_data->mc_ptr, &dest_str, &host_str))
+        return NULL;
+      found++;
+    }
+  }
+  g_assert(found == clu_conf->num_cluster_servers);
+  if (!found)
+    return NULL;
+  return dest_str.str;
+}
+
 static void
 report_error(IC_PARSE_DATA *parse_data, gchar *error_str)
 {
@@ -246,13 +320,11 @@ error:
 static int
 start_data_server_node(IC_PARSE_DATA *parse_data,
                        gchar *node_config,
-                       guint32 cluster_id,
-                       guint32 node_id,
-                       gboolean initial_flag)
+                       IC_CLUSTER_CONFIG *clu_conf)
 {
   IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)node_config;
-  guint32 num_parameters= 0;
-  IC_CONNECTION *conn= NULL;
+  guint32 num_params= 0;
+  const gchar* param_array[8];
 
   /*
     iClaustron supports the following parameters on Data Server nodes:
@@ -279,6 +351,25 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
       start.
   */
 
+  if (!(param_array[num_params++]= add_param_num(parse_data,
+                                                 ic_ndb_node_id_str,
+                                                 ds_conf->node_id)) ||
+      !(param_array[num_params++]= add_ndb_connectstring(parse_data,
+              ic_ndb_connectstring_str,
+              clu_conf)))
+    return IC_ERROR_MEM_ALLOC;
+  /*
+    This functionality requires a NDB that has been adapted to use
+    cluster ids and some other iClaustron functionality.
+
+  if (!(param_array[num_params++]= add_param_num(parse_data,
+                                                 ic_cluster_id_str,
+                                                 clu_conf->clu_info.cluster_id)))
+    return IC_ERROR_MEM_ALLOC;
+  */
+  if (parse_data->initial_flag)
+    param_array[num_params++]= ic_initial_flag_str;
+
   return start_node(parse_data,
                     node_config,
                     ic_def_grid_str,
@@ -286,17 +377,15 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
                     ds_conf->node_name,
                     ic_data_server_program_str,
                     parse_data->ndb_version_name.str,
-                    num_parameters,
-                    NULL,
-                    FALSE);
+                    num_params,
+                    (const gchar**)&param_array[0],
+                    parse_data->restart_flag);
 }
 
 static int
 start_client_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                   __attribute ((unused)) gchar *node_config,
-                  __attribute ((unused)) guint32 cluster_id,
-                  __attribute ((unused)) guint32 node_id,
-                  __attribute ((unused)) gboolean initial_flag)
+                  __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return 0;
 }
@@ -304,19 +393,15 @@ start_client_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 static int
 start_cluster_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                           __attribute ((unused)) gchar *node_config,
-                          __attribute ((unused)) guint32 cluster_id,
-                          __attribute ((unused)) guint32 node_id,
-                          __attribute ((unused)) gboolean initial_flag)
+                          __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return 0;
 }
 
 static int
 start_sql_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                       __attribute ((unused)) gchar *node_config,
-                      __attribute ((unused)) guint32 cluster_id,
-                      __attribute ((unused)) guint32 node_id,
-                      __attribute ((unused)) gboolean initial_flag)
+                      __attribute ((unused)) gchar *node_config,
+                      __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return 0;
 }
@@ -324,9 +409,7 @@ start_sql_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 static int
 start_rep_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                       __attribute ((unused)) gchar *node_config,
-                      __attribute ((unused)) guint32 cluster_id,
-                      __attribute ((unused)) guint32 node_id,
-                      __attribute ((unused)) gboolean initial_flag)
+                      __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return 0;
 }
@@ -334,9 +417,7 @@ start_rep_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 static int
 start_file_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                        __attribute ((unused)) gchar *node_config,
-                       __attribute ((unused)) guint32 cluster_id,
-                       __attribute ((unused)) guint32 node_id,
-                       __attribute ((unused)) gboolean initial_flag)
+                       __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return 0;
 }
@@ -344,9 +425,7 @@ start_file_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 static int
 start_restore_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                    __attribute ((unused)) gchar *node_config,
-                   __attribute ((unused)) guint32 cluster_id,
-                   __attribute ((unused)) guint32 node_id,
-                   __attribute ((unused)) gboolean initial_flag)
+                   __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return 0;
 }
@@ -354,20 +433,20 @@ start_restore_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 static int
 start_cluster_mgr_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                        __attribute ((unused)) gchar *node_config,
-                       __attribute ((unused)) guint32 cluster_id,
-                       __attribute ((unused)) guint32 node_id,
-                       __attribute ((unused)) gboolean initial_flag)
+                       __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
 {
   return 0;
 }
 
 static int
 start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
-                    IC_API_CONFIG_SERVER *apic, IC_PARSE_DATA *parse_data,
-                    guint32 cluster_id, guint32 node_id)
+                    IC_API_CONFIG_SERVER *apic,
+                    IC_PARSE_DATA *parse_data,
+                    guint32 node_id)
 {
   gchar *node_config;
   gboolean initial_flag;
+  guint32 cluster_id= clu_conf->clu_info.cluster_id;
 
   node_config= apic->api_op.ic_get_node_object(apic, cluster_id, node_id);
   if (!node_config)
@@ -388,72 +467,56 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     {
       return start_data_server_node(parse_data,
                                     node_config,
-                                    cluster_id,
-                                    node_id,
-                                    initial_flag);
+                                    clu_conf);
       break;
     }
     case IC_CLIENT_NODE:
     {
       return start_client_node(parse_data,
                                node_config,
-                               cluster_id,
-                               node_id,
-                               initial_flag);
+                               clu_conf);
       break;
     }
     case IC_CLUSTER_SERVER_NODE:
     {
       return start_cluster_server_node(parse_data,
                                        node_config,
-                                       cluster_id,
-                                       node_id,
-                                       initial_flag);
+                                       clu_conf);
       break;
     }
     case IC_SQL_SERVER_NODE:
     {
       return start_sql_server_node(parse_data,
                                    node_config,
-                                   cluster_id,
-                                   node_id,
-                                   initial_flag);
+                                   clu_conf);
       break;
     }
     case IC_REP_SERVER_NODE:
     {
       return start_rep_server_node(parse_data,
                                    node_config,
-                                   cluster_id,
-                                   node_id,
-                                   initial_flag);
+                                   clu_conf);
        break;
     }
     case IC_FILE_SERVER_NODE:
     {
       return start_file_server_node(parse_data,
                                     node_config,
-                                    cluster_id,
-                                    node_id,
-                                    initial_flag);
+                                    clu_conf);
        break;
     }
     case IC_RESTORE_NODE:
     {
       return start_restore_node(parse_data,
                                 node_config,
-                                cluster_id,
-                                node_id,
-                                initial_flag);
+                                clu_conf);
       break;
     }
     case IC_CLUSTER_MGR_NODE:
     {
       return start_cluster_mgr_node(parse_data,
                                     node_config,
-                                    cluster_id,
-                                    node_id,
-                                    initial_flag);
+                                    clu_conf);
       break;
     }
     default:
@@ -543,7 +606,7 @@ ic_start_cmd(IC_PARSE_DATA *parse_data)
   {
     for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
     {
-      start_specific_node(clu_conf, apic, parse_data, cluster_id, node_id);
+      start_specific_node(clu_conf, apic, parse_data, node_id);
     }
   }
   else
@@ -551,7 +614,7 @@ ic_start_cmd(IC_PARSE_DATA *parse_data)
     if (!get_node_id(parse_data))
     {
       node_id= (guint32)parse_data->node_id;
-      start_specific_node(clu_conf, apic, parse_data, cluster_id, node_id);
+      start_specific_node(clu_conf, apic, parse_data, node_id);
     }
   }
   return;
@@ -835,11 +898,6 @@ ic_execute(IC_PARSE_DATA *parse_data)
 }
 
 static void
-release_parse_data(__attribute ((unused)) IC_PARSE_DATA *parse_data)
-{
-}
-
-static void
 init_parse_data(IC_PARSE_DATA *parse_data)
 {
   parse_data->command= IC_NO_SUCH_CMD;
@@ -899,6 +957,8 @@ run_handle_new_connection(gpointer data)
         goto exit;
       /* Initialise index to parser buffer before beginning of new cmd */
       parse_inx= 0;
+      /* Release memory from old query but reuse memory container */
+      mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
     }
     else
     {
@@ -910,7 +970,6 @@ exit:
   DEBUG_PRINT(PROGRAM_LEVEL, ("End of client connection"));
 error:
   ic_free(parse_buf);
-  release_parse_data(&parse_data);
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   conn->conn_op.ic_free_connection(conn);

@@ -71,6 +71,8 @@ struct ic_parse_data
   gboolean exit_flag;
   /* Flag for start command to perform initial start */
   gboolean initial_flag;
+  /* Process controller will restart a crashed process */
+  gboolean restart_flag;
   /* Node type started */
   gboolean binary_type_flag;
   IC_NODE_TYPES binary_type;

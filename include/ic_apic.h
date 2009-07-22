@@ -48,6 +48,11 @@ extern const gchar *ic_rep_server_program_str;
 extern const gchar *ic_cluster_manager_program_str;
 extern const gchar *ic_cluster_server_program_str;
 
+extern const gchar *ic_ndb_node_id_str;
+extern const gchar *ic_ndb_connectstring_str;
+extern const gchar *ic_initial_flag_str;
+extern const gchar *ic_cluster_id_str;
+
 /* Initialisation of configuration parameters */
 int ic_init_config_parameters();
 void ic_print_config_parameters(guint32 mask);

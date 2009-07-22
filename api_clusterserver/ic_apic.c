@@ -617,6 +617,11 @@ const gchar *ic_cluster_manager_program_str= "ic_clmgrd";
 const gchar *ic_cluster_server_program_str= "ic_csd";
 const gchar *ic_restore_program_str= "ndb_restore";
 
+const gchar *ic_ndb_node_id_str= " --ndb-node-id=";
+const gchar *ic_ndb_connectstring_str= " --ndb-connectstring=";
+const gchar *ic_initial_flag_str= " --initial";
+const gchar *ic_cluster_id_str= " --cluster-id=";
+
 #define MIN_PORT 0
 #define MAX_PORT 65535
 

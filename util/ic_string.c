@@ -370,6 +370,22 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   return 0;
 }
 
+int
+ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
+                    IC_STRING *dest_str,
+                    IC_STRING *in_str)
+{
+  gchar *str;
+  guint32 len= dest_str->len + in_str->len;
+  if (!(str= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len + 1)))
+    return IC_ERROR_MEM_ALLOC;
+  memcpy(str, dest_str->str, dest_str->len);
+  memcpy(&str[dest_str->len], in_str->str, in_str->len);
+  str[len]= 0;
+  IC_INIT_STRING(dest_str, str, len, TRUE);
+  return 0;
+}
+
 void
 ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
 {

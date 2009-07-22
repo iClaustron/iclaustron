@@ -88,6 +88,10 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char);
   ic_add_ic_string
     Adds input_str to dest_str
 
+  ic_mc_add_ic_string
+    Adds in_str and dest_str into dest_str, dest_str string is allocated from
+    memory container.
+
   ic_str_find_first
     This function finds the first occurrence of the searched_char in the
     string. If it doesn't find any occurrence it reports the length of
@@ -118,6 +122,9 @@ gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr);
 void ic_add_string(IC_STRING *dest_str, const gchar *input_str);
 int ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str);
 void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
+int ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
+                        IC_STRING *dest_str,
+                        IC_STRING *in_str);
 guint32 ic_str_find_first(IC_STRING *ic_str, gchar searched_char);
 void ic_print_ic_string(IC_STRING *str);
 int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str);

@@ -234,7 +234,7 @@ ic_send_empty_line(IC_CONNECTION *conn)
 
 int
 ic_send_with_cr_composed(IC_CONNECTION *conn,
-                         gchar **buf,
+                         const gchar **buf,
                          guint32 num_strings)
 {
   gchar local_buf[256];

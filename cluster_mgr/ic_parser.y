@@ -280,6 +280,13 @@ opt_initial:
     { PARSE_DATA->initial_flag= TRUE; }
     ;
 
+opt_restart:
+    /* empty */
+    { PARSE_DATA->restart_flag= FALSE; }
+    | RESTART_SYM
+    { PARSE_DATA->restart_flag= TRUE; }
+    ;
+
 group_reference:
     GROUP_SYM ALL_SYM
     | GROUP_SYM IDENTIFIER
