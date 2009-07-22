@@ -63,6 +63,12 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 #define PTHREAD_STACK_MIN 64*1024
 #endif
 
+#define IC_DEF_CLUSTER_SERVER_PORT 1186
+#define IC_DEF_CLUSTER_SERVER_PORT_STR "1186"
+#define IC_DEF_PORT 1187
+#define IC_DEF_PCNTRL_PORT 11860
+#define IC_DEF_PCNTRL_PORT_STR "11860"
+
 /*
   Define stack sizes of our thread implementation, most of them are
   really lightweight and 64 kBytes should be sufficient for our

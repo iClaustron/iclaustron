@@ -59,7 +59,7 @@
 
 /* Configurable variables */
 static gchar *glob_ip= NULL;
-static gchar *glob_port= "10002";
+static gchar *glob_port= IC_DEF_PCNTRL_PORT_STR;
 static gchar *glob_base_dir= NULL;
 
 /* Global variables */

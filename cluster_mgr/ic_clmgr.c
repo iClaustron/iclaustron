@@ -81,6 +81,40 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+static int
+connect_pcntrl(IC_CONNECTION **conn, const gchar *node_config)
+{
+  const IC_DATA_SERVER_CONFIG *ds_conf=
+    (const IC_DATA_SERVER_CONFIG*)node_config;
+  IC_CONNECTION *local_conn;
+  guint32 len;
+  int ret_code= 0;
+  guint64 pcntrl_port_num= ds_conf->pcntrl_port;
+  gchar *pcntrl_port;
+  gchar pcntrl_port_buf[32];
+
+  pcntrl_port= ic_guint64_str(pcntrl_port_num,
+                              pcntrl_port_buf, &len);
+  if (!(local_conn= ic_create_socket_object(TRUE, FALSE, FALSE,
+                                            CONFIG_READ_BUF_SIZE,
+                                            NULL, NULL)))
+    return IC_ERROR_MEM_ALLOC;
+  local_conn->conn_op.ic_prepare_client_connection(
+                 local_conn,
+                 ds_conf->pcntrl_hostname,
+                 pcntrl_port,
+                 NULL, NULL);
+  if ((ret_code= local_conn->conn_op.ic_set_up_connection(local_conn,
+                                                          NULL,
+                                                          NULL)))
+    goto error;
+  *conn= local_conn;
+  return 0;
+error:
+  local_conn->conn_op.ic_free_connection(local_conn);
+  return ret_code;
+}
+
 static void
 report_error(IC_PARSE_DATA *parse_data, gchar *error_str)
 {
@@ -115,7 +149,7 @@ get_node_id(IC_PARSE_DATA *parse_data)
 
 static int
 start_node(IC_PARSE_DATA *parse_data,
-           IC_CONNECTION *conn,
+           const gchar *node_config,
            const gchar *grid_name,
            const gchar *cluster_name,
            const gchar *node_name,
@@ -130,6 +164,10 @@ start_node(IC_PARSE_DATA *parse_data,
   guint32 read_size;
   guint32 i;
   guint32 pid;
+  IC_CONNECTION *conn= NULL;
+
+  if ((ret_code= connect_pcntrl(&conn, node_config)))
+    goto error;
 
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
       (ret_code= ic_send_start_info(conn,
@@ -199,8 +237,9 @@ start_node(IC_PARSE_DATA *parse_data,
     ret_code= IC_PROTOCOL_ERROR;
     goto error;
   }
-  return 0;
 error:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
   return ret_code;
 }
 
@@ -215,8 +254,33 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
   guint32 num_parameters= 0;
   IC_CONNECTION *conn= NULL;
 
+  /*
+    iClaustron supports the following parameters on Data Server nodes:
+    1) --ndb-node-id
+      The node id of the node will be set here
+    2) --cluster-id
+      The cluster id of the node will be set here
+      This is an iClaustron extension of the Data Server to enable multiple
+      clusters to be maintained by one set of Cluster Servers and Cluster
+      Managers.
+    3) --ndb-connectstring
+      String used to inform the Data Server about where to find the iClaustron
+      Cluster Servers.
+      It is on the form:
+      host=myhost1:port1,myhost2:port2,myhost3:port3
+    4) --initial
+      Used to perform an initial cluster start of all Data Server nodes.
+    5) --initial-start
+      When performing an initial start of a partitioned cluster (meaning
+      not all nodes are to be started) this parameter will be set together
+      with --no-wait-nodes
+    6) --no-wait-nodes
+      Specifies which nodes are not to be started as part of the initial
+      start.
+  */
+
   return start_node(parse_data,
-                    conn,
+                    node_config,
                     ic_def_grid_str,
                     parse_data->cluster_name.str,
                     ds_conf->node_name,

@@ -231,10 +231,12 @@ struct ic_data_server_config
   gchar *hostname;
   gchar *node_data_path;
   gchar *node_name;
+  gchar *pcntrl_hostname;
   guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
   guint32 network_buffer_size;
+  guint32 pcntrl_port;
   /* End common part */
 
   gchar *filesystem_path;
@@ -346,11 +348,12 @@ struct ic_client_config
   gchar *hostname;
   gchar *node_data_path;
   gchar *node_name;
-
+  gchar *pcntrl_hostname;
   guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
   guint32 network_buffer_size;
+  guint32 pcntrl_port;
   /* End common part */
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;
@@ -372,10 +375,12 @@ struct ic_cluster_server_config
   gchar *hostname;
   gchar *node_data_path;
   gchar *node_name;
-
+  gchar *pcntrl_hostname;
   guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
+  guint32 network_buffer_size;
+  guint32 pcntrl_port;
   /* End common part */
   guint32 client_resolve_rank;
   guint32 client_resolve_timer;

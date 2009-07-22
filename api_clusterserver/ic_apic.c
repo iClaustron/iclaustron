@@ -821,9 +821,6 @@ init_config_object(gchar *conf_object, guint32 size_struct,
 static void
 init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry);
 
-#define DEF_CLUSTER_SERVER_PORT 1186
-#define DEF_PORT 1187
-
 static void
 init_config_object(gchar *conf_object, guint32 size_struct,
                    IC_CONFIG_TYPES config_type)
@@ -1273,6 +1270,8 @@ init_config_parameters()
   conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->config_entry_description=
   "Hostname of the node";
+
+
 
   IC_SET_CONFIG_MAP(IC_NODE_DATA_PATH, 7);
   IC_SET_DATA_SERVER_STRING(conf_entry, node_data_path,
@@ -2146,7 +2145,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 170);
   IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number, IC_UINT32,
-                               DEF_CLUSTER_SERVER_PORT,
+                               IC_DEF_CLUSTER_SERVER_PORT,
                                IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   conf_entry->config_entry_description=
@@ -2374,7 +2373,27 @@ init_config_parameters()
   "Size in number of records of batches in scan operations";
 
 /* Id 230-234 for configuration id 810-899 */
-/* Id 810-899 not used */
+/* Id 810-879, 882-899 not used */
+#define IC_NODE_PCNTRL_HOSTNAME 880
+#define IC_NODE_PCNTRL_PORT 881
+
+  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_HOSTNAME, 230);
+  IC_SET_DATA_SERVER_STRING(conf_entry, pcntrl_hostname,
+                            IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->config_entry_description=
+  "Hostname of the Process Controller to start/stop node";
+
+  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_PORT, 231);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, pcntrl_port, IC_UINT32,
+                            IC_DEF_PCNTRL_PORT, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->config_entry_description=
+  "Port number of the Process Controller to start/stop node";
 
 /* Id 235-239 for configuration id 900-999 */
 /* Id 900-996 not used */
@@ -2387,7 +2406,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(IC_PORT_NUMBER, 235);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, port_number, IC_UINT32,
-                       DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
+                            IC_DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->is_not_sent= TRUE;
   conf_entry->config_entry_description=
@@ -4029,6 +4048,8 @@ count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
 static int ensure_node_name_set(void *current_config,
                                 IC_MEMORY_CONTAINER *mc_ptr);
 
+static int ensure_pcntrl_hostname_set(void *current_config);
+
 static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
                                  IC_CONFIG_STRUCT *conf_server,
@@ -4090,6 +4111,8 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
           data_server_conf->filesystem_path;
       if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
         return error;
+      if ((error= ensure_pcntrl_hostname_set(current_config)))
+        return error;
       break;
     }
     case IC_CLIENT_TYPE:
@@ -4104,6 +4127,8 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
           client_mandatory_bits)
         goto mandatory_error;
       if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
+        return error;
+      if ((error= ensure_pcntrl_hostname_set(current_config)))
         return error;
       break;
     case IC_COMM_TYPE:
@@ -4154,6 +4179,26 @@ mandatory_error:
     }
   }
   return 1;
+}
+
+static int
+ensure_pcntrl_hostname_set(void *current_config)
+{
+  IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
+  if (ds_conf->pcntrl_hostname == NULL)
+  {
+    /*
+      Each node have a process controller that controls start and stop of
+      the node. The process controller is normally placed at the same
+      hostname as the node, however in some cases it is necessary to use
+      a separate hostname for performance reasons for the process
+      controller (reliability could also be an issue).
+
+      The default setting is thus the same as the hostname of the node.
+    */
+    ds_conf->pcntrl_hostname= ds_conf->hostname;
+  }
+  return 0;
 }
 
 static int

@@ -51,7 +51,7 @@ static gchar *glob_data_path= NULL;
 static gchar *glob_base_path= NULL;
 static gboolean glob_bootstrap= FALSE;
 static gchar *glob_server_name= "127.0.0.1";
-static gchar *glob_server_port= "10203";
+static gchar *glob_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 static guint32 glob_node_id= 1;
 
 static GOptionEntry entries[] = 
