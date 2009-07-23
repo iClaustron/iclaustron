@@ -39,45 +39,41 @@ static gchar *no_such_node_str="There is no such node in this cluster";
 
 /* Option variables */
 static gchar *glob_cluster_server_ip= "127.0.0.1";
-static gchar *glob_cluster_server_port= "10203";
+static gchar *glob_cluster_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
+static gchar *glob_cs_connectstring= NULL;
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
-static gchar *glob_cluster_mgr_port= "12003";
+static gchar *glob_cluster_mgr_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
 static gchar *glob_config_path= NULL;
 static guint32 glob_node_id= 5;
-static guint32 glob_bootstrap_cs_id= 1;
-static gboolean glob_bootstrap= FALSE; 
 static guint32 glob_use_iclaustron_cluster_server= 1;
 
 static GOptionEntry entries[] = 
 {
-  { "cluster_server_hostname", 0, 0, G_OPTION_ARG_STRING,
+  { "cs_hostname", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_server_ip,
     "Set Server Hostname of Cluster Server", NULL},
-  { "cluster_server_port", 0, 0, G_OPTION_ARG_STRING,
+  { "cs_port", 0, 0, G_OPTION_ARG_STRING,
     &glob_cluster_server_port,
     "Set Server Port of Cluster Server", NULL},
+  { "cs_connectstring", 0, 0, G_OPTION_ARG_STRING,
+    &glob_cs_connectstring,
+    "Connect string to Cluster Servers", NULL},
   { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
      &glob_use_iclaustron_cluster_server,
     "Use of iClaustron Cluster Server (default or NDB mgm server", NULL},
-  { "cluster_manager_hostname", 0, 0, G_OPTION_ARG_STRING,
+  { "server_name", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_ip,
     "Set Server Hostname of Cluster Manager", NULL},
-  { "cluster_manager_port", 0, 0, G_OPTION_ARG_STRING,
+  { "server_port", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_port,
     "Set Server Port of Cluster Manager", NULL},
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &glob_node_id,
     "Node id of Cluster Manager in all clusters", NULL},
-  { "config_dir", 0, 0, G_OPTION_ARG_STRING,
+  { "data_dir", 0, 0, G_OPTION_ARG_STRING,
     &glob_config_path,
     "Specification of Clusters to manage for Cluster Manager with access info",
      NULL},
-  { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
-    "Use this flag to start first cluster server before reading configuration",
-    NULL},
-  { "bootstrap_cs_id", 0, 0, G_OPTION_ARG_INT,
-    &glob_bootstrap_cs_id,
-    "Node id of Cluster Server to bootstrap in all clusters", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -153,10 +149,11 @@ add_param_string(IC_PARSE_DATA *parse_data, const gchar *param_str,
   cluster servers in this cluster and their respective port numbers
   port1 and port2. We don't provide the port numbers if they are
   the standard port number 1186 used for MySQL Cluster Managers.
+  Can also be used when parameter is called --cs_connectstring.
 */
 static gchar*
-add_ndb_connectstring(IC_PARSE_DATA *parse_data, const gchar *param_str,
-                      IC_CLUSTER_CONFIG *clu_conf)
+add_connectstring(IC_PARSE_DATA *parse_data, const gchar *param_str,
+                  IC_CLUSTER_CONFIG *clu_conf)
 {
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_STRING host_str, number_str, dest_str;
@@ -182,7 +179,7 @@ add_ndb_connectstring(IC_PARSE_DATA *parse_data, const gchar *param_str,
       }
       memcpy(buf_ptr, cs_conf->hostname, strlen(cs_conf->hostname)+1);
       IC_INIT_STRING(&host_str, buf, len, TRUE);
-      if (cs_conf->port_number != IC_DEF_PORT)
+      if (cs_conf->port_number != IC_DEF_CLUSTER_SERVER_PORT)
       {
         host_str.str[host_str.len]= ':';
         host_str.len++;
@@ -367,7 +364,7 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
   if (!(param_array[num_params++]= add_param_num(parse_data,
                                                  ic_ndb_node_id_str,
                                                  ds_conf->node_id)) ||
-      !(param_array[num_params++]= add_ndb_connectstring(parse_data,
+      !(param_array[num_params++]= add_connectstring(parse_data,
               ic_ndb_connectstring_str,
               clu_conf)))
     return IC_ERROR_MEM_ALLOC;
@@ -404,9 +401,9 @@ start_client_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 }
 
 static int
-start_cluster_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                          __attribute ((unused)) gchar *node_config,
-                          __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
+start_cluster_server_node(IC_PARSE_DATA *parse_data,
+                          gchar *node_config,
+                          IC_CLUSTER_CONFIG *clu_conf)
 {
   IC_CLUSTER_SERVER_CONFIG *cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
   guint32 num_params= 0;
@@ -432,7 +429,13 @@ start_cluster_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                                                     cs_conf->hostname)) ||
       !(param_array[num_params++]= add_param_num(parse_data,
                                                  ic_server_port_str,
-                                                 cs_conf->port_number)))
+                                                 cs_conf->port_number)) ||
+      !(param_array[num_params++]= add_param_string(parse_data,
+                                                 ic_data_dir_str,
+                                                 cs_conf->node_data_path)) ||
+      !(param_array[num_params++]= add_connectstring(parse_data,
+              ic_cs_connectstring_str,
+              clu_conf)))
     return IC_ERROR_MEM_ALLOC;
 
   return start_node(parse_data,
@@ -481,10 +484,53 @@ start_restore_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 }
 
 static int
-start_cluster_mgr_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                       __attribute ((unused)) gchar *node_config,
-                       __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
+start_cluster_mgr_node(IC_PARSE_DATA *parse_data,
+                       gchar *node_config,
+                       IC_CLUSTER_CONFIG *clu_conf)
 {
+  IC_CLUSTER_SERVER_CONFIG *mgr_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
+  guint32 num_params= 0;
+  gchar *param_array[8];
+
+  /*
+    We can set the following parameters when we start the cluster manager.
+    1) --node_id
+      The node id of the cluster manager
+    2) --server_nmae
+      The hostname of the cluster manager
+    3) --server_port
+      The port number of the cluster manager
+    4) --data_dir
+      The path to the data directory where config file will be in the
+      subdirectory config
+    5) --cs_connectstring
+      A list like myhost1:port1,myhost2:port2 that points out where the
+      cluster servers are placed.
+  */
+  if (!(param_array[num_params++]= add_param_num(parse_data,
+                                                 ic_node_id_str,
+                                                 mgr_conf->node_id)) ||
+      !(param_array[num_params++]= add_param_string(parse_data,
+                                                    ic_server_name_str,
+                                                    mgr_conf->hostname)) ||
+      !(param_array[num_params++]= add_param_num(parse_data,
+                                                 ic_server_port_str,
+                                                 mgr_conf->port_number)) ||
+      !(param_array[num_params++]= add_param_string(parse_data,
+                                                    ic_data_dir_str,
+                                                    mgr_conf->node_data_path)))
+    return IC_ERROR_MEM_ALLOC;
+
+  return start_node(parse_data,
+                    node_config,
+                    ic_def_grid_str,
+                    clu_conf->clu_info.cluster_name.str,
+                    mgr_conf->node_name,
+                    ic_cluster_manager_program_str,
+                    parse_data->iclaustron_version_name.str,
+                    num_params,
+                    (const gchar**)&param_array[0],
+                    parse_data->restart_flag);
   return 0;
 }
 
@@ -1117,10 +1163,173 @@ set_up_server_connection(IC_CONNECTION **conn)
   return 0;
 }
 
-static int
-bootstrap()
+typedef struct connect_string
 {
+  gchar **cs_hosts;
+  gchar **cs_ports;
+  guint32 num_cs_servers;
+  IC_MEMORY_CONTAINER *mc_ptr;
+} CONNECT_STRING;
+
+static int
+analyse_host(CONNECT_STRING *conn_str,
+             gchar *start_ptr,
+             guint32 curr_len)
+{
+  gchar *ptr;
+  IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
+
+  if (curr_len == 0)
+    return IC_ERROR_HOSTNAME_PARSE_ERROR;
+  if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
+    return IC_ERROR_MEM_ALLOC;
+  memcpy(ptr, start_ptr, curr_len);
+  ptr[curr_len]= 0;
+  conn_str->cs_hosts[conn_str->num_cs_servers]= ptr;
   return 0;
+}
+
+static int
+analyse_port_number(CONNECT_STRING *conn_str,
+                    gchar *start_ptr,
+                    guint32 curr_len)
+{
+  gchar *ptr;
+  IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
+
+  if (curr_len == 0)
+    return IC_ERROR_PORT_NUMBER_PARSE_ERROR;
+  if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
+    return IC_ERROR_MEM_ALLOC;
+  memcpy(ptr, start_ptr, curr_len);
+  ptr[curr_len]= 0;
+  conn_str->cs_ports[conn_str->num_cs_servers]= ptr;
+  return 0;
+}
+
+static int
+parse_cs_connectstring(gchar *connect_string,
+                       CONNECT_STRING *conn_str)
+{
+  guint32 len, buf_inx, curr_len;
+  gboolean read_host, read_port;
+  gchar c;
+  gchar *start_ptr;
+  int ret_code;
+  IC_MEMORY_CONTAINER *mc_ptr;
+
+  if (!(conn_str->mc_ptr= ic_create_memory_container(1024, 0)))
+    return IC_ERROR_MEM_ALLOC;
+  mc_ptr= conn_str->mc_ptr;
+  ret_code= IC_ERROR_MEM_ALLOC;
+  if (!(conn_str->cs_hosts= (gchar**)mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                 IC_MAX_CLUSTER_SERVERS * sizeof(gchar*))))
+    goto error;
+  if (!(conn_str->cs_ports= (gchar**)mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                 IC_MAX_CLUSTER_SERVERS * sizeof(gchar*))))
+    goto error;
+  if (connect_string == NULL)
+  {
+    /*
+      No connect string provided, set based on 
+      glob_cluster_server_ip and glob_cluster_server_port which can be
+      set as options.
+    */
+    conn_str->cs_hosts[0]= glob_cluster_server_ip;
+    conn_str->cs_ports[0]= glob_cluster_server_port;
+    conn_str->num_cs_servers= 1;
+    return 0;
+  }
+  /*
+    Initialise parser variables
+    We're looking for strings of the type
+    myhost1:port1,myhost2:port2
+    
+    Hostnames can contain a-z,A-Z,0-9 and _ and - and .
+    Port numbers can contain 0-9
+
+    Port numbers can be skipped and then the default port number 1186 is
+    used.
+    : serve as separator between host and port number
+    , serve as separator between host-port pairs
+  */
+  conn_str->num_cs_servers= 0;
+  len= strlen(connect_string);
+  curr_len= 0;
+  buf_inx= 0;
+  read_host= TRUE;
+  read_port= FALSE;
+  start_ptr= connect_string;
+  do
+  {
+    c= connect_string[buf_inx];
+    if (c == ',')
+    {
+      /* Finished this host, now time for next host */
+      if (read_host)
+      {
+        if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
+          goto error;
+        conn_str->cs_ports[conn_str->num_cs_servers]=
+          IC_DEF_CLUSTER_SERVER_PORT_STR;
+      }
+      else
+      {
+        if ((ret_code= analyse_port_number(conn_str, start_ptr, curr_len)))
+          goto error;
+      }
+      conn_str->num_cs_servers++;
+      read_host= TRUE;
+      read_port= FALSE;
+      curr_len= 0;
+      start_ptr+= (curr_len + 1);
+    }
+    else if (c == ':')
+    {
+      /* Finished host part now time for a port number */
+      if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
+        goto error;
+      read_port= TRUE;
+      read_host= FALSE;
+      curr_len= 0;
+      start_ptr+= (curr_len + 1);
+    }
+    else
+      curr_len++;
+    buf_inx++;
+    if (read_host)
+    {
+      ret_code= IC_ERROR_HOSTNAME_PARSE_ERROR;
+      if (!((c >= 'a' && c <= 'z') ||
+           (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') ||
+            c == '_' ||
+            c == '-' ||
+            c == '.'))
+        goto error;
+    }
+    else if (read_port)
+    {
+      ret_code= IC_ERROR_PORT_NUMBER_PARSE_ERROR;
+      if (!(c >= '0' && c <= '9'))
+        goto error;
+    }
+  } while (buf_inx < len);
+  if (read_host)
+  {
+    if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
+      goto error;
+  }
+  else
+  {
+    if ((ret_code= analyse_port_number(conn_str, start_ptr, curr_len)))
+      goto error;
+  }
+  conn_str->num_cs_servers++;
+  return 0;
+error:
+  mc_ptr->mc_ops.ic_mc_free(conn_str->mc_ptr);
+  return ret_code;
 }
 
 int main(int argc,
@@ -1133,7 +1342,9 @@ int main(int argc,
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= error_str;
+  CONNECT_STRING conn_str;
 
+  conn_str.mc_ptr= NULL;
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
            "- iClaustron Cluster Manager", TRUE)))
     goto error;
@@ -1143,14 +1354,15 @@ int main(int argc,
                                     glob_config_path,
                                     config_path_buf)))
     goto error;
-  if (glob_bootstrap && (ret_code= bootstrap()))
+  if ((ret_code= parse_cs_connectstring(glob_cs_connectstring, &conn_str)))
     goto error;
   ret_code= 1;
   if (!(apic= ic_get_configuration(&api_cluster_conn,
                                    &glob_config_dir,
                                    glob_node_id,
-                                   glob_cluster_server_ip,
-                                   glob_cluster_server_port,
+                                   conn_str.num_cs_servers,
+                                   conn_str.cs_hosts,
+                                   conn_str.cs_ports,
                                    glob_use_iclaustron_cluster_server,
                                    &ret_code,
                                    &err_str)))
@@ -1167,6 +1379,8 @@ end:
     apic->api_op.ic_free_config(apic);
   if (glob_tp_state)
     glob_tp_state->tp_ops.ic_threadpool_stop(glob_tp_state);
+  if (conn_str.mc_ptr)
+    conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
   ic_end();
   return ret_code;
 

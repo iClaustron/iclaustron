@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7055
+#define IC_LAST_ERROR 7057
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -154,6 +154,10 @@ ic_init_error_messages()
     "Index out of bound in dynamic translation";
   ic_error_str[IC_ERROR_TRANSLATION_INDEX_ERROR - IC_FIRST_ERROR]=
     "Trying to read non-existent entry in dynamic translation";
+  ic_error_str[IC_ERROR_HOSTNAME_PARSE_ERROR - IC_FIRST_ERROR]=
+    "Error when parsing hostname in connect string";
+  ic_error_str[IC_ERROR_PORT_NUMBER_PARSE_ERROR - IC_FIRST_ERROR]=
+    "Error when parsing port number in connect string";
 }
 
 void

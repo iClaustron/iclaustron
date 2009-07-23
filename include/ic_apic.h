@@ -50,11 +50,13 @@ extern const gchar *ic_cluster_server_program_str;
 
 extern const gchar *ic_ndb_node_id_str;
 extern const gchar *ic_ndb_connectstring_str;
+extern const gchar *ic_cs_connectstring_str;
 extern const gchar *ic_initial_flag_str;
 extern const gchar *ic_cluster_id_str;
 extern const gchar *ic_node_id_str;
 extern const gchar *ic_server_name_str;
 extern const gchar *ic_server_port_str;
+extern const gchar *ic_data_dir_str;
 
 /* Initialisation of configuration parameters */
 int ic_init_config_parameters();
@@ -613,8 +615,9 @@ IC_API_CONFIG_SERVER*
 ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      IC_STRING *config_dir,
                      guint32 node_id,
-                     gchar *cluster_server_ip,
-                     gchar *cluster_server_port,
+                     guint32 num_cs_servers,
+                     gchar **cluster_server_ips,
+                     gchar **cluster_server_ports,
                      gboolean use_iclaustron_cluster_server,
                      int *error,
                      gchar **err_str);

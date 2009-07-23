@@ -68,6 +68,8 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 #define IC_DEF_PORT 1187
 #define IC_DEF_PCNTRL_PORT 11860
 #define IC_DEF_PCNTRL_PORT_STR "11860"
+#define IC_DEF_CLUSTER_MANAGER_PORT 11861
+#define IC_DEF_CLUSTER_MANAGER_PORT_STR "11861"
 
 /*
   Define stack sizes of our thread implementation, most of them are

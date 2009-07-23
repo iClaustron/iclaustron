@@ -27,7 +27,7 @@ static IC_STRING glob_config_dir= { NULL, 0, TRUE};
 static const gchar *glob_process_name= "ic_fsd";
 
 static gchar *glob_cluster_server_ip= "127.0.0.1";
-static gchar *glob_cluster_server_port= "10203";
+static gchar *glob_cluster_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 static gchar *glob_data_path= NULL;
 static guint32 glob_node_id= 5;
 static guint32 glob_num_threads= 1;
@@ -163,8 +163,9 @@ int main(int argc, char *argv[])
   if (!(apic= ic_get_configuration(&api_cluster_conn,
                                    &glob_config_dir,
                                    glob_node_id,
-                                   glob_cluster_server_ip,
-                                   glob_cluster_server_port,
+                                   1,
+                                   &glob_cluster_server_ip,
+                                   &glob_cluster_server_port,
                                    glob_use_iclaustron_cluster_server,
                                    &ret_code,
                                    &err_str)))

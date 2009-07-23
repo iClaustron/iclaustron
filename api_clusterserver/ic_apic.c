@@ -619,11 +619,13 @@ const gchar *ic_restore_program_str= "ndb_restore";
 
 const gchar *ic_ndb_node_id_str= " --ndb-node-id=";
 const gchar *ic_ndb_connectstring_str= " --ndb-connectstring=";
+const gchar *ic_cs_connectstring_str= " --cs_connectstring=";
 const gchar *ic_initial_flag_str= " --initial";
-const gchar *ic_cluster_id_str= " --cluster-id=";
+const gchar *ic_cluster_id_str= " --cluster_id=";
 const gchar *ic_node_id_str= " --node_id=";
 const gchar *ic_server_name_str= " --server_name=";
 const gchar *ic_server_port_str=" --server_port=";
+const gchar *ic_data_dir_str= " --data_dir=";
 
 #define MIN_PORT 0
 #define MAX_PORT 65535
@@ -8935,8 +8937,9 @@ IC_API_CONFIG_SERVER*
 ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
                      IC_STRING *config_dir,
                      guint32 node_id,
-                     gchar *cluster_server_ip,
-                     gchar *cluster_server_port,
+                     guint32 num_cs_servers,
+                     gchar **cluster_server_ips,
+                     gchar **cluster_server_ports,
                      gboolean use_iclaustron_cluster_server,
                      int *error,
                      gchar **err_str)
@@ -8968,9 +8971,9 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
     goto end;
   }
 
-  api_cluster_conn->num_cluster_servers= 1;
-  api_cluster_conn->cluster_server_ips= &cluster_server_ip;
-  api_cluster_conn->cluster_server_ports= &cluster_server_port;
+  api_cluster_conn->num_cluster_servers= num_cs_servers;
+  api_cluster_conn->cluster_server_ips= cluster_server_ips;
+  api_cluster_conn->cluster_server_ports= cluster_server_ports;
   if ((apic= ic_create_api_cluster(api_cluster_conn,
                                    use_iclaustron_cluster_server)))
   {
