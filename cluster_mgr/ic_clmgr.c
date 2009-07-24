@@ -1192,15 +1192,17 @@ int main(int argc,
                                         glob_cluster_server_port)))
     goto error;
   ret_code= 1;
-  if (!(apic= ic_get_configuration(&api_cluster_conn,
-                                   &glob_config_dir,
-                                   glob_node_id,
-                                   conn_str.num_cs_servers,
-                                   conn_str.cs_hosts,
-                                   conn_str.cs_ports,
-                                   glob_use_iclaustron_cluster_server,
-                                   &ret_code,
-                                   &err_str)))
+  apic= ic_get_configuration(&api_cluster_conn,
+                             &glob_config_dir,
+                             glob_node_id,
+                             conn_str.num_cs_servers,
+                             conn_str.cs_hosts,
+                             conn_str.cs_ports,
+                             glob_use_iclaustron_cluster_server,
+                             &ret_code,
+                             &err_str);
+  conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
+  if (!apic)
     goto error;
   err_str= NULL;
   if ((ret_code= set_up_server_connection(&conn)))
@@ -1214,8 +1216,6 @@ end:
     apic->api_op.ic_free_config(apic);
   if (glob_tp_state)
     glob_tp_state->tp_ops.ic_threadpool_stop(glob_tp_state);
-  if (conn_str.mc_ptr)
-    conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
   ic_end();
   return ret_code;
 

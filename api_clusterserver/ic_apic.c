@@ -3950,7 +3950,8 @@ end:
 }
 
 static int
-connect_api_connections(IC_INT_API_CONFIG_SERVER *apic, IC_CONNECTION **conn_ptr)
+connect_api_connections(IC_INT_API_CONFIG_SERVER *apic,
+                        IC_CONNECTION **conn_ptr)
 {
   guint32 i;
   int error= 1;
@@ -6828,6 +6829,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   IC_MEMORY_CONTAINER *mc_ptr;
   IC_INT_API_CONFIG_SERVER *apic= NULL;
   guint32 num_cluster_servers= cluster_conn->num_cluster_servers;
+  guint32 i;
   DEBUG_ENTRY("ic_create_api_cluster");
 
 
@@ -6879,13 +6881,17 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
       !(apic->config_mutex= g_mutex_new()))
     goto error;
 
-  memcpy((gchar*)apic->cluster_conn.cluster_server_ips,
-         (gchar*)cluster_conn->cluster_server_ips,
-         num_cluster_servers * sizeof(gchar*));
-  memcpy((gchar*)apic->cluster_conn.cluster_server_ports,
-         (gchar*)cluster_conn->cluster_server_ports,
-         num_cluster_servers * sizeof(gchar*));
-
+  for (i= 0; i < num_cluster_servers; i++)
+  {
+    if (ic_mc_chardup(mc_ptr,
+                      &apic->cluster_conn.cluster_server_ips[i],
+                      cluster_conn->cluster_server_ips[i]))
+      goto error;
+    if (ic_mc_chardup(mc_ptr,
+                      &apic->cluster_conn.cluster_server_ports[i],
+                      cluster_conn->cluster_server_ports[i]))
+      goto error;
+  }
   DEBUG_RETURN((IC_API_CONFIG_SERVER*)apic);
 error:
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);

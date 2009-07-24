@@ -132,6 +132,8 @@ int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str);
 int ic_strdup(IC_STRING *out_str, IC_STRING *in_str);
 int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                  IC_STRING *out_str, IC_STRING *in_str);
+int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
+                  gchar **out_str, gchar *in_str);
 int ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
 gchar *ic_convert_file_to_dir(gchar *buf, gchar *file_name);
 
