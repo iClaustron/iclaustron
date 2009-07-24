@@ -112,7 +112,9 @@
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_port.h>
+#include <ic_mc.h>
 #include <ic_string.h>
+#include <ic_parse_connectstring.h>
 #include <ic_bitmap.h>
 #include <ic_dyn_array.h>
 #include <ic_connection.h>
@@ -122,6 +124,16 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 #include "ic_apid_int.h"
+
+
+IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
+gchar *ic_glob_cs_server_name= "127.0.0.1";
+gchar *ic_glob_cs_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
+gchar *ic_glob_cs_connectstring= NULL;
+gchar *ic_glob_data_path= NULL;
+guint32 ic_glob_node_id= 4;
+guint32 ic_glob_num_threads= 1;
+guint32 ic_glob_use_iclaustron_cluster_server= 1;
 
 /*
   These static functions implements the local IC_TRANSLATION_OBJ.
@@ -3152,4 +3164,64 @@ end:
 mem_pool_error:
   ret_code= IC_ERROR_MEM_ALLOC;
   goto end;
+}
+
+int
+ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
+                      gchar *config_path_buf,
+                      gchar **err_str,
+                      gchar *error_buf,
+                      IC_APID_GLOBAL **apid_global,
+                      IC_API_CONFIG_SERVER **apic)
+{
+  IC_CONNECT_STRING conn_str;
+  IC_API_CLUSTER_CONNECTION api_cluster_conn;
+  int ret_code;
+
+  if (!(*tp_state=
+          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+    return IC_ERROR_MEM_ALLOC;
+  if ((ret_code= ic_set_config_path(&ic_glob_config_dir,
+                                    ic_glob_data_path,
+                                    config_path_buf)))
+    return ret_code;
+  if ((ret_code= ic_parse_connectstring(ic_glob_cs_connectstring,
+                                        &conn_str,
+                                        ic_glob_cs_server_name,
+                                        ic_glob_cs_server_port)))
+    return ret_code;
+  *err_str= error_buf;
+  *apic= ic_get_configuration(&api_cluster_conn,
+                              &ic_glob_config_dir,
+                              ic_glob_node_id,
+                              conn_str.num_cs_servers,
+                              conn_str.cs_hosts,
+                              conn_str.cs_ports,
+                              ic_glob_use_iclaustron_cluster_server,
+                              &ret_code,
+                              err_str);
+  conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
+  if (!apic)
+    return ret_code;
+  if (!(*apid_global= ic_connect_apid_global(*apic, &ret_code, err_str)))
+    return ret_code;
+  *err_str= NULL;
+  return 0;
+}
+
+void
+ic_stop_apid_program(int ret_code,
+                     gchar *err_str,
+                     IC_APID_GLOBAL *apid_global,
+                     IC_API_CONFIG_SERVER *apic)
+{
+  if (err_str)
+    printf("%s", err_str);
+  if (ret_code)
+    ic_print_error(ret_code);
+  if (apid_global)
+    ic_disconnect_apid_global(apid_global);
+  if (apic)
+    apic->api_op.ic_free_config(apic);
+  ic_end();
 }

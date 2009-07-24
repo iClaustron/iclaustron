@@ -394,6 +394,30 @@ int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
+/*
+  Declarations used for programs using easy start and stop
+  of iClaustron Data API users. Also declaration of global
+  variables used by these programs.
+*/
+extern IC_STRING ic_glob_config_dir;
+extern gchar *ic_glob_cs_server_name;
+extern gchar *ic_glob_cs_server_port;
+extern gchar *ic_glob_cs_connectstring;
+extern gchar *ic_glob_data_path;
+extern guint32 ic_glob_node_id;
+extern guint32 ic_glob_num_threads;
+extern guint32 ic_glob_use_iclaustron_cluster_server;
+
+int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
+                          gchar *config_path_buf,
+                          gchar **err_str,
+                          gchar *error_buf,
+                          IC_APID_GLOBAL **apid_global,
+                          IC_API_CONFIG_SERVER **apic);
+void ic_stop_apid_program(int ret_code,
+                          gchar *error_str,
+                          IC_APID_GLOBAL *apid_global,
+                          IC_API_CONFIG_SERVER *apic);
 
 #include <ic_apid_inline.h>
 #endif
