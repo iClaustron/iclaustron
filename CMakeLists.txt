@@ -377,6 +377,7 @@ add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
             util/ic_threadpool_int.h util/ic_threadpool.c
             util/ic_debug.c util/ic_err.c util/ic_string.c
             util/ic_bitmap.c util/ic_config_reader.c
+            util/ic_parse_connectstring.c
             util/ic_protocol_support.c
             include/hashtable_itr.h include/hashtable_private.h
             include/ic_base64.h include/ic_config_reader.h
@@ -499,6 +500,7 @@ install (FILES
          include/ic_err.h
          include/ic_hashtable.h
          include/ic_mc.h
+         include/ic_parse_connectstring.h
          include/ic_poll_set.h
          include/ic_bitmap.h
          include/ic_port.h

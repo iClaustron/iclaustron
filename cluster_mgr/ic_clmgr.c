@@ -23,6 +23,7 @@
 #include <ic_connection.h>
 #include <ic_apic.h>
 #include <ic_protocol_support.h>
+#include <ic_parse_connectstring.h>
 #include "ic_clmgr_int.h"
 
 /* Global variables */
@@ -1163,175 +1164,6 @@ set_up_server_connection(IC_CONNECTION **conn)
   return 0;
 }
 
-typedef struct connect_string
-{
-  gchar **cs_hosts;
-  gchar **cs_ports;
-  guint32 num_cs_servers;
-  IC_MEMORY_CONTAINER *mc_ptr;
-} CONNECT_STRING;
-
-static int
-analyse_host(CONNECT_STRING *conn_str,
-             gchar *start_ptr,
-             guint32 curr_len)
-{
-  gchar *ptr;
-  IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
-
-  if (curr_len == 0)
-    return IC_ERROR_HOSTNAME_PARSE_ERROR;
-  if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
-    return IC_ERROR_MEM_ALLOC;
-  memcpy(ptr, start_ptr, curr_len);
-  ptr[curr_len]= 0;
-  conn_str->cs_hosts[conn_str->num_cs_servers]= ptr;
-  return 0;
-}
-
-static int
-analyse_port_number(CONNECT_STRING *conn_str,
-                    gchar *start_ptr,
-                    guint32 curr_len)
-{
-  gchar *ptr;
-  IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
-
-  if (curr_len == 0)
-    return IC_ERROR_PORT_NUMBER_PARSE_ERROR;
-  if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
-    return IC_ERROR_MEM_ALLOC;
-  memcpy(ptr, start_ptr, curr_len);
-  ptr[curr_len]= 0;
-  conn_str->cs_ports[conn_str->num_cs_servers]= ptr;
-  return 0;
-}
-
-static int
-parse_cs_connectstring(gchar *connect_string,
-                       CONNECT_STRING *conn_str)
-{
-  guint32 len, buf_inx, curr_len;
-  gboolean read_host, read_port;
-  gchar c;
-  gchar *start_ptr;
-  int ret_code;
-  IC_MEMORY_CONTAINER *mc_ptr;
-
-  if (!(conn_str->mc_ptr= ic_create_memory_container(1024, 0)))
-    return IC_ERROR_MEM_ALLOC;
-  mc_ptr= conn_str->mc_ptr;
-  ret_code= IC_ERROR_MEM_ALLOC;
-  if (!(conn_str->cs_hosts= (gchar**)mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
-                 IC_MAX_CLUSTER_SERVERS * sizeof(gchar*))))
-    goto error;
-  if (!(conn_str->cs_ports= (gchar**)mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
-                 IC_MAX_CLUSTER_SERVERS * sizeof(gchar*))))
-    goto error;
-  if (connect_string == NULL)
-  {
-    /*
-      No connect string provided, set based on 
-      glob_cluster_server_ip and glob_cluster_server_port which can be
-      set as options.
-    */
-    conn_str->cs_hosts[0]= glob_cluster_server_ip;
-    conn_str->cs_ports[0]= glob_cluster_server_port;
-    conn_str->num_cs_servers= 1;
-    return 0;
-  }
-  /*
-    Initialise parser variables
-    We're looking for strings of the type
-    myhost1:port1,myhost2:port2
-    
-    Hostnames can contain a-z,A-Z,0-9 and _ and - and .
-    Port numbers can contain 0-9
-
-    Port numbers can be skipped and then the default port number 1186 is
-    used.
-    : serve as separator between host and port number
-    , serve as separator between host-port pairs
-  */
-  conn_str->num_cs_servers= 0;
-  len= strlen(connect_string);
-  curr_len= 0;
-  buf_inx= 0;
-  read_host= TRUE;
-  read_port= FALSE;
-  start_ptr= connect_string;
-  do
-  {
-    c= connect_string[buf_inx];
-    if (c == ',')
-    {
-      /* Finished this host, now time for next host */
-      if (read_host)
-      {
-        if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
-          goto error;
-        conn_str->cs_ports[conn_str->num_cs_servers]=
-          IC_DEF_CLUSTER_SERVER_PORT_STR;
-      }
-      else
-      {
-        if ((ret_code= analyse_port_number(conn_str, start_ptr, curr_len)))
-          goto error;
-      }
-      conn_str->num_cs_servers++;
-      read_host= TRUE;
-      read_port= FALSE;
-      curr_len= 0;
-      start_ptr+= (curr_len + 1);
-    }
-    else if (c == ':')
-    {
-      /* Finished host part now time for a port number */
-      if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
-        goto error;
-      read_port= TRUE;
-      read_host= FALSE;
-      curr_len= 0;
-      start_ptr+= (curr_len + 1);
-    }
-    else
-      curr_len++;
-    buf_inx++;
-    if (read_host)
-    {
-      ret_code= IC_ERROR_HOSTNAME_PARSE_ERROR;
-      if (!((c >= 'a' && c <= 'z') ||
-           (c >= 'A' && c <= 'Z') ||
-           (c >= '0' && c <= '9') ||
-            c == '_' ||
-            c == '-' ||
-            c == '.'))
-        goto error;
-    }
-    else if (read_port)
-    {
-      ret_code= IC_ERROR_PORT_NUMBER_PARSE_ERROR;
-      if (!(c >= '0' && c <= '9'))
-        goto error;
-    }
-  } while (buf_inx < len);
-  if (read_host)
-  {
-    if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
-      goto error;
-  }
-  else
-  {
-    if ((ret_code= analyse_port_number(conn_str, start_ptr, curr_len)))
-      goto error;
-  }
-  conn_str->num_cs_servers++;
-  return 0;
-error:
-  mc_ptr->mc_ops.ic_mc_free(conn_str->mc_ptr);
-  return ret_code;
-}
-
 int main(int argc,
          char *argv[])
 {
@@ -1342,7 +1174,7 @@ int main(int argc,
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= error_str;
-  CONNECT_STRING conn_str;
+  IC_CONNECT_STRING conn_str;
 
   conn_str.mc_ptr= NULL;
   if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
@@ -1354,7 +1186,10 @@ int main(int argc,
                                     glob_config_path,
                                     config_path_buf)))
     goto error;
-  if ((ret_code= parse_cs_connectstring(glob_cs_connectstring, &conn_str)))
+  if ((ret_code= ic_parse_connectstring(glob_cs_connectstring,
+                                        &conn_str,
+                                        glob_cluster_server_ip,
+                                        glob_cluster_server_port)))
     goto error;
   ret_code= 1;
   if (!(apic= ic_get_configuration(&api_cluster_conn,

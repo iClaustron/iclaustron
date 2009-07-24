@@ -25,6 +25,7 @@ include_HEADERS = ic_apic.h \
                   ic_bitmap.h \
                   ic_err.h \
                   ic_mc.h \
+                  ic_parse_connectstring.h \
                   ic_poll_set.h \
                   ic_port.h \
                   ic_protocol_support.h \
