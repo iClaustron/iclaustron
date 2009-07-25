@@ -3183,7 +3183,7 @@ mem_pool_error:
   goto end;
 }
 
-GOptionEntry apid_entries[] = 
+GOptionEntry ic_apid_entries[] = 
 {
   { "cs_connectstring", 0, 0, G_OPTION_ARG_STRING,
     &ic_glob_cs_connectstring,
@@ -3333,7 +3333,7 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
 {
   int error= 0;
   guint32 i, thread_id;
-  DEBUG_ENTRY("run_file_server");
+  DEBUG_ENTRY("ic_run_apid_program");
 
   *err_str= NULL;
   printf("Ready to start server threads\n");

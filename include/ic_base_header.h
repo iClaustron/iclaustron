@@ -143,6 +143,7 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
   iClaustron program.
 */
 int ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+                     GOptionEntry add_entries[],
                      const gchar *program_name,
                      gchar *start_text, gboolean use_config);
 void ic_end();

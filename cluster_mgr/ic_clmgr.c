@@ -24,12 +24,11 @@
 #include <ic_apic.h>
 #include <ic_protocol_support.h>
 #include <ic_parse_connectstring.h>
+#include <ic_apid.h>
 #include "ic_clmgr_int.h"
 
 /* Global variables */
-static IC_STRING glob_config_dir= { NULL, 0, TRUE};
 static const gchar *glob_process_name= "ic_clmgrd";
-static IC_THREADPOOL_STATE *glob_tp_state= NULL;
 static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
 
 static gchar *not_impl_string= "not implemented yet";
@@ -39,42 +38,17 @@ static gchar *wrong_node_type= "Node id not of specified type";
 static gchar *no_such_node_str="There is no such node in this cluster";
 
 /* Option variables */
-static gchar *glob_cluster_server_ip= "127.0.0.1";
-static gchar *glob_cluster_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
-static gchar *glob_cs_connectstring= NULL;
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
 static gchar *glob_cluster_mgr_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
-static gchar *glob_config_path= NULL;
-static guint32 glob_node_id= 5;
-static guint32 glob_use_iclaustron_cluster_server= 1;
 
 static GOptionEntry entries[] = 
 {
-  { "cs_hostname", 0, 0, G_OPTION_ARG_STRING,
-     &glob_cluster_server_ip,
-    "Set Server Hostname of Cluster Server", NULL},
-  { "cs_port", 0, 0, G_OPTION_ARG_STRING,
-    &glob_cluster_server_port,
-    "Set Server Port of Cluster Server", NULL},
-  { "cs_connectstring", 0, 0, G_OPTION_ARG_STRING,
-    &glob_cs_connectstring,
-    "Connect string to Cluster Servers", NULL},
-  { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
-     &glob_use_iclaustron_cluster_server,
-    "Use of iClaustron Cluster Server (default or NDB mgm server", NULL},
   { "server_name", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_ip,
     "Set Server Hostname of Cluster Manager", NULL},
   { "server_port", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_port,
     "Set Server Port of Cluster Manager", NULL},
-  { "node_id", 0, 0, G_OPTION_ARG_INT,
-    &glob_node_id,
-    "Node id of Cluster Manager in all clusters", NULL},
-  { "data_dir", 0, 0, G_OPTION_ARG_STRING,
-    &glob_config_path,
-    "Specification of Clusters to manage for Cluster Manager with access info",
-     NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -497,7 +471,7 @@ start_cluster_mgr_node(IC_PARSE_DATA *parse_data,
     We can set the following parameters when we start the cluster manager.
     1) --node_id
       The node id of the cluster manager
-    2) --server_nmae
+    2) --server_name
       The hostname of the cluster manager
     3) --server_port
       The port number of the cluster manager
@@ -518,8 +492,11 @@ start_cluster_mgr_node(IC_PARSE_DATA *parse_data,
                                                  ic_server_port_str,
                                                  mgr_conf->port_number)) ||
       !(param_array[num_params++]= add_param_string(parse_data,
-                                                    ic_data_dir_str,
-                                                    mgr_conf->node_data_path)))
+                                              ic_data_dir_str,
+                                              mgr_conf->node_data_path)) ||
+      !(param_array[num_params++]= add_connectstring(parse_data,
+                                                     ic_cs_connectstring_str,
+                                                     clu_conf)))
     return IC_ERROR_MEM_ALLOC;
 
   return start_node(parse_data,
@@ -1077,13 +1054,14 @@ error:
 static int
 handle_new_connection(IC_CONNECTION *conn,
                       IC_API_CONFIG_SERVER *apic,
+                      IC_THREADPOOL_STATE *tp_state,
                       guint32 thread_id)
 {
   int ret_code;
 
   conn->conn_op.ic_set_param(conn, (void*)apic);
-  if ((ret_code= glob_tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
-                            glob_tp_state,
+  if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                            tp_state,
                             thread_id,
                             run_handle_new_connection,
                             (gpointer)conn,
@@ -1094,15 +1072,16 @@ handle_new_connection(IC_CONNECTION *conn,
 }
 static int
 wait_for_connections_and_fork(IC_CONNECTION *conn,
-                              IC_API_CONFIG_SERVER *apic)
+                              IC_API_CONFIG_SERVER *apic,
+                              IC_THREADPOOL_STATE *tp_state)
 {
   int ret_code;
   guint32 thread_id;
   IC_CONNECTION *fork_conn;
   do
   {
-    if ((ret_code= glob_tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
-                                                     glob_tp_state,
+    if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
+                                                     tp_state,
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))
       goto error;
@@ -1117,7 +1096,8 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
         ("Failed to fork a new connection from an accepted connection"));
       goto error;
     }
-    if ((ret_code= handle_new_connection(fork_conn, apic, thread_id)))
+    if ((ret_code= handle_new_connection(fork_conn, apic,
+                                         tp_state, thread_id)))
     {
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Failed to start new Cluster Manager thread"));
@@ -1169,60 +1149,29 @@ int main(int argc,
 {
   int ret_code;
   IC_CONNECTION *conn= NULL;
-  IC_API_CLUSTER_CONNECTION api_cluster_conn;
   IC_API_CONFIG_SERVER *apic= NULL;
+  IC_APID_GLOBAL *apid_global= NULL;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= error_str;
-  IC_CONNECT_STRING conn_str;
+  IC_THREADPOOL_STATE *tp_state;
 
-  conn_str.mc_ptr= NULL;
-  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
+  if ((ret_code= ic_start_program(argc, argv, entries,
+                                  ic_apid_entries, glob_process_name,
            "- iClaustron Cluster Manager", TRUE)))
-    goto error;
-  if ((glob_tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
-    goto error;
-  if ((ret_code= ic_set_config_path(&glob_config_dir,
-                                    glob_config_path,
-                                    config_path_buf)))
-    goto error;
-  if ((ret_code= ic_parse_connectstring(glob_cs_connectstring,
-                                        &conn_str,
-                                        glob_cluster_server_ip,
-                                        glob_cluster_server_port)))
-    goto error;
-  ret_code= 1;
-  apic= ic_get_configuration(&api_cluster_conn,
-                             &glob_config_dir,
-                             glob_node_id,
-                             conn_str.num_cs_servers,
-                             conn_str.cs_hosts,
-                             conn_str.cs_ports,
-                             glob_use_iclaustron_cluster_server,
-                             &ret_code,
-                             &err_str);
-  conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
-  if (!apic)
-    goto error;
-  err_str= NULL;
+    goto end;
+  if ((ret_code= ic_start_apid_program(&tp_state,
+                                       config_path_buf,
+                                       &err_str,
+                                       error_str,
+                                       &apid_global,
+                                       &apic)))
+    goto end;
   if ((ret_code= set_up_server_connection(&conn)))
-    goto error;
-  ret_code= wait_for_connections_and_fork(conn, apic);
+    goto end;
+  ret_code= wait_for_connections_and_fork(conn, apic, tp_state);
   conn->conn_op.ic_free_connection(conn);
-  if (ret_code)
-    goto error;
 end:
-  if (apic)
-    apic->api_op.ic_free_config(apic);
-  if (glob_tp_state)
-    glob_tp_state->tp_ops.ic_threadpool_stop(glob_tp_state);
-  ic_end();
+  ic_stop_apid_program(ret_code, err_str, apid_global, apic);
   return ret_code;
-
-error:
-  if (err_str)
-    printf("%s", err_str);
-  else
-    ic_print_error(ret_code);
-  goto end;
 }

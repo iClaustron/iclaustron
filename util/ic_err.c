@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7057
+#define IC_LAST_ERROR 7058
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -158,6 +158,8 @@ ic_init_error_messages()
     "Error when parsing hostname in connect string";
   ic_error_str[IC_ERROR_PORT_NUMBER_PARSE_ERROR - IC_FIRST_ERROR]=
     "Error when parsing port number in connect string";
+  ic_error_str[IC_ERROR_FAILED_TO_DAEMONIZE - IC_FIRST_ERROR]=
+    "Failed to daemonize process";
 }
 
 void

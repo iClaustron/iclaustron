@@ -9081,6 +9081,7 @@ static int use_config_vars;
 
 int
 ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+                 GOptionEntry add_entries[],
                  const gchar *program_name,
                  gchar *start_text,
                  gboolean use_config)
@@ -9097,6 +9098,8 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
     goto mem_error;
   /* Read command options */
   g_option_context_add_main_entries(context, entries, NULL);
+  if (add_entries)
+    g_option_context_add_main_entries(context, add_entries, NULL);
   debug_group= g_option_group_new("debug", debug_description,
                                   help_debug, NULL, NULL);
   if (!debug_group)

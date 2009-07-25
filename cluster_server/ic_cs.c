@@ -75,7 +75,8 @@ main(int argc, char *argv[])
   IC_RUN_CLUSTER_SERVER *run_obj;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
 
-  if ((error= ic_start_program(argc, argv, entries, glob_process_name,
+  if ((error= ic_start_program(argc, argv, entries, NULL,
+                               glob_process_name,
            "- iClaustron Cluster Server", TRUE)))
     return error;
   if ((error= ic_set_config_path(&glob_config_dir,

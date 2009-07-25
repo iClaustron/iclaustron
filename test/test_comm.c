@@ -300,7 +300,8 @@ int main(int argc, char *argv[])
   int ret_code= 1;
   int i;
 
-  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
+  if ((ret_code= ic_start_program(argc, argv, entries, NULL,
+                                  glob_process_name,
            "- Basic test program communication module", TRUE)))
     return ret_code;
   if (glob_test_type == 1)

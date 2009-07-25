@@ -47,7 +47,7 @@ int main(int argc,
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state;
 
-  if ((ret_code= ic_start_program(argc, argv, apid_entries,
+  if ((ret_code= ic_start_program(argc, argv, ic_apid_entries, NULL,
                                   glob_process_name,
             "- iClaustron Replication Server", TRUE)))
     goto end;

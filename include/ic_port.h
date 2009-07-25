@@ -53,4 +53,7 @@ IC_TIMER ic_micros_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 IC_TIMER ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 
 void ic_sleep(guint32 seconds_to_sleep);
+
+/* Interface to daemonize a program */
+int ic_daemonize(gchar *log_file);
 #endif

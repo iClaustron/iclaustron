@@ -42,6 +42,9 @@
 #ifdef HAVE_GETTIMEOFDAY
 #include <sys/time.h>
 #endif
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
 
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
@@ -422,4 +425,67 @@ ic_read_file(int file_ptr, gchar *buf, size_t size, guint64 *len)
   }
   *len= (guint32)ret_code;
   return 0;
+}
+
+#ifndef WIN32
+static void
+sig_handler(int signum)
+{
+  switch (signum)
+  {
+    case SIGCHLD:
+    case SIGUSR1:
+    case SIGALRM:
+      exit(0);
+      break;
+  }
+}
+#endif
+
+int
+ic_daemonize(gchar *log_file)
+{
+#ifndef WIN32
+  static int failed= 0;
+  pid_t child_pid, session_id, parent_pid;
+
+  signal(SIGCHLD, sig_handler);
+  signal(SIGUSR1, sig_handler);
+  signal(SIGALRM, sig_handler);
+
+  child_pid= fork();
+  if (child_pid < 0)
+    return IC_ERROR_FAILED_TO_DAEMONIZE;
+  if (child_pid > 0)
+  {
+    /*
+      Pause and wait for signal, ensure we deliver signal to
+      ourselves if no signal arrives.
+    */
+    alarm(2);
+    pause();
+    if (failed)
+      return IC_ERROR_FAILED_TO_DAEMONIZE;
+    exit(0);
+  }
+  /* We come here as the child process, the parent process will exit */
+  parent_pid= getppid(); /* Get pid of original process */
+
+  session_id= setsid();
+  if (session_id < 0)
+  {
+     /* Failed to create a new session for new process */
+     failed= 1;
+     exit(1);
+  }
+
+  freopen("/dev/null", "r", stdin);
+  freopen(log_file, "w", stdout);
+  freopen(log_file, "w", stderr);
+
+  kill(parent_pid, SIGUSR1); /* Wake parent process to make it exit */
+  return 0;
+#else
+  return 0;
+#endif
 }
