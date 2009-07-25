@@ -428,6 +428,7 @@ ic_read_file(int file_ptr, gchar *buf, size_t size, guint64 *len)
 }
 
 #ifndef WIN32
+#include <signal.h>
 static void
 sig_handler(int signum)
 {
