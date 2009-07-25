@@ -374,6 +374,7 @@ struct ic_int_apid_global
   GMutex *thread_id_mutex;
   guint32 num_receive_threads;
   guint32 num_listen_server_threads;
+  IC_RUN_APID_THREAD_FUNC apid_func;
   IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];
   IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];
 };

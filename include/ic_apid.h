@@ -15,6 +15,7 @@
 
 #ifndef IC_APID_H
 #define IC_APID_H
+#include <ic_threadpool.h>
 
 typedef struct ic_apid_global IC_APID_GLOBAL;
 typedef struct ic_apid_global_ops IC_APID_GLOBAL_OPS;
@@ -50,6 +51,7 @@ typedef enum ic_error_category IC_ERROR_CATEGORY;
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_where_condition IC_WHERE_CONDITION;
 
+typedef int (*IC_RUN_APID_THREAD_FUNC)(IC_APID_GLOBAL*, IC_THREAD_STATE*);
 /*
   Names of operation objects returned from ic_get_next_executed_operation.
   The information from these objects should be retrieved using the inline
@@ -377,6 +379,9 @@ struct ic_apid_global_ops
   guint32 (*ic_get_num_user_threads) (IC_APID_GLOBAL *apid_global);
   void (*ic_add_user_thread) (IC_APID_GLOBAL *apid_global);
   void (*ic_remove_user_thread) (IC_APID_GLOBAL *apid_global);
+  void (*ic_set_thread_func) (IC_APID_GLOBAL *apid_global,
+                              IC_RUN_APID_THREAD_FUNC apid_func);
+  IC_RUN_APID_THREAD_FUNC (*ic_get_thread_func) (IC_APID_GLOBAL *apid_global);
 };
 
 struct ic_apid_global
@@ -407,6 +412,7 @@ extern gchar *ic_glob_data_path;
 extern guint32 ic_glob_node_id;
 extern guint32 ic_glob_num_threads;
 extern guint32 ic_glob_use_iclaustron_cluster_server;
+extern GOptionEntry apid_entries[];
 
 int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                           gchar *config_path_buf,
@@ -414,6 +420,12 @@ int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                           gchar *error_buf,
                           IC_APID_GLOBAL **apid_global,
                           IC_API_CONFIG_SERVER **apic);
+
+int ic_run_apid_program(IC_APID_GLOBAL *apid_global,
+                        IC_THREADPOOL_STATE *tp_state,
+                        IC_RUN_APID_THREAD_FUNC apid_func,
+                        gchar **err_str);
+
 void ic_stop_apid_program(int ret_code,
                           gchar *error_str,
                           IC_APID_GLOBAL *apid_global,

@@ -672,6 +672,21 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
   DEBUG_RETURN_EMPTY;
 }
 
+IC_RUN_APID_THREAD_FUNC
+get_thread_func(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  return apid_global->apid_func;
+}
+
+void
+set_thread_func(IC_APID_GLOBAL *ext_apid_global,
+                IC_RUN_APID_THREAD_FUNC apid_func)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  apid_global->apid_func= apid_func;
+}
+
 void
 apid_global_cond_wait(IC_APID_GLOBAL *ext_apid_global)
 {
@@ -765,6 +780,8 @@ ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
     apid_global_add_user_thread;
   apid_global->apid_global_ops.ic_remove_user_thread=
     apid_global_remove_user_thread;
+  apid_global->apid_global_ops.ic_set_thread_func= set_thread_func;
+  apid_global->apid_global_ops.ic_get_thread_func= get_thread_func;
   return (IC_APID_GLOBAL*)apid_global;
 error:
   err_string= ic_common_fill_error_buffer(NULL, 0, *ret_code, *err_str);
@@ -3166,6 +3183,32 @@ mem_pool_error:
   goto end;
 }
 
+GOptionEntry apid_entries[] = 
+{
+  { "cs_connectstring", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_cs_connectstring,
+    "Connect string to Cluster Servers", NULL},
+  { "cs_hostname", 0, 0, G_OPTION_ARG_STRING,
+     &ic_glob_cs_server_name,
+    "Set Server Hostname of Cluster Server", NULL},
+  { "cs_port", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_cs_server_port,
+    "Set Server Port of Cluster Server", NULL},
+  { "node_id", 0, 0, G_OPTION_ARG_INT,
+    &ic_glob_node_id,
+    "Node id of file server in all clusters", NULL},
+  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME,
+    &ic_glob_data_path,
+    "Sets path to data directory, config files in subdirectory config", NULL},
+  { "num_threads", 0, 0, G_OPTION_ARG_INT,
+    &ic_glob_num_threads,
+    "Number of threads executing in process", NULL},
+  { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
+     &ic_glob_use_iclaustron_cluster_server,
+    "Use of iClaustron Cluster Server (default) or NDB mgm server", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
 int
 ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                       gchar *config_path_buf,
@@ -3224,4 +3267,97 @@ ic_stop_apid_program(int ret_code,
   if (apic)
     apic->api_op.ic_free_config(apic);
   ic_end();
+}
+
+static gpointer
+run_server_thread(gpointer data)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_APID_GLOBAL *apid_global= (IC_APID_GLOBAL*)
+    thread_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_APID_CONNECTION *apid_conn;
+  gboolean stop_flag;
+  int ret_code;
+  IC_RUN_APID_THREAD_FUNC apid_func;
+  DEBUG_ENTRY("run_server_thread");
+
+  apid_func= apid_global->apid_global_ops.ic_get_thread_func(apid_global);
+  thread_state->ts_ops.ic_thread_started(thread_state);
+  apid_global->apid_global_ops.ic_add_user_thread(apid_global);
+  stop_flag= apid_global->apid_global_ops.ic_get_stop_flag(apid_global);
+  if (stop_flag)
+    goto error;
+  /*
+    Now start-up has completed and at this point in time we have connections
+    to all clusters already set-up. So all we need to do now is start a local
+    IC_APID_CONNECTION and start using it based on input from users
+  */
+  if (!(apid_conn= ic_create_apid_connection(apid_global,
+                                             apid_global->cluster_bitmap)))
+    goto error;
+  if (thread_state->ts_ops.ic_thread_startup_done(thread_state))
+    goto error;
+  /*
+     We now have a local Data API connection and we are ready to issue
+     file system transactions to keep our local cache consistent with the
+     global NDB file system
+  */
+  ret_code= apid_func(apid_global, thread_state);
+  if (ret_code)
+    ic_print_error(ret_code);
+error:
+  apid_global->apid_global_ops.ic_remove_user_thread(apid_global);
+  thread_state->ts_ops.ic_thread_stops(thread_state);
+  DEBUG_RETURN(NULL);
+}
+
+static int
+start_server_threads(IC_APID_GLOBAL *apid_global,
+                     IC_THREADPOOL_STATE *tp_state,
+                     guint32 *thread_id)
+{
+  return tp_state->tp_ops.ic_threadpool_start_thread(
+                            tp_state,
+                            thread_id,
+                            run_server_thread,
+                            (gpointer)apid_global,
+                            IC_MEDIUM_STACK_SIZE,
+                            TRUE);
+}
+
+int
+ic_run_apid_program(IC_APID_GLOBAL *apid_global,
+                    IC_THREADPOOL_STATE *tp_state,
+                    IC_RUN_APID_THREAD_FUNC apid_func,
+                    gchar **err_str)
+{
+  int error= 0;
+  guint32 i, thread_id;
+  DEBUG_ENTRY("run_file_server");
+
+  *err_str= NULL;
+  printf("Ready to start server threads\n");
+  apid_global->apid_global_ops.ic_set_thread_func(apid_global, apid_func);
+  for (i= 0; i < ic_glob_num_threads; i++)
+  {
+    if ((error= start_server_threads(apid_global,
+                                     tp_state,
+                                     &thread_id)))
+    {
+      apid_global->apid_global_ops.ic_set_stop_flag(apid_global);
+      break;
+    }
+    tp_state->tp_ops.ic_threadpool_run_thread(tp_state, thread_id);
+  }
+  while (1)
+  {
+    if (apid_global->apid_global_ops.ic_get_num_user_threads(apid_global) == 0)
+    {
+      break;
+    }
+    apid_global->apid_global_ops.ic_cond_wait(apid_global);
+    tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
+  }
+  tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
+  DEBUG_RETURN(error);
 }

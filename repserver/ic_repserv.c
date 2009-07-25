@@ -27,40 +27,12 @@
 
 static const gchar *glob_process_name= "ic_fsd";
 
-static GOptionEntry entries[] = 
-{
-  { "cs_connectstring", 0, 0, G_OPTION_ARG_STRING,
-    &ic_glob_cs_connectstring,
-    "Connect string to Cluster Servers", NULL},
-  { "cs_hostname", 0, 0, G_OPTION_ARG_STRING,
-     &ic_glob_cs_server_name,
-    "Set Server Hostname of Cluster Server", NULL},
-  { "cs_port", 0, 0, G_OPTION_ARG_STRING,
-    &ic_glob_cs_server_port,
-    "Set Server Port of Cluster Server", NULL},
-  { "node_id", 0, 0, G_OPTION_ARG_INT,
-    &ic_glob_node_id,
-    "Node id of file server in all clusters", NULL},
-  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME,
-    &ic_glob_data_path,
-    "Sets path to data directory, config files in subdirectory config", NULL},
-  { "num_threads", 0, 0, G_OPTION_ARG_INT,
-    &ic_glob_num_threads,
-    "Number of threads executing in file server process", NULL},
-  { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
-     &ic_glob_use_iclaustron_cluster_server,
-    "Use of iClaustron Cluster Server (default or NDB mgm server", NULL},
-  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
-};
-
 static int
-run_replication_server(IC_APID_GLOBAL *apid_global,
-                       IC_THREADPOOL_STATE *tp_state,
-                       gchar **error_str)
+run_replication_server_thread(IC_APID_GLOBAL *apid_global,
+                              IC_THREAD_STATE *thread_state)
 {
   (void)apid_global;
-  (void)error_str;
-  (void)tp_state;
+  (void)thread_state;
   return 0;
 }
 
@@ -75,7 +47,8 @@ int main(int argc,
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state;
 
-  if ((ret_code= ic_start_program(argc, argv, entries, glob_process_name,
+  if ((ret_code= ic_start_program(argc, argv, apid_entries,
+                                  glob_process_name,
             "- iClaustron Replication Server", TRUE)))
     goto end;
   if ((ret_code= ic_start_apid_program(&tp_state,
@@ -85,7 +58,10 @@ int main(int argc,
                                        &apid_global,
                                        &apic)))
     goto end;
-  ret_code= run_replication_server(apid_global, tp_state, &err_str);
+  ret_code= ic_run_apid_program(apid_global,
+                                tp_state,
+                                run_replication_server_thread,
+                                &err_str);
 end:
   ic_stop_apid_program(ret_code, err_str, apid_global, apic);
   return ret_code;
