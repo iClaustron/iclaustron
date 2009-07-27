@@ -30,7 +30,7 @@ analyse_host(IC_CONNECT_STRING *conn_str,
   IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
 
   if (curr_len == 0)
-    return IC_ERROR_HOSTNAME_PARSE_ERROR;
+    return IC_ERROR_PARSE_HOSTNAME;
   if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(ptr, start_ptr, curr_len);
@@ -48,7 +48,7 @@ analyse_port_number(IC_CONNECT_STRING *conn_str,
   IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
 
   if (curr_len == 0)
-    return IC_ERROR_PORT_NUMBER_PARSE_ERROR;
+    return IC_ERROR_PARSE_PORT_NUMBER;
   if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(ptr, start_ptr, curr_len);
@@ -68,6 +68,7 @@ ic_parse_connectstring(gchar *connect_string,
   gchar c;
   gchar *start_ptr;
   int ret_code;
+  gboolean skip= FALSE;
   IC_MEMORY_CONTAINER *mc_ptr;
 
   if (!(conn_str->mc_ptr= ic_create_memory_container(1024, 0)))
@@ -133,8 +134,9 @@ ic_parse_connectstring(gchar *connect_string,
       conn_str->num_cs_servers++;
       read_host= TRUE;
       read_port= FALSE;
-      curr_len= 0;
       start_ptr+= (curr_len + 1);
+      curr_len= 0;
+      skip= TRUE;
     }
     else if (c == ':')
     {
@@ -143,34 +145,41 @@ ic_parse_connectstring(gchar *connect_string,
         goto error;
       read_port= TRUE;
       read_host= FALSE;
-      curr_len= 0;
       start_ptr+= (curr_len + 1);
+      curr_len= 0;
+      skip= TRUE;
     }
     else
       curr_len++;
     buf_inx++;
-    if (read_host)
+    if (!skip)
     {
-      ret_code= IC_ERROR_HOSTNAME_PARSE_ERROR;
-      if (!((c >= 'a' && c <= 'z') ||
-           (c >= 'A' && c <= 'Z') ||
-           (c >= '0' && c <= '9') ||
-            c == '_' ||
-            c == '-' ||
-            c == '.'))
-        goto error;
+      if (read_host)
+      {
+        ret_code= IC_ERROR_PARSE_HOSTNAME;
+        if (!((c >= 'a' && c <= 'z') ||
+             (c >= 'A' && c <= 'Z') ||
+             (c >= '0' && c <= '9') ||
+              c == '_' ||
+              c == '-' ||
+              c == '.'))
+          goto error;
+      }
+      else if (read_port)
+      {
+        ret_code= IC_ERROR_PARSE_PORT_NUMBER;
+        if (!(c >= '0' && c <= '9'))
+          goto error;
+      }
     }
-    else if (read_port)
-    {
-      ret_code= IC_ERROR_PORT_NUMBER_PARSE_ERROR;
-      if (!(c >= '0' && c <= '9'))
-        goto error;
-    }
+    skip= FALSE;
   } while (buf_inx < len);
   if (read_host)
   {
     if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
       goto error;
+    conn_str->cs_ports[conn_str->num_cs_servers]=
+      IC_DEF_CLUSTER_SERVER_PORT_STR;
   }
   else
   {

@@ -23,6 +23,7 @@
 #include <ic_apic.h>
 #include <ic_bitmap.h>
 #include <ic_hashtable.h>
+#include <ic_parse_connectstring.h>
 
 static const gchar *glob_process_name= "test_unit";
 static int glob_test_type= 0;
@@ -569,9 +570,254 @@ error:
   return ret_code;
 }
 
+/*
+  myhost1:1200
+  myhost1:1200, Fel
+  myhost1,myhost2
+  myhost1:port1,myhost2 Fel
+  myhost1:1200,myhost2
+  , Fel
+  : Fel
+  :port1 Fel
+  myhost1,myhost2,myhost3:port3 Fel
+  myhost1,myhost2,myhost3:1199
+*/
+static int
+test_parse_connectstring(gchar *connect_string,
+                         guint32 num_hosts,
+                         gchar **hosts,
+                         gchar **ports)
+{
+  int ret_code;
+  guint32 i;
+  IC_CONNECT_STRING conn_str;
+
+  ret_code= ic_parse_connectstring(connect_string,
+                                   &conn_str,
+                                   ic_empty_string,
+                                   ic_empty_string);
+  if (ret_code)
+    return ret_code;
+  if (conn_str.num_cs_servers != num_hosts)
+    goto error;
+  for (i= 0; i < num_hosts; i++)
+  {
+    if (strcmp(conn_str.cs_hosts[i], hosts[i]) != 0)
+      goto error;
+    if (strcmp(conn_str.cs_ports[i], ports[i]) != 0)
+      goto error;
+  }
+  conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
+  return 0;
+error:
+  conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
+  return 1;
+}
+
+static int
+unit_test_parse_connectstring()
+{
+  gchar *hosts[8];
+  gchar *ports[8];
+
+  hosts[0]= "myhost1"; ports[0]= "1186";
+  if (test_parse_connectstring("myhost1",
+            1, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost2"; ports[0]= "1100";
+  if (test_parse_connectstring("myhost2:1100",
+           1, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  if (test_parse_connectstring("myhost4,myhost5",
+            2, (gchar**)hosts, (gchar**)ports))
+    return 1; 
+  hosts[0]= "myhost4"; ports[0]= "1300";
+  hosts[1]= "myhost5"; ports[1]= "1200";
+  if (test_parse_connectstring("myhost4:1300,myhost5:1200",
+            2, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1500";
+  if (test_parse_connectstring("myhost4,myhost5:1500",
+            2, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1555";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  if (test_parse_connectstring("myhost4:1555,myhost5",
+            2, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1575";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  if (test_parse_connectstring("myhost4:1575,myhost5,myhost6",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1575";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  if (test_parse_connectstring("myhost4,myhost5:1575,myhost6",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1575";
+  if (test_parse_connectstring("myhost4,myhost5,myhost6:1575",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1575";
+  hosts[1]= "myhost5"; ports[1]= "1555";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  if (test_parse_connectstring("myhost4:1575,myhost5:1555,myhost6",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1575";
+  hosts[2]= "myhost6"; ports[2]= "1555";
+  if (test_parse_connectstring("myhost4,myhost5:1575,myhost6:1555",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1555";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1575";
+  if (test_parse_connectstring("myhost4:1555,myhost5,myhost6:1575",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1555";
+  hosts[1]= "myhost5"; ports[1]= "1575";
+  hosts[2]= "myhost6"; ports[2]= "1757";
+  if (test_parse_connectstring("myhost4:1555,myhost5:1575,myhost6:1757",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  if (test_parse_connectstring("myhost4,myhost5,myhost6",
+            3, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4,myhost5,myhost6,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1555";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4:1555,myhost5,myhost6,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1757";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4,myhost5:1757,myhost6,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1256";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4,myhost5,myhost6:1256,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1556";
+  if (test_parse_connectstring("myhost4,myhost5,myhost6,myhost7:1556",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1144";
+  hosts[1]= "myhost5"; ports[1]= "1145";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4:1144,myhost5:1145,myhost6,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1250";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1280";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4:1250,myhost5,myhost6:1280,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1249";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1965";
+  if (test_parse_connectstring("myhost4:1249,myhost5,myhost6,myhost7:1965",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1971";
+  hosts[2]= "myhost6"; ports[2]= "1813";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4,myhost5:1971,myhost6:1813,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1800";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1850";
+  if (test_parse_connectstring("myhost4,myhost5:1800,myhost6,myhost7:1850",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1600";
+  hosts[3]= "myhost7"; ports[3]= "1700";
+  if (test_parse_connectstring("myhost4,myhost5,myhost6:1600,myhost7:1700",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1276";
+  hosts[1]= "myhost5"; ports[1]= "1566";
+  hosts[2]= "myhost6"; ports[2]= "1766";
+  hosts[3]= "myhost7"; ports[3]= "1186";
+  if (test_parse_connectstring("myhost4:1276,myhost5:1566,myhost6:1766,myhost7",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1559";
+  hosts[1]= "myhost5"; ports[1]= "1669";
+  hosts[2]= "myhost6"; ports[2]= "1186";
+  hosts[3]= "myhost7"; ports[3]= "1779";
+  if (test_parse_connectstring("myhost4:1559,myhost5:1669,myhost6,myhost7:1779",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1906";
+  hosts[1]= "myhost5"; ports[1]= "1186";
+  hosts[2]= "myhost6"; ports[2]= "1966";
+  hosts[3]= "myhost7"; ports[3]= "1926";
+  if (test_parse_connectstring("myhost4:1906,myhost5,myhost6:1966,myhost7:1926",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1186";
+  hosts[1]= "myhost5"; ports[1]= "1201";
+  hosts[2]= "myhost6"; ports[2]= "1202";
+  hosts[3]= "myhost7"; ports[3]= "1203";
+  if (test_parse_connectstring("myhost4,myhost5:1201,myhost6:1202,myhost7:1203",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost4"; ports[0]= "1222";
+  hosts[1]= "myhost5"; ports[1]= "1223";
+  hosts[2]= "myhost6"; ports[2]= "1224";
+  hosts[3]= "myhost7"; ports[3]= "1225";
+  if (test_parse_connectstring("myhost4:1222,myhost5:1223,myhost6:1224,myhost7:1225",
+            4, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  if (test_parse_connectstring("myhost1:1200,myhost2:1300,",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_HOSTNAME)
+    return 1;
+  return 0;
+}
+
+                         
 int main(int argc, char *argv[])
 {
-  int ret_code= 1;
+  int ret_code;
 
   if ((ret_code= ic_start_program(argc, argv, entries, NULL,
                                   glob_process_name,
@@ -583,6 +829,7 @@ int main(int argc, char *argv[])
       printf("Executing Unit test of Memory Container\n");
       ret_code= unit_test_mc();
       break;
+
     case 1:
       printf("Executing Unit test of Simple Dynamic Array\n");
       ret_code= unit_test_simple_dynamic_array();
@@ -600,9 +847,13 @@ int main(int argc, char *argv[])
       ret_code= unit_test_bitmap();
       break;      
     case 5:
-      printf("Executing Unit test of hashtable\n");
+      printf("Executing Unit test of Hashtable\n");
       ret_code= unit_test_hashtable();
-      break;      
+      break;
+    case 6:
+      printf("Executing unit test of Parse Connectstring\n");
+      ret_code= unit_test_parse_connectstring();
+      break;
     default:
       break;
    }
