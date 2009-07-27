@@ -412,6 +412,7 @@ extern gchar *ic_glob_data_path;
 extern guint32 ic_glob_node_id;
 extern guint32 ic_glob_num_threads;
 extern guint32 ic_glob_use_iclaustron_cluster_server;
+extern guint32 ic_glob_nodaemonize;
 extern GOptionEntry ic_apid_entries[];
 
 int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
@@ -419,7 +420,8 @@ int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                           gchar **err_str,
                           gchar *error_buf,
                           IC_APID_GLOBAL **apid_global,
-                          IC_API_CONFIG_SERVER **apic);
+                          IC_API_CONFIG_SERVER **apic,
+                          gboolean daemonize);
 
 int ic_run_apid_program(IC_APID_GLOBAL *apid_global,
                         IC_THREADPOOL_STATE *tp_state,

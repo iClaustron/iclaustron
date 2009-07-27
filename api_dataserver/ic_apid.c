@@ -134,6 +134,7 @@ gchar *ic_glob_data_path= NULL;
 guint32 ic_glob_node_id= 4;
 guint32 ic_glob_num_threads= 1;
 guint32 ic_glob_use_iclaustron_cluster_server= 1;
+guint32 ic_glob_nodaemonize= 0;
 
 /*
   These static functions implements the local IC_TRANSLATION_OBJ.
@@ -3206,8 +3207,18 @@ GOptionEntry ic_apid_entries[] =
   { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
      &ic_glob_use_iclaustron_cluster_server,
     "Use of iClaustron Cluster Server (default) or NDB mgm server", NULL},
+  { "nodaemonize", 0, 0, G_OPTION_ARG_INT,
+     &ic_glob_nodaemonize,
+    "Don't daemonize program", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
+
+static void
+apid_kill_handler(void *param)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)param;
+  apid_global->apid_global_ops.ic_set_stop_flag((IC_APID_GLOBAL*)apid_global);
+}
 
 int
 ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
@@ -3215,7 +3226,8 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                       gchar **err_str,
                       gchar *error_buf,
                       IC_APID_GLOBAL **apid_global,
-                      IC_API_CONFIG_SERVER **apic)
+                      IC_API_CONFIG_SERVER **apic,
+                      gboolean daemonize)
 {
   IC_CONNECT_STRING conn_str;
   IC_API_CLUSTER_CONNECTION api_cluster_conn;
@@ -3228,6 +3240,11 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                                     ic_glob_data_path,
                                     config_path_buf)))
     return ret_code;
+  if (daemonize)
+  {
+    if ((ret_code= ic_daemonize("/dev/null")))
+      return ret_code;
+  }
   if ((ret_code= ic_parse_connectstring(ic_glob_cs_connectstring,
                                         &conn_str,
                                         ic_glob_cs_server_name,
@@ -3246,6 +3263,9 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
   if (!apic)
     return ret_code;
+  
+  ic_set_die_handler(apid_kill_handler, apid_global);
+  ic_set_sig_error_handler(NULL, NULL);
   if (!(*apid_global= ic_connect_apid_global(*apic, &ret_code, err_str)))
     return ret_code;
   *err_str= NULL;
@@ -3262,6 +3282,7 @@ ic_stop_apid_program(int ret_code,
     printf("%s", err_str);
   if (ret_code)
     ic_print_error(ret_code);
+  ic_set_die_handler(NULL, NULL);
   if (apid_global)
     ic_disconnect_apid_global(apid_global);
   if (apic)

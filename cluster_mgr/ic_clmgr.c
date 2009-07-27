@@ -1165,7 +1165,8 @@ int main(int argc,
                                        &err_str,
                                        error_str,
                                        &apid_global,
-                                       &apic)))
+                                       &apic,
+                                       !ic_glob_nodaemonize)))
     goto end;
   if ((ret_code= set_up_server_connection(&conn)))
     goto end;

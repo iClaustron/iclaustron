@@ -56,4 +56,8 @@ void ic_sleep(guint32 seconds_to_sleep);
 
 /* Interface to daemonize a program */
 int ic_daemonize(gchar *log_file);
+/* Interface to set function to call at kill signal */
+typedef void (*IC_SIG_HANDLER_FUNC)(void *param);
+void ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param);
+void ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param);
 #endif

@@ -429,6 +429,108 @@ ic_read_file(int file_ptr, gchar *buf, size_t size, guint64 *len)
 
 #ifndef WIN32
 #include <signal.h>
+static IC_SIG_HANDLER_FUNC glob_die_handler= NULL;
+static void *glob_die_param;
+static IC_SIG_HANDLER_FUNC glob_sig_error_handler= NULL;
+static void *glob_sig_error_param;
+
+static void
+sig_error_handler(int signum)
+{
+  switch (signum)
+  {
+    case SIGSEGV:
+    case SIGFPE:
+    case SIGILL:
+    case SIGBUS:
+    case SIGSYS:
+      break;
+    default:
+      return;
+  }
+  if (glob_sig_error_handler)
+    glob_sig_error_handler(glob_sig_error_param);
+}
+
+void
+ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
+{
+  glob_sig_error_handler= error_handler;
+  glob_sig_error_param= param;
+  signal(SIGSEGV, sig_error_handler);
+  signal(SIGFPE, sig_error_handler);
+  signal(SIGILL, sig_error_handler);
+  signal(SIGBUS, sig_error_handler);
+  signal(SIGSYS, sig_error_handler);
+}
+
+static void
+kill_handler(int signum)
+{
+  switch (signum)
+  {
+    case SIGTERM:
+    case SIGABRT:
+    case SIGQUIT:
+    case SIGXCPU:
+#ifdef SIGINFO
+    case SIGINFO:
+#else
+#ifdef SIGPWR
+    case SIGPWR:
+#endif
+#endif
+      break;
+    default:
+      return;
+  }
+  if (glob_die_handler)
+    glob_die_handler(glob_die_param);
+}
+
+void
+ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
+{
+  glob_die_param= param;
+  glob_die_handler= die_handler;
+  signal(SIGTERM, kill_handler);
+  signal(SIGABRT, kill_handler);
+  signal(SIGQUIT, kill_handler);
+  signal(SIGXCPU, kill_handler);
+#ifdef SIGINFO
+  signal(SIGINFO, kill_handler);
+#else
+#ifdef SIGPWR
+  signal(SIGPWR, kill_handler);
+#endif
+#endif
+}
+#else
+void
+ic_set_die_handler(IC_SIG_HANDLER_FUNC *die_handler,
+                   void *param)
+{
+  (void)die_handler;
+  (void)param;
+  return; 
+}
+
+void
+ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC *error_handler, void *param)
+{
+  (void)error_handler;
+  (void)param;
+}
+#endif
+
+#ifndef WIN32
+static void
+child_exit_handler(int signum)
+{
+  if (signum == SIGCHLD)
+    wait(NULL);
+}
+
 static void
 sig_handler(int signum)
 {
@@ -470,6 +572,14 @@ ic_daemonize(gchar *log_file)
     exit(0);
   }
   /* We come here as the child process, the parent process will exit */
+  signal(SIGCHLD, child_exit_handler);
+  signal(SIGHUP, SIG_IGN);
+  signal(SIGINT, SIG_IGN);
+  signal(SIGCONT, SIG_IGN);
+  signal(SIGSTOP, SIG_IGN);
+  signal(SIGTSTP, SIG_IGN);
+  signal(SIGTTIN, SIG_IGN);
+  signal(SIGTTOU, SIG_IGN);
   parent_pid= getppid(); /* Get pid of original process */
 
   session_id= setsid();
@@ -483,6 +593,7 @@ ic_daemonize(gchar *log_file)
   freopen("/dev/null", "r", stdin);
   freopen(log_file, "w", stdout);
   freopen(log_file, "w", stderr);
+
 
   kill(parent_pid, SIGUSR1); /* Wake parent process to make it exit */
   return 0;
