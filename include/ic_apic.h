@@ -84,7 +84,7 @@ enum ic_config_types
   IC_REP_SERVER_TYPE = 6,
   IC_FILE_SERVER_TYPE = 7,
   IC_RESTORE_TYPE = 8,
-  IC_CLUSTER_MGR_TYPE = 9,
+  IC_CLUSTER_MANAGER_TYPE = 9,
   IC_COMM_TYPE = 5,
   IC_SYSTEM_TYPE = 10,
   IC_NUMBER_OF_CONFIG_TYPES = 11
@@ -101,7 +101,7 @@ enum ic_node_types
   IC_REP_SERVER_NODE = 6,
   IC_FILE_SERVER_NODE = 7,
   IC_RESTORE_NODE = 8,
-  IC_CLUSTER_MGR_NODE = 9
+  IC_CLUSTER_MANAGER_NODE = 9
 };
 typedef enum ic_node_types IC_NODE_TYPES;
 
@@ -403,12 +403,12 @@ struct ic_cluster_server_config
 };
 typedef struct ic_cluster_server_config IC_CLUSTER_SERVER_CONFIG;
 
-struct ic_cluster_mgr_config
+struct ic_cluster_manager_config
 {
   IC_CLIENT_CONFIG client_conf;
-  guint32          not_used;
+  guint32 cluster_manager_port_number;
 };
-typedef struct ic_cluster_mgr_config IC_CLUSTER_MGR_CONFIG;
+typedef struct ic_cluster_manager_config IC_CLUSTER_MANAGER_CONFIG;
 
 struct ic_sql_server_config
 {
@@ -586,8 +586,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
 struct ic_run_cluster_server_operations
 {
-  int (*ic_start_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj,
-                                  gboolean bootstrap);
+  int (*ic_start_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
   gchar* (*ic_fill_error_buffer) (IC_RUN_CLUSTER_SERVER *run_obj,
                                   int error_code,
                                   gchar *error_buffer);

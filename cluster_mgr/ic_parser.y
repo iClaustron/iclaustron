@@ -345,7 +345,7 @@ binary_type:
     | RESTORE_SYM
     { PARSE_DATA->binary_type= IC_RESTORE_NODE; }
     | CLUSTER_SYM MANAGER_SYM
-    { PARSE_DATA->binary_type= IC_CLUSTER_MGR_NODE; }
+    { PARSE_DATA->binary_type= IC_CLUSTER_MANAGER_NODE; }
     ;
  
 node:

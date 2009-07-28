@@ -25,7 +25,7 @@
 
 static const gchar *glob_process_name= "ic_cclient";
 static gchar *glob_server_ip= "127.0.0.1";
-static gchar *glob_server_port= "12003";
+static gchar *glob_server_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
 static guint32 glob_history_size= 100;
 static gchar *ic_prompt= "iclaustron client> ";
 

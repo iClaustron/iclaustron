@@ -1030,7 +1030,7 @@ ic_print_config_parameters(guint32 mask)
         ic_printf("This config variable is used in a file server");
       if (conf_entry->config_types & (1 << IC_RESTORE_TYPE))
         ic_printf("This config variable is used in a restore node");
-      if (conf_entry->config_types & (1 << IC_CLUSTER_MGR_TYPE))
+      if (conf_entry->config_types & (1 << IC_CLUSTER_MANAGER_TYPE))
         ic_printf("This config variable is used in a cluster manager");
       if (conf_entry->config_types & (1 << IC_COMM_TYPE))
         ic_printf("This config variable is used in connections");
@@ -1197,7 +1197,7 @@ name_out_of_range(int id)
 
 #define ALL_CLIENT_TYPES    ((1 << IC_CLUSTER_SERVER_TYPE) + \
                              (1 << IC_CLIENT_TYPE) + \
-                             (1 << IC_CLUSTER_MGR_TYPE) + \
+                             (1 << IC_CLUSTER_MANAGER_TYPE) + \
                              (1 << IC_SQL_SERVER_TYPE) + \
                              (1 << IC_REP_SERVER_TYPE) + \
                              (1 << IC_FILE_SERVER_TYPE) + \
@@ -2162,10 +2162,11 @@ init_config_parameters()
 /* Id 160-169 for configuration id 270-299 */
 /* Id 270-299 not used */
 
-/* Id 170-174 for configuration id 300-304 */
+/* Id 170-174 for configuration id 300-350 */
 /* This is the cluster server configuration section  */
-#define CLUSTER_SERVER_PORT_NUMBER 300
-/* Id 301-304 not used */
+#define CLUSTER_SERVER_PORT_NUMBER 340
+#define CLUSTER_MANAGER_PORT_NUMBER 340
+/* Id 301-339 and 342-350 not used */
 
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 170);
   IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number, IC_UINT32,
@@ -2175,8 +2176,16 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Port number of Cluster Server";
 
-/* Id 175-179 for configuration id 305-399 */
-/* Id 305-399 not used */
+  IC_SET_CONFIG_MAP(CLUSTER_MANAGER_PORT_NUMBER, 171);
+  IC_SET_CLUSTER_MANAGER_CONFIG(conf_entry, cluster_manager_port_number, IC_UINT32,
+                                IC_DEF_CLUSTER_MANAGER_PORT,
+                                IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->config_entry_description=
+  "Port number of Cluster Manager";
+
+/* Id 175-179 for configuration id 351-399 */
+/* Id 351-399 not used */
 
 /* This is the Socket configuration section*/
 /* Id 180-189 for configuration id 400-409 */
@@ -2914,7 +2923,7 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
         conf_obj->num_file_servers++; break;
       case IC_RESTORE_NODE:
         conf_obj->num_restore_nodes++; break;
-      case IC_CLUSTER_MGR_NODE:
+      case IC_CLUSTER_MANAGER_NODE:
         conf_obj->num_cluster_mgrs++; break;
       default:
         DEBUG_PRINT(CONFIG_LEVEL, ("No such node type"));
@@ -4146,7 +4155,7 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
     case IC_REP_SERVER_TYPE:
     case IC_SQL_SERVER_TYPE:
     case IC_RESTORE_TYPE:
-    case IC_CLUSTER_MGR_TYPE:
+    case IC_CLUSTER_MANAGER_TYPE:
       mandatory_bits= client_mandatory_bits;
       if (((IC_CLIENT_CONFIG*)current_config)->mandatory_bits !=
           client_mandatory_bits)
@@ -4312,7 +4321,7 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   size_structs+= clu_conf->conf->num_restore_nodes *
                  sizeof(IC_RESTORE_CONFIG);
   size_structs+= clu_conf->conf->num_cluster_mgrs *
-                   sizeof(IC_CLUSTER_MGR_CONFIG);
+                   sizeof(IC_CLUSTER_MANAGER_CONFIG);
   size_structs+= clu_conf->conf->num_comms *
                  sizeof(IC_SOCKET_LINK_CONFIG);
 
@@ -4375,7 +4384,7 @@ int conf_serv_init(void *ic_conf, guint32 pass)
                      IC_RESTORE_TYPE);
   init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
                      sizeof(clu_conf->default_cluster_mgr_config),
-                     IC_CLUSTER_MGR_TYPE);
+                     IC_CLUSTER_MANAGER_TYPE);
   init_config_object((gchar*)&clu_conf->default_socket_config,
                      sizeof(clu_conf->default_socket_config),
                      IC_COMM_TYPE);
@@ -4499,14 +4508,14 @@ conf_serv_add_section(void *ic_config,
   }
   else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
   {
-    clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
+    clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
     if (pass == INITIAL_PASS)
     {
       clu_conf->conf->num_cluster_mgrs++;
       clu_conf->conf->num_nodes++;
       DEBUG_RETURN(0);
     }
-    init_node(clu_conf, sizeof(IC_CLUSTER_MGR_CONFIG),
+    init_node(clu_conf, sizeof(IC_CLUSTER_MANAGER_CONFIG),
               (void*)&clu_conf->default_cluster_mgr_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group"));
   }
@@ -4570,7 +4579,7 @@ conf_serv_add_section(void *ic_config,
     else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
-      clu_conf->current_node_config_type= IC_CLUSTER_MGR_TYPE;
+      clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group"));
     }
     else if (ic_cmp_null_term_str(socket_def_str, section_name) == 0)
@@ -4943,8 +4952,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       guint32 *config_version,
-                       gboolean bootstrap);
+                       guint32 *config_version);
 static int
 remove_config_files(IC_STRING *config_dir,
                     IC_CLUSTER_CONNECT_INFO **clu_infos,
@@ -5130,8 +5138,7 @@ error:
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       guint32 *config_version,
-                       gboolean bootstrap)
+                       guint32 *config_version)
 {
   guint32 state, pid;
   int error;
@@ -5152,8 +5159,6 @@ ic_load_config_version(IC_STRING *config_dir,
         We write the configuration version with our pid to ensure that we
         have locked the ownership of the grid configuration.
       */
-      if (*config_version == 0 && !bootstrap)
-        return IC_ERROR_BOOTSTRAP_NEEDED;
       if ((error= write_config_version_file(config_dir,
                                             *config_version,
                                             CONFIG_STATE_BUSY,
@@ -5177,8 +5182,6 @@ ic_load_config_version(IC_STRING *config_dir,
       return error;
     g_assert(IC_ERROR_PROCESS_NOT_ALIVE);
     error= 0;
-    if (*config_version == 0 && !bootstrap)
-      return IC_ERROR_BOOTSTRAP_NEEDED;
     if ((error= write_config_version_file(config_dir,
                                           *config_version,
                                           CONFIG_STATE_BUSY,
@@ -5465,7 +5468,7 @@ write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
   node_type_str[IC_REP_SERVER_TYPE]= rep_server_def_str;
   node_type_str[IC_FILE_SERVER_TYPE]= file_server_def_str;
   node_type_str[IC_RESTORE_TYPE]= restore_node_def_str;
-  node_type_str[IC_CLUSTER_MGR_TYPE]= cluster_mgr_def_str;
+  node_type_str[IC_CLUSTER_MANAGER_TYPE]= cluster_mgr_def_str;
   node_type_str[IC_COMM_TYPE]= socket_def_str;
   for (i= 1; i <= clu_conf->max_node_id; i++)
     any_node_of_type[clu_conf->node_types[i]]= TRUE;
@@ -5551,7 +5554,7 @@ write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
         sect_name= restore_node_str;
         default_struct_ptr= (gchar*)&clu_def->default_restore_config;
         break;
-      case IC_CLUSTER_MGR_NODE:
+      case IC_CLUSTER_MANAGER_NODE:
         sect_name= cluster_mgr_str;
         default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
         break;
@@ -5781,7 +5784,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
     case IC_RESTORE_TYPE:
       default_struct_ptr= (gchar*)&clu_def->default_restore_config;
       break;
-    case IC_CLUSTER_MGR_TYPE:
+    case IC_CLUSTER_MANAGER_TYPE:
       default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
       break;
     case IC_COMM_TYPE:
@@ -7035,16 +7038,14 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
    using the method ic_write_full_config_to_disk from another module.
 */
 
-static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                             gboolean bootstrap);
+static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                              IC_CLUSTER_CONNECT_INFO **clu_infos);
 static int verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 
 /* Implements the start_cluster_server method */
 static int
-start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj,
-                     gboolean bootstrap)
+start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
   int error;
@@ -7053,19 +7054,13 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj,
   /* Try to lock the configuration and get configuration version */
   if ((error= ic_load_config_version(run_obj->config_dir,
                                      run_obj->process_name,
-                                     &run_obj->state.config_version_number,
-                                     bootstrap)))
+                                     &run_obj->state.config_version_number)))
     goto error;
   run_obj->locked_configuration= TRUE;
-  if (bootstrap && run_obj->state.config_version_number)
-  {
-    error= IC_ERROR_BOOTSTRAP_ALREADY_PERFORMED;
-    goto error;
-  }
   /* Read configuration from disk configuration */
   run_obj->conf_server_struct.perm_mc_ptr= run_obj->state.mc_ptr;
   run_obj->cluster_conf_struct.perm_mc_ptr= run_obj->state.mc_ptr;
-  if ((error= load_local_config(run_obj, bootstrap)))
+  if ((error= load_local_config(run_obj)))
     goto error;
   DEBUG_RETURN(0);
 error:
@@ -7074,8 +7069,7 @@ error:
 }
 
 static int
-load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                  gboolean bootstrap)
+load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int error= 1;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
@@ -7088,7 +7082,7 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   if ((error= load_config_files(run_obj, clu_infos)) ||
       (error= verify_grid_config(run_obj)))
     return error;
-  if (bootstrap && (run_obj->state.config_version_number == 0))
+  if (run_obj->state.config_version_number == 0)
   {
     if ((error= ic_write_full_config_to_disk(run_obj->config_dir,
                                  &run_obj->state.config_version_number,
@@ -7191,7 +7185,7 @@ verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
         else
           node_type= IC_NOT_EXIST_NODE_TYPE;
         first_cs_or_cm= node_type == IC_CLUSTER_SERVER_NODE ||
-                        node_type == IC_CLUSTER_MGR_NODE;
+                        node_type == IC_CLUSTER_MANAGER_NODE;
         first= FALSE;
       }
       else
@@ -7206,7 +7200,7 @@ verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
         {
           if (i <= cluster->max_node_id &&
               (cluster->node_types[i] == IC_CLUSTER_SERVER_NODE ||
-               cluster->node_types[i] == IC_CLUSTER_MGR_NODE))
+               cluster->node_types[i] == IC_CLUSTER_MANAGER_NODE))
             goto error;
         }
       }

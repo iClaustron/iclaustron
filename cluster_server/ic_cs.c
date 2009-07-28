@@ -88,8 +88,7 @@ main(int argc, char *argv[])
   }
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Starting the iClaustron Cluster Server"));
-  if ((error= run_obj->run_op.ic_start_cluster_server(run_obj,
-                                                      glob_bootstrap)))
+  if ((error= run_obj->run_op.ic_start_cluster_server(run_obj)))
     goto start_error;
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Running the iClaustron Cluster Server"));

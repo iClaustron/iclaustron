@@ -434,6 +434,7 @@ static int
 start_cluster_node(IC_PARSE_DATA *parse_data,
                    gchar *node_config,
                    const gchar *program_str,
+                   guint32 port_number,
                    IC_CLUSTER_CONFIG *clu_conf)
 {
   IC_CLUSTER_SERVER_CONFIG *cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
@@ -463,7 +464,7 @@ start_cluster_node(IC_PARSE_DATA *parse_data,
                                                     cs_conf->hostname)) ||
       !(param_array[num_params++]= add_param_num(parse_data,
                                                  ic_server_port_str,
-                                                 cs_conf->port_number)) ||
+                                                 port_number)) ||
       !(param_array[num_params++]= add_param_string(parse_data,
                                               ic_data_dir_str,
                                               cs_conf->node_data_path)) ||
@@ -494,6 +495,8 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
   gchar *node_config;
   gboolean initial_flag;
   guint32 cluster_id= clu_conf->clu_info.cluster_id;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
 
   node_config= apic->api_op.ic_get_node_object(apic, cluster_id, node_id);
   if (!node_config)
@@ -526,17 +529,21 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     }
     case IC_CLUSTER_SERVER_NODE:
     {
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
       return start_cluster_node(parse_data,
                                 node_config,
                                 ic_cluster_server_program_str,
+                                cs_conf->cluster_server_port_number,
                                 clu_conf);
       break;
     }
-    case IC_CLUSTER_MGR_NODE:
+    case IC_CLUSTER_MANAGER_NODE:
     {
+      mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)node_config;
       return start_cluster_node(parse_data,
                                 node_config,
                                 ic_cluster_manager_program_str,
+                                mgr_conf->cluster_manager_port_number,
                                 clu_conf);
       break;
     }

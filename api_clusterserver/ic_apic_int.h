@@ -151,7 +151,7 @@ struct ic_cluster_config_load
   IC_REP_SERVER_CONFIG default_rep_server_config;
   IC_FILE_SERVER_CONFIG default_file_server_config;
   IC_RESTORE_CONFIG default_restore_config;
-  IC_CLUSTER_MGR_CONFIG default_cluster_mgr_config;
+  IC_CLUSTER_MANAGER_CONFIG default_cluster_mgr_config;
   IC_SOCKET_LINK_CONFIG default_socket_config;
 };
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
@@ -372,6 +372,16 @@ struct ic_int_run_cluster_server
   (conf_entry)->data_type= (type); \
   (conf_entry)->offset= offsetof(IC_CLUSTER_SERVER_CONFIG, name); \
   (conf_entry)->config_types= (1 << IC_CLUSTER_SERVER_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_CLUSTER_MANAGER_CONFIG(conf_entry, name, type, val, change) \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
+  (conf_entry)->default_value= (val); \
+  (conf_entry)->data_type= (type); \
+  (conf_entry)->offset= offsetof(IC_CLUSTER_MANAGER_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_CLUSTER_MANAGER_TYPE); \
   (conf_entry)->change_variant= (change);
 
 #define IC_SET_CLIENT_CONFIG(conf_entry, name, type, val, change) \
