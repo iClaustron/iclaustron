@@ -66,7 +66,6 @@ static guint32 glob_daemonize= 1;
 
 /* Global variables */
 static const gchar *glob_process_name= "ic_pcntrld";
-static guint32 glob_stop_flag= FALSE;
 static IC_STRING glob_base_dir;
 static GMutex *pc_hash_mutex= NULL;
 static IC_HASHTABLE *glob_pc_hash= NULL;
@@ -1114,19 +1113,6 @@ run_command_handler(gpointer data)
   return NULL;
 }
 
-static int
-accept_timeout_check(void *param, int time)
-{
-  (void)param;
-  (void)time;
-  if (glob_stop_flag)
-  {
-    DEBUG_PRINT(COMM_LEVEL, ("Stop ordered"));
-    return 1;
-  }
-  return 0;
-}
-
 int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
 {
   int ret_code;
@@ -1146,9 +1132,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                              NULL,
                                              0,
                                              TRUE);
-  ret_code= conn->conn_op.ic_set_up_connection(conn,
-                                               accept_timeout_check,
-                                               NULL);
+  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code)
     return ret_code;
   do
@@ -1185,19 +1169,9 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
         break;
       }
     } while (0);
-  } while (!glob_stop_flag);
+  } while (!ic_get_stop_flag());
   ic_printf("iClaustron Process Controller was stopped");
   return 0;
-}
-
-static void
-pcntrl_die(void *param)
-{
-  DEBUG_ENTRY("pcntrl_die");
-  (void)param;
-  ic_printf("Stop signal received");
-  glob_stop_flag= TRUE;
-  DEBUG_RETURN_EMPTY;
 }
 
 static GOptionEntry entries[] = 
@@ -1243,7 +1217,7 @@ int main(int argc, char *argv[])
     if ((ret_code= ic_daemonize(log_file.str)))
       goto error;
   }
-  ic_set_die_handler(pcntrl_die, NULL);
+  ic_set_die_handler(NULL, NULL);
   ic_set_sig_error_handler(NULL, NULL);
   DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
                               glob_base_dir.str));

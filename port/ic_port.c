@@ -52,6 +52,13 @@ static GMutex *mem_mutex= NULL;
 guint32 error_inject= 0;
 #endif
 static const gchar *port_binary_dir;
+static guint32 ic_stop_flag= 0;
+
+guint32
+ic_get_stop_flag()
+{
+  return ic_stop_flag;
+}
 
 void
 ic_mem_init()
@@ -204,26 +211,21 @@ ic_get_own_pid()
   return (GPid)pid;
 }
 
+#ifndef WIN32
 void 
 ic_kill_process(GPid pid, gboolean hard_kill)
 {
-  gchar buf[128];
-  gchar *arg_vector[4];
-  GError *error;
-  int i= 0;
-  guint32 len;
-
-  ic_guint64_str((guint64)pid,buf, &len);
-  DEBUG_PRINT(CONFIG_LEVEL, ("Kill process %s\n", buf));
-  arg_vector[i++]="kill";
   if (hard_kill)
-    arg_vector[i++]="-9";
-  arg_vector[i++]=buf;
-  arg_vector[i]=NULL;
-  g_spawn_async(NULL,&arg_vector[0], NULL,
-                G_SPAWN_SEARCH_PATH,
-                NULL,NULL,&pid,&error);
+    kill(pid, SIGKILL);
+  else
+    kill(pid, SIGTERM);
 }
+#else /* WIN32 */
+void 
+ic_kill_process(GPid pid, gboolean hard_kill)
+{
+}
+#endif
 
 int ic_start_process(gchar **argv,
                      gchar *working_dir,
@@ -449,6 +451,7 @@ sig_error_handler(int signum)
     default:
       DEBUG_RETURN_EMPTY;
   }
+  ic_stop_flag= 1;
   if (glob_sig_error_handler)
     glob_sig_error_handler(glob_sig_error_param);
   DEBUG_RETURN_EMPTY;
@@ -489,6 +492,7 @@ kill_handler(int signum)
     default:
       DEBUG_RETURN_EMPTY;
   }
+  ic_stop_flag= 1;
   if (glob_die_handler)
     glob_die_handler(glob_die_param);
   DEBUG_RETURN_EMPTY;

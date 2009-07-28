@@ -16,6 +16,7 @@
 #include <ic_base_header.h>
 #include <ic_port.h>
 #include <ic_err.h>
+#include <ic_debug.h>
 #include <ic_poll_set.h>
 #include "ic_poll_set_int.h"
 /* System header files */

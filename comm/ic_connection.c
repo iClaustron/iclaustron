@@ -83,6 +83,7 @@ close_socket(int sockfd)
 #endif
   DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", error));
 }
+
 /* Implements ic_check_for_data */
 static gboolean
 check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
@@ -90,10 +91,19 @@ check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   struct pollfd poll_struct;
   int ret_code;
+  int time_out;
 
   poll_struct.events= POLLIN;
   poll_struct.fd= conn->rw_sockfd;
-  ret_code= poll(&poll_struct, 1, timeout_in_ms);
+  
+  while (timeout_in_ms)
+  {
+    if (ic_get_stop_flag())
+      return TRUE;
+    time_out= IC_MIN(timeout_in_ms, 1000);
+    timeout_in_ms-= time_out;
+    ret_code= poll(&poll_struct, 1, time_out);
+  }
   if (ret_code > 0)
     return TRUE;
   else
@@ -404,6 +414,8 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   set_socket_nonblocking(conn->listen_sockfd, TRUE);
   do
   {
+    if (ic_get_stop_flag())
+      return IC_ERROR_APPLICATION_STOPPED;
     FD_ZERO(&select_set);
     FD_SET(conn->listen_sockfd, &select_set);
     select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
@@ -667,6 +679,8 @@ renew_connect:
       still waiting for a successful connect.
     */
     close_socket(sockfd);
+    if (ic_get_stop_flag())
+      return IC_ERROR_APPLICATION_STOPPED;
     timer++;
     if (conn->timeout_func &&
         conn->timeout_func(conn->timeout_obj, timer))

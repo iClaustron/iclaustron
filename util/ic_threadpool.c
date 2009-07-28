@@ -500,6 +500,8 @@ static gboolean
 get_stop_flag(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+  if (ic_get_stop_flag())
+    thread_state->stop_flag= TRUE;
   return thread_state->stop_flag;
 }
 

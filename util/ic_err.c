@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7058
+#define IC_LAST_ERROR 7059
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -160,6 +160,8 @@ ic_init_error_messages()
     "Too many hosts in connectstring";
   ic_error_str[IC_ERROR_FAILED_TO_DAEMONIZE - IC_FIRST_ERROR]=
     "Failed to daemonize process";
+  ic_error_str[IC_ERROR_APPLICATION_STOPPED - IC_FIRST_ERROR]=
+    "Application has been stopped";
 }
 
 void

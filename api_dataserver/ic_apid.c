@@ -714,6 +714,8 @@ apid_global_get_stop(IC_APID_GLOBAL *ext_apid_global)
   gboolean stop_flag;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
   g_mutex_lock(apid_global->mutex);
+  if (ic_get_stop_flag())
+    apid_global->stop_flag= TRUE;
   stop_flag= apid_global->stop_flag;
   g_mutex_unlock(apid_global->mutex);
   return stop_flag;
