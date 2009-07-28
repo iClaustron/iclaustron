@@ -38,31 +38,27 @@
 #include <ic_string.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
+#include <ic_apid.h>
 
 /* Global variables */
-static IC_STRING glob_config_dir= { NULL, 0, TRUE};
 static const gchar *glob_process_name= "ic_csd";
 
 /* Option variables */
-static gchar *glob_data_path= NULL;
 static gboolean glob_bootstrap= FALSE;
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
-static guint32 glob_node_id= 1;
 
 static GOptionEntry entries[] = 
 {
-  { "bootstrap", 0, 0, G_OPTION_ARG_NONE, &glob_bootstrap,
+  { "bootstrap", 0, 0, G_OPTION_ARG_NONE,
+    &glob_bootstrap,
     "Is this bootstrap of a cluster", NULL},
-  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME, &glob_data_path,
-    "Sets path to data directory, config files in subdirectory config", NULL},
-  { "server_port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
+  { "server_port", 0, 0, G_OPTION_ARG_STRING,
+    &glob_server_port,
     "Set Cluster Server connection Port", NULL},
-  { "server_name", 0, 0, G_OPTION_ARG_STRING, &glob_server_name,
+  { "server_name", 0, 0, G_OPTION_ARG_STRING,
+    &glob_server_name,
     "Set Cluster Server Hostname", NULL},
-  { "node_id", 0, 0, G_OPTION_ARG_INT,
-    &glob_node_id,
-    "Node id of Cluster Server in all clusters", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -75,19 +71,19 @@ main(int argc, char *argv[])
   IC_RUN_CLUSTER_SERVER *run_obj;
   gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
 
-  if ((error= ic_start_program(argc, argv, entries, NULL,
+  if ((error= ic_start_program(argc, argv, entries, ic_apid_entries,
                                glob_process_name,
            "- iClaustron Cluster Server", TRUE)))
     return error;
-  if ((error= ic_set_config_path(&glob_config_dir,
-                                 glob_data_path,
+  if ((error= ic_set_config_path(&ic_glob_config_dir,
+                                 ic_glob_data_path,
                                  config_path_buf)))
     return error;
-  if (!(run_obj= ic_create_run_cluster(&glob_config_dir,
+  if (!(run_obj= ic_create_run_cluster(&ic_glob_config_dir,
                                        glob_process_name,
                                        glob_server_name,
                                        glob_server_port,
-                                       glob_node_id)))
+                                       ic_glob_node_id)))
   {
     error= IC_ERROR_MEM_ALLOC;
     goto error;

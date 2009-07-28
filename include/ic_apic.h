@@ -57,6 +57,7 @@ extern const gchar *ic_node_id_str;
 extern const gchar *ic_server_name_str;
 extern const gchar *ic_server_port_str;
 extern const gchar *ic_data_dir_str;
+extern const gchar *ic_num_threads_str;
 
 /* Initialisation of configuration parameters */
 int ic_init_config_parameters();
@@ -371,6 +372,8 @@ struct ic_client_config
   guint32 client_max_batch_byte_size;
   guint32 client_batch_byte_size;
   guint32 client_batch_size;
+
+  guint32 apid_num_threads;
 };
 typedef struct ic_client_config IC_CLIENT_CONFIG;
 

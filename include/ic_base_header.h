@@ -99,6 +99,7 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 #define IC_MAX_CLUSTER_SERVERS 4
 #define IC_MAX_FILE_NAME_SIZE 255
 #define IC_MAX_INT_STRING 32
+#define IC_MAX_APID_NUM_THREADS 256
 
 /* Define a number of constants used in various places */
 #define SPACE_CHAR (gchar)32

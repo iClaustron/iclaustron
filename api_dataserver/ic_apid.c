@@ -134,7 +134,7 @@ gchar *ic_glob_data_path= NULL;
 guint32 ic_glob_node_id= 4;
 guint32 ic_glob_num_threads= 1;
 guint32 ic_glob_use_iclaustron_cluster_server= 1;
-guint32 ic_glob_nodaemonize= 0;
+guint32 ic_glob_daemonize= 1;
 
 /*
   These static functions implements the local IC_TRANSLATION_OBJ.
@@ -2638,8 +2638,8 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
   IC_NDB_MESSAGE_OPAQUE_AREA *message_opaque;
   IC_THREAD_CONNECTION *loc_thd_conn;
 
-  memset(&num_sent[0],
-         sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS), 0);
+  memset(&num_sent[0], 0,
+         sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS));
   for (i= min_hash_index; i < max_hash_index; i++)
   {
     ndb_message_anchor= &ndb_message_anchors[i];
@@ -2929,8 +2929,8 @@ run_receive_thread(void *data)
   IC_RECEIVE_NODE_CONNECTION *rec_node;
 
   thread_state->ts_ops.ic_thread_started(thread_state);
-  memset(message_anchors,
-         sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS, 0);
+  memset(message_anchors, 0,
+         sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS);
 
   /* Flag start-up done and wait for start order */
   thread_state->ts_ops.ic_thread_startup_done(thread_state);
@@ -3207,9 +3207,9 @@ GOptionEntry ic_apid_entries[] =
   { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
      &ic_glob_use_iclaustron_cluster_server,
     "Use of iClaustron Cluster Server (default) or NDB mgm server", NULL},
-  { "nodaemonize", 0, 0, G_OPTION_ARG_INT,
-     &ic_glob_nodaemonize,
-    "Don't daemonize program", NULL},
+  { "daemonize", 0, 0, G_OPTION_ARG_INT,
+     &ic_glob_daemonize,
+    "Daemonize program", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 

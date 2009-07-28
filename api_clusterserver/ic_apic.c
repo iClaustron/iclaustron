@@ -626,6 +626,7 @@ const gchar *ic_node_id_str= " --node_id=";
 const gchar *ic_server_name_str= " --server_name=";
 const gchar *ic_server_port_str=" --server_port=";
 const gchar *ic_data_dir_str= " --data_dir=";
+const gchar *ic_num_threads_str= " --num_threads=";
 
 #define MIN_PORT 0
 #define MAX_PORT 65535
@@ -1192,12 +1193,12 @@ name_out_of_range(int id)
 */
 
 #define ALL_CLIENT_TYPES    ((1 << IC_CLUSTER_SERVER_TYPE) + \
-                            (1 << IC_CLIENT_TYPE) + \
-                            (1 << IC_CLUSTER_MGR_TYPE) + \
-                            (1 << IC_SQL_SERVER_TYPE) + \
-                            (1 << IC_REP_SERVER_TYPE) + \
-                            (1 << IC_FILE_SERVER_TYPE) + \
-                            (1 << IC_RESTORE_TYPE))
+                             (1 << IC_CLIENT_TYPE) + \
+                             (1 << IC_CLUSTER_MGR_TYPE) + \
+                             (1 << IC_SQL_SERVER_TYPE) + \
+                             (1 << IC_REP_SERVER_TYPE) + \
+                             (1 << IC_FILE_SERVER_TYPE) + \
+                             (1 << IC_RESTORE_TYPE))
 
 #define ALL_NODE_TYPES (ALL_CLIENT_TYPES + (1 << IC_DATA_SERVER_TYPE))
 
@@ -2041,7 +2042,17 @@ init_config_parameters()
   "Send buffer memory reserved for Data Server traffic, not used";
 
 /* Id 130-139 for configuration id 210-249 */
-/* Id 210-249 not used */
+/* Id 210-248 not used */
+#define APID_NUM_THREADS 249
+
+  IC_SET_CONFIG_MAP(APID_NUM_THREADS, 139);
+  IC_SET_CLIENT_CONFIG(conf_entry, apid_num_threads,
+                       IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_APID_NUM_THREADS);
+  conf_entry->config_types= IC_FILE_SERVER_TYPE | IC_REP_SERVER_TYPE;
+  conf_entry->config_entry_description=
+  "Number of threads in Data API application server";
+
 
 /* Log level configuration items */
 /* Id 140-149 for configuration id 250-259 */

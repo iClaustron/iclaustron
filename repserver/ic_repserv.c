@@ -57,7 +57,7 @@ int main(int argc,
                                        error_str,
                                        &apid_global,
                                        &apic,
-                                       !ic_glob_nodaemonize)))
+                                       ic_glob_daemonize)))
     goto end;
   ret_code= ic_run_apid_program(apid_global,
                                 tp_state,

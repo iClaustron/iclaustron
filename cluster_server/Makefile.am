@@ -23,4 +23,5 @@ ic_csd_LDADD = $(LDADD) \
 			../port/libic_port.la \
 			../util/libic_util.la \
 			../comm/libic_comm.la \
-			../api_clusterserver/libic_apic.la
+			../api_clusterserver/libic_apic.la \
+			../api_dataserver/libic_apid.la

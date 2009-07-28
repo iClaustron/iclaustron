@@ -412,7 +412,7 @@ extern gchar *ic_glob_data_path;
 extern guint32 ic_glob_node_id;
 extern guint32 ic_glob_num_threads;
 extern guint32 ic_glob_use_iclaustron_cluster_server;
-extern guint32 ic_glob_nodaemonize;
+extern guint32 ic_glob_daemonize;
 extern GOptionEntry ic_apid_entries[];
 
 int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,

@@ -554,12 +554,18 @@ translate_hostnames(IC_INT_CONNECTION *conn)
     return IC_ERROR_ILLEGAL_SERVER_PORT;
   conn->server_port_num= (guint16)server_port;
   /* Get address information for Server part */
-  memset(&hints, sizeof(struct addrinfo), 0);
-  hints.ai_flags= AI_PASSIVE;
+  memset(&hints, 0, sizeof(struct addrinfo));
+#ifdef AI_NUMERICSERV
+  hints.ai_flags= AI_NUMERICSERV;
+#else
+  hints.ai_flags= 0;
+#endif
+  if (!conn->is_client)
+    hints.ai_flags|= AI_PASSIVE;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
   hints.ai_protocol= IPPROTO_TCP;
-  DEBUG_PRINT(COMM_LEVEL, ("Server name = %s, service = %s",
+  DEBUG_PRINT(COMM_LEVEL, ("Server name = %s, port = %s",
               conn->server_name, conn->server_port));
   if ((ret_code= getaddrinfo(conn->server_name, conn->server_port,
        &hints, &conn->server_addrinfo)) != 0)
@@ -588,8 +594,12 @@ translate_hostnames(IC_INT_CONNECTION *conn)
     return IC_ERROR_ILLEGAL_CLIENT_PORT;
   conn->client_port_num= (guint16)client_port;
   /* Get address information for Client part */
-  memset(&hints, sizeof(struct addrinfo), 0);
-  hints.ai_flags= AI_CANONNAME;
+  memset(&hints, 0, sizeof(struct addrinfo));
+#ifdef AI_NUMERICSERV
+  hints.ai_flags= AI_NUMERICSERV;
+#else
+  hints.ai_flags= 0;
+#endif
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
   hints.ai_protocol= IPPROTO_TCP;
@@ -950,7 +960,7 @@ writev_socket_connection(IC_CONNECTION *ext_conn,
   guint32 write_len;
   struct msghdr msg_hdr;
 
-  memset(&msg_hdr, sizeof(struct msghdr), 0);
+  memset(&msg_hdr, 0, sizeof(struct msghdr));
 
   send_state.time_measure= NULL;
   send_state.write_size= 0;

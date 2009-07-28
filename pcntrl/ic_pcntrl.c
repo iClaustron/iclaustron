@@ -58,9 +58,10 @@
 #define REC_FINAL_CR 2
 
 /* Configurable variables */
-static gchar *glob_ip= NULL;
-static gchar *glob_port= IC_DEF_PCNTRL_PORT_STR;
+static gchar *glob_server_name= "127.0.0.1";
+static gchar *glob_server_port= IC_DEF_PCNTRL_PORT_STR;
 static gchar *glob_base_dir= NULL;
+static guint32 glob_daemonize= 1;
 
 /* Global variables */
 static const gchar *glob_process_name= "ic_pcntrld";
@@ -73,16 +74,6 @@ static IC_HASHTABLE *glob_pc_hash= NULL;
 static IC_THREADPOOL_STATE *glob_tp_state;
 static guint64 glob_start_id= 1;
 static IC_DYNAMIC_TRANSLATION *glob_dyn_trans= NULL;
-
-static GOptionEntry entries[] = 
-{
-  { "ip", 0, 0, G_OPTION_ARG_STRING, &glob_ip,
-    "Set IP address, default is IP address of computer", NULL},
-  { "port", 0, 0, G_OPTION_ARG_STRING, &glob_port, "Set Port, default = 10002", NULL},
-  { "basedir", 0, 0, G_OPTION_ARG_STRING, &glob_base_dir,
-    "Sets path to binaries controlled by this program", NULL},
-  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
-};
 
 static int
 send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
@@ -1133,9 +1124,13 @@ int start_connection_loop()
   IC_CONNECTION *conn= NULL;
   IC_CONNECTION *fork_conn;
 
+  if (!(conn= ic_create_socket_object(FALSE, FALSE, FALSE,
+                                       CONFIG_READ_BUF_SIZE,
+                                       NULL, NULL)))
+    return IC_ERROR_MEM_ALLOC;
   conn->conn_op.ic_prepare_server_connection(conn,
-                                             glob_ip,
-                                             glob_port,
+                                             glob_server_name,
+                                             glob_server_port,
                                              NULL,
                                              NULL,
                                              0,
@@ -1181,6 +1176,23 @@ int start_connection_loop()
   } while (!glob_stop_flag);
   return 0;
 }
+
+static GOptionEntry entries[] = 
+{
+  { "server_name", 0, 0, G_OPTION_ARG_STRING,
+    &glob_server_name,
+    "Set server address of process controller", NULL},
+  { "server_port", 0, 0, G_OPTION_ARG_STRING,
+    &glob_server_port,
+    "Set server port, default = 11860", NULL},
+  { "basedir", 0, 0, G_OPTION_ARG_STRING,
+    &glob_base_dir,
+    "Sets path to binaries controlled by this program", NULL},
+  { "daemonize", 0, 0, G_OPTION_ARG_INT,
+     &glob_daemonize,
+    "Daemonize program", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
 
 int main(int argc, char *argv[])
 {
@@ -1239,6 +1251,11 @@ int main(int argc, char *argv[])
                       mysql_buf, glob_mysql_base_dir_string.str);
   DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
                               glob_base_dir_string.str));
+  if (glob_daemonize)
+  {
+    if ((ret_code= ic_daemonize("/dev/null")))
+      goto error;
+  }
   /*
     Next step is to wait for Cluster Managers to connect to us, after they
     have connected they can request action from us as well. Any server can

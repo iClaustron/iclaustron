@@ -201,7 +201,7 @@ epoll_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
   if ((ret_code= add_poll_set_member(poll_set, fd, user_obj, &index)))
     return ret_code;
 
-  memset(&add_event, sizeof(struct epoll_event), 0);
+  memset(&add_event, 0, sizeof(struct epoll_event));
   add_event.events= EPOLLIN;
   add_event.data.fd= fd;
   add_event.data.u32= index;
@@ -229,7 +229,7 @@ epoll_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
     epoll specific code, set-up data for epoll_ctl call and handle
     error codes properly.
   */
-  memset(&delete_event, sizeof(struct epoll_event), 0);
+  memset(&delete_event, 0, sizeof(struct epoll_event));
   delete_event.events= EPOLLIN;
   delete_event.data.u32= index;
   delete_event.data.fd= fd;

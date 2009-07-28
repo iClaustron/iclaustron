@@ -27,6 +27,10 @@
 #include <ic_apid.h>
 #include "ic_clmgr_int.h"
 
+/* Option variables */
+static gchar *glob_cluster_mgr_ip= "127.0.0.1";
+static gchar *glob_cluster_mgr_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
+
 /* Global variables */
 static const gchar *glob_process_name= "ic_clmgrd";
 static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
@@ -36,21 +40,6 @@ static gchar *no_such_cluster_string=
 "The specified cluster name doesn't exist in this grid";
 static gchar *wrong_node_type= "Node id not of specified type";
 static gchar *no_such_node_str="There is no such node in this cluster";
-
-/* Option variables */
-static gchar *glob_cluster_mgr_ip= "127.0.0.1";
-static gchar *glob_cluster_mgr_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
-
-static GOptionEntry entries[] = 
-{
-  { "server_name", 0, 0, G_OPTION_ARG_STRING,
-     &glob_cluster_mgr_ip,
-    "Set Server Hostname of Cluster Manager", NULL},
-  { "server_port", 0, 0, G_OPTION_ARG_STRING,
-     &glob_cluster_mgr_port,
-    "Set Server Port of Cluster Manager", NULL},
-  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
-};
 
 static int
 connect_pcntrl(IC_CONNECTION **conn, const gchar *node_config)
@@ -376,57 +365,6 @@ start_client_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 }
 
 static int
-start_cluster_server_node(IC_PARSE_DATA *parse_data,
-                          gchar *node_config,
-                          IC_CLUSTER_CONFIG *clu_conf)
-{
-  IC_CLUSTER_SERVER_CONFIG *cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
-  guint32 num_params= 0;
-  gchar *param_array[8];
-
-  /*
-    We can set the following parameters when we start the cluster server.
-    1) --node_id
-      The node id of the cluster server
-    2) --server_nmae
-      The hostname of the cluster server
-    3) --server_port
-      The port number of the cluster server
-    4) --data_dir
-      The path to the data directory where config files will be in the
-      subdirectory config
-  */
-  if (!(param_array[num_params++]= add_param_num(parse_data,
-                                                 ic_node_id_str,
-                                                 cs_conf->node_id)) ||
-      !(param_array[num_params++]= add_param_string(parse_data,
-                                                    ic_server_name_str,
-                                                    cs_conf->hostname)) ||
-      !(param_array[num_params++]= add_param_num(parse_data,
-                                                 ic_server_port_str,
-                                                 cs_conf->port_number)) ||
-      !(param_array[num_params++]= add_param_string(parse_data,
-                                                 ic_data_dir_str,
-                                                 cs_conf->node_data_path)) ||
-      !(param_array[num_params++]= add_connectstring(parse_data,
-              ic_cs_connectstring_str,
-              clu_conf)))
-    return IC_ERROR_MEM_ALLOC;
-
-  return start_node(parse_data,
-                    node_config,
-                    ic_def_grid_str,
-                    clu_conf->clu_info.cluster_name.str,
-                    cs_conf->node_name,
-                    ic_cluster_server_program_str,
-                    parse_data->iclaustron_version_name.str,
-                    num_params,
-                    (const gchar**)&param_array[0],
-                    parse_data->restart_flag);
-  return 0;
-}
-
-static int
 start_sql_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
                       __attribute ((unused)) gchar *node_config,
                       __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
@@ -435,18 +373,52 @@ start_sql_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 }
 
 static int
-start_rep_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                      __attribute ((unused)) gchar *node_config,
-                      __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
+start_apid_server_node(IC_PARSE_DATA *parse_data,
+                       gchar *node_config,
+                       const gchar *program_str,
+                       IC_CLUSTER_CONFIG *clu_conf)
 {
-  return 0;
-}
+  IC_CLIENT_CONFIG *client_conf= (IC_CLIENT_CONFIG*)node_config;
+  guint32 num_params= 0;
+  gchar *param_array[8];
 
-static int
-start_file_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                       __attribute ((unused)) gchar *node_config,
-                       __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
-{
+  /*
+    We can set the following parameters when we start the cluster manager.
+    1) --node_id
+      The node id
+    2) --data_dir
+      The path to the data directory where config file will be in the
+      subdirectory config
+    3) --cs_connectstring
+      A list like myhost1:port1,myhost2:port2 that points out where the
+      cluster servers are placed.
+    4) --num_threads
+      The number of threads to start up in the server node
+  */
+  if (!(param_array[num_params++]= add_param_num(parse_data,
+                                                 ic_node_id_str,
+                                                 client_conf->node_id)) ||
+      !(param_array[num_params++]= add_param_string(parse_data,
+                                              ic_data_dir_str,
+                                              client_conf->node_data_path)) ||
+      !(param_array[num_params++]= add_connectstring(parse_data,
+                                                     ic_cs_connectstring_str,
+                                                     clu_conf)) ||
+      !(param_array[num_params++]= add_param_num(parse_data,
+                                           ic_num_threads_str,
+                                           client_conf->apid_num_threads)))
+    return IC_ERROR_MEM_ALLOC;
+
+  return start_node(parse_data,
+                    node_config,
+                    ic_def_grid_str,
+                    clu_conf->clu_info.cluster_name.str,
+                    client_conf->node_name,
+                    program_str,
+                    parse_data->iclaustron_version_name.str,
+                    num_params,
+                    (const gchar**)&param_array[0],
+                    parse_data->restart_flag);
   return 0;
 }
 
@@ -459,22 +431,23 @@ start_restore_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
 }
 
 static int
-start_cluster_mgr_node(IC_PARSE_DATA *parse_data,
-                       gchar *node_config,
-                       IC_CLUSTER_CONFIG *clu_conf)
+start_cluster_node(IC_PARSE_DATA *parse_data,
+                   gchar *node_config,
+                   const gchar *program_str,
+                   IC_CLUSTER_CONFIG *clu_conf)
 {
-  IC_CLUSTER_SERVER_CONFIG *mgr_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
   guint32 num_params= 0;
   gchar *param_array[8];
 
   /*
     We can set the following parameters when we start the cluster manager.
     1) --node_id
-      The node id of the cluster manager
+      The node id of the cluster manager/server
     2) --server_name
-      The hostname of the cluster manager
+      The hostname of the cluster manager/server
     3) --server_port
-      The port number of the cluster manager
+      The port number of the cluster manager/server
     4) --data_dir
       The path to the data directory where config file will be in the
       subdirectory config
@@ -484,16 +457,16 @@ start_cluster_mgr_node(IC_PARSE_DATA *parse_data,
   */
   if (!(param_array[num_params++]= add_param_num(parse_data,
                                                  ic_node_id_str,
-                                                 mgr_conf->node_id)) ||
+                                                 cs_conf->node_id)) ||
       !(param_array[num_params++]= add_param_string(parse_data,
                                                     ic_server_name_str,
-                                                    mgr_conf->hostname)) ||
+                                                    cs_conf->hostname)) ||
       !(param_array[num_params++]= add_param_num(parse_data,
                                                  ic_server_port_str,
-                                                 mgr_conf->port_number)) ||
+                                                 cs_conf->port_number)) ||
       !(param_array[num_params++]= add_param_string(parse_data,
                                               ic_data_dir_str,
-                                              mgr_conf->node_data_path)) ||
+                                              cs_conf->node_data_path)) ||
       !(param_array[num_params++]= add_connectstring(parse_data,
                                                      ic_cs_connectstring_str,
                                                      clu_conf)))
@@ -503,8 +476,8 @@ start_cluster_mgr_node(IC_PARSE_DATA *parse_data,
                     node_config,
                     ic_def_grid_str,
                     clu_conf->clu_info.cluster_name.str,
-                    mgr_conf->node_name,
-                    ic_cluster_manager_program_str,
+                    cs_conf->node_name,
+                    program_str,
                     parse_data->iclaustron_version_name.str,
                     num_params,
                     (const gchar**)&param_array[0],
@@ -553,9 +526,18 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     }
     case IC_CLUSTER_SERVER_NODE:
     {
-      return start_cluster_server_node(parse_data,
-                                       node_config,
-                                       clu_conf);
+      return start_cluster_node(parse_data,
+                                node_config,
+                                ic_cluster_server_program_str,
+                                clu_conf);
+      break;
+    }
+    case IC_CLUSTER_MGR_NODE:
+    {
+      return start_cluster_node(parse_data,
+                                node_config,
+                                ic_cluster_manager_program_str,
+                                clu_conf);
       break;
     }
     case IC_SQL_SERVER_NODE:
@@ -567,15 +549,17 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     }
     case IC_REP_SERVER_NODE:
     {
-      return start_rep_server_node(parse_data,
-                                   node_config,
-                                   clu_conf);
+      return start_apid_server_node(parse_data,
+                                    node_config,
+                                    ic_rep_server_program_str,
+                                    clu_conf);
        break;
     }
     case IC_FILE_SERVER_NODE:
     {
-      return start_file_server_node(parse_data,
+      return start_apid_server_node(parse_data,
                                     node_config,
+                                    ic_file_server_program_str,
                                     clu_conf);
        break;
     }
@@ -584,13 +568,6 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
       return start_restore_node(parse_data,
                                 node_config,
                                 clu_conf);
-      break;
-    }
-    case IC_CLUSTER_MGR_NODE:
-    {
-      return start_cluster_mgr_node(parse_data,
-                                    node_config,
-                                    clu_conf);
       break;
     }
     default:
@@ -998,7 +975,7 @@ run_handle_new_connection(gpointer data)
 
   thread_state->ts_ops.ic_thread_started(thread_state);
   apic= (IC_API_CONFIG_SERVER*)conn->conn_op.ic_get_param(conn);
-  memset(&parse_data, sizeof(IC_PARSE_DATA), 0);
+  memset(&parse_data, 0, sizeof(IC_PARSE_DATA));
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
   {
     ic_print_error(IC_ERROR_MEM_ALLOC);
@@ -1144,6 +1121,17 @@ set_up_server_connection(IC_CONNECTION **conn)
   return 0;
 }
 
+static GOptionEntry entries[] = 
+{
+  { "server_name", 0, 0, G_OPTION_ARG_STRING,
+     &glob_cluster_mgr_ip,
+    "Set Server Hostname of Cluster Manager", NULL},
+  { "server_port", 0, 0, G_OPTION_ARG_STRING,
+     &glob_cluster_mgr_port,
+    "Set Server Port of Cluster Manager", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
 int main(int argc,
          char *argv[])
 {
@@ -1166,7 +1154,7 @@ int main(int argc,
                                        error_str,
                                        &apid_global,
                                        &apic,
-                                       !ic_glob_nodaemonize)))
+                                       ic_glob_daemonize)))
     goto end;
   if ((ret_code= set_up_server_connection(&conn)))
     goto end;
