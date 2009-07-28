@@ -511,9 +511,10 @@ ic_create_threadpool(guint32 pool_size)
   IC_INT_THREAD_STATE *thread_state;
   IC_INT_THREADPOOL_STATE *tp_state;
 
+  DEBUG_ENTRY("ic_create_threadpool");
   if (!(tp_state= (IC_INT_THREADPOOL_STATE*)
         ic_calloc(sizeof(IC_INT_THREADPOOL_STATE))))
-    return NULL;
+    DEBUG_RETURN(NULL);
   if (!(tp_state->thread_state= (IC_INT_THREAD_STATE**)
         ic_calloc(pool_size * sizeof(IC_INT_THREAD_STATE*))))
     goto mem_alloc_error;
@@ -570,9 +571,9 @@ ic_create_threadpool(guint32 pool_size)
   tp_state->tp_ops.ic_threadpool_check_threads= check_threads;
   tp_state->tp_ops.ic_threadpool_stop= stop_threadpool;
 
-  return (IC_THREADPOOL_STATE*)tp_state;
+  DEBUG_RETURN((IC_THREADPOOL_STATE*)tp_state);
 
 mem_alloc_error:
   free_threadpool(tp_state);
-  return NULL;
+  DEBUG_RETURN(NULL);
 }

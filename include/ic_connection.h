@@ -121,9 +121,7 @@ struct ic_connect_operations
   int (*ic_set_up_connection)          (IC_CONNECTION *conn,
                                         accept_timeout_func timeout_func,
                                         void *timeout_obj);
-  int (*ic_accept_connection)          (IC_CONNECTION *conn,
-                                        accept_timeout_func timeout_func,
-                                        void *timeout_obj);
+  int (*ic_accept_connection)          (IC_CONNECTION *conn);
   int (*ic_close_connection)           (IC_CONNECTION *conn);
   int (*ic_close_listen_connection)    (IC_CONNECTION *conn);
   /*

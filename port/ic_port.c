@@ -437,6 +437,7 @@ static void *glob_sig_error_param;
 static void
 sig_error_handler(int signum)
 {
+  DEBUG_ENTRY("sig_error_handler");
   switch (signum)
   {
     case SIGSEGV:
@@ -446,15 +447,17 @@ sig_error_handler(int signum)
     case SIGSYS:
       break;
     default:
-      return;
+      DEBUG_RETURN_EMPTY;
   }
   if (glob_sig_error_handler)
     glob_sig_error_handler(glob_sig_error_param);
+  DEBUG_RETURN_EMPTY;
 }
 
 void
 ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
 {
+  DEBUG_ENTRY("unix:ic_set_sig_error_handler");
   glob_sig_error_handler= error_handler;
   glob_sig_error_param= param;
   signal(SIGSEGV, sig_error_handler);
@@ -462,11 +465,13 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
   signal(SIGILL, sig_error_handler);
   signal(SIGBUS, sig_error_handler);
   signal(SIGSYS, sig_error_handler);
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
 kill_handler(int signum)
 {
+  DEBUG_ENTRY("kill_handler");
   switch (signum)
   {
     case SIGTERM:
@@ -482,15 +487,17 @@ kill_handler(int signum)
 #endif
       break;
     default:
-      return;
+      DEBUG_RETURN_EMPTY;
   }
   if (glob_die_handler)
     glob_die_handler(glob_die_param);
+  DEBUG_RETURN_EMPTY;
 }
 
 void
 ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
 {
+  DEBUG_ENTRY("unix:ic_set_die_handler");
   glob_die_param= param;
   glob_die_handler= die_handler;
   signal(SIGTERM, kill_handler);
@@ -504,22 +511,26 @@ ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
   signal(SIGPWR, kill_handler);
 #endif
 #endif
+  DEBUG_RETURN_EMPTY;
 }
 #else
 void
 ic_set_die_handler(IC_SIG_HANDLER_FUNC *die_handler,
                    void *param)
 {
+  DEBUG_ENTRY("windows:ic_set_die_handler");
   (void)die_handler;
   (void)param;
-  return; 
+  DEBUG_RETURN_EMPTY;
 }
 
 void
 ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC *error_handler, void *param)
 {
+  DEBUG_ENTRY("windows:ic_set_sig_error_handler");
   (void)error_handler;
   (void)param;
+  DEBUG_RETURN_EMPTY;
 }
 #endif
 

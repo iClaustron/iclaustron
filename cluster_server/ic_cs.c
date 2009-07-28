@@ -69,15 +69,13 @@ main(int argc, char *argv[])
   gchar *err_str;
   gchar error_buffer[ERROR_MESSAGE_SIZE];
   IC_RUN_CLUSTER_SERVER *run_obj;
-  gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
 
   if ((error= ic_start_program(argc, argv, entries, ic_apid_entries,
                                glob_process_name,
            "- iClaustron Cluster Server", TRUE)))
     return error;
-  if ((error= ic_set_config_path(&ic_glob_config_dir,
-                                 ic_glob_data_path,
-                                 config_path_buf)))
+  if ((error= ic_set_config_dir(&ic_glob_config_dir,
+                                ic_glob_data_path)))
     return error;
   if (!(run_obj= ic_create_run_cluster(&ic_glob_config_dir,
                                        glob_process_name,

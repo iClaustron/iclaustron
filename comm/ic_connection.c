@@ -371,9 +371,7 @@ error:
 
 /* Implements ic_accept_connection */
 static int
-accept_socket_connection(IC_CONNECTION *ext_conn,
-                         accept_timeout_func timeout_func,
-                         void *timeout_obj)
+accept_socket_connection(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   gboolean not_accepted= FALSE;
@@ -418,7 +416,8 @@ accept_socket_connection(IC_CONNECTION *ext_conn,
         a timeout error.
       */
       timer++;
-      if (timeout_func && timeout_func(timeout_obj, timer))
+      if (conn->timeout_func &&
+          conn->timeout_func(conn->timeout_obj, timer))
       {
         conn->error_code= IC_ERROR_ACCEPT_TIMEOUT;
         return conn->error_code;
@@ -757,9 +756,7 @@ renew_connect:
     }
     conn->listen_sockfd= sockfd;
     if (!conn->is_listen_socket_retained)
-      return accept_socket_connection((IC_CONNECTION*)conn,
-                                      conn->timeout_func,
-                                      conn->timeout_obj);
+      return accept_socket_connection((IC_CONNECTION*)conn);
     else
       conn->listen_sockfd= sockfd;
   }
@@ -1741,11 +1738,12 @@ ic_create_socket_object(gboolean is_client,
                         authenticate_func auth_func,
                         void *auth_obj)
 {
-  return int_create_socket_object(is_client, is_mutex_used,
-                                  is_connect_thread_used,
-                                  FALSE, FALSE,
-                                  read_buf_size,
-                                  auth_func, auth_obj);
+  DEBUG_ENTRY("ic_create_socket_object");
+  DEBUG_RETURN(int_create_socket_object(is_client, is_mutex_used,
+                                        is_connect_thread_used,
+                                        FALSE, FALSE,
+                                        read_buf_size,
+                                        auth_func, auth_obj));
 }
 
 #ifdef HAVE_SSL
@@ -2000,16 +1998,14 @@ set_up_ssl_connection(IC_CONNECTION *ext_in_conn,
 
 /* Implements ic_accept_connection */
 static int
-accept_ssl_connection(IC_CONNECTION *ext_conn,
-                      accept_timeout_func timeout_func,
-                      void *timeout_obj)
+accept_ssl_connection(IC_CONNECTION *ext_conn)
 {
   int error;
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   DEBUG_ENTRY("accept_ssl_connection");
 
   lock_connect_mutex(conn);
-  error= accept_socket_connection(ext_conn, timeout_func, timeout_obj);
+  error= accept_socket_connection(ext_conn)
   unlock_connect_mutex(conn);
   DEBUG_RETURN(error);
 }

@@ -32,11 +32,17 @@ void ic_debug_print_char_buf(gchar *buf);
 void ic_debug_printf(const char *format,...);
 void ic_debug_print_rec_buf(gchar *buf, guint32 read_size);
 
+/*
+  Various parts to debug, SILLY_LEVEL means a silly amount of debugging
+  messages are generated and thus should only be used for finding bugs
+  when really everything needs to be known.
+*/
 #define COMM_LEVEL 1
 #define ENTRY_LEVEL 2
 #define CONFIG_LEVEL 3
 #define PROGRAM_LEVEL 4
 #define THREAD_LEVEL 5
+#define SILLY_LEVEL 6
 
 #ifdef DEBUG_BUILD
 void ic_debug_entry(const char *entry_point);

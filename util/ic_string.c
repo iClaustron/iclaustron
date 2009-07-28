@@ -179,87 +179,45 @@ ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
                          input_base_dir);
 }
 
-void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf)
-{
-  buf[0]= 0;
-  IC_INIT_STRING(res_str, buf, 0, TRUE);
-  ic_add_string(res_str, (const gchar *)PACKAGE);
-  ic_add_string(res_str, (const gchar *)"-");
-  ic_add_string(res_str, (const gchar *)VERSION);
-}
-
-void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf)
-{
-  buf[0]= 0;
-  IC_INIT_STRING(res_str, buf, 0, TRUE);
-  ic_add_string(res_str, (const gchar *)MYSQL_VERSION_STRING);
-}
-
-void ic_set_relative_dir(IC_STRING *res_str, IC_STRING *dir,
-                         gchar *buf, const gchar *dir_name)
-{
-  IC_INIT_STRING(res_str, buf, 0, TRUE);
-  ic_add_ic_string(res_str, dir);
-  if (dir_name)
-  {
-    ic_add_string(res_str, dir_name);
-#ifdef WINDOWS
-    ic_add_string(res_str, "\\");
-#else
-    ic_add_string(res_str, "/");
-#endif
-  }
-}
-
-/* The default base directory is ICLAUSTRON_BASE_DIR */
-int
-ic_set_base_path(IC_STRING *base_dir,
-                 gchar *base_path,
-                 gchar *version,
-                 gchar *buf)
+static int
+ic_add_dir(IC_STRING *dir,
+           const gchar *dir_name)
 {
   int error;
-  IC_STRING loc_base_dir;
-  if ((error= ic_set_base_dir(&loc_base_dir, base_path)))
+  if ((error= ic_add_dup_string(dir, dir_name)))
     return error;
-  ic_set_relative_dir(base_dir, &loc_base_dir, buf,
-                      version);
-  DEBUG_PRINT(CONFIG_LEVEL, ("Base dir: %s", base_dir->str));
+  if ((error= add_dir_slash(dir)))
+    return error;
   return 0;
 }
 
-/* The default binary directory is ICLAUSTRON_BASE_DIR/bin */
+/* The default binary directory is ICLAUSTRON_BASE_DIR/version/bin */
 int
-ic_set_binary_path(IC_STRING *binary_dir,
-                   gchar *base_path,
-                   gchar *version,
-                   gchar *buf)
+ic_set_binary_dir(IC_STRING *binary_dir,
+                  gchar *base_path,
+                  gchar *version)
 {
   int error;
-  IC_STRING base_dir;
-  IC_STRING version_dir;
-  if ((error= ic_set_base_dir(&base_dir, base_path)))
+  if ((error= ic_set_base_dir(binary_dir, base_path)))
     return error;
-  ic_set_relative_dir(&version_dir, &base_dir, buf,
-                      version);
-  ic_set_relative_dir(binary_dir, &version_dir, buf,
-                      ic_binary_string.str);
+  if ((error= ic_add_dir(binary_dir, version)))
+    return error;
+  if ((error= ic_add_dir(binary_dir, ic_binary_string.str)))
+    return error;
   DEBUG_PRINT(CONFIG_LEVEL, ("Binary dir: %s", binary_dir->str));
   return 0;
 }
 
 /* The default configuration directory is ICLAUSTRON_DATA_DIR/config */
 int
-ic_set_config_path(IC_STRING *config_dir,
-                   gchar *data_path,
-                   gchar *buf)
+ic_set_config_dir(IC_STRING *config_dir,
+                  gchar *data_path)
 {
   int error;
-  IC_STRING data_dir;
-  if ((error= ic_set_data_dir(&data_dir, data_path)))
+  if ((error= ic_set_data_dir(config_dir, data_path)))
     return error;
-  ic_set_relative_dir(config_dir, &data_dir, buf,
-                      ic_config_string.str);
+  if ((error= ic_add_dir(config_dir, ic_config_string.str)))
+    return error;
   DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", config_dir->str));
   return 0;
 }

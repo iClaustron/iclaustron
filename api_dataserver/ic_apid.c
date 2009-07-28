@@ -127,6 +127,7 @@
 
 
 IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
 gchar *ic_glob_cs_server_name= "127.0.0.1";
 gchar *ic_glob_cs_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 gchar *ic_glob_cs_connectstring= NULL;
@@ -1295,7 +1296,9 @@ run_listen_thread(void *data)
 
   thread_state->ts_ops.ic_thread_started(thread_state);
   conn= listen_server_thread->conn;
-  if ((ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL)))
+  if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
+                                                    check_timeout_func,
+                                                    (void*)listen_server_thread)))
   {
     listen_server_thread->stop_ordered= TRUE;
     goto end;
@@ -1306,8 +1309,7 @@ run_listen_thread(void *data)
   /* We have been asked to start listening and so we start listening */
   do
   {
-    if (!(ret_code= conn->conn_op.ic_accept_connection(conn,
-                  check_timeout_func, (void*)listen_server_thread)))
+    if (!(ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
                                                      FALSE))) /* No mutex */
@@ -3222,7 +3224,6 @@ apid_kill_handler(void *param)
 
 int
 ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
-                      gchar *config_path_buf,
                       gchar **err_str,
                       gchar *error_buf,
                       IC_APID_GLOBAL **apid_global,
@@ -3236,9 +3237,8 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   if (!(*tp_state=
           ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
     return IC_ERROR_MEM_ALLOC;
-  if ((ret_code= ic_set_config_path(&ic_glob_config_dir,
-                                    ic_glob_data_path,
-                                    config_path_buf)))
+  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir,
+                                    ic_glob_data_path)))
     return ret_code;
   if (daemonize)
   {
@@ -3282,6 +3282,16 @@ ic_stop_apid_program(int ret_code,
     printf("%s", err_str);
   if (ret_code)
     ic_print_error(ret_code);
+  if (ic_glob_config_dir.str)
+  {
+    ic_free(ic_glob_config_dir.str);
+    ic_glob_config_dir.str= NULL;
+  }
+  if (ic_glob_data_dir.str)
+  {
+    ic_free(ic_glob_data_dir.str);
+    ic_glob_data_dir.str= NULL;
+  }
   ic_set_die_handler(NULL, NULL);
   if (apid_global)
     ic_disconnect_apid_global(apid_global);

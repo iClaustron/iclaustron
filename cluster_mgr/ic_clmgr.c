@@ -1062,7 +1062,7 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))
       goto error;
-    if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       goto error;
     DEBUG_PRINT(PROGRAM_LEVEL,
       ("Cluster Manager has accepted a new connection"));
@@ -1139,7 +1139,6 @@ int main(int argc,
   IC_CONNECTION *conn= NULL;
   IC_API_CONFIG_SERVER *apic= NULL;
   IC_APID_GLOBAL *apid_global= NULL;
-  gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= error_str;
   IC_THREADPOOL_STATE *tp_state;
@@ -1149,7 +1148,6 @@ int main(int argc,
            "- iClaustron Cluster Manager", TRUE)))
     goto end;
   if ((ret_code= ic_start_apid_program(&tp_state,
-                                       config_path_buf,
                                        &err_str,
                                        error_str,
                                        &apid_global,

@@ -24,6 +24,7 @@
 #include <ic_dyn_array.h>
 #include <ic_protocol_support.h>
 #include <ic_apic.h>
+#include <ic_apid.h>
 /*
   This program is also used to gather information from local log files as 
   part of any process to gather information about mishaps in the cluster(s).
@@ -60,18 +61,15 @@
 /* Configurable variables */
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_PCNTRL_PORT_STR;
-static gchar *glob_base_dir= NULL;
+static gchar *glob_base_path= NULL;
 static guint32 glob_daemonize= 1;
 
 /* Global variables */
 static const gchar *glob_process_name= "ic_pcntrld";
 static guint32 glob_stop_flag= FALSE;
-static IC_STRING glob_base_dir_string;
-static IC_STRING glob_ic_base_dir_string;
-static IC_STRING glob_mysql_base_dir_string;
+static IC_STRING glob_base_dir;
 static GMutex *pc_hash_mutex= NULL;
 static IC_HASHTABLE *glob_pc_hash= NULL;
-static IC_THREADPOOL_STATE *glob_tp_state;
 static guint64 glob_start_id= 1;
 static IC_DYNAMIC_TRANSLATION *glob_dyn_trans= NULL;
 
@@ -616,10 +614,9 @@ handle_start(IC_CONNECTION *conn)
     (iclaustron_install) with the version number appended and
     the bin directory where the binaries are placed.
   */
-  if ((ret_code= ic_set_base_path(&working_dir,
-                                  glob_base_dir,
-                                  pc_start->version_string.str,
-                                  NULL)))
+  if ((ret_code= ic_set_binary_dir(&working_dir,
+                                   glob_base_dir.str,
+                                   pc_start->version_string.str)))
     goto late_error;
   /*
     Start the actual using the program name, its arguments and the binary
@@ -1117,13 +1114,27 @@ run_command_handler(gpointer data)
   return NULL;
 }
 
-int start_connection_loop()
+static int
+accept_timeout_check(void *param, int time)
+{
+  DEBUG_ENTRY("accept_timeout_check");
+  (void)param;
+  DEBUG_PRINT(COMM_LEVEL, ("time = %d", time));
+  if (glob_stop_flag)
+    DEBUG_RETURN(1);
+  if (time < 5)
+    DEBUG_RETURN(0);
+  DEBUG_RETURN(1);
+}
+
+int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
 {
   int ret_code;
   guint32 thread_id;
   IC_CONNECTION *conn= NULL;
   IC_CONNECTION *fork_conn;
 
+  DEBUG_ENTRY("start_connection_loop");
   if (!(conn= ic_create_socket_object(FALSE, FALSE, FALSE,
                                        CONFIG_READ_BUF_SIZE,
                                        NULL, NULL)))
@@ -1135,16 +1146,18 @@ int start_connection_loop()
                                              NULL,
                                              0,
                                              TRUE);
-  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
+  ret_code= conn->conn_op.ic_set_up_connection(conn,
+                                               accept_timeout_check,
+                                               NULL);
   if (ret_code)
     return ret_code;
   do
   {
     do
     {
-      glob_tp_state->tp_ops.ic_threadpool_check_threads(glob_tp_state);
+      tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
       /* Wait for someone to connect to us. */
-      if ((ret_code= conn->conn_op.ic_accept_connection(conn, NULL, NULL)))
+      if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       {
         printf("Error %d received in accept connection\n", ret_code);
         break;
@@ -1160,13 +1173,12 @@ int start_connection_loop()
         We have an active connection, we'll handle the connection in a
         separate thread.
       */
-      if (glob_tp_state->tp_ops.ic_threadpool_start_thread(
-                 glob_tp_state,
-                 &thread_id,
-                 run_command_handler,
-                 fork_conn,
-                 IC_SMALL_STACK_SIZE,
-                 FALSE))
+      if (tp_state->tp_ops.ic_threadpool_start_thread(tp_state,
+                                                      &thread_id,
+                                                      run_command_handler,
+                                                      fork_conn,
+                                                      IC_SMALL_STACK_SIZE,
+                                                      FALSE))
       {
         printf("Failed to create thread after forking accept connection\n");
         fork_conn->conn_op.ic_free_connection(fork_conn);
@@ -1175,6 +1187,15 @@ int start_connection_loop()
     } while (0);
   } while (!glob_stop_flag);
   return 0;
+}
+
+static void
+pcntrl_die(void *param)
+{
+  DEBUG_ENTRY("pcntrl_die");
+  (void)param;
+  glob_stop_flag= TRUE;
+  DEBUG_RETURN_EMPTY;
 }
 
 static GOptionEntry entries[] = 
@@ -1186,8 +1207,11 @@ static GOptionEntry entries[] =
     &glob_server_port,
     "Set server port, default = 11860", NULL},
   { "basedir", 0, 0, G_OPTION_ARG_STRING,
-    &glob_base_dir,
+    &glob_base_path,
     "Sets path to binaries controlled by this program", NULL},
+  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME,
+    &ic_glob_data_path,
+    "Sets path to data directory", NULL},
   { "daemonize", 0, 0, G_OPTION_ARG_INT,
      &glob_daemonize,
     "Daemonize program", NULL},
@@ -1197,16 +1221,33 @@ static GOptionEntry entries[] =
 int main(int argc, char *argv[])
 {
   int ret_code= 0;
-  gchar tmp_buf[IC_MAX_FILE_NAME_SIZE];
-  gchar iclaustron_buf[IC_MAX_FILE_NAME_SIZE];
-  gchar mysql_buf[IC_MAX_FILE_NAME_SIZE];
+  IC_THREADPOOL_STATE *tp_state;
+  IC_STRING log_file;
  
+  IC_INIT_STRING(&log_file, NULL, 0, FALSE);
   if ((ret_code= ic_start_program(argc, argv, entries, NULL,
                                   glob_process_name,
            "- iClaustron Control Server", TRUE)))
     return ret_code;
-  if (!(glob_tp_state=
-        ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+  if ((ret_code= ic_set_base_dir(&glob_base_dir, glob_base_path)))
+    goto error;
+  if ((ret_code= ic_set_data_dir(&ic_glob_data_dir, ic_glob_data_path)))
+    goto error;
+  if (glob_daemonize)
+  {
+    if ((ret_code= ic_add_dup_string(&log_file, ic_glob_data_dir.str)) ||
+        (ret_code= ic_add_dup_string(&log_file, "ic_pcntrld.log")))
+      goto error;
+    if ((ret_code= ic_daemonize(log_file.str)))
+      goto error;
+  }
+  ic_set_die_handler(pcntrl_die, NULL);
+  ic_set_sig_error_handler(NULL, NULL);
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
+                              glob_base_dir.str));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Data directory: %s",
+                              ic_glob_data_dir.str));
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
     return IC_ERROR_MEM_ALLOC;
   if (!(glob_pc_hash= create_pc_hash()))
     goto error;
@@ -1231,31 +1272,16 @@ int main(int argc, char *argv[])
     /var/lib/iclaustron_install.
 
     The resulting base directory is stored in the global variable
-    glob_base_dir_string. We set up the default strings for the
+    glob_base_dir. We set up the default strings for the
     version we've compiled, the protocol to the process controller
     enables the Cluster Manager to specify which version to use.
 
     This program will have it's state in memory but will also checkpoint this
     state to a file. This is to ensure that we are able to connect to processes
     again even after we had to restart this program. This file is stored in
-    the iclaustron_data placed beside the iclaustron_install directory. The file
-    is called pcntrl_state.
+    the iclaustron_data placed beside the iclaustron_install directory. The
+    file is called pcntrl_state.
   */
-  if ((ret_code= ic_set_base_dir(&glob_base_dir_string, glob_base_dir)))
-    goto error;
-  ic_make_iclaustron_version_string(&glob_ic_base_dir_string, tmp_buf);
-  ic_set_relative_dir(&glob_ic_base_dir_string, &glob_base_dir_string,
-                      iclaustron_buf, glob_ic_base_dir_string.str);
-  ic_make_mysql_version_string(&glob_mysql_base_dir_string, tmp_buf);
-  ic_set_relative_dir(&glob_mysql_base_dir_string, &glob_base_dir_string,
-                      mysql_buf, glob_mysql_base_dir_string.str);
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
-                              glob_base_dir_string.str));
-  if (glob_daemonize)
-  {
-    if ((ret_code= ic_daemonize("/dev/null")))
-      goto error;
-  }
   /*
     Next step is to wait for Cluster Managers to connect to us, after they
     have connected they can request action from us as well. Any server can
@@ -1268,15 +1294,19 @@ int main(int argc, char *argv[])
     such that the program receives a SIGKILL signal. This program cannot
     be started and stopped from a Cluster Manager for security reasons.
   */
-  ret_code= start_connection_loop();
+  ret_code= start_connection_loop(tp_state);
 error:
-  glob_tp_state->tp_ops.ic_threadpool_stop(glob_tp_state);
+  tp_state->tp_ops.ic_threadpool_stop(tp_state);
   if (glob_pc_hash)
     ic_hashtable_destroy(glob_pc_hash);
   if (pc_hash_mutex)
     g_mutex_free(pc_hash_mutex);
-  if (glob_base_dir_string.str)
-    ic_free(glob_base_dir_string.str);
+  if (glob_base_dir.str)
+    ic_free(glob_base_dir.str);
+  if (ic_glob_data_dir.str)
+    ic_free(ic_glob_data_dir.str);
+  if (log_file.str)
+    ic_free(log_file.str);
   if (glob_dyn_trans)
     glob_dyn_trans->dt_ops.ic_free_dynamic_translation(glob_dyn_trans);
   return ret_code;

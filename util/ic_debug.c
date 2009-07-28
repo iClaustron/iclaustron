@@ -37,8 +37,12 @@ void
 ic_debug_entry(const char *entry_point)
 {
   if (glob_debug_screen)
+  {
     printf("Entry into: %s\n", entry_point);
+    fflush(stdout);
+  }
   fprintf(ic_fptr, "Entry into: %s\n", entry_point);
+  fflush(ic_fptr);
 }
 
 int ic_debug_open()
@@ -47,9 +51,11 @@ int ic_debug_open()
   if (ic_fptr == NULL)
   {
     printf("Failed to open %s\n", glob_debug_file);
+    fflush(stdout);
     return 1;
   }
   fprintf(ic_fptr, "Entry into: \n");
+  fflush(ic_fptr);
   return 0;
 }
 
@@ -57,8 +63,12 @@ void
 ic_debug_print_char_buf(gchar *buf)
 {
   if (glob_debug_screen)
+  {
     printf("%s\n", buf);
+    fflush(stdout);
+  }
   fprintf(ic_fptr, "%s\n", buf);
+  fflush(ic_fptr);
 }
 
 void
@@ -81,14 +91,18 @@ ic_debug_printf(const char *format,...)
   if (glob_debug_screen)
   {
     printf("%s\n", buf);
+    fflush(stdout);
   }
   fprintf(ic_fptr, "%s\n", buf);
+  fflush(ic_fptr);
   va_end(args);
 }
 
 void
 ic_debug_close()
 {
+  fflush(stdout);
+  fflush(ic_fptr);
   fclose(ic_fptr);
 }
 #endif

@@ -46,18 +46,9 @@ struct ic_string
 */
 int ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir);
 int ic_set_data_dir(IC_STRING *base_dir, const gchar *input_base_dir);
-void ic_set_relative_dir(IC_STRING *res_str, IC_STRING *dir,
-                         gchar *buf, const gchar *dir_name);
-int ic_set_base_path(IC_STRING *base_dir, gchar *base_path,
-                     gchar *version,
-                     gchar *base_path_buf);
-int ic_set_binary_path(IC_STRING *binary_dir, gchar *base_path,
-                       gchar *version,
-                       gchar *binary_path_buf);
-int ic_set_config_path(IC_STRING *config_dir, gchar *data_path,
-                       gchar *config_path_buf);
-void ic_make_iclaustron_version_string(IC_STRING *res_str, gchar *buf);
-void ic_make_mysql_version_string(IC_STRING *res_str, gchar *buf);
+int ic_set_binary_dir(IC_STRING *binary_dir, gchar *base_path,
+                      gchar *version);
+int ic_set_config_dir(IC_STRING *config_dir, gchar *data_path);
 
 void ic_set_number_ending_string(gchar *buf, guint64 number);
 void ic_create_config_file_name(IC_STRING *file_name,

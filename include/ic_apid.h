@@ -405,6 +405,7 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
   variables used by these programs.
 */
 extern IC_STRING ic_glob_config_dir;
+extern IC_STRING ic_glob_data_dir;
 extern gchar *ic_glob_cs_server_name;
 extern gchar *ic_glob_cs_server_port;
 extern gchar *ic_glob_cs_connectstring;
@@ -416,7 +417,6 @@ extern guint32 ic_glob_daemonize;
 extern GOptionEntry ic_apid_entries[];
 
 int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
-                          gchar *config_path_buf,
                           gchar **err_str,
                           gchar *error_buf,
                           IC_APID_GLOBAL **apid_global,

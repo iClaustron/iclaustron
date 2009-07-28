@@ -15,6 +15,7 @@
 
 #include <ic_base_header.h>
 #include <ic_err.h>
+#include <ic_debug.h>
 #include <ic_port.h>
 #include <ic_dyn_array.h>
 #include "ic_dyn_array_int.h"
@@ -820,14 +821,15 @@ ic_create_dynamic_translation()
   IC_TRANSLATION_ENTRY transl_entry;
   IC_DYNAMIC_TRANSLATION_INT *dyn_trans;
 
+  DEBUG_ENTRY("ic_create_dynamic_translation");
   if (IC_ERROR_INJECT(30) ||
       !(dyn_trans= (IC_DYNAMIC_TRANSLATION_INT*)ic_calloc(
                       sizeof(IC_DYNAMIC_TRANSLATION_INT))))
-    return NULL;
+    DEBUG_RETURN(NULL);
   if (!(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_create_ordered_dynamic_array()))
   {
     ic_free((void*)dyn_trans);
-    return NULL;
+    DEBUG_RETURN(NULL);
   }
   transl_entry.position= (guint64)0;
   if (insert_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array,
@@ -836,7 +838,7 @@ ic_create_dynamic_translation()
   {
     ic_free((void*)dyn_trans);
     free_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array);
-    return NULL;
+    DEBUG_RETURN(NULL);
   }
   dyn_trans->dt_ops.ic_insert_translation_object= insert_translation_object;
   dyn_trans->dt_ops.ic_remove_translation_object= remove_translation_object;
@@ -844,6 +846,6 @@ ic_create_dynamic_translation()
   dyn_trans->dt_ops.ic_get_translation_object= get_translation_object;
   dyn_trans->dt_ops.ic_get_max_index= get_max_index;
   dyn_trans->dyn_array= dyn_array;
-  return (IC_DYNAMIC_TRANSLATION*)dyn_trans;
+  DEBUG_RETURN((IC_DYNAMIC_TRANSLATION*)dyn_trans);
 }
 

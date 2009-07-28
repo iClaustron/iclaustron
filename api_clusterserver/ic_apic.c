@@ -7534,7 +7534,9 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     connection.
   */
   conn= run_obj->conn;
-  ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
+  ret_code= conn->conn_op.ic_set_up_connection(conn,
+                                               check_for_stopped_rcs_threads,
+                                               (void*)tp_state);
   if (ret_code)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
@@ -7547,9 +7549,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))
       goto error;
-    if ((ret_code= conn->conn_op.ic_accept_connection(conn,
-                                        check_for_stopped_rcs_threads,
-                                        (void*)tp_state)))
+    if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       DEBUG_PRINT(COMM_LEVEL,
         ("Failed to accept a new connection"));

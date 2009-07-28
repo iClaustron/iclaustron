@@ -41,7 +41,6 @@ int main(int argc, char *argv[])
   int ret_code;
   IC_API_CONFIG_SERVER *apic= NULL;
   IC_APID_GLOBAL *apid_global= NULL;
-  gchar config_path_buf[IC_MAX_FILE_NAME_SIZE];
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state;
@@ -51,7 +50,6 @@ int main(int argc, char *argv[])
             "- iClaustron File Server", TRUE)))
     goto end;
   if ((ret_code= ic_start_apid_program(&tp_state,
-                                       config_path_buf,
                                        &err_str,
                                        error_str,
                                        &apid_global,
