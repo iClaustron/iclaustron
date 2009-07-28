@@ -951,115 +951,118 @@ ic_print_config_parameters(guint32 mask)
       conf_entry= &glob_conf_entry[inx];
       if (!(conf_entry->config_types & mask))
         continue;
-      printf("\n");
+      ic_printf("");
       if (conf_entry->is_deprecated)
       {
-        printf("Entry %u is deprecated\n", i);
+        ic_printf("Entry %u is deprecated\n", i);
         continue;
       }
-      printf("Entry %u:\n", i);
-      printf("Name: %s\n", conf_entry->config_entry_name.str);
-      printf("Comment: %s\n", conf_entry->config_entry_description);
-      printf("ConfigId: %u\n", conf_entry->config_id);
+      ic_printf("Entry %u:", i);
+      ic_printf("Name: %s", conf_entry->config_entry_name.str);
+      ic_printf("Comment: %s", conf_entry->config_entry_description);
+      ic_printf("ConfigId: %u", conf_entry->config_id);
       switch (conf_entry->data_type)
       {
         case IC_CHARPTR:
-          printf("Data type is string\n");
+          ic_printf("Data type is string");
           break;
         case IC_UINT16:
-          printf("Data type is 16-bit unsigned integer\n");
+          ic_printf("Data type is 16-bit unsigned integer");
           break;
         case IC_BOOLEAN:
-          printf("Data type is boolean\n");
+          ic_printf("Data type is boolean");
           break;
         case IC_UINT32:
-          printf("Data type is 32-bit unsigned integer\n");
+          ic_printf("Data type is 32-bit unsigned integer");
           break;
         case IC_UINT64:
-          printf("Data type is 64-bit unsigned integer\n");
+          ic_printf("Data type is 64-bit unsigned integer");
           break;
         default:
-          printf("Data type set to non-existent type!!!\n");
+          ic_printf("Data type set to non-existent type!!!");
           break;
       }
       if (conf_entry->is_not_configurable)
       {
-        printf("Entry is not configurable with value %u\n",
+        ic_printf("Entry is not configurable with value %u",
                (guint32)conf_entry->default_value);
         continue;
       }
-      printf("Offset of variable is %u\n", conf_entry->offset);
+      ic_printf("Offset of variable is %u", conf_entry->offset);
       switch (conf_entry->change_variant)
       {
         case IC_ONLINE_CHANGE:
-          printf("This parameter is changeable online\n");
+          ic_printf("This parameter is changeable online");
           break;
         case IC_NODE_RESTART_CHANGE:
-          printf("This parameter can be changed during a node restart\n");
+          ic_printf("This parameter can be changed during a node restart");
           break;
         case IC_ROLLING_UPGRADE_CHANGE:
         case IC_ROLLING_UPGRADE_CHANGE_SPECIAL:
-          printf("Parameter can be changed during a rolling upgrade\n");
+          ic_printf("Parameter can be changed during a rolling upgrade");
           break;
         case IC_INITIAL_NODE_RESTART:
-          printf("Parameter can be changed when node performs initial restart\n");
+          ic_printf(
+            "Parameter can be changed when node performs initial restart");
           break;
         case IC_CLUSTER_RESTART_CHANGE:
-          printf("Parameter can be changed after stopping cluster before restart\n");
+          ic_printf(
+            "Parameter can be changed after stopping cluster before restart");
           break;
         case IC_NOT_CHANGEABLE:
-          printf("Parameter can only be changed using backup, change, restore\n");
+          ic_printf(
+            "Parameter can only be changed using backup, change, restore");
           break;
         default:
           g_assert(0);
       }
       if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
-        printf("This config variable is used in a client node\n");
+        ic_printf("This config variable is used in a client node");
       if (conf_entry->config_types & (1 << IC_DATA_SERVER_TYPE))
-        printf("This config variable is used in a data server\n");
+        ic_printf("This config variable is used in a data server");
       if (conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE))
-        printf("This config variable is used in a cluster server\n");
+        ic_printf("This config variable is used in a cluster server");
       if (conf_entry->config_types & (1 << IC_SQL_SERVER_TYPE))
-        printf("This config variable is used in a sql server\n");
+        ic_printf("This config variable is used in a sql server");
       if (conf_entry->config_types & (1 << IC_REP_SERVER_TYPE))
-        printf("This config variable is used in a replication server\n");
+        ic_printf("This config variable is used in a replication server");
       if (conf_entry->config_types & (1 << IC_FILE_SERVER_TYPE))
-        printf("This config variable is used in a file server\n");
+        ic_printf("This config variable is used in a file server");
       if (conf_entry->config_types & (1 << IC_RESTORE_TYPE))
-        printf("This config variable is used in a restore node\n");
+        ic_printf("This config variable is used in a restore node");
       if (conf_entry->config_types & (1 << IC_CLUSTER_MGR_TYPE))
-        printf("This config variable is used in a cluster manager\n");
+        ic_printf("This config variable is used in a cluster manager");
       if (conf_entry->config_types & (1 << IC_COMM_TYPE))
-        printf("This config variable is used in connections\n");
+        ic_printf("This config variable is used in connections");
       if (conf_entry->config_types & (1 << IC_SYSTEM_TYPE))
-        printf("This config variable is used in System (Cluster) section\n");
+        ic_printf("This config variable is used in System (Cluster) section");
 
       if (conf_entry->is_mandatory)
-        printf("Entry is mandatory and has no default value\n");
+        ic_printf("Entry is mandatory and has no default value");
       else if (conf_entry->is_string_type)
       {
         if (!conf_entry->is_mandatory)
         {
-          printf("Entry has default value: %s\n",
+          ic_printf("Entry has default value: %s",
                  conf_entry->default_string);
         }
         continue;
       }
       else
-        printf("Default value is %u\n", (guint32)conf_entry->default_value);
+        ic_printf("Default value is %u", (guint32)conf_entry->default_value);
       if (conf_entry->is_boolean)
       {
-        printf("Entry is either TRUE or FALSE\n");
+        ic_printf("Entry is either TRUE or FALSE");
         continue;
       }
       if (conf_entry->is_min_value_defined)
-        printf("Min value defined: %u\n", (guint32)conf_entry->min_value);
+        ic_printf("Min value defined: %u", (guint32)conf_entry->min_value);
       else
-        printf("No min value defined\n");
+        ic_printf("No min value defined");
       if (conf_entry->is_max_value_defined)
-        printf("Max value defined: %u\n", (guint32)conf_entry->max_value);
+        ic_printf("Max value defined: %u", (guint32)conf_entry->max_value);
       else
-        printf("No max value defined\n");
+        ic_printf("No max value defined");
     }
   }
 }
@@ -1169,21 +1172,21 @@ ic_destroy_conf_hash()
 static void
 id_already_used_aborting(int id)
 {
-  printf("Id = %d is already used, aborting\n", id);
+  ic_printf("Id = %d is already used, aborting", id);
   abort();
 }
 
 static void
 id_out_of_range(int id)
 {
-  printf("Id = % is out of range\n", id);
+  ic_printf("Id = % is out of range", id);
   abort();
 }
 
 static void
 name_out_of_range(int id)
 {
-  printf("Name = % is out of range\n", id);
+  ic_printf("Name = % is out of range", id);
   abort();
 }
 
@@ -4195,9 +4198,9 @@ mandatory_error:
         abort();
       }
       printf("Configuration error found at line %u, missing mandatory",
-             line_number);
-      printf(" configuration item in previous section\n");
-      printf("Missing item is %s\n", conf_entry->config_entry_name.str);
+                line_number);
+      ic_printf(" configuration item in previous section");
+      ic_printf("Missing item is %s", conf_entry->config_entry_name.str);
     }
   }
   return 1;
@@ -6605,8 +6608,8 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
           "Error at Line number %u:\n%s\n", err_obj->line_number,
           ic_get_error_message(err_obj->err_num));
     ret_ptr= NULL;
-    printf("%s Failed to load the cluster configuration file %s\n",
-           ic_err_str, file_name);
+    ic_printf("%s Failed to load the cluster configuration file %s",
+              ic_err_str, file_name);
   }
   else
   {
@@ -7211,9 +7214,9 @@ verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   }
   return 0;
 error:
-  printf("%s Grids require cluster managers/servers to be on "
-         "same nodeid in all clusters\n",
-         ic_err_str);
+  ic_printf("%s Grids require cluster managers/servers to be on "
+            "same nodeid in all clusters",
+            ic_err_str);
   return 1;
 }
 
@@ -7787,8 +7790,8 @@ end:
 
 error:
   read_buf[read_size]= 0;
-  printf("Protocol error line %d\n", error_line);
-  printf("Protocol message: %s\n", read_buf);
+  ic_printf("Protocol error line %d", error_line);
+  ic_printf("Protocol message: %s", read_buf);
   goto end;
 }
 
@@ -7917,14 +7920,14 @@ handle_report_event(IC_CONNECTION *conn)
   report_node_id= num_array[0] >> 16;
   g_assert((num_array[0] & 0xFFFF) == 59);
   if (num_array[1] == 0)
-    printf("Node %u has shutdown\n", report_node_id);
+    ic_printf("Node %u has shutdown", report_node_id);
   else if (num_array[1] == 1)
-    printf("Node %u has restarted\n", report_node_id);
+    ic_printf("Node %u has restarted", report_node_id);
   else
-    printf("Node %u has performed initial restart\n", report_node_id);
+    ic_printf("Node %u has performed initial restart", report_node_id);
   if (length == (guint64)3)
   {
-    printf(" due to graceful shutdown\n");
+    ic_printf(" due to graceful shutdown");
   }
   else
   {
@@ -7933,8 +7936,8 @@ handle_report_event(IC_CONNECTION *conn)
     os_signal_num= num_array[2];
     error_num= num_array[3];
     start_phase= num_array[4];
-    printf(" due to error %u, OS Signal %u in startphase %u\n",
-           error_num, os_signal_num, start_phase);
+    ic_printf(" due to error %u, OS Signal %u in startphase %u",
+              error_num, os_signal_num, start_phase);
   }
   DEBUG_RETURN(0);
 error:
@@ -9102,7 +9105,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   GOptionGroup *debug_group;
   GOptionContext *context;
 
-  printf("Starting %s program\n", program_name);
+  ic_printf("Starting %s program", program_name);
   use_config_vars= use_config; /* TRUE for Unit test programs */
   context= g_option_context_new(start_text);
   if (!context)
@@ -9125,10 +9128,10 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   return 0;
 
 parse_error:
-  printf("No such program option: %s\n", error->message);
+  ic_printf("No such program option: %s", error->message);
   goto error;
 mem_error:
-  printf("Memory allocation error\n");
+  ic_printf("Memory allocation error");
   goto error;
 error:
   return ret_code;

@@ -731,7 +731,7 @@ renew_connect:
           }
           else
           {
-            printf("sockfd not set at connect\n");
+            ic_printf("sockfd not set at connect");
             abort();
           }
         }
@@ -1112,7 +1112,7 @@ ic_ssl_read(IC_INT_CONNECTION *conn,
   IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
   int ret_code= SSL_read(ssl_conn->ssl_conn, buf, buf_size);
   int error;
-  printf("Wrote %d bytes through SSL\n", buf_size);
+  ic_printf("Wrote %d bytes through SSL", buf_size);
 
   switch ((error= SSL_get_error(ssl_conn->ssl_conn, ret_code)))
   {
@@ -1328,16 +1328,16 @@ static void
 write_stat_socket_connection(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  printf("Number of sent buffers = %u, Number of sent bytes = %u\n",
+  ic_printf("Number of sent buffers = %u, Number of sent bytes = %u",
          (guint32)conn->conn_stat.num_sent_buffers,
          (guint32)conn->conn_stat.num_sent_bytes);
-  printf("Number of rec buffers = %u, Number of rec bytes = %u\n",
+  ic_printf("Number of rec buffers = %u, Number of rec bytes = %u",
          (guint32)conn->conn_stat.num_rec_buffers,
          (guint32)conn->conn_stat.num_rec_bytes);
-  printf("Number of send errors = %u, Number of send timeouts = %u\n",
+  ic_printf("Number of send errors = %u, Number of send timeouts = %u",
         (guint32)conn->conn_stat.num_send_errors,
         (guint32)conn->conn_stat.num_send_timeouts);
-  printf("Number of rec errors = %u\n",
+  ic_printf("Number of rec errors = %u",
         (guint32)conn->conn_stat.num_rec_errors);
 }
 
@@ -1859,19 +1859,19 @@ static int
 ic_ssl_verify_callback(int ok, X509_STORE_CTX *ctx_store)
 {
   gchar buf[512];
-  printf("verify callback %d\n", ok);
+  ic_printf("verify callback %d", ok);
   if (ok == 0)
   {
     X509 *cert= X509_STORE_CTX_get_current_cert(ctx_store);
     int depth= X509_STORE_CTX_get_error_depth(ctx_store);
     int error= X509_STORE_CTX_get_error(ctx_store);
 
-    printf("Error with certificate at depth %d\n", depth);
+    ic_printf("Error with certificate at depth %d", depth);
     X509_NAME_oneline(X509_get_issuer_name(cert), buf, 512);
-    printf("Issuer = %s\n", buf);
+    ic_printf("Issuer = %s", buf);
     X509_NAME_oneline(X509_get_subject_name(cert), buf, 512);
-    printf("Subject = %s\n", buf);
-    printf("Error %d, %s\n", error, X509_verify_cert_error_string(error));
+    ic_printf("Subject = %s", buf);
+    ic_printf("Error %d, %s", error, X509_verify_cert_error_string(error));
   }
   return ok;
 }
@@ -1948,34 +1948,34 @@ ssl_create_connection(IC_SSL_CONNECTION *conn)
     SSL_CTX_set_tmp_dh_callback(conn->ssl_ctx, ssl_get_dh_callback);
   if (!(conn->ssl_conn= SSL_new(conn->ssl_ctx)))
     goto error_handler;
-  printf("Successfully created a new SSL session\n");
+  ic_printf("Successfully created a new SSL session");
   if (!SSL_set_fd(conn->ssl_conn, sock_conn->rw_sockfd))
   {
     error= SSL_get_error(conn->ssl_conn, 0);
     goto error_handler;
   }
-  printf("SSL session created\n");
+  ic_printf("SSL session created");
   if (sock_conn->is_client)
     error= SSL_connect(conn->ssl_conn);
   else
     error= SSL_accept(conn->ssl_conn);
-  printf("SSL session connected\n");
+  ic_printf("SSL session connected");
   error= SSL_get_error(conn->ssl_conn, error);
   if (error == SSL_ERROR_NONE)
   {
-    printf("SSL Success\n");
+    ic_printf("SSL Success");
     error= 0;
   }
   else
   {
     /* Go through SSL error stack */
-    printf("SSL Error: %d\n", error);
+    ic_printf("SSL Error: %d", error);
     goto error_handler;
   }
 
   return 0;
 error_handler:
-  printf("Session creation failed\n");
+  ic_printf("Session creation failed");
   free_ssl_session((IC_CONNECTION*)conn);
   return 1;
 }

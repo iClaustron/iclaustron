@@ -169,12 +169,12 @@ ic_print_error(int error_number)
       error_number > IC_LAST_ERROR ||
       !ic_error_str[error_number - IC_FIRST_ERROR])
   {
-    printf("%d: %s\n", error_number, no_such_error_str);
+    ic_printf("%d: %s", error_number, no_such_error_str);
     if (sys_errlist[error_number])
       perror(sys_errlist[error_number]);
   }
   else
-    printf("%s\n", ic_error_str[error_number - IC_FIRST_ERROR]);
+    ic_printf("%s", ic_error_str[error_number - IC_FIRST_ERROR]);
 }
 
 gchar *ic_get_error_message(int error_number)

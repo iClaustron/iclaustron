@@ -59,7 +59,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
     if (read_size == 0)
       break;
     read_buf[read_size]= 0;
-    printf("%s\n", read_buf);
+    ic_printf("%s\n", read_buf);
   }
   return ret_code;
 
@@ -94,7 +94,7 @@ read_one_line(IC_STRING *out_str)
   int ret_value;
   gchar line[2048];
 
-  printf("%s", ic_prompt);
+  ic_printf("%s", ic_prompt);
   line_str.str= fgets(line, sizeof(line), stdin);
   if (!line_str.str)
     return 1;
@@ -131,7 +131,7 @@ output_help(void)
 {
   gchar **loc_help_str= help_str;
   for ( ; *loc_help_str ; loc_help_str++)
-    printf("%s\n", *loc_help_str);
+    ic_printf("%s\n", *loc_help_str);
 }
 static int
 command_interpreter(IC_CONNECTION *conn)

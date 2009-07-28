@@ -82,8 +82,8 @@ stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
       break;
     if (loop_count > IC_MAX_WAIT_THREADPOOL_STOP)
     {
-      printf("We waited for %d seconds to stop threadpool unsuccessfully"
-             ", we stop anyways\n", IC_MAX_WAIT_THREADPOOL_STOP);
+      ic_printf("We waited for %d seconds to stop threadpool unsuccessfully"
+                ", we stop anyways\n", IC_MAX_WAIT_THREADPOOL_STOP);
       break;
     }
     loop_count++;

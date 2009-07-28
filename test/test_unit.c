@@ -15,6 +15,7 @@
 
 #include <ic_base_header.h>
 #include <ic_err.h>
+#include <ic_debug.h>
 #include <ic_port.h>
 #include <ic_mc.h>
 #include <ic_string.h>
@@ -319,8 +320,8 @@ test_dynamic_translation(guint32 num_inserts, guint32 num_removes)
   IC_TEST_DYN_TRANS *test_dyn_trans= (IC_TEST_DYN_TRANS*)
     ic_calloc(sizeof(IC_TEST_DYN_TRANS)*num_inserts);
 
-  printf("Testing with %u number of inserts and %u number of removes\n",
-         num_inserts, num_removes);
+  ic_printf("Testing with %u number of inserts and %u number of removes",
+            num_inserts, num_removes);
   dyn_trans= ic_create_dynamic_translation();
   if (dyn_trans == NULL)
   {
@@ -525,8 +526,8 @@ test_hashtable(guint32 num_inserts, guint32 num_removes)
   IC_TEST_HASHTABLE *test_hashtable= (IC_TEST_HASHTABLE*)
     ic_calloc(sizeof(IC_TEST_HASHTABLE)*num_inserts);
 
-  printf("Testing with %u number of inserts and %u number of removes\n",
-         num_inserts, num_removes);
+  ic_printf("Testing with %u number of inserts and %u number of removes",
+            num_inserts, num_removes);
   hashtable= ic_create_hashtable(4096, hash_function, equal_function);
   if (hashtable == NULL)
   {
@@ -982,38 +983,38 @@ int main(int argc, char *argv[])
   switch (glob_test_type)
   {
     case 0:
-      printf("Executing Unit test of Memory Container\n");
+      ic_printf("Executing Unit test of Memory Container");
       ret_code= unit_test_mc();
       break;
 
     case 1:
-      printf("Executing Unit test of Simple Dynamic Array\n");
+      ic_printf("Executing Unit test of Simple Dynamic Array");
       ret_code= unit_test_simple_dynamic_array();
       break;
     case 2:
-      printf("Executing Unit test of Ordered Dynamic Array\n");
+      ic_printf("Executing Unit test of Ordered Dynamic Array");
       ret_code= unit_test_ordered_dynamic_array();
       break;
     case 3:
-      printf("Executing Unit test of Dynamic translation\n");
+      ic_printf("Executing Unit test of Dynamic translation");
       ret_code= unit_test_dynamic_translation();
       break;
     case 4:
-      printf("Executing Unit test of Bitmap\n");
+      ic_printf("Executing Unit test of Bitmap");
       ret_code= unit_test_bitmap();
       break;      
     case 5:
-      printf("Executing Unit test of Hashtable\n");
+      ic_printf("Executing Unit test of Hashtable");
       ret_code= unit_test_hashtable();
       break;
     case 6:
-      printf("Executing unit test of Parse Connectstring\n");
+      ic_printf("Executing unit test of Parse Connectstring");
       ret_code= unit_test_parse_connectstring();
       break;
     default:
       break;
    }
    ic_end();
-   printf("iClaustron Test return code: %d\n", ret_code);
+   ic_printf("iClaustron Test return code: %d", ret_code);
    return ret_code;
 }

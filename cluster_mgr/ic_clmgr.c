@@ -828,8 +828,8 @@ ic_use_cluster_cmd(IC_PARSE_DATA *parse_data)
   gchar buf[256];
   guint32 cluster_id;
   IC_API_CONFIG_SERVER *apic= parse_data->apic;
-  printf("len= %u, str= %s\n", (guint32)parse_data->cluster_name.len,
-         parse_data->cluster_name.str);
+  ic_printf("len= %u, str= %s", (guint32)parse_data->cluster_name.len,
+            parse_data->cluster_name.str);
   if (parse_data->cluster_name.str)
   {
     cluster_id= apic->api_op.ic_get_cluster_id_from_name(apic,
@@ -1115,8 +1115,8 @@ set_up_server_connection(IC_CONNECTION **conn)
     loc_conn->conn_op.ic_free_connection(loc_conn);
     return 1;
   }
-  printf("Successfully set-up connection for Cluster Manager at %s:%s\n",
-         glob_cluster_mgr_ip, glob_cluster_mgr_port);
+  ic_printf("Successfully set-up connection for Cluster Manager at %s:%s",
+            glob_cluster_mgr_ip, glob_cluster_mgr_port);
   *conn= loc_conn;
   return 0;
 }

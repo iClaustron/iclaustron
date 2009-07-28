@@ -64,9 +64,9 @@ ic_mem_init()
 void ic_mem_end()
 {
 #ifdef DEBUG_BUILD
-  printf("num_mem_allocs = %u\n", (guint32)num_mem_allocs);
+  ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
   if (num_mem_allocs != (guint64)0)
-    printf("Memory leak found\n");
+    ic_printf("Memory leak found");
 #endif
 }
 void
@@ -263,12 +263,12 @@ int run_process(gchar **argv,
                     exit_status,
                     &error))
   {
-    printf("Failed to run script, error: %s", error->message);
+    ic_printf("Failed to run script, error: %s", error->message);
     return 0;
   }
   if (*exit_status)
   {
-    printf("Exit status %d\n", *exit_status);
+    ic_printf("Exit status %d\n", *exit_status);
     if (*exit_status < 0 || *exit_status > 2)
       *exit_status= 2;
     return *exit_status;

@@ -1101,7 +1101,7 @@ run_command_handler(gpointer data)
     else if (read_size)
     {
       read_buf[read_size]= 0;
-      printf("Received a message not expected: %s\n", read_buf);
+      ic_printf("Received a message not expected: %s", read_buf);
       ret_code= IC_PROTOCOL_ERROR;
       /* Closing connection */
       break;
@@ -1117,14 +1117,14 @@ run_command_handler(gpointer data)
 static int
 accept_timeout_check(void *param, int time)
 {
-  DEBUG_ENTRY("accept_timeout_check");
   (void)param;
-  DEBUG_PRINT(COMM_LEVEL, ("time = %d", time));
+  (void)time;
   if (glob_stop_flag)
-    DEBUG_RETURN(1);
-  if (time < 5)
-    DEBUG_RETURN(0);
-  DEBUG_RETURN(1);
+  {
+    DEBUG_PRINT(COMM_LEVEL, ("Stop ordered"));
+    return 1;
+  }
+  return 0;
 }
 
 int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
@@ -1159,14 +1159,14 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
       /* Wait for someone to connect to us. */
       if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       {
-        printf("Error %d received in accept connection\n", ret_code);
+        ic_printf("Error %d received in accept connection", ret_code);
         break;
       }
       if (!(fork_conn= 
             conn->conn_op.ic_fork_accept_connection(conn,
                                         FALSE)))  /* No mutex */
       {
-        printf("Error %d received in fork accepted connection\n", ret_code);
+        ic_printf("Error %d received in fork accepted connection", ret_code);
         break;
       }
       /*
@@ -1180,12 +1180,13 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                                       IC_SMALL_STACK_SIZE,
                                                       FALSE))
       {
-        printf("Failed to create thread after forking accept connection\n");
+        ic_printf("Failed to create thread after forking accept connection");
         fork_conn->conn_op.ic_free_connection(fork_conn);
         break;
       }
     } while (0);
   } while (!glob_stop_flag);
+  ic_printf("iClaustron Process Controller was stopped");
   return 0;
 }
 
@@ -1194,6 +1195,7 @@ pcntrl_die(void *param)
 {
   DEBUG_ENTRY("pcntrl_die");
   (void)param;
+  ic_printf("Stop signal received");
   glob_stop_flag= TRUE;
   DEBUG_RETURN_EMPTY;
 }

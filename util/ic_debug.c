@@ -99,6 +99,19 @@ ic_debug_printf(const char *format,...)
 }
 
 void
+ic_printf(const char *format,...)
+{
+  va_list args;
+  char buf[2049];
+
+  va_start(args, format);
+  vsprintf(buf, format, args);
+  printf("%s\n", buf);
+  fflush(stdout);
+  va_end(args);
+}
+
+void
 ic_debug_close()
 {
   fflush(stdout);

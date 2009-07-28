@@ -374,7 +374,7 @@ gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
 void ic_print_ic_string(IC_STRING *str)
 {
   if (str->is_null_terminated)
-    printf("%s\n", str->str);
+    ic_printf("%s", str->str);
   else
   {
     guint32 str_len= 0;
@@ -384,6 +384,7 @@ void ic_print_ic_string(IC_STRING *str)
       str_len++;
     }
     putchar('\n');
+    fflush(stdout);
   }
 }
 

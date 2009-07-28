@@ -312,7 +312,7 @@ IC_POLL_SET* ic_create_poll_set()
 
   if ((epoll_fd= epoll_create(MAX_POLL_SET_CONNECTIONS)) < 0)
   {
-    printf("Failed to allocate an epoll fd\n");
+    ic_printf("Failed to allocate an epoll fd");
     return NULL;
   }
   if (alloc_poll_set(&poll_set))
@@ -465,7 +465,7 @@ IC_POLL_SET* ic_create_poll_set()
 
   if ((eventport_fd= port_create()) < 0)
   {
-    printf("Failed to allocate eventport fd\n");
+    ic_printf("Failed to allocate eventport fd");
     return NULL;
   }
   if (alloc_poll_set(&poll_set))
@@ -614,7 +614,7 @@ IC_POLL_SET* ic_create_poll_set()
 
   if ((kqueue_fd= kqueue()) < 0)
   {
-    printf("Failed to allocate a kqueue fd\n");
+    ic_printf("Failed to allocate a kqueue fd");
     return NULL;
   }
   if (alloc_poll_set(&poll_set))
@@ -670,7 +670,10 @@ IC_POLL_SET* ic_create_poll_set()
   IC_INT_POLL_SET *poll_set;
 
   if (alloc_poll_set(&poll_set))
+  {
+    ic_printf("Failed to allocate an IO completion");
     return NULL;
+  }
   set_common_methods(poll_set);
   poll_set->poll_ops.ic_poll_set_add_connection=
     io_comp_poll_set_add_connection;
@@ -769,7 +772,10 @@ IC_POLL_SET* ic_create_poll_set()
   guint32 i;
 
   if (alloc_poll_set(&poll_set))
+  {
+    ic_printf("Failed to allocate a poll fd");
     return NULL;
+  }
   if (!(poll_set->impl_specific_ptr= ic_calloc(
       sizeof(struct pollfd) * MAX_POLL_SET_CONNECTIONS)))
   {

@@ -101,7 +101,7 @@ end:
   {
     if ((stop_error= run_obj->run_op.ic_stop_cluster_server(run_obj)))
     {
-      printf("Failed to stop cluster server with error:\n");
+      ic_printf("Failed to stop cluster server with error:");
       ic_print_error(stop_error);
     }
     run_obj->run_op.ic_free_run_cluster(run_obj);
@@ -113,6 +113,6 @@ error:
   goto end;
 start_error:
   err_str= run_obj->run_op.ic_fill_error_buffer(run_obj, error, error_buffer);
-  printf("%s", err_str);
+  ic_printf("%s", err_str);
   goto end;
 }

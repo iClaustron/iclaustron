@@ -29,6 +29,7 @@ extern guint32 glob_debug_screen;
 void ic_set_debug(guint32 val);
 guint32 ic_get_debug();
 void ic_debug_print_char_buf(gchar *buf);
+void ic_printf(const char *format,...);
 void ic_debug_printf(const char *format,...);
 void ic_debug_print_rec_buf(gchar *buf, guint32 read_size);
 

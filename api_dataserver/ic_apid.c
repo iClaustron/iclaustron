@@ -3279,7 +3279,7 @@ ic_stop_apid_program(int ret_code,
                      IC_API_CONFIG_SERVER *apic)
 {
   if (err_str)
-    printf("%s", err_str);
+    ic_printf("%s", err_str);
   if (ret_code)
     ic_print_error(ret_code);
   if (ic_glob_config_dir.str)
@@ -3367,7 +3367,7 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
   DEBUG_ENTRY("ic_run_apid_program");
 
   *err_str= NULL;
-  printf("Ready to start server threads\n");
+  ic_printf("Ready to start server threads");
   apid_global->apid_global_ops.ic_set_thread_func(apid_global, apid_func);
   for (i= 0; i < ic_glob_num_threads; i++)
   {

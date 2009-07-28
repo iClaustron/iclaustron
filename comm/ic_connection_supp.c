@@ -26,7 +26,7 @@ ic_print_buf(char *buf, guint32 size)
   char p_buf[2049];
   memcpy(p_buf, buf, size);
   p_buf[size]= NULL_BYTE;
-  printf("Receive buffer, size %u:\n%s\n", size, p_buf);
+  ic_printf("Receive buffer, size %u:\n%s", size, p_buf);
 }
 
 int

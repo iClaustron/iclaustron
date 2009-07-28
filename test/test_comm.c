@@ -67,7 +67,7 @@ connection_test(gboolean use_ssl)
   char buf[8192];
   int ret_code;
 
-  printf("Connection Test Started\n");
+  ic_printf("Connection Test Started");
   if (use_ssl)
   {
 #ifdef HAVE_SSL
@@ -103,11 +103,11 @@ connection_test(gboolean use_ssl)
                                      CONFIG_READ_BUF_SIZE,
                                      NULL, NULL)))
     {
-      printf("Error creating SSL connection object\n");
+      ic_printf("Error creating SSL connection object");
       return 1;
     }
 #else
-    printf("SSL not supported in this build\n");
+    ic_printf("SSL not supported in this build");
     return 0;
 #endif
   }
@@ -117,7 +117,7 @@ connection_test(gboolean use_ssl)
                                         CONFIG_READ_BUF_SIZE,
                                         NULL, NULL)))
     {
-      printf("Memory allocation error\n");
+      ic_printf("Memory allocation error");
       return IC_ERROR_MEM_ALLOC;
     }
   }
@@ -150,13 +150,13 @@ connection_test(gboolean use_ssl)
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code != 0)
   {
-    printf("Error in connection set-up: ret_code = %d\n", ret_code);
+    ic_printf("Error in connection set-up: ret_code = %d", ret_code);
     return ret_code;
   }
   if (glob_is_client)
   {
     guint32 read_size;
-    printf("Start reading\n");
+    ic_printf("Start reading");
     while (!(ret_code= conn->conn_op.ic_read_connection(conn,
                                                         (void*)buf,
                                                         sizeof(buf),
@@ -172,7 +172,7 @@ connection_test(gboolean use_ssl)
     unsigned i;
     memset(buf, 0, sizeof(buf));
     timer= g_timer_new(); /* No errror check in test program */
-    printf("Start writing\n");
+    ic_printf("Start writing");
     g_timer_start(timer);
     for (i= 0; i < 8192; i++)
     {
@@ -184,12 +184,12 @@ connection_test(gboolean use_ssl)
     }
     time_spent= g_timer_elapsed(timer, NULL);
     g_timer_destroy(timer);
-    printf("Time spent in writing 64 MBytes: %f\n", time_spent);
+    ic_printf("Time spent in writing 64 MBytes: %f", time_spent);
   }
   conn->conn_op.ic_write_stat_connection(conn);
   conn->conn_op.ic_close_connection(conn);
   conn->conn_op.ic_free_connection(conn);
-  printf("Connection Test Success\n");
+  ic_printf("Connection Test Success");
   return 0;
 }
 
@@ -205,13 +205,13 @@ api_clusterserver_test()
   IC_CLUSTER_CONNECT_INFO *clu_info_ptr[2];
   guint32 node_id= 1;
 
-  printf("Starting API Cluster server test\n");
+  ic_printf("Starting API Cluster server test");
   cluster_conn.cluster_server_ips= &glob_server_ip;
   cluster_conn.cluster_server_ports= &glob_server_port;
   cluster_conn.num_cluster_servers= 1;
   if (glob_test_type > 1)
   {
-    printf("Testing print of config parameters\n");
+    ic_printf("Testing print of config parameters");
     if (glob_test_type == 2)
       ic_print_config_parameters(1 << IC_DATA_SERVER_TYPE);
     if (glob_test_type == 3)
@@ -234,7 +234,7 @@ api_clusterserver_test()
   clu_info.cluster_id= IC_MAX_UINT32;
   srv_obj->api_op.ic_get_config(srv_obj, &clu_info_ptr[0], node_id);
   srv_obj->api_op.ic_free_config(srv_obj);
-  printf("Completing cluster server test\n");
+  ic_printf("Completing cluster server test");
   return 0;
 }
 
@@ -264,7 +264,7 @@ test_pcntrl()
                                       CONFIG_READ_BUF_SIZE,
                                       NULL, NULL)))
   {
-    printf("Memory allocation error\n");
+    ic_printf("Memory allocation error");
     return IC_ERROR_MEM_ALLOC;
   }
   conn->conn_op.ic_prepare_client_connection(conn,
@@ -309,11 +309,11 @@ int main(int argc, char *argv[])
     glob_client_ip= NULL;
     glob_client_port= NULL;
   }
-  printf("Server ip = %s, Client ip = %s\n", glob_server_ip,
-         glob_client_ip != NULL ? glob_client_ip : "NULL");
-  printf("Server port = %s, Client port = %s\n",
-         glob_server_port,
-         glob_client_port != NULL ? glob_client_port : "NULL");
+  ic_printf("Server ip = %s, Client ip = %s", glob_server_ip,
+            glob_client_ip != NULL ? glob_client_ip : "NULL");
+  ic_printf("Server port = %s, Client port = %s",
+            glob_server_port,
+            glob_client_port != NULL ? glob_client_port : "NULL");
   switch (glob_test_type)
   {
     case 0:
