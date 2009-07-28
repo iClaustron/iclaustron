@@ -154,10 +154,10 @@ ic_init_error_messages()
     "Index out of bound in dynamic translation";
   ic_error_str[IC_ERROR_TRANSLATION_INDEX_ERROR - IC_FIRST_ERROR]=
     "Trying to read non-existent entry in dynamic translation";
-  ic_error_str[IC_ERROR_PARSE_HOSTNAME - IC_FIRST_ERROR]=
-    "Error when parsing hostname in connect string";
-  ic_error_str[IC_ERROR_PARSE_PORT_NUMBER - IC_FIRST_ERROR]=
-    "Error when parsing port number in connect string";
+  ic_error_str[IC_ERROR_PARSE_CONNECTSTRING - IC_FIRST_ERROR]=
+    "Error when parsing connect string";
+  ic_error_str[IC_ERROR_TOO_MANY_CS_HOSTS - IC_FIRST_ERROR]=
+    "Too many hosts in connectstring";
   ic_error_str[IC_ERROR_FAILED_TO_DAEMONIZE - IC_FIRST_ERROR]=
     "Failed to daemonize process";
 }

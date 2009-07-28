@@ -30,7 +30,9 @@ analyse_host(IC_CONNECT_STRING *conn_str,
   IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
 
   if (curr_len == 0)
-    return IC_ERROR_PARSE_HOSTNAME;
+    return IC_ERROR_PARSE_CONNECTSTRING;
+  if (conn_str->num_cs_servers == IC_MAX_CLUSTER_SERVERS)
+    return IC_ERROR_TOO_MANY_CS_HOSTS;
   if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(ptr, start_ptr, curr_len);
@@ -48,7 +50,7 @@ analyse_port_number(IC_CONNECT_STRING *conn_str,
   IC_MEMORY_CONTAINER *mc_ptr= conn_str->mc_ptr;
 
   if (curr_len == 0)
-    return IC_ERROR_PARSE_PORT_NUMBER;
+    return IC_ERROR_PARSE_CONNECTSTRING;
   if (!(ptr= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, curr_len+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(ptr, start_ptr, curr_len);
@@ -140,6 +142,8 @@ ic_parse_connectstring(gchar *connect_string,
     }
     else if (c == ':')
     {
+      if (read_port)
+        goto parse_error;
       /* Finished host part now time for a port number */
       if ((ret_code= analyse_host(conn_str, start_ptr, curr_len)))
         goto error;
@@ -156,20 +160,18 @@ ic_parse_connectstring(gchar *connect_string,
     {
       if (read_host)
       {
-        ret_code= IC_ERROR_PARSE_HOSTNAME;
         if (!((c >= 'a' && c <= 'z') ||
              (c >= 'A' && c <= 'Z') ||
              (c >= '0' && c <= '9') ||
               c == '_' ||
               c == '-' ||
               c == '.'))
-          goto error;
+          goto parse_error;
       }
       else if (read_port)
       {
-        ret_code= IC_ERROR_PARSE_PORT_NUMBER;
         if (!(c >= '0' && c <= '9'))
-          goto error;
+          goto parse_error;
       }
     }
     skip= FALSE;
@@ -188,6 +190,8 @@ ic_parse_connectstring(gchar *connect_string,
   }
   conn_str->num_cs_servers++;
   return 0;
+parse_error:
+  ret_code= IC_ERROR_PARSE_CONNECTSTRING;
 error:
   mc_ptr->mc_ops.ic_mc_free(conn_str->mc_ptr);
   return ret_code;

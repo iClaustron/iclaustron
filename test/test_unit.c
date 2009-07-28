@@ -621,6 +621,165 @@ unit_test_parse_connectstring()
   gchar *ports[8];
 
   hosts[0]= "myhost1"; ports[0]= "1186";
+  hosts[1]= "myhost2"; ports[1]= "1186";
+  hosts[2]= "myhost3"; ports[2]= "1186";
+  hosts[3]= "myhost4"; ports[3]= "1186";
+  hosts[4]= "myhost5"; ports[4]= "1186";
+  if (test_parse_connectstring("myhost1,myhost2,myhost3,myhost4,myhost5",
+            5, (gchar**)hosts, (gchar**)ports) != IC_ERROR_TOO_MANY_CS_HOSTS)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1111";
+  if (test_parse_connectstring("myhost1,",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1111";
+  if (test_parse_connectstring("myhost1:",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1111";
+  hosts[1]= "myhost2"; ports[1]= "1222";
+  if (test_parse_connectstring("myhost1,port1:myhost,port0",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1112";
+  if (test_parse_connectstring(":port1112",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1111";
+  hosts[1]= "myhost2"; ports[1]= "1222";
+  if (test_parse_connectstring("1111:myhost1,1222:myhost2",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1111";
+  hosts[1]= "myhost2"; ports[1]= "1222";
+  if (test_parse_connectstring("myhost1:myhost2:port1",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1111";
+  if (test_parse_connectstring(":1111",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1111";
+  hosts[1]= "myhost2"; ports[1]= "1234";
+  if (test_parse_connectstring("myhost1:1111:1234",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring(":",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring(",",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("",
+            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost1,,myhost3",
+            3, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost(1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost/1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost¤1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost%1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost&1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost)1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost=1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost@1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost!1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost?1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost+1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost^1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost~1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost*1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost'1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost>1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost<1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost|1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost[1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost]1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost{1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost}1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost\1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost`1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost'1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost§1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost£1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost$1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  if (test_parse_connectstring("myhost;1",
+            1, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
+    return 1;
+  hosts[0]= "a"; ports[0]= "1186";
+  if (test_parse_connectstring("a",
+            1, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "a"; ports[0]= "1";
+  if (test_parse_connectstring("a:1",
+            1, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "a_-"; ports[0]= "1";
+  if (test_parse_connectstring("a_-:1",
+            1, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "192.168.0.1"; ports[0]= "1";
+  if (test_parse_connectstring("192.168.0.1:1",
+            1, (gchar**)hosts, (gchar**)ports))
+    return 1;
+  hosts[0]= "myhost1"; ports[0]= "1186";
   if (test_parse_connectstring("myhost1",
             1, (gchar**)hosts, (gchar**)ports))
     return 1;
@@ -807,9 +966,6 @@ unit_test_parse_connectstring()
   hosts[3]= "myhost7"; ports[3]= "1225";
   if (test_parse_connectstring("myhost4:1222,myhost5:1223,myhost6:1224,myhost7:1225",
             4, (gchar**)hosts, (gchar**)ports))
-    return 1;
-  if (test_parse_connectstring("myhost1:1200,myhost2:1300,",
-            2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_HOSTNAME)
     return 1;
   return 0;
 }
