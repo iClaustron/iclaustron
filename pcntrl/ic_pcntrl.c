@@ -1185,6 +1185,10 @@ static GOptionEntry entries[] =
   { "basedir", 0, 0, G_OPTION_ARG_STRING,
     &glob_base_path,
     "Sets path to binaries controlled by this program", NULL},
+  { "iclaustron_version", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_version_path,
+    "Version string to find iClaustron binaries used by this program, default "
+    IC_VERSION_STR, NULL},
   { "data_dir", 0, 0, G_OPTION_ARG_FILENAME,
     &ic_glob_data_path,
     "Sets path to data directory", NULL},

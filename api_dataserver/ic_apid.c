@@ -128,11 +128,15 @@
 
 IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_ic_binary_dir= { NULL, 0, TRUE};
 gchar *ic_glob_cs_server_name= "127.0.0.1";
 gchar *ic_glob_cs_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 gchar *ic_glob_cs_connectstring= NULL;
 gchar *ic_glob_data_path= NULL;
-guint32 ic_glob_node_id= 4;
+gchar *ic_glob_version_path= IC_VERSION_STR;
+gchar *ic_glob_base_path= NULL;
+guint32 ic_glob_node_id= 1;
 guint32 ic_glob_num_threads= 1;
 guint32 ic_glob_use_iclaustron_cluster_server= 1;
 guint32 ic_glob_daemonize= 1;
@@ -3337,16 +3341,6 @@ ic_stop_apid_program(int ret_code,
     ic_printf("%s", err_str);
   if (ret_code)
     ic_print_error(ret_code);
-  if (ic_glob_config_dir.str)
-  {
-    ic_free(ic_glob_config_dir.str);
-    ic_glob_config_dir.str= NULL;
-  }
-  if (ic_glob_data_dir.str)
-  {
-    ic_free(ic_glob_data_dir.str);
-    ic_glob_data_dir.str= NULL;
-  }
   ic_set_die_handler(NULL, NULL);
   if (apid_global)
     apid_global->apid_global_ops.ic_free_apid_global(apid_global);
@@ -3447,3 +3441,200 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
   tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
   DEBUG_RETURN(error);
 }
+
+/*
+  MODULE: iClaustron Initialise and End Functions
+  -----------------------------------------------
+  Every iClaustron program should start by calling ic_start_program
+  before using any of the iClaustron functionality and after
+  completing using the iClaustron API one should call ic_end().
+
+  ic_start_program will define automatically a set of debug options
+  for the program which are common to all iClaustron programs. The
+  program can also supply a set of options unique to this particular
+  program. In addition a start text should be provided.
+
+  So for most iClaustron programs this means calling these functions
+  at the start of the main function and at the end of the main
+  function.
+*/
+static int ic_init();
+
+/* Base directory group */
+static GOptionEntry basedir_entries[] =
+{
+  { "basedir", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_base_path,
+    "Sets path to binaries controlled by this program", NULL},
+  { "iclaustron_version", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_version_path,
+    "Version string to find iClaustron binaries used by this program, default "
+    IC_VERSION_STR, NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
+static gchar *help_basedir= "Groupl of flags to set base directory";
+static gchar *basedir_description= "\
+Basedir Flags\n\
+-------------\n\
+These flags are used to point out the directory where the iClaustron\n\
+programs expects to find the binaries. Many iClaustron programs make use\n\
+of scripts for some advanced information on processes and system.\n\
+\n\
+iClaustron expects an organisation where basedir is the directory where\n\
+all binaries are found under. Under the basedir there can be many\n\
+directories. These represents different versions of iClaustron and\n\
+MySQL. So e.g. iclaustron-0.0.1 is the directory where the binaries\n\
+for this version is expected to be placed. The binaries are thus in\n\
+this case placed in basedir/iclaustron-0.0.1/bin. Only the iClaustron\n\
+version can be set since iClaustron only call iClaustron scripts\n\
+The only MySQL binaries used are the ndbmtd and mysqld and these\n\
+are always called from ic_pcntrld (the iClaustron process controller).\n\
+\n\
+The iClaustron process controller reuses the basedir as well for all\n\
+processes started by the process controller. However the version is\n\
+provided by the client (mostly the cluster manager which gets the\n\
+version from the commands sent to the cluster manager).\n\
+";
+
+/* Debug group */
+static GOptionEntry debug_entries[] = 
+{
+  { "debug_level", 0, 0, G_OPTION_ARG_INT, &glob_debug,
+    "Set Debug Level", NULL},
+  { "debug_file", 0, 0, G_OPTION_ARG_STRING, &glob_debug_file,
+    "Set Debug File", NULL},
+  { "debug_screen", 0, 0, G_OPTION_ARG_INT, &glob_debug_screen,
+    "Flag whether to print debug info to stdout", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
+static gchar *help_debug= "Group of flags to set-up debugging";
+
+static gchar *debug_description= "\
+Debug Flags\n\
+-----------\n\
+Group of flags to set-up debugging level and where to pipe debug output \n\
+Debug level is actually several levels, one can decide to debug a certain\n\
+area at a time. Each area has a bit in debug level. So if one wants to\n\
+debug the communication area one sets debug_level to 1 (set bit 0). By\n\
+setting several bits it is possible to debug several areas at once.\n\
+\n\
+Current levels defined: \n\
+  Level 0 (= 1): Communication debugging\n\
+  Level 1 (= 2): Entry into functions debugging\n\
+  Level 2 (= 4): Configuration debugging\n\
+  Level 3 (= 8): Debugging specific to the currently executing program\n\
+  Level 4 (=16): Debugging of threads\n\
+";
+static int use_config_vars;
+
+int
+ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+                 GOptionEntry add_entries[],
+                 const gchar *program_name,
+                 gchar *start_text,
+                 gboolean use_config)
+{
+  int ret_code= 1;
+  GError *error= NULL;
+  GOptionGroup *debug_group;
+  GOptionGroup *basedir_group;
+  GOptionContext *context;
+
+  ic_printf("Starting %s program", program_name);
+  use_config_vars= use_config; /* TRUE for Unit test programs */
+  context= g_option_context_new(start_text);
+  if (!context)
+    goto mem_error;
+  /* Read command options */
+  g_option_context_add_main_entries(context, entries, NULL);
+  if (add_entries)
+    g_option_context_add_main_entries(context, add_entries, NULL);
+  basedir_group= g_option_group_new("basedir", basedir_description,
+                                     help_basedir, NULL, NULL);
+  if (!basedir_group)
+    goto mem_error;
+  debug_group= g_option_group_new("debug", debug_description,
+                                  help_debug, NULL, NULL);
+  if (!debug_group)
+    goto mem_error;
+  g_option_group_add_entries(debug_group, debug_entries);
+  g_option_context_add_group(context, debug_group);
+  g_option_group_add_entries(basedir_group, basedir_entries);
+  g_option_context_add_group(context, basedir_group);
+  if (!g_option_context_parse(context, &argc, &argv, &error))
+    goto parse_error;
+  g_option_context_free(context);
+  if ((ret_code= ic_init()))
+    return ret_code;
+  return 0;
+
+parse_error:
+  ic_printf("No such program option: %s", error->message);
+  goto error;
+mem_error:
+  ic_printf("Memory allocation error");
+  goto error;
+error:
+  return ret_code;
+}
+
+static int
+ic_init()
+{
+  int ret_value;
+  DEBUG_OPEN;
+  DEBUG_ENTRY("ic_init");
+
+  if (!g_thread_supported())
+    g_thread_init(NULL);
+  ic_mem_init();
+  ic_init_error_messages();
+  if (use_config_vars)
+  {
+    if ((ret_value= ic_init_config_parameters()))
+    {
+      ic_end();
+      DEBUG_RETURN(ret_value);
+    }
+  }
+  if ((ret_value= ic_ssl_init()))
+  {
+    ic_end();
+    DEBUG_RETURN(ret_value);
+  }
+  DEBUG_RETURN(0);
+}
+
+void ic_end()
+{
+  DEBUG_ENTRY("ic_end");
+
+  if (use_config_vars)
+    ic_destroy_conf_hash();
+  ic_ssl_end();
+  if (ic_glob_base_dir.str)
+  {
+    ic_free(ic_glob_base_dir.str);
+    ic_glob_base_dir.str= NULL;
+  }
+  if (ic_glob_config_dir.str)
+  {
+    ic_free(ic_glob_config_dir.str);
+    ic_glob_config_dir.str= NULL;
+  }
+  if (ic_glob_data_dir.str)
+  {
+    ic_free(ic_glob_data_dir.str);
+    ic_glob_data_dir.str= NULL;
+  }
+  if (ic_glob_ic_binary_dir.str)
+  {
+    ic_free(ic_glob_ic_binary_dir.str);
+    ic_glob_ic_binary_dir.str= NULL;
+  }
+  DEBUG_CLOSE;
+  ic_mem_end();
+}
+

@@ -19,7 +19,7 @@
 guint32 ic_get_stop_flag();
 
 /* Set reference to binary directory */
-void ic_port_set_binary_dir(const gchar *binary_dir);
+void ic_set_port_binary_dir(const gchar *binary_dir);
 /*
   HEADER MODULE: iClaustron Portability Layer
   ------------------------------------

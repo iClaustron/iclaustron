@@ -81,7 +81,7 @@ void ic_mem_end()
 #endif
 }
 void
-ic_port_set_binary_dir(const gchar *binary_dir)
+ic_set_port_binary_dir(const gchar *binary_dir)
 {
   port_binary_dir= binary_dir;
 }

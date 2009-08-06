@@ -86,6 +86,7 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
 #define ERROR_MESSAGE_SIZE 512
 #define IC_VERSION 0x000001
+#define IC_VERSION_STR "iclaustron-0.0.1"
 #define MYSQL_VERSION 0x060401
 #define MYSQL_VERSION_STRING "mysql-5.1.30-ndb-6.4.1"
 

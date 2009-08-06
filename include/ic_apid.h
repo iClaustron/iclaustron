@@ -412,6 +412,8 @@ extern gchar *ic_glob_cs_server_name;
 extern gchar *ic_glob_cs_server_port;
 extern gchar *ic_glob_cs_connectstring;
 extern gchar *ic_glob_data_path;
+extern gchar *ic_glob_version_path;
+extern gchar *ic_glob_base_path;
 extern guint32 ic_glob_node_id;
 extern guint32 ic_glob_num_threads;
 extern guint32 ic_glob_use_iclaustron_cluster_server;

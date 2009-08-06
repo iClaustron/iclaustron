@@ -105,6 +105,8 @@ end:
     }
     run_obj->run_op.ic_free_run_cluster(run_obj);
   }
+  if (ic_glob_config_dir.str)
+    ic_free(ic_glob_config_dir.str);
   ic_end();
   return error;
 error:
