@@ -7403,7 +7403,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
 
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
     goto error;
-  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     goto error;
   if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_RUN_CLUSTER_SERVER))))
@@ -7629,18 +7629,19 @@ run_cluster_server_thread(gpointer data)
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   gchar *read_buf;
   guint32 read_size;
+  IC_THREADPOOL_STATE *rcs_tp= thread_state->ic_get_threadpool(thread_state);
   IC_CONNECTION *conn= (IC_CONNECTION*)
-    thread_state->ts_ops.ic_thread_get_object(thread_state);
+    rcs_tp->ts_ops.ic_thread_get_object(thread_state);
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   int error, error_line;
   gboolean handled_request;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
 
-  thread_state->ts_ops.ic_thread_started(thread_state);
+  rcs_tp->ts_ops.ic_thread_started(thread_state);
   run_obj= (IC_INT_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) &&
-         !thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+         !rcs_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     switch (state)
     {
@@ -7787,7 +7788,7 @@ run_cluster_server_thread(gpointer data)
   DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
 end:
    conn->conn_op.ic_free_connection(conn);
-   thread_state->ts_ops.ic_thread_stops(thread_state);
+   rcs_tp->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 
 error:

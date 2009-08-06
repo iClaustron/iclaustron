@@ -230,10 +230,10 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
        ic_calloc(sizeof(IC_INT_APID_GLOBAL))))
     return NULL;
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
-                        IC_MAX_RECEIVE_THREADS)))
+                        IC_MAX_RECEIVE_THREADS, TRUE)))
     goto error;
   if (!(apid_global->send_thread_pool= ic_create_threadpool(
-                        IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+                        IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
   apid_global->apic= apic;
   apid_global->num_receive_threads= 0;
@@ -970,14 +970,16 @@ end:
   methods to perform send operations through the Data API.
 */
 static void
-active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                   IC_THREADPOOL_STATE *send_tp,
+                   IC_THREAD_STATE *thread_state)
 {
   guint32 send_size;
   guint32 iovec_size;
   int error;
   struct iovec write_vector[MAX_SEND_BUFFERS];
 
-  g_mutex_lock(send_node_conn->mutex);
+  send_tp->ts_ops.ic_thread_lock(thread_state);
   send_node_conn->send_thread_is_sending= FALSE;
   send_node_conn->send_thread_active= TRUE;
   do
@@ -989,7 +991,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
       /* All buffers have been sent, we can go to sleep again */
       send_node_conn->send_active= FALSE;
       send_node_conn->send_thread_is_sending= FALSE;
-      g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+      send_tp->ts_ops.ic_thread_wait(thread_state);
     }
     if (send_node_conn->stop_ordered || !send_node_conn->node_up)
       break;
@@ -997,10 +999,10 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     g_assert(send_node_conn->send_active);
     prepare_real_send_handling(send_node_conn, &send_size,
                                write_vector, &iovec_size);
-    g_mutex_unlock(send_node_conn->mutex);
+    send_tp->ts_ops.ic_thread_unlock(thread_state);
     error= real_send_handling(send_node_conn, write_vector,
                               iovec_size, send_size);
-    g_mutex_lock(send_node_conn->mutex);
+    send_tp->ts_ops.ic_thread_lock(thread_state);
     if (error)
       send_node_conn->node_up= FALSE;
   } while (1);
@@ -1009,7 +1011,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   send_node_conn->send_active= FALSE;
   send_node_conn->send_thread_active= FALSE;
   send_node_conn->send_thread_is_sending= FALSE;
-  g_mutex_unlock(send_node_conn->mutex);
+  send_tp->ts_ops.ic_thread_unlock(thread_state);
   return;
 }
 
@@ -1143,6 +1145,7 @@ remove_send_thread_from_listen_thread(
     */
     listen_server_thread->stop_ordered= TRUE;
     g_cond_signal(listen_server_thread->cond);
+    g_mutex_unlock(listen_server_thread->mutex);
     tp_state= send_node_conn->apid_global->send_thread_pool;
     tp_state->tp_ops.ic_threadpool_join(tp_state,
                                         listen_server_thread->thread_id);
@@ -1158,8 +1161,9 @@ check_thread_state(void *timeout_obj,
                    __attribute__ ((unused))int timer)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)timeout_obj;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
 
-  if (thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
     return 1;
   return 0;
 }
@@ -1296,15 +1300,16 @@ static gpointer
 run_listen_thread(void *data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
   IC_LISTEN_SERVER_THREAD *listen_server_thread= (IC_LISTEN_SERVER_THREAD*)
-    thread_state->ts_ops.ic_thread_get_object(thread_state);
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
   IC_CONNECTION *fork_conn, *conn;
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
   gboolean found;
   int ret_code;
 
-  thread_state->ts_ops.ic_thread_started(thread_state);
+  tp_state->ts_ops.ic_thread_started(thread_state);
   conn= listen_server_thread->conn;
   if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                                     check_timeout_func,
@@ -1314,7 +1319,7 @@ run_listen_thread(void *data)
     goto end;
   }
   /* We report start-up complete to the thread starting us */
-  if (thread_state->ts_ops.ic_thread_startup_done(thread_state))
+  if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
     goto end;
   /* We have been asked to start listening and so we start listening */
   do
@@ -1386,7 +1391,7 @@ run_listen_thread(void *data)
         We got a timeout, check if we're ordered to stop and if so
         we will stop. Otherwise we'll simply continue.
       */
-      if (thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+      if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
         break;
     }
   } while (1);
@@ -1414,7 +1419,7 @@ run_listen_thread(void *data)
   }
   g_mutex_unlock(listen_server_thread->mutex);
 end:
-  thread_state->ts_ops.ic_thread_stops(thread_state);
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
 
@@ -1443,16 +1448,15 @@ run_send_thread(void *data)
   gboolean found= FALSE;
   int ret_code;
   guint32 i, listen_inx;
-  GTimeVal time;
   gboolean ret_val;
   IC_CONNECTION *send_conn;
   IC_INT_APID_GLOBAL *apid_global;
   IC_CONNECTION *conn;
-  IC_THREADPOOL_STATE *send_tp;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *send_tp= thread_state->ic_get_threadpool(thread_state);
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)
-    thread_state->ts_ops.ic_thread_get_object(thread_state);
+    send_tp->ts_ops.ic_thread_get_object(thread_state);
   /*
     First step is to create a connection object, then it's time to
     start setting it up when told to do so by the main thread. We want
@@ -1462,7 +1466,7 @@ run_send_thread(void *data)
     must avoid to heavy activities such as starting 100's of threads.
   */
   apid_global= send_node_conn->apid_global;
-  thread_state->ts_ops.ic_thread_started(thread_state);
+  send_tp->ts_ops.ic_thread_started(thread_state);
   is_server_part= (send_node_conn->my_node_id ==
                    send_node_conn->link_config->server_node_id);
   if (!apid_global->use_external_connect)
@@ -1478,7 +1482,6 @@ run_send_thread(void *data)
         mode, so we don't need to protect things through mutexes.
       */
       apid_global= send_node_conn->apid_global;
-      send_tp= apid_global->send_thread_pool;
       send_conn= send_node_conn->conn;
       for (i= 0; i < apid_global->num_listen_server_threads; i++)
       {
@@ -1532,14 +1535,24 @@ run_send_thread(void *data)
           if (!(listen_server_thread->first_send_node_conn=
                 g_list_prepend(NULL, (void*)send_node_conn)))
             break;
-          ret_code= send_tp->tp_ops.ic_threadpool_start_thread(
+          if ((ret_code= send_tp->tp_ops.ic_threadpool_get_thread_id(
+                              send_tp,
+                              &listen_server_thread->thread_id)))
+             break;
+          thread_state= send_tp->tp_ops.ic_threadpool_get_thread_state(
+                              send_tp,
+                              listen_server_thread->thread_id);
+          send_tp->ts_ops.ic_thread_set_mutex(thread_state,
+                      listen_server_thread->mutex);
+          send_tp->ts_ops.ic_thread_set_cond(thread_state,
+                      listen_server_thread->cond);
+          ret_code= send_tp->tp_ops.ic_threadpool_start_thread_with_thread_id(
                                     send_tp,
-                                    &listen_server_thread->thread_id,
+                                    listen_server_thread->thread_id,
                                     run_listen_thread,
                                     (gpointer)listen_server_thread,
                                     IC_SMALL_STACK_SIZE,
                                     TRUE);                                  
-          break;
         } while (0);
         if (ret_code)
         {
@@ -1548,7 +1561,7 @@ run_send_thread(void *data)
              apid_global->listen_server_thread[listen_inx],
              apid_global);
           send_node_conn->send_thread_ended= TRUE;
-          thread_state->ts_ops.ic_thread_stops(thread_state);
+          send_tp->ts_ops.ic_thread_stops(thread_state);
           return NULL;
         }
         apid_global->num_receive_threads++;
@@ -1566,7 +1579,7 @@ run_send_thread(void *data)
           send_node_conn->stop_ordered= TRUE;
           send_node_conn->send_thread_ended= TRUE;
           g_mutex_unlock(send_node_conn->mutex);
-          thread_state->ts_ops.ic_thread_stops(thread_state);
+          send_tp->ts_ops.ic_thread_stops(thread_state);
         }
         g_mutex_unlock(listen_server_thread->mutex);
       }
@@ -1604,14 +1617,14 @@ run_send_thread(void *data)
     For the server part we have now attached ourself to a listen thread
     For the client part we are ready to start attempting to connect
   */
-  if (thread_state->ts_ops.ic_thread_startup_done(thread_state))
+  if (send_tp->ts_ops.ic_thread_startup_done(thread_state))
     goto end;
   /*
     The main thread have started up all threads and all communication objects
     have been created, it's now time to connect to the clusters.
   */
   ret_code= 0;
-  while (!thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  while (!send_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     if (ret_code)
     {
@@ -1650,19 +1663,13 @@ run_send_thread(void *data)
         ensure that we can handle termination of process in a proper manner
         and also when the API is terminated.
       */
-
-      g_get_current_time(&time);
-      time.tv_sec+= 3;
-      g_mutex_lock(send_node_conn->mutex);
-      ret_val= g_cond_timed_wait(send_node_conn->cond,
-                                 send_node_conn->mutex,
-                                 &time);
+      send_tp->ts_ops.ic_thread_lock_and_wait(thread_state);
       /*
          New connection has arrived from external source, make any
          set-up needed before delivering it to receive thread and starting
          the active send thread handling.
       */
-      g_mutex_unlock(send_node_conn->mutex);
+      send_tp->ts_ops.ic_thread_unlock(thread_state);
       if (!ret_val)
         continue;
     }
@@ -1677,10 +1684,10 @@ run_send_thread(void *data)
       taken care by active_send_thread, it returns when the connection
       for some reason have been dropped or a stop has been ordered.
     */
-    active_send_thread(send_node_conn);
+    active_send_thread(send_node_conn, send_tp, thread_state);
   }
 end:
-  g_mutex_lock(send_node_conn->mutex);
+  send_tp->ts_ops.ic_thread_lock(thread_state);
   if (is_server_part && !apid_global->use_external_connect)
   {
     /*
@@ -1694,9 +1701,9 @@ end:
                                           listen_server_thread);
   }
   send_node_conn->send_thread_ended= TRUE;
-  g_mutex_unlock(send_node_conn->mutex);
+  send_tp->ts_ops.ic_thread_unlock(thread_state);
   /* Thread is ready to stop */
-  thread_state->ts_ops.ic_thread_stops(thread_state);
+  send_tp->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
 
@@ -1706,6 +1713,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   int ret_code;
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_THREADPOOL_STATE *tp_state= apid_global->send_thread_pool;
+  IC_THREAD_STATE *thread_state;
 
   if (send_node_conn->my_node_id == send_node_conn->other_node_id)
   {
@@ -1723,10 +1731,24 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     set-up the connection. We set the synch_startup flag to indicate that
     we want the thread pool to return when the thread has performed its
     startup phase.
+    We reuse the mutex and condition from the send thread as mutex for the
+    thread state. This means that we can easier make sure to wake the
+    thread when it's necessary to stop the thread pool or thread.
   */
-  ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
+  if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id(
                               tp_state,
-                              &send_node_conn->thread_id,
+                              &send_node_conn->thread_id)))
+    return ret_code;
+  thread_state= tp_state->tp_ops.ic_threadpool_get_thread_state(
+                              tp_state,
+                              send_node_conn->thread_id);
+  tp_state->ts_ops.ic_thread_set_mutex(thread_state,
+                      send_node_conn->mutex);
+  tp_state->ts_ops.ic_thread_set_cond(thread_state,
+                      send_node_conn->cond);
+  ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                              tp_state,
+                              send_node_conn->thread_id,
                               run_send_thread,
                               (gpointer)send_node_conn,
                               IC_SMALL_STACK_SIZE,
@@ -2977,8 +2999,9 @@ static gpointer
 run_receive_thread(void *data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *rec_tp= thread_state->ic_get_threadpool(thread_state);
   IC_NDB_RECEIVE_STATE *rec_state= (IC_NDB_RECEIVE_STATE*)
-    thread_state->ts_ops.ic_thread_get_object(thread_state);
+    rec_tp->ts_ops.ic_thread_get_object(thread_state);
   LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
   int min_hash_index= NUM_THREAD_LISTS;
   int max_hash_index= (int)-1;
@@ -2988,14 +3011,14 @@ run_receive_thread(void *data)
   IC_THREAD_CONNECTION **thd_conn= apid_global->grid_comm->thread_conn_array;
   IC_RECEIVE_NODE_CONNECTION *rec_node;
 
-  thread_state->ts_ops.ic_thread_started(thread_state);
+  rec_tp->ts_ops.ic_thread_started(thread_state);
   memset(message_anchors, 0,
          sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS);
 
   /* Flag start-up done and wait for start order */
-  thread_state->ts_ops.ic_thread_startup_done(thread_state);
+  rec_tp->ts_ops.ic_thread_startup_done(thread_state);
 
-  while (!thread_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  while (!rec_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     /* Check for which nodes to receive from */
     /* Loop over each node to receive from */
@@ -3053,7 +3076,7 @@ end:
       rec_state->message_pool,
       ndb_message);
   }
-  thread_state->ts_ops.ic_thread_stops(thread_state);
+  rec_tp->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
 
@@ -3291,7 +3314,7 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   int ret_code;
 
   if (!(*tp_state=
-          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     return IC_ERROR_MEM_ALLOC;
   if ((ret_code= ic_set_config_dir(&ic_glob_config_dir,
                                     ic_glob_data_path)))
@@ -3353,8 +3376,9 @@ static gpointer
 run_server_thread(gpointer data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
   IC_APID_GLOBAL *apid_global= (IC_APID_GLOBAL*)
-    thread_state->ts_ops.ic_thread_get_object(thread_state);
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
   IC_APID_CONNECTION *apid_conn;
   gboolean stop_flag;
   int ret_code;
@@ -3362,7 +3386,7 @@ run_server_thread(gpointer data)
   DEBUG_ENTRY("run_server_thread");
 
   apid_func= apid_global->apid_global_ops.ic_get_thread_func(apid_global);
-  thread_state->ts_ops.ic_thread_started(thread_state);
+  tp_state->ts_ops.ic_thread_started(thread_state);
   apid_global->apid_global_ops.ic_add_user_thread(apid_global);
   stop_flag= apid_global->apid_global_ops.ic_get_stop_flag(apid_global);
   if (stop_flag)
@@ -3375,7 +3399,7 @@ run_server_thread(gpointer data)
   if (!(apid_conn= ic_create_apid_connection(apid_global,
                                              apid_global->cluster_bitmap)))
     goto error;
-  if (thread_state->ts_ops.ic_thread_startup_done(thread_state))
+  if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
     goto error;
   /*
      We now have a local Data API connection and we are ready to issue
@@ -3387,7 +3411,7 @@ run_server_thread(gpointer data)
     ic_print_error(ret_code);
 error:
   apid_global->apid_global_ops.ic_remove_user_thread(apid_global);
-  thread_state->ts_ops.ic_thread_stops(thread_state);
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_RETURN(NULL);
 }
 

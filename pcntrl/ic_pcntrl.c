@@ -1058,13 +1058,12 @@ run_command_handler(gpointer data)
   gchar *read_buf;
   guint32 read_size;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
   IC_CONNECTION *conn= (IC_CONNECTION*)
-    thread_state->ts_ops.ic_thread_get_object(thread_state);
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
   int ret_code;
 
-  thread_state->ts_ops.ic_thread_started(thread_state);
-  thread_state= conn->conn_op.ic_get_param(conn);
-
+  tp_state->ts_ops.ic_thread_started(thread_state);
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (ic_check_buf(read_buf, read_size, ic_start_str,
@@ -1109,7 +1108,7 @@ run_command_handler(gpointer data)
   if (ret_code)
     ic_print_error(ret_code);
   conn->conn_op.ic_free_connection(conn);
-  thread_state->ts_ops.ic_thread_stops(thread_state);
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }
 
@@ -1227,7 +1226,7 @@ int main(int argc, char *argv[])
                               glob_base_dir.str));
   DEBUG_PRINT(PROGRAM_LEVEL, ("Data directory: %s",
                               ic_glob_data_dir.str));
-  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE)))
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     return IC_ERROR_MEM_ALLOC;
   if (!(glob_pc_hash= create_pc_hash()))
     goto error;

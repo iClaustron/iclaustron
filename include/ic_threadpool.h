@@ -50,7 +50,24 @@ struct ic_thread_state_ops
     Returns TRUE if the thread has been asked to stop
   */
   gboolean (*ic_thread_startup_done) (IC_THREAD_STATE *thread_state);
-  
+
+  /*
+    These methods are used to call cond_wait on the mutex and condition
+    used by the thread. This can be an internal mutex/condition or a mutex
+    and condition supplied by the owner of the thread pool. There are also
+    methods to lock and unlock the thread using the mutex.
+  */
+  void (*ic_thread_wait) (IC_THREAD_STATE *thread_state);
+  void (*ic_thread_lock_and_wait) (IC_THREAD_STATE *thread_state);
+  void (*ic_thread_lock) (IC_THREAD_STATE *thread_state);
+  void (*ic_thread_unlock) (IC_THREAD_STATE *thread_state);
+  void (*ic_thread_wake) (IC_THREAD_STATE *thread_state);
+
+  void (*ic_thread_set_mutex) (IC_THREAD_STATE *thread_state,
+                               GMutex *mutex);
+  void (*ic_thread_set_cond) (IC_THREAD_STATE *thread_state,
+                              GCond *cond);
+
   void* (*ic_thread_get_object) (IC_THREAD_STATE *thread_state);
   gboolean (*ic_thread_get_stop_flag) (IC_THREAD_STATE *thread_state);
 };
@@ -58,7 +75,7 @@ typedef struct ic_thread_state_ops IC_THREAD_STATE_OPS;
 
 struct ic_thread_state
 {
-  IC_THREAD_STATE_OPS ts_ops;
+  IC_THREADPOOL_STATE* (*ic_get_threadpool) (IC_THREAD_STATE *thread_state);
 };
 
 struct ic_threadpool_ops
@@ -161,8 +178,9 @@ typedef struct ic_threadpool_ops IC_THREADPOOL_OPS;
 struct ic_threadpool_state
 {
   IC_THREADPOOL_OPS tp_ops;
+  IC_THREAD_STATE_OPS ts_ops;
 };
 
 IC_THREADPOOL_STATE*
-ic_create_threadpool(guint32 pool_size);
+ic_create_threadpool(guint32 pool_size, gboolean use_internal_mutex);
 #endif

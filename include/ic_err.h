@@ -22,6 +22,8 @@
   ----------------------------------------
   Error handling interface
 */
+#define ic_require(cond) if (!(cond)) { abort();}
+
 void ic_init_error_messages();
 void ic_print_error(int error_number);
 gchar *ic_get_error_message(int error_number);

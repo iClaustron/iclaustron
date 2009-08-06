@@ -19,7 +19,7 @@ typedef struct ic_int_thread_state IC_INT_THREAD_STATE;
 
 struct ic_int_thread_state
 {
-  IC_THREAD_STATE_OPS ts_ops;
+  IC_THREADPOOL_STATE* (*ic_get_threadpool) (IC_THREAD_STATE *thread_state);
   /*
     The following variables are static and set once and never changed
     and thus require no protection.
@@ -51,7 +51,8 @@ struct ic_int_thread_state
   guint32 started;
   /* Synchronisation of startup was requested */
   guint32 synch_startup;
-
+  /* Thread is waiting for wake up signal */
+  guint32 wait_wakeup;
   /*
     Thread have been stopped, not yet joined 
     Flag used when stopping thread to wait for it to complete stop
@@ -78,6 +79,7 @@ struct ic_int_thread_state
 struct ic_int_threadpool_state
 {
   IC_THREADPOOL_OPS tp_ops;
+  IC_THREAD_STATE_OPS ts_ops;
   /* 
     Keep track of number of free threads for easy stop, protected by free
     list mutex
@@ -85,7 +87,8 @@ struct ic_int_threadpool_state
   guint32 num_free_threads;
   /* Pointer to first free thread object, protected by free list mutex */
   guint32 first_free_thread_id;
-
+  /* Use internal mutex or not */
+  guint32 use_internal_mutex;
   /*
     Pointer to first stopped thread waiting to be joined
     Number of stopped threads in list
