@@ -22,6 +22,7 @@
 #define _XOPEN_SOURCE 600
 #endif
 #include <string.h>
+#undef _XOPEN_SOURCE
 #ifdef DEBUG_BUILD
 #include <stdio.h>
 #endif
@@ -44,6 +45,9 @@
 #endif
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
+#endif
+#ifdef HAVE_SIGNAL_H
+#include <signal.h>
 #endif
 
 #ifdef DEBUG_BUILD

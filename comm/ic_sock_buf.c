@@ -178,7 +178,7 @@ ic_create_sock_buf(guint32 page_size,
   IC_SOCK_BUF_PAGE *last_sock_buf_page;
   guint32 sock_buf_page_size;
 
-  sock_buf_page_size= IC_MAX(64, sizeof(IC_SOCK_BUF_PAGE)); 
+  sock_buf_page_size= IC_MAX(128, sizeof(IC_SOCK_BUF_PAGE)); 
   buf= (IC_SOCK_BUF*)ic_malloc(sizeof(IC_SOCK_BUF));
   if (!(ptr= ic_malloc(page_size * no_of_pages +
       (no_of_pages * sock_buf_page_size))))

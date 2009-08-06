@@ -973,7 +973,7 @@ error:
     Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
   Line x+1: Empty line to indicate end of message
 
-  Example: start\nprogram: ic_fsd¿\nversion: iclaustron-0.0.1\n
+  Example: start\nprogram: ic_fsd?\nversion: iclaustron-0.0.1\n
            grid: my_grid\ncluster: my_cluster\nnode: my_node\n
            autorestart: true\nnum parameters: 2\n
            parameter: data_dir string /home/mikael/iclaustron\n\n

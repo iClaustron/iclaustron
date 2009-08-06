@@ -365,6 +365,7 @@ struct ic_int_apid_global
   GCond *cond;
   guint32 num_user_threads_started;
   gboolean stop_flag;
+  gboolean use_external_connect;
   IC_SOCK_BUF *mem_buf_pool;
   IC_SOCK_BUF *ndb_message_pool;
   IC_GRID_COMM *grid_comm;

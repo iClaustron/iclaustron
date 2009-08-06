@@ -382,6 +382,7 @@ struct ic_apid_global_ops
   void (*ic_set_thread_func) (IC_APID_GLOBAL *apid_global,
                               IC_RUN_APID_THREAD_FUNC apid_func);
   IC_RUN_APID_THREAD_FUNC (*ic_get_thread_func) (IC_APID_GLOBAL *apid_global);
+  void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };
 
 struct ic_apid_global
@@ -390,9 +391,10 @@ struct ic_apid_global
   IC_BITMAP *cluster_bitmap;
 };
 
-IC_APID_GLOBAL* ic_connect_apid_global(IC_API_CONFIG_SERVER *apic,
-                                       int *ret_code,
-                                       gchar **err_str);
+IC_APID_GLOBAL* ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
+                                      gboolean use_external_connect,
+                                      int *ret_code,
+                                      gchar **err_str);
 void ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global);
 int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
                                guint32 cluster_id);

@@ -7765,7 +7765,15 @@ run_cluster_server_thread(gpointer data)
             error_line= __LINE__;
             goto error;
           }
-          /* At this point the connection is turned into a NDB Protocol connection */
+          /*
+            At this point the connection is turned into a NDB Protocol
+            connection. We do this by giving to a send node connection
+            in the Data API part. We also need to inform the Cluster
+            Server Data API thread that this connection exists. This
+            thread is responsible for ensuring that heartbeats are
+            sent properly but also all other traffic between cluster
+            server and other nodes using the NDB Protocol.
+          */
           state= 100; /* Need more work, TODO */
           break;
         }
