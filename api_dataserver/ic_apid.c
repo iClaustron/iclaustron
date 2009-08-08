@@ -3420,6 +3420,25 @@ mem_pool_error:
   goto end;
 }
 
+/*
+  MODULE: iClaustron Initialise and End Functions
+  -----------------------------------------------
+  This module contains a number of common function used by most Data API
+  programs for program options and various common start-up code.
+
+  Every iClaustron program should start by calling ic_start_program
+  before using any of the iClaustron functionality and after
+  completing using the iClaustron API one should call ic_end().
+
+  ic_start_program will define automatically a set of debug options
+  for the program which are common to all iClaustron programs. The
+  program can also supply a set of options unique to this particular
+  program. In addition a start text should be provided.
+
+  So for most iClaustron programs this means calling these functions
+  at the start of the main function and at the end of the main
+  function.
+*/
 GOptionEntry ic_apid_entries[] = 
 {
   { "cs_connectstring", 0, 0, G_OPTION_ARG_STRING,
@@ -3621,22 +3640,6 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
   DEBUG_RETURN(error);
 }
 
-/*
-  MODULE: iClaustron Initialise and End Functions
-  -----------------------------------------------
-  Every iClaustron program should start by calling ic_start_program
-  before using any of the iClaustron functionality and after
-  completing using the iClaustron API one should call ic_end().
-
-  ic_start_program will define automatically a set of debug options
-  for the program which are common to all iClaustron programs. The
-  program can also supply a set of options unique to this particular
-  program. In addition a start text should be provided.
-
-  So for most iClaustron programs this means calling these functions
-  at the start of the main function and at the end of the main
-  function.
-*/
 static int ic_init();
 
 /* Base directory group */
