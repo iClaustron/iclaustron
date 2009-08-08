@@ -833,24 +833,35 @@ end:
   Finally of course the send threads also reacts to external events when
   nodes are connecting.
 */
+
+/* Server part needs to return for stop check every 2-3 seconds */
+static int check_timeout_func(void *timeout_obj, int timer);
+
+/* Client part regularly checks if thread needs to stop */
+static int check_thread_state(void *timeout_obj, int timer);
+
+/* Function to check which node was connected to */
+static gboolean check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 IC_CONNECTION *conn);
+
+/* This function is used to close down the listen server thread */
+static void close_listen_server_thread(
+          IC_LISTEN_SERVER_THREAD *listen_server_thread,
+          IC_INT_APID_GLOBAL *apid_global);
+
+/*
+  The listen thread is used to wait for clients to connect to the node.
+  All send threads sharing hostname and port also share listen thread
+  if they are server threads.
+*/
+static gpointer run_listen_thread(void *data);
+
+/* This functions is used to close down the send thread */
 static void remove_send_thread_from_listen_thread(
   IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_LISTEN_SERVER_THREAD *listen_server_thread);
-static int check_timeout_func(void *timeout_obj, int timer);
-static gboolean check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                 IC_CONNECTION *conn);
-static gpointer run_listen_thread(void *data);
-static gpointer run_send_thread(void *data);
-static int set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                  IC_INT_APID_GLOBAL *apid_global,
-                                  gboolean is_server_part,
-                                  IC_THREADPOOL_STATE *send_tp,
-                                  IC_THREAD_STATE *thread_state);
-static void move_node_to_receive_thread(
-                 IC_SEND_NODE_CONNECTION *send_node_conn);
-static void active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
-                               IC_THREADPOOL_STATE *send_tp,
-                               IC_THREAD_STATE *thread_state);
+
+/* These functions are used to secure the node connections.  */
 static int server_api_connect(void *data);
 static int client_api_connect(void *data);
 static int authenticate_client_connection(IC_CONNECTION *conn,
@@ -859,13 +870,37 @@ static int authenticate_client_connection(IC_CONNECTION *conn,
 static int authenticate_server_connection(IC_CONNECTION *conn,
                                           guint32 my_nodeid,
                                           guint32 *client_nodeid);
-static void close_listen_server_thread(
-          IC_LISTEN_SERVER_THREAD *listen_server_thread,
-          IC_INT_APID_GLOBAL *apid_global);
+
+/*
+  After connection have been set-up the node connection is also moved to
+  the receive thread and then the active_send_thread function is where the
+  send thread spends its time in the connected phase.
+*/
+static void move_node_to_receive_thread(
+                 IC_SEND_NODE_CONNECTION *send_node_conn);
+static void active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                               IC_THREADPOOL_STATE *send_tp,
+                               IC_THREAD_STATE *thread_state);
+
+/*
+  The send thread is executed by the function run_send_thread, in its
+  startup it connects to the server part, or uses a listen thread to
+  wait for clients to connect or if connect happens externally it waits
+  external connect code to report a connection set-up.
+  The connect code starts up by preparing to set-up node connections
+  using the function prepare_set_up_send_connection and then the actual
+  connect happens in the connect_by_send_thread.
+*/
+static gpointer run_send_thread(void *data);
+static int prepare_set_up_send_connection(
+              IC_SEND_NODE_CONNECTION *send_node_conn,
+              IC_INT_APID_GLOBAL *apid_global,
+              gboolean is_server_part,
+              IC_THREADPOOL_STATE *send_tp,
+              IC_THREAD_STATE *thread_state);
 static int connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
                                   IC_THREAD_STATE *thread_state,
                                   gboolean is_server_part);
-static int check_thread_state(void *timeout_obj, int timer);
 
 /*
   start_send_threads is the function to start up the send threads.
@@ -878,7 +913,7 @@ static int start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
 static int set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  IC_SOCKET_LINK_CONFIG *link_config,
                                  guint32 my_node_id);
-
+/* Send thread functions */
 static int
 check_timeout_func(__attribute__ ((unused)) void *timeout_obj, int timer)
 {
@@ -888,6 +923,7 @@ check_timeout_func(__attribute__ ((unused)) void *timeout_obj, int timer)
     return 1;
 }
 
+/* TODO: This function needs to check which node was actually connected to */
 static gboolean
 check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                  __attribute__ ((unused)) IC_CONNECTION *conn)
@@ -1364,11 +1400,11 @@ client_api_connect(void *data)
 }
 
 static int
-set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
-                       IC_INT_APID_GLOBAL *apid_global,
-                       gboolean is_server_part,
-                       IC_THREADPOOL_STATE *send_tp,
-                       IC_THREAD_STATE *thread_state)
+prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
+                               IC_INT_APID_GLOBAL *apid_global,
+                               gboolean is_server_part,
+                               IC_THREADPOOL_STATE *send_tp,
+                               IC_THREAD_STATE *thread_state)
 {
   int ret_code;
   guint32 i, listen_inx;
@@ -1529,11 +1565,11 @@ run_send_thread(void *data)
                    send_node_conn->link_config->server_node_id);
   if (!apid_global->use_external_connect)
   {
-     if (set_up_send_connection(send_node_conn,
-                                apid_global,
-                                is_server_part,
-                                send_tp,
-                                thread_state))
+     if (prepare_set_up_send_connection(send_node_conn,
+                                        apid_global,
+                                        is_server_part,
+                                        send_tp,
+                                        thread_state))
        return NULL;
   }
   else /* apid_global->use_external_connect == TRUE */
