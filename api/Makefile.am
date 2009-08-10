@@ -13,17 +13,16 @@
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 ## This file is used to produce the Makefile.in for this directory
-## This directory is used to build iClaustron API towards Data Server
+## This directory is used to build iClaustron API towards Cluster Server
 ##
 
-lib_LTLIBRARIES = libic_apid.la
+lib_LTLIBRARIES = libic_api.la
 
-libic_apid_la_SOURCES = ic_apid.c
+libic_api_la_SOURCES = ic_apic.c ic_apid.c
 
-libic_apid_la_LIBADD = $(LDADD) \
+libic_api_la_LIBADD = $(LDADD) \
 				../port/libic_port.la \
 				../util/libic_util.la \
-				../comm/libic_comm.la \
-				../api_clusterserver/libic_apic.la
+				../comm/libic_comm.la
 
-EXTRA_DIST = ic_apid_int.h
+EXTRA_DIST =                    ic_apic_int.h ic_apid_int.h

@@ -24,8 +24,7 @@ test_comm_LDADD = $(LDADD) \
 			../port/libic_port.la \
 			../util/libic_util.la \
 			../comm/libic_comm.la \
-			../api_clusterserver/libic_apic.la \
-			../api_dataserver/libic_apid.la
+			../api/libic_api.la
 
 test_unit_SOURCES = test_unit.c
 test_unit_LDADD = $(LDADD) \
