@@ -7777,7 +7777,7 @@ run_cluster_server_thread(gpointer data)
           */
           if ((error=
                run_obj->apid_global->apid_global_ops.ic_external_connect(
-                           apid_global,
+                           run_obj->apid_global,
                            param.cluster_id,
                            param.node_number,
                            conn)))
@@ -7798,9 +7798,13 @@ run_cluster_server_thread(gpointer data)
     }
   }
   if (conn)
+  {
     DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
+  }
   else
+  {
     DEBUG_PRINT(CONFIG_LEVEL, ("Connection taken over by Data API"));
+  }
 end:
   if (conn)
     conn->conn_op.ic_free_connection(conn);

@@ -175,6 +175,14 @@ send_handling(IC_INT_APID_GLOBAL *apid_global,
               gboolean force_send);
 /* Function for Data API functions to receive messages */
 static int poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time);
+/*
+  External function used by Cluster Server to transfer a connection to the
+  Data API, part of Global Data API functions.
+*/
+static int external_connect(IC_APID_GLOBAL *apid_global,
+                            guint32 cluster_id,
+                            guint32 node_id,
+                            IC_CONNECTION *conn);
 
 /*
   GLOBAL DATA API INITIALISATION MODULE
@@ -600,6 +608,7 @@ ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
     apid_global_remove_user_thread;
   apid_global->apid_global_ops.ic_set_thread_func= set_thread_func;
   apid_global->apid_global_ops.ic_get_thread_func= get_thread_func;
+  apid_global->apid_global_ops.ic_external_connect= external_connect;
   apid_global->apid_global_ops.ic_free_apid_global= free_apid_global;
   return (IC_APID_GLOBAL*)apid_global;
 error:
@@ -1061,6 +1070,13 @@ static int real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
 static int send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
 static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
 
+/* Function used to map cluster_id and node_id to send node connection */
+static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
+                                 guint32 cluster_id,
+                                 guint32 node_id,
+                                 IC_SEND_NODE_CONNECTION **send_node_conn);
+
+/* Send message functions */
 static int
 ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
          IC_SOCK_BUF_PAGE *first_page_to_send,
@@ -1249,19 +1265,13 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   DEBUG_RETURN(error);
 }
 
-/*
-  This is the internal method used to actually send the gathered signals.
-  It essentially finds the proper IC_SEND_NODE_CONNECTION object and calls
-  ndb_send which handles the details of sending.
-*/
 static int
-send_handling(IC_INT_APID_GLOBAL *apid_global,
-              guint32 cluster_id,
-              guint32 node_id,
-              IC_SOCK_BUF_PAGE *first_page_to_send,
-              gboolean force_send)
+map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
+                               guint32 cluster_id,
+                               guint32 node_id,
+                               IC_SEND_NODE_CONNECTION **send_node_conn)
 {
-  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_SEND_NODE_CONNECTION *loc_send_node_conn;
   IC_CLUSTER_COMM *cluster_comm;
   IC_API_CONFIG_SERVER *apic;
   IC_GRID_COMM *grid_comm;
@@ -1276,8 +1286,32 @@ send_handling(IC_INT_APID_GLOBAL *apid_global,
   if (!cluster_comm)
     return error;
   error= IC_ERROR_NO_SUCH_NODE;
-  send_node_conn= cluster_comm->send_node_conn_array[node_id];
-  if (!send_node_conn)
+  loc_send_node_conn= cluster_comm->send_node_conn_array[node_id];
+  if (!loc_send_node_conn)
+    return error;
+  *send_node_conn= loc_send_node_conn;
+  return 0;
+}
+
+/*
+  This is the internal method used to actually send the gathered signals.
+  It essentially finds the proper IC_SEND_NODE_CONNECTION object and calls
+  ndb_send which handles the details of sending.
+*/
+static int
+send_handling(IC_INT_APID_GLOBAL *apid_global,
+              guint32 cluster_id,
+              guint32 node_id,
+              IC_SOCK_BUF_PAGE *first_page_to_send,
+              gboolean force_send)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  int error;
+
+  if ((error= map_id_to_send_node_connection(apid_global,
+                                             cluster_id,
+                                             node_id,
+                                             &send_node_conn)))
     return error;
   return ndb_send(send_node_conn, first_page_to_send, force_send);
 }
@@ -1404,6 +1438,37 @@ static int start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
 static int set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  IC_SOCKET_LINK_CONFIG *link_config,
                                  guint32 my_node_id);
+
+/*
+  This function is used by Cluster Server to transfer a connection
+   to the Data API.
+*/
+static int external_connect(IC_APID_GLOBAL *apid_global,
+                            guint32 cluster_id,
+                            guint32 node_id,
+                            IC_CONNECTION *conn);
+
+static int
+external_connect(IC_APID_GLOBAL *ext_apid_global,
+                 guint32 cluster_id,
+                 guint32 node_id,
+                 IC_CONNECTION *conn)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  int error;
+
+  if ((error= map_id_to_send_node_connection(apid_global,
+                                             cluster_id,
+                                             node_id,
+                                             &send_node_conn)))
+    return error;
+  g_mutex_lock(send_node_conn->mutex);
+  send_node_conn->conn= conn;
+  g_cond_signal(send_node_conn->cond);
+  g_mutex_unlock(send_node_conn->mutex);
+  return 0;
+}
 
 /*
   We also place the methods called from other threads that assist the

@@ -31,5 +31,4 @@ test_unit_LDADD = $(LDADD) \
 			../comm/libic_comm.la \
 			../port/libic_port.la \
 			../util/libic_util.la \
-			../api_clusterserver/libic_apic.la \
-			../api_dataserver/libic_apid.la
+			../api/libic_api.la
