@@ -16,6 +16,7 @@
 #ifndef IC_APID_H
 #define IC_APID_H
 #include <ic_threadpool.h>
+#include <ic_connection.h>
 
 typedef struct ic_apid_global IC_APID_GLOBAL;
 typedef struct ic_apid_global_ops IC_APID_GLOBAL_OPS;
@@ -382,6 +383,10 @@ struct ic_apid_global_ops
   void (*ic_set_thread_func) (IC_APID_GLOBAL *apid_global,
                               IC_RUN_APID_THREAD_FUNC apid_func);
   IC_RUN_APID_THREAD_FUNC (*ic_get_thread_func) (IC_APID_GLOBAL *apid_global);
+  int (*ic_external_connect) (IC_APID_GLOBAL *apid_global,
+                              guint32 cluster_id,
+                              guint32 node_id,
+                              IC_CONNECTION *conn);
   void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };
 

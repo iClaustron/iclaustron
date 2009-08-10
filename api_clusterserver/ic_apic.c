@@ -7775,7 +7775,19 @@ run_cluster_server_thread(gpointer data)
             sent properly but also all other traffic between cluster
             server and other nodes using the NDB Protocol.
           */
-          state= 100; /* Need more work, TODO */
+          if ((error=
+               run_obj->apid_global->apid_global_ops.ic_external_connect(
+                           apid_global,
+                           param.cluster_id,
+                           param.node_number,
+                           conn)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+        ("Error from ic_external_connect, code = %u", error));
+            error_line= __LINE__;
+            goto error;
+          }
+          conn= NULL;
           break;
         }
         error_line= __LINE__;
@@ -7785,10 +7797,14 @@ run_cluster_server_thread(gpointer data)
         break;
     }
   }
-  DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
+  if (conn)
+    DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
+  else
+    DEBUG_PRINT(CONFIG_LEVEL, ("Connection taken over by Data API"));
 end:
-   conn->conn_op.ic_free_connection(conn);
-   rcs_tp->ts_ops.ic_thread_stops(thread_state);
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
+  rcs_tp->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 
 error:
