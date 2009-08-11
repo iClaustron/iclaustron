@@ -2970,7 +2970,7 @@ step_key_value(IC_INT_API_CONFIG_SERVER *apic,
         PROTOCOL_CHECK_RETURN(FALSE);
       }
       (*key_value)+= len_words;
-      apic->string_memory_size+= value;
+      apic->temp->string_memory_size+= value;
       break;
    }
    default:
@@ -3041,18 +3041,17 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
   if (!(conf_obj->comm_config= (gchar**)
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                      conf_obj->num_comms * sizeof(gchar*))) ||
-      !(apic->string_memory_to_return= 
+      !(string_mem= 
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
-                     apic->string_memory_size)) ||
-      !(apic->config_memory_to_return= 
+                     apic->temp->string_memory_size)) ||
+      !(apic->temp->config_memory_to_return= 
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                      size_config_objects)))
     return IC_ERROR_MEM_ALLOC;
 
-  conf_obj_ptr= apic->config_memory_to_return;
-  string_mem= apic->string_memory_to_return;
-  apic->end_string_memory= string_mem + apic->string_memory_size;
-  apic->next_string_memory= string_mem;
+  conf_obj_ptr= apic->temp->config_memory_to_return;
+  apic->temp->end_string_memory= string_mem + apic->temp->string_memory_size;
+  apic->temp->next_string_memory= string_mem;
 
   for (i= 0; i < conf_obj->num_nodes; i++)
   {
@@ -3090,7 +3089,7 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
     conf_obj->comm_config[i]= conf_obj_ptr;
     conf_obj_ptr+= sizeof(IC_COMM_LINK_CONFIG);
   }
-  g_assert(conf_obj_ptr == (apic->config_memory_to_return +
+  g_assert(conf_obj_ptr == (apic->temp->config_memory_to_return +
                             size_config_objects));
   return 0;
 }
@@ -3363,7 +3362,7 @@ assign_config_value(IC_CONFIG_ENTRY *conf_entry,
     case IC_CL_CHAR_TYPE:
     {
       if ((error= assign_config_string(apic, conf_entry, conf_type,
-                                       apic->next_string_memory,
+                                       apic->temp->next_string_memory,
                                        value,
                                        struct_ptr,
                                        key_value)))
@@ -3407,8 +3406,8 @@ update_string_data(IC_INT_API_CONFIG_SERVER *apic,
                    guint32 **key_value)
 {
   guint32 len_words= (value + 3)/4;
-  apic->next_string_memory+= value;
-  g_assert(apic->next_string_memory <= apic->end_string_memory);
+  apic->temp->next_string_memory+= value;
+  g_assert(apic->temp->next_string_memory <= apic->temp->end_string_memory);
   (*key_value)+= len_words;
 }
 
@@ -3502,6 +3501,16 @@ static guint32 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos);
 
 static void disconnect_api_connections(IC_INT_API_CONFIG_SERVER *apic);
 
+static int
+null_get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
+                   IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   guint32 node_id)
+{
+  (void)ext_apic;
+  (void)clu_infos;
+  (void)node_id;
+  return IC_ERROR_GET_CONFIG_BY_CLUSTER_SERVER;
+}
 
 static int
 get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
@@ -3538,7 +3547,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
            (max_cluster_id + 1) * sizeof(IC_CLUSTER_CONFIG**))) ||
-      !(apic->node_ids= (guint32*)
+      !(apic->temp->node_ids= (guint32*)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
             sizeof(guint32) * (max_cluster_id + 1))))
     goto mem_alloc_error;
@@ -3564,7 +3573,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
       goto error;
     }
     apic->conf_objects[cluster_id]= clu_conf;
-    apic->node_ids[cluster_id]= node_id;
+    apic->temp->node_ids[cluster_id]= node_id;
     clu_conf->my_node_id= node_id;
   }
 
@@ -3689,7 +3698,7 @@ send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
   gchar endian_buf[32];
   guint64 node_type= 1;
   guint64 version_no;
-  guint32 node_id= apic->node_ids[cluster_id];
+  guint32 node_id= apic->temp->node_ids[cluster_id];
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
@@ -3777,7 +3786,7 @@ rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
           PROTOCOL_CHECK_RETURN(FALSE);
         }
         DEBUG_PRINT(CONFIG_LEVEL, ("Nodeid = %u", (guint32)node_number));
-        apic->node_ids[cluster_id]= (guint32)node_number;
+        apic->temp->node_ids[cluster_id]= (guint32)node_number;
         state= RESULT_OK_STATE;
         break;
       case RESULT_OK_STATE:
@@ -6766,7 +6775,8 @@ get_cluster_id_from_name(IC_API_CONFIG_SERVER *ext_apic,
 
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
-    if (!(clu_conf= get_cluster_config((IC_API_CONFIG_SERVER*)apic, cluster_id)))
+    if (!(clu_conf= get_cluster_config((IC_API_CONFIG_SERVER*)apic,
+                                       cluster_id)))
       continue;
     if (ic_cmp_str((const IC_STRING*)&clu_conf->clu_info.cluster_name,
                    cluster_name) == 0)
@@ -6795,6 +6805,13 @@ get_node_id_from_name(IC_API_CONFIG_SERVER *ext_apic,
       return node_id;
   }
   return IC_MAX_UINT32;
+}
+
+static void
+null_free_cs_config(IC_API_CONFIG_SERVER *apic)
+{
+  (void)apic;
+  return;
 }
 
 static void
@@ -6839,6 +6856,24 @@ get_node_and_cluster_config(IC_INT_API_CONFIG_SERVER *apic, guint32 cluster_id,
   return node_config;
 }
 
+static void
+set_up_apic_methods(IC_INT_API_CONFIG_SERVER *apic)
+{
+  apic->api_op.ic_get_config= get_cs_config;
+  apic->api_op.ic_use_iclaustron_cluster_server= use_ic_cs;
+  apic->api_op.ic_set_error_line= set_error_line;
+  apic->api_op.ic_fill_error_buffer= fill_error_buffer;
+  apic->api_op.ic_get_error_str= get_error_str;
+  apic->api_op.ic_get_cluster_config= get_cluster_config;
+  apic->api_op.ic_get_node_object= get_node_object;
+  apic->api_op.ic_get_communication_object= get_communication_object;
+  apic->api_op.ic_get_typed_node_object= get_typed_node_object;
+  apic->api_op.ic_get_node_id_from_name= get_node_id_from_name;
+  apic->api_op.ic_get_cluster_id_from_name= get_cluster_id_from_name;
+  
+  apic->api_op.ic_free_config= free_cs_config;
+}
+
 IC_API_CONFIG_SERVER*
 ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                       gboolean use_ic_cs_var)
@@ -6867,25 +6902,18 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
     DEBUG_RETURN(NULL);
   }
+  if (!(apic->temp= (IC_TEMP_API_CONFIG_SERVER*)
+      mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_TEMP_API_CONFIG_SERVER))))
+  {
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+    DEBUG_RETURN(NULL);
+  }
   apic->mc_ptr= mc_ptr;
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
   apic->use_ic_cs= use_ic_cs_var;
 
   /* Set-up function pointers */
-  apic->api_op.ic_get_config= get_cs_config;
-  apic->api_op.ic_use_iclaustron_cluster_server= use_ic_cs;
-  apic->api_op.ic_set_error_line= set_error_line;
-  apic->api_op.ic_fill_error_buffer= fill_error_buffer;
-  apic->api_op.ic_get_error_str= get_error_str;
-  apic->api_op.ic_get_cluster_config= get_cluster_config;
-  apic->api_op.ic_get_node_object= get_node_object;
-  apic->api_op.ic_get_communication_object= get_communication_object;
-  apic->api_op.ic_get_typed_node_object= get_typed_node_object;
-  apic->api_op.ic_get_node_id_from_name= get_node_id_from_name;
-  apic->api_op.ic_get_cluster_id_from_name= get_cluster_id_from_name;
-  
-  apic->api_op.ic_free_config= free_cs_config;
-
+  set_up_apic_methods(apic);
   if (!(apic->cluster_conn.cluster_server_ips= (gchar**)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, num_cluster_servers *
                                   sizeof(gchar*))) ||
@@ -7043,6 +7071,21 @@ static int load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                              IC_CLUSTER_CONNECT_INFO **clu_infos);
 static int verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 
+static void
+set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
+
+  set_up_apic_methods(apic);
+  apic->api_op.ic_get_config= null_get_cs_config;
+  apic->api_op.ic_free_config= null_free_cs_config;
+
+  apic->max_cluster_id= run_obj->max_cluster_id;
+  apic->use_ic_cs= TRUE;
+  apic->conf_objects= (IC_CLUSTER_CONFIG**)run_obj->conf_objects;
+  apic->mc_ptr= run_obj->state.mc_ptr;
+}
+
 /* Implements the start_cluster_server method */
 static int
 start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
@@ -7062,6 +7105,7 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   run_obj->cluster_conf_struct.perm_mc_ptr= run_obj->state.mc_ptr;
   if ((error= load_local_config(run_obj)))
     goto error;
+  set_up_apic(run_obj);
   DEBUG_RETURN(0);
 error:
   unlock_cv_file(run_obj);
@@ -7384,6 +7428,13 @@ static int fill_key_value_section(IC_CONFIG_TYPES config_type,
                                   guint64 version_number);
 static gboolean is_iclaustron_version(guint64 version_number);
 
+static IC_API_CONFIG_SERVER*
+get_api_config(IC_RUN_CLUSTER_SERVER *ext_run_obj)
+{
+  IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
+  return (IC_API_CONFIG_SERVER*)run_obj->apic;
+}
+
 /*
  * Here starts the code part of the Run Cluster Server Module
  ============================================================
@@ -7407,6 +7458,9 @@ ic_create_run_cluster(IC_STRING *config_dir,
     goto error;
   if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_RUN_CLUSTER_SERVER))))
+    goto error;
+  if (!(run_obj->apic= (IC_INT_API_CONFIG_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
+                mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
     goto error;
   if (!(run_obj->state.protect_state= g_mutex_new()))
     goto error;
@@ -7452,6 +7506,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
   run_obj->run_op.ic_fill_error_buffer= rcs_fill_error_buffer;
   run_obj->run_op.ic_run_cluster_server= run_cluster_server;
   run_obj->run_op.ic_stop_cluster_server= stop_cluster_server;
+  run_obj->run_op.ic_get_api_config= get_api_config;
   run_obj->run_op.ic_free_run_cluster= free_run_cluster;
   DEBUG_RETURN((IC_RUN_CLUSTER_SERVER*)run_obj);
 

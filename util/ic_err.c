@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7059
+#define IC_LAST_ERROR 7060
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -162,6 +162,8 @@ ic_init_error_messages()
     "Failed to daemonize process";
   ic_error_str[IC_ERROR_APPLICATION_STOPPED - IC_FIRST_ERROR]=
     "Application has been stopped";
+  ic_error_str[IC_ERROR_GET_CONFIG_BY_CLUSTER_SERVER - IC_FIRST_ERROR]=
+    "Trying to get configuration from network using cluster server";
 }
 
 void

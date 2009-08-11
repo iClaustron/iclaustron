@@ -586,6 +586,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
 typedef struct ic_run_cluster_server IC_RUN_CLUSTER_SERVER;
 struct ic_run_cluster_server_operations
 {
+  IC_API_CONFIG_SERVER* (*ic_get_api_config) (IC_RUN_CLUSTER_SERVER *run_obj);
   int (*ic_start_cluster_server) (IC_RUN_CLUSTER_SERVER *run_obj);
   gchar* (*ic_fill_error_buffer) (IC_RUN_CLUSTER_SERVER *run_obj,
                                   int error_code,

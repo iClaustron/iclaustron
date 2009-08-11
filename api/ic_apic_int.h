@@ -158,6 +158,19 @@ struct ic_cluster_config_load
 };
 typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 
+struct ic_temp_api_config_server
+{
+  /*
+    We have a number of variables to keep track of allocated memory
+    and use of allocated memory for strings.
+  */
+  guint32 string_memory_size;
+  gchar *end_string_memory;
+  gchar *next_string_memory;
+  guint32 *node_ids;
+  gchar *config_memory_to_return;
+};
+typedef struct ic_temp_api_config_server IC_TEMP_API_CONFIG_SERVER;
 /*
   The struct ic_api_config_server represents the configuration of
   all clusters that this node participates in and the node id it
@@ -166,23 +179,14 @@ typedef struct ic_cluster_config_load IC_CLUSTER_CONFIG_LOAD;
 struct ic_int_api_config_server
 {
   IC_API_CLUSTER_OPERATIONS api_op;
-  guint32 max_cluster_id;
-  guint32 string_memory_size;
   IC_CLUSTER_CONFIG **conf_objects;
   IC_MEMORY_CONTAINER *mc_ptr;
+  IC_TEMP_API_CONFIG_SERVER *temp;
   IC_API_CLUSTER_CONNECTION cluster_conn;
   GMutex *config_mutex;
 
-  guint32 *node_ids;
-  /*
-    We have a number of variables to keep track of allocated memory
-    and use of allocated memory for strings.
-  */
-  gchar *config_memory_to_return;
-  gchar *string_memory_to_return;
-  gchar *end_string_memory;
-  gchar *next_string_memory;
   const gchar *err_str;
+  guint32 max_cluster_id;
   guint32 err_line;
   gchar use_ic_cs;
 };
@@ -233,6 +237,7 @@ struct ic_int_run_cluster_server
   IC_THREADPOOL_STATE *tp_state;
 
   IC_CONNECTION *conn;
+  IC_INT_API_CONFIG_SERVER *apic;
   IC_APID_GLOBAL *apid_global;
   IC_STRING *config_dir;
   guint32 max_cluster_id;

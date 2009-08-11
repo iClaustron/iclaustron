@@ -67,6 +67,8 @@ main(int argc, char *argv[])
 {
   int error, stop_error;
   gchar *err_str;
+  IC_APID_GLOBAL *apid_global;
+  IC_API_CONFIG_SERVER *apic;
   gchar error_buffer[ERROR_MESSAGE_SIZE];
   IC_RUN_CLUSTER_SERVER *run_obj;
 
@@ -90,6 +92,15 @@ main(int argc, char *argv[])
     ("Starting the iClaustron Cluster Server"));
   if ((error= run_obj->run_op.ic_start_cluster_server(run_obj)))
     goto start_error;
+  apic= run_obj->run_op.ic_get_api_config(run_obj);
+  if (!(apid_global= ic_create_apid_global(apic,
+                                           TRUE,
+                                           &error,
+                                           &err_str)))
+  {
+    ic_print_error(error);
+    goto late_start_error;
+  }
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Running the iClaustron Cluster Server"));
   if ((error= run_obj->run_op.ic_run_cluster_server(run_obj)))
@@ -105,6 +116,8 @@ end:
     }
     run_obj->run_op.ic_free_run_cluster(run_obj);
   }
+  if (apid_global)
+    apid_global->apid_global_ops.ic_free_apid_global(apid_global);
   if (ic_glob_config_dir.str)
     ic_free(ic_glob_config_dir.str);
   ic_end();
@@ -114,6 +127,7 @@ error:
   goto end;
 start_error:
   err_str= run_obj->run_op.ic_fill_error_buffer(run_obj, error, error_buffer);
+late_start_error:
   ic_printf("%s", err_str);
   goto end;
 }
