@@ -6655,8 +6655,10 @@ file_open_error:
   which are support methods to the above
   There is also the create method of the interface:
     ic_create_api_cluster
+  The methods used by the object is set-up in set_up_apic_methods.
 */
 
+static void set_up_apic_methods(IC_INT_API_CONFIG_SERVER *apic);
 static gboolean use_ic_cs(IC_API_CONFIG_SERVER *apic);
 /* static void set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line); */
 static gchar* fill_error_buffer(IC_API_CONFIG_SERVER *apic,
@@ -7066,6 +7068,8 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
    using the method ic_write_full_config_to_disk from another module.
 */
 
+/* Ensure that also run cluster server has API config object */
+static void set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                              IC_CLUSTER_CONNECT_INFO **clu_infos);
