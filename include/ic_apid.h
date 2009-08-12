@@ -387,6 +387,8 @@ struct ic_apid_global_ops
                               guint32 cluster_id,
                               guint32 node_id,
                               IC_CONNECTION *conn);
+  int (*ic_start_heartbeat_thread) (IC_APID_GLOBAL *apid_global,
+                                    IC_THREADPOOL_STATE *tp_state);
   void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };
 

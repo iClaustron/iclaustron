@@ -6659,6 +6659,7 @@ file_open_error:
 */
 
 static void set_up_apic_methods(IC_INT_API_CONFIG_SERVER *apic);
+static guint32 get_max_cluster_id(IC_API_CONFIG_SERVER *apic);
 static gboolean use_ic_cs(IC_API_CONFIG_SERVER *apic);
 /* static void set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line); */
 static gchar* fill_error_buffer(IC_API_CONFIG_SERVER *apic,
@@ -6858,6 +6859,12 @@ get_node_and_cluster_config(IC_INT_API_CONFIG_SERVER *apic, guint32 cluster_id,
   return node_config;
 }
 
+static guint32
+get_max_cluster_id(IC_API_CONFIG_SERVER *apic)
+{
+  return ((IC_INT_API_CONFIG_SERVER*)apic)->max_cluster_id;
+}
+
 static void
 set_up_apic_methods(IC_INT_API_CONFIG_SERVER *apic)
 {
@@ -6872,6 +6879,7 @@ set_up_apic_methods(IC_INT_API_CONFIG_SERVER *apic)
   apic->api_op.ic_get_typed_node_object= get_typed_node_object;
   apic->api_op.ic_get_node_id_from_name= get_node_id_from_name;
   apic->api_op.ic_get_cluster_id_from_name= get_cluster_id_from_name;
+  apic->api_op.ic_get_max_cluster_id= get_max_cluster_id;
   
   apic->api_op.ic_free_config= free_cs_config;
 }
@@ -7078,7 +7086,7 @@ static int verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static void
 set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
+  IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)run_obj->apic;
 
   set_up_apic_methods(apic);
   apic->api_op.ic_get_config= null_get_cs_config;
@@ -7096,6 +7104,7 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
   int error;
+  gchar *err_str;
   DEBUG_ENTRY("start_cluster_server");
 
   /* Try to lock the configuration and get configuration version */
@@ -7110,7 +7119,14 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   if ((error= load_local_config(run_obj)))
     goto error;
   set_up_apic(run_obj);
+  if (!(run_obj->apid_global= ic_create_apid_global(run_obj->apic,
+                                                    TRUE,
+                                                    &error,
+                                                    &err_str)))
+    goto late_error;
   DEBUG_RETURN(0);
+late_error:
+  ic_printf("%s", err_str);
 error:
   unlock_cv_file(run_obj);
   DEBUG_RETURN(error);
@@ -7463,7 +7479,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
   if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_RUN_CLUSTER_SERVER))))
     goto error;
-  if (!(run_obj->apic= (IC_INT_API_CONFIG_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
+  if (!(run_obj->apic= (IC_API_CONFIG_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
     goto error;
   if (!(run_obj->state.protect_state= g_mutex_new()))
@@ -7573,6 +7589,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   int ret_code= 0;
   guint32 thread_id;
   IC_CONNECTION *conn, *fork_conn;
+  IC_APID_GLOBAL *apid_global= run_obj->apid_global;
   DEBUG_ENTRY("run_cluster_server");
 
   /*
@@ -7590,13 +7607,21 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     connection.
   */
   conn= run_obj->conn;
-  ret_code= conn->conn_op.ic_set_up_connection(conn,
+  if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                                check_for_stopped_rcs_threads,
-                                               (void*)tp_state);
-  if (ret_code)
+                                               (void*)tp_state)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Failed to set-up listening connection"));
+    goto error;
+  }
+  /* Start heartbeat thread */
+  if ((ret_code= apid_global->apid_global_ops.ic_start_heartbeat_thread(
+                   apid_global,
+                   tp_state)))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Failed to start heartbeat thread"));
     goto error;
   }
   do
@@ -7644,11 +7669,22 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
   guint32 i;
+  IC_APID_GLOBAL *apid_global;
+  IC_THREADPOOL_STATE *tp_state;
+  IC_CONNECTION *conn;
   DEBUG_ENTRY("free_run_cluster");
 
   if (run_obj)
   {
-    run_obj->conn->conn_op.ic_free_connection(run_obj->conn);
+    tp_state= run_obj->tp_state;
+    if (tp_state)
+      tp_state->tp_ops.ic_threadpool_stop(tp_state);
+    conn= run_obj->conn;
+    if (conn)
+      conn->conn_op.ic_free_connection(conn);
+    apid_global= run_obj->apid_global;
+    if (apid_global)
+      apid_global->apid_global_ops.ic_free_apid_global(apid_global);
     for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
     {
       if (run_obj->conf_objects[i])

@@ -183,6 +183,9 @@ static int external_connect(IC_APID_GLOBAL *apid_global,
                             guint32 cluster_id,
                             guint32 node_id,
                             IC_CONNECTION *conn);
+/* External function to start heartbeat thread */
+static int start_heartbeat_thread(IC_APID_GLOBAL *apid_global,
+                                  IC_THREADPOOL_STATE *tp_state);
 
 /*
   GLOBAL DATA API INITIALISATION MODULE
@@ -609,6 +612,8 @@ ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
   apid_global->apid_global_ops.ic_set_thread_func= set_thread_func;
   apid_global->apid_global_ops.ic_get_thread_func= get_thread_func;
   apid_global->apid_global_ops.ic_external_connect= external_connect;
+  apid_global->apid_global_ops.ic_start_heartbeat_thread=
+    start_heartbeat_thread;
   apid_global->apid_global_ops.ic_free_apid_global= free_apid_global;
   return (IC_APID_GLOBAL*)apid_global;
 error:
@@ -718,7 +723,8 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   IC_GRID_COMM *grid_comm;
   IC_THREAD_CONNECTION *thread_conn;
   IC_INT_APID_CONNECTION *apid_conn;
-  guint32 i;
+  guint32 i, num_bits;
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
   DEBUG_ENTRY("ic_create_apid_connection");
 
   /* Initialise the APID connection object */
@@ -728,11 +734,22 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   apid_conn->apid_global= apid_global;
   apid_conn->thread_id= thread_id;
   apid_conn->apid_global= apid_global;
-  apid_conn->apic= apid_global->apic;
-  if (!(apid_conn->cluster_id_bitmap= ic_create_bitmap(NULL,
-                        ic_bitmap_get_num_bits(cluster_id_bitmap))))
+  apid_conn->apic= apic;
+  num_bits= apic->api_op.ic_get_max_cluster_id(apic) + 1;
+  if (!(apid_conn->cluster_id_bitmap= ic_create_bitmap(NULL, num_bits)))
     goto error;
-  ic_bitmap_copy(apid_conn->cluster_id_bitmap, cluster_id_bitmap);
+  if (cluster_id_bitmap)
+  {
+    ic_bitmap_copy(apid_conn->cluster_id_bitmap, cluster_id_bitmap);
+  }
+  else
+  {
+    for (i= 0; i < num_bits; i++)
+    {
+    if (apic->api_op.ic_get_cluster_config(apic, i))
+      ic_bitmap_set_bit(apid_conn->cluster_id_bitmap, i);
+    }
+  }
 
   /* Initialise Thread Connection object */
   if (!(thread_conn= apid_conn->thread_conn= (IC_THREAD_CONNECTION*)
@@ -764,6 +781,7 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   }
   grid_comm->thread_conn_array[thread_id]= thread_conn;
   g_mutex_unlock(apid_global->thread_id_mutex);
+  apid_conn->thread_id= thread_id;
   /* Now initialise the method pointers for the Data API interface */
   apid_conn->apid_conn_ops.ic_free= apid_free;
   apid_conn->apid_conn_ops.ic_get_apid_global= get_apid_global;
@@ -776,6 +794,69 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
 error:
   apid_free((IC_APID_CONNECTION*)apid_conn);
 end:
+  return NULL;
+}
+
+/*
+  Heartbeat MODULE
+  ----------------
+
+  All users of the Data API requires sending of heartbeats every now and
+  then. To simplify this the Data API has methods to start a heartbeat
+  thread and there is also a method to add nodes to be handled by this
+  thread (start_heartbeat_thread and add_node_to_heartbeat_thread).
+
+  Then we also have the run heartbeat thread method that implements the
+  heartbeat thread.
+*/
+static int start_heartbeat_thread(IC_APID_GLOBAL *apid_global,
+                                  IC_THREADPOOL_STATE *tp_state);
+static void add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                              IC_SEND_NODE_CONNECTION *send_node_conn);
+static gpointer run_heartbeat_thread(gpointer data);
+
+static int
+start_heartbeat_thread(IC_APID_GLOBAL *ext_apid_global,
+                       IC_THREADPOOL_STATE *tp_state)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  IC_APID_CONNECTION *heartbeat_conn;
+  guint32 heartbeat_thread_id;
+  int error;
+
+  if (apid_global->heartbeat_conn)
+    return IC_ERROR_HEARTBEAT_THREAD_ALREADY_STARTED;
+  if (!(heartbeat_conn= ic_create_apid_connection(ext_apid_global, NULL)))
+    return IC_ERROR_MEM_ALLOC;
+  /* Start heartbeat thread */
+  error= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
+                        tp_state,
+                        &heartbeat_thread_id,
+                        IC_MAX_THREAD_WAIT_TIME);
+  error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                        tp_state,
+                        heartbeat_thread_id,
+                        run_heartbeat_thread,
+                        (void*)apid_global,
+                        IC_SMALL_STACK_SIZE,
+                        FALSE);
+  apid_global->heartbeat_conn= heartbeat_conn;
+  return 0;
+}
+
+static void
+add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                             IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  (void)apid_global;
+  (void)send_node_conn;
+  return;
+}
+
+static gpointer
+run_heartbeat_thread(gpointer data)
+{
+  (void)data;
   return NULL;
 }
 
@@ -2210,6 +2291,11 @@ run_send_thread(void *data)
       thread.
     */
     move_node_to_receive_thread(send_node_conn);
+    /*
+      Move node also to heartbeat thread to ensure keep sending heartbeat
+      messages to the node even if no other traffic is ongoing
+    */
+    add_node_to_heartbeat_thread(apid_global, send_node_conn);
     /*
       Now this thread is only handling the send_thread part which is
       taken care by active_send_thread, it returns when the connection

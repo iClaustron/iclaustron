@@ -370,6 +370,9 @@ struct ic_int_apid_global
   IC_SOCK_BUF *ndb_message_pool;
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
+  IC_APID_CONNECTION *heartbeat_conn;
+  IC_THREADPOOL_STATE *heartbeat_threadpool;
+  guint32 heartbeat_thread_id;
   IC_THREADPOOL_STATE *rec_thread_pool;
   IC_THREADPOOL_STATE *send_thread_pool;
   GMutex *thread_id_mutex;

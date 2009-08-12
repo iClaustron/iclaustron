@@ -237,7 +237,8 @@ struct ic_int_run_cluster_server
   IC_THREADPOOL_STATE *tp_state;
 
   IC_CONNECTION *conn;
-  IC_INT_API_CONFIG_SERVER *apic;
+  IC_API_CONFIG_SERVER *apic;
+  IC_APID_CONNECTION *heartbeat_conn;
   IC_APID_GLOBAL *apid_global;
   IC_STRING *config_dir;
   guint32 max_cluster_id;
