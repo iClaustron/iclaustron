@@ -4178,13 +4178,6 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   if (!(*tp_state=
           ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     return IC_ERROR_MEM_ALLOC;
-  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir, ic_glob_data_path)) ||
-      (ret_code= ic_set_base_dir(&ic_glob_base_dir, ic_glob_base_path)) ||
-      (ret_code= ic_set_binary_dir(&ic_glob_binary_dir,
-                                   ic_glob_base_path,
-                                   IC_VERSION_STR)))
-    return ret_code;
-  ic_set_port_binary_dir(ic_glob_binary_dir.str);
   if (daemonize)
   {
     if ((ret_code= ic_daemonize("/dev/null")))
@@ -4443,6 +4436,13 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   g_option_context_free(context);
   if ((ret_code= ic_init()))
     return ret_code;
+  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir, ic_glob_data_path)) ||
+      (ret_code= ic_set_base_dir(&ic_glob_base_dir, ic_glob_base_path)) ||
+      (ret_code= ic_set_binary_dir(&ic_glob_binary_dir,
+                                   ic_glob_base_path,
+                                   IC_VERSION_STR)))
+    return ret_code;
+  ic_set_port_binary_dir(ic_glob_binary_dir.str);
   return 0;
 
 parse_error:

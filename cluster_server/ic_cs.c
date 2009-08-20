@@ -76,9 +76,6 @@ main(int argc, char *argv[])
                                glob_process_name,
            "- iClaustron Cluster Server", TRUE)))
     return error;
-  if ((error= ic_set_config_dir(&ic_glob_config_dir,
-                                ic_glob_data_path)))
-    return error;
   if (!(run_obj= ic_create_run_cluster(&ic_glob_config_dir,
                                        glob_process_name,
                                        glob_server_name,

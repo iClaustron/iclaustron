@@ -209,6 +209,10 @@ static void
 thread_set_mutex(IC_THREAD_STATE *ext_thread_state, GMutex *mutex)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+  IC_INT_THREADPOOL_STATE *tp_state= thread_state->tp_state;
+
+  ic_require(tp_state->use_internal_mutex);
+  g_mutex_free(thread_state->mutex);
   thread_state->mutex= mutex;
 }
 
@@ -216,6 +220,10 @@ static void
 thread_set_cond(IC_THREAD_STATE *ext_thread_state, GCond *cond)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+  IC_INT_THREADPOOL_STATE *tp_state= thread_state->tp_state;
+
+  ic_require(tp_state->use_internal_mutex);
+  g_cond_free(thread_state->cond);
   thread_state->cond= cond;
 }
 
@@ -614,14 +622,11 @@ ic_create_threadpool(guint32 pool_size,
     thread_state_ptr+= thread_state_size;
     thread_state->tp_state= tp_state;
     thread_state->thread_id= i;
-    if (use_internal_mutex)
-    {
-      thread_state->mutex= g_mutex_new();
-      thread_state->cond= g_cond_new();
-      if (thread_state->mutex == NULL ||
-          thread_state->cond == NULL)
-        goto mem_alloc_error;
-    }
+    thread_state->mutex= g_mutex_new();
+    thread_state->cond= g_cond_new();
+    if (thread_state->mutex == NULL ||
+        thread_state->cond == NULL)
+      goto mem_alloc_error;
     free_thread(tp_state, thread_state, i);
   }
 
