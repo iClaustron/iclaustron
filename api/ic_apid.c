@@ -129,7 +129,7 @@
 IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};
-IC_STRING ic_glob_ic_binary_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_binary_dir= { NULL, 0, TRUE};
 gchar *ic_glob_cs_server_name= "127.0.0.1";
 gchar *ic_glob_cs_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 gchar *ic_glob_cs_connectstring= NULL;
@@ -4178,9 +4178,13 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   if (!(*tp_state=
           ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     return IC_ERROR_MEM_ALLOC;
-  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir,
-                                    ic_glob_data_path)))
+  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir, ic_glob_data_path)) ||
+      (ret_code= ic_set_base_dir(&ic_glob_base_dir, ic_glob_base_path)) ||
+      (ret_code= ic_set_binary_dir(&ic_glob_binary_dir,
+                                   ic_glob_base_path,
+                                   IC_VERSION_STR)))
     return ret_code;
+  ic_set_port_binary_dir(ic_glob_binary_dir.str);
   if (daemonize)
   {
     if ((ret_code= ic_daemonize("/dev/null")))
@@ -4500,10 +4504,10 @@ void ic_end()
     ic_free(ic_glob_data_dir.str);
     ic_glob_data_dir.str= NULL;
   }
-  if (ic_glob_ic_binary_dir.str)
+  if (ic_glob_binary_dir.str)
   {
-    ic_free(ic_glob_ic_binary_dir.str);
-    ic_glob_ic_binary_dir.str= NULL;
+    ic_free(ic_glob_binary_dir.str);
+    ic_glob_binary_dir.str= NULL;
   }
   DEBUG_CLOSE;
   ic_mem_end();

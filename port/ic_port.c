@@ -50,6 +50,9 @@
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
+#ifdef HAVE_SYS_WAIT_H
+#include <sys/wait.h>
+#endif
 #ifdef HAVE_SIGNAL_H
 #include <signal.h>
 #endif
@@ -84,6 +87,7 @@ void ic_mem_end()
     ic_printf("Memory leak found");
 #endif
 }
+
 void
 ic_set_port_binary_dir(const gchar *binary_dir)
 {
