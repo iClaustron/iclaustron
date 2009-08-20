@@ -32,19 +32,23 @@
 #include <ic_debug.h>
 #include <ic_string.h>
 #include <glib/gstdio.h>
+#ifdef HAVE_UNISTD_H
 #include <unistd.h>
+#endif
+#ifdef HAVE_FCNTL_H
 #include <fcntl.h>
-#ifdef HAVE_GETHRTIME
+#endif
+#ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
 #endif
-#ifdef HAVE_CLOCK_GETTIME
+#ifdef HAVE_TIME_H
 #include <time.h>
-#endif
-#ifdef HAVE_GETTIMEOFDAY
-#include <sys/time.h>
 #endif
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
+#endif
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
 #endif
 #ifdef HAVE_SIGNAL_H
 #include <signal.h>
@@ -164,6 +168,19 @@ ic_sleep(guint32 seconds_to_sleep)
   sleep(seconds_to_sleep);
 }
 
+void
+ic_microsleep(guint32 microseconds_to_sleep)
+{
+  struct timeval time;
+  guint32 seconds, microseconds;
+
+  seconds= microseconds_to_sleep / 1000000;
+  microseconds= microseconds_to_sleep - (seconds * 1000000);
+  time.tv_sec= seconds;
+  time.tv_usec= microseconds;
+  select(0, NULL, NULL, NULL, &time);
+}
+
 gchar *
 ic_calloc(size_t size)
 {
@@ -207,6 +224,7 @@ ic_free(void *ret_obj)
   g_free(ret_obj);
 }
 
+#ifndef WIN32
 GPid
 ic_get_own_pid()
 {
@@ -215,7 +233,6 @@ ic_get_own_pid()
   return (GPid)pid;
 }
 
-#ifndef WIN32
 void 
 ic_kill_process(GPid pid, gboolean hard_kill)
 {
@@ -224,9 +241,28 @@ ic_kill_process(GPid pid, gboolean hard_kill)
   else
     kill(pid, SIGTERM);
 }
+
+void ic_controlled_terminate()
+{
+  GPid my_pid;
+
+  my_pid= ic_get_own_pid();
+  kill(my_pid, SIGTERM);
+}
 #else /* WIN32 */
+GPid
+ic_get_own_pid()
+{
+  return 0;
+}
+
 void 
 ic_kill_process(GPid pid, gboolean hard_kill)
+{
+}
+
+void
+ic_controlled_terminate()
 {
 }
 #endif
@@ -619,4 +655,15 @@ ic_daemonize(gchar *log_file)
 #else
   return 0;
 #endif
+}
+
+guint32 ic_byte_order()
+{
+  guint32 loc_variable= 1;
+  gchar *loc_char_ptr= (gchar*)&loc_variable;
+
+  if (loc_char_ptr[0] == 1)
+    return 1;
+  else
+    return 0;
 }

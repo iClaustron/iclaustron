@@ -7589,7 +7589,6 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   int ret_code= 0;
   guint32 thread_id;
   IC_CONNECTION *conn, *fork_conn;
-  IC_APID_GLOBAL *apid_global= run_obj->apid_global;
   DEBUG_ENTRY("run_cluster_server");
 
   /*
@@ -7613,15 +7612,6 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Failed to set-up listening connection"));
-    goto error;
-  }
-  /* Start heartbeat thread */
-  if ((ret_code= apid_global->apid_global_ops.ic_start_heartbeat_thread(
-                   apid_global,
-                   tp_state)))
-  {
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Failed to start heartbeat thread"));
     goto error;
   }
   do

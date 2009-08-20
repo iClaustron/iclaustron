@@ -140,6 +140,7 @@ guint32 ic_glob_node_id= 1;
 guint32 ic_glob_num_threads= 1;
 guint32 ic_glob_use_iclaustron_cluster_server= 1;
 guint32 ic_glob_daemonize= 1;
+guint32 ic_glob_byte_order= 0;
 
 /*
   These static functions implements the local IC_TRANSLATION_OBJ.
@@ -167,12 +168,15 @@ static void close_listen_server_thread(
           IC_INT_APID_GLOBAL *apid_global);
 
 /* Function for Data API functions to send messages */
+/* Not yet used
 static int
-send_handling(IC_INT_APID_GLOBAL *apid_global,
+send_messages(IC_INT_APID_GLOBAL *apid_global,
               guint32 cluster_id,
               guint32 node_id,
               IC_SOCK_BUF_PAGE *first_page_to_send,
               gboolean force_send);
+*/
+
 /* Function for Data API functions to receive messages */
 static int poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time);
 /*
@@ -183,10 +187,16 @@ static int external_connect(IC_APID_GLOBAL *apid_global,
                             guint32 cluster_id,
                             guint32 node_id,
                             IC_CONNECTION *conn);
-/* External function to start heartbeat thread */
-static int start_heartbeat_thread(IC_APID_GLOBAL *apid_global,
+/* Internal function to start heartbeat thread */
+static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                   IC_THREADPOOL_STATE *tp_state);
+/* Internal function to handle node connection failure */
+static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
 
+/* Internal function to send a NDB message */
+static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
+                    IC_SOCK_BUF_PAGE *first_page_to_send,
+                    gboolean force_send);
 /*
   GLOBAL DATA API INITIALISATION MODULE
   -------------------------------------
@@ -221,7 +231,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
        ic_calloc(sizeof(IC_INT_APID_GLOBAL))))
     return NULL;
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
-                        IC_MAX_RECEIVE_THREADS, TRUE)))
+                        IC_MAX_RECEIVE_THREADS + 1, TRUE)))
     goto error;
   if (!(apid_global->send_thread_pool= ic_create_threadpool(
                         IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
@@ -245,8 +255,8 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
     goto error;
   if (!(apid_global->cond= g_cond_new()))
     goto error;
-  if (!(apid_global->mem_buf_pool= ic_create_sock_buf(IC_MEMBUF_SIZE,
-                                                      512)))
+  if (!(apid_global->send_buf_pool= ic_create_sock_buf(IC_MEMBUF_SIZE,
+                                                       1024)))
     goto error;
   if (!(apid_global->ndb_message_pool= ic_create_sock_buf(0, 16384)))
     goto error;
@@ -307,7 +317,7 @@ free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
 static void
 ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
 {
-  IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
   IC_SOCK_BUF *ndb_message_pool= apid_global->ndb_message_pool;
   IC_GRID_COMM *grid_comm= apid_global->grid_comm;
   IC_CLUSTER_COMM *cluster_comm;
@@ -323,10 +333,16 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
                   apid_global->send_thread_pool);
   if (apid_global->cluster_bitmap)
     ic_free_bitmap(apid_global->cluster_bitmap);
-  if (mem_buf_pool)
-    mem_buf_pool->sock_buf_ops.ic_free_sock_buf(mem_buf_pool);
+  if (send_buf_pool)
+    send_buf_pool->sock_buf_ops.ic_free_sock_buf(send_buf_pool);
   if (ndb_message_pool)
     ndb_message_pool->sock_buf_ops.ic_free_sock_buf(ndb_message_pool);
+  if (apid_global->heartbeat_mutex)
+    g_mutex_free(apid_global->heartbeat_mutex);
+  if (apid_global->heartbeat_cond)
+    g_cond_free(apid_global->heartbeat_cond);
+  if (apid_global->heartbeat_conn)
+    apid_free(apid_global->heartbeat_conn);
   if (apid_global->mutex)
     g_mutex_free(apid_global->mutex);
   if (apid_global->cond)
@@ -612,9 +628,14 @@ ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
   apid_global->apid_global_ops.ic_set_thread_func= set_thread_func;
   apid_global->apid_global_ops.ic_get_thread_func= get_thread_func;
   apid_global->apid_global_ops.ic_external_connect= external_connect;
-  apid_global->apid_global_ops.ic_start_heartbeat_thread=
-    start_heartbeat_thread;
   apid_global->apid_global_ops.ic_free_apid_global= free_apid_global;
+  if ((error= start_heartbeat_thread(apid_global,
+                                     apid_global->rec_thread_pool)))
+  {
+    ic_end_apid(apid_global);
+    *ret_code= error;
+    goto error;
+  }
   return (IC_APID_GLOBAL*)apid_global;
 error:
   err_string= ic_common_fill_error_buffer(NULL, 0, *ret_code, *err_str);
@@ -783,11 +804,12 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   g_mutex_unlock(apid_global->thread_id_mutex);
   apid_conn->thread_id= thread_id;
   /* Now initialise the method pointers for the Data API interface */
-  apid_conn->apid_conn_ops.ic_free= apid_free;
+  apid_conn->apid_conn_ops.ic_free_apid_connection= apid_free;
   apid_conn->apid_conn_ops.ic_get_apid_global= get_apid_global;
   apid_conn->apid_conn_ops.ic_get_api_config_server= get_api_config_server;
   apid_conn->apid_conn_ops.ic_get_next_executed_operation= 
     get_next_executed_operation;
+  apid_conn->apid_conn_ops.ic_poll= poll_messages;
   /* TODO many more methods */
   return (IC_APID_CONNECTION*)apid_conn;
 
@@ -807,57 +829,190 @@ end:
   thread (start_heartbeat_thread and add_node_to_heartbeat_thread).
 
   Then we also have the run heartbeat thread method that implements the
-  heartbeat thread.
+  heartbeat thread. This thread has one support function that packs the
+  API_HEARTBEATREQ message and one support function that does the
+  actual send of the heartbeat message (prepare_send_heartbeat and
+  real_send_heartbeat).
+
+  Finally there is a callback method that is called when the
+  API_HEARTBEATCONF message is received. This method belongs to the
+  heartbeat module but is alsoa vital part of the Message Logic Modules.
 */
-static int start_heartbeat_thread(IC_APID_GLOBAL *apid_global,
+static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                   IC_THREADPOOL_STATE *tp_state);
 static void add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                               IC_SEND_NODE_CONNECTION *send_node_conn);
+static int prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                  IC_SOCK_BUF_PAGE *heartbeat_page);
+static int real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                               IC_SOCK_BUF_PAGE *heartbeat_page);
 static gpointer run_heartbeat_thread(gpointer data);
 
 static int
-start_heartbeat_thread(IC_APID_GLOBAL *ext_apid_global,
+start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                        IC_THREADPOOL_STATE *tp_state)
 {
-  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
   IC_APID_CONNECTION *heartbeat_conn;
-  guint32 heartbeat_thread_id;
   int error;
 
-  if (apid_global->heartbeat_conn)
-    return IC_ERROR_HEARTBEAT_THREAD_ALREADY_STARTED;
-  if (!(heartbeat_conn= ic_create_apid_connection(ext_apid_global, NULL)))
-    return IC_ERROR_MEM_ALLOC;
+  ic_require(!apid_global->heartbeat_conn);
+  if (!(heartbeat_conn= ic_create_apid_connection(
+                (IC_APID_GLOBAL*)apid_global, NULL)))
+    goto mem_error;
+  if ((!(apid_global->heartbeat_mutex= g_mutex_new())) ||
+      (!(apid_global->heartbeat_cond= g_cond_new())))
+    goto mem_error;
   /* Start heartbeat thread */
-  error= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
+  if ((error= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
                         tp_state,
-                        &heartbeat_thread_id,
-                        IC_MAX_THREAD_WAIT_TIME);
-  error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                        &apid_global->heartbeat_thread_id,
+                        IC_MAX_THREAD_WAIT_TIME)) ||
+      ((error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                         tp_state,
-                        heartbeat_thread_id,
+                        apid_global->heartbeat_thread_id,
                         run_heartbeat_thread,
                         (void*)apid_global,
                         IC_SMALL_STACK_SIZE,
-                        FALSE);
+                        FALSE))))
+    goto error;
   apid_global->heartbeat_conn= heartbeat_conn;
   return 0;
+mem_error:
+  error= IC_ERROR_MEM_ALLOC;
+error:
+  heartbeat_conn->apid_conn_ops.ic_free_apid_connection(heartbeat_conn);
+  return error;
 }
 
 static void
 add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                              IC_SEND_NODE_CONNECTION *send_node_conn)
 {
-  (void)apid_global;
+  ic_require(send_node_conn);
+  g_mutex_lock(apid_global->heartbeat_mutex);
+  /*
+    If this is the first node added the heartbeat thread is waiting for
+    the first node to be connected before starting its activity.
+  */
+  if (!apid_global->heartbeat_thread_waiting)
+    g_cond_signal(apid_global->heartbeat_cond);
+  send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
+  apid_global->first_heartbeat_node= send_node_conn;
+  g_mutex_unlock(apid_global->heartbeat_mutex);
+}
+
+static void
+rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                               IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  IC_SEND_NODE_CONNECTION *prev_node= NULL, *next_node;
+
+  g_mutex_lock(apid_global->heartbeat_mutex);
+  next_node= apid_global->first_heartbeat_node;
+  while (next_node != send_node_conn && next_node)
+  {
+    prev_node= next_node;
+    next_node= next_node->next_heartbeat_node;
+  }
+  ic_require(next_node);
+  if (prev_node)
+    prev_node->next_heartbeat_node= next_node->next_heartbeat_node;
+  else
+    apid_global->first_heartbeat_node= next_node->next_heartbeat_node;
+  if (send_node_conn == apid_global->curr_heartbeat_node)
+    apid_global->curr_heartbeat_node= send_node_conn->next_heartbeat_node;
+  g_mutex_unlock(apid_global->heartbeat_mutex);
+}
+
+static int
+prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                       IC_SOCK_BUF_PAGE *hb_page)
+{
   (void)send_node_conn;
-  return;
+  (void)hb_page;
+  return 0;
+}
+
+static int
+real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                    IC_SOCK_BUF_PAGE *hb_page)
+{
+  return ndb_send(send_node_conn, hb_page, FALSE);
 }
 
 static gpointer
 run_heartbeat_thread(gpointer data)
 {
-  (void)data;
+  int error= 0;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_SEND_NODE_CONNECTION *last_send_node_conn= NULL;
+  IC_SOCK_BUF_PAGE *free_pages= NULL;
+  IC_SOCK_BUF_PAGE *hb_page= NULL;
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+
+  while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  {
+    if (!(hb_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
+                   send_buf_pool,
+                   &free_pages,
+                   (guint32)8,
+                   3000)))
+      goto error;
+    g_mutex_lock(apid_global->heartbeat_mutex);
+    if (!apid_global->first_heartbeat_node)
+    {
+      last_send_node_conn= NULL;
+      apid_global->heartbeat_thread_waiting= TRUE;
+      g_cond_wait(apid_global->heartbeat_cond, apid_global->heartbeat_mutex);
+      g_mutex_unlock(apid_global->heartbeat_mutex);
+      send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                          hb_page);
+      continue;
+    }
+    if (!apid_global->curr_heartbeat_node)
+    {
+      last_send_node_conn= apid_global->first_heartbeat_node;
+      apid_global->curr_heartbeat_node= apid_global->first_heartbeat_node;
+    }
+    else
+    {
+      if (last_send_node_conn == apid_global->curr_heartbeat_node)
+      {
+        /* Normal case, step forward here to next node */
+        apid_global->curr_heartbeat_node=
+          last_send_node_conn->next_heartbeat_node;
+        last_send_node_conn= last_send_node_conn->next_heartbeat_node;
+      }
+      else
+      {
+        /*
+          Remove node have moved curr_heartbeat_node forward, we need
+          to send to this node as well. No action needed here.
+        */
+        ;
+      }
+    }
+    error= prepare_send_heartbeat(last_send_node_conn, hb_page);
+    g_mutex_unlock(apid_global->heartbeat_mutex);
+    if (error || (error= real_send_heartbeat(last_send_node_conn, hb_page)))
+    {
+      g_mutex_lock(last_send_node_conn->mutex);
+      node_failure_handling(last_send_node_conn);
+      g_mutex_unlock(last_send_node_conn->mutex);
+    }
+  }
+end:
+  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                      free_pages);
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
+error:
+  /* Serious error, heartbeat thread cannot continue, need to stop */
+  ic_controlled_terminate();
+  goto end;
 }
 
 /*
@@ -1098,7 +1253,7 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
 */
 
 /*
-  The external interface to this module is send_handling which is where the
+  The external interface to this module is send_messages which is where the
   Data API methods calls when they are ready to deliver a set of messages to
   a certain node in a cluster. However since send logic is also shared by the
   send threads and also the receiver threads some methods here are used also
@@ -1117,22 +1272,48 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
      queueing situation in front of the socket, then the send will be done
      by a send thread.
 */
+/* Not yet used
 static int
-send_handling(IC_INT_APID_GLOBAL *apid_global,
+send_messages(IC_INT_APID_GLOBAL *apid_global,
               guint32 cluster_id,
               guint32 node_id,
               IC_SOCK_BUF_PAGE *first_page_to_send,
               gboolean force_send);
+*/
 
 /*
-  ndb_send is used by send_handling, in principle send_handling only converts
+  ndb_send is used by send_messages, in principle send_messages only converts
   an APID_GLOBAL object, a cluster id, a node id into a send node connection
   object.
+
+  fill_ndb_message_header is a base function used to fill in the message
+  and in particular the message header of the NDB Protocol.
+
+  fill_in_message_id_in_ndb_messages handles message id insertion when it is
+  used in the NDB Protocol messages, this is always called under protection
+  of the IC_SEND_NODE_CONNECTION mutex which protects the message id variable
+  used in this connection.
 */
 static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,
                     gboolean force_send);
 
+static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                       guint32 message_number,
+                                       guint32 message_priority,
+                                       guint32 sender_module_id,
+                                       guint32 receiver_mdoule_id,
+                                       guint32 *start_message,
+                                       guint32 main_message_size,
+                                       guint32 *main_message,
+                                       guint32 num_segments,
+                                       guint32 *segment_ptrs[3],
+                                       guint32 segment_lens[3]);
+
+static void fill_in_message_id_in_ndb_message(
+                          IC_SEND_NODE_CONNECTION *send_node_conn,
+                          IC_SOCK_BUF_PAGE *first_page,
+                          gboolean use_checksum);
 /*
   prepare_real_send_handling prepares send buffers that can be used
   immediately by the socket calls, it doesn't actually send the data.
@@ -1157,7 +1338,194 @@ static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
                                  guint32 node_id,
                                  IC_SEND_NODE_CONNECTION **send_node_conn);
 
+static guint32 get_message_size(guint32 word1);
 /* Send message functions */
+static guint32
+get_message_size(guint32 word1)
+{
+  return ((word1 >> 8) & 0xFFFF);
+}
+
+static guint32
+fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
+                        guint32 message_number,
+                        guint32 message_priority,
+                        guint32 sender_module_id,
+                        guint32 receiver_module_id,
+                        guint32 *start_message,
+                        guint32 main_message_size,
+                        guint32 *main_message,
+                        guint32 num_segments,
+                        guint32 *segment_ptrs[3],
+                        guint32 segment_lens[3])
+{
+  guint32 header_length= IC_NDB_MESSAGE_HEADER_SIZE;
+  register guint32 word;
+  register guint32 loc_variable;
+  guint32 tot_message_size;
+  gboolean use_message_id= send_node_conn->link_config->use_message_id;
+  gboolean use_checksum= send_node_conn->link_config->use_checksum;
+  guint32 *message_ptr;
+  guint32 i;
+  /*
+    First calculate length of message header:
+      It is 3 words (32-bit words) plus an optional word
+      that contains a message number which is unique for the sender
+      node. There is also an optional checksum word at the end of
+      the message.
+    Second copy the main message part and the segment parts into the
+    right place in the message if not already done.
+  */
+  header_length+= use_message_id;
+  tot_message_size= header_length + main_message_size;
+  if (main_message != (start_message + header_length))
+  {
+    memcpy(start_message + header_length,
+           main_message,
+           main_message_size * sizeof(guint32));
+  }
+  if (num_segments > 0)
+  {
+    message_ptr= start_message + header_length + main_message_size;
+    for (i= 0; i < num_segments; i++)
+    {
+      tot_message_size+= (segment_lens[i] + 1);
+      *message_ptr= segment_lens[i];
+      message_ptr++;
+    }
+    for (i= 0; i < num_segments; i++)
+    {
+      if (segment_ptrs[i] != message_ptr)
+      {
+        memcpy(message_ptr,
+               segment_ptrs[i],
+               segment_lens[i] * sizeof(guint32));
+      }
+      message_ptr+= segment_lens[i];
+    }
+  }
+  tot_message_size+= use_checksum;
+  /*
+    Calculate first header word
+    Bit 0, 7, 24, 31 are set if big endian on sender side
+    Bit 1,25   Fragmented messages indicator (Always 0 for now, TODO)
+    Bit 2      Message id used flag
+    Bit 3      ???
+    Bit 4      Checksum used flag
+    Bit 5-6    Message priority
+    Bit 8-23   Total message size
+    Bit 26-30  Main message size (max 25)
+  */
+  word= 0;
+
+  /* Set byte order indicator */
+  if (ic_glob_byte_order)
+    word= 0x81000081; /* Set bit 0,7,24,31 independent of byte order */
+
+  /* Set message id used flag */
+  loc_variable= use_message_id << 2;
+  word|= loc_variable;
+
+  /* Set checksum used flag */
+  loc_variable= use_checksum << 4;
+  word|= loc_variable;
+
+  /* Set message priority */
+  ic_require(message_priority <= IC_NDB_MAX_PRIO_LEVEL);
+  loc_variable= message_priority << 5;
+  word|= loc_variable;
+
+  /* Set total message size */
+  loc_variable= tot_message_size << 8;
+  word|= loc_variable;
+
+  /* Set main message size */
+  loc_variable= main_message_size + num_segments;
+  ic_require(loc_variable <= IC_NDB_MAX_MAIN_MESSAGE_SIZE);
+  loc_variable<<= 26;
+  word|= loc_variable;
+
+  start_message[0]= word;
+  /*
+    Calculate second header word
+    Bit 0-19   Message number (e.g. API_HBREQ)
+    Bit 20-25  Trace number
+    Bit 26-27  Number of segements used
+    Bit 28-31  Not used (?)
+  */
+
+  /* Set message number */
+  word= message_number;
+
+  /* Set trace number (0 always for now) */
+
+  /* Set number of segments used */
+  loc_variable= num_segments << 26;
+  word|= loc_variable;
+
+  start_message[1]= word;
+  /*
+    Calculate third header word
+    Bit 0-15   Sender module id
+    Bit 16-31  Receiver module id
+  */
+
+  /* Set sender module id */
+  ic_require(sender_module_id <= IC_NDB_MAX_MODULE_ID);
+  word= sender_module_id;
+
+  /* Set receiver module id */
+  ic_require(receiver_module_id <= IC_NDB_MAX_MODULE_ID);
+  loc_variable= receiver_module_id << 16;
+  word|= loc_variable;
+
+  start_message[2]= word;
+  if (use_message_id)
+    start_message[3]= 0;
+  if (use_checksum)
+  {
+    word= 0;
+    for (i= 0; i < tot_message_size - 1; i++)
+      word ^= start_message[i];
+    start_message[tot_message_size]= word;
+  }
+  return tot_message_size;
+}
+
+static void
+fill_in_message_id_in_ndb_message(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                  IC_SOCK_BUF_PAGE *first_page,
+                                  gboolean use_checksum)
+{
+  guint32 word1, current_size, message_id, prev_checksum, message_size;
+  guint32 *word_ptr, *message_id_ptr, *checksum_ptr;
+  IC_SOCK_BUF_PAGE *current_page= first_page;
+
+  while (current_page)
+  {
+    word_ptr= (guint32*)current_page->sock_buf;
+    current_size= 0;
+    while (current_size < current_page->size)
+    {
+      word1= *word_ptr;
+      message_size= get_message_size(word1);
+      message_id_ptr= word_ptr + IC_NDB_MESSAGE_HEADER_SIZE;
+
+      message_id= send_node_conn->message_id++;
+      if (use_checksum)
+      {
+        checksum_ptr= (word_ptr + (message_size - 1));
+        prev_checksum= *checksum_ptr;
+        *checksum_ptr= prev_checksum ^ message_id;
+      }
+      current_size+= (message_size * sizeof(guint32));
+      word_ptr+= message_size;
+    }
+    ic_require(current_size == current_page->size);
+    current_page= current_page->next_sock_buf_page;
+  }
+}
+
 static int
 ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
          IC_SOCK_BUF_PAGE *first_page_to_send,
@@ -1189,6 +1557,18 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   {
     g_mutex_unlock(send_node_conn->mutex);
     return IC_ERROR_NODE_DOWN;
+  }
+  if (send_node_conn->link_config->use_message_id)
+  {
+    /*
+      We are using message id's on the link, we need to fill in proper
+      message id's in all the NDB messages and we also need to update
+      the potential checksum in each of the messages where a message
+      id is set.
+    */
+    fill_in_message_id_in_ndb_message(send_node_conn,
+                                      first_page_to_send,
+                                send_node_conn->link_config->use_checksum);
   }
   /* Link the buffers into the linked list of pages to send */
   if (send_node_conn->last_sbp == NULL)
@@ -1234,9 +1614,11 @@ static int
 node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
-  IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
-  mem_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
-    mem_buf_pool, send_node_conn->first_sbp);
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+    send_buf_pool, send_node_conn->first_sbp);
+  rem_node_from_heartbeat_thread(send_node_conn->apid_global,
+                                 send_node_conn);
   return 0;
 }
 
@@ -1288,7 +1670,7 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
   int error;
   IC_CONNECTION *conn= send_node_conn->conn;
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
-  IC_SOCK_BUF *mem_buf_pool= apid_global->mem_buf_pool;
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
   DEBUG_ENTRY("real_send_handling");
   error= conn->conn_op.ic_writev_connection(conn,
                                             write_vector,
@@ -1296,8 +1678,8 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                                             send_size, 2);
 
   /* Release memory buffers used in send */
-  mem_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
-    mem_buf_pool, send_node_conn->release_sbp);
+  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+    send_buf_pool, send_node_conn->release_sbp);
   send_node_conn->release_sbp= NULL;
 
   if (error)
@@ -1379,8 +1761,9 @@ map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
   It essentially finds the proper IC_SEND_NODE_CONNECTION object and calls
   ndb_send which handles the details of sending.
 */
+/* Not yet used
 static int
-send_handling(IC_INT_APID_GLOBAL *apid_global,
+send_messages(IC_INT_APID_GLOBAL *apid_global,
               guint32 cluster_id,
               guint32 node_id,
               IC_SOCK_BUF_PAGE *first_page_to_send,
@@ -1396,6 +1779,7 @@ send_handling(IC_INT_APID_GLOBAL *apid_global,
     return error;
   return ndb_send(send_node_conn, first_page_to_send, force_send);
 }
+*/
 
 /*
   SEND THREAD MODULE
@@ -2288,8 +2672,10 @@ run_send_thread(void *data)
     /*
       We have successfully connected to another node in this send thread.
       It is now time to move the receive part to the proper receive
-      thread.
+      thread. First initialise the message id since we have a new
+      connection now.
     */
+    send_node_conn->message_id= 1;
     move_node_to_receive_thread(send_node_conn);
     /*
       Move node also to heartbeat thread to ensure keep sending heartbeat
@@ -2901,27 +3287,18 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   guint32 *message_ptr= (guint32*)message_page->sock_buf;
   guint32 chksum, message_id_used, chksum_used, start_segment_word;
 
-#ifdef HAVE_ENDIAN_SUPPORT
   word1= message_ptr[0];
-  if ((word1 & 1) != glob_byte_order)
+  if ((word1 & 1) != ic_glob_byte_order)
   {
-    if ((word1 & 1) == 0)
-    {
-      /* Change byte order for entire message from low endian to big endian */
-      word1= g_htonl(word1);
-      for (i= 1; i < message_size; i++)
-        message_ptr[i]= g_htonl(message_ptr[i]);
-    }
-    else
-    {
-      /* Change byte order for entire message from big endian to low endian */
-      word1= g_ntohl(word1);
-      for (i= 1; i < message_size; i++)
-        message_ptr[i]= g_ntohl(message_ptr[i]);
-    }
+    /*
+      Sender and receiver use different byte order, switch byte order of
+      all words involved in the message.
+    */
+    ic_swap_endian_word(word1);
+    message_size= get_message_size(word1);
+    for (i= 1; i < message_size; i++)
+      ic_swap_endian_word(message_ptr[i]);
   }
-#endif
-  word1= message_ptr[0];
   word2= message_ptr[1];
   word3= message_ptr[2];
 
@@ -2961,6 +3338,7 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   chksum_used= word1 & 0x10;
   /* Get number of segments from Bit 26-27 in word 2 */
   num_segments= (word2 >> 26) & 3;
+  /* Is this + 1 really correct, TODO */
   ndb_message->num_segments= num_segments + 1;
   
   start_segment_word= 3;
@@ -2984,7 +3362,7 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
     return 0;
   /* We need to check the checksum first, before handling the message. */
   chksum= 0;
-  message_size= (word2 >> 8) & 0xFFFF;
+  message_size= get_message_size(word1);
   for (i= 0; i < message_size; i++)
     chksum^= message_ptr[i];
   if (chksum)
@@ -3311,27 +3689,22 @@ static void
 read_message_early(gchar *read_ptr, guint32 *message_size,
                    guint32 *receiver_module_id)
 {
-  guint32 *message_ptr= (guint32*)read_ptr, word1, word3;
+  guint32 *message_ptr= (guint32*)read_ptr;
+  guint32 word1, word3;
 
   word1= message_ptr[0];
   word3= message_ptr[2];
-#ifdef HAVE_ENDIAN_SUPPORT
-  if ((word1 & 1) != glob_byte_order)
+  if ((word1 & 1) != ic_glob_byte_order)
   {
-    if ((word1 & 1) == 0)
-    {
-      word1= g_htonl(word1);
-      word3= g_htonl(word3);
-    }
-    else
-    {
-      word1= g_ntohl(word1);
-      word3= g_ntohl(word3);
-    }
+    /*
+      The sender and receiver use a different endian, we need to swap the
+      endian before reading the values from the message received.
+    */
+    ic_swap_endian_word(word1);
+    ic_swap_endian_word(word3);
   }
-#endif
   *receiver_module_id= word3 >> 16;
-  *message_size= (word1 >> 8) & 0xFFFF;
+  *message_size= get_message_size(word1);
 }
 
 /*
@@ -3707,7 +4080,7 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global)
   if (!(rec_state->cond= g_cond_new()))
     goto error;
   rec_state->apid_global= apid_global;
-  rec_state->rec_buf_pool= apid_global->mem_buf_pool;
+  rec_state->rec_buf_pool= apid_global->send_buf_pool;
   rec_state->message_pool= apid_global->ndb_message_pool;
   if ((!(rec_state->poll_set= ic_create_poll_set())) ||
       (ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
@@ -4040,6 +4413,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   GOptionContext *context;
 
   ic_printf("Starting %s program", program_name);
+  ic_glob_byte_order= ic_byte_order();
   use_config_vars= use_config; /* TRUE for Unit test programs */
   context= g_option_context_new(start_text);
   if (!context)

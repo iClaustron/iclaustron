@@ -56,6 +56,7 @@ IC_TIMER ic_micros_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 IC_TIMER ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 
 void ic_sleep(guint32 seconds_to_sleep);
+void ic_microsleep(guint32 microseconds_to_sleep);
 
 /* Interface to daemonize a program */
 int ic_daemonize(gchar *log_file);
@@ -63,4 +64,26 @@ int ic_daemonize(gchar *log_file);
 typedef void (*IC_SIG_HANDLER_FUNC)(void *param);
 void ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param);
 void ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param);
+
+/*
+  Interface to kill ourselves in a controlled manner by sending terminate
+  signal to ourselves to start termination logic.
+*/
+void ic_controlled_terminate();
+
+/*
+  Conversion routines from little endian to big endian and vice versa. Also a routine to
+  calculate the value of the byte order bit used in the NDB Protocol.
+*/
+#define ic_swap_endian_word(input_word) \
+{ \
+  guint32 ic_loc_word= (input_word); \
+  gchar *result_char= (gchar*)&(input_word); \
+  gchar *input_char= (gchar*)&ic_loc_word; \
+  result_char[0]= input_char[3]; \
+  result_char[1]= input_char[2]; \
+  result_char[2]= input_char[1]; \
+  result_char[3]= input_char[0]; \
+}
+guint32 ic_byte_order();
 #endif

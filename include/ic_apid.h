@@ -294,7 +294,7 @@ struct ic_apid_connection_ops
   IC_API_CONFIG_SERVER* (*ic_get_api_config_server)
                               (IC_APID_CONNECTION *apid_conn);
   /* Free all objects connected to this connection.  */
-  void (*ic_free) (IC_APID_CONNECTION *apid_conn);
+  void (*ic_free_apid_connection) (IC_APID_CONNECTION *apid_conn);
 };
 
 struct ic_apid_connection
@@ -387,8 +387,6 @@ struct ic_apid_global_ops
                               guint32 cluster_id,
                               guint32 node_id,
                               IC_CONNECTION *conn);
-  int (*ic_start_heartbeat_thread) (IC_APID_GLOBAL *apid_global,
-                                    IC_THREADPOOL_STATE *tp_state);
   void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };
 
@@ -425,6 +423,7 @@ extern guint32 ic_glob_node_id;
 extern guint32 ic_glob_num_threads;
 extern guint32 ic_glob_use_iclaustron_cluster_server;
 extern guint32 ic_glob_daemonize;
+extern guint32 ic_glob_byte_order;
 extern GOptionEntry ic_apid_entries[];
 
 int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,

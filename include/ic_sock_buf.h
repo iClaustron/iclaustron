@@ -40,7 +40,18 @@ struct ic_sock_buf_operations
   IC_SOCK_BUF_PAGE* (*ic_get_sock_buf_page)
       (IC_SOCK_BUF *buf,
        IC_SOCK_BUF_PAGE **free_pages,
-       guint32 num_pages);
+       guint32 num_pages_to_preallocate);
+
+  /*
+    This function is used when we want to get a page and are willing to
+    wait if no page exists. Normally it returns immediately when there
+    are pages available.
+  */
+  IC_SOCK_BUF_PAGE* (*ic_get_sock_buf_page_wait)
+      (IC_SOCK_BUF *sock_buf,
+       IC_SOCK_BUF_PAGE **free_pages,
+       guint32 num_pages_to_preallocate,
+       guint32 milliseconds_to_wait);
   /*
     This routine is used return socket buffer pages to the global free list.
     It will treat the pointer to the first socket buffer page as the first

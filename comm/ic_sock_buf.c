@@ -75,6 +75,37 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
   return first_page;
 }
 
+static IC_SOCK_BUF_PAGE*
+get_sock_buf_page_wait(IC_SOCK_BUF *sock_buf,
+                       IC_SOCK_BUF_PAGE **free_pages,
+                       guint32 num_pages_to_preallocate,
+                       guint32 milliseconds_to_wait)
+{
+  gboolean first= TRUE;
+  IC_SOCK_BUF_PAGE *loc_page;
+  IC_TIMER start_time, current_time;
+
+  while (!(loc_page= get_sock_buf_page(
+                  sock_buf,
+                  free_pages,
+                  num_pages_to_preallocate)))
+  {
+    if (first)
+    {
+      first= FALSE;
+      start_time= ic_gethrtime();
+    }
+    else
+    {
+      current_time= ic_gethrtime();
+      if (((guint32)ic_millis_elapsed(start_time, current_time)) >
+          milliseconds_to_wait)
+        return NULL;
+    }
+    ic_microsleep(10000);
+  }
+  return loc_page;
+}
 
 static void
 return_sock_buf_page(IC_SOCK_BUF *buf,
@@ -197,6 +228,7 @@ ic_create_sock_buf(guint32 page_size,
   buf->alloc_segments= 1;
 
   buf->sock_buf_ops.ic_get_sock_buf_page= get_sock_buf_page;
+  buf->sock_buf_ops.ic_get_sock_buf_page_wait= get_sock_buf_page_wait;
   buf->sock_buf_ops.ic_return_sock_buf_page= return_sock_buf_page;
   buf->sock_buf_ops.ic_inc_sock_buf= inc_sock_buf;
   buf->sock_buf_ops.ic_free_sock_buf= free_sock_buf;

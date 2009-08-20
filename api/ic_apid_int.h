@@ -293,6 +293,8 @@ struct ic_send_node_connection
   guint32 other_node_id;
   /* The cluster id this connection is used in */
   guint32 cluster_id;
+  /* The message id variable used for debugging purposes in the NDB Protocol */
+  guint32 message_id;
 
   /* Timer set when the first buffer was linked and not sent */
   IC_TIMER first_buffered_timer;
@@ -322,6 +324,11 @@ struct ic_send_node_connection
   IC_SEND_NODE_CONNECTION *next_add_node;
   IC_SEND_NODE_CONNECTION *next_rem_node;
   IC_SEND_NODE_CONNECTION *next_send_node;
+  /*
+    A pointer to the next node in the heartbeat thread linked list.
+    This list is protected by the mutex on the IC_APID_GLOBAL object.
+  */
+  IC_SEND_NODE_CONNECTION *next_heartbeat_node;
   /* Array of timers for the last 16 sends */
   IC_TIMER last_send_timers[MAX_SEND_TIMERS];
 };
@@ -366,13 +373,38 @@ struct ic_int_apid_global
   guint32 num_user_threads_started;
   gboolean stop_flag;
   gboolean use_external_connect;
-  IC_SOCK_BUF *mem_buf_pool;
+  IC_SOCK_BUF *send_buf_pool;
   IC_SOCK_BUF *ndb_message_pool;
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
+  /*
+    Heartbeat thread related variables, the heartbeat thread handles
+    heartbeat sending for all active nodes, the active nodes are
+    organised in a linked list of send node connections. This list
+    and all other heartbeat related variables are protected by the
+    heartbeat mutex. The heartbeat condition variable is used to sleep
+    on until the first node connection has arrived.
+
+    When the heartbeat thread goes through the list to send heartbeat
+    messages it takes one node at a time and keeps track of the node
+    currently sending using the curr_heartbeat_node. Since the mutex
+    is released, this node could disappear before we have time to
+    grab the mutex again, thus the removal of nodes from the heartbeat
+    thread has to also update this variable.
+
+    The heartbeat thread acts in the same manner as an application thread
+    and thus it requires an IC_APID_CONNECTION object to handle interaction
+    with send and receive threads.
+  */
   IC_APID_CONNECTION *heartbeat_conn;
-  IC_THREADPOOL_STATE *heartbeat_threadpool;
+  IC_SEND_NODE_CONNECTION *first_heartbeat_node;
+  IC_SEND_NODE_CONNECTION *curr_heartbeat_node;
+  GMutex *heartbeat_mutex;
+  GCond *heartbeat_cond;
   guint32 heartbeat_thread_id;
+  guint32 heartbeat_thread_waiting;
+  /* End heartbeat thread variables */
+
   IC_THREADPOOL_STATE *rec_thread_pool;
   IC_THREADPOOL_STATE *send_thread_pool;
   GMutex *thread_id_mutex;
@@ -383,4 +415,34 @@ struct ic_int_apid_global
   IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];
 };
 
+/* Define message numbers for NDB Protocol messages */
+#define API_HBREQ 3
+#define API_HBCONF 1
+#define API_HBREF 2
+
+#define NDB_KEYREQ 12
+#define NDB_KEYCONF 10
+#define NDB_KEYREF 11
+
+#define NDB_SCANREQ 32
+#define NDB_SCANREF 31
+
+#define NDB_ABORTREQ 15
+#define NDB_ABORTCONF 13
+#define NDB_ABORTREF 14
+#define NDB_ABORTREP 16
+
+#define NDB_COMMITREQ 19
+#define NDB_COMMITCONF 17
+#define NDB_COMMITREF 18
+
+#define NDB_HBREP 20
+
+#define NDB_CONNECTREQ 39
+#define NDB_CONNECTCONF 37
+#define NDB_CONNECTREF 38
+
+#define NDB_DISCONNECTREQ 36
+#define NDB_DISCONNECTCONF 34
+#define NDB_DISCONNECTREF 35
 #endif
