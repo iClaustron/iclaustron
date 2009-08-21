@@ -197,9 +197,7 @@ struct ic_cluster_config
 
   /*
     We keep track of the number of nodes of various types, maximum node id
-    and the number of communication objects. We don't necessarily store all
-    communication objects so the absence of a communication object simply
-    means that the default values can be used.
+    and the number of communication objects.
   */
   guint32 max_node_id;
   guint32 num_nodes;

@@ -130,6 +130,8 @@ struct ic_cluster_config_load
 {
   IC_CLUSTER_CONFIG *conf;
   IC_MEMORY_CONTAINER *temp_mc_ptr;
+  guint32 current_num_comms;
+  guint32 total_num_comms;
   void *current_node_config;
   gchar *string_memory;
   gchar *string_memory_to_return;

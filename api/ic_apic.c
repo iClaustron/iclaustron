@@ -790,6 +790,12 @@ static void set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line);
 */
 
 /*
+  Function needing forward declaration since used to build hash table
+  on communication objects
+*/
+static void init_node(IC_CLUSTER_CONFIG_LOAD *clu_conf,
+                      size_t size, void *config_struct);
+/*
   MODULE: Configuration Parameters
   --------------------------------
 
@@ -912,11 +918,14 @@ ic_keys_equal_comms(void *ptr1, void *ptr2)
 }
 
 static int
-build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf)
+build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_conf_load)
 {
   IC_HASHTABLE *comm_hash;
-  IC_SOCKET_LINK_CONFIG *comm_obj;
-  guint32 i;
+  IC_SOCKET_LINK_CONFIG *comm_obj, *socket_config;
+  IC_SOCKET_LINK_CONFIG test_comm;
+  IC_DATA_SERVER_CONFIG *first_node, *second_node;
+  guint32 i, node_id, other_node_id;
   DEBUG_ENTRY("build_hash_on_comms");
 
   if ((comm_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_comms,
@@ -930,6 +939,59 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf)
     }
     clu_conf->comm_hash= comm_hash;
     DEBUG_RETURN(0);
+  }
+  if (clu_conf_load)
+  {
+    /*
+      In the iClaustron Cluster Server we read the configuration from disk
+      and not all communication objects are in the config files. So while
+      building the hash on communication objects we also need to create
+      the missing communication objects. When the configuration arrived
+      over the network this isn't necessary since all communication objects
+      are set.
+    */
+    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+    {
+      if (!clu_conf->node_config[node_id])
+        continue;
+      for (other_node_id= node_id + 1;
+           other_node_id < clu_conf->max_node_id;
+           other_node_id++)
+      {
+        if (!clu_conf->node_config[other_node_id])
+          continue;
+        test_comm.first_node_id= node_id;
+        test_comm.second_node_id= other_node_id;
+        if (!(ic_hashtable_search(clu_conf->comm_hash,
+                                  (void*)&test_comm)))
+        {
+          /* Need to ad a new communication object */
+          init_node(clu_conf_load, sizeof(IC_SOCKET_LINK_CONFIG),
+                    &clu_conf_load->default_socket_config);
+          socket_config= 
+            (IC_SOCKET_LINK_CONFIG*)clu_conf_load->current_node_config;
+          first_node= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node_id];
+          second_node= (IC_DATA_SERVER_CONFIG*)
+            clu_conf->node_config[other_node_id];
+          socket_config->first_hostname= first_node->hostname;
+          socket_config->second_hostname= second_node->hostname;
+          socket_config->first_node_id= node_id;
+          socket_config->second_node_id= other_node_id;
+          if (clu_conf->node_types[node_id] == IC_DATA_SERVER_NODE &&
+              clu_conf->node_types[other_node_id] != IC_DATA_SERVER_NODE)
+            socket_config->server_node_id= node_id;
+          else if (clu_conf->node_types[other_node_id] ==
+                     IC_DATA_SERVER_NODE &&
+                   clu_conf->node_types[node_id] != IC_DATA_SERVER_NODE)
+            socket_config->server_node_id= other_node_id;
+          else
+            socket_config->server_node_id= IC_MIN(node_id, other_node_id);
+          clu_conf->comm_config[clu_conf->num_comms++]=
+            (gchar*)socket_config;
+        }
+      }
+    }
+    ic_require(clu_conf->num_comms == clu_conf_load->total_num_comms);
   }
 error:
   if (comm_hash)
@@ -3196,7 +3258,8 @@ assign_comm_section(IC_CLUSTER_CONFIG *conf_obj,
 }
 
 static int
-arrange_node_arrays(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
+arrange_node_arrays(IC_INT_API_CONFIG_SERVER *apic,
+                    IC_CLUSTER_CONFIG *conf_obj)
 {
   gchar **new_node_config;
   IC_NODE_TYPES *new_node_types;
@@ -3590,7 +3653,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
     IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
-    if (clu_conf && build_hash_on_comms(clu_conf))
+    if (clu_conf && build_hash_on_comms(clu_conf, NULL))
       goto mem_alloc_error;
   }
   apic->cluster_conn.current_conn= conn;
@@ -4179,6 +4242,8 @@ int complete_section(IC_CONFIG_STRUCT *ic_conf, guint32 line_number,
       if (((IC_SOCKET_LINK_CONFIG*)current_config)->mandatory_bits !=
           comm_mandatory_bits)
         goto mandatory_error;
+      clu_conf->conf->comm_config[clu_conf->current_num_comms++]=
+        (gchar*)current_config;
       break;
     default:
       abort();
@@ -4190,7 +4255,9 @@ mandatory_error:
   missing_bits= mandatory_bits ^
          ((IC_DATA_SERVER_CONFIG*)current_config)->mandatory_bits;
   {
-    __attribute__ ((unused)) gchar buf[128];
+    gchar buf[128];
+
+    (void)buf;
     DEBUG_PRINT(CONFIG_LEVEL,
       ("mandatory bits %s",
       ic_guint64_hex_str(((IC_DATA_SERVER_CONFIG*)
@@ -4274,7 +4341,7 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   IC_CLUSTER_CONFIG *clu_conf_perm;
   IC_MEMORY_CONTAINER *temp_mc_ptr;
   IC_MEMORY_CONTAINER *perm_mc_ptr;
-  guint32 max_node_id;
+  guint32 max_node_id, num_nodes;
   guint32 size_structs= 0;
   DEBUG_ENTRY("conf_serv_init");
   perm_mc_ptr= conf->perm_mc_ptr;
@@ -4331,7 +4398,9 @@ int conf_serv_init(void *ic_conf, guint32 pass)
                  sizeof(IC_RESTORE_CONFIG);
   size_structs+= clu_conf->conf->num_cluster_mgrs *
                    sizeof(IC_CLUSTER_MANAGER_CONFIG);
-  size_structs+= clu_conf->conf->num_comms *
+  num_nodes= clu_conf->conf->num_nodes;
+  clu_conf->total_num_comms= (num_nodes - 1)*num_nodes;
+  size_structs+= clu_conf->total_num_comms *
                  sizeof(IC_SOCKET_LINK_CONFIG);
 
   if (!(clu_conf->struct_memory= (gchar*)
@@ -4342,6 +4411,12 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   if (!(clu_conf->conf->node_config= (gchar**)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                                 sizeof(gchar*)*(max_node_id + 1))))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->conf->comm_config= (gchar**)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                  sizeof(gchar*)*(clu_conf->total_num_comms + 1))))
   {
     DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
   }
@@ -4826,7 +4901,7 @@ ic_load_config_server_from_files(gchar *config_file,
   else
   {
     ret_ptr= conf_server->config_ptr.clu_conf->conf;
-    if (build_hash_on_comms(ret_ptr))
+    if (build_hash_on_comms(ret_ptr, conf_server->config_ptr.clu_conf))
     {
       conf_serv_end(conf_server);
       err_obj->err_num= IC_ERROR_MEM_ALLOC;
