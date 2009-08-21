@@ -117,7 +117,7 @@ mc_calloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
   gchar *ptr;
   if (!(ptr= mc_alloc(ext_mc_ptr, size)))
     return NULL;
-  memset(ptr, 0, size);
+  ic_zero(ptr, size);
   return ptr;
 }
 
@@ -147,8 +147,8 @@ mc_reset(IC_MEMORY_CONTAINER *ext_mc_ptr)
   orig_arr_size= mc_get_base_buf_size(mc_ptr->max_size, mc_ptr->base_size);
   if (mc_ptr->buf_array_size > orig_arr_size)
     mc_realloc_buf_array(mc_ptr, orig_arr_size);
-  memset(&mc_ptr->buf_array[1], 0,
-         (mc_ptr->buf_array_size-1)*sizeof(gchar*));
+  ic_zero(&mc_ptr->buf_array[1],
+          (mc_ptr->buf_array_size-1)*sizeof(gchar*));
   mc_ptr->current_buf= mc_ptr->buf_array[0];
   mc_ptr->total_size= 0;
   mc_ptr->current_buf_inx= 0;

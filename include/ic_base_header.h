@@ -86,6 +86,7 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 #define IC_NDB_MAX_PRIO_LEVEL 1
 #define IC_NDB_MAX_MAIN_MESSAGE_SIZE 25
 #define IC_NDB_MAX_MODULE_ID 4096
+#define IC_MAX_MODULE_ID 8192
 
 #define IC_NDB_NORMAL_PRIO 0
 #define IC_NDB_HIGH_PRIO 1
@@ -119,11 +120,14 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 #define LINE_FEED (gchar)13
 #define NULL_BYTE (gchar)0
 
+#if defined(HAVE_MEMSET)
+#define bzero(buf, bytes) ((void) memset(buf, 0, bytes))
+#define ic_zero(buf, bytes) ((void) memset(buf, 0, bytes))
+#else
 #if defined(HAVE_BZERO) && !defined(HAVE_MEMSET)
+#define ic_zero(buf, num_bytes) ((void) bzero(buf, num_bytes))
 #define memset(buf, val, bytes)  ((void) bzero(buf, bytes))
 #endif
-#if !defined(HAVE_BZERO) && defined(HAVE_MEMSET)
-#define bzero(buf, bytes)  ((void) memset(buf, 0, bytes))
 #endif
 
 /*

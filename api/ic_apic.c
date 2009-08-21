@@ -2529,8 +2529,8 @@ int ic_init_config_parameters()
     DEBUG_RETURN(1);
   glob_conf_entry_inited= TRUE;
   glob_max_config_id= 0;
-  memset(map_config_id_to_inx, 0, MAX_MAP_CONFIG_ID * sizeof(guint16));
-  memset(glob_conf_entry, 0, MAX_CONFIG_ID * sizeof(IC_CONFIG_ENTRY));
+  ic_zero(map_config_id_to_inx, MAX_MAP_CONFIG_ID * sizeof(guint16));
+  ic_zero(glob_conf_entry, MAX_CONFIG_ID * sizeof(IC_CONFIG_ENTRY));
   init_config_parameters();
   calculate_mandatory_bits();
   DEBUG_RETURN(build_config_name_hash());
@@ -5461,7 +5461,7 @@ write_cluster_config_file(IC_STRING *config_dir,
   IC_CLUSTER_CONFIG_LOAD clu_def;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
-  memset(&clu_def, 0, sizeof(IC_CLUSTER_CONFIG_LOAD));
+  ic_zero(&clu_def, sizeof(IC_CLUSTER_CONFIG_LOAD));
   /*
      We start by creating the new configuration file and a dynamic array
      used to fill in the content of this new file before we write it.
@@ -6451,8 +6451,8 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
 static void
 init_cluster_params(IC_CLUSTER_CONFIG_TEMP *temp)
 {
-  memset(&temp->cluster_name, 0, sizeof(IC_STRING));
-  memset(&temp->password, 0, sizeof(IC_STRING));
+  ic_zero(&temp->cluster_name, sizeof(IC_STRING));
+  ic_zero(&temp->password, sizeof(IC_STRING));
   temp->cluster_id= IC_MAX_UINT32;
 }
 
@@ -7943,6 +7943,8 @@ run_cluster_server_thread(gpointer data)
             sent properly but also all other traffic between cluster
             server and other nodes using the NDB Protocol.
           */
+          DEBUG_PRINT(CONFIG_LEVEL,
+          ("We are now converting connection to a NDB Protocol connection"));
           if ((error=
                run_obj->apid_global->apid_global_ops.ic_external_connect(
                            run_obj->apid_global,
@@ -7956,7 +7958,7 @@ run_cluster_server_thread(gpointer data)
             goto error;
           }
           conn= NULL;
-          break;
+          goto break_out;
         }
         error_line= __LINE__;
         goto error;
@@ -7965,6 +7967,7 @@ run_cluster_server_thread(gpointer data)
         break;
     }
   }
+break_out:
   if (conn)
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("Connection closed by other side"));
@@ -8219,7 +8222,8 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
       (error= ic_send_with_cr_two_strings(conn, message_str,
                                           the_message_str)) ||
       (error= ic_send_with_cr_two_strings(conn, result_str,
-                                          the_result_str)))
+                                          the_result_str)) ||
+      (error= ic_send_empty_line(conn)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in converting to transporter"));

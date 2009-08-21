@@ -38,6 +38,7 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
       */
       first_page= *free_rec_pages;
       *free_rec_pages= (*free_rec_pages)->next_sock_buf_page;
+      first_page->next_sock_buf_page= NULL;
       return first_page;
     }
   }
@@ -112,17 +113,18 @@ return_sock_buf_page(IC_SOCK_BUF *buf,
                      IC_SOCK_BUF_PAGE *page)
 {
   IC_SOCK_BUF_PAGE *prev_first_page;
-  IC_SOCK_BUF_PAGE *next_page= page->next_sock_buf_page;
+  IC_SOCK_BUF_PAGE *next_page;
 
+  ic_require(page);
   g_mutex_lock(buf->ic_buf_mutex);
   do
   {
+    next_page= page->next_sock_buf_page;
     /* Return page to linked list at first page */
     prev_first_page= buf->first_page;
     buf->first_page= page;
     page->next_sock_buf_page= prev_first_page;
     page= next_page;
-    next_page= next_page->next_sock_buf_page;
   } while (page != NULL);
   g_mutex_unlock(buf->ic_buf_mutex);
 }

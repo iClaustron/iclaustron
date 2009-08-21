@@ -170,7 +170,7 @@ connection_test(gboolean use_ssl)
     GTimer *timer;
     double time_spent;
     unsigned i;
-    memset(buf, 0, sizeof(buf));
+    ic_zero(buf, sizeof(buf));
     timer= g_timer_new(); /* No errror check in test program */
     ic_printf("Start writing");
     g_timer_start(timer);

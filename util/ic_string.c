@@ -226,7 +226,6 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char)
 {
   guint32 i= 0;
   guint32 j= 0;
-  DEBUG_ENTRY("ic_reverse_str");
 
   while (in_buf[i] != end_char)
     i++;

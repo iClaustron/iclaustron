@@ -84,7 +84,6 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
   gchar *read_buf= conn->read_buf;
   guint32 size_curr_buf= conn->size_curr_read_buf;
   guint32 read_buf_pos;
-  DEBUG_ENTRY("ic_rec_with_cr");
 
   if (size_curr_buf > 0)
   {
@@ -110,7 +109,7 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
         DEBUG(COMM_LEVEL, ic_debug_print_rec_buf(read_buf, inx));
         *read_size= inx;
         *rec_buf= read_buf;
-        DEBUG_RETURN(0);
+        return 0;
       }
       /*
         We had no complete lines to read in the buffer received so
@@ -128,9 +127,9 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
                                                read_buf + size_curr_buf,
                                                size_to_read,
                                                &size_read)))
-      DEBUG_RETURN(res);
+      return res;
     size_curr_buf+= size_read;
   } while (1);
-  DEBUG_RETURN(0);
+  return 0;
 }
 

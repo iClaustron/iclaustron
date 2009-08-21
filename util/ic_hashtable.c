@@ -92,7 +92,7 @@ ic_create_hashtable(unsigned int minsize,
     if (NULL == h) return NULL; /*oom*/
     h->table = (struct entry **)ic_malloc(sizeof(struct entry*) * size);
     if (NULL == h->table) { ic_free(h); return NULL; } /*oom*/
-    memset(h->table, 0, size * sizeof(struct entry *));
+    ic_zero(h->table, size * sizeof(struct entry *));
     h->tablelength  = size;
     h->primeindex   = pindex;
     h->entrycount   = 0;
@@ -133,7 +133,7 @@ ic_hashtable_expand(struct ic_hashtable *h)
   newtable = (struct entry **)ic_malloc(sizeof(struct entry*) * newsize);
   if (NULL != newtable)
   {
-    memset(newtable, 0, newsize * sizeof(struct entry *));
+    ic_zero(newtable, newsize * sizeof(struct entry *));
     /* This algorithm is not 'stable'. ie. it reverses the list
      * when it transfers entries between the tables */
     for (i = 0; i < h->tablelength; i++)
@@ -160,7 +160,7 @@ ic_hashtable_expand(struct ic_hashtable *h)
       return 0;
     }
     h->table = newtable;
-    memset(newtable[h->tablelength], 0, newsize - h->tablelength);
+    ic_zero(newtable[h->tablelength], newsize - h->tablelength);
     for (i = 0; i < h->tablelength; i++)
     {
       for (pE = &(newtable[i]), e = *pE; e != NULL; e = *pE)

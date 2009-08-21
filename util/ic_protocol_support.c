@@ -244,7 +244,7 @@ ic_send_with_cr_composed(IC_CONNECTION *conn,
   for (i= 0; i < num_strings; i++)
   {
     len= strlen(buf[i]);
-    memcpy(local_buf, buf[i], len);
+    memcpy(local_buf + local_pos, buf[i], len);
     local_pos+= len;
   }
   local_buf[local_pos]= 0;

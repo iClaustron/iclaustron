@@ -983,7 +983,7 @@ run_handle_new_connection(gpointer data)
 
   tp_state->ts_ops.ic_thread_started(thread_state);
   apic= (IC_API_CONFIG_SERVER*)conn->conn_op.ic_get_param(conn);
-  memset(&parse_data, 0, sizeof(IC_PARSE_DATA));
+  ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
   {
     ic_print_error(IC_ERROR_MEM_ALLOC);

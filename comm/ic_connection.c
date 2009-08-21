@@ -565,7 +565,7 @@ translate_hostnames(IC_INT_CONNECTION *conn)
     return IC_ERROR_ILLEGAL_SERVER_PORT;
   conn->server_port_num= (guint16)server_port;
   /* Get address information for Server part */
-  memset(&hints, 0, sizeof(struct addrinfo));
+  ic_zero(&hints, sizeof(struct addrinfo));
 #ifdef AI_NUMERICSERV
   hints.ai_flags= AI_NUMERICSERV;
 #else
@@ -605,7 +605,7 @@ translate_hostnames(IC_INT_CONNECTION *conn)
     return IC_ERROR_ILLEGAL_CLIENT_PORT;
   conn->client_port_num= (guint16)client_port;
   /* Get address information for Client part */
-  memset(&hints, 0, sizeof(struct addrinfo));
+  ic_zero(&hints, sizeof(struct addrinfo));
 #ifdef AI_NUMERICSERV
   hints.ai_flags= AI_NUMERICSERV;
 #else
@@ -971,7 +971,7 @@ writev_socket_connection(IC_CONNECTION *ext_conn,
   guint32 write_len;
   struct msghdr msg_hdr;
 
-  memset(&msg_hdr, 0, sizeof(struct msghdr));
+  ic_zero(&msg_hdr, sizeof(struct msghdr));
 
   send_state.time_measure= NULL;
   send_state.write_size= 0;
