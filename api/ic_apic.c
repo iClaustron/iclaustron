@@ -938,7 +938,6 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
         goto error;
     }
     clu_conf->comm_hash= comm_hash;
-    DEBUG_RETURN(0);
   }
   if (clu_conf_load)
   {
@@ -955,7 +954,7 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
       if (!clu_conf->node_config[node_id])
         continue;
       for (other_node_id= node_id + 1;
-           other_node_id < clu_conf->max_node_id;
+           other_node_id <= clu_conf->max_node_id;
            other_node_id++)
       {
         if (!clu_conf->node_config[other_node_id])
@@ -988,11 +987,15 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
             socket_config->server_node_id= IC_MIN(node_id, other_node_id);
           clu_conf->comm_config[clu_conf->num_comms++]=
             (gchar*)socket_config;
+          if (ic_hashtable_insert(comm_hash, (void*)socket_config,
+                                  (void*)socket_config))
+            goto error;
         }
       }
     }
     ic_require(clu_conf->num_comms == clu_conf_load->total_num_comms);
   }
+  DEBUG_RETURN(0);
 error:
   if (comm_hash)
     ic_hashtable_destroy(comm_hash);
@@ -4115,7 +4118,7 @@ set_up_cluster_server_connection(IC_INT_API_CONFIG_SERVER *apic,
 static guint64
 get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server)
 {
-  guint64 version_no= MYSQL_VERSION;
+  guint64 version_no= NDB_VERSION;
   if (use_iclaustron_cluster_server)
   {
     version_no+= (IC_VERSION << IC_VERSION_BIT_START);
@@ -4399,7 +4402,12 @@ int conf_serv_init(void *ic_conf, guint32 pass)
   size_structs+= clu_conf->conf->num_cluster_mgrs *
                    sizeof(IC_CLUSTER_MANAGER_CONFIG);
   num_nodes= clu_conf->conf->num_nodes;
-  clu_conf->total_num_comms= (num_nodes - 1)*num_nodes;
+  /*
+    A fully connected set of nodes means n * n - 1 / 2 connections since
+    nodes are not connected to each other and only one connection is needed
+    between two nodes ( thus division by 2).
+  */
+  clu_conf->total_num_comms= ((num_nodes - 1)*num_nodes) / 2;
   size_structs+= clu_conf->total_num_comms *
                  sizeof(IC_SOCKET_LINK_CONFIG);
 
@@ -7549,7 +7557,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
 
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
     goto error;
-  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
   if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_RUN_CLUSTER_SERVER))))

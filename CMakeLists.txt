@@ -118,7 +118,7 @@ set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_PATCH 1)
 set (ICLAUSTRON_PACKAGE_NAME "iclaustron")
 set (ICLAUSTRON_VERSION "0.0.1")
-set (MYSQL_VERSION "mysql-5.1.28-ndb-6.3.19")
+set (MYSQL_VERSION "mysql-5.1.35-ndb-7.1.0")
 
 SET (ICLAUSTRON_LIBS "")
 SET (MANUAL_GLIB_LIB_DIR C:/glib/bin)

@@ -133,6 +133,7 @@ free_sock_buf(IC_SOCK_BUF *buf)
   guint32 i;
   guint32 alloc_segments= buf->alloc_segments;
 
+  g_mutex_free(buf->ic_buf_mutex);
   for (i= 0; i < alloc_segments; i++)
     free(buf->alloc_segments_ref[i]);
   free(buf);
@@ -211,12 +212,13 @@ ic_create_sock_buf(guint32 page_size,
 
   sock_buf_page_size= IC_MAX(IC_STD_CACHE_LINE_SIZE,
                              sizeof(IC_SOCK_BUF_PAGE)); 
-  buf= (IC_SOCK_BUF*)ic_malloc(sizeof(IC_SOCK_BUF));
+  if (!(buf= (IC_SOCK_BUF*)ic_malloc(sizeof(IC_SOCK_BUF))))
+    return NULL;
+  if (!(buf->ic_buf_mutex= g_mutex_new()))
+    goto error;
   if (!(ptr= ic_malloc(page_size * no_of_pages +
       (no_of_pages * sock_buf_page_size))))
-  {
-    return NULL;
-  }
+    goto error;
   last_sock_buf_page= set_up_pages_in_linked_list(ptr,
                                                   page_size,
                                                   no_of_pages,
@@ -233,4 +235,9 @@ ic_create_sock_buf(guint32 page_size,
   buf->sock_buf_ops.ic_inc_sock_buf= inc_sock_buf;
   buf->sock_buf_ops.ic_free_sock_buf= free_sock_buf;
   return buf;
+
+error:
+  if (buf->ic_buf_mutex)
+    g_mutex_free(buf->ic_buf_mutex);
+  ic_free(buf);
 }

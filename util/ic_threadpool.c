@@ -577,6 +577,13 @@ get_stop_flag(IC_THREAD_STATE *ext_thread_state)
   return thread_state->stop_flag;
 }
 
+static IC_THREADPOOL_STATE*
+get_threadpool(IC_THREAD_STATE *ext_thread_state)
+{
+  IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+  return thread_state->tp_state;
+}
+
 IC_THREADPOOL_STATE*
 ic_create_threadpool(guint32 pool_size,
                      gboolean use_internal_mutex)
@@ -624,6 +631,7 @@ ic_create_threadpool(guint32 pool_size,
     thread_state->thread_id= i;
     thread_state->mutex= g_mutex_new();
     thread_state->cond= g_cond_new();
+    thread_state->ic_get_threadpool= get_threadpool;
     if (thread_state->mutex == NULL ||
         thread_state->cond == NULL)
       goto mem_alloc_error;
