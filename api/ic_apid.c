@@ -197,6 +197,24 @@ static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
 static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,
                     gboolean force_send);
+
+/* Internal function to get NDB message header size */
+static guint32 get_ndb_message_header_size(
+                    IC_SEND_NODE_CONNECTION *send_node_conn);
+
+/* Internal function to prepare NDB message for sending */
+static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                       guint32 message_number,
+                                       guint32 message_priority,
+                                       guint32 sender_module_id,
+                                       guint32 receiver_mdoule_id,
+                                       guint32 *start_message,
+                                       guint32 main_message_size,
+                                       guint32 *main_message,
+                                       guint32 num_segments,
+                                       guint32 *segment_ptrs[3],
+                                       guint32 segment_lens[3]);
+
 /*
   GLOBAL DATA API INITIALISATION MODULE
   -------------------------------------
@@ -928,9 +946,24 @@ static int
 prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                        IC_SOCK_BUF_PAGE *hb_page)
 {
-  (void)send_node_conn;
-  (void)hb_page;
-  return 0;
+  guint32 *message_start= (guint32*)hb_page->sock_buf;
+  guint32 *main_message_start;
+  guint32 header_size;
+
+  header_size= get_ndb_message_header_size(send_node_conn);
+  main_message_start= message_start + header_size;
+  /* TODO: Fill in API_REGREQ message data */
+  return fill_ndb_message_header(send_node_conn,
+                                 3, /* API_REGREQ */
+                                 IC_NDB_NORMAL_PRIO,
+                                 send_node_conn->thread_id,
+                                 IC_NDB_QMGR_MODULE,
+                                 message_start,
+                                 8, /* Size of API_REGREQ */
+                                 main_message_start,
+                                 0, /* No segments */
+                                 NULL,
+                                 NULL);
 }
 
 static int
@@ -1293,10 +1326,16 @@ send_messages(IC_INT_APID_GLOBAL *apid_global,
   used in the NDB Protocol messages, this is always called under protection
   of the IC_SEND_NODE_CONNECTION mutex which protects the message id variable
   used in this connection.
+
+  get_ndb_message_header_size is a method that returns the size of the
+  NDB message header in the NDB Protocol.
 */
 static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,
                     gboolean force_send);
+
+static guint32 get_ndb_message_header_size(
+                    IC_SEND_NODE_CONNECTION *send_node_conn);
 
 static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        guint32 message_number,
@@ -1340,6 +1379,13 @@ static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
 
 static guint32 get_message_size(guint32 word1);
 /* Send message functions */
+static guint32
+get_ndb_message_header_size(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  guint32 header_length= IC_NDB_MESSAGE_HEADER_SIZE;
+  return header_length + send_node_conn->link_config->use_message_id;
+}
+
 static guint32
 get_message_size(guint32 word1)
 {

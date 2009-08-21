@@ -87,6 +87,11 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 #define IC_NDB_MAX_MAIN_MESSAGE_SIZE 25
 #define IC_NDB_MAX_MODULE_ID 4096
 
+#define IC_NDB_NORMAL_PRIO 0
+#define IC_NDB_HIGH_PRIO 1
+
+#define IC_NDB_QMGR_MODULE 4095
+
 #define IC_MAX_THREAD_WAIT_TIME 60
 
 #define ERROR_MESSAGE_SIZE 512
