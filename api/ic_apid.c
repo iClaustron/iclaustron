@@ -142,19 +142,6 @@ guint32 ic_glob_use_iclaustron_cluster_server= 1;
 guint32 ic_glob_daemonize= 1;
 guint32 ic_glob_byte_order= 0;
 
-/*
-  These static functions implements the local IC_TRANSLATION_OBJ.
-  For speed they're only declared as local objects such that they
-  can be inlined by the compiler if so decided.
-  TODO: Not implemented yet.
-*/
-
-IC_TRANSLATION_OBJ *create_translation_object();
-int insert_object_in_translation(IC_TRANSLATION_OBJ *transl_obj,
-                                 void *object);
-void remove_object_from_translation(void *object);
-/* End definition of IC_TRANSLATION_OBJ functions */
-
 /* Some declarations needed to reach functions inside Modules */
 /* Initialise function pointers in Message Logic Modules */
 static void initialize_message_func_array();
@@ -216,31 +203,6 @@ static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        guint32 segment_lens[3]);
 
 /*
-  NDB Protocol support MODULE
-  ---------------------------
-  This module contains a number of common functions used by most modules
-*/
-/*
-  The NDB Protocol often makes use of module references. This is a 32-bit
-  entity that uniquely identifies a module anywhere in the cluster. It has
-  3 entities, a node id, a module id and an instance id which essentially
-  is a thread id. For iClaustron nodes we effectively use both module id
-  and thread id to indicate the thread number and thus we can handle up
-  to 65536 threads.
-*/
-static guint32
-ic_get_ic_reference(guint32 node_id, guint32 thread_id)
-{
-  return (thread_id << 16) + node_id;
-}
-/*
-static guint32
-ic_get_ndb_reference(guint32 node_id, guint32 module_id, guint32 thread_id)
-{
-  return (thread_id << 25) + (module_id << 16) + node_id;
-}
-*/
-/*
   GLOBAL DATA API INITIALISATION MODULE
   -------------------------------------
   This module contains the code to initialise and set-up and tear down the
@@ -274,10 +236,10 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
        ic_calloc(sizeof(IC_INT_APID_GLOBAL))))
     return NULL;
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
-                        IC_MAX_RECEIVE_THREADS + 1, FALSE)))
+                        IC_MAX_RECEIVE_THREADS + 1, TRUE)))
     goto error;
   if (!(apid_global->send_thread_pool= ic_create_threadpool(
-                        IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
+                        IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
   apid_global->apic= apic;
   apid_global->num_receive_threads= 0;
@@ -760,6 +722,16 @@ apid_free(IC_APID_CONNECTION *ext_apid_conn)
   {
     if (apid_conn->cluster_id_bitmap)
       ic_free_bitmap(apid_conn->cluster_id_bitmap);
+    if (apid_conn->trans_bindings)
+    {
+      apid_conn->trans_bindings->dt_ops.ic_free_dynamic_translation(
+        apid_conn->trans_bindings);
+    }
+    if (apid_conn->op_bindings)
+    {
+      apid_conn->op_bindings->dt_ops.ic_free_dynamic_translation(
+        apid_conn->op_bindings);
+    }
     ic_free(apid_conn);
   }
   if (thread_conn)
@@ -814,6 +786,11 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
       ic_bitmap_set_bit(apid_conn->cluster_id_bitmap, i);
     }
   }
+
+  if (!(apid_conn->trans_bindings= ic_create_dynamic_translation()))
+    goto error;
+  if (!(apid_conn->op_bindings= ic_create_dynamic_translation()))
+    goto error;
 
   /* Initialise Thread Connection object */
   if (!(thread_conn= apid_conn->thread_conn= (IC_THREAD_CONNECTION*)
@@ -885,9 +862,8 @@ static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                   IC_THREADPOOL_STATE *tp_state);
 static void add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                               IC_SEND_NODE_CONNECTION *send_node_conn);
-static void prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                   IC_SOCK_BUF_PAGE *heartbeat_page,
-                                   guint32 thread_id);
+static int prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                  IC_SOCK_BUF_PAGE *heartbeat_page);
 static int real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                                IC_SOCK_BUF_PAGE *heartbeat_page);
 static gpointer run_heartbeat_thread(gpointer data);
@@ -916,7 +892,7 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                         apid_global->heartbeat_thread_id,
                         run_heartbeat_thread,
                         (void*)apid_global,
-                        IC_MEDIUM_STACK_SIZE,
+                        IC_SMALL_STACK_SIZE,
                         FALSE))))
     goto error;
   apid_global->heartbeat_conn= heartbeat_conn;
@@ -938,7 +914,7 @@ add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     If this is the first node added the heartbeat thread is waiting for
     the first node to be connected before starting its activity.
   */
-  if (apid_global->heartbeat_thread_waiting)
+  if (!apid_global->heartbeat_thread_waiting)
     g_cond_signal(apid_global->heartbeat_cond);
   send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
   apid_global->first_heartbeat_node= send_node_conn;
@@ -968,43 +944,35 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   g_mutex_unlock(apid_global->heartbeat_mutex);
 }
 
-static void
+static int
 prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
-                       IC_SOCK_BUF_PAGE *hb_page,
-                       guint32 thread_id)
+                       IC_SOCK_BUF_PAGE *hb_page)
 {
   guint32 *message_start= (guint32*)hb_page->sock_buf;
   guint32 *main_message_start;
   guint32 header_size;
-  guint32 message_size;
 
   header_size= get_ndb_message_header_size(send_node_conn);
   main_message_start= message_start + header_size;
-
-  /* Fill in message data */
-  main_message_start[0]= ic_get_ic_reference(send_node_conn->my_node_id,
-                                             thread_id);
-  main_message_start[1]= NDB_VERSION;
-  main_message_start[2]= MYSQL_VERSION;
-  message_size= fill_ndb_message_header(send_node_conn,
+  /* TODO: Fill in API_REGREQ message data */
+  return fill_ndb_message_header(send_node_conn,
                                  3, /* API_REGREQ */
                                  IC_NDB_NORMAL_PRIO,
                                  send_node_conn->thread_id,
                                  IC_NDB_QMGR_MODULE,
                                  message_start,
-                                 3, /* Size of API_REGREQ */
+                                 8, /* Size of API_REGREQ */
                                  main_message_start,
                                  0, /* No segments */
                                  NULL,
                                  NULL);
-  hb_page->size= message_size * sizeof(guint32);
 }
 
 static int
 real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *hb_page)
 {
-  return ndb_send(send_node_conn, hb_page, TRUE);
+  return ndb_send(send_node_conn, hb_page, FALSE);
 }
 
 static gpointer
@@ -1017,10 +985,9 @@ run_heartbeat_thread(gpointer data)
     tp_state->ts_ops.ic_thread_get_object(thread_state);
   IC_SEND_NODE_CONNECTION *last_send_node_conn= NULL;
   IC_SOCK_BUF_PAGE *free_pages= NULL;
-  IC_SOCK_BUF_PAGE *hb_page;
+  IC_SOCK_BUF_PAGE *hb_page= NULL;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
 
-  DEBUG_ENTRY("run_heartbeat_thread");
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     if (!(hb_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
@@ -1034,11 +1001,8 @@ run_heartbeat_thread(gpointer data)
     {
       last_send_node_conn= NULL;
       apid_global->heartbeat_thread_waiting= TRUE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Need to wait for nodes to connect"));
       g_cond_wait(apid_global->heartbeat_cond, apid_global->heartbeat_mutex);
       g_mutex_unlock(apid_global->heartbeat_mutex);
-      DEBUG_PRINT(CONFIG_LEVEL,
-      ("First node connected, heartbeat needs to be sent"));
       send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                           hb_page);
       continue;
@@ -1056,16 +1020,6 @@ run_heartbeat_thread(gpointer data)
         apid_global->curr_heartbeat_node=
           last_send_node_conn->next_heartbeat_node;
         last_send_node_conn= last_send_node_conn->next_heartbeat_node;
-        if (!last_send_node_conn)
-        {
-          /* We have sent to all nodes, sleep for a while and start again */
-          apid_global->curr_heartbeat_node= NULL;
-          g_mutex_unlock(apid_global->heartbeat_mutex);
-          send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
-                                                              hb_page);
-          ic_microsleep(100000);
-          continue;
-        }
       }
       else
       {
@@ -1076,10 +1030,9 @@ run_heartbeat_thread(gpointer data)
         ;
       }
     }
-    prepare_send_heartbeat(last_send_node_conn, hb_page,
-                           apid_global->heartbeat_thread_id);
+    error= prepare_send_heartbeat(last_send_node_conn, hb_page);
     g_mutex_unlock(apid_global->heartbeat_mutex);
-    if ((error= real_send_heartbeat(last_send_node_conn, hb_page)))
+    if (error || (error= real_send_heartbeat(last_send_node_conn, hb_page)))
     {
       g_mutex_lock(last_send_node_conn->mutex);
       node_failure_handling(last_send_node_conn);
@@ -1090,7 +1043,7 @@ end:
   send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                       free_pages);
   tp_state->ts_ops.ic_thread_stops(thread_state);
-  DEBUG_RETURN(NULL);
+  return NULL;
 error:
   /* Serious error, heartbeat thread cannot continue, need to stop */
   ic_controlled_terminate();
@@ -1566,7 +1519,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   */
 
   /* Set sender module id */
-  ic_require(sender_module_id <= IC_MAX_MODULE_ID);
+  ic_require(sender_module_id <= IC_NDB_MAX_MODULE_ID);
   word= sender_module_id;
 
   /* Set receiver module id */
@@ -2018,9 +1971,6 @@ external_connect(IC_APID_GLOBAL *ext_apid_global,
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
   int error;
 
-  DEBUG_PRINT(CONFIG_LEVEL,
-  ("Converting to NDB Protocol, cluster id = %u, node_id = %u",
-    cluster_id, node_id));
   if ((error= map_id_to_send_node_connection(apid_global,
                                              cluster_id,
                                              node_id,
@@ -2028,7 +1978,6 @@ external_connect(IC_APID_GLOBAL *ext_apid_global,
     return error;
   g_mutex_lock(send_node_conn->mutex);
   send_node_conn->conn= conn;
-  send_node_conn->node_up= TRUE;
   g_cond_signal(send_node_conn->cond);
   g_mutex_unlock(send_node_conn->mutex);
   return 0;
@@ -3013,7 +2962,6 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
         send_node_conn->my_node_id= my_node_id;
         send_node_conn->other_node_id= node_id;
         send_node_conn->cluster_id= cluster_id;
-        send_node_conn->last_send_timer_index= 1;
         /* Start send thread */
         if ((error= start_send_thread(send_node_conn)))
           goto error;
@@ -3135,27 +3083,6 @@ typedef struct ic_exec_message_func IC_EXEC_MESSAGE_FUNC;
 static IC_EXEC_MESSAGE_FUNC ic_exec_message_func_array[2][1024];
 
 static int
-execSCAN_TABLE_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  return 0;
-}
-
-static int
-execPRIMARY_KEY_OP_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  return 0;
-}
-
-static int
-execTRANSACTION_CONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  return 0;
-}
-
-static int
 handle_key_ai(__attribute__ ((unused)) IC_APID_OPERATION *apid_op,
               __attribute__ ((unused)) IC_TRANSACTION *trans,
               __attribute__ ((unused)) guint32 *ai_data,
@@ -3186,21 +3113,29 @@ static int
 execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
                       IC_MESSAGE_ERROR_OBJECT *error_object)
 {
-  guint32 *header_data= ndb_message->segment_ptr[0];
-  guint32 header_size= ndb_message->segment_size[0];
+  guint32 *header_data;
+  guint32 header_size;
   guint32 *attrinfo_data;
   void *connection_obj;
+  IC_INT_APID_CONNECTION *apid_conn;
   IC_APID_OPERATION *apid_op;
   IC_TRANSACTION *trans_op;
-  IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
+  IC_DYNAMIC_TRANSLATION *op_bindings;
   guint32 data_size;
-  guint64 connection_ptr= header_data[0];
-  guint32 transid_part1= header_data[1];
-  guint32 transid_part2= header_data[2];
+  guint64 connection_ptr;
+  guint32 transid_part1;
+  guint32 transid_part2;
 
-  if (dyn_trans->dt_ops.ic_get_translation_object(dyn_trans,
-                                                  connection_ptr,
-                                                  &connection_obj))
+  apid_conn= (IC_INT_APID_CONNECTION*)ndb_message->apid_conn;
+  header_data= ndb_message->segment_ptr[0];
+  header_size= ndb_message->segment_size[0];
+  op_bindings= apid_conn->op_bindings;
+  connection_ptr= header_data[0];
+  transid_part1= header_data[1];
+  transid_part2= header_data[2];
+  if (op_bindings->dt_ops.ic_get_translation_object(op_bindings,
+                                                    connection_ptr,
+                                                    &connection_obj))
   { 
     return 1;
   }
@@ -3241,33 +3176,303 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execTRANSACTION_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-             __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+execATTRIBUTE_INFO_ROUTED_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_COMMITCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+                      __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-execPRIMARY_KEY_OP_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-             __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+execNDB_COMMITREF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+                     __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
 static int
-execSCAN_TABLE_REF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-             __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+execNDB_ABORTCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+                     __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   return 0;
 }
 
-#define IC_SCAN_TABLE_CONF 1
-#define IC_SCAN_TABLE_REF 2
-#define IC_PRIMARY_KEY_OP_CONF 3
-#define IC_PRIMARY_KEY_OP_REF 4
-#define IC_TRANSACTION_CONF 5
-#define IC_TRANSACTION_REF 6
-#define IC_ATTRIBUTE_INFO 7
+static int
+execNDB_ABORTREF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+                    __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execNDB_ABORTREP_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+                    __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+static int
+execNDB_NODEFAIL_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_NODEFAIL_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_PRIM_KEYCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+                   __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Always equal to 0
+*/
+static int
+execNDB_PRIM_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
+                       IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Unique Index Id
+*/
+static int
+execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
+                       IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  NDB_SCANREQ:
+  ------------
+*/
+/*
+  NDB_SCAN_CONTINUE_REQ:
+  ----------------------
+  Word 1: NDB Object reference
+  Word 2: Stop scan indicator
+  Word 3-4: Transaction id
+  
+  There is also sent a list of scan partition references. If this list
+  is longer than 21 words it is sent as the first section of the
+  message. If the list is 21 or shorter, the references are sent in the
+  main message starting at word 5.
+*/
+
+/*
+  Word 1: Our object reference
+  Word 2: Flags
+    Bit 0-7: Number of records received (0-255)
+    Bit 8-9: Status of scan
+      0 = x
+      1 = x
+      2 = x
+      3 = x
+  Word 3-4: Transaction id
+*/
+static int
+execNDB_SCANCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                   IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Flag indicating whether close scan is needed
+
+  A close is not needed in the case when the scan process haven't even started
+  yet.
+*/
+static int
+execNDB_SCANREF_v0(IC_NDB_MESSAGE *ndb_message,
+                   IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  Word 1: Senders reference
+  Word 2: NDB node version
+  Word 3: error code (1 = Wrong Type and 2 = Unsupported version)
+  Word 4: MySQL base version
+*/
+static int
+execAPI_HBREF_v0(IC_NDB_MESSAGE *ndb_message,
+                 IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  Word 1: Senders reference
+  Word 2: NDB node version
+  Word 3: Heartbeat frequency for the API node to use
+  Word 4: MySQL base version
+  Word 5: Minimum compatible version
+  Word 6: Start Level
+    0 = Nothing is started
+    1 = Very early start
+    2 = All parts are starting up
+    3 = NDB is started
+    4 = NDB is in Single User Mode
+    5-8 = NDB is stopping node, no more transactions to be started
+  Word 7: Node group of NDB node
+  Word 8: Start Id of NDB node
+  IF Start Level is 4 THEN
+    Word 9: Start Phase
+    Word 10: Start Type
+      0 = Initial Start
+      1 = System Restart
+      2 = Node restart
+    Word 11: Ignore
+  ELSE IF Start Level is 5-8 THEN
+  ELSE
+    Ignore Word 9-11:
+  ENDIF
+  Word 12: Flag indicating of NDB in Single User Mode
+  Word 13: Node Id of the Single User API node
+  Word 14-21: Bitmask of node 1 through 255
+    A bit set indicates that the node with the id is connected to the
+    NDB node that sent the message.
+    Bit 1 in Word 14 is bit for node id 1, bit 0 in Word 16 is for node id
+    64 and finally bit 6 in word 19 is for node id 166.
+
+  As an API node the only thing we care about is the minimum compatible
+  the MySQL version possibly, the heartbeat frequency to use and the start
+  level of the node which indicates what messages the node is ready to
+  receive.
+
+  For management reasons we might be interested in the bitmap to provide
+  information to a management application of the cluster state. The same
+  applies for all other information in the message which normally isn't of
+  interest. So we will store all information about the node in the send
+  node connection for use of anyone interested.
+*/
+static int
+execAPI_HBCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
+                  __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  return 0;
+}
+
+/*
+  NDB_CONNECTREQ:
+  ---------------
+  Word 1: Our object reference
+  Word 2: Our module reference
+*/
+/*
+  Word 1: Our object reference
+  Word 2: The NDB object reference
+*/
+static int
+execNDB_CONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                       IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  Word 1: Our object reference
+  Word 2: Error code
+    219 = No free connections
+    203 = Cluster not started yet
+    281 = Cluster shutting down
+    280 = Node shutting down
+    282 = State error
+*/
+static int
+execNDB_CONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
+                      IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  NDB_DISCONNECTREQ:
+  Word 1: The NDB object reference
+  Word 2: Our module reference
+  Word 3: Our object reference
+*/
+/*
+  Word 1: Our object reference
+*/
+static int
+execNDB_DISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  Word 1: Our object reference
+  Word 2: Error code
+  Word 3: Error Line number (reference to NDB code)
+    229 = Invalid NDB object reference
+
+  Normally this message have 3 data words, but in case NDB has stored
+  a module reference which isn't the one sent in the release message
+  there will also be two additional words added:
+  Word 4: Our module reference as sent
+  Word 5: The module reference of the connection as NDB views it
+*/
+static int
+execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
+                         IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
 
 /* Initialize function pointer array for messages */
 static void
@@ -3279,20 +3484,46 @@ initialize_message_func_array()
     ic_exec_message_func_array[0][i].ic_exec_message_func= NULL;
     ic_exec_message_func_array[1][i].ic_exec_message_func= NULL;
   }
-  ic_exec_message_func_array[0][IC_SCAN_TABLE_CONF].ic_exec_message_func=
-    execSCAN_TABLE_CONF_v0;
-  ic_exec_message_func_array[0][IC_SCAN_TABLE_REF].ic_exec_message_func=
-    execSCAN_TABLE_REF_v0;
-  ic_exec_message_func_array[0][IC_TRANSACTION_CONF].ic_exec_message_func=
-    execTRANSACTION_CONF_v0;
-  ic_exec_message_func_array[0][IC_TRANSACTION_REF].ic_exec_message_func=
-    execTRANSACTION_REF_v0;
-  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_CONF].ic_exec_message_func=
-    execPRIMARY_KEY_OP_CONF_v0;
-  ic_exec_message_func_array[0][IC_PRIMARY_KEY_OP_REF].ic_exec_message_func=
-    execPRIMARY_KEY_OP_REF_v0;
-  ic_exec_message_func_array[0][IC_ATTRIBUTE_INFO].ic_exec_message_func=
+  ic_exec_message_func_array[0][1].ic_exec_message_func=
+    execAPI_HBCONF_v0;
+  ic_exec_message_func_array[0][2].ic_exec_message_func=
+    execAPI_HBREF_v0;
+  ic_exec_message_func_array[0][5].ic_exec_message_func=
     execATTRIBUTE_INFO_v0;
+  ic_exec_message_func_array[0][8].ic_exec_message_func=
+    execNDB_NODEFAIL_KEYCONF_v0;
+  ic_exec_message_func_array[0][9].ic_exec_message_func=
+    execNDB_NODEFAIL_KEYREF_v0;
+  ic_exec_message_func_array[0][10].ic_exec_message_func=
+    execNDB_PRIM_KEYCONF_v0;
+  ic_exec_message_func_array[0][11].ic_exec_message_func=
+    execNDB_PRIM_KEYREF_v0;
+  ic_exec_message_func_array[0][13].ic_exec_message_func=
+    execNDB_ABORTCONF_v0;
+  ic_exec_message_func_array[0][14].ic_exec_message_func=
+    execNDB_ABORTREF_v0;
+  ic_exec_message_func_array[0][16].ic_exec_message_func=
+    execNDB_ABORTREP_v0;
+  ic_exec_message_func_array[0][17].ic_exec_message_func=
+    execNDB_COMMITCONF_v0;
+  ic_exec_message_func_array[0][19].ic_exec_message_func=
+    execNDB_COMMITREF_v0;
+  ic_exec_message_func_array[0][21].ic_exec_message_func=
+    execATTRIBUTE_INFO_ROUTED_v0;
+  ic_exec_message_func_array[0][29].ic_exec_message_func=
+    execNDB_SCANCONF_v0;
+  ic_exec_message_func_array[0][31].ic_exec_message_func=
+    execNDB_SCANREF_v0;
+  ic_exec_message_func_array[0][37].ic_exec_message_func=
+    execNDB_CONNECTCONF_v0;
+  ic_exec_message_func_array[0][38].ic_exec_message_func=
+    execNDB_CONNECTREF_v0;
+  ic_exec_message_func_array[0][34].ic_exec_message_func=
+    execNDB_DISCONNECTCONF_v0;
+  ic_exec_message_func_array[0][35].ic_exec_message_func=
+    execNDB_DISCONNECTREF_v0;
+  ic_exec_message_func_array[0][521].ic_exec_message_func=
+    execNDB_UNIQ_KEYREF_v0;
 }
 
 /*
@@ -3329,7 +3560,8 @@ static IC_EXEC_MESSAGE_FUNC* get_exec_message_func(guint32 message_id,
 static void set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn);
 static IC_SOCK_BUF_PAGE*
 get_thread_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time);
-static int execute_message(IC_SOCK_BUF_PAGE *ndb_message_page);
+static int execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
+                           IC_NDB_MESSAGE *ndb_message);
 static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                               IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
                               IC_NDB_MESSAGE *ndb_message,
@@ -3337,8 +3569,9 @@ static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
 
 static IC_EXEC_MESSAGE_FUNC*
 get_exec_message_func(guint32 message_id,
-                      __attribute__ ((unused)) guint32 version_num)
+                      guint32 version_num)
 {
+  (void)version_num;
   return &ic_exec_message_func_array[0][message_id];
 }
 
@@ -3471,10 +3704,10 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
 }
 
 static int
-execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
+execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
+                IC_NDB_MESSAGE *ndb_message)
 {
   guint32 message_id;
-  IC_NDB_MESSAGE ndb_message;
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
   IC_EXEC_MESSAGE_FUNC *exec_message_func;
   IC_MESSAGE_ERROR_OBJECT error_object;
@@ -3487,7 +3720,7 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
     &ndb_message_page->opaque_area[0];
   if (!create_ndb_message(ndb_message_page,
                           ndb_message_opaque,
-                          &ndb_message,
+                          ndb_message,
                           &message_id))
   {
     exec_message_func= get_exec_message_func(message_id,
@@ -3495,7 +3728,7 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page)
     if (!exec_message_func)
     {
        if (exec_message_func->ic_exec_message_func
-             (&ndb_message, &error_object))
+             (ndb_message, &error_object))
        {
          /* Handle error */
          return error_object.error;
@@ -3533,6 +3766,7 @@ static int
 poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
 {
   IC_SOCK_BUF_PAGE *ndb_message_page;
+  IC_NDB_MESSAGE ndb_message;
   int error;
 
   /*
@@ -3545,12 +3779,13 @@ poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
     start executing them.
   */
   ndb_message_page= get_thread_messages(apid_conn, wait_time);
+  ndb_message.apid_conn= apid_conn;
   /*
   */
   while (ndb_message_page)
   {
     /* Execute one message received */
-    if ((error= execute_message(ndb_message_page)))
+    if ((error= execute_message(ndb_message_page, &ndb_message)))
     {
       /* Error handling */
       return error;
@@ -3696,8 +3931,8 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
         rec_state->first_send_node= send_node_conn;
       }
     }
-    g_mutex_unlock(send_node_conn->mutex);
     send_node_conn= next_send_node_conn;
+    g_mutex_unlock(send_node_conn->mutex);
   }
 }
 
@@ -3828,8 +4063,8 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
   IC_NDB_MESSAGE_OPAQUE_AREA *message_opaque;
   IC_THREAD_CONNECTION *loc_thd_conn;
 
-  ic_zero(&num_sent[0],
-          sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS));
+  memset(&num_sent[0], 0,
+         sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS));
   for (i= min_hash_index; i < max_hash_index; i++)
   {
     ndb_message_anchor= &ndb_message_anchors[i];
@@ -4097,7 +4332,8 @@ run_receive_thread(void *data)
   IC_RECEIVE_NODE_CONNECTION *rec_node;
 
   rec_tp->ts_ops.ic_thread_started(thread_state);
-  ic_zero(message_anchors, sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS);
+  memset(message_anchors, 0,
+         sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS);
 
   /* Flag start-up done and wait for start order */
   rec_tp->ts_ops.ic_thread_startup_done(thread_state);
@@ -4275,7 +4511,7 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   int ret_code;
 
   if (!(*tp_state=
-          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
+          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     return IC_ERROR_MEM_ALLOC;
   if (daemonize)
   {

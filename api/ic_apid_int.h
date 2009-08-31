@@ -87,6 +87,7 @@ struct ic_ndb_message_opaque_area
 
 struct ic_ndb_message
 {
+  IC_APID_CONNECTION *apid_conn;
   /*
     We keep pointers to the message buffer where the actual message data
     resides instead of copying. We also keep a pointer to the start of
@@ -153,8 +154,8 @@ struct ic_int_apid_connection
   IC_APID_CONNECTION_OPS apid_conn_ops;
   IC_METADATA_BIND_OPS apid_metadata_ops;
   IC_INT_APID_GLOBAL *apid_global;
-  IC_TRANSLATION_OBJ *trans_bindings;
-  IC_TRANSLATION_OBJ *op_bindings;
+  IC_DYNAMIC_TRANSLATION *trans_bindings;
+  IC_DYNAMIC_TRANSLATION *op_bindings;
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_id_bitmap;
   IC_THREAD_CONNECTION *thread_conn;
@@ -358,12 +359,6 @@ struct ic_int_apid_error
   gchar *error_msg;
 };
 
-#define TRANSLATION_ARRAY_SIZE 256
-struct ic_translation_obj
-{
-  IC_HASHTABLE *hash_table;
-};
-
 struct ic_int_apid_global
 {
   IC_APID_GLOBAL_OPS apid_global_ops;
@@ -414,35 +409,4 @@ struct ic_int_apid_global
   IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];
   IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];
 };
-
-/* Define message numbers for NDB Protocol messages */
-#define API_HBREQ 3
-#define API_HBCONF 1
-#define API_HBREF 2
-
-#define NDB_KEYREQ 12
-#define NDB_KEYCONF 10
-#define NDB_KEYREF 11
-
-#define NDB_SCANREQ 32
-#define NDB_SCANREF 31
-
-#define NDB_ABORTREQ 15
-#define NDB_ABORTCONF 13
-#define NDB_ABORTREF 14
-#define NDB_ABORTREP 16
-
-#define NDB_COMMITREQ 19
-#define NDB_COMMITCONF 17
-#define NDB_COMMITREF 18
-
-#define NDB_HBREP 20
-
-#define NDB_CONNECTREQ 39
-#define NDB_CONNECTCONF 37
-#define NDB_CONNECTREF 38
-
-#define NDB_DISCONNECTREQ 36
-#define NDB_DISCONNECTCONF 34
-#define NDB_DISCONNECTREF 35
 #endif
