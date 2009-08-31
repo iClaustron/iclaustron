@@ -203,6 +203,31 @@ static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        guint32 segment_lens[3]);
 
 /*
+  NDB Protocol support MODULE
+  ---------------------------
+  This module contains a number of common functions used by most modules
+*/
+/*
+  The NDB Protocol often makes use of module references. This is a 32-bit
+  entity that uniquely identifies a module anywhere in the cluster. It has
+  3 entities, a node id, a module id and an instance id which essentially
+  is a thread id. For iClaustron nodes we effectively use both module id
+  and thread id to indicate the thread number and thus we can handle up
+  to 65536 threads.
+*/
+static guint32
+ic_get_ic_reference(guint32 node_id, guint32 thread_id)
+{
+  return (thread_id << 16) + node_id;
+}
+/*
+static guint32
+ic_get_ndb_reference(guint32 node_id, guint32 module_id, guint32 thread_id)
+{
+  return (thread_id << 25) + (module_id << 16) + node_id;
+}
+*/
+/*
   GLOBAL DATA API INITIALISATION MODULE
   -------------------------------------
   This module contains the code to initialise and set-up and tear down the
@@ -236,10 +261,10 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
        ic_calloc(sizeof(IC_INT_APID_GLOBAL))))
     return NULL;
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
-                        IC_MAX_RECEIVE_THREADS + 1, TRUE)))
+                        IC_MAX_RECEIVE_THREADS + 1, FALSE)))
     goto error;
   if (!(apid_global->send_thread_pool= ic_create_threadpool(
-                        IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
+                        IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     goto error;
   apid_global->apic= apic;
   apid_global->num_receive_threads= 0;
@@ -862,8 +887,9 @@ static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                   IC_THREADPOOL_STATE *tp_state);
 static void add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                               IC_SEND_NODE_CONNECTION *send_node_conn);
-static int prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                  IC_SOCK_BUF_PAGE *heartbeat_page);
+static void prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                   IC_SOCK_BUF_PAGE *heartbeat_page,
+                                   guint32 thread_id);
 static int real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                                IC_SOCK_BUF_PAGE *heartbeat_page);
 static gpointer run_heartbeat_thread(gpointer data);
@@ -892,7 +918,7 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                         apid_global->heartbeat_thread_id,
                         run_heartbeat_thread,
                         (void*)apid_global,
-                        IC_SMALL_STACK_SIZE,
+                        IC_MEDIUM_STACK_SIZE,
                         FALSE))))
     goto error;
   apid_global->heartbeat_conn= heartbeat_conn;
@@ -914,7 +940,7 @@ add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     If this is the first node added the heartbeat thread is waiting for
     the first node to be connected before starting its activity.
   */
-  if (!apid_global->heartbeat_thread_waiting)
+  if (apid_global->heartbeat_thread_waiting)
     g_cond_signal(apid_global->heartbeat_cond);
   send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
   apid_global->first_heartbeat_node= send_node_conn;
@@ -944,35 +970,43 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   g_mutex_unlock(apid_global->heartbeat_mutex);
 }
 
-static int
+static void
 prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
-                       IC_SOCK_BUF_PAGE *hb_page)
+                       IC_SOCK_BUF_PAGE *hb_page,
+                       guint32 thread_id)
 {
   guint32 *message_start= (guint32*)hb_page->sock_buf;
   guint32 *main_message_start;
   guint32 header_size;
+  guint32 message_size;
 
   header_size= get_ndb_message_header_size(send_node_conn);
   main_message_start= message_start + header_size;
-  /* TODO: Fill in API_REGREQ message data */
-  return fill_ndb_message_header(send_node_conn,
+
+  /* Fill in message data */
+  main_message_start[0]= ic_get_ic_reference(send_node_conn->my_node_id,
+                                             thread_id);
+  main_message_start[1]= NDB_VERSION;
+  main_message_start[2]= MYSQL_VERSION;
+  message_size= fill_ndb_message_header(send_node_conn,
                                  3, /* API_REGREQ */
                                  IC_NDB_NORMAL_PRIO,
                                  send_node_conn->thread_id,
                                  IC_NDB_QMGR_MODULE,
                                  message_start,
-                                 8, /* Size of API_REGREQ */
+                                 3, /* Size of API_REGREQ */
                                  main_message_start,
                                  0, /* No segments */
                                  NULL,
                                  NULL);
+  hb_page->size= message_size * sizeof(guint32);
 }
 
 static int
 real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *hb_page)
 {
-  return ndb_send(send_node_conn, hb_page, FALSE);
+  return ndb_send(send_node_conn, hb_page, TRUE);
 }
 
 static gpointer
@@ -985,9 +1019,10 @@ run_heartbeat_thread(gpointer data)
     tp_state->ts_ops.ic_thread_get_object(thread_state);
   IC_SEND_NODE_CONNECTION *last_send_node_conn= NULL;
   IC_SOCK_BUF_PAGE *free_pages= NULL;
-  IC_SOCK_BUF_PAGE *hb_page= NULL;
+  IC_SOCK_BUF_PAGE *hb_page;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
 
+  DEBUG_ENTRY("run_heartbeat_thread");
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     if (!(hb_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
@@ -1001,8 +1036,11 @@ run_heartbeat_thread(gpointer data)
     {
       last_send_node_conn= NULL;
       apid_global->heartbeat_thread_waiting= TRUE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Need to wait for nodes to connect"));
       g_cond_wait(apid_global->heartbeat_cond, apid_global->heartbeat_mutex);
       g_mutex_unlock(apid_global->heartbeat_mutex);
+      DEBUG_PRINT(CONFIG_LEVEL,
+      ("First node connected, heartbeat needs to be sent"));
       send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                           hb_page);
       continue;
@@ -1020,6 +1058,16 @@ run_heartbeat_thread(gpointer data)
         apid_global->curr_heartbeat_node=
           last_send_node_conn->next_heartbeat_node;
         last_send_node_conn= last_send_node_conn->next_heartbeat_node;
+        if (!last_send_node_conn)
+        {
+          /* We have sent to all nodes, sleep for a while and start again */
+          apid_global->curr_heartbeat_node= NULL;
+          g_mutex_unlock(apid_global->heartbeat_mutex);
+          send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                              hb_page);
+          ic_microsleep(100000);
+          continue;
+        }
       }
       else
       {
@@ -1030,9 +1078,10 @@ run_heartbeat_thread(gpointer data)
         ;
       }
     }
-    error= prepare_send_heartbeat(last_send_node_conn, hb_page);
+    prepare_send_heartbeat(last_send_node_conn, hb_page,
+                           apid_global->heartbeat_thread_id);
     g_mutex_unlock(apid_global->heartbeat_mutex);
-    if (error || (error= real_send_heartbeat(last_send_node_conn, hb_page)))
+    if ((error= real_send_heartbeat(last_send_node_conn, hb_page)))
     {
       g_mutex_lock(last_send_node_conn->mutex);
       node_failure_handling(last_send_node_conn);
@@ -1043,7 +1092,7 @@ end:
   send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                       free_pages);
   tp_state->ts_ops.ic_thread_stops(thread_state);
-  return NULL;
+  DEBUG_RETURN(NULL);
 error:
   /* Serious error, heartbeat thread cannot continue, need to stop */
   ic_controlled_terminate();
@@ -1519,7 +1568,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   */
 
   /* Set sender module id */
-  ic_require(sender_module_id <= IC_NDB_MAX_MODULE_ID);
+  ic_require(sender_module_id <= IC_MAX_MODULE_ID);
   word= sender_module_id;
 
   /* Set receiver module id */
@@ -1971,6 +2020,9 @@ external_connect(IC_APID_GLOBAL *ext_apid_global,
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
   int error;
 
+  DEBUG_PRINT(CONFIG_LEVEL,
+  ("Converting to NDB Protocol, cluster id = %u, node_id = %u",
+    cluster_id, node_id));
   if ((error= map_id_to_send_node_connection(apid_global,
                                              cluster_id,
                                              node_id,
@@ -1978,6 +2030,7 @@ external_connect(IC_APID_GLOBAL *ext_apid_global,
     return error;
   g_mutex_lock(send_node_conn->mutex);
   send_node_conn->conn= conn;
+  send_node_conn->node_up= TRUE;
   g_cond_signal(send_node_conn->cond);
   g_mutex_unlock(send_node_conn->mutex);
   return 0;
@@ -2962,6 +3015,7 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
         send_node_conn->my_node_id= my_node_id;
         send_node_conn->other_node_id= node_id;
         send_node_conn->cluster_id= cluster_id;
+        send_node_conn->last_send_timer_index= 1;
         /* Start send thread */
         if ((error= start_send_thread(send_node_conn)))
           goto error;
@@ -3113,29 +3167,21 @@ static int
 execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
                       IC_MESSAGE_ERROR_OBJECT *error_object)
 {
-  guint32 *header_data;
-  guint32 header_size;
+  guint32 *header_data= ndb_message->segment_ptr[0];
+  guint32 header_size= ndb_message->segment_size[0];
   guint32 *attrinfo_data;
   void *connection_obj;
-  IC_INT_APID_CONNECTION *apid_conn;
   IC_APID_OPERATION *apid_op;
   IC_TRANSACTION *trans_op;
-  IC_DYNAMIC_TRANSLATION *op_bindings;
+  IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
   guint32 data_size;
-  guint64 connection_ptr;
-  guint32 transid_part1;
-  guint32 transid_part2;
+  guint64 connection_ptr= header_data[0];
+  guint32 transid_part1= header_data[1];
+  guint32 transid_part2= header_data[2];
 
-  apid_conn= (IC_INT_APID_CONNECTION*)ndb_message->apid_conn;
-  header_data= ndb_message->segment_ptr[0];
-  header_size= ndb_message->segment_size[0];
-  op_bindings= apid_conn->op_bindings;
-  connection_ptr= header_data[0];
-  transid_part1= header_data[1];
-  transid_part2= header_data[2];
-  if (op_bindings->dt_ops.ic_get_translation_object(op_bindings,
-                                                    connection_ptr,
-                                                    &connection_obj))
+  if (dyn_trans->dt_ops.ic_get_translation_object(dyn_trans,
+                                                  connection_ptr,
+                                                  &connection_obj))
   { 
     return 1;
   }
@@ -4063,8 +4109,8 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
   IC_NDB_MESSAGE_OPAQUE_AREA *message_opaque;
   IC_THREAD_CONNECTION *loc_thd_conn;
 
-  memset(&num_sent[0], 0,
-         sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS));
+  ic_zero(&num_sent[0],
+          sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS));
   for (i= min_hash_index; i < max_hash_index; i++)
   {
     ndb_message_anchor= &ndb_message_anchors[i];
@@ -4332,8 +4378,7 @@ run_receive_thread(void *data)
   IC_RECEIVE_NODE_CONNECTION *rec_node;
 
   rec_tp->ts_ops.ic_thread_started(thread_state);
-  memset(message_anchors, 0,
-         sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS);
+  ic_zero(message_anchors, sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS);
 
   /* Flag start-up done and wait for start order */
   rec_tp->ts_ops.ic_thread_startup_done(thread_state);
@@ -4511,7 +4556,7 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   int ret_code;
 
   if (!(*tp_state=
-          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
+          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     return IC_ERROR_MEM_ALLOC;
   if (daemonize)
   {
