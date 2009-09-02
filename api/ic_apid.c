@@ -970,38 +970,6 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   g_mutex_unlock(apid_global->heartbeat_mutex);
 }
 
-static void
-prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
-                       IC_SOCK_BUF_PAGE *hb_page,
-                       guint32 thread_id)
-{
-  guint32 *message_start= (guint32*)hb_page->sock_buf;
-  guint32 *main_message_start;
-  guint32 header_size;
-  guint32 message_size;
-
-  header_size= get_ndb_message_header_size(send_node_conn);
-  main_message_start= message_start + header_size;
-
-  /* Fill in message data */
-  main_message_start[0]= ic_get_ic_reference(send_node_conn->my_node_id,
-                                             thread_id);
-  main_message_start[1]= NDB_VERSION;
-  main_message_start[2]= MYSQL_VERSION;
-  message_size= fill_ndb_message_header(send_node_conn,
-                                 3, /* API_REGREQ */
-                                 IC_NDB_NORMAL_PRIO,
-                                 send_node_conn->thread_id,
-                                 IC_NDB_QMGR_MODULE,
-                                 message_start,
-                                 3, /* Size of API_REGREQ */
-                                 main_message_start,
-                                 0, /* No segments */
-                                 NULL,
-                                 NULL);
-  hb_page->size= message_size * sizeof(guint32);
-}
-
 static int
 real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *hb_page)
@@ -3157,11 +3125,20 @@ handle_scan_ai(__attribute__ ((unused)) IC_APID_OPERATION *apid_op,
 }
 
 /*
+  This message is part of three different protocols, the primary key operation
+  protocol, the unique key operation protocol and the scan protocol. It always
+  contains the result of reading one record and the field ids are interpreted
+  using the object reference we stored when sending the message.
+
+  ATTRIBUTE_INFO
+  --------------
   Signal Format:
-  Word 0: Connection object
+  Word 0: Our object reference
   Word 1: Transaction id part 1
   Word 2: Transaction id part 2
-  One segment which contains the actual ATTRINFO data
+  One segment which contains the actual read data from the record together
+  with some field ids and other information in the ATTRIBUTE_INFO data
+  protocol.
 */
 static int
 execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
@@ -3221,9 +3198,47 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
                        error_object);
 }
 
+/*
+  In the case of a transaction committed using the primary/unique key operation
+  protocol we get a report of an aborted transaction using NDB_ABORTREP instead.
+  So this message is part of those protocols.
+
+  NDB_ABORTREP
+  ------------
+
+*/
 static int
-execATTRIBUTE_INFO_ROUTED_v0(IC_NDB_MESSAGE *ndb_message,
-                             IC_MESSAGE_ERROR_OBJECT *error_object)
+execNDB_ABORTREP_v0(IC_NDB_MESSAGE *ndb_message,
+                    IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  The transaction commit protocol
+
+  This protocol is initiated by the API using the NDB_COMMITREQ message.
+  In many cases transactions are committed using the primary/unique key
+  operation protocol since there is a flag in this message indicating
+  transaction commit desired. In this case the NDB_PRIM_KEYCONF and
+  NDB_UNIQ_KEYCONF will contain an indication of a successfully committed
+  transaction.
+
+  NDB_COMMITREQ
+  -------------
+
+  NDB_COMMITCONF
+  --------------
+
+  NDB_COMMITREF
+  -------------
+
+*/
+static int
+execNDB_COMMITCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                      IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
@@ -3231,40 +3246,60 @@ execATTRIBUTE_INFO_ROUTED_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execNDB_COMMITCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-                      __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+execNDB_COMMITREF_v0(IC_NDB_MESSAGE *ndb_message,
+                     IC_MESSAGE_ERROR_OBJECT *error_object)
 {
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+/*
+  The transaction abort protocol
+
+  The abort protocol is always initiated from the API node using the
+  NDB_ABORTREQ message.
+
+  NDB_ABORTREQ
+  ------------
+
+  NDB_ABORTCONF
+  -------------
+
+  NDB_ABORTREF
+  ------------
+
+*/
+static int
+execNDB_ABORTCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                     IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
   return 0;
 }
 
 static int
-execNDB_COMMITREF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-                     __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+execNDB_ABORTREF_v0(IC_NDB_MESSAGE *ndb_message,
+                    IC_MESSAGE_ERROR_OBJECT *error_object)
 {
+  (void)ndb_message;
+  (void)error_object;
   return 0;
 }
 
-static int
-execNDB_ABORTCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-                     __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  return 0;
-}
+/*
+  In the case of a Node failure of the transaction coordinator data node
+  we get either NDB_NODEFAIL_KEYCONF or NDB_NODEFAIL_KEYREF to indicate whether
+  the transaction was successfully committed or whether it was aborted.
 
-static int
-execNDB_ABORTREF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-                    __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  return 0;
-}
+  NDB_NODEFAIL_KEYCONF
+  --------------------
 
-static int
-execNDB_ABORTREP_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-                    __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  return 0;
-}
+  NDB_NODEFAIL_KEYREF
+  -------------------
 
+*/
 static int
 execNDB_NODEFAIL_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message,
                             IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -3283,21 +3318,46 @@ execNDB_NODEFAIL_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+/*
+  Primary Key operation protocol
+
+  This protocol is used to perform any action Read/Insert/Delete/Update/Write
+  on one record using the primary key as reference to the record. It contains
+  a specification of fields to read or for modifying queries a list of fields
+  to update together with their new value. It is also possible to send along
+  an interpreted program that can perform the read/write based on some
+  condition and it can even write specific fields or read specific fields
+  conditionally based on some condition in the record.
+
+  Start of a transaction is performed through a primary key operation or
+  through a unique key operation. Scans are always independent transactions
+  and thus if locks from a scan have to be kept for the entire duration of
+  the transaction it is necessary to send a specific primary key operation to
+  read the record, this operation can be used without reading any fields.
+
+  NDB_PRIM_KEYREQ
+  ---------------
+
+  NDB_PRIM_KEYCONF
+  ----------------
+
+  NDB_PRIM_KEYREF
+  ---------------
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Always equal to 0
+*/
 static int
-execNDB_PRIM_KEYCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-                   __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
+execNDB_PRIM_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
   return 0;
 }
 
-/*
-  Word 1: Our object reference
-  Word 2-3: Transaction Id
-  Word 4: Error code
-  Word 5: Always equal to 0
-*/
 static int
 execNDB_PRIM_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
                        IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -3308,11 +3368,36 @@ execNDB_PRIM_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 /*
+  Unique key operation protocol
+
+  This protocol is exactly the same as the primary key operation protocol
+  except that it operates on a unique key instead of on a primary key.
+  In the description below we focus on the differences to the primary key
+  operation protocol.
+
+  NDB_UNIQ_KEYREQ
+  ---------------
+
+  NDB_UNIQ_KEYCONF
+  ----------------
+
+  NDB_UNIQ_KEYREF
+  ---------------
+  Sent from Data Node -> API node
   Word 1: Our object reference
   Word 2-3: Transaction Id
   Word 4: Error code
   Word 5: Unique Index Id
 */
+static int
+execNDB_UNIQ_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
 static int
 execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
                        IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -3323,10 +3408,54 @@ execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 /*
+  The scan table/index protocol
+
+  This protocol is used to scan a table for all its records or only one
+  of its partitions. It can also be used similarly to scan an index of
+  a table. In scanning an index one can send along a start range and an
+  end range. In both cases one can also send along a generic interpreted
+  program to define more conditions on which records to return. The scan
+  also defines which fields to return for records that should be returned
+  to the API node.
+
+  The protocol is a bit more complex. Thus it is required to also describe
+  the order messages are sent and received.
+
+  It is initiated by a NDB_SCANREQ message that specifies which table/index
+  to scan and if the partitions on this table/index to use.
+
+  The Data Node sends one ATTRIBUTE_INFO message for each record that is
+  returned to the scanner. After sending a set of records the Data Node
+  will send a NDB_SCANCONF message with the list of references to records
+  received from the Data Nodes. When this message arrives the API can start
+  handling the ATTRIBUTE_INFO messages. Actually the ATTRIBUTE_INFO messages
+  can arrive both before and after the NDB_SCANCONF messages. Thus we have to
+  keep track of the number of received records to ensure we have all records
+  to handle the NDB_SCANCONF message.
+
+  After sending NDB_SCANCONF, the Data Node awaits a NDB_SCAN_CONTINUE_REQ
+  message from the API node. In any such message the API can decide to close
+  the scan.
+
+  After sending a NDB_SCAN_CONTINUE_REQ message the API should be ready for
+  a new NDB_SCANCONF message.
+
+  At anytime when expecting a NDB_SCANCONF message it is possible to receive
+  a NDB_SCANREF message instead. This indicates a failure of the scan in
+  some manner. If the Data Node also requests a specific close in this message
+  then the API node have to respond with a NDB_SCAN_CONTINUE_REQ with the 
+  close flag set.
+
+  So the normal process of messages is:
+  (API) NDB_SCANREQ ---->  (Data Node)
+  Repeat below two steps until NDB_SCANCONF contains flag for closed flag set
+  When close flag is set in NDB_SCANCONF the API can safely dismiss the message.
+  (API) <-------- (Data Node) NDB_SCANCONF
+  (API) NDB_SCAN_CONTINUE_REQ(no_close_flag_set) ----> (Data Node)
+
   NDB_SCANREQ:
   ------------
-*/
-/*
+
   NDB_SCAN_CONTINUE_REQ:
   ----------------------
   Word 1: NDB Object reference
@@ -3337,9 +3466,9 @@ execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
   is longer than 21 words it is sent as the first section of the
   message. If the list is 21 or shorter, the references are sent in the
   main message starting at word 5.
-*/
 
-/*
+  NDB_SCANCONF
+  -----------
   Word 1: Our object reference
   Word 2: Flags
     Bit 0-7: Number of records received (0-255)
@@ -3349,6 +3478,17 @@ execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
       2 = x
       3 = x
   Word 3-4: Transaction id
+
+  NDB_SCANREF
+  -----------
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Flag indicating whether close scan is needed
+
+  A close is not needed in the case when the scan process haven't even started
+  yet.
 */
 static int
 execNDB_SCANCONF_v0(IC_NDB_MESSAGE *ndb_message,
@@ -3359,15 +3499,6 @@ execNDB_SCANCONF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
-/*
-  Word 1: Our object reference
-  Word 2-3: Transaction Id
-  Word 4: Error code
-  Word 5: Flag indicating whether close scan is needed
-
-  A close is not needed in the case when the scan process haven't even started
-  yet.
-*/
 static int
 execNDB_SCANREF_v0(IC_NDB_MESSAGE *ndb_message,
                    IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -3378,21 +3509,26 @@ execNDB_SCANREF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 /*
+  API Heartbeat protocol
+
+  API_HBREQ
+  ---------
+  Sent from API -> Data Node
+  Word 1: Our module reference
+  Word 2: Our NDB version number
+  Word 3: Our MySQL version number
+
+  API_HBREF
+  ---------
+  Sent from Data Node -> API node
   Word 1: Senders reference
   Word 2: NDB node version
   Word 3: error code (1 = Wrong Type and 2 = Unsupported version)
   Word 4: MySQL base version
-*/
-static int
-execAPI_HBREF_v0(IC_NDB_MESSAGE *ndb_message,
-                 IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
 
-/*
+  API_HBCONF
+  ----------
+  Sent from Data Node -> API node
   Word 1: Senders reference
   Word 2: NDB node version
   Word 3: Heartbeat frequency for the API node to use
@@ -3437,6 +3573,38 @@ execAPI_HBREF_v0(IC_NDB_MESSAGE *ndb_message,
   interest. So we will store all information about the node in the send
   node connection for use of anyone interested.
 */
+static void
+prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                       IC_SOCK_BUF_PAGE *hb_page,
+                       guint32 thread_id)
+{
+  guint32 *message_start= (guint32*)hb_page->sock_buf;
+  guint32 *main_message_start;
+  guint32 header_size;
+  guint32 message_size;
+
+  header_size= get_ndb_message_header_size(send_node_conn);
+  main_message_start= message_start + header_size;
+
+  /* Fill in message data */
+  main_message_start[0]= ic_get_ic_reference(send_node_conn->my_node_id,
+                                             thread_id);
+  main_message_start[1]= NDB_VERSION;
+  main_message_start[2]= MYSQL_VERSION;
+  message_size= fill_ndb_message_header(send_node_conn,
+                                 3, /* API_REGREQ */
+                                 IC_NDB_NORMAL_PRIO,
+                                 send_node_conn->thread_id,
+                                 IC_NDB_QMGR_MODULE,
+                                 message_start,
+                                 3, /* Size of API_REGREQ */
+                                 main_message_start,
+                                 0, /* No segments */
+                                 NULL,
+                                 NULL);
+  hb_page->size= message_size * sizeof(guint32);
+}
+
 static int
 execAPI_HBCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
                   __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -3444,15 +3612,40 @@ execAPI_HBCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+static int
+execAPI_HBREF_v0(IC_NDB_MESSAGE *ndb_message,
+                 IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
 /*
+  NDB_CONNECT Protocol
+
+  This protocol is used to connect to a transaction record in a Data Node.
+  It is initiated from the API.
+
   NDB_CONNECTREQ:
   ---------------
   Word 1: Our object reference
   Word 2: Our module reference
-*/
-/*
+
+  NDB_CONNECTCONF
+  ---------------
   Word 1: Our object reference
   Word 2: The NDB object reference
+
+  NDB_CONNECTREF
+  --------------
+  Word 1: Our object reference
+  Word 2: Error code
+    219 = No free connections
+    203 = Cluster not started yet
+    281 = Cluster shutting down
+    280 = Node shutting down
+    282 = State error
 */
 static int
 execNDB_CONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
@@ -3463,15 +3656,6 @@ execNDB_CONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
-/*
-  Word 1: Our object reference
-  Word 2: Error code
-    219 = No free connections
-    203 = Cluster not started yet
-    281 = Cluster shutting down
-    280 = Node shutting down
-    282 = State error
-*/
 static int
 execNDB_CONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
                       IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -3482,24 +3666,26 @@ execNDB_CONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 /*
-  NDB_DISCONNECTREQ:
+  NDB_DISCONNECT Protocol
+
+  This protocol is used to release a transaction record in the Data Node.
+  It is initiated from the API node.
+
+  NDB_DISCONNECTREQ
+  -----------------
+  Sent from API -> Data Node
   Word 1: The NDB object reference
   Word 2: Our module reference
   Word 3: Our object reference
-*/
-/*
-  Word 1: Our object reference
-*/
-static int
-execNDB_DISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
-                          IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
 
-/*
+  NDB_DISCONNECTCONF
+  ------------------
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+
+  NDB_DISCONNECTREF
+  -----------------
+  Sent from Data Node -> API node
   Word 1: Our object reference
   Word 2: Error code
   Word 3: Error Line number (reference to NDB code)
@@ -3511,6 +3697,15 @@ execNDB_DISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
   Word 4: Our module reference as sent
   Word 5: The module reference of the connection as NDB views it
 */
+static int
+execNDB_DISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
 static int
 execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
                          IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -3554,8 +3749,6 @@ initialize_message_func_array()
     execNDB_COMMITCONF_v0;
   ic_exec_message_func_array[0][19].ic_exec_message_func=
     execNDB_COMMITREF_v0;
-  ic_exec_message_func_array[0][21].ic_exec_message_func=
-    execATTRIBUTE_INFO_ROUTED_v0;
   ic_exec_message_func_array[0][29].ic_exec_message_func=
     execNDB_SCANCONF_v0;
   ic_exec_message_func_array[0][31].ic_exec_message_func=
@@ -3568,6 +3761,8 @@ initialize_message_func_array()
     execNDB_DISCONNECTCONF_v0;
   ic_exec_message_func_array[0][35].ic_exec_message_func=
     execNDB_DISCONNECTREF_v0;
+  ic_exec_message_func_array[0][520].ic_exec_message_func=
+    execNDB_UNIQ_KEYCONF_v0;
   ic_exec_message_func_array[0][521].ic_exec_message_func=
     execNDB_UNIQ_KEYREF_v0;
 }
