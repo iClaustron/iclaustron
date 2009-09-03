@@ -3095,6 +3095,15 @@ error:
   block for an extended period while executing messages.
 */
 
+/*
+  Fixed module ids:
+  Module to receive packed messages in API: 2047
+  Module for Heartbeat mechanism in API:    4002
+  Module for Transaction Coordinator in NDB: 245
+  Module for Dictionary in NDB             : 250
+  Module for Heartbeat handler in NDB      : 252
+  Module for Triggers in NDB               : 257
+*/
 struct ic_exec_message_func
 {
   int (*ic_exec_message_func) (IC_NDB_MESSAGE *message,
@@ -3338,8 +3347,157 @@ execNDB_NODEFAIL_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
   NDB_PRIM_KEYREQ
   ---------------
 
+  Word 1: The NDB connection reference
+  Word 2: Our object reference for this operation
+  Word 3: API version (stored in lower 16 bits)
+  Word 4: Table identity
+  Word 5: Flags
+    Bit 0: Dirty flag
+    -----------------
+      This flag differs for read and writes.
+      Reads:
+      ------
+      For reads it specifies that we want to read the latest committed record,
+      thus this type of read doesn't require waiting for any locks. This
+      is the variant normally used for reads in SQL mode READ COMMITTED.
+      Writes:
+      -------
+      When this flag is set we will commit locally on each replica, thus this
+      flag will disable proper transaction handling. It is only to be used in
+      cases when speed is more important then internal database consistency.
+      It's possible with this flag to get the replicas out of order of each
+      other.
+    Bit 1: No fields stored on disk will be read/updated indicator
+    --------------------------------------------------------------
+      When this flag is set it indicates that all fields in the operation are
+      main memory stored fields, this makes it easier for the NDB kernel to
+      handle those operations much faster, so a form of optimisation.
+    Bit 2: Distribution Key indicator
+    ---------------------------------
+      For tables that use only a subset of the primary key as distribution
+      key it is possible to either calculate the hash value of the distribution
+      key in the API or let the NDB data node do it. If the API does it, it
+      sets this flag and puts the hash value in the optional distribution
+      hash value below.
+    Bit 3: Not used
+    ---------------
+    Bit 4: Commit flag (this operation is last in transaction, commit it)
+    ---------------------------------------------------------------------
+    Bit 5-7: Operation Type
+    -----------------------
+      0 = Read
+      1 = Update
+      2 = Insert
+      3 = Delete
+      4 = Write
+      5 = Read with Exclusive Lock
+      6-7 = Not used
+    Bit 8: Simple flag
+    ------------------
+      This flag is valid in regard to read operations. A simple read means
+      that we take a row level lock before reading the row to ensure we read
+      the latest committed data, however after reading the record we will
+      release the lock before sending the message with the read record and
+      thus not waiting for the transaction to commit. This is used to
+      implement lower isolation levels than serialisability.
+    Bit 9: Not used
+    ---------------
+    Bit 10: Execute flag
+    --------------------
+      In the NDB Protocol it is possible to send several key operations after
+      each other without waiting for a response. However the last one sent
+      in a train of operation messages must have the execute flag set. This
+      is to ensure that the NDB Data nodes know if it can close the transaction
+      at failures and also to ensure that there is always a response sent
+      after receiving a message train.
+    Bit 11: Start transaction flag
+    ------------------------------
+      The start of a transaction is always performed by sending a key operation
+      with the start transaction flag set.
+    Bit 12-13: Abort Type
+    ---------------------
+      0 = Abort On Error
+      1 = Not used
+      2 = Commit as much as possible even on error
+      3 = Not used
+    Bit 14: Scan Flags used
+    -----------------------
+    This flag is set to indicate that we are about to take over a lock from a
+    scan operation. Thus the NDB data node have a lock currently and before
+    we send a message to continue the scan we have the possibility to take
+    over the lock. If we don't synchronize this the lock might be released
+    before we reach the row in the node.
+    Bit 15: Interpreted flag (Attribute information is an interpreted program)
+    --------------------------------------------------------------------------
+      NDB Data nodes have a simple interpreter that can be used to make
+      conditional updates and deletes. It can also be used to perform simple
+      operations on the fields such as a = a + 1.
+    Bit 16-31: Not used (Bit 19 used only by NDB nodes for reorg)
+    -------------------------------------------------------------
+  Word 6: Schema version of table
+  Word 7-8: Transaction identity
+
+  Word 9 and 10 are both optional and each will be present or not
+  dependent on their respective flags in Word 5 above.
+  Word 9:  Scan flags
+    Bit 0: Take over indicator
+    Bit 1-18: Take over information
+    Bit 19: Not used
+    Bit 20-31: Take over node
+  Word 10: Distribution Hash Value
+
+  All bits not used should be 0.
+
+  Then there are two sections:
+  ----------------------------
+
+  Section 0:
+  ----------
+  Key information. This is the primary key information. Each field in the
+  primary key is stored in aligned on a 4-byte boundary. So if a key field
+  is 10 bytes long it will use 12 bytes of key information and the last
+  two bytes will be set to 0.
+
+  Section 1:
+  ----------
+  Attribute information, this is information about fields to read and when
+  updating them also their new values, can also contain an interpreted
+  program.
+
   NDB_PRIM_KEYCONF
   ----------------
+  NDB_PRIM_KEYCONF can arrive packed or unpacked. The packed version always
+  arrives to module id = 2047 whereas the unpacked arrives directly to the
+  senders module. The unpacked does not contain the header part and the
+  length is always the same since there is always only one operation sent
+  in the response.
+
+  The packed format looks like:
+  Word 0: Header
+    Bit 0-15:  Length of this confirmation message 
+    Bit 16-31: Our module reference
+  Word 1: Our transaction reference
+  Word 2: Most significant part of Global Checkpoint Identity
+  Word 3: Flags
+    Bit 0-15: Number of operation confirmations in this message
+    Bit 16: Commit flag (indicates whether transaction is now committed)
+    Bit 17: Commit Marker flag (can only be set when commit flag is set)
+      When the commit ack marker flag is set it is necessary for the API
+      to send NDB_COMMIT_ACK to the NDB data node which ensures that the
+      data node knows when the API have received the confirmation of the
+      commit.
+    Bit 18-31: Not used
+  Word 4-5: Transaction identity
+
+  After this comes a set of operations that are confirmed in this message.
+  Each operation have 2 words:
+  Word 1: Our operation reference
+  Word 2:
+    Bit 0-15: Length of read data
+    Bit 31: Dirty read bit flag
+
+  Finally after the operation words there is a last word:
+  Word last: Least significant part of Global Checkpoint identity
 
   NDB_PRIM_KEYREF
   ---------------
@@ -3348,6 +3506,9 @@ execNDB_NODEFAIL_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
   Word 2-3: Transaction Id
   Word 4: Error code
   Word 5: Always equal to 0
+
+  NDB_COMMIT_ACK
+  --------------
 */
 static int
 execNDB_PRIM_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message,
