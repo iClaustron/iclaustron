@@ -218,7 +218,7 @@ static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
 static guint32
 ic_get_ic_reference(guint32 node_id, guint32 thread_id)
 {
-  return (thread_id << 16) + node_id;
+  return ((thread_id + IC_NDB_MIN_MODULE_ID_FOR_THREADS) << 16) + node_id;
 }
 /*
 static guint32
@@ -905,6 +905,7 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   if (!(heartbeat_conn= ic_create_apid_connection(
                 (IC_APID_GLOBAL*)apid_global, NULL)))
     goto mem_error;
+  apid_global->heartbeat_conn= heartbeat_conn;
   if ((!(apid_global->heartbeat_mutex= g_mutex_new())) ||
       (!(apid_global->heartbeat_cond= g_cond_new())))
     goto mem_error;
@@ -921,7 +922,6 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                         IC_MEDIUM_STACK_SIZE,
                         FALSE))))
     goto error;
-  apid_global->heartbeat_conn= heartbeat_conn;
   return 0;
 mem_error:
   error= IC_ERROR_MEM_ALLOC;
@@ -989,6 +989,7 @@ run_heartbeat_thread(gpointer data)
   IC_SOCK_BUF_PAGE *free_pages= NULL;
   IC_SOCK_BUF_PAGE *hb_page;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  IC_APID_CONNECTION *apid_conn= apid_global->heartbeat_conn;
 
   DEBUG_ENTRY("run_heartbeat_thread");
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
@@ -1033,7 +1034,7 @@ run_heartbeat_thread(gpointer data)
           g_mutex_unlock(apid_global->heartbeat_mutex);
           send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                               hb_page);
-          ic_microsleep(100000);
+          apid_conn->apid_conn_ops.ic_poll(apid_conn, 1000000);
           continue;
         }
       }
@@ -1047,7 +1048,7 @@ run_heartbeat_thread(gpointer data)
       }
     }
     prepare_send_heartbeat(last_send_node_conn, hb_page,
-                           apid_global->heartbeat_thread_id);
+         ((IC_INT_APID_CONNECTION*)apid_global->heartbeat_conn)->thread_id);
     g_mutex_unlock(apid_global->heartbeat_mutex);
     if ((error= real_send_heartbeat(last_send_node_conn, hb_page)))
     {
@@ -1737,6 +1738,9 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
   DEBUG_ENTRY("real_send_handling");
+
+  DEBUG_PRINT(COMM_LEVEL, ("Writing NDB message on fd = %d",
+    conn->conn_op.ic_get_fd(conn)));
   error= conn->conn_op.ic_writev_connection(conn,
                                             write_vector,
                                             iovec_size,
@@ -2253,13 +2257,25 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_NDB_RECEIVE_STATE *rec_state= apid_global->receive_threads[0];
+  IC_RECEIVE_NODE_CONNECTION *rec_node= &send_node_conn->rec_node;
 
   /*
     At this point in time the send node connection object is only handled
     by the send thread. As soon as we have delivered the object to the
     receive thread we need to protect this object since it's handled
     by multiple threads.
+    Initialize the receive node object before turning it over to receive
+    thread. Most of the variables are copies from the send node object
+    except for some dynamic variables used by the receive thread.
   */
+  rec_node->conn= send_node_conn->conn;
+  rec_node->my_node_id= send_node_conn->my_node_id;
+  rec_node->other_node_id= send_node_conn->other_node_id;
+  rec_node->cluster_id= send_node_conn->cluster_id;
+  rec_node->read_header_flag= FALSE;
+  rec_node->read_size= 0;
+  rec_node->buf_page= NULL;
+
   g_mutex_lock(rec_state->mutex);
   send_node_conn->next_add_node= rec_state->first_add_node;
   rec_state->first_add_node= send_node_conn;
@@ -2268,11 +2284,12 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 
 static int
 check_thread_state(void *timeout_obj,
-                   __attribute__ ((unused))int timer)
+                   int timer)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)timeout_obj;
   IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
 
+  (void)timer;
   if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
     return 1;
   return 0;
@@ -3985,20 +4002,23 @@ set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn)
 }
 
 static IC_SOCK_BUF_PAGE*
-get_thread_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
+get_thread_messages(IC_APID_CONNECTION *ext_apid_conn,
+                    glong wait_time_in_micros)
 {
   GTimeVal stop_timer;
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   IC_THREAD_CONNECTION *thd_conn= apid_conn->thread_conn;
   IC_SOCK_BUF_PAGE *sock_buf_page;
+  DEBUG_ENTRY("get_thread_messages");
+
   g_mutex_lock(thd_conn->mutex);
   sock_buf_page= thd_conn->first_received_message;
   if (sock_buf_page)
     set_sock_buf_page_empty(thd_conn);
-  else if (wait_time)
+  else if (wait_time_in_micros)
   {
     g_get_current_time(&stop_timer);
-    g_time_val_add(&stop_timer, wait_time);
+    g_time_val_add(&stop_timer, wait_time_in_micros);
     thd_conn->thread_wait_cond= TRUE;
     g_cond_timed_wait(thd_conn->cond, thd_conn->mutex, &stop_timer);
     sock_buf_page= thd_conn->first_received_message;
@@ -4333,8 +4353,8 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
         rec_state->first_send_node= send_node_conn;
       }
     }
-    send_node_conn= next_send_node_conn;
     g_mutex_unlock(send_node_conn->mutex);
+    send_node_conn= next_send_node_conn;
   }
 }
 
@@ -4467,7 +4487,7 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
 
   ic_zero(&num_sent[0],
           sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS));
-  for (i= min_hash_index; i < max_hash_index; i++)
+  for (i= min_hash_index; i <= max_hash_index; i++)
   {
     ndb_message_anchor= &ndb_message_anchors[i];
     ndb_message_page= ndb_message_anchor->first_ndb_message_page;
@@ -4480,6 +4500,17 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
       message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
         &ndb_message_page->opaque_area[0];
       receiver_module_id= message_opaque->receiver_module_id;
+      if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
+        receiver_module_id-= IC_NDB_MIN_MODULE_ID_FOR_THREADS;
+      else
+      {
+        /*
+          This is a special message which is sent packed, one such packed
+          message is NDB_PRIM_KEYCONF. Packed messages require some special
+          treatment since they contain several messages in one.
+        */
+        abort(); /* TODO */
+      }
       send_index= receiver_module_id / NUM_THREAD_LISTS;
       loc_thd_conn= thd_conn[receiver_module_id];
       temp= num_sent[send_index];
@@ -4565,6 +4596,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
   IC_SOCK_BUF_PAGE *anchor_first_page;
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
   LINK_MESSAGE_ANCHORS *anchor;
+  DEBUG_ENTRY("ndb_receive_node");
 
   g_assert(message_pool->page_size == 0);
 
@@ -4603,6 +4635,8 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         We check to see if we read an entire page in which case we
         might have more data to read.
       */
+      DEBUG_PRINT(COMM_LEVEL, ("Read %u bytes from NDB Protocol on socket %d",
+                  real_read_size, conn->conn_op.ic_get_fd(conn)));
       read_size= start_size + real_read_size;
       read_more= (read_size == page_size);
       /*
@@ -4618,6 +4652,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                              &receiver_module_id);
           read_header_flag= TRUE;
         }
+        message_size*= sizeof(guint32); /* Convert num words to num bytes */
         if (message_size > read_size)
           break;
         if (!(ndb_message_page=
@@ -4695,9 +4730,13 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
       if (!read_more || (loop_count++ >= MAX_NDB_RECEIVE_LOOPS))
         break;
     }
+    else
+      break;
   }
   if (ret_code)
   {
+    DEBUG_PRINT(COMM_LEVEL, ("Error %d on NDB Protocol socket %d",
+                ret_code, conn->conn_op.ic_get_fd(conn)));
     if (any_message_received)
     {
       post_ndb_messages(&message_anchors[0],
@@ -4743,7 +4782,13 @@ run_receive_thread(void *data)
   {
     /* Check for which nodes to receive from */
     /* Loop over each node to receive from */
-    rec_node= get_first_rec_node(rec_state);
+    if (rec_state->first_send_node)
+      rec_node= get_first_rec_node(rec_state);
+    else
+    {
+      rec_node= NULL;
+      ic_microsleep(100000);
+    }
     while (rec_node)
     {
       if ((ret_code= ndb_receive_node(rec_state,

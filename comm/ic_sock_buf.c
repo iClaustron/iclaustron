@@ -59,7 +59,7 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
 
   /* Initialise the returned page objects */
   next_page= first_page;
-  for (i= 0; i < num_pages_to_preallocate; i++)
+  for (i= 0; i < num_pages_to_preallocate && next_page; i++)
   {
     next_page->size= 0;
     next_page->ref_count= 0;
@@ -146,7 +146,8 @@ free_sock_buf(IC_SOCK_BUF *buf)
   buffers for iClaustron transporters.
 */
 static IC_SOCK_BUF_PAGE*
-set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
+set_up_pages_in_linked_list(IC_SOCK_BUF *sock_buf_container,
+                            gchar *ptr, guint32 page_size,
                             guint64 no_of_pages, guint32 sock_buf_page_size)
 {
   gchar *loop_ptr, *buf_page_ptr, *new_buf_page_ptr;
@@ -162,6 +163,9 @@ set_up_pages_in_linked_list(gchar *ptr, guint32 page_size,
   {
     sock_buf_page_ptr= (IC_SOCK_BUF_PAGE*)buf_page_ptr;
     sock_buf_page_ptr->sock_buf= loop_ptr;
+    sock_buf_page_ptr->size= page_size;
+    sock_buf_page_ptr->ref_count= 0;
+    sock_buf_page_ptr->sock_buf_container= sock_buf_container;
     new_buf_page_ptr= (buf_page_ptr + sock_buf_page_size);
     sock_buf_page_ptr->next_sock_buf_page= (IC_SOCK_BUF_PAGE*)new_buf_page_ptr;
     loop_ptr+= page_size;
@@ -182,7 +186,8 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
   sock_buf_page_size= IC_MAX(64, sizeof(IC_SOCK_BUF_PAGE)); 
   if (!(ptr= ic_malloc(no_of_pages * (page_size + sock_buf_page_size))))
     return 1;
-  last_sock_buf_page= set_up_pages_in_linked_list(ptr,
+  last_sock_buf_page= set_up_pages_in_linked_list(buf,
+                                                  ptr,
                                                   page_size,
                                                   no_of_pages,
                                                   sock_buf_page_size);
@@ -221,7 +226,8 @@ ic_create_sock_buf(guint32 page_size,
   if (!(ptr= ic_malloc(page_size * no_of_pages +
       (no_of_pages * sock_buf_page_size))))
     goto error;
-  last_sock_buf_page= set_up_pages_in_linked_list(ptr,
+  last_sock_buf_page= set_up_pages_in_linked_list(buf,
+                                                  ptr,
                                                   page_size,
                                                   no_of_pages,
                                                   sock_buf_page_size);
@@ -230,6 +236,7 @@ ic_create_sock_buf(guint32 page_size,
   buf->first_page= (IC_SOCK_BUF_PAGE*)ptr;
   buf->alloc_segments_ref[0]= ptr;
   buf->alloc_segments= 1;
+  buf->page_size= page_size;
 
   buf->sock_buf_ops.ic_get_sock_buf_page= get_sock_buf_page;
   buf->sock_buf_ops.ic_get_sock_buf_page_wait= get_sock_buf_page_wait;

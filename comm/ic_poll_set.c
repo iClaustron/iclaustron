@@ -80,7 +80,7 @@ add_poll_set_member(IC_INT_POLL_SET *poll_set, int fd, void *user_obj,
   {
     for (i= 0; i < poll_set->num_allocated_connections; i++)
     {
-      if (poll_set->poll_connections == NULL)
+      if (poll_set->poll_connections[i] == NULL)
       {
         /* Found an empty slot, let's use this slot */
         loc_index= i;
@@ -88,8 +88,11 @@ add_poll_set_member(IC_INT_POLL_SET *poll_set, int fd, void *user_obj,
       }
     }
   }
+  ic_require(loc_index < MAX_POLL_SET_CONNECTIONS);
   poll_set->poll_connections[loc_index]= poll_conn;
 
+  DEBUG_PRINT(COMM_LEVEL, ("Added fd = %d to slot %u for epoll fd = %d",
+              fd, loc_index, poll_set->poll_set_fd));
   poll_conn->fd= fd;
   poll_conn->user_obj= user_obj;
   poll_conn->index= loc_index;
@@ -99,7 +102,8 @@ add_poll_set_member(IC_INT_POLL_SET *poll_set, int fd, void *user_obj,
 }
 
 static int
-remove_poll_set_member(IC_INT_POLL_SET *poll_set, int fd, guint32 *index_removed)
+remove_poll_set_member(IC_INT_POLL_SET *poll_set, int fd,
+                       guint32 *index_removed)
 {
   guint32 i, num_ready_connections;
   guint32 found_index= MAX_POLL_SET_CONNECTIONS;
@@ -192,7 +196,8 @@ set_common_methods(IC_INT_POLL_SET *poll_set)
 #ifdef HAVE_EPOLL_CREATE
 #include <sys/epoll.h>
 static int
-epoll_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
+epoll_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd,
+                              void *user_obj)
 {
   IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
@@ -272,7 +277,7 @@ epoll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
   if ((ret_code= epoll_wait(poll_set->poll_set_fd,
                             rec_event,
                             (int)poll_set->num_allocated_connections,
-                            ms_time)))
+                            ms_time)) < 0)
   {
     ret_code= errno;
     if (ret_code == EINTR)
@@ -321,7 +326,13 @@ IC_POLL_SET* ic_create_poll_set()
     close(epoll_fd);
     return NULL;
   }
-
+  if (!(poll_set->impl_specific_ptr= ic_calloc(
+        sizeof(struct epoll_event) * MAX_POLL_SET_CONNECTIONS)))
+  {
+    free_poll_set((IC_POLL_SET*)poll_set);
+    close(epoll_fd);
+    return NULL;
+  }
   /* epoll has state and a fd to close at free time */
   poll_set->poll_set_fd= epoll_fd;
   poll_set->need_close_at_free= TRUE;
@@ -471,6 +482,13 @@ IC_POLL_SET* ic_create_poll_set()
   }
   if (alloc_poll_set(&poll_set))
   {
+    close(eventport_fd);
+    return NULL;
+  }
+  if (!(poll_set->impl_specific_ptr= ic_calloc(
+        sizeof(struct port_event_t) * MAX_POLL_SET_CONNECTIONS)))
+  {
+    free_poll_set((IC_POLL_SET*)poll_set);
     close(eventport_fd);
     return NULL;
   }
@@ -646,7 +664,8 @@ IC_POLL_SET* ic_create_poll_set()
 #else
 #ifdef HAVE_IO_COMPLETION
 static int
-io_comp_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
+io_comp_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd,
+                                void *user_obj)
 {
   IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   return 0;

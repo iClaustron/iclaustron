@@ -667,7 +667,7 @@ guint32 ic_byte_order()
   gchar *loc_char_ptr= (gchar*)&loc_variable;
 
   if (loc_char_ptr[0] == 1)
-    return 1;
-  else
     return 0;
+  else
+    return 1;
 }
