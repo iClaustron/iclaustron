@@ -3379,9 +3379,9 @@ execNDB_NODEFAIL_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
       is the variant normally used for reads in SQL mode READ COMMITTED.
       Writes:
       -------
+      This flag should not be used with writes.
       When this flag is set we will commit locally on each replica, thus this
-      flag will disable proper transaction handling. It is only to be used in
-      cases when speed is more important then internal database consistency.
+      flag will disable proper transaction handling. 
       It's possible with this flag to get the replicas out of order of each
       other.
     Bit 1: No fields stored on disk will be read/updated indicator
@@ -3555,12 +3555,20 @@ execNDB_PRIM_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
 
   NDB_UNIQ_KEYREQ
   ---------------
+  Sent from API -> Data Node
+  The layout of this message is the same as for NDB_PRIM_KEYREQ. However the
+  table identity is rather the Index identity of the unique key. Also scan
+  flags used for scan takeover isn't applicable and neither is distribution
+  key logic.
 
   NDB_UNIQ_KEYCONF
   ----------------
+  Exactly the same layout as NDB_PRIM_KEYCONF
 
   NDB_UNIQ_KEYREF
   ---------------
+  This message has the same words but word 5 is the unique index identity
+  rather than always 0.
   Sent from Data Node -> API node
   Word 1: Our object reference
   Word 2-3: Transaction Id
@@ -3633,6 +3641,87 @@ execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
 
   NDB_SCANREQ:
   ------------
+  Word 1: The NDB transaction reference used for this scan
+    A scan always uses its own connection and is a separate transaction thus.
+    If a scan is to be part of a transaction there is another word to
+    specify this transaction reference, also one should make sure that they
+    use the same transaction identity.
+  Word 2: Not used
+  Word 3: Flags
+    Bit 0-7: Scan parallelism
+      This must not be 0.
+      This indicates how many partitions we should scan in parallel. We will
+      never scan more in parallel than the number of partitions that exist
+      in the table.
+    Bit 8: Lock mode
+      This flag is interesting if the Read Committed flag isn't set.
+      0 = Read Mode
+      1 = Exclusive
+    Bit 9: Is any field read on disk flag
+    Bit 10: Hold Lock mode
+      If this flag is set and Read Committed isn't set then the lock will be
+      held while the API is reading the record thus giving the API the
+      chance to take over the lock and ensure that the record is locked until
+      commit time.
+    Bit 11: Read Committed flag
+    Bit 12: Key flag
+      If this flag is set there will be two messages sent for each record,
+      in addition to the record description there will also be information
+      about the primary key of the record already prepared in key format.
+      This message is sent in a NDB_KEYDATA message.
+    Bit 13: Use scan in record order
+      NDB can scan data both in the order the records end up in the hash index
+      or in the order they are stored. If the bit is set the scan is performed
+      in the order they are stored.
+    Bit 14: Use descending scan order
+      This bit is only relevant for scans on an index.
+    Bit 15: Use a range scan
+      This bit is only relevant for scans on an index.
+    Bit 16-25: Scan batch size
+      This indicates the maximum number of records that each node can
+      send before waiting for the API to consume all those records.
+    Bit 26: Distribution key flag (=> Distribution key hash value sent also)
+    Bit 27-31: Not used
+  Word 4: Table/Index identity
+  Word 5: Schema version
+  Word 6: Stored Procedure Identity (Not used)
+  Word 7-8: Transaction identity
+  Word 9: This is the reference to the transaction which this scan is part of.
+    If the scan isn't part of another transaction one should send
+    0xFFFFFFFF in this word.
+  Word 10: How many bytes should each batch contain
+    A batch is a number of records that each node which is scanned will send
+    before stopping, it will continue when the API has received those
+    records from the previous batch and sent a NDB_SCAN_CONTINUE_REQ to get
+    more records. This is a method to ensure that the API can keep up with
+    the flow of records while at the same time parallelizing as much as
+    possible. In many cases the scan is performed on all partitions in
+    parallel. A scan is either performed on all partitions or on only one
+    partition. It is performed on only one when the scan is performed on an
+    index which contains all fields which are part of the distribution key
+    and also it is a requirement that the search condition is a equality
+    condition.
+  Word 11: First batch size
+  Word 12: Distribution key hash value (Optional word, used if flag set)
+
+  There are also three sections in this message.
+
+    Section 0: Our scan record references
+    -------------------------------------
+      One such scan record references is sent by the data node for each record
+      sent as part of the scan. Thus the parallelism is limited by the number
+      of scan record references. The number of scan record references should
+      be equal to ScanParallelism * scanBatchSize (see above).
+
+    Section 1: Attribute information
+    --------------------------------
+      This is the specification of which attributes to read, it can also be an
+      interpreted program used to filter away some of the scanned records
+      already in the data node before sending it over the wire.
+
+    Section 2: Key information
+    --------------------------
+      ?
 
   NDB_SCAN_CONTINUE_REQ:
   ----------------------
