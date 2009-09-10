@@ -3224,24 +3224,6 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 /*
-  In the case of a transaction committed using the primary/unique key operation
-  protocol we get a report of an aborted transaction using NDB_ABORTREP instead.
-  So this message is part of those protocols.
-
-  NDB_ABORTREP
-  ------------
-
-*/
-static int
-execNDB_ABORTREP_v0(IC_NDB_MESSAGE *ndb_message,
-                    IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-/*
   The transaction commit protocol
 
   This protocol is initiated by the API using the NDB_COMMITREQ message.
@@ -3253,13 +3235,21 @@ execNDB_ABORTREP_v0(IC_NDB_MESSAGE *ndb_message,
 
   NDB_COMMITREQ
   -------------
+  Word 1: NDB transaction reference
+  Word 2-3: Transaction identity
 
   NDB_COMMITCONF
   --------------
+  Word 1: Our transaction reference
+    Bit 31: Indicator of that NDB_COMMIT_ACK needs to be sent
+  Word 2-3: Transaction identity
+  Word 4-5: Global checkpoint identity (high part first)
 
   NDB_COMMITREF
   -------------
-
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Error code
 */
 static int
 execNDB_COMMITCONF_v0(IC_NDB_MESSAGE *ndb_message,
@@ -3287,13 +3277,32 @@ execNDB_COMMITREF_v0(IC_NDB_MESSAGE *ndb_message,
 
   NDB_ABORTREQ
   ------------
+  Word 1: NDB transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Potentially bad data from API (Bit 0 set)
 
   NDB_ABORTCONF
   -------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
 
   NDB_ABORTREF
   ------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Error code
+  Word 5: Connect state when sending message
 
+  In the case of a transaction committed using the primary/unique key operation
+  protocol we get a report of an aborted transaction using NDB_ABORTREP instead.
+  So this message is part of those protocols.
+
+  NDB_ABORTREP
+  ------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Error code
+  Word 5: Error data
 */
 static int
 execNDB_ABORTCONF_v0(IC_NDB_MESSAGE *ndb_message,
@@ -3313,6 +3322,15 @@ execNDB_ABORTREF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+static int
+execNDB_ABORTREP_v0(IC_NDB_MESSAGE *ndb_message,
+                    IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
 /*
   In the case of a Node failure of the transaction coordinator data node
   we get either NDB_NODEFAIL_KEYCONF or NDB_NODEFAIL_KEYREF to indicate whether
@@ -3320,10 +3338,14 @@ execNDB_ABORTREF_v0(IC_NDB_MESSAGE *ndb_message,
 
   NDB_NODEFAIL_KEYCONF
   --------------------
+  Word 1: Our transaction reference
+    Bit 31: Indicator of that NDB_COMMIT_ACK needs to be sent
+  Word 2-3: Transaction identity
 
   NDB_NODEFAIL_KEYREF
   -------------------
-
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
 */
 static int
 execNDB_NODEFAIL_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message,
