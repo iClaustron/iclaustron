@@ -3097,7 +3097,6 @@ error:
 #define NUM_RECEIVE_PAGES_ALLOC 2
 #define NUM_NDB_SIGNAL_ALLOC 32
 #define MIN_NDB_HEADER_SIZE 12
-#define NUM_THREAD_LISTS 16
 #define MAX_LOOP_CHECK 100000
 #define IC_MAX_TIME 10000000
 
@@ -4324,16 +4323,6 @@ static int start_receive_thread(IC_INT_APID_GLOBAL *apid_global);
 static gpointer run_receive_thread(void *data);
 
 /*
-  Messages are linked using a link message anchor which is a data type
-  only used in the receive thread module.
-*/
-struct link_message_anchors
-{
-  IC_SOCK_BUF_PAGE *first_ndb_message_page;
-  IC_SOCK_BUF_PAGE *last_ndb_message_page;
-};
-typedef struct link_message_anchors LINK_MESSAGE_ANCHORS;
-/*
   The receiver thread is responsible to receive messages from other nodes
   using the NDB Protocol and send it on to the application threads. The
   ndb_receive_node function takes care of receiving messages from one
@@ -4350,14 +4339,15 @@ typedef struct link_message_anchors LINK_MESSAGE_ANCHORS;
 */
 static int ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                             IC_RECEIVE_NODE_CONNECTION *rec_node,
-                            int *min_hash_index,
-                            int *max_hash_index,
-                            LINK_MESSAGE_ANCHORS *message_anchors,
-                            IC_THREAD_CONNECTION **thd_conn);
-static void post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
-                              IC_THREAD_CONNECTION **thd_conn,
-                              int min_hash_index,
-                              int max_hash_index);
+                            IC_THREAD_CONNECTION **thd_conn,
+                            IC_TEMP_THREAD_CONNECTION *temp_thread_conn,
+                            guint32 *list_modules_received,
+                            guint32 *list_modules_received_index,
+                            guint32 *list_page_modules_received);
+static void post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
+                              IC_TEMP_THREAD_CONNECTION *temp_thread_conn,
+                              guint32 *list_modules_received,
+                              guint32 *list_modules_received_index);
 static void read_message_early(gchar *read_ptr, guint32 *message_size,
                                guint32 *receiver_module_id);
 static IC_RECEIVE_NODE_CONNECTION*
@@ -4372,7 +4362,6 @@ get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state);
   have been broken.
 */
 static int handle_node_error(int error,
-                             LINK_MESSAGE_ANCHORS *message_anchors,
                              IC_THREAD_CONNECTION **thd_conn);
 static void add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
 static void rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
@@ -4381,11 +4370,9 @@ static void check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state);
 
 static int
 handle_node_error(int error,
-                  LINK_MESSAGE_ANCHORS *message_anchors,
                   IC_THREAD_CONNECTION **thd_conn)
 {
   int ret_code= 0;
-  (void) message_anchors;
   (void) thd_conn;
   if (error == IC_ERROR_MEM_ALLOC)
   {
@@ -4560,95 +4547,84 @@ read_message_early(gchar *read_ptr, guint32 *message_size,
   messages waiting to be executed by this application thread.
 */
 static void
-post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
-                  IC_THREAD_CONNECTION **thd_conn,
-                  int min_hash_index,
-                  int max_hash_index)
+post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
+                  IC_TEMP_THREAD_CONNECTION *temp_thd_conn,
+                  guint32 *list_modules_received,
+                  guint32 *list_modules_received_index)
 {
-  int i;
-  guint32 j, send_index, receiver_module_id, loop_count, temp, module_id;
-  guint32 num_sent[IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS];
+  guint32 i, module_id;
+  guint32 max_id= *list_modules_received_index;
   gboolean signal_flag= FALSE;
-  IC_SOCK_BUF_PAGE *ndb_message_page, *next_ndb_message_page, *first_message;
-  LINK_MESSAGE_ANCHORS *ndb_message_anchor;
-  IC_NDB_MESSAGE_OPAQUE_AREA *message_opaque;
+  IC_SOCK_BUF_PAGE *first_ndb_message_page, *last_ndb_message_page;
   IC_THREAD_CONNECTION *loc_thd_conn;
+  IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn;
 
-  ic_zero(&num_sent[0],
-          sizeof(guint32)*(IC_MAX_THREAD_CONNECTIONS/NUM_THREAD_LISTS));
-  for (i= min_hash_index; i <= max_hash_index; i++)
+  ic_require(max_id <= IC_MAX_THREAD_CONNECTIONS);
+  for (i= 0; i < max_id; i++)
   {
-    ndb_message_anchor= &ndb_message_anchors[i];
-    ndb_message_page= ndb_message_anchor->first_ndb_message_page;
-    if (!ndb_message_page)
-      continue;
-    loop_count= 0;
-    do
+    /*
+      We have a list of module ids which have messages to be sent.
+      We'll go through this list and send each list of NDB messages to
+      the proper application thread.
+
+      We also ensure that we clear the list as we go through it to
+      ensure we need no special initialisation code afterwards.
+    */
+    module_id= list_modules_received[i];
+
+    /* Get list and reset number of messages in list */
+    loc_temp_thd_conn= &temp_thd_conn[module_id];
+    first_ndb_message_page= loc_temp_thd_conn->first_received_message;
+    last_ndb_message_page= loc_temp_thd_conn->last_received_message;
+
+    ic_require(first_ndb_message_page);
+    loc_temp_thd_conn->first_received_message= NULL;
+    loc_temp_thd_conn->last_received_message= NULL;
+    loc_thd_conn= thd_conn[module_id];
+
+
+    /* START Critical Section, delivering NDB messages to application thread */
+    g_mutex_lock(loc_thd_conn->mutex);
+    /* Link it into list on this thread connection object */
+    if (loc_thd_conn->first_received_message)
     {
-      next_ndb_message_page= ndb_message_page->next_sock_buf_page;
-      message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-        &ndb_message_page->opaque_area[0];
-      receiver_module_id= message_opaque->receiver_module_id;
-      if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
-        receiver_module_id-= IC_NDB_MIN_MODULE_ID_FOR_THREADS;
-      else
-      {
-        /*
-          This is a special message which is sent packed, one such packed
-          message is NDB_PRIM_KEYCONF. Packed messages require some special
-          treatment since they contain several messages in one.
-        */
-        abort(); /* TODO */
-      }
-      send_index= receiver_module_id / NUM_THREAD_LISTS;
-      loc_thd_conn= thd_conn[receiver_module_id];
-      temp= num_sent[send_index];
-      if (!temp)
-        g_mutex_lock(loc_thd_conn->mutex);
-      num_sent[send_index]= temp + 1;
-      /* Link it into list on this thread connection object */
-      first_message= loc_thd_conn->first_received_message;
-      ndb_message_page->next_sock_buf_page= NULL;
-      if (first_message)
-      {
-        /* Link message into the queue last */
-        loc_thd_conn->last_received_message->next_sock_buf_page=
-          ndb_message_page;
-        loc_thd_conn->last_received_message= ndb_message_page;
-      }
-      else
-      {
-        loc_thd_conn->first_received_message= ndb_message_page;
-        loc_thd_conn->last_received_message= ndb_message_page;
-      }
-      if (!next_ndb_message_page)
-        break;
-      g_assert(++loop_count > MAX_LOOP_CHECK);
-    } while (TRUE);
-    for (j= 0; j < NUM_THREAD_LISTS; j++)
+      /* Link first_message into the queue last */
+      loc_thd_conn->last_received_message->next_sock_buf_page=
+        first_ndb_message_page;
+    }
+    else
     {
-      module_id= (j * NUM_THREAD_LISTS) + i;
-      if (num_sent[j])
-      {
-        if (thd_conn[j]->thread_wait_cond)
-        {
-          thd_conn[j]->thread_wait_cond= FALSE;
-          signal_flag= TRUE;
-        }
-        message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-          &thd_conn[module_id]->last_received_message->opaque_area[0];
-        message_opaque->ref_count_releases= num_sent[j];
-        g_mutex_unlock(thd_conn[j]->mutex);
-        if (signal_flag)
-        {
-          /* Thread is waiting for our wake-up signal, wake it up */
-          g_cond_signal(thd_conn[j]->cond);
-          signal_flag= FALSE;
-        }
-        num_sent[j]= 0;
-      }
+      /* Queue was empty, put first message first */
+      loc_thd_conn->first_received_message= first_ndb_message_page;
+    }
+    /* Set last message inserted to be last in queue */
+    loc_thd_conn->last_received_message= last_ndb_message_page;
+    /* Now check if we need to wake the application thread */
+    if (loc_thd_conn->thread_wait_cond)
+    {
+      loc_thd_conn->thread_wait_cond= FALSE;
+      signal_flag= TRUE;
+    }
+    g_mutex_unlock(loc_thd_conn->mutex);
+    /* END Critical Section with delayed wake up signal */
+    if (signal_flag)
+    {
+      /*
+        Thread is waiting for our wake-up signal, wake it up. We optimise by
+        waking after releasing the mutex. This effectively means that it is
+        possible for the application thread to wake up and consume before
+        this signal is received. However this constitutes no problem other
+        than that the application thread will wake up and discover there is
+        nothing to receive and if it is already awake the signal will be lost
+        since there is no one to wake up which is also not a problem. It was
+        the objective to wake it up to consume the NDB messages and this
+        was achieved in all cases.
+      */
+      g_cond_signal(loc_thd_conn->cond);
+      signal_flag= FALSE;
     }
   }
+  *list_modules_received_index= 0;
   return;
 }
 
@@ -4656,35 +4632,34 @@ post_ndb_messages(LINK_MESSAGE_ANCHORS *ndb_message_anchors,
 static int
 ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                  IC_RECEIVE_NODE_CONNECTION *rec_node,
-                 int *min_hash_index,
-                 int *max_hash_index,
-                 LINK_MESSAGE_ANCHORS *message_anchors,
-                 IC_THREAD_CONNECTION **thd_conn)
+                 IC_THREAD_CONNECTION **thd_conn,
+                 IC_TEMP_THREAD_CONNECTION *temp_thd_conn,
+                 guint32 *list_modules_received,
+                 guint32 *list_modules_received_index,
+                 guint32 *list_page_modules_received)
 {
   IC_CONNECTION *conn= rec_node->conn;
   IC_SOCK_BUF *rec_buf_pool= rec_state->rec_buf_pool;
   IC_SOCK_BUF *message_pool= rec_state->message_pool;
   guint32 read_size= rec_node->read_size;
   guint32 real_read_size;
+  guint32 p_index= 0, index, i, num_messages_on_page, module_id;
   gboolean read_header_flag= rec_node->read_header_flag;
   gchar *read_ptr;
   guint32 page_size= rec_buf_pool->page_size;
   guint32 start_size;
   guint32 message_size= 0;
   guint32 receiver_module_id= IC_MAX_THREAD_CONNECTIONS;
-  int hash_index;
   guint32 loop_count= 0;
   int ret_code;
   gint ref_count;
-  int loc_min_hash_index= *min_hash_index;
-  int loc_max_hash_index= *max_hash_index;
   gboolean any_message_received= FALSE;
   gboolean read_more;
+  IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn;
   IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
   IC_SOCK_BUF_PAGE *ndb_message_page;
-  IC_SOCK_BUF_PAGE *anchor_first_page;
+  IC_SOCK_BUF_PAGE *first_page, *last_page;
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
-  LINK_MESSAGE_ANCHORS *anchor;
   DEBUG_ENTRY("ndb_receive_node");
 
   g_assert(message_pool->page_size == 0);
@@ -4750,6 +4725,18 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                 &rec_state->free_ndb_messages,
                 NUM_NDB_SIGNAL_ALLOC)))
           goto mem_pool_error;
+
+        if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
+          receiver_module_id-= IC_NDB_MIN_MODULE_ID_FOR_THREADS;
+        else
+        {
+          /*
+            This is a special message which is sent packed, one such packed
+            message is NDB_PRIM_KEYCONF. Packed messages require some special
+            treatment since they contain several messages in one.
+          */
+          abort(); /* TODO */
+        }
         ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
           &ndb_message_page->opaque_area[0];
         ndb_message_page->sock_buf= (gchar*)buf_page;
@@ -4757,26 +4744,41 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         ndb_message_opaque->sender_node_id= rec_node->other_node_id;
         ndb_message_opaque->receiver_node_id= rec_node->my_node_id;
         ndb_message_opaque->ref_count_releases= 0;
+ 
         ndb_message_opaque->receiver_module_id= receiver_module_id;
         ndb_message_opaque->version_num= 0; /* Define value although unused */
-        ref_count= buf_page->ref_count;
-        hash_index= receiver_module_id & (NUM_THREAD_LISTS - 1);
-        loc_min_hash_index= IC_MIN(loc_min_hash_index, hash_index);
-        loc_max_hash_index= IC_MAX(loc_max_hash_index, hash_index);
-        anchor= &message_anchors[hash_index];
-        anchor_first_page= anchor->first_ndb_message_page;
-        buf_page->ref_count= ref_count + 1;
-        if (!anchor_first_page)
+        loc_temp_thd_conn= &temp_thd_conn[receiver_module_id];
+        /*
+          We keep track on if there are any messages already received to this
+          application thread. If it is the first message we will put it into
+          the list of application threads which have non-empty lists and that
+          thus requires attention in the post_ndb_messages method.
+          
+          Also we keep track of modules that have received messages on this
+          page to save on some atomic operations in the application thread
+          when receiving NDB messages.
+        */
+        num_messages_on_page= loc_temp_thd_conn->num_messages_on_page;
+        first_page= loc_temp_thd_conn->first_received_message;
+        last_page= loc_temp_thd_conn->last_received_message;
+        if (!num_messages_on_page)
+          list_page_modules_received[p_index++]= receiver_module_id;
+        if (!first_page)
         {
-          anchor->first_ndb_message_page= ndb_message_page;
-          anchor->last_ndb_message_page= ndb_message_page;
+          ref_count= buf_page->ref_count;
+          index= *list_modules_received_index;
+          list_modules_received[index]= receiver_module_id;
+          loc_temp_thd_conn->first_received_message= ndb_message_page;
+          buf_page->ref_count= ref_count + 1;
+          *list_modules_received_index= index + 1;
         }
         else
         {
-          anchor->first_ndb_message_page->next_sock_buf_page= ndb_message_page;
-          anchor->last_ndb_message_page= ndb_message_page;
-          ndb_message_page->next_sock_buf_page= NULL;
+          last_page->next_sock_buf_page= ndb_message_page;
         }
+        loc_temp_thd_conn->num_messages_on_page= num_messages_on_page + 1;
+        loc_temp_thd_conn->last_received_message= ndb_message_page;
+        ndb_message_page->next_sock_buf_page= NULL;
         any_message_received= TRUE;
         read_header_flag= FALSE;
         read_size-= message_size;
@@ -4816,6 +4818,21 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         rec_node->read_size= 0;
         rec_node->read_header_flag= FALSE;
       }
+      /*
+        We now need to set ref_count_releases to 1 on the last NDB message
+        on each application thread receiving message from this page.
+      */
+      for (i= 0; i < p_index; i++)
+      {
+        module_id= list_page_modules_received[i];
+        loc_temp_thd_conn= &temp_thd_conn[module_id];
+        ndb_message_page= loc_temp_thd_conn->last_received_message;
+        ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+          &ndb_message_page->opaque_area[0];
+        ndb_message_opaque->ref_count_releases= 1;
+      }
+      p_index= 0;
+
       if (!read_more || (loop_count++ >= MAX_NDB_RECEIVE_LOOPS))
         break;
     }
@@ -4828,17 +4845,13 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                 ret_code, conn->conn_op.ic_get_fd(conn)));
     if (any_message_received)
     {
-      post_ndb_messages(&message_anchors[0],
-                        thd_conn,
-                        loc_min_hash_index,
-                        loc_max_hash_index);
-      loc_min_hash_index= NUM_THREAD_LISTS;
-      loc_max_hash_index= (int)-1;
+      post_ndb_messages(thd_conn,
+                        temp_thd_conn,
+                        list_modules_received,
+                        list_modules_received_index);
     }
   }
 end:
-  *min_hash_index= loc_min_hash_index;
-  *max_hash_index= loc_max_hash_index;
   return ret_code;
 mem_pool_error:
   ret_code= IC_ERROR_MEM_ALLOC;
@@ -4852,17 +4865,31 @@ run_receive_thread(void *data)
   IC_THREADPOOL_STATE *rec_tp= thread_state->ic_get_threadpool(thread_state);
   IC_NDB_RECEIVE_STATE *rec_state= (IC_NDB_RECEIVE_STATE*)
     rec_tp->ts_ops.ic_thread_get_object(thread_state);
-  LINK_MESSAGE_ANCHORS message_anchors[NUM_THREAD_LISTS];
-  int min_hash_index= NUM_THREAD_LISTS;
-  int max_hash_index= (int)-1;
   int ret_code;
   IC_SOCK_BUF_PAGE *buf_page, *ndb_message;
   IC_INT_APID_GLOBAL *apid_global= rec_state->apid_global;
   IC_THREAD_CONNECTION **thd_conn= apid_global->grid_comm->thread_conn_array;
+  IC_TEMP_THREAD_CONNECTION *temp_thd_conn= NULL;
+  guint32 *list_modules_received= NULL;
+  guint32 *list_page_modules_received;
+  guint32 list_modules_received_index= 0;
+  guint32 i;
   IC_RECEIVE_NODE_CONNECTION *rec_node;
 
   rec_tp->ts_ops.ic_thread_started(thread_state);
-  ic_zero(message_anchors, sizeof(LINK_MESSAGE_ANCHORS)*NUM_THREAD_LISTS);
+
+  if (!(temp_thd_conn= (IC_TEMP_THREAD_CONNECTION*)
+        ic_calloc(IC_MAX_THREAD_CONNECTIONS *
+                  sizeof(IC_TEMP_THREAD_CONNECTION))))
+    goto end;
+  if (!(list_modules_received= (guint32*)
+        ic_malloc(2 * (IC_MAX_THREAD_CONNECTIONS + 1) * sizeof(guint32))))
+    goto end;
+  for (i= 0; i < 2 * (IC_MAX_THREAD_CONNECTIONS + 1); i++)
+    list_modules_received[i]= IC_MAX_THREAD_CONNECTIONS;
+
+  list_page_modules_received= 
+    &list_modules_received[IC_MAX_THREAD_CONNECTIONS + 1];
 
   /* Flag start-up done and wait for start order */
   rec_tp->ts_ops.ic_thread_startup_done(thread_state);
@@ -4875,6 +4902,10 @@ run_receive_thread(void *data)
       rec_node= get_first_rec_node(rec_state);
     else
     {
+      /*
+        No nodes using this receive thread, sleep for a while and
+        check again
+      */
       rec_node= NULL;
       ic_microsleep(100000);
     }
@@ -4882,13 +4913,13 @@ run_receive_thread(void *data)
     {
       if ((ret_code= ndb_receive_node(rec_state,
                                       rec_node,
-                                      &min_hash_index,
-                                      &max_hash_index,
-                                      &message_anchors[0],
-                                      thd_conn)))
+                                      thd_conn,
+                                      temp_thd_conn,
+                                      list_modules_received,
+                                      &list_modules_received_index,
+                                      list_page_modules_received)))
       {
         if (handle_node_error(ret_code,
-                              &message_anchors[0],
                               thd_conn))
           goto end;
       }
@@ -4900,12 +4931,10 @@ run_receive_thread(void *data)
           messages to the application threads. At first we simply post
           ndb messages for each node we receive from.
         */
-        post_ndb_messages(&message_anchors[0],
-                          thd_conn,
-                          min_hash_index,
-                          max_hash_index);
-        min_hash_index= NUM_THREAD_LISTS;
-        max_hash_index= (int)-1;
+        post_ndb_messages(thd_conn,
+                          temp_thd_conn,
+                          list_modules_received,
+                          &list_modules_received_index);
       }
       rec_node= get_next_rec_node(rec_state);
     }
@@ -4931,6 +4960,10 @@ end:
       rec_state->message_pool,
       ndb_message);
   }
+  if (list_modules_received)
+    ic_free(list_modules_received);
+  if (temp_thd_conn)
+    ic_free(temp_thd_conn);
   rec_tp->ts_ops.ic_thread_stops(thread_state);
   return NULL;
 }

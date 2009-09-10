@@ -28,6 +28,7 @@ typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA;
 typedef struct ic_ndb_message IC_NDB_MESSAGE;
 typedef struct ic_thread_connection IC_THREAD_CONNECTION;
+typedef struct ic_temp_thread_connection IC_TEMP_THREAD_CONNECTION;
 typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
 typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
@@ -147,6 +148,13 @@ struct ic_thread_connection
   gboolean thread_wait_cond;
   GMutex *mutex;
   GCond *cond;
+};
+
+struct ic_temp_thread_connection
+{
+  IC_SOCK_BUF_PAGE *first_received_message;
+  IC_SOCK_BUF_PAGE *last_received_message;
+  guint32 num_messages_on_page;
 };
 
 struct ic_int_apid_connection
