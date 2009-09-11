@@ -996,6 +996,7 @@ run_heartbeat_thread(gpointer data)
   {
     if (!(hb_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
                    send_buf_pool,
+                   (guint32)0,
                    &free_pages,
                    (guint32)8,
                    3000)))
@@ -4245,8 +4246,8 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
   IC_MESSAGE_ERROR_OBJECT error_object;
   IC_SOCK_BUF_PAGE *message_page;
   IC_SOCK_BUF *sock_buf_container;
-  gint release_count, ref_count;
-  volatile gint *ref_count_ptr;
+  gint *ref_count_ptr;
+  gboolean ref_count_zero;
 
   ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
     &ndb_message_page->opaque_area[0];
@@ -4266,13 +4267,12 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
          return error_object.error;
        }
     }
-    if (ndb_message_opaque->ref_count_releases > 0)
+    if (ndb_message_page->ref_count > 0)
     {
-      release_count= ndb_message_opaque->ref_count_releases;
       message_page= (IC_SOCK_BUF_PAGE*)ndb_message_page->sock_buf;
-      ref_count_ptr= (volatile gint*)&message_page->ref_count;
-      ref_count= g_atomic_int_exchange_and_add(ref_count_ptr, release_count);
-      if (ref_count == release_count)
+      ref_count_ptr= (gint*)&ndb_message_page->ref_count;
+      ref_count_zero= g_atomic_int_dec_and_test(ref_count_ptr);
+      if (ref_count_zero)
       {
         /*
           This was the last message we executed on this page so we're now
@@ -4297,7 +4297,8 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
 static int
 poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
 {
-  IC_SOCK_BUF_PAGE *ndb_message_page;
+  IC_SOCK_BUF *sock_buf_container;
+  IC_SOCK_BUF_PAGE *ndb_message_page, *first_ndb_message_page;
   IC_NDB_MESSAGE ndb_message;
   int error;
 
@@ -4312,8 +4313,7 @@ poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
   */
   ndb_message_page= get_thread_messages(apid_conn, wait_time);
   ndb_message.apid_conn= apid_conn;
-  /*
-  */
+  first_ndb_message_page= ndb_message_page;
   while (ndb_message_page)
   {
     /* Execute one message received */
@@ -4322,12 +4322,12 @@ poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
       /* Error handling */
       return error;
     }
-    /*
-      Here we need to check if we should decrement the values from the
-      buffer page.
-    */
     ndb_message_page= ndb_message_page->next_sock_buf_page;
   }
+  /* Return all NDB messages executed to the free pool */
+  sock_buf_container= first_ndb_message_page->sock_buf_container;
+  sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
+    sock_buf_container, first_ndb_message_page);
   return 0;
 }
 
@@ -4602,6 +4602,7 @@ post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
     ic_require(first_ndb_message_page);
     loc_temp_thd_conn->first_received_message= NULL;
     loc_temp_thd_conn->last_received_message= NULL;
+    loc_temp_thd_conn->last_long_received_message= NULL;
     loc_thd_conn= thd_conn[module_id];
 
 
@@ -4650,6 +4651,88 @@ post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
   return;
 }
 
+static void
+prepare_opaque_area(IC_SOCK_BUF_PAGE *ndb_message_page,
+                    IC_RECEIVE_NODE_CONNECTION *rec_node)
+{
+  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+
+  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+    &ndb_message_page->opaque_area[0];
+  ndb_message_opaque->sender_node_id= rec_node->other_node_id;
+  ndb_message_opaque->receiver_node_id= rec_node->my_node_id;
+  ndb_message_opaque->cluster_id= rec_node->cluster_id;
+  ndb_message_opaque->version_num= 0; /* Define value although unused */
+  ndb_message_page->ref_count= 0;
+}
+
+static void
+put_message_on_temp_list(IC_SOCK_BUF_PAGE *ndb_message_page,
+                         IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn,
+                         guint32 receiver_module_id,
+                         guint32 *list_modules_received,
+                         guint32 *list_modules_received_index)
+{
+  guint32 index;
+  IC_SOCK_BUF_PAGE *first_page, *last_page;
+  /*
+    We keep track on if there are any messages already received to this
+    application thread. If it is the first message we will put it into
+    the list of application threads which have non-empty lists and that
+    thus requires attention in the post_ndb_messages method.
+  */
+  first_page= loc_temp_thd_conn->first_received_message;
+  last_page= loc_temp_thd_conn->last_received_message;
+  if (!first_page)
+  {
+    index= *list_modules_received_index;
+    loc_temp_thd_conn->first_received_message= ndb_message_page;
+    list_modules_received[index]= receiver_module_id;
+    *list_modules_received_index= index + 1;
+  }
+  else
+  {
+    last_page->next_sock_buf_page= ndb_message_page;
+  }
+  loc_temp_thd_conn->last_received_message= ndb_message_page;
+  ndb_message_page->next_sock_buf_page= NULL;
+}
+
+/*
+  We keep track of modules that have received messages on this
+  page to save on some atomic operations in the application thread
+  when receiving NDB messages. We only need to care about this for
+  message longer than our definition of a standard cache line size.
+  If we have several messages arriving to an application thread we
+  will only set the reference counter on the first and will set the
+  corresponding ref_count indicator on the last NDB message in the
+  buffer which is a long message.
+*/
+static void
+page_ref_count_handling(IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn,
+                        guint32 receiver_module_id,
+                        guint32 *p_index,
+                        guint32 *list_page_modules_received,
+                        IC_SOCK_BUF_PAGE *buf_page,
+                        IC_SOCK_BUF_PAGE *ndb_message_page)
+{
+  guint32 num_messages_on_page;
+  gint ref_count;
+  guint32 index;
+  num_messages_on_page= loc_temp_thd_conn->num_messages_on_page;
+  if (!num_messages_on_page)
+  {
+    index= *p_index;
+    ref_count= buf_page->ref_count;
+    list_page_modules_received[index]= receiver_module_id;
+    loc_temp_thd_conn->num_messages_on_page=
+      num_messages_on_page + 1;
+    *p_index= index + 1;
+    buf_page->ref_count= ref_count + 1;
+  }
+  loc_temp_thd_conn->last_long_received_message= ndb_message_page;
+}
+
 #define MAX_NDB_RECEIVE_LOOPS 16
 static int
 ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
@@ -4665,7 +4748,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
   IC_SOCK_BUF *message_pool= rec_state->message_pool;
   guint32 read_size= rec_node->read_size;
   guint32 real_read_size;
-  guint32 p_index= 0, index, i, num_messages_on_page, module_id;
+  guint32 p_index= 0, i, module_id;
   gboolean read_header_flag= rec_node->read_header_flag;
   gchar *read_ptr;
   guint32 page_size= rec_buf_pool->page_size;
@@ -4674,14 +4757,12 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
   guint32 receiver_module_id= IC_MAX_THREAD_CONNECTIONS;
   guint32 loop_count= 0;
   int ret_code;
-  gint ref_count;
   gboolean any_message_received= FALSE;
   gboolean read_more;
   IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn;
   IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
   IC_SOCK_BUF_PAGE *ndb_message_page;
-  IC_SOCK_BUF_PAGE *first_page, *last_page;
-  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+  IC_SOCK_BUF *sock_buf_container;
   DEBUG_ENTRY("ndb_receive_node");
 
   g_assert(message_pool->page_size == 0);
@@ -4697,6 +4778,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
     {
       if (!(buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
               rec_buf_pool,
+              (guint32)0,
               &rec_state->free_rec_pages,
               NUM_RECEIVE_PAGES_ALLOC)))
         goto mem_pool_error;
@@ -4740,16 +4822,50 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         }
         message_size*= sizeof(guint32); /* Convert num words to num bytes */
         if (message_size > read_size)
+        {
+          /* We haven't received a complete message yet */
           break;
-        if (!(ndb_message_page=
-              message_pool->sock_buf_ops.ic_get_sock_buf_page(
-                message_pool,
-                &rec_state->free_ndb_messages,
-                NUM_NDB_SIGNAL_ALLOC)))
-          goto mem_pool_error;
+        }
 
         if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
+        {
+          /* Normal messages go this way */
           receiver_module_id-= IC_NDB_MIN_MODULE_ID_FOR_THREADS;
+          loc_temp_thd_conn= &temp_thd_conn[receiver_module_id];
+          if (!(ndb_message_page=
+                message_pool->sock_buf_ops.ic_get_sock_buf_page(
+                  message_pool,
+                  message_size,
+                  &rec_state->free_ndb_messages,
+                  NUM_NDB_SIGNAL_ALLOC)))
+            goto mem_pool_error;
+          if (message_size <= IC_STD_CACHE_LINE_SIZE)
+          {
+            /*
+              Message shorter than our definition of standard cache size
+              will be copied instead of read from buffer to avoid having
+              to synchronize with atomic increments in the case of short
+              messages. So we simply copy the message to the buffer.
+            */
+            memcpy(ndb_message_page->sock_buf, read_ptr, message_size);
+          }
+          else
+          {
+            page_ref_count_handling(loc_temp_thd_conn,
+                                    receiver_module_id,
+                                    &p_index,
+                                    list_page_modules_received,
+                                    buf_page,
+                                    ndb_message_page);
+            ndb_message_page->sock_buf= (gchar*)read_ptr;
+          }
+          prepare_opaque_area(ndb_message_page, rec_node);
+          put_message_on_temp_list(ndb_message_page,
+                                   loc_temp_thd_conn,
+                                   receiver_module_id,
+                                   list_modules_received,
+                                   list_modules_received_index);
+        }
         else
         {
           /*
@@ -4758,49 +4874,8 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
             treatment since they contain several messages in one.
           */
           abort(); /* TODO */
+          loc_temp_thd_conn= &temp_thd_conn[receiver_module_id];
         }
-        ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-          &ndb_message_page->opaque_area[0];
-        ndb_message_page->sock_buf= (gchar*)buf_page;
-        ndb_message_opaque->message_offset= read_ptr - buf_page->sock_buf;
-        ndb_message_opaque->sender_node_id= rec_node->other_node_id;
-        ndb_message_opaque->receiver_node_id= rec_node->my_node_id;
-        ndb_message_opaque->ref_count_releases= 0;
- 
-        ndb_message_opaque->receiver_module_id= receiver_module_id;
-        ndb_message_opaque->version_num= 0; /* Define value although unused */
-        loc_temp_thd_conn= &temp_thd_conn[receiver_module_id];
-        /*
-          We keep track on if there are any messages already received to this
-          application thread. If it is the first message we will put it into
-          the list of application threads which have non-empty lists and that
-          thus requires attention in the post_ndb_messages method.
-          
-          Also we keep track of modules that have received messages on this
-          page to save on some atomic operations in the application thread
-          when receiving NDB messages.
-        */
-        num_messages_on_page= loc_temp_thd_conn->num_messages_on_page;
-        first_page= loc_temp_thd_conn->first_received_message;
-        last_page= loc_temp_thd_conn->last_received_message;
-        if (!num_messages_on_page)
-          list_page_modules_received[p_index++]= receiver_module_id;
-        if (!first_page)
-        {
-          ref_count= buf_page->ref_count;
-          index= *list_modules_received_index;
-          list_modules_received[index]= receiver_module_id;
-          loc_temp_thd_conn->first_received_message= ndb_message_page;
-          buf_page->ref_count= ref_count + 1;
-          *list_modules_received_index= index + 1;
-        }
-        else
-        {
-          last_page->next_sock_buf_page= ndb_message_page;
-        }
-        loc_temp_thd_conn->num_messages_on_page= num_messages_on_page + 1;
-        loc_temp_thd_conn->last_received_message= ndb_message_page;
-        ndb_message_page->next_sock_buf_page= NULL;
         any_message_received= TRUE;
         read_header_flag= FALSE;
         read_size-= message_size;
@@ -4822,6 +4897,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
           */
           if (!(new_buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
                   rec_buf_pool,
+                  (guint32)0,
                   &rec_state->free_rec_pages,
                   NUM_RECEIVE_PAGES_ALLOC)))
             goto mem_pool_error;
@@ -4841,19 +4917,34 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         rec_node->read_header_flag= FALSE;
       }
       /*
-        We now need to set ref_count_releases to 1 on the last NDB message
+        We now need to set ref_count to 1 on the last NDB message
         on each application thread receiving message from this page.
       */
-      for (i= 0; i < p_index; i++)
+      if (p_index == 0)
       {
-        module_id= list_page_modules_received[i];
-        loc_temp_thd_conn= &temp_thd_conn[module_id];
-        ndb_message_page= loc_temp_thd_conn->last_received_message;
-        ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
-          &ndb_message_page->opaque_area[0];
-        ndb_message_opaque->ref_count_releases= 1;
+        /*
+          We handled only short messages and thus we can return the buffer
+          immediately since no application thread will read anything from
+          the buffer.
+        */
+        sock_buf_container= buf_page->sock_buf_container;
+        sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
+          sock_buf_container,
+          buf_page);
+        buf_page= NULL; /* Safety initialisation */
       }
-      p_index= 0;
+      else
+      {
+        for (i= 0; i < p_index; i++)
+        {
+          module_id= list_page_modules_received[i];
+          loc_temp_thd_conn= &temp_thd_conn[module_id];
+          ndb_message_page= loc_temp_thd_conn->last_long_received_message;
+          ndb_message_page->ref_count= 1;
+          loc_temp_thd_conn->num_messages_on_page= 0;
+        }
+        p_index= 0;
+      }
 
       if (!read_more || (loop_count++ >= MAX_NDB_RECEIVE_LOOPS))
         break;

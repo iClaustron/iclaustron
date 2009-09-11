@@ -39,6 +39,7 @@ struct ic_sock_buf_operations
   */
   IC_SOCK_BUF_PAGE* (*ic_get_sock_buf_page)
       (IC_SOCK_BUF *buf,
+       guint32 buf_size,
        IC_SOCK_BUF_PAGE **free_pages,
        guint32 num_pages_to_preallocate);
 
@@ -49,6 +50,7 @@ struct ic_sock_buf_operations
   */
   IC_SOCK_BUF_PAGE* (*ic_get_sock_buf_page_wait)
       (IC_SOCK_BUF *sock_buf,
+       guint32 buf_size,
        IC_SOCK_BUF_PAGE **free_pages,
        guint32 num_pages_to_preallocate,
        guint32 milliseconds_to_wait);
@@ -73,11 +75,11 @@ struct ic_sock_buf_operations
 };
 
 /*
-  We want to ensure that the buffer is 64 bytes to avoid false cache sharing
-  on most platforms (there are some exceptions using 256 byte cache line sizes
-  that we will ignore).
+  We adapt the size of the page object to 128 bytes which is a common
+  size of the second level cacheline size. This will minimize the
+  amount of false cacheline sharing. These buffers are very often
+  shipped around between different threads.
 */
-#define IC_SOCK_BUF_PAGE_SIZE 64
 struct ic_sock_buf_page
 {
   IC_SOCK_BUF_PAGE *next_sock_buf_page;
@@ -86,7 +88,8 @@ struct ic_sock_buf_page
   guint32 size;
   /* This is an atomic counter used to keep track of reference count */
   gint ref_count;
-  guint32 opaque_area[6];
+  guint32 opaque_area[4];
+  guint32 buf_area[18];
 };
 
 struct ic_sock_buf
@@ -99,6 +102,22 @@ struct ic_sock_buf
   GMutex *ic_buf_mutex;
 };
 
+/*
+  Defining a page size of 0 is a special case. This means that we
+  won't allocate any special buffer area. We will instead use the
+  buf_area inside the IC_SOCK_BUF_PAGE object as the buffer area.
+  We will in this case support storing up to 128 bytes in the
+  buffer. This will be done by allocating an IC_SOCK_BUF_PAGE and
+  temporarily convert it to a buffer object. When returning it to
+  the pool we will convert it back to a IC_SOCK_BUF_PAGE object.
+  Thus normally we will allocate one object from the pool but for
+  this special case we will allocate two objects instead.
+  We add a parameter to the get_sock_buf call where we specify
+  size and thus the pool can decide where to put the buffer, it
+  will only be required to be big enough to fit the size. Size 0
+  means that we don't need buffer area for the special case and
+  is the required value to use for all other cases.
+*/
 IC_SOCK_BUF*
 ic_create_sock_buf(guint32 page_size,
                    guint64 no_of_pages);

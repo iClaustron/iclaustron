@@ -78,11 +78,10 @@ struct ic_ndb_receive_state
 
 struct ic_ndb_message_opaque_area
 {
-  guint32 message_offset;
   guint32 sender_node_id;
   guint32 receiver_node_id;
-  guint32 ref_count_releases;
-  guint32 receiver_module_id;
+  guint32 cluster_id;
+  guint32 packed_message;
   guint32 version_num; /* Always 0 currently */
 };
 
@@ -154,6 +153,7 @@ struct ic_temp_thread_connection
 {
   IC_SOCK_BUF_PAGE *first_received_message;
   IC_SOCK_BUF_PAGE *last_received_message;
+  IC_SOCK_BUF_PAGE *last_long_received_message;
   guint32 num_messages_on_page;
 };
 

@@ -25,6 +25,7 @@
 #include <ic_bitmap.h>
 #include <ic_hashtable.h>
 #include <ic_parse_connectstring.h>
+#include <ic_sock_buf.h>
 
 static const gchar *glob_process_name= "test_unit";
 static int glob_test_type= 0;
@@ -971,6 +972,90 @@ unit_test_parse_connectstring()
   return 0;
 }
 
+static IC_SOCK_BUF_PAGE*
+allocate_all_from_sock_buf(IC_SOCK_BUF *sock_buf,
+                           guint32 size,
+                           guint32 preallocate_size,
+                           IC_SOCK_BUF_PAGE **loc_free_pages)
+{
+  guint32 i;
+  IC_SOCK_BUF_PAGE *sock_buf_page, *first_sock_buf_page, *prev_sock_buf_page;
+
+  first_sock_buf_page= NULL;
+  prev_sock_buf_page= NULL;
+  for (i= 0; i < size; i++)
+  {
+    /* These should all work fine */
+    if (!(sock_buf_page= sock_buf->sock_buf_ops.ic_get_sock_buf_page(
+              sock_buf,
+              (guint32)0,
+              loc_free_pages,
+              preallocate_size)))
+      return NULL;
+    /* Put the allocated buffers in a linked list */
+    if (!first_sock_buf_page)
+      first_sock_buf_page= sock_buf_page;
+    else
+      prev_sock_buf_page->next_sock_buf_page= sock_buf_page;
+    prev_sock_buf_page= sock_buf_page;
+  }
+  return first_sock_buf_page;
+}
+
+static int
+verify_sock_buf_failure(IC_SOCK_BUF *sock_buf,
+                        IC_SOCK_BUF_PAGE **loc_free_pages,
+                        guint32 preallocate_size)
+{
+  if (sock_buf->sock_buf_ops.ic_get_sock_buf_page(sock_buf,
+                                                  (guint32)0,
+                                                  loc_free_pages,
+                                                  preallocate_size))
+    return 1;
+  return 0;
+}
+
+static void
+verify_return_sock_buf_all(IC_SOCK_BUF *sock_buf,
+                           IC_SOCK_BUF_PAGE *sock_buf_page)
+{
+  sock_buf->sock_buf_ops.ic_return_sock_buf_page(sock_buf,
+                                                 sock_buf_page);
+}
+
+static int
+test_sock_buf(guint32 size,
+              guint32 page_size,
+              guint32 preallocate_size)
+{
+  IC_SOCK_BUF *sock_buf;
+  guint32 i;
+  IC_SOCK_BUF_PAGE **loc_free_pages= NULL;
+  IC_SOCK_BUF_PAGE *first_sock_buf_page;
+
+  if (!(sock_buf= ic_create_sock_buf(page_size, size)))
+    return 1;
+  for (i= 0; i < 3; i++)
+  {
+    if (!(first_sock_buf_page= allocate_all_from_sock_buf(sock_buf,
+                                                          size,
+                                                          preallocate_size,
+                                                          loc_free_pages)))
+      return 1;
+    if (verify_sock_buf_failure(sock_buf, loc_free_pages, preallocate_size))
+      return 1;
+    verify_return_sock_buf_all(sock_buf, first_sock_buf_page);
+  }
+  sock_buf->sock_buf_ops.ic_free_sock_buf(sock_buf);
+  return 0;
+}
+static int
+unit_test_sock_buf()
+{
+  if (test_sock_buf(1000, 0, 10))
+    return 1;
+  return 0;
+}
                          
 int main(int argc, char *argv[])
 {
@@ -1010,6 +1095,10 @@ int main(int argc, char *argv[])
     case 6:
       ic_printf("Executing unit test of Parse Connectstring");
       ret_code= unit_test_parse_connectstring();
+      break;
+    case 7:
+      ic_printf("Executing unit test of Socket Buffer");
+      ret_code= unit_test_sock_buf();
       break;
     default:
       break;
