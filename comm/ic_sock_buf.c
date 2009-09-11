@@ -61,6 +61,7 @@ get_sock_buf_page(IC_SOCK_BUF *buf,
   }
   sock_buf_page->size= IC_STD_CACHE_LINE_SIZE;
   sock_buf_page->sock_buf= (gchar*)second_sock_buf_page;
+  return sock_buf_page;
 }
 
 static IC_SOCK_BUF_PAGE*
@@ -323,4 +324,5 @@ error:
   if (buf->ic_buf_mutex)
     g_mutex_free(buf->ic_buf_mutex);
   ic_free(buf);
+  return NULL;
 }
