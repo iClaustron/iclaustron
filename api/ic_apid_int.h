@@ -99,8 +99,8 @@ struct ic_ndb_message
   guint32 *segment_ptr[4];
   guint32 segment_size[4];
 
-  /* Trace number and message id are mostly for debug information.  */
-  guint32 message_id;
+  /* Trace number and message number are mostly for debug information.  */
+  guint32 message_number;
   guint32 trace_num;
   /*
      There can be up to 3 segments in a  message in addition to the always
@@ -122,11 +122,12 @@ struct ic_ndb_message
   guint32 fragmentation_bits;
 
   /*
-    The message number is the actual number indicating which message this is.
+    The message id is the actual number indicating which message this is.
     A message number could indicate for example that this is a TCKEYCONF,
     TRANSID_AI and other messages NDB sends. We also keep track of the
     total message size mostly for debug purposes.
   */
+  guint32 message_id;
 
   /*
     We need to keep track of Module id of both the sender and the receiver.

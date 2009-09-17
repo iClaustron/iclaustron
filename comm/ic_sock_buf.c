@@ -268,16 +268,17 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
   int error= 0;
   guint32 sock_buf_page_size;
 
-  sock_buf_page_size= IC_MAX(64, sizeof(IC_SOCK_BUF_PAGE)); 
+  sock_buf_page_size= IC_MAX(IC_STD_CACHE_LINE_SIZE,
+                             sizeof(IC_SOCK_BUF_PAGE));
   if (!(ptr= ic_malloc(no_of_pages * (page_size + sock_buf_page_size))))
-    return 1;
+    return IC_ERROR_MEM_ALLOC;
   last_sock_buf_page= set_up_pages_in_linked_list(buf,
                                                   ptr,
                                                   page_size,
                                                   no_of_pages,
                                                   sock_buf_page_size);
   g_mutex_lock(buf->ic_buf_mutex);
-  if (buf->alloc_segments == MAX_ALLOC_SEGMENTS)
+  if (buf->alloc_segments < MAX_ALLOC_SEGMENTS)
   {
     last_sock_buf_page->next_sock_buf_page= buf->first_page;
     buf->first_page= (IC_SOCK_BUF_PAGE*)ptr;
@@ -286,8 +287,8 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
   }
   else
   {
-    free(ptr);
-    error= 1;
+    ic_free(ptr);
+    error= IC_ERROR_MEM_ALLOC;
   }
   g_mutex_unlock(buf->ic_buf_mutex);
   return error;

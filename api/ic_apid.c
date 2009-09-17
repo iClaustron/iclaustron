@@ -986,6 +986,7 @@ run_heartbeat_thread(gpointer data)
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)
     tp_state->ts_ops.ic_thread_get_object(thread_state);
   IC_SEND_NODE_CONNECTION *last_send_node_conn= NULL;
+  IC_SEND_NODE_CONNECTION *next_node;
   IC_SOCK_BUF_PAGE *free_pages= NULL;
   IC_SOCK_BUF_PAGE *hb_page;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
@@ -1025,17 +1026,19 @@ run_heartbeat_thread(gpointer data)
       if (last_send_node_conn == apid_global->curr_heartbeat_node)
       {
         /* Normal case, step forward here to next node */
-        apid_global->curr_heartbeat_node=
-          last_send_node_conn->next_heartbeat_node;
-        last_send_node_conn= last_send_node_conn->next_heartbeat_node;
-        if (!last_send_node_conn)
+        next_node= last_send_node_conn->next_heartbeat_node;
+        apid_global->curr_heartbeat_node= next_node;
+        last_send_node_conn= next_node;
+        if (!next_node)
         {
           /* We have sent to all nodes, sleep for a while and start again */
           apid_global->curr_heartbeat_node= NULL;
           g_mutex_unlock(apid_global->heartbeat_mutex);
           send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                               hb_page);
-          apid_conn->apid_conn_ops.ic_poll(apid_conn, 1000000);
+          apid_conn->apid_conn_ops.ic_poll(apid_conn, 10000);
+          ic_microsleep(500000);
+          apid_conn->apid_conn_ops.ic_poll(apid_conn, 10000);
           continue;
         }
       }
@@ -3895,19 +3898,23 @@ prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
 }
 
 static int
-execAPI_HBCONF_v0(__attribute__ ((unused)) IC_NDB_MESSAGE *ndb_message,
-                  __attribute__ ((unused)) IC_MESSAGE_ERROR_OBJECT *error_object)
+execAPI_HBCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                  IC_MESSAGE_ERROR_OBJECT *error_object)
 {
-  return 0;
+  DEBUG_ENTRY("execAPI_HBCONF_v0");
+  (void)ndb_message;
+  (void)error_object;
+  DEBUG_RETURN(0);
 }
 
 static int
 execAPI_HBREF_v0(IC_NDB_MESSAGE *ndb_message,
                  IC_MESSAGE_ERROR_OBJECT *error_object)
 {
+  DEBUG_ENTRY("execAPI_HBREF_v0");
   (void)ndb_message;
   (void)error_object;
-  return 0;
+  DEBUG_RETURN(0);
 }
 
 /*
@@ -4094,8 +4101,7 @@ static int execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
                            IC_NDB_MESSAGE *ndb_message);
 static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                               IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
-                              IC_NDB_MESSAGE *ndb_message,
-                              guint32 *message_id);
+                              IC_NDB_MESSAGE *ndb_message);
 
 static IC_EXEC_MESSAGE_FUNC*
 get_exec_message_func(guint32 message_id,
@@ -4144,14 +4150,13 @@ get_thread_messages(IC_APID_CONNECTION *ext_apid_conn,
 static int
 create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                    IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
-                   IC_NDB_MESSAGE *ndb_message,
-                   guint32 *message_id)
+                   IC_NDB_MESSAGE *ndb_message)
 {
   guint32 word1, word2, word3, receiver_node_id, sender_node_id;
   guint32 num_segments, fragmentation_bits, i, segment_size;
   guint32 *segment_size_ptr, message_size;
   guint32 *message_ptr= (guint32*)message_page->sock_buf;
-  guint32 chksum, message_id_used, chksum_used, start_segment_word;
+  guint32 chksum, message_number_used, chksum_used, start_segment_word;
 
   word1= message_ptr[0];
   if ((word1 & 1) != ic_glob_byte_order)
@@ -4178,8 +4183,8 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   ndb_message->segment_size[0]= (word1 >> 26) & 0x1F;
   g_assert(ndb_message->segment_size[0] <= 25);
 
-  /* Get message number from Bit 0-19 in word 2 */
-  *message_id= word2 & 0x7FFFF;
+  /* Get message id from Bit 0-19 in word 2 */
+  ndb_message->message_id= word2 & 0x7FFFF;
   /* Get trace number from Bit 20-25 in word 2 */
   ndb_message->trace_num= (word2 >> 20) & 0x3F;
 
@@ -4192,14 +4197,14 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   /* Get receivers module id from Bit 16-31 in word 3 */
   ndb_message->receiver_module_id= word3 >> 16;
 
-  ndb_message->message_id= 0;
+  ndb_message->message_number= 0;
   ndb_message->segment_ptr[1]= NULL;
   ndb_message->segment_ptr[2]= NULL;
   ndb_message->segment_ptr[3]= NULL;
   ndb_message->segment_ptr[0]= &message_ptr[3];
 
   /* Get message id flag from Bit 2 in word 1 */
-  message_id_used= word1 & 4;
+  message_number_used= word1 & 4;
   /* Get checksum used flag from Bit 4 in word 1 */
   chksum_used= word1 & 0x10;
   /* Get number of segments from Bit 26-27 in word 2 */
@@ -4208,10 +4213,10 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   ndb_message->num_segments= num_segments + 1;
   
   start_segment_word= 3;
-  if (message_id_used)
+  if (message_number_used)
   {
     ndb_message->segment_ptr[0]= &message_ptr[4];
-    ndb_message->message_id= message_ptr[3];
+    ndb_message->message_number= message_ptr[3];
     start_segment_word= 4;
   }
   start_segment_word+= ndb_message->segment_size[0];
@@ -4240,7 +4245,6 @@ static int
 execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
                 IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 message_id;
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
   IC_EXEC_MESSAGE_FUNC *exec_message_func;
   IC_MESSAGE_ERROR_OBJECT error_object;
@@ -4253,12 +4257,11 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
     &ndb_message_page->opaque_area[0];
   if (!create_ndb_message(ndb_message_page,
                           ndb_message_opaque,
-                          ndb_message,
-                          &message_id))
+                          ndb_message))
   {
-    exec_message_func= get_exec_message_func(message_id,
+    exec_message_func= get_exec_message_func(ndb_message->message_id,
                                              ndb_message_opaque->version_num);
-    if (!exec_message_func)
+    if (exec_message_func)
     {
        if (exec_message_func->ic_exec_message_func
              (ndb_message, &error_object))
@@ -4324,10 +4327,13 @@ poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time)
     }
     ndb_message_page= ndb_message_page->next_sock_buf_page;
   }
-  /* Return all NDB messages executed to the free pool */
-  sock_buf_container= first_ndb_message_page->sock_buf_container;
-  sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
-    sock_buf_container, first_ndb_message_page);
+  if (first_ndb_message_page)
+  {
+    /* Return all NDB messages executed to the free pool */
+    sock_buf_container= first_ndb_message_page->sock_buf_container;
+    sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
+      sock_buf_container, first_ndb_message_page);
+  }
   return 0;
 }
 
