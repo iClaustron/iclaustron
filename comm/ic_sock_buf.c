@@ -70,7 +70,7 @@ low_get_sock_buf_page(IC_SOCK_BUF *buf,
                       guint32 num_pages_to_preallocate)
 {
   guint32 i;
-  IC_SOCK_BUF_PAGE *first_page, *next_page;
+  IC_SOCK_BUF_PAGE *first_page, *next_page, *last_page;
 
   if (free_rec_pages)
   {
@@ -108,16 +108,29 @@ low_get_sock_buf_page(IC_SOCK_BUF *buf,
   {
     next_page->size= 0;
     next_page->ref_count= 0;
+    last_page= next_page;
     next_page= next_page->next_sock_buf_page;
   }
   /* Initialise local free list */
   if (free_rec_pages && first_page)
-    *free_rec_pages= first_page->next_sock_buf_page;
-  /* Unlink first page and last page points to end of list */
+  {
+    /*
+      The preallocated list if any must be ended with a NULL pointer.
+      It must be also initialised to the first preallocated page. It's
+      important to not perform any action at all if no pages have been
+      preallocated which is noted by that last_page is different than
+      the first_page, this means we were successful in preallocating at
+      least one page.
+    */
+    if (last_page != first_page)
+    {
+      *free_rec_pages= first_page->next_sock_buf_page;
+      last_page->next_sock_buf_page= NULL;
+    }
+  }
+  /* Unlink first page from list */
   if (first_page)
-    first_page->next_sock_buf_page= 0;
-  if (next_page)
-    next_page->next_sock_buf_page= 0;
+    first_page->next_sock_buf_page= NULL;
   return first_page;
 }
 
@@ -209,8 +222,8 @@ free_sock_buf(IC_SOCK_BUF *buf)
 
   g_mutex_free(buf->ic_buf_mutex);
   for (i= 0; i < alloc_segments; i++)
-    free(buf->alloc_segments_ref[i]);
-  free(buf);
+    ic_free(buf->alloc_segments_ref[i]);
+  ic_free(buf);
 }
 
 /*

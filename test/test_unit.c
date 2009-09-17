@@ -975,6 +975,7 @@ unit_test_parse_connectstring()
 static IC_SOCK_BUF_PAGE*
 allocate_all_from_sock_buf(IC_SOCK_BUF *sock_buf,
                            guint32 size,
+                           guint32 alloc_page_size,
                            guint32 preallocate_size,
                            IC_SOCK_BUF_PAGE **loc_free_pages)
 {
@@ -988,7 +989,7 @@ allocate_all_from_sock_buf(IC_SOCK_BUF *sock_buf,
     /* These should all work fine */
     if (!(sock_buf_page= sock_buf->sock_buf_ops.ic_get_sock_buf_page(
               sock_buf,
-              (guint32)0,
+              (guint32)alloc_page_size,
               loc_free_pages,
               preallocate_size)))
       return NULL;
@@ -1030,29 +1031,73 @@ test_sock_buf(guint32 size,
 {
   IC_SOCK_BUF *sock_buf;
   guint32 i;
-  IC_SOCK_BUF_PAGE **loc_free_pages= NULL;
+  guint32 used_prealloc_size;
+  guint32 alloc_page_size= 0;
+  IC_SOCK_BUF_PAGE *loc_free_pages= NULL;
   IC_SOCK_BUF_PAGE *first_sock_buf_page;
+  IC_SOCK_BUF_PAGE **prealloc_pages;
+  int ret_code= 1;
+  guint32 i_mod_4;
 
   if (!(sock_buf= ic_create_sock_buf(page_size, size)))
     return 1;
-  for (i= 0; i < 3; i++)
+
+  for (i= 0; i < 16; i++)
   {
+    /* 
+      First four runs with normal page size, then four runs > 0 without
+      extra allocation and four runs with extra allocation and finally
+      four runs with no extra allocation due to larger size.
+    */
+    if (i < 4)
+      alloc_page_size= 0;
+    else if (i < 8)
+      alloc_page_size= 64;
+    else if (i < 12)
+      alloc_page_size= 124;
+    else
+      alloc_page_size= 256;
+
+    i_mod_4= i % 4;
+    /* Runs 0 and 2 use preallocate_size, 1 and 3 use it set to 1 */
+    if (i_mod_4 == 0 || i_mod_4 == 1)
+      used_prealloc_size= preallocate_size;
+    else
+      used_prealloc_size= 1;
+
+    /* All even runs use a free page list, odd runs don't */
+    if (i_mod_4 == 0 || i_mod_4 == 2)
+      prealloc_pages= NULL;
+    else
+      prealloc_pages= &loc_free_pages;
+
     if (!(first_sock_buf_page= allocate_all_from_sock_buf(sock_buf,
                                                           size,
-                                                          preallocate_size,
-                                                          loc_free_pages)))
-      return 1;
-    if (verify_sock_buf_failure(sock_buf, loc_free_pages, preallocate_size))
-      return 1;
+                                                          alloc_page_size,
+                                                          used_prealloc_size,
+                                                          prealloc_pages)))
+      goto error;
+    if (verify_sock_buf_failure(sock_buf, prealloc_pages, preallocate_size))
+      goto error;
     verify_return_sock_buf_all(sock_buf, first_sock_buf_page);
+    ic_require(prealloc_pages == NULL &&
+               loc_free_pages == NULL &&
+               prealloc_pages ? (prealloc_pages == &loc_free_pages) : TRUE);
   }
+  ret_code= 0;
+error:
   sock_buf->sock_buf_ops.ic_free_sock_buf(sock_buf);
-  return 0;
+  return ret_code;
 }
+
 static int
 unit_test_sock_buf()
 {
   if (test_sock_buf(1000, 0, 10))
+    return 1;
+  if (test_sock_buf(100, 0, 1000))
+    return 1;
+  if (test_sock_buf(1000, 100, 100))
     return 1;
   return 0;
 }
