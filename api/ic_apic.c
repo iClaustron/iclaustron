@@ -128,7 +128,9 @@
 
   The key-value pairs are sent as two 32-bit words for most data types, 64-bit
   words require another 32-bit word and character strings require also more
-  words but they always add 32-bit words.
+  words but they always add 32-bit words. 64-bit words send the 32 least
+  significant bits in the first 32 bit word and the most significant bits in
+  the 32 bit word following.
 
   The final step is that the all these 32-bit words are converted to network
   endian (big endian) format and the binary array of 32-bit words is then
@@ -2117,7 +2119,9 @@ init_config_parameters()
   IC_SET_CLIENT_CONFIG(conf_entry, apid_num_threads,
                        IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_APID_NUM_THREADS);
-  conf_entry->config_types= IC_FILE_SERVER_TYPE | IC_REP_SERVER_TYPE;
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_types= (1 << IC_FILE_SERVER_TYPE) |
+                            (1 << IC_REP_SERVER_TYPE);
   conf_entry->config_entry_description=
   "Number of threads in Data API application server";
 
@@ -2230,7 +2234,7 @@ init_config_parameters()
 /* Id 170-174 for configuration id 300-350 */
 /* This is the cluster server configuration section  */
 #define CLUSTER_SERVER_PORT_NUMBER 340
-#define CLUSTER_MANAGER_PORT_NUMBER 340
+#define CLUSTER_MANAGER_PORT_NUMBER 341
 /* Id 301-339 and 342-350 not used */
 
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 170);
@@ -2238,6 +2242,7 @@ init_config_parameters()
                                IC_DEF_CLUSTER_SERVER_PORT,
                                IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
   "Port number of Cluster Server";
 
@@ -2246,6 +2251,7 @@ init_config_parameters()
                                 IC_DEF_CLUSTER_MANAGER_PORT,
                                 IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
   "Port number of Cluster Manager";
 
@@ -2379,7 +2385,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(SOCKET_READ_BUFFER_SIZE, 195);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_read_buffer_size,
                        IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 64*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 1024*1024);
   conf_entry->config_entry_description=
   "Size of read buffer in front of socket";
 
@@ -3481,9 +3487,9 @@ update_string_data(IC_INT_API_CONFIG_SERVER *apic,
 static guint64
 get_64bit_value(guint32 value, guint32 **key_value)
 {
-  guint32 val= (guint64)**key_value;
-  val= g_ntohl(val);
-  guint64 long_val= value + (((guint64)val) << 32);
+  guint32 msb_val= **key_value; /* Most significant part */
+  msb_val= g_ntohl(msb_val);
+  guint64 long_val= value + (((guint64)msb_val) << 32);
   (*key_value)++;
   return long_val;
 }
@@ -4285,7 +4291,7 @@ mandatory_error:
                      ,i));
         abort();
       }
-      printf("Configuration error found at line %u, missing mandatory",
+      ic_printf("Configuration error found at line %u, missing mandatory",
                 line_number);
       ic_printf(" configuration item in previous section");
       ic_printf("Missing item is %s", conf_entry->config_entry_name.str);
@@ -5575,8 +5581,10 @@ write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
 
       It isn't necessary to write defaults for a node type not existing in
       this cluster.
+
+      We always write a default communication section.
     */
-    if (any_node_of_type[i])
+    if (any_node_of_type[i] || ((IC_CONFIG_TYPES)i == IC_COMM_TYPE))
     {
       /* Write e.g. [data server default] and its defaults into the buffer */
       if ((error= write_new_section_header(dyn_array, da_ops, buf,
@@ -5673,7 +5681,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
                     IC_CLUSTER_CONFIG_LOAD *clu_def)
 {
   guint32 i;
-  guint32 node1_id, node2_id, node1_port, node2_port;
+  guint32 node1_id, node2_id, node1_port, node2_port, server_port;
   gchar *first_hostname, *second_hostname;
   IC_SOCKET_LINK_CONFIG *comm_ptr, *default_comm_ptr;
   IC_DATA_SERVER_CONFIG *node1_ptr, *node2_ptr;
@@ -5724,38 +5732,50 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
         (default_comm_ptr->socket_bind_address != 
          comm_ptr->socket_bind_address))
     {
+      if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                           socket_str, FALSE)))
+        goto error;
       /* This section isn't a default section so we need to fill it in */
       if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_FIRST_NODE_ID].config_entry_name,
+           &get_conf_entry(SOCKET_FIRST_NODE_ID)->config_entry_name,
            (guint64)node1_id)))
         goto error;
       if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_SECOND_NODE_ID].config_entry_name,
+           &get_conf_entry(SOCKET_SECOND_NODE_ID)->config_entry_name,
            (guint64)node2_id)))
         goto error;
       if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_SERVER_NODE_ID].config_entry_name,
+           &get_conf_entry(SOCKET_SERVER_NODE_ID)->config_entry_name,
            (guint64)comm_ptr->server_node_id)))
         goto error;
       if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_CLIENT_PORT_NUMBER].config_entry_name,
+           &get_conf_entry(SOCKET_CLIENT_PORT_NUMBER)->config_entry_name,
            (guint64)comm_ptr->client_port_number)))
         goto error;
+      if (comm_ptr->server_port_number)
+        server_port= comm_ptr->server_port_number;
+      else
+      {
+        if (comm_ptr->server_node_id == node1_id)
+          server_port= node1_port;
+        else
+          server_port= node2_port;
+      }
       if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_SERVER_PORT_NUMBER].config_entry_name,
-           (guint64)comm_ptr->server_port_number)))
+           &get_conf_entry(SOCKET_SERVER_PORT_NUMBER)->config_entry_name,
+           (guint64)server_port)))
         goto error;
       if (strcmp(first_hostname, comm_ptr->first_hostname) != 0)
       {
         if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_FIRST_HOSTNAME].config_entry_name,
+           &get_conf_entry(SOCKET_FIRST_HOSTNAME)->config_entry_name,
            comm_ptr->first_hostname)))
           goto error;
       }
       if (strcmp(second_hostname, comm_ptr->second_hostname) != 0)
       {
         if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_SECOND_HOSTNAME].config_entry_name,
+           &get_conf_entry(SOCKET_SECOND_HOSTNAME)->config_entry_name,
            comm_ptr->second_hostname)))
           goto error;
       }
@@ -5763,7 +5783,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->socket_write_buffer_size)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_WRITE_BUFFER_SIZE].config_entry_name,
+           &get_conf_entry(SOCKET_WRITE_BUFFER_SIZE)->config_entry_name,
            comm_ptr->socket_write_buffer_size)))
           goto error;
       }
@@ -5771,7 +5791,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->socket_read_buffer_size)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_READ_BUFFER_SIZE].config_entry_name,
+           &get_conf_entry(SOCKET_READ_BUFFER_SIZE)->config_entry_name,
            comm_ptr->socket_read_buffer_size)))
           goto error;
       }
@@ -5779,7 +5799,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->socket_kernel_write_buffer_size)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_KERNEL_WRITE_BUFFER_SIZE].config_entry_name,
+           &get_conf_entry(SOCKET_KERNEL_WRITE_BUFFER_SIZE)->config_entry_name,
            comm_ptr->socket_kernel_write_buffer_size)))
           goto error;
       }
@@ -5787,7 +5807,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->socket_kernel_read_buffer_size)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-          &glob_conf_entry[SOCKET_KERNEL_READ_BUFFER_SIZE].config_entry_name,
+          &get_conf_entry(SOCKET_KERNEL_READ_BUFFER_SIZE)->config_entry_name,
           comm_ptr->socket_kernel_read_buffer_size)))
           goto error;
       }
@@ -5795,7 +5815,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->socket_max_wait_in_nanos)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_MAXSEG_SIZE].config_entry_name,
+           &get_conf_entry(SOCKET_MAXSEG_SIZE)->config_entry_name,
            comm_ptr->socket_max_wait_in_nanos)))
           goto error;
       }
@@ -5803,7 +5823,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->socket_maxseg_size)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_MAXSEG_SIZE].config_entry_name,
+           &get_conf_entry(SOCKET_MAXSEG_SIZE)->config_entry_name,
            comm_ptr->socket_maxseg_size)))
           goto error;
       }
@@ -5811,7 +5831,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->use_message_id)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_USE_MESSAGE_ID].config_entry_name,
+           &get_conf_entry(SOCKET_USE_MESSAGE_ID)->config_entry_name,
            comm_ptr->use_message_id)))
           goto error;
       }
@@ -5819,7 +5839,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->use_checksum)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_USE_CHECKSUM].config_entry_name,
+           &get_conf_entry(SOCKET_USE_CHECKSUM)->config_entry_name,
            comm_ptr->use_checksum)))
           goto error;
       }
@@ -5827,7 +5847,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
           default_comm_ptr->socket_bind_address)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
-           &glob_conf_entry[SOCKET_BIND_ADDRESS].config_entry_name,
+           &get_conf_entry(SOCKET_BIND_ADDRESS)->config_entry_name,
            comm_ptr->socket_bind_address)))
           goto error;
       }
@@ -9029,9 +9049,9 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
         case IC_UINT64:
         {
           guint64 *entry= (guint64*)(conf+conf_entry->offset);
-          value= (guint32)((guint64)(*entry >> 32));
-          assign_array[2]= g_htonl(value);
           value= *entry & 0xFFFFFFFF;
+          assign_array[2]= g_htonl(value);
+          value= (guint32)((guint64)(*entry >> 32));
           loc_key_value_array_len++;
           data_type= IC_CL_INT64_TYPE;
           break;
@@ -9076,7 +9096,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
       assign_array[0]= g_htonl(key);
       assign_array[1]= g_htonl(value);
       DEBUG_PRINT(CONFIG_LEVEL,
-                  ("sectid = %u, data_type = %x, config_id = %u, value = %x",
+                  ("sectid = %u, data_type = %u, config_id = %u, value = %u",
                    sect_id, data_type, config_id, value));
       loc_key_value_array_len+= 2;
     }

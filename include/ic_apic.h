@@ -237,11 +237,12 @@ typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 struct ic_data_server_config
 {
   /* Common for all nodes */
+  /* Mandatory bits is first in all node types and also in comm type */
+  guint64 mandatory_bits;
   gchar *hostname;
   gchar *node_data_path;
   gchar *node_name;
   gchar *pcntrl_hostname;
-  guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
   guint32 network_buffer_size;
@@ -354,11 +355,11 @@ typedef struct ic_data_server_config IC_DATA_SERVER_CONFIG;
 struct ic_client_config
 {
   /* Common part */
+  guint64 mandatory_bits;
   gchar *hostname;
   gchar *node_data_path;
   gchar *node_name;
   gchar *pcntrl_hostname;
-  guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
   guint32 network_buffer_size;
@@ -383,11 +384,11 @@ struct ic_cluster_server_config
      above to ensure offset of variables with same name are the same.
   */
   /* Common part */
+  guint64 mandatory_bits;
   gchar *hostname;
   gchar *node_data_path;
   gchar *node_name;
   gchar *pcntrl_hostname;
-  guint64 mandatory_bits;
   guint32 node_id;
   guint32 port_number;
   guint32 network_buffer_size;
@@ -438,10 +439,10 @@ typedef struct ic_restore_config IC_RESTORE_CONFIG;
 
 struct ic_socket_link_config
 {
+  guint64 mandatory_bits;
+
   gchar *first_hostname;
   gchar *second_hostname;
-
-  guint64 mandatory_bits;
 
   guint32 socket_write_buffer_size;
   guint32 socket_read_buffer_size;
@@ -469,18 +470,16 @@ typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;
 
 struct ic_sci_comm_link_config
 {
+  guint64 mandatory_bits;
   gchar *first_hostname;
   gchar *second_hostname;
-
-  guint64 mandatory_bits;
 };
 
 struct ic_shm_comm_link_config
 {
+  guint64 mandatory_bits;
   gchar *first_hostname;
   gchar *second_hostname;
-
-  guint64 mandatory_bits;
 };
 
 struct ic_comm_link_config
