@@ -51,6 +51,10 @@ check_binaries()
     FAULTY_PROCESS="uname"
     return $ret
   fi
+  if test -x $SED ; then
+    FAULTY_PROCESS="sed"
+    return $ret
+  fi
   ret=0
   return $ret
 }
@@ -64,7 +68,7 @@ check_process_alive()
   else
     LINES=`$PS -p $SEARCHED_PID -o command | \
            $GREP $SEARCHED_PROCESS | \
-           $WC -l`
+           $WC -l | $SED -e 's/ //g'`
   fi
   if test "x$LINES" = "x0" ; then
     EXIT_CODE=0
@@ -88,11 +92,13 @@ set_binaries()
     GREP="/bin/grep"
     WC="/usr/bin/wc"
     UNAME="/bin/uname"
+    SED="/bin/sed"
   else
     PS=`$WHICH ps`
     GREP=`$WHICH grep`
     WC=`$WHICH wc`
     UNAME=`$WHICH uname`
+    SED=`$WHICH sed`
   fi
   if test "x$PS" = "x" ; then
     PS="/bin/ps"
@@ -106,6 +112,9 @@ set_binaries()
   if test "x$UNAME" = "x" ; then
     UNAME="/bin/uname"
   fi
+  if test "x$SED" = "x" ; then
+    SED="/bin/sed"
+  fi
 }
 
 WHICH=
@@ -113,6 +122,7 @@ PS=
 GREP=
 WC=
 UNAME=
+SED=
 LINES=
 SEARCHED_PID=
 SEARCHED_PROCESS=

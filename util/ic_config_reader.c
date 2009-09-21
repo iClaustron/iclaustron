@@ -160,8 +160,8 @@ ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len)
   return 0;
 }
 
-static
-guint32 read_cr_line(gchar *iter_data)
+static guint32
+read_cr_line(gchar *iter_data)
 {
   gsize len= 1;
   do
@@ -176,8 +176,8 @@ guint32 read_cr_line(gchar *iter_data)
   return 0;
 }
 
-static
-gchar *conv_group_id(gchar *group_id, guint32 len)
+static gchar*
+conv_group_id(gchar *group_id, guint32 len)
 {
   guint32 iter_len= 0;
   gchar *save_group_id= group_id;
@@ -405,7 +405,9 @@ int ic_build_config_data(IC_STRING *conf_data,
       line_number++;
     }
   }
-  if ((error= ic_conf_op->ic_config_verify(ic_config)))
+  if ((error= ic_conf_op->ic_config_verify(ic_config,
+                                           line_number - 1,
+                                           pass - 1)))
     goto config_error;
   return 0;
 config_error:

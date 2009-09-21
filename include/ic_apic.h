@@ -294,7 +294,7 @@ struct ic_data_server_config
   guint32 number_of_local_operation_objects;
   guint32 number_of_local_scan_objects;
   guint32 size_of_scan_batch;
-  guint32 redo_log_memory;
+  guint32 redo_log_buffer_memory;
   guint32 long_message_memory;
   guint32 data_server_max_open_files;
   guint32 size_of_string_memory;

@@ -62,7 +62,9 @@ struct ic_config_operations
                         guint32 line_number,
                         IC_STRING *comment,
                         guint32 pass);
-  int (*ic_config_verify)(void *ic_config);
+  int (*ic_config_verify)(void *ic_config,
+                          guint32 line_number,
+                          guint32 pass);
   void (*ic_init_end)(void *ic_config);
   void (*ic_config_end)(void *ic_config);
 };

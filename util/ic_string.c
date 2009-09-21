@@ -123,12 +123,14 @@ set_default_dir(const gchar *default_dir, IC_STRING *dir,
       for data dir).
     */
     const gchar *user_name= g_get_user_name();
+#ifndef WINDOWS
     if (strcmp(user_name, "root") == 0)
     {
-#ifdef WINDOWS
-      if (ic_add_dup_string(dir, "\\var\\lib\\"))
-#else
       if (ic_add_dup_string(dir, "/var/lib/"))
+#else
+    if (strcmp(user_name, "root") == 0)
+    {
+      if (ic_add_dup_string(dir, "C:\\Program Files\\lib\\"))
 #endif
         goto end;
     }
