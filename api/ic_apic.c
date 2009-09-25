@@ -5461,10 +5461,10 @@ write_grid_config_file(IC_STRING *config_dir,
     clu_info= *clu_infos;
     clu_infos++;
   /* Write [cluster]<CR> into the buffer */
-  if ((error= write_new_section_header(dyn_array, da_ops, buf,
+    if ((error= write_new_section_header(dyn_array, da_ops, buf,
                                        cluster_str, first_call)))
-    goto error;
-  first_call= FALSE;
+      goto error;
+    first_call= FALSE;
   /* Write cluster_name: __name__<CR> into the buffer */
     if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_name_str,
                                         (guint32)strlen(cluster_name_str)))
@@ -5489,7 +5489,7 @@ write_grid_config_file(IC_STRING *config_dir,
     buf[1]= ' ';
     if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
       goto error;
-    
+  
     if (!ic_guint64_str((guint64)clu_info->cluster_id, buf, NULL))
       goto error;
     if (da_ops->ic_insert_dynamic_array(dyn_array, buf, strlen(buf)))

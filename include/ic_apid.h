@@ -68,7 +68,9 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
   The hidden header file contains parts of the interface which are
   public but which should not be used by API user. They are public
   for performance reasons and should not be trusted as being stable
-  between releases.
+  between releases. They provide the ability to use inlined methods
+  to improve performance whereas all the other methods use function
+  pointers which have a performance impact if called many times.
 
   The data types header file contains a number of data types definition
   which are public and will remain stable except possibly for additional
@@ -77,6 +79,114 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
 #include <ic_apid_datatypes.h>
 #include <ic_apid_hidden.h>
 
+/*
+  The iClaustron Data API have a number of basic concepts:
+  1) Table objects
+    This is the meta data definition of a table and its fields. A table
+    object can also be an index object. An index can either be a unique
+    key, or an ordered index. All tables have a primary key. The unique
+    keys are global indexes that are partitioned on the unique key
+    rather than the primary key.
+
+  2) Transaction object
+    This object is used by all queries, before a transaction object can be
+    used it has to be "started", starting a transaction object means to
+    allocate from a pool of objects connected to the NDB kernel nodes.
+    It is possible to define multi-threaded transactions. This means that
+    several connection objects can work in parallel on defining and
+    executing a transaction. It is however required to have some
+    interaction among the threads to ensure communication towards the
+    NDB kernel is still according to the NDB Protocol.
+
+  3) Connection object
+    A connection object represents usually a thread, the normal manner to
+    use the API is to define one connection object per API. Thus it is
+    not allowed to use the same object in many threads simultaneously
+    unless protected by mutexes. Queries are defined on the connection
+    object using an operation object, a transaction object and a table
+    object.
+  4) Operation object
+    An operation object represents the actual query and contains the fields
+    to read/write, the key to use, ranges for index scans and a possible
+    condition of the query. Only primary key access, unique key access
+    and table scans and index scans are currently supported.
+
+  There are two variants of how to define Data API operation objects.
+  The first variant is to define a predefined API operation object that
+  contains all fields in the table. In this case one uses a bitmap to
+  define which fields to actually use in executing a certain query.
+
+  The other variant is to define a subset of the fields of a table. In
+  this case one must use all fields all the time, no bitmap will be
+  used in this case.
+
+  The first variant is a good variant to use in an environment with
+  generic queries being executed, thus an operation object can be
+  easily reused by use of the bitmap. The other variant is more
+  efficient in applications with predefined queries that are reused
+  again and again such as the iClaustron File Server.
+
+  The set-up of a API operation objects is a mapping from fields to
+  a buffer and a null buffer. This mapping is used for both reads
+  and writes. For reads the result will be read into the buffer using
+  the buffer pointers and offset. For writes the updates will be done
+  by reading the data from the buffer. The mapping of primary and
+  unique key fields are also predefined. Thus field mappings for read,
+  write and key operations are predefined at definition of the operation
+  object and only needs to be changed at definition of the operation
+  object.
+
+  There are many other parts of the operation object that requires
+  definition for each query. However none of these are absolutely
+  required to define any query in the API.
+
+  The dynamic parts are:
+  1) Definition of ranges for scan operations
+  2) Definition of WHERE clause for any operation type
+     A WHERE clause is defined by a number of individual conditions,
+     then it is possible to bind together two conditions using
+     AND, OR and XOR.
+
+   Before an operation can be used in a query it also has to be mapped
+   towards the following objects.
+   1) Transaction object
+   2) Data API Connection object
+
+   Finally an operation type has to be defined for the operation object
+   before the query is ready to be executed.
+
+   The user has full control over when a query is actually sent to the
+   NDB kernel. A query needs to be defined first by using an API operation
+   object. Such prepare calls are ic_read_key_access, ic_write_key_access
+   and ic_scan_access. In this call the mapping to objects is performed
+   and the operation type is provided. The dynamic fields, ranges and
+   conditions have to be defined on the API operation object before this
+   call is made. However for simple queries no such preparatory calls are
+   needed.
+
+   When the application wants to send the queries it can use two methods,
+   ic_send and ic_flush. ic_send only sends and then the thread is free
+   to define new queries or work on any other thing. However the objects
+   which have been sent and buffers used by the queries must not be
+   touched by the application until the query has been returned. ic_flush
+   will start waiting for queries to complete immediately after sending the
+   queries. When using ic_send one can use ic_poll to start waiting
+   without sending first.
+
+   The default manner of using the API is to have send and receive done
+   separately to ensure that maximum possible parallelism and performance
+   can be achieved. However there is also some simplifications available
+   whereby the API user can make queries synchronous such that immediately
+   after returning the data is available.
+
+   The asynchronous method requires that the API user defines a callback
+   method which is called when the query is completed or have been
+   found in error. The synchronous method uses callback method inside the
+   API to give the user a perception of a RPC interface instead. This method
+   is much easier to program but also a lot less performant. Improvements of
+   up to 5x have been recorded in using the asynchronous method compared to
+   the synchronous method.
+*/
 struct ic_metadata_bind_ops
 {
   int (*ic_table_bind) (IC_TABLE_DEF *table_def,
