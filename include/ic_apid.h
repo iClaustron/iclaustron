@@ -52,7 +52,7 @@ typedef enum ic_error_category IC_ERROR_CATEGORY;
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_where_condition IC_WHERE_CONDITION;
 
-typedef int (*IC_RUN_APID_THREAD_FUNC)(IC_APID_GLOBAL*, IC_THREAD_STATE*);
+typedef int (*IC_RUN_APID_THREAD_FUNC)(IC_APID_CONNECTION*, IC_THREAD_STATE*);
 /*
   Names of operation objects returned from ic_get_next_executed_operation.
   The information from these objects should be retrieved using the inline

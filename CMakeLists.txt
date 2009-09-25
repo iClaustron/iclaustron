@@ -395,7 +395,7 @@ add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API and Data Server API
-add_library(ic_api STATIC api/ic_apic.c api/ic_apid.c
+add_library(ic_api STATIC api/ic_apic.c api/ic_apid.c api/ic_apid_define.c
             api/ic_apic_int.h api/ic_apid_int.h)
 target_link_libraries(ic_api ic_port ic_util comm)
 
@@ -405,7 +405,7 @@ target_link_libraries(ic_api ic_port ic_util comm)
 #        ARCHIVE DESTINATION lib/iClaustron)
 
 #Build test binary
-add_executable(test_comm test/test_comm.c)
+add_executable(test_comm test/test_comm.c test/test_api_basic.c)
 target_link_libraries(test_comm ic_port ic_util ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS test_comm DESTINATION bin)

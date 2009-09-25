@@ -91,6 +91,34 @@ struct ic_apid_operation
   IC_APID_OPERATION_TYPE op_type;
   IC_APID_CONNECTION *apid_conn;
   IC_TRANSACTION *trans_obj;
+  IC_TABLE_DEF *table_def;
+  IC_WHERE_CONDITION *where_cond;
+  union
+  {
+    /* range_cond used by scans, key_fields used by key operations */
+    IC_RANGE_CONDITION *range_cond;
+    IC_KEY_FIELD_BIND *key_fields;
+  };
+  union
+  {
+    /*
+      read_fields used by scans and read key operations and
+      write_fields used by write key operations
+    */
+    IC_READ_FIELD_BIND *read_fields;
+    IC_WRITE_FIELD_BIND *write_fields;
+  };
+  union
+  {
+    /*
+      read_key_op used by read key operations
+      write_key_op used by write key operations
+      scan_op used by scan operations.
+    */
+    IC_READ_KEY_OP read_key_op;
+    IC_WRITE_KEY_OP write_key_op;
+    IC_SCAN_OP scan_op;
+  };
   IC_APID_ERROR *error;
   void *user_reference;
   IC_APID_OPERATION *next_trans_op;
@@ -100,17 +128,9 @@ struct ic_apid_operation
   IC_APID_OPERATION_LIST_TYPE list_type;
 };
 
-struct ic_record_operation
-{
-  IC_APID_OPERATION op;
-  IC_TABLE_DEF *table_def;
-  IC_WHERE_CONDITION *where_cond;
-};
-
 struct ic_key_operation
 {
-  IC_RECORD_OPERATION rec_op;
-  IC_KEY_FIELD_BIND *key_fields;
+  IC_APID_OPERATION rec_op;
 };
 
 /*
@@ -121,7 +141,6 @@ struct ic_read_key_operation
 {
   IC_KEY_OPERATION apid_op;
   IC_READ_FIELD_BIND *read_fields;
-  IC_READ_KEY_OP read_key_op;
 };
 
 /*
@@ -131,8 +150,6 @@ struct ic_read_key_operation
 struct ic_write_key_operation
 {
   IC_KEY_OPERATION apid_op;
-  IC_WRITE_FIELD_BIND *write_fields;
-  IC_WRITE_KEY_OP write_key_op;
 };
 
 /*
@@ -142,9 +159,8 @@ struct ic_write_key_operation
 */
 struct ic_scan_operation
 {
-  IC_RECORD_OPERATION apid_op;
+  IC_APID_OPERATION apid_op;
   IC_READ_FIELD_BIND *read_fields;
-  IC_RANGE_CONDITION *range_cond;
   IC_SCAN_OP scan_op;
 };
 

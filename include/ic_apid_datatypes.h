@@ -101,7 +101,7 @@ struct ic_read_field_bind
 struct ic_write_field_bind
 {
   /* Number of fields in bit_array and field_defs array */
-  guint32 no_fields;
+  guint32 num_fields;
   /*
     For writes the user needs to supply a buffer, data is referenced
     offset from the buffer pointer. The user needs to supply both a
@@ -127,7 +127,7 @@ struct ic_write_field_bind
 struct ic_key_field_bind
 {
   /* Number of fields in bit_array and field_defs array */
-  guint32 no_fields;
+  guint32 num_fields;
   /*
     For writes the user needs to supply a buffer, data is referenced
     offset from the buffer pointer. The user needs to supply both a

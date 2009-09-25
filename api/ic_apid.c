@@ -5287,7 +5287,7 @@ run_server_thread(gpointer data)
      file system transactions to keep our local cache consistent with the
      global NDB file system
   */
-  ret_code= apid_func(apid_global, thread_state);
+  ret_code= apid_func(apid_conn, thread_state);
   if (ret_code)
     ic_print_error(ret_code);
 error:

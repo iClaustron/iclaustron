@@ -25,16 +25,11 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
-static const gchar *glob_process_name= "ic_fsd";
+static const gchar *glob_process_name= "test_api_basic";
 
-/*
-   We now have a local Data API connection and we are ready to issue
-   file system transactions to keep our local cache consistent with the
-   global NDB file system.
-*/
 static int
-run_file_server_thread(IC_APID_CONNECTION *apid_conn,
-                       IC_THREAD_STATE *thread_state)
+run_api_thread(IC_APID_CONNECTION *apid_conn,
+               IC_THREAD_STATE *thread_state)
 {
   IC_APID_GLOBAL *apid_global;
 
@@ -54,18 +49,24 @@ int main(int argc, char *argv[])
 
   if ((ret_code= ic_start_program(argc, argv, ic_apid_entries, NULL,
                                   glob_process_name,
-            "- iClaustron File Server", TRUE)))
+            "- iClaustron API Basic Test", TRUE)))
     goto end;
   if ((ret_code= ic_start_apid_program(&tp_state,
                                        &err_str,
                                        error_str,
                                        &apid_global,
                                        &apic,
-                                       ic_glob_daemonize)))
+                                       FALSE)))
     goto end;
+  /*
+    ic_run_apid_program will start glob_num_threads and in each thread it will
+    create an IC_APID_CONNECTION object and deliver it to the run_api_thread
+    method. The method won't return until all threads have stopped. All the
+    actions in the program is happening in the threads.
+  */
   ret_code= ic_run_apid_program(apid_global,
                                 tp_state,
-                                run_file_server_thread,
+                                run_api_thread,
                                 &err_str);
 end:
   ic_stop_apid_program(ret_code, err_str, apid_global, apic);

@@ -18,7 +18,7 @@
 
 lib_LTLIBRARIES = libic_api.la
 
-libic_api_la_SOURCES = ic_apic.c ic_apid.c
+libic_api_la_SOURCES = ic_apic.c ic_apid.c ic_apid_define.c
 
 libic_api_la_LIBADD = $(LDADD) \
 				../port/libic_port.la \

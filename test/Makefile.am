@@ -17,7 +17,7 @@
 ## This directory is used to build the iClaustron Test Programs
 ##
 
-bin_PROGRAMS = test_comm test_unit
+bin_PROGRAMS = test_comm test_unit test_api_basic
 
 test_comm_SOURCES = test_comm.c
 test_comm_LDADD = $(LDADD) \
@@ -28,6 +28,13 @@ test_comm_LDADD = $(LDADD) \
 
 test_unit_SOURCES = test_unit.c
 test_unit_LDADD = $(LDADD) \
+			../comm/libic_comm.la \
+			../port/libic_port.la \
+			../util/libic_util.la \
+			../api/libic_api.la
+
+test_api_basic_SOURCES = test_api_basic.c
+test_api_basic_LDADD = $(LDADD) \
 			../comm/libic_comm.la \
 			../port/libic_port.la \
 			../util/libic_util.la \
