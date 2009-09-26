@@ -25,13 +25,13 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
-static const gchar *glob_process_name= "ic_fsd";
+static const gchar *glob_process_name= "ic_repd";
 
 static int
-run_replication_server_thread(IC_APID_GLOBAL *apid_global,
+run_replication_server_thread(IC_APID_CONNECTION *apid_conn,
                               IC_THREAD_STATE *thread_state)
 {
-  (void)apid_global;
+  (void)apid_conn;
   (void)thread_state;
   return 0;
 }

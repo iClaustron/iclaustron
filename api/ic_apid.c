@@ -718,8 +718,8 @@ IC_APID_OPERATION*
 get_next_executed_operation(IC_APID_CONNECTION *ext_apid_conn)
 {
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
-  IC_APID_OPERATION *ret_op= apid_conn->first_executed_operation;
-  IC_APID_OPERATION *first_completed_op= apid_conn->first_completed_operation;
+  IC_INT_APID_OPERATION *ret_op= apid_conn->first_executed_operation;
+  IC_INT_APID_OPERATION *first_completed_op= apid_conn->first_completed_operation;
 
   if (ret_op == NULL)
     return NULL;
@@ -728,7 +728,7 @@ get_next_executed_operation(IC_APID_CONNECTION *ext_apid_conn)
   apid_conn->first_completed_operation= ret_op;
   ret_op->next_conn_op= first_completed_op;
   ret_op->list_type= IN_COMPLETED_LIST;
-  return ret_op;
+  return (IC_APID_OPERATION*)ret_op;
 }
 
 static void
@@ -3134,7 +3134,7 @@ typedef struct ic_exec_message_func IC_EXEC_MESSAGE_FUNC;
 static IC_EXEC_MESSAGE_FUNC ic_exec_message_func_array[2][1024];
 
 static int
-handle_key_ai(__attribute__ ((unused)) IC_APID_OPERATION *apid_op,
+handle_key_ai(__attribute__ ((unused)) IC_INT_APID_OPERATION *apid_op,
               __attribute__ ((unused)) IC_TRANSACTION *trans,
               __attribute__ ((unused)) guint32 *ai_data,
               __attribute__ ((unused)) guint32 data_size,
@@ -3144,7 +3144,7 @@ handle_key_ai(__attribute__ ((unused)) IC_APID_OPERATION *apid_op,
 }
 
 static int
-handle_scan_ai(__attribute__ ((unused)) IC_APID_OPERATION *apid_op,
+handle_scan_ai(__attribute__ ((unused)) IC_INT_APID_OPERATION *apid_op,
                __attribute__ ((unused)) IC_TRANSACTION *trans,
                __attribute__ ((unused)) guint32 *ai_data,
                __attribute__ ((unused)) guint32 data_size,
@@ -3177,7 +3177,7 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   guint32 header_size= ndb_message->segment_size[0];
   guint32 *attrinfo_data;
   void *connection_obj;
-  IC_APID_OPERATION *apid_op;
+  IC_INT_APID_OPERATION *apid_op;
   IC_TRANSACTION *trans_op;
   IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
   guint32 data_size;
@@ -3191,7 +3191,7 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   { 
     return 1;
   }
-  apid_op= (IC_APID_OPERATION*)connection_obj;
+  apid_op= (IC_INT_APID_OPERATION*)connection_obj;
   if (ndb_message->num_segments == 1)
   {
     attrinfo_data= ndb_message->segment_ptr[1];

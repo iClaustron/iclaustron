@@ -20,10 +20,10 @@ typedef struct ic_write_key_operation IC_WRITE_KEY_OPERATION;
 typedef struct ic_scan_operation IC_SCAN_OPERATION;
 typedef struct ic_record_operation IC_RECORD_OPERATION;
 typedef struct ic_key_operation IC_KEY_OPERATION;
-typedef struct ic_apid_operation IC_COMMIT_OPERATION;
-typedef struct ic_apid_operation IC_ROLLBACK_OPERATION;
+typedef struct ic_int_apid_operation IC_INT_APID_OPERATION;
 typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
 typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
+typedef struct ic_int_table_def IC_INT_TABLE_DEF;
 
 /*
   This is part of the external interface for efficiency reasons.
@@ -48,7 +48,7 @@ struct ic_message_error_object
   int error_severity;
 };
 
-struct ic_table_def
+struct ic_int_table_def
 {
   guint32 table_id;
   guint32 index_id;
@@ -86,28 +86,23 @@ enum ic_apid_operation_list_type
   IN_COMPLETED_LIST = 4
 };
 
-struct ic_apid_operation
+struct ic_int_apid_operation
 {
-  IC_APID_OPERATION_TYPE op_type;
+  IC_APID_OPERATION_OPS apid_op_ops;
   IC_APID_CONNECTION *apid_conn;
   IC_TRANSACTION *trans_obj;
   IC_TABLE_DEF *table_def;
+
   IC_WHERE_CONDITION *where_cond;
-  union
-  {
-    /* range_cond used by scans, key_fields used by key operations */
-    IC_RANGE_CONDITION *range_cond;
-    IC_KEY_FIELD_BIND *key_fields;
-  };
-  union
-  {
-    /*
-      read_fields used by scans and read key operations and
-      write_fields used by write key operations
-    */
-    IC_READ_FIELD_BIND *read_fields;
-    IC_WRITE_FIELD_BIND *write_fields;
-  };
+  IC_RANGE_CONDITION *range_cond;
+  IC_KEY_FIELD_BIND *key_fields;
+  /*
+    read_fields used by scans and read key operations and
+    write_fields used by write key operations
+  */
+  IC_READ_FIELD_BIND *read_fields;
+  IC_WRITE_FIELD_BIND *write_fields;
+  IC_APID_OPERATION_TYPE op_type;
   union
   {
     /*
@@ -119,70 +114,30 @@ struct ic_apid_operation
     IC_WRITE_KEY_OP write_key_op;
     IC_SCAN_OP scan_op;
   };
+  IC_APID_OPERATION_LIST_TYPE list_type;
   IC_APID_ERROR *error;
   void *user_reference;
-  IC_APID_OPERATION *next_trans_op;
-  IC_APID_OPERATION *prev_trans_op;
-  IC_APID_OPERATION *next_conn_op;
-  IC_APID_OPERATION *prev_conn_op;
-  IC_APID_OPERATION_LIST_TYPE list_type;
+  IC_INT_APID_OPERATION *next_trans_op;
+  IC_INT_APID_OPERATION *prev_trans_op;
+  IC_INT_APID_OPERATION *next_conn_op;
+  IC_INT_APID_OPERATION *prev_conn_op;
 };
 
-struct ic_key_operation
-{
-  IC_APID_OPERATION rec_op;
-};
 
 /*
   Read key operations have a definition of fields read, a definition of the
   key fields and finally a definition of the type of read operation.
-*/
-struct ic_read_key_operation
-{
-  IC_KEY_OPERATION apid_op;
-  IC_READ_FIELD_BIND *read_fields;
-};
 
-/*
   Write key operations have a definition of fields written, a definition of
   the key fields and finally a definition of the write operation type.
-*/
-struct ic_write_key_operation
-{
-  IC_KEY_OPERATION apid_op;
-};
 
-/*
   Scan operations also have a definition of fields read, it has a range
   condition in the cases when there is a scan of an index (will be NULL
   for scan table operation). There is also a generic where condition.
-*/
-struct ic_scan_operation
-{
-  IC_APID_OPERATION apid_op;
-  IC_READ_FIELD_BIND *read_fields;
-  IC_SCAN_OP scan_op;
-};
-
-/*
-  Commit and rollback operations don't need any extra information outside of
-  IC_APID_OPERATION object. Thus we define IC_COMMIT_OPERATION to be of
-  type struct ic_apid_operation and the same for IC_ABORT_OPERATION.
 */
 
 /*
   Create/Rollback savepoint operation requires a note about savepoint id
   in addition to the fields in the IC_APID_OPERATION object.
 */
-struct ic_create_savepoint_operation
-{
-  IC_APID_OPERATION apid_op;
-  IC_SAVEPOINT_ID savepoint_id;
-};
-
-struct ic_rollback_savepoint_operation
-{
-  IC_APID_OPERATION apid_op;
-  IC_SAVEPOINT_ID savepoint_id;
-};
 #endif

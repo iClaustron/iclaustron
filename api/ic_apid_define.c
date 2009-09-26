@@ -13,6 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+/*
 static int
 define_key_field_bind(IC_TABLE_DEF *table_def,
                       guint32 num_fields,
@@ -91,4 +92,4 @@ ic_create_apid_operation(IC_TABLE_DEF *table_def,
   (void)table_def;
   
 }
-                         
+*/                        

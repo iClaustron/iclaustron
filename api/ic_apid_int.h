@@ -185,14 +185,14 @@ struct ic_int_apid_connection
     the last list which is the completed operations. This is also a singly
     linked list.
   */
-  IC_APID_OPERATION *first_defined_operation;
-  IC_APID_OPERATION *last_defined_operation;
-  IC_APID_OPERATION *first_executing_list;
-  IC_APID_OPERATION *last_executing_list;
-  IC_APID_OPERATION *first_completed_operation;
-  IC_APID_OPERATION *last_completed_operation;
-  IC_APID_OPERATION *first_executed_operation;
-  IC_APID_OPERATION *last_executed_operation;
+  IC_INT_APID_OPERATION *first_defined_operation;
+  IC_INT_APID_OPERATION *last_defined_operation;
+  IC_INT_APID_OPERATION *first_executing_list;
+  IC_INT_APID_OPERATION *last_executing_list;
+  IC_INT_APID_OPERATION *first_completed_operation;
+  IC_INT_APID_OPERATION *last_completed_operation;
+  IC_INT_APID_OPERATION *first_executed_operation;
+  IC_INT_APID_OPERATION *last_executed_operation;
 };
 
 struct ic_listen_server_thread

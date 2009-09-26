@@ -51,8 +51,17 @@ typedef enum ic_error_severity_level IC_ERROR_SEVERITY_LEVEL;
 typedef enum ic_error_category IC_ERROR_CATEGORY;
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_where_condition IC_WHERE_CONDITION;
+typedef enum ic_range_type IC_RANGE_TYPE;
+typedef enum ic_comparator_type IC_COMPARATOR_TYPE;
+typedef enum ic_boolean_type IC_BOOLEAN_TYPE;
+typedef struct ic_apid_operation_ops IC_APID_OPERATION_OPS;
+typedef struct ic_table_def_ops IC_TABLE_DEF_OPS;
+typedef enum ic_field_data_type IC_FIELD_DATA_TYPE;
+
+#define IC_NO_FIELD_ID 0xFFFFFFF0
 
 typedef int (*IC_RUN_APID_THREAD_FUNC)(IC_APID_CONNECTION*, IC_THREAD_STATE*);
+typedef int (*IC_APID_CALLBACK_FUNC) (IC_APID_CONNECTION*, void* user_data);
 /*
   Names of operation objects returned from ic_get_next_executed_operation.
   The information from these objects should be retrieved using the inline
@@ -63,21 +72,6 @@ typedef int (*IC_RUN_APID_THREAD_FUNC)(IC_APID_CONNECTION*, IC_THREAD_STATE*);
 typedef struct ic_apid_operation IC_APID_OPERATION;
 typedef struct ic_create_savepoint_operation IC_CREATE_SAVEPOINT_OPERATION;
 typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
-
-/*
-  The hidden header file contains parts of the interface which are
-  public but which should not be used by API user. They are public
-  for performance reasons and should not be trusted as being stable
-  between releases. They provide the ability to use inlined methods
-  to improve performance whereas all the other methods use function
-  pointers which have a performance impact if called many times.
-
-  The data types header file contains a number of data types definition
-  which are public and will remain stable except possibly for additional
-  entries in the enum's and struct's at the end.
-*/
-#include <ic_apid_datatypes.h>
-#include <ic_apid_hidden.h>
 
 /*
   The iClaustron Data API have a number of basic concepts:
@@ -105,6 +99,7 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
     unless protected by mutexes. Queries are defined on the connection
     object using an operation object, a transaction object and a table
     object.
+
   4) Operation object
     An operation object represents the actual query and contains the fields
     to read/write, the key to use, ranges for index scans and a possible
@@ -126,7 +121,7 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
   efficient in applications with predefined queries that are reused
   again and again such as the iClaustron File Server.
 
-  The set-up of a API operation objects is a mapping from fields to
+  The set-up of an API operation objects is a mapping from fields to
   a buffer and a null buffer. This mapping is used for both reads
   and writes. For reads the result will be read into the buffer using
   the buffer pointers and offset. For writes the updates will be done
@@ -158,7 +153,7 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
    The user has full control over when a query is actually sent to the
    NDB kernel. A query needs to be defined first by using an API operation
    object. Such prepare calls are ic_read_key_access, ic_write_key_access
-   and ic_scan_access. In this call the mapping to objects is performed
+   and ic_scan_access. In these calls the mapping of objects is performed
    and the operation type is provided. The dynamic fields, ranges and
    conditions have to be defined on the API operation object before this
    call is made. However for simple queries no such preparatory calls are
@@ -187,16 +182,96 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
    up to 5x have been recorded in using the asynchronous method compared to
    the synchronous method.
 */
+struct ic_table_def_ops
+{
+  int (*ic_get_table_id) (IC_TABLE_DEF *table_def);
+  int (*ic_get_field_id) (IC_TABLE_DEF *table_def,
+                          const gchar *field_name,
+                          guint32* field_id);
+  int (*ic_get_field_type) (IC_TABLE_DEF *table_def,
+                            guint32 field_id,
+                            IC_FIELD_DATA_TYPE *field_data_type);
+  int (*ic_get_field_len) (IC_TABLE_DEF *table_def,
+                           guint32 field_id,
+                           guint32 *field_len);
+};
+
 struct ic_metadata_bind_ops
 {
-  int (*ic_table_bind) (IC_TABLE_DEF *table_def,
+  int (*ic_table_bind) (IC_TABLE_DEF **table_def,
                         const gchar *table_name);
-  int (*ic_index_bind) (IC_TABLE_DEF *table_def,
+  int (*ic_index_bind) (IC_TABLE_DEF **table_def,
                         const gchar *index_name,
                         const gchar *table_name);
-  int (*ic_field_bind) (guint32 table_id,
-                        guint32* field_id,
-                        const gchar *field_name);
+};
+
+struct ic_table_def
+{
+  IC_TABLE_DEF_OPS table_def_ops;
+};
+
+struct ic_apid_operation_ops
+{
+  /*
+    To define a range we call ic_define_range_part once for each field in the
+    index. We need to define them in order from first index field. Thus
+    field_id is mostly used to assert that the user knows the API. All parts
+    except the last part must be an equality range.
+
+    As an example if we have an index on a,b and c. We can define a range
+    based on the condition a = 1 AND b < 1. In this case the start part is
+    a = 1 and the end part is a = 1, b = 1, with the range type on the
+    a field equal to IC_RANGE_EQ and the range type on the b field equal
+    to IC_RANGE_LT. To indicate that the b field is not involved in the
+    start part we set start_ptr to NULL, in this case start_len is undefined.
+    NULL values can only be involved in a range as equality ranges. Such a
+    condition is defined by setting start_ptr and end_ptr to NULL and in
+    this case also range_type must be IC_RANGE_EQ, the value of start_len
+    and end_len is undefined.
+
+    Ranges are defined as part of the definition of the APID operation object
+    and the range will be removed from the APID operation object immediately
+    after completing the query. Thus ranges have to be defined for each
+    individual query it's used in. It is possible to avoid this pattern by
+    specifically calling ic_keep_ranges. The default is to use only one range
+    and in this case no other calls are needed. It is also possible to define
+    a scan over multiple ranges, in this case one needs to call ic_multi_range
+    before defining the individual ranges. This call defines the number of
+    ranges to be used. If this call isn't used the first call to
+    ic_define_range_part will be interpreted also as a call to
+    ic_multi_range with number of ranges equal to 0. The first range id
+    is 0. The ranges should be defined in the order of increasing range ids.
+  */
+  int (*ic_multi_range) (IC_APID_OPERATION *apid_op,
+                         guint32 num_ranges);
+  int (*ic_define_range_part) (IC_APID_OPERATION *apid_op,
+                               guint32 range_id,
+                               guint32 field_id,
+                               gchar *start_ptr,
+                               guint32 start_len,
+                               gchar* end_ptr,
+                               guint32 end_len,
+                               IC_RANGE_TYPE range_type);
+  int (*ic_keep_ranges) (IC_APID_OPERATION *apid_op);
+  int (*ic_define_condition) (IC_APID_OPERATION *apid_op,
+                              guint32 left_field_id,
+                              gchar *left_ptr,
+                              guint32 left_len,
+                              /* IC_NO_FIELD_ID => constant */
+                              guint32 right_field_id,
+                              gchar *right_ptr,
+                              guint32 right_len,
+                              guint32 *condition_id,
+                              IC_COMPARATOR_TYPE comp_type);
+  int (*ic_define_boolean) (IC_APID_OPERATION *apid_op,
+                            guint32 left_condition_id,
+                            guint32 right_condition_id,
+                            IC_BOOLEAN_TYPE boolean_type);
+};
+
+struct ic_apid_operation
+{
+  IC_APID_OPERATION_OPS apid_op_ops;
 };
 
 struct ic_apid_error_ops
@@ -249,6 +324,8 @@ struct ic_apid_connection_ops
                 IC_TABLE_DEF *table_def,
                 /* Type of write operation */
                 IC_WRITE_KEY_OP write_key_op,
+                /* Callback function */
+                IC_APID_CALLBACK_FUNC callback_func,
                 /* Any reference the user wants to pass to completion phase */
                 void *user_reference);
 
@@ -266,6 +343,7 @@ struct ic_apid_connection_ops
                 IC_TABLE_DEF *table_def,
                 /* Type of read operation */
                 IC_READ_KEY_OP read_key_op,
+                IC_APID_CALLBACK_FUNC callback_func,
                 void *user_reference);
   /*
     Scan table operation
@@ -282,6 +360,7 @@ struct ic_apid_connection_ops
                 IC_WHERE_CONDITION *where_cond,
                 IC_TABLE_DEF *table_def,
                 IC_SCAN_OP scan_op,
+                IC_APID_CALLBACK_FUNC callback_func,
                 void *user_reference);
 
   /*
@@ -553,5 +632,21 @@ void ic_stop_apid_program(int ret_code,
                           IC_APID_GLOBAL *apid_global,
                           IC_API_CONFIG_SERVER *apic);
 
+/*
+  The hidden header file contains parts of the interface which are
+  public but which should not be used by API user. They are public
+  for performance reasons and should not be trusted as being stable
+  between releases. They provide the ability to use inlined methods
+  to improve performance whereas all the other methods use function
+  pointers which have a performance impact if called many times.
+
+  The data types header file contains a number of data types definition
+  which are public and will remain stable except possibly for additional
+  entries in the enum's and struct's at the end.
+
+  The inline header file contains all functions that are inlined.
+*/
+#include <ic_apid_datatypes.h>
+#include <ic_apid_hidden.h>
 #include <ic_apid_inline.h>
 #endif

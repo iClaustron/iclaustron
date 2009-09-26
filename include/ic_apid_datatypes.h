@@ -30,6 +30,13 @@ enum ic_apid_operation_type
   ROLLBACK_SAVEPOINT= 6
 };
 
+enum ic_field_data_type
+{
+  IC_NDB_UINT8= 0,
+  IC_NDB_UINT16= 1,
+  IC_NDB_UINT32= 2
+};
+
 /*
   We only handle the basic types here. This means that we manage
   all integer types of various sorts, the bit type, fixed size
@@ -278,6 +285,32 @@ enum ic_scan_op
   SCAN_READ_EXCLUSIVE= 1,
   SCAN_HOLD_LOCK= 2,
   SCAN_CONSISTENT_READ= 3
+};
+
+enum ic_range_type
+{
+  IC_RANGE_EQ= 0,
+  IC_RANGE_LT= 1,
+  IC_RANGE_LE= 2,
+  IC_RANGE_GT= 3,
+  IC_RANGE_GE= 4
+};
+
+enum ic_comparator_type
+{
+  IC_COND_EQ= 0,
+  IC_COND_LT= 1,
+  IC_COND_LE= 2,
+  IC_COND_GT= 3,
+  IC_COND_GE= 4,
+  IC_COND_NE= 5
+};
+
+enum ic_boolean_type
+{
+  IC_AND= 0,
+  IC_OR= 1,
+  IC_XOR= 2
 };
 
 enum ic_instruction_type
