@@ -36,6 +36,7 @@ typedef struct ic_grid_comm IC_GRID_COMM;
 typedef struct ic_int_apid_error IC_INT_APID_ERROR;
 typedef struct ic_int_apid_connection IC_INT_APID_CONNECTION;
 typedef struct ic_int_apid_global IC_INT_APID_GLOBAL;
+typedef struct ic_int_table_def IC_INT_TABLE_DEF;
 
 struct ic_ndb_receive_state
 {
@@ -156,6 +157,11 @@ struct ic_temp_thread_connection
   IC_SOCK_BUF_PAGE *last_received_message;
   IC_SOCK_BUF_PAGE *last_long_received_message;
   guint32 num_messages_on_page;
+};
+
+struct ic_int_table_def
+{
+  IC_TABLE_DEF_OPS table_def_ops;
 };
 
 struct ic_int_apid_connection

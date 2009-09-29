@@ -20,10 +20,8 @@
 
 typedef struct ic_apid_global IC_APID_GLOBAL;
 typedef struct ic_apid_global_ops IC_APID_GLOBAL_OPS;
-typedef struct ic_read_field_def IC_READ_FIELD_DEF;
-typedef struct ic_read_field_bind IC_READ_FIELD_BIND;
-typedef struct ic_write_field_def IC_WRITE_FIELD_DEF;
-typedef struct ic_write_field_bind IC_WRITE_FIELD_BIND;
+typedef struct ic_field_def IC_FIELD_DEF;
+typedef struct ic_field_bind IC_FIELD_BIND;
 typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
 typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
 typedef enum ic_field_type IC_FIELD_TYPE;
@@ -59,6 +57,7 @@ typedef struct ic_table_def_ops IC_TABLE_DEF_OPS;
 typedef enum ic_field_data_type IC_FIELD_DATA_TYPE;
 
 #define IC_NO_FIELD_ID 0xFFFFFFF0
+#define IC_NO_NULL_OFFSET 0xFFFFFFF1
 
 typedef int (*IC_RUN_APID_THREAD_FUNC)(IC_APID_CONNECTION*, IC_THREAD_STATE*);
 typedef int (*IC_APID_CALLBACK_FUNC) (IC_APID_CONNECTION*, void* user_data);
@@ -242,6 +241,18 @@ struct ic_apid_operation_ops
     ic_multi_range with number of ranges equal to 0. The first range id
     is 0. The ranges should be defined in the order of increasing range ids.
   */
+  int (*ic_define_field) (IC_APID_OPERATION *apid_op,
+                          guint32 index,
+                          guint32 field_id,
+                          guint32 buffer_offset,
+                          guint32 null_offset,
+                          gboolean key_field,
+                          IC_FIELD_TYPE field_type);
+  int (*ic_define_pos) (IC_APID_OPERATION *apid_op,
+                        guint32 start_pos,
+                        guint32 end_pos);
+  int (*ic_define_alloc_size) (IC_APID_OPERATION *apid_op,
+                               guint32 size);
   int (*ic_multi_range) (IC_APID_OPERATION *apid_op,
                          guint32 num_ranges);
   int (*ic_define_range_part) (IC_APID_OPERATION *apid_op,
@@ -267,6 +278,8 @@ struct ic_apid_operation_ops
                             guint32 left_condition_id,
                             guint32 right_condition_id,
                             IC_BOOLEAN_TYPE boolean_type);
+  IC_APID_ERROR* (*ic_get_error_object) (IC_APID_OPERATION *apid_op);
+  void (*ic_free_apid_op) (IC_APID_OPERATION *apid_op);
 };
 
 struct ic_apid_operation

@@ -30,13 +30,6 @@ enum ic_apid_operation_type
   ROLLBACK_SAVEPOINT= 6
 };
 
-enum ic_field_data_type
-{
-  IC_NDB_UINT8= 0,
-  IC_NDB_UINT16= 1,
-  IC_NDB_UINT32= 2
-};
-
 /*
   We only handle the basic types here. This means that we manage
   all integer types of various sorts, the bit type, fixed size
@@ -70,70 +63,37 @@ enum ic_field_type
 /* For efficiency reasons the structs are part of the public API.  */
 
 /*
-  When performing a read operation we always supply a IC_READ_FIELD_BIND
-  object. This object specifies the fields we want to read.
+  When performing a read/write operation we always supply a IC_FIELD_BIND
+  object. This object specifies the fields we want to read/write.
 */
-struct ic_read_field_bind
+struct ic_field_bind
 {
   /* Number of fields in bit_array and field_defs array */
-  guint32 no_fields;
-  /* If a buffer_ptr is provided a buffer_size also is required. */
+  guint32 num_fields;
+  /* Size of buffer is required. */
   guint32 buffer_size;
-  /* User supplied buffer to use for returned results. */
-  gchar *buffer_ptr;
+  /* Number of null bits allowed in the null pointer reference */
+  guint32 num_null_bits;
   /*
-    Reference to the buffer where results are returned. If the user
-    supplied a buffer it will be the same buffer as he supplied,
-    otherwise a buffer allocated by the API. This buffer is released
-    when operation is released or transaction ended. So reference
-    to the buffer is only safe until this call to the API. If the user
-    supplied the buffer the reference to the buffer is safe until
-    calling the API to get the next record of a scan. For key reads the
-    buffer is stable until the user decides otherwise.
+    User supplied buffer to use for data to write and read results.
+    The buffer is stable until the operation is released or the
+    transaction is released, for scans until we fetch the next
+    row.
   */
-  gchar *returned_buffer_ptr;
+  gchar *buffer_ptr;
   /*
     The bit_array field makes it possible to reuse this structure for many
     different reads on the same table. We will only read those fields that
     have their bit set in the bit_array.
   */
-  guint8 *bit_array;
-  /*
-    An array of pointers to IC_READ_FIELD_DEF objects describing
-    fields to read.
-  */
-  IC_READ_FIELD_DEF **field_defs;
-};
-
-struct ic_write_field_bind
-{
-  /* Number of fields in bit_array and field_defs array */
-  guint32 num_fields;
-  /*
-    For writes the user needs to supply a buffer, data is referenced
-    offset from the buffer pointer. The user needs to supply both a
-    buffer pointer and a size of the buffer. The buffer is maintained
-    by the user of the API and won't be touched by the API other than
-    for reading its data.
-  */
-  guint32 buffer_size;
-  gchar *buffer_ptr;
-  /*
-    The bit_array field makes it possible to reuse this structure for many
-    different writes on the same table. We will only write those fields that
-    have their bit set in the bit_array.
-  */
-  guint8 *bit_array;
-  /*
-    An array of pointers to IC_WRITE_FIELD_DEF objects describing
-    fields to write.
-  */
-  IC_WRITE_FIELD_DEF **field_defs;
+  guint8 *null_ptr;
+  /* An array of pointers to IC_FIELD_DEF objects describing fields to read. */
+  IC_FIELD_DEF **field_defs;
 };
 
 struct ic_key_field_bind
 {
-  /* Number of fields in bit_array and field_defs array */
+  /* Number of fields in field_defs array */
   guint32 num_fields;
   /*
     For writes the user needs to supply a buffer, data is referenced
@@ -143,7 +103,12 @@ struct ic_key_field_bind
     for reading its data.
   */
   guint32 buffer_size;
+  /* Number of null bits allowed in the null pointer reference */
+  guint32 num_null_bits;
+  /* Pointer to the data buffer */
   gchar *buffer_ptr;
+  /* Pointer to the NULL bits */
+  guint8 *null_ptr;
   /*
     An array of pointers to IC_KEY_FIELD_DEF objects describing
     fields to use in key.
@@ -151,14 +116,44 @@ struct ic_key_field_bind
   IC_KEY_FIELD_DEF **field_defs;
 };
 
-struct ic_read_field_def
+struct ic_field_def
 {
-  /* Fields set by caller */
-  /* The field can be specified by field id.  */
+  /*
+    The fields in this struct defines a field and is used both to read and
+    write data in the Data API. The data in this struct is initialised at
+    create time, the only fields that can be changed dynamically is start_pos
+    and end_pos when we read or write a partial field.
+  */
+
+  /* The field can be specified by field id. */
   guint32 field_id;
-  /* Reference to the data within the buffer: This is set-up by caller */
+  /* Reference inside the buffer of the data we're writing */
   guint32 data_offset;
   /*
+    Which of the null bits are we using, we divide by 8 to get the null
+    byte to use and we get the 3 least significant bits to get which bit
+    in this byte to use. The null byte to use is offset from null pointer
+    reference stored in IC_FIELD_BIND object. Set to IC_NO_NULL_OFFSET
+    means no NULL offset is used.
+  */
+  guint32 null_offset;
+  /*
+    This is the field type of the data sent to the API, if there is a
+    mismatch between this type and the field type in the database
+    we will apply a conversion method to convert it to the proper
+    data type.
+  */
+  IC_FIELD_TYPE field_type;
+  /*
+    != 0 if we're writing zero's from start_pos to end_pos,
+    Thus no need to send data since we're setting everything
+    to zero's. This can be set dynamically and is ignored for
+    read operations.
+  */
+  guint32 allocate_field_size;
+  /*
+    For fixed size fields the start_pos and end_pos is ignored.
+
     For variable length it is possible to specify a starting byte position
     and an end position. The actual data read will always start at
     start_pos, the actual length read is returned in data_length. If zero
@@ -166,11 +161,6 @@ struct ic_read_field_def
 
     The start_pos and end_pos is set by caller and not changed by API.
 
-    The special case of start_pos= end_pos= 0 means that we're interested
-    in the length of the complete field. In this case the data type
-    returned is always IC_API_UINT32 and the length is returned at
-    data_offset and data_length is 4 (size of UINT32).
-    
     To read all data in a field set start_pos to 0 and end_pos at
     least as big as the maximum size of the field. However it isn't
     possible to read more than 8 kBytes per read. It is however
@@ -180,50 +170,6 @@ struct ic_read_field_def
   */
   guint32 start_pos;
   guint32 end_pos;
-
-  /* Fields set by API */
-  /* The actual length of the field, set by API */
-  guint32 data_length;
-  /* The field type, set by API */
-  IC_FIELD_TYPE field_type;
-  /* Null indicator set by API */
-  gboolean is_null;
-};
-
-struct ic_write_field_def
-{
-  /*
-    All fields in this struct is set by caller and the struct is
-    read-only in the API.
-  */
-  /* The field can be specified by field id. */
-  guint32 field_id;
-  /* Reference inside the buffer of the data we're writing */
-  guint32 data_offset;
-  /*
-    For fixed size fields the start_pos and end_pos is ignored.
-    For variable sized fields it indicates the starting position
-    to write from and the end position to write into. For normal
-    writes of the full field we set start_pos to 0 and end_pos to
-    size of the field.
-  */
-  guint32 start_pos;
-  guint32 end_pos;
-  /*
-    This is the field type of the data sent to the API, if there is a
-    mismatch between this type and the field type in the database
-    we will apply a conversion method to convert it to the proper
-    data type.
-  */
-  IC_FIELD_TYPE field_type;
-  /* TRUE if we're writing NULL to the field */
-  gboolean is_null;
-  /*
-    TRUE if we're writing zero's from start_pos to end_pos,
-    Thus no need to send data since we're setting everything
-    to zero's.
-  */
-  gboolean allocate_field_size;
 };
 
 struct ic_key_field_def
@@ -236,8 +182,8 @@ struct ic_key_field_def
   guint32 field_id;
   /* Reference inside the buffer of the data we're writing */
   guint32 data_offset;
-  /* Length of field, no BLOBs allowed here */
-  guint32 data_length;
+  /* Null bit offset and null byte offset */
+  guint32 null_offset;
   /*
     This is the field type of the data sent to the API, if there is a
     mismatch between this type and the field type in the database
@@ -246,7 +192,6 @@ struct ic_key_field_def
   */
   IC_FIELD_TYPE field_type;
 };
-
 
 enum ic_commit_state
 {

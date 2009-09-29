@@ -88,7 +88,7 @@ enum ic_apid_operation_list_type
 
 struct ic_int_apid_operation
 {
-  IC_APID_OPERATION_OPS apid_op_ops;
+  IC_APID_OPERATION_OPS *apid_op_ops;
   IC_APID_CONNECTION *apid_conn;
   IC_TRANSACTION *trans_obj;
   IC_TABLE_DEF *table_def;
@@ -96,12 +96,8 @@ struct ic_int_apid_operation
   IC_WHERE_CONDITION *where_cond;
   IC_RANGE_CONDITION *range_cond;
   IC_KEY_FIELD_BIND *key_fields;
-  /*
-    read_fields used by scans and read key operations and
-    write_fields used by write key operations
-  */
-  IC_READ_FIELD_BIND *read_fields;
-  IC_WRITE_FIELD_BIND *write_fields;
+  /* fields used by scans, read key operations and write key operations */
+  IC_FIELD_BIND *fields;
   IC_APID_OPERATION_TYPE op_type;
   union
   {
@@ -122,7 +118,6 @@ struct ic_int_apid_operation
   IC_INT_APID_OPERATION *next_conn_op;
   IC_INT_APID_OPERATION *prev_conn_op;
 };
-
 
 /*
   Read key operations have a definition of fields read, a definition of the

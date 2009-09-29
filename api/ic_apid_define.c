@@ -92,4 +92,64 @@ ic_create_apid_operation(IC_TABLE_DEF *table_def,
   (void)table_def;
   
 }
-*/                        
+*/
+
+static void
+free_apid_op(IC_APID_OPERATION *apid_op)
+{
+  if (apid_op)
+    ic_free(apid_op);
+}
+
+static IC_APID_OPERATION_OPS glob_apid_ops
+{
+  .ic_define_field            = define_field,
+  .ic_multi_range             = multi_range,
+  .ic_define_range_part       = define_range_part,
+  .ic_keep_ranges             = keep_ranges,
+  .ic_define_condition        = define_condition,
+  .ic_define_boolean          = define_boolean
+  .ic_get_error_object        = get_error_object,
+  .ic_free_apid_op            = free_apid_op
+};
+
+IC_APID_OPERATION*
+ic_create_apid_operation(IC_TABLE_DEF *table_def,
+                         guint32 num_fields,
+                         guint32 num_key_fields,
+                         gchar *buffer_ptr,
+                         guint32 buffer_size,
+                         gchar *null_ptr,
+                         guint32 num_null_bits,
+                         gboolean full_table_op)
+{
+  IC_INT_APID_OPERATION *apid_op;
+  IC_FIELD_DEF *field_def;
+  gchar *loc_alloc;
+  guint32 tot_size;
+
+  tot_size=
+    sizeof(IC_INT_APID_OPERATION) +
+    sizeof(IC_FIELD_BIND) + 
+    num_fields * (
+      sizeof(IC_FIELD_DEF*) + sizeof(IC_FIELD_DEF));
+  if ((loc_alloc= ic_calloc(tot_size)))
+    return NULL;
+  apid_op= (IC_INT_APID_OPERATION*)loc_alloc;
+  apid_op->fields= (IC_FIELD_DEF*)(loc_alloc + sizeof(IC_INT_APID_OPERATION));
+  apid_op->field_def= (IC_FIELD_DEF**)(loc_alloc + sizeof(IC_FIELD_BIND));
+  loc_alloc+= (num_fields * sizeof(IC_FIELD_DEF*));
+  for (i= 0; i < num_fields; i++)
+  {
+    apid_op->field_def[i]= (IC_FIELD_DEF*)loc_alloc;
+    loc_alloc+= sizeof(IC_FIELD_DEF);
+  }
+  apid_op->table_def= table_def;
+  apid_op->fields->num_fields= num_fields;
+  apid_op->fields->num_key_fields= num_key_fields;
+  apid_op->fields->buffer_ptr= buffer_ptr;
+  apid_op->fields->null_ptr= null_ptr;
+  apid_op->fields->num_null_bits= num_null_bits;
+  apid_op->fields->buffer_size= buffer_size;
+  return apid_op;
+}
