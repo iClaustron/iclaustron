@@ -92,21 +92,14 @@ ic_get_user_reference_from_operation(IC_APID_OPERATION *ext_apid_op)
   return apid_op->user_reference;
 }
 
-static inline IC_READ_FIELD_BIND*
-ic_get_read_field_from_operation(IC_APID_OPERATION *ext_apid_op)
+static inline IC_FIELD_BIND*
+ic_get_field_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_INT_APID_OPERATION *apid_op= (IC_INT_APID_OPERATION*)ext_apid_op;
   g_assert(apid_op->op_type == KEY_READ_OPERATION ||
+           apid_op->op_type == KEY_WRITE_OPERATION ||
            apid_op->op_type == SCAN_OPERATION);
-  return apid_op->read_fields;
-}
-
-static inline IC_WRITE_FIELD_BIND*
-ic_get_write_field_from_operation(IC_APID_OPERATION *ext_apid_op)
-{
-  IC_INT_APID_OPERATION *apid_op= (IC_INT_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == KEY_WRITE_OPERATION);
-  return apid_op->write_fields;
+  return apid_op->fields;
 }
 
 static inline IC_KEY_FIELD_BIND*

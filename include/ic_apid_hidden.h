@@ -23,7 +23,6 @@ typedef struct ic_key_operation IC_KEY_OPERATION;
 typedef struct ic_int_apid_operation IC_INT_APID_OPERATION;
 typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
 typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
-typedef struct ic_int_table_def IC_INT_TABLE_DEF;
 
 /*
   This is part of the external interface for efficiency reasons.
@@ -46,13 +45,6 @@ struct ic_message_error_object
   gchar *error_string;
   int error_category;
   int error_severity;
-};
-
-struct ic_int_table_def
-{
-  guint32 table_id;
-  guint32 index_id;
-  gboolean use_index;
 };
 
 struct ic_instruction

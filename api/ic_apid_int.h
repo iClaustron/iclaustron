@@ -162,6 +162,9 @@ struct ic_temp_thread_connection
 struct ic_int_table_def
 {
   IC_TABLE_DEF_OPS table_def_ops;
+  guint32 table_id;
+  guint32 index_id;
+  gboolean use_index;
 };
 
 struct ic_int_apid_connection

@@ -13,86 +13,147 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-/*
+#include <ic_base_header.h>
+#include <ic_err.h>
+#include <ic_debug.h>
+#include <ic_port.h>
+#include <ic_string.h>
+#include <ic_dyn_array.h>
+#include <ic_sock_buf.h>
+#include <ic_connection.h>
+#include <ic_poll_set.h>
+#include <ic_threadpool.h>
+#include <ic_apic.h>
+#include <ic_apid.h>
+#include "ic_apid_int.h"
+
 static int
-define_key_field_bind(IC_TABLE_DEF *table_def,
-                      guint32 num_fields,
-                      gchar *buffer_ptr,
-                      guint64 buffer_size,
-                      gchar *null_ptr,
-                      guint32 null_area_size)
+define_field(IC_APID_OPERATION *apid_op,
+             guint32 index,
+             guint32 field_id,
+             guint32 buffer_offset,
+             guint32 null_offset,
+             gboolean key_field,
+             IC_FIELD_TYPE field_type)
 {
+  (void)apid_op;
+  (void)index;
+  (void)field_id;
+  (void)buffer_offset;
+  (void)null_offset;
+  (void)key_field;
+  (void)field_type;
+  return 0;
 }
 
 static int
-define_read_field(IC_TABLE_DEF *table_def,
+define_pos(IC_APID_OPERATION *apid_op,
+           guint32 start_pos,
+           guint32 end_pos)
+{
+  (void)apid_op;
+  (void)start_pos;
+  (void)end_pos;
+  return 0;
+}
+
+static int
+define_alloc_size(IC_APID_OPERATION *apid_op,
+                  guint32 alloc_size)
+{
+  (void)apid_op;
+  (void)alloc_size;
+  return 0;
+}
+
+static int
+multi_range(IC_APID_OPERATION *apid_op,
+            guint32 num_ranges)
+{
+  (void)apid_op;
+  (void)num_ranges;
+  return 0;
+}
+
+static int
+define_range_part(IC_APID_OPERATION *apid_op,
+                  guint32 range_id,
                   guint32 field_id,
-                  gchar *buffer_ptr,
-                  guint32 offset,
-                  gchar *null_ptr,
-                  guint32 null_offset)
+                  gchar *start_ptr,
+                  guint32 start_len,
+                  gchar *end_ptr,
+                  guint32 end_len,
+                  IC_RANGE_TYPE range_type)
 {
+  (void)apid_op;
+  (void)range_id;
+  (void)field_id;
+  (void)start_ptr;
+  (void)start_len;
+  (void)end_ptr;
+  (void)end_len;
+  (void)range_type;
+  return 0;
 }
 
 static int
-define_read_part_field(IC_TABLE_DEF *table_def,
-                       guint32 field_id,
-                       gchar *buffer_ptr,
-                       guint32 offset,
-                       gchar *null_ptr,
-                       guint32 null_offset,
-                       guint32 start_byte,
-                       guint32 end_byte)
+keep_ranges(IC_APID_OPERATION *apid_op)
 {
+  (void)apid_op;
+  return 0;
 }
 
 static int
-define_key_field(IC_TABLE_DEF *table_def,
-                 guint32 field_id,
-                 gchar *buffer_ptr,
-                 guint32 offset,
-                 gchar *null_ptr,
-                 guint32 null_offset)
+define_condition(IC_APID_OPERATION *apid_op,
+                 guint32 left_field_id,
+                 gchar *left_ptr,
+                 guint32 left_len,
+                 guint32 right_field_id,
+                 gchar *right_ptr,
+                 guint32 right_len,
+                 guint32 *condition_id,
+                 IC_COMPARATOR_TYPE comp_type)
 {
+  (void)apid_op;
+  (void)left_field_id;
+  (void)left_ptr;
+  (void)left_len;
+  (void)right_field_id;
+  (void)right_ptr;
+  (void)right_len;
+  (void)condition_id;
+  (void)comp_type;
+  return 0;
 }
 
 static int
-define_write_field(IC_TABLE_DEF *table_def,
-                   guint32 field_id,
-                   gchar *buffer_ptr,
-                   guint32 offset,
-                   gchar *null_offset,
-                   guint32 null_offset)
+define_boolean(IC_APID_OPERATION *apid_op,
+               guint32 left_condition_id,
+               guint32 right_condition_id,
+               IC_BOOLEAN_TYPE boolean_type)
 {
+  (void)apid_op;
+  (void)left_condition_id;
+  (void)right_condition_id;
+  (void)boolean_type;
+  return 0;
 }
 
 static int
-define_write_part_field(IC_TABLE_DEF *table_def,
-                        guint32 field_id,
-                        gchar *buffer_ptr,
-                        guint32 offset,
-                        gchar *null_ptr,
-                        guint32 null_offset,
-                        guint32 start_byte,
-                        guint32 end_byte)
+set_partition_id(IC_APID_OPERATION *apid_op,
+                 guint32 partition_id)
 {
+  (void)apid_op;
+  (void)partition_id;
+  return 0;
 }
 
-static int
-ic_create_apid_operation(IC_TABLE_DEF *table_def,
-                         guint32 num_key_fields,
-                         guint32 num_read_fields,
-                         guint32 num_write_fields,
-                         gchar *buffer_ptr,
-                         guint64 buffer_size,
-                         gchar *null_ptr,
-                         guint32 null_area_size)
+static IC_APID_ERROR*
+get_error_object(IC_APID_OPERATION *apid_op)
 {
-  IC_A
-  (void)table_def;
-  
+  (void)apid_op;
+  return NULL;
 }
-*/
 
 static void
 free_apid_op(IC_APID_OPERATION *apid_op)
@@ -101,14 +162,17 @@ free_apid_op(IC_APID_OPERATION *apid_op)
     ic_free(apid_op);
 }
 
-static IC_APID_OPERATION_OPS glob_apid_ops
+static IC_APID_OPERATION_OPS glob_apid_ops =
 {
   .ic_define_field            = define_field,
+  .ic_define_pos              = define_pos,
+  .ic_define_alloc_size       = define_alloc_size,
   .ic_multi_range             = multi_range,
   .ic_define_range_part       = define_range_part,
   .ic_keep_ranges             = keep_ranges,
   .ic_define_condition        = define_condition,
-  .ic_define_boolean          = define_boolean
+  .ic_define_boolean          = define_boolean,
+  .ic_set_partition_id        = set_partition_id,
   .ic_get_error_object        = get_error_object,
   .ic_free_apid_op            = free_apid_op
 };
@@ -116,17 +180,16 @@ static IC_APID_OPERATION_OPS glob_apid_ops
 IC_APID_OPERATION*
 ic_create_apid_operation(IC_TABLE_DEF *table_def,
                          guint32 num_fields,
-                         guint32 num_key_fields,
                          gchar *buffer_ptr,
                          guint32 buffer_size,
-                         gchar *null_ptr,
+                         guint8 *null_ptr,
                          guint32 num_null_bits,
                          gboolean full_table_op)
 {
   IC_INT_APID_OPERATION *apid_op;
-  IC_FIELD_DEF *field_def;
   gchar *loc_alloc;
   guint32 tot_size;
+  guint32 i;
 
   tot_size=
     sizeof(IC_INT_APID_OPERATION) +
@@ -136,20 +199,40 @@ ic_create_apid_operation(IC_TABLE_DEF *table_def,
   if ((loc_alloc= ic_calloc(tot_size)))
     return NULL;
   apid_op= (IC_INT_APID_OPERATION*)loc_alloc;
-  apid_op->fields= (IC_FIELD_DEF*)(loc_alloc + sizeof(IC_INT_APID_OPERATION));
-  apid_op->field_def= (IC_FIELD_DEF**)(loc_alloc + sizeof(IC_FIELD_BIND));
+  apid_op->fields= (IC_FIELD_BIND*)(loc_alloc + sizeof(IC_INT_APID_OPERATION));
+  apid_op->fields->field_defs= (IC_FIELD_DEF**)(loc_alloc + sizeof(IC_FIELD_BIND));
   loc_alloc+= (num_fields * sizeof(IC_FIELD_DEF*));
   for (i= 0; i < num_fields; i++)
   {
-    apid_op->field_def[i]= (IC_FIELD_DEF*)loc_alloc;
+    apid_op->fields->field_defs[i]= (IC_FIELD_DEF*)loc_alloc;
     loc_alloc+= sizeof(IC_FIELD_DEF);
   }
+  apid_op->apid_op_ops= &glob_apid_ops;
+  /*
+    apid_conn set per query
+    trans_obj set per query
+    where_cond set per query if used in query
+    range_cond set per query if used in query
+    op_type set per query
+    read_key_op, write_key_op, scan_op union set per query
+    user_reference set per query
+    next_trans_op, prev_trans_op used to keep doubly linked list
+    of operation records in transaction.
+    next_conn_op, prev_conn_op used to keep doubly linked list of
+    operation records on connection object.
+  */
   apid_op->table_def= table_def;
+  /* Assign fields object */
   apid_op->fields->num_fields= num_fields;
-  apid_op->fields->num_key_fields= num_key_fields;
+  apid_op->fields->buffer_size= buffer_size;
+  apid_op->fields->num_null_bits= num_null_bits;
   apid_op->fields->buffer_ptr= buffer_ptr;
   apid_op->fields->null_ptr= null_ptr;
-  apid_op->fields->num_null_bits= num_null_bits;
-  apid_op->fields->buffer_size= buffer_size;
-  return apid_op;
+  /* Assign key fields object */
+  apid_op->key_fields->num_fields= num_fields;
+  apid_op->key_fields->buffer_size= buffer_size;
+  apid_op->key_fields->num_null_bits= num_null_bits;
+  apid_op->key_fields->buffer_ptr= buffer_ptr;
+  apid_op->key_fields->null_ptr= null_ptr;
+  return (IC_APID_OPERATION*)apid_op;
 }

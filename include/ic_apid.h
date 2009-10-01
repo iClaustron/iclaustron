@@ -278,6 +278,8 @@ struct ic_apid_operation_ops
                             guint32 left_condition_id,
                             guint32 right_condition_id,
                             IC_BOOLEAN_TYPE boolean_type);
+  int (*ic_set_partition_id) (IC_APID_OPERATION *apid_op,
+                              guint32 partition_id);
   IC_APID_ERROR* (*ic_get_error_object) (IC_APID_OPERATION *apid_op);
   void (*ic_free_apid_op) (IC_APID_OPERATION *apid_op);
 };
@@ -322,19 +324,33 @@ struct ic_apid_connection_ops
     Insert, Update, Delete and Write operation
     This method is used to send a primary key or unique key operation
     towards NDB. It will not actually send the operation, it will only
-    define the operation for later sending and execution.
+    define the operation for later sending and execution. Before calling
+    this function the IC_APID_OPERATION needs to be properly set-up for
+    the query, this object defines what query to execute. The 
+    IC_APID_CONNECTION provides a communication channel to this thread
+    in the API, the IC_TRANSACTION puts the query in a transaction
+    context. The IC_WRITE_KEY_OP specifies the type of operation we are
+    performing.
+
+    The normal use of the API is to provide a callback function together
+    with a user object that will be called when the query has completed
+    (when this callback is called it carries the outcome of the query,
+    whether it was successful and any read data will be available in the
+    buffer set-up by the IC_APID_OPERATION object.
+
+    It is also possible to avoid the use of a callback function, in this
+    case the callback function is sent as NULL and the user data is ignored,
+    in this case the API will execute a default callback function. In this
+    case one has to use the IC_APID_OPERATION to get the result of the query
+    execution after returning from either the ic_poll or ic_flush call.
    */
   int (*ic_write_key_access)
                 /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
+                /* Our operation object */
+                IC_APID_OPERATION *apid_op,
                 /* Transaction object, can span multiple threads */
                 IC_TRANSACTION *transaction_obj,
-                /* Description of fields and their new value to be written */
-                IC_WRITE_FIELD_BIND *write_fields, /* == NULL for delete */
-                /* Key fields and their values == WHERE clause */
-                IC_KEY_FIELD_BIND *key_fields,
-                /* Table and index ids */
-                IC_TABLE_DEF *table_def,
                 /* Type of write operation */
                 IC_WRITE_KEY_OP write_key_op,
                 /* Callback function */
@@ -346,17 +362,22 @@ struct ic_apid_connection_ops
     Read key operation
     This method is used to perform primary key or unique key operations
     toward NDB. Will not send the operation, only define it.
+
+    It works in exactly the same manner as ic_write_key_access except that it
+    defines a read operation instead.
   */
   int (*ic_read_key_access)
+                /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
+                /* Our operation object */
+                IC_APID_OPERATION *apid_op,
+                /* Transaction object, can span multiple threads */
                 IC_TRANSACTION *transaction_obj,
-                /* Description of read fields and where to write values */
-                IC_READ_FIELD_BIND *read_fields,
-                IC_KEY_FIELD_BIND *key_fields,
-                IC_TABLE_DEF *table_def,
                 /* Type of read operation */
                 IC_READ_KEY_OP read_key_op,
+                /* Callback function */
                 IC_APID_CALLBACK_FUNC callback_func,
+                /* Any reference the user wants to pass to completion phase */
                 void *user_reference);
   /*
     Scan table operation
@@ -365,15 +386,17 @@ struct ic_apid_connection_ops
     to a subset of the partitions used in the table.
   */
   int (*ic_scan_access)
+                /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
+                /* Our operation object */
+                IC_APID_OPERATION *apid_op,
+                /* Transaction object, can span multiple threads */
                 IC_TRANSACTION *transaction_obj,
-                /* Description of where to place fields read from records */
-                IC_READ_FIELD_BIND *read_fields,
-                IC_RANGE_CONDITION *range_cond,
-                IC_WHERE_CONDITION *where_cond,
-                IC_TABLE_DEF *table_def,
+                /* Type of scan operation */
                 IC_SCAN_OP scan_op,
+                /* Callback function */
                 IC_APID_CALLBACK_FUNC callback_func,
+                /* Any reference the user wants to pass to completion phase */
                 void *user_reference);
 
   /*
@@ -414,6 +437,9 @@ struct ic_apid_connection_ops
   */
   int (*ic_commit_transaction) (IC_APID_CONNECTION *apid_conn,
                                 IC_TRANSACTION *transaction_obj,
+                                /* Callback function */
+                                IC_APID_CALLBACK_FUNC callback_func,
+                                /* User data to callback function */
                                 void *user_reference);
 
   /*
@@ -424,18 +450,21 @@ struct ic_apid_connection_ops
   */
   int (*ic_rollback_transaction) (IC_APID_CONNECTION *apid_conn,
                                   IC_TRANSACTION *transaction_obj,
+                                  /* Callback function */
+                                  IC_APID_CALLBACK_FUNC callback_func,
+                                  /* User data to callback function */
                                   void *user_reference);
 
   /*
     Create a savepoint in the transaction
     This creates a savepoint which we can roll back to. The actual
     creation of the savepoint happens in NDB but unless the
-    transaction is aborted it is successful.
+    transaction is aborted it is successful. There is no specific
+    error reporting from this call.
   */
   int (*ic_create_savepoint) (IC_APID_CONNECTION *apid_conn,
                               IC_TRANSACTION *transaction_obj,
-                              IC_SAVEPOINT_ID *savepoint_id,
-                              void *user_reference);
+                              IC_SAVEPOINT_ID *savepoint_id);
 
   /*
     Rollback to savepoint.
@@ -447,6 +476,9 @@ struct ic_apid_connection_ops
   int (*ic_rollback_savepoint) (IC_APID_CONNECTION *apid_conn,
                                 IC_TRANSACTION *transaction_obj,
                                 IC_SAVEPOINT_ID savepoint_id,
+                                /* Callback function */
+                                IC_APID_CALLBACK_FUNC callback_func,
+                                /* User data to callback function */
                                 void *user_reference);
 
   int (*ic_check_transaction_state) (IC_APID_CONNECTION *apid_conn,
