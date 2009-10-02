@@ -25,6 +25,7 @@ typedef struct ic_field_bind IC_FIELD_BIND;
 typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
 typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
 typedef enum ic_field_type IC_FIELD_TYPE;
+typedef enum ic_calculation_type IC_CALCULATION_TYPE;
 typedef guint32 IC_SAVEPOINT_ID;
 typedef struct ic_transaction_hint IC_TRANSACTION_HINT;
 typedef struct ic_apid_connection IC_APID_CONNECTION;
@@ -272,16 +273,38 @@ struct ic_apid_operation_ops
   int (*ic_read_field_into_memory) (IC_APID_OPERATION *apid_op,
                                     guint32 *memory_address,
                                     guint32 field_id);
+  int (*ic_write_field_into_memory) (IC_APID_OPERATION *apid_op,
+                                     guint32 memory_address,
+                                     guint32 field_id);
   int (*ic_read_const_into_memory) (IC_APID_OPERATION *apid_op,
                                     guint32 *memory_address,
                                     gchar *const_ptr,
                                     guint32 const_len,
-                                    IC_FIELD_DATA_TYPE const_type);
+                                    IC_FIELD_TYPE const_type);
+  int (*ic_define_calculation) (IC_APID_OPERATION *apid_op,
+                                guint32 *returned_memory_address,
+                                guint32 left_memory_address,
+                                guint32 right_memory_address,
+                                IC_CALCULATION_TYPE calc_type);
   int (*ic_define_boolean) (IC_APID_OPERATION *apid_op,
                             guint32 *result_condition_id,
                             guint32 left_condition_id,
                             guint32 right_condition_id,
                             IC_BOOLEAN_TYPE boolean_type);
+  int (*ic_define_not) (IC_APID_OPERATION *apid_op,
+                        guint32 condition_id);
+  int (*ic_define_regexp) (IC_APID_OPERATION *apid_op,
+                           guint32 *condition_id,
+                           guint32 field_id,
+                           guint32 start_pos,
+                           guint32 end_pos,
+                           guint32 reg_exp_memory);
+  int (*ic_define_like) (IC_APID_OPERATION *apid_op,
+                         guint32 *condition_id,
+                         guint32 field_id,
+                         guint32 start_pos,
+                         guint32 end_pos,
+                         guint32 like_memory_address);
   int (*ic_set_partition_id) (IC_APID_OPERATION *apid_op,
                               guint32 partition_id);
   IC_APID_ERROR* (*ic_get_error_object) (IC_APID_OPERATION *apid_op);

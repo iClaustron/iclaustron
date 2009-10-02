@@ -130,6 +130,17 @@ read_field_into_memory(IC_APID_OPERATION *apid_op,
 }
 
 static int
+write_field_into_memory(IC_APID_OPERATION *apid_op,
+                        guint32 memory_address,
+                        guint32 field_id)
+{
+  (void)apid_op;
+  (void)memory_address;
+  (void)field_id;
+  return 0;
+}
+
+static int
 read_const_into_memory(IC_APID_OPERATION *apid_op,
                        guint32 *memory_address,
                        gchar *const_ptr,
@@ -145,6 +156,21 @@ read_const_into_memory(IC_APID_OPERATION *apid_op,
 }
 
 static int
+define_calculation(IC_APID_OPERATION *apid_op,
+                   guint32 *returned_memory_address,
+                   guint32 left_memory_address,
+                   guint32 right_memory_address,
+                   IC_CALCULATION_TYPE calc_type)
+{
+  (void)apid_op;
+  (void)returned_memory_address;
+  (void)left_memory_address;
+  (void)right_memory_address;
+  (void)calc_type;
+  return 0;
+}
+
+static int
 define_boolean(IC_APID_OPERATION *apid_op,
                guint32 *result_condition_id,
                guint32 left_condition_id,
@@ -156,6 +182,49 @@ define_boolean(IC_APID_OPERATION *apid_op,
   (void)left_condition_id;
   (void)right_condition_id;
   (void)boolean_type;
+  return 0;
+}
+
+static int
+define_not(IC_APID_OPERATION *apid_op,
+           guint32 condition_id)
+{
+  (void)apid_op;
+  (void)condition_id;
+  return 0;
+}
+
+static int
+define_regexp(IC_APID_OPERATION *apid_op,
+              guint32 *condition_id,
+              guint32 field_id,
+              guint32 start_pos,
+              guint32 end_pos,
+              guint32 reg_exp_memory_address)
+{
+  (void)apid_op;
+  (void)condition_id;
+  (void)field_id;
+  (void)start_pos;
+  (void)end_pos;
+  (void)reg_exp_memory_address;
+  return 0;
+}
+
+static int
+define_like(IC_APID_OPERATION *apid_op,
+            guint32 *condition_id,
+            guint32 field_id,
+            guint32 start_pos,
+            guint32 end_pos,
+            guint32 like_memory_address)
+{
+  (void)apid_op;
+  (void)condition_id;
+  (void)field_id;
+  (void)start_pos;
+  (void)end_pos;
+  (void)like_memory_address;
   return 0;
 }
 
@@ -192,8 +261,13 @@ static IC_APID_OPERATION_OPS glob_apid_ops =
   .ic_keep_ranges             = keep_ranges,
   .ic_define_condition        = define_condition,
   .ic_read_field_into_memory  = read_field_into_memory,
+  .ic_write_field_into_memory = write_field_into_memory,
   .ic_read_const_into_memory  = read_const_into_memory,
+  .ic_define_calculation      = define_calculation,
   .ic_define_boolean          = define_boolean,
+  .ic_define_not              = define_not,
+  .ic_define_regexp           = define_regexp,
+  .ic_define_like             = define_like,
   .ic_set_partition_id        = set_partition_id,
   .ic_get_error_object        = get_error_object,
   .ic_free_apid_op            = free_apid_op
