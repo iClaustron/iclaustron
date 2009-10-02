@@ -105,34 +105,54 @@ keep_ranges(IC_APID_OPERATION *apid_op)
 
 static int
 define_condition(IC_APID_OPERATION *apid_op,
-                 guint32 left_field_id,
-                 gchar *left_ptr,
-                 guint32 left_len,
-                 guint32 right_field_id,
-                 gchar *right_ptr,
-                 guint32 right_len,
                  guint32 *condition_id,
+                 guint32 left_memory_address,
+                 guint32 right_memory_address,
                  IC_COMPARATOR_TYPE comp_type)
 {
   (void)apid_op;
-  (void)left_field_id;
-  (void)left_ptr;
-  (void)left_len;
-  (void)right_field_id;
-  (void)right_ptr;
-  (void)right_len;
   (void)condition_id;
+  (void)left_memory_address;
+  (void)right_memory_address;
   (void)comp_type;
   return 0;
 }
 
 static int
+read_field_into_memory(IC_APID_OPERATION *apid_op,
+                       guint32 *memory_address,
+                       guint32 field_id)
+{
+  (void)apid_op;
+  (void)memory_address;
+  (void)field_id;
+  return 0;
+}
+
+static int
+read_const_into_memory(IC_APID_OPERATION *apid_op,
+                       guint32 *memory_address,
+                       gchar *const_ptr,
+                       guint32 const_len,
+                       IC_FIELD_TYPE const_type)
+{
+  (void)apid_op;
+  (void)memory_address;
+  (void)const_ptr;
+  (void)const_len;
+  (void)const_type;
+  return 0;
+}
+
+static int
 define_boolean(IC_APID_OPERATION *apid_op,
+               guint32 *result_condition_id,
                guint32 left_condition_id,
                guint32 right_condition_id,
                IC_BOOLEAN_TYPE boolean_type)
 {
   (void)apid_op;
+  (void)result_condition_id;
   (void)left_condition_id;
   (void)right_condition_id;
   (void)boolean_type;
@@ -171,6 +191,8 @@ static IC_APID_OPERATION_OPS glob_apid_ops =
   .ic_define_range_part       = define_range_part,
   .ic_keep_ranges             = keep_ranges,
   .ic_define_condition        = define_condition,
+  .ic_read_field_into_memory  = read_field_into_memory,
+  .ic_read_const_into_memory  = read_const_into_memory,
   .ic_define_boolean          = define_boolean,
   .ic_set_partition_id        = set_partition_id,
   .ic_get_error_object        = get_error_object,

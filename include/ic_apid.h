@@ -265,16 +265,20 @@ struct ic_apid_operation_ops
                                IC_RANGE_TYPE range_type);
   int (*ic_keep_ranges) (IC_APID_OPERATION *apid_op);
   int (*ic_define_condition) (IC_APID_OPERATION *apid_op,
-                              guint32 left_field_id,
-                              gchar *left_ptr,
-                              guint32 left_len,
-                              /* IC_NO_FIELD_ID => constant */
-                              guint32 right_field_id,
-                              gchar *right_ptr,
-                              guint32 right_len,
                               guint32 *condition_id,
+                              guint32 left_memory_address,
+                              guint32 right_memory_address,
                               IC_COMPARATOR_TYPE comp_type);
+  int (*ic_read_field_into_memory) (IC_APID_OPERATION *apid_op,
+                                    guint32 *memory_address,
+                                    guint32 field_id);
+  int (*ic_read_const_into_memory) (IC_APID_OPERATION *apid_op,
+                                    guint32 *memory_address,
+                                    gchar *const_ptr,
+                                    guint32 const_len,
+                                    IC_FIELD_DATA_TYPE const_type);
   int (*ic_define_boolean) (IC_APID_OPERATION *apid_op,
+                            guint32 *result_condition_id,
                             guint32 left_condition_id,
                             guint32 right_condition_id,
                             IC_BOOLEAN_TYPE boolean_type);
