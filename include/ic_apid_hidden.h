@@ -55,16 +55,6 @@ struct ic_instruction
   guint32 dest_register;
 };
 
-struct ic_range_condition
-{
-  guint32 not_used;
-};
-
-struct ic_where_condition
-{
-  guint32 not_used;
-};
-
 /*
   This part is common for all operations towards the iClaustron Data API.
 */
@@ -82,11 +72,11 @@ struct ic_int_apid_operation
 {
   IC_APID_OPERATION_OPS *apid_op_ops;
   IC_APID_CONNECTION *apid_conn;
-  IC_TRANSACTION *trans_obj;
   IC_TABLE_DEF *table_def;
-
   IC_WHERE_CONDITION *where_cond;
   IC_RANGE_CONDITION *range_cond;
+  IC_CONDITIONAL_ASSIGNMENT **cond_assign;
+  IC_TRANSACTION *trans_obj;
   IC_KEY_FIELD_BIND *key_fields;
   /* fields used by scans, read key operations and write key operations */
   IC_FIELD_BIND *fields;

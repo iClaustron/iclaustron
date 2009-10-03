@@ -37,6 +37,8 @@ typedef struct ic_int_apid_error IC_INT_APID_ERROR;
 typedef struct ic_int_apid_connection IC_INT_APID_CONNECTION;
 typedef struct ic_int_apid_global IC_INT_APID_GLOBAL;
 typedef struct ic_int_table_def IC_INT_TABLE_DEF;
+typedef struct ic_int_range_condition IC_INT_RANGE_CONDITION;
+typedef struct ic_int_where_condition IC_INT_WHERE_CONDITION;
 
 struct ic_ndb_receive_state
 {
@@ -165,6 +167,18 @@ struct ic_int_table_def
   guint32 table_id;
   guint32 index_id;
   gboolean use_index;
+};
+
+struct ic_int_range_condition
+{
+  IC_RANGE_CONDITION_OPS *range_ops;
+  guint32 not_used;
+};
+
+struct ic_int_where_condition
+{
+  IC_WHERE_CONDITION_OPS *cond_ops;
+  guint32 not_used;
 };
 
 struct ic_int_apid_connection

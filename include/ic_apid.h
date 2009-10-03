@@ -52,6 +52,8 @@ typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_range_condition_ops IC_RANGE_CONDITION_OPS;
 typedef struct ic_where_condition IC_WHERE_CONDITION;
 typedef struct ic_where_condition_ops IC_WHERE_CONDITION_OPS;
+typedef struct ic_conditional_assignment IC_CONDITIONAL_ASSIGNMENT;
+typedef struct ic_conditional_assignment_ops IC_CONDITIONAL_ASSIGNMENT_OPS;
 typedef enum ic_range_type IC_RANGE_TYPE;
 typedef enum ic_comparator_type IC_COMPARATOR_TYPE;
 typedef enum ic_boolean_type IC_BOOLEAN_TYPE;
@@ -227,10 +229,8 @@ struct ic_apid_operation_ops
                         guint32 end_pos);
   int (*ic_define_alloc_size) (IC_APID_OPERATION *apid_op,
                                guint32 size);
-  int (*ic_keep_ranges) (IC_APID_OPERATION *apid_op);
-  int (*ic_write_field_into_memory) (IC_APID_OPERATION *apid_op,
-                                     guint32 memory_address,
-                                     guint32 field_id);
+  int (*ic_keep_range) (IC_APID_OPERATION *apid_op);
+  int (*ic_release_range) (IC_APID_OPERATION *apid_op);
   IC_RANGE_CONDITION* (*ic_create_range_condition)
                              (IC_APID_OPERATION *apid_op);
   IC_WHERE_CONDITION* (*ic_create_where_condition)
@@ -238,6 +238,9 @@ struct ic_apid_operation_ops
   int (*ic_map_where_condition) (IC_APID_OPERATION *apid_op,
                                  IC_APID_GLOBAL *apid_global,
                                  guint32 where_cond_id);
+  IC_CONDITIONAL_ASSIGNMENT** (*ic_create_conditional_assignments)
+                             (IC_APID_OPERATION *apid_op,
+                              guint32 num_cond_assigns);
   int (*ic_set_partition_id) (IC_APID_OPERATION *apid_op,
                               guint32 partition_id);
   IC_APID_ERROR* (*ic_get_error_object) (IC_APID_OPERATION *apid_op);
@@ -417,9 +420,32 @@ struct ic_where_condition_ops
   int (*ic_free_cond) (IC_WHERE_CONDITION *cond);
 };
 
+struct ic_conditional_assignment_ops
+{
+  int (*ic_write_field_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                                     guint32 memory_address,
+                                     guint32 field_id);
+  int (*ic_free_cond_assign) (IC_CONDITIONAL_ASSIGNMENT **cond_assign);
+};
+
+struct ic_conditional_assignment
+{
+  IC_CONDITIONAL_ASSIGNMENT_OPS *cond_assign_ops;
+};
+
+struct ic_range_condition
+{
+  IC_RANGE_CONDITION_OPS *range_ops;
+};
+
+struct ic_where_condition
+{
+  IC_WHERE_CONDITION_OPS *cond_ops;
+};
+
 struct ic_apid_operation
 {
-  IC_APID_OPERATION_OPS apid_op_ops;
+  IC_APID_OPERATION_OPS *apid_op_ops;
 };
 
 struct ic_apid_error_ops

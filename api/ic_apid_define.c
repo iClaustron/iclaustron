@@ -27,45 +27,6 @@
 #include <ic_apid.h>
 #include "ic_apid_int.h"
 
-static int
-define_field(IC_APID_OPERATION *apid_op,
-             guint32 index,
-             guint32 field_id,
-             guint32 buffer_offset,
-             guint32 null_offset,
-             gboolean key_field,
-             IC_FIELD_TYPE field_type)
-{
-  (void)apid_op;
-  (void)index;
-  (void)field_id;
-  (void)buffer_offset;
-  (void)null_offset;
-  (void)key_field;
-  (void)field_type;
-  return 0;
-}
-
-static int
-define_pos(IC_APID_OPERATION *apid_op,
-           guint32 start_pos,
-           guint32 end_pos)
-{
-  (void)apid_op;
-  (void)start_pos;
-  (void)end_pos;
-  return 0;
-}
-
-static int
-define_alloc_size(IC_APID_OPERATION *apid_op,
-                  guint32 alloc_size)
-{
-  (void)apid_op;
-  (void)alloc_size;
-  return 0;
-}
-
 /*
   MODULE: Definition of Range Condition Module
   --------------------------------------------
@@ -113,13 +74,6 @@ static IC_RANGE_CONDITION_OPS glob_range_ops =
   .ic_define_range_part       = range_define_range_part,
   .ic_free_range_cond         = range_free
 };
-
-static int
-keep_ranges(IC_APID_OPERATION *apid_op)
-{
-  (void)apid_op;
-  return 0;
-}
 
 /*
   MODULE: Define WHERE condition
@@ -281,14 +235,91 @@ static IC_WHERE_CONDITION_OPS glob_cond_ops =
   .ic_free_cond               = cond_free
 };
 
+/*
+  MODULE: Define Conditional Assignments module
+  ---------------------------------------------
+  This module contains the methods needed to define conditional assignments
+  used in write operation.
+*/
 static int
-write_field_into_memory(IC_APID_OPERATION *apid_op,
+write_field_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                         guint32 memory_address,
                         guint32 field_id)
 {
-  (void)apid_op;
+  (void)cond_assign;
   (void)memory_address;
   (void)field_id;
+  return 0;
+}
+
+static int
+cond_assign_free(IC_CONDITIONAL_ASSIGNMENT** cond_assigns)
+{
+  (void)cond_assigns;
+  return 0;
+}
+
+static IC_CONDITIONAL_ASSIGNMENT_OPS glob_cond_assign_ops =
+{
+  .ic_write_field_into_memory = write_field_into_memory,
+  .ic_free_cond_assign        = cond_assign_free
+};
+
+/*
+  MODULE: Define API operation object module
+  ------------------------------------------
+  This module contains methods to define an Data API operation object.
+*/
+static int
+define_field(IC_APID_OPERATION *apid_op,
+             guint32 index,
+             guint32 field_id,
+             guint32 buffer_offset,
+             guint32 null_offset,
+             gboolean key_field,
+             IC_FIELD_TYPE field_type)
+{
+  (void)apid_op;
+  (void)index;
+  (void)field_id;
+  (void)buffer_offset;
+  (void)null_offset;
+  (void)key_field;
+  (void)field_type;
+  return 0;
+}
+
+static int
+define_pos(IC_APID_OPERATION *apid_op,
+           guint32 start_pos,
+           guint32 end_pos)
+{
+  (void)apid_op;
+  (void)start_pos;
+  (void)end_pos;
+  return 0;
+}
+
+static int
+define_alloc_size(IC_APID_OPERATION *apid_op,
+                  guint32 alloc_size)
+{
+  (void)apid_op;
+  (void)alloc_size;
+  return 0;
+}
+
+static int
+keep_range(IC_APID_OPERATION *apid_op)
+{
+  (void)apid_op;
+  return 0;
+}
+
+static int
+release_range(IC_APID_OPERATION *apid_op)
+{
+  (void)apid_op;
   return 0;
 }
 
@@ -315,6 +346,15 @@ map_where_condition(IC_APID_OPERATION *apid_op,
   (void)apid_global;
   (void)where_cond_id;
   return 0;
+}
+
+static IC_CONDITIONAL_ASSIGNMENT**
+create_conditional_assignments(IC_APID_OPERATION *apid_op,
+                               guint32 num_cond_assigns)
+{
+  (void)apid_op;
+  (void)num_cond_assigns;
+  return NULL;
 }
 
 static int
@@ -352,11 +392,12 @@ static IC_APID_OPERATION_OPS glob_apid_ops =
   .ic_define_field            = define_field,
   .ic_define_pos              = define_pos,
   .ic_define_alloc_size       = define_alloc_size,
-  .ic_keep_ranges             = keep_ranges,
-  .ic_write_field_into_memory = write_field_into_memory,
+  .ic_keep_range              = keep_range,
+  .ic_release_range           = release_range,
   .ic_create_range_condition  = create_range_condition,
   .ic_create_where_condition  = apid_op_create_where_condition,
   .ic_map_where_condition     = map_where_condition,
+  .ic_create_conditional_assignments = create_conditional_assignments,
   .ic_set_partition_id        = set_partition_id,
   .ic_get_error_object        = get_error_object,
   .ic_reset_apid_op           = reset_apid_op,
