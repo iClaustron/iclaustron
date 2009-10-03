@@ -422,6 +422,24 @@ struct ic_where_condition_ops
 
 struct ic_conditional_assignment_ops
 {
+  IC_WHERE_CONDITION* (*ic_create_assignment_condition)
+                       (IC_CONDITIONAL_ASSIGNMENT *cond_assign);
+  int (*ic_map_assignment_condition) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                                      IC_APID_GLOBAL *apid_global,
+                                      guint32 where_cond_id);
+  int (*ic_read_field_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                                    guint32 *memory_address,
+                                    guint32 field_id);
+  int (*ic_define_calculation) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                                guint32 *returned_memory_address,
+                                guint32 left_memory_address,
+                                guint32 right_memory_address,
+                                IC_CALCULATION_TYPE calc_type);
+  int (*ic_read_const_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                                    guint32 *memory_address,
+                                    gchar *const_ptr,
+                                    guint32 const_len,
+                                    IC_FIELD_TYPE const_type);
   int (*ic_write_field_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                      guint32 memory_address,
                                      guint32 field_id);

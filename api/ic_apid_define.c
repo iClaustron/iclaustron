@@ -241,6 +241,55 @@ static IC_WHERE_CONDITION_OPS glob_cond_ops =
   This module contains the methods needed to define conditional assignments
   used in write operation.
 */
+
+static int
+assign_read_const_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                              guint32 *memory_address,
+                              gchar *const_ptr,
+                              guint32 const_len,
+                              IC_FIELD_TYPE const_type)
+{
+  (void)cond_assign;
+  (void)memory_address;
+  (void)const_ptr;
+  (void)const_len;
+  (void)const_type;
+  return 0;
+}
+
+static int
+assign_define_calculation(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                          guint32 *returned_memory_address,
+                          guint32 left_memory_address,
+                          guint32 right_memory_address,
+                          IC_CALCULATION_TYPE calc_type)
+{
+  (void)cond_assign;
+  (void)returned_memory_address;
+  (void)left_memory_address;
+  (void)right_memory_address;
+  (void)calc_type;
+  return 0;
+}
+
+static IC_WHERE_CONDITION*
+create_assignment_condition(IC_CONDITIONAL_ASSIGNMENT *cond_assign)
+{
+  (void)cond_assign;
+  return NULL;
+}
+
+static int
+map_assignment_condition(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                         IC_APID_GLOBAL *apid_global,
+                         guint32 where_cond_id)
+{
+  (void)cond_assign;
+  (void)apid_global;
+  (void)where_cond_id;
+  return 0;
+}
+
 static int
 write_field_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                         guint32 memory_address,
@@ -261,8 +310,12 @@ cond_assign_free(IC_CONDITIONAL_ASSIGNMENT** cond_assigns)
 
 static IC_CONDITIONAL_ASSIGNMENT_OPS glob_cond_assign_ops =
 {
-  .ic_write_field_into_memory = write_field_into_memory,
-  .ic_free_cond_assign        = cond_assign_free
+  .ic_read_const_into_memory          = assign_read_const_into_memory,
+  .ic_define_calculation              = assign_define_calculation,
+  .ic_create_assignment_condition     = create_assignment_condition,
+  .ic_map_assignment_condition        = map_assignment_condition,
+  .ic_write_field_into_memory         = write_field_into_memory,
+  .ic_free_cond_assign                = cond_assign_free
 };
 
 /*
