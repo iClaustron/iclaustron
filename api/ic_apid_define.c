@@ -241,6 +241,16 @@ static IC_WHERE_CONDITION_OPS glob_cond_ops =
   This module contains the methods needed to define conditional assignments
   used in write operation.
 */
+static int
+assign_read_field_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                              guint32 *memory_address,
+                              guint32 field_id)
+{
+  (void)cond_assign;
+  (void)memory_address;
+  (void)field_id;
+  return 0;
+}
 
 static int
 assign_read_const_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
@@ -310,6 +320,7 @@ cond_assign_free(IC_CONDITIONAL_ASSIGNMENT** cond_assigns)
 
 static IC_CONDITIONAL_ASSIGNMENT_OPS glob_cond_assign_ops =
 {
+  .ic_read_field_into_memory          = assign_read_field_into_memory,
   .ic_read_const_into_memory          = assign_read_const_into_memory,
   .ic_define_calculation              = assign_define_calculation,
   .ic_create_assignment_condition     = create_assignment_condition,
@@ -402,12 +413,23 @@ map_where_condition(IC_APID_OPERATION *apid_op,
 }
 
 static IC_CONDITIONAL_ASSIGNMENT**
-create_conditional_assignments(IC_APID_OPERATION *apid_op,
-                               guint32 num_cond_assigns)
+apid_op_create_conditional_assignments(IC_APID_OPERATION *apid_op,
+                                       guint32 num_cond_assigns)
 {
   (void)apid_op;
   (void)num_cond_assigns;
   return NULL;
+}
+
+static int
+map_conditional_assignment(IC_APID_OPERATION *apid_op,
+                           IC_APID_GLOBAL *apid_global,
+                           guint32 cond_assign_id)
+{
+  (void)apid_op;
+  (void)apid_global;
+  (void)cond_assign_id;
+  return 0;
 }
 
 static int
@@ -450,7 +472,8 @@ static IC_APID_OPERATION_OPS glob_apid_ops =
   .ic_create_range_condition  = create_range_condition,
   .ic_create_where_condition  = apid_op_create_where_condition,
   .ic_map_where_condition     = map_where_condition,
-  .ic_create_conditional_assignments = create_conditional_assignments,
+  .ic_create_conditional_assignments = apid_op_create_conditional_assignments,
+  .ic_map_conditional_assignment = map_conditional_assignment,
   .ic_set_partition_id        = set_partition_id,
   .ic_get_error_object        = get_error_object,
   .ic_reset_apid_op           = reset_apid_op,

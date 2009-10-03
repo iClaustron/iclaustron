@@ -185,8 +185,8 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
    is much easier to program but also a lot less performant. Improvements of
    up to 5x have been recorded in using the asynchronous method compared to
    the synchronous method.
-
 */
+
 struct ic_table_def_ops
 {
   int (*ic_get_table_id) (IC_TABLE_DEF *table_def);
@@ -208,11 +208,6 @@ struct ic_metadata_bind_ops
   int (*ic_index_bind) (IC_TABLE_DEF **table_def,
                         const gchar *index_name,
                         const gchar *table_name);
-};
-
-struct ic_table_def
-{
-  IC_TABLE_DEF_OPS table_def_ops;
 };
 
 struct ic_apid_operation_ops
@@ -241,6 +236,9 @@ struct ic_apid_operation_ops
   IC_CONDITIONAL_ASSIGNMENT** (*ic_create_conditional_assignments)
                              (IC_APID_OPERATION *apid_op,
                               guint32 num_cond_assigns);
+  int (*ic_map_conditional_assignment) (IC_APID_OPERATION *apid_op,
+                                        IC_APID_GLOBAL *apid_global,
+                                        guint32 cond_assign_id);
   int (*ic_set_partition_id) (IC_APID_OPERATION *apid_op,
                               guint32 partition_id);
   IC_APID_ERROR* (*ic_get_error_object) (IC_APID_OPERATION *apid_op);
@@ -422,6 +420,85 @@ struct ic_where_condition_ops
 
 struct ic_conditional_assignment_ops
 {
+  /*
+    Conditional assignment can be used to perform some calculations on the
+    row to be updated and even make the update of a field conditional upon
+    a where condition.
+
+    The final method call defining a conditional assignment is always
+    ic_write_field_into_memory. Before this call at a minimum we need to
+    assign something to the memory address used in this call. This memory
+    address can be prepared by loading constants into memory and also by
+    performing operations on constants and field values.
+
+    We can also make the entire assignment conditional, to do this, we reuse
+    the IC_WHERE_CONDITION class. Thus a generic WHERE condition can be
+    executed before we perform the assignment. If no WHERE condition is used
+    the assignment is unconditional. For an API operation it is possible to
+    define any number of assignments (withing reasonable limits set by how
+    large the interpreted program is allowed to be). Each of those assignments
+    will see the results of the previous assignments. Thus if we have two
+    assignments: a = a + 1, b = a + 1 and a=b=1 before the assignment then
+    first the value of a will be set to 1 + 1 = 2, whereafter b is assigned
+    the new value of a = 2 plus one, thus 3. So a = 2, b = 3 after these two
+    assignments. There can be several conditional assignments to the same
+    field, the last assignment will be the one prevailing.
+
+    An example of a conditional assignment is:
+    a = a * (b + 1)
+    
+    When mapping this into a conditional assignment we use the same technique
+    as we did for WHERE conditions using left-deep traversal of the
+    assignment tree. The tree for the above assignment is:
+
+                   -------
+                   |  =  |
+                   -------
+                   |     |
+                 |         |
+               |             |
+            -------       -------
+            |  a  |       |  *  |
+            -------       -------
+                          |     |
+                        |         |
+                      |              |
+                   ------          -----
+                   | a  |          | + |
+                   ------          -----
+                                   |   |
+                                 |       |
+                               |           |
+                            ------      -------
+                            | b  |      |  1  |
+                            ------      -------
+
+    The top node of an assignment tree is always an assignment operator. The
+    left-side node is always the field which to assign the value to. Thus we
+    can immediately start on the right side of the assignment tree.
+
+    We go left-deep on the right side of the tree and where we find a read of
+    the field a into memory address 0. Next we move over to the right side
+    of the * operator where we read the field b into a memory address. Next we
+    move on to move 1 into a memory address. Now we are prepared to sum the
+    memory addresses of b and 1 into a memory address whereafter we multiply
+    the memory address of a and the memory address of the addition and store
+    the result in a memory address. This final memory address is the one
+    to be used in the ic_write_field_into_memory.
+
+    Thus the call chain will be (in pseudocode):
+      ic_read_field_into_memory("a", &a_address);
+      ic_read_field_into_memory("b", &b_address);
+      ic_read_const_into_memory(1, &1_address);
+      ic_define_calculation("+", &res1_address, b_address, 1_address);
+      ic_define_calculation("*", &res2_address, a_address, res1_address);
+      ic_write_field_into_memory("a", res2_address);
+
+    Conditional assignments can either be defined dynamically per API
+    operation it's needed in. It could also be defined globally on the
+    IC_APID_GLOBAL object from where it can be reused by any query using
+    the IC_APID_GLOBAL instance.
+  */
   IC_WHERE_CONDITION* (*ic_create_assignment_condition)
                        (IC_CONDITIONAL_ASSIGNMENT *cond_assign);
   int (*ic_map_assignment_condition) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
@@ -430,62 +507,20 @@ struct ic_conditional_assignment_ops
   int (*ic_read_field_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                     guint32 *memory_address,
                                     guint32 field_id);
-  int (*ic_define_calculation) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
-                                guint32 *returned_memory_address,
-                                guint32 left_memory_address,
-                                guint32 right_memory_address,
-                                IC_CALCULATION_TYPE calc_type);
   int (*ic_read_const_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                     guint32 *memory_address,
                                     gchar *const_ptr,
                                     guint32 const_len,
                                     IC_FIELD_TYPE const_type);
+  int (*ic_define_calculation) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                                guint32 *returned_memory_address,
+                                guint32 left_memory_address,
+                                guint32 right_memory_address,
+                                IC_CALCULATION_TYPE calc_type);
   int (*ic_write_field_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                      guint32 memory_address,
                                      guint32 field_id);
   int (*ic_free_cond_assign) (IC_CONDITIONAL_ASSIGNMENT **cond_assign);
-};
-
-struct ic_conditional_assignment
-{
-  IC_CONDITIONAL_ASSIGNMENT_OPS *cond_assign_ops;
-};
-
-struct ic_range_condition
-{
-  IC_RANGE_CONDITION_OPS *range_ops;
-};
-
-struct ic_where_condition
-{
-  IC_WHERE_CONDITION_OPS *cond_ops;
-};
-
-struct ic_apid_operation
-{
-  IC_APID_OPERATION_OPS *apid_op_ops;
-};
-
-struct ic_apid_error_ops
-{
-  /* Get error code */
-  int (*ic_get_apid_error_code) (IC_APID_ERROR *apid_error);
-
-  /* Get error string */
-  const gchar* (*ic_get_apid_error_msg) (IC_APID_ERROR *apid_error);
-
-  /* Get severity level of the error */
-  IC_ERROR_SEVERITY_LEVEL
-    (*ic_get_apid_error_severity) (IC_APID_ERROR *apid_error);
-
-  /* Get category of error */
-  IC_ERROR_CATEGORY (*ic_get_apid_error_category) (IC_APID_ERROR *apid_error);
-};
-
-struct ic_apid_error
-{
-  IC_APID_ERROR_OPS error_ops;
-  gboolean any_error;
 };
 
 struct ic_apid_connection_ops
@@ -708,12 +743,6 @@ struct ic_apid_connection_ops
   void (*ic_free_apid_connection) (IC_APID_CONNECTION *apid_conn);
 };
 
-struct ic_apid_connection
-{
-  IC_APID_CONNECTION_OPS apid_conn_ops;
-  IC_METADATA_BIND_OPS apid_metadata_ops;
-};
-
 struct ic_transaction_ops
 {
   /*
@@ -746,19 +775,21 @@ struct ic_transaction_hint_ops
 {
 };
 
-struct ic_transaction_hint
+struct ic_apid_error_ops
 {
-  IC_TRANSACTION_HINT_OPS trans_hint_ops;
-  guint32 cluster_id;
-  guint32 node_id;
-};
+  /* Get error code */
+  int (*ic_get_apid_error_code) (IC_APID_ERROR *apid_error);
 
-struct ic_transaction_obj
-{
-  IC_TRANSACTION_OPS trans_ops;
-  guint32 transaction_id[2];
-};
+  /* Get error string */
+  const gchar* (*ic_get_apid_error_msg) (IC_APID_ERROR *apid_error);
 
+  /* Get severity level of the error */
+  IC_ERROR_SEVERITY_LEVEL
+    (*ic_get_apid_error_severity) (IC_APID_ERROR *apid_error);
+
+  /* Get category of error */
+  IC_ERROR_CATEGORY (*ic_get_apid_error_category) (IC_APID_ERROR *apid_error);
+};
 
 /*
   These two functions are used to connect/disconnect to/from the clusters
@@ -801,12 +832,6 @@ struct ic_apid_global_ops
   void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };
 
-struct ic_apid_global
-{
-  IC_APID_GLOBAL_OPS apid_global_ops;
-  IC_BITMAP *cluster_bitmap;
-};
-
 IC_APID_GLOBAL* ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
                                       gboolean use_external_connect,
                                       int *ret_code,
@@ -817,6 +842,63 @@ int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
+
+struct ic_apid_error
+{
+  IC_APID_ERROR_OPS error_ops;
+  gboolean any_error;
+};
+
+struct ic_apid_connection
+{
+  IC_APID_CONNECTION_OPS apid_conn_ops;
+  IC_METADATA_BIND_OPS apid_metadata_ops;
+};
+
+struct ic_apid_global
+{
+  IC_APID_GLOBAL_OPS apid_global_ops;
+  IC_BITMAP *cluster_bitmap;
+};
+
+struct ic_table_def
+{
+  IC_TABLE_DEF_OPS table_def_ops;
+};
+
+struct ic_conditional_assignment
+{
+  IC_CONDITIONAL_ASSIGNMENT_OPS *cond_assign_ops;
+};
+
+struct ic_range_condition
+{
+  IC_RANGE_CONDITION_OPS *range_ops;
+};
+
+struct ic_where_condition
+{
+  IC_WHERE_CONDITION_OPS *cond_ops;
+};
+
+struct ic_apid_operation
+{
+  IC_APID_OPERATION_OPS *apid_op_ops;
+};
+
+struct ic_transaction_hint
+{
+  IC_TRANSACTION_HINT_OPS trans_hint_ops;
+  guint32 cluster_id;
+  guint32 node_id;
+};
+
+struct ic_transaction_obj
+{
+  IC_TRANSACTION_OPS trans_ops;
+  guint32 transaction_id[2];
+};
+
 /*
   Declarations used for programs using easy start and stop
   of iClaustron Data API users. Also declaration of global
