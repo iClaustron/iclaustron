@@ -60,14 +60,6 @@ enum ic_field_type
   IC_API_BLOB_TYPE= 13
 };
 
-enum ic_calculation_type
-{
-  IC_PLUS= 0,
-  IC_MINUS= 1,
-  IC_MULTIPLICATION= 2,
-  IC_DIVISION= 3
-};
-
 /* For efficiency reasons the structs are part of the public API.  */
 
 /*
@@ -264,6 +256,17 @@ enum ic_boolean_type
   IC_AND= 0,
   IC_OR= 1,
   IC_XOR= 2
+};
+
+enum ic_calculation_type
+{
+  IC_PLUS= 0,
+  IC_MINUS= 1,
+  IC_MULTIPLICATION= 2,
+  IC_DIVISION= 3,
+  IC_BITWISE_OR= 4,
+  IC_BITWISE_AND= 5,
+  IC_BITWISE_XOR= 6
 };
 
 enum ic_instruction_type

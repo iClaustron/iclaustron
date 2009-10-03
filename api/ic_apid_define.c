@@ -66,26 +66,31 @@ define_alloc_size(IC_APID_OPERATION *apid_op,
   return 0;
 }
 
+/*
+  MODULE: Definition of Range Condition Module
+  --------------------------------------------
+  This module is used to define the range condition used in queries.
+*/
 static int
-multi_range(IC_APID_OPERATION *apid_op,
-            guint32 num_ranges)
+range_multi_range(IC_RANGE_CONDITION *range,
+                  guint32 num_ranges)
 {
-  (void)apid_op;
+  (void)range;
   (void)num_ranges;
   return 0;
 }
 
 static int
-define_range_part(IC_APID_OPERATION *apid_op,
-                  guint32 range_id,
-                  guint32 field_id,
-                  gchar *start_ptr,
-                  guint32 start_len,
-                  gchar *end_ptr,
-                  guint32 end_len,
-                  IC_RANGE_TYPE range_type)
+range_define_range_part(IC_RANGE_CONDITION *range,
+                        guint32 range_id,
+                        guint32 field_id,
+                        gchar *start_ptr,
+                        guint32 start_len,
+                        gchar *end_ptr,
+                        guint32 end_len,
+                        IC_RANGE_TYPE range_type)
 {
-  (void)apid_op;
+  (void)range;
   (void)range_id;
   (void)field_id;
   (void)start_ptr;
@@ -96,6 +101,19 @@ define_range_part(IC_APID_OPERATION *apid_op,
   return 0;
 }
 
+static void
+range_free(IC_RANGE_CONDITION *range)
+{
+  (void)range;
+}
+
+static IC_RANGE_CONDITION_OPS glob_range_ops =
+{
+  .ic_multi_range             = range_multi_range,
+  .ic_define_range_part       = range_define_range_part,
+  .ic_free_range_cond         = range_free
+};
+
 static int
 keep_ranges(IC_APID_OPERATION *apid_op)
 {
@@ -103,14 +121,22 @@ keep_ranges(IC_APID_OPERATION *apid_op)
   return 0;
 }
 
+/*
+  MODULE: Define WHERE condition
+  ------------------------------
+  This module contains all the methods used to define a WHERE condition
+  in the iClaustron Data API. The WHERE condition is mapped into a
+  Data API operation object before the query is defined as part of a
+  transaction.
+*/
 static int
-define_condition(IC_APID_OPERATION *apid_op,
-                 guint32 *condition_id,
-                 guint32 left_memory_address,
-                 guint32 right_memory_address,
-                 IC_COMPARATOR_TYPE comp_type)
+cond_define_condition(IC_WHERE_CONDITION *cond,
+                      guint32 *condition_id,
+                      guint32 left_memory_address,
+                      guint32 right_memory_address,
+                      IC_COMPARATOR_TYPE comp_type)
 {
-  (void)apid_op;
+  (void)cond;
   (void)condition_id;
   (void)left_memory_address;
   (void)right_memory_address;
@@ -119,15 +145,141 @@ define_condition(IC_APID_OPERATION *apid_op,
 }
 
 static int
-read_field_into_memory(IC_APID_OPERATION *apid_op,
-                       guint32 *memory_address,
-                       guint32 field_id)
+cond_read_field_into_memory(IC_WHERE_CONDITION *cond,
+                            guint32 *memory_address,
+                            guint32 field_id)
 {
-  (void)apid_op;
+  (void)cond;
   (void)memory_address;
   (void)field_id;
   return 0;
 }
+
+static int
+cond_read_const_into_memory(IC_WHERE_CONDITION *cond,
+                            guint32 *memory_address,
+                            gchar *const_ptr,
+                            guint32 const_len,
+                            IC_FIELD_TYPE const_type)
+{
+  (void)cond;
+  (void)memory_address;
+  (void)const_ptr;
+  (void)const_len;
+  (void)const_type;
+  return 0;
+}
+
+static int
+cond_define_calculation(IC_WHERE_CONDITION *cond,
+                        guint32 *returned_memory_address,
+                        guint32 left_memory_address,
+                        guint32 right_memory_address,
+                        IC_CALCULATION_TYPE calc_type)
+{
+  (void)cond;
+  (void)returned_memory_address;
+  (void)left_memory_address;
+  (void)right_memory_address;
+  (void)calc_type;
+  return 0;
+}
+
+static int
+cond_define_boolean(IC_WHERE_CONDITION *cond,
+                    guint32 *result_condition_id,
+                    guint32 left_condition_id,
+                    guint32 right_condition_id,
+                    IC_BOOLEAN_TYPE boolean_type)
+{
+  (void)cond;
+  (void)result_condition_id;
+  (void)left_condition_id;
+  (void)right_condition_id;
+  (void)boolean_type;
+  return 0;
+}
+
+static int
+cond_define_not(IC_WHERE_CONDITION *cond,
+                guint32 condition_id)
+{
+  (void)cond;
+  (void)condition_id;
+  return 0;
+}
+
+static int
+cond_define_regexp(IC_WHERE_CONDITION *cond,
+                   guint32 *condition_id,
+                   guint32 field_id,
+                   guint32 start_pos,
+                   guint32 end_pos,
+                   guint32 reg_exp_memory_address)
+{
+  (void)cond;
+  (void)condition_id;
+  (void)field_id;
+  (void)start_pos;
+  (void)end_pos;
+  (void)reg_exp_memory_address;
+  return 0;
+}
+
+static int
+cond_define_like(IC_WHERE_CONDITION *cond,
+                 guint32 *condition_id,
+                 guint32 field_id,
+                 guint32 start_pos,
+                 guint32 end_pos,
+                 guint32 like_memory_address)
+{
+  (void)cond;
+  (void)condition_id;
+  (void)field_id;
+  (void)start_pos;
+  (void)end_pos;
+  (void)like_memory_address;
+  return 0;
+}
+
+static int
+cond_evaluate_condition(IC_WHERE_CONDITION *cond)
+{
+  (void)cond;
+  return 0;
+}
+
+static int
+cond_store_where_condition(IC_WHERE_CONDITION *cond,
+                           guint32 cluster_id)
+{
+  (void)cond;
+  (void)cluster_id;
+  return 0;
+}
+
+static int
+cond_free(IC_WHERE_CONDITION *cond)
+{
+  (void)cond;
+  return 0;
+}
+
+static IC_WHERE_CONDITION_OPS glob_cond_ops =
+{
+  .ic_define_condition        = cond_define_condition,
+  .ic_read_field_into_memory  = cond_read_field_into_memory,
+  .ic_read_const_into_memory  = cond_read_const_into_memory,
+  .ic_define_calculation      = cond_define_calculation,
+  .ic_define_boolean          = cond_define_boolean,
+  .ic_define_not              = cond_define_not,
+  .ic_define_regexp           = cond_define_regexp,
+  .ic_define_like             = cond_define_like,
+  .ic_evaluate_condition      = cond_evaluate_condition,
+  .ic_store_where_condition   = cond_store_where_condition,
+  .ic_free_cond               = cond_free
+};
 
 static int
 write_field_into_memory(IC_APID_OPERATION *apid_op,
@@ -140,91 +292,28 @@ write_field_into_memory(IC_APID_OPERATION *apid_op,
   return 0;
 }
 
-static int
-read_const_into_memory(IC_APID_OPERATION *apid_op,
-                       guint32 *memory_address,
-                       gchar *const_ptr,
-                       guint32 const_len,
-                       IC_FIELD_TYPE const_type)
+static IC_RANGE_CONDITION*
+create_range_condition(IC_APID_OPERATION *apid_op)
 {
   (void)apid_op;
-  (void)memory_address;
-  (void)const_ptr;
-  (void)const_len;
-  (void)const_type;
-  return 0;
+  return NULL;
+}
+
+static IC_WHERE_CONDITION*
+apid_op_create_where_condition(IC_APID_OPERATION *apid_op)
+{
+  (void)apid_op;
+  return NULL;
 }
 
 static int
-define_calculation(IC_APID_OPERATION *apid_op,
-                   guint32 *returned_memory_address,
-                   guint32 left_memory_address,
-                   guint32 right_memory_address,
-                   IC_CALCULATION_TYPE calc_type)
+map_where_condition(IC_APID_OPERATION *apid_op,
+                    IC_APID_GLOBAL *apid_global,
+                    guint32 where_cond_id)
 {
   (void)apid_op;
-  (void)returned_memory_address;
-  (void)left_memory_address;
-  (void)right_memory_address;
-  (void)calc_type;
-  return 0;
-}
-
-static int
-define_boolean(IC_APID_OPERATION *apid_op,
-               guint32 *result_condition_id,
-               guint32 left_condition_id,
-               guint32 right_condition_id,
-               IC_BOOLEAN_TYPE boolean_type)
-{
-  (void)apid_op;
-  (void)result_condition_id;
-  (void)left_condition_id;
-  (void)right_condition_id;
-  (void)boolean_type;
-  return 0;
-}
-
-static int
-define_not(IC_APID_OPERATION *apid_op,
-           guint32 condition_id)
-{
-  (void)apid_op;
-  (void)condition_id;
-  return 0;
-}
-
-static int
-define_regexp(IC_APID_OPERATION *apid_op,
-              guint32 *condition_id,
-              guint32 field_id,
-              guint32 start_pos,
-              guint32 end_pos,
-              guint32 reg_exp_memory_address)
-{
-  (void)apid_op;
-  (void)condition_id;
-  (void)field_id;
-  (void)start_pos;
-  (void)end_pos;
-  (void)reg_exp_memory_address;
-  return 0;
-}
-
-static int
-define_like(IC_APID_OPERATION *apid_op,
-            guint32 *condition_id,
-            guint32 field_id,
-            guint32 start_pos,
-            guint32 end_pos,
-            guint32 like_memory_address)
-{
-  (void)apid_op;
-  (void)condition_id;
-  (void)field_id;
-  (void)start_pos;
-  (void)end_pos;
-  (void)like_memory_address;
+  (void)apid_global;
+  (void)where_cond_id;
   return 0;
 }
 
@@ -251,25 +340,26 @@ free_apid_op(IC_APID_OPERATION *apid_op)
     ic_free(apid_op);
 }
 
+static int
+reset_apid_op(IC_APID_OPERATION *apid_op)
+{
+  (void)apid_op;
+  return 0;
+}
+
 static IC_APID_OPERATION_OPS glob_apid_ops =
 {
   .ic_define_field            = define_field,
   .ic_define_pos              = define_pos,
   .ic_define_alloc_size       = define_alloc_size,
-  .ic_multi_range             = multi_range,
-  .ic_define_range_part       = define_range_part,
   .ic_keep_ranges             = keep_ranges,
-  .ic_define_condition        = define_condition,
-  .ic_read_field_into_memory  = read_field_into_memory,
   .ic_write_field_into_memory = write_field_into_memory,
-  .ic_read_const_into_memory  = read_const_into_memory,
-  .ic_define_calculation      = define_calculation,
-  .ic_define_boolean          = define_boolean,
-  .ic_define_not              = define_not,
-  .ic_define_regexp           = define_regexp,
-  .ic_define_like             = define_like,
+  .ic_create_range_condition  = create_range_condition,
+  .ic_create_where_condition  = apid_op_create_where_condition,
+  .ic_map_where_condition     = map_where_condition,
   .ic_set_partition_id        = set_partition_id,
   .ic_get_error_object        = get_error_object,
+  .ic_reset_apid_op           = reset_apid_op,
   .ic_free_apid_op            = free_apid_op
 };
 
