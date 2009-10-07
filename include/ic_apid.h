@@ -306,6 +306,22 @@ struct ic_where_condition_ops
    sufficient memory is available to execute the WHERE condition. The WHERE
    condition can be executed both in the API and in the NDB kernel.
 
+   The definition of WHERE condition starts by using a special handling of
+   boolean conditions like AND/OR/XOR. The reason is to enable optimisations
+   where it is only necessary to evaluate the left branch of the boolean
+   condition to calculate the result of the boolean condition. Thus in an
+   AND condition it is sufficient to evaluate the left branch if the left
+   branch evaluates to FALSE, we only need to evaluate the right branch if
+   the left branch is TRUE. For OR conditions the opposite holds, if the
+   left branch is TRUE it is clear that the OR condition is TRUE whereas
+   a FALSE in the left branch requires another step of evaluation.
+
+   To be able to define this easily in walking the WHERE tree we provide the
+   boolean condition as two special subroutines that return a condition id.
+   Thus when we encounter a boolean condition in the tree we inject the code
+   for it immediately, we then pass the subroutine id to the instructions
+   on both sides.
+
    The definition of WHERE condition is supposed to be done by going through
    the condition tree from left-deep to right. Thus to evaluate the condition
    WHERE a = 1 AND b < (c + 3) the tree will look like:
@@ -332,24 +348,70 @@ struct ic_where_condition_ops
                                 | c |          | 3 |
                                 -----          -----
 
-  To evaluate this we go left-deep from AND to EQ to a, so we start by reading
-  the field into memory address 0, next we load the constant 1 into the next
-  memory address (dependent on size of a). Next step is to perform the boolean
-  EQ operation on the memory loaded from a and the memory where 1 was loaded.
-  The result of this comparison will end up in condition id 0.  Next we follow
-  the right branch in the AND left-deep and load b into the next memory
-  address (here the API could decide to start from memory address 0 again since
-  we already used the variables on the left side of the AND to calculate
-  condition id 0. Whether the API does this or not is dependent on how
-  advanced the memory management algorithm the API uses. Next it it follows the
-  right side of the LT left-deep and loads c into the next memory address and
-  next loads 3 into the memory address. The operation + is performed and the
-  result placed in the next memory address or reusing a memory address used to
-  load c and/or 3. Then the condition id 1 is derived as the result of the
-  comparison of b and (c + 3). Finally the result is TRUE of both condition id
-  0 and condition id 1 is TRUE and the result is stored in condition id 2 
-  (or in condition id 0 if reusing condition id's). After completing this one
-  calls ic_evaluate_cond to indicate that the last condition
+  To evaluate this we start at the AND condition and generate the AND
+  statement that uses two subroutines, one for the left branch and one
+  for the right branch. The initial subroutine id is always 0, this
+  subroutine id indicates the top-level routine. Next we go left-deep
+  from AND to EQ to a, so we start by reading the field into memory address
+  0, next we load the constant 1 into the next memory address (dependent on
+  size of a). Next step is to perform the boolean EQ operation on the memory
+  loaded from a and the memory where 1 was loaded.  The result of this
+  comparison will end up in condition id 0.  Next we follow the right branch
+  in the AND left-deep and load b into the next memory address (here the API
+  could decide to start from memory address 0 again since we already used the
+  variables on the left side of the AND to calculate condition id 0. Whether
+  the API does this or not is dependent on how advanced the memory management
+  algorithm the API uses. Next it it follows the right side of the LT
+  left-deep and loads c into the next memory address and next loads 3 into the
+  memory address. The operation + is performed and the result placed in the
+  next memory address or reusing a memory address used to load c and/or 3.
+  Then the condition id 1 is derived as the result of the comparison of
+  b and (c + 3). Finally the result is TRUE of both condition id 0 and
+  condition id 1 is TRUE and the result is stored in condition id 2 
+  (or in condition id 0 if reusing condition id's). The result of the WHERE
+  condition is always the result of the initial operation. Thus if we have no
+  top boolean condition we use a special condition statement that uses one
+  special subroutine to evaluate its condition.
+
+  The observation that comparator's like EQ, LE, LT, GE, GT can only feed
+  into boolean condition gives us the further simplification that subroutines
+  will always end with a ic_define_condition, thus we can make the end of
+  subroutine here implicit, it is always the case.
+
+  Another implicit derivation is that the first statement is always the
+  statement which evaluates the WHERE condition. Thus the record will
+  automatically if the initial boolean condition returns FALSE.
+
+  A call to ic_define_boolean is also an implicit return from a subroutine.
+  If it is the first call it is the return of the WHERE condition, in other
+  cases it always feeds into another boolean condition and thus is the first
+  and also only instruction in the subroutine.
+
+  The first call can be ic_define_boolean in the case where the top condition
+  is a boolean condition, ic_define_not if the condition is a NOT condition
+  and otherwise if the top condition is a condition the first call is always
+  ic_define_first.
+
+  ic_define_regexp and ic_define_like have the same logic as
+  ic_define_condition in the sense that they are always the return from the
+  subroutine.
+
+  Thus the call chain will be (in pseudocode):
+    current_subroutine_id= 0;
+    ic_define_boolean(current_subroutine_id,
+                      &left_subroutine_id,
+                      &right_subroutine_id,
+                      "AND");
+    ic_read_field_into_memory("a", left_subroutine_id, &a_address);
+    ic_read_const_into_memory(1, left_subroutine_id, &1_address);
+    ic_define_condition("EQ", left_subroutine_id, a_address, 1_address);
+
+    ic_read_field_into_memory("b", right_subroutine_id, &b_address);
+    ic_read_field_into_memory("c", right_subroutine_id, &c_address);
+    ic_read_const_into_memory(3, right_subroutine_id, &3_address);
+    ic_define_calculation("+", right_subroutine_id, &res1_address,
+                          c_address, 3_address);
+    ic_define_condition("LT", right_subroutine_id, b_address, res1_address);
 
   An execution model based on memory is used to make it easy to map condition
   trees to an interpreted program that can be sent to the NDB data nodes or
@@ -375,31 +437,37 @@ struct ic_where_condition_ops
   in the Data nodes in the clusters. To support this we have a method on the
   object to store conditions in a cluster.
   */
+  int (*ic_define_boolean) (IC_WHERE_CONDITION *cond,
+                            guint32 current_subroutine_id,
+                            guint32 *left_subroutine_id,
+                            guint32 *right_subroutine_id,
+                            IC_BOOLEAN_TYPE boolean_type);
   int (*ic_define_condition) (IC_WHERE_CONDITION *cond,
-                              guint32 *condition_id,
+                              guint32 current_subroutine_id,
                               guint32 left_memory_address,
                               guint32 right_memory_address,
                               IC_COMPARATOR_TYPE comp_type);
   int (*ic_read_field_into_memory) (IC_WHERE_CONDITION *cond,
+                                    guint32 current_subroutine_id,
                                     guint32 *memory_address,
                                     guint32 field_id);
   int (*ic_read_const_into_memory) (IC_WHERE_CONDITION *cond,
+                                    guint32 current_subroutine_id,
                                     guint32 *memory_address,
                                     gchar *const_ptr,
                                     guint32 const_len,
                                     IC_FIELD_TYPE const_type);
   int (*ic_define_calculation) (IC_WHERE_CONDITION *cond,
+                                guint32 current_subroutine_id,
                                 guint32 *returned_memory_address,
                                 guint32 left_memory_address,
                                 guint32 right_memory_address,
                                 IC_CALCULATION_TYPE calc_type);
-  int (*ic_define_boolean) (IC_WHERE_CONDITION *cond,
-                            guint32 *result_condition_id,
-                            guint32 left_condition_id,
-                            guint32 right_condition_id,
-                            IC_BOOLEAN_TYPE boolean_type);
   int (*ic_define_not) (IC_WHERE_CONDITION *cond,
-                        guint32 condition_id);
+                        guint32 current_subroutine_id,
+                        guint32 *subroutine_id);
+  int (*ic_define_first(IC_WHERE_CONDITION *cond,
+                        guint32 *subroutine_id);
   int (*ic_define_regexp) (IC_WHERE_CONDITION *cond,
                            guint32 *condition_id,
                            guint32 field_id,
