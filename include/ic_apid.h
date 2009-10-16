@@ -212,6 +212,20 @@ struct ic_metadata_bind_ops
 
 struct ic_apid_operation_ops
 {
+  /*
+    The definition of an APID operation object is expected to be performed
+    once and be reused many times. It's expected that the user have allocated
+    a buffer, if the user don't want to handle this on his own, the table
+    object have an operation to define a buffer using a bitmap of the fields
+    to be involved in the buffer. There are also operations in this case to
+    map the fields to offsets in the buffer.
+
+    All fields which are larger than 256 bytes are allocated by the API and
+    they are freed at the ic_reset_apid_op call or when ic_free_apid_op is
+    called. There is also a specific call to transfer the "ownership" of a
+    buffer to the API user for a specific field. In this case the API user
+    will have the responsibility to free this memory later on.
+  */
   int (*ic_define_field) (IC_APID_OPERATION *apid_op,
                           guint32 index,
                           guint32 field_id,
@@ -251,20 +265,79 @@ struct ic_range_condition_ops
   /*
     To define a range we call ic_define_range_part once for each field in the
     index. We need to define them in order from first index field. Thus
-    field_id is mostly used to assert that the user knows the API. All parts
-    except the last part must be an equality range.
+    field_id is mostly used to assert that the user knows the API. The
+    definition of a range contains an upper range and a lower range. For
+    bot the upper range and the lower range all parts except the last part
+    must be an equality range.
 
-    As an example if we have an index on a,b and c. We can define a range
+    For the upper part of the range we can define the range type as:
+    1) IC_RANGE_EQ
+    2) IC_RANGE_NO_UPPER_LIMIT
+    3) IC_RANGE_LT
+    4) IC_RANGE_LE
+
+    For the lower part of the range we can define the range type as follows:
+    1) IC_RANGE_EQ
+    2) IC_RANGE_NO_LOWER_LIMIT
+    3) IC_RANGE_GT
+    4) IC_RANGE_GE
+
+    Some examples:
+    a <= 1 would be translated to:
+    IC_RANGE_GT with boundary value set to NULL on lower range part.
+    IC_RANGE_LE with boundary value set to 1 on upper range part.
+    The reason is that by definition in most databases NULL is not part
+    of any range other than the equality range with NULL. The range interface
+    will however not take care of such rules, it's the responsibility of the
+    API user to enforce such rules.
+
+    a == 1 would be translated to:
+    IC_RANGE_EQ with boundary value set to 1 on both lower and upper range
+    part. In this case the start_ptr needs to be equal to end_ptr and
+    similarly start_len must be equal to end_len.
+
+    a = 1 AND b <= 2 AND c = 2 translates to:
+    IC_RANGE_EQ with boundary value set to 1 on both lower and upper range
+    for the field a. IC_RANGE_GT with lower bound set to NULL on lower part of
+    b and IC_RANGE_LE with upper bound set to 2. Since lower part of the
+    field b is using IC_RANGE_GT the lower range on the field c will be
+    ignored. However the upper bound using field c is still of interest.
+    This will be set to IC_RANGE_EQ with boundary value set to 2. The check
+    if a value is within this range is performed by first checking that the
+    instantiation of (a,b,c) has a = 1, b > NULL, b <= 1 and c = 2. Thus if
+    we scan an ordered index we will place the start of the scan at a = 1,
+    b = NULL and the end of the scan at a = 1, b = 2 and c = 2. In this range
+    we will skip the starting value and will also throw away all rows which
+    don't have c = 2. If the c = 2 would have been replaced by c <= 2 the
+    start and end point in the index would have been the same but records
+    would be filtered out using c <= 2 instead of c = 2.
+
+    a >= 1 is translated to:
+    IC_RANGE_GE as lower bound with value 1, the upper bound is
+    IC_RANGE_NO_UPPER_LIMIT, in this the value of end_ptr and end_len is
+    ignored.
+
+    As another example if we have an index on a,b and c. We can define a range
     based on the condition a = 1 AND b < 1. In this case the start part is
     a = 1 and the end part is a = 1, b = 1, with the range type on the
-    a field equal to IC_RANGE_EQ and the range type on the b field equal
-    to IC_RANGE_LT. To indicate that the b field is not involved in the
-    start part we set start_ptr to NULL, in this case start_len is undefined.
-    NULL values can only be involved in a range as equality ranges. Such a
+    a field equal to IC_RANGE_EQ for both lower and upper part and the upper
+    range type on the b field equal to IC_RANGE_LT. To indicate that the
+    b field is not involved in the start part we set start_ptr to NULL, in
+    this case start_len is undefined.
+
+    NULL values can be involved in a range as equality ranges. Such a
     condition is defined by setting start_ptr and end_ptr to NULL and in
     this case also range_type must be IC_RANGE_EQ, the value of start_len
     and end_len is undefined.
 
+    A definition of a range can contain any number of IC_RANGE_EQ on the
+    first set of fields. A definition of IC_RANGE_LT means that only the
+    end part needs to be defined and IC_RANGE_LT is always the last field
+    in the range definition since both the upper and lower parts have been
+    fully defined. In the same manner IC_RANGE_GT requires only the start
+    part to be defined and the field is always the last part of the range
+    definition.
+    
     Ranges are defined as part of the definition of the APID operation object
     and the range will be removed from the APID operation object immediately
     after completing the query. Thus ranges have to be defined for each
@@ -275,7 +348,7 @@ struct ic_range_condition_ops
     before defining the individual ranges. This call defines the number of
     ranges to be used. If this call isn't used the first call to
     ic_define_range_part will be interpreted also as a call to
-    ic_multi_range with number of ranges equal to 0. The first range id
+    ic_multi_range with number of ranges equal to 1. The first range id
     is 0. The ranges should be defined in the order of increasing range ids.
   */
   int (*ic_multi_range) (IC_RANGE_CONDITION *range,
@@ -287,7 +360,8 @@ struct ic_range_condition_ops
                                guint32 start_len,
                                gchar* end_ptr,
                                guint32 end_len,
-                               IC_RANGE_TYPE range_type);
+                               IC_LOWER_RANGE_TYPE lower_range_type,
+                               IC_UPPER_RANGE_TYPE upper_range_type);
   void (*ic_free_range_cond) (IC_RANGE_CONDITION *range);
 };
 
@@ -466,7 +540,7 @@ struct ic_where_condition_ops
   int (*ic_define_not) (IC_WHERE_CONDITION *cond,
                         guint32 current_subroutine_id,
                         guint32 *subroutine_id);
-  int (*ic_define_first(IC_WHERE_CONDITION *cond,
+  int (*ic_define_first) (IC_WHERE_CONDITION *cond,
                         guint32 *subroutine_id);
   int (*ic_define_regexp) (IC_WHERE_CONDITION *cond,
                            guint32 *condition_id,
