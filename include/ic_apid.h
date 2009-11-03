@@ -18,64 +18,92 @@
 #include <ic_threadpool.h>
 #include <ic_connection.h>
 
+
+/*
+  GENERAL PRINCIPLES ON NAMING AND DATA HIDING IN iClaustron DATA API
+  -------------------------------------------------------------------
+  iClaustron uses a naming standard which is that all object types are used
+  by capital letters. These names in capital letters are always defined by a
+  typedef. The typedef maps the name of the real struct/enum or other data
+  type. structs and enums always use the name in lower case. So e.g. the
+  global object defining the Data API is called IC_APID_GLOBAL and is in
+  reality a struct called ic_apid_global.
+
+  In the iClaustron implementation files there is similarly an object
+  IC_INT_APID_GLOBAL that contains the actual data which is hidden to the API
+  user. The implementation will when creating a IC_APID_GLOBAL object
+  actually create an IC_INT_APID_GLOBAL and at every call map it over to the
+  internal data type. There is no execution cost attached to this mapping.
+  It's only a method to ensure the implementation data isn't visible to API
+  users.
+
+  Certain data is required to be accessible fast through inlined methods
+  although they are part of the private data of the objects. In this case
+  iClaustron defines those data types in ic_apid_hidden.h. Often by using an
+  object called e.g. IC_HIDDEN_APID_GLOBAL which is then a subset of
+  IC_INT_APID_GLOBAL and a superset of IC_APID_GLOBAL. The user of the API is
+  free to use the inline methods, these are part of the iClaustron Data API,
+  however the user should not use variables defined in the ic_apid_hidden.h
+  file. These are going to change without notice from release to release. Thus
+  they are very unsafe to use. It is however not possible to hide those from
+  the user since the application needs to have access to the inline methods
+  to be able to inline them in their application.
+
+  Each object used in the have an object called *_ops or *_OPS for the
+  external name. These contains the function pointers to methods accessible
+  for these objects. E.g. IC_APID_GLOBAL_OPS for the IC_APID_GLOBAL methods.
+*/
 typedef struct ic_apid_global IC_APID_GLOBAL;
 typedef struct ic_apid_global_ops IC_APID_GLOBAL_OPS;
-typedef struct ic_field_def IC_FIELD_DEF;
-typedef struct ic_field_bind IC_FIELD_BIND;
-typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
-typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
-typedef enum ic_field_type IC_FIELD_TYPE;
-typedef enum ic_calculation_type IC_CALCULATION_TYPE;
-typedef guint32 IC_SAVEPOINT_ID;
-typedef struct ic_transaction_hint IC_TRANSACTION_HINT;
+
 typedef struct ic_apid_connection IC_APID_CONNECTION;
-typedef struct ic_transaction_obj IC_TRANSACTION;
-typedef enum ic_commit_state IC_COMMIT_STATE;
+typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
+
+typedef struct ic_table_def IC_TABLE_DEF;
+typedef struct ic_table_def_ops IC_TABLE_DEF_OPS;
+typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
+
+typedef struct ic_transaction IC_TRANSACTION;
+typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
+typedef struct ic_transaction_state IC_TRANSACTION_STATE;
+typedef guint32 IC_SAVEPOINT_ID;
+
+typedef struct ic_transaction_hint IC_TRANSACTION_HINT;
+typedef struct ic_transaction_hint_ops IC_TRANSACTION_HINT_OPS;
+
+typedef struct ic_apid_operation IC_APID_OPERATION;
+typedef struct ic_apid_operation_ops IC_APID_OPERATION_OPS;
+
+typedef struct ic_range_condition IC_RANGE_CONDITION;
+typedef struct ic_range_condition_ops IC_RANGE_CONDITION_OPS;
+typedef enum ic_range_type IC_RANGE_TYPE;
+
+typedef struct ic_where_condition IC_WHERE_CONDITION;
+typedef struct ic_where_condition_ops IC_WHERE_CONDITION_OPS;
+typedef enum ic_boolean_type IC_BOOLEAN_TYPE;
+typedef enum ic_comparator_type IC_COMPARATOR_TYPE;
+/* This type is also used by IC_CONDITIONAL_ASSIGNMENT */
+typedef enum ic_calculation_type IC_CALCULATION_TYPE; 
+
+typedef struct ic_conditional_assignment IC_CONDITIONAL_ASSIGNMENT;
+typedef struct ic_conditional_assignment_ops IC_CONDITIONAL_ASSIGNMENT_OPS;
+
+typedef struct ic_apid_error IC_APID_ERROR;
+typedef struct ic_apid_error_ops IC_APID_ERROR_OPS;
+typedef enum ic_error_severity_level IC_ERROR_SEVERITY_LEVEL;
+typedef enum ic_error_category IC_ERROR_CATEGORY;
+
 typedef enum ic_read_key_op IC_READ_KEY_OP;
 typedef enum ic_write_key_op IC_WRITE_KEY_OP;
 typedef enum ic_scan_op IC_SCAN_OP;
-typedef enum ic_instruction_type IC_INSTRUCTION_TYPE;
-typedef struct ic_instruction IC_INSTRUCTION;
-typedef struct ic_table_def IC_TABLE_DEF;
-typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
-typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
-typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
-typedef struct ic_apid_error IC_APID_ERROR;
-typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
-typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
-typedef struct ic_transaction_hint_ops IC_TRANSACTION_HINT_OPS;
-typedef struct ic_apid_error_ops IC_APID_ERROR_OPS;
-typedef struct ic_transaction_state IC_TRANSACTION_STATE;
-typedef enum ic_error_severity_level IC_ERROR_SEVERITY_LEVEL;
-typedef enum ic_error_category IC_ERROR_CATEGORY;
-typedef struct ic_range_condition IC_RANGE_CONDITION;
-typedef struct ic_range_condition_ops IC_RANGE_CONDITION_OPS;
-typedef struct ic_where_condition IC_WHERE_CONDITION;
-typedef struct ic_where_condition_ops IC_WHERE_CONDITION_OPS;
-typedef struct ic_conditional_assignment IC_CONDITIONAL_ASSIGNMENT;
-typedef struct ic_conditional_assignment_ops IC_CONDITIONAL_ASSIGNMENT_OPS;
-typedef enum ic_range_type IC_RANGE_TYPE;
-typedef enum ic_comparator_type IC_COMPARATOR_TYPE;
-typedef enum ic_boolean_type IC_BOOLEAN_TYPE;
-typedef struct ic_apid_operation_ops IC_APID_OPERATION_OPS;
-typedef struct ic_table_def_ops IC_TABLE_DEF_OPS;
-typedef enum ic_field_data_type IC_FIELD_DATA_TYPE;
+
+typedef enum ic_commit_state IC_COMMIT_STATE;
 
 #define IC_NO_FIELD_ID 0xFFFFFFF0
 #define IC_NO_NULL_OFFSET 0xFFFFFFF1
 
 typedef int (*IC_RUN_APID_THREAD_FUNC)(IC_APID_CONNECTION*, IC_THREAD_STATE*);
 typedef int (*IC_APID_CALLBACK_FUNC) (IC_APID_CONNECTION*, void* user_data);
-/*
-  Names of operation objects returned from ic_get_next_executed_operation.
-  The information from these objects should be retrieved using the inline
-  functions defined in ic_apid_inline.h. The structs are defined in the
-  header file ic_apid_hidden.h which isn't safe to use, it will be changed
-  from version to version.
-*/
-typedef struct ic_apid_operation IC_APID_OPERATION;
-typedef struct ic_create_savepoint_operation IC_CREATE_SAVEPOINT_OPERATION;
-typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
 
 /*
   The iClaustron Data API have a number of basic concepts:
@@ -108,7 +136,8 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
     An operation object represents the actual query and contains the fields
     to read/write, the key to use, ranges for index scans and a possible
     condition of the query. Only primary key access, unique key access
-    and table scans and index scans are currently supported.
+    and table scans and index scans are currently supported. It is also
+    possible to define conditional assignments on update queries.
 
   There are two variants of how to define Data API operation objects.
   The first variant is to define a predefined API operation object that
@@ -143,7 +172,7 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
   1) Definition of ranges for scan operations
   2) Definition of WHERE clause for any operation type
      A WHERE clause is defined by a number of individual conditions,
-     then it is possible to bind together two conditions using
+     then it is possible to bind together conditions using
      AND, OR and XOR.
 
    Before an operation can be used in a query it also has to be mapped
@@ -164,13 +193,13 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
    needed.
 
    When the application wants to send the queries it can use two methods,
-   ic_send and ic_flush. ic_send only sends and then the thread is free
+   ic_send and ic_flush. ic_send only sends and wherafter the thread is free
    to define new queries or work on any other thing. However the objects
    which have been sent and buffers used by the queries must not be
    touched by the application until the query has been returned. ic_flush
    will start waiting for queries to complete immediately after sending the
    queries. When using ic_send one can use ic_poll to start waiting
-   without sending first.
+   at any time convenient for the application to wait.
 
    The default manner of using the API is to have send and receive done
    separately to ensure that maximum possible parallelism and performance
@@ -184,30 +213,70 @@ typedef struct ic_rollback_savepoint_operation IC_ROLLBACK_SAVEPOINT_OPERATION;
    API to give the user a perception of a RPC interface instead. This method
    is much easier to program but also a lot less performant. Improvements of
    up to 5x have been recorded in using the asynchronous method compared to
-   the synchronous method.
+   the synchronous method using the NDB API.
 */
 
 struct ic_table_def_ops
 {
-  int (*ic_get_table_id) (IC_TABLE_DEF *table_def);
-  int (*ic_get_field_id) (IC_TABLE_DEF *table_def,
-                          const gchar *field_name,
-                          guint32* field_id);
+  int (*ic_get_table_id)   (IC_TABLE_DEF *table_def);
+  int (*ic_get_field_id)   (IC_TABLE_DEF *table_def,
+                            const gchar *field_name,
+                            guint32* field_id);
   int (*ic_get_field_type) (IC_TABLE_DEF *table_def,
                             guint32 field_id,
                             IC_FIELD_DATA_TYPE *field_data_type);
-  int (*ic_get_field_len) (IC_TABLE_DEF *table_def,
-                           guint32 field_id,
-                           guint32 *field_len);
+  int (*ic_get_field_len)  (IC_TABLE_DEF *table_def,
+                            guint32 field_id,
+                            guint32 *field_len);
+  int (*ic_get_buf)        (IC_TABLE_DEF *table_def,
+                            IC_BITMAP *used_fields,
+                            gchar **buffer);
+  int (*ic_get_buf_offset) (IC_TABLE_DEF *table_def,
+                            guint32 field_id,
+                            guint32 *offset);
 };
 
 struct ic_metadata_bind_ops
 {
-  int (*ic_table_bind) (IC_TABLE_DEF **table_def,
+  /*
+    Bind to metadata for an IC_APID_CONNECTION
+    ------------------------------------------
+    iClaustron binds to tables and indexes in the NDB kernel nodes.
+    These metadata objects contain definition of tables, their fields
+    and their indexes.
+
+    Each IC_APID_CONNECTION needs to bind itself to a table object in order
+    to issue queries towards the table or using the index. When a
+    connection object doesn't need a table object anymore it issues an
+    unbind call, after this the connection won't be able to access this
+    table definition anymore.
+
+    The IC_TABLE_DEF object is created by the API and can only be used for
+    reading metadata. It is not possible to change any metadata through this
+    object. It's possible that the implementation uses the same object towards
+    several connection objects.
+
+    Table names, index names, database names and schema names are normal
+    NULL-terminated strings.
+  */
+  IC_APID_ERROR*
+      (*ic_table_bind) (IC_APID_GLOBAL *apid_global,
+                        IC_APID_CONNECTION *apid_conn,
+                        IC_TABLE_DEF **table_def,
+                        const gchar *schema_name,
+                        const gchar *db_name,
                         const gchar *table_name);
-  int (*ic_index_bind) (IC_TABLE_DEF **table_def,
+  IC_APID_ERROR*
+      (*ic_index_bind) (IC_APID_GLOBAL *apid_global,
+                        IC_APID_CONNECTION *apid_conn,
+                        IC_TABLE_DEF **table_def,
+                        const gchar *schema_name,
+                        const gchar *db_name,
                         const gchar *index_name,
                         const gchar *table_name);
+   int (*ic_table_unbind) (IC_APID_GLOBAL *apid_global,
+                           IC_APID_CONNECTION *apid_conn,
+                           IC_TABLE_DEF *table_def);
 };
 
 struct ic_apid_operation_ops
@@ -225,37 +294,204 @@ struct ic_apid_operation_ops
     called. There is also a specific call to transfer the "ownership" of a
     buffer to the API user for a specific field. In this case the API user
     will have the responsibility to free this memory later on.
+
+    After the application have allocated a buffer on their own or
+  */
+
+  /*
+    Handling of normal-sized fields
+    -------------------------------
+    Define a field to be used in this operation. One must define the buffer
+    offset (which is a byte offset) and a null offset (which is a bit offset).
+    When creating the operation object one supplied a buffer reference and
+    a table object. The table object could either be for a table or for
+    an index. This means that the API can find out whether the field is part
+    of the primary key (or unique key if unique index) and also the type
+    and size of the field. When using the operation object for key access
+    it's necessary to have defined all key fields. If this hasn't been done
+    the key operations will fail on the operation object. Similarly the API
+    will also verify that the buffer offsets used by the application isn't
+    overlapping for different fields.
+
+    The null offset is ignored for fields that are NOT NULL.
+
+    The buffer offset is the offset of the pointer to the field data in
+    the case of fields of size larger than 255 bytes.
   */
   int (*ic_define_field) (IC_APID_OPERATION *apid_op,
-                          guint32 index,
                           guint32 field_id,
                           guint32 buffer_offset,
-                          guint32 null_offset,
-                          gboolean key_field,
-                          IC_FIELD_TYPE field_type);
+                          guint32 null_offset);
+
+  /*
+    Handling of large fields (over 256 bytes)
+    -----------------------------------------
+    In order to read or write large fields we have to map a buffer for the
+    field. This call is required for each query for each field larger than
+    256 bytes. It is never necessary for fields smaller since they will
+    always be updated fully and also will be entirely stored in the buffer.
+
+    In the case of read the pointer to the buffer can be NULL. In this the
+    API will allocate a buffer of appropriate size. The user can assume
+    the ownership of this buffer later on if desired.
+
+    In the case of writes the user must supply a buffer which is != NULL.
+
+    In both the read and write case it is possible to define start_pos and
+    end_pos to be only a part of the field. In this case it's necessary to
+    set use_full_field to false. In this case start_pos and end_pos are
+    both required to be set properly and the buffer size is
+    (end_pos - start_pos) and only this part of the buffer is overwritten
+    for writes and only this part is read for reads.
+    
+    If use_full_field is set the start_pos is always ignored and end_pos is
+    read as buffer size. In this case the end_pos for reads is defined as
+    the size of the buffer supplied. In the case of writes it is the new
+    size of the field and the entire field in the NDB kernel will be
+    overwritten.
+  */
   int (*ic_define_pos) (IC_APID_OPERATION *apid_op,
+                        guint32 field_id,
+                        gchar *field_data,
+                        gboolean use_full_field,
                         guint32 start_pos,
                         guint32 end_pos);
-  int (*ic_define_alloc_size) (IC_APID_OPERATION *apid_op,
-                               guint32 size);
-  int (*ic_keep_range) (IC_APID_OPERATION *apid_op);
-  int (*ic_release_range) (IC_APID_OPERATION *apid_op);
+  int (*ic_transfer_ownership) (IC_APID_OPERATION *apid_op,
+                                guint32 field_id);
+
+  /*
+    Handling of Partitions Ids are used in query
+    --------------------------------------------
+    The tables in NDB kernel nodes are partitioned. This means that parts of
+    the table are stored on different nodes. When issuing a query it is
+    possible to restrict the query to only use one partition or a set of
+    partitions. In the case of multiple partitions the function uses a
+    bitmap where the Nth bit set to 0 means that partition N is to be part
+    of the query.
+  */
+  int (*ic_set_partition_ids) (IC_APID_OPERATION *apid_op,
+                               IC_BITMAP *used_partitions);
+  int (*ic_set_partition_id) (IC_APID_OPERATION *apid_op,
+                              guint32 partition_id);
+
+  /*
+    Handling of RANGE CONDITION objects
+    -----------------------------------
+    Operations can optionally define a range. This is only true for scan
+    queries. Primary key and unique key operations cannot use a range since
+    they will always fetch one row and only one row. There is also a function
+    to ask the operation to retain the range also after completing the
+    execution of a query to ensure that the range can be reused for the
+    next query this operation object is used for. This function needs to be
+    called every time a range is used as part of a query. So no specific call
+    is needed to release a range, simply avoid calling ic_keep_range and the
+    range will be released on the next completion of a query for this object.
+  */
   IC_RANGE_CONDITION* (*ic_create_range_condition)
                              (IC_APID_OPERATION *apid_op);
+  int (*ic_keep_range) (IC_APID_OPERATION *apid_op);
+
+  /*
+    Handling of WHERE CONDITION objects
+    -----------------------------------
+    All operations can optionally define a WHERE condition which is executed
+    before the actual read or write is performed. One can create a WHERE
+    condition from this object and it is also possible to reuse the WHERE
+    condition object from the APID_GLOBAL object. There can only be one WHERE
+    condition per query.
+
+    It is possible to keep a WHERE condition object even after reset by
+    calling ic_keep_where, this needs to be done for each query it's reused
+    if needed for many queries in a row.
+  */
   IC_WHERE_CONDITION* (*ic_create_where_condition)
                              (IC_APID_OPERATION *apid_op);
   int (*ic_map_where_condition) (IC_APID_OPERATION *apid_op,
                                  IC_APID_GLOBAL *apid_global,
                                  guint32 where_cond_id);
+  void (*ic_keep_where) (IC_APID_OPERATION *apid_op);
+
+  /*
+    Handling of CONDITIONAL ASSIGNMENT objects
+    ------------------------------------------
+    Update operations can also have conditional assignments. There can be
+    multiple such conditional assignment objects. Each conditional
+    assignments sets the value of one field and thus one conditional
+    assignment is needed for each field needing a conditional assignment.
+
+    Conditional assignments are allocated in two steps. The first steps
+    allocation makes it easy to access the conditional assignments, the
+    second step does the actual creation of the individual conditional
+    assignments.
+
+    So if we define 3 conditional assignments we call
+    ic_create_conditional_assignments first with num_cond_assigns set to 3.
+    This means that we plan on defining 3 conditional assignments which
+    will be numbered 0,1 and 2. Then we create conditional assignment
+    objects by calling ic_create_conditional_assignment or by instead
+    mapping a global conditional assignment using
+    ic_map_conditional_assignment. Both of these functions will return the
+    identity of the conditional assignment. If we used
+    ic_create_conditional_assignment we also need to actually define the
+    IC_CONDITIONAL_ASSIGNMENT object using the methods available for that.
+
+    When a query is to be executed it will always check that all data
+    structures related to the query is defined properly such that no
+    half-baked data structures are used in the iClaustron Data API.
+
+    It is possible to keep a conditional assignment object even after
+    reset by calling ic_keep_conditional_assignments, this needs to
+    be done for each query it's reused if needed for many queries in
+    a row.
+  */
   IC_CONDITIONAL_ASSIGNMENT** (*ic_create_conditional_assignments)
-                             (IC_APID_OPERATION *apid_op,
-                              guint32 num_cond_assigns);
+                               (IC_APID_OPERATION *apid_op,
+                                guint32 num_cond_assigns);
+  IC_CONDITIONAL_ASSIGNMENT* (*ic_create_conditional_assignment)
+                               (IC_APID_OPERATION *apid_op,
+                                guint32 *cond_assign_id);
   int (*ic_map_conditional_assignment) (IC_APID_OPERATION *apid_op,
                                         IC_APID_GLOBAL *apid_global,
-                                        guint32 cond_assign_id);
-  int (*ic_set_partition_id) (IC_APID_OPERATION *apid_op,
-                              guint32 partition_id);
+                                        guint32 *loc_cond_assign_id,
+                                        guint32 glob_cond_assign_id);
+  void (*ic_keep_conditional_assignment) (IC_APID_OPERATION *apid_op);
+
+  /*
+    Handling of Errors
+    ------------------
+    In the case of an error on a query, an error object is available to
+    the application. However to avoid having to fetch this object after
+    completing each query it is possible to quickly check the variable
+    named any_error on the IC_APID_OPERATION object. If this is set to
+    FALSE then the query went through without any warnings or errors.
+
+    If the variable is set one can get an error object and query this object
+    for more information on the nature of the error.
+  */
   IC_APID_ERROR* (*ic_get_error_object) (IC_APID_OPERATION *apid_op);
+
+  /*
+    Handling of Query Completion
+    ----------------------------
+    There are three ways to handle Query Completion.
+    1) Don't do anything, operation object will be reset at close of the
+       transaction.
+    2) Call is_reset_apid_op after completing the query and before transaction
+       is committed or aborted. Operation object can be immediately reused for
+       the next query in the same or other transaction.
+    3) Free operation object after completing query. This will release all
+       memory allocated by the operation object and all objects owned created
+       through this object including RANGE conditions, WHERE condition and
+       CONDITIONAL ASSIGNMENT objects.
+
+    A reset operation will also release memory in some cases where WHERE
+    conditions and CONDITIONAL ASSIGNMENT objects have been allocated to
+    the operation object and not been specified to be kept.
+
+    To call reset before close of the transaction has the obvious advantage
+    of releasing an operation object early on that can be immediately
+    reused for other queries.
+  */
   int (*ic_reset_apid_op) (IC_APID_OPERATION *apid_op);
   void (*ic_free_apid_op) (IC_APID_OPERATION *apid_op);
 };
@@ -351,8 +587,17 @@ struct ic_range_condition_ops
     ic_multi_range with number of ranges equal to 1. The first range id
     is 0. The ranges should be defined in the order of increasing range ids.
   */
+
+  /*
+    For a range consisting of several subranges it's necessary to define
+    the number of ranges before defining the ranges. For ranges consisting
+    of only one range this call will be implicit at the first
+    ic_define_range_part call.
+  */
   int (*ic_multi_range) (IC_RANGE_CONDITION *range,
                          guint32 num_ranges);
+
+  /* Define one subrange */
   int (*ic_define_range_part) (IC_RANGE_CONDITION *range,
                                guint32 range_id,
                                guint32 field_id,
@@ -362,6 +607,8 @@ struct ic_range_condition_ops
                                guint32 end_len,
                                IC_LOWER_RANGE_TYPE lower_range_type,
                                IC_UPPER_RANGE_TYPE upper_range_type);
+
+  /* Free the range object */
   void (*ic_free_range_cond) (IC_RANGE_CONDITION *range);
 };
 
@@ -447,7 +694,7 @@ struct ic_where_condition_ops
   top boolean condition we use a special condition statement that uses one
   special subroutine to evaluate its condition.
 
-  The observation that comparator's like EQ, LE, LT, GE, GT can only feed
+  The observation that comparator's like NE, EQ, LE, LT, GE, GT can only feed
   into boolean condition gives us the further simplification that subroutines
   will always end with a ic_define_condition, thus we can make the end of
   subroutine here implicit, it is always the case.
@@ -511,53 +758,102 @@ struct ic_where_condition_ops
   in the Data nodes in the clusters. To support this we have a method on the
   object to store conditions in a cluster.
   */
+
+  /* Create a BOOLEAN expression (AND, OR, XOR) between two subroutines */
   int (*ic_define_boolean) (IC_WHERE_CONDITION *cond,
                             guint32 current_subroutine_id,
                             guint32 *left_subroutine_id,
                             guint32 *right_subroutine_id,
                             IC_BOOLEAN_TYPE boolean_type);
+
+  /*
+    A condition (=, !=, <, <=, >, >=) between two memory address, the result
+    is the result of a subroutine. The memory address is typed, so it
+    remembers what the type of the constant or field it was created with.
+  */
   int (*ic_define_condition) (IC_WHERE_CONDITION *cond,
                               guint32 current_subroutine_id,
                               guint32 left_memory_address,
                               guint32 right_memory_address,
                               IC_COMPARATOR_TYPE comp_type);
+
+  /* Read a field into a memory address */
   int (*ic_read_field_into_memory) (IC_WHERE_CONDITION *cond,
                                     guint32 current_subroutine_id,
                                     guint32 *memory_address,
                                     guint32 field_id);
+
+  /* Read a constant into memory, specify constant data type */
   int (*ic_read_const_into_memory) (IC_WHERE_CONDITION *cond,
                                     guint32 current_subroutine_id,
                                     guint32 *memory_address,
                                     gchar *const_ptr,
                                     guint32 const_len,
                                     IC_FIELD_TYPE const_type);
+
+  /*
+    Calculate the result of a mathematical operation on two memory
+    addresses and store result in a third memory adresses which is
+    generated by function. The mathematical operation can be any of
+    +, -, *, /. It doesn't return from the subroutine.
+  */
   int (*ic_define_calculation) (IC_WHERE_CONDITION *cond,
                                 guint32 current_subroutine_id,
                                 guint32 *returned_memory_address,
                                 guint32 left_memory_address,
                                 guint32 right_memory_address,
                                 IC_CALCULATION_TYPE calc_type);
+
+  /*
+    Take the result from one subroutine and invert it, returns from
+    subroutine.
+  */
   int (*ic_define_not) (IC_WHERE_CONDITION *cond,
                         guint32 current_subroutine_id,
                         guint32 *subroutine_id);
+
+  /*
+    Create top level condition when top-level is a normal condition
+    and no inversion of condition is needed. Always used at top level
+    node in code generated.
+   */
   int (*ic_define_first) (IC_WHERE_CONDITION *cond,
-                        guint32 *subroutine_id);
+                          guint32 *subroutine_id);
+
+  /*
+    A special type of condition where we do a regular expression on a
+    field, the reg_exp_memory contains the regular expression which
+    needs to be loaded as constant first. Can be applied on part or
+    full size of field.
+  */
   int (*ic_define_regexp) (IC_WHERE_CONDITION *cond,
-                           guint32 *condition_id,
+                           guint32 current_suroutine_id,
                            guint32 field_id,
                            guint32 start_pos,
                            guint32 end_pos,
                            guint32 reg_exp_memory);
+
+  /* Same ic_define_regexp but a LIKE condition instead */
   int (*ic_define_like) (IC_WHERE_CONDITION *cond,
                          guint32 *condition_id,
                          guint32 field_id,
                          guint32 start_pos,
                          guint32 end_pos,
                          guint32 like_memory_address);
-  int (*ic_evaluate_condition) (IC_WHERE_CONDITION *cond);
-  int (*ic_store_where_condition) (IC_WHERE_CONDITION *cond,
+
+  /*
+    End of WHERE condition, evaluate it, if true the record will
+    be returned to application or assignment will proceed (if used in
+    conditional assignment).
+  */
+  int (*ic_evaluate_where) (IC_WHERE_CONDITION *cond);
+
+  /* FUTURE: Store condition in cluster */
+  int (*ic_store_where) (IC_WHERE_CONDITION *cond,
                                    guint32 cluster_id);
-  int (*ic_free_cond) (IC_WHERE_CONDITION *cond);
+
+  /* Free WHERE condition */
+  int (*ic_free_where) (IC_WHERE_CONDITION *cond);
 };
 
 struct ic_conditional_assignment_ops
@@ -641,27 +937,52 @@ struct ic_conditional_assignment_ops
     IC_APID_GLOBAL object from where it can be reused by any query using
     the IC_APID_GLOBAL instance.
   */
+
+  /*
+    Conditional assignments can have one WHERE condition attached to them.
+    If no where condition is attached, the assignment is made unconditional.
+  */
   IC_WHERE_CONDITION* (*ic_create_assignment_condition)
                        (IC_CONDITIONAL_ASSIGNMENT *cond_assign);
+
+  /* Assignment can be reused from a global pool */
   int (*ic_map_assignment_condition) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                       IC_APID_GLOBAL *apid_global,
-                                      guint32 where_cond_id);
+                                      guint32 cond_assignment_id);
+
+  /* Read a field into a memory address */
   int (*ic_read_field_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                     guint32 *memory_address,
                                     guint32 field_id);
+
+  /* Read a constant into a memory address */
   int (*ic_read_const_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                     guint32 *memory_address,
                                     gchar *const_ptr,
                                     guint32 const_len,
                                     IC_FIELD_TYPE const_type);
+
+  /*
+    Perform a mathematical operation on two memory addresses which are
+    equipped with type information and store result in a third memory
+    address.
+  */
   int (*ic_define_calculation) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                 guint32 *returned_memory_address,
                                 guint32 left_memory_address,
                                 guint32 right_memory_address,
                                 IC_CALCULATION_TYPE calc_type);
+
+  /*
+    The actual assignment which is made dependent on the WHERE condition
+    and the data written is the result of calculations on fields in the
+    table as well as constants.
+  */
   int (*ic_write_field_into_memory) (IC_CONDITIONAL_ASSIGNMENT *cond_assign,
                                      guint32 memory_address,
                                      guint32 field_id);
+
+  /* Free the conditional assignment object */
   int (*ic_free_cond_assign) (IC_CONDITIONAL_ASSIGNMENT **cond_assign);
 };
 
@@ -931,6 +1252,9 @@ struct ic_apid_error_ops
 
   /* Get category of error */
   IC_ERROR_CATEGORY (*ic_get_apid_error_category) (IC_APID_ERROR *apid_error);
+
+  /* Free error object */
+  void (*ic_free_error) (IC_APID_ERROR *apid_error);
 };
 
 /*
@@ -971,35 +1295,71 @@ struct ic_apid_global_ops
                               guint32 cluster_id,
                               guint32 node_id,
                               IC_CONNECTION *conn);
+  int (*ic_wait_first_node_connect) (IC_APID_GLOBAL *apid_global,
+                                     guint32 cluster_id);
   void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };
 
+/*
+  CREATE METHODS
+  --------------
+
+  These are methods to create the global object, the connection object to be
+  used in a specific thread and the operation object used to handle a certain
+  low-level query. All other data structures are allocated as part of the
+  interfaces to these objects.
+
+  ic_create_apid_global
+  ---------------------
+  Method that creates the global APID object, this uses a configuration
+  object already created. In the special case of the Cluster Server the
+  connections are transferred from the Configuration part to the Data
+  API.
+
+  ic_create_apid_connection
+  -------------------------
+  Method to create the APID connection object, each object connects either
+  to all clusters or to a subset of the clusters. An APID connection is
+  normally mapped to usage within one thread. Thus the API user must
+  protect it with a mutex if it's used on more than one thread at a time.
+
+  ic_create_apid_operation
+  ------------------------
+  Method to create APID operation object, it is connected to the global
+  APID object but it's ok to use an operation on any APID connection.
+  An APID object needs to be connected to a table object and a buffer
+  is also connected to the APID operation object.
+*/
 IC_APID_GLOBAL* ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
                                       gboolean use_external_connect,
                                       int *ret_code,
                                       gchar **err_str);
-void ic_disconnect_apid_global(IC_APID_GLOBAL *apid_global);
-int ic_wait_first_node_connect(IC_APID_GLOBAL *apid_global,
-                               guint32 cluster_id);
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
+int ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
+                             gchar *buffer,
+                             IC_TABLE_DEF *table_def);
+
+/*
+  EXTERNALLY VISIBLE DATA STRUCTURES
+  ----------------------------------
+*/
 
 struct ic_apid_error
 {
   IC_APID_ERROR_OPS error_ops;
-  gboolean any_error;
 };
 
 struct ic_apid_connection
 {
   IC_APID_CONNECTION_OPS apid_conn_ops;
-  IC_METADATA_BIND_OPS apid_metadata_ops;
 };
 
 struct ic_apid_global
 {
   IC_APID_GLOBAL_OPS apid_global_ops;
+  IC_METADATA_BIND_OPS apid_metadata_ops;
   IC_BITMAP *cluster_bitmap;
 };
 
@@ -1026,6 +1386,7 @@ struct ic_where_condition
 struct ic_apid_operation
 {
   IC_APID_OPERATION_OPS *apid_op_ops;
+  gboolean any_error;
 };
 
 struct ic_transaction_hint
@@ -1035,7 +1396,7 @@ struct ic_transaction_hint
   guint32 node_id;
 };
 
-struct ic_transaction_obj
+struct ic_transaction
 {
   IC_TRANSACTION_OPS trans_ops;
   guint32 transaction_id[2];
