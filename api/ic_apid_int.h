@@ -35,6 +35,21 @@ typedef enum ic_field_type IC_FIELD_TYPE;
 typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
 typedef enum ic_field_data_type IC_FIELD_DATA_TYPE;
 
+typedef struct ic_int_transaction IC_INT_TRANSACTION;
+typedef struct ic_int_apid_operation IC_INT_APID_OPERATION;
+typedef struct ic_int_apid_error IC_INT_APID_ERROR;
+typedef struct ic_int_apid_connection IC_INT_APID_CONNECTION;
+typedef struct ic_int_apid_global IC_INT_APID_GLOBAL;
+typedef struct ic_int_table_def IC_INT_TABLE_DEF;
+typedef struct ic_int_range_condition IC_INT_RANGE_CONDITION;
+typedef struct ic_int_where_condition IC_INT_WHERE_CONDITION;
+
+typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
+
+/*
+  Objects used by iClaustron Data API implementation, not related at all
+  to the API objects.
+*/
 typedef struct ic_cluster_comm IC_CLUSTER_COMM;
 typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
 typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA;
@@ -45,12 +60,18 @@ typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
 typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 typedef struct ic_grid_comm IC_GRID_COMM;
-typedef struct ic_int_apid_error IC_INT_APID_ERROR;
-typedef struct ic_int_apid_connection IC_INT_APID_CONNECTION;
-typedef struct ic_int_apid_global IC_INT_APID_GLOBAL;
-typedef struct ic_int_table_def IC_INT_TABLE_DEF;
-typedef struct ic_int_range_condition IC_INT_RANGE_CONDITION;
-typedef struct ic_int_where_condition IC_INT_WHERE_CONDITION;
+
+struct ic_int_transaction
+{
+  /* Public part */
+  IC_TRANSACTION_OPS trans_ops;
+  guint64 transaction_id;
+  /* Hidden part */
+  IC_COMMIT_STATE commit_state;
+  IC_SAVEPOINT_ID savepoint_stable;
+  IC_SAVEPOINT_ID savepoint_requested;
+  /* Internal part */
+};
 
 /*
   The basic operation types we support are scan, read using key
@@ -97,6 +118,27 @@ enum ic_field_type
   IC_API_BLOB_TYPE= 13
 };
 
+enum ic_apid_operation_list_type
+{
+  NO_LIST = 0,
+  IN_DEFINED_LIST = 1,
+  IN_EXECUTING_LIST = 2,
+  IN_EXECUTED_LIST = 3,
+  IN_COMPLETED_LIST = 4
+};
+
+/*
+  Read key operations have a definition of fields read, a definition of the
+  key fields and finally a definition of the type of read operation.
+
+  Write key operations have a definition of fields written, a definition of
+  the key fields and finally a definition of the write operation type.
+
+  Scan operations also have a definition of fields read, it has a range
+  condition in the cases when there is a scan of an index (will be NULL
+  for scan table operation). There is also a generic where condition.
+*/
+
 /*
   When performing a read/write operation we always supply a IC_FIELD_BIND
   object. This object specifies the fields we want to read/write.
@@ -109,19 +151,6 @@ struct ic_field_bind
   guint32 buffer_size;
   /* Number of null bits allowed in the null pointer reference */
   guint32 num_null_bits;
-  /*
-    User supplied buffer to use for data to write and read results.
-    The buffer is stable until the operation is released or the
-    transaction is released, for scans until we fetch the next
-    row.
-  */
-  gchar *buffer_ptr;
-  /*
-    The bit_array field makes it possible to reuse this structure for many
-    different reads on the same table. We will only read those fields that
-    have their bit set in the bit_array.
-  */
-  guint8 *null_ptr;
   /* An array of pointers to IC_FIELD_DEF objects describing fields to read. */
   IC_FIELD_DEF **field_defs;
 };
@@ -140,10 +169,6 @@ struct ic_key_field_bind
   guint32 buffer_size;
   /* Number of null bits allowed in the null pointer reference */
   guint32 num_null_bits;
-  /* Pointer to the data buffer */
-  gchar *buffer_ptr;
-  /* Pointer to the NULL bits */
-  guint8 *null_ptr;
   /*
     An array of pointers to IC_KEY_FIELD_DEF objects describing
     fields to use in key.
@@ -228,127 +253,6 @@ struct ic_key_field_def
   IC_FIELD_TYPE field_type;
 };
 
-struct ic_ndb_receive_state
-{
-  /* Global data for Data Server API */
-  IC_INT_APID_GLOBAL *apid_global;
-  /* Local free pool of receive pages */
-  IC_SOCK_BUF_PAGE *free_rec_pages;
-  /* Local free pool of NDB messages */
-  IC_SOCK_BUF_PAGE *free_ndb_messages;
-  /* Reference to global pool of receive pages */
-  IC_SOCK_BUF *rec_buf_pool;
-  /* Reference to global pool of NDB messages */
-  IC_SOCK_BUF *message_pool;
-  /* Poll set used by this receive thread */
-  IC_POLL_SET *poll_set;
-  /*
-    Linked lists of connections to other nodes which should be added or
-    removed to/from this receive thread handling this NDB receive state.
-    Both those lists are protected the mutex on this record.
-  */
-  IC_SEND_NODE_CONNECTION *first_add_node;
-  IC_SEND_NODE_CONNECTION *first_rem_node;
-  IC_SEND_NODE_CONNECTION *first_send_node;
-  /* 
-    Statistical info to track usage of this socket to enable proper
-    configuration of threads to handle NDB Protocol.
-    Not created yet.
-  */
-  /* Thread id in receive thread pool of receiver thread */
-  guint32 thread_id;
-
-  GMutex *mutex;
-  GCond *cond;
-};
-
-#define IC_MESSAGE_FRAGMENT_NONE 0
-#define IC_MESSAGE_FRAGMENT_FIRST_NOT_LAST 1
-#define IC_MESSAGE_FRAGMENT_INTERMEDIATE 2
-#define IC_MESSAGE_FRAGMENT_LAST 3
-
-struct ic_ndb_message_opaque_area
-{
-  guint32 sender_node_id;
-  guint32 receiver_node_id;
-  guint32 cluster_id;
-  guint32 packed_message;
-  guint32 version_num; /* Always 0 currently */
-};
-
-struct ic_ndb_message
-{
-  IC_APID_CONNECTION *apid_conn;
-  /*
-    We keep pointers to the message buffer where the actual message data
-    resides instead of copying. We also keep a pointer to the start of
-    the message to make it easy to release the IC_NDB_MESSAGE object.
-    We also need a pointer to the page from which this message is created.
-    This is needed to ensure that we can efficiently release the page when
-    all messages have been executed.
-  */
-  guint32 *segment_ptr[4];
-  guint32 segment_size[4];
-
-  /* Trace number and message number are mostly for debug information.  */
-  guint32 message_number;
-  guint32 trace_num;
-  /*
-     There can be up to 3 segments in a  message in addition to the always
-     existing short data part which can have a maximum 25 words.
-     There is a variable to keep track of number of segments, number of words
-     in the short data part. In order to handle really large messages we
-     use fragmentation bits to keep track of the message train that should
-     be treated as one message.
-     Messages also have priorities, currently there are only 2 really used,
-     Priority A and Priority B.
-
-     The offset to the short data is
-     message_header[header_size]
-     The offset to the segment sizes are
-     message_header[header_size + short_data_size]
-  */
-  guint32 num_segments;
-  guint32 message_priority;
-  guint32 fragmentation_bits;
-
-  /*
-    The message id is the actual number indicating which message this is.
-    A message number could indicate for example that this is a TCKEYCONF,
-    TRANSID_AI and other messages NDB sends. We also keep track of the
-    total message size mostly for debug purposes.
-  */
-  guint32 message_id;
-
-  /*
-    We need to keep track of Module id of both the sender and the receiver.
-    In reality the address of the sender and the receiver is identified by
-    the module id and the node id.
-  */
-  guint32 sender_module_id;
-  guint32 receiver_module_id;
-  guint32 sender_node_id;
-  guint32 receiver_node_id;
-};
-
-struct ic_thread_connection
-{
-  IC_SOCK_BUF_PAGE *first_received_message;
-  IC_SOCK_BUF_PAGE *last_received_message;
-  IC_INT_APID_CONNECTION *apid_conn;
-  gboolean thread_wait_cond;
-  GMutex *mutex;
-  GCond *cond;
-};
-
-struct ic_temp_thread_connection
-{
-  IC_SOCK_BUF_PAGE *first_received_message;
-  IC_SOCK_BUF_PAGE *last_received_message;
-  IC_SOCK_BUF_PAGE *last_long_received_message;
-  guint32 num_messages_on_page;
-};
-
 struct ic_int_table_def
 {
   IC_TABLE_DEF_OPS table_def_ops;
@@ -367,6 +271,60 @@ struct ic_int_where_condition
 {
   IC_WHERE_CONDITION_OPS *cond_ops;
   guint32 not_used;
+};
+
+struct ic_int_apid_operation
+{
+  /* Public part */
+  IC_APID_OPERATION_OPS *apid_op_ops;
+  gboolean any_error;
+  /* Hidden part */
+  union
+  {
+    /*
+      read_key_op used by read key operations
+      write_key_op used by write key operations
+      scan_op used by scan operations.
+    */
+    IC_READ_KEY_OP read_key_op;
+    IC_WRITE_KEY_OP write_key_op;
+    IC_SCAN_OP scan_op;
+  };
+  guint32 num_cond_assignment_ids;
+  IC_APID_OPERATION_TYPE op_type;
+  IC_APID_CONNECTION *apid_conn;
+  IC_TRANSACTION *trans_obj;
+  IC_TABLE_DEF *table_def;
+  IC_WHERE_CONDITION *where_cond;
+  IC_RANGE_CONDITION *range_cond;
+  IC_CONDITIONAL_ASSIGNMENT **cond_assign;
+  IC_APID_ERROR *error;
+  void *user_reference;
+
+  IC_KEY_FIELD_BIND *key_fields;
+  /* fields used by scans, read key operations and write key operations */
+  IC_FIELD_BIND *fields;
+
+  /*
+    User supplied buffer to use for data to write and read results.
+    The buffer is stable until the operation is released or the
+    transaction is released, for scans until we fetch the next
+    row.
+  */
+  gchar *buffer_ptr;
+  /*
+    The bit_array field makes it possible to reuse this structure for many
+    different reads on the same table. We will only read those fields that
+    have their bit set in the bit_array.
+  */
+  guint8 *null_ptr;
+
+  /* Internal part */
+  IC_APID_OPERATION_LIST_TYPE list_type;
+  IC_INT_APID_OPERATION *next_trans_op;
+  IC_INT_APID_OPERATION *prev_trans_op;
+  IC_INT_APID_OPERATION *next_conn_op;
+  IC_INT_APID_OPERATION *prev_conn_op;
 };
 
 struct ic_int_apid_connection
@@ -405,172 +363,6 @@ struct ic_int_apid_connection
   IC_INT_APID_OPERATION *first_executed_operation;
   IC_INT_APID_OPERATION *last_executed_operation;
 };
-
-struct ic_listen_server_thread
-{
-  IC_CONNECTION *conn;
-  guint32 cluster_id;
-  guint32 thread_id;
-  guint32 index;
-  gboolean started;
-  gboolean stop_ordered;
-  GMutex *mutex;
-  GCond *cond;
-  GList *first_send_node_conn;
-};
-
-#define MAX_SEND_TIMERS 16
-#define MAX_SENDS_TRACKED 8
-#define MAX_SEND_SIZE 65535
-#define MAX_SEND_BUFFERS 16
-#define IC_MEMBUF_SIZE 32768
-
-
-struct ic_receive_node_connection
-{
-  /* Reference to socket representation for this node */
-  IC_CONNECTION *conn;
-  /* The current page received into on this socket */
-  IC_SOCK_BUF_PAGE *buf_page;
-  /* How many bytes have been received into the current receive page */
-  guint32 read_size;
-  /* Have we received a full header of the NDB message in the receive page */
-  gboolean read_header_flag;
-  /* Cluster id of this connection */
-  guint32 cluster_id;
-  /* Node id of the node on the other end of the socket connection */
-  guint32 other_node_id;
-  /* Node id of myself on the socket connection */
-  guint32 my_node_id;
-};
-
-struct ic_send_node_connection
-{
-  /* A pointer to the global struct */
-  IC_INT_APID_GLOBAL *apid_global;
-  /* Receive node object */
-  IC_RECEIVE_NODE_CONNECTION rec_node;
-  /* My hostname of the connection used by this thread */
-  gchar *my_hostname;
-  /* My port number of connection used by thread */
-  gchar *my_port_number;
-  /* Hostname on other side of the connection used by this thread */
-  gchar *other_hostname;
-  /* Port number of other side of connection used by thread */
-  gchar *other_port_number;
-  /*
-     Allocated string memory where strings for my_hostname,
-     other_hostname, my_port_number and other_port_number
-     are stored.
-  */
-  gchar *string_memory;
-  /* The connection object */
-  IC_CONNECTION *conn;
-  /* For server connections this is the link to the listen server thread */
-  IC_LISTEN_SERVER_THREAD *listen_server_thread;
-  /* The configuration for this connection */
-  IC_SOCKET_LINK_CONFIG *link_config;
-
-  /*
-     Thread data for send thread, presence of thread_state set to
-     non-NULL value also indicates thread has started.
-  */
-  IC_THREAD_STATE *thread_state;
-  guint32 thread_id;
-  /* Mutex protecting this struct */
-  GMutex *mutex;
-  /* Condition used to wake up send thread when it's needed */
-  GCond *cond;
-
-  /* Linked list of send buffers awaiting sending */
-  IC_SOCK_BUF_PAGE *first_sbp;
-  IC_SOCK_BUF_PAGE *last_sbp;
-  /* List of buffers to release after sending completed */
-  IC_SOCK_BUF_PAGE *release_sbp;
-
-  /* How many bytes are in the send buffers awaiting sending */
-  guint32 queued_bytes;
-  /* When any thread is actively sending already this boolean is set */
-  gboolean send_active;
-  /* Indicates if node is up, if not it's no use sending */
-  gboolean node_up;
-  /* Indicates if the connection is up. */
-  gboolean connection_up;
-
-  /* Debug variable set when waking up send thread */
-  gboolean send_thread_is_sending;
-  /* Variable indicating when send thread has exited */
-  gboolean send_thread_ended;
-  /* Variable indicating send thread is awake and working */
-  gboolean send_thread_active;
-  /* Somebody ordered the node to stop */
-  gboolean stop_ordered;
-  /*
-    The node id we have in this cluster. If this node id is equal to
-    the receiving end, the link is a local connection.
-  */
-  guint32 my_node_id;
-  /* The node id in the cluster of the receiving end */
-  guint32 other_node_id;
-  /* The cluster id this connection is used in */
-  guint32 cluster_id;
-  /* The message id variable used for debugging purposes in the NDB Protocol */
-  guint32 message_id;
-
-  /* Timer set when the first buffer was linked and not sent */
-  IC_TIMER first_buffered_timer;
-  /* Timer for how long we want the maximum wait to be */
-  IC_TIMER max_wait_in_nanos;
-  /*
-    num_waits keeps track of how many sends are currently already waiting
-    max_num_waits keeps track of how many are currently allowed to wait
-    at maximum, this is the current state of the adaptive send algorithm.
-  */
-  guint32 num_waits;
-  guint32 max_num_waits;
-  /* Number of statistical entries */
-  guint32 num_stats;
-  /* Sum of waits with current state */
-  IC_TIMER tot_curr_wait_time;
-  /* Sum of waits if we added one to the state */
-  IC_TIMER tot_wait_time_plus_one;
-  /* Index into timer array */
-  guint32 last_send_timer_index;
-  /*
-     Next pointers for lists on IC_NDB_RECEIVE_STATE for add/remove
-     this connection to the receive thread
-     Both those variables are protected by both the receive thread
-     mutex and the send node connection mutex.
-  */
-  IC_SEND_NODE_CONNECTION *next_add_node;
-  IC_SEND_NODE_CONNECTION *next_rem_node;
-  IC_SEND_NODE_CONNECTION *next_send_node;
-  /*
-    A pointer to the next node in the heartbeat thread linked list.
-    This list is protected by the mutex on the IC_APID_GLOBAL object.
-  */
-  IC_SEND_NODE_CONNECTION *next_heartbeat_node;
-  /* Array of timers for the last 16 sends */
-  IC_TIMER last_send_timers[MAX_SEND_TIMERS];
-};
-
-struct ic_cluster_comm
-{
-  IC_SEND_NODE_CONNECTION **send_node_conn_array;
-};
-
-struct ic_grid_comm
-{
-  IC_CLUSTER_COMM **cluster_comm_array;
-  IC_THREAD_CONNECTION **thread_conn_array;
-};
-
-#define IC_MAX_SERVER_PORTS_LISTEN 256
-#define IC_MAX_RECEIVE_THREADS 64
-
-/* Definitions used to handle NDB Protocol handling data structures. */
-
-#define IC_MEM_BUF_SIZE 32768
 
 struct ic_int_apid_error
 {
@@ -629,4 +421,5 @@ struct ic_int_apid_global
   IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];
   IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];
 };
+#include "ic_apid_impl.h"
 #endif

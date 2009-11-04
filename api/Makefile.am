@@ -25,4 +25,5 @@ libic_api_la_LIBADD = $(LDADD) \
 				../util/libic_util.la \
 				../comm/libic_comm.la
 
-EXTRA_DIST =                    ic_apic_int.h ic_apid_int.h
+EXTRA_DIST =                    ic_apic_int.h ic_apid_int.h \
+                                ic_apid_impl.h

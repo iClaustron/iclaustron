@@ -18,7 +18,6 @@
 #include <ic_threadpool.h>
 #include <ic_connection.h>
 
-
 /*
   GENERAL PRINCIPLES ON NAMING AND DATA HIDING IN iClaustron DATA API
   -------------------------------------------------------------------
@@ -55,17 +54,16 @@
 */
 typedef struct ic_apid_global IC_APID_GLOBAL;
 typedef struct ic_apid_global_ops IC_APID_GLOBAL_OPS;
+typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
 
 typedef struct ic_apid_connection IC_APID_CONNECTION;
 typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 
 typedef struct ic_table_def IC_TABLE_DEF;
 typedef struct ic_table_def_ops IC_TABLE_DEF_OPS;
-typedef struct ic_metadata_bind_ops IC_METADATA_BIND_OPS;
 
 typedef struct ic_transaction IC_TRANSACTION;
 typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
-typedef struct ic_transaction_state IC_TRANSACTION_STATE;
 typedef guint32 IC_SAVEPOINT_ID;
 
 typedef struct ic_transaction_hint IC_TRANSACTION_HINT;
@@ -93,10 +91,12 @@ typedef struct ic_apid_error_ops IC_APID_ERROR_OPS;
 typedef enum ic_error_severity_level IC_ERROR_SEVERITY_LEVEL;
 typedef enum ic_error_category IC_ERROR_CATEGORY;
 
+/* Parameter when starting Key read, Key write and Scan operations */
 typedef enum ic_read_key_op IC_READ_KEY_OP;
 typedef enum ic_write_key_op IC_WRITE_KEY_OP;
 typedef enum ic_scan_op IC_SCAN_OP;
 
+/* State returned when asking transaction for its commit state */
 typedef enum ic_commit_state IC_COMMIT_STATE;
 
 #define IC_NO_FIELD_ID 0xFFFFFFF0
@@ -1090,7 +1090,8 @@ struct ic_apid_connection_ops
     kernel, this will however happen as part of the first operation of the
     transaction.
   */
-  int (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
+  IC_APID_ERROR*
+      (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
                                IC_TRANSACTION **transaction_obj,
                                IC_TRANSACTION_HINT *transaction_hint,
                                gboolean joinable);
@@ -1099,7 +1100,8 @@ struct ic_apid_connection_ops
     To be able to use a transaction with this Data API connection we need
     to specifically join the transaction.
   */
-  int (*ic_join_transaction) (IC_APID_CONNECTION *apid_conn,
+  IC_APID_ERROR*
+      (*ic_join_transaction) (IC_APID_CONNECTION *apid_conn,
                               IC_TRANSACTION *transaction_obj,
                               void *user_reference);
 
@@ -1110,7 +1112,8 @@ struct ic_apid_connection_ops
     not known until we have sent and polled in all operations of the
     transaction.
   */
-  int (*ic_commit_transaction) (IC_APID_CONNECTION *apid_conn,
+  IC_APID_ERROR*
+      (*ic_commit_transaction) (IC_APID_CONNECTION *apid_conn,
                                 IC_TRANSACTION *transaction_obj,
                                 /* Callback function */
                                 IC_APID_CALLBACK_FUNC callback_func,
@@ -1123,7 +1126,8 @@ struct ic_apid_connection_ops
     since the transaction is only committed if specifically committed and
     the commit was successful.
   */
-  int (*ic_rollback_transaction) (IC_APID_CONNECTION *apid_conn,
+  IC_APID_ERROR*
+      (*ic_rollback_transaction) (IC_APID_CONNECTION *apid_conn,
                                   IC_TRANSACTION *transaction_obj,
                                   /* Callback function */
                                   IC_APID_CALLBACK_FUNC callback_func,
@@ -1137,7 +1141,8 @@ struct ic_apid_connection_ops
     transaction is aborted it is successful. There is no specific
     error reporting from this call.
   */
-  int (*ic_create_savepoint) (IC_APID_CONNECTION *apid_conn,
+  IC_APID_ERROR*
+      (*ic_create_savepoint) (IC_APID_CONNECTION *apid_conn,
                               IC_TRANSACTION *transaction_obj,
                               IC_SAVEPOINT_ID *savepoint_id);
 
@@ -1156,9 +1161,6 @@ struct ic_apid_connection_ops
                                 /* User data to callback function */
                                 void *user_reference);
 
-  int (*ic_check_transaction_state) (IC_APID_CONNECTION *apid_conn,
-                                     IC_TRANSACTION *transaction_obj,
-                                     IC_TRANSACTION_STATE *transaction_state);
   /*
     Check for new operations received. If wait_time > 0 we will wait for
     the number of milliseconds given for new operations.
@@ -1208,14 +1210,6 @@ struct ic_apid_connection_ops
 
 struct ic_transaction_ops
 {
-  /*
-    Get state of transaction
-    trans_obj                 IN
-    trans_state               OUT
-  */
-  int (*ic_check_state) (IC_TRANSACTION *trans_obj,
-                         IC_TRANSACTION_STATE *trans_state);
-
   /*
     This method iterates over all ongoing operations that still haven't
     been executed in the cluster. They have though been sent, so this
@@ -1338,7 +1332,8 @@ IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
 int ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
-                             gchar *buffer,
+                             gchar *data_buffer,
+                             gchar *null_buffer,
                              IC_TABLE_DEF *table_def);
 
 /*
@@ -1399,7 +1394,7 @@ struct ic_transaction_hint
 struct ic_transaction
 {
   IC_TRANSACTION_OPS trans_ops;
-  guint32 transaction_id[2];
+  guint64 transaction_id;
 };
 
 /*
