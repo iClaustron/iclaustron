@@ -54,13 +54,20 @@ enum ic_scan_op
   SCAN_CONSISTENT_READ= 3
 };
 
-enum ic_range_type
+enum ic_lower_range_type
 {
-  IC_RANGE_EQ= 0,
-  IC_RANGE_LT= 1,
-  IC_RANGE_LE= 2,
-  IC_RANGE_GT= 3,
-  IC_RANGE_GE= 4
+  IC_NO_MINIMUM= 0,
+  IC_LOWER_RANGE_GT= 1,
+  IC_LOWER_RANGE_GE= 2,
+  IC_LOWER_RANGE_EQ= 3
+};
+
+enum ic_upper_range_type
+{
+  IC_NO_MAXIMUM= 0,
+  IC_UPPER_RANGE_LT= 1,
+  IC_UPPER_RANGE_LE= 2,
+  IC_UPPER_RANGE_EQ= 3
 };
 
 enum ic_comparator_type
@@ -102,5 +109,35 @@ enum ic_error_category
 {
   USER_ERROR = 0,
   INTERNAL_ERROR = 1
+};
+
+/*
+  We only handle the basic types here. This means that we manage
+  all integer types of various sorts, the bit type, fixed size
+  character strings, the variable sized character strings. We also
+  handle the new NDB type BLOB type which can store up to e.g.
+  16MB or more on the actual record. User level blobs are handled
+  on a higher level by using many records to accomodate for large
+  BLOB's. A user level BLOB is allowed to be spread among many
+  nodes and node groups within one cluster, but it cannot span
+  many clusters. The new BLOB type is essentially an array of
+  unsigned 8 bit values.
+*/
+enum ic_field_type
+{
+  IC_API_UINT32_TYPE= 0,
+  IC_API_UINT64_TYPE= 1,
+  IC_API_UINT24_TYPE= 2,
+  IC_API_UINT16_TYPE= 3,
+  IC_API_UINT8_TYPE= 4,
+  IC_API_INT32_TYPE= 5,
+  IC_API_INT64_TYPE= 6,
+  IC_API_INT24_TYPE= 7,
+  IC_API_INT16_TYPE= 8,
+  IC_API_INT8_TYPE= 9,
+  IC_API_BIT_TYPE= 10,
+  IC_API_FIXED_SIZE_CHAR= 11,
+  IC_API_VARIABLE_SIZE_CHAR= 12,
+  IC_API_BLOB_TYPE= 13
 };
 #endif

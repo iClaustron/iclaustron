@@ -3181,6 +3181,7 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   IC_TRANSACTION *trans_op;
   IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
   guint32 data_size;
+  guint32 transid[2];
   guint64 connection_ptr= header_data[0];
   guint32 transid_part1= header_data[1];
   guint32 transid_part2= header_data[2];
@@ -3206,8 +3207,9 @@ execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
     data_size= header_size - 3;
   }
   trans_op= apid_op->trans_obj;
-  if (trans_op->transaction_id[0] != transid_part1 ||
-      trans_op->transaction_id[1] != transid_part2)
+  ic_get_transaction_id(trans_op, transid);
+  if (transid[0] != transid_part1 ||
+      transid[1] != transid_part2)
   {
     g_assert(FALSE);
     return 1;

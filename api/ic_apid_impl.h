@@ -16,6 +16,16 @@
 #ifndef IC_APID_IMPL_H
 #define IC_APID_IMPL_H
 
+typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
+
+struct ic_message_error_object
+{
+  int error;
+  gchar *error_string;
+  int error_category;
+  int error_severity;
+};
+
 struct ic_ndb_receive_state
 {
   /* Global data for Data Server API */
@@ -50,7 +60,7 @@ struct ic_ndb_receive_state
   GCond *cond;
 };
 
-#define IC_MESSAGE_FRAGMENT_NONE 0
+#define IC_MESSAGE_FRAGMENT_FIRST_AND_LAST 0
 #define IC_MESSAGE_FRAGMENT_FIRST_NOT_LAST 1
 #define IC_MESSAGE_FRAGMENT_INTERMEDIATE 2
 #define IC_MESSAGE_FRAGMENT_LAST 3
@@ -295,9 +305,6 @@ struct ic_grid_comm
   IC_CLUSTER_COMM **cluster_comm_array;
   IC_THREAD_CONNECTION **thread_conn_array;
 };
-
-#define IC_MAX_SERVER_PORTS_LISTEN 256
-#define IC_MAX_RECEIVE_THREADS 64
 
 /* Definitions used to handle NDB Protocol handling data structures. */
 

@@ -18,6 +18,25 @@
 typedef struct ic_hidden_transaction IC_HIDDEN_TRANSACTION;
 typedef struct ic_hidden_apid_operation IC_HIDDEN_APID_OPERATION;
 
+typedef struct ic_field_bind IC_FIELD_BIND;
+typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
+typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
+
+/*
+  The basic operation types we support are scan, read using key
+  and the write using a key.
+*/
+enum ic_apid_operation_type
+{
+  SCAN_OPERATION= 0,
+  KEY_READ_OPERATION= 1,
+  KEY_WRITE_OPERATION= 2,
+  COMMIT_TRANSACTION= 3,
+  ROLLBACK_TRANSACTION= 4,
+  CREATE_SAVEPOINT= 5,
+  ROLLBACK_SAVEPOINT= 6
+};
+
 /*
   This is part of the external interface for efficiency reasons.
   However this part is defined to not be stable. The stable interface
@@ -67,5 +86,12 @@ struct ic_hidden_apid_operation
   IC_FIELD_BIND *fields;
   gchar *buffer_ptr;
   guint8 *null_ptr;
+};
+
+struct ic_hidden_table_def
+{
+  /* Public part */
+  IC_TABLE_DEF_OPS table_def_ops;
+  /* Hidden part */
 };
 #endif

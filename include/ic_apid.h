@@ -72,9 +72,11 @@ typedef struct ic_transaction_hint_ops IC_TRANSACTION_HINT_OPS;
 typedef struct ic_apid_operation IC_APID_OPERATION;
 typedef struct ic_apid_operation_ops IC_APID_OPERATION_OPS;
 
+
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_range_condition_ops IC_RANGE_CONDITION_OPS;
-typedef enum ic_range_type IC_RANGE_TYPE;
+typedef enum ic_lower_range_type IC_LOWER_RANGE_TYPE;
+typedef enum ic_upper_range_type IC_UPPER_RANGE_TYPE;
 
 typedef struct ic_where_condition IC_WHERE_CONDITION;
 typedef struct ic_where_condition_ops IC_WHERE_CONDITION_OPS;
@@ -98,6 +100,8 @@ typedef enum ic_scan_op IC_SCAN_OP;
 
 /* State returned when asking transaction for its commit state */
 typedef enum ic_commit_state IC_COMMIT_STATE;
+
+typedef enum ic_field_type IC_FIELD_TYPE;
 
 #define IC_NO_FIELD_ID 0xFFFFFFF0
 #define IC_NO_NULL_OFFSET 0xFFFFFFF1
@@ -224,7 +228,7 @@ struct ic_table_def_ops
                             guint32* field_id);
   int (*ic_get_field_type) (IC_TABLE_DEF *table_def,
                             guint32 field_id,
-                            IC_FIELD_DATA_TYPE *field_data_type);
+                            IC_FIELD_TYPE *field_data_type);
   int (*ic_get_field_len)  (IC_TABLE_DEF *table_def,
                             guint32 field_id,
                             guint32 *field_len);
@@ -389,7 +393,7 @@ struct ic_apid_operation_ops
   */
   IC_RANGE_CONDITION* (*ic_create_range_condition)
                              (IC_APID_OPERATION *apid_op);
-  int (*ic_keep_range) (IC_APID_OPERATION *apid_op);
+  void (*ic_keep_range) (IC_APID_OPERATION *apid_op);
 
   /*
     Handling of WHERE CONDITION objects
@@ -449,10 +453,10 @@ struct ic_apid_operation_ops
                                 guint32 num_cond_assigns);
   IC_CONDITIONAL_ASSIGNMENT* (*ic_create_conditional_assignment)
                                (IC_APID_OPERATION *apid_op,
-                                guint32 *cond_assign_id);
+                                guint32 cond_assign_id);
   int (*ic_map_conditional_assignment) (IC_APID_OPERATION *apid_op,
                                         IC_APID_GLOBAL *apid_global,
-                                        guint32 *loc_cond_assign_id,
+                                        guint32 loc_cond_assign_id,
                                         guint32 glob_cond_assign_id);
   void (*ic_keep_conditional_assignment) (IC_APID_OPERATION *apid_op);
 
@@ -818,6 +822,7 @@ struct ic_where_condition_ops
     node in code generated.
    */
   int (*ic_define_first) (IC_WHERE_CONDITION *cond,
+                          guint32 current_subroutine_id,
                           guint32 *subroutine_id);
 
   /*
@@ -835,7 +840,7 @@ struct ic_where_condition_ops
 
   /* Same ic_define_regexp but a LIKE condition instead */
   int (*ic_define_like) (IC_WHERE_CONDITION *cond,
-                         guint32 *condition_id,
+                         guint32 current_subroutine_id,
                          guint32 field_id,
                          guint32 start_pos,
                          guint32 end_pos,
@@ -1328,13 +1333,19 @@ IC_APID_GLOBAL* ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
                                       gboolean use_external_connect,
                                       int *ret_code,
                                       gchar **err_str);
+
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
-int ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
-                             gchar *data_buffer,
-                             gchar *null_buffer,
-                             IC_TABLE_DEF *table_def);
+
+IC_APID_OPERATION*
+ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
+                         IC_TABLE_DEF *table_def,
+                         guint32 num_fields, /* == 0 means all fields */
+                         gchar *data_buffer,
+                         guint32 buffer_size, /* in bytes */
+                         guint8 *null_buffer,
+                         guint32 null_buffer_size); /* in bytes */
 
 /*
   EXTERNALLY VISIBLE DATA STRUCTURES

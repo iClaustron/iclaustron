@@ -24,16 +24,10 @@
 #ifndef IC_APID_INT_H
 #define IC_APID_INT_H
 typedef struct ic_field_def IC_FIELD_DEF;
-typedef struct ic_field_bind IC_FIELD_BIND;
 
 typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
-typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
 
 typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
-
-typedef enum ic_field_type IC_FIELD_TYPE;
-typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
-typedef enum ic_field_data_type IC_FIELD_DATA_TYPE;
 
 typedef struct ic_int_transaction IC_INT_TRANSACTION;
 typedef struct ic_int_apid_operation IC_INT_APID_OPERATION;
@@ -73,51 +67,6 @@ struct ic_int_transaction
   /* Internal part */
 };
 
-/*
-  The basic operation types we support are scan, read using key
-  and the write using a key.
-*/
-enum ic_apid_operation_type
-{
-  SCAN_OPERATION= 0,
-  KEY_READ_OPERATION= 1,
-  KEY_WRITE_OPERATION= 2,
-  COMMIT_TRANSACTION= 3,
-  ROLLBACK_TRANSACTION= 4,
-  CREATE_SAVEPOINT= 5,
-  ROLLBACK_SAVEPOINT= 6
-};
-
-/*
-  We only handle the basic types here. This means that we manage
-  all integer types of various sorts, the bit type, fixed size
-  character strings, the variable sized character strings. We also
-  handle the new NDB type BLOB type which can store up to e.g.
-  16MB or more on the actual record. User level blobs are handled
-  on a higher level by using many records to accomodate for large
-  BLOB's. A user level BLOB is allowed to be spread among many
-  nodes and node groups within one cluster, but it cannot span
-  many clusters. The new BLOB type is essentially an array of
-  unsigned 8 bit values.
-*/
-enum ic_field_type
-{
-  IC_API_UINT32_TYPE= 0,
-  IC_API_UINT64_TYPE= 1,
-  IC_API_UINT24_TYPE= 2,
-  IC_API_UINT16_TYPE= 3,
-  IC_API_UINT8_TYPE= 4,
-  IC_API_INT32_TYPE= 5,
-  IC_API_INT64_TYPE= 6,
-  IC_API_INT24_TYPE= 7,
-  IC_API_INT16_TYPE= 8,
-  IC_API_INT8_TYPE= 9,
-  IC_API_BIT_TYPE= 10,
-  IC_API_FIXED_SIZE_CHAR= 11,
-  IC_API_VARIABLE_SIZE_CHAR= 12,
-  IC_API_BLOB_TYPE= 13
-};
-
 enum ic_apid_operation_list_type
 {
   NO_LIST = 0,
@@ -147,10 +96,6 @@ struct ic_field_bind
 {
   /* Number of fields in bit_array and field_defs array */
   guint32 num_fields;
-  /* Size of buffer is required. */
-  guint32 buffer_size;
-  /* Number of null bits allowed in the null pointer reference */
-  guint32 num_null_bits;
   /* An array of pointers to IC_FIELD_DEF objects describing fields to read. */
   IC_FIELD_DEF **field_defs;
 };
@@ -159,16 +104,6 @@ struct ic_key_field_bind
 {
   /* Number of fields in field_defs array */
   guint32 num_fields;
-  /*
-    For writes the user needs to supply a buffer, data is referenced
-    offset from the buffer pointer. The user needs to supply both a
-    buffer pointer and a size of the buffer. The buffer is maintained
-    by the user of the API and won't be touched by the API other than
-    for reading its data.
-  */
-  guint32 buffer_size;
-  /* Number of null bits allowed in the null pointer reference */
-  guint32 num_null_bits;
   /*
     An array of pointers to IC_KEY_FIELD_DEF objects describing
     fields to use in key.
@@ -255,10 +190,15 @@ struct ic_key_field_def
 
 struct ic_int_table_def
 {
+  /* Public part */
   IC_TABLE_DEF_OPS table_def_ops;
+  /* Hidden part */
+  /* Internal part */
   guint32 table_id;
   guint32 index_id;
-  gboolean use_index;
+  guint32 num_fields;
+  guint32 num_key_fields;
+  gboolean is_index;
 };
 
 struct ic_int_range_condition
@@ -292,12 +232,15 @@ struct ic_int_apid_operation
   };
   guint32 num_cond_assignment_ids;
   IC_APID_OPERATION_TYPE op_type;
+
   IC_APID_CONNECTION *apid_conn;
   IC_TRANSACTION *trans_obj;
   IC_TABLE_DEF *table_def;
+
   IC_WHERE_CONDITION *where_cond;
   IC_RANGE_CONDITION *range_cond;
   IC_CONDITIONAL_ASSIGNMENT **cond_assign;
+
   IC_APID_ERROR *error;
   void *user_reference;
 
@@ -306,25 +249,35 @@ struct ic_int_apid_operation
   IC_FIELD_BIND *fields;
 
   /*
+    For writes the user needs to supply a buffer, data is referenced
+    offset from the buffer pointer. The user needs to supply both a
+    buffer pointer and a size of the buffer. The buffer is maintained
+    by the user of the API and won't be touched by the API other than
+    for reading its data.
+
     User supplied buffer to use for data to write and read results.
     The buffer is stable until the operation is released or the
     transaction is released, for scans until we fetch the next
     row.
-  */
-  gchar *buffer_ptr;
-  /*
+
     The bit_array field makes it possible to reuse this structure for many
     different reads on the same table. We will only read those fields that
     have their bit set in the bit_array.
   */
+  gchar *buffer_ptr;
   guint8 *null_ptr;
 
   /* Internal part */
+  guint32 buffer_size;
+  guint32 max_null_bits;
+
   IC_APID_OPERATION_LIST_TYPE list_type;
   IC_INT_APID_OPERATION *next_trans_op;
   IC_INT_APID_OPERATION *prev_trans_op;
   IC_INT_APID_OPERATION *next_conn_op;
   IC_INT_APID_OPERATION *prev_conn_op;
+
+  IC_INT_APID_GLOBAL *apid_global;
 };
 
 struct ic_int_apid_connection
@@ -370,6 +323,9 @@ struct ic_int_apid_error
   int error_code;
   gchar *error_msg;
 };
+
+#define IC_MAX_SERVER_PORTS_LISTEN 256
+#define IC_MAX_RECEIVE_THREADS 64
 
 struct ic_int_apid_global
 {
@@ -421,5 +377,6 @@ struct ic_int_apid_global
   IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];
   IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];
 };
+
 #include "ic_apid_impl.h"
 #endif
