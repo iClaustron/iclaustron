@@ -234,10 +234,14 @@ struct ic_table_def_ops
                             guint32 *field_len);
   int (*ic_get_buf)        (IC_TABLE_DEF *table_def,
                             IC_BITMAP *used_fields,
-                            gchar **buffer);
+                            gchar **data_buffer,
+                            guint8 **null_buffer,
+                            guint32 *data_buffer_size,
+                            guint32 *null_buffer_size);
   int (*ic_get_buf_offset) (IC_TABLE_DEF *table_def,
                             guint32 field_id,
-                            guint32 *offset);
+                            guint32 *offset,
+                            guint32 *null_bit_offset);
 };
 
 struct ic_metadata_bind_ops
@@ -321,11 +325,18 @@ struct ic_apid_operation_ops
 
     The buffer offset is the offset of the pointer to the field data in
     the case of fields of size larger than 255 bytes.
+
+    In the case that the API user created the buffer using the API, the
+    buffer offset and null offset are ignored in this call. The API already
+    knows about the offsets of the field in the buffer and the API user can
+    get this data from the IC_TABLE_DEF object. In the special case when
+    buffer is allocated by API and we're using all fields in the table we
+    don't need this call and it will be rejected.
   */
   int (*ic_define_field) (IC_APID_OPERATION *apid_op,
                           guint32 field_id,
-                          guint32 buffer_offset,
-                          guint32 null_offset);
+                          guint32 buffer_offset, /* in bytes */
+                          guint32 null_offset); /* in bits */
 
   /*
     Handling of large fields (over 256 bytes)
@@ -358,8 +369,9 @@ struct ic_apid_operation_ops
                         guint32 field_id,
                         gchar *field_data,
                         gboolean use_full_field,
-                        guint32 start_pos,
-                        guint32 end_pos);
+                        guint32 start_pos, /* in bytes */
+                        guint32 end_pos);  /* in bytes */
+
   int (*ic_transfer_ownership) (IC_APID_OPERATION *apid_op,
                                 guint32 field_id);
 
@@ -1341,11 +1353,15 @@ ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
 IC_APID_OPERATION*
 ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
                          IC_TABLE_DEF *table_def,
-                         guint32 num_fields, /* == 0 means all fields */
+                         /* == 0 means all fields */
+                         guint32 num_fields,
+                         /* == TRUE means API allocated buffer */
+                         gboolean is_buffer_allocated_by_api,
                          gchar *data_buffer,
                          guint32 buffer_size, /* in bytes */
                          guint8 *null_buffer,
-                         guint32 null_buffer_size); /* in bytes */
+                         guint32 null_buffer_size, /* in bytes */
+                         int *error);
 
 /*
   EXTERNALLY VISIBLE DATA STRUCTURES

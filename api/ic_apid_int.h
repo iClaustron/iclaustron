@@ -23,9 +23,9 @@
 
 #ifndef IC_APID_INT_H
 #define IC_APID_INT_H
-typedef struct ic_field_def IC_FIELD_DEF;
 
-typedef struct ic_key_field_def IC_KEY_FIELD_DEF;
+typedef struct ic_field_def IC_FIELD_DEF;
+typedef struct ic_field_in_op IC_FIELD_IN_OP;
 
 typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
 
@@ -40,20 +40,15 @@ typedef struct ic_int_where_condition IC_INT_WHERE_CONDITION;
 
 typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
 
+typedef struct ic_thread_connection IC_THREAD_CONNECTION;
+typedef struct ic_grid_comm IC_GRID_COMM;
+typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
+typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
+typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 /*
   Objects used by iClaustron Data API implementation, not related at all
   to the API objects.
 */
-typedef struct ic_cluster_comm IC_CLUSTER_COMM;
-typedef struct ic_ndb_receive_state IC_NDB_RECEIVE_STATE;
-typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA;
-typedef struct ic_ndb_message IC_NDB_MESSAGE;
-typedef struct ic_thread_connection IC_THREAD_CONNECTION;
-typedef struct ic_temp_thread_connection IC_TEMP_THREAD_CONNECTION;
-typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
-typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
-typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
-typedef struct ic_grid_comm IC_GRID_COMM;
 
 struct ic_int_transaction
 {
@@ -88,30 +83,7 @@ enum ic_apid_operation_list_type
   for scan table operation). There is also a generic where condition.
 */
 
-/*
-  When performing a read/write operation we always supply a IC_FIELD_BIND
-  object. This object specifies the fields we want to read/write.
-*/
-struct ic_field_bind
-{
-  /* Number of fields in bit_array and field_defs array */
-  guint32 num_fields;
-  /* An array of pointers to IC_FIELD_DEF objects describing fields to read. */
-  IC_FIELD_DEF **field_defs;
-};
-
-struct ic_key_field_bind
-{
-  /* Number of fields in field_defs array */
-  guint32 num_fields;
-  /*
-    An array of pointers to IC_KEY_FIELD_DEF objects describing
-    fields to use in key.
-  */
-  IC_KEY_FIELD_DEF **field_defs;
-};
-
-struct ic_field_def
+struct ic_field_in_op
 {
   /*
     The fields in this struct defines a field and is used both to read and
@@ -167,24 +139,14 @@ struct ic_field_def
   guint32 end_pos;
 };
 
-struct ic_key_field_def
+struct ic_field_def
 {
-  /*
-    All fields in this struct is set by caller and the struct is
-    read-only in the API.
-  */
-  /* The field can be specified by field id. */
   guint32 field_id;
-  /* Reference inside the buffer of the data we're writing */
-  guint32 data_offset;
-  /* Null bit offset and null byte offset */
-  guint32 null_offset;
-  /*
-    This is the field type of the data sent to the API, if there is a
-    mismatch between this type and the field type in the database
-    we will apply a conversion method to convert it to the proper
-    data type.
-  */
+  guint32 field_size;
+  gboolean is_nullable;
+  gboolean has_default_value;
+  gchar *default_value;
+  guint32 default_value_len;
   IC_FIELD_TYPE field_type;
 };
 
@@ -199,6 +161,8 @@ struct ic_int_table_def
   guint32 num_fields;
   guint32 num_key_fields;
   gboolean is_index;
+  gboolean is_unique_index;
+  IC_FIELD_DEF **fields;
 };
 
 struct ic_int_range_condition
@@ -244,9 +208,9 @@ struct ic_int_apid_operation
   IC_APID_ERROR *error;
   void *user_reference;
 
-  IC_KEY_FIELD_BIND *key_fields;
   /* fields used by scans, read key operations and write key operations */
-  IC_FIELD_BIND *fields;
+  IC_FIELD_IN_OP **fields;
+  IC_FIELD_IN_OP **key_fields;
 
   /*
     For writes the user needs to supply a buffer, data is referenced
@@ -270,6 +234,23 @@ struct ic_int_apid_operation
   /* Internal part */
   guint32 buffer_size;
   guint32 max_null_bits;
+
+  /* Number of fields in this operation object */
+  guint32 num_fields;
+  /* Number of fields defined */
+  guint32 num_fields_defined;
+  /* Number of key fields in table/index, 0 if not all keys are defined */
+  guint32 num_key_fields;
+  gboolean is_buffer_allocated_by_api;
+  /*
+    When setting up the APID operation object we will check whether all fields
+    have been defined in the case that the operation is using a table object
+    (in which case the key is the primary key) and in the case the operation
+    is using the unique key (in which case the the key is the unique key).
+    For non-unique indexes this flag is always FALSE since the operation
+    cannot be used for Key Read/Write operations.
+  */
+  gboolean is_all_key_fields_defined;
 
   IC_APID_OPERATION_LIST_TYPE list_type;
   IC_INT_APID_OPERATION *next_trans_op;

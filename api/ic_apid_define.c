@@ -357,15 +357,45 @@ static IC_CONDITIONAL_ASSIGNMENT_OPS glob_cond_assign_ops =
   This module contains methods to define an Data API operation object.
 */
 static int
-apid_op_define_field(IC_APID_OPERATION *apid_op,
+organize_field_in_op_array(IC_INT_APID_OPERATION *apid_op)
+{
+  (void)apid_op;
+  return 0;
+}
+
+static int
+apid_op_define_field(IC_APID_OPERATION *ext_apid_op,
                      guint32 field_id,
                      guint32 buffer_offset,
                      guint32 null_offset)
 {
-  (void)apid_op;
-  (void)field_id;
-  (void)buffer_offset;
-  (void)null_offset;
+  IC_FIELD_DEF *field_def;
+  IC_FIELD_IN_OP *field_in_op;
+  IC_INT_APID_OPERATION *apid_op= (IC_INT_APID_OPERATION*)ext_apid_op;
+  IC_INT_TABLE_DEF *table_def;
+  guint32 num_fields_defined= apid_op->num_fields_defined;
+  int ret_code;
+
+  table_def= (IC_INT_TABLE_DEF*)apid_op->table_def;
+  if (field_id > table_def->num_fields ||
+      num_fields_defined >= apid_op->num_fields)
+    return IC_ERROR_TOO_MANY_FIELDS;
+  field_def= table_def->fields[field_id];
+  field_in_op= apid_op->fields[num_fields_defined];
+  num_fields_defined++;
+  apid_op->num_fields_defined= num_fields_defined;
+  if (!apid_op->is_buffer_allocated_by_api)
+  {
+    field_in_op->data_offset=  buffer_offset;
+    field_in_op->null_offset= null_offset;
+  }
+  field_in_op->field_id= field_id;
+  if (num_fields_defined == apid_op->num_fields)
+  {
+    /* Last field defined, organise fields data */
+    if ((ret_code= organize_field_in_op_array(apid_op)))
+      return ret_code;
+  }
   return 0;
 }
 
@@ -529,39 +559,87 @@ static IC_APID_OPERATION_OPS glob_apid_ops =
   .ic_free_apid_op            = apid_op_free
 };
 
+static void
+set_up_fields_in_apid_op(IC_INT_APID_OPERATION *apid_op,
+                         IC_INT_TABLE_DEF *table_def)
+{
+  guint32 i;
+  int ret_code;
+  for (i= 0; i < table_def->num_fields; i++)
+  {
+    ret_code= apid_op_define_field((IC_APID_OPERATION*)apid_op, i, 0, 0);
+    ic_require(!ret_code);
+  }
+}
+
 IC_APID_OPERATION*
 ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
                          IC_TABLE_DEF *ext_table_def,
                          guint32 num_fields,
+                         gboolean is_buffer_allocated_by_api,
                          gchar *data_buffer,
                          guint32 data_buffer_size,
                          guint8 *null_buffer,
-                         guint32 null_buffer_size)
+                         guint32 null_buffer_size,
+                         int *error)
 {
   IC_INT_APID_OPERATION *apid_op;
   IC_INT_TABLE_DEF *table_def= (IC_INT_TABLE_DEF*)ext_table_def;
   gchar *loc_alloc;
   guint32 tot_size;
   guint32 i;
+  guint32 num_key_fields= 0;
 
-  tot_size=
-    sizeof(IC_INT_APID_OPERATION) +
-    sizeof(IC_FIELD_BIND) + 
-    num_fields * (
-      sizeof(IC_FIELD_DEF*) + sizeof(IC_FIELD_DEF));
-  if ((loc_alloc= ic_calloc(tot_size)))
+  if (!error)
     return NULL;
-  apid_op= (IC_INT_APID_OPERATION*)loc_alloc;
-  apid_op->fields= (IC_FIELD_BIND*)(loc_alloc + sizeof(IC_INT_APID_OPERATION));
-  apid_op->fields->field_defs= (IC_FIELD_DEF**)(loc_alloc + sizeof(IC_FIELD_BIND));
-  loc_alloc+= (num_fields * sizeof(IC_FIELD_DEF*));
-  for (i= 0; i < num_fields; i++)
+  if (num_fields > table_def->num_fields)
   {
-    apid_op->fields->field_defs[i]= (IC_FIELD_DEF*)loc_alloc;
-    loc_alloc+= sizeof(IC_FIELD_DEF);
+    *error= IC_ERROR_TOO_MANY_FIELDS;
+    return NULL;
+  }
+  if (!(data_buffer && null_buffer))
+  {
+    *error= IC_ERROR_BUFFER_MISSING_CREATE_APID_OP;
+    return NULL;
   }
 
-  apid_op->apid_op_ops= &glob_apid_ops;
+  if (!table_def->is_index || table_def->is_unique_index)
+  {
+    /*
+      Allocate an area for key fields to make Key Read/Writes more efficient.
+      Not necessary when using a non-unique index. Also not needed when
+      number of fields is smaller than number of key fields obviously.
+    */
+    if (num_fields >= table_def->num_key_fields)
+      num_key_fields= table_def->num_key_fields;
+  }
+  if (!num_fields) /* Use all fields if num_fields == 0 */
+    num_fields= table_def->num_fields;
+  tot_size=
+    sizeof(IC_INT_APID_OPERATION) +
+    sizeof(IC_FIELD_IN_OP*) * num_key_fields +
+    num_fields * (
+      sizeof(IC_FIELD_IN_OP*) + sizeof(IC_FIELD_IN_OP));
+  if ((loc_alloc= ic_calloc(tot_size)))
+  {
+    *error= IC_ERROR_MEM_ALLOC;
+    return NULL;
+  }
+  apid_op= (IC_INT_APID_OPERATION*)loc_alloc;
+  apid_op->fields= (IC_FIELD_IN_OP**)
+    (loc_alloc + sizeof(IC_INT_APID_OPERATION));
+  loc_alloc+= (num_fields * sizeof(IC_FIELD_IN_OP*));
+  if (num_key_fields)
+  {
+    apid_op->key_fields= (IC_FIELD_IN_OP**)loc_alloc;
+    loc_alloc+= (num_key_fields * sizeof(IC_FIELD_IN_OP*));
+  }
+  for (i= 0; i < num_fields; i++)
+  {
+    apid_op->fields[i]= (IC_FIELD_IN_OP*)loc_alloc;
+    loc_alloc+= sizeof(IC_FIELD_IN_OP);
+  }
+
   /*
     apid_conn set per query
     trans_obj set per query
@@ -575,18 +653,22 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
     next_conn_op, prev_conn_op used to keep doubly linked list of
     operation records on connection object.
   */
+  apid_op->apid_op_ops= &glob_apid_ops;
   apid_op->table_def= (IC_TABLE_DEF*)table_def;
   apid_op->buffer_ptr= data_buffer;
   apid_op->null_ptr= null_buffer;
   apid_op->buffer_size= data_buffer_size;
   apid_op->max_null_bits= null_buffer_size * 8;
   apid_op->apid_global= (IC_INT_APID_GLOBAL*)apid_global;
+  apid_op->is_buffer_allocated_by_api= is_buffer_allocated_by_api;
+  apid_op->num_fields= num_fields;
+  apid_op->num_key_fields= num_key_fields;
 
-  /* Assign fields object */
-  if (!num_fields)
-    num_fields= table_def->num_fields;
-  apid_op->fields->num_fields= num_fields;
-  /* Assign key fields object */
-  apid_op->key_fields->num_fields= table_def->num_key_fields;
+  if (is_buffer_allocated_by_api &&
+      table_def->num_fields == num_fields)
+  {
+    set_up_fields_in_apid_op(apid_op, table_def);
+  }
+  *error= 0;
   return (IC_APID_OPERATION*)apid_op;
 }

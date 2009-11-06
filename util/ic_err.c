@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7060
+#define IC_LAST_ERROR 7062
 #define IC_MAX_ERRORS 100
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -164,6 +164,10 @@ ic_init_error_messages()
     "Application has been stopped";
   ic_error_str[IC_ERROR_GET_CONFIG_BY_CLUSTER_SERVER - IC_FIRST_ERROR]=
     "Trying to get configuration from network using cluster server";
+  ic_error_str[IC_ERROR_BUFFER_MISSING_CREATE_APID_OP - IC_FIRST_ERROR]=
+    "Need to have a valid buffers when creating APID operation object";
+  ic_error_str[IC_ERROR_TOO_MANY_FIELDS - IC_FIRST_ERROR]=
+    "Defining more fields than table contains isn't valid";
 }
 
 void

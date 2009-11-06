@@ -16,6 +16,11 @@
 #ifndef IC_APID_IMPL_H
 #define IC_APID_IMPL_H
 
+typedef struct ic_cluster_comm IC_CLUSTER_COMM;
+typedef struct ic_ndb_message_opaque_area IC_NDB_MESSAGE_OPAQUE_AREA;
+typedef struct ic_ndb_message IC_NDB_MESSAGE;
+typedef struct ic_temp_thread_connection IC_TEMP_THREAD_CONNECTION;
+typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
 
 struct ic_message_error_object
