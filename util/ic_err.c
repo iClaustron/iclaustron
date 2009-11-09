@@ -31,8 +31,8 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7062
-#define IC_MAX_ERRORS 100
+#define IC_LAST_ERROR 7063
+#define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
@@ -168,6 +168,8 @@ ic_init_error_messages()
     "Need to have a valid buffers when creating APID operation object";
   ic_error_str[IC_ERROR_TOO_MANY_FIELDS - IC_FIRST_ERROR]=
     "Defining more fields than table contains isn't valid";
+  ic_error_str[IC_ERROR_DUPLICATE_FIELD_IDS - IC_FIRST_ERROR]=
+    "Trying to define the same field twice";
 }
 
 void

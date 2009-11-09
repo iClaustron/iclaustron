@@ -1,0 +1,195 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Define WHERE condition
+  ------------------------------
+  This module contains all the methods used to define a WHERE condition
+  in the iClaustron Data API. The WHERE condition is mapped into a
+  Data API operation object before the query is defined as part of a
+  transaction.
+*/
+
+static int
+where_define_boolean(IC_WHERE_CONDITION *cond,
+                     guint32 current_subroutine_id,
+                     guint32 *left_subroutine_id,
+                     guint32 *right_subroutine_id,
+                     IC_BOOLEAN_TYPE boolean_type)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)left_subroutine_id;
+  (void)right_subroutine_id;
+  (void)boolean_type;
+  return 0;
+}
+
+static int
+where_define_condition(IC_WHERE_CONDITION *cond,
+                       guint32 current_subroutine_id,
+                       guint32 left_memory_address,
+                       guint32 right_memory_address,
+                       IC_COMPARATOR_TYPE comp_type)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)left_memory_address;
+  (void)right_memory_address;
+  (void)comp_type;
+  return 0;
+}
+
+static int
+where_read_field_into_memory(IC_WHERE_CONDITION *cond,
+                             guint32 current_subroutine_id,
+                             guint32 *memory_address,
+                             guint32 field_id)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)memory_address;
+  (void)field_id;
+  return 0;
+}
+
+static int
+where_read_const_into_memory(IC_WHERE_CONDITION *cond,
+                             guint32 current_subroutine_id,
+                             guint32 *memory_address,
+                             gchar *const_ptr,
+                             guint32 const_len,
+                             IC_FIELD_TYPE const_type)
+{
+  (void)cond;
+  (void)memory_address;
+  (void)current_subroutine_id;
+  (void)const_ptr;
+  (void)const_len;
+  (void)const_type;
+  return 0;
+}
+
+static int
+where_define_calculation(IC_WHERE_CONDITION *cond,
+                         guint32 current_subroutine_id,
+                         guint32 *returned_memory_address,
+                         guint32 left_memory_address,
+                         guint32 right_memory_address,
+                         IC_CALCULATION_TYPE calc_type)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)returned_memory_address;
+  (void)left_memory_address;
+  (void)right_memory_address;
+  (void)calc_type;
+  return 0;
+}
+
+static int
+where_define_not(IC_WHERE_CONDITION *cond,
+                 guint32 current_subroutine_id,
+                 guint32 *subroutine_id)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)subroutine_id;
+  return 0;
+}
+
+static int
+where_define_first(IC_WHERE_CONDITION *cond,
+                   guint32 current_subroutine_id,
+                   guint32 *subroutine_id)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)subroutine_id;
+  return 0;
+}
+
+static int
+where_define_regexp(IC_WHERE_CONDITION *cond,
+                    guint32 current_subroutine_id,
+                    guint32 field_id,
+                    guint32 start_pos,
+                    guint32 end_pos,
+                    guint32 reg_exp_memory_address)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)field_id;
+  (void)start_pos;
+  (void)end_pos;
+  (void)reg_exp_memory_address;
+  return 0;
+}
+
+static int
+where_define_like(IC_WHERE_CONDITION *cond,
+                  guint32 current_subroutine_id,
+                  guint32 field_id,
+                  guint32 start_pos,
+                  guint32 end_pos,
+                  guint32 like_memory_address)
+{
+  (void)cond;
+  (void)current_subroutine_id;
+  (void)field_id;
+  (void)start_pos;
+  (void)end_pos;
+  (void)like_memory_address;
+  return 0;
+}
+
+static int
+where_evaluate(IC_WHERE_CONDITION *cond)
+{
+  (void)cond;
+  return 0;
+}
+
+static int
+where_store(IC_WHERE_CONDITION *cond,
+            guint32 cluster_id)
+{
+  (void)cond;
+  (void)cluster_id;
+  return 0;
+}
+
+static int
+where_free(IC_WHERE_CONDITION *cond)
+{
+  (void)cond;
+  return 0;
+}
+
+static IC_WHERE_CONDITION_OPS glob_cond_ops =
+{
+  .ic_define_boolean          = where_define_boolean,
+  .ic_define_condition        = where_define_condition,
+  .ic_read_field_into_memory  = where_read_field_into_memory,
+  .ic_read_const_into_memory  = where_read_const_into_memory,
+  .ic_define_calculation      = where_define_calculation,
+  .ic_define_not              = where_define_not,
+  .ic_define_first            = where_define_first,
+  .ic_define_regexp           = where_define_regexp,
+  .ic_define_like             = where_define_like,
+  .ic_evaluate_where          = where_evaluate,
+  .ic_store_where             = where_store,
+  .ic_free_where              = where_free
+};

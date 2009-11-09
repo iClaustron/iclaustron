@@ -62,6 +62,9 @@ typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 typedef struct ic_table_def IC_TABLE_DEF;
 typedef struct ic_table_def_ops IC_TABLE_DEF_OPS;
 
+typedef struct ic_metadata_transaction IC_METADATA_TRANSACTION;
+typedef struct ic_metadata_transaction_ops IC_METADATA_TRANSACTION_OPS;
+
 typedef struct ic_transaction IC_TRANSACTION;
 typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
 typedef guint32 IC_SAVEPOINT_ID;
@@ -222,22 +225,50 @@ typedef int (*IC_APID_CALLBACK_FUNC) (IC_APID_CONNECTION*, void* user_data);
 
 struct ic_table_def_ops
 {
+  /*
+    The table definition object is used to get data about a table, its
+    fields and its keys.
+  */
+
   int (*ic_get_table_id)   (IC_TABLE_DEF *table_def);
   int (*ic_get_field_id)   (IC_TABLE_DEF *table_def,
                             const gchar *field_name,
                             guint32* field_id);
+  int (*ic_get_field_name) (IC_TABLE_DEF *table_def,
+                            gchar **field_name,
+                            guint32 field_id);
   int (*ic_get_field_type) (IC_TABLE_DEF *table_def,
                             guint32 field_id,
                             IC_FIELD_TYPE *field_data_type);
   int (*ic_get_field_len)  (IC_TABLE_DEF *table_def,
                             guint32 field_id,
                             guint32 *field_len);
+  int (*ic_get_num_key_fields) (IC_TABLE_DEF *table_def,
+                                guint32 *num_key_fields);
+  int (*ic_get_key_field_id) (IC_TABLE_DEF *table_def,
+                              guint32 *field_id,
+                              guint32 key_field_id_order);
+  /*
+    The data buffer used by APID operations can either be defined by the
+    user, or it's defined by the API. In the case of a buffer defined by
+    the API, these two calls are used to get the buffer and the offsets
+    of the fields in this buffer.
+
+    The call to ic_get_buf will allocate a data buffer and null buffer
+    and will report back the sizes of these. The buffer pointers and sizes
+    can be immediately reused in creating an APID operation.
+
+    The call to ic_get_buf_offset is used to get the actual whereabouts of the
+    fields in the buffer. Here fields will always be aligned on a boundary
+    such that no special alignment is necessary of these field data.
+  */
   int (*ic_get_buf)        (IC_TABLE_DEF *table_def,
                             IC_BITMAP *used_fields,
                             gchar **data_buffer,
                             guint8 **null_buffer,
                             guint32 *data_buffer_size,
                             guint32 *null_buffer_size);
+
   int (*ic_get_buf_offset) (IC_TABLE_DEF *table_def,
                             guint32 field_id,
                             guint32 *offset,
@@ -270,6 +301,7 @@ struct ic_metadata_bind_ops
   IC_APID_ERROR*
       (*ic_table_bind) (IC_APID_GLOBAL *apid_global,
                         IC_APID_CONNECTION *apid_conn,
+                        IC_METADATA_TRANSACTION *metadata_trans_obj,
                         IC_TABLE_DEF **table_def,
                         const gchar *schema_name,
                         const gchar *db_name,
@@ -277,12 +309,14 @@ struct ic_metadata_bind_ops
   IC_APID_ERROR*
       (*ic_index_bind) (IC_APID_GLOBAL *apid_global,
                         IC_APID_CONNECTION *apid_conn,
+                        IC_METADATA_TRANSACTION *metadata_trans_obj,
                         IC_TABLE_DEF **table_def,
                         const gchar *schema_name,
                         const gchar *db_name,
                         const gchar *index_name,
                         const gchar *table_name);
-   int (*ic_table_unbind) (IC_APID_GLOBAL *apid_global,
+   IC_APID_ERROR*
+       (*ic_table_unbind) (IC_APID_GLOBAL *apid_global,
                            IC_APID_CONNECTION *apid_conn,
                            IC_TABLE_DEF *table_def);
 };
@@ -1036,7 +1070,7 @@ struct ic_apid_connection_ops
     case one has to use the IC_APID_OPERATION to get the result of the query
     execution after returning from either the ic_poll or ic_flush call.
    */
-  int (*ic_write_key_access)
+  int (*ic_write_key)
                 /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
                 /* Our operation object */
@@ -1058,7 +1092,7 @@ struct ic_apid_connection_ops
     It works in exactly the same manner as ic_write_key_access except that it
     defines a read operation instead.
   */
-  int (*ic_read_key_access)
+  int (*ic_read_key)
                 /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
                 /* Our operation object */
@@ -1077,7 +1111,7 @@ struct ic_apid_connection_ops
     index or perform a full table scan. It is possible to limit the scan
     to a subset of the partitions used in the table.
   */
-  int (*ic_scan_access)
+  int (*ic_scan)
                 /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
                 /* Our operation object */
@@ -1090,6 +1124,19 @@ struct ic_apid_connection_ops
                 IC_APID_CALLBACK_FUNC callback_func,
                 /* Any reference the user wants to pass to completion phase */
                 void *user_reference);
+
+  /*
+    A metadata transaction object is needed to create and alter metadata in
+    the iClaustron API. It's also necessary to bind to metadata objects.
+    
+    A metadata transaction is only performed on one cluster in the iClaustron
+    grid.
+  */
+  IC_APID_ERROR*
+      (*ic_start_metadata_transaction)
+                              (IC_APID_CONNECTION *apid_conn,
+                               IC_METADATA_TRANSACTION *md_trans_obj,
+                               guint32 cluster_id);
 
   /*
     This method is used to create a new transaction object
@@ -1106,16 +1153,28 @@ struct ic_apid_connection_ops
     be used immediately. The actual transaction start happens in the NDB
     kernel, this will however happen as part of the first operation of the
     transaction.
+
+    Transactions can only occur within one cluster. It's also necessary to
+    only use metadata objects belonging to this cluster in all operations of
+    the transaction.
+
+    It is possible to process many transactions on the same or different
+    clusters in parallel, thus one ic_send operation can send transaction
+    operations to many clusters.
   */
   IC_APID_ERROR*
       (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
                                IC_TRANSACTION **transaction_obj,
                                IC_TRANSACTION_HINT *transaction_hint,
+                               guint32 cluster_id,
                                gboolean joinable);
 
   /*
     To be able to use a transaction with this Data API connection we need
-    to specifically join the transaction.
+    to specifically join the transaction. The transaction must have been
+    started in another thread in this node, the transaction_obj is the
+    reference to the transaction object that the start_transaction call
+    returned in this thread.
   */
   IC_APID_ERROR*
       (*ic_join_transaction) (IC_APID_CONNECTION *apid_conn,
@@ -1170,7 +1229,8 @@ struct ic_apid_connection_ops
     more operations will be accepted on the transaction until the
     rollback to savepoint is completed in NDB.
   */
-  int (*ic_rollback_savepoint) (IC_APID_CONNECTION *apid_conn,
+  IC_APID_ERROR*
+      (*ic_rollback_savepoint) (IC_APID_CONNECTION *apid_conn,
                                 IC_TRANSACTION *transaction_obj,
                                 IC_SAVEPOINT_ID savepoint_id,
                                 /* Callback function */
@@ -1195,10 +1255,21 @@ struct ic_apid_connection_ops
        We return 0 and there will be operations returned from the
        ic_get_next_operation iterator.
   */
-  int (*ic_poll) (IC_APID_CONNECTION *apid_conn, glong wait_time);
+  IC_APID_ERROR* (*ic_poll) (IC_APID_CONNECTION *apid_conn, glong wait_time);
 
-  /* Send all operations that we have prepared in this connection.  */
-  int (*ic_send) (IC_APID_CONNECTION *apid_conn);
+  /*
+    Send all operations that we have prepared in this connection.
+    If force_send is FALSE, we will use an adaptive algorithm which keeps
+    track of the mean value and standard deviation on how long time there is
+    between sends to a specific node in the cluster. If the expected time to
+    wait is less than a specified time in the cluster configuration, then we
+    will wait for another message to arrive before sending. When the next
+    message arrives we will estimate whether it's likely that another message
+    will arrive before the specified time since the first message arrived
+    have expired.
+  */
+  IC_APID_ERROR* (*ic_send) (IC_APID_CONNECTION *apid_conn,
+                             gboolean force_send);
 
   /*
     Send operations and wait for operations to be received. This is
@@ -1206,7 +1277,9 @@ struct ic_apid_connection_ops
     found already at the send phase and if the send is successful
     it will report in the same manner as poll.
   */
-  int (*ic_flush) (IC_APID_CONNECTION *apid_conn, glong wait_time);
+  IC_APID_ERROR* (*ic_flush) (IC_APID_CONNECTION *apid_conn,
+                              glong wait_time,
+                              gboolean force_send);
 
   /*
     After returning 0 from flush or poll we use this iterator to get
@@ -1251,21 +1324,27 @@ struct ic_transaction_hint_ops
 
 struct ic_apid_error_ops
 {
+  /*
+    The error object is expected to be a part of another object and thus
+    have no own create methods. It does have a initialisation method which
+    is called when the user explicitly wants to reset the error object to
+    indicate no error.
+  */
+  /* Initialise error object */
+  void (*ic_init_apid_error) (IC_APID_ERROR *apid_error);
+
   /* Get error code */
   int (*ic_get_apid_error_code) (IC_APID_ERROR *apid_error);
 
   /* Get error string */
   const gchar* (*ic_get_apid_error_msg) (IC_APID_ERROR *apid_error);
 
-  /* Get severity level of the error */
-  IC_ERROR_SEVERITY_LEVEL
-    (*ic_get_apid_error_severity) (IC_APID_ERROR *apid_error);
-
   /* Get category of error */
   IC_ERROR_CATEGORY (*ic_get_apid_error_category) (IC_APID_ERROR *apid_error);
 
-  /* Free error object */
-  void (*ic_free_error) (IC_APID_ERROR *apid_error);
+  /* Get severity level of the error */
+  IC_ERROR_SEVERITY_LEVEL
+    (*ic_get_apid_error_severity) (IC_APID_ERROR *apid_error);
 };
 
 /*
@@ -1293,21 +1372,69 @@ struct ic_apid_error_ops
 
 struct ic_apid_global_ops
 {
+  /*
+    The most important functions for normal user threads is to use the
+    ic_get_stop_flag and ic_set_stop_flag functions. The ic_get_stop_flag
+    should be called regularly to check for other threads wanting a global
+    stop to the user API. The ic_set_stop_flag is used to indicate that the
+    user has decided to stop the iClaustron Data API and is now in close
+    down operation.
+
+    Also each thread should call ic_wait_first_node_connect at the beginning
+    on each cluster that the thread is expecting to use to ensure that there
+    is at least one connection to the cluster to be used. If there is no
+    connection to a cluster all operations towards that cluster will fail.
+
+    Most other functions are used by the ic_start_apid_program and
+    ic_run_apid_programs to handle additions of user threads, removal of user
+    threads, setting and getting thread functions. There is also a function
+    to give a connection from the iClaustron Cluster Server over to the
+    iClaustron Data API, this is only used by the iClaustron Cluster Server.
+  */
+
+  /* This function can be waited to get start/stop events from the API */
   void (*ic_cond_wait) (IC_APID_GLOBAL *apid_global);
+
+  /* Check of the API is to be stopped */
   gboolean (*ic_get_stop_flag) (IC_APID_GLOBAL *apid_global);
+
+  /* Indicate that the user wants to stop the Data API */
   void (*ic_set_stop_flag) (IC_APID_GLOBAL *apid_global);
+
+  /* Get the number of threads currently active in the Data API */
   guint32 (*ic_get_num_user_threads) (IC_APID_GLOBAL *apid_global);
+
+  /* Add a new user thread to the Data API */
   void (*ic_add_user_thread) (IC_APID_GLOBAL *apid_global);
+
+  /* Remove a user thread from the Data API */
   void (*ic_remove_user_thread) (IC_APID_GLOBAL *apid_global);
+
+  /* Set thread function of the Data API */
   void (*ic_set_thread_func) (IC_APID_GLOBAL *apid_global,
                               IC_RUN_APID_THREAD_FUNC apid_func);
+
+  /* Get thread function of the Data API */
   IC_RUN_APID_THREAD_FUNC (*ic_get_thread_func) (IC_APID_GLOBAL *apid_global);
+
+  /*
+    Method used by iClaustron Cluster Server to deliver IC_CONNECTION object
+    to the Data API to be reused as node connection.
+  */
   int (*ic_external_connect) (IC_APID_GLOBAL *apid_global,
                               guint32 cluster_id,
                               guint32 node_id,
                               IC_CONNECTION *conn);
+
+  /*
+    Wait until at least we're connected to at least one node in the cluster.
+    Before this can return OK all operations towards the cluster will fail.
+  */
   int (*ic_wait_first_node_connect) (IC_APID_GLOBAL *apid_global,
-                                     guint32 cluster_id);
+                                     guint32 cluster_id,
+                                     glong wait_time); /* in milliseconds */
+
+  /* Free the IC_APID_GLOBAL object */
   void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };
 
@@ -1327,12 +1454,20 @@ struct ic_apid_global_ops
   connections are transferred from the Configuration part to the Data
   API.
 
+  This object is created by the ic_start_apid_program for a standard
+  iClaustron Data API application.
+
   ic_create_apid_connection
   -------------------------
   Method to create the APID connection object, each object connects either
   to all clusters or to a subset of the clusters. An APID connection is
   normally mapped to usage within one thread. Thus the API user must
   protect it with a mutex if it's used on more than one thread at a time.
+  
+  This function will be called by ic_run_apid_program once for each thread
+  the user has decided to start. In this manner the standard use of the
+  iClaustron Data API will always have one such object per thread as is
+  intended.
 
   ic_create_apid_operation
   ------------------------
@@ -1340,6 +1475,10 @@ struct ic_apid_global_ops
   APID object but it's ok to use an operation on any APID connection.
   An APID object needs to be connected to a table object and a buffer
   is also connected to the APID operation object.
+
+  Creation of these objects and deciding whether to use a global pool or
+  a local pool per thread is a decision by the user, or even to create
+  and destroy these objects per query.
 */
 IC_APID_GLOBAL* ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
                                       gboolean use_external_connect,
@@ -1370,24 +1509,24 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
 
 struct ic_apid_error
 {
-  IC_APID_ERROR_OPS error_ops;
+  IC_APID_ERROR_OPS *apid_error_ops;
 };
 
 struct ic_apid_connection
 {
-  IC_APID_CONNECTION_OPS apid_conn_ops;
+  IC_APID_CONNECTION_OPS *apid_conn_ops;
 };
 
 struct ic_apid_global
 {
-  IC_APID_GLOBAL_OPS apid_global_ops;
-  IC_METADATA_BIND_OPS apid_metadata_ops;
+  IC_APID_GLOBAL_OPS *apid_global_ops;
+  IC_METADATA_BIND_OPS *apid_metadata_ops;
   IC_BITMAP *cluster_bitmap;
 };
 
 struct ic_table_def
 {
-  IC_TABLE_DEF_OPS table_def_ops;
+  IC_TABLE_DEF_OPS *table_def_ops;
 };
 
 struct ic_conditional_assignment
@@ -1411,24 +1550,66 @@ struct ic_apid_operation
   gboolean any_error;
 };
 
-struct ic_transaction_hint
+struct ic_metadata_transaction
 {
-  IC_TRANSACTION_HINT_OPS trans_hint_ops;
-  guint32 cluster_id;
-  guint32 node_id;
+  IC_METADATA_TRANSACTION_OPS *md_trans_ops;
 };
 
 struct ic_transaction
 {
-  IC_TRANSACTION_OPS trans_ops;
+  IC_TRANSACTION_OPS *trans_ops;
   guint64 transaction_id;
+};
+
+struct ic_transaction_hint
+{
+  IC_TRANSACTION_HINT_OPS *trans_hint_ops;
+  guint32 cluster_id;
+  guint32 node_id;
 };
 
 /*
   Declarations used for programs using easy start and stop
   of iClaustron Data API users. Also declaration of global
   variables used by these programs.
+
+  Programming a standard application using the iClaustron is very
+  straightforward.
+
+  1) Call ic_start_program
+     This call initialises all iClaustron data structures and parses the
+     command line options.
+  2) Call ic_start_apid_program
+     This call connects to iClaustron Cluster Server to fetch the
+     configuration of the iClaustron Grid. It does also initialise the
+     iClaustron Data API and starts connection attempts to all the
+     nodes in all clusters in the iClaustron Grid. It also initialises
+     the thread pool object used by the iClaustron API program.
+  3) Call in_run_apid_program
+     This call starts all user threads as specified by the user command line
+     option "num_threads". The threads will run until stopped by some event
+     decided by the API program. When the threads decide to stop the program
+     the above method will return.
+  4) Call ic_stop_apid_program
+     Clean up everything and release all memory allocated by the iClaustron
+     Data API.
+
+  So the API user can focus his efforts on how to program the API user
+  threads. These threads each receive a IC_APID_CONNECTION object at start
+  of the function. They also receive a thread_state variable that can be
+  used for some amount of communication between the threads. When the user
+  returns from the API user function the API will automatically ensure that
+  the thread is stopped in an organised manner to ensure that if all threads
+  stops, that the ic_run_apid_program returns. It is also possible to perform
+  expedited stops that ensures that all threads are made aware of that the
+  user wants to stop the API.
+
+  This easy manner of using the API will be sufficient for many users. For
+  the users that need to implement the above functionality in a different
+  manner, the functions to build your own start_apid, run_apid and stop_apid
+  functions are available in the Data API functions.
 */
+
 extern IC_STRING ic_glob_config_dir;
 extern IC_STRING ic_glob_data_dir;
 extern gchar *ic_glob_cs_server_name;

@@ -1,0 +1,65 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Definition of Range Condition Module
+  --------------------------------------------
+  This module is used to define the range condition used in queries.
+*/
+static int
+range_multi_range(IC_RANGE_CONDITION *range,
+                  guint32 num_ranges)
+{
+  (void)range;
+  (void)num_ranges;
+  return 0;
+}
+
+static int
+range_define_range_part(IC_RANGE_CONDITION *range,
+                        guint32 range_id,
+                        guint32 field_id,
+                        gchar *start_ptr,
+                        guint32 start_len,
+                        gchar *end_ptr,
+                        guint32 end_len,
+                        IC_LOWER_RANGE_TYPE lower_range_type,
+                        IC_UPPER_RANGE_TYPE upper_range_type)
+{
+  (void)range;
+  (void)range_id;
+  (void)field_id;
+  (void)start_ptr;
+  (void)start_len;
+  (void)end_ptr;
+  (void)end_len;
+  (void)lower_range_type;
+  (void)upper_range_type;
+  return 0;
+}
+
+static void
+range_free(IC_RANGE_CONDITION *range)
+{
+  (void)range;
+}
+
+static IC_RANGE_CONDITION_OPS glob_range_ops =
+{
+  .ic_multi_range             = range_multi_range,
+  .ic_define_range_part       = range_define_range_part,
+  .ic_free_range_cond         = range_free
+};
+

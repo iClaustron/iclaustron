@@ -48,7 +48,7 @@ enum ic_apid_operation_type
 struct ic_hidden_transaction
 {
   /* Public part */
-  IC_TRANSACTION_OPS trans_ops;
+  IC_TRANSACTION_OPS *trans_ops;
   guint64 transaction_id;
   /* Hidden part */
   IC_COMMIT_STATE commit_state;
@@ -91,7 +91,7 @@ struct ic_hidden_apid_operation
 struct ic_hidden_table_def
 {
   /* Public part */
-  IC_TABLE_DEF_OPS table_def_ops;
+  IC_TABLE_DEF_OPS *table_def_ops;
   /* Hidden part */
 };
 #endif

@@ -100,15 +100,17 @@ enum ic_calculation_type
 
 enum ic_error_severity_level
 {
-  WARNING = 0,
-  ERROR = 1,
-  STOP_ERROR = 2
+  IC_SEVERITY_NO_ERROR= 0,
+  IC_SEVERITY_WARNING= 1,
+  IC_SEVERITY_ERROR= 2,
+  IC_SEVERITY_STOP_ERROR= 3
 };
 
 enum ic_error_category
 {
-  USER_ERROR = 0,
-  INTERNAL_ERROR = 1
+  IC_CATEGORY_NO_ERROR= 0,
+  IC_CATEGORY_USER_ERROR= 1,
+  IC_CATEGORY_INTERNAL_ERROR= 2
 };
 
 /*

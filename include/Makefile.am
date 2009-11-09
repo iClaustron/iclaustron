@@ -19,11 +19,11 @@ include_HEADERS = ic_apic.h \
                   ic_apid_inline.h \
                   ic_base_header.h \
                   ic_connection.h \
-                  ic_common_header.h \
                   ic_debug.h \
                   ic_dyn_array.h \
                   ic_bitmap.h \
                   ic_err.h \
+                  ic_linked_list.h \
                   ic_mc.h \
                   ic_parse_connectstring.h \
                   ic_poll_set.h \
@@ -36,7 +36,6 @@ include_HEADERS = ic_apic.h \
 
 noinst_HEADERS    = ic_base64.h \
                     ic_protocol_support.h \
-                    ic_common.h \
                     ic_config_reader.h \
                     ic_sock_buf.h \
                     ic_hashtable_itr.h \

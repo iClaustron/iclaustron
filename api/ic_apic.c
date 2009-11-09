@@ -7863,7 +7863,7 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       conn->conn_op.ic_free_connection(conn);
     apid_global= run_obj->apid_global;
     if (apid_global)
-      apid_global->apid_global_ops.ic_free_apid_global(apid_global);
+      apid_global->apid_global_ops->ic_free_apid_global(apid_global);
     for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
     {
       if (run_obj->conf_objects[i])
@@ -8052,7 +8052,7 @@ run_cluster_server_thread(gpointer data)
           DEBUG_PRINT(CONFIG_LEVEL,
           ("We are now converting connection to a NDB Protocol connection"));
           if ((error=
-               run_obj->apid_global->apid_global_ops.ic_external_connect(
+               run_obj->apid_global->apid_global_ops->ic_external_connect(
                            run_obj->apid_global,
                            param.cluster_id,
                            param.node_number,

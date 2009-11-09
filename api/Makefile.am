@@ -18,7 +18,7 @@
 
 lib_LTLIBRARIES = libic_api.la
 
-libic_api_la_SOURCES = ic_apic.c ic_apid.c ic_apid_define.c
+libic_api_la_SOURCES = ic_apic.c ic_apid_impl.c
 
 libic_api_la_LIBADD = $(LDADD) \
 				../port/libic_port.la \
@@ -26,4 +26,6 @@ libic_api_la_LIBADD = $(LDADD) \
 				../comm/libic_comm.la
 
 EXTRA_DIST =                    ic_apic_int.h ic_apid_int.h \
-                                ic_apid_impl.h
+                                ic_apid_impl.h ic_apid_static.h \
+                                ic_apid_define.c ic_apid.c \
+                                ic_apid_range.c ic_apid_where.c

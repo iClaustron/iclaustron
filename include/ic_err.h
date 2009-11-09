@@ -22,6 +22,7 @@
   ----------------------------------------
   Error handling interface
 */
+#define ic_assert(cond) g_assert((cond))
 #define ic_require(cond) if (!(cond)) { abort();}
 
 void ic_init_error_messages();
@@ -103,4 +104,5 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_GET_CONFIG_BY_CLUSTER_SERVER 7060
 #define IC_ERROR_BUFFER_MISSING_CREATE_APID_OP 7061
 #define IC_ERROR_TOO_MANY_FIELDS 7062
+#define IC_ERROR_DUPLICATE_FIELD_IDS 7063
 #endif

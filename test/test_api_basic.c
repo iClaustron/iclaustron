@@ -34,7 +34,7 @@ run_api_thread(IC_APID_CONNECTION *apid_conn,
   IC_APID_GLOBAL *apid_global;
 
   (void)thread_state;
-  apid_global= apid_conn->apid_conn_ops.ic_get_apid_global(apid_conn);
+  apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
   return 0;
 }
 

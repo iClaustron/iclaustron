@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2009 iClaustron AB
+/* Copyright (C) 2009 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -14,25 +14,33 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 /*
-  This header file is a convenience header file including all modules
-  of the iclaustron code except for the top level modules.
+  We implement the iClaustron Data API in a set of C-files, but we'll still
+  let the compiler work on them all as one module to allow the compiler to
+  do optimisations better.
 */
 
-#ifndef IC_COMMON_HEADER_H
-#define IC_COMMON_HEADER_H
-/*
-  Memory Container, String, Hashtable and the Communication
-  module are all part of the external interface. Error definitions
-  are also an important part of the external interface. We also
-  include the debug interface to enable debugging of application
-  and API together.
-*/
+/* Header files used by the iClaustron Data API */
 #include <ic_base_header.h>
-#include <ic_mc.h>
-#include <ic_string.h>
-#include <ic_hashtable.h>
 #include <ic_err.h>
 #include <ic_debug.h>
+#include <ic_port.h>
+#include <ic_mc.h>
+#include <ic_string.h>
+#include <ic_parse_connectstring.h>
+#include <ic_bitmap.h>
+#include <ic_dyn_array.h>
 #include <ic_connection.h>
-#include <ic_ssl.h>
-#endif
+#include <ic_sock_buf.h>
+#include <ic_poll_set.h>
+#include <ic_threadpool.h>
+#include <ic_apic.h>
+#include <ic_apid.h>
+#include "ic_apid_int.h"
+#include "ic_apid_impl.h"
+#include "ic_apid_static.h"
+
+/* Implementation files of the iClaustron Data API */
+#include "ic_apid.c"
+#include "ic_apid_range.c"
+#include "ic_apid_where.c"
+#include "ic_apid_define.c"

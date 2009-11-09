@@ -40,6 +40,8 @@ typedef struct ic_int_where_condition IC_INT_WHERE_CONDITION;
 
 typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
 
+typedef struct ic_send_cluster_node IC_SEND_CLUSTER_NODE;
+
 typedef struct ic_thread_connection IC_THREAD_CONNECTION;
 typedef struct ic_grid_comm IC_GRID_COMM;
 typedef struct ic_send_node_connection IC_SEND_NODE_CONNECTION;
@@ -53,13 +55,15 @@ typedef struct ic_listen_server_thread IC_LISTEN_SERVER_THREAD;
 struct ic_int_transaction
 {
   /* Public part */
-  IC_TRANSACTION_OPS trans_ops;
+  IC_TRANSACTION_OPS *trans_ops;
   guint64 transaction_id;
   /* Hidden part */
   IC_COMMIT_STATE commit_state;
   IC_SAVEPOINT_ID savepoint_stable;
   IC_SAVEPOINT_ID savepoint_requested;
   /* Internal part */
+  IC_INT_APID_OPERATION *first_trans_op;
+  IC_INT_APID_OPERATION *last_trans_op;
 };
 
 enum ic_apid_operation_list_type
@@ -153,7 +157,7 @@ struct ic_field_def
 struct ic_int_table_def
 {
   /* Public part */
-  IC_TABLE_DEF_OPS table_def_ops;
+  IC_TABLE_DEF_OPS *table_def_ops;
   /* Hidden part */
   /* Internal part */
   guint32 table_id;
@@ -162,6 +166,8 @@ struct ic_int_table_def
   guint32 num_key_fields;
   gboolean is_index;
   gboolean is_unique_index;
+  IC_BITMAP *key_fields;
+  guint32 *key_field_id_order;
   IC_FIELD_DEF **fields;
 };
 
@@ -175,6 +181,15 @@ struct ic_int_where_condition
 {
   IC_WHERE_CONDITION_OPS *cond_ops;
   guint32 not_used;
+};
+
+struct ic_int_apid_error
+{
+  IC_APID_ERROR_OPS *apid_error_ops;
+  gchar *error_msg;
+  int error_code;
+  IC_ERROR_CATEGORY error_category;
+  IC_ERROR_SEVERITY_LEVEL error_severity;
 };
 
 struct ic_int_apid_operation
@@ -253,18 +268,43 @@ struct ic_int_apid_operation
   gboolean is_all_key_fields_defined;
 
   IC_APID_OPERATION_LIST_TYPE list_type;
+
   IC_INT_APID_OPERATION *next_trans_op;
   IC_INT_APID_OPERATION *prev_trans_op;
+
   IC_INT_APID_OPERATION *next_conn_op;
   IC_INT_APID_OPERATION *prev_conn_op;
+
+  IC_INT_APID_OPERATION *next_defined_operation;
+  IC_INT_APID_OPERATION *prev_defined_operation;
+
+  IC_INT_APID_OPERATION *next_executing_list;
+  IC_INT_APID_OPERATION *prev_executing_list;
+
+  IC_INT_APID_OPERATION *next_completed_operation;
+  IC_INT_APID_OPERATION *prev_completed_operation;
+
+  IC_INT_APID_OPERATION *next_executed_operation;
+  IC_INT_APID_OPERATION *prev_executed_operation;
 
   IC_INT_APID_GLOBAL *apid_global;
 };
 
+struct ic_send_cluster_node
+{
+  guint32 cluster_id;
+  guint32 node_id;
+
+  IC_SOCK_BUF_PAGE *first_sock_buf_page;
+  IC_SOCK_BUF_PAGE *last_sock_buf_page;
+
+  IC_SEND_CLUSTER_NODE *next_send_cluster_node;
+  IC_SEND_CLUSTER_NODE *prev_send_cluster_node;
+};
+
 struct ic_int_apid_connection
 {
-  IC_APID_CONNECTION_OPS apid_conn_ops;
-  IC_METADATA_BIND_OPS apid_metadata_ops;
+  IC_APID_CONNECTION_OPS *apid_conn_ops;
   IC_INT_APID_GLOBAL *apid_global;
   IC_DYNAMIC_TRANSLATION *trans_bindings;
   IC_DYNAMIC_TRANSLATION *op_bindings;
@@ -288,21 +328,25 @@ struct ic_int_apid_connection
     the last list which is the completed operations. This is also a singly
     linked list.
   */
+  IC_INT_APID_OPERATION *first_conn_op;
+  IC_INT_APID_OPERATION *last_conn_op;
+
   IC_INT_APID_OPERATION *first_defined_operation;
   IC_INT_APID_OPERATION *last_defined_operation;
+
   IC_INT_APID_OPERATION *first_executing_list;
   IC_INT_APID_OPERATION *last_executing_list;
+
   IC_INT_APID_OPERATION *first_completed_operation;
   IC_INT_APID_OPERATION *last_completed_operation;
+
   IC_INT_APID_OPERATION *first_executed_operation;
   IC_INT_APID_OPERATION *last_executed_operation;
-};
 
-struct ic_int_apid_error
-{
-  IC_APID_ERROR_OPS error_ops;
-  int error_code;
-  gchar *error_msg;
+  IC_SEND_CLUSTER_NODE *first_send_cluster_node;
+  IC_SEND_CLUSTER_NODE *last_send_cluster_node;
+
+  IC_INT_APID_ERROR apid_error;
 };
 
 #define IC_MAX_SERVER_PORTS_LISTEN 256
@@ -310,8 +354,12 @@ struct ic_int_apid_error
 
 struct ic_int_apid_global
 {
-  IC_APID_GLOBAL_OPS apid_global_ops;
+  /* Public part */
+  IC_APID_GLOBAL_OPS *apid_global_ops;
+  IC_METADATA_BIND_OPS *apid_metadata_ops;
   IC_BITMAP *cluster_bitmap;
+  /* Hidden part */
+  /* Internal part */
   GMutex *mutex;
   GCond *cond;
   guint32 num_user_threads_started;

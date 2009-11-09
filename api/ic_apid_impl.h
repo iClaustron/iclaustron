@@ -23,12 +23,17 @@ typedef struct ic_temp_thread_connection IC_TEMP_THREAD_CONNECTION;
 typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
 
+IC_APID_ERROR* ic_poll_messages(IC_APID_CONNECTION *apid_conn,
+                                glong wait_time);
+IC_APID_ERROR* ic_send_messages(IC_APID_CONNECTION *apid_conn,
+                                gboolean force_send);
+
 struct ic_message_error_object
 {
-  int error;
-  gchar *error_string;
-  int error_category;
-  int error_severity;
+  gchar *error_msg;
+  int error_code;
+  IC_ERROR_CATEGORY error_category;
+  IC_ERROR_SEVERITY_LEVEL error_severity;
 };
 
 struct ic_ndb_receive_state
@@ -81,7 +86,7 @@ struct ic_ndb_message_opaque_area
 
 struct ic_ndb_message
 {
-  IC_APID_CONNECTION *apid_conn;
+  IC_INT_APID_CONNECTION *apid_conn;
   /*
     We keep pointers to the message buffer where the actual message data
     resides instead of copying. We also keep a pointer to the start of

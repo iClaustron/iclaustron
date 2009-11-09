@@ -106,7 +106,7 @@ end:
     run_obj->run_op.ic_free_run_cluster(run_obj);
   }
   if (apid_global)
-    apid_global->apid_global_ops.ic_free_apid_global(apid_global);
+    apid_global->apid_global_ops->ic_free_apid_global(apid_global);
   if (ic_glob_config_dir.str)
     ic_free(ic_glob_config_dir.str);
   ic_end();
