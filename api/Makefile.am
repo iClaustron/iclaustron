@@ -27,5 +27,5 @@ libic_api_la_LIBADD = $(LDADD) \
 
 EXTRA_DIST =                    ic_apic_int.h ic_apid_int.h \
                                 ic_apid_impl.h ic_apid_static.h \
-                                ic_apid_define.c ic_apid.c \
-                                ic_apid_range.c ic_apid_where.c
+                                ic_apid_define.ic ic_apid.ic \
+                                ic_apid_range.ic ic_apid_where.ic

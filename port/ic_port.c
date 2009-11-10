@@ -411,7 +411,7 @@ ic_get_file_contents(const gchar *file, gchar **file_content,
   guint64 read_size, size_left;
   DEBUG_ENTRY("ic_get_file_contents");
 
-  file_ptr= g_open(file, O_RDONLY);
+  file_ptr= open(file, O_RDONLY);
   if (file_ptr == (int)-1)
     goto error;
   if ((error= get_file_length(file_ptr, file_size)))

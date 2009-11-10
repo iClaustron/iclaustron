@@ -40,7 +40,7 @@
 #include "ic_apid_static.h"
 
 /* Implementation files of the iClaustron Data API */
-#include "ic_apid.c"
-#include "ic_apid_range.c"
-#include "ic_apid_where.c"
-#include "ic_apid_define.c"
+#include "ic_apid.ic"
+#include "ic_apid_range.ic"
+#include "ic_apid_where.ic"
+#include "ic_apid_define.ic"

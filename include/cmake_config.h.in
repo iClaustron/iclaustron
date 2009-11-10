@@ -43,6 +43,7 @@
 #cmakedefine HAVE_SYS_TIMES_H
 #cmakedefine HAVE_SYS_SOCKET_H
 #cmakedefine HAVE_SYS_SELECT_H
+#cmakedefine HAVE_FCNTL_H
 #cmakedefine HAVE_NETDB_H
 #cmakedefine HAVE_ARPA_INET_H
 #cmakedefine HAVE_READLINE

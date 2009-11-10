@@ -20,7 +20,7 @@
 #include <ic_string.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
-#include "ic_clmgr_int.h"
+#include <../cluster_mgr/ic_clmgr_int.h>
 
 int yylex(void *parse_data, void *scanner);
 
@@ -275,16 +275,20 @@ opt_group:
 
 opt_initial:
     /* empty */
-    { PARSE_DATA->initial_flag= FALSE; }
+    {
+      PARSE_DATA->initial_flag= FALSE;
+      PARSE_DATA->restart_flag= FALSE;
+    }
     | INITIAL_SYM
-    { PARSE_DATA->initial_flag= TRUE; }
-    ;
-
-opt_restart:
-    /* empty */
-    { PARSE_DATA->restart_flag= FALSE; }
+    {
+      PARSE_DATA->initial_flag= TRUE;
+      PARSE_DATA->restart_flag= FALSE;
+    }
     | RESTART_SYM
-    { PARSE_DATA->restart_flag= TRUE; }
+    {
+      PARSE_DATA->initial_flag= FALSE;
+      PARSE_DATA->restart_flag= TRUE;
+    }
     ;
 
 group_reference:

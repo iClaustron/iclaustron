@@ -371,6 +371,12 @@ else (WITH_PRODUCTION)
 endif (WITH_PRODUCTION)
 
 set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${CMAKE_REQUIRED_LIBRARIES})
+
+configure_file (
+  "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
+  "${PROJECT_BINARY_DIR}/include/config.h"
+  )
+
 #Build library for iClaustron portability layer
 add_library(ic_port STATIC port/ic_port.c)
 
@@ -383,7 +389,7 @@ add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
             util/ic_bitmap.c util/ic_config_reader.c
             util/ic_parse_connectstring.c
             util/ic_protocol_support.c
-            include/hashtable_itr.h include/hashtable_private.h
+            include/ic_hashtable_itr.h include/ic_hashtable_private.h
             include/ic_base64.h include/ic_config_reader.h
             include/ic_protocol_support.h include/ic_sock_buf.h)
 target_link_libraries(ic_util ic_port)
@@ -395,8 +401,11 @@ add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API and Data Server API
-add_library(ic_api STATIC api/ic_apic.c api/ic_apid.c api/ic_apid_define.c
-            api/ic_apic_int.h api/ic_apid_int.h api/ic_apid_impl.h)
+add_library(ic_api STATIC api/ic_apic.c api/ic_apid_impl.c
+            api/ic_apid_define.ic api/ic_apid_range.ic
+            api/ic_apid_where.ic api/ic_apid.ic
+            api/ic_apic_int.h api/ic_apid_int.h
+            api/ic_apid_impl.h api/ic_apid_static.h)
 target_link_libraries(ic_api ic_port ic_util comm)
 
 #install(TARGETS ic_api
@@ -404,11 +413,16 @@ target_link_libraries(ic_api ic_port ic_util comm)
 #        LIBRARY DESTINATION lib
 #        ARCHIVE DESTINATION lib/iClaustron)
 
-#Build test binary
-add_executable(test_comm test/test_comm.c test/test_api_basic.c)
+#Build test binaries
+add_executable(test_comm test/test_comm.c)
 target_link_libraries(test_comm ic_port ic_util ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS test_comm DESTINATION bin)
+
+add_executable(test_api_basic test/test_api_basic.c)
+target_link_libraries(test_api_basic ic_port ic_util ic_api
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS test_api_basic DESTINATION bin)
 
 #Build Process Control Binary
 add_executable(ic_pcntrld pcntrl/ic_pcntrl.c)
@@ -467,6 +481,7 @@ ADD_CUSTOM_COMMAND(
 SET(ClusterManagerSource ${ClusterManagerSource}
     ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
     ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_clmgr_int.h
     ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c)
 #Mark ic_parser.c and ic_lex.c as a generated file
 SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
@@ -478,8 +493,7 @@ SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
 #Include binary directory to ensure ic_lex.c is included as well
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
-add_executable(ic_clmgrd ${ClusterManagerSource}
-               cluster_mgr/ic_clmgr_int.h)
+add_executable(ic_clmgrd ${ClusterManagerSource})
 target_link_libraries(ic_clmgrd ic_port ic_util comm ic_api
                       ${ICLAUSTRON_LIBS})
 install (TARGETS ic_clmgrd DESTINATION bin)
@@ -521,7 +535,3 @@ install (DIRECTORY doc DESTINATION ${CMAKE_INSTALL_PREFIX})
 install (FILES README README-CONFIG AUTHORS NEWS AUTHORS
          DESTINATION doc)
 
-configure_file (
-  "${PROJECT_SOURCE_DIR}/include/cmake_config.h.in"
-  "${PROJECT_BINARY_DIR}/include/config.h"
-  )

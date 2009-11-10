@@ -99,6 +99,15 @@ ic_debug_printf(const char *format,...)
 }
 
 void
+ic_debug_close()
+{
+  fflush(stdout);
+  fflush(ic_fptr);
+  fclose(ic_fptr);
+}
+#endif
+
+void
 ic_printf(const char *format,...)
 {
   va_list args;
@@ -110,12 +119,3 @@ ic_printf(const char *format,...)
   fflush(stdout);
   va_end(args);
 }
-
-void
-ic_debug_close()
-{
-  fflush(stdout);
-  fflush(ic_fptr);
-  fclose(ic_fptr);
-}
-#endif
