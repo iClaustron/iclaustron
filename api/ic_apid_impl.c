@@ -42,6 +42,8 @@
 /* Implementation files of the iClaustron Data API */
 /* The error object */
 #include "ic_apid_error.ic"
+/* Common methods */
+#include "ic_apid_common.ic"
 /* Data API internals */
 #include "ic_apid_heartbeat.ic"
 #include "ic_apid_adaptive_send.ic"
@@ -51,6 +53,7 @@
 #include "ic_apid_exec_message.ic"
 #include "ic_apid_rec_thread.ic"
 #include "ic_apid_start.ic"
+/* External interface object implementations */
 #include "ic_apid_range.ic"
 #include "ic_apid_where.ic"
 #include "ic_apid_cond_assign.ic"
