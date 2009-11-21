@@ -1,0 +1,292 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  EXECUTE MESSAGE MODULE
+  ----------------------
+  This module contains the code executed in the user thread to execute
+  messages posted to this thread by the receiver thread. The actual
+  logic to handle the individual messages received is found in the
+  various MEssage Logic Modules.
+*/
+
+/*
+  poll_messages is called from outside of this module as a result of some
+  user action, the user have decided to check for arrival of new messages
+  that he is expecting to arrive. The remainder of the functions are used
+  to support this function.
+
+  The get_thread_messages gets a page of messages from the thread connection.
+  For each message it finds in this page it calls execute_message to perform
+  the execution of the message, create_ndb_message turns the message into
+  a message format used by the Message Logic Module, these modules only
+  see NDB Messages arriving and have no notion of any other format.
+  The get_exec_message_func function gets a function pointer to the message
+  execution function in a Message Logic Module based on message id and
+  version of the NDB Protocol.
+  set_sock_buf_page_empty is a simple support function to ensure we don't
+  duplicate code.
+*/
+static IC_EXEC_MESSAGE_FUNC* get_exec_message_func(guint32 message_id,
+                                                   guint32 version_num);
+static void set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn);
+static IC_SOCK_BUF_PAGE*
+get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn, glong wait_time);
+static int execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
+                           IC_NDB_MESSAGE *ndb_message,
+                           IC_INT_APID_ERROR *apid_error);
+static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
+                              IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
+                              IC_NDB_MESSAGE *ndb_message);
+
+static IC_EXEC_MESSAGE_FUNC*
+get_exec_message_func(guint32 message_id,
+                      guint32 version_num)
+{
+  (void)version_num;
+  return &ic_exec_message_func_array[0][message_id];
+}
+
+static void
+set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn)
+{
+  thd_conn->first_received_message= NULL;
+  thd_conn->last_received_message= NULL;
+}
+
+static IC_SOCK_BUF_PAGE*
+get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
+                    glong wait_time_in_micros)
+{
+  GTimeVal stop_timer;
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  IC_THREAD_CONNECTION *thd_conn= apid_conn->thread_conn;
+  IC_SOCK_BUF_PAGE *sock_buf_page;
+  DEBUG_ENTRY("get_thread_messages");
+
+  g_mutex_lock(thd_conn->mutex);
+  sock_buf_page= thd_conn->first_received_message;
+  if (sock_buf_page)
+    set_sock_buf_page_empty(thd_conn);
+  else if (wait_time_in_micros)
+  {
+    g_get_current_time(&stop_timer);
+    g_time_val_add(&stop_timer, wait_time_in_micros);
+    thd_conn->thread_wait_cond= TRUE;
+    g_cond_timed_wait(thd_conn->cond, thd_conn->mutex, &stop_timer);
+    sock_buf_page= thd_conn->first_received_message;
+    if (sock_buf_page)
+      set_sock_buf_page_empty(thd_conn);
+  }
+  g_mutex_unlock(thd_conn->mutex);
+  return sock_buf_page;
+}
+
+/* Create a IC_NDB_MESSAGE for execution by the user thread.  */
+static int
+create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
+                   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
+                   IC_NDB_MESSAGE *ndb_message)
+{
+  guint32 word1, word2, word3, receiver_node_id, sender_node_id;
+  guint32 num_segments, fragmentation_bits, i, segment_size;
+  guint32 *segment_size_ptr, message_size;
+  guint32 *message_ptr= (guint32*)message_page->sock_buf;
+  guint32 chksum, message_number_used, chksum_used, start_segment_word;
+
+  word1= message_ptr[0];
+  if ((word1 & 1) != ic_glob_byte_order)
+  {
+    /*
+      Sender and receiver use different byte order, switch byte order of
+      all words involved in the message.
+    */
+    ic_swap_endian_word(word1);
+    message_size= get_message_size(word1);
+    for (i= 1; i < message_size; i++)
+      ic_swap_endian_word(message_ptr[i]);
+  }
+  word2= message_ptr[1];
+  word3= message_ptr[2];
+
+  /* Get message priority from Bit 5-6 in word 1 */
+  ndb_message->message_priority= (word1 >> 5) & 3;
+  /* Get fragmentation bits from bit 1 and bit 25 in word 1 */
+  fragmentation_bits= (word1 >> 1) & 1;
+  fragmentation_bits+= ((word1 >> 25) & 1) << 1;
+  ndb_message->fragmentation_bits= fragmentation_bits;
+  /* Get short data size from Bit 26-30 (Max 25 words) in word 1 */
+  ndb_message->segment_size[0]= (word1 >> 26) & 0x1F;
+  g_assert(ndb_message->segment_size[0] <= 25);
+
+  /* Get message id from Bit 0-19 in word 2 */
+  ndb_message->message_id= word2 & 0x7FFFF;
+  /* Get trace number from Bit 20-25 in word 2 */
+  ndb_message->trace_num= (word2 >> 20) & 0x3F;
+
+  receiver_node_id= ndb_message_opaque->receiver_node_id;
+  sender_node_id= ndb_message_opaque->sender_node_id;
+  ndb_message->receiver_node_id= receiver_node_id;
+  ndb_message->sender_node_id= sender_node_id;
+  /* Get senders module id from Bit 0-15 in word 3 */
+  ndb_message->sender_module_id= word3 & 0xFFFF;
+  /* Get receivers module id from Bit 16-31 in word 3 */
+  ndb_message->receiver_module_id= word3 >> 16;
+
+  ndb_message->message_number= 0;
+  ndb_message->segment_ptr[1]= NULL;
+  ndb_message->segment_ptr[2]= NULL;
+  ndb_message->segment_ptr[3]= NULL;
+  ndb_message->segment_ptr[0]= &message_ptr[3];
+
+  /* Get message id flag from Bit 2 in word 1 */
+  message_number_used= word1 & 4;
+  /* Get checksum used flag from Bit 4 in word 1 */
+  chksum_used= word1 & 0x10;
+  /* Get number of segments from Bit 26-27 in word 2 */
+  num_segments= (word2 >> 26) & 3;
+  /* Is this + 1 really correct, TODO */
+  ndb_message->num_segments= num_segments + 1;
+  
+  start_segment_word= 3;
+  if (message_number_used)
+  {
+    ndb_message->segment_ptr[0]= &message_ptr[4];
+    ndb_message->message_number= message_ptr[3];
+    start_segment_word= 4;
+  }
+  start_segment_word+= ndb_message->segment_size[0];
+  segment_size_ptr= &message_ptr[start_segment_word];
+  start_segment_word+= num_segments;
+  for (i= 0; i < num_segments; i++)
+  {
+    segment_size= segment_size_ptr[i];
+    ndb_message->segment_size[i+1]= segment_size;
+    ndb_message->segment_ptr[i+1]= &message_ptr[start_segment_word];
+    start_segment_word+= segment_size;
+  }
+  if (!chksum_used)
+    return 0;
+  /* We need to check the checksum first, before handling the message. */
+  chksum= 0;
+  message_size= get_message_size(word1);
+  for (i= 0; i < message_size; i++)
+    chksum^= message_ptr[i];
+  if (chksum)
+    return IC_ERROR_MESSAGE_CHECKSUM;
+  return 0;
+}
+
+static int
+execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
+                IC_NDB_MESSAGE *ndb_message,
+                IC_INT_APID_ERROR *error_report_object)
+{
+  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+  IC_EXEC_MESSAGE_FUNC *exec_message_func;
+  IC_SOCK_BUF_PAGE *message_page;
+  IC_SOCK_BUF *sock_buf_container;
+  IC_MESSAGE_ERROR_OBJECT error_object;
+  gint *ref_count_ptr;
+  gboolean ref_count_zero;
+
+  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+    &ndb_message_page->opaque_area[0];
+  if (!create_ndb_message(ndb_message_page,
+                          ndb_message_opaque,
+                          ndb_message))
+  {
+    exec_message_func= get_exec_message_func(ndb_message->message_id,
+                                             ndb_message_opaque->version_num);
+    if (exec_message_func)
+    {
+       if (exec_message_func->ic_exec_message_func
+             (ndb_message, &error_object))
+       {
+         error_report_object->error_msg= error_object.error_msg;
+         error_report_object->error_code= error_object.error_code;
+         error_report_object->error_category= error_object.error_category;
+         error_report_object->error_severity= error_object.error_severity;
+         return 1;
+       }
+    }
+    if (ndb_message_page->ref_count > 0)
+    {
+      message_page= (IC_SOCK_BUF_PAGE*)ndb_message_page->sock_buf;
+      ref_count_ptr= (gint*)&ndb_message_page->ref_count;
+      ref_count_zero= g_atomic_int_dec_and_test(ref_count_ptr);
+      if (ref_count_zero)
+      {
+        /*
+          This was the last message we executed on this page so we're now
+          ready to release the page where these messages were stored.
+        */
+        sock_buf_container= message_page->sock_buf_container;
+        sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
+          sock_buf_container, message_page);
+      }
+    }
+    return 0;
+  }
+  /* Fill in error_report_object */
+  return 1;
+}
+
+/*
+  This is the method where we wait for messages to be executed by NDB and
+  our return messages to arrive for processing. It is executed in the 
+  user thread upon a call to the iClaustron Data API which requires a
+  message to be received from another node.
+*/
+IC_APID_ERROR*
+ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
+{
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  IC_SOCK_BUF *sock_buf_container;
+  IC_SOCK_BUF_PAGE *ndb_message_page, *first_ndb_message_page;
+  IC_NDB_MESSAGE ndb_message;
+
+  /*
+    We start by getting the messages waiting for us in the send queue, this
+    is the first step in putting together the new scheduler for message
+    handling in the iClaustron API.
+    If no messages are waiting we can wait for a small amount of time
+    before returning, if no messages arrive in this timeframe we'll
+    return anyways. As soon as messages arrive we'll wake up and
+    start executing them.
+  */
+  ndb_message_page= get_thread_messages(apid_conn, wait_time);
+  ndb_message.apid_conn= apid_conn;
+  first_ndb_message_page= ndb_message_page;
+  while (ndb_message_page)
+  {
+    /* Execute one message received */
+    if (execute_message(ndb_message_page,
+                        &ndb_message,
+                        &apid_conn->apid_error))
+    {
+      return (IC_APID_ERROR*)&apid_conn->apid_error;
+    }
+    ndb_message_page= ndb_message_page->next_sock_buf_page;
+  }
+  if (first_ndb_message_page)
+  {
+    /* Return all NDB messages executed to the free pool */
+    sock_buf_container= first_ndb_message_page->sock_buf_container;
+    sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
+      sock_buf_container, first_ndb_message_page);
+  }
+  return NULL;
+}

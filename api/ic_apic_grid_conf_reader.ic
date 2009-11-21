@@ -1,0 +1,326 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: iClaustron Grid Configuration file reader
+  -------------------------------------------------
+  This module implements one method:
+    ic_load_cluster_config_from_file
+
+  This method uses the configuration file reader module and
+  implements its interface through a number of methods defined
+  below.
+
+  It reads the file describing which clusters the iClaustron Cluster Server
+  maintains. For each cluster it contains data about its password, name and
+  id. It returns this information in a IC_CLUSTER_CONNECT_INFO array, one
+  entry for each cluster maintained in this grid.
+
+  Before making this call the caller needs to get the config_version_number
+  from the config_version.ini-file.
+
+  This is a support module for the Run Cluster Server module.
+*/
+static IC_CLUSTER_CONNECT_INFO**
+ic_load_cluster_config_from_file(IC_STRING *config_dir,
+                                 guint32 config_version_number,
+                                 IC_CONFIG_STRUCT *cluster_conf,
+                                 IC_CONFIG_ERROR *err_obj);
+
+static void
+init_cluster_params(IC_CLUSTER_CONFIG_TEMP *temp)
+{
+  ic_zero(&temp->cluster_name, sizeof(IC_STRING));
+  ic_zero(&temp->password, sizeof(IC_STRING));
+  temp->cluster_id= IC_MAX_UINT32;
+}
+
+static void
+set_cluster_config_string(IC_STRING *dest_str, IC_STRING *in_str,
+                          IC_CLUSTER_CONFIG_TEMP *temp)
+{
+  memcpy(dest_str, in_str, sizeof(IC_STRING));
+  dest_str->str= temp->string_memory;
+  dest_str->str[in_str->len]= 0;
+  dest_str->is_null_terminated= TRUE;
+  temp->string_memory+= (in_str->len + 1);
+}
+
+static void
+set_cluster_config(IC_CLUSTER_CONNECT_INFO *clu_info,
+                   IC_CLUSTER_CONFIG_TEMP *temp)
+{
+  memcpy(&clu_info->cluster_name,
+         &temp->cluster_name, sizeof(IC_STRING));
+  memcpy(&clu_info->password,
+         &temp->password, sizeof(IC_STRING));
+  clu_info->cluster_id= temp->cluster_id;
+}
+
+static int
+cluster_config_init(void *ic_conf, guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  IC_CLUSTER_CONNECT_INFO **clusters;
+  IC_MEMORY_CONTAINER *mc_ptr= conf->perm_mc_ptr;
+  guint32 i;
+  DEBUG_ENTRY("cluster_config_init");
+
+  if (pass == INITIAL_PASS)
+  {
+    if (!(temp= (IC_CLUSTER_CONFIG_TEMP*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
+                      sizeof(IC_CLUSTER_CONFIG_TEMP))))
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    temp->string_memory= NULL;
+    conf->config_ptr.cluster_conf= temp;
+  }
+  else
+  {
+    temp= conf->config_ptr.cluster_conf;
+    if (!(clusters= (IC_CLUSTER_CONNECT_INFO**)
+           mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+           (temp->num_clusters + 1) * sizeof(IC_CLUSTER_CONNECT_INFO*))))
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    temp->clu_info= clusters;
+    for (i= 0; i < temp->num_clusters; i++)
+    {
+      if (!(clusters[i]= (IC_CLUSTER_CONNECT_INFO*)
+          mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+            sizeof(IC_CLUSTER_CONNECT_INFO))))
+        DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    if (!(temp->string_memory= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+          temp->size_string_memory)))
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    clusters[temp->num_clusters]= NULL;
+  }
+  temp->num_clusters= 0;
+  temp->init_state= TRUE;
+  temp->size_string_memory= 0;
+  init_cluster_params(temp);
+  DEBUG_RETURN(0);
+}
+
+static int
+cluster_config_add_section(void *ic_conf,
+                           guint32 section_number,
+                           guint32 line_number,
+                           IC_STRING *section_name,
+                           guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  DEBUG_ENTRY("cluster_config_add_section");
+  (void)line_number;
+  (void)section_number;
+
+  temp= conf->config_ptr.cluster_conf;
+  if (ic_cmp_null_term_str(cluster_str, section_name) == 0)
+  {
+    /*
+       Found a cluster section (the only allowed one in this type of
+       configuration file.
+    */
+    if (pass != INITIAL_PASS && !temp->init_state)
+    {
+      /*
+        We have completed a section and need to copy the data over to the
+        IC_CLUSTER_CONFIG struct.
+      */
+      clu_info= temp->clu_info[temp->num_clusters-1];
+      set_cluster_config(clu_info, temp);
+    }
+    init_cluster_params(temp);
+    temp->num_clusters++;
+    temp->init_state= FALSE;
+  }
+  else
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("No such cluster config section"));
+    DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
+  }
+  DEBUG_RETURN(0);
+}
+
+static int
+cluster_config_add_key(void *ic_conf,
+                       guint32 section_number,
+                       guint32 line_number,
+                       IC_STRING *key_name,
+                       IC_STRING *data,
+                       guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  guint64 value;
+  DEBUG_ENTRY("cluster_config_add_key");
+  (void)section_number;
+  (void)line_number;
+
+  DEBUG_IC_STRING(CONFIG_LEVEL, key_name);
+  DEBUG_IC_STRING(CONFIG_LEVEL, data);
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Line: %d, Section: %d, Key-value pair", (int)line_number,
+     (int)section_number));
+
+  temp= conf->config_ptr.cluster_conf;
+  if (temp->init_state)
+    DEBUG_RETURN(IC_ERROR_NO_SECTION_DEFINED_YET);
+  if (pass == INITIAL_PASS)
+    temp->size_string_memory+= (data->len + 1);
+  else
+    memcpy(temp->string_memory, data->str, data->len);
+  if (ic_cmp_null_term_str(cluster_name_str, key_name) == 0)
+  {
+    if (pass != INITIAL_PASS)
+      set_cluster_config_string(&temp->cluster_name, data, temp);
+  }
+  else if (ic_cmp_null_term_str(cluster_password_str, key_name) == 0)
+  {
+    if (pass != INITIAL_PASS)
+      set_cluster_config_string(&temp->password, data, temp);
+  }
+  else if (ic_cmp_null_term_str(cluster_id_string, key_name) == 0)
+  {
+    if (pass != INITIAL_PASS)
+    {
+      if (ic_conv_config_str_to_int(&value, data))
+        DEBUG_RETURN(IC_ERROR_WRONG_CONFIG_NUMBER);
+      temp->cluster_id= (guint32)value;
+      if (temp->cluster_id > IC_MAX_CLUSTER_ID)
+        DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+    }
+  }
+  else
+    DEBUG_RETURN(IC_ERROR_NO_SUCH_CONFIG_KEY);
+  return 0;
+}
+
+static int
+cluster_config_add_comment(void *ic_conf,
+                           guint32 section_number,
+                           guint32 line_number,
+                           IC_STRING *comment,
+                           guint32 pass)
+{
+  (void)ic_conf;
+  (void)section_number;
+  (void)line_number;
+  (void)comment;
+  (void)pass;
+  return 0;
+}
+
+static int
+cluster_config_verify(void *ic_conf,
+                      guint32 line_number,
+                      guint32 pass)
+{
+  (void)ic_conf;
+  (void)line_number;
+  (void)pass;
+  return 0;
+}
+
+static void
+cluster_config_init_end(void *ic_config)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_config;
+  IC_CLUSTER_CONFIG_TEMP *temp;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  DEBUG_ENTRY("cluster_config_init_end");
+
+  temp= conf->config_ptr.cluster_conf;
+  if (temp->num_clusters > 0)
+  {
+    clu_info= temp->clu_info[temp->num_clusters-1];
+    set_cluster_config(clu_info, temp);
+  }
+  return;
+}
+
+static void
+cluster_config_end(__attribute__ ((unused)) void *ic_config)
+{
+  return;
+}
+
+static IC_CONFIG_OPERATIONS cluster_config_ops =
+{
+  .ic_config_init = cluster_config_init,
+  .ic_add_section = cluster_config_add_section,
+  .ic_add_key     = cluster_config_add_key,
+  .ic_add_comment = cluster_config_add_comment,
+  .ic_config_verify = cluster_config_verify,
+  .ic_init_end    = cluster_config_init_end,
+  .ic_config_end  = cluster_config_end,
+};
+
+static IC_CLUSTER_CONNECT_INFO**
+ic_load_cluster_config_from_file(IC_STRING *config_dir,
+                                 guint32 config_version_number,
+                                 IC_CONFIG_STRUCT *cluster_conf,
+                                 IC_CONFIG_ERROR *err_obj)
+{
+  gchar *conf_data_str;
+  guint64 conf_data_len;
+  IC_STRING conf_data;
+  IC_STRING file_name_string;
+  int ret_val;
+  IC_CLUSTER_CONNECT_INFO **ret_ptr;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("ic_load_cluster_config_from_file");
+
+  ic_create_config_file_name(&file_name_string,
+                             file_name,
+                             config_dir,
+                             &ic_config_string,
+                             config_version_number);
+
+  cluster_conf->clu_conf_ops= &cluster_config_ops;
+  cluster_conf->config_ptr.cluster_conf= NULL;
+  DEBUG_PRINT(CONFIG_LEVEL, ("cluster_config_file = %s",
+                             file_name));
+  if ((ret_val= ic_get_file_contents(file_name, &conf_data_str,
+                                     &conf_data_len)))
+    goto file_open_error;
+
+  IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
+  ret_val= ic_build_config_data(&conf_data, cluster_conf, err_obj);
+  ic_free(conf_data.str);
+  if (ret_val == 1)
+  {
+    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+          "Error at Line number %u:\n%s\n", err_obj->line_number,
+          ic_get_error_message(err_obj->err_num));
+    ret_ptr= NULL;
+    ic_printf("%s Failed to load the cluster configuration file %s",
+              ic_err_str, file_name);
+  }
+  else
+  {
+    ret_ptr= cluster_conf->config_ptr.cluster_conf->clu_info;
+    cluster_config_ops.ic_init_end(cluster_conf);
+  }
+  DEBUG_RETURN(ret_ptr);
+
+file_open_error:
+  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+        "Failed reading cluster config file %s\n", file_name);
+  err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
+  DEBUG_RETURN(NULL);
+}

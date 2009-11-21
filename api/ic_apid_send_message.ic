@@ -1,0 +1,610 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  SEND MESSAGE MODULE
+  -------------------
+  To send messages using the NDB Protocol we have a struct called
+  IC_SEND_NODE_CONNECTION which is used by the application thread plus
+  one send thread per node.
+
+  Before invoking the send method, the application thread packs a number of
+  NDB messages in the NDB Protocol format into a number of IC_SOCK_BUF_PAGE's.
+  The interface to the send method contains a linked list of such
+  IC_SOCK_BUF_PAGE's plus the IC_SEND_NODE_CONNECTION object and finally a
+  boolean that indicates whether it's necessary to send immediately or
+  whether an adaptive send algorithm is allowed.
+
+  The focus is on holding the send mutex for a short time and this means that
+  in the normal case there will be two mutex lock/unlocks. One when entering
+  to see if someone else is currently sending. If no one is sending one will
+  pack the proper number of buffers and release the mutex and then start the
+  sending. If one send is not enough to handle all the sending, then we will
+  simply wake up the send thread which will send until there are no more
+  buffers to send. Thus the send thread has a really easy task in most cases,
+  simply sleeping and then occasionally waking up and taking care of a set
+  of send operations.
+
+  The adaptive send algorithm is also handled inside the mutex, thus we will
+  set the send to active only after deciding whether it's a good idea to wait
+  with sending.
+
+  The Send Message Module is a support module to the Send Thread Module.
+*/
+
+/*
+  The application thread has prepared to send a number of items and is now
+  ready to send these set of pages. The IC_SEND_NODE_CONNECTION is the
+  protected data structure that contains the information about the node
+  to which this communication is to be sent to.
+
+  This object keeps track of information which is required for the adaptive
+  algorithm to work. So it keeps track of how often we send information to
+  this node, how long time pages have been waiting to be sent.
+
+  The workings of the sender is the following, the sender locks the
+  IC_SEND_NODE_CONNECTION object, then he puts the pages in the linked list of
+  pages to be sent here. Next step is to check if another thread is already
+  active sending and hasn't flagged that he's not ready to continue
+  sending. If there is a thread already sending we unlock and proceed.
+*/
+
+/*
+  The external interface to this module is send_messages which is where the
+  Data API methods calls when they are ready to deliver a set of messages to
+  a certain node in a cluster. However since send logic is also shared by the
+  send threads and also the receiver threads some methods here are used also
+  by other modules.
+
+  The logic to send is as follows:
+  1) Normally messages are sent directly by the application thread
+  2) Using the adaptive send algorithm the send can be delayed and then
+     be sent by another application thread
+  3) If a messages have been waiting for too long to be sent the receiver
+     thread will pick it up and send it in the absence of a proper
+     application thread to deliver it. Actually the receiver thread won't
+     send it, it will only wake up a send thread to ensure that the messages
+     are sent.
+  4) If an application thread or a receiver thread cannot send due to a
+     queueing situation in front of the socket, then the send will be done
+     by a send thread.
+*/
+static void
+ic_fill_error_object(int error, IC_INT_APID_ERROR *apid_error)
+{
+  apid_error->error_code= error;
+}
+
+IC_APID_ERROR*
+ic_send_messages(IC_APID_CONNECTION *ext_apid_conn, gboolean force_send)
+{
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
+  IC_SEND_CLUSTER_NODE *send_cluster_node;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_INT_APID_ERROR *apid_error= &apid_conn->apid_error;
+  int error;
+  
+  send_cluster_node= IC_GET_FIRST_DLL(apid_conn, send_cluster_node);
+  
+  while (send_cluster_node)
+  {
+    if ((error= map_id_to_send_node_connection(apid_global,
+                                               send_cluster_node->cluster_id,
+                                               send_cluster_node->node_id,
+                                               &send_node_conn)))
+      goto error;
+    if ((error= ndb_send(send_node_conn,
+                         send_cluster_node->first_sock_buf_page,
+                         force_send)))
+      goto error;
+    send_cluster_node= IC_GET_NEXT_DLL(send_cluster_node, send_cluster_node);
+  }
+  return NULL;
+error:
+  ic_fill_error_object(error, apid_error);
+  return (IC_APID_ERROR*)apid_error;
+}
+
+/*
+  ndb_send is used by send_messages, in principle send_messages only converts
+  an APID_GLOBAL object, a cluster id, a node id into a send node connection
+  object.
+
+  fill_ndb_message_header is a base function used to fill in the message
+  and in particular the message header of the NDB Protocol.
+
+  fill_in_message_id_in_ndb_messages handles message id insertion when it is
+  used in the NDB Protocol messages, this is always called under protection
+  of the IC_SEND_NODE_CONNECTION mutex which protects the message id variable
+  used in this connection.
+
+  get_ndb_message_header_size is a method that returns the size of the
+  NDB message header in the NDB Protocol.
+*/
+static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
+                    IC_SOCK_BUF_PAGE *first_page_to_send,
+                    gboolean force_send);
+
+static guint32 get_ndb_message_header_size(
+                    IC_SEND_NODE_CONNECTION *send_node_conn);
+
+static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                       guint32 message_number,
+                                       guint32 message_priority,
+                                       guint32 sender_module_id,
+                                       guint32 receiver_mdoule_id,
+                                       guint32 *start_message,
+                                       guint32 main_message_size,
+                                       guint32 *main_message,
+                                       guint32 num_segments,
+                                       guint32 *segment_ptrs[3],
+                                       guint32 segment_lens[3]);
+
+static void fill_in_message_id_in_ndb_message(
+                          IC_SEND_NODE_CONNECTION *send_node_conn,
+                          IC_SOCK_BUF_PAGE *first_page,
+                          gboolean use_checksum);
+/*
+  prepare_real_send_handling prepares send buffers that can be used
+  immediately by the socket calls, it doesn't actually send the data.
+  The actual send is done by the real_send_handling.
+  After send has been performed send_done_handling is called and
+  a broken node connection is handled by node_failure_handling.
+*/
+static void prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                       guint32 *send_size,
+                                       struct iovec *write_vector,
+                                       guint32 *iovec_size);
+static int real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                              struct iovec *write_vector,
+                              guint32 iovec_size,
+                              guint32 send_size);
+static int send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
+static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
+
+/* Function used to map cluster_id and node_id to send node connection */
+static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
+                                 guint32 cluster_id,
+                                 guint32 node_id,
+                                 IC_SEND_NODE_CONNECTION **send_node_conn);
+
+static guint32 get_message_size(guint32 word1);
+/* Send message functions */
+static guint32
+get_ndb_message_header_size(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  guint32 header_length= IC_NDB_MESSAGE_HEADER_SIZE;
+  return header_length + send_node_conn->link_config->use_message_id;
+}
+
+static guint32
+get_message_size(guint32 word1)
+{
+  return ((word1 >> 8) & 0xFFFF);
+}
+
+static guint32
+fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
+                        guint32 message_number,
+                        guint32 message_priority,
+                        guint32 sender_module_id,
+                        guint32 receiver_module_id,
+                        guint32 *start_message,
+                        guint32 main_message_size,
+                        guint32 *main_message,
+                        guint32 num_segments,
+                        guint32 *segment_ptrs[3],
+                        guint32 segment_lens[3])
+{
+  guint32 header_length= IC_NDB_MESSAGE_HEADER_SIZE;
+  register guint32 word;
+  register guint32 loc_variable;
+  guint32 tot_message_size;
+  gboolean use_message_id= send_node_conn->link_config->use_message_id;
+  gboolean use_checksum= send_node_conn->link_config->use_checksum;
+  guint32 *message_ptr;
+  guint32 i;
+  /*
+    First calculate length of message header:
+      It is 3 words (32-bit words) plus an optional word
+      that contains a message number which is unique for the sender
+      node. There is also an optional checksum word at the end of
+      the message.
+    Second copy the main message part and the segment parts into the
+    right place in the message if not already done.
+  */
+  header_length+= use_message_id;
+  tot_message_size= header_length + main_message_size;
+  if (main_message != (start_message + header_length))
+  {
+    memcpy(start_message + header_length,
+           main_message,
+           main_message_size * sizeof(guint32));
+  }
+  if (num_segments > 0)
+  {
+    message_ptr= start_message + header_length + main_message_size;
+    for (i= 0; i < num_segments; i++)
+    {
+      tot_message_size+= (segment_lens[i] + 1);
+      *message_ptr= segment_lens[i];
+      message_ptr++;
+    }
+    for (i= 0; i < num_segments; i++)
+    {
+      if (segment_ptrs[i] != message_ptr)
+      {
+        memcpy(message_ptr,
+               segment_ptrs[i],
+               segment_lens[i] * sizeof(guint32));
+      }
+      message_ptr+= segment_lens[i];
+    }
+  }
+  tot_message_size+= use_checksum;
+  /*
+    Calculate first header word
+    Bit 0, 7, 24, 31 are set if big endian on sender side
+    Bit 1,25   Fragmented messages indicator (Always 0 for now, TODO)
+    Bit 2      Message id used flag
+    Bit 3      ???
+    Bit 4      Checksum used flag
+    Bit 5-6    Message priority
+    Bit 8-23   Total message size
+    Bit 26-30  Main message size (max 25)
+  */
+  word= 0;
+
+  /* Set byte order indicator */
+  if (ic_glob_byte_order)
+    word= 0x81000081; /* Set bit 0,7,24,31 independent of byte order */
+
+  /* Set message id used flag */
+  loc_variable= use_message_id << 2;
+  word|= loc_variable;
+
+  /* Set checksum used flag */
+  loc_variable= use_checksum << 4;
+  word|= loc_variable;
+
+  /* Set message priority */
+  ic_require(message_priority <= IC_NDB_MAX_PRIO_LEVEL);
+  loc_variable= message_priority << 5;
+  word|= loc_variable;
+
+  /* Set total message size */
+  loc_variable= tot_message_size << 8;
+  word|= loc_variable;
+
+  /* Set main message size */
+  loc_variable= main_message_size + num_segments;
+  ic_require(loc_variable <= IC_NDB_MAX_MAIN_MESSAGE_SIZE);
+  loc_variable<<= 26;
+  word|= loc_variable;
+
+  start_message[0]= word;
+  /*
+    Calculate second header word
+    Bit 0-19   Message number (e.g. API_HBREQ)
+    Bit 20-25  Trace number
+    Bit 26-27  Number of segements used
+    Bit 28-31  Not used (?)
+  */
+
+  /* Set message number */
+  word= message_number;
+
+  /* Set trace number (0 always for now) */
+
+  /* Set number of segments used */
+  loc_variable= num_segments << 26;
+  word|= loc_variable;
+
+  start_message[1]= word;
+  /*
+    Calculate third header word
+    Bit 0-15   Sender module id
+    Bit 16-31  Receiver module id
+  */
+
+  /* Set sender module id */
+  ic_require(sender_module_id <= IC_MAX_MODULE_ID);
+  word= sender_module_id;
+
+  /* Set receiver module id */
+  ic_require(receiver_module_id <= IC_NDB_MAX_MODULE_ID);
+  loc_variable= receiver_module_id << 16;
+  word|= loc_variable;
+
+  start_message[2]= word;
+  if (use_message_id)
+    start_message[3]= 0;
+  if (use_checksum)
+  {
+    word= 0;
+    for (i= 0; i < tot_message_size - 1; i++)
+      word ^= start_message[i];
+    start_message[tot_message_size]= word;
+  }
+  return tot_message_size;
+}
+
+static void
+fill_in_message_id_in_ndb_message(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                  IC_SOCK_BUF_PAGE *first_page,
+                                  gboolean use_checksum)
+{
+  guint32 word1, current_size, message_id, prev_checksum, message_size;
+  guint32 *word_ptr, *message_id_ptr, *checksum_ptr;
+  IC_SOCK_BUF_PAGE *current_page= first_page;
+
+  while (current_page)
+  {
+    word_ptr= (guint32*)current_page->sock_buf;
+    current_size= 0;
+    while (current_size < current_page->size)
+    {
+      word1= *word_ptr;
+      message_size= get_message_size(word1);
+      message_id_ptr= word_ptr + IC_NDB_MESSAGE_HEADER_SIZE;
+
+      message_id= send_node_conn->message_id++;
+      if (use_checksum)
+      {
+        checksum_ptr= (word_ptr + (message_size - 1));
+        prev_checksum= *checksum_ptr;
+        *checksum_ptr= prev_checksum ^ message_id;
+      }
+      current_size+= (message_size * sizeof(guint32));
+      word_ptr+= message_size;
+    }
+    ic_require(current_size == current_page->size);
+    current_page= current_page->next_sock_buf_page;
+  }
+}
+
+static int
+ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
+         IC_SOCK_BUF_PAGE *first_page_to_send,
+         gboolean force_send)
+{
+  IC_SOCK_BUF_PAGE *last_page_to_send;
+  guint32 send_size= 0;
+  guint32 iovec_size;
+  struct iovec write_vector[MAX_SEND_BUFFERS];
+  gboolean return_imm= TRUE;
+  int error;
+  IC_TIMER current_time;
+  DEBUG_ENTRY("ndb_send");
+
+  /*
+    We start by calculating the last page to send and the total send size
+    before acquiring the mutex.
+  */
+  last_page_to_send= first_page_to_send;
+  send_size+= last_page_to_send->size;
+  while (last_page_to_send->next_sock_buf_page)
+  {
+    send_size+= last_page_to_send->size;
+    last_page_to_send= last_page_to_send->next_sock_buf_page;
+  }
+  /* Start critical section for sending */
+  g_mutex_lock(send_node_conn->mutex);
+  if (!send_node_conn->node_up)
+  {
+    g_mutex_unlock(send_node_conn->mutex);
+    return IC_ERROR_NODE_DOWN;
+  }
+  if (send_node_conn->link_config->use_message_id)
+  {
+    /*
+      We are using message id's on the link, we need to fill in proper
+      message id's in all the NDB messages and we also need to update
+      the potential checksum in each of the messages where a message
+      id is set.
+    */
+    fill_in_message_id_in_ndb_message(send_node_conn,
+                                      first_page_to_send,
+                                send_node_conn->link_config->use_checksum);
+  }
+  /* Link the buffers into the linked list of pages to send */
+  if (send_node_conn->last_sbp == NULL)
+  {
+    g_assert(send_node_conn->queued_bytes == 0);
+    send_node_conn->first_sbp= first_page_to_send;
+    send_node_conn->last_sbp= last_page_to_send;
+  }
+  else
+  {
+    send_node_conn->last_sbp->next_sock_buf_page= first_page_to_send;
+    send_node_conn->last_sbp= last_page_to_send;
+  }
+  send_node_conn->queued_bytes+= send_size;
+  current_time= ic_gethrtime();
+  if (!send_node_conn->send_active)
+  {
+    return_imm= FALSE;
+    send_node_conn->send_active= TRUE;
+    prepare_real_send_handling(send_node_conn, &send_size,
+                               write_vector, &iovec_size);
+    if (!force_send)
+    {
+      adaptive_send_algorithm_decision(send_node_conn,
+                                       &return_imm,
+                                       current_time);
+    }
+  }
+  adaptive_send_algorithm_statistics(send_node_conn, current_time);
+  /* End critical section for sending */
+  g_mutex_unlock(send_node_conn->mutex);
+  if (return_imm)
+    return 0;
+  /* We will send now */
+  if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
+                                 send_size)))
+    return error;
+  /* Send done handling includes a new critical section for sending */
+  DEBUG_RETURN(send_done_handling(send_node_conn));
+}
+
+static int
+node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+    send_buf_pool, send_node_conn->first_sbp);
+  rem_node_from_heartbeat_thread(send_node_conn->apid_global,
+                                 send_node_conn);
+  return 0;
+}
+
+static void
+prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                           guint32 *send_size,
+                           struct iovec *write_vector,
+                           guint32 *iovec_size)
+{
+  IC_SOCK_BUF_PAGE *loc_next_send, *loc_last_send;
+  guint32 loc_send_size= 0, iovec_index= 0;
+  DEBUG_ENTRY("prepare_real_send_handling");
+
+  loc_next_send= send_node_conn->first_sbp;
+  loc_last_send= NULL;
+  do
+  {
+    write_vector[iovec_index].iov_base= loc_next_send->sock_buf;
+    write_vector[iovec_index].iov_len= loc_next_send->size;
+    iovec_index++;
+    loc_send_size+= loc_next_send->size;
+    loc_last_send= loc_next_send;
+    loc_next_send= loc_next_send->next_sock_buf_page;
+  } while (loc_send_size < MAX_SEND_SIZE &&
+           iovec_index < MAX_SEND_BUFFERS &&
+           loc_next_send);
+  send_node_conn->release_sbp= send_node_conn->first_sbp;
+  send_node_conn->first_sbp= loc_next_send;
+  loc_last_send->next_sock_buf_page= NULL;
+  if (!loc_next_send)
+    send_node_conn->last_sbp= NULL;
+  *iovec_size= iovec_index;
+  *send_size= loc_send_size;
+  send_node_conn->queued_bytes-= loc_send_size;
+  DEBUG_RETURN_EMPTY;
+}
+
+/*
+  real_send_handling is not executed with mutex protection, it is
+  however imperative that prepare_real_send_handling and real_send_handling
+  is executed in the same thread since the release_sbp is only used to
+  communicate between those two methods and therefore not protected.
+*/
+static int
+real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                   struct iovec *write_vector, guint32 iovec_size,
+                   guint32 send_size)
+{
+  int error;
+  IC_CONNECTION *conn= send_node_conn->conn;
+  IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  DEBUG_ENTRY("real_send_handling");
+
+  DEBUG_PRINT(COMM_LEVEL, ("Writing NDB message on fd = %d",
+    conn->conn_op.ic_get_fd(conn)));
+  error= conn->conn_op.ic_writev_connection(conn,
+                                            write_vector,
+                                            iovec_size,
+                                            send_size, 2);
+
+  /* Release memory buffers used in send */
+  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+    send_buf_pool, send_node_conn->release_sbp);
+  send_node_conn->release_sbp= NULL;
+
+  if (error)
+  {
+    /*
+      We failed to send and in this case we need to invoke node failure
+      handling since either the connection was broken or it was slow to
+      the point of being similar to broken.
+    */
+    g_mutex_lock(send_node_conn->mutex);
+    node_failure_handling(send_node_conn);
+    g_mutex_unlock(send_node_conn->mutex);
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
+}
+
+static int
+send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  gboolean signal_send_thread= FALSE;
+  int error;
+  DEBUG_ENTRY("send_done_handling");
+  /* Handle send done */
+  error= 0;
+  g_mutex_lock(send_node_conn->mutex);
+  if (!send_node_conn->node_up)
+    error= IC_ERROR_NODE_DOWN;
+  else if (send_node_conn->first_sbp)
+  {
+    /*
+      There are more buffers to send, we give this mission to the
+      send thread and return immediately
+    */
+    send_node_conn->send_thread_is_sending= TRUE;
+    signal_send_thread= TRUE;
+  }
+  else
+  {
+    /* All buffers have been sent, we can return immediately */
+    send_node_conn->send_active= FALSE;
+  }
+  g_mutex_unlock(send_node_conn->mutex);
+  if (signal_send_thread)
+    g_cond_signal(send_node_conn->cond);
+  DEBUG_RETURN(error);
+}
+
+static int
+map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
+                               guint32 cluster_id,
+                               guint32 node_id,
+                               IC_SEND_NODE_CONNECTION **send_node_conn)
+{
+  IC_SEND_NODE_CONNECTION *loc_send_node_conn;
+  IC_CLUSTER_COMM *cluster_comm;
+  IC_API_CONFIG_SERVER *apic;
+  IC_GRID_COMM *grid_comm;
+  int error;
+
+  apic= apid_global->apic;
+  grid_comm= apid_global->grid_comm;
+  error= IC_ERROR_NO_SUCH_CLUSTER;
+  if (cluster_id > apic->max_cluster_id)
+    return error;
+  cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+  if (!cluster_comm)
+    return error;
+  error= IC_ERROR_NO_SUCH_NODE;
+  loc_send_node_conn= cluster_comm->send_node_conn_array[node_id];
+  if (!loc_send_node_conn)
+    return error;
+  *send_node_conn= loc_send_node_conn;
+  return 0;
+}

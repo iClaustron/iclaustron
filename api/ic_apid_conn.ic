@@ -1,0 +1,358 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  DATA API Connection Module
+  --------------------------
+  This module contains all the methods that are part of the Data API
+  Connection interface. This interface contains methods to start
+  transactions and control execution of transactions. Each thread
+  should have its own Data API Connection module.
+*/
+
+static int
+apid_conn_write_key(IC_APID_CONNECTION *apid_conn,
+                    IC_APID_OPERATION *apid_op,
+                    IC_TRANSACTION *trans_obj,
+                    IC_WRITE_KEY_OP write_key_op,
+                    IC_APID_CALLBACK_FUNC callback_func,
+                    void *user_reference)
+{
+  (void)apid_conn;
+  (void)apid_op;
+  (void)trans_obj;
+  (void)write_key_op;
+  (void)callback_func;
+  (void)user_reference;
+  return 0;
+}
+
+static int
+apid_conn_read_key(IC_APID_CONNECTION *apid_conn,
+                   IC_APID_OPERATION *apid_op,
+                   IC_TRANSACTION *trans_obj,
+                   IC_READ_KEY_OP read_key_op,
+                   IC_APID_CALLBACK_FUNC callback_func,
+                   void *user_reference)
+{
+  (void)apid_conn;
+  (void)apid_op;
+  (void)trans_obj;
+  (void)read_key_op;
+  (void)callback_func;
+  (void)user_reference;
+  return 0;
+}
+
+static int
+apid_conn_scan(IC_APID_CONNECTION *apid_conn,
+               IC_APID_OPERATION *apid_op,
+               IC_TRANSACTION *trans_obj,
+               IC_SCAN_OP scan_op,
+               IC_APID_CALLBACK_FUNC callback_func,
+               void *user_reference)
+{
+  (void)apid_conn;
+  (void)apid_op;
+  (void)trans_obj;
+  (void)scan_op;
+  (void)callback_func;
+  (void)user_reference;
+  return 0;
+}
+
+static IC_APID_ERROR*
+apid_conn_start_metadata_transaction(IC_APID_CONNECTION *apid_conn,
+                                     IC_METADATA_TRANSACTION *md_trans_obj,
+                                     guint32 cluster_id)
+{
+  (void)apid_conn;
+  (void)md_trans_obj;
+  (void)cluster_id;
+  return NULL;
+}
+
+static IC_APID_ERROR*
+apid_conn_start_transaction(IC_APID_CONNECTION *apid_conn,
+                            IC_TRANSACTION **trans_obj,
+                            IC_TRANSACTION_HINT *transaction_hint,
+                            guint32 cluster_id,
+                            gboolean joinable)
+{
+  (void)apid_conn;
+  (void)trans_obj;
+  (void)transaction_hint;
+  (void)cluster_id;
+  (void)joinable;
+  return NULL;
+}
+
+static IC_APID_ERROR*
+apid_conn_join_transaction(IC_APID_CONNECTION *apid_conn,
+                           IC_TRANSACTION *trans_obj,
+                           void *user_reference)
+{
+  (void)apid_conn;
+  (void)trans_obj;
+  (void)user_reference;
+  return NULL;
+}
+
+static IC_APID_ERROR*
+apid_conn_commit_transaction(IC_APID_CONNECTION *apid_conn,
+                             IC_TRANSACTION *trans_obj,
+                             IC_APID_CALLBACK_FUNC callback_func,
+                             void *user_reference)
+{
+  (void)apid_conn;
+  (void)trans_obj;
+  (void)callback_func;
+  (void)user_reference;
+  return NULL;
+}
+
+static IC_APID_ERROR*
+apid_conn_rollback_transaction(IC_APID_CONNECTION *apid_conn,
+                               IC_TRANSACTION *trans_obj,
+                               IC_APID_CALLBACK_FUNC callback_func,
+                               void *user_reference)
+{
+  (void)apid_conn;
+  (void)trans_obj;
+  (void)callback_func;
+  (void)user_reference;
+  return NULL;
+}
+
+static IC_APID_ERROR*
+apid_conn_create_savepoint(IC_APID_CONNECTION *apid_conn,
+                           IC_TRANSACTION *trans_obj,
+                           IC_SAVEPOINT_ID *savepoint_id)
+{
+  (void)apid_conn;
+  (void)trans_obj;
+  (void)savepoint_id;
+  return NULL;
+}
+
+static IC_APID_ERROR*
+apid_conn_rollback_savepoint(IC_APID_CONNECTION *apid_conn,
+                             IC_TRANSACTION *trans_obj,
+                             IC_SAVEPOINT_ID savepoint_id,
+                             IC_APID_CALLBACK_FUNC callback_func,
+                             void *user_reference)
+{
+  (void)apid_conn;
+  (void)trans_obj;
+  (void)savepoint_id;
+  (void)callback_func;
+  (void)user_reference;
+  return NULL;
+}
+
+static IC_APID_ERROR*
+apid_conn_flush(IC_APID_CONNECTION *apid_conn,
+                glong wait_time,
+                gboolean force_send)
+{
+  IC_APID_ERROR* apid_error;
+  if (!(apid_error= ic_send_messages(apid_conn, force_send)))
+    return apid_error;
+  return ic_poll_messages(apid_conn, wait_time);
+}
+
+/*
+  This method is only called after a successful call to flush or poll
+*/
+IC_APID_OPERATION*
+apid_conn_get_next_executed_operation(IC_APID_CONNECTION *ext_apid_conn)
+{
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  IC_INT_APID_OPERATION *ret_op= apid_conn->first_executed_operation;
+  IC_INT_APID_OPERATION *first_completed_op= apid_conn->first_completed_operation;
+
+  if (ret_op == NULL)
+    return NULL;
+  g_assert(ret_op->list_type == IN_EXECUTED_LIST);
+  apid_conn->first_executed_operation= ret_op->next_conn_op;
+  apid_conn->first_completed_operation= ret_op;
+  ret_op->next_conn_op= first_completed_op;
+  ret_op->list_type= IN_COMPLETED_LIST;
+  return (IC_APID_OPERATION*)ret_op;
+}
+
+IC_APID_GLOBAL*
+apid_conn_get_apid_global(IC_APID_CONNECTION *ext_apid_conn)
+{
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  return (IC_APID_GLOBAL*)apid_conn->apid_global;
+}
+
+IC_API_CONFIG_SERVER*
+apid_conn_get_api_config_server(IC_APID_CONNECTION *ext_apid_conn)
+{
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  return apid_conn->apic;
+}
+
+static void
+apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
+{
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  IC_THREAD_CONNECTION *thread_conn= apid_conn->thread_conn;
+  IC_GRID_COMM *grid_comm;
+  IC_INT_APID_GLOBAL *apid_global;
+  guint32 thread_id= apid_conn->thread_id;
+  DEBUG_ENTRY("apid_free");
+
+  apid_global= apid_conn->apid_global;
+  grid_comm= apid_global->grid_comm;
+  if (apid_conn)
+  {
+    if (apid_conn->cluster_id_bitmap)
+      ic_free_bitmap(apid_conn->cluster_id_bitmap);
+    if (apid_conn->trans_bindings)
+    {
+      apid_conn->trans_bindings->dt_ops.ic_free_dynamic_translation(
+        apid_conn->trans_bindings);
+    }
+    if (apid_conn->op_bindings)
+    {
+      apid_conn->op_bindings->dt_ops.ic_free_dynamic_translation(
+        apid_conn->op_bindings);
+    }
+    ic_free(apid_conn);
+  }
+  if (thread_conn)
+  {
+    thread_id= apid_conn->thread_id;
+    if (thread_conn->mutex)
+      g_mutex_free(thread_conn->mutex);
+    if (thread_conn->cond)
+      g_cond_free(thread_conn->cond);
+    ic_free(thread_conn);
+  }
+  g_mutex_lock(apid_global->thread_id_mutex);
+  if (thread_conn &&
+      grid_comm->thread_conn_array[thread_id] == thread_conn)
+    grid_comm->thread_conn_array[thread_id]= NULL;
+  g_mutex_unlock(apid_global->thread_id_mutex);
+}
+
+static IC_APID_CONNECTION_OPS glob_apid_conn_ops=
+{
+  .ic_write_key              = apid_conn_write_key,
+  .ic_read_key               = apid_conn_read_key,
+  .ic_scan                   = apid_conn_scan,
+  .ic_start_metadata_transaction = apid_conn_start_metadata_transaction,
+  .ic_start_transaction      = apid_conn_start_transaction,
+  .ic_join_transaction       = apid_conn_join_transaction,
+  .ic_commit_transaction     = apid_conn_commit_transaction,
+  .ic_rollback_transaction   = apid_conn_rollback_transaction,
+  .ic_create_savepoint       = apid_conn_create_savepoint,
+  .ic_rollback_savepoint     = apid_conn_rollback_savepoint,
+  .ic_poll                   = ic_poll_messages,
+  .ic_send                   = ic_send_messages,
+  .ic_flush                  = apid_conn_flush,
+  .ic_get_next_executed_operation = apid_conn_get_next_executed_operation,
+  .ic_get_apid_global        = apid_conn_get_apid_global,
+  .ic_get_api_config_server  = apid_conn_get_api_config_server,
+  .ic_free_apid_connection   = apid_conn_free_apid_connection
+};
+
+IC_APID_CONNECTION*
+ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
+                          IC_BITMAP *cluster_id_bitmap)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  guint32 thread_id= IC_MAX_THREAD_CONNECTIONS;
+  IC_GRID_COMM *grid_comm;
+  IC_THREAD_CONNECTION *thread_conn;
+  IC_INT_APID_CONNECTION *apid_conn;
+  guint32 i, num_bits;
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  DEBUG_ENTRY("ic_create_apid_connection");
+
+  /* Initialise the APID connection object */
+  if (!(apid_conn= (IC_INT_APID_CONNECTION*)
+                    ic_calloc(sizeof(IC_INT_APID_CONNECTION))))
+    goto end;
+  apid_conn->apid_global= apid_global;
+  apid_conn->thread_id= thread_id;
+  apid_conn->apic= apic;
+  num_bits= apic->api_op.ic_get_max_cluster_id(apic) + 1;
+  if (!(apid_conn->cluster_id_bitmap= ic_create_bitmap(NULL, num_bits)))
+    goto error;
+  if (cluster_id_bitmap)
+  {
+    ic_bitmap_copy(apid_conn->cluster_id_bitmap, cluster_id_bitmap);
+  }
+  else
+  {
+    for (i= 0; i < num_bits; i++)
+    {
+    if (apic->api_op.ic_get_cluster_config(apic, i))
+      ic_bitmap_set_bit(apid_conn->cluster_id_bitmap, i);
+    }
+  }
+
+  if (!(apid_conn->trans_bindings= ic_create_dynamic_translation()))
+    goto error;
+  if (!(apid_conn->op_bindings= ic_create_dynamic_translation()))
+    goto error;
+
+  /* Initialise Thread Connection object */
+  if (!(thread_conn= apid_conn->thread_conn= (IC_THREAD_CONNECTION*)
+                      ic_calloc(sizeof(IC_THREAD_CONNECTION))))
+    goto error;
+  thread_conn->apid_conn= apid_conn;
+  if (!(thread_conn->mutex= g_mutex_new()))
+    goto error;
+  if (!(thread_conn->cond= g_cond_new()))
+    goto error;
+
+
+  grid_comm= apid_global->grid_comm;
+  g_mutex_lock(apid_global->thread_id_mutex);
+  for (i= 0; i < IC_MAX_THREAD_CONNECTIONS; i++)
+  {
+    if (!grid_comm->thread_conn_array[i])
+    {
+      thread_id= i;
+      break;
+    }
+  }
+  if (thread_id == IC_MAX_THREAD_CONNECTIONS)
+  {
+    g_mutex_unlock(apid_global->thread_id_mutex);
+    ic_free(apid_conn->thread_conn);
+    apid_conn->thread_conn= NULL;
+    goto error;
+  }
+  grid_comm->thread_conn_array[thread_id]= thread_conn;
+  g_mutex_unlock(apid_global->thread_id_mutex);
+  apid_conn->thread_id= thread_id;
+  /* Now initialise the method pointers for the Data API interface */
+  apid_conn->apid_conn_ops= &glob_apid_conn_ops;
+  /* Now initialise error object */
+  apid_error_init_apid_error((IC_APID_ERROR*)&apid_conn->apid_error);
+  apid_conn->apid_error.apid_error_ops= &glob_apid_error_ops;
+  return (IC_APID_CONNECTION*)apid_conn;
+
+error:
+  apid_conn_free_apid_connection((IC_APID_CONNECTION*)apid_conn);
+end:
+  return NULL;
+}

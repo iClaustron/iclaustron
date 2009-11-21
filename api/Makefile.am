@@ -18,14 +18,27 @@
 
 lib_LTLIBRARIES = libic_api.la
 
-libic_api_la_SOURCES = ic_apic.c ic_apid_impl.c
+libic_api_la_SOURCES = ic_apic_impl.c ic_apid_impl.c
 
 libic_api_la_LIBADD = $(LDADD) \
 				../port/libic_port.la \
 				../util/libic_util.la \
 				../comm/libic_comm.la
 
-EXTRA_DIST =                    ic_apic_int.h ic_apid_int.h \
-                                ic_apid_impl.h ic_apid_static.h \
-                                ic_apid_define.ic ic_apid.ic \
-                                ic_apid_range.ic ic_apid_where.ic
+EXTRA_DIST =              ic_apic_int.h ic_apid_int.h \
+                          ic_apid_impl.h ic_apid_static.h \
+                          ic_apid.ic \
+                          ic_apid_heartbeat.ic ic_apid_adaptive_send.ic \
+                          ic_apid_send_message.ic ic_apid_send_thread.ic \
+                          ic_apid_handle_messages.ic ic_apid_exec_messages.ic \
+                          ic_apid_rec_thread.ic ic_apid_start.ic \
+                          ic_apid_range.ic ic_apid_where.ic \
+                          ic_apid_assign.ic ic_apid_op.ic \
+                          ic_apid_error.ic ic_apid_conn.ic \
+                          ic_apid_table.ic \
+                          ic_apic.ic \
+                          ic_apic_conf_param.ic ic_apic_conf_read_transl.ic \
+                          ic_apic_proto_supp.ic ic_apic_conf_read_proto.ic \
+                          ic_apic_conf_reader.ic ic_apic_conf_writer.ic \
+                          ic_apic_grid_conf_reader.ic ic_apic_if.ic \
+                          ic_apic_run_cs.ic ic_apic_conf_net_read.ic

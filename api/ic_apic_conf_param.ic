@@ -1,0 +1,1771 @@
+/* Copyight (C) 2007-2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Configuration Parameters
+  --------------------------------
+
+  This module contains all definitions of the configuration parameters.
+  They are only used in this file, the rest of the code can only get hold
+  of configuration objects that are filled in, they can also access methods
+  that create protocol objects based on those configuration objects.
+
+  The main brunt of the work in this module is provided by the methods:
+    init_config_parameters
+    calculate_mandatory_bits
+    build_config_name_hash
+  These methods are called from the method
+  ic_init_config_parameters
+  This routine is called from all programs that are iClaustron programs
+  as the very first thing done in the iClaustron code.
+
+  This builds a global data structure which is created once at start of the
+  program and then not updated.
+
+  There is also a support method to print all configuration parameters with
+  comments and their defaults, max and mins and so forth:
+    ic_print_config_parameters
+
+  There is also method to check if a certain configuration entry is used in
+  a certain MySQL or iClaustron version.
+
+  There is also a method to initialise a configuration object:
+    init_config_object
+  which uses the support method:
+    init_config_default_values
+*/
+
+static gboolean
+is_entry_used_in_version(IC_CONFIG_ENTRY *conf_entry,
+                         guint64 version_num);
+static void
+init_config_object(gchar *conf_object, guint32 size_struct,
+                   IC_CONFIG_TYPES config_type);
+static void
+init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry);
+
+static void
+init_config_object(gchar *conf_object, guint32 size_struct,
+                   IC_CONFIG_TYPES config_type)
+{
+  guint32 i;
+  for (i= 1; i <= glob_max_config_id; i++)
+  {
+    IC_CONFIG_ENTRY *conf_entry= &glob_conf_entry[i];
+    if (conf_entry && conf_entry->config_types & (1 << config_type))
+    {
+      gchar *var_ptr= conf_object + conf_entry->offset;
+      if (conf_entry->offset >= size_struct)
+        abort();
+      init_config_default_value(var_ptr, conf_entry);
+    }
+  }
+}
+
+static void
+init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
+{
+  switch (conf_entry->data_type)
+  {
+    case IC_CHARPTR:
+    {
+      gchar **varchar_ptr= (gchar**)var_ptr;
+      *varchar_ptr= conf_entry->default_string;
+      break;
+    }
+    case IC_UINT16:
+    {
+      guint16 *var16_ptr= (guint16*)var_ptr;
+      *var16_ptr= (guint16)conf_entry->default_value;
+      break;
+    }
+    case IC_BOOLEAN:
+    {
+      gchar *varboolean_ptr= (gchar*)var_ptr;
+      *varboolean_ptr= (gchar)conf_entry->default_value;
+      break;
+    }
+    case IC_UINT32:
+    {
+      guint32 *var32_ptr= (guint32*)var_ptr;
+      *var32_ptr= (guint32)conf_entry->default_value;
+      break;
+    }
+    case IC_UINT64:
+    {
+      guint64 *var64_ptr= (guint64*)var_ptr;
+      *var64_ptr= (guint64)conf_entry->default_value;
+      break;
+    }
+    default:
+      abort();
+      break;
+  }
+}
+
+static unsigned int
+ic_hash_comms(void *ptr)
+{
+  IC_SOCKET_LINK_CONFIG *sock= (IC_SOCKET_LINK_CONFIG*)ptr;
+  return sock->first_node_id ^ sock->second_node_id;
+}
+
+static int
+ic_keys_equal_comms(void *ptr1, void *ptr2)
+{
+  IC_SOCKET_LINK_CONFIG *sock1= (IC_SOCKET_LINK_CONFIG*)ptr1;
+  IC_SOCKET_LINK_CONFIG *sock2= (IC_SOCKET_LINK_CONFIG*)ptr2;
+  if ((sock1->first_node_id == sock2->first_node_id &&
+       sock1->second_node_id == sock2->second_node_id) ||
+       (sock1->first_node_id == sock2->second_node_id &&
+        sock2->second_node_id == sock1->first_node_id))
+    return 1;
+  return 0;
+}
+
+static int
+build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_conf_load)
+{
+  IC_HASHTABLE *comm_hash;
+  IC_SOCKET_LINK_CONFIG *comm_obj, *socket_config;
+  IC_SOCKET_LINK_CONFIG test_comm;
+  IC_DATA_SERVER_CONFIG *first_node, *second_node;
+  guint32 i, node_id, other_node_id;
+  DEBUG_ENTRY("build_hash_on_comms");
+
+  if ((comm_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_comms,
+                                      ic_keys_equal_comms)))
+  {
+    for (i= 0; i < clu_conf->num_comms; i++)
+    {
+      comm_obj= (IC_SOCKET_LINK_CONFIG*)clu_conf->comm_config[i];
+      if (ic_hashtable_insert(comm_hash, (void*)comm_obj, (void*)comm_obj))
+        goto error;
+    }
+    clu_conf->comm_hash= comm_hash;
+  }
+  if (clu_conf_load)
+  {
+    /*
+      In the iClaustron Cluster Server we read the configuration from disk
+      and not all communication objects are in the config files. So while
+      building the hash on communication objects we also need to create
+      the missing communication objects. When the configuration arrived
+      over the network this isn't necessary since all communication objects
+      are set.
+    */
+    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+    {
+      if (!clu_conf->node_config[node_id])
+        continue;
+      for (other_node_id= node_id + 1;
+           other_node_id <= clu_conf->max_node_id;
+           other_node_id++)
+      {
+        if (!clu_conf->node_config[other_node_id])
+          continue;
+        test_comm.first_node_id= node_id;
+        test_comm.second_node_id= other_node_id;
+        if (!(ic_hashtable_search(clu_conf->comm_hash,
+                                  (void*)&test_comm)))
+        {
+          /* Need to ad a new communication object */
+          init_node(clu_conf_load, sizeof(IC_SOCKET_LINK_CONFIG),
+                    &clu_conf_load->default_socket_config);
+          socket_config= 
+            (IC_SOCKET_LINK_CONFIG*)clu_conf_load->current_node_config;
+          first_node= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node_id];
+          second_node= (IC_DATA_SERVER_CONFIG*)
+            clu_conf->node_config[other_node_id];
+          socket_config->first_hostname= first_node->hostname;
+          socket_config->second_hostname= second_node->hostname;
+          socket_config->first_node_id= node_id;
+          socket_config->second_node_id= other_node_id;
+          if (clu_conf->node_types[node_id] == IC_DATA_SERVER_NODE &&
+              clu_conf->node_types[other_node_id] != IC_DATA_SERVER_NODE)
+            socket_config->server_node_id= node_id;
+          else if (clu_conf->node_types[other_node_id] ==
+                     IC_DATA_SERVER_NODE &&
+                   clu_conf->node_types[node_id] != IC_DATA_SERVER_NODE)
+            socket_config->server_node_id= other_node_id;
+          else
+            socket_config->server_node_id= IC_MIN(node_id, other_node_id);
+          clu_conf->comm_config[clu_conf->num_comms++]=
+            (gchar*)socket_config;
+          if (ic_hashtable_insert(comm_hash, (void*)socket_config,
+                                  (void*)socket_config))
+            goto error;
+        }
+      }
+    }
+    ic_require(clu_conf->num_comms == clu_conf_load->total_num_comms);
+  }
+  DEBUG_RETURN(0);
+error:
+  if (comm_hash)
+    ic_hashtable_destroy(comm_hash);
+  DEBUG_RETURN(1);
+}
+
+void
+ic_print_config_parameters(guint32 mask)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 inx, i;
+  if (!glob_conf_entry_inited)
+    return;
+  for (i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    if ((inx= map_config_id_to_inx[i]))
+    {
+      conf_entry= &glob_conf_entry[inx];
+      if (!(conf_entry->config_types & mask))
+        continue;
+      ic_printf("");
+      if (conf_entry->is_deprecated)
+      {
+        ic_printf("Entry %u is deprecated\n", i);
+        continue;
+      }
+      ic_printf("Entry %u:", i);
+      ic_printf("Name: %s", conf_entry->config_entry_name.str);
+      ic_printf("Comment: %s", conf_entry->config_entry_description);
+      ic_printf("ConfigId: %u", conf_entry->config_id);
+      switch (conf_entry->data_type)
+      {
+        case IC_CHARPTR:
+          ic_printf("Data type is string");
+          break;
+        case IC_UINT16:
+          ic_printf("Data type is 16-bit unsigned integer");
+          break;
+        case IC_BOOLEAN:
+          ic_printf("Data type is boolean");
+          break;
+        case IC_UINT32:
+          ic_printf("Data type is 32-bit unsigned integer");
+          break;
+        case IC_UINT64:
+          ic_printf("Data type is 64-bit unsigned integer");
+          break;
+        default:
+          ic_printf("Data type set to non-existent type!!!");
+          break;
+      }
+      if (conf_entry->is_not_configurable)
+      {
+        ic_printf("Entry is not configurable with value %u",
+               (guint32)conf_entry->default_value);
+        continue;
+      }
+      ic_printf("Offset of variable is %u", conf_entry->offset);
+      switch (conf_entry->change_variant)
+      {
+        case IC_ONLINE_CHANGE:
+          ic_printf("This parameter is changeable online");
+          break;
+        case IC_NODE_RESTART_CHANGE:
+          ic_printf("This parameter can be changed during a node restart");
+          break;
+        case IC_ROLLING_UPGRADE_CHANGE:
+        case IC_ROLLING_UPGRADE_CHANGE_SPECIAL:
+          ic_printf("Parameter can be changed during a rolling upgrade");
+          break;
+        case IC_INITIAL_NODE_RESTART:
+          ic_printf(
+            "Parameter can be changed when node performs initial restart");
+          break;
+        case IC_CLUSTER_RESTART_CHANGE:
+          ic_printf(
+            "Parameter can be changed after stopping cluster before restart");
+          break;
+        case IC_NOT_CHANGEABLE:
+          ic_printf(
+            "Parameter can only be changed using backup, change, restore");
+          break;
+        default:
+          g_assert(0);
+      }
+      if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
+        ic_printf("This config variable is used in a client node");
+      if (conf_entry->config_types & (1 << IC_DATA_SERVER_TYPE))
+        ic_printf("This config variable is used in a data server");
+      if (conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE))
+        ic_printf("This config variable is used in a cluster server");
+      if (conf_entry->config_types & (1 << IC_SQL_SERVER_TYPE))
+        ic_printf("This config variable is used in a sql server");
+      if (conf_entry->config_types & (1 << IC_REP_SERVER_TYPE))
+        ic_printf("This config variable is used in a replication server");
+      if (conf_entry->config_types & (1 << IC_FILE_SERVER_TYPE))
+        ic_printf("This config variable is used in a file server");
+      if (conf_entry->config_types & (1 << IC_RESTORE_TYPE))
+        ic_printf("This config variable is used in a restore node");
+      if (conf_entry->config_types & (1 << IC_CLUSTER_MANAGER_TYPE))
+        ic_printf("This config variable is used in a cluster manager");
+      if (conf_entry->config_types & (1 << IC_COMM_TYPE))
+        ic_printf("This config variable is used in connections");
+      if (conf_entry->config_types & (1 << IC_SYSTEM_TYPE))
+        ic_printf("This config variable is used in System (Cluster) section");
+
+      if (conf_entry->is_mandatory)
+        ic_printf("Entry is mandatory and has no default value");
+      else if (conf_entry->is_string_type)
+      {
+        if (!conf_entry->is_mandatory)
+        {
+          ic_printf("Entry has default value: %s",
+                 conf_entry->default_string);
+        }
+        continue;
+      }
+      else
+        ic_printf("Default value is %u", (guint32)conf_entry->default_value);
+      if (conf_entry->is_boolean)
+      {
+        ic_printf("Entry is either TRUE or FALSE");
+        continue;
+      }
+      if (conf_entry->is_min_value_defined)
+        ic_printf("Min value defined: %u", (guint32)conf_entry->min_value);
+      else
+        ic_printf("No min value defined");
+      if (conf_entry->is_max_value_defined)
+        ic_printf("Max value defined: %u", (guint32)conf_entry->max_value);
+      else
+        ic_printf("No max value defined");
+    }
+  }
+}
+
+static gboolean
+is_entry_used_in_version(IC_CONFIG_ENTRY *conf_entry,
+                         guint64 version_num)
+{
+  guint32 ic_version_num= (guint32)(version_num >> 32);
+  guint32 ndb_version_num= (guint32)(version_num & 0xFFFFFFFF);
+  /* Check Ndb Version */
+  if ((ic_version_num == 0) && conf_entry->is_only_iclaustron)
+    return FALSE;
+  if (conf_entry->min_ndb_version_used > ndb_version_num ||
+      (conf_entry->max_ndb_version_used &&
+       conf_entry->max_ndb_version_used < ndb_version_num))
+    return FALSE;
+  /* Check iClaustron Version */
+  if (conf_entry->min_ic_version_used > ic_version_num ||
+      (conf_entry->max_ic_version_used &&
+       conf_entry->max_ic_version_used < ic_version_num))
+    return FALSE;
+  return TRUE;
+}
+
+static void
+calculate_mandatory_bits()
+{
+  guint32 i;
+  IC_CONFIG_ENTRY *conf_entry;
+  DEBUG_ENTRY("calculate_mandatory_bits");
+
+  data_server_mandatory_bits= 0;
+  client_mandatory_bits= 0;
+  cluster_server_mandatory_bits= 0;
+  rep_server_mandatory_bits= 0;
+  sql_server_mandatory_bits= 0;
+  comm_mandatory_bits= 0;
+
+  for (i= 1; i <= glob_max_config_id; i++)
+  {
+    conf_entry= &glob_conf_entry[i];
+    if (conf_entry->is_mandatory)
+    {
+      if (conf_entry->config_types & (1 << IC_DATA_SERVER_TYPE))
+        data_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
+        client_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if ((conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE)) ||
+          (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
+        cluster_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if ((conf_entry->config_types & (1 << IC_REP_SERVER_TYPE)) ||
+          (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
+        rep_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if ((conf_entry->config_types & (1 << IC_SQL_SERVER_TYPE)) ||
+          (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
+        sql_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+      if (conf_entry->config_types & (1 << IC_COMM_TYPE))
+        comm_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+    }
+  }
+  {
+    DEBUG_DECL(gchar buf[128]);
+    DEBUG_PRINT(CONFIG_LEVEL, ("data_server_mandatory_bits = %s",
+                      ic_guint64_hex_str(data_server_mandatory_bits, buf)));
+    DEBUG_PRINT(CONFIG_LEVEL, ("client_mandatory_bits = %s",
+                 ic_guint64_hex_str(client_mandatory_bits, buf)));
+    DEBUG_PRINT(CONFIG_LEVEL, ("cluster_server_mandatory_bits = %s",
+                 ic_guint64_hex_str(cluster_server_mandatory_bits, buf)));
+    DEBUG_PRINT(CONFIG_LEVEL, ("rep_server_mandatory_bits = %s",
+                 ic_guint64_hex_str(rep_server_mandatory_bits, buf)));
+    DEBUG_PRINT(CONFIG_LEVEL, ("sql_server_mandatory_bits = %s",
+                 ic_guint64_hex_str(sql_server_mandatory_bits, buf)));
+    DEBUG_PRINT(CONFIG_LEVEL, ("comm_mandatory_bits = %s",
+                  ic_guint64_hex_str(comm_mandatory_bits, buf)));
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static int
+build_config_name_hash()
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 i;
+  for (i= 1; i <= glob_max_config_id; i++)
+  {
+    conf_entry= &glob_conf_entry[i];
+    if (conf_entry->config_entry_name.str != NULL)
+    {
+      if (ic_hashtable_insert(glob_conf_hash,
+                              (void*)&conf_entry->config_entry_name,
+                              (void*)conf_entry))
+        return 1;
+    }
+  }
+  return 0;
+}
+
+void
+ic_destroy_conf_hash()
+{
+  if (glob_conf_hash)
+    ic_hashtable_destroy(glob_conf_hash);
+  glob_conf_entry_inited= FALSE;
+}
+
+static void
+id_already_used_aborting(int id)
+{
+  ic_printf("Id = %d is already used, aborting", id);
+  abort();
+}
+
+static void
+id_out_of_range(int id)
+{
+  ic_printf("Id = % is out of range", id);
+  abort();
+}
+
+static void
+name_out_of_range(int id)
+{
+  ic_printf("Name = % is out of range", id);
+  abort();
+}
+
+/*
+  This method defines all configuration parameters and puts them in a global
+  variable only accessible from a few methods in this file.
+*/
+
+#define ALL_CLIENT_TYPES    ((1 << IC_CLUSTER_SERVER_TYPE) + \
+                             (1 << IC_CLIENT_TYPE) + \
+                             (1 << IC_CLUSTER_MANAGER_TYPE) + \
+                             (1 << IC_SQL_SERVER_TYPE) + \
+                             (1 << IC_REP_SERVER_TYPE) + \
+                             (1 << IC_FILE_SERVER_TYPE) + \
+                             (1 << IC_RESTORE_TYPE))
+
+#define ALL_NODE_TYPES (ALL_CLIENT_TYPES + (1 << IC_DATA_SERVER_TYPE))
+
+static void
+init_config_parameters()
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  guint32 mandatory_bits= 0;
+/*
+  We add 1000 to the system configuration items.
+  Id 10-15 for configuration ids of system
+*/
+#define SYSTEM_SECTION_ADJUSTMENT 1000
+#define SYSTEM_PRIMARY_CS_NODE 1001
+#define SYSTEM_CONFIGURATION_NUMBER 1002
+#define SYSTEM_NAME 1003
+
+  IC_SET_CONFIG_MAP(SYSTEM_PRIMARY_CS_NODE, 10);
+  conf_entry->config_id= SYSTEM_PRIMARY_CS_NODE - SYSTEM_SECTION_ADJUSTMENT;
+  map_inx_to_config_id[10]= SYSTEM_PRIMARY_CS_NODE - SYSTEM_SECTION_ADJUSTMENT;
+  IC_SET_SYSTEM_CONFIG(conf_entry, system_primary_cs_node,
+                       IC_UINT16, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_NODE_ID);
+  conf_entry->config_entry_description=
+  "Primary Cluster Server node in the grid";
+
+  IC_SET_CONFIG_MAP(SYSTEM_CONFIGURATION_NUMBER, 11);
+  conf_entry->config_id= SYSTEM_CONFIGURATION_NUMBER - SYSTEM_SECTION_ADJUSTMENT;
+  map_inx_to_config_id[11]= SYSTEM_CONFIGURATION_NUMBER - SYSTEM_SECTION_ADJUSTMENT;
+  IC_SET_SYSTEM_CONFIG(conf_entry, system_configuration_number,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  conf_entry->config_entry_description=
+  "Configuration generation of grid";
+
+  IC_SET_CONFIG_MAP(SYSTEM_NAME, 12);
+  conf_entry->config_id= SYSTEM_NAME - SYSTEM_SECTION_ADJUSTMENT;
+  map_inx_to_config_id[12]= SYSTEM_NAME - SYSTEM_SECTION_ADJUSTMENT;
+  IC_SET_SYSTEM_STRING(conf_entry, system_name,
+                       IC_NOT_CHANGEABLE);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->config_entry_description=
+  "Cluster name";
+/*
+  This is the data server node configuration section.
+*/
+/* Id 0-9 for configuration id 0-9 */
+/* Id 0 not used */
+#define DATA_SERVER_INJECT_FAULT 1
+/* Id 2 not used */
+#define IC_NODE_ID       3
+/* Id 4 not used */
+#define IC_NODE_HOST     5
+/* Id 6 not used */
+#define IC_NODE_DATA_PATH 7
+/* Id 8 not used */
+#define IC_NETWORK_BUFFER_SIZE 9
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_INJECT_FAULT, 1);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, inject_fault,
+                       IC_UINT32, 2, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
+  conf_entry->config_entry_description=
+  "Inject faults (only available in special test builds)";
+
+  /* These parameters are common for most node types */
+  IC_SET_CONFIG_MAP(IC_NODE_ID, 3);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, node_id, IC_UINT32,
+                       0, IC_NOT_CHANGEABLE);
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->config_entry_description=
+  "Node id";
+
+  IC_SET_CONFIG_MAP(IC_NODE_HOST, 5);
+  IC_SET_DATA_SERVER_STRING(conf_entry, hostname, IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->config_entry_description=
+  "Hostname of the node";
+
+  IC_SET_CONFIG_MAP(IC_NODE_DATA_PATH, 7);
+  IC_SET_DATA_SERVER_STRING(conf_entry, node_data_path,
+                            IC_INITIAL_NODE_RESTART);
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->config_entry_description=
+  "Data directory of the node";
+
+  IC_SET_CONFIG_MAP(IC_NETWORK_BUFFER_SIZE, 9);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, network_buffer_size, IC_UINT32,
+                            12 * 1024 * 1024,
+                            IC_ONLINE_CHANGE);
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->config_entry_description=
+  "The total size of the network buffers used in the node";
+
+/* Id 16-19 for configuration id 10-99 */
+#define IC_NODE_NAME 14
+  IC_SET_CONFIG_MAP(IC_NODE_NAME, 16);
+  IC_SET_DATA_SERVER_STRING(conf_entry, node_name, IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->config_entry_description=
+  "Node name";
+
+/* Id 10-99 not used */
+
+/* Id 20-29 for configuration id 100-109 */
+#define DATA_SERVER_MAX_TRACE_FILES 100
+#define DATA_SERVER_REPLICAS 101
+#define DATA_SERVER_TABLE_OBJECTS 102
+#define DATA_SERVER_COLUMN_OBJECTS 103
+#define DATA_SERVER_KEY_OBJECTS 104
+#define DATA_SERVER_INTERNAL_TRIGGER_OBJECTS 105
+#define DATA_SERVER_CONNECTION_OBJECTS 106
+#define DATA_SERVER_OPERATION_OBJECTS 107
+#define DATA_SERVER_SCAN_OBJECTS 108
+#define DATA_SERVER_INTERNAL_TRIGGER_OPERATION_OBJECTS 109
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_TRACE_FILES, 20);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, max_number_of_trace_files,
+                       IC_UINT32, 25, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 2048);
+  conf_entry->config_entry_description=
+  "The number of crashes that can be reported before we overwrite error log and trace files";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REPLICAS, 21);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_replicas,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->config_entry_description=
+  "This defines number of nodes per node group, within a node group all nodes contain the same data";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_TABLE_OBJECTS, 22);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_table_objects,
+                       IC_UINT32, 256, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 32);
+  conf_entry->config_entry_description=
+  "Sets the maximum number of tables that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_COLUMN_OBJECTS, 23);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_column_objects,
+                       IC_UINT32, 2048, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 256);
+  conf_entry->config_entry_description=
+  "Sets the maximum number of columns that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_KEY_OBJECTS, 24);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_key_objects,
+                       IC_UINT32, 256, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 32);
+  conf_entry->config_entry_description=
+  "Sets the maximum number of keys that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_INTERNAL_TRIGGER_OBJECTS, 25);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_internal_trigger_objects,
+                       IC_UINT32, 1536, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 512);
+  conf_entry->config_entry_description=
+  "Each unique index will use 3 internal trigger objects, index/backup will use 1 per table";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CONNECTION_OBJECTS, 26);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_connection_objects,
+                       IC_UINT32, 8192, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 128);
+  conf_entry->config_entry_description=
+  "Each active transaction and active scan uses a connection object";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_OPERATION_OBJECTS, 27);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_operation_objects,
+                       IC_UINT32, 32768, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 1024);
+  conf_entry->config_entry_description=
+  "Each record read/updated in a transaction uses an operation object during the transaction";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_SCAN_OBJECTS, 28);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_scan_objects,
+                       IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 32, 512);
+  conf_entry->config_entry_description=
+  "Each active scan uses a scan object for the lifetime of the scan operation";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_INTERNAL_TRIGGER_OPERATION_OBJECTS, 29);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry,
+                            number_of_internal_trigger_operation_objects,
+                       IC_UINT32, 4000, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 4000, 4000);
+  conf_entry->config_entry_description=
+  "Each internal trigger that is fired uses an operation object for a short time";
+
+/* Id 30-39 for configuration id 110-119 */
+#define DATA_SERVER_KEY_OPERATION_OBJECTS 110
+#define DATA_SERVER_CONNECTION_BUFFER 111
+#define DATA_SERVER_RAM_MEMORY 112
+#define DATA_SERVER_HASH_MEMORY 113
+#define DATA_SERVER_MEMORY_LOCKED 114
+#define DATA_SERVER_WAIT_PARTIAL_START 115
+#define DATA_SERVER_WAIT_PARTITIONED_START 116
+#define DATA_SERVER_WAIT_ERROR_START 117
+#define DATA_SERVER_HEARTBEAT_TIMER 118
+#define DATA_SERVER_CLIENT_HEARTBEAT_TIMER 119
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_KEY_OPERATION_OBJECTS, 30);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_key_operation_objects,
+                       IC_UINT32, 4096, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 128);
+  conf_entry->config_entry_description=
+  "Each read and update of an unique hash index in a transaction uses one of those objects";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CONNECTION_BUFFER, 31);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_connection_buffer,
+                       IC_UINT32, 1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1024*1024, 1024*1024);
+  conf_entry->config_entry_description=
+  "Internal buffer used by connections for transactions and scans";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_RAM_MEMORY, 32);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_ram_memory,
+                       IC_UINT64, 256*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 16*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of memory used to store RAM-based records";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_HASH_MEMORY, 33);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_hash_memory,
+                       IC_UINT64, 64*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 8*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of memory used to store primary hash index on all tables and unique hash indexes";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MEMORY_LOCKED, 34);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, use_unswappable_memory, FALSE,
+                             IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Setting this to 1 means that all memory is locked and will not be swapped out";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_WAIT_PARTIAL_START, 35);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_wait_partial_start,
+                       IC_UINT32, 20000, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_WAIT_PARTITIONED_START, 36);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_wait_partitioned_start,
+                       IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_WAIT_ERROR_START, 37);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_wait_error_start,
+                       IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_HEARTBEAT_TIMER, 38);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_heartbeat_data_server_nodes,
+                       IC_UINT32, 700, IC_ROLLING_UPGRADE_CHANGE_SPECIAL);
+  IC_SET_CONFIG_MIN(conf_entry, 10);
+  conf_entry->config_entry_description=
+  "Time in ms between sending heartbeat messages to data servers, 4 missed leads to node crash";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CLIENT_HEARTBEAT_TIMER, 39);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_heartbeat_client_nodes,
+                       IC_UINT32, 1000, IC_ROLLING_UPGRADE_CHANGE_SPECIAL);
+  IC_SET_CONFIG_MIN(conf_entry, 10);
+  conf_entry->config_entry_description=
+  "Time in ms between sending heartbeat messages to client nodes, 4 missed leads to node crash";
+
+/* Id 40-49 for configuration id 120-129 */
+#define DATA_SERVER_LOCAL_CHECKPOINT_TIMER 120
+#define DATA_SERVER_GLOBAL_CHECKPOINT_TIMER 121
+#define DATA_SERVER_RESOLVE_TIMER 122
+#define DATA_SERVER_WATCHDOG_TIMER 123
+#define DATA_SERVER_DAEMON_RESTART_AT_ERROR 124
+#define DATA_SERVER_FILESYSTEM_PATH 125
+#define DATA_SERVER_REDO_LOG_FILES 126
+/* 127 and 128 deprecated */
+#define DATA_SERVER_CHECK_INTERVAL 129
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_CHECKPOINT_TIMER, 40);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_local_checkpoint,
+                       IC_UINT32, 24, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 6, 31);
+  conf_entry->config_entry_description=
+  "Specifies how often local checkpoints are executed, logarithmic scale on log size";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_GLOBAL_CHECKPOINT_TIMER, 41);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_global_checkpoint,
+                       IC_UINT32, 1000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 10);
+  conf_entry->config_entry_description=
+  "Time in ms between starting global checkpoints";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_RESOLVE_TIMER, 42);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_resolve,
+                       IC_UINT32, 2000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 10);
+  conf_entry->config_entry_description=
+  "Time in ms waiting for response from resolve";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_WATCHDOG_TIMER, 43);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_data_server_watchdog,
+                       IC_UINT32, 6000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 1000);
+  conf_entry->config_entry_description=
+  "Time in ms without activity in data server before watchdog is fired";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DAEMON_RESTART_AT_ERROR, 44);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_automatic_restart, FALSE,
+                             IC_ONLINE_CHANGE);
+  conf_entry->config_entry_description=
+  "If set, data server restarts automatically after a failure";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_FILESYSTEM_PATH, 45);
+  IC_SET_DATA_SERVER_STRING(conf_entry, filesystem_path,
+                            IC_INITIAL_NODE_RESTART);
+  conf_entry->config_entry_description=
+  "Path to filesystem of data server";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_FILES, 46);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_redo_log_files,
+                       IC_UINT32, 4, IC_INITIAL_NODE_RESTART);
+  IC_SET_CONFIG_MIN(conf_entry, 4);
+  conf_entry->config_entry_description=
+  "Number of REDO log files, each file represents by default 512 MB log space";
+
+  IC_SET_CONFIG_MAP(127, 47);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(128, 48);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECK_INTERVAL, 49);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_check_interval,
+                       IC_UINT32, 500, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 500, 500);
+  conf_entry->config_entry_description=
+  "Time in ms between checks after transaction timeouts";
+
+/* Id 50-59 for configuration id 130-139 */
+#define DATA_SERVER_CLIENT_ACTIVITY_TIMER 130
+#define DATA_SERVER_DEADLOCK_TIMER 131
+#define DATA_SERVER_CHECKPOINT_OBJECTS 132
+#define DATA_SERVER_CHECKPOINT_MEMORY 133
+#define DATA_SERVER_CHECKPOINT_DATA_MEMORY 134
+#define DATA_SERVER_CHECKPOINT_LOG_MEMORY 135
+#define DATA_SERVER_CHECKPOINT_WRITE_SIZE 136
+/* 137 and 138 deprecated */
+#define DATA_SERVER_CHECKPOINT_MAX_WRITE_SIZE 139
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CLIENT_ACTIVITY_TIMER, 50);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_client_activity,
+                       IC_UINT32, 1024*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 1000);
+  conf_entry->config_entry_description=
+  "Time in ms before transaction is aborted due to client inactivity";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DEADLOCK_TIMER, 51);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_deadlock,
+                       IC_UINT32, 2000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 1000);
+  conf_entry->config_entry_description=
+  "Time in ms before transaction is aborted due to internal wait (indication of deadlock)";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_OBJECTS, 52);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_checkpoint_objects,
+                       IC_UINT32, 1, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 1);
+  conf_entry->config_entry_description=
+  "Number of possible parallel backups and local checkpoints";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_MEMORY, 53);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_memory,
+                       IC_UINT32, 4*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 4*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of memory buffers for local checkpoint and backup";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_DATA_MEMORY, 54);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_data_memory,
+                       IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of data memory buffers for local checkpoint and backup";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_LOG_MEMORY, 55);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_log_memory,
+                       IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of log memory buffers for local checkpoint and backup";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_WRITE_SIZE, 56);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_write_size,
+                       IC_UINT32, 64*1024, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 64*1024);
+  conf_entry->config_entry_description=
+  "Size of default writes in local checkpoint and backups";
+
+  IC_SET_CONFIG_MAP(137, 57);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(138, 58);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_MAX_WRITE_SIZE, 59);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_max_write_size,
+                       IC_UINT32, 256*1024, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 256*1024, 256*1024);
+  conf_entry->config_entry_description=
+  "Size of maximum writes in local checkpoint and backups";
+
+/* Id 60-69 for configuration id 140-149 */
+#define DATA_SERVER_SIZE_OF_REDO_LOG_FILES 140
+#define DATA_SERVER_INITIAL_WATCHDOG_TIMER 141
+/* 142 - 146 not used */
+/* 147 Cluster Server parameter */
+#define CLUSTER_SERVER_EVENT_LOG 147
+#define DATA_SERVER_VOLATILE_MODE 148
+#define DATA_SERVER_ORDERED_KEY_OBJECTS 149
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_SIZE_OF_REDO_LOG_FILES, 60);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_redo_log_files,
+                       IC_UINT32, 128 * 1024 * 1024, IC_INITIAL_NODE_RESTART);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 2000*1024*1024);
+  conf_entry->min_ndb_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Size of REDO log files (there are four of these in parallel and the number of REDO log files are specified by the parameter number_of_redo_log_files";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_WATCHDOG_TIMER, 61);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_initial_watchdog_timer,
+                       IC_UINT32, 15000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 100);
+  conf_entry->min_ndb_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Initial value of watchdog timer before communication set-up";
+
+  /* This is a cluster server parameter */
+/*
+  We currently don't use this variable since we might use the cluster
+  manager for logging rather.
+
+  IC_SET_CONFIG_MAP(CLUSTER_SERVER_EVENT_LOG, 67);
+  IC_SET_CLUSTER_SERVER_STRING(conf_entry, cluster_server_event_log,
+                               ic_empty_string, IC_INITIAL_NODE_RESTART);
+  conf_entry->is_not_sent= TRUE;
+  conf_entry->config_entry_description=
+  "Type of cluster event log";
+*/
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_VOLATILE_MODE, 68);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_volatile_mode, FALSE,
+                             IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "In this mode all file writes are ignored and all starts becomes initial starts";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_ORDERED_KEY_OBJECTS, 69);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_ordered_key_objects,
+                       IC_UINT32, 512, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 32);
+  conf_entry->config_entry_description=
+  "Sets the maximum number of ordered keys that can be stored in cluster";
+
+/* Id 70-79 for configuration id 150-159 */
+#define DATA_SERVER_UNIQUE_HASH_KEY_OBJECTS 150
+/* 151 and 152 deprecated */
+#define DATA_SERVER_SCAN_BATCH_SIZE 153
+/* 154 and 155 deprecated */
+#define DATA_SERVER_REDO_LOG_BUFFER_MEMORY 156
+#define DATA_SERVER_LONG_MESSAGE_MEMORY 157
+#define DATA_SERVER_CHECKPOINT_PATH 158
+#define DATA_SERVER_MAX_OPEN_FILES 159
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_UNIQUE_HASH_KEY_OBJECTS, 70);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_unique_hash_key_objects,
+                       IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 32);
+  conf_entry->config_entry_description=
+  "Sets the maximum number of unique hash keys that can be stored in cluster";
+
+  IC_SET_CONFIG_MAP(151, 71);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(152, 72);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_SCAN_BATCH_SIZE, 73);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_scan_batch,
+                       IC_UINT32, 64, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64, 64);
+  conf_entry->config_entry_description=
+  "Number of records sent in a scan from the local data server node";
+
+  IC_SET_CONFIG_MAP(154, 74);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(155, 75);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_BUFFER_MEMORY, 76);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, redo_log_buffer_memory,
+                       IC_UINT32, 32*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
+  conf_entry->config_entry_description=
+  "Size of REDO log memory buffer";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LONG_MESSAGE_MEMORY, 77);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, long_message_memory,
+                       IC_UINT32, 4*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 4*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of long memory buffers";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_PATH, 78);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_checkpoint_path,
+                           IC_INITIAL_NODE_RESTART);
+  conf_entry->config_entry_description=
+  "Path to filesystem of checkpoints";
+  conf_entry->is_mandatory= TRUE;
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_OPEN_FILES, 79);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_open_files,
+                       IC_UINT32, 64, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64, 64);
+  conf_entry->config_entry_description=
+  "Maximum number of open files in data server node";
+
+/* Id 80-89 for configuration id 160-169 */
+#define DATA_SERVER_PAGE_CACHE_SIZE 160
+#define DATA_SERVER_STRING_MEMORY 161
+#define DATA_SERVER_INITIAL_OPEN_FILES 162
+#define DATA_SERVER_FILE_SYNCH_SIZE 163
+#define DATA_SERVER_DISK_WRITE_SPEED 164
+#define DATA_SERVER_DISK_WRITE_SPEED_START 165
+#define DATA_SERVER_REPORT_MEMORY_FREQUENCY 166
+#define DATA_SERVER_BACKUP_STATUS_FREQUENCY 167
+#define DATA_SERVER_USE_O_DIRECT 168
+#define DATA_SERVER_MAX_ALLOCATE_SIZE 169
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_PAGE_CACHE_SIZE, 80);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, page_cache_size,
+                       IC_UINT64, 128*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 64*1024);
+  conf_entry->config_entry_description=
+  "Size of page cache for disk-based data";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_STRING_MEMORY, 81);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_string_memory,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
+  conf_entry->config_entry_description=
+  "Size of string memory";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_OPEN_FILES, 82);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_open_files,
+                       IC_UINT32, 27, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 27, 27);
+  conf_entry->config_entry_description=
+  "Number of open file handles in data server from start";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_FILE_SYNCH_SIZE, 83);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_file_synch_size,
+                       IC_UINT32, 4*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
+  conf_entry->config_entry_description=
+  "Size of file writes before a synch is always used";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DISK_WRITE_SPEED, 84);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_disk_write_speed,
+                       IC_UINT32, 8*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 64*1024);
+  conf_entry->config_entry_description=
+  "Limit on how fast checkpoints are allowed to write to disk";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DISK_WRITE_SPEED_START, 85);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_disk_write_speed_start,
+                       IC_UINT32, 256*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
+  conf_entry->config_entry_description=
+  "Limit on how fast checkpoints are allowed to write to disk during start of the node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REPORT_MEMORY_FREQUENCY, 86)
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_report_memory_frequency,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  conf_entry->config_entry_description=
+  "Frequency of memory reports, 0 means only at certain thresholds";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_BACKUP_STATUS_FREQUENCY, 87)
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_backup_status_frequency,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  conf_entry->config_entry_description=
+  "Frequency of backup status, 0 means no status reporting except at end";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_USE_O_DIRECT, 88);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, use_o_direct, TRUE,
+                             IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Use O_DIRECT on file system of data servers";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_ALLOCATE_SIZE, 89);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_allocate_size,
+                       IC_UINT32, 32*1024*1024, IC_INITIAL_NODE_RESTART);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1*1024*1024, 1000*1024*1024);
+  conf_entry->min_ndb_version_used= 0x50119;
+  conf_entry->config_entry_description=
+  "Size of maximum extent allocated at a time for table memory";
+
+/* Id 90-99 for configuration id 170-179 */
+#define DATA_SERVER_GROUP_COMMIT_DELAY 170
+#define DATA_SERVER_GROUP_COMMIT_TIMEOUT 171
+#define DATA_SERVER_BACKUP_COMPRESSION 172
+#define DATA_SERVER_LOCAL_CHECKPOINT_COMPRESSION 173
+#define DATA_SERVER_SCHEDULER_NO_SEND_TIME 174
+#define DATA_SERVER_SCHEDULER_NO_SLEEP_TIME 175
+#define DATA_SERVER_RT_SCHEDULER_THREADS 176
+#define DATA_SERVER_LOCK_MAIN_THREAD 177
+#define DATA_SERVER_LOCK_OTHER_THREADS 178
+#define DATA_SERVER_MAX_LOCAL_TRIGGERS 179
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_GROUP_COMMIT_DELAY, 90);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_group_commit_delay,
+                       IC_UINT32, 100, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 32000);
+  conf_entry->min_ndb_version_used= 0x60301;
+  conf_entry->config_entry_description=
+  "How long is the delay between each group commit started by the cluster";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_GROUP_COMMIT_TIMEOUT, 91);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_group_commit_timeout,
+                            IC_UINT32, 4000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 32000);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Maximum time group commit is allowed to take before node is shut down";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_BACKUP_COMPRESSION, 92);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_backup_compression,
+                             FALSE, IC_INITIAL_NODE_RESTART);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Use zlib compression for NDB online backups";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_CHECKPOINT_COMPRESSION, 93);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry,
+                             data_server_local_checkpoint_compression,
+                             FALSE, IC_INITIAL_NODE_RESTART);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Use zlib compression for NDB local checkpoints";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SEND_TIME, 94);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_scheduler_no_send_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "How long time can the scheduler execute without sending socket buffers";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SLEEP_TIME, 95);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_scheduler_no_sleep_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "How long time can the scheduler execute without going to sleep";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_RT_SCHEDULER_THREADS, 96);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_rt_scheduler_threads,
+                             FALSE, IC_ONLINE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "If set the data server is setting its thread in RT priority, requires root privileges";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_MAIN_THREAD, 97);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
+                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "Lock Main Thread to a CPU id";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_OTHER_THREADS, 98);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
+                       IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
+  conf_entry->min_ndb_version_used= 0x60304;
+  conf_entry->config_entry_description=
+  "Lock other threads to a CPU id";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGERS, 99);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_local_triggers,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of local triggers that can be defined";
+
+/* Id 100-109 for configuration id 180-189 */
+#define DATA_SERVER_MAX_LOCAL_TRIGGER_USERS 180
+#define DATA_SERVER_MAX_LOCAL_TRIGGER_OPERATIONS 181
+#define DATA_SERVER_MAX_STORED_GROUP_COMMITS 182
+#define DATA_SERVER_LOCAL_TRIGGER_HANDOVER_TIMEOUT 183
+#define DATA_SERVER_REPORT_STARTUP_FREQUENCY 184
+#define DATA_SERVER_NODE_GROUP 185
+#define DATA_SERVER_THREADS 186
+#define DATA_SERVER_LOCAL_DB_THREADS 187
+#define DATA_SERVER_LOCAL_DB_WORKERS 188
+#define DATA_SERVER_ZERO_REDO_LOG 189
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGER_USERS, 100);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_local_trigger_users,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of local trigger user nodes";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGER_OPERATIONS, 101);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry,
+                            data_server_max_local_trigger_operations,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of local trigger operations";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MAX_STORED_GROUP_COMMITS, 102);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_stored_group_commits,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Max number of group commits we will store information about";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_TRIGGER_HANDOVER_TIMEOUT, 103);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry,
+                            data_server_local_trigger_handover_timeout,
+                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60316;
+  conf_entry->config_entry_description=
+  "Maximum time to wait when performing a handover during local trigger definitions";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REPORT_STARTUP_FREQUENCY, 104);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_report_startup_frequency,
+                            IC_UINT32, 0, IC_ONLINE_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "How often to issue status reports during startup of the ndb kernel";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_NODE_GROUP, 105);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_node_group,
+                            IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_NODE_ID);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Node group of Data Server node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_THREADS, 106);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_threads,
+                            IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 2, 8);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of threads that can be used maximally for Data Server node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_THREADS, 107);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_threads,
+                            IC_UINT32, 4, IC_NODE_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of threads used by local database part in Data Server";
+  
+  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_WORKERS, 108);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_workers,
+                            IC_UINT32, 4, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of partitions used by local database part in Data Server";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_ZERO_REDO_LOG, 109);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_zero_redo_log,
+                            IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->default_string= "sparse";
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Initialise REDO log during initial start (sparse or full)";
+
+/* Id 110-119 for configuration id 190-199 */
+/* 191-197 not used */
+#define DATA_SERVER_FILE_THREAD_POOL 190
+#define DATA_SERVER_MEMORY_POOL 198
+/* 199 used, not for normal builds though */
+  IC_SET_CONFIG_MAP(DATA_SERVER_FILE_THREAD_POOL, 110);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_file_thread_pool,
+                            IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->min_ndb_version_used= 0x60401;
+  conf_entry->config_entry_description=
+  "Number of threads used for Disk Data file threads";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_MEMORY_POOL, 118);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_memory_pool,
+                       IC_UINT64, 0, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Size of memory pool for internal memory usage";
+
+/* Client/Cluster Server configuration items */
+/* Id 120-129 for configuration id 200-209 */
+#define CLIENT_RESOLVE_RANK 200
+#define CLIENT_RESOLVE_TIMER 201
+#define RESERVED_SEND_BUFFER 202
+
+  IC_SET_CONFIG_MAP(CLIENT_RESOLVE_RANK, 120);
+  IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_rank,
+                       IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
+  conf_entry->config_types= ALL_CLIENT_TYPES;
+  conf_entry->config_entry_description=
+  "Rank in resolving network partition of the client";
+
+  IC_SET_CONFIG_MAP(CLIENT_RESOLVE_TIMER, 121);
+  IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_timer,
+                       IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->config_types= ALL_CLIENT_TYPES;
+  conf_entry->config_entry_description=
+  "Time in ms waiting for resolve before crashing";
+
+  IC_SET_CONFIG_MAP(RESERVED_SEND_BUFFER, 122);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, reserved_send_buffer,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
+  conf_entry->config_entry_description=
+  "Send buffer memory reserved for Data Server traffic, not used";
+
+/* Id 130-139 for configuration id 210-249 */
+/* Id 210-248 not used */
+#define APID_NUM_THREADS 249
+
+  IC_SET_CONFIG_MAP(APID_NUM_THREADS, 139);
+  IC_SET_CLIENT_CONFIG(conf_entry, apid_num_threads,
+                       IC_UINT32, 1, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_APID_NUM_THREADS);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_types= (1 << IC_FILE_SERVER_TYPE) |
+                            (1 << IC_REP_SERVER_TYPE);
+  conf_entry->config_entry_description=
+  "Number of threads in Data API application server";
+
+
+/* Log level configuration items */
+/* Id 140-149 for configuration id 250-259 */
+#define DATA_SERVER_START_LOG_LEVEL 250
+#define DATA_SERVER_STOP_LOG_LEVEL 251
+#define DATA_SERVER_STAT_LOG_LEVEL 252
+#define DATA_SERVER_CHECKPOINT_LOG_LEVEL 253
+#define DATA_SERVER_RESTART_LOG_LEVEL 254
+#define DATA_SERVER_CONNECTION_LOG_LEVEL 255
+#define DATA_SERVER_REPORT_LOG_LEVEL 256
+#define DATA_SERVER_WARNING_LOG_LEVEL 257
+#define DATA_SERVER_ERROR_LOG_LEVEL 258
+#define DATA_SERVER_CONGESTION_LOG_LEVEL 259
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_START_LOG_LEVEL, 140);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_start,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level at start of a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_STOP_LOG_LEVEL, 141);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_stop,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level at stop of a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_STAT_LOG_LEVEL, 142);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_statistics,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of statistics on a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_LOG_LEVEL, 143);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_checkpoint,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level at checkpoint of a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_RESTART_LOG_LEVEL, 144);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_restart,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level at restart of a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CONNECTION_LOG_LEVEL, 145);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_connection,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of connections to a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REPORT_LOG_LEVEL, 146);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_reports,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of reports from a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_WARNING_LOG_LEVEL, 147);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_warning,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of warnings from a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_ERROR_LOG_LEVEL, 148);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_error,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of errors from a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CONGESTION_LOG_LEVEL, 149);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_congestion,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of congestions to a node";
+
+/* Id 150-159 for configuration id 260-269 */
+#define DATA_SERVER_DEBUG_LOG_LEVEL 260
+#define DATA_SERVER_BACKUP_LOG_LEVEL 261
+/* Id 262-269 not used */
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DEBUG_LOG_LEVEL, 150);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_debug,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of debug messages from a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_BACKUP_LOG_LEVEL, 151);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_backup,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of backups at a node";
+
+/* Id 160-169 for configuration id 270-299 */
+/* Id 270-299 not used */
+
+/* Id 170-174 for configuration id 300-350 */
+/* This is the cluster server configuration section  */
+#define CLUSTER_SERVER_PORT_NUMBER 340
+#define CLUSTER_MANAGER_PORT_NUMBER 341
+/* Id 301-339 and 342-350 not used */
+
+  IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 170);
+  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number, IC_UINT32,
+                               IC_DEF_CLUSTER_SERVER_PORT,
+                               IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_entry_description=
+  "Port number of Cluster Server";
+
+  IC_SET_CONFIG_MAP(CLUSTER_MANAGER_PORT_NUMBER, 171);
+  IC_SET_CLUSTER_MANAGER_CONFIG(conf_entry, cluster_manager_port_number, IC_UINT32,
+                                IC_DEF_CLUSTER_MANAGER_PORT,
+                                IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_entry_description=
+  "Port number of Cluster Manager";
+
+/* Id 175-179 for configuration id 351-399 */
+/* Id 351-399 not used */
+
+/* This is the Socket configuration section*/
+/* Id 180-189 for configuration id 400-409 */
+#define SOCKET_FIRST_NODE_ID 400
+#define SOCKET_SECOND_NODE_ID 401
+#define SOCKET_USE_MESSAGE_NUMBER 402
+#define SOCKET_USE_CHECKSUM 403
+/* Id 404, 405 not used */
+#define SOCKET_SERVER_PORT_NUMBER 406
+#define SOCKET_FIRST_HOSTNAME 407
+#define SOCKET_SECOND_HOSTNAME 408
+#define SOCKET_GROUP 409
+
+  IC_SET_CONFIG_MAP(SOCKET_FIRST_NODE_ID, 180);
+  IC_SET_SOCKET_CONFIG(conf_entry, first_node_id,
+                       IC_UINT16, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->is_key= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->config_entry_description=
+  "First node id of the connection";
+
+  IC_SET_CONFIG_MAP(SOCKET_SECOND_NODE_ID, 181);
+  IC_SET_SOCKET_CONFIG(conf_entry, second_node_id,
+                       IC_UINT16, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->is_key= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->config_entry_description=
+  "Second node id of the connection";
+
+  IC_SET_CONFIG_MAP(SOCKET_USE_MESSAGE_NUMBER, 182);
+  IC_SET_SOCKET_BOOLEAN(conf_entry, use_message_id,
+                        FALSE, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Using message id can be a valuable resource to find problems related to distributed execution";
+
+  IC_SET_CONFIG_MAP(SOCKET_USE_CHECKSUM, 183);
+  IC_SET_SOCKET_BOOLEAN(conf_entry, use_checksum,
+                        FALSE, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Using checksum ensures that internal bugs doesn't corrupt data while data is placed in buffers";
+
+  IC_SET_CONFIG_MAP(SOCKET_SERVER_PORT_NUMBER, 186);
+  IC_SET_SOCKET_CONFIG(conf_entry, server_port_number,
+                       IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->config_entry_description=
+  "Port number to use on server side";
+
+  IC_SET_CONFIG_MAP(SOCKET_FIRST_HOSTNAME, 187);
+  IC_SET_SOCKET_STRING(conf_entry, first_hostname, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->config_entry_description=
+  "Hostname of first node";
+
+  IC_SET_CONFIG_MAP(SOCKET_SECOND_HOSTNAME, 188);
+  IC_SET_SOCKET_STRING(conf_entry, second_hostname, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->config_entry_description=
+  "Hostname of second node";
+
+  IC_SET_CONFIG_MAP(SOCKET_GROUP, 189);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_group,
+                       IC_UINT16, 55, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 55, 55);
+  conf_entry->config_entry_description=
+  "Group id of the connection";
+
+/* Id 190-209 for configuration id 410-499 */
+#define SOCKET_SERVER_NODE_ID 410
+#define SOCKET_OVERLOAD 411
+/* Id 412-419 not used */
+#define SOCKET_CLIENT_PORT_NUMBER 420
+/* Id 421-453 not used */
+#define SOCKET_WRITE_BUFFER_SIZE 454
+#define SOCKET_READ_BUFFER_SIZE 455
+/* Id 456 not used */
+#define SOCKET_KERNEL_READ_BUFFER_SIZE 457
+#define SOCKET_KERNEL_WRITE_BUFFER_SIZE 458
+#define SOCKET_MAXSEG_SIZE 459
+#define SOCKET_BIND_ADDRESS 460
+#define SOCKET_MAX_WAIT_IN_NANOS 489
+/* Id 461-488 not used */
+/* Id 490-499 not used */
+
+  IC_SET_CONFIG_MAP(SOCKET_SERVER_NODE_ID, 190);
+  IC_SET_SOCKET_CONFIG(conf_entry, server_node_id,
+                       IC_UINT16, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, IC_MAX_NODE_ID);
+  conf_entry->is_mandatory= TRUE;
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->mandatory_bit= mandatory_bits++;
+  conf_entry->config_entry_description=
+  "Node id of node that is server part of connection";
+
+  IC_SET_CONFIG_MAP(SOCKET_OVERLOAD, 191);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_overload,
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
+  conf_entry->config_entry_description=
+  "Number of bytes before overload declared, deprecated";
+
+  IC_SET_CONFIG_MAP(SOCKET_CLIENT_PORT_NUMBER, 193);
+  IC_SET_SOCKET_CONFIG(conf_entry, client_port_number,
+                       IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->max_ndb_version_used= 1;
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_entry_description=
+  "Port number to use on client side";
+
+  IC_SET_CONFIG_MAP(SOCKET_WRITE_BUFFER_SIZE, 194);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_write_buffer_size,
+                       IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN(conf_entry, 128*1024);
+  conf_entry->config_entry_description=
+  "Size of write buffer in front of socket";
+
+  IC_SET_CONFIG_MAP(SOCKET_READ_BUFFER_SIZE, 195);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_read_buffer_size,
+                       IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 1024*1024);
+  conf_entry->config_entry_description=
+  "Size of read buffer in front of socket";
+
+  IC_SET_CONFIG_MAP(SOCKET_KERNEL_READ_BUFFER_SIZE, 197);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_read_buffer_size,
+                       IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024);
+  conf_entry->config_entry_description=
+  "Size of receive buffer for socket in OS kernel";
+
+  IC_SET_CONFIG_MAP(SOCKET_KERNEL_WRITE_BUFFER_SIZE, 198);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_write_buffer_size,
+                       IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024*1024);
+  conf_entry->config_entry_description=
+  "Size of send buffer of socket inside the OS kernel";
+
+  IC_SET_CONFIG_MAP(SOCKET_MAXSEG_SIZE, 199);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_maxseg_size,
+                       IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_CONFIG_MAX(conf_entry, 128*1024*1024);
+  conf_entry->config_entry_description=
+  "TCP_MAXSEG on socket";
+
+  IC_SET_CONFIG_MAP(SOCKET_BIND_ADDRESS, 200);
+  IC_SET_SOCKET_BOOLEAN(conf_entry, socket_bind_address, FALSE,
+                        IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_entry_description=
+  "Bind to IP address of server";
+
+  /*
+    The parameter socket_max_wait_in_nanos is used in conjunction with
+    the adaptive send protocol. It's possible to set the maximum time
+    a message can be waiting for sending before it's being forced to
+    send as soon as discovered in this state. By setting it to zero one
+    effectively disables the adaptive send protocol.
+
+    This parameter is only used when the application has asked for a non-
+    forced send. Thus forced send will always be sent immediately and
+    non-forced sends will not wait for longer than this configured time.
+    This parameter can be changed at any time.
+  */
+  IC_SET_CONFIG_MAP(SOCKET_MAX_WAIT_IN_NANOS, 201);
+  IC_SET_SOCKET_CONFIG(conf_entry, socket_max_wait_in_nanos,
+                       IC_UINT32, 50 * 1000, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MAX(conf_entry, 1000 * 1000 * 10);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_entry_description=
+  "Maximum time a message can wait before being sent in nanoseconds";
+
+/* Id 210-219 for configuration id 500-799 */
+/* Id 500-604 and 606-799 not used */
+#define DATA_SERVER_LCP_POLL_TIME 605
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_LCP_POLL_TIME, 210);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lcp_poll_time,
+                       IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 600);
+  conf_entry->min_ndb_version_used= 0x60404;
+  conf_entry->config_entry_description=
+  "Busy poll for LCP mutex before going to lock queue";
+
+/* Id 220-229 for configuration id 800-809 */
+/* This is the client configuration section*/
+#define CLIENT_MAX_BATCH_BYTE_SIZE 800
+#define CLIENT_BATCH_BYTE_SIZE 801
+#define CLIENT_BATCH_SIZE 802
+/* Id 803-809 not used */
+
+  IC_SET_CONFIG_MAP(CLIENT_MAX_BATCH_BYTE_SIZE, 220);
+  IC_SET_CLIENT_CONFIG(conf_entry, client_max_batch_byte_size,
+                       IC_UINT32, 256*1024, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 32*1024, 4*1024*1024);
+  /*
+    All node types except data server and cluster server use these
+    parameters
+  */
+  conf_entry->config_types= ALL_NODE_TYPES &
+                            ((~(1 << IC_DATA_SERVER_TYPE)) &
+                             (~(1 << IC_CLUSTER_SERVER_TYPE)));
+  conf_entry->config_entry_description=
+  "Size in bytes of max of the sum of the batches in a scan operations";
+
+  IC_SET_CONFIG_MAP(CLIENT_BATCH_BYTE_SIZE, 221);
+  IC_SET_CLIENT_CONFIG(conf_entry, client_batch_byte_size,
+                       IC_UINT32, 8192, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 128, 65536);
+  /* All node types except data server use these parameters */
+  conf_entry->config_types= ALL_NODE_TYPES &
+                            ((~(1 << IC_DATA_SERVER_TYPE)) &
+                             (~(1 << IC_CLUSTER_SERVER_TYPE)));
+  conf_entry->config_entry_description=
+  "Size in bytes of batches in scan operations";
+
+  IC_SET_CONFIG_MAP(CLIENT_BATCH_SIZE, 222);
+  IC_SET_CLIENT_CONFIG(conf_entry, client_batch_size,
+                       IC_UINT32, 64, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 992);
+  /* All node types except data server use these parameters */
+  conf_entry->config_types= ALL_NODE_TYPES &
+                            ((~(1 << IC_DATA_SERVER_TYPE)) &
+                             (~(1 << IC_CLUSTER_SERVER_TYPE)));
+  conf_entry->config_entry_description=
+  "Size in number of records of batches in scan operations";
+
+/* Id 230-234 for configuration id 810-899 */
+/* Id 810-879, 882-899 not used */
+#define IC_NODE_PCNTRL_HOSTNAME 880
+#define IC_NODE_PCNTRL_PORT 881
+
+  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_HOSTNAME, 230);
+  IC_SET_DATA_SERVER_STRING(conf_entry, pcntrl_hostname,
+                            IC_CLUSTER_RESTART_CHANGE);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->is_derived_default= TRUE;
+  conf_entry->config_entry_description=
+  "Hostname of the Process Controller to start/stop node";
+
+  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_PORT, 231);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, pcntrl_port, IC_UINT32,
+                            IC_DEF_PCNTRL_PORT, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  conf_entry->is_only_iclaustron= TRUE;
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->config_entry_description=
+  "Port number of the Process Controller to start/stop node";
+
+/* Id 235-239 for configuration id 900-999 */
+/* Id 900-996 not used */
+#define IC_PORT_NUMBER 997
+/* Id 998 not used */
+#define IC_NODE_TYPE     999
+/* Node type is stored in separate array and is handled in a special manner */
+
+  /* Port number is used both by clients and data servers */
+  IC_SET_CONFIG_MAP(IC_PORT_NUMBER, 235);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, port_number, IC_UINT32,
+                            IC_DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
+  conf_entry->config_types= ALL_NODE_TYPES;
+  conf_entry->is_not_sent= TRUE;
+  conf_entry->config_entry_description=
+  "Port number";
+
+/* Id 240-255 for configuration id 1000-16383 */
+/* 1000-16381 not used */
+#define IC_PARENT_ID     16382
+/* 168383 not used */
+
+  /* Parameters common for all node types */
+}
+
+int ic_init_config_parameters()
+{
+  DEBUG_ENTRY("ic_init_config_parameters");
+
+  if (glob_conf_entry_inited)
+    return 0;
+  if (!(glob_conf_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_str,
+                                            ic_keys_equal_str)))
+    DEBUG_RETURN(1);
+  glob_conf_entry_inited= TRUE;
+  glob_max_config_id= 0;
+  ic_zero(map_config_id_to_inx, MAX_MAP_CONFIG_ID * sizeof(guint16));
+  ic_zero(glob_conf_entry, MAX_CONFIG_ID * sizeof(IC_CONFIG_ENTRY));
+  init_config_parameters();
+  calculate_mandatory_bits();
+  DEBUG_RETURN(build_config_name_hash());
+}

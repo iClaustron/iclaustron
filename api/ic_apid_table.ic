@@ -1,0 +1,161 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Table definition interface
+  ----------------------------------
+  This module implements the IC_TABLE_DEF interface which is used to fetch
+  metadata about a table, its indexes and its fields.
+*/
+
+static int
+table_def_get_table_id(IC_TABLE_DEF *table_def,
+                       guint32 *table_id)
+{
+  (void)table_def;
+  (void)table_id;
+  return 0;
+}
+
+static int
+table_def_get_field_id(IC_TABLE_DEF *table_def,
+                       const gchar *field_name,
+                       guint32 *field_id)
+{
+  (void)table_def;
+  (void)field_name;
+  (void)field_id;
+  return 0;
+}
+
+static int
+table_def_get_field_name(IC_TABLE_DEF *table_def,
+                         guint32 field_id,
+                         gchar **field_name)
+{
+  (void)table_def;
+  (void)field_id;
+  (void)field_name;
+  return 0;
+}
+
+static int
+table_def_get_field_type(IC_TABLE_DEF *table_def,
+                         guint32 field_id,
+                         IC_FIELD_TYPE *field_data_type)
+{
+  (void)table_def;
+  (void)field_id;
+  (void)field_data_type;
+  return 0;
+}
+
+static int
+table_def_get_field_len(IC_TABLE_DEF *table_def,
+                        guint32 field_id,
+                        guint32 *field_len)
+{
+  (void)table_def;
+  (void)field_id;
+  (void)field_len;
+  return 0;
+}
+
+static int
+table_def_get_buf(IC_TABLE_DEF *table_def,
+                  IC_BITMAP *used_fields,
+                  gchar **data_buffer,
+                  guint8 **null_buffer,
+                  guint32 *data_buffer_size,
+                  guint32 *null_buffer_size)
+{
+  (void)table_def;
+  (void)used_fields;
+  (void)data_buffer;
+  (void)null_buffer;
+  (void)data_buffer_size;
+  (void)null_buffer_size;
+  return 0;
+}
+
+static int
+table_def_get_buf_offset(IC_TABLE_DEF *table_def,
+                         guint32 field_id,
+                         guint32 *offset,
+                         guint32 *null_bit_offset)
+{
+  (void)table_def;
+  (void)field_id;
+  (void)offset;
+  (void)null_bit_offset;
+  return 0;
+}
+
+static IC_TABLE_DEF_OPS glob_table_def_ops=
+{
+  .ic_get_table_id             = table_def_get_table_id,
+  .ic_get_field_id             = table_def_get_field_id,
+  .ic_get_field_name           = table_def_get_field_name,
+  .ic_get_field_type           = table_def_get_field_type,
+  .ic_get_field_len            = table_def_get_field_len,
+  .ic_get_buf                  = table_def_get_buf,
+  .ic_get_buf_offset       = table_def_get_buf_offset
+};
+
+static int
+index_def_get_index_id(IC_INDEX_DEF *index_def,
+                       guint32 *index_id)
+{
+  (void)index_def;
+  (void)index_id;
+  return 0;
+}
+
+static int
+index_def_get_table_id(IC_INDEX_DEF *index_def,
+                       guint32 *table_id)
+{
+  (void)index_def;
+  (void)table_id;
+  return 0;
+}
+
+static int
+index_def_get_num_key_fields(IC_INDEX_DEF *index_def,
+                             guint32 *num_key_fields)
+{
+  (void)index_def;
+  (void)num_key_fields;
+  return 0;
+}
+
+static int
+index_def_get_key_field_id(IC_INDEX_DEF *index_def,
+                           guint32 key_field_id_order,
+                           guint32 *field_id)
+{
+  (void)index_def;
+  (void)key_field_id_order;
+  (void)field_id;
+  return 0;
+}
+
+static IC_INDEX_DEF_OPS glob_index_def_ops=
+{
+  .ic_get_index_id           = index_def_get_index_id,
+  .ic_get_table_id           = index_def_get_table_id,
+  .ic_get_num_key_fields     = index_def_get_num_key_fields,
+  .ic_get_key_field_id       = index_def_get_key_field_id
+};

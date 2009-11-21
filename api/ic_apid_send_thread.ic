@@ -1,0 +1,1165 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  SEND THREAD MODULE
+  ------------------
+  This module contains the code to run the send thread and the supporting
+  methods to perform send operations through the Data API.
+
+  There are two types of threads to manage send threads, the reason is that
+  the server part of the connect handling requires only one listener per
+  hostname-port pair, thus a number of send threads use one listen thread to
+  handle listening to the server part of the socket. The client part can be
+  handled by each send thread by sending connect attempts to the server side
+  every now and then.
+
+  The send threads have two responsibilities, the first is to connect nodes.
+  After they have been connected the connection needs to be delivered to
+  a receive thread. The second responsibility is in the connected state
+  when the send thread should assist application threads to send data when
+  a queue has lined up in front of the socket.
+
+  At the moment there is one send thread per possible node connection. This
+  can obviously become a large number of threads, possibly in the range of
+  thousands of threads. Thus an alternative design later on could be that
+  each send thread manages more than one node connection. Since the send
+  thread handling is very much a separate module this should be a fairly
+  simple change if needed.
+
+  The Send Thread Module has very few interfaces to the rest of the code.
+  The only direct call from outside is to the 'start_send_threads' function.
+  This function is responsible for starting up the send threads. The call
+  to stop the send threads is done by stopping the send threadpool. This
+  pool interacts with send threads in such a manner that in the normal
+  case the send threads should all be gone within 2-3 seconds after
+  stopping the threadpool. The threadpool is handling both the send threads
+  and the listen threads.
+
+  The send thread can indirectly be called by writing in send thread
+  protected areas with mutex protection followed often by a signal of an
+  event to ensure that a send thread is acting on the request.
+
+  Finally of course the send threads also reacts to external events when
+  nodes are connecting.
+*/
+
+/* Server part needs to return for stop check every 2-3 seconds */
+static int check_timeout_func(void *timeout_obj, int timer);
+
+/* Client part regularly checks if thread needs to stop */
+static int check_thread_state(void *timeout_obj, int timer);
+
+/* Function to check which node was connected to */
+static gboolean check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 IC_CONNECTION *conn);
+
+/* This function is used to close down the listen server thread */
+static void close_listen_server_thread(
+          IC_LISTEN_SERVER_THREAD *listen_server_thread,
+          IC_INT_APID_GLOBAL *apid_global);
+
+/*
+  The listen thread is used to wait for clients to connect to the node.
+  All send threads sharing hostname and port also share listen thread
+  if they are server threads.
+*/
+static gpointer run_listen_thread(void *data);
+
+/* This functions is used to close down the send thread */
+static void remove_send_thread_from_listen_thread(
+  IC_SEND_NODE_CONNECTION *send_node_conn,
+  IC_LISTEN_SERVER_THREAD *listen_server_thread);
+
+/* These functions are used to secure the node connections.  */
+static int server_api_connect(void *data);
+static int client_api_connect(void *data);
+static int authenticate_client_connection(IC_CONNECTION *conn,
+                                          guint32 my_nodeid,
+                                          guint32 server_nodeid);
+static int authenticate_server_connection(IC_CONNECTION *conn,
+                                          guint32 my_nodeid,
+                                          guint32 *client_nodeid);
+
+/*
+  After connection have been set-up the node connection is also moved to
+  the receive thread and then the active_send_thread function is where the
+  send thread spends its time in the connected phase.
+*/
+static void move_node_to_receive_thread(
+                 IC_SEND_NODE_CONNECTION *send_node_conn);
+static void active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                               IC_THREADPOOL_STATE *send_tp,
+                               IC_THREAD_STATE *thread_state);
+
+/*
+  The send thread is executed by the function run_send_thread, in its
+  startup it connects to the server part, or uses a listen thread to
+  wait for clients to connect or if connect happens externally it waits
+  external connect code to report a connection set-up.
+  The connect code starts up by preparing to set-up node connections
+  using the function prepare_set_up_send_connection and then the actual
+  connect happens in the connect_by_send_thread.
+*/
+static gpointer run_send_thread(void *data);
+static int prepare_set_up_send_connection(
+              IC_SEND_NODE_CONNECTION *send_node_conn,
+              IC_INT_APID_GLOBAL *apid_global,
+              gboolean is_server_part,
+              IC_THREADPOOL_STATE *send_tp,
+              IC_THREAD_STATE *thread_state);
+static int connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                  IC_THREAD_STATE *thread_state,
+                                  gboolean is_server_part);
+
+/*
+  start_send_threads is the function to start up the send threads.
+  It uses start_send_thread to start each thread and it also uses
+  a support function set_hostname_and_port to handle some simple string
+  logic around hostnames and ports that consume many lines of code.
+*/
+static int start_send_threads(IC_INT_APID_GLOBAL *apid_global);
+static int start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
+static int set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 IC_SOCKET_LINK_CONFIG *link_config,
+                                 guint32 my_node_id);
+
+/*
+  We also place the methods called from other threads that assist the
+  send threads in performing the send functionality
+*/
+
+/* Send thread functions */
+static int
+check_timeout_func(__attribute__ ((unused)) void *timeout_obj, int timer)
+{
+  if (timer < 2)
+    return 0;
+  else
+    return 1;
+}
+
+/* TODO: This function needs to check which node was actually connected to */
+static gboolean
+check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
+                 __attribute__ ((unused)) IC_CONNECTION *conn)
+{
+  if (!send_node_conn->connection_up)
+    return FALSE;
+  else
+    return TRUE;
+}
+
+static gpointer
+run_listen_thread(void *data)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+  IC_LISTEN_SERVER_THREAD *listen_server_thread= (IC_LISTEN_SERVER_THREAD*)
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_CONNECTION *fork_conn, *conn;
+  IC_SEND_NODE_CONNECTION *iter_send_node_conn;
+  GList *list_iterator;
+  gboolean found;
+  int ret_code;
+
+  tp_state->ts_ops.ic_thread_started(thread_state);
+  conn= listen_server_thread->conn;
+  if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
+                                           check_timeout_func,
+                                           (void*)listen_server_thread)))
+  {
+    listen_server_thread->stop_ordered= TRUE;
+    goto end;
+  }
+  /* We report start-up complete to the thread starting us */
+  if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
+    goto end;
+  /* We have been asked to start listening and so we start listening */
+  do
+  {
+    if (!(ret_code= conn->conn_op.ic_accept_connection(conn)))
+    {
+      if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
+                                                     FALSE))) /* No mutex */
+        break;
+      /*
+         We have a new connection, deliver it to the send thread and
+         receive thread.
+      */
+      g_mutex_lock(listen_server_thread->mutex);
+      if (listen_server_thread->stop_ordered)
+      {
+        g_mutex_unlock(listen_server_thread->mutex);
+        break;
+      }
+      found= FALSE;
+      list_iterator= g_list_first(listen_server_thread->first_send_node_conn);
+      while (list_iterator)
+      {
+        iter_send_node_conn= (IC_SEND_NODE_CONNECTION*)list_iterator->data;
+        /*
+          Here we are doing something dangerous, we're locking a mutex
+          while already having one, this means that we're by no means
+          allowed to do the opposite, we must NEVER take a mutex on
+          listen_server_thread while holding a send_node_conn mutex.
+          This would lead to a deadlock situation.
+          To not do this would however instead lead to extremely complex
+          code which we want to avoid. It's necessary that the list of
+          send node connections are stable while we are searching for the
+          right one that uses this connection.
+        */
+        g_mutex_lock(iter_send_node_conn->mutex);
+        if (!check_connection(iter_send_node_conn, fork_conn))
+        {
+          /*
+            We have found the right send node connection, give the
+            connection over to the send thread and also start a
+            receiver thread for this node.
+          */
+          found= TRUE;
+          iter_send_node_conn->connection_up= TRUE;
+          g_cond_signal(iter_send_node_conn->cond);
+          g_mutex_unlock(iter_send_node_conn->mutex);
+          break;
+        }
+        g_mutex_unlock(iter_send_node_conn->mutex);
+        list_iterator= g_list_next(list_iterator);
+      }
+      g_mutex_unlock(listen_server_thread->mutex);
+      if (!found)
+      {
+        /*
+          Somebody tried to connect and we weren't able to detect a node
+          which this would be a connection for, thus we will disconnect
+          and continue waiting for new connections. Freeing a socket in
+          the iClaustron Communication API also will close the socket
+          if it's still open.
+        */
+        fork_conn->conn_op.ic_free_connection(fork_conn);
+      }
+    }
+    else
+    {
+      /*
+        We got a timeout, check if we're ordered to stop and if so
+        we will stop. Otherwise we'll simply continue.
+      */
+      if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+        break;
+    }
+  } while (1);
+  /*
+    We got memory allocation failure most likely, it's not so easy to
+    continue in this case, so we tell all dependent send connections
+    that stop has been ordered. Those that are already connected will
+    remain so, they will be dropped as soon as their connection is
+    broken since the listen server thread has set stop_ordered also.
+  */
+  g_mutex_lock(listen_server_thread->mutex);
+  listen_server_thread->stop_ordered= TRUE;
+  list_iterator= g_list_first(listen_server_thread->first_send_node_conn);
+  while (list_iterator)
+  {
+    iter_send_node_conn= (IC_SEND_NODE_CONNECTION*)list_iterator->data;
+    g_mutex_lock(iter_send_node_conn->mutex);
+    if (!iter_send_node_conn->send_thread_active)
+    {
+      iter_send_node_conn->stop_ordered= TRUE;
+      g_cond_signal(iter_send_node_conn->cond);
+    }
+    g_mutex_unlock(iter_send_node_conn->mutex);
+    list_iterator= g_list_next(list_iterator);
+  }
+  g_mutex_unlock(listen_server_thread->mutex);
+end:
+  tp_state->ts_ops.ic_thread_stops(thread_state);
+  return NULL;
+}
+
+static void
+remove_send_thread_from_listen_thread(
+  IC_SEND_NODE_CONNECTION *send_node_conn,
+  IC_LISTEN_SERVER_THREAD *listen_server_thread)
+{
+  IC_THREADPOOL_STATE *tp_state;
+
+  g_mutex_lock(listen_server_thread->mutex);
+  listen_server_thread->first_send_node_conn=
+  g_list_remove(listen_server_thread->first_send_node_conn,
+                (void*)send_node_conn);
+  if (listen_server_thread->first_send_node_conn == NULL)
+  {
+    /*
+      We are the last send thread to use this listen server
+      thread, this means we are responsible to stop this thread.
+      We order the thread to stop, signal it in case it is
+      in a cond wait and finally wait for the thread to complete.
+      When the thread is completed we clean up everything in the
+      listen server thread.
+    */
+    listen_server_thread->stop_ordered= TRUE;
+    g_cond_signal(listen_server_thread->cond);
+    g_mutex_unlock(listen_server_thread->mutex);
+    tp_state= send_node_conn->apid_global->send_thread_pool;
+    tp_state->tp_ops.ic_threadpool_join(tp_state,
+                                        listen_server_thread->thread_id);
+    close_listen_server_thread(listen_server_thread,
+                               send_node_conn->apid_global);
+  }
+  else
+    g_mutex_unlock(listen_server_thread->mutex);
+}
+
+/*
+  This function is used to assist the application threads with sending
+  data, this is where the send thread is supposed to spend most of its
+  time, waiting for application threads to wake it up when they have
+  not been able to send the data immediately.
+*/
+static void
+active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                   IC_THREADPOOL_STATE *send_tp,
+                   IC_THREAD_STATE *thread_state)
+{
+  guint32 send_size;
+  guint32 iovec_size;
+  int error;
+  struct iovec write_vector[MAX_SEND_BUFFERS];
+
+  send_tp->ts_ops.ic_thread_lock(thread_state);
+  send_node_conn->send_thread_is_sending= FALSE;
+  send_node_conn->send_thread_active= TRUE;
+  do
+  {
+    if (send_node_conn->stop_ordered || !send_node_conn->node_up)
+      break;
+    if (!send_node_conn->first_sbp)
+    {
+      /* All buffers have been sent, we can go to sleep again */
+      send_node_conn->send_active= FALSE;
+      send_node_conn->send_thread_is_sending= FALSE;
+      send_tp->ts_ops.ic_thread_wait(thread_state);
+    }
+    if (send_node_conn->stop_ordered || !send_node_conn->node_up)
+      break;
+    g_assert(send_node_conn->send_thread_is_sending);
+    g_assert(send_node_conn->send_active);
+    prepare_real_send_handling(send_node_conn, &send_size,
+                               write_vector, &iovec_size);
+    send_tp->ts_ops.ic_thread_unlock(thread_state);
+    error= real_send_handling(send_node_conn, write_vector,
+                              iovec_size, send_size);
+    send_tp->ts_ops.ic_thread_lock(thread_state);
+    if (error)
+      send_node_conn->node_up= FALSE;
+  } while (1);
+  if (!send_node_conn->node_up)
+    node_failure_handling(send_node_conn);
+  send_node_conn->send_active= FALSE;
+  send_node_conn->send_thread_active= FALSE;
+  send_node_conn->send_thread_is_sending= FALSE;
+  send_tp->ts_ops.ic_thread_unlock(thread_state);
+  return;
+}
+
+/*
+  Function to move a node connection into a receive thread when the
+  node has connected to ensure that both the send and receive parts
+  are handled properly.
+*/
+static void
+move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_NDB_RECEIVE_STATE *rec_state= apid_global->receive_threads[0];
+  IC_RECEIVE_NODE_CONNECTION *rec_node= &send_node_conn->rec_node;
+
+  /*
+    At this point in time the send node connection object is only handled
+    by the send thread. As soon as we have delivered the object to the
+    receive thread we need to protect this object since it's handled
+    by multiple threads.
+    Initialize the receive node object before turning it over to receive
+    thread. Most of the variables are copies from the send node object
+    except for some dynamic variables used by the receive thread.
+  */
+  rec_node->conn= send_node_conn->conn;
+  rec_node->my_node_id= send_node_conn->my_node_id;
+  rec_node->other_node_id= send_node_conn->other_node_id;
+  rec_node->cluster_id= send_node_conn->cluster_id;
+  rec_node->read_header_flag= FALSE;
+  rec_node->read_size= 0;
+  rec_node->buf_page= NULL;
+
+  g_mutex_lock(rec_state->mutex);
+  send_node_conn->next_add_node= rec_state->first_add_node;
+  rec_state->first_add_node= send_node_conn;
+  g_mutex_unlock(rec_state->mutex);
+}
+
+static int
+check_thread_state(void *timeout_obj,
+                   int timer)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)timeout_obj;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+
+  (void)timer;
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    return 1;
+  return 0;
+}
+
+/*
+  The send thread has two cases, client connecting and server connecting.
+  In the client case the thread itself will connect.
+  In the server case there are many connections that uses the same server
+  port and to resolve this we use a special server connect thread. This
+  method simply waits for this thread to report any connections that
+  occurred.
+*/
+static int
+connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
+                       IC_THREAD_STATE *thread_state,
+                       gboolean is_server_part)
+{
+  IC_CONNECTION *conn;
+  IC_SOCKET_LINK_CONFIG *link_config;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread;
+  gboolean stop_ordered= FALSE;
+  IC_THREADPOOL_STATE *tp_state;
+  int ret_code= 0;
+
+  if (is_server_part)
+  {
+    /*
+      The actual connection set-up is done by the listen server
+      thread. So all we need to do is to communicate with this
+      thread. We take mutexes in a careful manner to ensure we
+      don't create a mutex deadlock situation.
+
+      It is important here to check for connection being set-up,
+      checking if we need to start the listen server thread connect
+      phase and finally also checking if it's desired that we simply
+      stop the send thread due to stopping the API instance.
+    */
+    g_mutex_lock(send_node_conn->mutex);
+    while (!send_node_conn->connection_up || send_node_conn->stop_ordered)
+    {
+      if (send_node_conn->stop_ordered)
+        stop_ordered= TRUE;
+      listen_server_thread= send_node_conn->listen_server_thread;
+      g_mutex_unlock(send_node_conn->mutex);
+      if (!stop_ordered)
+      {
+        /*
+          This is just to ensure that someone kicks the listen server
+          thread into action to start the listening on the server socket
+        */
+        tp_state= send_node_conn->apid_global->send_thread_pool;
+        tp_state->tp_ops.ic_threadpool_run_thread(tp_state,
+                                        listen_server_thread->thread_id);
+      }
+      else /* stop_ordered == TRUE */
+      {
+        return IC_ERROR_STOP_ORDERED;
+      }
+      g_mutex_lock(send_node_conn->mutex);
+      if (!send_node_conn->stop_ordered)
+        g_cond_wait(send_node_conn->cond, send_node_conn->mutex);
+    }
+    g_mutex_unlock(send_node_conn->mutex);
+  }
+  else /* Client connection */
+  {
+    conn= send_node_conn->conn;
+    link_config= send_node_conn->link_config;
+    if (!send_node_conn->other_port_number)
+      return IC_ERROR_INCONSISTENT_DATA;
+    conn->conn_op.ic_prepare_client_connection(conn,
+                                         send_node_conn->other_hostname,
+                                         send_node_conn->other_port_number,
+                                         send_node_conn->my_hostname,
+                                         send_node_conn->my_port_number);
+    conn->conn_op.ic_prepare_extra_parameters(
+             conn,
+             link_config->socket_maxseg_size,
+             link_config->is_wan_connection,
+             link_config->socket_read_buffer_size,
+             link_config->socket_write_buffer_size);
+    if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
+                                                      check_thread_state,
+                                                      (void*)thread_state)))
+      return ret_code;
+  }
+  return ret_code;
+}
+
+static void
+close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread,
+                           IC_INT_APID_GLOBAL *apid_global)
+{
+  IC_CONNECTION *conn;
+  if (listen_server_thread)
+  {
+    apid_global->listen_server_thread[listen_server_thread->index]= NULL;
+    if ((conn= listen_server_thread->conn))
+      conn->conn_op.ic_free_connection(conn);
+    if (listen_server_thread->mutex)
+      g_mutex_free(listen_server_thread->mutex);
+    if (listen_server_thread->cond)
+      g_cond_free(listen_server_thread->cond);
+    if (listen_server_thread->first_send_node_conn)
+      g_list_free(listen_server_thread->first_send_node_conn);
+    listen_server_thread->conn= NULL;
+    listen_server_thread->mutex= NULL;
+    listen_server_thread->cond= NULL;
+    listen_server_thread->first_send_node_conn= NULL;
+    listen_server_thread->thread_id= IC_MAX_UINT32;
+  }
+}
+
+/*
+  Protocol to start up a connection in the NDB Protocol.
+  Client:
+    Send "ndbd"<CR>
+    Send "ndbd passwd"<CR>
+  Server:
+    Send "ok"<CR>
+  Client:
+    Send "2 3"<CR> (2 is client node id and 3 is server node id)
+  Server:
+    Send "1 1"<CR> (1 is transporter type for client/server)
+  Connection is ready to send and receive NDB Protocol messages
+*/
+static int
+authenticate_client_connection(IC_CONNECTION *conn,
+                               guint32 my_nodeid,
+                               guint32 server_nodeid)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  gchar send_buf[64];
+  int error;
+
+  g_snprintf(send_buf, (int)64, "%u %u", my_nodeid, server_nodeid);
+  if ((error= ic_send_with_cr(conn, "ndbd")) ||
+      (error= ic_send_with_cr(conn, "ndbd passwd")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ok")) ||
+      (error= ic_send_with_cr(conn, send_buf)) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "1 1")))
+    return error;
+  return 0;
+}
+
+static int
+authenticate_server_connection(IC_CONNECTION *conn,
+                               guint32 my_nodeid,
+                               guint32 *client_nodeid)
+{
+  guint32 read_size;
+  gchar *read_buf;
+  int error;
+  guint32 len;
+  guint64 my_id, client_id;
+
+  /* Retrieve client node id and verify that server is my node id */
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ndbd")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
+      (!strcmp(read_buf, "ndbd passwd")) ||
+      (error= ic_send_with_cr(conn, "ok")) ||
+      (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
+      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
+      (read_buf[len] != ' ') ||
+      (len= len + 1, FALSE) ||
+      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
+      ((guint64)my_nodeid != my_id) ||
+      (client_id >= IC_MAX_NODE_ID) ||
+      (error= ic_send_with_cr(conn, "1 1")) ||
+      (error= IC_AUTHENTICATE_ERROR, FALSE) ||
+      (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
+      (read_buf[len] != ' ') ||
+      (len++, FALSE) ||
+      (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
+      ((guint64)my_nodeid != my_id) ||
+      (client_id >= IC_MAX_NODE_ID) ||
+      (error= ic_send_with_cr(conn, "ok")))
+    return error;
+  *client_nodeid= client_id;
+  return 0;
+}
+
+/*
+  This callback is called by the object connecting the server to the
+  client using the NDB Protocol. This method calls a method on the
+  IC_API_CONFIG_SERVER object implementing the server side of the set-up
+  of this protocol.
+*/
+static int
+server_api_connect(void *data)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+  return authenticate_server_connection(send_node_conn->conn,
+                                        send_node_conn->my_node_id,
+                                        &send_node_conn->other_node_id);
+}
+
+/*
+  This callback is called by the object connecting the client to the
+  server using the NDB Protocol. This method calls a method on the
+  IC_API_CONFIG_SERVER object implementing the client side of the set-up
+  of this protocol.
+*/
+static int
+client_api_connect(void *data)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+  return authenticate_client_connection(send_node_conn->conn,
+                                        send_node_conn->my_node_id,
+                                        send_node_conn->other_node_id);
+}
+
+static int
+prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
+                               IC_INT_APID_GLOBAL *apid_global,
+                               gboolean is_server_part,
+                               IC_THREADPOOL_STATE *send_tp,
+                               IC_THREAD_STATE *thread_state)
+{
+  int ret_code;
+  guint32 i, listen_inx;
+  gboolean found= FALSE;
+  IC_CONNECTION *send_conn;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
+
+  if (is_server_part)
+  {
+    /*
+      Here we need to ensure there is a thread handling this server
+      connection. We ensure there is one thread per port and this
+      thread will start connections for the various send threads
+      and report to them when a connection has been performed.
+      When we come here to start things up we're still in single-threaded
+      mode, so we don't need to protect things through mutexes.
+    */
+    send_conn= send_node_conn->conn;
+    for (i= 0; i < apid_global->num_listen_server_threads; i++)
+    {
+      listen_server_thread= apid_global->listen_server_thread[i];
+      if (listen_server_thread)
+      {
+        if (!send_conn->conn_op.ic_cmp_connection(listen_server_thread->conn,
+                                            send_node_conn->my_hostname,
+                                            send_node_conn->my_port_number))
+        {
+          send_node_conn->listen_server_thread= listen_server_thread;
+          found= TRUE;
+          break;
+        }
+      }
+    }
+    if (!found)
+    {
+      ret_code= 1;
+      do
+      {
+        /* Found a new hostname+port combination, we need another*/
+        listen_inx= apid_global->num_listen_server_threads;
+        if (!(apid_global->listen_server_thread[listen_inx]=
+    	  (IC_LISTEN_SERVER_THREAD*)
+              ic_calloc(sizeof(IC_LISTEN_SERVER_THREAD))))
+          break;
+        /* Successful allocation of memory */
+        listen_server_thread= apid_global->listen_server_thread[listen_inx];
+        listen_server_thread->index= listen_inx;
+        send_node_conn->listen_server_thread= listen_server_thread;
+        if (!(listen_server_thread->conn= ic_create_socket_object(
+                FALSE,  /* This is a server connection */
+                FALSE,  /* Mutex supplied by API code instead */
+                FALSE,  /* This thread is already a connection thread */
+                CONFIG_READ_BUF_SIZE, /* Used by authentication function */
+                server_api_connect,   /* Authentication function */
+                (void*)send_node_conn)))  /* Authentication object */
+          break;
+        listen_server_thread->conn->conn_op.ic_prepare_server_connection(
+          listen_server_thread->conn,
+          send_node_conn->my_hostname,
+          send_node_conn->my_port_number,
+          NULL, NULL, /* Any client can connect, we check after connect */
+          0,          /* Default backlog */
+          TRUE);      /* Retain listen socket */
+        if (!(listen_server_thread->mutex= g_mutex_new()))
+          break;
+        if (!(listen_server_thread->cond= g_cond_new()))
+          break;
+        if (!(listen_server_thread->first_send_node_conn=
+              g_list_prepend(NULL, (void*)send_node_conn)))
+          break;
+        if ((ret_code= send_tp->tp_ops.ic_threadpool_get_thread_id(
+                            send_tp,
+                            &listen_server_thread->thread_id)))
+           break;
+        thread_state= send_tp->tp_ops.ic_threadpool_get_thread_state(
+                            send_tp,
+                            listen_server_thread->thread_id);
+        send_tp->ts_ops.ic_thread_set_mutex(thread_state,
+                    listen_server_thread->mutex);
+        send_tp->ts_ops.ic_thread_set_cond(thread_state,
+                    listen_server_thread->cond);
+        ret_code= send_tp->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                                  send_tp,
+                                  listen_server_thread->thread_id,
+                                  run_listen_thread,
+                                  (gpointer)listen_server_thread,
+                                  IC_SMALL_STACK_SIZE,
+                                  TRUE);                                  
+      } while (0);
+      if (ret_code)
+      {
+        /* We didn't succeed in starting listen thread, quit */
+        close_listen_server_thread(
+           apid_global->listen_server_thread[listen_inx],
+           apid_global);
+        send_node_conn->send_thread_ended= TRUE;
+        send_tp->ts_ops.ic_thread_stops(thread_state);
+        return 1;
+      }
+      apid_global->num_receive_threads++;
+    }
+    else
+    {
+     /* Found an existing a new thread to use, need not start a new thread */
+      g_mutex_lock(listen_server_thread->mutex);
+      if (!(listen_server_thread->first_send_node_conn=
+            g_list_prepend(listen_server_thread->first_send_node_conn,
+                           (void*)send_node_conn)))
+      {
+        g_mutex_unlock(listen_server_thread->mutex);
+        g_mutex_lock(send_node_conn->mutex);
+        send_node_conn->stop_ordered= TRUE;
+        send_node_conn->send_thread_ended= TRUE;
+        g_mutex_unlock(send_node_conn->mutex);
+        send_tp->ts_ops.ic_thread_stops(thread_state);
+      }
+      g_mutex_unlock(listen_server_thread->mutex);
+    }
+  }
+  else
+  {
+    send_node_conn->conn= ic_create_socket_object(
+                TRUE,   /* is client */
+                FALSE,  /* Mutex supplied by API code instead */
+                FALSE,  /* This thread is already a connection thread */
+                CONFIG_READ_BUF_SIZE, /* Used by authentication function */
+                client_api_connect,   /* Authentication function */
+                (void*)send_node_conn);  /* Authentication object */
+    if (send_node_conn->conn == NULL)
+      send_node_conn->stop_ordered= TRUE;
+  }
+  return 0;
+}
+
+static gpointer
+run_send_thread(void *data)
+{
+  gboolean is_server_part;
+  int ret_code;
+  IC_INT_APID_GLOBAL *apid_global;
+  IC_CONNECTION *conn;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *send_tp= thread_state->ic_get_threadpool(thread_state);
+  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)
+    send_tp->ts_ops.ic_thread_get_object(thread_state);
+  /*
+    First step is to create a connection object, then it's time to
+    start setting it up when told to do so by the main thread. We want
+    to ensure that all threads and other preparatory activities have
+    been done before we start connecting to the cluster. As soon as we
+    connect to the cluster we're immediately a real-time application and
+    must avoid to heavy activities such as starting 100's of threads.
+  */
+  apid_global= send_node_conn->apid_global;
+  send_tp->ts_ops.ic_thread_started(thread_state);
+  is_server_part= (send_node_conn->my_node_id ==
+                   send_node_conn->link_config->server_node_id);
+  if (!apid_global->use_external_connect)
+  {
+     if (prepare_set_up_send_connection(send_node_conn,
+                                        apid_global,
+                                        is_server_part,
+                                        send_tp,
+                                        thread_state))
+       return NULL;
+  }
+  else /* apid_global->use_external_connect == TRUE */
+  {
+    /*
+      When we come here the Data API should not set-up the connections to the
+      other nodes in the cluster, rather it should wait for those to be
+      delivered to it through an interface to the IC_APID_GLOBAL object.
+      This functionality is mainly needed for the iClaustron Cluster Server
+      that listens for connections from nodes and then after the configuration
+      have been delivered it converts the connection into a NDB Protocol
+      connection. We implement this by delivering the connection to the
+      iClaustron Data API object.
+
+      For the moment there is no need to set-up any thing here.
+    */
+    ;
+  }
+  /*
+    For the server part we have now attached ourself to a listen thread
+    For the client part we are ready to start attempting to connect
+  */
+  if (send_tp->ts_ops.ic_thread_startup_done(thread_state))
+    goto end;
+  /*
+    The main thread have started up all threads and all communication objects
+    have been created, it's now time to connect to the clusters.
+  */
+  ret_code= 0;
+  while (!send_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
+  {
+    if (ret_code)
+    {
+      /*
+        Something failed in the connect process. We report the error and
+        continue after sleeping for a few seconds.
+      */
+      ic_print_error(ret_code);
+      ic_sleep(3);
+    }
+    if (!apid_global->use_external_connect)
+    {
+      if ((ret_code= connect_by_send_thread(send_node_conn,
+                                            thread_state,
+                                            is_server_part)))
+        continue;
+      conn= send_node_conn->conn;
+      /*
+        The send thread needs to perform the login function before moving onto
+        the NDB Protocol phase.
+      */
+      if ((ret_code= conn->conn_op.ic_login_connection(conn)))
+        continue;
+    }
+    else
+    {
+      /*
+        For external connect users we wait on the send node condition object
+        which will be signalled when we receive a connection ready to be
+        converted to a NDB Protocol connection.
+        We will wait 3 seconds and then check if stop has been ordered to
+        ensure that we can handle termination of process in a proper manner
+        and also when the API is terminated.
+      */
+      send_tp->ts_ops.ic_thread_lock_and_wait(thread_state);
+      /*
+         New connection has arrived from external source, make any
+         set-up needed before delivering it to receive thread and starting
+         the active send thread handling.
+      */
+      send_tp->ts_ops.ic_thread_unlock(thread_state);
+    }
+    /*
+      We have successfully connected to another node in this send thread.
+      It is now time to move the receive part to the proper receive
+      thread. First initialise the message id since we have a new
+      connection now.
+    */
+    send_node_conn->message_id= 1;
+    move_node_to_receive_thread(send_node_conn);
+    /*
+      Move node also to heartbeat thread to ensure keep sending heartbeat
+      messages to the node even if no other traffic is ongoing
+    */
+    add_node_to_heartbeat_thread(apid_global, send_node_conn);
+    /*
+      Now this thread is only handling the send_thread part which is
+      taken care by active_send_thread, it returns when the connection
+      for some reason have been dropped or a stop has been ordered.
+    */
+    active_send_thread(send_node_conn, send_tp, thread_state);
+  }
+end:
+  send_tp->ts_ops.ic_thread_lock(thread_state);
+  if (is_server_part && !apid_global->use_external_connect)
+  {
+    /*
+      Remove our send node connection from the list on this listen
+      server thread as part of server part cleanup since we have
+      attached ourselves to the listen server thread. If we are the
+      last send thread to remove ourself from a listen thread we
+      will also remove the listen thread entirely.
+    */
+    remove_send_thread_from_listen_thread(send_node_conn,
+                                          listen_server_thread);
+  }
+  send_node_conn->send_thread_ended= TRUE;
+  send_tp->ts_ops.ic_thread_unlock(thread_state);
+  /* Thread is ready to stop */
+  send_tp->ts_ops.ic_thread_stops(thread_state);
+  return NULL;
+}
+
+static int
+start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  int ret_code;
+  IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
+  IC_THREADPOOL_STATE *tp_state= apid_global->send_thread_pool;
+  IC_THREAD_STATE *thread_state;
+
+  if (send_node_conn->my_node_id == send_node_conn->other_node_id)
+  {
+    /*
+      This is a local connection, we don't need to start a send thread
+      since it isn't possible to overload a local connection and thus
+      we don't need a send thread and also there is no need for a
+      connection and thus no need for a thread to start the connection.
+    */
+    send_node_conn->node_up= TRUE;
+    return 0;
+  }
+  /*
+    We start the send thread, this thread is also used as the thread to
+    set-up the connection. We set the synch_startup flag to indicate that
+    we want the thread pool to return when the thread has performed its
+    startup phase.
+    We reuse the mutex and condition from the send thread as mutex for the
+    thread state. This means that we can easier make sure to wake the
+    thread when it's necessary to stop the thread pool or thread.
+  */
+  if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id(
+                              tp_state,
+                              &send_node_conn->thread_id)))
+    return ret_code;
+  thread_state= tp_state->tp_ops.ic_threadpool_get_thread_state(
+                              tp_state,
+                              send_node_conn->thread_id);
+  tp_state->ts_ops.ic_thread_set_mutex(thread_state,
+                      send_node_conn->mutex);
+  tp_state->ts_ops.ic_thread_set_cond(thread_state,
+                      send_node_conn->cond);
+  ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                              tp_state,
+                              send_node_conn->thread_id,
+                              run_send_thread,
+                              (gpointer)send_node_conn,
+                              IC_SMALL_STACK_SIZE,
+                              TRUE);
+  /*
+    The send thread is done with its start-up phase and we're ready to start
+    the next send thread if the start thread was successful.
+  */
+  return ret_code;
+}
+
+static int
+set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
+                      IC_SOCKET_LINK_CONFIG *link_config,
+                      guint32 my_node_id)
+{
+  gchar *copy_ptr;
+  guint32 first_hostname_len, second_hostname_len;
+  guint32 tot_string_len, server_port_len, client_port_len;
+  gchar *server_port_str= NULL;
+  gchar *client_port_str= NULL;
+  gchar server_port[64], client_port[64];
+  /*
+    We store hostname for both side of the connections on the
+    send node connection object. Also strings for the port
+    part.
+  */
+  first_hostname_len= strlen(link_config->first_hostname) + 1;
+  second_hostname_len= strlen(link_config->second_hostname) + 1;
+  tot_string_len= first_hostname_len;
+  tot_string_len+= second_hostname_len;
+  server_port_str= ic_guint64_str((guint64)link_config->server_port_number,
+                                  server_port, &server_port_len);
+  server_port_len++; /* Room for NULL byte */
+  if (link_config->client_port_number != 0)
+  {
+    client_port_str= ic_guint64_str((guint64)link_config->client_port_number,
+                                    client_port, &client_port_len);
+    client_port_len++; /* Room for NULL byte */
+  } else
+    client_port_len= 0;
+  tot_string_len+= server_port_len;
+  tot_string_len+= client_port_len;
+  if (!(send_node_conn->string_memory= ic_calloc(tot_string_len)))
+    return IC_ERROR_MEM_ALLOC;
+  copy_ptr= send_node_conn->string_memory;
+  if (link_config->first_node_id == my_node_id)
+  {
+    send_node_conn->my_hostname= copy_ptr;
+    copy_ptr+= first_hostname_len;
+    memcpy(send_node_conn->my_hostname,
+           link_config->first_hostname,
+           first_hostname_len);
+    send_node_conn->other_hostname= copy_ptr;
+    copy_ptr+= second_hostname_len;
+    memcpy(send_node_conn->other_hostname,
+          link_config->second_hostname,
+          second_hostname_len);
+  }
+  else
+  {
+    send_node_conn->my_hostname= copy_ptr;
+    copy_ptr+= second_hostname_len;
+    memcpy(send_node_conn->my_hostname,
+           link_config->second_hostname,
+           second_hostname_len);
+    send_node_conn->other_hostname= copy_ptr;
+    copy_ptr+= first_hostname_len;
+    memcpy(send_node_conn->other_hostname,
+           link_config->first_hostname,
+           first_hostname_len);
+  }
+  if (link_config->server_node_id == my_node_id)
+  {
+    send_node_conn->my_port_number= copy_ptr;
+    copy_ptr+= server_port_len;
+    memcpy(send_node_conn->my_port_number,
+           server_port_str,
+           server_port_len);
+    if (client_port_len == 0)
+      send_node_conn->other_port_number= NULL;
+    else
+    {
+      send_node_conn->other_port_number= copy_ptr;
+      copy_ptr+= client_port_len;
+      memcpy(send_node_conn->other_port_number,
+             client_port_str,
+             client_port_len);
+    }
+  }
+  else
+  {
+    send_node_conn->other_port_number= copy_ptr;
+    copy_ptr+= server_port_len;
+    memcpy(send_node_conn->other_port_number,
+           server_port_str,
+           server_port_len);
+    if (client_port_len == 0)
+      send_node_conn->my_port_number= NULL;
+    else
+    {
+      send_node_conn->my_port_number= copy_ptr;
+      copy_ptr+= client_port_len;
+      memcpy(send_node_conn->my_port_number,
+             client_port_str,
+             client_port_len);
+    }
+  }
+  g_assert(((guint32)(copy_ptr - send_node_conn->string_memory)) ==
+            tot_string_len);
+  return 0;
+}
+
+static int
+start_send_threads(IC_INT_APID_GLOBAL *apid_global)
+{
+  guint32 node_id, cluster_id, my_node_id;
+  int error= 0;
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  IC_GRID_COMM *grid_comm= apid_global->grid_comm;
+  IC_CLUSTER_COMM *cluster_comm;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_SOCKET_LINK_CONFIG *link_config;
+  DEBUG_ENTRY("start_send_threads");
+
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
+      continue;
+    my_node_id= clu_conf->my_node_id;
+    cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+    g_assert(cluster_comm);
+    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+    {
+      link_config= NULL;
+      send_node_conn= cluster_comm->send_node_conn_array[node_id];
+      if (node_id == my_node_id ||
+          (link_config= apic->api_op.ic_get_communication_object(apic,
+                            cluster_id,
+                            node_id,
+                            my_node_id)))
+      {
+        g_assert(clu_conf->node_config[node_id]);
+        g_assert(send_node_conn);
+        /* We have found a node to connect to, start connect thread */
+        if (node_id != my_node_id)
+        {
+          if ((error= set_hostname_and_port(send_node_conn,
+                                            link_config,
+                                            my_node_id)))
+            goto error;
+          send_node_conn->max_wait_in_nanos=
+                 (IC_TIMER)link_config->socket_max_wait_in_nanos;
+        }
+        else
+          send_node_conn->max_wait_in_nanos= 0;
+        send_node_conn->apid_global= apid_global;
+        send_node_conn->link_config= link_config;
+        send_node_conn->my_node_id= my_node_id;
+        send_node_conn->other_node_id= node_id;
+        send_node_conn->cluster_id= cluster_id;
+        send_node_conn->last_send_timer_index= 1;
+        /* Start send thread */
+        if ((error= start_send_thread(send_node_conn)))
+          goto error;
+      }
+      else
+      {
+        if (!apic->api_op.ic_use_iclaustron_cluster_server(apic))
+        {
+          /*
+            In NDB, API's don't need to connect to other API's and
+            to management server
+          */
+          if (clu_conf->node_config[node_id])
+          {
+            g_assert(clu_conf->node_types[my_node_id] == IC_CLIENT_TYPE);
+            g_assert(clu_conf->node_types[node_id] == IC_CLIENT_TYPE ||
+                     clu_conf->node_types[node_id] == IC_CLUSTER_SERVER_TYPE);
+          }
+        }
+        else
+        {
+          /* In iClaustron all nodes are connected */
+          g_assert(!clu_conf->node_config[node_id]);
+        }
+        /* Indicate we have no send thread here */
+        if (send_node_conn)
+          send_node_conn->send_thread_ended= TRUE;
+      }
+    }
+  }
+  return 0;
+error:
+  return error;
+}

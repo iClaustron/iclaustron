@@ -1,0 +1,779 @@
+/* Copyight (C) 2007-2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  This file contains the code to handle the Cluster Server protocols,
+  handling of configuration files. It's an important resource for all
+  iClaustron programs. Cluster Servers use the run_cluster_server
+  framework and most programs use the get configuration over the network
+  framework. Also many use the framework to read configuration files,
+  both the configuration files for a specific cluster and the configuration
+  file containing information about which clusters exist and security
+  information for those.
+
+  The iClaustron servers can coexist with two types of classic NDB nodes.
+  These are the data server (ndbd and ndbmtd) nodes which contain the actual
+  data and that handle all the transaction algorithms. The second type is
+  NDB API clients, these could be classic NDB API programs or a MySQL Server
+  using the NDB API.
+
+  The classic nodes have some limitations which iClaustron must handle.
+  These are:
+  1) No SSL connections
+  2) No security handling
+  3) Only one cluster can be handled (for data server nodes it's likely we
+     will patch NDB data server nodes to send a cluster id to the iClaustron
+     Cluster Server).
+  4) It knows only 3 node types, Data Servers, Cluster Servers and
+     Clients. Thus the Cluster Server must be aware of that it needs to
+     translate node types when communicating with classic NDB nodes.
+
+  DESCRIPTION HOW TO ADD NEW CONFIGURATION VARIABLE:
+  1) Add a new constant in this file e.g:
+  #define DATA_SERVER_SCHEDULER_NO_SEND_TIME 166
+     This is the constant that will be used in the key-value pairs
+     sent in the NDB Management Server protocol.
+
+  2) Add a new entry in init_config_parameters
+     Check how other entries look like, the struct
+     to fill in config_entry and is described in
+     ic_apic.h
+
+     Ensure that the hard-coded id used is unique, to ease the
+     allocation of unique id's ensure that you put the id's in 
+     increasing order in the file.
+
+     Here one defines minimum value, maximum value, default values,
+     value type and so forth.
+
+  3) Add a new variable in the struct's for the various
+     node types, for data server variables the struct is
+     ic_data_server_node_config (ic_apic.h). The name of this
+     variable must be the same name as provided in the
+     definition of the config variable in the method
+     init_config_parameters.
+
+  ---------------------------------------------------------
+  *********************************************************
+  ---------------------------------------------------------
+
+  Description of Management Server protocol
+  -----------------------------------------
+
+  We describe the protocol from a top-down view. Starting by describing what
+  the high-level data structure is, describing how this can be discovered and
+  then describing how parameters are described. Next step describing how the
+  data is encoded. The final step is to describe the conversation between the
+  client and the server in getting this encoded data.
+
+  Each node in the configuration has a separate section. These sections are
+  listed in section 1. Each section then contains all the configuration
+  parameters of that node. The node section are separated such that all
+  API node types are appearing from section 2 and onwards whereas the
+  data server node sections are put after all other sections.
+
+  After the last API node section there is another section used to describe
+  the system, this also has a meta section which always lists only one
+  section, the system (system is a synonym of cluster here).
+
+  After the system section the meta section of the communication section is
+  found after which the communication sections are listed.
+
+  In the example case below there are 4 nodes and thus section 6 is the
+  section describing which communication sections that exist.
+  There is one communication section for each pair of nodes that require
+  communication. So in this case with 2 data nodes and 1 API node and 1
+  management server there is one communication section to interconnect the
+  data nodes and 2 communication sections for each data node to connect them
+  with the API and the cluster server. Thus a total of 5 communication
+  sections.
+
+  All the values in the sections are sent as a sorted list of
+  key-value pairs. Each key-value pair contains section id, configuration
+  id, value type and the value. We need to pass through
+  the list of key-value pairs one time in order to discover the number of
+  nodes of various types to understand the allocation requirements.
+
+  The key-value pairs are sent as two 32-bit words for most data types, 64-bit
+  words require another 32-bit word and character strings require also more
+  words but they always add 32-bit words. 64-bit words send the 32 least
+  significant bits in the first 32 bit word and the most significant bits in
+  the 32 bit word following.
+
+  The final step is that the all these 32-bit words are converted to network
+  endian (big endian) format and the binary array of 32-bit words is then
+  finally converted to base64-encoding. This encoding transfers the data
+  over the wire using ASCII. base64-encoding sends its data with 76 ASCII
+  characters per line followed by newline character. As part of the encoded
+  data one also sends a verification string to ensure that the receiver can
+  verify that the data uses the NDB Management Server protocol.
+
+  Part of the protocol is that before transformation into base64 format there
+  is a 8-byte verification string added at the beginning of the array of
+  32-bit words and finally at the end a 4-byte checksum is added, this is
+  calculated as the XOR of all words including the verification string and
+  where checksum is 0 in the calculation.
+
+  There also some special configuration id's.
+  One is 16382 which describes the parent section which for all node sections
+  is equal to 0.
+  999 is a configuration id describing the node type.
+  3 is the configuration id providing the node id.
+
+  -------------------
+  -                 -
+  -  Section 0      -
+  -                 -
+  -------------------
+  |  |
+  |  | -------------------
+  |  | -                 -
+  |  | -  Section 1      -
+  |  |  -                 -
+  |  |  -------------------
+  |  |   |  |  |  |
+  |  |   |  |  |  |           Node Sections
+  |  |   |  |  |  ----------> ------------------
+  |  |   |  |  |              -  Section 2     -
+  |  |   |  |  |              ------------------
+  |  |   |  |  |
+  |  |   |  |  -------------> ------------------
+  |  |   |  |                 -  Section 3     -
+  |  |   |  |                 ------------------
+  |  |   |  |
+  |  |   |  |                 Data Server nodes
+  |  |   |  ----------------> ------------------
+  |  |   |                    -  Section 12    -
+  |  |   |                    ------------------
+  |  |   |
+  |  |   -------------------> ------------------
+  |  |                        -  Section 13    -
+  |  |                        ------------------
+  |  |
+  |  -------------------
+  |  -                 -
+  |  -  Section 4      -
+  |  -                 -
+  |  -------------------
+  |    |                   System Section
+  |    |-----------------> ------------------
+  |                        - Section 5      -
+  |                        ------------------
+ -------------------
+ -                 -
+ -  Section 6      -
+ -                 -
+ -------------------
+   | | | | |             Communication Sections
+   | | | | ------------> ------------------
+   | | | |               -  Section 7     -
+   | | | |               ------------------
+   | | | |
+   | | | --------------> ------------------
+   | | |                 -  Section 8     -
+   | | |                 ------------------
+   | | |
+   | | ----------------> ------------------
+   | |                   -  Section 9     -
+   | |                   ------------------
+   | |
+   | ------------------> ------------------
+   |                     -  Section 10    -
+   |                     ------------------
+   |
+   --------------------> ------------------
+                         -  Section 11    -
+                         ------------------
+    
+  Description of protocol to get configuration profile from
+  cluster server.
+
+  1) Start with get_nodeid session. The client sends a number of
+     lines of text with information about itself and login
+     information:
+
+     get nodeid<CR>
+     nodeid: 0<CR>
+     version: 327948<CR>
+     nodetype: 1<CR>
+     user: mysqld<CR>
+     password: mysqld<CR>
+     public key: a public key<CR>
+     endian: little<CR>
+     log_event: 0<CR>
+     cluster_id: 0<CR> This is only used in iClaustron
+     <CR>
+
+     Here nodeid is normally 0, meaning that the receiver can accept
+     any nodeid connected to the host we are connecting from. If nodeid
+     != 0 then this is the only nodeid we accept.
+
+     Version number is the version of the API, the version number is the
+     hexadecimal notation of the version number (e.g. 5.1.12 = 0x5010c =
+     327948). We indicate it is an iClaustron node by setting bit 20 in
+     the version number.
+
+     Nodetype is either 1 for API's to the data servers, for data servers
+     the nodetype is 0 and for cluster servers it is 2. There is a whole
+     range of various API node types for iClaustron nodes which for
+     NDB nodes are treated as API nodes.
+
+     user, password and public key is preparation for future functionality
+     so should always be mysqld, mysqld and a public key for API nodes.
+     Endian should either be little or big, dependent on if the API is on
+     little-endian box or big-endian box.
+     Log event is ??
+
+     The cluster server will respond with either an error response or
+     a response that provides the nodeid to the API using the following
+     messages.
+
+     get nodeid reply<CR>
+     nodeid: 4<CR>
+     result: Ok<CR>
+     <CR>
+
+     Where nodeid is the one chosen by the cluster server.
+
+     An error response is sent as:
+
+     result: Error (Message)<CR>
+     <CR>
+
+  2) The next step is to get the configuration. To get the configuration
+     the API sends the following messages:
+
+     get config<CR>
+     version: 327948<CR>
+     nodetype: 1<CR>
+     <CR>
+
+     In response to this the cluster server will send the configuration
+     or an error response in the same manner as above.
+     The configuration is sent as follows:
+
+     get config reply<CR>
+     result: Ok<CR>
+     Content-Length: 3047<CR>
+     ndbconfig/octet-stream<CR>
+     Content-Transfer-Encoding: base64<CR>
+     <CR>
+     base64-encoded string with length as provided above
+     <CR>
+
+  3) The third step is to get the node id of the management server.
+
+     get mgmd nodeid<CR>
+     <CR>
+
+     In response to this the cluster server responds with its nodeid
+     in the following manner:
+
+     get mgmd nodeid reply<CR>
+     nodeid: 1<CR>
+     <CR>
+
+  4) The fourth step is to set dynamic connection parameters for all
+     connections the node is to use. The main use here is to set
+     parameter 406 which is the server port number to use. This port
+     number is dynamically allocated by the server part of a connection
+     using dynamic ports.
+
+     This protocol part is only used when a new dynamic port has been
+     selected.
+
+     What happens here is that the starting node binds to all sockets
+     it is to use, for those where a dynamic port is specified by
+     having server port set to 0, the dynamic port selected needs to
+     be communicated back to the cluster server. This is only required
+     for connections where the node is the server part, the clients
+     needs to have information about this dynamic port to be able to
+     connect to this node.
+
+     In MySQL Cluster only NDB nodes are server nodes and in the case of
+     a connection between two NDB nodes the node with the higher node
+     number is the server part.
+
+     However in iClaustron also clients can communicate and thus also
+     the clients can be server parts. The same principle is still true that
+     the node with the higher node number becomes the server part.
+
+     set connection parameter<CR>
+     cluster_id: 0<CR>  This part isn't sent by NDB nodes currently
+     node1: 3<CR>
+     node2: 4<CR>
+     param: 406<CR>
+     value: -45024<CR>
+     <CR>
+
+     The -45024 indicates that the port number to use is 45024, the minus sign
+     is there due to an internal implementation detail in NDB where dynamic
+     port numbers are represented as negative numbers.
+
+     This is currently only used to set parameter 406 Server port of the
+     transporter connection.
+
+     send connection parameter reply<CR>
+     message: <CR>
+     result: Ok<CR>
+     <CR>
+
+     The above is repeated once for each node the starting node is to
+     connect to.
+
+     The use of dynamic ports can be advantegous in some networks, it has
+     however two main drawbacks. The first is that in networks with firewalls
+     it is not possible to specify rules of which ports that can be held open
+     for communication to NDB nodes and between iClaustron nodes. The second
+     problem is that a restarted node gets a new port number assigned and
+     thus requires that all nodes are informed of the new port number.
+
+     The solution with static port number has the disadvantage that if this
+     port is used by another application the cluster won't start.
+
+     So thus in the case of a cluster setup with firewalls one should use
+     static port numbers on all nodes and in the case of an open network
+     one should use dynamic ports.
+
+  5) The final step is to convert the connection to a NDB API connection.
+
+     transporter connect<CR>
+     3 1<CR>
+     <CR>
+     
+     3 and 1 here are the node ids involved in the connection.
+
+     Response:
+     1 1<CR>
+
+     1 and 1 indicates it is a TCP connection.
+
+  After this the connection is a NDB API connection and follows the NDB API
+  protocol.
+
+  A node that starts up its connections needs to know the dynamic ports assigned
+  to nodes it needs to connect to. This is required for all connections where the
+  node is the client part. The client part tries to connect to the server part
+  at certain intervals. If this is unsuccessful and we use dynamic ports, we will
+  get the port using the get connection parameter request to the Cluster Server.
+  This will be done on a new cluster server connection if required.
+
+  We will need to adapt the ndbd process here to handle multiple clusters, the
+  problem is that it needs to also send its cluster id to the cluster server in
+  a number of the vital NDB MGM protocol actions, the get connection is one
+  such occurrence.
+
+  The protocol actions to get a dynamic port by using get connection
+  parameter is as follows:
+
+     get connection parameter<CR>
+     cluster_id: 0<CR>  This part isn't sent by NDB nodes currently
+     node1: 3<CR>       The first node is the server part
+     node2: 4<CR>       The second node is the client part
+     param: 406<CR>
+     <CR>
+
+     In response to this message the cluster server will respond as follows:
+     get connection parameter reply<CR>
+     value: -45024<CR>   A negative number indicates a dynamic port
+     result: Ok<CR>
+     <CR>
+
+  General description of architecture of Cluster Servers
+  ------------------------------------------------------
+
+  The architecture of the Cluster Server is based on the following ideas.
+  There will be four routines to read/write configurations.
+  1) There will be one routine to read a configuration from a file.
+  2) There will be one routine to read the configuration from a Cluster Server
+     using the NDB Management Server Protocol.
+  3) There will be one routine to write the data structures of a configuration
+     into a file.
+  4) There will be one routine to write the data structures of a configuration
+     to another node using the NDB Management Server Protocol.
+
+  Using these four routines it is possible to easily design a fault-tolerant
+  Cluster Server, thus each time a change occurs one changes the data
+  structures then one ensures that the configuration is locked (actually the
+  first step) and starts changing the configuration in all servers. This
+  requires sending the configuration to all servers, then each server updates
+  its local copy on disk. Each time a Cluster Server starts up it will try to
+  get in contact with the other Cluster Servers. They will check if the
+  configuration has changed while the Cluster Server was down. If so it will
+  replace the configuration from the existing servers.
+
+  On top of this the idea is that the Cluster Server(s) will act as Cluster
+  Server not only for one cluster but for many. When requesting configuration
+  from a Cluster Server one can specify a number of clusters to fetch the
+  configuration for. To handle this we require a new parameter in the NDB
+  Management Server Protocol specifying the Cluster Id in a similar as the
+  node id is specified.
+
+  The routine to read configurations from a Cluster Server is
+    get_cs_config
+  This routine is part of the configuration client interface.
+  The routine to read a configuration from a file is
+    ic_load_config_server_from_files
+  This routine makes use of the config file reader interface.
+
+  Description of Cluster Server Data Structures
+  ---------------------------------------------
+  The configuration of a cluster is kept within the IC_CLUSTER_CONFIG
+  struct. This struct contains arrays of all node structs, all communication
+  struct's. There is also various variables keeping track of numbers of
+  nodes of all types and number of communication sections and maximum node
+  id. The arrays of node and communication struct's is actually a pointer to
+  an array of pointers to the structs. There is also an array of the types
+  of the nodes and the types of the communication types. It is thus necessary
+  to read both the pointer array and the type array to know which struct to
+  map the pointer of nodes and communications to.
+
+  Finally all communication sections that exists in the configuration are
+  in a hash table based on nodeid of both ends of the communication. If
+  no communication object is found then the default communication parameters
+  are used.
+
+  During load of a configuration file from disk a special data structure,
+  IC_CLUSTER_CONFIG_LOAD is used, this contains space for default config
+  parameters and pointers to allocated memory for the configuration. It also
+  contains space for some temporary variables used during the reading of the
+  config file. The space of the IC_CLUSTER_CONFIG struct is part of this
+  struct.
+
+  Reading of the configuration file is performed using the module for config
+  file readers. It's a generic module that reads a config file using sections,
+  keys and comments. It contains an init call and an end call to clean up.
+
+  Each configuration file represents one cluster. There is also a grid config
+  file that represents the clusters that are part of the grid. This grid config
+  file only contains references to the cluster config files.
+
+  A cluster server accepts requests for configurations and sends the
+  configuration to the requester. A request is always for a specific
+  cluster. The cluster server does however serve a grid. Thus it can
+  serve configurations for many different clusters.
+
+  There will be a struct representing the grid and the most important
+  thing this grid contains is pointers to an array of cluster configurations.
+  The cluster server will also calculate the base64 representation of each
+  cluster and store it in this struct. Thus when a request for a configuration
+  arrives it isn't necessary to calculate this. This means of course that
+  this base64 representation has to be recalculated on every change of the
+  configuration of a cluster.
+
+  For clients that access the cluster server to retrieve the configuration of
+  one or more clusters the IC_API_CONFIG_SERVER is used to represent the
+  cluster configurations retrieved from the cluster server. The most important
+  part of this struct is a pointer to a set of structs of type
+  IC_CLUSTER_CONFIG. There is also an interface to this implementation to
+  make it replaceable by a separate implementation. The struct also contains
+  an array of the cluster id's and the nodeid we're represented by in the
+  specific cluster. There is also a set of temporary variables used when
+  retrieving the config from the cluster server.
+*/
+
+gchar *ic_empty_string= "";
+gchar *ic_err_str= "Error:";
+/* Strings used in config version file */
+/*
+  version_str is defined in section defining strings used in MGM API
+  protocol
+*/
+static const gchar *state_str= "state: ";
+static const gchar *pid_str= "pid: ";
+#define STATE_STR_LEN 7
+#define PID_STR_LEN 5
+#define CONFIG_STATE_IDLE 0
+#define CONFIG_STATE_BUSY 1
+#define CONFIG_STATE_UPDATE_CLUSTER_CONFIG 2
+#define CONFIG_STATE_UPDATE_CONFIGS 3
+/* Strings used in cluster configuration files */
+static const gchar *cluster_str= "cluster";
+static const gchar *cluster_id_string= "cluster_id";
+static const gchar *cluster_name_str= "cluster_name";
+static const gchar *cluster_password_str= "password";
+
+/* Strings used in configuration files for each cluster */
+static const gchar *data_server_str= "data server";
+static const gchar *client_node_str= "client";
+static const gchar *cluster_server_str= "cluster server";
+static const gchar *sql_server_str= "sql server";
+static const gchar *rep_server_str= "replication server";
+static const gchar *file_server_str= "file server";
+static const gchar *restore_node_str= "restore";
+static const gchar *cluster_mgr_str= "cluster manager";
+static const gchar *socket_str= "socket";
+static const gchar *data_server_def_str= "data server default";
+static const gchar *client_node_def_str= "client default";
+static const gchar *cluster_server_def_str= "cluster server default";
+static const gchar *sql_server_def_str= "sql server default";
+static const gchar *rep_server_def_str= "replication server default";
+static const gchar *file_server_def_str= "file server default";
+static const gchar *restore_node_def_str= "restore default";
+static const gchar *cluster_mgr_def_str= "cluster manager default";
+static const gchar *socket_def_str= "socket default";
+static const gchar *node_id_str= "node_id";
+
+/* Strings used in NDB MGMAPI Protocol, first group additions */
+static const gchar *get_cluster_list_str= "get cluster list";
+static const gchar *get_cluster_list_reply_str= "get cluster list reply";
+static const gchar *cluster_name_string= "clustername: ";
+static const gchar *cluster_id_str= "clusterid: ";
+static const gchar *end_get_cluster_list_str= "end get cluster list";
+
+static const gchar *get_mgmd_nodeid_str= "get mgmd nodeid";
+static const gchar *get_mgmd_nodeid_reply_str= "get mgmd nodeid reply";
+static const gchar *set_connection_parameter_str= "set connection parameter";
+static const gchar *set_connection_parameter_reply_str=
+  "set connection parameter reply";
+static const gchar *message_str= "message: ";
+static const gchar *convert_transporter_str= "transporter connect";
+static const gchar *report_event_str= "report event";
+static const gchar *report_event_reply_str= "report event reply";
+static const gchar *length_str= "length: ";
+static const gchar *data_str= "data:  ";
+
+static const gchar *get_nodeid_str= "get nodeid";
+static const gchar *get_nodeid_reply_str= "get nodeid reply";
+static const gchar *get_config_str= "get config";
+static const gchar *get_config_reply_str= "get config reply";
+static const gchar *nodeid_str= "nodeid: ";
+static const gchar *node1_str= "node1: ";
+static const gchar *node2_str= "node2: ";
+static const gchar *param_str= "param: ";
+static const gchar *value_str= "value: ";
+static const gchar *nodetype_str= "nodetype: ";
+static const gchar *user_str= "user: mysqld";
+static const gchar *password_str= "password: mysqld";
+static const gchar *public_key_str= "public key: a public key";
+static const gchar *endian_str= "endian: ";
+static const gchar *little_endian_str= "little";
+static const gchar *big_endian_str= "big";
+static const gchar *log_event_str= "log_event: 0";
+static const gchar *result_ok_str= "result: Ok";
+static const gchar *result_str= "result: ";
+static const gchar *content_len_str= "Content-Length: ";
+static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
+static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
+
+const gchar *ic_ok_str= "Ok";
+const gchar *ic_version_str= "version: ";
+const gchar *ic_grid_str= "grid: ";
+const gchar *ic_cluster_str= "cluster: ";
+const gchar *ic_node_str= "node: ";
+const gchar *ic_program_str= "program: ";
+const gchar *ic_start_time_str= "start time: ";
+const gchar *ic_error_str= "Error";
+const gchar *ic_start_str= "start";
+const gchar *ic_stop_str= "stop";
+const gchar *ic_kill_str= "kill";
+const gchar *ic_list_str= "list";
+const gchar *ic_list_full_str= "list full";
+const gchar *ic_list_next_str= "list next";
+const gchar *ic_list_node_str= "list node";
+const gchar *ic_list_stop_str= "list stop";
+const gchar *ic_true_str= "true";
+const gchar *ic_false_str= "false";
+const gchar *ic_auto_restart_str= "autorestart: ";
+const gchar *ic_num_parameters_str= "num parameters: ";
+const gchar *ic_pid_str= "pid: ";
+
+const gchar *ic_def_grid_str= "iclaustron";
+const gchar *ic_data_server_program_str= "ndbmtd";
+const gchar *ic_file_server_program_str= "ic_fsd";
+const gchar *ic_rep_server_program_str= "ic_repd";
+const gchar *ic_sql_server_program_str= "mysqld";
+const gchar *ic_cluster_manager_program_str= "ic_clmgrd";
+const gchar *ic_cluster_server_program_str= "ic_csd";
+const gchar *ic_restore_program_str= "ndb_restore";
+
+const gchar *ic_ndb_node_id_str= " --ndb-node-id=";
+const gchar *ic_ndb_connectstring_str= " --ndb-connectstring=";
+const gchar *ic_cs_connectstring_str= " --cs_connectstring=";
+const gchar *ic_initial_flag_str= " --initial";
+const gchar *ic_cluster_id_str= " --cluster_id=";
+const gchar *ic_node_id_str= " --node_id=";
+const gchar *ic_server_name_str= " --server_name=";
+const gchar *ic_server_port_str=" --server_port=";
+const gchar *ic_data_dir_str= " --data_dir=";
+const gchar *ic_num_threads_str= " --num_threads=";
+
+#define MIN_PORT 0
+#define MAX_PORT 65535
+
+#define GET_NODEID_REQ_STATE 0
+#define NODEID_REQ_STATE 1
+#define VERSION_REQ_STATE 2
+#define NODETYPE_REQ_STATE 3
+#define USER_REQ_STATE 4
+#define PASSWORD_REQ_STATE 5
+#define PUBLIC_KEY_REQ_STATE 6
+#define ENDIAN_REQ_STATE 7
+#define LOG_EVENT_REQ_STATE 8
+#define CLUSTER_ID_REQ_STATE 9
+#define EMPTY_LINE_REQ_STATE 10
+
+#define GET_CONFIG_REQ_STATE 0
+#define EMPTY_STATE 1
+
+#define GET_NODEID_REPLY_STATE 0
+#define NODEID_STATE 1
+#define RESULT_OK_STATE 2
+#define WAIT_EMPTY_RETURN_STATE 3
+#define RESULT_ERROR_STATE 4
+
+#define GET_CONFIG_REPLY_STATE 5
+#define CONTENT_LENGTH_STATE 6
+#define OCTET_STREAM_STATE 7
+#define CONTENT_ENCODING_STATE 8
+#define RECEIVE_CONFIG_STATE 9
+#define WAIT_LAST_EMPTY_RETURN_STATE 10
+
+/*
+  These states are used in the main routine that handles
+  the Cluster Server's run protocol.
+
+  In the initial state WAIT_GET_CLUSTER_LIST we're waiting for the
+  get cluster list request from iClaustron nodes.
+*/
+#define INITIAL_STATE 0
+#define WAIT_GET_NODEID 1
+#define WAIT_GET_MGMD_NODEID 2
+#define WAIT_SET_CONNECTION 3
+#define WAIT_CONVERT_TRANSPORTER 4
+
+#define GET_NODEID_LEN 10
+#define GET_NODEID_REPLY_LEN 16
+#define NODEID_LEN 8
+#define VERSION_REQ_LEN 9
+#define NODETYPE_REQ_LEN 10
+#define USER_REQ_LEN 12
+#define PASSWORD_REQ_LEN 16
+#define PUBLIC_KEY_REQ_LEN 24
+#define ENDIAN_REQ_LEN 8
+#define LITTLE_ENDIAN_LEN 6
+#define BIG_ENDIAN_LEN 3
+#define LOG_EVENT_REQ_LEN 12
+#define CLUSTER_ID_REQ_LEN 11
+#define RESULT_OK_LEN 10
+
+#define CLUSTER_NAME_REQ_LEN 13
+
+#define GET_CONFIG_LEN 10
+#define GET_CONFIG_REPLY_LEN 16
+#define CONTENT_LENGTH_LEN 16
+#define OCTET_STREAM_LEN 36
+#define CONTENT_ENCODING_LEN 33
+
+#define CONFIG_LINE_LEN 76
+#define MAX_CONTENT_LEN 16 * 1024 * 1024 /* 16 MByte max */
+
+#define IC_CL_KEY_MASK 0x3FFF
+#define IC_CL_KEY_SHIFT 28
+#define IC_CL_SECT_SHIFT 14
+#define IC_CL_SECT_MASK 0x3FFF
+#define IC_CL_INT32_TYPE 1
+#define IC_CL_CHAR_TYPE  2
+#define IC_CL_SECT_TYPE  3
+#define IC_CL_INT64_TYPE 4
+
+#define MAX_MAP_CONFIG_ID 1024
+#define MAX_CONFIG_ID 256
+
+#define IC_TCP_TRANSPORTER_TYPE 1
+
+static guint32 glob_max_config_id;
+static IC_HASHTABLE *glob_conf_hash;
+static gboolean glob_conf_entry_inited= FALSE;
+static guint16 map_config_id_to_inx[MAX_MAP_CONFIG_ID];
+static guint16 map_inx_to_config_id[MAX_CONFIG_ID];
+static IC_CONFIG_ENTRY glob_conf_entry[MAX_CONFIG_ID];
+
+/*
+  Mandatory bits for data servers, client nodes and so forth.
+  Calculated once and then used for quick access to see if a
+  configuration has provided all mandatory configuration items.
+*/
+static guint64 data_server_mandatory_bits;
+static guint64 client_mandatory_bits;
+static guint64 cluster_server_mandatory_bits;
+static guint64 rep_server_mandatory_bits;
+static guint64 sql_server_mandatory_bits;
+static guint64 comm_mandatory_bits;
+
+static void set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line);
+
+/*
+  List of modules in the API for the Cluster Server
+  -------------------------------------------------
+  1.  Configuration parameter definitions
+      This module contains the definition of all configuration entries and
+      some helper methods around this.
+
+  2.  Configuration reader client, Translate Part
+      This module takes a base64-encoded string and translates it into a data
+      structure containing the configuration.
+
+  3.  Protocol support module
+      This module contains a number of common helper functions for protocol
+      handling of the NDB Management Protocol.
+
+  4.  Configuration reader client, Protocol Part
+      This module handles the protocol part of the clients retrieving the
+      configuration from a Cluster Server. This module implements the
+      ic_get_cs_config part of the IC_API_CONFIG_SERVER interface.
+
+  5.  iClauster Cluster Configuration File Reader
+      This module implements reading the Cluster Configuration files (there
+      is one such file per cluster in the grid and is named kalle.ini if
+      the cluster name is kalle). It reads the file into a data structure
+      containing the configuration.
+      
+  6.  iClaustron Configuration Writer
+      This module contains the logic needed to write a configuration of an
+      entire grid, it includes writing both cluster configuration files,
+      grid configuration file and configuration version file and making
+      sure this write is done atomically.
+
+  7.  iClaustron Grid Configuration file reader
+      This module implements the reading of the grid configuration file into
+      a data structure describing the clusters involved in the grid.
+
+  8.  Cluster Configuration Data Structure interface
+      This module contains the implementation of the IC_API_CONFIG_SERVER
+      interface except for get ic_get_cs_config method which is implemented
+      by the modules to read configuration from network.
+
+  9.  Stop Cluster Server
+      This module implements the method to stop a cluster server.
+
+  10. Start Cluster Server
+      This module implements the method to start a cluster server using a set
+      of modules listed here.
+
+  11. Run Cluster Server
+      This module implements running a multithreaded cluster server.
+
+  12. Read Configuration from network
+      This module implements a single method interface to get a grid
+      configuration.
+*/
+
+/*
+  Function needing forward declaration since used to build hash table
+  on communication objects
+*/
+static void init_node(IC_CLUSTER_CONFIG_LOAD *clu_conf,
+                      size_t size, void *config_struct);

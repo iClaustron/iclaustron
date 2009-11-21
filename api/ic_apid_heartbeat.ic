@@ -1,0 +1,222 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  Heartbeat MODULE
+  ----------------
+
+  All users of the Data API requires sending of heartbeats every now and
+  then. To simplify this the Data API has methods to start a heartbeat
+  thread and there is also a method to add nodes to be handled by this
+  thread (start_heartbeat_thread and add_node_to_heartbeat_thread).
+
+  Then we also have the run heartbeat thread method that implements the
+  heartbeat thread. This thread has one support function that packs the
+  API_HEARTBEATREQ message and one support function that does the
+  actual send of the heartbeat message (prepare_send_heartbeat and
+  real_send_heartbeat).
+
+  Finally there is a callback method that is called when the
+  API_HEARTBEATCONF message is received. This method belongs to the
+  heartbeat module but is alsoa vital part of the Message Logic Modules.
+*/
+static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                                  IC_THREADPOOL_STATE *tp_state);
+static void add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                              IC_SEND_NODE_CONNECTION *send_node_conn);
+static void prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                   IC_SOCK_BUF_PAGE *heartbeat_page,
+                                   guint32 thread_id);
+static int real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                               IC_SOCK_BUF_PAGE *heartbeat_page);
+static gpointer run_heartbeat_thread(gpointer data);
+
+static int
+start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                       IC_THREADPOOL_STATE *tp_state)
+{
+  IC_APID_CONNECTION *heartbeat_conn;
+  int error;
+
+  ic_require(!apid_global->heartbeat_conn);
+  if (!(heartbeat_conn= ic_create_apid_connection(
+                (IC_APID_GLOBAL*)apid_global, NULL)))
+    goto mem_error;
+  apid_global->heartbeat_conn= heartbeat_conn;
+  if ((!(apid_global->heartbeat_mutex= g_mutex_new())) ||
+      (!(apid_global->heartbeat_cond= g_cond_new())))
+    goto mem_error;
+  /* Start heartbeat thread */
+  if ((error= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
+                        tp_state,
+                        &apid_global->heartbeat_thread_id,
+                        IC_MAX_THREAD_WAIT_TIME)) ||
+      ((error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                        tp_state,
+                        apid_global->heartbeat_thread_id,
+                        run_heartbeat_thread,
+                        (void*)apid_global,
+                        IC_MEDIUM_STACK_SIZE,
+                        FALSE))))
+    goto error;
+  return 0;
+mem_error:
+  error= IC_ERROR_MEM_ALLOC;
+error:
+  heartbeat_conn->apid_conn_ops->ic_free_apid_connection(heartbeat_conn);
+  return error;
+}
+
+static void
+add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                             IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  ic_require(send_node_conn);
+  g_mutex_lock(apid_global->heartbeat_mutex);
+  /*
+    If this is the first node added the heartbeat thread is waiting for
+    the first node to be connected before starting its activity.
+  */
+  if (apid_global->heartbeat_thread_waiting)
+    g_cond_signal(apid_global->heartbeat_cond);
+  send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
+  apid_global->first_heartbeat_node= send_node_conn;
+  g_mutex_unlock(apid_global->heartbeat_mutex);
+}
+
+static void
+rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
+                               IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  IC_SEND_NODE_CONNECTION *prev_node= NULL, *next_node;
+
+  g_mutex_lock(apid_global->heartbeat_mutex);
+  next_node= apid_global->first_heartbeat_node;
+  while (next_node != send_node_conn && next_node)
+  {
+    prev_node= next_node;
+    next_node= next_node->next_heartbeat_node;
+  }
+  ic_require(next_node);
+  if (prev_node)
+    prev_node->next_heartbeat_node= next_node->next_heartbeat_node;
+  else
+    apid_global->first_heartbeat_node= next_node->next_heartbeat_node;
+  if (send_node_conn == apid_global->curr_heartbeat_node)
+    apid_global->curr_heartbeat_node= send_node_conn->next_heartbeat_node;
+  g_mutex_unlock(apid_global->heartbeat_mutex);
+}
+
+static int
+real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                    IC_SOCK_BUF_PAGE *hb_page)
+{
+  return ndb_send(send_node_conn, hb_page, TRUE);
+}
+
+static gpointer
+run_heartbeat_thread(gpointer data)
+{
+  int error= 0;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_SEND_NODE_CONNECTION *last_send_node_conn= NULL;
+  IC_SEND_NODE_CONNECTION *next_node;
+  IC_SOCK_BUF_PAGE *free_pages= NULL;
+  IC_SOCK_BUF_PAGE *hb_page;
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  IC_APID_CONNECTION *apid_conn= apid_global->heartbeat_conn;
+
+  DEBUG_ENTRY("run_heartbeat_thread");
+  while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  {
+    if (!(hb_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
+                   send_buf_pool,
+                   (guint32)0,
+                   &free_pages,
+                   (guint32)8,
+                   3000)))
+      goto error;
+    g_mutex_lock(apid_global->heartbeat_mutex);
+    if (!apid_global->first_heartbeat_node)
+    {
+      last_send_node_conn= NULL;
+      apid_global->heartbeat_thread_waiting= TRUE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Need to wait for nodes to connect"));
+      g_cond_wait(apid_global->heartbeat_cond, apid_global->heartbeat_mutex);
+      g_mutex_unlock(apid_global->heartbeat_mutex);
+      DEBUG_PRINT(CONFIG_LEVEL,
+      ("First node connected, heartbeat needs to be sent"));
+      send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                          hb_page);
+      continue;
+    }
+    if (!apid_global->curr_heartbeat_node)
+    {
+      last_send_node_conn= apid_global->first_heartbeat_node;
+      apid_global->curr_heartbeat_node= apid_global->first_heartbeat_node;
+    }
+    else
+    {
+      if (last_send_node_conn == apid_global->curr_heartbeat_node)
+      {
+        /* Normal case, step forward here to next node */
+        next_node= last_send_node_conn->next_heartbeat_node;
+        apid_global->curr_heartbeat_node= next_node;
+        last_send_node_conn= next_node;
+        if (!next_node)
+        {
+          /* We have sent to all nodes, sleep for a while and start again */
+          apid_global->curr_heartbeat_node= NULL;
+          g_mutex_unlock(apid_global->heartbeat_mutex);
+          send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                              hb_page);
+          apid_conn->apid_conn_ops->ic_poll(apid_conn, 10000);
+          ic_microsleep(500000);
+          apid_conn->apid_conn_ops->ic_poll(apid_conn, 10000);
+          continue;
+        }
+      }
+      else
+      {
+        /*
+          Remove node have moved curr_heartbeat_node forward, we need
+          to send to this node as well. No action needed here.
+        */
+        ;
+      }
+    }
+    prepare_send_heartbeat(last_send_node_conn, hb_page,
+         ((IC_INT_APID_CONNECTION*)apid_global->heartbeat_conn)->thread_id);
+    g_mutex_unlock(apid_global->heartbeat_mutex);
+    if ((error= real_send_heartbeat(last_send_node_conn, hb_page)))
+    {
+      g_mutex_lock(last_send_node_conn->mutex);
+      node_failure_handling(last_send_node_conn);
+      g_mutex_unlock(last_send_node_conn->mutex);
+    }
+  }
+end:
+  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                      free_pages);
+  tp_state->ts_ops.ic_thread_stops(thread_state);
+  DEBUG_RETURN(NULL);
+error:
+  /* Serious error, heartbeat thread cannot continue, need to stop */
+  ic_controlled_terminate();
+  goto end;
+}

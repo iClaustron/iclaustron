@@ -1,0 +1,859 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: iClauster Cluster Configuration File Reader
+  ---------------------------------------------------
+  This module is used to read a cluster configuration file. It implements
+  one method:
+    ic_load_config_server_from_files
+  
+  This module is a support module for the Run Cluster Server module.
+  It returns the cluster configuration in a IC_CLUSTER_CONFIG object.
+
+  It is an implementation of the configuration reader interface which is
+  implemented by a set of methods defined below.
+*/
+static int ensure_node_name_set(void *current_config,
+                                IC_MEMORY_CONTAINER *mc_ptr);
+
+static void ensure_pcntrl_hostname_set(void *current_config);
+static void ensure_node_data_path_set(void *current_config);
+static void ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
+                                 IC_CLUSTER_CONFIG *clu_conf);
+
+static IC_CLUSTER_CONFIG*
+ic_load_config_server_from_files(gchar *config_file,
+                                 IC_CONFIG_STRUCT *conf_server,
+                                 IC_CONFIG_ERROR *err_obj);
+
+static IC_CONFIG_ENTRY*
+get_config_entry_mandatory(guint32 bit_id,
+                           IC_CONFIG_TYPES conf_type)
+{
+  guint32 i;
+  IC_CONFIG_ENTRY *conf_entry;
+  DEBUG_ENTRY("get_config_entry_mandatory");
+  for (i= 1; i <= glob_max_config_id; i++)
+  {
+    conf_entry= &glob_conf_entry[i];
+    if (conf_entry && conf_entry->is_mandatory &&
+        (guint32)conf_entry->mandatory_bit == bit_id &&
+        conf_entry->config_types & (1 << conf_type))
+      DEBUG_RETURN(conf_entry);
+  }
+  DEBUG_RETURN(NULL);
+}
+
+static int
+complete_section(IC_CONFIG_STRUCT *ic_conf,
+                 guint32 line_number,
+                 guint32 pass)
+{
+  IC_CLUSTER_CONFIG_LOAD *clu_conf_load;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_CONFIG_TYPES conf_type;
+  guint32 i;
+  int error;
+  guint64 mandatory_bits, missing_bits, bit64;
+  void *current_config;
+  IC_CONFIG_ENTRY *conf_entry;
+  DEBUG_ENTRY("complete_section");
+
+  /*
+    Need to check that all mandatory values have been assigned here in
+    second pass.
+  */
+  clu_conf_load= ic_conf->config_ptr.clu_conf;
+  conf_type= clu_conf_load->current_node_config_type;
+  current_config= clu_conf_load->current_node_config;
+  if (clu_conf_load->default_section || pass == INITIAL_PASS)
+    DEBUG_RETURN(0);
+  switch (conf_type)
+  {
+    case IC_NO_CONFIG_TYPE:
+      return 0;
+    case IC_DATA_SERVER_TYPE:
+    {
+      IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
+      mandatory_bits= data_server_mandatory_bits;
+      if (ds_conf->mandatory_bits != data_server_mandatory_bits)
+        goto mandatory_error;
+      if (ds_conf->filesystem_path == NULL)
+        ds_conf->filesystem_path= ds_conf->node_data_path;
+      if (ds_conf->data_server_checkpoint_path == NULL)
+        ds_conf->data_server_checkpoint_path= ds_conf->filesystem_path;
+      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
+        return error;
+      ensure_pcntrl_hostname_set(current_config);
+      ensure_node_data_path_set(current_config);
+      break;
+    }
+    case IC_CLIENT_TYPE:
+    case IC_CLUSTER_SERVER_TYPE:
+    case IC_FILE_SERVER_TYPE:
+    case IC_REP_SERVER_TYPE:
+    case IC_SQL_SERVER_TYPE:
+    case IC_RESTORE_TYPE:
+    case IC_CLUSTER_MANAGER_TYPE:
+      mandatory_bits= client_mandatory_bits;
+      if (((IC_CLIENT_CONFIG*)current_config)->mandatory_bits !=
+          client_mandatory_bits)
+        goto mandatory_error;
+      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
+        return error;
+      ensure_pcntrl_hostname_set(current_config);
+      ensure_node_data_path_set(current_config);
+      break;
+    case IC_COMM_TYPE:
+      mandatory_bits= comm_mandatory_bits;
+      if (((IC_SOCKET_LINK_CONFIG*)current_config)->mandatory_bits !=
+          comm_mandatory_bits)
+        goto mandatory_error;
+      clu_conf_load->conf->comm_config[clu_conf_load->current_num_comms++]=
+        (gchar*)current_config;
+      clu_conf= clu_conf_load->conf;
+      ensure_hostnames_set((IC_SOCKET_LINK_CONFIG*)current_config,
+                           clu_conf);
+      break;
+    default:
+      abort();
+      break;
+  }
+  DEBUG_RETURN(0);
+
+mandatory_error:
+  missing_bits= mandatory_bits ^
+         ((IC_DATA_SERVER_CONFIG*)current_config)->mandatory_bits;
+  {
+    gchar buf[128];
+    (void)buf;
+
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("mandatory bits %s",
+      ic_guint64_hex_str(((IC_DATA_SERVER_CONFIG*)
+                          current_config)->mandatory_bits,
+                         (gchar*)&buf)));
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("missing bits %s",
+      ic_guint64_hex_str(missing_bits,
+                         (gchar*)&buf)));
+  }
+  g_assert(missing_bits);
+  for (i= 0; i < 64; i++)
+  {
+    bit64= 1;
+    bit64 <<= i;
+    if (missing_bits & bit64)
+    {
+      if (!(conf_entry= get_config_entry_mandatory(i, conf_type)))
+      {
+        DEBUG_PRINT(CONFIG_LEVEL,
+                    ("Didn't find mandatory entry after config error, i= %u"
+                     ,i));
+        abort();
+      }
+      ic_printf("Configuration error found at line %u, missing mandatory",
+                line_number);
+      ic_printf(" configuration item in previous section");
+      ic_printf("Missing item is %s", conf_entry->config_entry_name.str);
+    }
+  }
+  DEBUG_RETURN(1);
+}
+
+static void
+ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
+                     IC_CLUSTER_CONFIG *clu_conf)
+{
+  if (!link_config->first_hostname)
+  {
+    IC_DATA_SERVER_CONFIG *ds_conf;
+    ds_conf= (IC_DATA_SERVER_CONFIG*)
+      clu_conf->node_config[link_config->first_node_id];
+    link_config->first_hostname= ds_conf->hostname;
+  }
+  if (!link_config->second_hostname)
+  {
+    IC_DATA_SERVER_CONFIG *ds_conf;
+    ds_conf= (IC_DATA_SERVER_CONFIG*)
+      clu_conf->node_config[link_config->second_node_id];
+    link_config->second_hostname= ds_conf->hostname;
+  }
+}
+
+static void
+ensure_node_data_path_set(void *current_config)
+{
+  IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
+  if (ds_conf->node_data_path == NULL)
+  {
+    /*
+      Ensure all nodes have a node data path set. The default is
+      /var/lib/iclaustron on Unix platforms and
+      C:\Program Files\lib\iclaustron on Windows
+    */
+#ifndef WINDOWS
+    ds_conf->node_data_path= "/var/lib/iclaustron";
+#else
+    ds_conf->node_data_path= "C:\\Program Files\\lib\\iclaustron\\";
+#endif
+  }
+}
+
+static void
+ensure_pcntrl_hostname_set(void *current_config)
+{
+  IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
+  if (ds_conf->pcntrl_hostname == NULL)
+  {
+    /*
+      Each node have a process controller that controls start and stop of
+      the node. The process controller is normally placed at the same
+      hostname as the node, however in some cases it is necessary to use
+      a separate hostname for performance reasons for the process
+      controller (reliability could also be an issue).
+
+      The default setting is thus the same as the hostname of the node.
+    */
+    ds_conf->pcntrl_hostname= ds_conf->hostname;
+  }
+}
+
+static int
+ensure_node_name_set(void *current_config, IC_MEMORY_CONTAINER *mc_ptr)
+{
+  IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
+  gchar node_name_buffer[128];
+  gchar *num_ptr, *alloc_ptr;
+  guint32 num_len, alloc_len;
+
+  if (ds_conf->node_name == NULL)
+  {
+    /* Default name is node_1 for node 1 */
+    memcpy(node_name_buffer, "node_", 5);
+    num_ptr= ic_guint64_str((guint64)ds_conf->node_id, &node_name_buffer[5], &num_len);
+    num_ptr[num_len]= 0;
+    alloc_len= num_len + 1 + 5;
+    if (!(alloc_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, alloc_len)))
+      return IC_ERROR_MEM_ALLOC;
+    memcpy(alloc_ptr, node_name_buffer, alloc_len);
+  }
+  return 0;
+}
+
+static int
+conf_serv_init(void *ic_conf, guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf;
+  IC_CLUSTER_CONFIG *clu_conf_perm;
+  IC_MEMORY_CONTAINER *temp_mc_ptr;
+  IC_MEMORY_CONTAINER *perm_mc_ptr;
+  guint32 max_node_id, num_nodes;
+  guint32 size_structs= 0;
+  DEBUG_ENTRY("conf_serv_init");
+  perm_mc_ptr= conf->perm_mc_ptr;
+  if (pass == INITIAL_PASS)
+  {
+    /*
+      In this initial phase we allocate a temporary memory container and we
+      set up the pointers for deallocation, the memory to be returned is
+      allocated on a memory container supplied by the caller.
+    */
+    if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    {
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)temp_mc_ptr->mc_ops.ic_mc_calloc(
+                    temp_mc_ptr, sizeof(IC_CLUSTER_CONFIG_LOAD))))
+    {
+      temp_mc_ptr->mc_ops.ic_mc_free(temp_mc_ptr);
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
+    clu_conf->temp_mc_ptr= temp_mc_ptr;
+    if (!(clu_conf_perm= (IC_CLUSTER_CONFIG*)perm_mc_ptr->mc_ops.ic_mc_calloc(
+                         perm_mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
+    {
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    clu_conf->conf= clu_conf_perm;
+    clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
+    DEBUG_RETURN(0);
+  }
+  clu_conf= conf->config_ptr.clu_conf;
+  max_node_id= clu_conf->conf->max_node_id;
+  if (max_node_id == 0)
+  {
+    DEBUG_RETURN(IC_ERROR_NO_NODES_FOUND);
+  }
+  clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
+  /*
+    Calculate size of all node struct's and allocate them in one chunk.
+  */
+  size_structs+= clu_conf->conf->num_data_servers *
+                 sizeof(IC_DATA_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_clients * sizeof(IC_CLIENT_CONFIG);
+  size_structs+= clu_conf->conf->num_cluster_servers *
+                 sizeof(IC_CLUSTER_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_sql_servers *
+                 sizeof(IC_SQL_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_rep_servers *
+                 sizeof(IC_REP_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_file_servers *
+                 sizeof(IC_FILE_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_restore_nodes *
+                 sizeof(IC_RESTORE_CONFIG);
+  size_structs+= clu_conf->conf->num_cluster_mgrs *
+                   sizeof(IC_CLUSTER_MANAGER_CONFIG);
+  num_nodes= clu_conf->conf->num_nodes;
+  /*
+    A fully connected set of nodes means n * n - 1 / 2 connections since
+    nodes are not connected to each other and only one connection is needed
+    between two nodes ( thus division by 2).
+  */
+  clu_conf->total_num_comms= ((num_nodes - 1)*num_nodes) / 2;
+  size_structs+= clu_conf->total_num_comms *
+                 sizeof(IC_SOCKET_LINK_CONFIG);
+
+  if (!(clu_conf->struct_memory= (gchar*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr, size_structs)))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->conf->node_config= (gchar**)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                                sizeof(gchar*)*(max_node_id + 1))))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->conf->comm_config= (gchar**)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                  sizeof(gchar*)*(clu_conf->total_num_comms + 1))))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->string_memory= (gchar*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                                         clu_conf->size_string_memory)))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->conf->node_types= (IC_NODE_TYPES*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                             sizeof(IC_NODE_TYPES)*(max_node_id+1))))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+
+  init_config_object((gchar*)&clu_conf->default_data_server_config,
+                     sizeof(clu_conf->default_data_server_config),
+                     IC_DATA_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_client_config,
+                     sizeof(clu_conf->default_client_config),
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_cluster_server_config,
+                     sizeof(clu_conf->default_cluster_server_config),
+                     IC_CLUSTER_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_sql_server_config.client_conf,
+                     sizeof(clu_conf->default_sql_server_config.client_conf),
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_sql_server_config,
+                     sizeof(clu_conf->default_sql_server_config),
+                     IC_SQL_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_rep_server_config.client_conf,
+                     sizeof(clu_conf->default_rep_server_config.client_conf),
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_rep_server_config,
+                     sizeof(clu_conf->default_rep_server_config),
+                     IC_REP_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_file_server_config.client_conf,
+                     sizeof(clu_conf->default_file_server_config.client_conf),
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_file_server_config,
+                     sizeof(clu_conf->default_file_server_config),
+                     IC_FILE_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_restore_config.client_conf,
+                     sizeof(clu_conf->default_restore_config.client_conf),
+                     IC_CLIENT_TYPE);
+  init_config_object((gchar*)&clu_conf->default_restore_config,
+                     sizeof(clu_conf->default_restore_config),
+                     IC_RESTORE_TYPE);
+  init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
+                     sizeof(clu_conf->default_cluster_mgr_config),
+                     IC_CLUSTER_MANAGER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_socket_config,
+                     sizeof(clu_conf->default_socket_config),
+                     IC_COMM_TYPE);
+  DEBUG_RETURN(0);
+}
+
+static void
+init_node(IC_CLUSTER_CONFIG_LOAD *clu_conf, size_t size, void *config_struct)
+{
+  clu_conf->current_node_config= (void*)clu_conf->struct_memory;
+  clu_conf->struct_memory+= size;
+  memcpy(clu_conf->current_node_config, config_struct, size);
+}
+
+static int
+conf_serv_add_section(void *ic_conf,
+                      guint32 section_number,
+                      guint32 line_number,
+                      IC_STRING *section_name,
+                      guint32 pass)
+{
+  int error;
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  DEBUG_ENTRY("conf_serv_add_section");
+  DEBUG_IC_STRING(CONFIG_LEVEL, section_name);
+  (void)section_number;
+
+  if ((error= complete_section(ic_conf, line_number, pass)))
+    DEBUG_RETURN(error);
+  clu_conf->default_section= FALSE;
+  if (ic_cmp_null_term_str(data_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_DATA_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_nodes++;
+      clu_conf->conf->num_data_servers++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_DATA_SERVER_CONFIG),
+              (void*)&clu_conf->default_data_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found data server group"));
+  }
+  else if (ic_cmp_null_term_str(client_node_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_CLIENT_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_clients++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_CLIENT_CONFIG),
+              (void*)&clu_conf->default_client_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found client group"));
+  }
+  else if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_cluster_servers++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_CLUSTER_SERVER_CONFIG),
+              (void*)&clu_conf->default_cluster_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group"));
+  }
+  else if (ic_cmp_null_term_str(sql_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_sql_servers++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_SQL_SERVER_CONFIG),
+              (void*)&clu_conf->default_sql_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server group"));
+  }
+  else if (ic_cmp_null_term_str(rep_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_rep_servers++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_REP_SERVER_CONFIG),
+              (void*)&clu_conf->default_rep_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server group"));
+  }
+  else if (ic_cmp_null_term_str(file_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_FILE_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_file_servers++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_FILE_SERVER_CONFIG),
+              (void*)&clu_conf->default_file_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found file server group"));
+  }
+  else if (ic_cmp_null_term_str(restore_node_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_RESTORE_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_restore_nodes++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_RESTORE_CONFIG),
+              (void*)&clu_conf->default_restore_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found restore node group"));
+  }
+  else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_cluster_mgrs++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_CLUSTER_MANAGER_CONFIG),
+              (void*)&clu_conf->default_cluster_mgr_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group"));
+  }
+  else if (ic_cmp_null_term_str(socket_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_COMM_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_comms++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_SOCKET_LINK_CONFIG),
+              (void*)&clu_conf->default_socket_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found socket group"));
+  }
+  else
+  {
+    clu_conf->default_section= TRUE;
+    if (ic_cmp_null_term_str(data_server_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_data_server_config;
+      clu_conf->current_node_config_type= IC_DATA_SERVER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found data server default group"));
+    }
+    else if (ic_cmp_null_term_str(client_node_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_client_config;
+      clu_conf->current_node_config_type= IC_CLIENT_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found client default group"));
+    }
+    else if (ic_cmp_null_term_str(cluster_server_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_cluster_server_config;
+      clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server default group"));
+    }
+    else if (ic_cmp_null_term_str(sql_server_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_sql_server_config;
+      clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found sql server default group"));
+    }
+    else if (ic_cmp_null_term_str(rep_server_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_rep_server_config;
+      clu_conf->current_node_config_type= IC_REP_SERVER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found replication server default group"));
+    }
+    else if (ic_cmp_null_term_str(file_server_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_file_server_config;
+      clu_conf->current_node_config_type= IC_FILE_SERVER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found file server default group"));
+    }
+    else if (ic_cmp_null_term_str(restore_node_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_restore_config;
+      clu_conf->current_node_config_type= IC_RESTORE_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found restore default group"));
+    }
+    else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
+      clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group"));
+    }
+    else if (ic_cmp_null_term_str(socket_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_socket_config;
+      clu_conf->current_node_config_type= IC_COMM_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found socket default group"));
+    }
+    else
+    {
+      DEBUG_PRINT(CONFIG_LEVEL, ("No such config section"));
+      DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
+    }
+  }
+  DEBUG_RETURN(0);
+}
+
+static int
+conf_serv_add_key(void *ic_conf,
+                  guint32 section_number,
+                  guint32 line_number,
+                  IC_STRING *key_name,
+                  IC_STRING *data,
+                  guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  IC_CONFIG_ENTRY *conf_entry;
+  guint64 value;
+  gchar *struct_ptr;
+  guint64 num32_check;
+  gchar buf[128];
+  DEBUG_ENTRY("conf_serv_add_key");
+  DEBUG_IC_STRING(CONFIG_LEVEL, key_name);
+  DEBUG_IC_STRING(CONFIG_LEVEL, data);
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Line: %d, Section: %d, Key-value pair", (int)line_number,
+     (int)section_number));
+  (void)section_number;
+  (void)line_number;
+  (void)buf;
+
+  if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
+    DEBUG_RETURN(IC_ERROR_NO_SECTION_DEFINED_YET);
+  if (!(conf_entry= (IC_CONFIG_ENTRY*)ic_hashtable_search(glob_conf_hash,
+                                                          (void*)key_name)))
+    DEBUG_RETURN(IC_ERROR_NO_SUCH_CONFIG_KEY);
+  struct_ptr= (gchar*)clu_conf->current_node_config + conf_entry->offset;
+  if (!(conf_entry->config_types & (1 << clu_conf->current_node_config_type)))
+    DEBUG_RETURN(IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION);
+  if (conf_entry->is_mandatory && (pass != INITIAL_PASS))
+  {
+    ((IC_DATA_SERVER_CONFIG*)clu_conf->current_node_config)->mandatory_bits|=
+      (1 << conf_entry->mandatory_bit);
+  }
+  if (conf_entry->is_string_type)
+  {
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->size_string_memory+= (data->len+1);
+    }
+    else
+    {
+      strncpy(clu_conf->string_memory, data->str, data->len);
+      *(gchar**)struct_ptr= clu_conf->string_memory;
+      clu_conf->string_memory+= (data->len+1);
+    }
+    DEBUG_RETURN(0);
+  }
+  if (ic_conv_config_str_to_int(&value, data))
+    DEBUG_RETURN(IC_ERROR_WRONG_CONFIG_NUMBER);
+  if (conf_entry->is_boolean && value > 1)
+    DEBUG_RETURN(IC_ERROR_NO_BOOLEAN_VALUE);
+  num32_check= 1;
+  num32_check<<= 32;
+  if (!ic_cmp_null_term_str(node_id_str, key_name))
+  {
+    /*
+      We have found a node id
+    */
+    clu_conf->conf->max_node_id= MAX(value, clu_conf->conf->max_node_id);
+    if (!clu_conf->default_section && pass != INITIAL_PASS)
+    {
+      if (clu_conf->conf->node_config[value])
+      {
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Trying to define node %u twice", (guint32)value));
+        DEBUG_RETURN(IC_ERROR_NODE_ALREADY_DEFINED);
+      }
+      clu_conf->conf->node_config[value]= (gchar*)clu_conf->current_node_config;
+      clu_conf->conf->node_types[value]= 
+        clu_conf->current_node_config_type;
+    }
+  }
+  if (conf_entry->is_min_value_defined && conf_entry->min_value > value)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Parameter %s is smaller than min_value = %u",
+       ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->min_value));
+    DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+  }
+  else if (conf_entry->is_max_value_defined && conf_entry->max_value < value)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Parameter %s is larger than min_value = %u",
+      ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->max_value));
+    DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+  }
+  else if ((conf_entry->data_type == IC_UINT16 && value > 65535) ||
+           (conf_entry->data_type == IC_CHAR && value > 255) ||
+           (conf_entry->data_type == IC_BOOLEAN && value > 1) ||
+           (conf_entry->data_type == IC_UINT32 && value >= num32_check))
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Parameter %s is larger than its type",
+           ic_get_ic_string(key_name, (gchar*)&buf)));
+    DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+  }
+  if (pass == INITIAL_PASS)
+    DEBUG_RETURN(0);
+  /* Assign value of configuration variable according to its data type.  */
+  if (conf_entry->data_type == IC_CHAR ||
+      conf_entry->data_type == IC_BOOLEAN)
+    *(guint8*)struct_ptr= (guint8)value;
+  else if (conf_entry->data_type == IC_UINT16)
+    *(guint16*)struct_ptr= (guint16)value;
+  else if (conf_entry->data_type == IC_UINT32)
+    *(guint32*)struct_ptr= (guint32)value;
+  else if (conf_entry->data_type == IC_UINT64)
+    *(guint64*)struct_ptr= value;
+  else
+  {
+    g_assert(FALSE);
+    abort();
+    DEBUG_RETURN(1);
+  }
+  DEBUG_RETURN(0);
+}
+
+static int
+conf_serv_add_comment(void *ic_conf,
+                      guint32 section_number,
+                      guint32 line_number,
+                      IC_STRING *comment,
+                      guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  DEBUG_ENTRY("conf_serv_add_comment");
+  DEBUG_PRINT(CONFIG_LEVEL,
+              ("Line number %d in section %d was comment line",
+               line_number, section_number));
+  (void)section_number;
+  (void)line_number;
+  (void)comment;
+
+  if (pass == INITIAL_PASS)
+    clu_conf->comments.num_comments++;
+  DEBUG_RETURN(0);
+}
+
+static int
+conf_serv_verify_conf(void *ic_conf,
+                      guint32 line_number,
+                      guint32 pass)
+{
+  int error;
+  if ((error= complete_section(ic_conf, line_number, pass)))
+    DEBUG_RETURN(error);
+  return 0;
+}
+
+static void
+conf_init_end(void *ic_conf)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  if (clu_conf)
+  {
+    /*
+      We are now ready to release the temporary data structures we needed
+      to generate the configuration data structures. The permanent data
+      structures are released by the caller of the building of the
+      configuration data since many configuration files can use the same
+      memory container.
+    */
+    if (clu_conf->temp_mc_ptr)
+      clu_conf->temp_mc_ptr->mc_ops.ic_mc_free(clu_conf->temp_mc_ptr);
+  }
+  return;
+}
+
+static void
+conf_serv_end(void *ic_conf)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  DEBUG_ENTRY("conf_serv_end");
+  if (clu_conf)
+  {
+    if (clu_conf->conf->comm_hash)
+      ic_hashtable_destroy(clu_conf->conf->comm_hash);
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static IC_CONFIG_OPERATIONS config_server_ops =
+{
+  .ic_config_init = conf_serv_init,
+  .ic_add_section = conf_serv_add_section,
+  .ic_add_key     = conf_serv_add_key,
+  .ic_add_comment = conf_serv_add_comment,
+  .ic_config_verify = conf_serv_verify_conf,
+  .ic_init_end    = conf_init_end,
+  .ic_config_end  = conf_serv_end,
+};
+
+static IC_CLUSTER_CONFIG*
+ic_load_config_server_from_files(gchar *config_file,
+                                 IC_CONFIG_STRUCT *conf_server,
+                                 IC_CONFIG_ERROR *err_obj)
+{
+  gchar *conf_data_str;
+  guint64 conf_data_len;
+  IC_STRING conf_data;
+  int ret_val;
+  IC_CLUSTER_CONFIG *ret_ptr;
+  DEBUG_ENTRY("ic_load_config_server_from_files");
+
+  conf_server->clu_conf_ops= &config_server_ops;
+  conf_server->config_ptr.clu_conf= NULL;
+  DEBUG_PRINT(CONFIG_LEVEL, ("config_file = %s", config_file));
+  if (ic_get_file_contents(config_file, &conf_data_str,
+                           &conf_data_len))
+    goto file_open_error;
+
+  IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
+  ret_val= ic_build_config_data(&conf_data, conf_server, err_obj);
+  ic_free(conf_data.str);
+  if (ret_val == 1)
+  {
+    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+          "Error at Line number %u in file %s:\n%s\n",
+          err_obj->line_number,
+          config_file,
+          ic_get_error_message(err_obj->err_num));
+    ret_ptr= NULL;
+  }
+  else
+  {
+    ret_ptr= conf_server->config_ptr.clu_conf->conf;
+    if (build_hash_on_comms(ret_ptr, conf_server->config_ptr.clu_conf))
+    {
+      conf_serv_end(conf_server);
+      err_obj->err_num= IC_ERROR_MEM_ALLOC;
+      ret_ptr= NULL;
+    }
+  }
+  config_server_ops.ic_init_end(conf_server);
+  DEBUG_RETURN(ret_ptr);
+
+file_open_error:
+  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
+        "Couldn't open file %s\n", config_file);
+  err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
+  DEBUG_RETURN(NULL);
+}
