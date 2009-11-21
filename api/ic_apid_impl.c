@@ -52,7 +52,7 @@
 #include "ic_apid_start.ic"
 #include "ic_apid_range.ic"
 #include "ic_apid_where.ic"
-#include "ic_apid_assign.ic"
+#include "ic_apid_cond_assign.ic"
 #include "ic_apid_op.ic"
 #include "ic_apid_conn.ic"
 #include "ic_apid_table.ic"

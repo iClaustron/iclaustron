@@ -33,7 +33,7 @@ EXTRA_DIST =              ic_apic_int.h ic_apid_int.h \
                           ic_apid_handle_messages.ic ic_apid_exec_messages.ic \
                           ic_apid_rec_thread.ic ic_apid_start.ic \
                           ic_apid_range.ic ic_apid_where.ic \
-                          ic_apid_assign.ic ic_apid_op.ic \
+                          ic_apid_cond_assign.ic ic_apid_op.ic \
                           ic_apid_error.ic ic_apid_conn.ic \
                           ic_apid_table.ic \
                           ic_apic.ic \
