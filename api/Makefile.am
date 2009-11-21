@@ -27,7 +27,7 @@ libic_api_la_LIBADD = $(LDADD) \
 
 EXTRA_DIST =              ic_apic_int.h ic_apid_int.h \
                           ic_apid_impl.h ic_apid_static.h \
-                          ic_apid.ic \
+                          ic_apid_global.ic ic_apid_common.ic \
                           ic_apid_heartbeat.ic ic_apid_adaptive_send.ic \
                           ic_apid_send_message.ic ic_apid_send_thread.ic \
                           ic_apid_handle_messages.ic ic_apid_exec_messages.ic \

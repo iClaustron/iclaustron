@@ -109,33 +109,6 @@
 */
 
 /*
-  NDB Protocol support MODULE
-  ---------------------------
-  This module contains a number of common functions used by most modules
-*/
-
-
-/*
-  The NDB Protocol often makes use of module references. This is a 32-bit
-  entity that uniquely identifies a module anywhere in the cluster. It has
-  3 entities, a node id, a module id and an instance id which essentially
-  is a thread id. For iClaustron nodes we effectively use both module id
-  and thread id to indicate the thread number and thus we can handle up
-  to 65536 threads.
-*/
-static guint32
-ic_get_ic_reference(guint32 node_id, guint32 thread_id)
-{
-  return ((thread_id + IC_NDB_MIN_MODULE_ID_FOR_THREADS) << 16) + node_id;
-}
-/*
-static guint32
-ic_get_ndb_reference(guint32 node_id, guint32 module_id, guint32 thread_id)
-{
-  return (thread_id << 25) + (module_id << 16) + node_id;
-}
-*/
-/*
   GLOBAL DATA API INITIALISATION MODULE
   -------------------------------------
   This module contains the code to initialise and set-up and tear down the

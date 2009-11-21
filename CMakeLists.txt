@@ -402,7 +402,7 @@ target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API and Data Server API
 add_library(ic_api STATIC api/ic_apic_impl.c api/ic_apid_impl.c
-            api/ic_apid.ic
+            api/ic_apid_global.ic api/ic_apid_common.ic
             api/ic_apid_heartbeat.ic api/ic_apid_adaptive_send.ic
             api/ic_apid_send_message.ic api/ic_apid_send_thread.ic
             api/ic_apid_handle_messages.ic api/ic_apid_exec_message.ic
