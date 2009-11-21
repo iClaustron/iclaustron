@@ -401,9 +401,22 @@ add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API and Data Server API
-add_library(ic_api STATIC api/ic_apic.c api/ic_apid_impl.c
-            api/ic_apid_define.ic api/ic_apid_range.ic
-            api/ic_apid_where.ic api/ic_apid.ic
+add_library(ic_api STATIC api/ic_apic_impl.c api/ic_apid_impl.c
+            api/ic_apid.ic
+            api/ic_apid_heartbeat.ic api/ic_apid_adaptive_send.ic
+            api/ic_apid_send_message.ic api/ic_apid_send_thread.ic
+            api/ic_apid_handle_messages.ic api/ic_apid_exec_message.ic
+            api/ic_apid_rec_thread.ic api/ic_apid_start.ic
+            api/ic_apid_range.ic api/ic_apid_where.ic
+            api/ic_apid_cond_assign.ic api/ic_apid_op.ic
+            api/ic_apid_error.ic api/ic_apid_conn.ic
+            api/ic_apid_table.ic
+            api/ic_apic.ic
+            api/ic_apic_conf_param.ic api/ic_apic_conf_read_transl.ic
+            api/ic_apic_proto_supp.ic api/ic_apic_conf_read_proto.ic
+            api/ic_apic_conf_reader.ic api/ic_apic_conf_writer.ic
+            api/ic_apic_grid_conf_reader.ic api/ic_apic_if.ic
+            api/ic_apic_run_cs.ic api/ic_apic_conf_net_read.ic
             api/ic_apic_int.h api/ic_apid_int.h
             api/ic_apid_impl.h api/ic_apid_static.h)
 target_link_libraries(ic_api ic_port ic_util comm)

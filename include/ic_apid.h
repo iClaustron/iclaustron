@@ -62,6 +62,9 @@ typedef struct ic_apid_connection_ops IC_APID_CONNECTION_OPS;
 typedef struct ic_table_def IC_TABLE_DEF;
 typedef struct ic_table_def_ops IC_TABLE_DEF_OPS;
 
+typedef struct ic_index_def IC_INDEX_DEF;
+typedef struct ic_index_def_ops IC_INDEX_DEF_OPS;
+
 typedef struct ic_metadata_transaction IC_METADATA_TRANSACTION;
 typedef struct ic_metadata_transaction_ops IC_METADATA_TRANSACTION_OPS;
 
@@ -230,24 +233,20 @@ struct ic_table_def_ops
     fields and its keys.
   */
 
-  int (*ic_get_table_id)   (IC_TABLE_DEF *table_def);
+  int (*ic_get_table_id)   (IC_TABLE_DEF *table_def,
+                            guint32 *table_id);
   int (*ic_get_field_id)   (IC_TABLE_DEF *table_def,
                             const gchar *field_name,
                             guint32* field_id);
   int (*ic_get_field_name) (IC_TABLE_DEF *table_def,
-                            gchar **field_name,
-                            guint32 field_id);
+                            guint32 field_id,
+                            gchar **field_name);
   int (*ic_get_field_type) (IC_TABLE_DEF *table_def,
                             guint32 field_id,
                             IC_FIELD_TYPE *field_data_type);
   int (*ic_get_field_len)  (IC_TABLE_DEF *table_def,
                             guint32 field_id,
                             guint32 *field_len);
-  int (*ic_get_num_key_fields) (IC_TABLE_DEF *table_def,
-                                guint32 *num_key_fields);
-  int (*ic_get_key_field_id) (IC_TABLE_DEF *table_def,
-                              guint32 *field_id,
-                              guint32 key_field_id_order);
   /*
     The data buffer used by APID operations can either be defined by the
     user, or it's defined by the API. In the case of a buffer defined by
@@ -273,6 +272,24 @@ struct ic_table_def_ops
                             guint32 field_id,
                             guint32 *offset,
                             guint32 *null_bit_offset);
+};
+
+struct ic_index_def_ops
+{
+  /*
+    The index definition objcet is used to get data about an index. Data
+    about its fields and the table it's part of is derived from the
+    table definition object
+  */
+  int (*ic_get_index_id)   (IC_INDEX_DEF *index_def,
+                            guint32 *index_id);
+  int (*ic_get_table_id)   (IC_INDEX_DEF *index_def,
+                            guint32 *table_id);
+  int (*ic_get_num_key_fields) (IC_INDEX_DEF *index_def,
+                                guint32 *num_key_fields);
+  int (*ic_get_key_field_id) (IC_INDEX_DEF *index_def,
+                              guint32 key_field_id_order,
+                              guint32 *field_id);
 };
 
 struct ic_metadata_bind_ops
@@ -338,9 +355,7 @@ struct ic_apid_operation_ops
     will have the responsibility to free this memory later on.
 
     After the application have allocated a buffer on their own or
-  */
 
-  /*
     Handling of normal-sized fields
     -------------------------------
     Define a field to be used in this operation. One must define the buffer
@@ -1527,6 +1542,11 @@ struct ic_apid_global
 struct ic_table_def
 {
   IC_TABLE_DEF_OPS *table_def_ops;
+};
+
+struct ic_index_def
+{
+  IC_INDEX_DEF_OPS *index_def_ops;
 };
 
 struct ic_conditional_assignment

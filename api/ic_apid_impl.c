@@ -40,8 +40,9 @@
 #include "ic_apid_static.h"
 
 /* Implementation files of the iClaustron Data API */
-#include "ic_apid.ic"
+/* The error object */
 #include "ic_apid_error.ic"
+/* Data API internals */
 #include "ic_apid_heartbeat.ic"
 #include "ic_apid_adaptive_send.ic"
 #include "ic_apid_send_message.ic"
@@ -53,6 +54,8 @@
 #include "ic_apid_range.ic"
 #include "ic_apid_where.ic"
 #include "ic_apid_cond_assign.ic"
+#include "ic_apid_global.ic"
 #include "ic_apid_op.ic"
 #include "ic_apid_conn.ic"
+#include "ic_apid_trans.ic"
 #include "ic_apid_table.ic"

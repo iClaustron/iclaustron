@@ -4,4 +4,4 @@ wc -l *.ac *.sh.in *.am */*.am api/*.[ch] cluster_client/*.[ch] cluster_mgr/*.[y
   scripts/*.sh.in README AUTHORS README-CONFIG NEWS TODO \
   api/*.ic \
   *.txt */*.txt FindGLIB2.cmake include/cmake_config.h.in \
-  build_test/*.c
+  build_test/*.c svn_tags.sh
