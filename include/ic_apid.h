@@ -1335,6 +1335,7 @@ struct ic_transaction_ops
 
 struct ic_transaction_hint_ops
 {
+  int (*ic_define_hint) (IC_TRANSACTION_HINT *trans_hint);
 };
 
 struct ic_apid_error_ops

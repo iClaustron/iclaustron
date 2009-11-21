@@ -34,3 +34,15 @@ static IC_TRANSACTION_OPS glob_trans_ops=
 {
   .ic_get_ongoing_op         = trans_get_ongoing_op
 };
+
+static int
+trans_hint_define_hint(IC_TRANSACTION_HINT *trans_hint)
+{
+  (void)trans_hint;
+  return 0;
+}
+
+static IC_TRANSACTION_HINT_OPS glob_trans_hint_ops=
+{
+  .ic_define_hint           = trans_hint_define_hint
+};
