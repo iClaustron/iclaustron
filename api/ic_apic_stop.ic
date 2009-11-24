@@ -1,0 +1,49 @@
+/* Copyright (C) 2009 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Stop Cluster Server
+  ---------------------------
+  This module is a support module to the Run Cluster Server that implements
+  the to stop the Cluster Server by unlocking the configuration and
+  communicating the close down to the other Cluster Servers in the grid.
+  It implements the stop_cluster_server method in the Run Cluster Server
+  interface.
+*/
+static int unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj);
+
+static int
+stop_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
+{
+  IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
+  DEBUG_ENTRY("stop_cluster_server");
+
+  run_obj->tp_state->tp_ops.ic_threadpool_stop(run_obj->tp_state);
+  DEBUG_RETURN(unlock_cv_file(run_obj));
+}
+
+static int
+unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  int error= 0;
+  if (run_obj->locked_configuration)
+  {
+    error= write_config_version_file(run_obj->config_dir,
+                                     run_obj->state.config_version_number,
+                                     CONFIG_STATE_IDLE,
+                                     (guint32)0);
+  }
+  return error;
+}
