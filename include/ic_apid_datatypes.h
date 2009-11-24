@@ -142,4 +142,19 @@ enum ic_field_type
   IC_API_VARIABLE_SIZE_CHAR= 12,
   IC_API_BLOB_TYPE= 13
 };
+
+enum ic_index_type
+{
+  IC_PRIMARY_KEY= 0,
+  IC_UNIQUE_KEY= 1,
+  IC_ORDERED_INDEX= 2
+};
+
+enum ic_partition_type
+{
+  IC_LINEAR_KEY_PARTITION= 0,
+  IC_KEY_PARTITION= 1,
+  IC_RANGE_PARTITION= 2,
+  IC_LIST_PARTITION= 3
+};
 #endif

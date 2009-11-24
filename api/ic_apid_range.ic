@@ -35,6 +35,7 @@ range_define_range_part(IC_RANGE_CONDITION *range,
                         guint32 start_len,
                         gchar *end_ptr,
                         guint32 end_len,
+                        IC_BITMAP *partition_bitmap,
                         IC_LOWER_RANGE_TYPE lower_range_type,
                         IC_UPPER_RANGE_TYPE upper_range_type)
 {
@@ -45,6 +46,7 @@ range_define_range_part(IC_RANGE_CONDITION *range,
   (void)start_len;
   (void)end_ptr;
   (void)end_len;
+  (void)partition_bitmap;
   (void)lower_range_type;
   (void)upper_range_type;
   return 0;

@@ -68,6 +68,9 @@ typedef struct ic_index_def_ops IC_INDEX_DEF_OPS;
 typedef struct ic_metadata_transaction IC_METADATA_TRANSACTION;
 typedef struct ic_metadata_transaction_ops IC_METADATA_TRANSACTION_OPS;
 
+typedef struct ic_alter_table IC_ALTER_TABLE;
+typedef struct ic_alter_table_ops IC_ALTER_TABLE_OPS;
+
 typedef struct ic_transaction IC_TRANSACTION;
 typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
 typedef guint32 IC_SAVEPOINT_ID;
@@ -108,6 +111,8 @@ typedef enum ic_scan_op IC_SCAN_OP;
 typedef enum ic_commit_state IC_COMMIT_STATE;
 
 typedef enum ic_field_type IC_FIELD_TYPE;
+typedef enum ic_index_type IC_INDEX_TYPE;
+typedef enum ic_partition_type IC_PARTITION_TYPE;
 
 #define IC_NO_FIELD_ID 0xFFFFFFF0
 #define IC_NO_NULL_OFFSET 0xFFFFFFF1
@@ -336,6 +341,127 @@ struct ic_metadata_bind_ops
        (*ic_table_unbind) (IC_APID_GLOBAL *apid_global,
                            IC_APID_CONNECTION *apid_conn,
                            IC_TABLE_DEF *table_def);
+};
+
+struct ic_metadata_transaction_ops
+{
+  /*
+    A metadata transaction consists of a number of operations, each operation
+    performs creation of a table, adding an index, altering a table, drop of
+    a table and so forth.
+
+    There are certain rules to what things can be combined into metadata
+    transactions. For each operation one needs to create an IC_ALTER_TABLE
+    object by ic_create_metadata_op which also connects this operation to
+    a metadata transaction.
+  */
+  int (*ic_create_metadata_op) (IC_METADATA_TRANSACTION *md_trans,
+                                IC_ALTER_TABLE **alter_table);
+
+  /*
+    Commit the metadata transaction, it's mostly the atomic part of
+    transactions we are dealing in here. Thus the metadata transaction
+    either will be fully done or nothing will be done. If it is reported
+    as done back to the API then it will also be durable.
+  */
+  int (*ic_commit) (IC_METADATA_TRANSACTION *md_trans);
+
+  int (*ic_free_md_trans) (IC_METADATA_TRANSACTION *md_trans);
+};
+
+struct ic_alter_table_ops
+{
+  /*
+    Fields are added as part of create table, or as part of an alter table.
+    There are certain restrictions on what fields that can be added as
+    part of alter table, as alter table is done as an online operation.
+  */
+  int (*ic_add_field) (IC_ALTER_TABLE *alter_table,
+                       IC_METADATA_TRANSACTION *md_trans,
+                       const gchar *field_name,
+                       IC_FIELD_TYPE field_data_type,
+                       guint32 field_size,
+                       gboolean is_nullable,
+                       gboolean is_disk_stored);
+
+  /* One or more fields can be dropped in an alter table operation */
+  int (*ic_drop_field) (IC_ALTER_TABLE *alter_table,
+                        IC_METADATA_TRANSACTION *md_trans,
+                        const gchar *field_name);
+
+  /*
+    Indexes are added as part of create table, or as part of an alter table.
+  */
+  int (*ic_add_index) (IC_ALTER_TABLE *alter_table,
+                       IC_METADATA_TRANSACTION *md_trans,
+                       const gchar *index_name,
+                       const gchar **field_names,
+                       guint32 num_fields,
+                       IC_INDEX_TYPE index_type,
+                       gboolean is_null_values_in_index);
+
+  /* One or more indexes can be dropped in an alter table operation */
+  int (*ic_drop_index) (IC_ALTER_TABLE *alter_table,
+                        IC_METADATA_TRANSACTION *md_trans,
+                        const gchar *index_name);
+
+  /*
+    It's possible to define partitioning as part of create table, it's
+    an optional call as part of create table.
+  */
+  int (*ic_define_partitioning) (IC_ALTER_TABLE *alter_table,
+                                 IC_PARTITION_TYPE partition_type,
+                                 const gchar **field_names,
+                                 guint32 num_fields,
+                                 const gchar **partition_names,
+                                 guint32 *map_partition_to_nodegroup,
+                                 const gchar **map_partition_to_tablespace,
+                                 guint32 num_partitions);
+
+  /*
+    To create a table one needs to add at least one field, one also needs to
+    add one primary key. It is also optional to define partitioning. No other
+    things are needed or allowed to create a table.
+  */
+  int (*ic_create_table) (IC_ALTER_TABLE *alter_table,
+                          IC_METADATA_TRANSACTION *md_trans,
+                          const gchar *table_name,
+                          const gchar *db_name,
+                          const gchar *schema_name);
+
+  /*
+    Drop table is always called as the single method call, no more calls are
+    needed to define dropping a table.
+  */
+  int (*ic_drop_table) (IC_ALTER_TABLE *alter_table,
+                        IC_METADATA_TRANSACTION *md_trans,
+                        const gchar *table_name,
+                        const gchar *db_name,
+                        const gchar *schema_name);
+
+  /*
+    Alter table adds or drops one component (field or indexes). If the
+    transaction already contains a create table operation, then this operation
+    can only add indexes. If the table already exists it is possible to add
+    fields, drop fields, add indexes and drop indexes.
+  */
+  int (*ic_alter_table) (IC_ALTER_TABLE *alter_table,
+                         IC_METADATA_TRANSACTION *md_trans,
+                         const gchar *table_name,
+                         const gchar *db_name,
+                         const gchar *schema_name);
+
+  /*
+    Rename table is also a single call to define.
+  */
+  int (*ic_rename_table) (IC_ALTER_TABLE *alter_table,
+                          IC_METADATA_TRANSACTION *md_trans,
+                          const gchar *old_table_name,
+                          const gchar *old_db_name,
+                          const gchar *old_schema_name,
+                          const gchar *new_table_name,
+                          const gchar *new_db_name,
+                          const gchar *new_schema_name);
 };
 
 struct ic_apid_operation_ops
@@ -670,6 +796,7 @@ struct ic_range_condition_ops
                                guint32 start_len,
                                gchar* end_ptr,
                                guint32 end_len,
+                               IC_BITMAP *partition_bitmap,
                                IC_LOWER_RANGE_TYPE lower_range_type,
                                IC_UPPER_RANGE_TYPE upper_range_type);
 
@@ -1518,6 +1645,10 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
                          guint32 null_buffer_size, /* in bytes */
                          int *error);
 
+IC_METADATA_TRANSACTION*
+ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
+                               guint32 cluster_id);
+
 /*
   EXTERNALLY VISIBLE DATA STRUCTURES
   ----------------------------------
@@ -1574,6 +1705,11 @@ struct ic_apid_operation
 struct ic_metadata_transaction
 {
   IC_METADATA_TRANSACTION_OPS *md_trans_ops;
+};
+
+struct ic_alter_table
+{
+  IC_ALTER_TABLE_OPS *alter_table_ops;
 };
 
 struct ic_transaction
