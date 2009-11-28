@@ -157,4 +157,11 @@ enum ic_partition_type
   IC_RANGE_PARTITION= 2,
   IC_LIST_PARTITION= 3
 };
+
+enum ic_tablespace_access_mode
+{
+  IC_TABLESPACE_READ_WRITE= 0,
+  IC_TABLESPACE_READ_ONLY= 1,
+  IC_TABLESPACE_NO_ACCESS= 2
+};
 #endif

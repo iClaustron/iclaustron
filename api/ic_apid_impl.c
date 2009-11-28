@@ -62,3 +62,4 @@
 #include "ic_apid_conn.ic"
 #include "ic_apid_trans.ic"
 #include "ic_apid_table.ic"
+#include "ic_apid_tablespace.ic"

@@ -71,6 +71,9 @@ typedef struct ic_metadata_transaction_ops IC_METADATA_TRANSACTION_OPS;
 typedef struct ic_alter_table IC_ALTER_TABLE;
 typedef struct ic_alter_table_ops IC_ALTER_TABLE_OPS;
 
+typedef struct ic_alter_tablespace IC_ALTER_TABLESPACE;
+typedef struct ic_alter_tablespace_ops IC_ALTER_TABLESPACE_OPS;
+
 typedef struct ic_transaction IC_TRANSACTION;
 typedef struct ic_transaction_ops IC_TRANSACTION_OPS;
 typedef guint32 IC_SAVEPOINT_ID;
@@ -80,7 +83,6 @@ typedef struct ic_transaction_hint_ops IC_TRANSACTION_HINT_OPS;
 
 typedef struct ic_apid_operation IC_APID_OPERATION;
 typedef struct ic_apid_operation_ops IC_APID_OPERATION_OPS;
-
 
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_range_condition_ops IC_RANGE_CONDITION_OPS;
@@ -113,6 +115,7 @@ typedef enum ic_commit_state IC_COMMIT_STATE;
 typedef enum ic_field_type IC_FIELD_TYPE;
 typedef enum ic_index_type IC_INDEX_TYPE;
 typedef enum ic_partition_type IC_PARTITION_TYPE;
+typedef enum ic_tablespace_access_mode IC_TABLESPACE_ACCESS_MODE;
 
 #define IC_NO_FIELD_ID 0xFFFFFFF0
 #define IC_NO_NULL_OFFSET 0xFFFFFFF1
@@ -358,6 +361,9 @@ struct ic_metadata_transaction_ops
   int (*ic_create_metadata_op) (IC_METADATA_TRANSACTION *md_trans,
                                 IC_ALTER_TABLE **alter_table);
 
+  int (*ic_create_tablespace_op) (IC_METADATA_TRANSACTION *md_trans,
+                                  IC_ALTER_TABLESPACE **alter_ts);
+
   /*
     Commit the metadata transaction, it's mostly the atomic part of
     transactions we are dealing in here. Thus the metadata transaction
@@ -377,7 +383,6 @@ struct ic_alter_table_ops
     part of alter table, as alter table is done as an online operation.
   */
   int (*ic_add_field) (IC_ALTER_TABLE *alter_table,
-                       IC_METADATA_TRANSACTION *md_trans,
                        const gchar *field_name,
                        IC_FIELD_TYPE field_data_type,
                        guint32 field_size,
@@ -386,14 +391,12 @@ struct ic_alter_table_ops
 
   /* One or more fields can be dropped in an alter table operation */
   int (*ic_drop_field) (IC_ALTER_TABLE *alter_table,
-                        IC_METADATA_TRANSACTION *md_trans,
                         const gchar *field_name);
 
   /*
     Indexes are added as part of create table, or as part of an alter table.
   */
   int (*ic_add_index) (IC_ALTER_TABLE *alter_table,
-                       IC_METADATA_TRANSACTION *md_trans,
                        const gchar *index_name,
                        const gchar **field_names,
                        guint32 num_fields,
@@ -402,7 +405,6 @@ struct ic_alter_table_ops
 
   /* One or more indexes can be dropped in an alter table operation */
   int (*ic_drop_index) (IC_ALTER_TABLE *alter_table,
-                        IC_METADATA_TRANSACTION *md_trans,
                         const gchar *index_name);
 
   /*
@@ -424,7 +426,6 @@ struct ic_alter_table_ops
     things are needed or allowed to create a table.
   */
   int (*ic_create_table) (IC_ALTER_TABLE *alter_table,
-                          IC_METADATA_TRANSACTION *md_trans,
                           const gchar *table_name,
                           const gchar *db_name,
                           const gchar *schema_name);
@@ -434,7 +435,6 @@ struct ic_alter_table_ops
     needed to define dropping a table.
   */
   int (*ic_drop_table) (IC_ALTER_TABLE *alter_table,
-                        IC_METADATA_TRANSACTION *md_trans,
                         const gchar *table_name,
                         const gchar *db_name,
                         const gchar *schema_name);
@@ -446,7 +446,6 @@ struct ic_alter_table_ops
     fields, drop fields, add indexes and drop indexes.
   */
   int (*ic_alter_table) (IC_ALTER_TABLE *alter_table,
-                         IC_METADATA_TRANSACTION *md_trans,
                          const gchar *table_name,
                          const gchar *db_name,
                          const gchar *schema_name);
@@ -455,13 +454,118 @@ struct ic_alter_table_ops
     Rename table is also a single call to define.
   */
   int (*ic_rename_table) (IC_ALTER_TABLE *alter_table,
-                          IC_METADATA_TRANSACTION *md_trans,
                           const gchar *old_table_name,
                           const gchar *old_db_name,
                           const gchar *old_schema_name,
                           const gchar *new_table_name,
                           const gchar *new_db_name,
                           const gchar *new_schema_name);
+};
+
+struct ic_alter_tablespace_ops
+{
+  /*
+    Initial size of the datafile created, this is used for tablespace
+    and log file groups. One data file is created for each tablespace
+    and log file group and additional can be created by using
+    add data file functions.
+   */
+  int (*ic_set_initial_size) (IC_ALTER_TABLESPACE *alter_ts,
+                              guint64 size);
+
+  /* Memory buffer size for REDO or UNDO log file group.  */
+  int (*ic_set_buffer_size) (IC_ALTER_TABLESPACE *alter_ts,
+                             guint64 buf_size);
+
+  /*
+    Auto extend size is how much the tablespace will automatically extend
+    itself when it becomes full.
+  */
+  int (*ic_set_autoextend_size) (IC_ALTER_TABLESPACE *alter_ts,
+                                 guint64 auto_extend_size);
+
+  /* The tablespace will never grow beyond its maximum size.  */
+  int (*ic_set_max_size) (IC_ALTER_TABLESPACE *alter_ts,
+                          guint64 ts_max_size);
+  /*
+    Extent size can only be set at creation time. Extent size is the
+    size that each table allocates at a time from the tablespace.
+    It is thus the allocation unit of the tablespace. It is also
+    only possible to have one extent size per tablespace, so it's not
+    possible to set this per data file.
+  */
+  int (*ic_set_extent_size) (IC_ALTER_TABLESPACE *alter_ts,
+                             guint64 extent_size);
+
+  /*
+    Which nodegroup should the tablespace/log file group be created in.
+    Default behaviour is that it is created in all nodegroups.
+  */
+  int (*ic_set_nodegroup) (IC_ALTER_TABLESPACE *alter_ts,
+                           guint32 node_group);
+
+  /*
+    Create a tablespace with the given name and which will use the
+    given Log File Group as REDO and UNDO log file. The data file
+    name is the name of the initial file created for the tablespace.
+    It is either an indirect filename based off of the NDB data
+    directory or a full file name.
+  */
+  int (*ic_create_tablespace) (IC_ALTER_TABLESPACE *alter_ts,
+                               const gchar *tablespace_name,
+                               const gchar *data_file_name,
+                               const gchar *log_filegroup_name,
+                               const gchar *tablespace_comment);
+
+  /*
+    Log file groups can be either UNDO log files or REDO log files.
+    One file is mapped to the log file group and this file isn't
+    autoextendable, thus the initial size is the final size. It is
+    however possible to add new log files to a log file group.
+  */
+  int (*ic_create_undo_log_file_group) (IC_ALTER_TABLESPACE *alter_ts,
+                                        const gchar *log_file_group_name,
+                                        const gchar *data_file_name,
+                                        guint64 file_size,
+                                        const gchar *comment);
+
+  int (*ic_create_redo_log_file_group) (IC_ALTER_TABLESPACE *alter_ts,
+                                        const gchar *log_file_group_name,
+                                        const gchar *data_file_name,
+                                        guint64 file_size,
+                                        const gchar *comment);
+
+  /* Drop the entire tablespace with all its data files */
+  int (*ic_drop_tablespace) (IC_ALTER_TABLESPACE *alter_ts,
+                             const gchar *tablespace_name);
+
+  /* Drop the log file group and all its data files */
+  int (*ic_drop_log_file_group) (IC_ALTER_TABLESPACE *alter_ts,
+                                 const gchar *log_file_group_name);
+
+  /*
+    It's possible to add a datafile, before calling this function it is
+    possible to set initial size, auto extend size, maximum size.
+  */
+  int (*ic_add_ts_datafile) (IC_ALTER_TABLESPACE *alter_ts,
+                             const gchar *tablespace_name,
+                             const gchar *data_file_name);
+
+  int (*ic_add_lg_datafile) (IC_ALTER_TABLESPACE *alter_ts,
+                             const gchar *log_file_group_name,
+                             const gchar *data_file_name);
+
+  /*
+    It is possible to change maximum data file size, auto extend size and
+    initial size for a data file.
+  */
+  int (*ic_alter_ts_datafile) (IC_ALTER_TABLESPACE *alter_ts,
+                               const gchar *tablespace_name,
+                               const gchar *data_file_name);
+
+  int (*ic_set_tablespace_access_mode) (IC_ALTER_TABLESPACE *alter_ts,
+                                      const gchar *tablespace_name,
+                                      IC_TABLESPACE_ACCESS_MODE access_mode);
 };
 
 struct ic_apid_operation_ops
@@ -1710,6 +1814,11 @@ struct ic_metadata_transaction
 struct ic_alter_table
 {
   IC_ALTER_TABLE_OPS *alter_table_ops;
+};
+
+struct ic_alter_tablespace
+{
+  IC_ALTER_TABLESPACE_OPS *alter_tablespace_ops;
 };
 
 struct ic_transaction
