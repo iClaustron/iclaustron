@@ -35,7 +35,7 @@ EXTRA_DIST =              ic_apic_int.h ic_apid_int.h \
                           ic_apid_range.ic ic_apid_where.ic \
                           ic_apid_cond_assign.ic ic_apid_op.ic \
                           ic_apid_error.ic ic_apid_conn.ic \
-                          ic_apid_table.ic \
+                          ic_apid_table.ic ic_apid_tablespace.ic \
                           ic_apic.ic \
                           ic_apic_conf_param.ic ic_apic_conf_read_transl.ic \
                           ic_apic_proto_supp.ic ic_apic_conf_read_proto.ic \

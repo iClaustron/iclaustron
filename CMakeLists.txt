@@ -410,7 +410,7 @@ add_library(ic_api STATIC api/ic_apic_impl.c api/ic_apid_impl.c
             api/ic_apid_range.ic api/ic_apid_where.ic
             api/ic_apid_cond_assign.ic api/ic_apid_op.ic
             api/ic_apid_error.ic api/ic_apid_conn.ic
-            api/ic_apid_table.ic
+            api/ic_apid_table.ic api/ic_apid_tablespace.ic
             api/ic_apic.ic
             api/ic_apic_conf_param.ic api/ic_apic_conf_read_transl.ic
             api/ic_apic_proto_supp.ic api/ic_apic_conf_read_proto.ic
