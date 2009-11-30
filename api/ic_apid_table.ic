@@ -159,3 +159,216 @@ static IC_INDEX_DEF_OPS glob_index_def_ops=
   .ic_get_num_key_fields     = index_def_get_num_key_fields,
   .ic_get_key_field_id       = index_def_get_key_field_id
 };
+
+
+static int
+at_add_field(IC_ALTER_TABLE *alter_table,
+             const gchar *field_name,
+             IC_FIELD_TYPE field_type,
+             guint32 field_size,
+             gboolean is_nullable,
+             gboolean is_disk_stored)
+{
+  (void)alter_table;
+  (void)field_name;
+  (void)field_type;
+  (void)field_size;
+  (void)is_nullable;
+  (void)is_disk_stored;
+  return 0;
+}
+
+static int
+at_set_charset(IC_ALTER_TABLE *alter_table,
+               const gchar *field_name,
+               guint32 cs_id)
+{
+  (void)alter_table;
+  (void)field_name;
+  (void)cs_id;
+  return 0;
+}
+
+static int
+at_set_decimal_field(IC_ALTER_TABLE *alter_table,
+                     const gchar *field_name,
+                     guint32 scale,
+                     guint32 precision)
+{
+  (void)alter_table;
+  (void)field_name;
+  (void)scale;
+  (void)precision;
+  return 0;
+}
+
+static int
+at_drop_field(IC_ALTER_TABLE *alter_table,
+              const gchar *field_name)
+{
+  (void)alter_table;
+  (void)field_name;
+  return 0;
+}
+
+static int
+at_add_index(IC_ALTER_TABLE *alter_table,
+             const gchar *index_name,
+             const gchar **field_names,
+             guint32 num_fields,
+             IC_INDEX_TYPE index_type,
+             gboolean is_null_values_in_index_allowed)
+{
+  (void)alter_table;
+  (void)index_name;
+  (void)field_names;
+  (void)num_fields;
+  (void)index_type;
+  (void)is_null_values_in_index_allowed;
+  return 0;
+}
+
+static int
+at_drop_index(IC_ALTER_TABLE *alter_table,
+              const gchar *index_name)
+{
+  (void)alter_table;
+  (void)index_name;
+  return 0;
+}
+
+static int
+at_define_partitioning(IC_ALTER_TABLE *alter_table,
+                       IC_PARTITION_TYPE partition_type,
+                       const gchar **field_names,
+                       guint32 num_fields,
+                       const gchar **partition_names,
+                       guint32 *map_partition_to_nodegroup,
+                       const gchar **map_partition_to_tablespace,
+                       guint32 num_partitions)
+{
+  (void)alter_table;
+  (void)partition_type;
+  (void)field_names;
+  (void)num_fields;
+  (void)partition_names;
+  (void)map_partition_to_nodegroup;
+  (void)map_partition_to_tablespace;
+  (void)num_partitions;
+  return 0;
+}
+
+static int
+at_create_table(IC_ALTER_TABLE *alter_table,
+                const gchar *table_name,
+                const gchar *db_name,
+                const gchar *schema_name,
+                const gchar *tablespace_name)
+{
+  (void)alter_table;
+  (void)table_name;
+  (void)db_name;
+  (void)schema_name;
+  (void)tablespace_name;
+  return 0;
+}
+
+static int
+at_drop_table(IC_ALTER_TABLE *alter_table,
+              const gchar *table_name,
+              const gchar *db_name,
+              const gchar *schema_name)
+{
+  (void)alter_table;
+  (void)table_name;
+  (void)db_name;
+  (void)schema_name;
+  return 0;
+}
+
+static int
+at_alter_table(IC_ALTER_TABLE *alter_table,
+               const gchar *table_name,
+               const gchar *db_name,
+               const gchar *schema_name)
+{
+  (void)alter_table;
+  (void)table_name;
+  (void)db_name;
+  (void)schema_name;
+  return 0;
+}
+
+static int
+at_rename_table(IC_ALTER_TABLE *alter_table,
+                const gchar *old_table_name,
+                const gchar *old_db_name,
+                const gchar *old_schema_name,
+                const gchar *new_table_name,
+                const gchar *new_db_name,
+                const gchar *new_schema_name)
+{
+  (void)alter_table;
+  (void)old_table_name;
+  (void)old_db_name;
+  (void)old_schema_name;
+  (void)new_table_name;
+  (void)new_db_name;
+  (void)new_schema_name;
+  return 0;
+}
+
+static IC_ALTER_TABLE_OPS glob_alter_table_ops=
+{
+  .ic_add_field              = at_add_field,
+  .ic_set_charset            = at_set_charset,
+  .ic_set_decimal_field      = at_set_decimal_field,
+  .ic_drop_field             = at_drop_field,
+  .ic_add_index              = at_add_index,
+  .ic_drop_index             = at_drop_index,
+  .ic_define_partitioning    = at_define_partitioning,
+  .ic_create_table           = at_create_table,
+  .ic_drop_table             = at_drop_table,
+  .ic_alter_table            = at_alter_table,
+  .ic_rename_table           = at_rename_table
+};
+
+static int
+mdt_create_metadata_op(IC_METADATA_TRANSACTION *md_trans,
+                       IC_ALTER_TABLE **alter_table)
+{
+  (void)md_trans;
+  (void)alter_table;
+  return 0;
+}
+
+static int
+mdt_create_tablespace_op(IC_METADATA_TRANSACTION *md_trans,
+                         IC_ALTER_TABLESPACE **alter_ts)
+{
+  (void)md_trans;
+  (void)alter_ts;
+  return 0;
+}
+
+static int
+mdt_md_commit(IC_METADATA_TRANSACTION *md_trans)
+{
+  (void)md_trans;
+  return 0;
+}
+
+static int
+mdt_free_md_trans(IC_METADATA_TRANSACTION *md_trans)
+{
+  (void)md_trans;
+  return 0;
+}
+
+static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
+{
+  .ic_create_metadata_op     = mdt_create_metadata_op,
+  .ic_create_tablespace_op   = mdt_create_tablespace_op,
+  .ic_md_commit              = mdt_md_commit,
+  .ic_free_md_trans          = mdt_free_md_trans
+};

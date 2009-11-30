@@ -361,6 +361,10 @@ struct ic_metadata_transaction_ops
   int (*ic_create_metadata_op) (IC_METADATA_TRANSACTION *md_trans,
                                 IC_ALTER_TABLE **alter_table);
 
+  /*
+    Create a metadata transaction operation for altering/dropping/creating
+    a tablespace.
+  */
   int (*ic_create_tablespace_op) (IC_METADATA_TRANSACTION *md_trans,
                                   IC_ALTER_TABLESPACE **alter_ts);
 
@@ -370,7 +374,7 @@ struct ic_metadata_transaction_ops
     either will be fully done or nothing will be done. If it is reported
     as done back to the API then it will also be durable.
   */
-  int (*ic_commit) (IC_METADATA_TRANSACTION *md_trans);
+  int (*ic_md_commit) (IC_METADATA_TRANSACTION *md_trans);
 
   int (*ic_free_md_trans) (IC_METADATA_TRANSACTION *md_trans);
 };
@@ -381,13 +385,26 @@ struct ic_alter_table_ops
     Fields are added as part of create table, or as part of an alter table.
     There are certain restrictions on what fields that can be added as
     part of alter table, as alter table is done as an online operation.
+
+    If at least one field is defined to be disk stored, then the table
+    must have a tablespace attached to it, or attached to the individual
+    partitions.
   */
   int (*ic_add_field) (IC_ALTER_TABLE *alter_table,
                        const gchar *field_name,
-                       IC_FIELD_TYPE field_data_type,
+                       IC_FIELD_TYPE field_type,
                        guint32 field_size,
                        gboolean is_nullable,
                        gboolean is_disk_stored);
+
+  int (*ic_set_charset) (IC_ALTER_TABLE *alter_table,
+                         const gchar *field_name,
+                         guint32 cs_id);
+
+  int (*ic_set_decimal_field) (IC_ALTER_TABLE *alter_table,
+                               const gchar *field_name,
+                               guint32 scale,
+                               guint32 precision);
 
   /* One or more fields can be dropped in an alter table operation */
   int (*ic_drop_field) (IC_ALTER_TABLE *alter_table,
@@ -424,11 +441,16 @@ struct ic_alter_table_ops
     To create a table one needs to add at least one field, one also needs to
     add one primary key. It is also optional to define partitioning. No other
     things are needed or allowed to create a table.
+
+    The tablespace name is required if the table uses disk data and no
+    partitioning have been defined where each partition is mapped to a
+    specific tablespace.
   */
   int (*ic_create_table) (IC_ALTER_TABLE *alter_table,
                           const gchar *table_name,
                           const gchar *db_name,
-                          const gchar *schema_name);
+                          const gchar *schema_name,
+                          const gchar *tablespace_name);
 
   /*
     Drop table is always called as the single method call, no more calls are
@@ -487,6 +509,7 @@ struct ic_alter_tablespace_ops
   /* The tablespace will never grow beyond its maximum size.  */
   int (*ic_set_max_size) (IC_ALTER_TABLESPACE *alter_ts,
                           guint64 ts_max_size);
+
   /*
     Extent size can only be set at creation time. Extent size is the
     size that each table allocates at a time from the tablespace.
@@ -547,21 +570,21 @@ struct ic_alter_tablespace_ops
     It's possible to add a datafile, before calling this function it is
     possible to set initial size, auto extend size, maximum size.
   */
-  int (*ic_add_ts_datafile) (IC_ALTER_TABLESPACE *alter_ts,
-                             const gchar *tablespace_name,
-                             const gchar *data_file_name);
+  int (*ic_add_ts_data_file) (IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *tablespace_name,
+                              const gchar *data_file_name);
 
-  int (*ic_add_lg_datafile) (IC_ALTER_TABLESPACE *alter_ts,
-                             const gchar *log_file_group_name,
-                             const gchar *data_file_name);
+  int (*ic_add_lg_data_file) (IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *log_file_group_name,
+                              const gchar *data_file_name);
 
   /*
     It is possible to change maximum data file size, auto extend size and
     initial size for a data file.
   */
-  int (*ic_alter_ts_datafile) (IC_ALTER_TABLESPACE *alter_ts,
-                               const gchar *tablespace_name,
-                               const gchar *data_file_name);
+  int (*ic_alter_ts_data_file) (IC_ALTER_TABLESPACE *alter_ts,
+                                const gchar *tablespace_name,
+                                const gchar *data_file_name);
 
   int (*ic_set_tablespace_access_mode) (IC_ALTER_TABLESPACE *alter_ts,
                                       const gchar *tablespace_name,
