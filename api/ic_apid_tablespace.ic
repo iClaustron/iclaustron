@@ -13,59 +13,66 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-int ts_set_initial_size(IC_ALTER_TABLESPACE *alter_ts,
-                        guint64 size)
+static int
+ts_set_initial_size(IC_ALTER_TABLESPACE *alter_ts,
+                    guint64 size)
 {
   (void)alter_ts;
   (void)size;
   return 0;
 }
 
-int ts_set_buffer_size(IC_ALTER_TABLESPACE *alter_ts,
-                       guint64 buf_size)
+static int
+ts_set_buffer_size(IC_ALTER_TABLESPACE *alter_ts,
+                   guint64 buf_size)
 {
   (void)alter_ts;
   (void)buf_size;
   return 0;
 }
 
-int ts_set_autoextend_size(IC_ALTER_TABLESPACE *alter_ts,
-                           guint64 auto_extend_size)
+static int
+ts_set_autoextend_size(IC_ALTER_TABLESPACE *alter_ts,
+                       guint64 auto_extend_size)
 {
   (void)alter_ts;
   (void)auto_extend_size;
   return 0;
 }
 
-int ts_set_max_size(IC_ALTER_TABLESPACE *alter_ts,
-                    guint64 ts_max_size)
+static int
+ts_set_max_size(IC_ALTER_TABLESPACE *alter_ts,
+                guint64 ts_max_size)
 {
   (void)alter_ts;
   (void)ts_max_size;
   return 0;
 }
 
-int ts_set_extent_size(IC_ALTER_TABLESPACE *alter_ts,
-                       guint64 extent_size)
+static int
+ts_set_extent_size(IC_ALTER_TABLESPACE *alter_ts,
+                   guint64 extent_size)
 {
   (void)alter_ts;
   (void)extent_size;
   return 0;
 }
 
-int ts_set_nodegroup(IC_ALTER_TABLESPACE *alter_ts,
-                     guint32 node_group)
+static int
+ts_set_nodegroup(IC_ALTER_TABLESPACE *alter_ts,
+                 guint32 node_group)
 {
   (void)alter_ts;
   (void)node_group;
   return 0;
 }
 
-int ts_create_tablespace(IC_ALTER_TABLESPACE *alter_ts,
-                         const gchar *tablespace_name,
-                         const gchar *data_file_name,
-                         const gchar *log_file_group_name,
-                         const gchar *tablespace_comment)
+static int
+ts_create_tablespace(IC_ALTER_TABLESPACE *alter_ts,
+                     const gchar *tablespace_name,
+                     const gchar *data_file_name,
+                     const gchar *log_file_group_name,
+                     const gchar *tablespace_comment)
 {
   (void)alter_ts;
   (void)tablespace_name;
@@ -75,11 +82,12 @@ int ts_create_tablespace(IC_ALTER_TABLESPACE *alter_ts,
   return 0;
 }
 
-int ts_create_undo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
-                                  const gchar *log_file_group_name,
-                                  const gchar *data_file_name,
-                                  guint64 file_size,
-                                  const gchar *comment)
+static int
+ts_create_undo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *log_file_group_name,
+                              const gchar *data_file_name,
+                              guint64 file_size,
+                              const gchar *comment)
 {
   (void)alter_ts;
   (void)log_file_group_name;
@@ -89,11 +97,12 @@ int ts_create_undo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
   return 0;
 }
 
-int ts_create_redo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
-                                  const gchar *log_file_group_name,
-                                  const gchar *data_file_name,
-                                  guint64 file_size,
-                                  const gchar *comment)
+static int
+ts_create_redo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *log_file_group_name,
+                              const gchar *data_file_name,
+                              guint64 file_size,
+                              const gchar *comment)
 {
   (void)alter_ts;
   (void)log_file_group_name;
@@ -103,25 +112,28 @@ int ts_create_redo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
   return 0;
 }
 
-int ts_drop_tablespace(IC_ALTER_TABLESPACE *alter_ts,
-                       const gchar *tablespace_name)
+static int
+ts_drop_tablespace(IC_ALTER_TABLESPACE *alter_ts,
+                   const gchar *tablespace_name)
 {
   (void)alter_ts;
   (void)tablespace_name;
   return 0;
 }
 
-int ts_drop_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
-                           const gchar *log_file_group_name)
+static int
+ts_drop_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
+                       const gchar *log_file_group_name)
 {
   (void)alter_ts;
   (void)log_file_group_name;
   return 0;
 }
 
-int ts_add_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
-                        const gchar *tablespace_name,
-                        const gchar *data_file_name)
+static int
+ts_add_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
+                    const gchar *tablespace_name,
+                    const gchar *data_file_name)
 {
   (void)alter_ts;
   (void)tablespace_name;
@@ -129,9 +141,10 @@ int ts_add_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
   return 0;
 }
 
-int ts_add_lg_data_file(IC_ALTER_TABLESPACE *alter_ts,
-                        const gchar *log_file_group_name,
-                        const gchar *data_file_name)
+static int
+ts_add_lg_data_file(IC_ALTER_TABLESPACE *alter_ts,
+                    const gchar *log_file_group_name,
+                    const gchar *data_file_name)
 {
   (void)alter_ts;
   (void)log_file_group_name;
@@ -139,9 +152,10 @@ int ts_add_lg_data_file(IC_ALTER_TABLESPACE *alter_ts,
   return 0;
 }
 
-int ts_alter_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
-                          const gchar *tablespace_name,
-                          const gchar *data_file_name)
+static int
+ts_alter_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
+                      const gchar *tablespace_name,
+                      const gchar *data_file_name)
 {
   (void)alter_ts;
   (void)tablespace_name;
@@ -149,9 +163,10 @@ int ts_alter_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
   return 0;
 }
 
-int ts_set_tablespace_access_mode(IC_ALTER_TABLESPACE *alter_ts,
-                                  const gchar *tablespace_name,
-                                  IC_TABLESPACE_ACCESS_MODE access_mode)
+static int
+ts_set_tablespace_access_mode(IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *tablespace_name,
+                              IC_TABLESPACE_ACCESS_MODE access_mode)
 {
   (void)alter_ts;
   (void)tablespace_name;
