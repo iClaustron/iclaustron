@@ -1807,6 +1807,7 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
 
 IC_METADATA_TRANSACTION*
 ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
+                               IC_APID_CONNECTION *apid_conn,
                                guint32 cluster_id);
 
 /*

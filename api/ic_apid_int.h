@@ -294,6 +294,8 @@ struct ic_int_metadata_transaction
   guint32 cluster_id;
   /* Global Data API object */
   IC_INT_APID_GLOBAL *apid_global;
+  /* Data API connection object */
+  IC_INT_APID_CONNECTION *apid_conn;
 
   /* Linked list of table operations in metadata transaction */
   IC_ALTER_TABLE *first_alter_table;

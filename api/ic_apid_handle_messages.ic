@@ -986,6 +986,78 @@ execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+static int
+execNDB_START_MD_TRANS_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                              IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                               IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_END_MD_TRANS_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_END_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
 /* Initialize function pointer array for messages */
 static void
 initialize_message_func_array()
@@ -1032,8 +1104,24 @@ initialize_message_func_array()
     execNDB_DISCONNECTCONF_v0;
   ic_exec_message_func_array[0][35].ic_exec_message_func=
     execNDB_DISCONNECTREF_v0;
+  ic_exec_message_func_array[0][510].ic_exec_message_func=
+    execNDB_CREATE_INDEX_REF_v0;
+  ic_exec_message_func_array[0][511].ic_exec_message_func=
+    execNDB_CREATE_INDEX_CONF_v0;
   ic_exec_message_func_array[0][520].ic_exec_message_func=
     execNDB_UNIQ_KEYCONF_v0;
   ic_exec_message_func_array[0][521].ic_exec_message_func=
     execNDB_UNIQ_KEYREF_v0;
+  ic_exec_message_func_array[0][598].ic_exec_message_func=
+    execNDB_CREATE_TABLE_REF_v0;
+  ic_exec_message_func_array[0][599].ic_exec_message_func=
+    execNDB_CREATE_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][732].ic_exec_message_func=
+    execNDB_START_MD_TRANS_CONF_v0;
+  ic_exec_message_func_array[0][733].ic_exec_message_func=
+    execNDB_START_MD_TRANS_REF_v0;
+  ic_exec_message_func_array[0][735].ic_exec_message_func=
+    execNDB_END_MD_TRANS_CONF_v0;
+  ic_exec_message_func_array[0][736].ic_exec_message_func=
+    execNDB_END_MD_TRANS_REF_v0;
 }
