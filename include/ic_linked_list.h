@@ -14,7 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #define IC_INSERT_SLL(parent_object, object, name) \
-  if ((parent_object)->first##name) \
+  if ((parent_object)->first_##name) \
   { \
     (parent_object)->first_##name = (object); \
     (parent_object)->last_##name = (object); \

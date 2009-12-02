@@ -116,6 +116,9 @@ void ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str);
 int ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
                         IC_STRING *dest_str,
                         IC_STRING *in_str);
+int ic_mc_add_string(IC_MEMORY_CONTAINER *mc_ptr,
+                     IC_STRING *dest_str,
+                     const gchar *in_str);
 guint32 ic_str_find_first(IC_STRING *ic_str, gchar searched_char);
 void ic_print_ic_string(IC_STRING *str);
 int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str);

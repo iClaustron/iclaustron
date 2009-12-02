@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7063
+#define IC_LAST_ERROR 7070
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -170,6 +170,20 @@ ic_init_error_messages()
     "Defining more fields than table contains isn't valid";
   ic_error_str[IC_ERROR_DUPLICATE_FIELD_IDS - IC_FIRST_ERROR]=
     "Trying to define the same field twice";
+  ic_error_str[IC_ERROR_FIELD_ALREADY_DEFINED - IC_FIRST_ERROR]=
+    "Trying to define the same field twice";
+  ic_error_str[IC_ERROR_FIELD_NOT_DEFINED - IC_FIRST_ERROR]=
+    "Trying to define a characteristic on a field not defined";
+  ic_error_str[IC_ERROR_NOT_A_CHARSET_FIELD - IC_FIRST_ERROR]=
+    "Trying to define character set on a field not using it";
+  ic_error_str[IC_ERROR_NOT_A_DECIMAL_FIELD - IC_FIRST_ERROR]=
+    "Trying to define decimal characteristics on a field not decimal";
+  ic_error_str[IC_ERROR_NOT_A_SIGNABLE_FIELD - IC_FIRST_ERROR]=
+    "Trying to define signed or not on a field not a number field";
+  ic_error_str[IC_ERROR_INDEX_ALREADY_DEFINED - IC_FIRST_ERROR]=
+    "Trying to define the same index twice";
+  ic_error_str[IC_ERROR_INDEX_NOT_DEFINED - IC_FIRST_ERROR]=
+    "Trying to operate on a non-existent index";
 }
 
 void

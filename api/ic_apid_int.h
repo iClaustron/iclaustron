@@ -27,7 +27,15 @@
 typedef struct ic_field_def IC_FIELD_DEF;
 typedef struct ic_field_in_op IC_FIELD_IN_OP;
 
+typedef struct ic_define_field IC_DEFINE_FIELD;
+typedef struct ic_define_index IC_DEFINE_INDEX;
+
 typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
+
+typedef enum ic_alter_operation_type IC_ALTER_OPERATION_TYPE;
+typedef struct ic_int_alter_table IC_INT_ALTER_TABLE;
+typedef struct ic_int_alter_tablespace IC_INT_ALTER_TABLESPACE;
+typedef struct ic_int_metadata_transaction IC_INT_METADATA_TRANSACTION;
 
 typedef struct ic_int_transaction IC_INT_TRANSACTION;
 typedef struct ic_int_apid_operation IC_INT_APID_OPERATION;
@@ -190,6 +198,110 @@ struct ic_int_apid_error
   int error_code;
   IC_ERROR_CATEGORY error_category;
   IC_ERROR_SEVERITY_LEVEL error_severity;
+};
+
+struct ic_define_field
+{
+  IC_DEFINE_FIELD *next_add_field;
+  IC_DEFINE_FIELD *next_drop_field;
+  gchar *name;
+  IC_FIELD_TYPE type;
+  guint32 size;
+  guint32 charset_id;
+  guint32 scale;
+  guint32 precision;
+  gboolean is_nullable;
+  gboolean is_disk_stored;
+  gboolean is_signed;
+};
+
+struct ic_define_index
+{
+  IC_DEFINE_INDEX *next_add_index;
+  IC_DEFINE_INDEX *next_drop_index;
+  gchar *name;
+  IC_INDEX_TYPE type;
+  IC_DEFINE_FIELD **def_fields;
+  guint32 num_fields;
+  gboolean is_null_values_in_index_allowed;
+};
+
+enum ic_alter_operation_type
+{
+  IC_CREATE_TABLE_OP= 0,
+  IC_ALTER_TABLE_OP= 1,
+  IC_DROP_TABLE_OP= 2,
+  IC_RENAME_TABLE_OP= 3
+};
+
+struct ic_int_alter_table
+{
+  IC_ALTER_TABLE_OPS *alter_table_ops;
+
+  /* Memory container for metadata transaction */
+  IC_MEMORY_CONTAINER *mc_ptr;
+
+  /* Lists of added/dropped fields and added/dropped indexes */
+  IC_DEFINE_FIELD *first_add_field;
+  IC_DEFINE_FIELD *last_add_field;
+
+  IC_DEFINE_FIELD *first_drop_field;
+  IC_DEFINE_FIELD *last_drop_field;
+
+  IC_DEFINE_INDEX *first_add_index;
+  IC_DEFINE_INDEX *last_drop_index;
+
+  IC_DEFINE_INDEX *last_add_index;
+  IC_DEFINE_INDEX *first_drop_index;
+
+  /*
+    Table name consisting of a concatenation of schema, database and
+    table name.
+
+    In case of rename table_name is the new table name and old_table_name
+    is the old table name.
+  */
+  gchar *table_name;
+  gchar *old_table_name;
+  /*
+    Tablespace id, needed only if at least one field have is_disk_stored
+    is true.
+  */
+  guint32 tablespace_id;
+  gboolean is_disk_stored;
+
+  /* Type of operation create/alter/drop/rename table */
+  IC_ALTER_OPERATION_TYPE alter_op_type;
+
+  /* Next pointer in linked list of table operations in transaction */
+  IC_ALTER_TABLE *next_alter_table;
+};
+
+struct ic_int_alter_tablespace
+{
+  IC_ALTER_TABLESPACE_OPS *alter_ts_ops;
+  IC_MEMORY_CONTAINER *mc_ptr;
+};
+
+struct ic_int_metadata_transaction
+{
+  IC_METADATA_TRANSACTION_OPS *md_trans_ops;
+
+  /* Memory container for metadata transaction */
+  IC_MEMORY_CONTAINER *mc_ptr;
+
+  /* Cluster id to target metadata transaction towards */
+  guint32 cluster_id;
+  /* Global Data API object */
+  IC_INT_APID_GLOBAL *apid_global;
+
+  /* Linked list of table operations in metadata transaction */
+  IC_ALTER_TABLE *first_alter_table;
+  IC_ALTER_TABLE *last_alter_table;
+
+  /* Linked list of tablespace operations in metadata transaction */
+  IC_ALTER_TABLESPACE *first_alter_ts;
+  IC_ALTER_TABLESPACE *last_alter_ts;
 };
 
 struct ic_int_apid_operation

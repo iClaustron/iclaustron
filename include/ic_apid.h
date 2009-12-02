@@ -406,6 +406,10 @@ struct ic_alter_table_ops
                                guint32 scale,
                                guint32 precision);
 
+  int (*ic_set_signed) (IC_ALTER_TABLE *alter_table,
+                        const gchar *field_name,
+                        gboolean is_signed);
+
   /* One or more fields can be dropped in an alter table operation */
   int (*ic_drop_field) (IC_ALTER_TABLE *alter_table,
                         const gchar *field_name);
@@ -438,6 +442,35 @@ struct ic_alter_table_ops
                                  guint32 num_partitions);
 
   /*
+    The ordering of calls is that one starts by defining what type of
+    operation we are performing (ic_create_table, ic_alter_table,
+    ic_rename_table, ic_drop_table). After this one defines the
+    fields added/dropped, indexes added/dropped and possible partitioning
+    specification.
+
+    So in the case of ic_create_table one defines things in the following
+    order:
+    ic_create_table (1 call)
+    ic_add_field (1 call per field)
+    ic_set_charset, ic_set_decimal_field, ic_set_signed for each field
+      where it is needed.
+    ic_add_index (1 call per index, at least one call for primary key index).
+
+    In the case of ic_alter_table one defines thing in the following order.
+
+    ic_alter_table (1 call)
+    ic_add_field (1 call per new field with additional calls to ic_set_charset,
+      ic_set_decimal_field, ic_set_signed where needed).
+    ic_drop_field (1 call per dropped field)
+    ic_add_index (1 call per added index)
+    ic_drop_index (1 call per dropped index, not possible to drop primary key
+      index)
+
+    For ic_drop_table and ic_rename_table only one call is required.
+
+    The actual creation, dropping, renaming and alteration of a table happens
+    when the metadata transaction is committed.
+
     To create a table one needs to add at least one field, one also needs to
     add one primary key. It is also optional to define partitioning. No other
     things are needed or allowed to create a table.
@@ -447,9 +480,9 @@ struct ic_alter_table_ops
     specific tablespace.
   */
   int (*ic_create_table) (IC_ALTER_TABLE *alter_table,
-                          const gchar *table_name,
-                          const gchar *db_name,
                           const gchar *schema_name,
+                          const gchar *db_name,
+                          const gchar *table_name,
                           const gchar *tablespace_name);
 
   /*
@@ -457,9 +490,9 @@ struct ic_alter_table_ops
     needed to define dropping a table.
   */
   int (*ic_drop_table) (IC_ALTER_TABLE *alter_table,
-                        const gchar *table_name,
+                        const gchar *schema_name,
                         const gchar *db_name,
-                        const gchar *schema_name);
+                        const gchar *table_name);
 
   /*
     Alter table adds or drops one component (field or indexes). If the
@@ -468,20 +501,20 @@ struct ic_alter_table_ops
     fields, drop fields, add indexes and drop indexes.
   */
   int (*ic_alter_table) (IC_ALTER_TABLE *alter_table,
-                         const gchar *table_name,
+                         const gchar *schema_name,
                          const gchar *db_name,
-                         const gchar *schema_name);
+                         const gchar *table_name);
 
   /*
     Rename table is also a single call to define.
   */
   int (*ic_rename_table) (IC_ALTER_TABLE *alter_table,
-                          const gchar *old_table_name,
-                          const gchar *old_db_name,
                           const gchar *old_schema_name,
-                          const gchar *new_table_name,
+                          const gchar *old_db_name,
+                          const gchar *old_table_name,
+                          const gchar *new_schema_name,
                           const gchar *new_db_name,
-                          const gchar *new_schema_name);
+                          const gchar *new_table_name);
 };
 
 struct ic_alter_tablespace_ops
