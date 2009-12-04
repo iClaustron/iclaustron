@@ -132,19 +132,19 @@ handle_scan_ai(__attribute__ ((unused)) IC_INT_APID_OPERATION *apid_op,
   contains the result of reading one record and the field ids are interpreted
   using the object reference we stored when sending the message.
 
-  ATTRIBUTE_INFO
-  --------------
+  RECORD_INFO
+  -----------
   Signal Format:
   Word 0: Our object reference
   Word 1: Transaction id part 1
   Word 2: Transaction id part 2
   One segment which contains the actual read data from the record together
-  with some field ids and other information in the ATTRIBUTE_INFO data
+  with some field ids and other information in the RECORD_INFO data
   protocol.
 */
 static int
-execATTRIBUTE_INFO_v0(IC_NDB_MESSAGE *ndb_message,
-                      IC_MESSAGE_ERROR_OBJECT *error_object)
+execRECORD_INFO_v0(IC_NDB_MESSAGE *ndb_message,
+                   IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   guint32 *header_data= ndb_message->segment_ptr[0];
   guint32 header_size= ndb_message->segment_size[0];
@@ -610,11 +610,11 @@ execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message,
   It is initiated by a NDB_SCANREQ message that specifies which table/index
   to scan and if the partitions on this table/index to use.
 
-  The Data Node sends one ATTRIBUTE_INFO message for each record that is
+  The Data Node sends one RECORD_INFO message for each record that is
   returned to the scanner. After sending a set of records the Data Node
   will send a NDB_SCANCONF message with the list of references to records
   received from the Data Nodes. When this message arrives the API can start
-  handling the ATTRIBUTE_INFO messages. Actually the ATTRIBUTE_INFO messages
+  handling the RECORD_INFO messages. Actually the RECORD_INFO messages
   can arrive both before and after the NDB_SCANCONF messages. Thus we have to
   keep track of the number of received records to ensure we have all records
   to handle the NDB_SCANCONF message.
@@ -1023,6 +1023,15 @@ execNDB_END_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
+execNDB_END_MD_TRANS_REP_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
 execNDB_CREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
                             IC_MESSAGE_ERROR_OBJECT *error_object)
 {
@@ -1034,6 +1043,51 @@ execNDB_CREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
 static int
 execNDB_CREATE_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
                              IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_ALTER_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_ALTER_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_ALTER_TABLE_REP_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
@@ -1058,6 +1112,177 @@ execNDB_CREATE_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+static int
+execNDB_ALTER_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_ALTER_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_PARTITION_MAP_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                                    IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_PARTITION_MAP_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                                     IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                                 IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                                  IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                               IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                                  IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                              IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_CREATE_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                                  IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                               IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_DROP_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                                  IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_LIST_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_GET_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                         IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_GET_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_GET_TABLE_ID_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execNDB_GET_TABLE_ID_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
 /* Initialize function pointer array for messages */
 static void
 initialize_message_func_array()
@@ -1068,60 +1293,174 @@ initialize_message_func_array()
     ic_exec_message_func_array[0][i].ic_exec_message_func= NULL;
     ic_exec_message_func_array[1][i].ic_exec_message_func= NULL;
   }
+  /* Heartbeat messages */
   ic_exec_message_func_array[0][1].ic_exec_message_func=
     execAPI_HBCONF_v0;
   ic_exec_message_func_array[0][2].ic_exec_message_func=
     execAPI_HBREF_v0;
+
+  /* Container for record data from NDB Kernel */
   ic_exec_message_func_array[0][5].ic_exec_message_func=
-    execATTRIBUTE_INFO_v0;
+    execRECORD_INFO_v0;
+
+  /* Message about outcome of operation in Node failure situation */
   ic_exec_message_func_array[0][8].ic_exec_message_func=
     execNDB_NODEFAIL_KEYCONF_v0;
   ic_exec_message_func_array[0][9].ic_exec_message_func=
     execNDB_NODEFAIL_KEYREF_v0;
+
+  /*
+    Read/Update/Delete/Write using primary key message responses + RECORD_INFO
+    This is the most common messages used together with the NDB_SCAN* messages
+    since these are the messages used to get/set data in NDB. NDB_UNIQ*
+    messages are equivalents, but using unique indexes instead of a primary
+    key index, these unique indexes are using a separate lookup in a unique
+    key table and then internally in NDB reuses the same code paths as these
+    messages do. The unique key table contains the unqiue key as primary key
+    and the primary key as fields in the table.
+  */
   ic_exec_message_func_array[0][10].ic_exec_message_func=
     execNDB_PRIM_KEYCONF_v0;
   ic_exec_message_func_array[0][11].ic_exec_message_func=
     execNDB_PRIM_KEYREF_v0;
+
+  /* Abort response messages */
   ic_exec_message_func_array[0][13].ic_exec_message_func=
     execNDB_ABORTCONF_v0;
   ic_exec_message_func_array[0][14].ic_exec_message_func=
     execNDB_ABORTREF_v0;
   ic_exec_message_func_array[0][16].ic_exec_message_func=
     execNDB_ABORTREP_v0;
+
+  /* Commit response messages */
   ic_exec_message_func_array[0][17].ic_exec_message_func=
     execNDB_COMMITCONF_v0;
   ic_exec_message_func_array[0][19].ic_exec_message_func=
     execNDB_COMMITREF_v0;
+
+  /* 23 = NDB_GET_TABLE_REF see below */
+
+  /* Scan table/index message responses, see also RECORD_INFO */
   ic_exec_message_func_array[0][29].ic_exec_message_func=
     execNDB_SCANCONF_v0;
   ic_exec_message_func_array[0][31].ic_exec_message_func=
     execNDB_SCANREF_v0;
+
+  /* Connect to a transaction record in NDB */
   ic_exec_message_func_array[0][37].ic_exec_message_func=
     execNDB_CONNECTCONF_v0;
   ic_exec_message_func_array[0][38].ic_exec_message_func=
     execNDB_CONNECTREF_v0;
+
+  /* Disconnect from a transaction record in NDB */
   ic_exec_message_func_array[0][34].ic_exec_message_func=
     execNDB_DISCONNECTCONF_v0;
   ic_exec_message_func_array[0][35].ic_exec_message_func=
     execNDB_DISCONNECTREF_v0;
-  ic_exec_message_func_array[0][510].ic_exec_message_func=
-    execNDB_CREATE_INDEX_REF_v0;
+
+  /* Drop table messages */
+  ic_exec_message_func_array[0][102].ic_exec_message_func=
+    execNDB_DROP_TABLE_REF_v0;
+  ic_exec_message_func_array[0][112].ic_exec_message_func=
+    execNDB_DROP_TABLE_CONF_v0;
+
+  /* Get table messages */
+  ic_exec_message_func_array[0][23].ic_exec_message_func=
+    execNDB_GET_TABLE_REF_v0;
+  ic_exec_message_func_array[0][190].ic_exec_message_func=
+    execNDB_GET_TABLE_CONF_v0;
+
+  /* List table messages */
+  ic_exec_message_func_array[0][194].ic_exec_message_func=
+    execNDB_LIST_TABLE_CONF_v0;
+
+  /* Create partition map response messages */
+  ic_exec_message_func_array[0][298].ic_exec_message_func=
+    execNDB_CREATE_PARTITION_MAP_REF_v0;
+  ic_exec_message_func_array[0][299].ic_exec_message_func=
+    execNDB_CREATE_PARTITION_MAP_CONF_v0;
+ 
+  /* Create index response messages */
   ic_exec_message_func_array[0][511].ic_exec_message_func=
     execNDB_CREATE_INDEX_CONF_v0;
+  ic_exec_message_func_array[0][512].ic_exec_message_func=
+    execNDB_CREATE_INDEX_REF_v0;
+ 
+  /* Drop index response messages */
+  ic_exec_message_func_array[0][517].ic_exec_message_func=
+    execNDB_DROP_INDEX_CONF_v0;
+  ic_exec_message_func_array[0][518].ic_exec_message_func=
+    execNDB_DROP_INDEX_REF_v0;
+
+  /* Unique key read/update/delete/write response messages */
   ic_exec_message_func_array[0][520].ic_exec_message_func=
     execNDB_UNIQ_KEYCONF_v0;
   ic_exec_message_func_array[0][521].ic_exec_message_func=
     execNDB_UNIQ_KEYREF_v0;
+
+  /* Create table messages */
   ic_exec_message_func_array[0][598].ic_exec_message_func=
     execNDB_CREATE_TABLE_REF_v0;
   ic_exec_message_func_array[0][599].ic_exec_message_func=
     execNDB_CREATE_TABLE_CONF_v0;
+
+  /* Alter table messages */
+  ic_exec_message_func_array[0][601].ic_exec_message_func=
+    execNDB_ALTER_TABLE_REF_v0;
+  ic_exec_message_func_array[0][602].ic_exec_message_func=
+    execNDB_ALTER_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][606].ic_exec_message_func=
+    execNDB_ALTER_TABLE_REP_v0;
+
+  /* Alter table messages */
+  ic_exec_message_func_array[0][604].ic_exec_message_func=
+    execNDB_ALTER_INDEX_REF_v0;
+  ic_exec_message_func_array[0][605].ic_exec_message_func=
+    execNDB_ALTER_INDEX_CONF_v0;
+
+  /* 606 = NDB_ALTER_TABLE_REP, see above */
+
+  /* Get table id messages */
+  ic_exec_message_func_array[0][684].ic_exec_message_func=
+    execNDB_GET_TABLE_ID_REF_v0;
+  ic_exec_message_func_array[0][685].ic_exec_message_func=
+    execNDB_GET_TABLE_ID_CONF_v0;
+
+  /* Create tablespace/log file group messages */
+  ic_exec_message_func_array[0][714].ic_exec_message_func=
+    execNDB_CREATE_TABLESPACE_REF_v0;
+  ic_exec_message_func_array[0][715].ic_exec_message_func=
+    execNDB_CREATE_TABLESPACE_CONF_v0;
+
+  /* Create tablespace/log file group files */
+  ic_exec_message_func_array[0][717].ic_exec_message_func=
+    execNDB_CREATE_TS_FILE_REF_v0;
+  ic_exec_message_func_array[0][718].ic_exec_message_func=
+    execNDB_CREATE_TS_FILE_CONF_v0;
+
+  /* Drop tablespace/log file group messages */
+  ic_exec_message_func_array[0][720].ic_exec_message_func=
+    execNDB_DROP_TABLESPACE_REF_v0;
+  ic_exec_message_func_array[0][721].ic_exec_message_func=
+    execNDB_DROP_TABLESPACE_CONF_v0;
+
+  /* Drop tablespace/log file group files */
+  ic_exec_message_func_array[0][723].ic_exec_message_func=
+    execNDB_DROP_TS_FILE_REF_v0;
+  ic_exec_message_func_array[0][724].ic_exec_message_func=
+    execNDB_DROP_TS_FILE_CONF_v0;
+
+  /* Start metadata transaction messages */
   ic_exec_message_func_array[0][732].ic_exec_message_func=
     execNDB_START_MD_TRANS_CONF_v0;
   ic_exec_message_func_array[0][733].ic_exec_message_func=
     execNDB_START_MD_TRANS_REF_v0;
+
+  /* Commit metadata transaction messages */
   ic_exec_message_func_array[0][735].ic_exec_message_func=
     execNDB_END_MD_TRANS_CONF_v0;
   ic_exec_message_func_array[0][736].ic_exec_message_func=
     execNDB_END_MD_TRANS_REF_v0;
+  ic_exec_message_func_array[0][768].ic_exec_message_func=
+    execNDB_END_MD_TRANS_REP_v0;
 }
