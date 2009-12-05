@@ -31,7 +31,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7070
+#define IC_LAST_ERROR 7077
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -184,6 +184,20 @@ ic_init_error_messages()
     "Trying to define the same index twice";
   ic_error_str[IC_ERROR_INDEX_NOT_DEFINED - IC_FIRST_ERROR]=
     "Trying to operate on a non-existent index";
+  ic_error_str[IC_ERROR_MULTIPLE_METADATA_OPS - IC_FIRST_ERROR]=
+"Currently only supported with one metadata table/tablespace per transaction";
+  ic_error_str[IC_ERROR_CREATE_TABLE_NO_FIELDS - IC_FIRST_ERROR]=
+    "Trying to create a table without fields";
+  ic_error_str[IC_ERROR_MD_COMMIT_NO_OPERATION - IC_FIRST_ERROR]=
+    "Trying to commit metadata transaction without any operations";
+  ic_error_str[IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME - IC_FIRST_ERROR]=
+    "Trying to perform operation not allowed with drop/rename table";
+  ic_error_str[IC_ERROR_ILLEGAL_MD_OPERATION_CREATE - IC_FIRST_ERROR]=
+    "Trying to perform operation not allowed with create table";
+  ic_error_str[IC_ERROR_TABLE_MUST_HAVE_PRIMARY_KEY - IC_FIRST_ERROR]=
+    "Tables defined in NDB must have a primary key";
+  ic_error_str[IC_ERROR_RECORD_SIZE_TOO_BIG - IC_FIRST_ERROR]=
+    "Record size is limited to 8052 bytes currently";
 }
 
 void

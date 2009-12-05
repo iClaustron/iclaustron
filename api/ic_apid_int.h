@@ -263,6 +263,9 @@ struct ic_int_alter_table
   */
   gchar *table_name;
   gchar *old_table_name;
+
+  /* Number of fields defined in table */
+  guint32 num_fields;
   /*
     Tablespace id, needed only if at least one field have is_disk_stored
     is true.
@@ -298,12 +301,12 @@ struct ic_int_metadata_transaction
   IC_INT_APID_CONNECTION *apid_conn;
 
   /* Linked list of table operations in metadata transaction */
-  IC_ALTER_TABLE *first_alter_table;
-  IC_ALTER_TABLE *last_alter_table;
+  IC_INT_ALTER_TABLE *first_alter_table;
+  IC_INT_ALTER_TABLE *last_alter_table;
 
   /* Linked list of tablespace operations in metadata transaction */
-  IC_ALTER_TABLESPACE *first_alter_ts;
-  IC_ALTER_TABLESPACE *last_alter_ts;
+  IC_INT_ALTER_TABLESPACE *first_alter_ts;
+  IC_INT_ALTER_TABLESPACE *last_alter_ts;
 };
 
 struct ic_int_apid_operation

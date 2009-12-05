@@ -349,6 +349,9 @@ at_add_field(IC_ALTER_TABLE *ext_alter_table,
   IC_DEFINE_FIELD *def_field;
   int ret_code;
 
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_ALREADY_DEFINED;
@@ -383,6 +386,9 @@ at_set_charset(IC_ALTER_TABLE *ext_alter_table,
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
 
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
@@ -409,6 +415,9 @@ at_set_signed(IC_ALTER_TABLE *ext_alter_table,
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
 
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
@@ -436,6 +445,9 @@ at_set_decimal_field(IC_ALTER_TABLE *ext_alter_table,
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
 
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
@@ -462,6 +474,11 @@ at_drop_field(IC_ALTER_TABLE *ext_alter_table,
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
 
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  if (alter_table->alter_op_type == IC_CREATE_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_CREATE;
   if (!(def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
@@ -498,6 +515,9 @@ at_add_index(IC_ALTER_TABLE *ext_alter_table,
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
 
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
   if ((def_index= find_index_in_add_index(alter_table, index_name)))
   {
     ret_code= IC_ERROR_INDEX_ALREADY_DEFINED;
@@ -537,6 +557,11 @@ at_drop_index(IC_ALTER_TABLE *ext_alter_table,
   IC_DEFINE_INDEX *def_index;
   int ret_code;
 
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  if (alter_table->alter_op_type == IC_CREATE_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_CREATE;
   if (!(def_index= find_index_in_add_index(alter_table, index_name)))
   {
     ret_code= IC_ERROR_INDEX_NOT_DEFINED;
@@ -562,7 +587,7 @@ error:
 
 /* Implements ic_define_partitioning method */
 static int
-at_define_partitioning(IC_ALTER_TABLE *alter_table,
+at_define_partitioning(IC_ALTER_TABLE *ext_alter_table,
                        IC_PARTITION_TYPE partition_type,
                        const gchar **field_names,
                        guint32 num_fields,
@@ -571,7 +596,7 @@ at_define_partitioning(IC_ALTER_TABLE *alter_table,
                        const gchar **map_partition_to_tablespace,
                        guint32 num_partitions)
 {
-  (void)alter_table;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   (void)partition_type;
   (void)field_names;
   (void)num_fields;
@@ -579,6 +604,9 @@ at_define_partitioning(IC_ALTER_TABLE *alter_table,
   (void)map_partition_to_nodegroup;
   (void)map_partition_to_tablespace;
   (void)num_partitions;
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
   return 0;
 }
 
@@ -701,6 +729,78 @@ static IC_ALTER_TABLE_OPS glob_alter_table_ops=
   .ic_rename_table           = at_rename_table
 };
 
+static guint32
+get_ndb_field_size(IC_DEFINE_FIELD *def_field)
+{
+  switch (def_field->type)
+  {
+    case IC_API_INT32_TYPE:
+    case IC_API_INT24_TYPE:
+    case IC_API_INT16_TYPE:
+    case IC_API_INT8_TYPE:
+      return 4;
+    case IC_API_INT64_TYPE:
+      return 8;
+    case IC_API_FIXED_SIZE_CHAR:
+      return ic_align(def_field->size, 4);
+    case IC_API_VARIABLE_SIZE_CHAR:
+      return ic_align(def_field->size + 2, 4);
+    default:
+      /* Not implemented yet */
+      ic_require(FALSE);
+      return 0;
+  }
+}
+
+static int
+check_for_primary_key(IC_INT_ALTER_TABLE *alter_table)
+{
+  gboolean found_pk= FALSE;
+  IC_DEFINE_INDEX *def_index;
+
+  def_index= IC_GET_FIRST_SLL(alter_table, add_index);
+  while (def_index)
+  {
+    if (def_index->type == IC_PRIMARY_KEY)
+    {
+      found_pk= TRUE;
+      break;
+    }
+    def_index= IC_GET_NEXT_SLL(def_index, add_index);
+  }
+  if (found_pk)
+    return 0;
+  return 1;
+}
+
+static int
+check_record_size(IC_INT_ALTER_TABLE *alter_table)
+{
+  guint32 record_size= 0;
+  IC_DEFINE_FIELD *def_field;
+
+  def_field= IC_GET_FIRST_SLL(alter_table, add_field);
+  while (def_field)
+  {
+    record_size+= get_ndb_field_size(def_field);
+    def_field= IC_GET_NEXT_SLL(def_field, add_field);
+  }
+  if (record_size > 8052)
+    return 1;
+  return 0;
+}
+
+static int
+verify_create_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  if (!alter_table->first_add_field)
+    return IC_ERROR_MD_COMMIT_NO_OPERATION;
+  if (check_for_primary_key(alter_table))
+    return IC_ERROR_TABLE_MUST_HAVE_PRIMARY_KEY;
+  if (check_record_size(alter_table))
+    return IC_ERROR_RECORD_SIZE_TOO_BIG;
+  return 0;
+}
 static int
 mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
                        IC_ALTER_TABLE **ext_alter_table)
@@ -709,6 +809,8 @@ mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
   IC_INT_ALTER_TABLE *alter_table;
 
+  if (md_trans->first_alter_ts || md_trans->first_alter_table)
+    return IC_ERROR_MULTIPLE_METADATA_OPS;
   if ((alter_table= (IC_INT_ALTER_TABLE*)
       md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
                                             sizeof(IC_INT_ALTER_TABLE))))
@@ -727,6 +829,8 @@ mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
   IC_INT_ALTER_TABLESPACE *alter_ts;
 
+  if (md_trans->first_alter_ts || md_trans->first_alter_table)
+    return IC_ERROR_MULTIPLE_METADATA_OPS;
   if ((alter_ts= (IC_INT_ALTER_TABLESPACE*)
       md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
                                             sizeof(IC_INT_ALTER_TABLESPACE))))
@@ -737,13 +841,67 @@ mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
 }
 
 static int
+md_commit_alter_tablespace(IC_INT_METADATA_TRANSACTION *md_trans,
+                           IC_INT_ALTER_TABLESPACE *alter_ts)
+{
+  (void)md_trans;
+  (void)alter_ts;
+  return 1; /* Not implemented yet */
+}
+
+static int
+md_commit_alter_table(IC_INT_METADATA_TRANSACTION *md_trans,
+                      IC_INT_ALTER_TABLE *alter_table)
+{
+  int ret_code;
+  (void)md_trans;
+  switch (alter_table->alter_op_type)
+  {
+    /*
+      Verify that the operation defined by the user is allowed and doesn't
+      use things not supported by NDB.
+    */
+    case IC_CREATE_TABLE_OP:
+    {
+      if ((ret_code= verify_create_table(alter_table)))
+        return ret_code;
+    }
+    case IC_ALTER_TABLE_OP:
+    {
+    }
+    case IC_DROP_TABLE_OP:
+    {
+    }
+    case IC_RENAME_TABLE_OP:
+    {
+    }
+    default:
+      ic_require(FALSE);
+      break;
+  }
+  return 0;
+}
+
+static int
 mdt_md_commit(IC_METADATA_TRANSACTION *ext_md_trans)
 {
   IC_INT_METADATA_TRANSACTION *md_trans=
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
 
-  (void)md_trans;
-  return 0;
+  if (md_trans->first_alter_ts)
+  {
+    g_assert(!md_trans->first_alter_table);
+    return md_commit_alter_tablespace(md_trans,
+                                      md_trans->first_alter_ts);
+    return 1; /* Not implemented yet */
+  }
+  else if (md_trans->first_alter_table)
+  {
+    g_assert(!md_trans->first_alter_ts);
+    return md_commit_alter_table(md_trans,
+                                 md_trans->first_alter_table);
+  }
+  return IC_ERROR_MD_COMMIT_NO_OPERATION;
 }
 
 static int
