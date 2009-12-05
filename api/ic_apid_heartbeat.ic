@@ -148,8 +148,8 @@ run_heartbeat_thread(gpointer data)
                    send_buf_pool,
                    (guint32)0,
                    &free_pages,
-                   (guint32)8,
-                   3000)))
+                   IC_PREALLOC_NUM_MESSAGES,
+                   IC_WAIT_SEND_BUF_POOL)))
       goto error;
     g_mutex_lock(apid_global->heartbeat_mutex);
     if (!apid_global->first_heartbeat_node)

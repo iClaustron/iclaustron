@@ -987,6 +987,83 @@ execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
+send_small_message(IC_INT_APID_CONNECTION *apid_conn,
+                   /* Message data */
+                   guint32 message_id,
+                   guint32 *message_data,
+                   guint32 message_size,
+                   /* Destination data */
+                   guint32 receiver_cluster_id,
+                   guint32 receiver_node_id,
+                   guint32 receiver_module_id)
+{
+  guint32 *message_start;
+  guint32 *main_message_start;
+  guint32 header_size;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
+  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  IC_SOCK_BUF_PAGE *send_page;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  int ret_code= IC_ERROR_MEM_ALLOC;
+
+  if (!(send_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
+                 send_buf_pool,
+                 (guint32)0,
+                 &apid_conn->free_pages,
+                 IC_PREALLOC_NUM_MESSAGES,
+                 IC_WAIT_SEND_BUF_POOL)))
+      goto error;
+  if ((ret_code= map_id_to_send_node_connection(apid_global,
+                                                receiver_cluster_id,
+                                                receiver_node_id,
+                                                &send_node_conn)))
+    goto error;
+  message_start= (guint32*)send_page->sock_buf;
+  header_size= get_ndb_message_header_size(send_node_conn);
+  main_message_start= message_start + header_size;
+  memcpy(main_message_start, message_data,
+         sizeof(guint32) * message_size);
+
+  /* Fill in message data */
+  message_size= fill_ndb_message_header(send_node_conn,
+                                        message_id,
+                                        IC_NDB_NORMAL_PRIO,
+                                        send_node_conn->thread_id,
+                                        receiver_module_id,
+                                        message_start,
+                                        message_size,
+                                        main_message_start,
+                                        0, /* No segments */
+                                        NULL,
+                                        NULL);
+  send_page->size= message_size * sizeof(guint32);
+
+  /* Send message data */
+  if ((ret_code= ndb_send(send_node_conn,
+                          send_page,
+                          TRUE)))
+    goto error;
+  return 0;
+error:
+  return ret_code;
+}
+
+static int
+send_START_MD_TRANS_REQ_v0(IC_INT_APID_CONNECTION *apid_conn,
+                           IC_INT_METADATA_TRANSACTION *md_trans)
+{
+  guint32 send_data[5];
+  /* Set-up message to start schema transaction */
+  return send_small_message(apid_conn,
+                            (guint32)731, /* BEGIN_SCHEMA_TRANS_REQ */
+                            (guint32*)&send_data,
+                            5,
+                            md_trans->cluster_id,
+                            md_trans->node_id,
+                            IC_NDB_DICT_MODULE);
+}
+
+static int
 execNDB_START_MD_TRANS_REF_v0(IC_NDB_MESSAGE *ndb_message,
                               IC_MESSAGE_ERROR_OBJECT *error_object)
 {

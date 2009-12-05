@@ -295,6 +295,9 @@ struct ic_int_metadata_transaction
 
   /* Cluster id to target metadata transaction towards */
   guint32 cluster_id;
+  /* Node id of master node, used for all metadata transactions */
+  guint32 node_id;
+
   /* Global Data API object */
   IC_INT_APID_GLOBAL *apid_global;
   /* Data API connection object */
@@ -428,6 +431,7 @@ struct ic_int_apid_connection
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_id_bitmap;
   IC_THREAD_CONNECTION *thread_conn;
+  IC_SOCK_BUF_PAGE *free_pages;
   guint32 thread_id;
   /*
     The operations pass through a set of lists from start to end.
