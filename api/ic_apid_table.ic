@@ -801,6 +801,29 @@ verify_create_table(IC_INT_ALTER_TABLE *alter_table)
     return IC_ERROR_RECORD_SIZE_TOO_BIG;
   return 0;
 }
+
+
+static int
+verify_alter_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
+static int
+verify_drop_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
+static int
+verify_rename_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
 static int
 mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
                        IC_ALTER_TABLE **ext_alter_table)
@@ -816,6 +839,7 @@ mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
                                             sizeof(IC_INT_ALTER_TABLE))))
     return IC_ERROR_MEM_ALLOC;
   alter_table->mc_ptr= md_trans->mc_ptr;
+  alter_table->md_trans= md_trans;
   alter_table->alter_table_ops= &glob_alter_table_ops;
   *ext_alter_table= (IC_ALTER_TABLE*)alter_table;
   return 0;
@@ -836,6 +860,7 @@ mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
                                             sizeof(IC_INT_ALTER_TABLESPACE))))
     return IC_ERROR_MEM_ALLOC;
   alter_ts->mc_ptr= md_trans->mc_ptr;
+  alter_ts->md_trans= md_trans;
   *ext_alter_ts= (IC_ALTER_TABLESPACE*)alter_ts;
   return 0;
 }
@@ -865,15 +890,33 @@ md_commit_alter_table(IC_INT_METADATA_TRANSACTION *md_trans,
     {
       if ((ret_code= verify_create_table(alter_table)))
         return ret_code;
+      if ((ret_code= send_create_table(alter_table)))
+        return ret_code;
+      break;
     }
     case IC_ALTER_TABLE_OP:
     {
+      if ((ret_code= verify_alter_table(alter_table)))
+        return ret_code;
+      if ((ret_code= send_alter_table(alter_table)))
+        return ret_code;
+      break;
     }
     case IC_DROP_TABLE_OP:
     {
+      if ((ret_code= verify_drop_table(alter_table)))
+        return ret_code;
+      if ((ret_code= send_drop_table(alter_table)))
+        return ret_code;
+      break;
     }
     case IC_RENAME_TABLE_OP:
     {
+      if ((ret_code= verify_rename_table(alter_table)))
+        return ret_code;
+      if ((ret_code= send_rename_table(alter_table)))
+        return ret_code;
+      break;
     }
     default:
       ic_require(FALSE);

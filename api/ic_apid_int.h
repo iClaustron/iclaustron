@@ -35,6 +35,7 @@ typedef struct ic_translation_obj IC_TRANSLATION_OBJ;
 typedef enum ic_alter_operation_type IC_ALTER_OPERATION_TYPE;
 typedef struct ic_int_alter_table IC_INT_ALTER_TABLE;
 typedef struct ic_int_alter_tablespace IC_INT_ALTER_TABLESPACE;
+typedef enum ic_metadata_transaction_state IC_METADATA_TRANSACTION_STATE;
 typedef struct ic_int_metadata_transaction IC_INT_METADATA_TRANSACTION;
 
 typedef struct ic_int_transaction IC_INT_TRANSACTION;
@@ -241,6 +242,9 @@ struct ic_int_alter_table
   /* Memory container for metadata transaction */
   IC_MEMORY_CONTAINER *mc_ptr;
 
+  /* Transaction operation is part of */
+  IC_INT_METADATA_TRANSACTION *md_trans;
+
   /* Lists of added/dropped fields and added/dropped indexes */
   IC_DEFINE_FIELD *first_add_field;
   IC_DEFINE_FIELD *last_add_field;
@@ -284,6 +288,20 @@ struct ic_int_alter_tablespace
 {
   IC_ALTER_TABLESPACE_OPS *alter_ts_ops;
   IC_MEMORY_CONTAINER *mc_ptr;
+  /* Transaction operation is part of */
+  IC_INT_METADATA_TRANSACTION *md_trans;
+
+};
+
+enum ic_metadata_transaction_state
+{
+  IC_WAIT_MD_START_TRANS= 0,
+  IC_WAIT_MD_END_TRANS= 1,
+  IC_WAIT_NDB_CREATE_TABLE= 2,
+  IC_WAIT_NDB_ALTER_TABLE= 3,
+  IC_WAIT_NDB_DROP_TABLE= 4,
+  IC_WAIT_NDB_CREATE_INDEX= 5,
+  IC_WAIT_NDB_DROP_INDEX= 6
 };
 
 struct ic_int_metadata_transaction
@@ -298,10 +316,19 @@ struct ic_int_metadata_transaction
   /* Node id of master node, used for all metadata transactions */
   guint32 node_id;
 
+  /* NDB Transaction reference */
+  guint32 ndb_trans_ref;
+
+  /* Transaction state */
+  IC_METADATA_TRANSACTION_STATE state;
+
   /* Global Data API object */
   IC_INT_APID_GLOBAL *apid_global;
   /* Data API connection object */
   IC_INT_APID_CONNECTION *apid_conn;
+
+  IC_INT_ALTER_TABLE *current_alter_table;
+  IC_INT_ALTER_TABLESPACE *current_alter_ts;
 
   /* Linked list of table operations in metadata transaction */
   IC_INT_ALTER_TABLE *first_alter_table;

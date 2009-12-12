@@ -986,95 +986,110 @@ execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
   return 0;
 }
 
+/*
+  Metadata messages
+  -----------------
+*/
+
+#define NDB_START_MD_TRANS_REQ_LEN 3
 static int
-send_small_message(IC_INT_APID_CONNECTION *apid_conn,
-                   /* Message data */
-                   guint32 message_id,
-                   guint32 *message_data,
-                   guint32 message_size,
-                   /* Destination data */
-                   guint32 receiver_cluster_id,
-                   guint32 receiver_node_id,
-                   guint32 receiver_module_id)
+send_NDB_MD_TRANS_START_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
-  guint32 *message_start;
-  guint32 *main_message_start;
-  guint32 header_size;
-  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
-  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
-  IC_SOCK_BUF_PAGE *send_page;
-  IC_SEND_NODE_CONNECTION *send_node_conn;
-  int ret_code= IC_ERROR_MEM_ALLOC;
+  int ret_code;
+  guint32 node_id= 0;
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  IC_DYNAMIC_TRANSLATION *dyn_trans= apid_conn->trans_bindings;
+  guint32 our_reference;
+  guint64 our_trans_id;
+  guint32 message_data[NDB_START_MD_TRANS_REQ_LEN];
 
-  if (!(send_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
-                 send_buf_pool,
-                 (guint32)0,
-                 &apid_conn->free_pages,
-                 IC_PREALLOC_NUM_MESSAGES,
-                 IC_WAIT_SEND_BUF_POOL)))
-      goto error;
-  if ((ret_code= map_id_to_send_node_connection(apid_global,
-                                                receiver_cluster_id,
-                                                receiver_node_id,
-                                                &send_node_conn)))
+  /* Get our id for transaction */
+  if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(dyn_trans,
+                   &our_trans_id,
+                   (void*)md_trans)))
+    return ret_code;
+  /* Get our NDB reference */
+  our_reference= ic_get_ic_reference(node_id, apid_conn->thread_id);
+
+  /* Set up message data for NDB_CREATE_TABLE_REQ */
+  message_data[0]= our_reference;
+  message_data[1]= (guint32)our_trans_id;
+  message_data[2]= 0;
+
+  if ((ret_code= send_small_message(apid_conn,
+                                    731, /* NDB_START_MD_TRANS_REQ */
+                                    &message_data[0],
+                                    NDB_START_MD_TRANS_REQ_LEN,
+                                    md_trans->cluster_id,
+                                    md_trans->node_id,
+                                    IC_NDB_DICT_MODULE)))
     goto error;
-  message_start= (guint32*)send_page->sock_buf;
-  header_size= get_ndb_message_header_size(send_node_conn);
-  main_message_start= message_start + header_size;
-  memcpy(main_message_start, message_data,
-         sizeof(guint32) * message_size);
+  return 0;
+error:
+  dyn_trans->dt_ops.ic_remove_translation_object(dyn_trans,
+                                                 our_trans_id,
+                                                 (void*)md_trans);
+  return ret_code;
+}
 
-  /* Fill in message data */
-  message_size= fill_ndb_message_header(send_node_conn,
-                                        message_id,
-                                        IC_NDB_NORMAL_PRIO,
-                                        send_node_conn->thread_id,
-                                        receiver_module_id,
-                                        message_start,
-                                        message_size,
-                                        main_message_start,
-                                        0, /* No segments */
-                                        NULL,
-                                        NULL);
-  send_page->size= message_size * sizeof(guint32);
+static int
+execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                               IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  int ret_code;
+  IC_INT_METADATA_TRANSACTION *md_trans;
+  guint32 *main_message_data= ndb_message->segment_ptr[0];
+  guint32 main_message_size= ndb_message->segment_size[0];
+  IC_INT_APID_CONNECTION *apid_conn= ndb_message->apid_conn;
+  IC_DYNAMIC_TRANSLATION *dyn_trans= apid_conn->trans_bindings;
+  /* Word 0 is NDB sender reference */
+  guint64 trans_id= (guint64)main_message_data[1];
+  guint32 ndb_trans_ref= main_message_data[2];
+  IC_INT_ALTER_TABLE *alter_table;
+  IC_INT_ALTER_TABLESPACE *alter_ts;
 
-  /* Send message data */
-  if ((ret_code= ndb_send(send_node_conn,
-                          send_page,
-                          TRUE)))
+  ic_require(main_message_size == 3);
+  if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(
+                                      dyn_trans,
+                                      trans_id,
+                                      (void**)&md_trans)))
     goto error;
+  (void)error_object;
+  md_trans->ndb_trans_ref= ndb_trans_ref;
+  ic_require(md_trans->state == IC_WAIT_MD_START_TRANS);
+  if ((alter_table= md_trans->current_alter_table))
+  {
+    switch (alter_table->alter_op_type)
+    {
+      case IC_CREATE_TABLE_OP:
+        break;
+      case IC_ALTER_TABLE_OP:
+        ic_require(FALSE);
+        break;
+      case IC_DROP_TABLE_OP:
+        ic_require(FALSE);
+        break;
+      case IC_RENAME_TABLE_OP:
+        ic_require(FALSE);
+        break;
+      default:
+        ic_require(FALSE);
+    }
+  }
+  else if ((alter_ts= md_trans->current_alter_ts))
+  {
+    ic_require(FALSE);
+  }
+  else
+    ic_require(FALSE);
   return 0;
 error:
   return ret_code;
 }
 
 static int
-send_START_MD_TRANS_REQ_v0(IC_INT_APID_CONNECTION *apid_conn,
-                           IC_INT_METADATA_TRANSACTION *md_trans)
-{
-  guint32 send_data[5];
-  /* Set-up message to start schema transaction */
-  return send_small_message(apid_conn,
-                            (guint32)731, /* BEGIN_SCHEMA_TRANS_REQ */
-                            (guint32*)&send_data,
-                            5,
-                            md_trans->cluster_id,
-                            md_trans->node_id,
-                            IC_NDB_DICT_MODULE);
-}
-
-static int
 execNDB_START_MD_TRANS_REF_v0(IC_NDB_MESSAGE *ndb_message,
                               IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                               IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
@@ -1109,6 +1124,19 @@ execNDB_END_MD_TRANS_REP_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
+send_create_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  int ret_code;
+  IC_INT_METADATA_TRANSACTION *md_trans= alter_table->md_trans;
+
+  md_trans->current_alter_table= alter_table;
+  if ((ret_code= send_NDB_MD_TRANS_START_REQ(md_trans)))
+    return ret_code;
+  /* Time to poll waiting for messages */
+  return 0;
+}
+
+static int
 execNDB_CREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
                             IC_MESSAGE_ERROR_OBJECT *error_object)
 {
@@ -1127,6 +1155,13 @@ execNDB_CREATE_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
+send_drop_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
+static int
 execNDB_DROP_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
                           IC_MESSAGE_ERROR_OBJECT *error_object)
 {
@@ -1141,6 +1176,20 @@ execNDB_DROP_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 {
   (void)ndb_message;
   (void)error_object;
+  return 0;
+}
+
+static int
+send_rename_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
+static int
+send_alter_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
   return 0;
 }
 
