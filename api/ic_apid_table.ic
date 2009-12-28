@@ -928,23 +928,25 @@ md_commit_alter_table(IC_INT_METADATA_TRANSACTION *md_trans,
 static int
 mdt_md_commit(IC_METADATA_TRANSACTION *ext_md_trans)
 {
+  int ret_code;
   IC_INT_METADATA_TRANSACTION *md_trans=
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
 
   if (md_trans->first_alter_ts)
   {
     g_assert(!md_trans->first_alter_table);
-    return md_commit_alter_tablespace(md_trans,
-                                      md_trans->first_alter_ts);
-    return 1; /* Not implemented yet */
+    ret_code= md_commit_alter_tablespace(md_trans,
+                                         md_trans->first_alter_ts);
   }
   else if (md_trans->first_alter_table)
   {
     g_assert(!md_trans->first_alter_ts);
-    return md_commit_alter_table(md_trans,
-                                 md_trans->first_alter_table);
+    ret_code= md_commit_alter_table(md_trans,
+                                    md_trans->first_alter_table);
   }
-  return IC_ERROR_MD_COMMIT_NO_OPERATION;
+  else
+    ret_code= IC_ERROR_MD_COMMIT_NO_OPERATION;
+  return ret_code;
 }
 
 static int
@@ -952,7 +954,10 @@ mdt_free_md_trans(IC_METADATA_TRANSACTION *ext_md_trans)
 {
   IC_INT_METADATA_TRANSACTION *md_trans=
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
 
+  if (apid_conn)
+    apid_conn->md_trans= NULL;
   md_trans->mc_ptr->mc_ops.ic_mc_free(md_trans->mc_ptr);
   return 0;
 }
@@ -967,12 +972,15 @@ static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
 
 IC_METADATA_TRANSACTION*
 ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
-                               IC_APID_CONNECTION *apid_conn,
+                               IC_APID_CONNECTION *ext_apid_conn,
                                guint32 cluster_id)
 {
   IC_INT_METADATA_TRANSACTION *md_trans;
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   IC_MEMORY_CONTAINER *mc_ptr;
 
+  if (apid_conn->md_trans)
+    return NULL;
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
     return NULL;
   if (!(md_trans= (IC_INT_METADATA_TRANSACTION*)
@@ -987,6 +995,7 @@ ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
   md_trans->apid_global= (IC_INT_APID_GLOBAL*)apid_global;
   md_trans->apid_conn= (IC_INT_APID_CONNECTION*)apid_conn;
   md_trans->mc_ptr= mc_ptr;
+  apid_conn->md_trans= md_trans;
 
   return (IC_METADATA_TRANSACTION*)md_trans;
 }

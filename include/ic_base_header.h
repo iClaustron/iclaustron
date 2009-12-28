@@ -105,6 +105,9 @@ typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
 #define IC_MAX_THREAD_WAIT_TIME 60
 
+#define IC_MICROSEC_PER_SECOND 1000000
+#define IC_MICROSEC_PER_MILLI 1000
+
 #define ERROR_MESSAGE_SIZE 512
 #define IC_VERSION 0x000001
 #define IC_VERSION_STR "iclaustron-0.0.1"

@@ -232,7 +232,7 @@ api_clusterserver_test()
   IC_INIT_STRING(&clu_info.password, kalle_pwd_str, strlen(kalle_pwd_str),
                  TRUE);
   clu_info.cluster_id= IC_MAX_UINT32;
-  srv_obj->api_op.ic_get_config(srv_obj, &clu_info_ptr[0], node_id);
+  srv_obj->api_op.ic_get_config(srv_obj, &clu_info_ptr[0], node_id, (guint32)3);
   srv_obj->api_op.ic_free_config(srv_obj);
   ic_printf("Completing cluster server test");
   return 0;

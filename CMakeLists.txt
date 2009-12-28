@@ -67,52 +67,6 @@ macro (find_bison)
  endif (BISON_EXECUTABLE)
 endmacro (find_bison)
 
-macro (find_flex)
-  FIND_PROGRAM(FLEX_EXECUTABLE
-    NAMES flex
-    PATHS ${system_path}
-    DOC "Flex executable"
-    NO_DEFAULT_PATH)
- if (FLEX_EXECUTABLE)
-   execute_process(COMMAND ${FLEX_EXECUTABLE} --version
-                   OUTPUT_VARIABLE _FLEX_VERSION)
-   string (REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+"
-           FLEX_VERSION
-           "${_FLEX_VERSION}")
-   string (REGEX MATCH "[0-9]+"
-           FLEX_MAJOR_VERSION
-           "${FLEX_VERSION}")
-   string (REGEX MATCH "\\.[0-9]+\\.[0-9]+"
-           FLEX_TMP_VERSION
-           "${FLEX_VERSION}")
-   string (REGEX MATCH "[0-9]+\\.[0-9]+"
-           FLEX_MINOR_VERSIONS
-           "${FLEX_TMP_VERSION}")
-   string (REGEX MATCH "[0-9]+"
-           FLEX_MINOR_VERSION
-           "${FLEX_MINOR_VERSIONS}")
-   string (REGEX MATCH "\\.[0-9]+"
-           FLEX_TMP_VERSION
-           "${FLEX_MINOR_VERSIONS}")
-   string (REGEX MATCH "[0-9]+"
-           FLEX_PATCH_VERSION
-           "${FLEX_TMP_VERSION}")
-   set(FLEX_FOUND NOTFOUND)
-   if (FLEX_MAJOR_VERSION GREATER 1)
-     if (FLEX_MINOR_VERSION GREATER 4)
-       if (FLEX_PATCH_VERSION GREATER 30)
-         message("Found working flex version in" ${FLEX_EXECUTABLE})
-         message("flex version is " ${FLEX_VERSION})
-         set(FLEX_FOUND TRUE)
-       endif (FLEX_PATCH_VERSION GREATER 30)
-     endif (FLEX_MINOR_VERSION GREATER 4)
-   endif (FLEX_MAJOR_VERSION GREATER 1)
-   if (NOT FLEX_FOUND)
-     set(FLEX_EXECUTABLE NOTFOUND)
-   endif (NOT FLEX_FOUND)
- endif (FLEX_EXECUTABLE)
-endmacro (find_flex)
-
 set (iClaustron_VERSION_MAJOR 0)
 set (iClaustron_VERSION_MINOR 0)
 set (iClaustron_VERSION_PATCH 1)
@@ -131,7 +85,6 @@ SET (SYSTEM_LIB_PATH
      /opt/lib)
 
 set(BISON_EXECUTABLE NOTFOUND)
-set(FLEX_EXECUTABLE NOTFOUND)
 if (NOT WIN32)
   foreach (system_path
            /bin
@@ -145,9 +98,6 @@ if (NOT WIN32)
     if (NOT BISON_EXECUTABLE)
       find_bison()
     endif (NOT BISON_EXECUTABLE)
-    if (NOT FLEX_EXECUTABLE)
-      find_flex()
-    endif (NOT FLEX_EXECUTABLE)
   endforeach (system_path)
 else (NOT WIN32)
   foreach (system_path
@@ -158,20 +108,10 @@ else (NOT WIN32)
       find_bison()
     endif (NOT BISON_EXECUTABLE)
   endforeach (system_path)
-  foreach (system_path
-           C:/Program Files/Flex
-           )
-    if (NOT FLEX_EXECUTABLE)
-      find_flex()
-    endif (NOT FLEX_EXECUTABLE)
-  endforeach (system_path)
 endif (NOT WIN32)
 if (NOT BISON_EXECUTABLE)
   message(FATAL_ERROR "Found no working Bison executable")
 endif (NOT BISON_EXECUTABLE)
-if (NOT FLEX_EXECUTABLE)
-  message(FATAL_ERROR "Found no working Flex executable")
-endif (NOT FLEX_EXECUTABLE)
 
 include_directories("${PROJECT_BINARY_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/include")
@@ -468,16 +408,8 @@ target_link_libraries(ic_repd ic_port ic_util ic_api
 install(TARGETS ic_repd DESTINATION bin)
 
 #Create target for the building of the parser of the Cluster Manager
-SET(ClusterManagerSource cluster_mgr/ic_clmgr.c)
+SET(ClusterManagerSource cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c)
 ADD_CUSTOM_TARGET(ClusterManagerParser echo "Creating ic_parser.c")
-
-ADD_CUSTOM_COMMAND(
-  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.l
-  COMMAND ${FLEX_EXECUTABLE}
-  ARGS -o${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.l
-  TARGET ClusterManagerParser
-  OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c)
 
 ADD_CUSTOM_COMMAND(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
@@ -499,11 +431,9 @@ SET(ClusterManagerSource ${ClusterManagerSource}
 #Mark ic_parser.c and ic_lex.c as a generated file
 SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
                             GENERATED)
-SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
-                            GENERATED)
 SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
                             GENERATED)
-#Include binary directory to ensure ic_lex.c is included as well
+#Include binary directory to ensure ic_parser.c is included as well
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(ic_clmgrd ${ClusterManagerSource})

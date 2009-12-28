@@ -16,7 +16,11 @@
 #ifndef IC_CLMGR_INT_H
 #define IC_CLMGR_INT_H
 
-void ic_call_parser(char *parse_string, int str_len, void *some_data);
+void ic_call_parser(gchar *parse_string,
+                    guint32 str_len,
+                    void *parse_data);
+
+gboolean ic_find_hash_function();
 
 enum ic_parse_commands
 {
@@ -54,9 +58,8 @@ struct ic_parse_data
     These variables are initialised before
     call to parser and only used by lexer.
   */
-  void *yyscanner;
   gchar *parse_buf;
-  guint32 parse_inx;
+  guint32 parse_current_pos;
   guint32 parse_str_len;
 
   /* Memory container for parser/lexer */
@@ -98,10 +101,9 @@ struct ic_parse_data
 };
 typedef struct ic_parse_data IC_PARSE_DATA;
 
-#define YY_EXTRA_TYPE IC_PARSE_DATA*
-void yyset_extra(YY_EXTRA_TYPE, void*);
-void yyerror(void *parse_data, void*, char *s);
-int yyparse(IC_PARSE_DATA *parse_data, void *);
+/*#define YY_EXTRA_TYPE IC_PARSE_DATA */
+void yyerror(void *parse_data, char *s);
+int yyparse(IC_PARSE_DATA *parse_data);
 
 #define PARSE_DATA ((IC_PARSE_DATA*)parse_data)
 #endif

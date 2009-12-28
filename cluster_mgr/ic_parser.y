@@ -79,23 +79,22 @@ int yylex(void *parse_data, void *scanner);
 %token VARIABLE_SYM
 %token VERSION_SYM
 
-%token END
-%token IDENTIFIER
-%token INTEGER
-%token VERSION_IDENTIFIER
+%token END_SYM
+%token IDENTIFIER_SYM
+%token INTEGER_SYM
+%token VERSION_IDENTIFIER_SYM
 
 %pure_parser
 %parse-param { IC_PARSE_DATA *parse_data }
-%parse-param { void *scanner }
-%lex-param   { yyscan_t *scanner }
+%lex-param   { IC_PARSE_DATA *parse_data }
 
-%type <ic_str> IDENTIFIER VERSION_IDENTIFIER cluster_name node_name
-%type <int_val> INTEGER cluster_id node_id
+%type <ic_str> IDENTIFIER_SYM VERSION_IDENTIFIER_SYM cluster_name node_name
+%type <int_val> INTEGER_SYM cluster_id node_id
 
 %%
 
 command:
-    any_command END
+    any_command END_SYM
     ;
 
 any_command:
@@ -239,7 +238,7 @@ use_cluster_command:
     ;
 
 use_version_ndb_command:
-    USE_SYM VERSION_SYM NDB_SYM VERSION_IDENTIFIER
+    USE_SYM VERSION_SYM NDB_SYM VERSION_IDENTIFIER_SYM
     {
       memcpy(&PARSE_DATA->ndb_version_name,&$4,sizeof(IC_STRING));
       PARSE_DATA->command= IC_USE_VERSION_NDB_CMD;
@@ -247,7 +246,7 @@ use_version_ndb_command:
     ;
 
 use_version_iclaustron_command:
-    USE_SYM VERSION_SYM ICLAUSTRON_SYM VERSION_IDENTIFIER
+    USE_SYM VERSION_SYM ICLAUSTRON_SYM VERSION_IDENTIFIER_SYM
     {
       memcpy(&PARSE_DATA->iclaustron_version_name,&$4,sizeof(IC_STRING));
       PARSE_DATA->command= IC_USE_VERSION_ICLAUSTRON_CMD;
@@ -265,7 +264,7 @@ top_command:
 
 opt_variable:
     /* empty */
-    | VARIABLE_SYM IDENTIFIER
+    | VARIABLE_SYM IDENTIFIER_SYM
     ;
 
 opt_group:
@@ -293,7 +292,7 @@ opt_initial:
 
 group_reference:
     GROUP_SYM ALL_SYM
-    | GROUP_SYM IDENTIFIER
+    | GROUP_SYM IDENTIFIER_SYM
     ;
 
 opt_seen_from:
@@ -362,11 +361,11 @@ node_reference:
     ;
 
 node_id:
-    INTEGER { $$= $1; }
+    INTEGER_SYM { $$= $1; }
     ;
 
 node_name:
-    IDENTIFIER { $$= $1; }
+    IDENTIFIER_SYM { $$= $1; }
     ;
 
 cluster:
@@ -380,11 +379,11 @@ one_cluster_reference:
     ;
 
 cluster_id:
-    INTEGER { $$= $1; }
+    INTEGER_SYM { $$= $1; }
     ;
 
 cluster_name:
-    IDENTIFIER { $$= $1; }
+    IDENTIFIER_SYM { $$= $1; }
     ;
 
 node_all:

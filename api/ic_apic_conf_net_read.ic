@@ -31,6 +31,7 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
                      guint32 num_cs_servers,
                      gchar **cluster_server_ips,
                      gchar **cluster_server_ports,
+                     guint32 cs_timeout,
                      gboolean use_iclaustron_cluster_server,
                      int *error,
                      gchar **err_str)
@@ -70,7 +71,8 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
   {
     if (!(ret_code= apic->api_op.ic_get_config(apic,
                                                clu_infos,
-                                               node_id)))
+                                               node_id,
+                                               cs_timeout)))
       goto end;
     *err_str= save_err_str;
     *err_str= apic->api_op.ic_fill_error_buffer(apic, ret_code, *err_str);

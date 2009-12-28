@@ -43,9 +43,12 @@ GOptionEntry ic_apid_entries[] =
   { "cs_port", 0, 0, G_OPTION_ARG_STRING,
     &ic_glob_cs_server_port,
     "Set Server Port of Cluster Server", NULL},
+  { "cs_timeout", 0, 0, G_OPTION_ARG_INT,
+    &ic_glob_cs_timeout,
+    "Time to wait for Cluster Servers connecting, 0=no timeout", NULL},
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &ic_glob_node_id,
-    "Node id of file server in all clusters", NULL},
+    "Node id of this server in all clusters", NULL},
   { "data_dir", 0, 0, G_OPTION_ARG_FILENAME,
     &ic_glob_data_path,
     "Sets path to data directory, config files in subdirectory config", NULL},
@@ -88,27 +91,31 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
     if ((ret_code= ic_daemonize("/dev/null")))
       return ret_code;
   }
+  ic_set_die_handler(apid_kill_handler, apid_global);
+  ic_set_sig_error_handler(NULL, NULL);
+
   if ((ret_code= ic_parse_connectstring(ic_glob_cs_connectstring,
                                         &conn_str,
                                         ic_glob_cs_server_name,
                                         ic_glob_cs_server_port)))
     return ret_code;
   *err_str= error_buf;
+  ic_printf("Trying to get configuration from iClaustron Cluster Server");
   *apic= ic_get_configuration(&api_cluster_conn,
                               &ic_glob_config_dir,
                               ic_glob_node_id,
                               conn_str.num_cs_servers,
                               conn_str.cs_hosts,
                               conn_str.cs_ports,
+                              ic_glob_cs_timeout,
                               ic_glob_use_iclaustron_cluster_server,
                               &ret_code,
                               err_str);
   conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
-  if (!apic)
+  if (!(*apic))
     return ret_code;
   
-  ic_set_die_handler(apid_kill_handler, apid_global);
-  ic_set_sig_error_handler(NULL, NULL);
+  ic_printf("Successfully retrieved configuration from iClaustron Cluster Server");
   if (!(*apid_global= ic_create_apid_global(*apic,
                                             FALSE,
                                              &ret_code,
@@ -122,17 +129,20 @@ void
 ic_stop_apid_program(int ret_code,
                      gchar *err_str,
                      IC_APID_GLOBAL *apid_global,
-                     IC_API_CONFIG_SERVER *apic)
+                     IC_API_CONFIG_SERVER *apic,
+                     IC_THREADPOOL_STATE *tp_state)
 {
   if (err_str)
     ic_printf("%s", err_str);
-  if (ret_code)
+  if (!err_str && ret_code)
     ic_print_error(ret_code);
   ic_set_die_handler(NULL, NULL);
   if (apid_global)
     apid_global->apid_global_ops->ic_free_apid_global(apid_global);
   if (apic)
     apic->api_op.ic_free_config(apic);
+  if (tp_state)
+    tp_state->tp_ops.ic_threadpool_stop(tp_state);
   ic_end();
 }
 
@@ -245,7 +255,7 @@ static GOptionEntry basedir_entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-static gchar *help_basedir= "Groupl of flags to set base directory";
+static gchar *help_basedir= "Group of flags to set base directory";
 static gchar *basedir_description= "\
 Basedir Flags\n\
 -------------\n\

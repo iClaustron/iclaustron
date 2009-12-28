@@ -19,7 +19,7 @@
 
 BUILT_SOURCES          = ic_parser.h
 bin_PROGRAMS           = ic_clmgrd
-ic_clmgrd_SOURCES       = ic_clmgr.c ic_parser.y ic_lex.l
+ic_clmgrd_SOURCES       = ic_clmgr.c ic_parser.y ic_lex.c
 ic_clmgrd_LDADD = $(LDADD) \
 			../port/libic_port.la \
 			../util/libic_util.la \

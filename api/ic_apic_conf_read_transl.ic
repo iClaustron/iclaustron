@@ -292,20 +292,23 @@ analyse_key_value(guint32 *key_value, guint32 len,
             goto error;
 
         }
-        if (sect_id >= 2 && sect_id < system_section)
+        if (sect_id >= 2)
         {
-          node_index= sect_id - 2;
-          if ((error= analyse_node_section_phase1(conf_obj, apic, node_index,
-                                                  value, hash_key)))
-            goto error;
-        }
-        else if (sect_id >= first_data_server_section)
-        {
-          node_index= num_apis + (sect_id - first_data_server_section);
-          if ((error= analyse_node_section_phase1(conf_obj, apic,
-                                                  node_index,
-                                                  value, hash_key)))
-            goto error;
+          if (sect_id < system_section)
+          {
+            node_index= sect_id - 2;
+            if ((error= analyse_node_section_phase1(conf_obj, apic, node_index,
+                                                    value, hash_key)))
+              goto error;
+          }
+          else if (sect_id >= first_data_server_section)
+          {
+            node_index= num_apis + (sect_id - first_data_server_section);
+            if ((error= analyse_node_section_phase1(conf_obj, apic,
+                                                    node_index,
+                                                    value, hash_key)))
+              goto error;
+          }
         }
       }
       key_value+= 2;
@@ -328,7 +331,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
             (hash_key == 3000 &&
               (value == ((system_section + 2) << IC_CL_SECT_SHIFT))));
           PROTOCOL_CHECK_GOTO(key_type == IC_CL_SECT_TYPE);
-        } else if (sect_id == 1)
+        }
+        else if (sect_id == 1)
         {
           /* Node meta section */
           PROTOCOL_CHECK_GOTO(key_type == IC_CL_INT32_TYPE);
@@ -342,7 +346,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
               (((hash_key - num_apis) + first_data_server_section)
                   << IC_CL_SECT_SHIFT));
           }
-        } else if (sect_id >= 2 && sect_id < system_section)
+        }
+        else if (sect_id >= 2 && sect_id < system_section)
         {
           /* API node sections */
           node_sect_id= sect_id - 2;
@@ -350,13 +355,15 @@ analyse_key_value(guint32 *key_value, guint32 len,
                                           key_type, &key_value,
                                           value, hash_key, node_sect_id)))
             goto error;
-        } else if (sect_id == system_section)
+        }
+        else if (sect_id == system_section)
         {
           /* System meta section */
           PROTOCOL_CHECK_GOTO(hash_key == 0 &&
                               key_type == IC_CL_INT32_TYPE &&
                value == ((system_section + 1) << IC_CL_SECT_SHIFT));
-        } else if (sect_id == (system_section + 1))
+        }
+        else if (sect_id == (system_section + 1))
         {
           /*
              This is the system section where we currently define name,
@@ -366,7 +373,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
                                             key_type, &key_value,
                                             value, hash_key)))
             goto error;
-        } else if (sect_id == (system_section + 2))
+        }
+        else if (sect_id == (system_section + 2))
         {
           /*
              This is the communication meta section. In communication
@@ -376,7 +384,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
                               hash_key < conf_obj->num_comms &&
                               (first_comm_section + hash_key) ==
                                 (value >> IC_CL_SECT_SHIFT));
-        } else if (sect_id < first_data_server_section)
+        }
+        else if (sect_id < first_data_server_section)
         {
           /* Communication sections */
           guint32 comm_sect_id= sect_id - first_comm_section;
@@ -384,7 +393,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
                                           key_type, &key_value,
                                           value, hash_key, comm_sect_id)))
             goto error;
-        } else
+        }
+        else
         {
           /* Data Server node sections */
           node_sect_id= num_apis + (sect_id - first_data_server_section);

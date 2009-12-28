@@ -459,7 +459,9 @@ struct ic_int_apid_connection
   IC_BITMAP *cluster_id_bitmap;
   IC_THREAD_CONNECTION *thread_conn;
   IC_SOCK_BUF_PAGE *free_pages;
+  IC_INT_METADATA_TRANSACTION *md_trans;
   guint32 thread_id;
+  gboolean return_to_api;
   /*
     The operations pass through a set of lists from start to end.
 

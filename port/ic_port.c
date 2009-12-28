@@ -484,6 +484,7 @@ static void
 sig_error_handler(int signum)
 {
   DEBUG_ENTRY("sig_error_handler");
+  DEBUG_PRINT(COMM_LEVEL, ("signum = %d", signum));
   switch (signum)
   {
     case SIGSEGV:
@@ -510,8 +511,9 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
   signal(SIGSEGV, sig_error_handler);
   signal(SIGFPE, sig_error_handler);
   signal(SIGILL, sig_error_handler);
-  signal(SIGBUS, sig_error_handler);
+  /* signal(SIGBUS, sig_error_handler); */
   signal(SIGSYS, sig_error_handler);
+  signal(SIGPIPE, SIG_IGN);
   DEBUG_RETURN_EMPTY;
 }
 

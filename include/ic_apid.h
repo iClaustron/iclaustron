@@ -1942,6 +1942,7 @@ extern gchar *ic_glob_data_path;
 extern gchar *ic_glob_version_path;
 extern gchar *ic_glob_base_path;
 extern guint32 ic_glob_node_id;
+extern guint32 ic_glob_cs_timeout;
 extern guint32 ic_glob_num_threads;
 extern guint32 ic_glob_use_iclaustron_cluster_server;
 extern guint32 ic_glob_daemonize;
@@ -1963,7 +1964,8 @@ int ic_run_apid_program(IC_APID_GLOBAL *apid_global,
 void ic_stop_apid_program(int ret_code,
                           gchar *error_str,
                           IC_APID_GLOBAL *apid_global,
-                          IC_API_CONFIG_SERVER *apic);
+                          IC_API_CONFIG_SERVER *apic,
+                          IC_THREADPOOL_STATE *tp_state);
 
 /*
   The hidden header file contains parts of the interface which are

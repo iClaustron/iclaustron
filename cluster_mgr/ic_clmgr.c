@@ -30,6 +30,7 @@
 /* Option variables */
 static gchar *glob_cluster_mgr_ip= "127.0.0.1";
 static gchar *glob_cluster_mgr_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
+static gboolean glob_only_find_hash= FALSE;
 
 /* Global variables */
 static const gchar *glob_process_name= "ic_clmgrd";
@@ -1008,7 +1009,7 @@ run_handle_new_connection(gpointer data)
       parse_inx+= 2;
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Ready to execute command:\n%s", parse_buf));
-      ic_call_parser(parse_buf, parse_inx, (void*)&parse_data);
+      ic_call_parser(parse_buf, parse_inx, &parse_data);
       if (parse_data.exit_flag)
         goto exit;
       ic_execute(&parse_data);
@@ -1137,6 +1138,8 @@ static GOptionEntry entries[] =
   { "server_port", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_port,
     "Set Server Port of Cluster Manager", NULL},
+  { "only_find_hash", 0, 0, G_OPTION_ARG_INT, &glob_only_find_hash,
+    "Only run to see if we find a proper hash function", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -1149,12 +1152,22 @@ int main(int argc,
   IC_APID_GLOBAL *apid_global= NULL;
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= error_str;
-  IC_THREADPOOL_STATE *tp_state;
+  IC_THREADPOOL_STATE *tp_state= NULL;
 
   if ((ret_code= ic_start_program(argc, argv, entries,
                                   ic_apid_entries, glob_process_name,
            "- iClaustron Cluster Manager", TRUE)))
     goto end;
+  if (ic_find_hash_function())
+  {
+    ic_printf("Failed to setup a proper hash function");
+    return 1;
+  }
+  if (glob_only_find_hash)
+  {
+    ic_printf("Succeeded in setting up a proper hash function");
+    return 0;
+  }
   if ((ret_code= ic_start_apid_program(&tp_state,
                                        &err_str,
                                        error_str,
@@ -1167,6 +1180,10 @@ int main(int argc,
   ret_code= wait_for_connections_and_fork(conn, apic, tp_state);
   conn->conn_op.ic_free_connection(conn);
 end:
-  ic_stop_apid_program(ret_code, err_str, apid_global, apic);
+  ic_stop_apid_program(ret_code,
+                       err_str,
+                       apid_global,
+                       apic,
+                       tp_state);
   return ret_code;
 }

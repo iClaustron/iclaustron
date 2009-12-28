@@ -44,7 +44,7 @@ int main(int argc,
   IC_APID_GLOBAL *apid_global= NULL;
   gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= NULL;
-  IC_THREADPOOL_STATE *tp_state;
+  IC_THREADPOOL_STATE *tp_state= NULL;
 
   if ((ret_code= ic_start_program(argc, argv, ic_apid_entries, NULL,
                                   glob_process_name,
@@ -62,6 +62,10 @@ int main(int argc,
                                 run_replication_server_thread,
                                 &err_str);
 end:
-  ic_stop_apid_program(ret_code, err_str, apid_global, apic);
+  ic_stop_apid_program(ret_code,
+                       err_str,
+                       apid_global,
+                       apic,
+                       tp_state);
   return ret_code;
 }

@@ -991,70 +991,94 @@ execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
   -----------------
 */
 
-#define NDB_START_MD_TRANS_REQ_LEN 3
+static int
+send_NDB_CREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
+                          IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)md_trans;
+  (void)alter_table;
+  return 0;
+}
+
+static int
+send_NDB_CREATE_INDEX_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
+                          IC_INT_ALTER_TABLE *alter_table,
+                          guint32 index_id)
+{
+  (void)md_trans;
+  (void)alter_table;
+  (void)index_id;
+  return 0;
+}
+
+#define NDB_MD_TRANS_END_REQ_LEN 3
+static int
+send_NDB_MD_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
+{
+  guint32 our_reference;
+  guint32 message_data[NDB_MD_TRANS_END_REQ_LEN];
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+
+  /* Get our NDB reference */
+  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
+
+  /* Set up message data for NDB_MD_TRANS_END_REQ */
+  message_data[0]= our_reference;
+  message_data[1]= 0; /* Always use trans id 0 */
+  message_data[2]= 0;
+
+  return send_small_message(apid_conn,
+                            123, /* NDB_MD_TRANS_END_REQ */
+                            &message_data[0],
+                            NDB_MD_TRANS_END_REQ_LEN,
+                            md_trans->cluster_id,
+                            md_trans->node_id,
+                            IC_NDB_DICT_MODULE);
+}
+
+#define NDB_MD_TRANS_START_REQ_LEN 3
 static int
 send_NDB_MD_TRANS_START_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
-  int ret_code;
-  guint32 node_id= 0;
-  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
-  IC_DYNAMIC_TRANSLATION *dyn_trans= apid_conn->trans_bindings;
   guint32 our_reference;
-  guint64 our_trans_id;
-  guint32 message_data[NDB_START_MD_TRANS_REQ_LEN];
+  guint32 message_data[NDB_MD_TRANS_START_REQ_LEN];
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
 
-  /* Get our id for transaction */
-  if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(dyn_trans,
-                   &our_trans_id,
-                   (void*)md_trans)))
-    return ret_code;
   /* Get our NDB reference */
-  our_reference= ic_get_ic_reference(node_id, apid_conn->thread_id);
+  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
 
-  /* Set up message data for NDB_CREATE_TABLE_REQ */
+  /* Set up message data for NDB_MD_TRANS_START_REQ */
   message_data[0]= our_reference;
-  message_data[1]= (guint32)our_trans_id;
+  message_data[1]= 0; /* Always use trans id 0 */
   message_data[2]= 0;
 
-  if ((ret_code= send_small_message(apid_conn,
-                                    731, /* NDB_START_MD_TRANS_REQ */
-                                    &message_data[0],
-                                    NDB_START_MD_TRANS_REQ_LEN,
-                                    md_trans->cluster_id,
-                                    md_trans->node_id,
-                                    IC_NDB_DICT_MODULE)))
-    goto error;
-  return 0;
-error:
-  dyn_trans->dt_ops.ic_remove_translation_object(dyn_trans,
-                                                 our_trans_id,
-                                                 (void*)md_trans);
-  return ret_code;
+  return send_small_message(apid_conn,
+                            731, /* NDB_MD_TRANS_START_REQ */
+                            &message_data[0],
+                            NDB_MD_TRANS_START_REQ_LEN,
+                            md_trans->cluster_id,
+                            md_trans->node_id,
+                            IC_NDB_DICT_MODULE);
 }
 
 static int
 execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
                                IC_MESSAGE_ERROR_OBJECT *error_object)
 {
-  int ret_code;
-  IC_INT_METADATA_TRANSACTION *md_trans;
+  int ret_code= 0;
+  IC_INT_APID_CONNECTION *apid_conn= ndb_message->apid_conn;
   guint32 *main_message_data= ndb_message->segment_ptr[0];
   guint32 main_message_size= ndb_message->segment_size[0];
-  IC_INT_APID_CONNECTION *apid_conn= ndb_message->apid_conn;
-  IC_DYNAMIC_TRANSLATION *dyn_trans= apid_conn->trans_bindings;
-  /* Word 0 is NDB sender reference */
-  guint64 trans_id= (guint64)main_message_data[1];
+  IC_INT_METADATA_TRANSACTION *md_trans= apid_conn->md_trans;
+  /* Word 0 is NDB sender reference, currently no use of this info */
+  guint32 our_trans_id= main_message_data[1];
   guint32 ndb_trans_ref= main_message_data[2];
   IC_INT_ALTER_TABLE *alter_table;
   IC_INT_ALTER_TABLESPACE *alter_ts;
 
-  ic_require(main_message_size == 3);
-  if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(
-                                      dyn_trans,
-                                      trans_id,
-                                      (void**)&md_trans)))
-    goto error;
   (void)error_object;
+  ic_require(main_message_size == 3);
+  ic_require(our_trans_id == 0);
   md_trans->ndb_trans_ref= ndb_trans_ref;
   ic_require(md_trans->state == IC_WAIT_MD_START_TRANS);
   if ((alter_table= md_trans->current_alter_table))
@@ -1062,6 +1086,7 @@ execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     switch (alter_table->alter_op_type)
     {
       case IC_CREATE_TABLE_OP:
+        ret_code= send_NDB_CREATE_TABLE_REQ(md_trans, alter_table);
         break;
       case IC_ALTER_TABLE_OP:
         ic_require(FALSE);
@@ -1082,8 +1107,6 @@ execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   }
   else
     ic_require(FALSE);
-  return 0;
-error:
   return ret_code;
 }
 
@@ -1128,11 +1151,17 @@ send_create_table(IC_INT_ALTER_TABLE *alter_table)
 {
   int ret_code;
   IC_INT_METADATA_TRANSACTION *md_trans= alter_table->md_trans;
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
 
   md_trans->current_alter_table= alter_table;
   if ((ret_code= send_NDB_MD_TRANS_START_REQ(md_trans)))
     return ret_code;
-  /* Time to poll waiting for messages */
+  /* Poll waiting for messages until we're done */
+  do
+  {
+    ic_poll_messages((IC_APID_CONNECTION*)apid_conn,
+                     3 * IC_MICROSEC_PER_SECOND);
+  } while (apid_conn->return_to_api);
   return 0;
 }
 

@@ -90,12 +90,14 @@ check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   struct pollfd poll_struct;
-  int ret_code;
+  int ret_code= 0;
   int time_out;
 
   poll_struct.events= POLLIN;
   poll_struct.fd= conn->rw_sockfd;
-  
+
+  if (timeout_in_ms == 0)
+    timeout_in_ms= 1;
   while (timeout_in_ms)
   {
     if (ic_get_stop_flag())
@@ -649,6 +651,7 @@ static int
 int_set_up_socket_connection(IC_INT_CONNECTION *conn)
 {
   int error, sockfd;
+  socklen_t len;
   struct addrinfo *loc_addrinfo;
   fd_set read_set, write_set;
   struct timeval time_out;
@@ -720,9 +723,10 @@ renew_connect:
       if (connect(sockfd, (struct sockaddr*)conn->server_addrinfo->ai_addr,
                   conn->server_addrinfo->ai_addrlen) < 0)
       {
-        if (errno == EINTR || errno == ECONNREFUSED)
+        error= errno;
+        if (error == EINTR || error == ECONNREFUSED)
           continue;
-        if (errno == EINPROGRESS)
+        if (error == EINPROGRESS)
         {
           /* We successfully sent a CONNECT request, still waiting for reply */
           time_out.tv_sec= 3; /* Timeout is 3 seconds */
@@ -736,11 +740,10 @@ renew_connect:
           if ((FD_ISSET(sockfd, &read_set)) || 
               (FD_ISSET(sockfd, &write_set)))
           {
-#ifdef SOLARIS
             len= sizeof(error);
-            if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+            if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 ||
+                error != 0)
                goto renew_connect;
-#endif
              break;
           }
           else

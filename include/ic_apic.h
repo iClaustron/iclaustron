@@ -518,7 +518,8 @@ struct ic_api_cluster_operations
   */
   int (*ic_get_config) (IC_API_CONFIG_SERVER *apic,
                         IC_CLUSTER_CONNECT_INFO **clu_info,
-                        guint32 node_id);
+                        guint32 node_id,
+                        guint32 timeout);
   /*
     The following methods are used to retrieve information from the
     configuration after a successful execution of the ic_get_config
@@ -620,6 +621,7 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *apic,
                      guint32 num_cs_servers,
                      gchar **cluster_server_ips,
                      gchar **cluster_server_ports,
+                     guint32 cs_timeout,
                      gboolean use_iclaustron_cluster_server,
                      int *error,
                      gchar **err_str);
