@@ -560,6 +560,15 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
       case IC_REP_SERVER_NODE:
         size_config_objects+= sizeof(IC_REP_SERVER_CONFIG);
         break;
+      case IC_FILE_SERVER_NODE:
+        size_config_objects+= sizeof(IC_FILE_SERVER_CONFIG);
+        break;
+      case IC_RESTORE_NODE:
+        size_config_objects+= sizeof(IC_RESTORE_CONFIG);
+        break;
+      case IC_CLUSTER_MANAGER_NODE:
+        size_config_objects+= sizeof(IC_CLUSTER_MANAGER_CONFIG);
+        break;
       default:
         g_assert(FALSE);
         break;
@@ -602,6 +611,15 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
         break;
       case IC_REP_SERVER_NODE:
         size_struct= sizeof(IC_REP_SERVER_CONFIG);
+        break;
+      case IC_FILE_SERVER_NODE:
+        size_struct= sizeof(IC_FILE_SERVER_CONFIG);
+        break;
+      case IC_RESTORE_NODE:
+        size_struct= sizeof(IC_RESTORE_CONFIG);
+        break;
+      case IC_CLUSTER_MANAGER_NODE:
+        size_struct= sizeof(IC_CLUSTER_MANAGER_CONFIG);
         break;
       default:
         g_assert(FALSE);

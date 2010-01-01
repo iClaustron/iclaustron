@@ -1502,6 +1502,8 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
   if (orig_conn->read_buf_size)
   {
     fork_conn->read_buf_size= orig_conn->read_buf_size;
+    fork_conn->read_buf_pos= 0;
+    fork_conn->size_curr_read_buf= 0;
     if ((fork_conn->read_buf= ic_calloc(orig_conn->read_buf_size)) == NULL)
       return NULL;
   }
@@ -1521,10 +1523,16 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
   fork_conn->listen_sockfd= 0;
   fork_conn->bytes_written_before_interrupt= 0;
   fork_conn->error_code= 0;
+  fork_conn->err_str= NULL;
+  fork_conn->error_line= 0;
   fork_conn->is_listen_socket_retained= FALSE;
   fork_conn->is_mutex_used= FALSE;
   fork_conn->is_connect_thread_used= FALSE;
   fork_conn->is_mutex_used= use_mutex;
+  fork_conn->ret_client_addrinfo= NULL;
+  fork_conn->ret_server_addrinfo= NULL;
+  fork_conn->thread= NULL;
+  fork_conn->param= NULL;
   orig_conn->forked_connections++;
 
   fork_conn->conn_op.ic_write_connection= write_socket_connection;

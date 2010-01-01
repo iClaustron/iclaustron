@@ -849,7 +849,7 @@ run_send_thread(void *data)
         continue after sleeping for a few seconds.
       */
       ic_print_error(ret_code);
-      ic_sleep(3);
+      ic_sleep(1);
     }
     if (!apid_global->use_external_connect)
     {
