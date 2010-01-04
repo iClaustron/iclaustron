@@ -47,6 +47,12 @@ extern guint32 error_inject;
 #define IC_ERROR_INJECT(a) FALSE
 #endif
 
+#ifdef _MSC_VER
+#define IC_INLINE static __inline
+#else
+#define IC_INLINE static inline
+#endif
+
 typedef struct ic_bitmap IC_BITMAP;
 typedef struct ic_connection IC_CONNECTION;
 typedef struct ic_dynamic_array IC_DYNAMIC_ARRAY;

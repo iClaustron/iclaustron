@@ -18,6 +18,7 @@
 #ifndef __HASHTABLE_CWC22_H__
 #define __HASHTABLE_CWC22_H__
 
+#include <ic_base_header.h>
 /* Example of use:
  *
  *      struct ic_hashtable  *h;

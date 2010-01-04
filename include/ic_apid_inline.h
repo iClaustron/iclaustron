@@ -19,28 +19,28 @@
   MODULE: Inline functions for IC_TRANSACTION object
   --------------------------------------------------------
 */
-static inline IC_COMMIT_STATE
+IC_INLINE IC_COMMIT_STATE
 ic_get_commit_state(IC_TRANSACTION *transaction)
 {
   IC_HIDDEN_TRANSACTION *h_trans= (IC_HIDDEN_TRANSACTION*)transaction;
   return h_trans->commit_state;
 }
 
-static inline IC_SAVEPOINT_ID
+IC_INLINE IC_SAVEPOINT_ID
 ic_get_stable_savepoint(IC_TRANSACTION *transaction)
 {
   IC_HIDDEN_TRANSACTION *h_trans= (IC_HIDDEN_TRANSACTION*)transaction;
   return h_trans->savepoint_stable;
 }
 
-static inline IC_SAVEPOINT_ID
+IC_INLINE IC_SAVEPOINT_ID
 ic_get_requested_savepoint(IC_TRANSACTION *transaction)
 {
   IC_HIDDEN_TRANSACTION *h_trans= (IC_HIDDEN_TRANSACTION*)transaction;
   return h_trans->savepoint_requested;
 }
 
-static inline void
+IC_INLINE void
 ic_get_transaction_id(IC_TRANSACTION *transaction,
                       guint32 trans_id[2])
 {
@@ -52,28 +52,28 @@ ic_get_transaction_id(IC_TRANSACTION *transaction,
   MODULE: Inline functions for IC_APID_OPERATION classes
   ------------------------------------------------------
 */
-static inline IC_APID_OPERATION_TYPE
+IC_INLINE IC_APID_OPERATION_TYPE
 ic_get_apid_operation_type(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
   return apid_op->op_type;
 }
 
-static inline IC_APID_CONNECTION*
+IC_INLINE IC_APID_CONNECTION*
 ic_get_apid_connection_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
   return apid_op->apid_conn;
 }
 
-static inline IC_TRANSACTION*
+IC_INLINE IC_TRANSACTION*
 ic_get_transaction_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
   return apid_op->trans_obj;
 }
 
-static inline IC_TABLE_DEF*
+IC_INLINE IC_TABLE_DEF*
 ic_get_table_definition_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -83,26 +83,26 @@ ic_get_table_definition_from_operation(IC_APID_OPERATION *ext_apid_op)
   return apid_op->table_def;
 }
 
-static inline IC_APID_ERROR*
+IC_INLINE IC_APID_ERROR*
 ic_get_error_object_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
   return apid_op->error;
 }
 
-static inline gboolean
+IC_INLINE gboolean
 ic_is_failed_operation(IC_APID_OPERATION *apid_op)
 {
   return apid_op->any_error;
 }
-static inline void*
+IC_INLINE void*
 ic_get_user_reference_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
   return apid_op->user_reference;
 }
 
-static inline IC_FIELD_BIND*
+IC_INLINE IC_FIELD_BIND*
 ic_get_field_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -112,7 +112,7 @@ ic_get_field_from_operation(IC_APID_OPERATION *ext_apid_op)
   return apid_op->fields;
 }
 
-static inline IC_KEY_FIELD_BIND*
+IC_INLINE IC_KEY_FIELD_BIND*
 ic_get_key_fields_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -121,7 +121,7 @@ ic_get_key_fields_from_operation(IC_APID_OPERATION *ext_apid_op)
   return apid_op->key_fields;
 }
 
-static inline IC_READ_KEY_OP
+IC_INLINE IC_READ_KEY_OP
 ic_get_read_operation_type(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -129,7 +129,7 @@ ic_get_read_operation_type(IC_APID_OPERATION *ext_apid_op)
   return apid_op->read_key_op;
 }
 
-static inline IC_WRITE_KEY_OP
+IC_INLINE IC_WRITE_KEY_OP
 ic_get_write_operation_type(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -137,7 +137,7 @@ ic_get_write_operation_type(IC_APID_OPERATION *ext_apid_op)
   return apid_op->write_key_op;
 }
 
-static inline IC_SCAN_OP
+IC_INLINE IC_SCAN_OP
 ic_get_scan_operation_type(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -145,7 +145,7 @@ ic_get_scan_operation_type(IC_APID_OPERATION *ext_apid_op)
   return apid_op->scan_op;
 }
 
-static inline IC_RANGE_CONDITION*
+IC_INLINE IC_RANGE_CONDITION*
 ic_get_range_condition(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -153,7 +153,7 @@ ic_get_range_condition(IC_APID_OPERATION *ext_apid_op)
   return apid_op->range_cond;
 }
 
-static inline IC_WHERE_CONDITION*
+IC_INLINE IC_WHERE_CONDITION*
 ic_get_where_condition(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
@@ -163,7 +163,7 @@ ic_get_where_condition(IC_APID_OPERATION *ext_apid_op)
   return apid_op->where_cond;
 }
 
-static inline IC_CONDITIONAL_ASSIGNMENT*
+IC_INLINE IC_CONDITIONAL_ASSIGNMENT*
 ic_get_conditional_assignment(IC_APID_OPERATION *ext_apid_op,
                               guint32 cond_assignment_id)
 {
