@@ -53,9 +53,9 @@ apid_error_get_apid_error_severity(IC_APID_ERROR *ext_apid_error)
 
 static IC_APID_ERROR_OPS glob_apid_error_ops=
 {
-  .ic_init_apid_error              = apid_error_init_apid_error,
-  .ic_get_apid_error_code          = apid_error_get_apid_error_code,
-  .ic_get_apid_error_msg           = apid_error_get_apid_error_msg,
-  .ic_get_apid_error_category      = apid_error_get_apid_error_category,
-  .ic_get_apid_error_severity      = apid_error_get_apid_error_severity
+  /* .ic_init_apid_error              = */ apid_error_init_apid_error,
+  /* .ic_get_apid_error_code          = */ apid_error_get_apid_error_code,
+  /* .ic_get_apid_error_msg           = */ apid_error_get_apid_error_msg,
+  /* .ic_get_apid_error_category      = */ apid_error_get_apid_error_category,
+  /* .ic_get_apid_error_severity      = */ apid_error_get_apid_error_severity
 };

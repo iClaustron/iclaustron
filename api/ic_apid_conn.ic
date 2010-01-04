@@ -253,23 +253,23 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
 
 static IC_APID_CONNECTION_OPS glob_apid_conn_ops=
 {
-  .ic_write_key              = apid_conn_write_key,
-  .ic_read_key               = apid_conn_read_key,
-  .ic_scan                   = apid_conn_scan,
-  .ic_start_metadata_transaction = apid_conn_start_metadata_transaction,
-  .ic_start_transaction      = apid_conn_start_transaction,
-  .ic_join_transaction       = apid_conn_join_transaction,
-  .ic_commit_transaction     = apid_conn_commit_transaction,
-  .ic_rollback_transaction   = apid_conn_rollback_transaction,
-  .ic_create_savepoint       = apid_conn_create_savepoint,
-  .ic_rollback_savepoint     = apid_conn_rollback_savepoint,
-  .ic_poll                   = ic_poll_messages,
-  .ic_send                   = ic_send_messages,
-  .ic_flush                  = apid_conn_flush,
-  .ic_get_next_executed_operation = apid_conn_get_next_executed_operation,
-  .ic_get_apid_global        = apid_conn_get_apid_global,
-  .ic_get_api_config_server  = apid_conn_get_api_config_server,
-  .ic_free_apid_connection   = apid_conn_free_apid_connection
+  /* .ic_write_key              = */ apid_conn_write_key,
+  /* .ic_read_key               = */ apid_conn_read_key,
+  /* .ic_scan                   = */ apid_conn_scan,
+  /* .ic_start_metadata_transaction = */ apid_conn_start_metadata_transaction,
+  /* .ic_start_transaction      = */ apid_conn_start_transaction,
+  /* .ic_join_transaction       = */ apid_conn_join_transaction,
+  /* .ic_commit_transaction     = */ apid_conn_commit_transaction,
+  /* .ic_rollback_transaction   = */ apid_conn_rollback_transaction,
+  /* .ic_create_savepoint       = */ apid_conn_create_savepoint,
+  /* .ic_rollback_savepoint     = */ apid_conn_rollback_savepoint,
+  /* .ic_poll                   = */ ic_poll_messages,
+  /* .ic_send                   = */ ic_send_messages,
+  /* .ic_flush                  = */ apid_conn_flush,
+  /* .ic_get_next_executed_operation = */ apid_conn_get_next_executed_operation,
+  /* .ic_get_apid_global        = */ apid_conn_get_apid_global,
+  /* .ic_get_api_config_server  = */ apid_conn_get_api_config_server,
+  /* .ic_free_apid_connection   = */ apid_conn_free_apid_connection
 };
 
 IC_APID_CONNECTION*

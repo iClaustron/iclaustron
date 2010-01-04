@@ -20,7 +20,11 @@
 #include <ic_poll_set.h>
 #include "ic_poll_set_int.h"
 /* System header files */
+#ifdef WIN32
+#include <winsock.h>
+#else
 #include <unistd.h>
+#endif
 
 static void
 free_poll_set(IC_POLL_SET *ext_poll_set)

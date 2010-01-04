@@ -32,8 +32,12 @@
 #include "ic_apic_int.h"
 /* System includes */
 #include <glib/gstdio.h>
+#ifdef HAVE_UNISTD_H
 #include <unistd.h>
+#endif
+#ifdef HAVE_FCNTL_H
 #include <fcntl.h>
+#endif
 
 /* Implementation files used by the iClaustron Configuration API */
 #include "ic_apic.ic"

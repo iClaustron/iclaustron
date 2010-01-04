@@ -715,18 +715,18 @@ error:
 
 static IC_ALTER_TABLE_OPS glob_alter_table_ops=
 {
-  .ic_add_field              = at_add_field,
-  .ic_set_charset            = at_set_charset,
-  .ic_set_decimal_field      = at_set_decimal_field,
-  .ic_set_signed             = at_set_signed,
-  .ic_drop_field             = at_drop_field,
-  .ic_add_index              = at_add_index,
-  .ic_drop_index             = at_drop_index,
-  .ic_define_partitioning    = at_define_partitioning,
-  .ic_create_table           = at_create_table,
-  .ic_drop_table             = at_drop_table,
-  .ic_alter_table            = at_alter_table,
-  .ic_rename_table           = at_rename_table
+  /* .ic_add_field              = */ at_add_field,
+  /* .ic_set_charset            = */ at_set_charset,
+  /* .ic_set_decimal_field      = */ at_set_decimal_field,
+  /* .ic_set_signed             = */ at_set_signed,
+  /* .ic_drop_field             = */ at_drop_field,
+  /* .ic_add_index              = */ at_add_index,
+  /* .ic_drop_index             = */ at_drop_index,
+  /* .ic_define_partitioning    = */ at_define_partitioning,
+  /* .ic_create_table           = */ at_create_table,
+  /* .ic_drop_table             = */ at_drop_table,
+  /* .ic_alter_table            = */ at_alter_table,
+  /* .ic_rename_table           = */ at_rename_table
 };
 
 static guint32
@@ -964,10 +964,10 @@ mdt_free_md_trans(IC_METADATA_TRANSACTION *ext_md_trans)
 
 static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
 {
-  .ic_create_metadata_op     = mdt_create_metadata_op,
-  .ic_create_tablespace_op   = mdt_create_tablespace_op,
-  .ic_md_commit              = mdt_md_commit,
-  .ic_free_md_trans          = mdt_free_md_trans
+  /* .ic_create_metadata_op     = */ mdt_create_metadata_op,
+  /* .ic_create_tablespace_op   = */ mdt_create_tablespace_op,
+  /* .ic_md_commit              = */ mdt_md_commit,
+  /* .ic_free_md_trans          = */ mdt_free_md_trans
 };
 
 IC_METADATA_TRANSACTION*
