@@ -105,13 +105,13 @@ table_def_get_buf_offset(IC_TABLE_DEF *table_def,
 
 static IC_TABLE_DEF_OPS glob_table_def_ops=
 {
-  .ic_get_table_id             = table_def_get_table_id,
-  .ic_get_field_id             = table_def_get_field_id,
-  .ic_get_field_name           = table_def_get_field_name,
-  .ic_get_field_type           = table_def_get_field_type,
-  .ic_get_field_len            = table_def_get_field_len,
-  .ic_get_buf                  = table_def_get_buf,
-  .ic_get_buf_offset       = table_def_get_buf_offset
+  /* .ic_get_table_id             = */ table_def_get_table_id,
+  /* .ic_get_field_id             = */ table_def_get_field_id,
+  /* .ic_get_field_name           = */ table_def_get_field_name,
+  /* .ic_get_field_type           = */ table_def_get_field_type,
+  /* .ic_get_field_len            = */ table_def_get_field_len,
+  /* .ic_get_buf                  = */ table_def_get_buf,
+  /* .ic_get_buf_offset           = */ table_def_get_buf_offset
 };
 
 static int
@@ -154,10 +154,10 @@ index_def_get_key_field_id(IC_INDEX_DEF *index_def,
 
 static IC_INDEX_DEF_OPS glob_index_def_ops=
 {
-  .ic_get_index_id           = index_def_get_index_id,
-  .ic_get_table_id           = index_def_get_table_id,
-  .ic_get_num_key_fields     = index_def_get_num_key_fields,
-  .ic_get_key_field_id       = index_def_get_key_field_id
+  /* .ic_get_index_id           = */ index_def_get_index_id,
+  /* .ic_get_table_id           = */ index_def_get_table_id,
+  /* .ic_get_num_key_fields     = */ index_def_get_num_key_fields,
+  /* .ic_get_key_field_id       = */ index_def_get_key_field_id
 };
 
 

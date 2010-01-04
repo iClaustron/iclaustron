@@ -262,13 +262,13 @@ cluster_config_end(void *ic_config)
 
 static IC_CONFIG_OPERATIONS cluster_config_ops =
 {
-  .ic_config_init = cluster_config_init,
-  .ic_add_section = cluster_config_add_section,
-  .ic_add_key     = cluster_config_add_key,
-  .ic_add_comment = cluster_config_add_comment,
-  .ic_config_verify = cluster_config_verify,
-  .ic_init_end    = cluster_config_init_end,
-  .ic_config_end  = cluster_config_end,
+  /*.ic_config_init = */   cluster_config_init,
+  /* .ic_add_section = */  cluster_config_add_section,
+  /* .ic_add_key     = */  cluster_config_add_key,
+  /* .ic_add_comment = */  cluster_config_add_comment,
+  /* .ic_config_verify = */cluster_config_verify,
+  /* .ic_init_end    = */  cluster_config_init_end,
+  /* .ic_config_end  = */  cluster_config_end,
 };
 
 static IC_CLUSTER_CONNECT_INFO**

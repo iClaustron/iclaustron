@@ -98,11 +98,11 @@ assign_free(IC_CONDITIONAL_ASSIGNMENT** cond_assigns)
 
 static IC_CONDITIONAL_ASSIGNMENT_OPS glob_cond_assign_ops =
 {
-  .ic_create_assignment_condition     = assign_create_where_condition,
-  .ic_map_assignment_condition        = assign_map_condition,
-  .ic_read_field_into_memory          = assign_read_field_into_memory,
-  .ic_read_const_into_memory          = assign_read_const_into_memory,
-  .ic_define_calculation              = assign_define_calculation,
-  .ic_write_field_into_memory         = assign_write_field_into_memory,
-  .ic_free_cond_assign                = assign_free
+  /* .ic_create_assignment_condition     = */ assign_create_where_condition,
+  /* .ic_map_assignment_condition        = */ assign_map_condition,
+  /* .ic_read_field_into_memory          = */ assign_read_field_into_memory,
+  /* .ic_read_const_into_memory          = */ assign_read_const_into_memory,
+  /* .ic_define_calculation              = */ assign_define_calculation,
+  /* .ic_write_field_into_memory         = */ assign_write_field_into_memory,
+  /* .ic_free_cond_assign                = */ assign_free
 };

@@ -32,7 +32,7 @@ trans_get_ongoing_op(IC_TRANSACTION *trans,
 
 static IC_TRANSACTION_OPS glob_trans_ops=
 {
-  .ic_get_ongoing_op         = trans_get_ongoing_op
+  /* .ic_get_ongoing_op         = */ trans_get_ongoing_op
 };
 
 static int
@@ -44,5 +44,5 @@ trans_hint_define_hint(IC_TRANSACTION_HINT *trans_hint)
 
 static IC_TRANSACTION_HINT_OPS glob_trans_hint_ops=
 {
-  .ic_define_hint           = trans_hint_define_hint
+  /* .ic_define_hint           = */ trans_hint_define_hint
 };

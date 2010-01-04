@@ -180,16 +180,16 @@ where_free(IC_WHERE_CONDITION *cond)
 
 static IC_WHERE_CONDITION_OPS glob_cond_ops =
 {
-  .ic_define_boolean          = where_define_boolean,
-  .ic_define_condition        = where_define_condition,
-  .ic_read_field_into_memory  = where_read_field_into_memory,
-  .ic_read_const_into_memory  = where_read_const_into_memory,
-  .ic_define_calculation      = where_define_calculation,
-  .ic_define_not              = where_define_not,
-  .ic_define_first            = where_define_first,
-  .ic_define_regexp           = where_define_regexp,
-  .ic_define_like             = where_define_like,
-  .ic_evaluate_where          = where_evaluate,
-  .ic_store_where             = where_store,
-  .ic_free_where              = where_free
+  /* .ic_define_boolean          = */ where_define_boolean,
+  /* .ic_define_condition        = */ where_define_condition,
+  /* .ic_read_field_into_memory  = */ where_read_field_into_memory,
+  /* .ic_read_const_into_memory  = */ where_read_const_into_memory,
+  /* .ic_define_calculation      = */ where_define_calculation,
+  /* .ic_define_not              = */ where_define_not,
+  /* .ic_define_first            = */ where_define_first,
+  /* .ic_define_regexp           = */ where_define_regexp,
+  /* .ic_define_like             = */ where_define_like,
+  /* .ic_evaluate_where          = */ where_evaluate,
+  /* .ic_store_where             = */ where_store,
+  /* .ic_free_where              = */ where_free
 };

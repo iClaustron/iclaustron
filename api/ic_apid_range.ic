@@ -60,8 +60,8 @@ range_free(IC_RANGE_CONDITION *range)
 
 static IC_RANGE_CONDITION_OPS glob_range_ops =
 {
-  .ic_multi_range             = range_multi_range,
-  .ic_define_range_part       = range_define_range_part,
-  .ic_free_range_cond         = range_free
+  /* .ic_multi_range             = */ range_multi_range,
+  /* .ic_define_range_part       = */ range_define_range_part,
+  /* .ic_free_range_cond         = */ range_free
 };
 
