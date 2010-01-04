@@ -39,7 +39,7 @@ else (WIN32)
 endif (WIN32)
 macro (find_bison)
   FIND_PROGRAM(BISON_EXECUTABLE
-    NAMES bison byacc
+    NAMES bison
     PATHS ${system_path}
     DOC "Bison executable"
     NO_DEFAULT_PATH)
@@ -75,8 +75,6 @@ set (ICLAUSTRON_VERSION "0.0.1")
 set (MYSQL_VERSION "mysql-5.1.35-ndb-7.1.0")
 
 SET (ICLAUSTRON_LIBS "")
-SET (MANUAL_GLIB_LIB_DIR C:/glib/bin)
-SET (MANUAL_GLIB_INCLUDE_DIR C:/glib/include)
 SET (SYSTEM_BINARY_PATH
      /usr/local/bin /opt/local/bin /bin /sbin /usr/bin /usr/sbin
      /opt/bin)
@@ -101,8 +99,8 @@ if (NOT WIN32)
   endforeach (system_path)
 else (NOT WIN32)
   foreach (system_path
-           C:/Program Files/Bison
-           C:/Program Files/Byacc
+           "C:\\Program Files\\GnuWin32\\bin"
+           "C:\\Program Files (x86)\\GnuWin32\\bin"
            )
     if (NOT BISON_EXECUTABLE)
       find_bison()
@@ -201,16 +199,13 @@ else (HAVE_CLOCK_GETTIME)
   message("No clock_gettime function")
 endif (HAVE_CLOCK_GETTIME)
 
-if (WIN32)
-  find_library(MATH_LIB
-               NAMES m
-               PATHS C:/Program Files/Math)
-else (WIN32)
+if (NOT WIN32)
   find_library(MATH_LIB
                NAMES m
                PATHS /usr/local/lib /usr/lib)
-endif (WIN32)
-set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${MATH_LIB})
+  set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${MATH_LIB})
+endif (NOT WIN32)
+
 
 message("Checking for MSG_NOSIGNAL in this platform")
 try_compile(USE_MSG_NOSIGNAL
@@ -418,7 +413,7 @@ ADD_CUSTOM_COMMAND(
        -y ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
        -o ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
   TARGET ClusterManagerParser
-  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.c
   OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
           ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h)
 
@@ -427,7 +422,7 @@ SET(ClusterManagerSource ${ClusterManagerSource}
     ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
     ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_clmgr_int.h
-    ${CMAKE_CURRENT_BINARY_DIR}/ic_lex.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.c)
 #Mark ic_parser.c and ic_lex.c as a generated file
 SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
                             GENERATED)

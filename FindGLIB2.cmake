@@ -26,23 +26,13 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   set (GLIB2_DEFINITIONS "")
   include(FindPkgConfig)
 
-
-  set (WINDOWS_GLIB_INCLUDE C:/glib/include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/glib/lib/glib-2.0/include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/glib/include/glib-2.0)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/glib-2.0/include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/GTK/include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/Program/GTK/include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} C:/Program Files/GTK/include)
-  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} ${MANUAL_GLIB_INCLUDE_DIR})
-
-  set (WINDOWS_GLIB_LIB C:/glib/bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/glib/lib)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/glib-2.0/bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/GTK/bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/Program/GTK/bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} C:/Program Files/GTK/bin)
-  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} ${MANUAL_GLIB_LIB_DIR})
+  set (WINDOWS_GLIB_INCLUDE "C:\\Program Files\\GTK\\include\\glib-2.0")
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} "C:\\Program Files (x86)\\GTK\\include\\glib-2.0")
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} "C:\\Program Files\\GTK\\lib\\glib-2.0\\include")
+  set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} "C:\\Program Files (x86)\\GTK\\lib\\glib-2.0\\include")
+  
+  set (WINDOWS_GLIB_LIB "C:/Program Files (x86)/GTK/lib")
+  set (WINDOWS_GLIB_LIB ${WINDOWS_GLIB_LIB} "C:\\Program Files\\GTK\\lib")
 
   set (UNIX_GLIB_LIB /opt/gnome/lib)
   set (UNIX_GLIB_LIB ${UNIX_GLIB_LIB} /opt/gnome/lib64)
@@ -93,15 +83,11 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
     if (WIN32)
       find_library(GLIB2_LIBRARY
         NAMES glib-2.0
-        PATHS 
-          ${WINDOWS_GLIB_LIB}
-          NO_DEFAULT_PATH)
+        PATHS "C:\\Program Files (x86)\\GTK\\lib")
     else (WIN32)
       find_library(GLIB2_LIBRARY
-        NAMES
-          glib-2.0
-        PATHS
-          ${UNIX_GLIB_LIB}
+        NAMES glib-2.0
+        PATHS ${UNIX_GLIB_LIB}
         NO_DEFAULT_PATH)
     endif (WIN32)
     if (NOT GLIB2_LIBRARY)
