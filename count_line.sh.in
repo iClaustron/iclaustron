@@ -1,7 +1,20 @@
-wc -l *.ac *.sh.in *.am */*.am api/*.[ch] cluster_client/*.[ch] cluster_mgr/*.[yl] \
-  cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c cluster_server/*.[ch] comm/*.[ch] \
-  fileserver/*.[ch] pcntrl/*.[ch] port/*.[ch] repserver/*.[ch] test/*.[ch] util/*.[ch] include/ic*.h \
-  scripts/*.sh.in README AUTHORS README-CONFIG NEWS TODO \
-  api/*.ic \
+wc -l *.ac *.sh.in *.am */*.am \
+  README AUTHORS README-CONFIG NEWS TODO \
   *.txt */*.txt FindGLIB2.cmake include/cmake_config.h.in \
-  build_test/*.c svn_tags.sh
+  svn_tags.sh \
+  api/*.[ch] api/*.ic \
+  build_test/*.c \
+  cluster_client/*.[ch] \
+  cluster_mgr/*.y cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c \
+  cluster_mgr/ic_clmgr_int.h \
+  cluster_server/*.[ch] \
+  comm/*.[ch] \
+  examples/*.ini \
+  fileserver/*.[ch] \
+  include/ic*.h \
+  pcntrl/*.[ch] \
+  port/*.[ch] \
+  repserver/*.[ch] \
+  scripts/*.sh.in \
+  test/*.[ch] \
+  util/*.[ch]

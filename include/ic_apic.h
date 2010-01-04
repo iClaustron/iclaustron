@@ -229,6 +229,7 @@ struct ic_cluster_config
   */
   guint32 *node_ids;
   guint32 my_node_id;
+  IC_CONNECTION *cs_conn;
   IC_NODE_TYPES *node_types;
   IC_HASHTABLE *comm_hash;
 };

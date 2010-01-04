@@ -162,15 +162,20 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
     clu_conf->my_node_id= node_id;
   }
 
+  first= TRUE;
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
-    if (!apic->conf_objects[cluster_id])
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    if (!clu_conf)
       continue;
+    if (!first && (error= connect_api_connections(apic, &conn, cs_timeout)))
+      goto error;
     if ((error= send_get_nodeid_req(apic, conn, cluster_id)) ||
         (error= rec_get_nodeid_reply(apic, conn, cluster_id)) ||
         (error= send_get_config_req(apic, conn)) ||
         (error= rec_get_config_reply(apic, conn, cluster_id)))
       goto error;
+    clu_conf->cs_conn= conn;
   }
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
