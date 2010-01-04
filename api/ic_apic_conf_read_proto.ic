@@ -109,6 +109,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   IC_CONNECTION *conn= NULL;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
+  gboolean first;
   DEBUG_ENTRY("get_cs_config");
 
   if (apic->use_ic_cs)

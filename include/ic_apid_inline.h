@@ -77,9 +77,9 @@ static inline IC_TABLE_DEF*
 ic_get_table_definition_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == KEY_READ_OPERATION ||
-           apid_op->op_type == SCAN_OPERATION ||
-           apid_op->op_type == KEY_WRITE_OPERATION);
+  g_assert(apid_op->op_type == IC_KEY_READ_OPERATION ||
+           apid_op->op_type == IC_SCAN_OPERATION ||
+           apid_op->op_type == IC_KEY_WRITE_OPERATION);
   return apid_op->table_def;
 }
 
@@ -106,9 +106,9 @@ static inline IC_FIELD_BIND*
 ic_get_field_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == KEY_READ_OPERATION ||
-           apid_op->op_type == KEY_WRITE_OPERATION ||
-           apid_op->op_type == SCAN_OPERATION);
+  g_assert(apid_op->op_type == IC_KEY_READ_OPERATION ||
+           apid_op->op_type == IC_KEY_WRITE_OPERATION ||
+           apid_op->op_type == IC_SCAN_OPERATION);
   return apid_op->fields;
 }
 
@@ -116,8 +116,8 @@ static inline IC_KEY_FIELD_BIND*
 ic_get_key_fields_from_operation(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == KEY_WRITE_OPERATION ||
-           apid_op->op_type == KEY_READ_OPERATION);
+  g_assert(apid_op->op_type == IC_KEY_WRITE_OPERATION ||
+           apid_op->op_type == IC_KEY_READ_OPERATION);
   return apid_op->key_fields;
 }
 
@@ -125,7 +125,7 @@ static inline IC_READ_KEY_OP
 ic_get_read_operation_type(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == KEY_READ_OPERATION);
+  g_assert(apid_op->op_type == IC_KEY_READ_OPERATION);
   return apid_op->read_key_op;
 }
 
@@ -133,7 +133,7 @@ static inline IC_WRITE_KEY_OP
 ic_get_write_operation_type(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == KEY_WRITE_OPERATION);
+  g_assert(apid_op->op_type == IC_KEY_WRITE_OPERATION);
   return apid_op->write_key_op;
 }
 
@@ -141,7 +141,7 @@ static inline IC_SCAN_OP
 ic_get_scan_operation_type(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == SCAN_OPERATION);
+  g_assert(apid_op->op_type == IC_SCAN_OPERATION);
   return apid_op->scan_op;
 }
 
@@ -149,7 +149,7 @@ static inline IC_RANGE_CONDITION*
 ic_get_range_condition(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == SCAN_OPERATION);
+  g_assert(apid_op->op_type == IC_SCAN_OPERATION);
   return apid_op->range_cond;
 }
 
@@ -157,9 +157,9 @@ static inline IC_WHERE_CONDITION*
 ic_get_where_condition(IC_APID_OPERATION *ext_apid_op)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == SCAN_OPERATION ||
-           apid_op->op_type == KEY_READ_OPERATION ||
-           apid_op->op_type == KEY_WRITE_OPERATION);
+  g_assert(apid_op->op_type == IC_SCAN_OPERATION ||
+           apid_op->op_type == IC_KEY_READ_OPERATION ||
+           apid_op->op_type == IC_KEY_WRITE_OPERATION);
   return apid_op->where_cond;
 }
 
@@ -168,8 +168,8 @@ ic_get_conditional_assignment(IC_APID_OPERATION *ext_apid_op,
                               guint32 cond_assignment_id)
 {
   IC_HIDDEN_APID_OPERATION *apid_op= (IC_HIDDEN_APID_OPERATION*)ext_apid_op;
-  g_assert(apid_op->op_type == KEY_WRITE_OPERATION &&
-           apid_op->write_key_op == KEY_UPDATE);
+  g_assert(apid_op->op_type == IC_KEY_WRITE_OPERATION &&
+           apid_op->write_key_op == IC_KEY_UPDATE);
   g_assert(apid_op->num_cond_assignment_ids > cond_assignment_id);
   return apid_op->cond_assign[cond_assignment_id];
 }

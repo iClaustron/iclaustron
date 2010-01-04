@@ -187,7 +187,7 @@ execRECORD_INFO_v0(IC_NDB_MESSAGE *ndb_message,
     g_assert(FALSE);
     return 1;
   }
-  if (apid_op->op_type == SCAN_OPERATION)
+  if (apid_op->op_type == IC_SCAN_OPERATION)
   {
     return handle_scan_ai(apid_op,
                           trans_op,
