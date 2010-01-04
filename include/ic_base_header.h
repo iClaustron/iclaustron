@@ -25,19 +25,21 @@
 #ifndef IC_BASE_HEADER_H
 #define IC_BASE_HEADER_H
 
+/* Configure definitions are needed also in header files */
+#include <config.h>
+
+#ifdef WINDOWS
+#define _WIN32_WINNT 0x0601
+#include <winsock2.h>
+#endif
+
 /* GLib header files contains all data type definitions */
 #include <glib.h>
 #include <glib/gprintf.h>
-/* Configure definitions are needed also in header files */
-#include <config.h>
 /* Very basic header files */
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#ifdef WINDOWS
-#define _WIN32_WINNT 0x0600
-#include <windows.h>
-#endif
 
 #include <ic_linked_list.h>
 /*
@@ -55,6 +57,16 @@ extern guint32 error_inject;
 #define IC_INLINE static __inline
 #else
 #define IC_INLINE static inline
+#endif
+
+#ifdef WINDOWS
+#define IC_POLL_FLAG POLLRDNORM
+#define IC_POLLFD_STRUCT WSAPOLLFD
+#define ic_poll WSAPoll
+#else
+#define IC_POLL_FLAG POLLIN
+#define IC_POLLFD_STRUCT struct pollfd
+#define ic_poll poll
 #endif
 
 typedef struct ic_bitmap IC_BITMAP;

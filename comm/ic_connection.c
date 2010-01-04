@@ -22,7 +22,9 @@
 #include <ic_connection.h>
 #include "ic_connection_int.h"
 
+#ifdef HAVE_FCNTL_H
 #include <fcntl.h>
+#endif
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
 #endif
@@ -57,10 +59,6 @@
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
-#ifdef WIN32
-#define _WIN32_WINNT 0x0600
-#include <winsock.h>
-#endif
 
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
@@ -93,11 +91,11 @@ static gboolean
 check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  struct pollfd poll_struct;
+  IC_POLLFD_STRUCT poll_struct;
   int ret_code= 0;
   int time_out;
 
-  poll_struct.events= POLLIN;
+  poll_struct.events= IC_POLL_FLAG;
   poll_struct.fd= conn->rw_sockfd;
 
   if (timeout_in_ms == 0)
@@ -108,7 +106,7 @@ check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
       return TRUE;
     time_out= IC_MIN(timeout_in_ms, 1000);
     timeout_in_ms-= time_out;
-    ret_code= poll(&poll_struct, 1, time_out);
+    ret_code= ic_poll(&poll_struct, 1, time_out);
   }
   if (ret_code > 0)
     return TRUE;
