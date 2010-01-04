@@ -254,8 +254,9 @@ cluster_config_init_end(void *ic_config)
 }
 
 static void
-cluster_config_end(__attribute__ ((unused)) void *ic_config)
+cluster_config_end(void *ic_config)
 {
+  (void)ic_config;
   return;
 }
 

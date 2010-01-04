@@ -358,18 +358,24 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
 }
 
 static int
-start_client_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                  __attribute ((unused)) gchar *node_config,
-                  __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
+start_client_node(IC_PARSE_DATA *parse_data,
+                  gchar *node_config,
+                  IC_CLUSTER_CONFIG *clu_conf)
 {
+  (void)parse_data;
+  (void)node_config;
+  (void)clu_conf;
   return 0;
 }
 
 static int
-start_sql_server_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                      __attribute ((unused)) gchar *node_config,
-                      __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
+start_sql_server_node(IC_PARSE_DATA *parse_data,
+                      gchar *node_config,
+                      IC_CLUSTER_CONFIG *clu_conf)
 {
+  (void)parse_data;
+  (void)node_config;
+  (void)clu_conf;
   return 0;
 }
 
@@ -424,10 +430,13 @@ start_apid_server_node(IC_PARSE_DATA *parse_data,
 }
 
 static int
-start_restore_node(__attribute ((unused)) IC_PARSE_DATA *parse_data,
-                   __attribute ((unused)) gchar *node_config,
-                   __attribute ((unused)) IC_CLUSTER_CONFIG *clu_conf)
+start_restore_node(IC_PARSE_DATA *parse_data,
+                   gchar *node_config,
+                   IC_CLUSTER_CONFIG *clu_conf)
 {
+  (void)parse_data;
+  (void)node_config;
+  (void)clu_conf;
   return 0;
 }
 

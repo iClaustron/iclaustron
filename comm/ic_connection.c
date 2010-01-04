@@ -1219,9 +1219,10 @@ read_socket_connection(IC_CONNECTION *ext_conn,
 /* Implements ic_open_write_session */
 static int
 open_write_socket_session_mutex(IC_CONNECTION *ext_conn,
-                                __attribute__ ((unused)) guint32 total_size)
+                                guint32 total_size)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  (void)total_size;
   g_mutex_lock(conn->write_mutex);
   return 0;
 }
@@ -1255,16 +1256,19 @@ close_read_socket_session_mutex(IC_CONNECTION *ext_conn)
 
 /* Implements various methods not used */
 static int
-no_op_socket_method(__attribute__ ((unused)) IC_CONNECTION *ext_conn)
+no_op_socket_method(IC_CONNECTION *ext_conn)
 {
+  (void)ext_conn;
   return 0;
 }
 
 /* Implements various methods not used */
 static int
-no_op_with_size_socket_method(__attribute__ ((unused)) IC_CONNECTION *ext_conn,
-                              __attribute__ ((unused)) guint32 total_size)
+no_op_with_size_socket_method(IC_CONNECTION *ext_conn,
+                              guint32 total_size)
 {
+  (void)ext_conn;
+  (void)total_size;
   return 0;
 }
 
@@ -1902,10 +1906,13 @@ ic_ssl_verify_callback(int ok, X509_STORE_CTX *ctx_store)
 }
 
 static DH*
-ssl_get_dh_callback(__attribute__ ((unused)) SSL *ssl,
-                    __attribute__ ((unused)) int is_export,
+ssl_get_dh_callback(SSL *ssl,
+                    int is_export,
                     int key_length)
 {
+  (void)ssl;
+  (void)is_export;
+
   if (key_length == 512)
     return dh_512;
   else

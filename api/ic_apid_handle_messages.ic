@@ -107,22 +107,32 @@ typedef struct ic_exec_message_func IC_EXEC_MESSAGE_FUNC;
 static IC_EXEC_MESSAGE_FUNC ic_exec_message_func_array[2][1024];
 
 static int
-handle_key_ai(__attribute__ ((unused)) IC_INT_APID_OPERATION *apid_op,
-              __attribute__ ((unused)) IC_TRANSACTION *trans,
-              __attribute__ ((unused)) guint32 *ai_data,
-              __attribute__ ((unused)) guint32 data_size,
-              __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
+handle_key_ai(IC_INT_APID_OPERATION *apid_op,
+              IC_TRANSACTION *trans,
+              guint32 *ai_data,
+              guint32 data_size,
+              IC_MESSAGE_ERROR_OBJECT *error_object)
 {
+  (void)apid_op;
+  (void)trans;
+  (void)ai_data;
+  (void)data_size;
+  (void)error_object;
   return 0;
 }
 
 static int
-handle_scan_ai(__attribute__ ((unused)) IC_INT_APID_OPERATION *apid_op,
-               __attribute__ ((unused)) IC_TRANSACTION *trans,
-               __attribute__ ((unused)) guint32 *ai_data,
-               __attribute__ ((unused)) guint32 data_size,
-               __attribute__ ((unused))IC_MESSAGE_ERROR_OBJECT *error_object)
+handle_scan_ai(IC_INT_APID_OPERATION *apid_op,
+               IC_TRANSACTION *trans,
+               guint32 *ai_data,
+               guint32 data_size,
+               IC_MESSAGE_ERROR_OBJECT *error_object)
 {
+  (void)apid_op;
+  (void)trans;
+  (void)ai_data;
+  (void)data_size;
+  (void)error_object;
   return 0;
 }
 

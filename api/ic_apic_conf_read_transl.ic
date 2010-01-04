@@ -972,9 +972,11 @@ get_64bit_value(guint32 value, guint32 **key_value)
 
 static int
 key_type_error(IC_INT_API_CONFIG_SERVER *apic,
-               __attribute__ ((unused)) guint32 hash_key,
-               __attribute__ ((unused)) guint32 node_type)
+               guint32 hash_key,
+               guint32 node_type)
 {
+  (void)hash_key;
+  (void)node_type;
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Wrong key type %u node type %u", hash_key, node_type));
   PROTOCOL_CHECK_RETURN(FALSE);
