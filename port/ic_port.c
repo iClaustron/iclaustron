@@ -228,7 +228,7 @@ ic_free(void *ret_obj)
   g_free(ret_obj);
 }
 
-#ifndef WIN32
+#ifndef WINDOWS
 GPid
 ic_get_own_pid()
 {
@@ -253,7 +253,7 @@ void ic_controlled_terminate()
   my_pid= ic_get_own_pid();
   kill(my_pid, SIGTERM);
 }
-#else /* WIN32 */
+#else /* WINDOWS */
 GPid
 ic_get_own_pid()
 {
@@ -473,7 +473,7 @@ ic_read_file(int file_ptr, gchar *buf, size_t size, guint64 *len)
   return 0;
 }
 
-#ifndef WIN32
+#ifndef WINDOWS
 #include <signal.h>
 static IC_SIG_HANDLER_FUNC glob_die_handler= NULL;
 static void *glob_die_param;
@@ -584,7 +584,7 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC *error_handler, void *param)
 }
 #endif
 
-#ifndef WIN32
+#ifndef WINDOWS
 static void
 child_exit_handler(int signum)
 {
@@ -609,7 +609,7 @@ sig_handler(int signum)
 int
 ic_daemonize(gchar *log_file)
 {
-#ifndef WIN32
+#ifndef WINDOWS
   static int failed= 0;
   pid_t child_pid, session_id, parent_pid;
 

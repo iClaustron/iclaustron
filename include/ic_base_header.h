@@ -34,7 +34,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#ifdef WIN32
+#ifdef WINDOWS
 #define _WIN32_WINNT 0x0600
 #include <windows.h>
 #endif
