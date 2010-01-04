@@ -53,13 +53,6 @@ ic_hashtable_iterator(struct ic_hashtable *h)
 /* key      - return the key of the (key,value) pair at the current position */
 /* value    - return the value of the (key,value) pair at the current position */
 
-void *
-ic_hashtable_iterator_key(struct ic_hashtable_itr *i)
-{ return i->e->k; }
-
-void *
-ic_hashtable_iterator_value(struct ic_hashtable_itr *i)
-{ return i->e->v; }
 
 /*****************************************************************************/
 /* advance - advance the iterator to the next element

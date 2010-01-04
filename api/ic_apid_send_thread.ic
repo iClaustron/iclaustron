@@ -143,8 +143,9 @@ static int set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
 
 /* Send thread functions */
 static int
-check_timeout_func(__attribute__ ((unused)) void *timeout_obj, int timer)
+check_timeout_func(void *timeout_obj, int timer)
 {
+  (void)timeout_obj;
   if (timer < 2)
     return 0;
   else
@@ -154,8 +155,9 @@ check_timeout_func(__attribute__ ((unused)) void *timeout_obj, int timer)
 /* TODO: This function needs to check which node was actually connected to */
 static gboolean
 check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
-                 __attribute__ ((unused)) IC_CONNECTION *conn)
+                 IC_CONNECTION *conn)
 {
+  (void)conn;
   if (!send_node_conn->connection_up)
     return FALSE;
   else
