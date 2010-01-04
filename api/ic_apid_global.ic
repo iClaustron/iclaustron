@@ -563,17 +563,17 @@ apid_global_free(IC_APID_GLOBAL *ext_apid_global)
 
 static IC_APID_GLOBAL_OPS glob_apid_global_ops=
 {
-  .ic_cond_wait               = apid_global_cond_wait,
-  .ic_get_stop_flag           = apid_global_get_stop,
-  .ic_set_stop_flag           = apid_global_set_stop,
-  .ic_get_num_user_threads    = apid_global_get_num_user_threads,
-  .ic_add_user_thread         = apid_global_add_user_thread,
-  .ic_remove_user_thread      = apid_global_remove_user_thread,
-  .ic_set_thread_func         = apid_global_set_thread_func,
-  .ic_get_thread_func         = apid_global_get_thread_func,
-  .ic_external_connect        = apid_global_external_connect,
-  .ic_wait_first_node_connect = apid_global_wait_first_node_connect,
-  .ic_free_apid_global        = apid_global_free
+  /* .ic_cond_wait               = */ apid_global_cond_wait,
+  /* .ic_get_stop_flag           = */ apid_global_get_stop,
+  /* .ic_set_stop_flag           = */ apid_global_set_stop,
+  /* .ic_get_num_user_threads    = */ apid_global_get_num_user_threads,
+  /* .ic_add_user_thread         = */ apid_global_add_user_thread,
+  /* .ic_remove_user_thread      = */ apid_global_remove_user_thread,
+  /* .ic_set_thread_func         = */ apid_global_set_thread_func,
+  /* .ic_get_thread_func         = */ apid_global_get_thread_func,
+  /* .ic_external_connect        = */ apid_global_external_connect,
+  /* .ic_wait_first_node_connect = */ apid_global_wait_first_node_connect,
+  /* .ic_free_apid_global        = */ apid_global_free
 };
 
 static IC_APID_ERROR*
@@ -629,9 +629,9 @@ md_bind_table_unbind(IC_APID_GLOBAL *apid_global,
 
 static IC_METADATA_BIND_OPS glob_metadata_bind_ops=
 {
-  .ic_table_bind              = md_bind_table_bind,
-  .ic_index_bind              = md_bind_index_bind,
-  .ic_table_unbind            = md_bind_table_unbind
+  /* .ic_table_bind              = */ md_bind_table_bind,
+  /* .ic_index_bind              = */ md_bind_index_bind,
+  /* .ic_table_unbind            = */ md_bind_table_unbind
 };
 
 /*

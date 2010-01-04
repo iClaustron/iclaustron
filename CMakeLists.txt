@@ -305,8 +305,6 @@ if (NOT WIN32)
   else (WITH_PRODUCTION)
     add_definitions(-W -Wall)
   endif (WITH_PRODUCTION)
-else (NOT WIN32)
-  add_definitions(-DWINDOWS)
 endif (NOT WIN32)
 
 set (ICLAUSTRON_LIBS ${ICLAUSTRON_LIBS} ${CMAKE_REQUIRED_LIBRARIES})
