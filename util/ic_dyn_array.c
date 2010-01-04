@@ -556,7 +556,7 @@ read_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
 static int
 write_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
                           guint64 position,
-                          __attribute__((unused)) guint64 size,
+                          guint64 size,
                           const gchar *buf)
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
@@ -565,6 +565,7 @@ write_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
   gchar *write_buf;
   int ret_code;
 
+  (void)size;
   if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
                                             &dyn_buf, &buf_pos)))
     return ret_code;
