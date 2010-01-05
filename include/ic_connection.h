@@ -144,6 +144,11 @@ struct ic_connect_operations
                                         guint32 tot_size,
                                         guint32 secs_to_try);
   int (*ic_flush_connection)           (IC_CONNECTION *conn);
+  /*
+    After bind or connect it is possible to get port number when using
+    ephemeral ports
+  */
+  guint32 (*ic_get_port_number)        (IC_CONNECTION *conn);
   /* This call is used to check if there is data to be read on the socket */
   gboolean (*ic_check_for_data)        (IC_CONNECTION *conn,
                                         int timeout_in_ms);

@@ -163,6 +163,7 @@ struct ic_listen_server_thread
   guint32 cluster_id;
   guint32 thread_id;
   guint32 index;
+  guint32 listen_port;
   gboolean started;
   gboolean stop_ordered;
   GMutex *mutex;

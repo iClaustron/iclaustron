@@ -1269,7 +1269,7 @@ free_socket_connection(IC_CONNECTION *ext_conn)
     g_thread_join(conn->thread);
     conn->thread= NULL;
   }
-  ic_close_socket_connection(ext_conn);
+  close_socket_connection(ext_conn);
   if (conn->ret_client_addrinfo)
     freeaddrinfo(conn->ret_client_addrinfo);
   if (conn->ret_server_addrinfo)
@@ -1664,6 +1664,34 @@ get_fd(IC_CONNECTION *ext_conn)
   return conn->rw_sockfd;
 }
 
+static guint32
+get_port_number(IC_CONNECTION *ext_conn)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  struct sockaddr_storage sa_storage;
+  struct sockaddr *sa_addr= (struct sockaddr*)&sa_storage;
+  socklen_t sock_len;
+  guint32 port_number;
+  int fd= conn->is_client ? conn->rw_sockfd : conn->listen_sockfd;
+
+  sock_len= sizeof(sa_addr);
+  if (getsockname(fd, sa_addr, &sock_len) == (int)-1)
+    return 0;
+  if (sa_addr->sa_family == AF_INET)
+  {
+    struct sockaddr_in *ipv4_addr= (struct sockaddr_in*)sa_addr;
+    port_number= ntohs(ipv4_addr->sin_port);
+  }
+  else if (sa_addr->sa_family == AF_INET6)
+  {
+    struct sockaddr_in6 *ipv6_addr= (struct sockaddr_in6*)sa_addr;
+    port_number= ntohs(ipv6_addr->sin6_port);
+  }
+  else
+    return 0;
+  return port_number;
+}
+
 IC_CONNECTION*
 int_create_socket_object(gboolean is_client,
                          gboolean is_mutex_used,
@@ -1725,6 +1753,7 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_write_connection= write_socket_connection;
   conn->conn_op.ic_writev_connection= writev_socket_connection;
   conn->conn_op.ic_flush_connection= no_op_socket_method;
+  conn->conn_op.ic_get_port_number= get_port_number;
 
   init_connect_stat(conn);
 

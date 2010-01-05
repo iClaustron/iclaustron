@@ -182,10 +182,18 @@ run_listen_thread(void *data)
   if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                            check_timeout_func,
                                            (void*)listen_server_thread)))
-  {
-    listen_server_thread->stop_ordered= TRUE;
-    goto end;
-  }
+    goto error;
+  /*
+    We need to retrieve the port number that we're listening to and make sure
+    that it is communicated to the Cluster Server to enable other nodes to
+    connect to us if we're using dynamic port numbers. For static port numbers
+    this isn't necessary.
+  */
+  g_mutex_thread_lock(listen_server_thread->mutex);
+  listen_server_thread->listen_port= conn->conn_op.ic_get_port_number(conn);
+  g_mutex_thread_unlock(listen_server_thread->mutex);
+  if (listen_server_thread->listen_port == 0)
+    goto error;
   /* We report start-up complete to the thread starting us */
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
     goto end;
@@ -289,6 +297,10 @@ run_listen_thread(void *data)
 end:
   tp_state->ts_ops.ic_thread_stops(thread_state);
   return NULL;
+
+error:
+  listen_server_thread->stop_ordered= TRUE;
+  goto end;
 }
 
 static void
@@ -752,10 +764,15 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
     {
      /* Found an existing a new thread to use, need not start a new thread */
       g_mutex_lock(listen_server_thread->mutex);
-      if (!(listen_server_thread->first_send_node_conn=
+      if ((listen_server_thread->first_send_node_conn=
             g_list_prepend(listen_server_thread->first_send_node_conn,
                            (void*)send_node_conn)))
       {
+        g_mutex_unlock(listen_server_thread->mutex);
+      }
+      else
+      {
+        /* Error handling */
         g_mutex_unlock(listen_server_thread->mutex);
         g_mutex_lock(send_node_conn->mutex);
         send_node_conn->stop_ordered= TRUE;
@@ -763,7 +780,6 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
         g_mutex_unlock(send_node_conn->mutex);
         send_tp->ts_ops.ic_thread_stops(thread_state);
       }
-      g_mutex_unlock(listen_server_thread->mutex);
     }
   }
   else
