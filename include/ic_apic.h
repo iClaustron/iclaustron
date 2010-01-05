@@ -226,9 +226,15 @@ struct ic_cluster_config
     pointers into the proper structure and we also store a hash table on
     communication objects where we can quickly find the communication object
     given the node ids of the communication link.
+
+    cs_conn and cs_nodeid is used to keep information about the Cluster
+    Server connection used to retrieve configuration information and its
+    nodeid, we will complete the NDB Management Protocol as part of setting
+    up the Data API.
   */
   guint32 *node_ids;
   guint32 my_node_id;
+  guint32 cs_nodeid;
   IC_CONNECTION *cs_conn;
   IC_NODE_TYPES *node_types;
   IC_HASHTABLE *comm_hash;

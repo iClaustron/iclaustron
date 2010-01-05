@@ -1222,7 +1222,7 @@ handle_convert_transporter_request(IC_CONNECTION *conn,
 {
   int error;
   int trp_type= IC_TCP_TRANSPORTER_TYPE;
-  gchar client_buf[32], cs_buf[32];
+  gchar client_buf[64], cs_buf[64];
   DEBUG_ENTRY("handle_convert_transporter_request");
 
   g_snprintf(client_buf, 64, "%d %d", client_nodeid, trp_type);

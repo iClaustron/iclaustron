@@ -51,8 +51,14 @@
   which are implemented by the protocol support methods:
     send_get_nodeid_req
     send_get_config_req
+    send_get_mgmd_nodeid_req
+    send_convert_transporter_req
+    client_set_connection_parameter
     rec_get_nodeid_reply
     rec_get_config_reply
+    rec_get_mgmd_nodeid_reply
+    rec_convert_transporter_reply
+
   As part of the rec_get_config_reply method we call the translate_config
   method which is implemented in the other Configuration reader client
   module.
@@ -64,9 +70,23 @@ static int send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
                                guint32 cluster_id);
 static int send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
                                IC_CONNECTION *conn);
+static int send_get_mgmd_nodeid_req(IC_CONNECTION *conn);
+static int send_convert_transporter_req(IC_INT_API_CONFIG_SERVER *apic,
+                                        IC_CONNECTION *conn,
+                                        guint32 cluster_id);
+static int rec_get_mgmd_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                     IC_CONNECTION *conn,
+                                     guint32 cluster_id,
+                                     guint32 *cs_nodeid);
+static int rec_convert_transporter_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                         IC_CONNECTION *conn,
+                                         guint32 cs_nodeid);
 static int rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
                                 IC_CONNECTION *conn,
                               guint32 cluster_id);
+static int client_set_connection_parameter(IC_INT_API_CONFIG_SERVER *apic,
+                                           IC_CONNECTION *conn,
+                                           guint32 cluster_id);
 static int rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
                                 IC_CONNECTION *conn,
                                 guint32 cluster_id);
@@ -167,16 +187,50 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
     IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    guint32 cs_nodeid;
+
     if (!clu_conf)
       continue;
     if (!first && (error= connect_api_connections(apic, &conn, cs_timeout)))
       goto error;
+
+    /*
+      1) Send request to Cluster Server to get a nodeid and acquire this
+         nodeid to ensure no one else uses the same nodeid in the cluster.
+      2) Receive response to this message
+      3) Send request to get cluster configuration
+      4) Get cluster configuration
+      5) Send request to get nodeid of Cluster Server
+      6) Receive response to this message
+      7) Send request to set connection parameters
+      8) Receive response to this message
+      9) Repeat step 7) and 8) for as long as needed
+      10) Send request to convert connection to NDB Protocol connection
+      11) Receive response to this message
+
+      After this protocol serie is completed, this node has a nodeid,
+      the Cluster Server node id is known and we have an already
+      working connection to this server. Thus when we set-up the
+      Data API towards this node, we can reuse the connection already
+      established.
+      
+      Step 7-11 is necessary to move to the startup of the Data API since
+      it involves providing dynamic port assignments made to nodes during
+      set-up of server part of the connections.
+    */
     if ((error= send_get_nodeid_req(apic, conn, cluster_id)) ||
         (error= rec_get_nodeid_reply(apic, conn, cluster_id)) ||
         (error= send_get_config_req(apic, conn)) ||
-        (error= rec_get_config_reply(apic, conn, cluster_id)))
+        (error= rec_get_config_reply(apic, conn, cluster_id)) ||
+        (error= send_get_mgmd_nodeid_req(conn)) ||
+        (error= rec_get_mgmd_nodeid_reply(apic, conn,
+                                          cluster_id, &cs_nodeid)) ||
+        (error= client_set_connection_parameter(apic, conn, cluster_id)) ||
+        (error= send_convert_transporter_req(apic, conn, cluster_id)) ||
+        (error= rec_convert_transporter_reply(apic, conn, cluster_id)))
       goto error;
     clu_conf->cs_conn= conn;
+    clu_conf->cs_nodeid= cs_nodeid;
   }
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
@@ -326,6 +380,86 @@ send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
       ic_send_with_cr_with_num(conn, nodetype_str, node_type) ||
       ic_send_empty_line(conn))
     return conn->conn_op.ic_get_error_code(conn);
+  return 0;
+}
+
+static int
+send_get_mgmd_nodeid_req(IC_CONNECTION *conn)
+{
+  if (ic_send_with_cr(conn, get_mgmd_nodeid_str) ||
+      ic_send_empty_line(conn))
+    return conn->conn_op.ic_get_error_code(conn);
+  return 0;
+}
+
+static int
+send_convert_transporter_req(IC_INT_API_CONFIG_SERVER *apic,
+                             IC_CONNECTION *conn,
+                             guint32 cluster_id)
+{
+  guint32 our_nodeid= apic->temp->node_ids[cluster_id];
+  gchar buf[64];
+
+  g_snprintf(buf, 64, "%d %d", our_nodeid, IC_TCP_TRANSPORTER_TYPE);
+  if (ic_send_with_cr(conn, convert_transporter_str) ||
+      ic_send_empty_line(conn) ||
+      ic_send_with_cr(conn, buf))
+    return conn->conn_op.ic_get_error_code(conn);
+  return 0;
+}
+
+static int
+rec_get_mgmd_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                          IC_CONNECTION *conn,
+                          guint32 cluster_id,
+                          guint32 *cs_nodeid)
+{
+  int error;
+  int loc_nodeid;
+  IC_CLUSTER_CONFIG *clu_conf;
+
+  if ((error= ic_rec_simple_str(conn, get_mgmd_nodeid_reply_str)) ||
+      (error= ic_rec_int_number(conn, nodeid_str, &loc_nodeid)) ||
+      (error= ic_rec_empty_line(conn)))
+    return error;
+  clu_conf= apic->conf_objects[cluster_id];
+  if (loc_nodeid < 1 ||
+      loc_nodeid > IC_MAX_NODE_ID ||
+      loc_nodeid > (int)clu_conf->max_node_id ||
+      clu_conf->node_types[loc_nodeid] != IC_CLUSTER_SERVER_NODE)
+  {
+    set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__);
+    return IC_PROTOCOL_ERROR;
+  }
+  *cs_nodeid= loc_nodeid;
+  return 0;
+}
+
+static int
+rec_convert_transporter_reply(IC_INT_API_CONFIG_SERVER *apic,
+                              IC_CONNECTION *conn,
+                              guint32 cs_nodeid)
+{
+  int error;
+  gchar buf[64];
+
+  g_snprintf(buf, 64, "%d %d", cs_nodeid, IC_TCP_TRANSPORTER_TYPE);
+  if ((error= ic_rec_simple_str(conn, buf)))
+  {
+    set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__);
+    return IC_PROTOCOL_ERROR;
+  }
+  return 0;
+}
+
+static int
+client_set_connection_parameter(IC_INT_API_CONFIG_SERVER *apic,
+                                IC_CONNECTION *conn,
+                                guint32 cluster_id)
+{
+  (void)apic;
+  (void)conn;
+  (void)cluster_id;
   return 0;
 }
 
