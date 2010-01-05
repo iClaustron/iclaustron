@@ -605,8 +605,7 @@ authenticate_server_connection(IC_CONNECTION *conn,
       (len++, FALSE) ||
       (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
       ((guint64)my_nodeid != my_id) ||
-      (client_id >= IC_MAX_NODE_ID) ||
-      (error= ic_send_with_cr(conn, "ok")))
+      (client_id >= IC_MAX_NODE_ID))
     return error;
   *client_nodeid= client_id;
   return 0;

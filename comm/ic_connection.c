@@ -68,24 +68,6 @@ static void destroy_mutexes(IC_INT_CONNECTION *conn);
 
 static int close_socket_connection(IC_CONNECTION *conn);
 
-static void
-close_socket(int sockfd)
-{
-  int error;
-#ifdef WINDOWS
-  if (closesocket(sockfd))
-    error= WSAGetLastError();
-#else
-  do
-  {
-    error= 0;
-    if (close(sockfd))
-      error= errno;
-  } while (error == EINTR);
-#endif
-  DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", error));
-}
-
 /* Implements ic_check_for_data */
 static gboolean
 check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
@@ -474,7 +456,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   } while (1);
   if (!conn->is_listen_socket_retained)
   {
-    close_socket(conn->listen_sockfd);
+    ic_close_socket(conn->listen_sockfd);
     conn->listen_sockfd= 0;
   }
   if (ret_sockfd < 0)
@@ -542,7 +524,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
                    conn->conn_stat.client_ip_addr));
     }
     conn->error_code= IC_ACCEPT_ERROR;
-    close_socket(ret_sockfd);
+    ic_close_socket(ret_sockfd);
     return IC_ACCEPT_ERROR;
   }
   conn->rw_sockfd= ret_sockfd;
@@ -683,7 +665,7 @@ renew_connect:
       seconds we will renew the connect message if the user is
       still waiting for a successful connect.
     */
-    close_socket(sockfd);
+    ic_close_socket(sockfd);
     if (ic_get_stop_flag())
       return IC_ERROR_APPLICATION_STOPPED;
     timer++;
@@ -790,7 +772,7 @@ error:
   DEBUG_PRINT(COMM_LEVEL, ("Error code: %d, message: %s",
                             error, conn->err_str));
   conn->error_code= error;
-  close_socket(sockfd);
+  ic_close_socket(sockfd);
   return error;
 }
 
@@ -1093,12 +1075,12 @@ close_socket_connection(IC_CONNECTION *ext_conn)
   lock_connect_mutex(conn);
   if (conn->listen_sockfd)
   {
-    close_socket(conn->listen_sockfd);
+    ic_close_socket(conn->listen_sockfd);
     conn->listen_sockfd= 0;
   }
   if (conn->rw_sockfd)
   {
-    close_socket(conn->rw_sockfd);
+    ic_close_socket(conn->rw_sockfd);
     conn->rw_sockfd= 0;
   }
   conn->error_code= 0;
@@ -1114,7 +1096,7 @@ close_listen_socket_connection(IC_CONNECTION *ext_conn)
   lock_connect_mutex(conn);
   if (conn->listen_sockfd)
   {
-    close_socket(conn->listen_sockfd);
+    ic_close_socket(conn->listen_sockfd);
     conn->listen_sockfd= 0;
   }
   conn->error_code= 0;
@@ -1287,7 +1269,7 @@ free_socket_connection(IC_CONNECTION *ext_conn)
     g_thread_join(conn->thread);
     conn->thread= NULL;
   }
-  close_socket_connection(ext_conn);
+  ic_close_socket_connection(ext_conn);
   if (conn->ret_client_addrinfo)
     freeaddrinfo(conn->ret_client_addrinfo);
   if (conn->ret_server_addrinfo)

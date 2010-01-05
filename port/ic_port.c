@@ -89,6 +89,25 @@ void ic_mem_end()
 }
 
 void
+ic_close_socket(int sockfd)
+{
+  int error;
+#ifdef WINDOWS
+  if (closesocket(sockfd))
+    error= WSAGetLastError();
+#else
+  do
+  {
+    error= 0;
+    if (close(sockfd))
+      error= errno;
+  } while (error == EINTR);
+#endif
+  if (error)
+    DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", error));
+}
+
+void
 ic_set_port_binary_dir(const gchar *binary_dir)
 {
   port_binary_dir= binary_dir;

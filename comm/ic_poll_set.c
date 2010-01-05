@@ -39,7 +39,7 @@ free_poll_set(IC_POLL_SET *ext_poll_set)
   if (poll_set->ready_connections)
     ic_free(poll_set->ready_connections);
   if (poll_set->need_close_at_free)
-    close(poll_set->poll_set_fd);
+    ic_close_socket(poll_set->poll_set_fd);
   if (poll_set->impl_specific_ptr)
     ic_free(poll_set->impl_specific_ptr);
   ic_free(poll_set);
@@ -327,14 +327,14 @@ IC_POLL_SET* ic_create_poll_set()
   }
   if (alloc_poll_set(&poll_set))
   {
-    close(epoll_fd);
+    ic_close_socket(epoll_fd);
     return NULL;
   }
   if (!(poll_set->impl_specific_ptr= ic_calloc(
         sizeof(struct epoll_event) * MAX_POLL_SET_CONNECTIONS)))
   {
     free_poll_set((IC_POLL_SET*)poll_set);
-    close(epoll_fd);
+    ic_close_socket(epoll_fd);
     return NULL;
   }
   /* epoll has state and a fd to close at free time */
@@ -486,14 +486,14 @@ IC_POLL_SET* ic_create_poll_set()
   }
   if (alloc_poll_set(&poll_set))
   {
-    close(eventport_fd);
+    ic_close_socket(eventport_fd);
     return NULL;
   }
   if (!(poll_set->impl_specific_ptr= ic_calloc(
         sizeof(struct port_event_t) * MAX_POLL_SET_CONNECTIONS)))
   {
     free_poll_set((IC_POLL_SET*)poll_set);
-    close(eventport_fd);
+    ic_close_socket(eventport_fd);
     return NULL;
   }
 
@@ -642,14 +642,14 @@ IC_POLL_SET* ic_create_poll_set()
   }
   if (alloc_poll_set(&poll_set))
   {
-    close(kqueue_fd);
+    ic_close_socket(kqueue_fd);
     return NULL;
   }
   if (!(poll_set->impl_specific_ptr= ic_calloc(
         sizeof(struct kevent) * MAX_POLL_SET_CONNECTIONS)))
   {
     free_poll_set((IC_POLL_SET*)poll_set);
-    close(kqueue_fd);
+    ic_close_socket(kqueue_fd);
     return NULL;
   }
   /* event_ports has state and a fd to close at free time */

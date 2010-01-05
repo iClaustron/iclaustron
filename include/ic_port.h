@@ -15,6 +15,9 @@
 
 #ifndef PORT_H
 #define PORT_H
+/* Portable method to close a socket */
+void ic_close_socket(int sockfd);
+
 /* Get stop flag (set by SIGTERM and similar signals) */
 guint32 ic_get_stop_flag();
 
