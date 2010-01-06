@@ -1454,7 +1454,7 @@ init_config_parameters()
   IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number, IC_UINT32,
                                IC_DEF_CLUSTER_SERVER_PORT,
                                IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
   "Port number of Cluster Server";
@@ -1463,7 +1463,7 @@ init_config_parameters()
   IC_SET_CLUSTER_MANAGER_CONFIG(conf_entry, cluster_manager_port_number, IC_UINT32,
                                 IC_DEF_CLUSTER_MANAGER_PORT,
                                 IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_entry_description=
   "Port number of Cluster Manager";
@@ -1507,18 +1507,20 @@ init_config_parameters()
   IC_SET_SOCKET_BOOLEAN(conf_entry, use_message_id,
                         FALSE, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
-  "Using message id can be a valuable resource to find problems related to distributed execution";
+  "Using message id can be a valuable resource to find problems related to"
+  " distributed execution";
 
   IC_SET_CONFIG_MAP(SOCKET_USE_CHECKSUM, 183);
   IC_SET_SOCKET_BOOLEAN(conf_entry, use_checksum,
                         FALSE, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_entry_description=
-  "Using checksum ensures that internal bugs doesn't corrupt data while data is placed in buffers";
+  "Using checksum ensures that internal bugs doesn't corrupt data while"
+  " data is placed in buffers";
 
   IC_SET_CONFIG_MAP(SOCKET_SERVER_PORT_NUMBER, 186);
   IC_SET_SOCKET_CONFIG(conf_entry, server_port_number,
                        IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
   conf_entry->is_mandatory= TRUE;
   conf_entry->is_derived_default= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
@@ -1581,7 +1583,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(SOCKET_CLIENT_PORT_NUMBER, 193);
   IC_SET_SOCKET_CONFIG(conf_entry, client_port_number,
                        IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
   conf_entry->is_derived_default= TRUE;
   conf_entry->max_ndb_version_used= 1;
   conf_entry->is_only_iclaustron= TRUE;
@@ -1721,7 +1723,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_PORT, 231);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, pcntrl_port, IC_UINT32,
                             IC_DEF_PCNTRL_PORT, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
   conf_entry->is_only_iclaustron= TRUE;
   conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->config_entry_description=
@@ -1736,7 +1738,7 @@ init_config_parameters()
 
   /* Port number is used both by clients and data servers */
   IC_SET_CONFIG_MAP(IC_PORT_NUMBER, 235);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, MIN_PORT, MAX_PORT);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, port_number, IC_UINT32,
                             IC_DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
   conf_entry->config_types= ALL_NODE_TYPES;

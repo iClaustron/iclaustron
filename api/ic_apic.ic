@@ -538,6 +538,9 @@ static const gchar *get_mgmd_nodeid_reply_str= "get mgmd nodeid reply";
 static const gchar *set_connection_parameter_str= "set connection parameter";
 static const gchar *set_connection_parameter_reply_str=
   "set connection parameter reply";
+static const gchar *get_connection_parameter_str= "get connection parameter";
+static const gchar *get_connection_parameter_reply_str=
+  "get connection parameter reply";
 static const gchar *message_str= "message: ";
 static const gchar *convert_transporter_str= "transporter connect";
 static const gchar *report_event_str= "report event";
@@ -610,8 +613,8 @@ const gchar *ic_server_port_str=" --server_port=";
 const gchar *ic_data_dir_str= " --data_dir=";
 const gchar *ic_num_threads_str= " --num_threads=";
 
-#define MIN_PORT 0
-#define MAX_PORT 65535
+#define IC_MIN_PORT 0
+#define IC_MAX_PORT 65535
 
 #define GET_NODEID_REQ_STATE 0
 #define NODEID_REQ_STATE 1

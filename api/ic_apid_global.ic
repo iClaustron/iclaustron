@@ -216,6 +216,8 @@ free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
     g_cond_free(send_node_conn->cond);
   if (send_node_conn->string_memory)
     ic_free(send_node_conn->string_memory);
+  if (send_node_conn->dynamic_port_number_to_release)
+    ic_free(send_node_conn->dynamic_port_number_to_release);
   ic_free(send_node_conn);
 }
 

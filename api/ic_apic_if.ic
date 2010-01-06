@@ -200,7 +200,7 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
   guint32 i;
   if (apic)
   {
-    disconnect_api_connections(apic);
+    disconnect_api_connections(apic, TRUE);
     if (apic->config_mutex)
       g_mutex_free(apic->config_mutex);
     if (apic->conf_objects)
@@ -245,6 +245,7 @@ static void
 set_up_apic_methods(IC_INT_API_CONFIG_SERVER *apic)
 {
   apic->api_op.ic_get_config= get_cs_config;
+  apic->api_op.ic_get_dynamic_port_number= get_dynamic_port_number;
   apic->api_op.ic_use_iclaustron_cluster_server= use_ic_cs;
   apic->api_op.ic_set_error_line= set_error_line;
   apic->api_op.ic_fill_error_buffer= fill_error_buffer;

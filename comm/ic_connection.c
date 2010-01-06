@@ -1404,7 +1404,7 @@ cmp_hostname_and_port(IC_CONNECTION *ext_conn, gchar *hostname, gchar *port)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   if ((strcmp(conn->server_name, hostname) == 0) &&
-	  (strcmp(conn->server_port, port) == 0))
+      (strcmp(conn->server_port, port) == 0))
     return 0;
   return 1;
 }

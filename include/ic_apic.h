@@ -517,6 +517,25 @@ struct ic_api_cluster_operations
   gboolean (*ic_use_iclaustron_cluster_server) (IC_API_CONFIG_SERVER *apic);
   /* Get error string for special errors, not set for all errors */
   const gchar* (*ic_get_error_str) (IC_API_CONFIG_SERVER *apic);
+
+  /*
+    Get dynamic port number from Cluster Server by using get connection
+    parameter protocol, deliver the port as a 
+
+    When the user haven't specified a port number to use for the node to connect
+    to, the port number will be set when the node starts up, the port number
+    will be communicated to the Cluster Server, so we need to retrieve it from
+    there in the client part of the send thread connect phase. This is handled
+    by the get_dynamic_port_number method.
+  */
+  int (*ic_get_dynamic_port_number) (IC_API_CONFIG_SERVER *apic,
+                                     void *tp_state,
+                                     void *thread_state,
+                                     guint32 cluster_id,
+                                     guint32 my_nodeid,
+                                     guint32 other_nodeid,
+                                     guint32 *port_number);
+
   /*
     This function gets the configuration for a set of clusters from the
     Cluster Server(s). It allocates the node id in each of those

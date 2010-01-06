@@ -187,7 +187,7 @@ struct ic_int_api_config_server
   IC_API_CLUSTER_CONNECTION cluster_conn;
   GMutex *config_mutex;
 
-  const gchar *err_str;
+  gchar *err_str;
   guint32 max_cluster_id;
   guint32 err_line;
   gchar use_ic_cs;

@@ -213,9 +213,15 @@ struct ic_send_node_connection
   /*
      Allocated string memory where strings for my_hostname,
      other_hostname, my_port_number and other_port_number
-     are stored.
+     are
+     else
+       other_port_number= send_node_conn->other_port_number;stored.
+     When dynamic ports are used we need to dynamic_port_number_to_release
+     to remember which memory to release.
   */
   gchar *string_memory;
+  gchar *dynamic_port_number_to_release;
+
   /* The connection object */
   IC_CONNECTION *conn;
   /* For server connections this is the link to the listen server thread */

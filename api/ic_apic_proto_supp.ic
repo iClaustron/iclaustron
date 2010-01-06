@@ -36,6 +36,16 @@ ic_rec_cluster_id(IC_CONNECTION *conn,
   return ic_rec_opt_number(conn, cluster_id_str, cluster_id);
 }
 
+static int
+ic_send_cluster_id(IC_CONNECTION *conn,
+                   guint32 cluster_id,
+                   gboolean use_iclaustron)
+{
+  if (use_iclaustron)
+    return ic_send_with_cr_with_num(conn, cluster_id_str, (guint64)cluster_id);
+  return 0;
+}
+
 /*
   MODULE: Support for iClaustron Protocols
   ----------------------------------------

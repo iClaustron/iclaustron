@@ -189,9 +189,9 @@ run_listen_thread(void *data)
     connect to us if we're using dynamic port numbers. For static port numbers
     this isn't necessary.
   */
-  g_mutex_thread_lock(listen_server_thread->mutex);
+  g_mutex_lock(listen_server_thread->mutex);
   listen_server_thread->listen_port= conn->conn_op.ic_get_port_number(conn);
-  g_mutex_thread_unlock(listen_server_thread->mutex);
+  g_mutex_unlock(listen_server_thread->mutex);
   if (listen_server_thread->listen_port == 0)
     goto error;
   /* We report start-up complete to the thread starting us */
@@ -455,7 +455,13 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_LISTEN_SERVER_THREAD *listen_server_thread;
   gboolean stop_ordered= FALSE;
   IC_THREADPOOL_STATE *tp_state;
+  gchar *other_port_number;
+  guint32 port_number;
   int ret_code= 0;
+  gchar buf[32];
+  guint32 buf_len;
+  IC_STRING buf_string, out_buf_string;
+  IC_API_CONFIG_SERVER *apic;
 
   if (is_server_part)
   {
@@ -502,10 +508,44 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
     conn= send_node_conn->conn;
     link_config= send_node_conn->link_config;
     if (!send_node_conn->other_port_number)
-      return IC_ERROR_INCONSISTENT_DATA;
+    {
+      /*
+        We need to use dynamic ports to connect to this node. This means
+        that before we can start the connect phase we must acquire a port
+        number to connect to. This is acquired from a Cluster Server, if
+        the node isn't up and running the port number will remain zero
+        until it has started and sent its port number using the
+        set connection parameter protocol.
+
+        We will wait here and regularly ask the Cluster Server for a port
+        number to connect to using the get connection parameter protocol.
+      */
+      if (send_node_conn->dynamic_port_number_to_release)
+      {
+        ic_free(send_node_conn->dynamic_port_number_to_release);
+        send_node_conn->dynamic_port_number_to_release= NULL;
+      }
+      apic= send_node_conn->apid_global->apic;
+      if ((ret_code= apic->api_op.ic_get_dynamic_port_number(apic,
+                                             (void*)tp_state,
+                                             (void*)thread_state,
+                                             send_node_conn->cluster_id,
+                                             send_node_conn->my_node_id,
+                                             send_node_conn->other_node_id,
+                                             &port_number)))
+        return ret_code;
+      ic_guint64_str((guint64)port_number, buf, &buf_len);
+      IC_INIT_STRING(&buf_string, buf, buf_len, TRUE);
+      if ((ret_code= ic_strdup(&out_buf_string, &buf_string)))
+        return ret_code;
+      other_port_number= out_buf_string.str;
+      send_node_conn->dynamic_port_number_to_release= other_port_number;
+    }
+    else
+      other_port_number= send_node_conn->other_port_number;
     conn->conn_op.ic_prepare_client_connection(conn,
                                          send_node_conn->other_hostname,
-                                         send_node_conn->other_port_number,
+                                         other_port_number,
                                          send_node_conn->my_hostname,
                                          send_node_conn->my_port_number);
     conn->conn_op.ic_prepare_extra_parameters(
@@ -1014,9 +1054,14 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   second_hostname_len= strlen(link_config->second_hostname) + 1;
   tot_string_len= first_hostname_len;
   tot_string_len+= second_hostname_len;
-  server_port_str= ic_guint64_str((guint64)link_config->server_port_number,
-                                  server_port, &server_port_len);
-  server_port_len++; /* Room for NULL byte */
+  if (link_config->server_port_number)
+  {
+    server_port_str= ic_guint64_str((guint64)link_config->server_port_number,
+                                    server_port, &server_port_len);
+    server_port_len++; /* Room for NULL byte */
+  }
+  else
+    server_port_len= 0;
   if (link_config->client_port_number != 0)
   {
     client_port_str= ic_guint64_str((guint64)link_config->client_port_number,
@@ -1057,11 +1102,16 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   if (link_config->server_node_id == my_node_id)
   {
-    send_node_conn->my_port_number= copy_ptr;
-    copy_ptr+= server_port_len;
-    memcpy(send_node_conn->my_port_number,
-           server_port_str,
-           server_port_len);
+    if (server_port_len == 0)
+      send_node_conn->my_port_number= NULL;
+    else
+    {
+      send_node_conn->my_port_number= copy_ptr;
+      copy_ptr+= server_port_len;
+      memcpy(send_node_conn->my_port_number,
+             server_port_str,
+             server_port_len);
+    }
     if (client_port_len == 0)
       send_node_conn->other_port_number= NULL;
     else
@@ -1075,11 +1125,16 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   else
   {
-    send_node_conn->other_port_number= copy_ptr;
-    copy_ptr+= server_port_len;
-    memcpy(send_node_conn->other_port_number,
-           server_port_str,
-           server_port_len);
+    if (server_port_len == 0)
+      send_node_conn->other_port_number= NULL;
+    else
+    {
+      send_node_conn->other_port_number= copy_ptr;
+      copy_ptr+= server_port_len;
+      memcpy(send_node_conn->other_port_number,
+             server_port_str,
+             server_port_len);
+    }
     if (client_port_len == 0)
       send_node_conn->my_port_number= NULL;
     else
