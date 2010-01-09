@@ -398,11 +398,31 @@ error:
   return 1;
 }
 
+static int
+send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                              IC_CONNECTION *conn)
+{
+  (void)run_obj;
+  (void)conn;
+  return 0;
+}
+
+static int
+rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                               IC_CONNECTION *conn)
+{
+  (void)run_obj;
+  (void)conn;
+  return 0;
+}
+
 typedef struct thread_data
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   guint32 cs_index;
 } THREAD_DATA;
+
+#define IC_CS_START_TIMEOUT 7
 
 static gpointer
 start_cs_func(gpointer data)
@@ -415,16 +435,48 @@ start_cs_func(gpointer data)
   guint32 cs_index= thread_data->cs_index;
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
-  IC_API_CLUSTER_CONNECTION *cluster_conn= &apic->cluster_conn;
-  gchar *cs_host, *cs_port;
-  guint32 cs_nodeid;
+  IC_CONNECTION *conn;
+  guint32 i;
+  int error;
+  gchar *err_str;
   DEBUG_ENTRY("start_cs_func");
 
+  (void)rc_state;
   tp_state->ts_ops.ic_thread_started(thread_state);
-  cs_host= cluster_conn->cluster_server_ips[cs_index];
-  cs_port= cluster_conn->cluster_server_ports[cs_index];
-  cs_nodeid= cluster_conn->cs_nodeid[cs_index];
 
+  for (i= 0; i < IC_CS_START_TIMEOUT; i++)
+  {
+    err_str= NULL;
+    if (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+      goto end;
+    if (!(error= connect_cluster_server(apic,
+                                       &conn,
+                                       cs_index,
+                                       &cs_index,
+                                       (guint32)1,
+                                       &err_str)))
+      break;
+    /*
+      Another attempt to connect failed, check if the other node
+      connected to us.
+    */
+  }
+  /*
+    We are now connected to the Cluster Server this thread is appointed to
+    handle.  We need to give our start up data and receive information
+    about the other node's state
+  */
+  if ((error= send_start_cluster_server_req(run_obj, conn)) ||
+      (error= rec_start_cluster_server_reply(run_obj, conn)))
+  {
+    /* Handle error */
+  }
+  /*
+    We are now connected to the other Cluster Server and we have
+    successfully exchanged start-up data. We keep this thread
+    until the connection breaks or until we're to quit.
+  */
+end:
   DEBUG_RETURN(NULL);
 }
 
@@ -667,7 +719,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
   if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_RUN_CLUSTER_SERVER))))
     goto error;
-  if (!(run_obj->apic= (IC_API_CONFIG_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
+  if (!(run_obj->apic= (IC_INT_API_CONFIG_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
                 mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
     goto error;
   if (!(run_obj->state.protect_state= g_mutex_new()))
@@ -1144,6 +1196,8 @@ handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 {
   int error;
   DEBUG_ENTRY("handle_get_connection_parameter");
+  (void)run_obj;
+  (void)conn;
   DEBUG_RETURN(0);
 error:
   DEBUG_PRINT(CONFIG_LEVEL,
