@@ -460,7 +460,6 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   int ret_code= 0;
   gchar buf[32];
   guint32 buf_len;
-  IC_STRING buf_string, out_buf_string;
   IC_API_CONFIG_SERVER *apic;
 
   if (is_server_part)
@@ -535,10 +534,8 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
                                              &port_number)))
         return ret_code;
       ic_guint64_str((guint64)port_number, buf, &buf_len);
-      IC_INIT_STRING(&buf_string, buf, buf_len, TRUE);
-      if ((ret_code= ic_strdup(&out_buf_string, &buf_string)))
+      if ((ret_code= ic_chardup(&other_port_number, buf)))
         return ret_code;
-      other_port_number= out_buf_string.str;
       send_node_conn->dynamic_port_number_to_release= other_port_number;
     }
     else

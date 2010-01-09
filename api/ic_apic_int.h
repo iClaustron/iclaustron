@@ -215,8 +215,6 @@ typedef struct ic_run_cluster_thread IC_RUN_CLUSTER_THREAD;
 
 struct ic_run_cluster_state
 {
-  IC_MEMORY_CONTAINER *mc_ptr;
-
   gboolean cs_master;
   gboolean cs_started;
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
@@ -233,13 +231,14 @@ typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 struct ic_int_run_cluster_server
 {
   IC_RUN_CLUSTER_SERVER_OPERATIONS run_op;
-  struct ic_cluster_config *conf_objects[IC_MAX_CLUSTER_ID];
+  IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID];
   IC_RUN_CLUSTER_STATE state;
+  IC_MEMORY_CONTAINER *mc_ptr;
 
   IC_THREADPOOL_STATE *tp_state;
 
   IC_CONNECTION *conn;
-  IC_API_CONFIG_SERVER *apic;
+  IC_INT_API_CONFIG_SERVER *apic;
   IC_APID_CONNECTION *heartbeat_conn;
   IC_APID_GLOBAL *apid_global;
   IC_STRING *config_dir;

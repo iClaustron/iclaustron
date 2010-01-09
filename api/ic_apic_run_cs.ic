@@ -137,16 +137,23 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 */
 
 /* Ensure that also run cluster server has API config object */
-static void set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static int set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                              IC_CLUSTER_CONNECT_INFO **clu_infos);
 static int verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 
-static void
+static int
 set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)run_obj->apic;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  guint32 i, cs_index, dummy;
+  gchar buf[32], *buf_ptr, *port_number_str;
+  int error;
+  IC_MEMORY_CONTAINER *mc_ptr= run_obj->mc_ptr;
+  IC_API_CLUSTER_CONNECTION *cluster_conn= &apic->cluster_conn;
 
   set_up_apic_methods(apic);
   apic->api_op.ic_get_config= null_get_cs_config;
@@ -155,7 +162,58 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   apic->max_cluster_id= run_obj->max_cluster_id;
   apic->use_ic_cs= TRUE;
   apic->conf_objects= (IC_CLUSTER_CONFIG**)run_obj->conf_objects;
-  apic->mc_ptr= run_obj->state.mc_ptr;
+  apic->mc_ptr= run_obj->mc_ptr;
+
+  /*
+    Find a cluster configuration, any will do since Cluster Servers have
+    the same host, port and node id in all clusters.
+  */
+  for (i= 0; i <= run_obj->max_cluster_id; i++)
+  {
+    if (!(clu_conf= run_obj->conf_objects[i]))
+      continue;
+  }
+  g_assert(clu_conf);
+  /* Count number of Cluster Servers */
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_types[i] == IC_CLUSTER_SERVER_NODE)
+      cs_index++;
+  }
+  cluster_conn->num_cluster_servers= cs_index;
+  if (!((cluster_conn->cluster_server_ips= (gchar**)
+          mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                          sizeof(gchar*)*cs_index)) &&
+        (cluster_conn->cluster_server_ports= (gchar**)
+          mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                          sizeof(gchar*)*cs_index)) &&
+        (cluster_conn->cs_nodeid= (guint32*)
+          mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                          sizeof(guint32)*cs_index))))
+    goto error;
+  g_assert(cs_index <= IC_MAX_CLUSTER_SERVERS);
+  cs_index= 0;
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_types[i] == IC_CLUSTER_SERVER_NODE)
+    {
+      /* We found a Cluster Server Node, record it in cluster_conn */
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)clu_conf->node_config[i];
+      cluster_conn->cluster_server_ips[cs_index]= cs_conf->hostname;
+      buf_ptr= ic_guint64_str((guint64)cs_conf->cluster_server_port_number,
+                              buf,
+                              &dummy);
+      if ((error= ic_mc_chardup(run_obj->mc_ptr, &port_number_str,
+                                buf_ptr)))
+        goto error;
+      cluster_conn->cluster_server_ports[cs_index]= port_number_str;
+      cluster_conn->cs_nodeid[cs_index]= cs_conf->node_id;
+      cs_index++;
+    }
+  }
+  return 0;
+error:
+  return error;
 }
 
 /* Implements the start_cluster_server method */
@@ -172,18 +230,20 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
                                      run_obj->process_name,
                                      &run_obj->state.config_version_number)))
     goto error;
-  run_obj->locked_configuration= TRUE;
   /* Read configuration from disk configuration */
-  run_obj->conf_server_struct.perm_mc_ptr= run_obj->state.mc_ptr;
-  run_obj->cluster_conf_struct.perm_mc_ptr= run_obj->state.mc_ptr;
+  run_obj->conf_server_struct.perm_mc_ptr= run_obj->mc_ptr;
+  run_obj->cluster_conf_struct.perm_mc_ptr= run_obj->mc_ptr;
   if ((error= load_local_config(run_obj)))
     goto error;
-  set_up_apic(run_obj);
-  if (!(run_obj->apid_global= ic_create_apid_global(run_obj->apic,
-                                                    TRUE,
-                                                    &error,
-                                                    &err_str)))
+  if ((error= set_up_apic(run_obj)))
+    goto error;
+  if (!(run_obj->apid_global= ic_create_apid_global(
+                     (IC_API_CONFIG_SERVER*)run_obj->apic,
+                     TRUE,
+                     &error,
+                     &err_str)))
     goto late_error;
+
   DEBUG_RETURN(0);
 late_error:
   ic_printf("%s", err_str);
@@ -223,7 +283,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 {
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *cluster;
-  IC_MEMORY_CONTAINER *mc_ptr= run_obj->state.mc_ptr;
+  IC_MEMORY_CONTAINER *mc_ptr= run_obj->mc_ptr;
   IC_STRING file_name_string;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
 
@@ -338,6 +398,79 @@ error:
   return 1;
 }
 
+typedef struct thread_data
+{
+  IC_INT_RUN_CLUSTER_SERVER *run_obj;
+  guint32 cs_index;
+} THREAD_DATA;
+
+static gpointer
+start_cs_func(gpointer data)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+  THREAD_DATA *thread_data= 
+    (THREAD_DATA*)tp_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_INT_RUN_CLUSTER_SERVER *run_obj= thread_data->run_obj;
+  guint32 cs_index= thread_data->cs_index;
+  IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
+  IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
+  IC_API_CLUSTER_CONNECTION *cluster_conn= &apic->cluster_conn;
+  gchar *cs_host, *cs_port;
+  guint32 cs_nodeid;
+  DEBUG_ENTRY("start_cs_func");
+
+  tp_state->ts_ops.ic_thread_started(thread_state);
+  cs_host= cluster_conn->cluster_server_ips[cs_index];
+  cs_port= cluster_conn->cluster_server_ports[cs_index];
+  cs_nodeid= cluster_conn->cs_nodeid[cs_index];
+
+  DEBUG_RETURN(NULL);
+}
+
+static int
+start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
+  guint32 thread_id, i;
+  int error;
+  guint32 num_threads_started= 0;
+  THREAD_DATA thread_data;
+  IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
+  DEBUG_ENTRY("start_connect_other_cluster_servers");
+
+  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+  {
+    if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid)
+      continue;
+    num_threads_started++;
+    thread_data.run_obj= run_obj;
+    thread_data.cs_index= i;
+    if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
+                                             tp_state,
+                                             &thread_id,
+                                             start_cs_func,
+                                             &thread_data,
+                                             IC_MEDIUM_STACK_SIZE,
+                                             TRUE)))
+      goto error;
+    
+  }
+  if (num_threads_started == 0)
+  {
+    /*
+      Startup is completed, we're the only Cluster Server, record state
+      and proceed.
+    */
+    run_obj->state.cs_master= TRUE;
+    run_obj->state.cs_started= TRUE;
+    run_obj->state.cs_master_nodeid= run_obj->cs_nodeid;
+  }
+  DEBUG_RETURN(0);
+error:
+  DEBUG_RETURN(error);
+}
+
 /*
   MODULE: Run Cluster Server
   --------------------------
@@ -447,13 +580,6 @@ static int start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER* run_obj,
                                        guint32 thread_id);
 static gpointer run_cluster_server_thread(gpointer data);
 
-static int check_config_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                            IC_CONNECTION *conn,
-                            IC_RC_PARAM *param,
-                            gchar *read_buf,
-                            guint32 read_size,
-                            gboolean *handled_request);
-
 static int check_for_stopped_rcs_threads(void *obj, int not_used);
 
 static int handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -553,7 +679,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
   */
   run_obj->state.cs_master= FALSE;
   run_obj->state.cs_started= FALSE;
-  run_obj->state.mc_ptr= mc_ptr;
+  run_obj->mc_ptr= mc_ptr;
 
   run_obj->process_name= process_name;
   run_obj->config_dir= config_dir;
@@ -666,7 +792,21 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     connections to a certain Cluster Server in the start-up phase we'll
     close this client connection and wait for it to connect to our server
     connection.
+
+    We'll connect in separate threads, this is to ensure that we can also
+    accept connections from other starting Cluster Server in the case where
+    there are more than one Cluster Server that starts up in parallel.
+
+    Thus we will have one thread per other cluster server in the startup
+    phase plus this thread that is ready to start threads when cluster
+    servers connect to it.
+
+    If another node connects in this phase it will get an error message that
+    the Cluster Server is still starting up.
   */
+  if ((ret_code= start_connect_other_cluster_servers(run_obj)))
+    goto error;
+
   conn= run_obj->conn;
   if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                                check_for_stopped_rcs_threads,
@@ -742,8 +882,8 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       if (run_obj->conf_objects[i])
         ic_hashtable_destroy(run_obj->conf_objects[i]->comm_hash);
     }
-    if (run_obj->state.mc_ptr)
-      run_obj->state.mc_ptr->mc_ops.ic_mc_free(run_obj->state.mc_ptr);
+    if (run_obj->mc_ptr)
+      run_obj->mc_ptr->mc_ops.ic_mc_free(run_obj->mc_ptr);
   }
   DEBUG_RETURN_EMPTY;
 }
@@ -781,7 +921,6 @@ run_cluster_server_thread(gpointer data)
     rcs_tp->ts_ops.ic_thread_get_object(thread_state);
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   int error, error_line;
-  gboolean handled_request;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
 
@@ -798,48 +937,51 @@ run_cluster_server_thread(gpointer data)
         {
           if ((error= handle_get_cluster_list(run_obj, conn)))
           {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error from handle_get_cluster_list, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
           state= WAIT_GET_NODEID;
           break;
         }
-        /* NDB nodes will not ask for a Cluster list first */
-        if ((error= check_config_req(run_obj, conn, &param,
-                                     read_buf, read_size, &handled_request)))
+        if (!ic_check_buf(read_buf, read_size, get_nodeid_str,
+                          strlen(get_nodeid_str)))
         {
-          error_line= __LINE__;
-          goto error;
-        }
-        if (handled_request)
-        {
+          if ((error= handle_config_request(run_obj, conn, &param)))
+          {
+            error_line= __LINE__;
+            goto error;
+          }
           state= WAIT_GET_MGMD_NODEID;
           break;
         }
         if (!ic_check_buf(read_buf, read_size, report_event_str,
                           strlen(report_event_str)))
         {
-          /* Handle report event */
           if ((error= handle_report_event(conn)))
           {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Error from handle_report_event, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
           break; /* The report event is always done in separate connection */
         }
+        if (!ic_check_buf(read_buf, read_size, set_connection_parameter_str,
+                          strlen(set_connection_parameter_str)))
+        {
+          if ((error= handle_set_connection_parameter_req(conn,
+                                                          (guint32)0)))
+          {
+            error_line= __LINE__;
+            goto error;
+          }
+          goto end; /* Always sent as only message in separate connection */
+        }
+        /* Fall through since get connection parameter is also allowed */
       case GET_CONNECTION_PARAMETER:
         if (!ic_check_buf(read_buf, read_size, get_connection_parameter_str,
                           strlen(get_connection_parameter_str)))
         {
-          /* Handle get connection parameter event */
           if ((error= handle_get_connection_parameter(run_obj, conn)))
           {
-            DEBUG_PRINT(CONFIG_LEVEL,
-        ("Error from handle_get_connection_parameter, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
@@ -849,14 +991,14 @@ run_cluster_server_thread(gpointer data)
         error_line= __LINE__;
         goto error;
       case WAIT_GET_NODEID:
-        if ((error= check_config_req(run_obj, conn, &param,
-                                     read_buf, read_size, &handled_request)))
+        if (!ic_check_buf(read_buf, read_size, get_nodeid_str,
+                          strlen(get_nodeid_str)))
         {
-          error_line= __LINE__;
-          goto error;
-        }
-        if (handled_request)
-        {
+          if ((error= handle_config_request(run_obj, conn, &param)))
+          {
+            error_line= __LINE__;
+            goto error;
+          }
           state= WAIT_GET_MGMD_NODEID;
           break;
         }
@@ -869,27 +1011,10 @@ run_cluster_server_thread(gpointer data)
           if ((error= handle_get_mgmd_nodeid_req(conn,
                                                  run_obj->cs_nodeid)))
           {
-            DEBUG_PRINT(CONFIG_LEVEL,
-            ("Error from handle_get_mgmd_nodeid_req, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
           state= WAIT_SET_CONNECTION;
-          break;
-        }
-        /*
-          iClaustron nodes can ask for more than one Cluster config before
-           proceeding to get management node part of the protocol
-        */
-        if ((error= check_config_req(run_obj, conn, &param,
-                                     read_buf, read_size, &handled_request)))
-        {
-          error_line= __LINE__;
-          goto error;
-        }
-        if (handled_request)
-        {
-          state= WAIT_GET_MGMD_NODEID;
           break;
         }
         error_line= __LINE__;
@@ -902,8 +1027,6 @@ run_cluster_server_thread(gpointer data)
                             conn,
                             (guint32)param.client_nodeid)))
           {
-            DEBUG_PRINT(CONFIG_LEVEL,
-    ("Error from handle_set_connection_parameter_req, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
@@ -923,8 +1046,6 @@ run_cluster_server_thread(gpointer data)
                                           param.client_nodeid,
                                           run_obj->cs_nodeid)))
           {
-            DEBUG_PRINT(CONFIG_LEVEL,
-        ("Error from handle_convert_transporter_request, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
@@ -946,8 +1067,6 @@ run_cluster_server_thread(gpointer data)
                            param.node_number,
                            conn)))
           {
-            DEBUG_PRINT(CONFIG_LEVEL,
-               ("Error from ic_external_connect, code = %u", error));
             error_line= __LINE__;
             goto error;
           }
@@ -983,33 +1102,6 @@ error:
   goto end;
 }
 
-/* Check for configuration request, possible in multiple states */
-static int
-check_config_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                 IC_CONNECTION *conn,
-                 IC_RC_PARAM *param,
-                 gchar *read_buf,
-                 guint32 read_size,
-                 gboolean *handled_request)
-{
-  int error;
-
-  *handled_request= FALSE;
-  if (!ic_check_buf(read_buf, read_size, get_nodeid_str,
-                    strlen(get_nodeid_str)))
-  {
-    /* Handle a request to get configuration for a cluster */
-    if ((error= handle_config_request(run_obj, conn, param)))
-    {
-      DEBUG_PRINT(CONFIG_LEVEL,
-        ("Error from handle_config_request, code = %u", error));
-      return error;
-    }
-    *handled_request= TRUE;
-  }
-  return 0;
-}
-
 /* Handle get cluster list protocol action in Cluster Server */
 static int
 handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -1042,7 +1134,7 @@ handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   DEBUG_RETURN(0);
 error:
   DEBUG_PRINT(CONFIG_LEVEL,
-              ("Protocol error in get cluster list"));
+              ("Protocol error in get cluster list, code = %d", error));
   PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
 }
 
@@ -1050,8 +1142,13 @@ static int
 handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                 IC_CONNECTION *conn)
 {
+  int error;
   DEBUG_ENTRY("handle_get_connection_parameter");
   DEBUG_RETURN(0);
+error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Error from handle_get_connection_parameter, code = %u", error));
+  DEBUG_RETURN(error);
 }
 
 /*
@@ -1138,6 +1235,8 @@ handle_report_event(IC_CONNECTION *conn)
   }
   DEBUG_RETURN(0);
 error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Error from handle_report_event, code = %u", error));
   DEBUG_RETURN(error);
 }
 
@@ -1155,13 +1254,50 @@ handle_get_mgmd_nodeid_req(IC_CONNECTION *conn, guint32 cs_nodeid)
       (error= ic_send_empty_line(conn)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-                ("Protocol error in converting to transporter"));
+                ("Protocol error in get mgmd nodeid, code = %d", error));
     DEBUG_RETURN(error);
   }
   DEBUG_RETURN(0);
 }
 
-/* Handle set connection parameter request protocol action */
+static int
+send_set_connection_parameter(IC_CONNECTION *conn,
+                              guint32 cluster_id,
+                              guint32 node1_id,
+                              guint32 node2_id,
+                              guint32 dynamic_port)
+{
+  int error;
+  DEBUG_ENTRY("send_set_connection_parameter");
+
+  /* Send request to Cluster Server */
+  if ((error= ic_send_with_cr(conn, set_connection_parameter_str)) ||
+      (error= ic_send_cluster_id(conn, cluster_id, TRUE)) ||
+      (error= ic_send_with_cr_with_num(conn, node1_str, node1_id)) ||
+      (error= ic_send_with_cr_with_num(conn, node2_str, node2_id)) ||
+      (error= ic_send_with_cr_with_num(conn, param_str,
+                                       (guint32)SOCKET_SERVER_PORT_NUMBER)) ||
+      (error= ic_send_with_cr_with_num(conn, value_str, dynamic_port)) ||
+      (error= ic_send_empty_line(conn)))
+    goto error;
+
+  /* Receive response from Cluster Server */
+  DEBUG_RETURN(0);
+error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Error in send_set_connection_parameter, code = %d", error));
+  DEBUG_RETURN(error);
+}
+
+/*
+  Handle set connection parameter request protocol action
+  This request can be sent from client nodes when they have set a dynamic
+  port and want to spread the information about this dynamic assignment.
+  It can also be received from another Cluster Server that needs to
+  replicate this information.
+
+  client_nodeid:     Node id of client, 0 if sent by Cluster Server
+*/
 static int
 handle_set_connection_parameter_req(IC_CONNECTION *conn,
                                     guint32 client_nodeid)
@@ -1178,7 +1314,7 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
       (error= ic_rec_number(conn, param_str, &param)) ||
       (error= ic_rec_int_number(conn, value_str, &value)) ||
       (error= ic_rec_empty_line(conn)))
-    return error;
+    goto error;
   /*
     We received a correct set connection parameter protocol message.
     Now we need to verify also that the data is reasonable and also
@@ -1189,7 +1325,7 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
   {
     error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_PARAM;
   }
-  else if (node1_id != client_nodeid)
+  else if (client_nodeid != 0 && node1_id != client_nodeid)
   {
     error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES;
   }
@@ -1227,16 +1363,16 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
       (error= ic_send_with_cr_two_strings(conn, result_str,
                                           the_result_str)) ||
       (error= ic_send_empty_line(conn)))
-  {
-    DEBUG_PRINT(CONFIG_LEVEL,
-                ("Protocol error in converting to transporter"));
-    DEBUG_RETURN(error);
-  }
+    goto error;
   /*
     We have now received a new port number to use for the nodes the
     starting node will communicate with.
   */
   DEBUG_RETURN(0);
+error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Protocol error in set connection parameter, code = %d", error));
+  DEBUG_RETURN(error);
 }
 
 /* Handle convert transporter request protocol action */
@@ -1257,7 +1393,7 @@ handle_convert_transporter_request(IC_CONNECTION *conn,
       (error= ic_send_with_cr(conn, cs_buf)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
-                ("Protocol error in converting to transporter"));
+      ("Protocol error in converting to transporter, code = %d", error));
     DEBUG_RETURN(error);
   }
   DEBUG_RETURN(0);
@@ -1281,9 +1417,7 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                     &param->version_number,
                                     &param->node_type,
                                     &param->cluster_id)))
-  {
-    DEBUG_RETURN(ret_code);
-  }
+    goto end;
   g_mutex_lock(state_mutex);
   if (rcs_state->cs_started && rcs_state->cs_master)
   {
@@ -1317,13 +1451,17 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                       &config_base64_str,
                                       &config_len,
                                       param->version_number)))
-  {
-    DEBUG_RETURN(ret_code);
-  }
+    goto end;
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Converted configuration to a base64 representation"));
   ret_code= send_get_config_reply(conn, (gchar*)config_base64_str, config_len);
   ic_free((gchar*)config_base64_str);
+end:
+  if (ret_code)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Error from handle_config_request, code = %u", ret_code));
+  }
   DEBUG_RETURN(ret_code);
 }
 

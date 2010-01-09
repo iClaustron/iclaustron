@@ -200,7 +200,6 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
   guint32 i;
   if (apic)
   {
-    disconnect_api_connections(apic, TRUE);
     if (apic->config_mutex)
       g_mutex_free(apic->config_mutex);
     if (apic->conf_objects)

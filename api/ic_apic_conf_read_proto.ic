@@ -36,11 +36,8 @@
   The method implemented is the:
   get_cs_config
 
-  This method first calls the connect_api_connection to set-up the socket
-  connections to the Cluster Server through help of the methods
-  (disconnect_api_connection for error handling and used by other modules):
-    connect_api_connection
-    disconnect_api_connection
+  This method first calls the connect_to_cluster_server to set-up the
+  socket connections to the Cluster Server through help of the method
     set_up_server_connection
 
   After connection has been set-up the client asks for the cluster id
@@ -72,6 +69,7 @@ static int send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
 static int send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
                                IC_CONNECTION *conn);
 static int send_get_mgmd_nodeid_req(IC_CONNECTION *conn);
+
 static int send_convert_transporter_req(IC_INT_API_CONFIG_SERVER *apic,
                                         IC_CONNECTION *conn,
                                         guint32 cluster_id);
@@ -92,19 +90,12 @@ static int rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
                                 IC_CONNECTION *conn,
                                 guint32 cluster_id);
 
-static int connect_api_connections(IC_INT_API_CONFIG_SERVER *apic,
-                                   IC_CONNECTION **conn_ptr,
-                                   guint32 cs_timeout,
-                                   gchar **err_str);
 static int set_up_cluster_server_connection(IC_CONNECTION **conn,
                                             gchar *server_name,
                                             gchar *server_port,
                                             gchar **err_str);
 static guint64 get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server);
 static guint32 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos);
-
-static void disconnect_api_connections(IC_INT_API_CONFIG_SERVER *apic,
-                                       gboolean free);
 
 static int get_dynamic_port_number(IC_API_CONFIG_SERVER *apic,
                                    void *tp_state,
@@ -141,12 +132,18 @@ get_dynamic_port_number(IC_API_CONFIG_SERVER *ext_apic,
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)ext_thread_state;
   IC_CONNECTION *conn= NULL;
   gchar *err_str;
+  guint32 dummy;
   int error;
 
   *port_number= 0;
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
-     if (!(error= connect_api_connections(apic, &conn, (guint32)5, &err_str)))
+     if (!(error= connect_to_cluster_server(apic,
+                                      &conn,
+                                      apic->cluster_conn.num_cluster_servers,
+                                      &dummy,
+                                      (guint32)5,
+                                      &err_str)))
      {
        if (!((error= ic_send_with_cr(conn, get_connection_parameter_str)) ||
             (error= ic_send_cluster_id(conn, cluster_id, apic->use_ic_cs)) ||
@@ -205,19 +202,29 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   IC_CLUSTER_CONFIG *clu_conf;
   IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
   gboolean first;
+  guint32 used_cluster_server_id;
   DEBUG_ENTRY("get_cs_config");
 
   if (apic->use_ic_cs)
     num_clusters= count_clusters(clu_infos);
   else
     num_clusters= 1;
-  if ((error= connect_api_connections(apic, &conn, cs_timeout,
-                                      &apic->err_str)))
+  if ((error= connect_to_cluster_server(apic,
+                                        &conn,
+                                        apic->cluster_conn.num_cluster_servers,
+                                        &used_cluster_server_id,
+                                        cs_timeout,
+                                        &apic->err_str)))
+  {
     DEBUG_RETURN(error);
+  }
   if (apic->use_ic_cs)
   {
     if ((error= get_cluster_ids(apic, conn, clu_infos)))
+    {
+      conn->conn_op.ic_free_connection(conn);
       DEBUG_RETURN(error);
+    }
     for (i= 0; i < num_clusters; i++)
       max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
     apic->max_cluster_id= max_cluster_id;
@@ -267,8 +274,12 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
 
     if (!clu_conf)
       continue;
-    if (!first && (error= connect_api_connections(apic, &conn, cs_timeout,
-                                                  &apic->err_str)))
+    if (!first && (error= connect_to_cluster_server(apic,
+                                                    &conn,
+                                                    used_cluster_server_id,
+                                                    &used_cluster_server_id,
+                                                    cs_timeout,
+                                                    &apic->err_str)))
       goto error;
 
     /*
@@ -306,9 +317,9 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
         (error= send_convert_transporter_req(apic, conn, cluster_id)) ||
         (error= rec_convert_transporter_reply(apic, conn, cluster_id)))
       goto error;
-    disconnect_api_connections(apic, FALSE);
     clu_conf->cs_conn= conn;
     clu_conf->cs_nodeid= cs_nodeid;
+    conn= NULL;
   }
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
@@ -317,9 +328,24 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
       goto mem_alloc_error;
   }
   DEBUG_RETURN(0);
+
 mem_alloc_error:
   error= IC_ERROR_MEM_ALLOC;
 error:
+  if (apic->conf_objects)
+  {
+    for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+    {
+      IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+      if (clu_conf && clu_conf->cs_conn)
+      {
+        clu_conf->cs_conn->conn_op.ic_free_connection(clu_conf->cs_conn);
+        clu_conf->cs_conn= NULL;
+      }
+    }
+  }
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
   DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", error));
   DEBUG_RETURN(error);
 }
@@ -786,28 +812,38 @@ end:
 }
 
 static int
-connect_api_connections(IC_INT_API_CONFIG_SERVER *apic,
-                        IC_CONNECTION **conn_ptr,
-                        guint32 cs_timeout,
-                        gchar **err_str)
+connect_to_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
+                          IC_CONNECTION **conn_ptr,
+                          guint32 cluster_server_id,
+                          guint32 *used_cluster_server_id,
+                          guint32 cs_timeout,
+                          gchar **err_str)
 {
-  guint32 i;
   int error= 1;
-  IC_CONNECTION **conn_p;
   guint32 timer= 0;
+  guint32 i, start_id, end_id;
+  
+  if (cluster_server_id >= apic->cluster_conn.num_cluster_servers)
+  {
+    start_id= 0;
+    end_id= apic->cluster_conn.num_cluster_servers - 1;
+  }
+  else
+  {
+    start_id= cluster_server_id;
+    end_id= cluster_server_id;
+  }
 
   do
   {
-    for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+    for (i= start_id; i <= end_id; i++)
     {
-      conn_p= (IC_CONNECTION**)(&apic->cluster_conn.cluster_srv_conns[i]);
-      if (!(error= set_up_cluster_server_connection(conn_p,
+      if (!(error= set_up_cluster_server_connection(conn_ptr,
                     apic->cluster_conn.cluster_server_ips[i],
                     apic->cluster_conn.cluster_server_ports[i],
                     err_str)))
       {
-        *conn_ptr= *conn_p;
-        apic->cluster_conn.current_conn= *conn_p;
+        *used_cluster_server_id= i;
         return 0;
       }
       if (error != IC_ERROR_CONNECT_TIMEOUT)
@@ -819,21 +855,6 @@ connect_api_connections(IC_INT_API_CONFIG_SERVER *apic,
     ic_sleep(1);
   } while (1);
   return error;
-}
-
-static void
-disconnect_api_connections(IC_INT_API_CONFIG_SERVER *apic, gboolean free)
-{
-  guint32 i;
-  IC_CONNECTION *conn;
-
-  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
-  {
-    conn= apic->cluster_conn.cluster_srv_conns[i];
-    if (conn && free)
-      conn->conn_op.ic_free_connection(conn);
-    apic->cluster_conn.cluster_srv_conns[i]= NULL;
-  }
 }
 
 static int

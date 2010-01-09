@@ -100,6 +100,9 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char);
     ic_mc_strdup does the same thing but allocates memory from a memory
     container instead.
 
+  ic_chardup, ic_mc_chardup
+    Create a copy of a NULL terminated string
+
   ic_conv_config_str_to_int
     Converts an IC_STRING containing a number from a configuration file
     to a number. A configuration file number can contain k, K, m, M, g and G
@@ -123,11 +126,12 @@ guint32 ic_str_find_first(IC_STRING *ic_str, gchar searched_char);
 void ic_print_ic_string(IC_STRING *str);
 int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str);
 int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str);
+int ic_chardup(gchar **out_str, gchar *in_str);
+int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr, gchar **out_str,
+                  gchar *in_str);
 int ic_strdup(IC_STRING *out_str, IC_STRING *in_str);
 int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                  IC_STRING *out_str, IC_STRING *in_str);
-int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
-                  gchar **out_str, gchar *in_str);
 int ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
 gchar *ic_convert_file_to_dir(gchar *buf, gchar *file_name);
 

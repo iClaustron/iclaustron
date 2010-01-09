@@ -597,7 +597,7 @@ struct ic_api_cluster_connection
   gchar **cluster_server_ips;
   gchar **cluster_server_ports;
   IC_CONNECTION **cluster_srv_conns;
-  IC_CONNECTION *current_conn;
+  guint32 *cs_nodeid;
   guint32 num_cluster_servers;
   guint32 tail_index;
   guint32 head_index;

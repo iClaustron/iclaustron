@@ -444,21 +444,6 @@ ic_set_up_ic_string(IC_STRING *in_out_str)
   in_out_str->is_null_terminated= FALSE;
 }
 
-int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
-                  gchar **out_str,
-                  gchar *in_str)
-{
-  IC_STRING dest_str;
-  IC_STRING input_str;
-  int ret_code;
-
-  IC_INIT_STRING(&input_str, in_str, strlen(in_str), TRUE);
-  if ((ret_code= ic_mc_strdup(mc_ptr, &dest_str, &input_str)))
-    return ret_code;
-  *out_str= dest_str.str;
-  return 0;
-}
-
 int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                  IC_STRING *out_str,
                  IC_STRING *in_str)
@@ -485,10 +470,31 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   return 0;
 }
 
+int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
+                  gchar **out_str,
+                  gchar *in_str)
+{
+  IC_STRING dest_str;
+  IC_STRING input_str;
+  int ret_code;
+
+  IC_INIT_STRING(&input_str, in_str, strlen(in_str), TRUE);
+  if ((ret_code= ic_mc_strdup(mc_ptr, &dest_str, &input_str)))
+    return ret_code;
+  *out_str= dest_str.str;
+  return 0;
+}
+
 int
 ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
 {
   return ic_mc_strdup(NULL, out_str, in_str);
+}
+
+int
+ic_chardup(gchar **out_str, gchar *in_str)
+{
+  return ic_mc_chardup(NULL, out_str, in_str);
 }
 
 guint32

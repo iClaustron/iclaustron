@@ -519,6 +519,7 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
   int error;
+  DEBUG_ENTRY("apid_global_external_connect");
 
   DEBUG_PRINT(CONFIG_LEVEL,
   ("Converting to NDB Protocol, cluster id = %u, node_id = %u",
@@ -527,13 +528,18 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
                                              cluster_id,
                                              node_id,
                                              &send_node_conn)))
-    return error;
+    goto error;
   g_mutex_lock(send_node_conn->mutex);
   send_node_conn->conn= conn;
   send_node_conn->node_up= TRUE;
   g_cond_signal(send_node_conn->cond);
   g_mutex_unlock(send_node_conn->mutex);
-  return 0;
+  DEBUG_RETURN(0);
+
+error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Error from ic_external_connect, code = %u", error));
+  DEBUG_RETURN(error);
 }
 
 static int

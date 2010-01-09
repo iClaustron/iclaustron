@@ -781,3 +781,16 @@ static void set_error_line(IC_API_CONFIG_SERVER *apic, guint32 error_line);
 */
 static void init_node(IC_CLUSTER_CONFIG_LOAD *clu_conf,
                       size_t size, void *config_struct);
+
+/* Functions used by several modules */
+static int send_set_connection_parameter(IC_CONNECTION *conn,
+                                         guint32 cluster_id,
+                                         guint32 node1_id,
+                                         guint32 node2_id,
+                                         guint32 dynamic_port);
+static int connect_to_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
+                                     IC_CONNECTION **conn_ptr,
+                                     guint32 cluster_server_id,
+                                     guint32 *used_cluster_server_id,
+                                     guint32 cs_timeout,
+                                     gchar **err_str);
