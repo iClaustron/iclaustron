@@ -458,6 +458,8 @@ static int check_for_stopped_rcs_threads(void *obj, int not_used);
 
 static int handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                    IC_CONNECTION *conn);
+static int handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                           IC_CONNECTION *conn);
 static int handle_report_event(IC_CONNECTION *conn);
 static int handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
                                           guint32 cs_nodeid);
@@ -829,6 +831,21 @@ run_cluster_server_thread(gpointer data)
           }
           break; /* The report event is always done in separate connection */
         }
+      case GET_CONNECTION_PARAMETER:
+        if (!ic_check_buf(read_buf, read_size, get_connection_parameter_str,
+                          strlen(get_connection_parameter_str)))
+        {
+          /* Handle get connection parameter event */
+          if ((error= handle_get_connection_parameter(run_obj, conn)))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+        ("Error from handle_get_connection_parameter, code = %u", error));
+            error_line= __LINE__;
+            goto error;
+          }
+          state= GET_CONNECTION_PARAMETER;
+          break; /* Always handled in separate connection */
+        }
         error_line= __LINE__;
         goto error;
       case WAIT_GET_NODEID:
@@ -1027,6 +1044,14 @@ error:
   DEBUG_PRINT(CONFIG_LEVEL,
               ("Protocol error in get cluster list"));
   PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
+}
+
+static int
+handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                IC_CONNECTION *conn)
+{
+  DEBUG_ENTRY("handle_get_connection_parameter");
+  DEBUG_RETURN(0);
 }
 
 /*

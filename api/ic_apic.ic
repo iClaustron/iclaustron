@@ -656,6 +656,7 @@ const gchar *ic_num_threads_str= " --num_threads=";
 #define WAIT_GET_MGMD_NODEID 2
 #define WAIT_SET_CONNECTION 3
 #define WAIT_CONVERT_TRANSPORTER 4
+#define GET_CONNECTION_PARAMETER 5
 
 #define GET_NODEID_LEN 10
 #define GET_NODEID_REPLY_LEN 16
