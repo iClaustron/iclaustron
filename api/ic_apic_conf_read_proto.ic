@@ -36,7 +36,7 @@
   The method implemented is the:
   get_cs_config
 
-  This method first calls the connect_to_cluster_server to set-up the
+  This method first calls the connect_cluster_server to set-up the
   socket connections to the Cluster Server through help of the method
     set_up_server_connection
 
@@ -138,7 +138,7 @@ get_dynamic_port_number(IC_API_CONFIG_SERVER *ext_apic,
   *port_number= 0;
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
-     if (!(error= connect_to_cluster_server(apic,
+     if (!(error= connect_cluster_server(apic,
                                       &conn,
                                       apic->cluster_conn.num_cluster_servers,
                                       &dummy,
@@ -209,12 +209,12 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
     num_clusters= count_clusters(clu_infos);
   else
     num_clusters= 1;
-  if ((error= connect_to_cluster_server(apic,
-                                        &conn,
-                                        apic->cluster_conn.num_cluster_servers,
-                                        &used_cluster_server_id,
-                                        cs_timeout,
-                                        &apic->err_str)))
+  if ((error= connect_cluster_server(apic,
+                                     &conn,
+                                     apic->cluster_conn.num_cluster_servers,
+                                     &used_cluster_server_id,
+                                     cs_timeout,
+                                     &apic->err_str)))
   {
     DEBUG_RETURN(error);
   }
@@ -274,12 +274,12 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
 
     if (!clu_conf)
       continue;
-    if (!first && (error= connect_to_cluster_server(apic,
-                                                    &conn,
-                                                    used_cluster_server_id,
-                                                    &used_cluster_server_id,
-                                                    cs_timeout,
-                                                    &apic->err_str)))
+    if (!first && (error= connect_cluster_server(apic,
+                                                 &conn,
+                                                 used_cluster_server_id,
+                                                 &used_cluster_server_id,
+                                                 cs_timeout,
+                                                 &apic->err_str)))
       goto error;
 
     /*
@@ -812,12 +812,12 @@ end:
 }
 
 static int
-connect_to_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
-                          IC_CONNECTION **conn_ptr,
-                          guint32 cluster_server_id,
-                          guint32 *used_cluster_server_id,
-                          guint32 cs_timeout,
-                          gchar **err_str)
+connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
+                       IC_CONNECTION **conn_ptr,
+                       guint32 cluster_server_id,
+                       guint32 *used_cluster_server_id,
+                       guint32 cs_timeout,
+                       gchar **err_str)
 {
   int error= 1;
   guint32 timer= 0;
