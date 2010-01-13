@@ -1195,9 +1195,54 @@ handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                 IC_CONNECTION *conn)
 {
   int error;
+  guint32 cluster_id, node1_id, node2_id, param;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_SOCKET_LINK_CONFIG search_comm_section, *comm_section;
+  guint32 port_number;
   DEBUG_ENTRY("handle_get_connection_parameter");
-  (void)run_obj;
-  (void)conn;
+
+  if ((error= ic_rec_cluster_id(conn, &cluster_id)) ||
+      (error= ic_rec_number(conn, node1_str, &node1_id)) ||
+      (error= ic_rec_number(conn, node2_str, &node2_id)) ||
+      (error= ic_rec_number(conn, param_str, &param)) ||
+      (error= ic_rec_empty_line(conn)) ||
+      (error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_PARAM, FALSE) ||
+      (param != SOCKET_SERVER_PORT_NUMBER))
+    goto error;
+  if (cluster_id > run_obj->max_cluster_id ||
+      !(clu_conf= run_obj->conf_objects[cluster_id]))
+  {
+    error= IC_ERROR_NO_SUCH_CLUSTER;
+    goto error;
+  }
+  /* Get the dynamic port number of the connection */
+  search_comm_section.first_node_id= node1_id;
+  search_comm_section.second_node_id= node2_id;
+  error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES;
+  if (!(comm_section= (IC_SOCKET_LINK_CONFIG*)
+       ic_hashtable_search(clu_conf->comm_hash, (void*)&search_comm_section)))
+    goto error;
+  /*
+    Found a valid communication section.
+    We return the configured port number if it is nonzero in which case it
+    is permanent. If it is zero we instead return the dynamic port number.
+    This could be a zero as well which indicates we don't know the value
+    currently in which case the node asking will have to ask again later.
+  */
+  if (comm_section->server_port_number)
+    port_number= comm_section->server_port_number;
+  else
+    port_number= comm_section->dynamic_server_port_number;
+
+  if ((error= ic_send_with_cr(conn, get_connection_parameter_reply_str)) ||
+      (error= ic_send_with_cr_with_num(conn, node1_str, node1_id)) ||
+      (error= ic_send_with_cr_with_num(conn, node2_str, node2_id)) ||
+      (error= ic_send_with_cr_with_num(conn, param_str,
+                                       SOCKET_SERVER_PORT_NUMBER)) ||
+      (error= ic_send_with_cr_with_num(conn, value_str,
+                                       (guint64)port_number)) ||
+      (error= ic_send_empty_line(conn)))
+    goto error;
   DEBUG_RETURN(0);
 error:
   DEBUG_PRINT(CONFIG_LEVEL,

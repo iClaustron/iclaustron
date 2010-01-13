@@ -467,6 +467,7 @@ struct ic_socket_link_config
   guint16 server_node_id;
   guint16 socket_group;
   /* Ignore Connection Group for now */
+  guint16 dynamic_server_port_number;
 
   gchar use_message_id;
   gchar use_checksum;
