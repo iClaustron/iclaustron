@@ -21,6 +21,15 @@
 
 /* Header files used by the iClaustron Data API */
 #include <ic_base_header.h>
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#ifdef HAVE_SYS_UIO_H
+#include <sys/uio.h>
+#endif
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_port.h>
@@ -38,15 +47,6 @@
 #include "ic_apid_int.h"
 #include "ic_apid_impl.h"
 #include "ic_apid_static.h"
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-#ifdef HAVE_SYS_UIO_H
-#include <sys/uio.h>
-#endif
 
 /* Implementation files of the iClaustron Data API */
 /* The error object */
