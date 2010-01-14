@@ -170,7 +170,7 @@ LIBS="$LIBS $LIBREADLINE"
 dnl Next step is to check the existence of external header files.
 
 AC_HEADER_STDC
-AC_CHECK_HEADERS([arpa/inet.h netinet/in.h netinet/tcp.h sys/poll.h sys/select.h sys/socket.h sys/times.h sys/types.h sys/wait.h fcntl.h netdb.h poll.h signal.h time.h unistd.h],,
+AC_CHECK_HEADERS([arpa/inet.h netinet/in.h netinet/tcp.h sys/poll.h sys/select.h sys/socket.h sys/times.h sys/types.h sys/wait.h fcntl.h netdb.h poll.h signal.h time.h unistd.h sys/uio.h],,
   [AC_MSG_ERROR([Common headers missing, e.g. socket.h])])
 AC_CHECK_HEADER(glib.h,,
   [AC_MSG_ERROR([GLib headers missing])])

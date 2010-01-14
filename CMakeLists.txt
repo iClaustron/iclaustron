@@ -184,6 +184,7 @@ check_include_files(poll.h HAVE_POLL_H)
 check_include_files(signal.h HAVE_SIGNAL_H)
 check_include_files(time.h HAVE_TIME_H)
 check_include_files(unistd.h HAVE_UNISTD_H)
+check_include_files(sys/uio.h HAVE_SYS_UIO_H)
 
 message("Check for clock_gettime function")
 find_library(RT_LIB
