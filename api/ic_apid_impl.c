@@ -38,6 +38,12 @@
 #include "ic_apid_int.h"
 #include "ic_apid_impl.h"
 #include "ic_apid_static.h"
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
 #ifdef HAVE_SYS_UIO_H
 #include <sys/uio.h>
 #endif
