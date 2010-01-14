@@ -21,7 +21,15 @@
 #else
 #include <netdb.h>
 #endif
-
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_SYS_UIO_H
+#include <sys/uio.h>
+#endif
+#ifdef UNISTD_H
+#include <unistd.h>
+#endif
 #ifdef USE_MSG_NOSIGNAL
 #define IC_MSG_NOSIGNAL MSG_NOSIGNAL
 #else

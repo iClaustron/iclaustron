@@ -21,15 +21,6 @@
 
 /* Header files used by the iClaustron Data API */
 #include <ic_base_header.h>
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-#ifdef HAVE_SYS_UIO_H
-#include <sys/uio.h>
-#endif
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_port.h>
