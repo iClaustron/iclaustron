@@ -174,6 +174,7 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       continue;
   }
   g_assert(clu_conf);
+  cs_index= 0;
   /* Count number of Cluster Servers */
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
@@ -181,6 +182,7 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       cs_index++;
   }
   cluster_conn->num_cluster_servers= cs_index;
+  error= IC_ERROR_MEM_ALLOC;
   if (!((cluster_conn->cluster_server_ips= (gchar**)
           mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                           sizeof(gchar*)*cs_index)) &&
@@ -641,7 +643,8 @@ static int handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 static int handle_report_event(IC_CONNECTION *conn);
 static int handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
                                           guint32 cs_nodeid);
-static int handle_set_connection_parameter_req(IC_CONNECTION *conn,
+static int handle_set_connection_parameter_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                               IC_CONNECTION *conn,
                                                guint32 client_nodeid);
 static int handle_convert_transporter_request(IC_CONNECTION *conn,
                                               guint32 client_nodeid,
@@ -1019,7 +1022,8 @@ run_cluster_server_thread(gpointer data)
         if (!ic_check_buf(read_buf, read_size, set_connection_parameter_str,
                           strlen(set_connection_parameter_str)))
         {
-          if ((error= handle_set_connection_parameter_req(conn,
+          if ((error= handle_set_connection_parameter_req(run_obj,
+                                                          conn,
                                                           (guint32)0)))
           {
             error_line= __LINE__;
@@ -1076,6 +1080,7 @@ run_cluster_server_thread(gpointer data)
                           strlen(set_connection_parameter_str)))
         {
           if ((error= handle_set_connection_parameter_req(
+                            run_obj,
                             conn,
                             (guint32)param.client_nodeid)))
           {
@@ -1191,14 +1196,34 @@ error:
 }
 
 static int
+get_socket_link_config(guint32 node1_id,
+                       guint32 node2_id,
+                       IC_SOCKET_LINK_CONFIG **comm_section,
+                       IC_CLUSTER_CONFIG *clu_conf)
+{
+  int error;
+  IC_SOCKET_LINK_CONFIG search_comm_section;
+  DEBUG_ENTRY("get_socket_link_config");
+
+  /* Get the dynamic port number of the connection */
+  search_comm_section.first_node_id= node1_id;
+  search_comm_section.second_node_id= node2_id;
+  error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES;
+  if (!(*comm_section= (IC_SOCKET_LINK_CONFIG*)
+       ic_hashtable_search(clu_conf->comm_hash, (void*)&search_comm_section)))
+    return error;
+  return 0;
+}
+
+static int
 handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                 IC_CONNECTION *conn)
 {
   int error;
   guint32 cluster_id, node1_id, node2_id, param;
   IC_CLUSTER_CONFIG *clu_conf;
-  IC_SOCKET_LINK_CONFIG search_comm_section, *comm_section;
   guint32 port_number;
+  IC_SOCKET_LINK_CONFIG *comm_section;
   DEBUG_ENTRY("handle_get_connection_parameter");
 
   if ((error= ic_rec_cluster_id(conn, &cluster_id)) ||
@@ -1215,12 +1240,10 @@ handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     error= IC_ERROR_NO_SUCH_CLUSTER;
     goto error;
   }
-  /* Get the dynamic port number of the connection */
-  search_comm_section.first_node_id= node1_id;
-  search_comm_section.second_node_id= node2_id;
-  error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES;
-  if (!(comm_section= (IC_SOCKET_LINK_CONFIG*)
-       ic_hashtable_search(clu_conf->comm_hash, (void*)&search_comm_section)))
+  if ((error= get_socket_link_config(node1_id,
+                                     node2_id,
+                                     &comm_section,
+                                     clu_conf)))
     goto error;
   /*
     Found a valid communication section.
@@ -1398,13 +1421,16 @@ error:
   client_nodeid:     Node id of client, 0 if sent by Cluster Server
 */
 static int
-handle_set_connection_parameter_req(IC_CONNECTION *conn,
+handle_set_connection_parameter_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                    IC_CONNECTION *conn,
                                     guint32 client_nodeid)
 {
   int error;
   guint32 cluster_id, node1_id, node2_id, param;
   int value;
   const gchar *the_result_str, *the_message_str;
+  IC_SOCKET_LINK_CONFIG *comm_section;
+  IC_CLUSTER_CONFIG *clu_conf;
   DEBUG_ENTRY("handle_set_connection_parameter_req");
 
   if ((error= ic_rec_cluster_id(conn, &cluster_id)) ||
@@ -1428,6 +1454,25 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
   {
     error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES;
   }
+  else if (cluster_id > run_obj->max_cluster_id ||
+           !(clu_conf= run_obj->conf_objects[cluster_id]))
+  {
+    error= IC_ERROR_NO_SUCH_CLUSTER;
+  }
+  else if (!(error= get_socket_link_config(node1_id,
+                                           node2_id,
+                                           &comm_section,
+                                           clu_conf)))
+  {
+    if (comm_section->server_port_number)
+      error= IC_ERROR_SET_CONNECTION_NO_DYNAMIC;
+    else
+    {
+      /* Update the actual dynamic server port number */
+      comm_section->dynamic_server_port_number= value;
+    }
+  }
+
   if (error)
   {
     the_result_str= ic_error_str;
@@ -1452,7 +1497,6 @@ handle_set_connection_parameter_req(IC_CONNECTION *conn,
       when not all cluster servers are up and running. It cannot be changed
       however when no cluster server is up since no node can start without
       a cluster server to read configuration information from.
-      TODO: Not implemented yet.
     */
   }
   /* Now it's time to send the prepared response */

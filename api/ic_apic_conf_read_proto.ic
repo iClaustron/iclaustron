@@ -133,7 +133,7 @@ get_dynamic_port_number(IC_API_CONFIG_SERVER *ext_apic,
   IC_CONNECTION *conn= NULL;
   gchar *err_str;
   guint32 dummy;
-  int error;
+  int error= 0;
 
   *port_number= 0;
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
