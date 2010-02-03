@@ -106,6 +106,32 @@ ic_check_buf_with_string(gchar *read_buf, guint32 read_size, const gchar *str,
 }
 
 int
+ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
+{
+  gchar *read_buf;
+  guint32 read_size, remaining_len;
+  int error;
+  guint32 prefix_str_len= strlen(prefix_str);
+
+  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    if (read_size >= prefix_str_len &&
+        ic_check_buf(read_buf, prefix_str_len, prefix_str,
+                     prefix_str_len))
+    {
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Protocol error in waiting for %s", str));
+      DEBUG_RETURN(IC_PROTOCOL_ERROR);
+    }
+    remaining_len= read_size - prefix_str_len;
+    memcmp(read_str, &read_buf[prefix_str_len], remaining_len);
+    read_str[remaining_len]= 0;
+    DEBUG_RETURN(0);
+  }
+  DEBUG_RETURN(error);
+}
+
+int
 ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
 {
   gchar *read_buf;

@@ -581,7 +581,7 @@ static IC_THREADPOOL_STATE*
 get_threadpool(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
-  return thread_state->tp_state;
+  return (IC_THREADPOOL_STATE*)thread_state->tp_state;
 }
 
 IC_THREADPOOL_STATE*

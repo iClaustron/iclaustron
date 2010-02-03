@@ -463,6 +463,7 @@ start_cs_func(gpointer data)
       connected to us.
     */
   }
+  run_obj->cs_connections[cs_index]= conn;
   /*
     We are now connected to the Cluster Server this thread is appointed to
     handle.  We need to give our start up data and receive information
@@ -1382,32 +1383,124 @@ handle_get_mgmd_nodeid_req(IC_CONNECTION *conn, guint32 cs_nodeid)
   DEBUG_RETURN(0);
 }
 
+static gboolean
+rc_start_update(IC_RUN_CLUSTER_STATE *rc_state)
+{
+  gboolean is_master;
+  g_mutex_lock(rc_state->protect_state);
+  is_master= rc_state->cs_master;
+  /*
+    We are the master of the Cluster Servers which means all updates
+    need to start in our Cluster Server
+  */
+  while (rc_state->update_state)
+  {
+    /*
+      Someone is already performing an update, we need to wait until
+      this update is completed, the Cluster Servers can only handle
+      one update at a time.
+    */
+    rc_state->update_waiters++;
+    g_cond_wait(rc_state->update_cond, rc_state->protect_state);
+    g_assert(!rc_state->update_state);
+  }
+  rc_state->update_state= TRUE;
+  g_mutex_unlock(rc_state->protect_state);
+  return is_master;
+}
+
+static void
+rc_stop_update(IC_RUN_CLUSTER_STATE *rc_state)
+{
+  g_mutex_lock(rc_state->protect_state);
+  g_assert(rc_state->update_state);
+  if (rc_state->update_waiters)
+  {
+    rc_state->update_waiters--;
+    g_cond_signal(rc_state->update_cond);
+  }
+  rc_state->update_state= FALSE;
+  g_mutex_unlock(rc_state->protect_state);
+}
+
 static int
-send_set_connection_parameter(IC_CONNECTION *conn,
-                              guint32 cluster_id,
-                              guint32 node1_id,
-                              guint32 node2_id,
-                              guint32 dynamic_port)
+send_set_connection_param_message(IC_CONNECTION *conn,
+                                  guint32 cluster_id,
+                                  guint32 node1_id,
+                                  guint32 node2_id,
+                                  guint32 port_number)
 {
   int error;
-  DEBUG_ENTRY("send_set_connection_parameter");
 
-  /* Send request to Cluster Server */
   if ((error= ic_send_with_cr(conn, set_connection_parameter_str)) ||
       (error= ic_send_cluster_id(conn, cluster_id, TRUE)) ||
       (error= ic_send_with_cr_with_num(conn, node1_str, node1_id)) ||
       (error= ic_send_with_cr_with_num(conn, node2_str, node2_id)) ||
       (error= ic_send_with_cr_with_num(conn, param_str,
-                                       (guint32)SOCKET_SERVER_PORT_NUMBER)) ||
-      (error= ic_send_with_cr_with_num(conn, value_str, dynamic_port)) ||
+                                       SOCKET_SERVER_PORT_NUMBER)) ||
+      (error= ic_send_with_cr_with_num(conn, value_str, port_number)) ||
       (error= ic_send_empty_line(conn)))
-    goto error;
+  {
+    return error;
+  }
+  return error;
+}
 
-  /* Receive response from Cluster Server */
-  DEBUG_RETURN(0);
-error:
-  DEBUG_PRINT(CONFIG_LEVEL,
-    ("Error in send_set_connection_parameter, code = %d", error));
+static int
+rec_set_connection_param_message(IC_CONNECTION *conn)
+{
+  int error;
+  gchar rec_message_buf[32];
+  gchar rec_result_buf[IC_MAX_ERROR_STRING_SIZE];
+
+  if ((error= ic_rec_simple_str(conn,
+                                set_connection_parameter_reply_str)) ||
+      (error= ic_rec_string(conn, message_str, rec_message_buf)) ||
+      (error= ic_rec_string(conn, result_str, rec_result_buf)) ||
+      (error= ic_rec_empty_line(conn)))
+    return error;
+  if (strcmp(ic_empty_string, rec_message_buf) != 0 ||
+      strcmp(ic_ok_str, rec_result_buf) != 0)
+    error= ic_translate_error_string(rec_result_buf);
+  return error;
+}
+static int
+send_set_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                              guint32 cluster_id,
+                              guint32 node1_id,
+                              guint32 node2_id,
+                              guint32 port_number)
+{
+  IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
+  guint32 i;
+  int error= 0;
+  IC_CONNECTION *conn;
+  IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
+  gboolean is_master;
+  DEBUG_ENTRY("send_set_connection_parameter");
+
+  is_master= rc_start_update(rc_state);
+  if (is_master)
+  {
+    for (i= 0; i < IC_MAX_CLUSTER_SERVERS; i++)
+    {
+      if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid ||
+          run_obj->cs_connections[i] == NULL)
+        continue;
+      conn= run_obj->cs_connections[i];
+      if ((error= send_set_connection_param_message(conn,
+                                                    cluster_id,
+                                                    node1_id,
+                                                    node2_id,
+                                                    port_number)) ||
+          (error= rec_set_connection_param_message(conn)))
+        ;
+    }
+  }
+  else
+  {
+  }
+  rc_stop_update(rc_state);
   DEBUG_RETURN(error);
 }
 
@@ -1466,13 +1559,22 @@ handle_set_connection_parameter_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   {
     if (comm_section->server_port_number)
       error= IC_ERROR_SET_CONNECTION_NO_DYNAMIC;
-    else
-    {
-      /* Update the actual dynamic server port number */
-      comm_section->dynamic_server_port_number= value;
-    }
   }
 
+  if (!error && client_nodeid)
+  {
+    /*
+      We have successfully received a request to update the dynamic
+      port number. Before we make the actual update we need to update
+      the other cluster servers successfully first since the request
+      was received from a client node.
+    */
+    error= send_set_connection_parameter(run_obj,
+                                         cluster_id,
+                                         node1_id,
+                                         node2_id,
+                                         value);
+  }
   if (error)
   {
     the_result_str= ic_error_str;
@@ -1480,6 +1582,9 @@ handle_set_connection_parameter_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   }
   else
   {
+    /* Update the actual dynamic server port number */
+    comm_section->dynamic_server_port_number= value;
+
     the_message_str= ic_empty_string;
     the_result_str= ic_ok_str;
     /*

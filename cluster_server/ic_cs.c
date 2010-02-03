@@ -67,7 +67,6 @@ main(int argc, char *argv[])
 {
   int error, stop_error;
   gchar *err_str;
-  IC_APID_GLOBAL *apid_global;
   IC_API_CONFIG_SERVER *apic;
   gchar error_buffer[ERROR_MESSAGE_SIZE];
   IC_RUN_CLUSTER_SERVER *run_obj;
@@ -105,8 +104,6 @@ end:
     }
     run_obj->run_op.ic_free_run_cluster(run_obj);
   }
-  if (apid_global)
-    apid_global->apid_global_ops->ic_free_apid_global(apid_global);
   if (ic_glob_config_dir.str)
     ic_free(ic_glob_config_dir.str);
   ic_end();

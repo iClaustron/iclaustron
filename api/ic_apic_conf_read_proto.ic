@@ -138,14 +138,14 @@ get_dynamic_port_number(IC_API_CONFIG_SERVER *ext_apic,
   *port_number= 0;
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
-     if (!(error= connect_cluster_server(apic,
-                                      &conn,
-                                      apic->cluster_conn.num_cluster_servers,
-                                      &dummy,
-                                      (guint32)5,
-                                      &err_str)))
-     {
-       if (!((error= ic_send_with_cr(conn, get_connection_parameter_str)) ||
+    if (!(error= connect_cluster_server(apic,
+                                        &conn,
+                                        apic->cluster_conn.num_cluster_servers,
+                                        &dummy,
+                                        (guint32)5,
+                                       &err_str)))
+    {
+      if (!((error= ic_send_with_cr(conn, get_connection_parameter_str)) ||
             (error= ic_send_cluster_id(conn, cluster_id, apic->use_ic_cs)) ||
             (error= ic_send_with_cr_with_num(conn, node1_str,
                                              (guint64)my_nodeid)) ||
@@ -158,28 +158,23 @@ get_dynamic_port_number(IC_API_CONFIG_SERVER *ext_apic,
                       get_connection_parameter_reply_str)) ||
             (error= ic_rec_number(conn, value_str, port_number)) ||
             (error= ic_rec_simple_str(conn, result_ok_str))))
-       {
-         /*
-           We were successful in connecting to the Cluster Server and were also
-           successful in retrieving a port number, if it is 0 then the other
-           node haven't started yet and we wait for a few seconds before
-           trying again.
-         */
-         if (!port_number)
-         {
-           ic_sleep(10);
-           continue;
-         }
-         /* Found a port number to use, return with it */
-         break;
-       }
-       else
-       {
-         conn->conn_op.ic_free_connection(conn);
-         conn= NULL;
-         /* Retry after short sleep */
-         ic_sleep(1);
-       }
+      {
+        /*
+          We were successful in connecting to the Cluster Server and were also
+          successful in retrieving a port number, if it is 0 then the other
+          node haven't started yet and we wait for a few seconds before
+          trying again.
+        */
+        if (port_number)
+        {
+          /* Found a port number to use, return with it */
+          break;
+        }
+      }
+      conn->conn_op.ic_free_connection(conn);
+      conn= NULL;
+      /* Retry after short sleep */
+      ic_sleep(10);
     }
   }
   /* Release connection to Cluster Server before returning */

@@ -1200,7 +1200,7 @@ static GOptionEntry entries[] =
 int main(int argc, char *argv[])
 {
   int ret_code= 0;
-  IC_THREADPOOL_STATE *tp_state;
+  IC_THREADPOOL_STATE *tp_state= NULL;
   IC_STRING log_file;
  
   IC_INIT_STRING(&log_file, NULL, 0, FALSE);
@@ -1275,7 +1275,8 @@ int main(int argc, char *argv[])
   */
   ret_code= start_connection_loop(tp_state);
 error:
-  tp_state->tp_ops.ic_threadpool_stop(tp_state);
+  if (tp_state)
+    tp_state->tp_ops.ic_threadpool_stop(tp_state);
   if (glob_pc_hash)
     ic_hashtable_destroy(glob_pc_hash);
   if (pc_hash_mutex)

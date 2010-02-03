@@ -80,6 +80,7 @@ typedef struct ic_string IC_STRING;
 typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
 #define CONFIG_READ_BUF_SIZE 256
+#define IC_MAX_ERROR_STRING_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
 
 #ifndef PTHREAD_STACK_MIN

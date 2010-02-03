@@ -33,6 +33,7 @@ gchar *ic_common_fill_error_buffer(const gchar *error_message,
                                    int error_code,
                                    gchar *error_buffer);
 gchar *ic_get_strerror(int error_number, gchar *buf, guint32 buf_len);
+int ic_translate_error_string(gchar *error_string);
 
 struct ic_config_error
 {
@@ -120,4 +121,5 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_TABLE_MUST_HAVE_PRIMARY_KEY 7076
 #define IC_ERROR_RECORD_SIZE_TOO_BIG 7077
 #define IC_ERROR_SET_CONNECTION_NO_DYNAMIC 7078
+#define IC_ERROR_NO_SUCH_ERROR 7079
 #endif

@@ -31,11 +31,24 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7078
+#define IC_LAST_ERROR 7079
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
+
+int ic_translate_error_string(gchar *error_str)
+{
+  guint32 i;
+
+  for (i= 0; i < IC_MAX_ERRORS; i++)
+  {
+    if (ic_error_str[i] &&
+        strcmp(ic_error_str[i], error_str) == 0)
+      return (i + IC_FIRST_ERROR);
+  }
+  return IC_ERROR_NO_SUCH_ERROR;
+}
 
 void
 ic_init_error_messages()
@@ -200,6 +213,8 @@ ic_init_error_messages()
     "Record size is limited to 8052 bytes currently";
   ic_error_str[IC_ERROR_SET_CONNECTION_NO_DYNAMIC - IC_FIRST_ERROR]=
     "Trying set dynamic port number when fixed port number is used";
+  ic_error_str[IC_ERROR_NO_SUCH_ERROR - IC_FIRST_ERROR]=
+    "No such error";
 }
 
 void

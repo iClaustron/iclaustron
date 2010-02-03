@@ -104,6 +104,8 @@ low_get_sock_buf_page(IC_SOCK_BUF *buf,
 
   /* Initialise the returned page objects */
   next_page= first_page;
+  last_page= NULL;
+  g_assert(num_pages_to_preallocate > 0);
   for (i= 0; i < num_pages_to_preallocate && next_page; i++)
   {
     next_page->size= 0;
@@ -143,7 +145,8 @@ get_sock_buf_page_wait(IC_SOCK_BUF *sock_buf,
 {
   gboolean first= TRUE;
   IC_SOCK_BUF_PAGE *loc_page;
-  IC_TIMER start_time, current_time;
+  IC_TIMER start_time= (IC_TIMER)0;
+  IC_TIMER current_time;
 
   while (!(loc_page= get_sock_buf_page(
                   sock_buf,

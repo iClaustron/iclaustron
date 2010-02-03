@@ -454,13 +454,13 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_SOCKET_LINK_CONFIG *link_config;
   IC_LISTEN_SERVER_THREAD *listen_server_thread;
   gboolean stop_ordered= FALSE;
-  IC_THREADPOOL_STATE *tp_state;
   gchar *other_port_number;
   guint32 port_number;
   int ret_code= 0;
   gchar buf[32];
   guint32 buf_len;
   IC_API_CONFIG_SERVER *apic;
+  IC_THREADPOOL_STATE *tp_state= send_node_conn->apid_global->send_thread_pool;
 
   if (is_server_part)
   {
@@ -488,7 +488,6 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
           This is just to ensure that someone kicks the listen server
           thread into action to start the listening on the server socket
         */
-        tp_state= send_node_conn->apid_global->send_thread_pool;
         tp_state->tp_ops.ic_threadpool_run_thread(tp_state,
                                         listen_server_thread->thread_id);
       }

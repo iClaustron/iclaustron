@@ -217,6 +217,8 @@ struct ic_run_cluster_state
 {
   gboolean cs_master;
   gboolean cs_started;
+  gboolean update_state;
+  guint32 update_waiters;
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
 
   guint32 cs_master_nodeid;
@@ -225,6 +227,7 @@ struct ic_run_cluster_state
   guint32 num_cluster_servers_connected;
 
   GMutex *protect_state;
+  GCond  *update_cond;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 
@@ -237,6 +240,7 @@ struct ic_int_run_cluster_server
 
   IC_THREADPOOL_STATE *tp_state;
 
+  IC_CONNECTION *cs_connections[IC_MAX_CLUSTER_SERVERS];
   IC_CONNECTION *conn;
   IC_INT_API_CONFIG_SERVER *apic;
   IC_APID_CONNECTION *heartbeat_conn;

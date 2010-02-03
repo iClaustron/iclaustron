@@ -22,7 +22,8 @@ organize_field_in_op_array(IC_INT_APID_OPERATION *apid_op,
   guint32 num_fields= apid_op->num_fields;
   guint32 field_id_compare= IC_MAX_UINT32;
   guint32 num_key_fields= table_def->num_key_fields;
-  guint32 i, j, field_id, key_field_id, key_fields;
+  guint32 i, j, field_id, key_field_id;
+  guint32 key_fields= 0;
 
   qsort(apid_op->fields,
         num_fields,

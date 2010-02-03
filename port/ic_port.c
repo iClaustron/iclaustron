@@ -104,7 +104,9 @@ ic_close_socket(int sockfd)
   } while (error == EINTR);
 #endif
   if (error)
+  {
     DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", error));
+  }
 }
 
 void
