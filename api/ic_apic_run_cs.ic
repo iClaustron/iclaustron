@@ -400,6 +400,39 @@ error:
   return 1;
 }
 
+/*
+  Protocol between Cluster Servers to start up.
+
+  Starting Cluster Server sends to all Cluster Servers which accepts
+  connection set-up the following message.
+
+  start cluster server<CR>
+  version: version_number<CR>
+  status: status_code<CR>
+  pid: pid_number<CR>
+  <CR>
+
+  The starting cluster server waits for replies from other Cluster Servers,
+  it also waits for similar messages from other starting Cluster Servers.
+  It waits for a maximum of 10 seconds before it proceeds.
+
+  An already started Cluster Server responds to this message with the
+  following reply if the Cluster Server is the current master.
+
+  start cluster server reply<CR>
+  version: version_number<CR>
+  status: status_code<CR>
+  pid: pid_number<CR>
+  master node: node_number_of_master<CR>
+  slave node: first_slave_node_number<CR>
+  slave node: second_slave_node_number<CR>
+  slave node: third_slave_node_number<CR>
+
+  Given that the maximum number of Cluster Servers are 4, it isn't possible
+  to get more than 2 slave nodes in the list. When this message arrives, the
+  new Cluster Server will immediately know its place in the set of Cluster
+  Servers.
+*/
 static int
 send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                               IC_CONNECTION *conn)
