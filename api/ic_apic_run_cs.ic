@@ -424,6 +424,17 @@ typedef struct thread_data
   guint32 cs_index;
 } THREAD_DATA;
 
+static int
+handle_start_cluster_server(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                            IC_CONNECTION *conn,
+                            guint32 *error_line)
+{
+  (void)run_obj;
+  (void)conn;
+  (void)error_line;
+  return 0;
+}
+
 #define IC_CS_START_TIMEOUT 7
 
 static gpointer
@@ -524,6 +535,21 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   DEBUG_RETURN(0);
 error:
   DEBUG_RETURN(error);
+}
+
+static int
+handle_cluster_server_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                 IC_CONNECTION *conn,
+                                 gchar *read_buf,
+                                 guint32 read_size,
+                                 guint32 *error_line)
+{
+  (void)run_obj;
+  (void)conn;
+  (void)read_buf;
+  (void)read_size;
+  (void)error_line;
+  return 0;
 }
 
 /*
@@ -640,16 +666,26 @@ static int check_for_stopped_rcs_threads(void *obj, int not_used);
 static int handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                    IC_CONNECTION *conn);
 static int handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                                           IC_CONNECTION *conn);
+                                           IC_CONNECTION *conn,
+                                           gchar *read_buf,
+                                           guint32 read_size,
+                                           guint32 *error_line);
 static int handle_report_event(IC_CONNECTION *conn);
 static int handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
-                                          guint32 cs_nodeid);
+                                      guint32 cs_nodeid,
+                                      gchar *read_buf,
+                                      guint32 read_size,
+                                      guint32 *error_line);
 static int handle_set_connection_parameter_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                                IC_CONNECTION *conn,
                                                guint32 client_nodeid);
-static int handle_convert_transporter_request(IC_CONNECTION *conn,
-                                              guint32 client_nodeid,
-                                              guint32 cs_nodeid);
+static int handle_convert_transporter_request(
+                                       IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                       IC_CONNECTION *conn,
+                                       IC_RC_PARAM *param,
+                                       gchar *read_buf,
+                                       guint32 read_size,
+                                       guint32 *error_line);
 static int handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                  IC_CONNECTION *conn,
                                  IC_RC_PARAM *param);
@@ -976,7 +1012,8 @@ run_cluster_server_thread(gpointer data)
   IC_CONNECTION *conn= (IC_CONNECTION*)
     rcs_tp->ts_ops.ic_thread_get_object(thread_state);
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
-  int error, error_line;
+  int error;
+  guint32 error_line;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
 
@@ -1032,21 +1069,27 @@ run_cluster_server_thread(gpointer data)
           }
           goto end; /* Always sent as only message in separate connection */
         }
+        if (!ic_check_buf(read_buf, read_size,
+                          start_cluster_server_str,
+                          strlen(start_cluster_server_str)))
+        {
+          if ((error= handle_start_cluster_server(run_obj,
+                                                  conn,
+                                                  &error_line)))
+            goto error;
+          state= CLUSTER_SERVER_CONNECTION;
+          break;
+        }
         /* Fall through since get connection parameter is also allowed */
       case GET_CONNECTION_PARAMETER:
-        if (!ic_check_buf(read_buf, read_size, get_connection_parameter_str,
-                          strlen(get_connection_parameter_str)))
-        {
-          if ((error= handle_get_connection_parameter(run_obj, conn)))
-          {
-            error_line= __LINE__;
-            goto error;
-          }
-          state= GET_CONNECTION_PARAMETER;
-          break; /* Always handled in separate connection */
-        }
-        error_line= __LINE__;
-        goto error;
+        if ((error= handle_get_connection_parameter(run_obj,
+                                                    conn,
+                                                    read_buf,
+                                                    read_size,
+                                                    &error_line)))
+          goto error;
+        state= GET_CONNECTION_PARAMETER;
+        break; /* Always handled in separate connection */
       case WAIT_GET_NODEID:
         if (!ic_check_buf(read_buf, read_size, get_nodeid_str,
                           strlen(get_nodeid_str)))
@@ -1062,20 +1105,14 @@ run_cluster_server_thread(gpointer data)
         error_line= __LINE__;
         goto error;
       case WAIT_GET_MGMD_NODEID:
-        if (!ic_check_buf(read_buf, read_size, get_mgmd_nodeid_str,
-                          strlen(get_mgmd_nodeid_str)))
-        {
-          if ((error= handle_get_mgmd_nodeid_req(conn,
-                                                 run_obj->cs_nodeid)))
-          {
-            error_line= __LINE__;
-            goto error;
-          }
-          state= WAIT_SET_CONNECTION;
-          break;
-        }
-        error_line= __LINE__;
-        goto error;
+        if ((error= handle_get_mgmd_nodeid_req(conn,
+                                               run_obj->cs_nodeid,
+                                               read_buf,
+                                               read_size,
+                                               &error_line)))
+          goto error;
+        state= WAIT_SET_CONNECTION;
+        break;
       case WAIT_SET_CONNECTION:
         if (!ic_check_buf(read_buf, read_size, set_connection_parameter_str,
                           strlen(set_connection_parameter_str)))
@@ -1097,42 +1134,28 @@ run_cluster_server_thread(gpointer data)
           message.
         */
       case WAIT_CONVERT_TRANSPORTER:
-        if (!ic_check_buf(read_buf, read_size, convert_transporter_str,
-                          strlen(convert_transporter_str)))
-        {
-          if ((error= handle_convert_transporter_request(conn,
-                                          param.client_nodeid,
-                                          run_obj->cs_nodeid)))
-          {
-            error_line= __LINE__;
-            goto error;
-          }
-          /*
-            At this point the connection is turned into a NDB Protocol
-            connection. We do this by giving to a send node connection
-            in the Data API part. We also need to inform the Cluster
-            Server Data API thread that this connection exists. This
-            thread is responsible for ensuring that heartbeats are
-            sent properly but also all other traffic between cluster
-            server and other nodes using the NDB Protocol.
-          */
-          DEBUG_PRINT(CONFIG_LEVEL,
-          ("We are now converting connection to a NDB Protocol connection"));
-          if ((error=
-               run_obj->apid_global->apid_global_ops->ic_external_connect(
-                           run_obj->apid_global,
-                           param.cluster_id,
-                           param.node_number,
-                           conn)))
-          {
-            error_line= __LINE__;
-            goto error;
-          }
-          conn= NULL;
-          goto break_out;
-        }
-        error_line= __LINE__;
-        goto error;
+        if ((error= handle_convert_transporter_request(run_obj,
+                                                       conn,
+                                                       &param,
+                                                       read_buf,
+                                                       read_size,
+                                                       &error_line)))
+          goto error;
+        conn= NULL;
+        goto break_out;
+      case CLUSTER_SERVER_CONNECTION:
+      /*
+        This connection is now a connection between two cluster servers
+        and can only handle such actions as are permissible between
+        those servers.
+      */
+        if ((error= handle_cluster_server_connection(run_obj,
+                                                     conn,
+                                                     read_buf,
+                                                     read_size,
+                                                     &error_line)))
+          goto error; /* error_line is set up in function */
+        break;   
       default:
         abort();
         break;
@@ -1218,7 +1241,10 @@ get_socket_link_config(guint32 node1_id,
 
 static int
 handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                                IC_CONNECTION *conn)
+                                IC_CONNECTION *conn,
+                                gchar *read_buf,
+                                guint32 read_size,
+                                guint32 *error_line)
 {
   int error;
   guint32 cluster_id, node1_id, node2_id, param;
@@ -1227,6 +1253,12 @@ handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_SOCKET_LINK_CONFIG *comm_section;
   DEBUG_ENTRY("handle_get_connection_parameter");
 
+  if (ic_check_buf(read_buf, read_size, get_connection_parameter_str,
+                   strlen(get_connection_parameter_str)))
+  {
+    *error_line= __LINE__;
+    DEBUG_RETURN(IC_PROTOCOL_ERROR);
+  }
   if ((error= ic_rec_cluster_id(conn, &cluster_id)) ||
       (error= ic_rec_number(conn, node1_str, &node1_id)) ||
       (error= ic_rec_number(conn, node2_str, &node2_id)) ||
@@ -1271,6 +1303,7 @@ handle_get_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 error:
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Error from handle_get_connection_parameter, code = %u", error));
+  *error_line= __LINE__;
   DEBUG_RETURN(error);
 }
 
@@ -1365,11 +1398,21 @@ error:
 
 /* Handle get mgmd nodeid request protocol action */
 static int
-handle_get_mgmd_nodeid_req(IC_CONNECTION *conn, guint32 cs_nodeid)
+handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
+                           guint32 cs_nodeid,
+                           gchar *read_buf,
+                           guint32 read_size,
+                           guint32 *error_line)
 {
   int error;
   DEBUG_ENTRY("handle_get_mgmd_nodeid_req");
 
+  if (ic_check_buf(read_buf, read_size, get_mgmd_nodeid_str,
+                   strlen(get_mgmd_nodeid_str)))
+  {
+    *error_line= __LINE__;
+    DEBUG_RETURN(IC_PROTOCOL_ERROR);
+  }
   if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
       (error= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (error= ic_send_with_cr_with_num(conn, nodeid_str,
@@ -1378,6 +1421,7 @@ handle_get_mgmd_nodeid_req(IC_CONNECTION *conn, guint32 cs_nodeid)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Protocol error in get mgmd nodeid, code = %d", error));
+    *error_line= __LINE__;
     DEBUG_RETURN(error);
   }
   DEBUG_RETURN(0);
@@ -1625,23 +1669,55 @@ error:
 
 /* Handle convert transporter request protocol action */
 static int
-handle_convert_transporter_request(IC_CONNECTION *conn,
-                                   guint32 client_nodeid,
-                                   guint32 cs_nodeid)
+handle_convert_transporter_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                   IC_CONNECTION *conn,
+                                   IC_RC_PARAM *param,
+                                   gchar *read_buf,
+                                   guint32 read_size,
+                                   guint32 *error_line)
 {
   int error;
   int trp_type= IC_TCP_TRANSPORTER_TYPE;
   gchar client_buf[64], cs_buf[64];
   DEBUG_ENTRY("handle_convert_transporter_request");
 
-  g_snprintf(client_buf, 64, "%d %d", client_nodeid, trp_type);
-  g_snprintf(cs_buf, 64, "%d %d", cs_nodeid, trp_type);
+  if (ic_check_buf(read_buf, read_size, convert_transporter_str,
+                   strlen(convert_transporter_str)))
+  {
+    *error_line= __LINE__;
+    DEBUG_RETURN(IC_PROTOCOL_ERROR);
+  }
+  g_snprintf(client_buf, 64, "%d %d",
+             (guint32)param->client_nodeid, trp_type);
+  g_snprintf(cs_buf, 64, "%d %d",
+             (guint32)param->node_number, trp_type);
   if ((error= ic_rec_simple_str(conn, ic_empty_string)) ||
       (error= ic_rec_simple_str(conn, client_buf)) ||
       (error= ic_send_with_cr(conn, cs_buf)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Protocol error in converting to transporter, code = %d", error));
+    DEBUG_RETURN(error);
+  }
+  /*
+    At this point the connection is turned into a NDB Protocol
+    connection. We do this by giving to a send node connection
+    in the Data API part. We also need to inform the Cluster
+    Server Data API thread that this connection exists. This
+    thread is responsible for ensuring that heartbeats are
+    sent properly but also all other traffic between cluster
+    server and other nodes using the NDB Protocol.
+  */
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("We are now converting connection to a NDB Protocol connection"));
+  if ((error=
+         run_obj->apid_global->apid_global_ops->ic_external_connect(
+                   run_obj->apid_global,
+                   param->cluster_id,
+                   param->node_number,
+                   conn)))
+  {
+    *error_line= __LINE__;
     DEBUG_RETURN(error);
   }
   DEBUG_RETURN(0);

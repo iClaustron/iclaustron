@@ -120,11 +120,11 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
                      prefix_str_len))
     {
       DEBUG_PRINT(CONFIG_LEVEL,
-        ("Protocol error in waiting for %s", str));
+        ("Protocol error in waiting for %s", prefix_str));
       DEBUG_RETURN(IC_PROTOCOL_ERROR);
     }
     remaining_len= read_size - prefix_str_len;
-    memcmp(read_str, &read_buf[prefix_str_len], remaining_len);
+    memcpy(read_str, &read_buf[prefix_str_len], remaining_len);
     read_str[remaining_len]= 0;
     DEBUG_RETURN(0);
   }
