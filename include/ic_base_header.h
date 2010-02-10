@@ -79,6 +79,8 @@ typedef struct ic_sock_buf_page IC_SOCK_BUF_PAGE;
 typedef struct ic_string IC_STRING;
 typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
+typedef guint64 IC_PID_TYPE;
+
 #define CONFIG_READ_BUF_SIZE 256
 #define IC_MAX_ERROR_STRING_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048

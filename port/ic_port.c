@@ -250,35 +250,37 @@ ic_free(void *ret_obj)
 }
 
 #ifndef WINDOWS
-GPid
+IC_PID_TYPE
 ic_get_own_pid()
 {
-  GPid pid;
-  pid= getpid();
-  return (GPid)pid;
+  IC_PID_TYPE pid;
+  pid= (IC_PID_TYPE)getpid();
+  return pid;
 }
 
 void 
-ic_kill_process(GPid pid, gboolean hard_kill)
+ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill)
 {
   if (hard_kill)
-    kill(pid, SIGKILL);
+    kill((pid_t)pid, SIGKILL);
   else
-    kill(pid, SIGTERM);
+    kill((pid_t)pid, SIGTERM);
 }
 
 void ic_controlled_terminate()
 {
-  GPid my_pid;
+  IC_PID_TYPE my_pid;
 
   my_pid= ic_get_own_pid();
-  kill(my_pid, SIGTERM);
+  kill((pid_t)my_pid, SIGTERM);
 }
 #else /* WINDOWS */
-GPid
+IC_PID_TYPE
 ic_get_own_pid()
 {
-  return 0;
+  IC_PID_TYPE pid;
+  pid= (IC_PID_TYPE)GetCurrentProcessId();
+  return pid;
 }
 
 void 
@@ -294,16 +296,17 @@ ic_controlled_terminate()
 
 int ic_start_process(gchar **argv,
                      gchar *working_dir,
-                     GPid *pid)
+                     IC_PID_TYPE *pid)
 {
   GError *error;
+  GPid loc_pid;
 
   if (g_spawn_async_with_pipes(working_dir,
                                argv,
                                NULL, /* environment */
                                0,    /* Flags */
                                NULL, NULL, /* Child setup stuff */
-                               pid, /* Pid of program started */
+                               &loc_pid, /* Pid of program started */
                                NULL, /* stdin */
                                NULL, /* stdout */
                                NULL, /* stderr */
@@ -312,6 +315,7 @@ int ic_start_process(gchar **argv,
     /* Unsuccessful start */
     return 1;
   }
+  *pid= (IC_PID_TYPE)loc_pid;
   return 0;
 }
 
@@ -344,7 +348,7 @@ int run_process(gchar **argv,
 }
 
 int
-ic_is_process_alive(guint32 pid,
+ic_is_process_alive(IC_PID_TYPE pid,
                     const gchar *process_name)
 {
   gchar *argv[6];

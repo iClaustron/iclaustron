@@ -37,10 +37,10 @@ gchar *ic_realloc(gchar *ptr, size_t size);
 void ic_free(void *ret_obj);
 
 /* Process start/stop/check calls */
-GPid ic_get_own_pid();
-int ic_is_process_alive(guint32 pid, const gchar *process_name);
-int ic_start_process(gchar **argv, gchar *working_dir, GPid *pid);
-void ic_kill_process(GPid pid, gboolean hard_kill);
+IC_PID_TYPE ic_get_own_pid();
+int ic_is_process_alive(IC_PID_TYPE pid, const gchar *process_name);
+int ic_start_process(gchar **argv, gchar *working_dir, IC_PID_TYPE *pid);
+void ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill);
 
 /* iClaustron file routines */
 int ic_write_file(int file_ptr, const gchar *file_name, size_t size);

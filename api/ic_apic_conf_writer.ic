@@ -222,17 +222,17 @@ static int
 write_config_version_file(IC_STRING *config_dir,
                           guint32 config_version,
                           guint32 state,
-                          guint32 pid);
+                          IC_PID_TYPE pid);
 static int
 write_cv_file(IC_STRING *config_dir,
               guint32 config_version,
               guint32 state,
-              guint32 pid);
+              IC_PID_TYPE pid);
 static int
 read_config_version_file(IC_STRING *config_dir,
                          guint32 *config_version,
                          guint32 *state,
-                         guint32 *pid);
+                         IC_PID_TYPE *pid);
 static void
 insert_line_config_version_file(IC_STRING *str,
                                 gchar **ptr,
@@ -249,7 +249,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
 {
   int error= 0;
   guint32 old_version= *old_config_version_number;
-  GPid own_pid;
+  IC_PID_TYPE own_pid;
   DEBUG_ENTRY("ic_write_full_config_to_disk");
   /*
    The first step before writing anything is to ensure that the previous
@@ -319,7 +319,8 @@ ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
                        guint32 *config_version)
 {
-  guint32 state, pid;
+  guint32 state;
+  IC_PID_TYPE pid;
   int error;
   DEBUG_ENTRY("ic_load_config_version");
 
@@ -341,7 +342,7 @@ ic_load_config_version(IC_STRING *config_dir,
       if ((error= write_config_version_file(config_dir,
                                             *config_version,
                                             CONFIG_STATE_BUSY,
-                                            (guint32)ic_get_own_pid())))
+                                            ic_get_own_pid())))
         return error;
       return 0;
     }
@@ -364,7 +365,7 @@ ic_load_config_version(IC_STRING *config_dir,
     if ((error= write_config_version_file(config_dir,
                                           *config_version,
                                           CONFIG_STATE_BUSY,
-                                          (guint32)ic_get_own_pid())))
+                                          ic_get_own_pid())))
       return error;
     return 0;
   }
@@ -1330,9 +1331,10 @@ static int
 write_config_version_file(IC_STRING *config_dir,
                           guint32 config_version,
                           guint32 state,
-                          guint32 pid)
+                          IC_PID_TYPE pid)
 {
-  guint32 read_pid, read_state, read_cv;
+  guint32 read_state, read_cv;
+  IC_PID_TYPE read_pid;
   int error;
   DEBUG_ENTRY("write_config_version_file");
 
@@ -1371,7 +1373,7 @@ static int
 write_cv_file(IC_STRING *config_dir,
               guint32 config_version,
               guint32 state,
-              guint32 pid)
+              IC_PID_TYPE pid)
 {
   int file_ptr, error;
   IC_STRING file_name_string, str;
@@ -1449,7 +1451,7 @@ static int
 read_config_version_file(IC_STRING *config_dir,
                          guint32 *config_version,
                          guint32 *state,
-                         guint32 *pid)
+                         IC_PID_TYPE *pid)
 {
   IC_STRING file_name_string;
   IC_STRING str;
