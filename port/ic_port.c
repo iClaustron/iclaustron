@@ -196,11 +196,13 @@ ic_gethrtime()
 #else
 #ifdef WINDOWS
   LARGE_INTEGER win_time, win_freq;
+
   QueryPerformanceFrequency(&win_freq);
   QueryPerformanceCounter(&win_time);
   timer= (win_time / win_freq) * 1000000;
-#endif
+#else
   No implementation of get time found
+#endif
 #endif
 #endif
 #endif
