@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_base_header.h>
+#include <ic_port.h>
 #include <ic_debug.h>
 #include <ic_string.h>
 #include <ic_err.h>
@@ -220,13 +221,15 @@ ic_init_error_messages()
 void
 ic_print_error(int error_number)
 {
+  gchar buf[IC_MAX_ERROR_STRING_SIZE];
+
   if (error_number < IC_FIRST_ERROR ||
       error_number > IC_LAST_ERROR ||
       !ic_error_str[error_number - IC_FIRST_ERROR])
   {
     ic_printf("%d: %s", error_number, no_such_error_str);
-    if (sys_errlist[error_number])
-      perror(sys_errlist[error_number]);
+    if (ic_get_strerror(error_number, buf, sizeof(buf)))
+      perror(ic_get_strerror(error_number, buf, sizeof(buf)));
   }
   else
     ic_printf("%s", ic_error_str[error_number - IC_FIRST_ERROR]);

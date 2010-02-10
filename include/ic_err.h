@@ -32,7 +32,6 @@ gchar *ic_common_fill_error_buffer(const gchar *error_message,
                                    guint32 error_line,
                                    int error_code,
                                    gchar *error_buffer);
-gchar *ic_get_strerror(int error_number, gchar *buf, guint32 buf_len);
 int ic_translate_error_string(gchar *error_string);
 
 struct ic_config_error

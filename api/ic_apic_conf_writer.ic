@@ -1425,7 +1425,7 @@ write_cv_file(IC_STRING *config_dir,
     ic_close_file(file_ptr);
   }
   /* Open config.version for writing */
-  file_ptr= ic_open_file((const gchar *)file_name);
+  file_ptr= ic_open_file((const gchar *)file_name, FALSE);
   if (file_ptr == (int)-1)
   {
     error= ic_get_error();

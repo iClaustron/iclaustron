@@ -44,7 +44,7 @@ void ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill);
 
 /* iClaustron file routines */
 int ic_get_error();
-int ic_open_file(const gchar *file_name);
+int ic_open_file(const gchar *file_name, gboolean create_flag);
 int ic_create_file(const gchar *buf);
 int ic_close_file(int file_ptr);
 int ic_write_file(int file_ptr, const gchar *file_name, size_t size);
@@ -52,6 +52,9 @@ int ic_read_file(int file_ptr, gchar *file_name, size_t size, guint64 *len);
 int ic_delete_file(const gchar *file_name);
 int ic_get_file_contents(const gchar *file, gchar **file_content,
                          guint64 *file_size);
+
+/* Error string routine */
+gchar *ic_get_strerror(int error_number, gchar *buf, guint32 buf_len);
 
 typedef unsigned char ic_bool;
 typedef guint64 IC_TIMER;

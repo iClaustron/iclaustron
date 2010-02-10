@@ -417,9 +417,13 @@ ic_delete_file(const gchar *file_name)
 }
 
 int
-ic_open_file(const gchar *file_name)
+ic_open_file(const gchar *file_name, gboolean create_flag)
 {
-  return open(file_name, O_CREAT | O_RDWR | O_SYNC, 0);
+  int flags= O_RDWR | O_SYNC;
+  
+  if (create_flag)
+    flags|= O_CREAT;
+  return open(file_name, flags, 0);
 }
 
 int
