@@ -48,7 +48,13 @@ ic_debug_entry(const char *entry_point)
 
 int ic_debug_open()
 {
-  ic_fptr= ic_open_file(glob_debug_file, TRUE);
+#ifndef WINDOWS
+  ic_fptr= fopen(glob_debug_file, "w");
+#else
+  errno_t error= fopen_s(&ic_fptr, glob_debug_file, "w");
+  if (error)
+    ic_fptr= NULL;
+#endif
   if (ic_fptr == NULL)
   {
     ic_printf("Failed to open %s\n", glob_debug_file);
