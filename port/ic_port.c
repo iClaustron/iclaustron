@@ -94,7 +94,7 @@ ic_close_socket(int sockfd)
   int error;
 #ifdef WINDOWS
   if (closesocket(sockfd))
-    error= WSAGetLastError();
+    error= ic_get_error();
 #else
   do
   {
@@ -113,7 +113,7 @@ int
 ic_get_error()
 {
 #ifdef WINDOWS
-  return WSAGetError();
+  return WSAGetLastError();
 #else
   return errno;
 #endif
@@ -128,7 +128,11 @@ ic_set_port_binary_dir(const gchar *binary_dir)
 gchar*
 ic_get_strerror(int error_number, gchar *buf, guint32 buf_len)
 {
+#ifdef WINDOWS
+  strerror(error_number, (char*)buf, (size_t)buf_len);
+#else
   strerror_r(error_number, (char*)buf, (size_t)buf_len);
+#endif
   return buf;
 }
 
@@ -190,6 +194,12 @@ ic_gethrtime()
   timer*= time_of_day.tv_sec;
   timer+= (time_of_day.tv_usec * 1000);
 #else
+#ifdef WINDOWS
+  LARGE_INTEGER win_time, win_freq;
+  QueryPerformanceFrequency(&win_freq);
+  QueryPerformanceCounter(&win_time);
+  timer= (win_time / win_freq) * 1000000;
+#endif
   No implementation of get time found
 #endif
 #endif
