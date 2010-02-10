@@ -1422,7 +1422,7 @@ write_cv_file(IC_STRING *config_dir,
       error= ic_get_error();
       goto file_error;
     }
-    close(file_ptr);
+    ic_close_file(file_ptr);
   }
   /* Open config.version for writing */
   file_ptr= ic_open_file((const gchar *)file_name);
@@ -1447,7 +1447,7 @@ insert_line_config_version_file(IC_STRING *str,
   guint32 str_len;
   gchar *loc_ptr= *ptr;
 
-  strcpy(loc_ptr, str->str);
+  memcpy(loc_ptr, str->str, str->len);
   loc_ptr+= str->len;
   loc_ptr= ic_guint64_str(value, loc_ptr, &str_len);
   loc_ptr+= str_len;

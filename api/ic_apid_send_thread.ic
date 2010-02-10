@@ -351,7 +351,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   guint32 send_size;
   guint32 iovec_size;
   int error;
-  struct iovec write_vector[MAX_SEND_BUFFERS];
+  IC_IOVEC write_vector[MAX_SEND_BUFFERS];
 
   send_tp->ts_ops.ic_thread_lock(thread_state);
   send_node_conn->send_thread_is_sending= FALSE;

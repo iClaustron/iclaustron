@@ -147,7 +147,7 @@ struct ic_connect_operations
                                         guint32 size,
                                         guint32 secs_to_try);
   int (*ic_writev_connection)          (IC_CONNECTION *conn,
-                                        struct iovec *write_vector,
+                                        IC_IOVEC *write_vector,
                                         guint32 iovec_size,
                                         guint32 tot_size,
                                         guint32 secs_to_try);
