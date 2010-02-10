@@ -195,10 +195,10 @@ ic_gethrtime()
   timer+= (time_of_day.tv_usec * 1000);
 #else
 #ifdef WINDOWS
-  LARGE_INTEGER win_time, win_freq;
+  guint64 win_time, win_freq;
 
-  QueryPerformanceFrequency(&win_freq);
-  QueryPerformanceCounter(&win_time);
+  QueryPerformanceFrequency((LARGE_INTEGER*)&win_freq);
+  QueryPerformanceCounter((LARGE_INTEGER*)&win_time);
   timer= (win_time / win_freq) * 1000000;
 #else
   No implementation of get time found
