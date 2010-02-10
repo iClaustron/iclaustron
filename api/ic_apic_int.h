@@ -222,7 +222,7 @@ struct ic_run_cluster_state
   gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
 
   guint32 cs_master_nodeid;
-  guint32 config_version_number;
+  guint64 config_version_number;
   guint32 num_cluster_servers;
   guint32 num_cluster_servers_connected;
 

@@ -94,7 +94,7 @@ send_ok_reply(IC_CONNECTION *conn)
 }
 
 static int
-send_ok_pid_reply(IC_CONNECTION *conn, GPid pid)
+send_ok_pid_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
 {
   int error;
 
@@ -585,7 +585,7 @@ handle_start(IC_CONNECTION *conn)
   gchar **arg_vector;
   int ret_code;
   guint32 i;
-  GPid pid;
+  IC_PID_TYPE pid;
   IC_STRING working_dir;
   IC_PC_START *pc_start, *pc_start_check;
 
@@ -671,7 +671,7 @@ handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
   IC_PC_FIND *pc_find= NULL;
   IC_PC_START *pc_start_found;
   int error;
-  GPid pid;
+  IC_PID_TYPE pid;
   guint64 start_id= 0;
   int loop_count= 0;
   gchar *program_name;

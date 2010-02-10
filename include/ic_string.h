@@ -55,7 +55,7 @@ void ic_create_config_file_name(IC_STRING *file_name,
                                 gchar *buf,
                                 IC_STRING *config_dir,
                                 IC_STRING *name,
-                                guint32 config_version_number);
+                                IC_CONF_VERSION_TYPE config_version_number);
 void ic_create_config_version_file_name(IC_STRING *file_name,
                                         gchar *buf,
                                         IC_STRING *config_dir);

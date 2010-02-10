@@ -63,7 +63,7 @@ ic_create_config_file_name(IC_STRING *file_name,
                            gchar *buf,
                            IC_STRING *config_dir,
                            IC_STRING *name,
-                           guint32 config_version_number)
+                           IC_CONF_VERSION_TYPE config_version_number)
 {
   gchar int_buf[IC_MAX_INT_STRING];
   IC_STRING ending_string;
@@ -75,7 +75,7 @@ ic_create_config_file_name(IC_STRING *file_name,
   ic_add_ic_string(file_name, &ic_config_ending_string);
   if (config_version_number)
   {
-    ic_set_number_ending_string(int_buf, (guint64)config_version_number);
+    ic_set_number_ending_string(int_buf, config_version_number);
     IC_INIT_STRING(&ending_string, int_buf, strlen(int_buf), TRUE);
     ic_add_ic_string(file_name, &ending_string);
   }

@@ -125,30 +125,32 @@
 */
 static int
 ic_write_full_config_to_disk(IC_STRING *config_dir,
-                             guint32 *old_config_version_number,
+                             IC_CONF_VERSION_TYPE *old_config_version_number,
                              IC_CLUSTER_CONNECT_INFO **clu_infos,
                              IC_CLUSTER_CONFIG **clusters);
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       guint32 *config_version);
+                       IC_CONF_VERSION_TYPE *config_version);
 static int
 remove_config_files(IC_STRING *config_dir,
                     IC_CLUSTER_CONNECT_INFO **clu_infos,
-                    guint32 config_version);
+                    IC_CONF_VERSION_TYPE config_version);
 static int
 remove_config_version_file(IC_STRING *config_dir);
 static int
-write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
-                   IC_CLUSTER_CONFIG **clusters, guint32 config_version);
+write_config_files(IC_STRING *config_dir,
+                   IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   IC_CLUSTER_CONFIG **clusters,
+                   IC_CONF_VERSION_TYPE config_version);
 static int
 write_grid_config_file(IC_STRING *config_dir,
-                          IC_CLUSTER_CONNECT_INFO **clu_infos,
-                          guint32 config_version);
+                       IC_CLUSTER_CONNECT_INFO **clu_infos,
+                       IC_CONF_VERSION_TYPE config_version);
 static int
 write_cluster_config_file(IC_STRING *config_dir,
                           IC_CLUSTER_CONFIG *clu_conf,
-                          guint32 config_version);
+                          IC_CONF_VERSION_TYPE config_version);
 static int
 write_new_section_header(IC_DYNAMIC_ARRAY *dyn_array,
                          IC_DYNAMIC_ARRAY_OPS *da_ops,
@@ -220,35 +222,37 @@ get_node_data(const gchar *struct_ptr, guint32 offset,
 
 static int
 write_config_version_file(IC_STRING *config_dir,
-                          guint32 config_version,
-                          guint32 state,
+                          IC_CONF_VERSION_TYPE config_version,
+                          IC_CONF_STATE_TYPE state,
                           IC_PID_TYPE pid);
 static int
 write_cv_file(IC_STRING *config_dir,
-              guint32 config_version,
-              guint32 state,
+              IC_CONF_VERSION_TYPE config_version,
+              IC_CONF_STATE_TYPE state,
               IC_PID_TYPE pid);
 static int
 read_config_version_file(IC_STRING *config_dir,
-                         guint32 *config_version,
-                         guint32 *state,
+                         IC_CONF_VERSION_TYPE *config_version,
+                         IC_CONF_STATE_TYPE *state,
                          IC_PID_TYPE *pid);
 static void
 insert_line_config_version_file(IC_STRING *str,
                                 gchar **ptr,
-                                guint32 value);
+                                guint64 value);
 static int
-cmp_config_version_line(IC_STRING *str, guint64 *len,
-                        guint32 *value, gchar **ptr);
+cmp_config_version_line(IC_STRING *str,
+                        guint64 *len,
+                        guint64 *value,
+                        gchar **ptr);
 /* Here is the source code for the module */
 static int
 ic_write_full_config_to_disk(IC_STRING *config_dir,
-                             guint32 *old_config_version_number,
+                             IC_CONF_VERSION_TYPE *old_config_version_number,
                              IC_CLUSTER_CONNECT_INFO **clu_infos,
                              IC_CLUSTER_CONFIG **clusters)
 {
   int error= 0;
-  guint32 old_version= *old_config_version_number;
+  IC_CONF_VERSION_TYPE old_version= *old_config_version_number;
   IC_PID_TYPE own_pid;
   DEBUG_ENTRY("ic_write_full_config_to_disk");
   /*
@@ -283,7 +287,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
    perform step 3.
   */
   own_pid= ic_get_own_pid();
-  if (old_version > (guint32)1)
+  if (old_version > (guint64)1)
   {
     /* Step 0 */
     if ((error= remove_config_files(config_dir, clu_infos, old_version - 1)))
@@ -294,8 +298,9 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
                                  old_version + 1)))
     goto error;
   /* Step 2 */
-  if ((error= write_config_version_file(config_dir, old_version + 1,
-                                        CONFIG_STATE_BUSY,
+  if ((error= write_config_version_file(config_dir,
+                                        (IC_CONF_VERSION_TYPE)(old_version + 1),
+                                        (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY,
                                         own_pid)))
     goto error;
   if (old_version > 0)
@@ -317,17 +322,17 @@ error:
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       guint32 *config_version)
+                       IC_CONF_VERSION_TYPE *config_version)
 {
-  guint32 state;
+  IC_CONF_STATE_TYPE state;
   IC_PID_TYPE pid;
   int error;
   DEBUG_ENTRY("ic_load_config_version");
 
   if (!(error= read_config_version_file(config_dir,
-                                       config_version,
-                                       &state,
-                                       &pid)))
+                                        config_version,
+                                        &state,
+                                        &pid)))
   {
     if (state == CONFIG_STATE_IDLE)
     {
@@ -341,7 +346,7 @@ ic_load_config_version(IC_STRING *config_dir,
       */
       if ((error= write_config_version_file(config_dir,
                                             *config_version,
-                                            CONFIG_STATE_BUSY,
+                                            (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY,
                                             ic_get_own_pid())))
         return error;
       return 0;
@@ -364,7 +369,7 @@ ic_load_config_version(IC_STRING *config_dir,
     error= 0;
     if ((error= write_config_version_file(config_dir,
                                           *config_version,
-                                          CONFIG_STATE_BUSY,
+                                          (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY,
                                           ic_get_own_pid())))
       return error;
     return 0;
@@ -375,7 +380,7 @@ ic_load_config_version(IC_STRING *config_dir,
 static int
 remove_config_files(IC_STRING *config_dir,
                     IC_CLUSTER_CONNECT_INFO **clu_infos,
-                    guint32 config_version)
+                    IC_CONF_VERSION_TYPE config_version)
 {
   int error;
   IC_STRING file_name_string;
@@ -412,8 +417,10 @@ remove_config_version_file(IC_STRING *config_dir)
 }
 
 static int
-write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
-                   IC_CLUSTER_CONFIG **clusters, guint32 config_version)
+write_config_files(IC_STRING *config_dir,
+                   IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   IC_CLUSTER_CONFIG **clusters,
+                   IC_CONF_VERSION_TYPE config_version)
 {
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *clu_conf;
@@ -438,7 +445,7 @@ write_config_files(IC_STRING *config_dir, IC_CLUSTER_CONNECT_INFO **clu_infos,
 static int
 write_grid_config_file(IC_STRING *config_dir,
                        IC_CLUSTER_CONNECT_INFO **clu_infos,
-                       guint32 config_version)
+                       IC_CONF_VERSION_TYPE config_version)
 {
   IC_DYNAMIC_ARRAY *dyn_array;
   IC_CLUSTER_CONNECT_INFO *clu_info;
@@ -539,7 +546,7 @@ file_error:
 static int
 write_cluster_config_file(IC_STRING *config_dir,
                           IC_CLUSTER_CONFIG *clu_conf,
-                          guint32 config_version)
+                          IC_CONF_VERSION_TYPE config_version)
 {
   IC_DYNAMIC_ARRAY *dyn_array;
   IC_DYNAMIC_ARRAY_OPS *da_ops;
@@ -1329,17 +1336,20 @@ check_int_value(guint64 data, guint64 *value, gboolean *first)
 
 static int
 write_config_version_file(IC_STRING *config_dir,
-                          guint32 config_version,
-                          guint32 state,
+                          IC_CONF_VERSION_TYPE config_version,
+                          IC_CONF_STATE_TYPE state,
                           IC_PID_TYPE pid)
 {
-  guint32 read_state, read_cv;
+  IC_CONF_STATE_TYPE read_state;
+  IC_CONF_VERSION_TYPE read_cv;
   IC_PID_TYPE read_pid;
   int error;
   DEBUG_ENTRY("write_config_version_file");
 
-  if ((error= write_cv_file(config_dir, config_version,
-                            state, pid)))
+  if ((error= write_cv_file(config_dir,
+                            config_version,
+                            state,
+                            pid)))
     goto error;
   if ((error= read_config_version_file(config_dir,
                                        &read_cv,
@@ -1371,8 +1381,8 @@ error:
 
 static int
 write_cv_file(IC_STRING *config_dir,
-              guint32 config_version,
-              guint32 state,
+              IC_CONF_VERSION_TYPE config_version,
+              IC_CONF_STATE_TYPE state,
               IC_PID_TYPE pid)
 {
   int file_ptr, error;
@@ -1396,14 +1406,14 @@ write_cv_file(IC_STRING *config_dir,
     when the configuration is updated.
   */
   IC_INIT_STRING(&str, (gchar*)ic_version_str, VERSION_REQ_LEN, TRUE);
-  insert_line_config_version_file(&str, &ptr, config_version);
+  insert_line_config_version_file(&str, &ptr, (guint64)config_version);
   IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
-  insert_line_config_version_file(&str, &ptr, state);
+  insert_line_config_version_file(&str, &ptr, (guint64)state);
   IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
-  insert_line_config_version_file(&str, &ptr, pid);
+  insert_line_config_version_file(&str, &ptr, (guint64)pid);
 
   ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
-  if (config_version == (guint32)0)
+  if (config_version == (guint64)0)
   {
     /* This is the initial write of the file */
     file_ptr= g_creat((const gchar *)file_name, S_IRUSR | S_IWUSR);
@@ -1432,15 +1442,14 @@ file_error:
 static void
 insert_line_config_version_file(IC_STRING *str,
                                 gchar **ptr,
-                                guint32 value)
+                                guint64 value)
 {
   guint32 str_len;
-  guint64 long_value= (guint64)value;
   gchar *loc_ptr= *ptr;
 
   strcpy(loc_ptr, str->str);
   loc_ptr+= str->len;
-  loc_ptr= ic_guint64_str(long_value, loc_ptr, &str_len);
+  loc_ptr= ic_guint64_str(value, loc_ptr, &str_len);
   loc_ptr+= str_len;
   *loc_ptr= CARRIAGE_RETURN;
   loc_ptr++;
@@ -1449,8 +1458,8 @@ insert_line_config_version_file(IC_STRING *str,
 
 static int
 read_config_version_file(IC_STRING *config_dir,
-                         guint32 *config_version,
-                         guint32 *state,
+                         IC_CONF_VERSION_TYPE *config_version,
+                         IC_CONF_STATE_TYPE *state,
                          IC_PID_TYPE *pid)
 {
   IC_STRING file_name_string;
@@ -1494,8 +1503,10 @@ file_error:
 }
 
 static int
-cmp_config_version_line(IC_STRING *str, guint64 *len,
-                        guint32 *value, gchar **ptr)
+cmp_config_version_line(IC_STRING *str,
+                        guint64 *len,
+                        guint64 *value,
+                        gchar **ptr)
 {
   guint64 loc_value;
   guint32 value_len;
@@ -1512,7 +1523,7 @@ cmp_config_version_line(IC_STRING *str, guint64 *len,
   if ((loc_len < (value_len + 1)) ||
       (loc_value > (guint64)(((guint64)1) << 32)))
     goto file_error;
-  *value= (guint32)loc_value;
+  *value= loc_value;
   loc_ptr+= value_len;
   if (*loc_ptr != CARRIAGE_RETURN)
     goto file_error;

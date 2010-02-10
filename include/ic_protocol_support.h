@@ -83,7 +83,7 @@ struct ic_pc_start
   IC_STRING *parameters;
   IC_MEMORY_CONTAINER *mc_ptr;
   IC_PC_START *next_pc_start;
-  GPid pid;
+  IC_PID_TYPE pid;
   guint64 start_id;
   guint64 dyn_trans_index;
   guint32 num_parameters;

@@ -80,6 +80,8 @@ typedef struct ic_string IC_STRING;
 typedef struct ic_threadpool_state IC_THREADPOOL_STATE;
 
 typedef guint64 IC_PID_TYPE;
+typedef guint64 IC_CONF_VERSION_TYPE;
+typedef guint64 IC_CONF_STATE_TYPE;
 
 #define CONFIG_READ_BUF_SIZE 256
 #define IC_MAX_ERROR_STRING_SIZE 256
