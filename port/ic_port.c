@@ -212,7 +212,11 @@ ic_gethrtime()
 void
 ic_sleep(guint32 seconds_to_sleep)
 {
+#ifndef WINDOWS
   sleep(seconds_to_sleep);
+#else
+  Sleep(seconds_to_sleep);
+#endif
 }
 
 void
@@ -236,8 +240,7 @@ ic_calloc(size_t size)
   num_mem_allocs++;
   g_mutex_unlock(mem_mutex);
 #endif
-  gchar *alloc_ptr= g_try_malloc0(size);
-  return alloc_ptr;
+  return g_try_malloc0(size);
 }
 
 gchar*
@@ -256,8 +259,7 @@ ic_malloc(size_t size)
   num_mem_allocs++;
   g_mutex_unlock(mem_mutex);
 #endif
-  gchar *alloc_ptr= g_try_malloc(size);
-  return alloc_ptr;
+  return g_try_malloc(size);
 }
 
 void
@@ -306,7 +308,7 @@ ic_get_own_pid()
 }
 
 void 
-ic_kill_process(GPid pid, gboolean hard_kill)
+ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill)
 {
 }
 
@@ -431,11 +433,21 @@ ic_delete_file(const gchar *file_name)
 int
 ic_open_file(const gchar *file_name, gboolean create_flag)
 {
+#ifndef WINDOWS
   int flags= O_RDWR | O_SYNC;
   
   if (create_flag)
     flags|= O_CREAT;
   return open(file_name, flags, 0);
+#else
+  CreateFile(file_name,
+	  GENERIC_READ | GENERIC_WRITE,
+	  FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+	  NULL,
+	  CREATE_ALWAYS,
+	  FILE_ATTRIBUTE_NORMAL,
+	  NULL);
+#endif
 }
 
 int
@@ -485,7 +497,7 @@ ic_get_file_contents(const gchar *file, gchar **file_content,
     goto error;
   if ((error= get_file_length(file_ptr, file_size)))
     return error;
-  if (!(loc_ptr= ic_malloc((*file_size) + 1)))
+  if (!(loc_ptr= ic_malloc((size_t)((*file_size) + 1))))
     return IC_ERROR_MEM_ALLOC;
   loc_ptr[*file_size]= 0;
   *file_content= loc_ptr;
