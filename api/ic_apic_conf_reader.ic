@@ -673,7 +673,7 @@ conf_serv_add_key(void *ic_conf,
       We have found a node id
     */
     clu_conf->conf->max_node_id=
-      (guint32)IC_MAX(value, clu_conf->conf->max_node_id);
+      (guint32)IC_MAX((guint32)value, clu_conf->conf->max_node_id);
     if (!clu_conf->default_section && pass != INITIAL_PASS)
     {
       if (clu_conf->conf->node_config[value])
@@ -800,13 +800,13 @@ conf_serv_end(void *ic_conf)
 
 static IC_CONFIG_OPERATIONS config_server_ops =
 {
-  .ic_config_init = conf_serv_init,
-  .ic_add_section = conf_serv_add_section,
-  .ic_add_key     = conf_serv_add_key,
-  .ic_add_comment = conf_serv_add_comment,
-  .ic_config_verify = conf_serv_verify_conf,
-  .ic_init_end    = conf_init_end,
-  .ic_config_end  = conf_serv_end,
+  /* .ic_config_init =  */ conf_serv_init,
+  /* .ic_add_section =  */ conf_serv_add_section,
+  /* .ic_add_key     =  */ conf_serv_add_key,
+  /* .ic_add_comment =  */ conf_serv_add_comment,
+  /* .ic_config_verify = */conf_serv_verify_conf,
+  /* .ic_init_end    =  */ conf_init_end,
+  /* .ic_config_end  =  */conf_serv_end
 };
 
 static IC_CLUSTER_CONFIG*
@@ -828,7 +828,7 @@ ic_load_config_server_from_files(gchar *config_file,
                            &conf_data_len))
     goto file_open_error;
 
-  IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
+  IC_INIT_STRING(&conf_data, conf_data_str, (guint32)conf_data_len, TRUE);
   ret_val= ic_build_config_data(&conf_data, conf_server, err_obj);
   ic_free(conf_data.str);
   if (ret_val == 1)
