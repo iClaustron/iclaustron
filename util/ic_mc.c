@@ -28,12 +28,12 @@
 static guint32
 mc_get_base_buf_size(guint64 max_size, guint32 base_size)
 {
-  guint32 buf_size;
+  guint64 buf_size;
   if (max_size == 0) /* No max_size given */
     buf_size= 8;
   else
     buf_size= (max_size + base_size - 1)/base_size;
-  return buf_size;
+  return (guint32)buf_size;
 }
 
 static gchar*
