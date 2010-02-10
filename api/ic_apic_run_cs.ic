@@ -1203,7 +1203,7 @@ run_cluster_server_thread(gpointer data)
     rcs_tp->ts_ops.ic_thread_get_object(thread_state);
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   int error;
-  guint32 error_line;
+  guint32 error_line= 0;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
 

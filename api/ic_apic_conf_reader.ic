@@ -654,7 +654,8 @@ conf_serv_add_key(void *ic_conf,
     }
     else
     {
-      strncpy(clu_conf->string_memory, data->str, data->len);
+      memcpy(clu_conf->string_memory, data->str, data->len);
+      clu_conf->string_memory[data->len]= 0;
       *(gchar**)struct_ptr= clu_conf->string_memory;
       clu_conf->string_memory+= (data->len+1);
     }

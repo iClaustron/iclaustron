@@ -870,7 +870,7 @@ assign_config_string(IC_INT_API_CONFIG_SERVER *apic,
   }
   struct_ptr+= conf_entry->offset;
   *(gchar**)struct_ptr= string_memory;
-  strncpy(string_memory, *string_val, string_len);
+  memcpy(string_memory, *string_val, string_len);
   DEBUG_PRINT(CONFIG_LEVEL,
     ("String value = %s", string_memory));
   return 0;
