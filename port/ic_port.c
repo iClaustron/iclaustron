@@ -94,13 +94,13 @@ ic_close_socket(int sockfd)
   int error;
 #ifdef WINDOWS
   if (closesocket(sockfd))
-    error= ic_get_error();
+    error= WSAGetLastError();
 #else
   do
   {
     error= 0;
     if (close(sockfd))
-      error= ic_get_error();
+      error= errno;
   } while (error == EINTR);
 #endif
   if (error)
@@ -110,7 +110,17 @@ ic_close_socket(int sockfd)
 }
 
 int
-ic_get_error()
+ic_get_last_error()
+{
+#ifdef WINDOWS
+  return GetLastError();
+#else
+  return errno;
+#endif
+}
+
+int
+ic_get_last_socket_error()
 {
 #ifdef WINDOWS
   return WSAGetLastError();
@@ -118,7 +128,6 @@ ic_get_error()
   return errno;
 #endif
 }
-
 void
 ic_set_port_binary_dir(const gchar *binary_dir)
 {
@@ -430,36 +439,102 @@ ic_delete_file(const gchar *file_name)
   return g_unlink(file_name);
 }
 
-int
-ic_open_file(const gchar *file_name, gboolean create_flag)
+#ifdef WINDOWS
+static int
+win_open_file(IC_FILE_HANDLE *handle,
+              const gchar *file_name,
+              gboolean create_flag,
+              gboolean open_flag)
 {
-#ifndef WINDOWS
+  DWORD create_value;
+
+  if (!open_flag)
+    create_value= CREATE_ALWAYS;
+  else if (create_flag)
+    create_value= OPEN_ALWAYS;
+  else
+    create_value= OPEN_EXISTING;
+
+  HANDLE file_handle=
+    CreateFile(file_name,
+      GENERIC_READ | GENERIC_WRITE,
+      FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+      NULL,
+      create_value,
+      FILE_ATTRIBUTE_NORMAL,
+      NULL);
+
+  if (file_handle != INVALID_HANDLE_VALUE)
+  {
+    *handle= file_handle;
+    return 0;
+  }
+  else
+    return GetLastError();
+}
+#else
+static int
+unix_open_file(IC_FILE_HANDLE *handle,
+               const gchar *file_name,
+               gboolean create_flag,
+               gboolean open_flag)
+{
   int flags= O_RDWR | O_SYNC;
+  int file_ptr;
   
   if (create_flag)
     flags|= O_CREAT;
-  return open(file_name, flags, 0);
+  if (!open_flag)
+    flags|= O_TRUNC;
+
+  file_ptr= open(file_name, flags, 0);
+  if (file_ptr  == (int)-1)
+    return errno;
+  else
+  {
+    *handle= file_ptr;
+    return 0;
+  }
+}
+#endif
+
+int
+ic_open_file(IC_FILE_HANDLE *handle,
+             const gchar *file_name,
+             gboolean create_flag)
+{
+#ifndef WINDOWS
+  return unix_open_file(handle, file_name, create_flag, TRUE);
 #else
-  CreateFile(file_name,
-	  GENERIC_READ | GENERIC_WRITE,
-	  FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
-	  NULL,
-	  CREATE_ALWAYS,
-	  FILE_ATTRIBUTE_NORMAL,
-	  NULL);
+  return win_open_file(handle, file_name, create_flag, TRUE);
 #endif
 }
 
 int
-ic_create_file(const gchar *file_name)
+ic_create_file(IC_FILE_HANDLE *handle,
+               const gchar *file_name)
 {
-  return open(file_name, O_CREAT | O_TRUNC | O_RDWR | O_SYNC);
+#ifndef WINDOWS
+  return unix_open_file(handle, file_name, TRUE, FALSE);
+#else
+  return win_open_file(handle, file_name, TRUE, FALSE);
+#endif
 }
 
 int
-ic_close_file(int file_ptr)
+ic_close_file(IC_FILE_HANDLE file_ptr)
 {
-  return close(file_ptr);
+#ifndef WINDOWS
+  if ((close(file_ptr)) == (int)-1)
+    return errno;
+  else
+    return 0;
+#else
+  if (closeHandle(file_ptr))
+    return GetLastError();
+  else
+    return 0;
+#endif
 }
 
 static int
@@ -478,7 +553,7 @@ get_file_length(int file_ptr, guint64 *read_size)
     return 1;
   return 0;
 error:
-  error= ic_get_error();
+  error= ic_get_last_error();
   return error;
 }
 
@@ -516,7 +591,7 @@ ic_get_file_contents(const gchar *file, gchar **file_content,
     size_left-= read_size;
   } while (1);
 error:
-  error= ic_get_error();
+  error= ic_get_last_error();
   return error;
 }
 
@@ -526,12 +601,8 @@ ic_write_file(int file_ptr, const gchar *buf, size_t size)
   int ret_code;
   do
   {
-    ret_code= write(file_ptr, (const void*)buf, size);
-    if (ret_code == (int)-1)
-    {
-      ret_code= ic_get_error();
+    if ((ret_code= write(file_ptr, (const void*)buf, size)))
       return ret_code;
-    }
     if (ret_code == (int)size)
       return 0;
     buf+= ret_code;
@@ -544,12 +615,9 @@ int
 ic_read_file(int file_ptr, gchar *buf, size_t size, guint64 *len)
 {
   int ret_code;
-  ret_code= read(file_ptr, (void*)buf, size);
-  if (ret_code == (int)-1)
-  {
-    ret_code= ic_get_error();
+
+  if ((ret_code= read(file_ptr, (void*)buf, size)))
     return ret_code;
-  }
   *len= (guint32)ret_code;
   return 0;
 }

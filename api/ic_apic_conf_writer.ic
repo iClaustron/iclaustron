@@ -452,7 +452,7 @@ write_grid_config_file(IC_STRING *config_dir,
   IC_DYNAMIC_ARRAY_OPS *da_ops;
   IC_STRING file_name_str;
   int error= IC_ERROR_MEM_ALLOC;
-  int file_ptr;
+  IC_FILE_HANDLE file_ptr;
   gboolean first_call= TRUE;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
@@ -462,12 +462,8 @@ write_grid_config_file(IC_STRING *config_dir,
                              &ic_config_string,
                              config_version);
   /* We are writing a new file here */
-  file_ptr= ic_create_file((const gchar *)buf);
-  if (file_ptr == (int)-1)
-  {
-    error= ic_get_error();
+  if ((error= ic_create_file(&file_ptr, (const gchar *)buf)))
     goto file_error;
-  }
 
   if (!(dyn_array= ic_create_simple_dynamic_array()))
     return IC_ERROR_MEM_ALLOC;
@@ -552,7 +548,7 @@ write_cluster_config_file(IC_STRING *config_dir,
   IC_DYNAMIC_ARRAY_OPS *da_ops;
   IC_STRING file_name_str;
   int error= IC_ERROR_MEM_ALLOC;
-  int file_ptr;
+  IC_FILE_HANDLE file_ptr;
   IC_CLUSTER_CONFIG_LOAD clu_def;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
@@ -567,12 +563,8 @@ write_cluster_config_file(IC_STRING *config_dir,
                              &clu_conf->clu_info.cluster_name,
                              config_version);
   /* We are writing a new file here */
-  file_ptr= ic_create_file((const gchar *)buf);
-  if (file_ptr == (int)-1)
-  {
-    error= ic_get_error();
+  if ((error= ic_create_file(&file_ptr, (const gchar *)buf)))
     goto file_error;
-  }
 
   if (!(dyn_array= ic_create_simple_dynamic_array()))
     return IC_ERROR_MEM_ALLOC;
@@ -1385,7 +1377,8 @@ write_cv_file(IC_STRING *config_dir,
               IC_CONF_STATE_TYPE state,
               IC_PID_TYPE pid)
 {
-  int file_ptr, error;
+  IC_FILE_HANDLE file_ptr;
+  int error;
   IC_STRING file_name_string, str;
   gchar buf[128];
   gchar *ptr= buf;
@@ -1416,21 +1409,13 @@ write_cv_file(IC_STRING *config_dir,
   if (config_version == (guint64)0)
   {
     /* This is the initial write of the file */
-    file_ptr= ic_create_file((const gchar *)file_name);
-    if (file_ptr == (int)-1)
-    {
-      error= ic_get_error();
+    if ((error= ic_create_file(&file_ptr, (const gchar *)file_name)))
       goto file_error;
-    }
     ic_close_file(file_ptr);
   }
   /* Open config.version for writing */
-  file_ptr= ic_open_file((const gchar *)file_name, FALSE);
-  if (file_ptr == (int)-1)
-  {
-    error= ic_get_error();
+  if ((error= ic_open_file(&file_ptr, (const gchar *)file_name, FALSE)))
     goto file_error;
-  }
   error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
   ic_close_file(file_ptr);
   return error;

@@ -27,7 +27,7 @@ struct ic_dynamic_array_ops
                                  const gchar *buf);
   guint64 (*ic_get_current_size) (IC_DYNAMIC_ARRAY *dyn_array);
   int (*ic_write_dynamic_array_to_disk) (IC_DYNAMIC_ARRAY *dyn_array,
-                                         int file_ptr);
+                                         IC_FILE_HANDLE file_ptr);
   int (*ic_read_dynamic_array) (IC_DYNAMIC_ARRAY *dyn_array,
                                 guint64 position, guint64 size,
                                 gchar *ret_buf);

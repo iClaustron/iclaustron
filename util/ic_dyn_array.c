@@ -235,7 +235,7 @@ read_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array, guint64 pos,
 /* This call expects an open file which is empty to start with as input */
 static int
 write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *ext_dyn_array,
-                                   int file_ptr)
+                                   IC_FILE_HANDLE file_ptr)
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
   IC_SIMPLE_DYNAMIC_BUF *dyn_buf= dyn_array->sd_array.first_dyn_buf;

@@ -43,17 +43,26 @@ int ic_start_process(gchar **argv, gchar *working_dir, IC_PID_TYPE *pid);
 void ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill);
 
 /* iClaustron file routines */
-int ic_get_error();
-int ic_open_file(const gchar *file_name, gboolean create_flag);
-int ic_create_file(const gchar *buf);
-int ic_close_file(int file_ptr);
-int ic_write_file(int file_ptr, const gchar *file_name, size_t size);
-int ic_read_file(int file_ptr, gchar *file_name, size_t size, guint64 *len);
+int ic_open_file(IC_FILE_HANDLE *handle,
+                 const gchar *file_name,
+                 gboolean create_flag);
+int ic_create_file(IC_FILE_HANDLE *handle,
+                   const gchar *buf);
+int ic_close_file(IC_FILE_HANDLE file_ptr);
+int ic_write_file(IC_FILE_HANDLE file_ptr,
+                  const gchar *buf,
+                  size_t buf_size);
+int ic_read_file(IC_FILE_HANDLE file_ptr,
+                 gchar *buf,
+                 size_t size,
+                 guint64 *len);
 int ic_delete_file(const gchar *file_name);
 int ic_get_file_contents(const gchar *file, gchar **file_content,
                          guint64 *file_size);
 
-/* Error string routine */
+/* Error routines */
+int ic_get_last_error();
+int ic_get_last_socket_error();
 gchar *ic_get_strerror(int error_number, gchar *buf, guint32 buf_len);
 
 typedef unsigned char ic_bool;
