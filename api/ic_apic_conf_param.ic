@@ -376,8 +376,6 @@ calculate_mandatory_bits()
 {
   guint32 i;
   IC_CONFIG_ENTRY *conf_entry;
-  guint64 data_server_mandatory_bits, client_mandatory_bits;
-  guin64 cluster_server_mandatory_bits
   DEBUG_ENTRY("calculate_mandatory_bits");
 
   data_server_mandatory_bits= 0;
