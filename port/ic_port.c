@@ -539,27 +539,41 @@ ic_close_file(IC_FILE_HANDLE file_ptr)
 }
 
 static int
-get_file_length(int file_ptr, guint64 *read_size)
+get_file_length(IC_FILE_HANDLE file_ptr, guint64 *read_size)
 {
+  int error= 0;
+#ifndef WINDOWS
   gint64 size;
-  int error;
   size= lseek(file_ptr, (off_t)0, SEEK_END);
   if (size == (gint64)-1)
+  {
+    error= errno;
     goto error;
+  }
   *read_size= size;
   size= lseek(file_ptr, (off_t)0, SEEK_SET);
   if (size == (gint64)-1)
+  {
+    error= errno;
     goto error;
+  }
   if (size != 0)
     return 1;
   return 0;
 error:
-  error= ic_get_last_error();
   return error;
+#else
+  if (GetFileSizeEx(file_ptr, (LARGE_INTEGER*)read_size))
+  {
+    error= GetLastError();
+  }
+  return error;
+#endif
 }
 
 int
-ic_get_file_contents(const gchar *file, gchar **file_content,
+ic_get_file_contents(const gchar *file,
+					 gchar **file_content,
                      guint64 *file_size)
 {
   IC_FILE_HANDLE file_ptr;
@@ -568,8 +582,7 @@ ic_get_file_contents(const gchar *file, gchar **file_content,
   guint64 read_size, size_left;
   DEBUG_ENTRY("ic_get_file_contents");
 
-  file_ptr= open(file, O_RDONLY);
-  if (file_ptr == (int)-1)
+  if ((error= ic_open_file(&file_ptr, file, FALSE)))
     goto error;
   if ((error= get_file_length(file_ptr, file_size)))
     return error;
@@ -597,7 +610,7 @@ error:
 }
 
 int
-ic_write_file(int file_ptr, const gchar *buf, size_t size)
+ic_write_file(IC_FILE_HANDLE file_ptr, const gchar *buf, size_t size)
 {
   int ret_code;
   do
@@ -613,7 +626,7 @@ ic_write_file(int file_ptr, const gchar *buf, size_t size)
 }
 
 int
-ic_read_file(int file_ptr, gchar *buf, size_t size, guint64 *len)
+ic_read_file(IC_FILE_HANDLE file_ptr, gchar *buf, size_t size, guint64 *len)
 {
   int ret_code;
 
