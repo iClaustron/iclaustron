@@ -591,7 +591,7 @@ ic_get_file_contents(const gchar *file,
     return IC_ERROR_MEM_ALLOC;
   loc_ptr[*file_size]= 0;
   *file_content= loc_ptr;
-  size_left= *file_size;
+  size_left= (size_t)*file_size;
   do
   {
     if ((error= ic_read_file(file_ptr, loc_ptr, size_left, &read_size)))
@@ -603,7 +603,7 @@ ic_get_file_contents(const gchar *file,
     if (read_size == size_left)
       return 0;
     loc_ptr+= read_size;
-    size_left-= read_size;
+    size_left-= (size_t)read_size;
   } while (1);
 error:
   error= ic_get_last_error();
