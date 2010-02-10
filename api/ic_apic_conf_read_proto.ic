@@ -416,7 +416,7 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
         PROTOCOL_CHECK_GOTO(cluster_id <= IC_MAX_CLUSTER_ID);
         if (found_clu_info)
         {
-          found_clu_info->cluster_id= cluster_id;
+          found_clu_info->cluster_id= (guint32)cluster_id;
           num_clusters_found++;
         }
         state= RECEIVE_CLUSTER_NAME;
@@ -741,7 +741,7 @@ rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
           place to put the encoded binary data.
           This is a temporary memory allocation only for this method.
         */
-        if (!(config_buf= ic_calloc(content_length)))
+        if (!(config_buf= ic_calloc((size_t)content_length)))
           return IC_ERROR_MEM_ALLOC;
         config_size= 0;
         rec_config_size= 0;
