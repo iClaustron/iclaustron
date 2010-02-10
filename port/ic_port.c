@@ -419,7 +419,7 @@ ic_delete_file(const gchar *file_name)
 int
 ic_open_file(const gchar *file_name)
 {
-  return open(file_name, O_RDWR | O_SYNC, 0);
+  return open(file_name, O_CREAT | O_RDWR | O_SYNC, 0);
 }
 
 int

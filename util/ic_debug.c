@@ -47,7 +47,7 @@ ic_debug_entry(const char *entry_point)
 
 int ic_debug_open()
 {
-  ic_fptr= fopen(glob_debug_file, "w");
+  ic_fptr= ic_open_file(glob_debug_file);
   if (ic_fptr == NULL)
   {
     printf("Failed to open %s\n", glob_debug_file);
@@ -87,7 +87,11 @@ ic_debug_printf(const char *format,...)
   char buf[2049];
 
   va_start(args, format);
+#ifndef WINDOWS
   vsprintf(buf, format, args);
+#else
+  vsprintf_s(buf, sizeof(buf), format, args);
+#endif
   if (glob_debug_screen)
   {
     printf("%s\n", buf);
@@ -114,7 +118,11 @@ ic_printf(const char *format,...)
   char buf[2049];
 
   va_start(args, format);
+#ifndef WINDOWS
   vsprintf(buf, format, args);
+#else
+  vsprintf_s(buf, sizeof(buf), format, args);
+#endif
   printf("%s\n", buf);
   fflush(stdout);
   va_end(args);
