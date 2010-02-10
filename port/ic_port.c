@@ -610,30 +610,91 @@ error:
   return error;
 }
 
+static int
+portable_write(IC_FILE_HANDLE file_ptr,
+               const void *buf,
+               size_t size,
+               size_t *ret_size)
+{
+#ifndef WINDOWS
+  ssize_t ret_code;
+  ret_code= write(file_ptr, buf, size);
+  if (ret_code != (int)-1)
+  {
+    *ret_size= (size_t)ret_code;
+    return 0;
+  }
+  else
+    return errno;
+#else
+  if (WriteFile(file_ptr,
+                buf,
+                size,
+                ret_size,
+                NULL))
+    return 0;
+  else
+    return GetLastError();
+#endif
+}
+
 int
 ic_write_file(IC_FILE_HANDLE file_ptr, const gchar *buf, size_t size)
 {
   int ret_code;
+  size_t ret_size= 0;
   do
   {
-    if ((ret_code= write(file_ptr, (const void*)buf, size)))
+    if ((ret_code= portable_write(file_ptr,
+                                  (const void*)buf,
+                                  size,
+                                  &ret_size)))
       return ret_code;
-    if (ret_code == (int)size)
+    if (ret_size == size)
       return 0;
-    buf+= ret_code;
-    size-= ret_code;
+    buf+= ret_size;
+    size-= ret_size;
   } while (1);
   return 0;
+}
+
+static int
+portable_read(IC_FILE_HANDLE file_ptr,
+              void *buf,
+              size_t size,
+              size_t *ret_size)
+{
+#ifndef WINDOWS
+  ssize_t ret_code;
+  ret_code= read(file_ptr, buf, size);
+  if (ret_code != (int)-1)
+  {
+    *ret_size= (size_t)ret_code;
+    return 0;
+  }
+  else
+    return errno;
+#else
+  if (ReadFile(file_ptr,
+               buf,
+               size,
+               ret_size,
+               NULL))
+    return 0;
+  else
+    return GetLastError();
+#endif
 }
 
 int
 ic_read_file(IC_FILE_HANDLE file_ptr, gchar *buf, size_t size, guint64 *len)
 {
   int ret_code;
+  size_t ret_size= 0;
 
-  if ((ret_code= read(file_ptr, (void*)buf, size)))
+  if ((ret_code= portable_read(file_ptr, (void*)buf, size, &ret_size)))
     return ret_code;
-  *len= (guint32)ret_code;
+  *len= (guint32)ret_size;
   return 0;
 }
 
