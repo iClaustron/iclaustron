@@ -407,6 +407,7 @@ error:
   connection set-up the following message.
 
   start cluster server<CR>
+  nodeid: node_number<CR>
   version: version_number<CR>
   status: status_code<CR>
   pid: pid_number<CR>
@@ -419,7 +420,8 @@ error:
   An already started Cluster Server responds to this message with the
   following reply if the Cluster Server is the current master.
 
-  start cluster server reply<CR>
+  start cluster server master reply<CR>
+  nodeid: node_number<CR>
   version: version_number<CR>
   status: status_code<CR>
   pid: pid_number<CR>
@@ -429,9 +431,164 @@ error:
   slave node: third_slave_node_number<CR>
 
   Given that the maximum number of Cluster Servers are 4, it isn't possible
-  to get more than 2 slave nodes in the list. When this message arrives, the
+  to get more than 3 slave nodes in the list. When this message arrives, the
   new Cluster Server will immediately know its place in the set of Cluster
-  Servers.
+  Servers. The new node starting is immediately placed into the list of
+  slave nodes. This message is actually sent to all Cluster Servers to ensure
+  the information is in all Cluster Servers to ensure that all Cluster Servers
+  will choose the new master in the same manner.
+
+  To confirm the reception of this message all nodes should send the following
+  message.
+
+  start cluster server reply<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+  master node: node_number_of_master<CR>
+  slave node: first_slave_node_number<CR>
+  slave node: second_slave_node_number<CR>
+  slave node: third_slave_node_number<CR>
+
+  In the case where no master was assigned before the Cluster Server started,
+  the Cluster Server will collect all messages received for 10 seconds. These
+  messages should be other "start cluster server"-messages from other
+  starting Cluster Servers. After 10 seconds each starting node will make a
+  decision if they are to be the master. They will choose this path if they
+  are the Cluster Server starting with lowest node number.
+
+  If we receive another start message after selecting to become master we
+  know that this node will wait for 10 seconds before attempting to become
+  master. Thus we have time to ensure we can become the new master node
+  and respond to the new nodes start message.
+
+  The other nodes that decides to not become master will wait for another
+  10 seconds for the master to send his start confirmed message. If no
+  message arrive, they will make a renewed election of new master. This
+  procedure will be repeated every 10 seconds until either the elected
+  master will send his start reply message or until the node itself becomes
+  master and will start the master start procedure.
+
+  When the master have received replies from all other nodes about a starting
+  node, the master starts the synchronisation procedure if a quorum of Cluster
+  Servers have started. If no quorum has started, the master will wait for
+  more Cluster Servers and use the heartbeat protocol which means sending
+  the following message every 3 seconds:
+
+  heartbeat<CR>
+  
+  and receive the reply:
+
+  heartbeat reply<CR>
+
+  from all other started Cluster Server.
+
+  When a quorum of Cluster Servers are started, it means that at least one
+  node participated in the latest update of the configuration. If all nodes
+  did participate in this update and have same version and the same state,
+  then the master will send the following message to indicate that
+  synchronisation is done.
+
+  synchronization done<CR>
+
+  and receive the reply
+
+  synchronization done reply<CR>
+
+  When a slave receives this message and when the master sends this message
+  the Cluster Servers are started and are ready to receive requests for new
+  updates of the configuration including requests to get the configuration.
+
+  If one of the nodes isn't up-to-date with state, but has the right version
+  number, the Cluster Server will send a commit message to this node.
+
+  cluster server commit<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+
+  and will receive the response when commit is done:
+
+  cluster server commit reply<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+
+  When at least one of the nodes are not having the right version number or
+  have the right version number but is in a state which isn't possible to
+  commit from, then the node needs to receive the configuration from another
+  node.
+
+  To prepare for this the master first notifies the node to send the
+  configuration with the message.
+
+  prepare send configuration<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+  receiver node id: node_number<CR>
+
+  The master sends one such message for each node to receive a new
+  configuration. The node responds with the message (one response
+  for each request).
+
+  prepare send configuration reply<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+  receiver node id: node_number<CR>
+
+  When this message have been received the node have been prepared for a
+  message requesting the configuration on a new channel and will allow
+  for such a message if it arrives from the node for which it has opened
+  up for.
+
+  The master will then request the node to receive the configuration to fetch
+  it from the given node. It will request it through.
+
+  fetch configuration<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+  sender node id: node_number<CR>
+
+  The receiver will immediately respond to this message to the master through
+  the message.
+
+  fetch configuration reply<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+  sender node id: node_number<CR>
+
+  After sending this message it will connect to the given Cluster Server using
+  another connection and get a configuration using the normal procedure to
+  fetch a configuration. When it has received this configuration it will
+  save this version on disk.
+
+  Finally when it has retrieved the new configuration and saved it on disk, it
+  will respond to the master again by using the message
+
+  cluster server commit reply<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+
+  During this time the heartbeat protocol will ensure that we detect nodes
+  no longer working.
+
+  When all nodes have completed their fetch of a new configuration we will
+  use the "synchronization done" protocol to complete the Cluster Server
+  start-up.
+
+  A new node cannot accept get configuration requests or update configuration
+  requests from any other node (other than when specifically told to do so)
+  before receiving the "synchronization done" message. A starting master
+  cannot start accepting before sending synchronization done to the other
+  Cluster Servers.
+
+  During the time of inclusion of a new Cluster Server we will temporarily
+  disable the ability to update the configuration.
 */
 static int
 send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -769,9 +926,9 @@ get_api_config(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 }
 
 /*
- * Here starts the code part of the Run Cluster Server Module
+ Here starts the code part of the Run Cluster Server Module
  ============================================================
- */
+*/
 IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_STRING *config_dir,
                       const gchar *process_name,

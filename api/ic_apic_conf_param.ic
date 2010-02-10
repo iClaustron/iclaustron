@@ -376,6 +376,8 @@ calculate_mandatory_bits()
 {
   guint32 i;
   IC_CONFIG_ENTRY *conf_entry;
+  guint64 data_server_mandatory_bits, client_mandatory_bits;
+  guin64 cluster_server_mandatory_bits
   DEBUG_ENTRY("calculate_mandatory_bits");
 
   data_server_mandatory_bits= 0;
@@ -391,20 +393,21 @@ calculate_mandatory_bits()
     if (conf_entry->is_mandatory)
     {
       if (conf_entry->config_types & (1 << IC_DATA_SERVER_TYPE))
-        data_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+        data_server_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
       if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
-        client_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+        client_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
       if ((conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE)) ||
           (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
-        cluster_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+        cluster_server_mandatory_bits|=
+          (guint64)(1 << conf_entry->mandatory_bit);
       if ((conf_entry->config_types & (1 << IC_REP_SERVER_TYPE)) ||
           (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
-        rep_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+        rep_server_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
       if ((conf_entry->config_types & (1 << IC_SQL_SERVER_TYPE)) ||
           (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
-        sql_server_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+        sql_server_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
       if (conf_entry->config_types & (1 << IC_COMM_TYPE))
-        comm_mandatory_bits|= (1 << conf_entry->mandatory_bit);
+        comm_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
     }
   }
   {
