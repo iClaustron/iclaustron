@@ -1432,7 +1432,7 @@ write_cv_file(IC_STRING *config_dir,
     goto file_error;
   }
   error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
-  close(file_ptr);
+  ic_close_file(file_ptr);
   return error;
 
 file_error:
