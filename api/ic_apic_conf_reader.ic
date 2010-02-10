@@ -644,7 +644,7 @@ conf_serv_add_key(void *ic_conf,
   if (conf_entry->is_mandatory && (pass != INITIAL_PASS))
   {
     ((IC_DATA_SERVER_CONFIG*)clu_conf->current_node_config)->mandatory_bits|=
-      (1 << conf_entry->mandatory_bit);
+      (guint64)(1 << conf_entry->mandatory_bit);
   }
   if (conf_entry->is_string_type)
   {
@@ -672,7 +672,8 @@ conf_serv_add_key(void *ic_conf,
     /*
       We have found a node id
     */
-    clu_conf->conf->max_node_id= MAX(value, clu_conf->conf->max_node_id);
+    clu_conf->conf->max_node_id=
+      (guint32)IC_MAX(value, clu_conf->conf->max_node_id);
     if (!clu_conf->default_section && pass != INITIAL_PASS)
     {
       if (clu_conf->conf->node_config[value])
