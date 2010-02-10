@@ -100,13 +100,23 @@ ic_close_socket(int sockfd)
   {
     error= 0;
     if (close(sockfd))
-      error= errno;
+      error= ic_get_error();
   } while (error == EINTR);
 #endif
   if (error)
   {
     DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", error));
   }
+}
+
+int
+ic_get_error()
+{
+#ifdef WINDOWS
+  return WSAGetError();
+#else
+  return errno;
+#endif
 }
 
 void
@@ -406,6 +416,24 @@ ic_delete_file(const gchar *file_name)
   return g_unlink(file_name);
 }
 
+int
+ic_open_file(const gchar *file_name)
+{
+  return open(file_name, O_RDWR | O_SYNC, 0);
+}
+
+int
+ic_create_file(const gchar *file_name)
+{
+  return open(file_name, O_CREAT | O_TRUNC | O_RDWR | O_SYNC);
+}
+
+int
+ic_close_file(int file_ptr)
+{
+  return close(file_ptr);
+}
+
 static int
 get_file_length(int file_ptr, guint64 *read_size)
 {
@@ -422,7 +450,7 @@ get_file_length(int file_ptr, guint64 *read_size)
     return 1;
   return 0;
 error:
-  error= errno;
+  error= ic_get_error();
   return error;
 }
 
@@ -460,7 +488,7 @@ ic_get_file_contents(const gchar *file, gchar **file_content,
     size_left-= read_size;
   } while (1);
 error:
-  error= errno;
+  error= ic_get_error();
   return error;
 }
 
@@ -473,7 +501,7 @@ ic_write_file(int file_ptr, const gchar *buf, size_t size)
     ret_code= write(file_ptr, (const void*)buf, size);
     if (ret_code == (int)-1)
     {
-      ret_code= errno;
+      ret_code= ic_get_error();
       return ret_code;
     }
     if (ret_code == (int)size)
@@ -491,7 +519,7 @@ ic_read_file(int file_ptr, gchar *buf, size_t size, guint64 *len)
   ret_code= read(file_ptr, (void*)buf, size);
   if (ret_code == (int)-1)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     return ret_code;
   }
   *len= (guint32)ret_code;

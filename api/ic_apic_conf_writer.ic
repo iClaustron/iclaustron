@@ -462,10 +462,10 @@ write_grid_config_file(IC_STRING *config_dir,
                              &ic_config_string,
                              config_version);
   /* We are writing a new file here */
-  file_ptr= g_creat((const gchar *)buf, S_IWUSR | S_IRUSR);
+  file_ptr= ic_create_file((const gchar *)buf);
   if (file_ptr == (int)-1)
   {
-    error= errno;
+    error= ic_get_error();
     goto file_error;
   }
 
@@ -537,7 +537,7 @@ write_grid_config_file(IC_STRING *config_dir,
     goto error;
   error= 0;
 error:
-  close(file_ptr);
+  ic_close_file(file_ptr);
   da_ops->ic_free_dynamic_array(dyn_array);
 file_error:
   return error;
@@ -567,10 +567,10 @@ write_cluster_config_file(IC_STRING *config_dir,
                              &clu_conf->clu_info.cluster_name,
                              config_version);
   /* We are writing a new file here */
-  file_ptr= g_creat((const gchar *)buf, S_IWUSR | S_IRUSR);
+  file_ptr= ic_create_file((const gchar *)buf);
   if (file_ptr == (int)-1)
   {
-    error= errno;
+    error= ic_get_error();
     goto file_error;
   }
 
@@ -595,7 +595,7 @@ write_cluster_config_file(IC_STRING *config_dir,
     goto error;
   error= 0;
 error:
-  close(file_ptr);
+  ic_close_file(file_ptr);
   da_ops->ic_free_dynamic_array(dyn_array);
 file_error:
   return error;
@@ -1416,19 +1416,19 @@ write_cv_file(IC_STRING *config_dir,
   if (config_version == (guint64)0)
   {
     /* This is the initial write of the file */
-    file_ptr= g_creat((const gchar *)file_name, S_IRUSR | S_IWUSR);
+    file_ptr= ic_create_file((const gchar *)file_name);
     if (file_ptr == (int)-1)
     {
-      error= errno;
+      error= ic_get_error();
       goto file_error;
     }
     close(file_ptr);
   }
   /* Open config.version for writing */
-  file_ptr= g_open((const gchar *)file_name, O_WRONLY | O_SYNC, 0);
+  file_ptr= ic_open_file((const gchar *)file_name);
   if (file_ptr == (int)-1)
   {
-    error= errno;
+    error= ic_get_error();
     goto file_error;
   }
   error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));

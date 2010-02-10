@@ -218,7 +218,7 @@ epoll_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd,
   if ((ret_code= epoll_ctl(poll_set->poll_set_fd,
                            EPOLL_CTL_ADD, fd, &add_event)))
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     remove_poll_set_member(poll_set, fd, &index);
     return ret_code;
   }
@@ -246,7 +246,7 @@ epoll_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
   if ((ret_code= epoll_ctl(poll_set->poll_set_fd,
                            EPOLL_CTL_DEL, fd, &delete_event)))
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     if (ret_code == ENOENT)
     {
       /*
@@ -283,7 +283,7 @@ epoll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
                             (int)poll_set->num_allocated_connections,
                             ms_time)) < 0)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     if (ret_code == EINTR)
     {
       /*
@@ -369,7 +369,7 @@ eventports_poll_set_add_connection(IC_POLL_SET *ext_poll_set,
                                 POLLIN,
                                 (void*)index)) < 0)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     remove_poll_set_member(poll_set, fd, &index);
     return ret_code;
   }
@@ -389,7 +389,7 @@ eventports_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
                                  PORT_SOURCE_FD,
                                  fd)) < 0)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     if (ret_code == ENOENT)
     {
       /*
@@ -430,7 +430,7 @@ eventports_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
                            &num_events,
                            &timeout)) < 0)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     if (ret_code == EINTR || ret_code == ETIME)
     {
       /*
@@ -463,7 +463,7 @@ eventports_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
                                   POLLIN,
                                   (void*)index)) < 0)
     {
-      ret_code= errno;
+      ret_code= ic_get_error();
       poll_conn->ret_code= ret_code;
     }
     else
@@ -532,7 +532,7 @@ kqueue_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj
                         0,
                         NULL)) < 0)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     remove_poll_set_member(poll_set, fd, &index);
     return ret_code;
   }
@@ -557,7 +557,7 @@ kqueue_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
                         0,
                         NULL)) < 0)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     if (ret_code == ENOENT)
     {
       /*
@@ -598,7 +598,7 @@ kqueue_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
                         (int)poll_set->num_allocated_connections,
                         &timeout)) < 0)
   {
-    ret_code= errno;
+    ret_code= ic_get_error();
     if (ret_code == EINTR)
     {
       /*

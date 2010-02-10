@@ -204,7 +204,7 @@ set_socket_nonblocking(int sockfd, gboolean flag)
 
   if ((flags= fcntl(sockfd, F_GETFL) < 0))
   {
-    error= errno;
+    error= ic_get_error();
     DEBUG_PRINT(COMM_LEVEL, ("fcntl F_GETFL error: %d", error));
     return; /* Failed to set socket nonblocking */
   }
@@ -223,7 +223,7 @@ set_socket_nonblocking(int sockfd, gboolean flag)
     flags&= ~nonblocking_flag;
   if ((flags= fcntl(sockfd, F_SETFL, (long)flags) < 0))
   {
-    error= errno;
+    error= ic_get_error();
     DEBUG_PRINT(COMM_LEVEL, ("fcntl F_SETFL error: %d", error));
   }
 #endif
@@ -261,7 +261,7 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
                          (const void*)&reuse_addr, sizeof(int))))
   {
     /* We will continue even with this error */
-    error= errno;
+    error= ic_get_error();
     DEBUG_PRINT(COMM_LEVEL, ("Set SO_REUSEADDR error: %d", error));
     reuse_addr= 0;
   }
@@ -428,7 +428,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
                          &addr_len);
       if (ret_sockfd < 0)
       {
-        error= errno;
+        error= ic_get_error();
         if (error == EAGAIN ||
             error == ECONNABORTED ||
             error == EPROTO ||
@@ -461,7 +461,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   }
   if (ret_sockfd < 0)
   {
-    conn->error_code= errno;
+    conn->error_code= ic_get_error();
     conn->err_str= ic_get_strerror(conn->error_code,
                                    conn->err_buf,
                                    (guint32)128);
@@ -707,7 +707,7 @@ renew_connect:
       if (connect(sockfd, (struct sockaddr*)conn->server_addrinfo->ai_addr,
                   conn->server_addrinfo->ai_addrlen) < 0)
       {
-        error= errno;
+        error= ic_get_error();
         if (error == EINTR || error == ECONNREFUSED)
           continue;
         if (error == EINPROGRESS)
@@ -765,7 +765,7 @@ renew_connect:
   return 0;
 
 error:
-  error= errno;
+  error= ic_get_error();
   conn->err_str= ic_get_strerror(error,
                                  conn->err_buf,
                                  (guint32)128);
@@ -896,7 +896,7 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
   {
     int error;
     if (!conn->is_ssl_used_for_data)
-      error= errno;
+      error= ic_get_error();
     else
       error= (-1) * ret_code;
     if (error == EINTR)
@@ -1186,12 +1186,12 @@ read_socket_connection(IC_CONNECTION *ext_conn,
       return IC_END_OF_FILE;
     }
     if (!conn->is_ssl_used_for_data)
-      error= errno;
+      error= ic_get_error();
     else
       error= (-1) * ret_code;
   } while (error == EINTR);
   conn->conn_stat.num_rec_errors++;
-  conn->error_code= errno;
+  conn->error_code= ic_get_error();
   conn->err_str= ic_get_strerror(conn->error_code,
                                  conn->err_buf,
                                  (guint32)128);

@@ -296,7 +296,9 @@ endif (WITH_UNIT_TEST)
 
 if (WITH_DEBUG)
   add_definitions(-DDEBUG_BUILD)
-  add_definitions(-g)
+  if (NOT WIN32)
+    add_definitions(-g)
+  endif (NOT WIN32)
 endif (WITH_DEBUG)
 
 if (NOT WIN32)
