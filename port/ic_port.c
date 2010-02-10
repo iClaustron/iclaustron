@@ -790,7 +790,7 @@ ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
 }
 #else
 void
-ic_set_die_handler(IC_SIG_HANDLER_FUNC *die_handler,
+ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler,
                    void *param)
 {
   DEBUG_ENTRY("windows:ic_set_die_handler");
@@ -800,7 +800,7 @@ ic_set_die_handler(IC_SIG_HANDLER_FUNC *die_handler,
 }
 
 void
-ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC *error_handler, void *param)
+ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
 {
   DEBUG_ENTRY("windows:ic_set_sig_error_handler");
   (void)error_handler;
