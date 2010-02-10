@@ -531,7 +531,7 @@ ic_close_file(IC_FILE_HANDLE file_ptr)
   else
     return 0;
 #else
-  if (CloseHandle(file_ptr))
+  if (!CloseHandle(file_ptr))
     return GetLastError();
   else
     return 0;
@@ -563,7 +563,7 @@ get_file_length(IC_FILE_HANDLE file_ptr, guint64 *read_size)
 error:
   return error;
 #else
-  if (GetFileSizeEx(file_ptr, (LARGE_INTEGER*)read_size))
+  if (!GetFileSizeEx(file_ptr, (LARGE_INTEGER*)read_size))
   {
     error= GetLastError();
   }
