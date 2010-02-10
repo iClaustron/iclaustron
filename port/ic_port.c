@@ -579,7 +579,8 @@ ic_get_file_contents(const gchar *file,
   IC_FILE_HANDLE file_ptr;
   int error;
   gchar *loc_ptr;
-  guint64 read_size, size_left;
+  guint64 read_size;
+  size_t size_left;
   DEBUG_ENTRY("ic_get_file_contents");
 
   if ((error= ic_open_file(&file_ptr, file, FALSE)))
