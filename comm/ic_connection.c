@@ -204,7 +204,7 @@ set_socket_nonblocking(int sockfd, gboolean flag)
 
   if ((flags= fcntl(sockfd, F_GETFL) < 0))
   {
-    error= ic_get_error();
+    error= errno;
     DEBUG_PRINT(COMM_LEVEL, ("fcntl F_GETFL error: %d", error));
     return; /* Failed to set socket nonblocking */
   }
