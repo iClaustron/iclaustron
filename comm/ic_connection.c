@@ -945,7 +945,8 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
 /* Implements ic_writev_connection */
 static int
 writev_socket_connection(IC_CONNECTION *ext_conn,
-                         struct iovec *write_vector, guint32 iovec_size,
+                         IC_IOVEC *write_vector,
+                         guint32 iovec_size,
                          guint32 tot_size,
                          guint32 secs_to_try)
 {
@@ -2142,7 +2143,7 @@ write_ssl_connection(IC_CONNECTION *ext_conn,
 /* Implements ic_writev_connection */
 static int
 writev_ssl_connection(IC_CONNECTION *ext_conn,
-                      struct iovec *write_vector, guint32 iovec_size,
+                      IC_IOVEC *write_vector, guint32 iovec_size,
                       guint32 tot_size,
                       guint32 secs_to_try)
 {

@@ -83,6 +83,14 @@ typedef guint64 IC_PID_TYPE;
 typedef guint64 IC_CONF_VERSION_TYPE;
 typedef guint64 IC_CONF_STATE_TYPE;
 
+struct ic_iovec
+{
+  gchar *iov_base;
+  guint64 iov_len;
+};
+
+typedef struct ic_iovec IC_IOVEC;
+
 #define CONFIG_READ_BUF_SIZE 256
 #define IC_MAX_ERROR_STRING_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048

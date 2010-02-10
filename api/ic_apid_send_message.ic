@@ -166,10 +166,10 @@ static void fill_in_message_id_in_ndb_message(
 */
 static void prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        guint32 *send_size,
-                                       struct iovec *write_vector,
+                                       IC_IOVEC *write_vector,
                                        guint32 *iovec_size);
 static int real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
-                              struct iovec *write_vector,
+                              IC_IOVEC *write_vector,
                               guint32 iovec_size,
                               guint32 send_size);
 static int send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
@@ -384,7 +384,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_SOCK_BUF_PAGE *last_page_to_send;
   guint32 send_size= 0;
   guint32 iovec_size;
-  struct iovec write_vector[MAX_SEND_BUFFERS];
+  IC_IOVEC write_vector[MAX_SEND_BUFFERS];
   gboolean return_imm= TRUE;
   int error;
   IC_TIMER current_time;
@@ -475,7 +475,7 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 static void
 prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                            guint32 *send_size,
-                           struct iovec *write_vector,
+                           IC_IOVEC *write_vector,
                            guint32 *iovec_size)
 {
   IC_SOCK_BUF_PAGE *loc_next_send, *loc_last_send;
@@ -514,7 +514,7 @@ prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
 */
 static int
 real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
-                   struct iovec *write_vector, guint32 iovec_size,
+                   IC_IOVEC *write_vector, guint32 iovec_size,
                    guint32 send_size)
 {
   int error;

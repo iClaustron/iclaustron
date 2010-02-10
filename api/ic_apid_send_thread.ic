@@ -655,7 +655,7 @@ authenticate_server_connection(IC_CONNECTION *conn,
       ((guint64)my_nodeid != my_id) ||
       (client_id >= IC_MAX_NODE_ID))
     return error;
-  *client_nodeid= client_id;
+  *client_nodeid= (guint32)client_id;
   return 0;
 }
 
