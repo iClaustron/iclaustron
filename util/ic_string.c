@@ -240,6 +240,8 @@ gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
 {
   guint32 i= 0;
   gchar buf[128];
+  guint64 tmp;
+
   if (val == 0)
   {
     buf[0]= '0';
@@ -247,7 +249,7 @@ gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
   }
   while (val != 0)
   {
-    guint tmp= val/10;
+    tmp= val/10;
     tmp*= 10;
     tmp= val - tmp;
     buf[i]= (((gchar)'0') + (gchar)tmp);
@@ -265,6 +267,8 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
 {
   guint32 i= 0;
   gchar buf[128];
+  guint64 tmp;
+
   if (val == 0)
   {
     buf[0]= '0';
@@ -272,7 +276,7 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
   }
   while (val != 0)
   {
-    guint tmp= val/16;
+    tmp= val/16;
     tmp*= 16;
     tmp= val - tmp;
     if (tmp < 10)
