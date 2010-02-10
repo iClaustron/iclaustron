@@ -447,6 +447,7 @@ win_open_file(IC_FILE_HANDLE *handle,
               gboolean open_flag)
 {
   DWORD create_value;
+  HANDLE file_handle;
 
   if (!open_flag)
     create_value= CREATE_ALWAYS;
@@ -455,7 +456,7 @@ win_open_file(IC_FILE_HANDLE *handle,
   else
     create_value= OPEN_EXISTING;
 
-  HANDLE file_handle=
+  file_handle=
     CreateFile(file_name,
       GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -530,7 +531,7 @@ ic_close_file(IC_FILE_HANDLE file_ptr)
   else
     return 0;
 #else
-  if (closeHandle(file_ptr))
+  if (CloseHandle(file_ptr))
     return GetLastError();
   else
     return 0;
@@ -561,7 +562,7 @@ int
 ic_get_file_contents(const gchar *file, gchar **file_content,
                      guint64 *file_size)
 {
-  int file_ptr;
+  IC_FILE_HANDLE file_ptr;
   int error;
   gchar *loc_ptr;
   guint64 read_size, size_left;
