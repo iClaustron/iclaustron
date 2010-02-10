@@ -36,8 +36,10 @@ ic_send_with_cr(IC_CONNECTION *conn, const gchar *send_buf)
   int res;
   char buf[256];
 
-  strcpy(buf, send_buf);
-  inx= strlen(buf);
+  inx= strlen(send_buf);
+  g_assert(inx < 255);
+  memcpy(buf, send_buf, inx);
+
   buf[inx++]= CARRIAGE_RETURN;
   buf[inx]= NULL_BYTE;
   DEBUG_PRINT(COMM_LEVEL, ("Send: %s", buf));
