@@ -85,7 +85,7 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   buf_ptr_start_pos= bytes_used;
   while (size_left_to_copy > size_in_buffer)
   {
-    memcpy(buf_ptr, buf, size_in_buffer);
+    memcpy(buf_ptr, buf, (size_t)size_in_buffer);
     size_left_to_copy-= size_in_buffer;
     buf+= size_in_buffer;
     if (IC_ERROR_INJECT(12) ||  
@@ -106,7 +106,7 @@ insert_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
     size_in_buffer= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
     buf_ptr_start_pos= 0;
   }
-  memcpy(buf_ptr, buf, size_left_to_copy);
+  memcpy(buf_ptr, buf, (size_t)size_left_to_copy);
   sd_array->bytes_used= buf_ptr_start_pos + size_left_to_copy;
   dyn_array->total_size_in_bytes+= size;
   return 0;
@@ -158,7 +158,7 @@ read_pos_simple_dynamic_array(IC_SIMPLE_DYNAMIC_BUF *dyn_buf,
                        (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - buf_pos));
     already_read_size+= read_size;
     read_buf+= buf_pos;
-    memcpy(dest_buf, read_buf, read_size);
+    memcpy(dest_buf, read_buf, (size_t)read_size);
     dest_buf+= read_size;
     buf_pos= 0;
     dyn_buf= dyn_buf->next_dyn_buf;
@@ -186,7 +186,7 @@ write_pos_simple_dynamic_array(IC_SIMPLE_DYNAMIC_BUF *dyn_buf,
                        (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - buf_pos));
     already_written_size+= write_size;
     write_buf+= buf_pos;
-    memcpy(write_buf, source_buf, write_size);
+    memcpy(write_buf, source_buf, (size_t)write_size);
     source_buf+= write_size;
     buf_pos= 0;
     dyn_buf= dyn_buf->next_dyn_buf;
@@ -242,7 +242,7 @@ write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *ext_dyn_array,
   IC_SIMPLE_DYNAMIC_BUF *last_dyn_buf= dyn_array->sd_array.last_dyn_buf;
   IC_SIMPLE_DYNAMIC_BUF *old_dyn_buf;
   gchar *buf;
-  guint32 size_in_buffer;
+  guint64 size_in_buffer;
   int ret_code;
 
   while (dyn_buf)
@@ -252,7 +252,7 @@ write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *ext_dyn_array,
     else
       size_in_buffer= dyn_array->sd_array.bytes_used;
     buf= (gchar*)&dyn_buf->buf[0];
-    if ((ret_code= ic_write_file(file_ptr, buf, size_in_buffer)))
+    if ((ret_code= ic_write_file(file_ptr, buf, (size_t)size_in_buffer)))
       return ret_code;
     old_dyn_buf= dyn_buf;
     dyn_buf= dyn_buf->next_dyn_buf;
@@ -325,7 +325,7 @@ insert_buf_in_ordered_dynamic_index(IC_DYNAMIC_ARRAY_INT *dyn_array,
                                     void *child_ptr)
 {
   IC_DYNAMIC_ARRAY_INDEX *new_dyn_index;
-  guint32 next_index_to_insert= dyn_index->next_index_to_insert;
+  guint64 next_index_to_insert= dyn_index->next_index_to_insert;
   IC_DYNAMIC_ARRAY_INDEX *new_parent_dyn_index;
   int ret_code;
 
@@ -549,7 +549,7 @@ read_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
     return ret_code;
   read_buf= (gchar*)&dyn_buf->buf[0];
   read_buf+= buf_pos;
-  memcpy(buf, read_buf, size);
+  memcpy(buf, read_buf, (size_t)size);
   return 0;
 }
 
