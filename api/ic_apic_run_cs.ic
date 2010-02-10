@@ -325,7 +325,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     /* Update System section for handling NDB Management Protocol */
     cluster->sys_conf.system_name= cluster->clu_info.cluster_name.str;
     cluster->sys_conf.system_configuration_number=
-      run_obj->state.config_version_number;
+      (guint32)run_obj->state.config_version_number;
     cluster->sys_conf.system_primary_cs_node=
       run_obj->state.cs_master_nodeid;
 

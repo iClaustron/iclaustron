@@ -35,7 +35,7 @@
 */
 static IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(IC_STRING *config_dir,
-                                 guint32 config_version_number,
+                                 IC_CONF_VERSION_TYPE config_version_number,
                                  IC_CONFIG_STRUCT *cluster_conf,
                                  IC_CONFIG_ERROR *err_obj);
 
@@ -273,7 +273,7 @@ static IC_CONFIG_OPERATIONS cluster_config_ops =
 
 static IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(IC_STRING *config_dir,
-                                 guint32 config_version_number,
+                                 IC_CONF_VERSION_TYPE config_version_number,
                                  IC_CONFIG_STRUCT *cluster_conf,
                                  IC_CONFIG_ERROR *err_obj)
 {
@@ -300,7 +300,7 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
                                      &conf_data_len)))
     goto file_open_error;
 
-  IC_INIT_STRING(&conf_data, conf_data_str, conf_data_len, TRUE);
+  IC_INIT_STRING(&conf_data, conf_data_str, (guint32)conf_data_len, TRUE);
   ret_val= ic_build_config_data(&conf_data, cluster_conf, err_obj);
   ic_free(conf_data.str);
   if (ret_val == 1)
