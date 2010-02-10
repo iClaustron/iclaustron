@@ -129,7 +129,7 @@ gchar*
 ic_get_strerror(int error_number, gchar *buf, guint32 buf_len)
 {
 #ifdef WINDOWS
-  strerror(error_number, (char*)buf, (size_t)buf_len);
+  strerror_s((char*)buf, (size_t)buf_len, error_number);
 #else
   strerror_r(error_number, (char*)buf, (size_t)buf_len);
 #endif
