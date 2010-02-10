@@ -1557,7 +1557,7 @@ handle_report_event(IC_CONNECTION *conn)
       (error= ic_send_with_cr(conn, result_ok_str)) ||
       (error= ic_send_empty_line(conn)))
     goto error;
-  report_node_id= num_array[0] >> 16;
+  report_node_id= (guint32)(num_array[0] >> 16);
   g_assert((num_array[0] & 0xFFFF) == 59);
   if (num_array[1] == 0)
     ic_printf("Node %u has shutdown", report_node_id);
@@ -1573,9 +1573,9 @@ handle_report_event(IC_CONNECTION *conn)
   {
     g_assert(length == (guint64)6);
     g_assert(num_array[5] == 0);
-    os_signal_num= num_array[2];
-    error_num= num_array[3];
-    start_phase= num_array[4];
+    os_signal_num= (guint32)num_array[2];
+    error_num= (guint32)num_array[3];
+    start_phase= (guint32)num_array[4];
     ic_printf(" due to error %u, OS Signal %u in startphase %u",
               error_num, os_signal_num, start_phase);
   }
@@ -1903,8 +1903,8 @@ handle_convert_transporter_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   if ((error=
          run_obj->apid_global->apid_global_ops->ic_external_connect(
                    run_obj->apid_global,
-                   param->cluster_id,
-                   param->node_number,
+                   (guint32)param->cluster_id,
+                   (guint32)param->node_number,
                    conn)))
   {
     *error_line= __LINE__;
@@ -1958,7 +1958,7 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     /* Here we ensure that the requested node id is correct */
     param->client_nodeid= param->node_number;
   }
-  if ((ret_code= send_get_nodeid_reply(conn, param->client_nodeid)) ||
+  if ((ret_code= send_get_nodeid_reply(conn, (guint32)param->client_nodeid)) ||
       (ret_code= rec_get_config_req(conn, param->version_number,
                                     param->node_type)) ||
       (ret_code= ic_get_base64_config(run_obj->conf_objects[param->cluster_id],
