@@ -409,7 +409,6 @@ install(TARGETS ic_repd DESTINATION bin)
 
 #Create target for the building of the parser of the Cluster Manager
 SET(ClusterManagerSource cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c)
-ADD_CUSTOM_TARGET(ClusterManagerParser echo "Creating ic_parser.c")
 
 ADD_CUSTOM_COMMAND(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
@@ -417,8 +416,6 @@ ADD_CUSTOM_COMMAND(
   ARGS -d
        -y ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
        -o ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
-  TARGET ClusterManagerParser
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.c
   OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
           ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h)
 
@@ -426,9 +423,8 @@ ADD_CUSTOM_COMMAND(
 SET(ClusterManagerSource ${ClusterManagerSource}
     ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
     ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_clmgr_int.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_lex.c)
-#Mark ic_parser.c and ic_lex.c as a generated file
+    ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_clmgr_int.h)
+#Mark ic_parser.c as a generated file
 SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
                             GENERATED)
 SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
