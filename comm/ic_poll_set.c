@@ -797,7 +797,7 @@ poll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_INT_POLL_SET *poll_set;
-  IC_POLLFD_TYPE poll_fd_array;
+  IC_POLLFD_TYPE *poll_fd_array;
   guint32 i;
 
   if (alloc_poll_set(&poll_set))
@@ -808,7 +808,7 @@ IC_POLL_SET* ic_create_poll_set()
   if (!(poll_set->impl_specific_ptr= ic_calloc(
       sizeof(IC_POLLFD_TYPE) * MAX_POLL_SET_CONNECTIONS)))
   {
-    free_poll_set(poll_set);
+    free_poll_set((IC_POLL_SET*)poll_set);
     return NULL;
   }
   poll_fd_array= (IC_POLLFD_TYPE*)poll_set->impl_specific_ptr;

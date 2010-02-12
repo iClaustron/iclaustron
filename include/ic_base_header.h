@@ -66,7 +66,6 @@ extern guint32 error_inject;
 #ifdef WINDOWS
 #define IC_POLL_FLAG POLLRDNORM
 #define IC_POLLFD_STRUCT WSAPOLLFD
-#define ic_poll WSAPoll
 #define IC_FILE_HANDLE HANDLE
 #define IC_SOCKLEN_TYPE int
 #define snprintf sprintf_s

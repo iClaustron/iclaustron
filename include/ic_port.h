@@ -17,8 +17,8 @@
 #define PORT_H
 
 #ifdef WINDOWS
-typedef (int WSAAPI* IC_POLL_FUNCTION)
-  (WSAPOLLFD fds[],
+typedef int (WSAAPI* IC_POLL_FUNCTION)(
+   WSAPOLLFD *fds,
    ULONG num_fds,
    INT time_out);
 
