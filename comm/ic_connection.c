@@ -970,51 +970,82 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
   return EINTR;
 }
 
-/* Implements ic_writev_connection */
+/* Implements ic_write_connection */
 static int
-writev_socket_connection(IC_CONNECTION *ext_conn,
-                         IC_IOVEC *write_vector,
-                         guint32 iovec_size,
-                         guint32 tot_size,
-                         guint32 secs_to_try)
+write_socket_connection(IC_CONNECTION *ext_conn,
+                        const void *buf,
+                        guint32 size,
+                        guint32 secs_to_try)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   IC_SEND_STATE send_state;
-  int error;
   gssize ret_code;
-  guint32 iovec_index= 0;
-  guint32 vec_len;
-  guint32 write_len;
-  struct msghdr msg_hdr;
-
-  ic_zero(&msg_hdr, sizeof(struct msghdr));
+  int error;
+  gint32 buf_size;
 
   send_state.time_measure= NULL;
   send_state.write_size= 0;
   send_state.loop_count= 0;
   send_state.secs_to_try= secs_to_try;
+
   do
   {
-    msg_hdr.msg_iov= &write_vector[iovec_index];
-    msg_hdr.msg_iovlen= iovec_size - iovec_index;
+    buf_size= size - send_state.write_size;
+
 #ifdef HAVE_SSL
     if (conn->is_ssl_used_for_data)
-    {
       ret_code= ic_ssl_write(conn,
-                             write_vector[iovec_index].iov_base,
-                             write_vector[iovec_index].iov_len);
-    }
+                             buf + send_state.write_size,
+                             buf_size);
     else
-    {
-      ret_code= sendmsg(conn->rw_sockfd,
-                        &msg_hdr,
-                        IC_MSG_NOSIGNAL);
-    }
+#endif
+      ret_code= send(conn->rw_sockfd,
+                     ((const IC_VOID_PTR_TYPE)buf + send_state.write_size),
+                     buf_size,
+                     IC_MSG_NOSIGNAL);
+    if (ret_code != IC_SOCKET_ERROR)
+      send_state.write_size+= ret_code;
+    if (!(error= handle_return_write(conn, ret_code, &send_state) == 0))
+      return 0;
+    if (error != EINTR || conn->error_code != 0)
+      return error;
+    send_state.loop_count++;
+  } while (1);
+  return 0;
+}
+
+#ifdef WINDOWS
+#define send_msg(a) 1
 #else
+static int
+send_msg(IC_INT_CONNECTION *conn,
+         IC_IOVEC *write_vector,
+         guint32 iovec_size,
+         guint32 tot_size,
+         guint32 secs_to_try)
+{
+  IC_SEND_STATE send_state;
+  struct msghdr msg_hdr;
+  gssize ret_code;
+  int error;
+  guint32 iovec_index= 0;
+  guint32 vec_len;
+  guint32 write_len;
+
+  send_state.time_measure= NULL;
+  send_state.write_size= 0;
+  send_state.loop_count= 0;
+  send_state.secs_to_try= secs_to_try;
+
+  ic_zero(&msg_hdr, sizeof(struct msghdr));
+  do
+  {
+    
+    msg_hdr.msg_iov= &write_vector[iovec_index];
+    msg_hdr.msg_iovlen= iovec_size - iovec_index;
     ret_code= sendmsg(conn->rw_sockfd,
                       &msg_hdr,
                       IC_MSG_NOSIGNAL);
-#endif
     if (ret_code > 0)
     {
       send_state.write_size+= ret_code;
@@ -1047,54 +1078,48 @@ writev_socket_connection(IC_CONNECTION *ext_conn,
   } while (1);
   return 0;
 }
+#endif
 
-/* Implements ic_write_connection */
+/* Implements ic_writev_connection */
 static int
-write_socket_connection(IC_CONNECTION *ext_conn,
-                        const void *buf, guint32 size,
-                        guint32 secs_to_try)
+writev_socket_connection(IC_CONNECTION *ext_conn,
+                         IC_IOVEC *write_vector,
+                         guint32 iovec_size,
+                         guint32 tot_size,
+                         guint32 secs_to_try)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  IC_SEND_STATE send_state;
-  gssize ret_code;
-  int error;
-  gint32 buf_size;
+  int ret_code= 0;
+  gboolean use_loop= FALSE;
+  guint32 i;
 
-  send_state.time_measure= NULL;
-  send_state.write_size= 0;
-  send_state.loop_count= 0;
-  send_state.secs_to_try= secs_to_try;
-
-  do
-  {
-    buf_size= size - send_state.write_size;
-
-#ifdef HAVE_SSL
-    if (conn->is_ssl_used_for_data)
-      ret_code= ic_ssl_write(conn,
-                             buf + send_state.write_size,
-                             buf_size);
-    else
-      ret_code= send(conn->rw_sockfd,
-                     buf + send_state.write_size,
-                     buf_size,
-                     IC_MSG_NOSIGNAL);
-#else
-    ret_code= send(conn->rw_sockfd,
-                   ((const IC_VOID_PTR_TYPE)buf + send_state.write_size),
-                   buf_size,
-                   IC_MSG_NOSIGNAL);
+  if (conn->is_ssl_used_for_data)
+    use_loop= TRUE;
+#ifdef WINDOWS
+  use_loop= TRUE;
 #endif
-    if (ret_code != IC_SOCKET_ERROR)
-      send_state.write_size+= ret_code;
-    if (!(error= handle_return_write(conn, ret_code, &send_state) == 0))
-      return 0;
-    if (error != EINTR || conn->error_code != 0)
-      return error;
-    send_state.loop_count++;
-  } while (1);
-  return 0;
+  if (use_loop)
+  {
+    for (i= 0; i < iovec_size; i++)
+    {
+      if ((ret_code= write_socket_connection(ext_conn,
+                                             write_vector[i].iov_base,
+                                             write_vector[i].iov_len,
+                                             secs_to_try)))
+        break;
+    }
+  }
+  else
+  {
+    ret_code= send_msg(conn,
+                       write_vector,
+                       iovec_size,
+                       tot_size,
+                       secs_to_try);
+  }
+  return ret_code;
 }
+
 
 /* Implements ic_close_connection */
 static int
