@@ -65,6 +65,12 @@ guint32 error_inject= 0;
 static const gchar *port_binary_dir;
 static guint32 ic_stop_flag= 0;
 
+#ifdef WINDOWS
+static int WSAAPI (*ic_poll)(WSAPOLLFD fds[],
+                             ULONG  num_fds,
+                             INT time_out)=0;
+#endif
+
 int ic_stop_socket_system()
 {
   int ret_code= 0;

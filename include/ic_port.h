@@ -15,6 +15,13 @@
 
 #ifndef PORT_H
 #define PORT_H
+
+#ifdef WINDOWS
+extern int WSAAPI (*ic_poll)(WSAPOLLFD fds[],
+                             ULONG  num_fds,
+                             INT time_out);
+#endif
+
 /* Portable method to close a socket */
 void ic_close_socket(int sockfd);
 

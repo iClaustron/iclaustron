@@ -744,15 +744,15 @@ poll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
   IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   int ret_code;
   guint32 i, num_ready_connections;
-  struct pollfd *poll_fd_array= (struct pollfd *)poll_set->impl_specific_ptr;
+  IC_POLLFD_TYPE *poll_fd_array= (IC_POLLFD_TYPE*)poll_set->impl_specific_ptr;
 
   poll_set->num_ready_connections= 0;
   poll_set->poll_scan_ongoing= TRUE;
   do
   {
-    if ((ret_code= poll((struct pollfd*)poll_set->impl_specific_ptr,
-                        poll_set->num_poll_connections,
-                        ms_time)) > 0)
+    if ((ret_code= ic_poll((IC_POLLFD_TYPE*)poll_set->impl_specific_ptr,
+                         poll_set->num_poll_connections,
+                         ms_time)) > 0)
     {
       for (i= 0; i < poll_set->num_poll_connections; i++)
       {
@@ -792,7 +792,7 @@ poll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 IC_POLL_SET* ic_create_poll_set()
 {
   IC_INT_POLL_SET *poll_set;
-  struct pollfd *poll_fd_array;
+  IC_POLLFD_TYPE poll_fd_array;
   guint32 i;
 
   if (alloc_poll_set(&poll_set))
@@ -801,12 +801,12 @@ IC_POLL_SET* ic_create_poll_set()
     return NULL;
   }
   if (!(poll_set->impl_specific_ptr= ic_calloc(
-      sizeof(struct pollfd) * MAX_POLL_SET_CONNECTIONS)))
+      sizeof(IC_POLLFD_TYPE) * MAX_POLL_SET_CONNECTIONS)))
   {
     free_poll_set(poll_set);
     return NULL;
   }
-  poll_fd_array= (struct pollfd*)poll_set->impl_specific_ptr;
+  poll_fd_array= (IC_POLLFD_TYPE*)poll_set->impl_specific_ptr;
   for (i= 0; i < MAX_POLL_SET_CONNECTIONS; i++)
   {
     poll_fd_array[i].fd= 0;

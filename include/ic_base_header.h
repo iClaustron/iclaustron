@@ -74,6 +74,7 @@ extern guint32 error_inject;
 #define IC_INVALID_SOCKET INVALID_SOCKET
 #define IC_SOCKET_ERROR SOCKET_ERROR
 #define IC_VOID_PTR_TYPE char*
+#define IC_POLLFD_TYPE WSAPOLLFD
 #else
 #define IC_POLL_FLAG POLLIN
 #define IC_POLLFD_STRUCT struct pollfd
@@ -83,6 +84,8 @@ extern guint32 error_inject;
 #define IC_INVALID_SOCKET (int)-1
 #define IC_SOCKET_ERROR (int)-1
 #define IC_VOID_PTR_TYPE void*
+#define IC_POLLFD_TYPE struct pollfd
+#define ic_poll poll
 #endif
 
 typedef struct ic_bitmap IC_BITMAP;
