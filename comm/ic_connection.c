@@ -894,7 +894,7 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
     guint32 num_sent_buf_range;
     guint64 num_sent_bufs= conn->conn_stat.num_sent_buffers;
     guint64 num_sent_bytes= conn->conn_stat.num_sent_bytes;
-    guint64 num_sent_square= conn->conn_stat.num_sent_bytes_square_sum;
+    long double num_sent_square= conn->conn_stat.num_sent_bytes_square_sum;
 
     i= ic_count_highest_bit((guint32)(buf_size | 32));
     i-= 6;
@@ -903,7 +903,7 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
     conn->conn_stat.num_sent_buffers= num_sent_bufs + 1;
     conn->conn_stat.num_sent_bytes= num_sent_bytes + buf_size;
     conn->conn_stat.num_sent_bytes_square_sum=
-                             num_sent_square + (buf_size*buf_size);
+                    num_sent_square + (long double)(buf_size*buf_size);
     conn->conn_stat.num_sent_buf_range[i]= num_sent_buf_range + 1;
     if (send_state->loop_count && send_state->time_measure)
       g_timer_destroy(send_state->time_measure);
@@ -1080,7 +1080,7 @@ write_socket_connection(IC_CONNECTION *ext_conn,
 #ifndef WINDOWS
                    buf + send_state.write_size,
 #else
-                   (const char*)(buf + send_state.write_size),
+                   (const char*)((const char*)buf + send_state.write_size),
 #endif
                    buf_size,
                    IC_MSG_NOSIGNAL);

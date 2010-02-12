@@ -66,7 +66,7 @@ extern guint32 error_inject;
 #define IC_FILE_HANDLE HANDLE
 #define IC_SOCKLEN_TYPE int
 #define snprintf sprintf_s
-#define strncat strcat_s
+#define strncat(a,b,c) strcat_s((a),(c),(b))
 #define IC_INVALID_SOCKET INVALID_SOCKET
 #define IC_SOCKET_ERROR SOCKET_ERROR
 #else
