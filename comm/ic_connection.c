@@ -233,7 +233,7 @@ static void
 set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
 {
   int no_delay, error, maxseg_size, rec_size, snd_size, reuse_addr;
-  socklen_t sock_len= sizeof(int);
+  IC_SOCKLEN_TYPE sock_len= sizeof(int);
 #ifdef __APPLE__
   int no_sigpipe= 1;
   /*
@@ -372,7 +372,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   gboolean not_accepted= FALSE;
   int ret_sockfd, ok, error;
-  socklen_t addr_len;
+  IC_SOCKLEN_TYPE addr_len;
   struct sockaddr_storage client_address;
   const struct sockaddr *client_addr_ptr= 
         (const struct sockaddr*)&client_address;
@@ -635,7 +635,7 @@ static int
 int_set_up_socket_connection(IC_INT_CONNECTION *conn)
 {
   int error, sockfd;
-  socklen_t len;
+  IC_SOCKLEN_TYPE len;
   struct addrinfo *loc_addrinfo;
   fd_set read_set, write_set;
   struct timeval time_out;
@@ -1671,7 +1671,7 @@ get_port_number(IC_CONNECTION *ext_conn)
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   struct sockaddr_storage sa_storage;
   struct sockaddr *sa_addr= (struct sockaddr*)&sa_storage;
-  socklen_t sock_len;
+  IC_SOCKLEN_TYPE sock_len;
   guint32 port_number;
   int fd= conn->is_client ? conn->rw_sockfd : conn->listen_sockfd;
 
