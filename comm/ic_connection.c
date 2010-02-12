@@ -447,13 +447,15 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
       if (ret_sockfd == IC_INVALID_SOCKET)
       {
         error= ic_get_last_socket_error();
-        if (error == EAGAIN ||
 #ifndef WINDOWS
+        if (error == EAGAIN ||
             error == ECONNABORTED ||
             error == EPROTO ||
-#endif
             error == EWOULDBLOCK ||
             error == EINTR)
+#else
+        if (error == WSAEWOULDBLOCK)
+#endif
         {
           /*
              EAGAIN/EWOULDBLOCK happens when no connections are yet
@@ -725,12 +727,14 @@ renew_connect:
         timeout occurs.
       */
       if (connect(sockfd, (struct sockaddr*)conn->server_addrinfo->ai_addr,
-                  conn->server_addrinfo->ai_addrlen) == IC_INVALID_SOCKET)
+                  conn->server_addrinfo->ai_addrlen) == IC_SOCKET_ERROR)
       {
         error= ic_get_last_socket_error();
-        if (error == EINTR || error == ECONNREFUSED)
-          continue;
-        if (error == EINPROGRESS)
+#ifndef WINDOWS
+        if (error == EINPROGRESS || error == EINTR)
+#else
+        if (error == WSAEWOULDBLOCK)
+#endif
         {
           /* We successfully sent a CONNECT request, still waiting for reply */
           time_out.tv_sec= 3; /* Timeout is 3 seconds */
