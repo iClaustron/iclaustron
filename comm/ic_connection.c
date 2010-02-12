@@ -345,7 +345,7 @@ ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
                   NI_NUMERICHOST))
     return 0;
   snprintf(port_str, sizeof(port_str), ":%d", port);
-  strcat(ip_addr, port_str);
+  strncat(ip_addr, port_str, ip_addr_len);
   return 1;
 }
 
@@ -1179,7 +1179,7 @@ read_socket_connection(IC_CONNECTION *ext_conn,
       guint32 num_rec_buf_range;
       guint64 num_rec_bufs= conn->conn_stat.num_rec_buffers;
       guint64 num_rec_bytes= conn->conn_stat.num_rec_bytes;
-      guint64 num_rec_square= conn->conn_stat.num_rec_bytes_square_sum;
+      long double num_rec_square= conn->conn_stat.num_rec_bytes_square_sum;
       
       *read_size= ret_code;
       range_limit= 32;
@@ -1193,8 +1193,8 @@ read_socket_connection(IC_CONNECTION *ext_conn,
       conn->error_code= 0;
       conn->conn_stat.num_rec_buffers= num_rec_bufs + 1;
       conn->conn_stat.num_rec_bytes= num_rec_bytes + ret_code;
-      conn->conn_stat.num_rec_bytes_square_sum= (long double)
-                             num_rec_square + (ret_code*ret_code);
+      conn->conn_stat.num_rec_bytes_square_sum=
+                        num_rec_square + (long double)(ret_code*ret_code);
       conn->conn_stat.num_rec_buf_range[i]= num_rec_buf_range + 1;
       return 0;
     }

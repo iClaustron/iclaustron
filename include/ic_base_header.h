@@ -65,6 +65,8 @@ extern guint32 error_inject;
 #define ic_poll WSAPoll
 #define IC_FILE_HANDLE HANDLE
 #define IC_SOCKLEN_TYPE int
+#define snprintf sprintf_s
+#define strncat strcat_s
 #else
 #define IC_POLL_FLAG POLLIN
 #define IC_POLLFD_STRUCT struct pollfd
