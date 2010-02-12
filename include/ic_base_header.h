@@ -67,12 +67,15 @@ extern guint32 error_inject;
 #define IC_SOCKLEN_TYPE int
 #define snprintf sprintf_s
 #define strncat strcat_s
+#define EWOULDBLOCK WSAEWOULDBLOCK
+#define IC_INVALID_SOCKET INVALID_SOCKET
 #else
 #define IC_POLL_FLAG POLLIN
 #define IC_POLLFD_STRUCT struct pollfd
 #define ic_poll poll
 #define IC_FILE_HANDLE int
 #define IC_SOCKLEN_TYPE socklen_t
+#define IC_INVALID_SOCKET (int)-1
 #endif
 
 typedef struct ic_bitmap IC_BITMAP;
