@@ -66,7 +66,7 @@ static const gchar *port_binary_dir;
 static guint32 ic_stop_flag= 0;
 
 #ifdef WINDOWS
-static IC_POLL_FUNCTION ic_poll;
+IC_POLL_FUNCTION ic_poll;
 #endif
 
 int ic_stop_socket_system()
