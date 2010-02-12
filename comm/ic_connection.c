@@ -916,7 +916,7 @@ handle_return_write(IC_INT_CONNECTION *conn, gssize ret_code,
     send_state->next_sec_check= (gdouble)1;
     send_state->secs_count= 0;
   }
-  if (ret_code < 0)
+  if (ret_code == IC_SOCKET_ERROR)
   {
     int error;
     if (!conn->is_ssl_used_for_data)
@@ -1077,11 +1077,15 @@ write_socket_connection(IC_CONNECTION *ext_conn,
                      IC_MSG_NOSIGNAL);
 #else
     ret_code= send(conn->rw_sockfd,
+#ifndef WINDOWS
                    buf + send_state.write_size,
+#else
+                   (const char*)(buf + send_state.write_size),
+#endif
                    buf_size,
                    IC_MSG_NOSIGNAL);
 #endif
-    if (ret_code > 0)
+    if (ret_code != IC_SOCKET_ERROR)
       send_state.write_size+= ret_code;
     if (!(error= handle_return_write(conn, ret_code, &send_state) == 0))
       return 0;
