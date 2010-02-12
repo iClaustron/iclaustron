@@ -98,7 +98,7 @@ typedef guint64 IC_CONF_STATE_TYPE;
 struct ic_iovec
 {
   gchar *iov_base;
-  guint64 iov_len;
+  guint32 iov_len;
 };
 
 typedef struct ic_iovec IC_IOVEC;
