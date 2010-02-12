@@ -327,6 +327,8 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   ic_printf("Starting %s program", program_name);
   ic_glob_byte_order= ic_byte_order();
   use_config_vars= use_config; /* TRUE for Unit test programs */
+  if (ic_start_socket_system())
+    goto error;
   context= g_option_context_new(start_text);
   if (!context)
     goto mem_error;
@@ -424,6 +426,7 @@ void ic_end()
     ic_free(ic_glob_binary_dir.str);
     ic_glob_binary_dir.str= NULL;
   }
+  ic_stop_socket_system();
   DEBUG_CLOSE;
   ic_mem_end();
 }

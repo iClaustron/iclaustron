@@ -65,6 +65,42 @@ guint32 error_inject= 0;
 static const gchar *port_binary_dir;
 static guint32 ic_stop_flag= 0;
 
+int ic_stop_socket_system()
+{
+  int ret_code= 0;
+#ifdef WINDOWS
+  ret_code= WSACleanup();
+#endif
+  return ret_code;
+}
+
+int ic_start_socket_system()
+{
+#ifdef WINDOWS
+  WORD version_requested;
+  WSADATA wsa_data;
+  int error;
+  version_requested= MAKE_WORD(2,2);
+
+  if ((error= WSAStartup(version_requested, &wsa_data)))
+  {
+    ic_printf("WSAStartup failed with error code = %d",
+              GetLastError());
+    return 1;
+  }
+  if (LOBYTE(wsa_data.wVersion) != 2 ||
+      HIBYTE(wsa_data.wVersion) != 2)
+  {
+    ic_printf("WSAStartup failed to start with version 2,2");
+    return 1;
+  }
+  return 0;
+#else
+  /* Not needed on non-Windows platforms */
+  return 0;
+#endif
+}
+
 guint32
 ic_get_stop_flag()
 {

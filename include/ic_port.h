@@ -18,6 +18,10 @@
 /* Portable method to close a socket */
 void ic_close_socket(int sockfd);
 
+/* Start/stop socket library (needed on Windows) */
+int ic_start_socket_system();
+int ic_stop_socket_system();
+
 /* Get stop flag (set by SIGTERM and similar signals) */
 guint32 ic_get_stop_flag();
 
