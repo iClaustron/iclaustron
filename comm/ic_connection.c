@@ -234,7 +234,11 @@ set_socket_nonblocking(int sockfd, gboolean flag)
 static void
 set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
 {
-  int no_delay, error, maxseg_size, rec_size, snd_size, reuse_addr;
+  int no_delay, error;
+#ifndef WINDOWS
+  int maxseg_size;
+#endif
+  int rec_size, snd_size, reuse_addr;
   IC_SOCKLEN_TYPE sock_len= sizeof(int);
 #ifdef __APPLE__
   int no_sigpipe= 1;
@@ -282,6 +286,7 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
                                  IPPROTO_TCP, TCP_MAXSEG);
   }
   DEBUG_PRINT(COMM_LEVEL, ("Used TCP_MAXSEG = %d", maxseg_size));
+  conn->conn_stat.used_tcp_maxseg_size= maxseg_size;
 #endif
   sock_len= sizeof(int);
   getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF,
@@ -311,7 +316,6 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
   DEBUG_PRINT(COMM_LEVEL, ("Used SO_SNDBUF = %d", snd_size));
   DEBUG_PRINT(COMM_LEVEL, ("Used TCP_NODELAY = %d", no_delay));
   DEBUG_PRINT(COMM_LEVEL, ("Used SO_REUSEADDR = %d", reuse_addr));
-  conn->conn_stat.used_tcp_maxseg_size= maxseg_size;
   conn->conn_stat.used_tcp_receive_buffer_size= rec_size;
   conn->conn_stat.used_tcp_send_buffer_size= snd_size;
   conn->conn_stat.tcp_no_delay= no_delay;
@@ -1015,7 +1019,7 @@ write_socket_connection(IC_CONNECTION *ext_conn,
 }
 
 #ifdef WINDOWS
-#define send_msg(a) 1
+#define send_msg(a,b,c,d,e) 1
 #else
 static int
 send_msg(IC_INT_CONNECTION *conn,
