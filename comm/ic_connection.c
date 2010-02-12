@@ -59,9 +59,6 @@
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
-#ifdef WINDOWS
-#include <ws2tcpip.h>
-#endif
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
 #endif

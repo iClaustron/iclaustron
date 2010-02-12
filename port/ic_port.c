@@ -80,7 +80,7 @@ int ic_start_socket_system()
   WORD version_requested;
   WSADATA wsa_data;
   int error;
-  version_requested= MAKE_WORD(2,2);
+  version_requested= MAKEWORD(2,2);
 
   if ((error= WSAStartup(version_requested, &wsa_data)))
   {

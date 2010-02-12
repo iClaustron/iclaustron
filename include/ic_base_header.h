@@ -31,6 +31,9 @@
 #ifdef WINDOWS
 #define _WIN32_WINNT 0x0601
 #include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdio.h>
+#include <windows.h>
 #endif
 
 /* GLib header files contains all data type definitions */
