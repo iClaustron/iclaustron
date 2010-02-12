@@ -98,6 +98,12 @@ int ic_start_socket_system()
     ic_printf("WSAStartup failed to start with version 2,2");
     return 1;
   }
+  if (!(ic_poll= (IC_POLL_FUNCTION)(void*)
+        GetProcAddress(LoadLibrary("ws2_32"), "WSAPoll")))
+  {
+    ic_printf("Minimum Windows Vista is required, support of WSAPoll lacking");
+    return 1;
+  }
   return 0;
 #else
   /* Not needed on non-Windows platforms */
