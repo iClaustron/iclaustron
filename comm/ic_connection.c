@@ -749,7 +749,11 @@ renew_connect:
               (FD_ISSET(sockfd, &write_set)))
           {
             len= sizeof(error);
-            if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 ||
+            if (getsockopt(sockfd,
+                           SOL_SOCKET,
+                           SO_ERROR,
+                           (IC_VOID_PTR_TYPE)&error,
+                           &len) < 0 ||
                 error != 0)
                goto renew_connect;
              break;
@@ -1077,11 +1081,7 @@ write_socket_connection(IC_CONNECTION *ext_conn,
                      IC_MSG_NOSIGNAL);
 #else
     ret_code= send(conn->rw_sockfd,
-#ifndef WINDOWS
-                   buf + send_state.write_size,
-#else
-                   (const char*)((const char*)buf + send_state.write_size),
-#endif
+                   ((const IC_VOID_PTR_TYPE)buf + send_state.write_size),
                    buf_size,
                    IC_MSG_NOSIGNAL);
 #endif
