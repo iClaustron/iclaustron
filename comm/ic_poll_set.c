@@ -707,8 +707,13 @@ IC_POLL_SET* ic_create_poll_set()
   return (IC_POLL_SET*)poll_set;
 }
 #else
+#ifdef WINDOWS
+#define HAVE_POLL
+#endif
 #ifdef HAVE_POLL
+#ifndef WINDOWS
 #include <poll.h>
+#endif
 static int
 poll_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj)
 {
