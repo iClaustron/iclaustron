@@ -99,8 +99,8 @@ if (NOT WIN32)
   endforeach (system_path)
 else (NOT WIN32)
   foreach (system_path
-           "C:\\Program Files\\GnuWin32\\bin"
-           "C:\\Program Files (x86)\\GnuWin32\\bin"
+           "C:\\Program\ Files\\GnuWin32\\bin"
+           "C:\\Program\ Files\ (x86)\\GnuWin32\\bin"
            )
     if (NOT BISON_EXECUTABLE)
       find_bison()
