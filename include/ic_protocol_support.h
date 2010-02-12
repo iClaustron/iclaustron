@@ -52,6 +52,9 @@ int ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str);
 int ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str,
                   gchar *read_str);
 int ic_rec_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
+int ic_rec_long_number(IC_CONNECTION *conn,
+                       const gchar *str,
+                       guint64 *number);
 int ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
 int ic_rec_int_number(IC_CONNECTION *conn, const gchar *str, int *number);
 int ic_rec_empty_line(IC_CONNECTION *conn);

@@ -131,7 +131,9 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       IC_CONF_VERSION_TYPE *config_version);
+                       IC_CONF_VERSION_TYPE *config_version,
+                       IC_CONF_STATE_TYPE *state,
+                       IC_PID_TYPE *pid);
 static int
 remove_config_files(IC_STRING *config_dir,
                     IC_CLUSTER_CONNECT_INFO **clu_infos,
@@ -322,19 +324,21 @@ error:
 static int
 ic_load_config_version(IC_STRING *config_dir,
                        const gchar *process_name,
-                       IC_CONF_VERSION_TYPE *config_version)
+                       IC_CONF_VERSION_TYPE *config_version,
+                       IC_CONF_STATE_TYPE *state,
+                       IC_PID_TYPE *pid)
 {
-  IC_CONF_STATE_TYPE state;
-  IC_PID_TYPE pid;
+  IC_PID_TYPE loc_pid;
   int error;
   DEBUG_ENTRY("ic_load_config_version");
 
+  *pid= ic_get_own_pid();
   if (!(error= read_config_version_file(config_dir,
                                         config_version,
-                                        &state,
-                                        &pid)))
+                                        state,
+                                        &loc_pid)))
   {
-    if (state == CONFIG_STATE_IDLE)
+    if (*state == CONFIG_STATE_IDLE)
     {
       /*
         Configuration not in update process. It is also idle in the sense
@@ -344,14 +348,15 @@ ic_load_config_version(IC_STRING *config_dir,
         We write the configuration version with our pid to ensure that we
         have locked the ownership of the grid configuration.
       */
+      *state= (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY;
       if ((error= write_config_version_file(config_dir,
                                             *config_version,
-                                            (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY,
-                                            ic_get_own_pid())))
+                                            *state,
+                                            *pid)))
         return error;
       return 0;
     }
-    error= ic_is_process_alive(pid, process_name);
+    error= ic_is_process_alive(loc_pid, process_name);
     if (error == 0)
     {
       /*
@@ -367,10 +372,11 @@ ic_load_config_version(IC_STRING *config_dir,
       return error;
     g_assert(IC_ERROR_PROCESS_NOT_ALIVE);
     error= 0;
+    *state= (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY;
     if ((error= write_config_version_file(config_dir,
                                           *config_version,
-                                          (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY,
-                                          ic_get_own_pid())))
+                                          *state,
+                                          *pid)))
       return error;
     return 0;
   }

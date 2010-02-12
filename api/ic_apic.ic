@@ -595,6 +595,8 @@ const gchar *ic_false_str= "false";
 const gchar *ic_auto_restart_str= "autorestart: ";
 const gchar *ic_num_parameters_str= "num parameters: ";
 const gchar *ic_pid_str= "pid: ";
+const gchar *ic_status_str= "status: ";
+const gchar *ic_master_index_size_str= "master index size: ";
 
 const gchar *ic_def_grid_str= "iclaustron";
 const gchar *ic_data_server_program_str= "ndbmtd";

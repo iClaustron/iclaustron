@@ -215,44 +215,134 @@ typedef struct ic_run_cluster_thread IC_RUN_CLUSTER_THREAD;
 
 struct ic_run_cluster_state
 {
-  gboolean cs_master;
-  gboolean cs_started;
-  gboolean update_state;
-  guint32 update_waiters;
-  gboolean cs_connect_state[IC_MAX_CLUSTER_SERVERS];
+  /* Points to our Cluster Server Info, should always be 0 */
+  guint32 my_cs_index;
 
-  guint32 cs_master_nodeid;
-  guint64 config_version_number;
-  guint32 num_cluster_servers;
-  guint32 num_cluster_servers_connected;
+  /* Points to Cluster Server info of master */
+  guint32 master_cs_index;
+
+  /* Set when we've started and are ready to respond to requests */
+  gboolean cs_started;
+
+  /* 
+    If this variable is set, the connections are occupied by someone
+    performing an update, we need to wait for this to become free.
+  */
+  gboolean update_state;
+
+  /* Number of threads waiting to update */
+  guint32 update_waiters;
 
   GMutex *protect_state;
   GCond  *update_cond;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 
+enum ic_cs_start_state
+{
+  IC_NOT_STARTED= 0, /* Initial state */
+  IC_START_REPLY= 1
+};
+typedef enum ic_cs_start_state IC_CS_START_STATE;
+
+struct ic_info_cluster_server
+{
+  /* A permanent connection to this Cluster Server used for updates */
+  IC_CONNECTION *conn;
+
+  /* Have we got a connection to this server yet. */
+  gboolean cs_connect_state;
+
+  /* The pid of this Cluster Server */
+  IC_PID_TYPE pid;
+
+  /* The state of this server currently */
+  IC_CONF_STATE_TYPE state;
+
+  /* The current configuration version of this server */
+  IC_CONF_VERSION_TYPE config_version_number;
+
+  /* State of this node currently */
+  IC_CS_START_STATE start_state;
+
+  /*
+    When is this node becoming master. 0 means it is master, 1 means
+    it will take over immediately if the master fails and so forth.
+  */
+  guint32 master_index;
+
+  /* Node id of this particular Cluster Server in all clusters in the grid */
+  guint32 node_id;
+
+  /* This node's view on master indexes */
+  guint32 master_index_view[IC_MAX_CLUSTER_SERVERS];
+};
+typedef struct ic_info_cluster_server IC_INFO_CLUSTER_SERVER;
+
 struct ic_int_run_cluster_server
 {
+  /* The external interface to the object */
   IC_RUN_CLUSTER_SERVER_OPERATIONS run_op;
+
+  /* The configuration of each cluster resident in memory */
   IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID];
+
+  /* The state of our cluster server */
   IC_RUN_CLUSTER_STATE state;
+
+  /* A memory container to make it easy to deallocate resources */
   IC_MEMORY_CONTAINER *mc_ptr;
 
+  /* The thread pool handling all threads for the cluster server */
   IC_THREADPOOL_STATE *tp_state;
 
-  IC_CONNECTION *cs_connections[IC_MAX_CLUSTER_SERVERS];
+  /* Info on the other cluster servers and their state */
+  IC_INFO_CLUSTER_SERVER cs_servers[IC_MAX_CLUSTER_SERVERS];
+
+  /* This is the socket of that listens to connections */
   IC_CONNECTION *conn;
+
+  /*
+    This object is normally used by clients, we fill it up with what
+    is needed to allow us to reuse a number of methods from the
+    client handling part of the iClaustron configuration management.
+  */
   IC_INT_API_CONFIG_SERVER *apic;
+
+  /* The object handling heartbeats on the NDB API connections */
   IC_APID_CONNECTION *heartbeat_conn;
+
+  /* The global API object */
   IC_APID_GLOBAL *apid_global;
+
+  /* The string that defines the directory for the config files */
   IC_STRING *config_dir;
+
+  /* Number of cluster servers in the grid */
+  guint32 num_cluster_servers;
+
+  /* Max cluster id in the grid */
   guint32 max_cluster_id;
+
+  /* Number of clusters in this grid */
   guint32 num_clusters;
+
+  /* Our node id in all clusters we are part of */
   guint32 cs_nodeid;
+
+  /* The name of this process, normally ic_csd */
   const gchar *process_name;
+
+  /* Configuration has been locked indicator */
   gboolean locked_configuration;
+
+  /* Stop has been ordered indicator */
   gboolean stop_flag;
+
+  /* Error handling object */
   IC_CONFIG_ERROR err_obj;
+
+  /* Object used read configuration from file */
   IC_CONFIG_STRUCT conf_server_struct;
   IC_CONFIG_STRUCT cluster_conf_struct;
 };

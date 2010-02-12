@@ -190,6 +190,29 @@ ic_rec_number_impl(IC_CONNECTION *conn,
 }
 
 int
+ic_rec_long_number(IC_CONNECTION *conn, const gchar *str, guint64 *number)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  int error;
+  guint64 local_id;
+
+  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    if (!ic_check_buf_with_int(read_buf, read_size, str,
+                               strlen(str),
+                               &local_id))
+    {
+      *number= local_id;
+      return 0;
+    }
+    else
+      return IC_PROTOCOL_ERROR;
+  }
+  return error;
+}
+
+int
 ic_rec_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
 {
   return ic_rec_number_impl(conn, str, number, FALSE);
