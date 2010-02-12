@@ -104,6 +104,7 @@ else (NOT WIN32)
            )
     if (NOT BISON_EXECUTABLE)
       find_bison()
+      set (BISON_PATH system_path)
     endif (NOT BISON_EXECUTABLE)
   endforeach (system_path)
 endif (NOT WIN32)
@@ -409,6 +410,11 @@ install(TARGETS ic_repd DESTINATION bin)
 
 #Create target for the building of the parser of the Cluster Manager
 SET(ClusterManagerSource cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c)
+
+if (WIN32)
+  ADD_CUSTOM_COMMAND(
+    COMMAND copy ${BISON_PATH}/m4.exe ${CMAKE_CURRENT_BINARY_DIR})
+endif (WIN32)
 
 ADD_CUSTOM_COMMAND(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
