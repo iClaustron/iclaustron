@@ -59,7 +59,9 @@
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
-
+#ifdef WINDOWS
+#include <ws2tcpip.h>
+#endif
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
 #endif
@@ -265,8 +267,22 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
     DEBUG_PRINT(COMM_LEVEL, ("Set SO_REUSEADDR error: %d", error));
     reuse_addr= 0;
   }
+#ifndef WINDOWS
   getsockopt(sockfd, IPPROTO_TCP, TCP_MAXSEG,
              (void*)&maxseg_size, &sock_len);
+  DEBUG_PRINT(COMM_LEVEL, ("Default TCP_MAXSEG = %d", maxseg_size));
+  if (conn->is_wan_connection)
+  {
+    maxseg_size= set_option_size(sockfd, WAN_TCP_MAXSEG_SIZE, maxseg_size,
+                                 IPPROTO_TCP, TCP_MAXSEG);
+  }
+  else
+  {
+    maxseg_size= set_option_size(sockfd, conn->tcp_maxseg_size, maxseg_size,
+                                 IPPROTO_TCP, TCP_MAXSEG);
+  }
+  DEBUG_PRINT(COMM_LEVEL, ("Used TCP_MAXSEG = %d", maxseg_size));
+#endif
   sock_len= sizeof(int);
   getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF,
              (void*)&rec_size, &sock_len);
@@ -274,26 +290,23 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
   getsockopt(sockfd, SOL_SOCKET, SO_SNDBUF,
              (void*)&snd_size, &sock_len);
   sock_len= sizeof(int);
-  DEBUG_PRINT(COMM_LEVEL, ("Default TCP_MAXSEG = %d", maxseg_size));
   DEBUG_PRINT(COMM_LEVEL, ("Default SO_RCVBUF = %d", rec_size));
   DEBUG_PRINT(COMM_LEVEL, ("Default SO_SNDBUF = %d", snd_size));
 
   if (conn->is_wan_connection)
   {
-    maxseg_size= set_option_size(sockfd, WAN_TCP_MAXSEG_SIZE, maxseg_size,
-                                 IPPROTO_TCP, TCP_MAXSEG);
     rec_size= set_option_size(sockfd, WAN_REC_BUF_SIZE, rec_size,
                               SOL_SOCKET, SO_RCVBUF);
     snd_size= set_option_size(sockfd, WAN_SND_BUF_SIZE, snd_size,
                               SOL_SOCKET, SO_SNDBUF);
   }
-  maxseg_size= set_option_size(sockfd, conn->tcp_maxseg_size, maxseg_size,
-                               IPPROTO_TCP, TCP_MAXSEG);
-  rec_size= set_option_size(sockfd, conn->tcp_receive_buffer_size,
-                            rec_size, SOL_SOCKET, SO_RCVBUF);
-  snd_size= set_option_size(sockfd, conn->tcp_send_buffer_size,
-                            snd_size, SOL_SOCKET, SO_SNDBUF);
-  DEBUG_PRINT(COMM_LEVEL, ("Used TCP_MAXSEG = %d", maxseg_size));
+  else
+  {
+    rec_size= set_option_size(sockfd, conn->tcp_receive_buffer_size,
+                              rec_size, SOL_SOCKET, SO_RCVBUF);
+    snd_size= set_option_size(sockfd, conn->tcp_send_buffer_size,
+                              snd_size, SOL_SOCKET, SO_SNDBUF);
+  }
   DEBUG_PRINT(COMM_LEVEL, ("Used SO_RCVBUF = %d", rec_size));
   DEBUG_PRINT(COMM_LEVEL, ("Used SO_SNDBUF = %d", snd_size));
   DEBUG_PRINT(COMM_LEVEL, ("Used TCP_NODELAY = %d", no_delay));
@@ -311,18 +324,25 @@ ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
   struct sockaddr_in *ipv4_addr= (struct sockaddr_in*)sa;
   struct sockaddr_in6 *ipv6_addr= (struct sockaddr_in6*)sa;
   guint32 port;
+  IC_SOCKLEN_TYPE addr_len;
   gchar port_str[8];
 
-  if (getnameinfo(sa, sa->sa_len,
+  if (sa->sa_family == AF_INET)
+  {
+     port= ntohs(ipv4_addr->sin_port);
+	 addr_len= sizeof(*ipv4_addr);
+  }
+  else if (sa->sa_family == AF_INET6)
+  {
+     port= ntohs(ipv6_addr->sin6_port);
+	 addr_len= sizeof(*ipv6_addr);
+  }
+  else
+    return 0;
+  if (getnameinfo(sa, addr_len,
                   ip_addr, ip_addr_len-8,
                   NULL, 0,
                   NI_NUMERICHOST))
-    return 0;
-  if (sa->sa_family == AF_INET)
-     port= ntohs(ipv4_addr->sin_port);
-  else if (sa->sa_family == AF_INET6)
-     port= ntohs(ipv6_addr->sin6_port);
-  else
     return 0;
   snprintf(port_str, sizeof(port_str), ":%d", port);
   strcat(ip_addr, port_str);
@@ -1173,7 +1193,7 @@ read_socket_connection(IC_CONNECTION *ext_conn,
       conn->error_code= 0;
       conn->conn_stat.num_rec_buffers= num_rec_bufs + 1;
       conn->conn_stat.num_rec_bytes= num_rec_bytes + ret_code;
-      conn->conn_stat.num_rec_bytes_square_sum=
+      conn->conn_stat.num_rec_bytes_square_sum= (long double)
                              num_rec_square + (ret_code*ret_code);
       conn->conn_stat.num_rec_buf_range[i]= num_rec_buf_range + 1;
       return 0;

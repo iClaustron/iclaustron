@@ -273,7 +273,8 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
 
   sock_buf_page_size= IC_MAX(IC_STD_CACHE_LINE_SIZE,
                              sizeof(IC_SOCK_BUF_PAGE));
-  if (!(ptr= ic_malloc(no_of_pages * (page_size + sock_buf_page_size))))
+  if (!(ptr= ic_malloc(
+	    (size_t)(no_of_pages * (page_size + sock_buf_page_size)))))
     return IC_ERROR_MEM_ALLOC;
   last_sock_buf_page= set_up_pages_in_linked_list(buf,
                                                   ptr,
@@ -315,8 +316,9 @@ ic_create_sock_buf(guint32 page_size,
     return NULL;
   if (!(buf->ic_buf_mutex= g_mutex_new()))
     goto error;
-  if (!(ptr= ic_malloc(page_size * no_of_pages +
-      (no_of_pages * sock_buf_page_size))))
+  if (!(ptr= ic_malloc(
+	  (size_t)(page_size * no_of_pages +
+      (no_of_pages * sock_buf_page_size)))))
     goto error;
   last_sock_buf_page= set_up_pages_in_linked_list(buf,
                                                   ptr,
