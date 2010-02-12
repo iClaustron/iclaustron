@@ -422,7 +422,7 @@ ADD_CUSTOM_COMMAND(
   ARGS -d
        -y ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
        -o ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
-  OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
           ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h)
 
 #Add ic_parser.c to source files
