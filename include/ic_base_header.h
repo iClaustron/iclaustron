@@ -63,14 +63,14 @@ extern guint32 error_inject;
 #define IC_POLL_FLAG POLLRDNORM
 #define IC_POLLFD_STRUCT WSAPOLLFD
 #define ic_poll WSAPoll
-typedef HANDLE IC_FILE_HANDLE;
-typedef int IC_SOCKLEN_TYPE;
+#define IC_FILE_HANDLE HANDLE
+#define IC_SOCKLEN_TYPE int
 #else
 #define IC_POLL_FLAG POLLIN
 #define IC_POLLFD_STRUCT struct pollfd
 #define ic_poll poll
-typedef int IC_FILE_HANDLE;
-typedef socklen_t IC_SOCKLEN_TYPE;
+#define IC_FILE_HANDLE int
+#define IC_SOCKLEN_TYPE socklen_t
 #endif
 
 typedef struct ic_bitmap IC_BITMAP;

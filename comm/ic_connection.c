@@ -305,30 +305,28 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
   return;
 }
 
-static int
+static gboolean
 ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
 {
   struct sockaddr_in *ipv4_addr= (struct sockaddr_in*)sa;
   struct sockaddr_in6 *ipv6_addr= (struct sockaddr_in6*)sa;
   guint32 port;
   gchar port_str[8];
+
+  if (getnameinfo(sa, sa->sa_len,
+                  ip_addr, ip_addr_len-8,
+                  NULL, 0,
+                  NI_NUMERICHOST))
+    return 0;
   if (sa->sa_family == AF_INET)
-  {
-     if (inet_ntop(AF_INET, &ipv4_addr->sin_addr, ip_addr, ip_addr_len-8))
-       return 1;
      port= ntohs(ipv4_addr->sin_port);
-  }
   else if (sa->sa_family == AF_INET6)
-  {
-     if (inet_ntop(AF_INET6, &ipv6_addr->sin6_addr, ip_addr, ip_addr_len-8))
-       return 1;
      port= ntohs(ipv6_addr->sin6_port);
-  }
   else
-    return 1;
+    return 0;
   snprintf(port_str, sizeof(port_str), ":%d", port);
   strcat(ip_addr, port_str);
-  return 0;
+  return 1;
 }
 
 static int
