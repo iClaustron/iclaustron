@@ -181,13 +181,13 @@ get_node_id(IC_PARSE_DATA *parse_data)
   if (parse_data->node_id == IC_MAX_UINT32)
   {
     node_id= apic->api_op.ic_get_node_id_from_name(apic,
-                                                   parse_data->cluster_id,
+                                                   (guint32)parse_data->cluster_id,
                                                    &parse_data->node_name);
   }
   else
-    node_id= parse_data->node_id;
+    node_id= (guint32)parse_data->node_id;
   if (!parse_data->apic->api_op.ic_get_node_object(parse_data->apic,
-                                                   parse_data->cluster_id,
+                                                   (guint32)parse_data->cluster_id,
                                                    node_id))
   {
     report_error(parse_data, no_such_node_str);
@@ -722,7 +722,7 @@ ic_list_cmd(IC_PARSE_DATA *parse_data)
     goto error;
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
-    clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
+    clu_conf= apic->api_op.ic_get_cluster_config(apic, (guint32)cluster_id);
     if (!clu_conf)
       continue;
     cluster_name_ptr= clu_conf->clu_info.cluster_name.str;
@@ -914,53 +914,77 @@ ic_execute(IC_PARSE_DATA *parse_data)
   switch (parse_data->command)
   {
     case IC_DIE_CMD:
-      return ic_die_cmd(parse_data);
+      ic_die_cmd(parse_data);
+	  return;
     case IC_KILL_CMD:
-      return ic_kill_cmd(parse_data);
+      ic_kill_cmd(parse_data);
+	  return;
     case IC_MOVE_CMD:
-      return ic_move_cmd(parse_data);
+      ic_move_cmd(parse_data);
+	  return;
     case IC_PERFORM_BACKUP_CMD:
-      return ic_perform_backup_cmd(parse_data);
+      ic_perform_backup_cmd(parse_data);
+	  return;
     case IC_PERFORM_ROLLING_UPGRADE_CMD:
-      return ic_perform_rolling_upgrade_cmd(parse_data);
+      ic_perform_rolling_upgrade_cmd(parse_data);
+	  return;
     case IC_RESTART_CMD:
-      return ic_restart_cmd(parse_data);
+      ic_restart_cmd(parse_data);
+	  return;
     case IC_START_CMD:
-      return ic_start_cmd(parse_data);
+      ic_start_cmd(parse_data);
+	  return;
     case IC_STOP_CMD:
-      return ic_stop_cmd(parse_data);
+      ic_stop_cmd(parse_data);
+	  return;
     case IC_LIST_CMD:
-      return ic_list_cmd(parse_data);
+      ic_list_cmd(parse_data);
+	  return;
     case IC_LISTEN_CMD:
-      return ic_listen_cmd(parse_data);
+      ic_listen_cmd(parse_data);
+	  return;
     case IC_SHOW_CLUSTER_CMD:
-      return ic_show_cluster_cmd(parse_data);
+      ic_show_cluster_cmd(parse_data);
+	  return;
     case IC_SHOW_CLUSTER_STATUS_CMD:
-      return ic_show_cluster_status_cmd(parse_data);
+      ic_show_cluster_status_cmd(parse_data);
+	  return;
     case IC_SHOW_CONNECTIONS_CMD:
-      return ic_show_connections_cmd(parse_data);
+      ic_show_connections_cmd(parse_data);
+	  return;
     case IC_SHOW_CONFIG_CMD:
-      return ic_show_config_cmd(parse_data);
+      ic_show_config_cmd(parse_data);
+	  return;
     case IC_SHOW_MEMORY_CMD:
-      return ic_show_memory_cmd(parse_data);
+      ic_show_memory_cmd(parse_data);
+	  return;
     case IC_SHOW_STATVARS_CMD:
-      return ic_show_statvars_cmd(parse_data);
+      ic_show_statvars_cmd(parse_data);
+	  return;
     case IC_SHOW_STATS_CMD:
-      return ic_show_stats_cmd(parse_data);
+      ic_show_stats_cmd(parse_data);
+	  return;
     case IC_SET_STAT_LEVEL_CMD:
-      return ic_set_stat_level_cmd(parse_data);
+      ic_set_stat_level_cmd(parse_data);
+	  return;
     case IC_USE_CLUSTER_CMD:
-      return ic_use_cluster_cmd(parse_data);
+      ic_use_cluster_cmd(parse_data);
+	  return;
     case IC_DISPLAY_STATS_CMD:
-      return ic_display_stats_cmd(parse_data);
+      ic_display_stats_cmd(parse_data);
+	  return;
     case IC_TOP_CMD:
-      return ic_top_cmd(parse_data);
+      ic_top_cmd(parse_data);
+	  return;
     case IC_USE_VERSION_NDB_CMD:
-      return ic_use_ndb_version_cmd(parse_data);
+      ic_use_ndb_version_cmd(parse_data);
+	  return;
     case IC_USE_VERSION_ICLAUSTRON_CMD:
-      return ic_use_iclaustron_version_cmd(parse_data);
+      ic_use_iclaustron_version_cmd(parse_data);
+	  return;
     default:
-      return report_error(parse_data, not_impl_string);
+      report_error(parse_data, not_impl_string);
+	  return;
   }
   return;
 }

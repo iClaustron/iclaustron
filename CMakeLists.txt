@@ -99,8 +99,7 @@ if (NOT WIN32)
   endforeach (system_path)
 else (NOT WIN32)
   foreach (system_path
-           "C:\\Program\ Files\\GnuWin32\\bin"
-           "C:\\Program\ Files\ (x86)\\GnuWin32\\bin"
+           "C:\GnuWin32\bin"
            )
     if (NOT BISON_EXECUTABLE)
       find_bison()
@@ -413,7 +412,8 @@ SET(ClusterManagerSource cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c)
 
 if (WIN32)
   ADD_CUSTOM_COMMAND(
-    COMMAND copy ${BISON_PATH}/m4.exe ${CMAKE_CURRENT_BINARY_DIR})
+    COMMAND copy ${BISON_PATH}/m4.exe ${CMAKE_CURRENT_BINARY_DIR}
+    OUTPUT ${BISON_PATH}/m4.exe)
 endif (WIN32)
 
 ADD_CUSTOM_COMMAND(
