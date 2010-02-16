@@ -146,13 +146,13 @@ adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
   num_stats= send_node_conn->num_stats;
   send_node_conn->num_stats= num_stats + 1;
   last_send_timer_index++;
-  if (last_send_timer_index == MAX_SEND_TIMERS)
+  if (last_send_timer_index == IC_MAX_SEND_TIMERS)
   {
     /* Compress array into first 8 entries to free up new entries */
-    for (i= 0; i < MAX_SENDS_TRACKED; i++)
+    for (i= 0; i < IC_MAX_SENDS_TRACKED; i++)
     {
       last_send_timer_index--;
-      new_send_timer_index= last_send_timer_index - MAX_SENDS_TRACKED;
+      new_send_timer_index= last_send_timer_index - IC_MAX_SENDS_TRACKED;
       send_node_conn->last_send_timers[new_send_timer_index]=
         send_node_conn->last_send_timers[last_send_timer_index];
     }
@@ -197,7 +197,7 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
       The mean waiting is within limits even if we increase the number
       of waiters we can accept.
     */
-    if (send_node_conn->max_num_waits < MAX_SENDS_TRACKED)
+    if (send_node_conn->max_num_waits < IC_MAX_SENDS_TRACKED)
       send_node_conn->max_num_waits++;
   }
 }

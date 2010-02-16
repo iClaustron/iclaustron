@@ -171,12 +171,6 @@ struct ic_listen_server_thread
   GList *first_send_node_conn;
 };
 
-#define MAX_SEND_TIMERS 16
-#define MAX_SENDS_TRACKED 8
-#define MAX_SEND_SIZE 65535
-#define MAX_SEND_BUFFERS 16
-#define IC_MEMBUF_SIZE 32768
-
 
 struct ic_receive_node_connection
 {
@@ -309,7 +303,7 @@ struct ic_send_node_connection
   */
   IC_SEND_NODE_CONNECTION *next_heartbeat_node;
   /* Array of timers for the last 16 sends */
-  IC_TIMER last_send_timers[MAX_SEND_TIMERS];
+  IC_TIMER last_send_timers[IC_MAX_SEND_TIMERS];
 };
 
 struct ic_cluster_comm

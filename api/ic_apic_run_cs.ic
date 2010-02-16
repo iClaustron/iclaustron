@@ -13,6 +13,8 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+/* MODULE: Support functions for Cluster Server */
+
 static IC_INFO_CLUSTER_SERVER*
 get_my_cluster_info(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
@@ -706,15 +708,47 @@ send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   return 0;
 }
 
+static int
+verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  IC_INFO_CLUSTER_SERVER *first_info_cs= NULL;
+  IC_INFO_CLUSTER_SERVER *current_info_cs;
+  guint32 i;
+
+  for (i= 0; i < IC_MAX_CLUSTER_SERVERS; i++)
+  {
+    current_info_cs= &run_obj->cs_servers[i];
+    if (!current_info_cs->cs_connect_state)
+      continue;
+    if (!first_info_cs)
+    {
+      first_info_cs= current_info_cs;
+      continue;
+    }
+    if (first_info_cs->master_index_size !=
+        current_info_cs->master_index_size)
+      goto error;
+    if (memcmp(&first_info_cs->master_index_view[0],
+               &current_info_cs->master_index_view[0],
+               sizeof(guint32)*first_info_cs->master_index_size))
+      goto error;
+  }
+  return 0;
+error:
+  return IC_ERROR_MASTER_INDEX_VIEW_DIFFERS;
+}
+
 /* Receive start cluster server reply-message */
 static int
 rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                               IC_CONNECTION *conn)
+                               IC_CONNECTION *conn,
+                               guint32 cs_index)
 {
   int error;
   guint32 i;
   guint64 version_num, pid;
   guint32 node_id, status, index_size;
+  IC_INFO_CLUSTER_SERVER *info_cs;
   guint32 master_node_index[IC_MAX_CLUSTER_SERVERS];
 
   if ((error= ic_rec_simple_str(conn, start_cluster_server_reply_str)) ||
@@ -733,7 +767,38 @@ rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   }
   if ((error= ic_rec_empty_line(conn)))
     return error;
-  return 0;
+  /*
+    We have received a correct protocol message describing a started
+    Cluster Server.
+  */
+  info_cs= &run_obj->cs_servers[cs_index];
+  g_mutex_lock(run_obj->state.protect_state);
+  /* Verify node is using correct node id */
+  if (info_cs->node_id != node_id)
+  {
+    error= IC_ERROR_WRONG_NODE_ID;
+    goto error;
+  }
+  /* Copy master index into this node's view on it */
+  info_cs->master_index_size= index_size;
+  memcpy(&info_cs->master_index_view[0],
+         &master_node_index[0],
+         sizeof(guint32) * index_size);
+
+  /* Note we have a connection to the node */
+  info_cs->cs_connect_state= TRUE;
+
+  if ((error= verify_master_index_view(run_obj)))
+    goto error;
+
+  /* Update status variables */
+  info_cs->pid= (IC_PID_TYPE)pid;
+  info_cs->state= (IC_CONF_STATE_TYPE)status;
+  info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
+  error= 0;
+error:
+  g_mutex_unlock(run_obj->state.protect_state);
+  return error;
 }
 
 typedef struct thread_data
@@ -799,7 +864,9 @@ start_cs_func(gpointer data)
     about the other node's state
   */
   if ((error= send_start_cluster_server_req(run_obj, conn)) ||
-      (error= rec_start_cluster_server_reply(run_obj, conn)))
+      (error= rec_start_cluster_server_reply(run_obj,
+                                             conn,
+                                             cs_index)))
   {
     /* Handle error */
   }

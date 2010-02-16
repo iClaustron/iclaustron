@@ -1026,12 +1026,14 @@ send_msg(IC_INT_CONNECTION *conn,
          guint32 secs_to_try)
 {
   IC_SEND_STATE send_state;
+  struct iovec iovec_array[IC_MAX_SEND_BUFFERS];
   struct msghdr msg_hdr;
   gssize ret_code;
   int error;
   guint32 iovec_index= 0;
   guint32 vec_len;
   guint32 write_len;
+  guint32 i;
 
   send_state.time_measure= NULL;
   send_state.write_size= 0;
@@ -1039,10 +1041,15 @@ send_msg(IC_INT_CONNECTION *conn,
   send_state.secs_to_try= secs_to_try;
 
   ic_zero(&msg_hdr, sizeof(struct msghdr));
+  for (i= 0; i < iovec_size; i++)
+  {
+    iovec_array[i].iov_base= write_vector[i].iov_base;
+    iovec_array[i].iov_len= write_vector[i].iov_len;
+  }
   do
   {
     
-    msg_hdr.msg_iov= &write_vector[iovec_index];
+    msg_hdr.msg_iov= &iovec_array[iovec_index];
     msg_hdr.msg_iovlen= iovec_size - iovec_index;
     ret_code= sendmsg(conn->rw_sockfd,
                       &msg_hdr,
@@ -1055,17 +1062,17 @@ send_msg(IC_INT_CONNECTION *conn,
         /* We need to calculate where to start the next send */
         do
         {
-          vec_len= (guint32)write_vector[iovec_index].iov_len;
+          vec_len= (guint32)iovec_array[iovec_index].iov_len;
           write_len= (guint32)ret_code;
           if (write_len < vec_len)
           {
-            write_vector[iovec_index].iov_len-= write_len;
-            write_vector[iovec_index].iov_base+= write_len;
+            iovec_array[iovec_index].iov_len-= write_len;
+            iovec_array[iovec_index].iov_base+= write_len;
             break;
           }
           else
           {
-            write_len-= write_vector[iovec_index].iov_len;
+            write_len-= iovec_array[iovec_index].iov_len;
             iovec_index++;
           }
         } while (1);

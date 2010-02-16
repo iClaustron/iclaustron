@@ -274,6 +274,9 @@ struct ic_info_cluster_server
   /* Node id of this particular Cluster Server in all clusters in the grid */
   guint32 node_id;
 
+  /* Number of nodes in this index */
+  guint32 master_index_size;
+
   /* This node's view on master indexes */
   guint32 master_index_view[IC_MAX_CLUSTER_SERVERS];
 };

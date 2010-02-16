@@ -109,6 +109,12 @@ struct ic_iovec
 
 typedef struct ic_iovec IC_IOVEC;
 
+#define IC_MAX_SEND_TIMERS 16
+#define IC_MAX_SENDS_TRACKED 8
+#define IC_MAX_SEND_SIZE 65535
+#define IC_MAX_SEND_BUFFERS 16
+#define IC_MEMBUF_SIZE 32768
+
 #define CONFIG_READ_BUF_SIZE 256
 #define IC_MAX_ERROR_STRING_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
