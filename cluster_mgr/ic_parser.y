@@ -15,6 +15,7 @@
 
 %{
 #include <ic_base_header.h>
+#include <ic_port.h>
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_string.h>
@@ -23,6 +24,9 @@
 #include <../cluster_mgr/ic_clmgr_int.h>
 
 int yylex(void *parse_data, void *scanner);
+
+#define YYMALLOC ic_malloc
+#define YYFREE ic_free
 
 %}
 %union{
