@@ -322,11 +322,12 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 num_threads_started= 0;
   THREAD_DATA thread_data;
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
-  gboolean break_flag= FALSE;
+  gboolean break_flag;
   DEBUG_ENTRY("start_connect_other_cluster_servers");
 
   do
   {
+    break_flag= FALSE;
     g_mutex_lock(run_obj->state.protect_state);
     for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
     {
@@ -364,14 +365,16 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       do
       {
         g_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
-        if (run_obj->state.cs_starting ||
-            run_obj->state.cs_started)
+        if (!run_obj->state.cs_started && !run_obj->state.cs_starting)
         {
-          /*
-            Start is ongoing or start already completed, ready to proceed.
-            If start threads failed
-          */
+          /* Start failed, we need to retry */
+          break;
+        }
+        if (run_obj->state.cs_started)
+        {
+          /* Start successful, synchronization done in run part if needed */
           break_flag= TRUE;
+          break;
         }
       } while (1);
       g_mutex_unlock(run_obj->state.protect_state);
@@ -844,6 +847,7 @@ verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_INFO_CLUSTER_SERVER *first_info_cs= NULL;
   IC_INFO_CLUSTER_SERVER *curr_info_cs, *change_info_cs, *keep_info_cs;
   guint32 i;
+  int error;
 
   for (i= 0; i < IC_MAX_CLUSTER_SERVERS; i++)
   {
@@ -890,15 +894,19 @@ verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       goto error;
     }
   }
-  return 0;
+  error= 0;
+  goto end;
 
 change_view:
   memcpy(&change_info_cs->master_index_view[0],
          &keep_info_cs->master_index_view[0],
          sizeof(guint32)*keep_info_cs->master_index_size);
-  return IC_ERROR_CHANGE_VIEW;
+  error= IC_ERROR_CHANGE_VIEW;
+  goto end;
 error:
-  return IC_ERROR_MASTER_INDEX_VIEW_DIFFERS;
+  error= IC_ERROR_MASTER_INDEX_VIEW_DIFFERS;
+end:
+  return error;
 }
 
 static int
@@ -942,9 +950,11 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   }
   *cs_index= found_index;
   info_cs= &run_obj->cs_servers[found_index];
+  g_mutex_lock(run_obj->state.protect_state);
   info_cs->pid= (IC_PID_TYPE)pid;
   info_cs->state= (IC_CONF_STATE_TYPE)status;
   info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
+  g_mutex_unlock(run_obj->state.protect_state);
   return 0;
 }
 
@@ -1048,6 +1058,7 @@ send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 */
 static int
 send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
+                                IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                 IC_CONNECTION *conn,
                                 guint32 *error_line)
 {
@@ -1067,7 +1078,7 @@ send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
                                        my_info_cs->master_index_size)))
   {
     *error_line= __LINE__;
-    return error;
+    goto end;
   }
   for (i= 0; i < my_info_cs->master_index_size; i++)
   {
@@ -1075,14 +1086,27 @@ send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
                                          my_info_cs->master_index_view[i])))
     {
       *error_line= __LINE__;
-      return error;
+      goto end;
     }
   }
   if ((error= ic_send_empty_line(conn)))
   {
     *error_line= __LINE__;
-    return error;
+    goto end;
   }
+end:
+  g_mutex_unlock(run_obj->state.protect_state);
+  return error;
+}
+
+static int
+send_start_cluster_server_ok(IC_CONNECTION *conn)
+{
+  int error;
+
+  if ((error= ic_send_with_cr(conn, start_cluster_server_ok_str)) ||
+      (error= ic_send_empty_line(conn)))
+    return error;
   return 0;
 }
 
@@ -1115,17 +1139,6 @@ get_count_connected_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 }
 
 static int
-send_start_cluster_server_ok(IC_CONNECTION *conn)
-{
-  int error;
-
-  if ((error= ic_send_with_cr(conn, start_cluster_server_ok_str)) ||
-      (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
-}
-
-static int
 handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                       IC_CONNECTION *conn,
                       gboolean is_client,
@@ -1135,12 +1148,14 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   guint32 error_line= 0;
   gboolean found;
   IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
+  gchar *err_msg;
+  gchar buf[IC_MAX_ERROR_STRING_SIZE];
 
   if (!is_client)
   {
     /* Server starts protocol */
     if ((error= send_start_cluster_server_req(run_obj, conn)))
-      return error;
+      goto error;
   }
   else
   {
@@ -1150,31 +1165,37 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                              cs_index,
                                              &error_line)) ||
         (error= send_start_cluster_server_reply(my_info_cs,
+                                                run_obj,
                                                 conn,
                                                 &error_line)))
-      return error;
+    {
+      error_line= __LINE__;
+      goto error;
+    }
     /* Wait for ok or corrected response */
     if ((error= ic_rec_simple_str_opt(conn,
                                       start_cluster_server_ok_str,
                                       &found)))
     {
       error_line= __LINE__;
-      return error;
+      goto error;
     }
     if (found)
     {
+      if ((error= ic_rec_empty_line(conn)))
+      {
+        error_line= __LINE__;
+        goto error;
+      }
       /*
         Copy our master index view to view by other node since he
         accepted our view
       */
+      g_mutex_lock(run_obj->state.protect_state);
       memcpy(&run_obj->cs_servers[*cs_index].master_index_view[0],
              &my_info_cs->master_index_view[0],
              sizeof(guint32)*IC_MAX_CLUSTER_SERVERS);
-      if ((error= ic_rec_empty_line(conn)))
-      {
-        error_line= __LINE__;
-        return error;
-      }
+      g_mutex_unlock(run_obj->state.protect_state);
       return 0;
     }
     /* Not found means we should expect to receive new reply */
@@ -1188,16 +1209,17 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     if (error != IC_ERROR_CHANGE_VIEW || is_client)
     {
       error_line= __LINE__;
-      return error;
+      goto error;
     }
     /* We had a more up-to-date view on master node order */
     if ((error= send_start_cluster_server_reply(my_info_cs,
+                                                run_obj,
                                                 conn,
                                                 &error_line)) ||
         (error= rec_start_cluster_server_ok(conn)))
     {
       error_line= __LINE__;
-      return error;
+      goto error;
     }
   }
   else
@@ -1206,10 +1228,17 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     if ((error= send_start_cluster_server_ok(conn)))
     {
       error_line= __LINE__;
-      return error;
+      goto error;
     }
   }
   return 0;
+error:
+  err_msg= ic_common_fill_error_buffer(NULL,
+                                       error_line,
+                                       error,
+                                       buf);
+  ic_printf("%s\n", err_msg);
+  return error;
 }
 
 static void
@@ -1226,8 +1255,54 @@ release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   conn->conn_op.ic_free_connection(conn);
 }
 
-#define IC_CS_START_TIMEOUT 7
+static void
+set_up_initial_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 min_node_id= 0;
+  guint32 lowest_node_id= IC_MAX_NODE_ID;
+  guint32 index_size= 0;
+  guint32 i, j;
+  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
 
+  /* Sort in lowest node number first */
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    for (j= 0; j < run_obj->num_cluster_servers; j++)
+    {
+       if (run_obj->cs_servers[j].node_id > min_node_id &&
+           run_obj->cs_servers[j].node_id < lowest_node_id &&
+           run_obj->cs_servers[j].conn)
+         lowest_node_id= run_obj->cs_servers[j].node_id;
+    }
+    if (min_node_id != lowest_node_id)
+      index_size++;
+    my_info_cs->master_index_view[i]= lowest_node_id;
+    min_node_id= lowest_node_id;
+  }
+  my_info_cs->master_index_size= index_size;
+}
+
+static void
+check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
+  IC_CONF_VERSION_TYPE config_version_number= my_info_cs->config_version_number;
+  IC_CONF_STATE_TYPE status= my_info_cs->state;
+  guint32 i;
+
+  run_obj->state.cs_started= TRUE;
+  for (i= 1; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].config_version_number !=
+        config_version_number ||
+        run_obj->cs_servers[i].state != status)
+    {
+      /* We haven't started yet, we still need to synchronize configs */
+      return;
+    }
+  }
+  run_obj->state.cs_starting= FALSE;
+}
 static gpointer
 start_cs_func(gpointer data)
 {
@@ -1357,6 +1432,7 @@ start_cs_func(gpointer data)
     g_cond_wait(run_obj->state.connect_cond,
                 run_obj->state.protect_state);
   }
+  set_up_initial_master_index_view(run_obj);
   g_mutex_unlock(run_obj->state.protect_state);
 
   /*
@@ -1380,7 +1456,7 @@ start_cs_func(gpointer data)
   g_mutex_lock(run_obj->state.protect_state);
   do
   {
-    if (!run_obj->state.cs_started && !run_obj->state.cs_starting)
+    if (!run_obj->state.cs_starting)
     {
       /*
         Some other connection failed with start protocol, return and
@@ -1398,8 +1474,7 @@ start_cs_func(gpointer data)
         Startup is completed, we can now set state to started and
         start working as a Cluster Server to others in the Cluster.
       */
-      run_obj->state.cs_started= TRUE;
-      run_obj->state.cs_starting= FALSE;
+      check_if_cs_started(run_obj);
       g_cond_broadcast(run_obj->state.start_cond);
       DEBUG_PRINT(CONFIG_LEVEL, ("Completed startup of Cluster Server"));
       break;
@@ -1418,6 +1493,7 @@ start_cs_func(gpointer data)
     successfully exchanged start-up data. We keep this thread
     until the connection breaks or until we're about to quit.
   */
+  handle_cs_heartbeat(run_obj, cs_index);
 end:
   DEBUG_RETURN(NULL);
 }
@@ -1632,6 +1708,8 @@ free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     g_mutex_free(run_obj->state.protect_state);
   if (run_obj->state.update_cond)
     g_cond_free(run_obj->state.update_cond);
+  if (run_obj->state.connect_cond)
+    g_cond_free(run_obj->state.connect_cond);
   if (run_obj->state.start_cond)
     g_cond_free(run_obj->state.start_cond);
 }
@@ -1662,6 +1740,8 @@ ic_create_run_cluster(IC_STRING *config_dir,
   if (!(run_obj->state.protect_state= g_mutex_new()))
     goto error;
   if (!(run_obj->state.update_cond= g_cond_new()))
+    goto error;
+  if (!(run_obj->state.connect_cond= g_cond_new()))
     goto error;
   if (!(run_obj->state.start_cond= g_cond_new()))
     goto error;
@@ -1957,8 +2037,8 @@ run_cluster_server_thread(gpointer data)
                                             FALSE,
                                             &cs_index)))
             goto error;
-          state= CLUSTER_SERVER_CONNECTION;
-          break;
+          handle_cs_heartbeat(run_obj, cs_index);
+          goto end;
         }
         /* Fall through since get connection parameter is also allowed */
       case GET_CONNECTION_PARAMETER:
@@ -2023,19 +2103,6 @@ run_cluster_server_thread(gpointer data)
           goto error;
         conn= NULL;
         goto break_out;
-      case CLUSTER_SERVER_CONNECTION:
-      /*
-        This connection is now a connection between two cluster servers
-        and can only handle such actions as are permissible between
-        those servers.
-      */
-        if ((error= handle_cluster_server_connection(run_obj,
-                                                     conn,
-                                                     read_buf,
-                                                     read_size,
-                                                     &error_line)))
-          goto error; /* error_line is set up in function */
-        break;   
       default:
         abort();
         break;
