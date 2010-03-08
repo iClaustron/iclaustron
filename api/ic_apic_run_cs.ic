@@ -1498,21 +1498,6 @@ end:
   DEBUG_RETURN(NULL);
 }
 
-static int
-handle_cluster_server_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                                 IC_CONNECTION *conn,
-                                 gchar *read_buf,
-                                 guint32 read_size,
-                                 guint32 *error_line)
-{
-  (void)run_obj;
-  (void)conn;
-  (void)read_buf;
-  (void)read_size;
-  (void)error_line;
-  return 0;
-}
-
 /*
   MODULE: Run Cluster Server
   --------------------------
