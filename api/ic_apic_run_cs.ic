@@ -1,4 +1,4 @@
-/* Copyright (C) 2009 iClaustron AB
+/* Copyright (C) 2009-2010 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -21,12 +21,6 @@ get_my_cluster_info(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   return &run_obj->cs_servers[0];
 }
 
-static IC_INFO_CLUSTER_SERVER*
-get_master_cluster_info(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  return &run_obj->cs_servers[run_obj->state.master_cs_index];
-}
-
 static guint32
 get_master_node_id(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
@@ -37,20 +31,6 @@ static gboolean
 is_cs_master(IC_RUN_CLUSTER_STATE *rc_state)
 {
   return (rc_state->my_cs_index == rc_state->master_cs_index);
-}
-
-static guint32
-count_cs_start_replied(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  guint32 num_replies= 1; /* We have replied to ourself */
-  guint32 i;
-
-  for (i= 1; i < run_obj->num_cluster_servers; i++)
-  {
-    if (run_obj->cs_servers[i].start_state == IC_START_REPLY)
-      num_replies++;
-  }
-  return num_replies;
 }
 
 /*
@@ -215,6 +195,24 @@ get_any_cluster_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   }
   g_assert(clu_conf);
   return clu_conf;
+}
+
+static int
+find_cs_index(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+              guint32 node_id,
+              guint32 *index)
+{
+  guint32 i;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].node_id == node_id)
+    {
+      *index= i;
+      return 0;
+    }
+  }
+  return IC_PROTOCOL_ERROR;
 }
 
 static void
@@ -605,8 +603,13 @@ error:
 /*
   Protocol between Cluster Servers to start up.
 
-  Starting Cluster Server sends to all Cluster Servers which accepts
-  connection set-up the following message.
+  The first step is to connect to all Cluster Servers. We will wait until
+  at least a quorum of Cluster Servers have connected before proceeding
+  with the start of the Cluster Server.
+
+  When a quorum of cluster servers have started up we will start the
+  Cluster Server start protocol. Whoever of the two nodes which became
+  server part in the setup will start by sending:
 
   start cluster server<CR>
   nodeid: node_number<CR>
@@ -614,6 +617,34 @@ error:
   status: status_code<CR>
   pid: pid_number<CR>
   <CR>
+
+  In response to this message the receiving node sends:
+
+  start cluster server reply<CR>
+  nodeid: node_number<CR>
+  version: version_number<CR>
+  pid: pid_number<CR>
+  master index size: size_number<CR>
+  nodeid: node_number_of_master<CR>
+  nodeid: first_slave_node_number<CR>
+  nodeid: second_slave_node_number<CR>
+  nodeid: third_slave_node_number<CR>
+  <CR>
+
+  If the node accepts the list of master information it sends:
+  
+  start cluster server ok<CR>
+  <CR>
+
+  Otherwise it sends the list which it think is the proper list of master
+  nodes. They can differ if the node which became the server part was
+  starting whereas the other node was already started and a running
+  Cluster Server. This message is the same "start cluster server reply"
+  message as above with a new nodeid list. In response to the the same
+  "start cluster server ok" message is sent.
+
+  At this point the starting node has information about its own need of
+  synchronisation with another Cluster Server.
 
   The starting cluster server waits for replies from other Cluster Servers,
   it also waits for similar messages from other starting Cluster Servers.
@@ -794,27 +825,6 @@ error:
   disable the ability to update the configuration.
 */
 
-/* Send start cluster server-message */
-static int
-send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                              IC_CONNECTION *conn)
-{
-  int error;
-  IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
-
-  if ((error= ic_send_with_cr(conn, start_cluster_server_str)) ||
-      (error= ic_send_with_cr_with_num(conn, nodeid_str,
-                                       (guint64)run_obj->cs_nodeid)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_version_str,
-                                   info_cs->config_version_number)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_status_str,
-                                  (guint64)info_cs->state)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_pid_str,
-                                  (guint64)info_cs->pid)))
-    return error;
-  return 0;
-}
-
 static gboolean
 is_view_from_starting_node(IC_INFO_CLUSTER_SERVER *info_cs)
 {
@@ -886,7 +896,7 @@ change_view:
   memcpy(&change_info_cs->master_index_view[0],
          &keep_info_cs->master_index_view[0],
          sizeof(guint32)*keep_info_cs->master_index_size);
-  return 0;
+  return IC_ERROR_CHANGE_VIEW;
 error:
   return IC_ERROR_MASTER_INDEX_VIEW_DIFFERS;
 }
@@ -900,68 +910,47 @@ handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj, guint32 cs_index)
 }
 
 static int
-check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                    IC_THREAD_STATE *thread_state,
-                    guint32 cs_index)
+rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                             IC_CONNECTION *conn,
+                             guint32 *cs_index,
+                             guint32 *error_line)
 {
-  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
-  guint32 num_cluster_servers= run_obj->num_cluster_servers;
-  guint32 num_started;
-  gboolean quorum_started= FALSE;
-  guint32 i;
+  guint32 node_id, status;
+  guint64 pid, version_num;
   int error;
-  GTimeVal stop_timer;
+  guint32 found_index;
+  IC_INFO_CLUSTER_SERVER *info_cs;
 
-  do
+  if ((error= ic_rec_number(conn, nodeid_str, &node_id)) ||
+      (error= ic_rec_long_number(conn, ic_version_str, &version_num)) ||
+      (error= ic_rec_number(conn, ic_status_str, &status)) ||
+      (error= ic_rec_long_number(conn, ic_pid_str, &pid)))
   {
-    num_started= 0;
-    for (i= 0; i < num_cluster_servers; i++)
-    {
-      if (run_obj->cs_servers[i].cs_connect_state)
-        num_started++;
-    }
-    if (num_cluster_servers == num_started)
-    {
-      /* All nodes responded, we'll start */
-      break;
-    }
-    if ((num_cluster_servers == 3 && num_started == 2) ||
-        (num_cluster_servers == 4 && num_started == 3))
-    {
-       if (quorum_started)
-       {
-         /*
-           We waited an additional 3 seconds before starting using a
-           quorum and not all the nodes. We'll start.
-         */
-         break;
-       }
-       quorum_started= TRUE;
-       /*
-         We'll wait for the last node to start as well for a short while
-         before we decide to start with a quorum.
-       */
-    }
-    /*
-      Wait for 1 seconds before checking again or until signal that enough
-      Cluster Servers have been started. Before waiting we'll handle a
-      heartbeat round.
-    */
-    if ((error= handle_cs_heartbeat(run_obj, cs_index)))
-      return error;
-    g_get_current_time(&stop_timer);
-    g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
-    g_cond_timed_wait(run_obj->state.start_cond, run_obj->state.protect_state,
-                      &stop_timer);
-  } while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state));
-  g_cond_broadcast(run_obj->state.start_cond);
+    *error_line= __LINE__; 
+    return error;
+  }
+  if ((error= find_cs_index(run_obj, node_id, &found_index)))
+  {
+    *error_line= __LINE__; 
+    return error;
+  }
+  if (*cs_index != IC_MAX_CLUSTER_SERVERS &&
+      *cs_index != found_index)
+  {
+    *error_line= __LINE__; 
+    return IC_PROTOCOL_ERROR;
+  }
+  *cs_index= found_index;
+  info_cs= &run_obj->cs_servers[found_index];
+  info_cs->pid= (IC_PID_TYPE)pid;
+  info_cs->state= (IC_CONF_STATE_TYPE)status;
+  info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
   return 0;
 }
 
 /* Receive start cluster server reply-message */
 static int
 rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                               IC_THREAD_STATE *thread_state,
                                IC_CONNECTION *conn,
                                guint32 cs_index)
 {
@@ -1016,11 +1005,85 @@ rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   info_cs->pid= (IC_PID_TYPE)pid;
   info_cs->state= (IC_CONF_STATE_TYPE)status;
   info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
-  check_if_cs_started(run_obj, thread_state, cs_index);
   error= 0;
 error:
   g_mutex_unlock(run_obj->state.protect_state);
   return error;
+}
+
+static int
+rec_start_cluster_server_ok(IC_CONNECTION *conn)
+{
+  int error;
+
+  if ((error= ic_rec_simple_str(conn, start_cluster_server_ok_str)) ||
+      (error= ic_rec_empty_line(conn)))
+    return error;
+  return 0;
+}
+/* Send start cluster server-message */
+static int
+send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                              IC_CONNECTION *conn)
+{
+  int error;
+  IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
+
+  if ((error= ic_send_with_cr(conn, start_cluster_server_str)) ||
+      (error= ic_send_with_cr_with_num(conn, nodeid_str,
+                                       (guint64)run_obj->cs_nodeid)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_version_str,
+                                   info_cs->config_version_number)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_status_str,
+                                  (guint64)info_cs->state)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_pid_str,
+                                  (guint64)info_cs->pid)))
+    return error;
+  return 0;
+}
+
+/*
+  Code executed on behalf of starting Cluster Servers in already started
+  Cluster Servers.
+*/
+static int
+send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
+                                IC_CONNECTION *conn,
+                                guint32 *error_line)
+{
+  int error;
+  guint32 i;
+
+  if ((error= ic_send_with_cr(conn, start_cluster_server_reply_str)) ||
+      (error= ic_send_with_cr_with_num(conn, nodeid_str,
+                                       my_info_cs->node_id)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_version_str,
+                                       my_info_cs->config_version_number)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_status_str,
+                                       my_info_cs->state)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_pid_str,
+                                       my_info_cs->pid)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_master_index_size_str,
+                                       my_info_cs->master_index_size)))
+  {
+    *error_line= __LINE__;
+    return error;
+  }
+  for (i= 0; i < my_info_cs->master_index_size; i++)
+  {
+    if ((error= ic_send_with_cr_with_num(conn, nodeid_str,
+                                         my_info_cs->master_index_view[i])))
+    {
+      *error_line= __LINE__;
+      return error;
+    }
+  }
+  if ((error= ic_send_empty_line(conn)))
+  {
+    *error_line= __LINE__;
+    return error;
+  }
+  return 0;
 }
 
 static guint32
@@ -1052,18 +1115,100 @@ get_count_connected_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 }
 
 static int
-handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                      IC_CONNECTION *conn,
-                      IC_THREAD_STATE *thread_state,
-                      guint32 cs_index)
+send_start_cluster_server_ok(IC_CONNECTION *conn)
 {
   int error;
-  if ((error= send_start_cluster_server_req(run_obj, conn)) ||
-      (error= rec_start_cluster_server_reply(run_obj,
-                                             thread_state,
-                                             conn,
-                                             cs_index)))
+
+  if ((error= ic_send_with_cr(conn, start_cluster_server_ok_str)) ||
+      (error= ic_send_empty_line(conn)))
     return error;
+  return 0;
+}
+
+static int
+handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                      IC_CONNECTION *conn,
+                      gboolean is_client,
+                      guint32 *cs_index)
+{
+  int error;
+  guint32 error_line= 0;
+  gboolean found;
+  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
+
+  if (!is_client)
+  {
+    /* Server starts protocol */
+    if ((error= send_start_cluster_server_req(run_obj, conn)))
+      return error;
+  }
+  else
+  {
+    /* Client waits for start request and sends response */
+    if ((error= rec_start_cluster_server_req(run_obj,
+                                             conn,
+                                             cs_index,
+                                             &error_line)) ||
+        (error= send_start_cluster_server_reply(my_info_cs,
+                                                conn,
+                                                &error_line)))
+      return error;
+    /* Wait for ok or corrected response */
+    if ((error= ic_rec_simple_str_opt(conn,
+                                      start_cluster_server_ok_str,
+                                      &found)))
+    {
+      error_line= __LINE__;
+      return error;
+    }
+    if (found)
+    {
+      /*
+        Copy our master index view to view by other node since he
+        accepted our view
+      */
+      memcpy(&run_obj->cs_servers[*cs_index].master_index_view[0],
+             &my_info_cs->master_index_view[0],
+             sizeof(guint32)*IC_MAX_CLUSTER_SERVERS);
+      if ((error= ic_rec_empty_line(conn)))
+      {
+        error_line= __LINE__;
+        return error;
+      }
+      return 0;
+    }
+    /* Not found means we should expect to receive new reply */
+  }
+
+  /* Receive reply from other Cluster Server */
+  if ((error= rec_start_cluster_server_reply(run_obj,
+                                             conn,
+                                             *cs_index)))
+  {
+    if (error != IC_ERROR_CHANGE_VIEW || is_client)
+    {
+      error_line= __LINE__;
+      return error;
+    }
+    /* We had a more up-to-date view on master node order */
+    if ((error= send_start_cluster_server_reply(my_info_cs,
+                                                conn,
+                                                &error_line)) ||
+        (error= rec_start_cluster_server_ok(conn)))
+    {
+      error_line= __LINE__;
+      return error;
+    }
+  }
+  else
+  {
+    /* Send ok */
+    if ((error= send_start_cluster_server_ok(conn)))
+    {
+      error_line= __LINE__;
+      return error;
+    }
+  }
   return 0;
 }
 
@@ -1095,28 +1240,28 @@ start_cs_func(gpointer data)
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   IC_CONNECTION *conn;
-  guint32 i, active_start_threads;
+  guint32 active_start_threads;
   int error;
   gchar *err_str;
   GTimeVal stop_timer;
+  gboolean is_client= FALSE;
   DEBUG_ENTRY("start_cs_func");
 
   (void)rc_state;
   tp_state->ts_ops.ic_thread_started(thread_state);
 
-  for (i= 0; i < IC_CS_START_TIMEOUT; i++)
+  while (1)
   {
     err_str= NULL;
     if (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
       goto end;
-    if (get_count_connected_cluster_servers(run_obj) > 0)
-      i= 0; /* No timeout when one node have connected */
+    is_client= TRUE;
     if (!(error= connect_cluster_server(apic,
                                         &conn,
                                         cs_index,
                                         &cs_index,
                                         (guint32)1,
-                                        TRUE,
+                                        is_client,
                                         &err_str)))
     {
       DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
@@ -1127,12 +1272,13 @@ start_cs_func(gpointer data)
       Another attempt to connect failed, check if the other node
       connected to us.
     */
+    is_client= FALSE;
     if (!(error= connect_cluster_server(apic,
                                         &conn,
                                         cs_index,
                                         &cs_index,
                                         (guint32)1,
-                                        FALSE,
+                                        is_client,
                                         &err_str)))
     {
       DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
@@ -1153,63 +1299,6 @@ start_cs_func(gpointer data)
       DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, others starting",
                   cs_index));
       return NULL;
-    }
-    if (i > (IC_CS_START_TIMEOUT / 2))
-    {
-      g_mutex_lock(run_obj->state.protect_state);
-      if (get_count_connected_cluster_servers(run_obj) == 0)
-      {
-        run_obj->state.start_threads_stopped++;
-        if (run_obj->state.start_threads_stopped ==
-            run_obj->num_cluster_servers)
-        {
-          /*
-             No cluster server have connected, we will take on the master
-             role and start the cluster server in a state waiting for
-             other cluster servers to connect.
-          */
-          run_obj->state.master_cs_index= 0;
-          run_obj->state.cs_starting= TRUE;
-          run_obj->cs_servers[0].pid= ic_get_own_pid();
-          run_obj->cs_servers[0].node_id= run_obj->cs_nodeid;
-          run_obj->cs_servers[0].master_index= 0;
-          run_obj->cs_servers[0].master_index_size= 1;
-          run_obj->cs_servers[0].master_index_view[0]= run_obj->cs_nodeid;
-          g_cond_broadcast(run_obj->state.connect_cond);
-          DEBUG_PRINT(CONFIG_LEVEL, ("We become master, not yet started"));
-        }
-        else
-        {
-          g_cond_wait(run_obj->state.connect_cond,
-                      run_obj->state.protect_state);
-          if (get_count_connected_cluster_servers(run_obj) > 0)
-          {
-            /*
-              At least one Cluster Server connected, we can't become master,
-              we will wait for Cluster Servers to connect for a while more.
-            */
-            g_mutex_unlock(run_obj->state.protect_state);
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("Wait for more connect for index %u, at least one is connected",
-               cs_index));
-            continue;
-          }
-          else
-          {
-            DEBUG_PRINT(CONFIG_LEVEL,
-              ("We become master, other thread handled it"));
-          }
-        }
-        g_mutex_unlock(run_obj->state.protect_state);
-        /*
-          We can now return since there is no connections to handle anymore.
-          Connections from new starting cluster servers will be handled by
-          the normal Cluster Server code to handle new connections.
-          Returning here means the thread will complete.
-        */
-        return NULL;
-      }
-      g_mutex_unlock(run_obj->state.protect_state);
     }
   }
   /* Inform the other cluster server of our intentions */
@@ -1279,12 +1368,12 @@ start_cs_func(gpointer data)
   */
   if ((error= handle_start_protocol(run_obj,
                                     conn,
-                                    thread_state,
-                                    cs_index)))
+                                    is_client,
+                                    &cs_index)))
   {
     /* Release connection, return and ensure we make another retry */
-    g_mutex_lock(run_obj->state.protect_state);
     DEBUG_PRINT(CONFIG_LEVEL, ("This thread failed with start protocol"));
+    g_mutex_lock(run_obj->state.protect_state);
     release_cs_connection(run_obj, conn, cs_index);
     return NULL;
   }
@@ -1331,75 +1420,6 @@ start_cs_func(gpointer data)
   */
 end:
   DEBUG_RETURN(NULL);
-}
-
-/*
-  Code executed on behalf of starting Cluster Servers in already started
-  Cluster Servers.
-*/
-static int
-send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
-                                IC_CONNECTION *conn,
-                                guint32 *error_line)
-{
-  int error;
-  guint32 i;
-
-  if ((error= ic_send_with_cr(conn, start_cluster_server_reply_str)) ||
-      (error= ic_send_with_cr_with_num(conn, nodeid_str,
-                                       my_info_cs->node_id)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_version_str,
-                                       my_info_cs->config_version_number)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_status_str,
-                                       my_info_cs->state)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_pid_str,
-                                       my_info_cs->pid)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_master_index_size_str,
-                                       my_info_cs->master_index_size)))
-  {
-    *error_line= __LINE__;
-    return error;
-  }
-  for (i= 0; i < my_info_cs->master_index_size; i++)
-  {
-    if ((error= ic_send_with_cr_with_num(conn, nodeid_str,
-                                         my_info_cs->master_index_view[i])))
-    {
-      *error_line= __LINE__;
-      return error;
-    }
-  }
-  if ((error= ic_send_empty_line(conn)))
-  {
-    *error_line= __LINE__;
-    return error;
-  }
-  return 0;
-}
-
-static int
-handle_start_cluster_server(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                            IC_CONNECTION *conn,
-                            guint32 *error_line)
-{
-  guint32 node_id, status;
-  guint64 pid, version_num;
-  int error;
-  IC_INFO_CLUSTER_SERVER *my_info_cs;
-
-  if ((error= ic_rec_number(conn, nodeid_str, &node_id)) ||
-      (error= ic_rec_long_number(conn, ic_version_str, &version_num)) ||
-      (error= ic_rec_number(conn, ic_status_str, &status)) ||
-      (error= ic_rec_long_number(conn, ic_pid_str, &pid)))
-  {
-    *error_line= __LINE__; 
-    return error;
-  }
-  /* We received a successful start message from another Cluster Server */
-  my_info_cs= get_my_cluster_info(run_obj);
-  if ((error= send_start_cluster_server_reply(my_info_cs, conn, error_line)))
-    return error;
-  return 0;
 }
 
 static int
@@ -1864,6 +1884,7 @@ run_cluster_server_thread(gpointer data)
     rcs_tp->ts_ops.ic_thread_get_object(thread_state);
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   int error;
+  guint32 cs_index;
   guint32 error_line= 0;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
@@ -1930,9 +1951,11 @@ run_cluster_server_thread(gpointer data)
                           start_cluster_server_str,
                           strlen(start_cluster_server_str)))
         {
-          if ((error= handle_start_cluster_server(run_obj,
-                                                  conn,
-                                                  &error_line)))
+          cs_index= IC_MAX_CLUSTER_SERVERS;
+          if ((error= handle_start_protocol(run_obj,
+                                            conn,
+                                            FALSE,
+                                            &cs_index)))
             goto error;
           state= CLUSTER_SERVER_CONNECTION;
           break;

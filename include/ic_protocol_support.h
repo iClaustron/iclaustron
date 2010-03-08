@@ -49,6 +49,9 @@ int ic_check_buf_with_string(gchar *read_buf, guint32 read_size,
                              const gchar *str, int str_len,
                              IC_STRING **string);
 int ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str);
+int ic_rec_simple_str_opt(IC_CONNECTION *conn,
+                          const gchar *str,
+                          gboolean *found);
 int ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str,
                   gchar *read_str);
 int ic_rec_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);

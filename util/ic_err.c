@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2009 iClaustron AB
+/* Copyright (C) 2007-2010 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7081
+#define IC_LAST_ERROR 7082
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -218,8 +218,8 @@ ic_init_error_messages()
     "No such error";
   ic_error_str[IC_ERROR_MASTER_INDEX_VIEW_DIFFERS - IC_FIRST_ERROR]=
     "Cluster Servers have different views on master index";
-  ic_error_str[IC_ERROR_WRONG_NODE_ID - IC_FIRST_ERROR]=
-    "Wrong node id sent from Cluster Server";
+  ic_error_str[IC_ERROR_CHANGE_VIEW - IC_FIRST_ERROR]=
+    "Cluster Server changed view on master node order";
 }
 
 void

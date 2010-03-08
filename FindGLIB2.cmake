@@ -9,7 +9,7 @@
 #  Copyright (c) 2006 Andreas Schneider <mail@cynapses.org>
 #  Copyright (c) 2006 Philippe Bernery <philippe.bernery@gmail.com>
 #  Copyright (c) 2007 Daniel Gollub <dgollub@suse.de>
-#  Copyright (c) 2008 Mikael Ronstrom <mikael.ronstrom@gmail.com>
+#  Copyright (c) 2008-2010 Mikael Ronstrom <mikael.ronstrom@gmail.com>
 #   Updated to use FindPkgConfig and fit it for iClaustron needs
 #
 #  Redistribution and use is allowed according to the terms of the New

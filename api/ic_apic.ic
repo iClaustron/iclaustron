@@ -1,4 +1,4 @@
-/* Copyight (C) 2007-2009 iClaustron AB
+/* Copyight (C) 2007-2010 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -574,6 +574,8 @@ static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 static const gchar *start_cluster_server_str= "start cluster server";
 static const gchar *start_cluster_server_reply_str=
   "start cluster server reply";
+static const gchar *start_cluster_server_ok_str=
+  "start cluster server ok";
 const gchar *ic_ok_str= "Ok";
 const gchar *ic_version_str= "version: ";
 const gchar *ic_grid_str= "grid: ";

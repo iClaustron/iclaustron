@@ -1,4 +1,4 @@
-/* Copyight (C) 2009 iClaustron AB
+/* Copyight (C) 2009-2010 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -131,8 +131,10 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
   DEBUG_RETURN(error);
 }
 
-int
-ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
+static int
+ic_rec_simple_str_impl(IC_CONNECTION *conn,
+                       const gchar *str,
+                       gboolean *optional_and_found)
 {
   gchar *read_buf;
   guint32 read_size;
@@ -143,13 +145,37 @@ ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
     if (ic_check_buf(read_buf, read_size, str,
                      strlen(str)))
     {
-      DEBUG_PRINT(CONFIG_LEVEL,
-        ("Protocol error in waiting for %s", str));
-      DEBUG_RETURN(IC_PROTOCOL_ERROR);
+      if (!(*optional_and_found))
+      {
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Protocol error in waiting for %s", str));
+        DEBUG_RETURN(IC_PROTOCOL_ERROR);
+      }
+      ic_step_back_rec_with_cr(conn, read_size);
+      *optional_and_found= FALSE;
     }
+    else
+      *optional_and_found= TRUE;
     DEBUG_RETURN(0);
   }
+  *optional_and_found= FALSE;
   DEBUG_RETURN(error);
+}
+
+int
+ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
+{
+  gboolean optional= FALSE;
+  return ic_rec_simple_str_impl(conn, str, &optional);
+}
+
+int
+ic_rec_simple_str_opt(IC_CONNECTION *conn,
+                      const gchar *str,
+                      gboolean *found)
+{
+  *found= TRUE;
+  return ic_rec_simple_str_impl(conn, str, found);
 }
 
 /*
