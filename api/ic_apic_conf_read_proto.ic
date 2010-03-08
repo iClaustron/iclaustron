@@ -93,7 +93,8 @@ static int rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
 static int set_up_cluster_server_connection(IC_CONNECTION **conn,
                                             gchar *server_name,
                                             gchar *server_port,
-                                            gchar **err_str);
+                                            gchar **err_str,
+                                            gboolean is_client);
 static guint64 get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server);
 static guint32 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos);
 
@@ -143,7 +144,8 @@ get_dynamic_port_number(IC_API_CONFIG_SERVER *ext_apic,
                                         apic->cluster_conn.num_cluster_servers,
                                         &dummy,
                                         (guint32)5,
-                                       &err_str)))
+                                        TRUE,
+                                        &err_str)))
     {
       if (!((error= ic_send_with_cr(conn, get_connection_parameter_str)) ||
             (error= ic_send_cluster_id(conn, cluster_id, apic->use_ic_cs)) ||
@@ -209,6 +211,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
                                      apic->cluster_conn.num_cluster_servers,
                                      &used_cluster_server_id,
                                      cs_timeout,
+                                     TRUE,
                                      &apic->err_str)))
   {
     DEBUG_RETURN(error);
@@ -274,6 +277,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
                                                  used_cluster_server_id,
                                                  &used_cluster_server_id,
                                                  cs_timeout,
+                                                 TRUE,
                                                  &apic->err_str)))
       goto error;
 
@@ -812,6 +816,7 @@ connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
                        guint32 cluster_server_id,
                        guint32 *used_cluster_server_id,
                        guint32 cs_timeout,
+                       gboolean is_client,
                        gchar **err_str)
 {
   int error= 1;
@@ -836,7 +841,8 @@ connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
       if (!(error= set_up_cluster_server_connection(conn_ptr,
                     apic->cluster_conn.cluster_server_ips[i],
                     apic->cluster_conn.cluster_server_ports[i],
-                    err_str)))
+                    err_str,
+                    is_client)))
       {
         *used_cluster_server_id= i;
         return 0;
@@ -864,22 +870,30 @@ static int
 set_up_cluster_server_connection(IC_CONNECTION **conn,
                                  gchar *server_name,
                                  gchar *server_port,
-                                 gchar **err_str)
+                                 gchar **err_str,
+                                 gboolean is_client)
 {
   int error;
   IC_CONNECTION *loc_conn;
 
-  if (!(loc_conn= ic_create_socket_object(TRUE, FALSE, FALSE,
+  if (!(loc_conn= ic_create_socket_object(is_client, FALSE, FALSE,
                                        CONFIG_READ_BUF_SIZE,
                                        NULL, NULL)))
     return IC_ERROR_MEM_ALLOC;
-  loc_conn->conn_op.ic_prepare_server_connection(loc_conn,
-                                                 server_name,
-                                                 server_port,
-                                                 NULL,
-                                                 NULL,
-                                                 0,
-                                                 FALSE);
+  if (is_client)
+    loc_conn->conn_op.ic_prepare_client_connection(loc_conn,
+                                                   server_name,
+                                                   server_port,
+                                                   NULL,
+                                                   NULL);
+  else
+    loc_conn->conn_op.ic_prepare_server_connection(loc_conn,
+                                                   server_name,
+                                                   server_port,
+                                                   NULL,
+                                                   NULL,
+                                                   0,
+                                                   FALSE);
 
   if ((error= loc_conn->conn_op.ic_set_up_connection(loc_conn,
                                                      cs_timeout_func,

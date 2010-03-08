@@ -324,34 +324,63 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 num_threads_started= 0;
   THREAD_DATA thread_data;
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
+  gboolean break_flag= FALSE;
   DEBUG_ENTRY("start_connect_other_cluster_servers");
 
-  for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+  do
   {
-    if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid)
-      continue;
-    num_threads_started++;
-    thread_data.run_obj= run_obj;
-    thread_data.cs_index= i;
-    if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
+    g_mutex_lock(run_obj->state.protect_state);
+    for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+    {
+      if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid)
+        continue;
+      num_threads_started++;
+      thread_data.run_obj= run_obj;
+      thread_data.cs_index= i;
+      run_obj->cs_servers[i].is_start_thread_active= TRUE;
+      if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
                                              tp_state,
                                              &thread_id,
                                              start_cs_func,
                                              &thread_data,
                                              IC_MEDIUM_STACK_SIZE,
                                              TRUE)))
-      goto error;
+        goto error;
     
-  }
-  if (num_threads_started == 0)
-  {
-    /*
-      Startup is completed, we're the only Cluster Server, record state
-      and proceed.
-    */
-    run_obj->state.master_cs_index= 0;
-    run_obj->state.cs_started= TRUE;
-  }
+    }
+    g_mutex_unlock(run_obj->state.protect_state);
+    if (num_threads_started == 0)
+    {
+      /*
+        Startup is completed, we're the only Cluster Server, record state
+        and proceed.
+      */
+      run_obj->state.master_cs_index= 0;
+      run_obj->state.cs_started= TRUE;
+      break;
+    }
+    else
+    {
+      g_mutex_lock(run_obj->state.protect_state);
+      /* Wait until start threads have completed startup phase */
+      do
+      {
+        g_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
+        if (run_obj->state.cs_starting ||
+            run_obj->state.cs_started)
+        {
+          /*
+            Start is ongoing or start already completed, ready to proceed.
+            If start threads failed
+          */
+          break_flag= TRUE;
+        }
+      } while (1);
+      g_mutex_unlock(run_obj->state.protect_state);
+      if (break_flag)
+        break;
+    }
+  } while (1);
   DEBUG_RETURN(0);
 error:
   DEBUG_RETURN(error);
@@ -786,39 +815,153 @@ send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   return 0;
 }
 
+static gboolean
+is_view_from_starting_node(IC_INFO_CLUSTER_SERVER *info_cs)
+{
+  guint32 i;
+  
+  for (i= 1; i < info_cs->master_index_size; i++)
+  {
+    if (info_cs->master_index_view[i] < info_cs->master_index_view[i-1])
+      return FALSE;
+  }
+  return TRUE;
+}
+
 static int
 verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   IC_INFO_CLUSTER_SERVER *first_info_cs= NULL;
-  IC_INFO_CLUSTER_SERVER *current_info_cs;
+  IC_INFO_CLUSTER_SERVER *curr_info_cs, *change_info_cs, *keep_info_cs;
   guint32 i;
 
   for (i= 0; i < IC_MAX_CLUSTER_SERVERS; i++)
   {
-    current_info_cs= &run_obj->cs_servers[i];
-    if (!current_info_cs->cs_connect_state)
+    curr_info_cs= &run_obj->cs_servers[i];
+    if (!curr_info_cs->cs_connect_state)
       continue;
     if (!first_info_cs)
     {
-      first_info_cs= current_info_cs;
+      first_info_cs= curr_info_cs;
       continue;
     }
     if (first_info_cs->master_index_size !=
-        current_info_cs->master_index_size)
+        curr_info_cs->master_index_size)
       goto error;
     if (memcmp(&first_info_cs->master_index_view[0],
-               &current_info_cs->master_index_view[0],
+               &curr_info_cs->master_index_view[0],
                sizeof(guint32)*first_info_cs->master_index_size))
+    {
+      /*
+        Differing views on master index view can happen when one node
+        is already a master node and the others aren't aware of this
+        yet.
+      */
+      if (is_view_from_starting_node(first_info_cs))
+      {
+        if (is_view_from_starting_node(curr_info_cs))
+          goto error;
+        change_info_cs= first_info_cs;
+        keep_info_cs= curr_info_cs;
+        if (curr_info_cs->master_index_view[0] ==
+            curr_info_cs->node_id)
+          goto change_view;
+      }
+      else
+      {
+        if (!is_view_from_starting_node(curr_info_cs))
+          goto error;
+        change_info_cs= curr_info_cs;
+        keep_info_cs= first_info_cs;
+        if (first_info_cs->master_index_view[0] ==
+            first_info_cs->node_id)
+          goto change_view;
+      }
       goto error;
+    }
   }
+  return 0;
+
+change_view:
+  memcpy(&change_info_cs->master_index_view[0],
+         &keep_info_cs->master_index_view[0],
+         sizeof(guint32)*keep_info_cs->master_index_size);
   return 0;
 error:
   return IC_ERROR_MASTER_INDEX_VIEW_DIFFERS;
 }
 
+static int
+handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj, guint32 cs_index)
+{
+  (void)run_obj;
+  (void)cs_index;
+  return 0;
+}
+
+static int
+check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                    IC_THREAD_STATE *thread_state,
+                    guint32 cs_index)
+{
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+  guint32 num_cluster_servers= run_obj->num_cluster_servers;
+  guint32 num_started;
+  gboolean quorum_started= FALSE;
+  guint32 i;
+  int error;
+  GTimeVal stop_timer;
+
+  do
+  {
+    num_started= 0;
+    for (i= 0; i < num_cluster_servers; i++)
+    {
+      if (run_obj->cs_servers[i].cs_connect_state)
+        num_started++;
+    }
+    if (num_cluster_servers == num_started)
+    {
+      /* All nodes responded, we'll start */
+      break;
+    }
+    if ((num_cluster_servers == 3 && num_started == 2) ||
+        (num_cluster_servers == 4 && num_started == 3))
+    {
+       if (quorum_started)
+       {
+         /*
+           We waited an additional 3 seconds before starting using a
+           quorum and not all the nodes. We'll start.
+         */
+         break;
+       }
+       quorum_started= TRUE;
+       /*
+         We'll wait for the last node to start as well for a short while
+         before we decide to start with a quorum.
+       */
+    }
+    /*
+      Wait for 1 seconds before checking again or until signal that enough
+      Cluster Servers have been started. Before waiting we'll handle a
+      heartbeat round.
+    */
+    if ((error= handle_cs_heartbeat(run_obj, cs_index)))
+      return error;
+    g_get_current_time(&stop_timer);
+    g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
+    g_cond_timed_wait(run_obj->state.start_cond, run_obj->state.protect_state,
+                      &stop_timer);
+  } while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state));
+  g_cond_broadcast(run_obj->state.start_cond);
+  return 0;
+}
+
 /* Receive start cluster server reply-message */
 static int
 rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                               IC_THREAD_STATE *thread_state,
                                IC_CONNECTION *conn,
                                guint32 cs_index)
 {
@@ -873,10 +1016,69 @@ rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   info_cs->pid= (IC_PID_TYPE)pid;
   info_cs->state= (IC_CONF_STATE_TYPE)status;
   info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
+  check_if_cs_started(run_obj, thread_state, cs_index);
   error= 0;
 error:
   g_mutex_unlock(run_obj->state.protect_state);
   return error;
+}
+
+static guint32
+get_count_active_start_threads(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  guint32 num_started= 0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].is_start_thread_active)
+      num_started++;
+  }
+  return num_started;
+}
+
+static guint32
+get_count_connected_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  guint32 num_connected= 0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].conn)
+      num_connected++;
+  }
+  return num_connected;
+}
+
+static int
+handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                      IC_CONNECTION *conn,
+                      IC_THREAD_STATE *thread_state,
+                      guint32 cs_index)
+{
+  int error;
+  if ((error= send_start_cluster_server_req(run_obj, conn)) ||
+      (error= rec_start_cluster_server_reply(run_obj,
+                                             thread_state,
+                                             conn,
+                                             cs_index)))
+    return error;
+  return 0;
+}
+
+static void
+release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                      IC_CONNECTION *conn,
+                      guint32 cs_index)
+{
+  run_obj->cs_servers[cs_index].conn= NULL;
+  run_obj->state.start_threads_stopped++;
+  run_obj->state.cs_starting= FALSE;
+  run_obj->state.cs_started= FALSE;
+  g_cond_broadcast(run_obj->state.start_cond);
+  g_mutex_unlock(run_obj->state.protect_state);
+  conn->conn_op.ic_free_connection(conn);
 }
 
 #define IC_CS_START_TIMEOUT 7
@@ -893,9 +1095,10 @@ start_cs_func(gpointer data)
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   IC_CONNECTION *conn;
-  guint32 i;
+  guint32 i, active_start_threads;
   int error;
   gchar *err_str;
+  GTimeVal stop_timer;
   DEBUG_ENTRY("start_cs_func");
 
   (void)rc_state;
@@ -906,35 +1109,225 @@ start_cs_func(gpointer data)
     err_str= NULL;
     if (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
       goto end;
+    if (get_count_connected_cluster_servers(run_obj) > 0)
+      i= 0; /* No timeout when one node have connected */
     if (!(error= connect_cluster_server(apic,
-                                       &conn,
-                                       cs_index,
-                                       &cs_index,
-                                       (guint32)1,
-                                       &err_str)))
+                                        &conn,
+                                        cs_index,
+                                        &cs_index,
+                                        (guint32)1,
+                                        TRUE,
+                                        &err_str)))
+    {
+      DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
+                  cs_index));
       break;
+    }
     /*
       Another attempt to connect failed, check if the other node
       connected to us.
     */
+    if (!(error= connect_cluster_server(apic,
+                                        &conn,
+                                        cs_index,
+                                        &cs_index,
+                                        (guint32)1,
+                                        FALSE,
+                                        &err_str)))
+    {
+      DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
+                  cs_index));
+      break;
+    }
+    if (run_obj->state.cs_starting)
+    {
+      /*
+        A quorum have already been reached without us, no use of continuing
+        to connect to the node. When the node starts up we will have a port
+        open to connect to.
+      */
+      g_mutex_lock(run_obj->state.protect_state);
+      run_obj->state.start_threads_stopped++;
+      g_cond_broadcast(run_obj->state.connect_cond);
+      g_mutex_unlock(run_obj->state.protect_state);
+      DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, others starting",
+                  cs_index));
+      return NULL;
+    }
+    if (i > (IC_CS_START_TIMEOUT / 2))
+    {
+      g_mutex_lock(run_obj->state.protect_state);
+      if (get_count_connected_cluster_servers(run_obj) == 0)
+      {
+        run_obj->state.start_threads_stopped++;
+        if (run_obj->state.start_threads_stopped ==
+            run_obj->num_cluster_servers)
+        {
+          /*
+             No cluster server have connected, we will take on the master
+             role and start the cluster server in a state waiting for
+             other cluster servers to connect.
+          */
+          run_obj->state.master_cs_index= 0;
+          run_obj->state.cs_starting= TRUE;
+          run_obj->cs_servers[0].pid= ic_get_own_pid();
+          run_obj->cs_servers[0].node_id= run_obj->cs_nodeid;
+          run_obj->cs_servers[0].master_index= 0;
+          run_obj->cs_servers[0].master_index_size= 1;
+          run_obj->cs_servers[0].master_index_view[0]= run_obj->cs_nodeid;
+          g_cond_broadcast(run_obj->state.connect_cond);
+          DEBUG_PRINT(CONFIG_LEVEL, ("We become master, not yet started"));
+        }
+        else
+        {
+          g_cond_wait(run_obj->state.connect_cond,
+                      run_obj->state.protect_state);
+          if (get_count_connected_cluster_servers(run_obj) > 0)
+          {
+            /*
+              At least one Cluster Server connected, we can't become master,
+              we will wait for Cluster Servers to connect for a while more.
+            */
+            g_mutex_unlock(run_obj->state.protect_state);
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Wait for more connect for index %u, at least one is connected",
+               cs_index));
+            continue;
+          }
+          else
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("We become master, other thread handled it"));
+          }
+        }
+        g_mutex_unlock(run_obj->state.protect_state);
+        /*
+          We can now return since there is no connections to handle anymore.
+          Connections from new starting cluster servers will be handled by
+          the normal Cluster Server code to handle new connections.
+          Returning here means the thread will complete.
+        */
+        return NULL;
+      }
+      g_mutex_unlock(run_obj->state.protect_state);
+    }
   }
+  /* Inform the other cluster server of our intentions */
+  g_mutex_lock(run_obj->state.protect_state);
   run_obj->cs_servers[cs_index].conn= conn;
+  if ((get_count_connected_cluster_servers(run_obj) + 1) ==
+      run_obj->num_cluster_servers)
+  {
+    /*
+      All cluster servers have connected, we will proceed after waking
+      all threads which have successfully connected to a Cluster Server.
+    */
+    g_cond_broadcast(run_obj->state.connect_cond);
+  }
+  else
+  {
+    /*
+      We don't have a sufficient number of connections to start-up
+      immediately. We will wait for a few seconds, after this wait we
+      will check if we've reached a quorum, if a quorum has been
+      established we will start although not all Cluster servers have
+      connected.
+    */
+    active_start_threads= get_count_active_start_threads(run_obj);
+    if ((active_start_threads + 1 == run_obj->num_cluster_servers) &&
+        (run_obj->num_cluster_servers > 2))
+    {
+      g_get_current_time(&stop_timer);
+      g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
+      g_cond_timed_wait(run_obj->state.connect_cond,
+                        run_obj->state.protect_state,
+                        &stop_timer);
+      g_cond_broadcast(run_obj->state.connect_cond);
+    }
+    else
+    {
+      /*
+         We will wait here for someone else to complete the connection
+         set-up, whereafter we can continue with the Cluster Server start
+         protocol.
+      */
+      g_cond_wait(run_obj->state.connect_cond, run_obj->state.protect_state);
+    }
+  }
+  run_obj->state.cs_starting= TRUE;
+  if ((get_count_connected_cluster_servers(run_obj) !=
+       run_obj->num_cluster_servers) &&
+      (run_obj->state.start_threads_stopped == 0))
+  {
+    /*
+      We are starting with a quorum, wait for last connect thread to stop
+      or connect before we start the Cluster Server start protocol. This is
+      to ensure we don't have to handle a node connecting in the middle of
+      the start protocol.
+    */
+    g_cond_wait(run_obj->state.connect_cond,
+                run_obj->state.protect_state);
+  }
+  g_mutex_unlock(run_obj->state.protect_state);
+
   /*
     We are now connected to the Cluster Server this thread is appointed to
-    handle.  We need to give our start up data and receive information
-    about the other node's state
+    handle. Also enough nodes have connected to form at least a quorum of
+    Cluster Servers. We need to give our start up data and receive information
+    about the other node's state. If any node fails as part of the start
+    protocol we will disconnect all connections and try again.
   */
-  if ((error= send_start_cluster_server_req(run_obj, conn)) ||
-      (error= rec_start_cluster_server_reply(run_obj,
-                                             conn,
-                                             cs_index)))
+  if ((error= handle_start_protocol(run_obj,
+                                    conn,
+                                    thread_state,
+                                    cs_index)))
   {
-    /* Handle error */
+    /* Release connection, return and ensure we make another retry */
+    g_mutex_lock(run_obj->state.protect_state);
+    DEBUG_PRINT(CONFIG_LEVEL, ("This thread failed with start protocol"));
+    release_cs_connection(run_obj, conn, cs_index);
+    return NULL;
   }
+  g_mutex_lock(run_obj->state.protect_state);
+  do
+  {
+    if (!run_obj->state.cs_started && !run_obj->state.cs_starting)
+    {
+      /*
+        Some other connection failed with start protocol, return and
+        ensure we make another attempt at starting up.
+      */
+      DEBUG_PRINT(CONFIG_LEVEL, ("Other thread failed with start protocol"));
+      release_cs_connection(run_obj, conn, cs_index);
+      return NULL;
+    }
+    if ((get_count_connected_cluster_servers(run_obj) +
+         run_obj->state.start_threads_stopped + 1) ==
+        run_obj->num_cluster_servers)
+    {
+      /*
+        Startup is completed, we can now set state to started and
+        start working as a Cluster Server to others in the Cluster.
+      */
+      run_obj->state.cs_started= TRUE;
+      run_obj->state.cs_starting= FALSE;
+      g_cond_broadcast(run_obj->state.start_cond);
+      DEBUG_PRINT(CONFIG_LEVEL, ("Completed startup of Cluster Server"));
+      break;
+    }
+    else
+    {
+      /* Wait for all other Cluster Servers to complete */
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Wait for other threads to complete startup"));
+      g_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
+    }
+  } while (1);
+  g_mutex_unlock(run_obj->state.protect_state);
   /*
     We are now connected to the other Cluster Server and we have
     successfully exchanged start-up data. We keep this thread
-    until the connection breaks or until we're to quit.
+    until the connection breaks or until we're about to quit.
   */
 end:
   DEBUG_RETURN(NULL);
@@ -1211,6 +1604,18 @@ get_api_config(IC_RUN_CLUSTER_SERVER *ext_run_obj)
  Here starts the code part of the Run Cluster Server Module
  ============================================================
 */
+
+static void
+free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  if (run_obj->state.protect_state)
+    g_mutex_free(run_obj->state.protect_state);
+  if (run_obj->state.update_cond)
+    g_cond_free(run_obj->state.update_cond);
+  if (run_obj->state.start_cond)
+    g_cond_free(run_obj->state.start_cond);
+}
+
 IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_STRING *config_dir,
                       const gchar *process_name,
@@ -1235,6 +1640,10 @@ ic_create_run_cluster(IC_STRING *config_dir,
                 mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
     goto error;
   if (!(run_obj->state.protect_state= g_mutex_new()))
+    goto error;
+  if (!(run_obj->state.update_cond= g_cond_new()))
+    goto error;
+  if (!(run_obj->state.start_cond= g_cond_new()))
     goto error;
   /*
     Initialise the Cluster Server state, the state is protected by a mutex to
@@ -1287,8 +1696,7 @@ error:
       tp_state->tp_ops.ic_threadpool_stop(tp_state);
     if (run_obj)
     {
-      if (run_obj->state.protect_state)
-        g_mutex_free(run_obj->state.protect_state);
+      free_run_cluster_protect(run_obj);
       if (run_obj->conn)
         run_obj->conn->conn_op.ic_free_connection(run_obj->conn);
     }
@@ -1416,6 +1824,7 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       if (run_obj->conf_objects[i])
         ic_hashtable_destroy(run_obj->conf_objects[i]->comm_hash);
     }
+    free_run_cluster_protect(run_obj);
     if (run_obj->mc_ptr)
       run_obj->mc_ptr->mc_ops.ic_mc_free(run_obj->mc_ptr);
   }
@@ -1461,7 +1870,13 @@ run_cluster_server_thread(gpointer data)
 
   rcs_tp->ts_ops.ic_thread_started(thread_state);
   run_obj= (IC_INT_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
-  while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) &&
+  /*
+    Continue receiving until stop or timeout occurs, if a timeout occurs
+    we will continue also in the case of start ongoing yet.
+  */
+  while ((!(error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+          (run_obj->state.cs_starting &&
+           error == IC_ERROR_RECEIVE_TIMEOUT)) &&
          !rcs_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     switch (state)

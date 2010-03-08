@@ -221,6 +221,12 @@ struct ic_run_cluster_state
   /* Points to Cluster Server info of master */
   guint32 master_cs_index;
 
+  /* Number of threads set-up to connect to other Cluster Servers */
+  guint32 start_threads_stopped;
+
+  /* Set when start-up logic is active with a set of Cluster Servers */
+  gboolean cs_starting;
+
   /* Set when we've started and are ready to respond to requests */
   gboolean cs_started;
 
@@ -234,6 +240,8 @@ struct ic_run_cluster_state
   guint32 update_waiters;
 
   GMutex *protect_state;
+  GCond  *start_cond;
+  GCond  *connect_cond;
   GCond  *update_cond;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
@@ -252,6 +260,9 @@ struct ic_info_cluster_server
 
   /* Have we got a connection to this server yet. */
   gboolean cs_connect_state;
+
+  /* Is start thread still running */
+  gboolean is_start_thread_active;
 
   /* The pid of this Cluster Server */
   IC_PID_TYPE pid;

@@ -32,7 +32,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7079
+#define IC_LAST_ERROR 7081
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -216,6 +216,10 @@ ic_init_error_messages()
     "Trying set dynamic port number when fixed port number is used";
   ic_error_str[IC_ERROR_NO_SUCH_ERROR - IC_FIRST_ERROR]=
     "No such error";
+  ic_error_str[IC_ERROR_MASTER_INDEX_VIEW_DIFFERS - IC_FIRST_ERROR]=
+    "Cluster Servers have different views on master index";
+  ic_error_str[IC_ERROR_WRONG_NODE_ID - IC_FIRST_ERROR]=
+    "Wrong node id sent from Cluster Server";
 }
 
 void
