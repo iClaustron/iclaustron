@@ -43,10 +43,16 @@ struct ic_int_connection
   GMutex *read_mutex;
   GMutex *write_mutex;
   GMutex *connect_mutex;
+
   gchar *read_buf;
   guint32 read_buf_size;
   guint32 size_curr_read_buf;
   guint32 read_buf_pos;
+
+  gchar *write_buf;
+  guint32 write_buf_size;
+  guint32 write_buf_pos;
+
   struct connection_buffer *first_con_buf;
   struct connection_buffer *last_con_buf;
   int rw_sockfd;
@@ -56,6 +62,7 @@ struct ic_int_connection
     0 means wait forever
   */
   int ms_wait;
+  int rec_wait_ms;
   guint32 node_id;
   /*
     We keep track of time that the connection has been up and a timer for how

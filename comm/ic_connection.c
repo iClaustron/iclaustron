@@ -69,12 +69,13 @@ static int close_socket_connection(IC_CONNECTION *conn);
 
 /* Implements ic_check_for_data */
 static gboolean
-check_for_data_on_connection(IC_CONNECTION *ext_conn, int timeout_in_ms)
+check_for_data_on_connection(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   IC_POLLFD_STRUCT poll_struct;
   int ret_code= 0;
   int time_out;
+  int timeout_in_ms= conn->rec_wait_ms;
 
   poll_struct.events= IC_POLL_FLAG;
   poll_struct.fd= conn->rw_sockfd;
@@ -1340,6 +1341,8 @@ free_socket_connection(IC_CONNECTION *ext_conn)
   destroy_mutexes(conn);
   if (conn->read_buf)
     ic_free(conn->read_buf);
+  if (conn->write_buf)
+    ic_free(conn->write_buf);
   ic_free(conn);
 }
 
@@ -1754,6 +1757,20 @@ get_port_number(IC_CONNECTION *ext_conn)
   return port_number;
 }
 
+static void
+set_rec_wait_ms(IC_CONNECTION *ext_conn, int rec_wait_ms)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  conn->rec_wait_ms= rec_wait_ms;
+}
+
+static int
+get_rec_wait_ms(IC_CONNECTION *ext_conn)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  return conn->rec_wait_ms;
+}
+
 IC_CONNECTION*
 int_create_socket_object(gboolean is_client,
                          gboolean is_mutex_used,
@@ -1774,7 +1791,17 @@ int_create_socket_object(gboolean is_client,
   {
     conn->read_buf_size= read_buf_size;
     if ((conn->read_buf= ic_calloc(read_buf_size)) == NULL)
+    {
+      ic_free((gchar*)conn);
       return NULL;
+    }
+    conn->write_buf_size= read_buf_size;
+    if ((conn->write_buf= ic_calloc(read_buf_size)) == NULL)
+    {
+      ic_free(conn->read_buf);
+      ic_free((gchar*)conn);
+      return NULL;
+    }
   }
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
   conn->conn_op.ic_login_connection= login_connection;
@@ -1803,6 +1830,8 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_set_error_line= set_error_line;
   conn->conn_op.ic_set_nonblocking= set_nonblocking_flag;
   conn->conn_op.ic_get_fd= get_fd;
+  conn->conn_op.ic_set_rec_wait_ms= set_rec_wait_ms;
+  conn->conn_op.ic_get_rec_wait_ms= get_rec_wait_ms;
 
   conn->is_ssl_connection= is_ssl;
   conn->is_ssl_used_for_data= is_ssl_used_for_data;
@@ -1810,6 +1839,7 @@ int_create_socket_object(gboolean is_client,
   conn->is_connect_thread_used= is_connect_thread_used;
   conn->backlog= 1;
   conn->is_mutex_used= is_mutex_used;
+  conn->rec_wait_ms= 10000; /* Default wait 10 sec for protocol reads */
 
   set_up_rw_methods_mutex(conn, is_mutex_used);
   conn->conn_op.ic_write_connection= write_socket_connection;
@@ -1830,6 +1860,10 @@ int_create_socket_object(gboolean is_client,
 error:
   if (conn)
     destroy_mutexes(conn);
+  if (conn->read_buf)
+    ic_free(conn->read_buf);
+  if (conn->write_buf)
+    ic_free(conn->write_buf);
   ic_free(conn);
   return NULL;
 }

@@ -468,6 +468,7 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                                 &run_obj->cluster_conf_struct,
                                 &run_obj->err_obj)))
     return error;
+  run_obj->clu_infos= clu_infos;
   if ((error= load_config_files(run_obj, clu_infos)) ||
       (error= verify_grid_config(run_obj)))
     return error;
@@ -910,10 +911,59 @@ end:
 }
 
 static int
-handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj, guint32 cs_index)
+send_heartbeat(IC_CONNECTION *conn)
 {
-  (void)run_obj;
-  (void)cs_index;
+  int error;
+
+  if ((error= ic_send_with_cr(conn, heartbeat_str)) ||
+      (error= ic_send_empty_line(conn)))
+    return error;
+  return 0;
+}
+
+static int
+rec_heartbeat(IC_CONNECTION *conn)
+{
+  int error;
+
+  if ((error= ic_rec_simple_str(conn, heartbeat_str)) ||
+      (error= ic_rec_empty_line(conn)))
+    return error;
+  return 0;
+}
+
+static int
+handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                    IC_THREAD_STATE *thread_state,
+                    guint32 cs_index)
+{
+  IC_CONNECTION *conn= run_obj->cs_servers[cs_index].conn;
+  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+  int error;
+
+  conn->conn_op.ic_set_rec_wait_ms(conn, 6000); /* Set timeout to 6 seconds */
+
+  if (run_obj->cs_servers[cs_index].is_client_side)
+  {
+    /* We are the client side, means we are responsible initiating heartbeat */
+    while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    {
+      if ((error= send_heartbeat(conn)) ||
+          (error= rec_heartbeat(conn)))
+        return error;
+      ic_sleep(2);
+    }
+  }
+  else
+  {
+    /* Server side waits for heartbeat */
+    while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    {
+      if ((error= rec_heartbeat(conn)) ||
+          (error= send_heartbeat(conn)))
+        return error;
+    }
+  }
   return 0;
 }
 
@@ -1282,13 +1332,49 @@ set_up_initial_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   my_info_cs->master_index_size= index_size;
 }
 
+static IC_CONF_VERSION_TYPE
+find_max_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  IC_CONF_VERSION_TYPE version_number= (IC_CONF_VERSION_TYPE)0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].config_version_number > version_number)
+      version_number= run_obj->cs_servers[i].config_version_number;
+  }
+  return version_number;
+}
+
+static IC_CONF_VERSION_TYPE
+find_max_committed_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  IC_CONF_VERSION_TYPE version_number= (IC_CONF_VERSION_TYPE)0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].state == CONFIG_STATE_BUSY &&
+        run_obj->cs_servers[i].config_version_number > version_number)
+      version_number= run_obj->cs_servers[i].config_version_number;
+  }
+  if (version_number == (IC_CONF_VERSION_TYPE)0)
+  {
+    /* All servers are in PREPARE state, max committed is -1 of max version */
+    return (IC_CONF_VERSION_TYPE)(find_max_version(run_obj) - 1);
+  }
+  return version_number;
+}
+
 static void
 check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
   IC_CONF_VERSION_TYPE config_version_number= my_info_cs->config_version_number;
   IC_CONF_STATE_TYPE status= my_info_cs->state;
+  IC_CONF_VERSION_TYPE max_committed_version;
   guint32 i;
+  int error;
 
   run_obj->state.cs_started= TRUE;
   for (i= 1; i < run_obj->num_cluster_servers; i++)
@@ -1297,7 +1383,84 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
         config_version_number ||
         run_obj->cs_servers[i].state != status)
     {
+      max_committed_version= find_max_committed_version(run_obj);
       /* We haven't started yet, we still need to synchronize configs */
+      if (my_info_cs->config_version_number > max_committed_version)
+      {
+        /*
+          Our most recent version is a version in a prepared state which
+          which will not be committed, we need to remove this version
+          and set our state to committed of the previous version number.
+          After this our Cluster Server is in synch with the committed
+          version of the Cluster Servers. We can start our Cluster Server
+          and accept reads of the configuration, but we cannot writes until
+          all Cluster Servers are up-to-date.
+        */
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Our version was never committed, go back one version"));
+        (void)remove_config_files(run_obj->config_dir,
+                                  run_obj->clu_infos,
+                                  my_info_cs->config_version_number);
+        my_info_cs->state= CONFIG_STATE_BUSY;
+        my_info_cs->config_version_number= max_committed_version;
+        if ((error= write_config_version_file(run_obj->config_dir,
+                                      my_info_cs->config_version_number,
+                                      my_info_cs->state,
+                                      my_info_cs->pid)))
+        {
+          ic_print_error(error);
+          ic_printf("Failed to write config version file at line %d",
+                    __LINE__);
+          abort();
+          return;
+        }
+      }
+      else if (my_info_cs->config_version_number < max_committed_version)
+      {
+        /*
+          Our configuration is out-of-date. We don't have access to the
+          latest committed configuration version. We need to get this using
+          the get configuration and then save this version on file before
+          the Cluster Servers are ready to accept updates of the
+          configuration.
+        */
+        DEBUG_PRINT(CONFIG_LEVEL, ("Our version is out-of-date"));
+        return;
+      }
+      else if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
+      {
+        /*
+          We have the right version of the configuration but it hasn't been
+          committed yet, since someone else have committed we are safe to
+          commit it by updating the config version file.
+        */
+        DEBUG_PRINT(CONFIG_LEVEL, ("Commit our prepared version"));
+        my_info_cs->state= CONFIG_STATE_BUSY;
+        if ((error= write_config_version_file(run_obj->config_dir,
+                                      my_info_cs->config_version_number,
+                                      my_info_cs->state,
+                                      my_info_cs->pid)))
+        {
+          ic_print_error(error);
+          ic_printf("Failed to write config version file at line %d",
+                    __LINE__);
+          abort();
+          return;
+        }
+      }
+      else
+      {
+        DEBUG_PRINT(CONFIG_LEVEL, ("Our Cluster Server is in synch"));
+        return;
+      }
+      /*
+        We have changed our state, it's possible that all Cluster Servers are
+        in synch now, so we retry check for this by a recursive call here.
+        Since our state will be CONFIG_STATE_BUSY and equal to
+        max_committed_version here, there is no risk of more than one
+        recursive call here.
+      */
+      check_if_cs_started(run_obj);
       return;
     }
   }
@@ -1328,7 +1491,7 @@ start_cs_func(gpointer data)
   while (1)
   {
     err_str= NULL;
-    if (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
       goto end;
     is_client= TRUE;
     if (!(error= connect_cluster_server(apic,
@@ -1341,6 +1504,7 @@ start_cs_func(gpointer data)
     {
       DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
                   cs_index));
+      run_obj->cs_servers[cs_index].is_client_side= TRUE;
       break;
     }
     /*
@@ -1358,6 +1522,7 @@ start_cs_func(gpointer data)
     {
       DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
                   cs_index));
+      run_obj->cs_servers[cs_index].is_client_side= FALSE;
       break;
     }
     if (run_obj->state.cs_starting)
@@ -1371,6 +1536,8 @@ start_cs_func(gpointer data)
       run_obj->state.start_threads_stopped++;
       g_cond_broadcast(run_obj->state.connect_cond);
       g_mutex_unlock(run_obj->state.protect_state);
+      if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+        goto end;
       DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, others starting",
                   cs_index));
       return NULL;
@@ -1418,6 +1585,11 @@ start_cs_func(gpointer data)
       g_cond_wait(run_obj->state.connect_cond, run_obj->state.protect_state);
     }
   }
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  {
+    g_mutex_unlock(run_obj->state.protect_state);
+    goto end;
+  }
   run_obj->state.cs_starting= TRUE;
   if ((get_count_connected_cluster_servers(run_obj) !=
        run_obj->num_cluster_servers) &&
@@ -1434,6 +1606,8 @@ start_cs_func(gpointer data)
   }
   set_up_initial_master_index_view(run_obj);
   g_mutex_unlock(run_obj->state.protect_state);
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    goto end;
 
   /*
     We are now connected to the Cluster Server this thread is appointed to
@@ -1453,6 +1627,8 @@ start_cs_func(gpointer data)
     release_cs_connection(run_obj, conn, cs_index);
     return NULL;
   }
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    goto end;
   g_mutex_lock(run_obj->state.protect_state);
   do
   {
@@ -1485,6 +1661,11 @@ start_cs_func(gpointer data)
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Wait for other threads to complete startup"));
       g_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
+      if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+      {
+        g_mutex_unlock(run_obj->state.protect_state);
+        goto end;
+      }
     }
   } while (1);
   g_mutex_unlock(run_obj->state.protect_state);
@@ -1493,7 +1674,7 @@ start_cs_func(gpointer data)
     successfully exchanged start-up data. We keep this thread
     until the connection breaks or until we're about to quit.
   */
-  handle_cs_heartbeat(run_obj, cs_index);
+  handle_cs_heartbeat(run_obj, thread_state, cs_index);
 end:
   DEBUG_RETURN(NULL);
 }
@@ -2022,7 +2203,8 @@ run_cluster_server_thread(gpointer data)
                                             FALSE,
                                             &cs_index)))
             goto error;
-          handle_cs_heartbeat(run_obj, cs_index);
+          run_obj->cs_servers[cs_index].is_client_side= FALSE;
+          handle_cs_heartbeat(run_obj, thread_state, cs_index);
           goto end;
         }
         /* Fall through since get connection parameter is also allowed */

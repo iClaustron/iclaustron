@@ -495,10 +495,11 @@ static const gchar *state_str= "state: ";
 static const gchar *pid_str= "pid: ";
 #define STATE_STR_LEN 7
 #define PID_STR_LEN 5
+
 #define CONFIG_STATE_IDLE 0
 #define CONFIG_STATE_BUSY 1
-#define CONFIG_STATE_UPDATE_CLUSTER_CONFIG 2
-#define CONFIG_STATE_UPDATE_CONFIGS 3
+#define CONFIG_STATE_PREPARE_UPDATE 2
+
 /* Strings used in cluster configuration files */
 static const gchar *cluster_str= "cluster";
 static const gchar *cluster_id_string= "cluster_id";
@@ -576,6 +577,8 @@ static const gchar *start_cluster_server_reply_str=
   "start cluster server reply";
 static const gchar *start_cluster_server_ok_str=
   "start cluster server ok";
+static const gchar *heartbeat_str= "heartbeat";
+
 const gchar *ic_ok_str= "Ok";
 const gchar *ic_version_str= "version: ";
 const gchar *ic_grid_str= "grid: ";

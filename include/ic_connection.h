@@ -120,6 +120,9 @@ struct ic_connect_operations
     socket after successful accept.
   */
   void (*ic_set_nonblocking)           (IC_CONNECTION *conn);
+  /* Set/Get timeout in millisecs used by ic_check_for_data, default 10 secs */
+  void (*ic_set_rec_wait_ms)           (IC_CONNECTION *conn, int rec_wait_ms);
+  int  (*ic_get_rec_wait_ms)           (IC_CONNECTION *conn);
   int  (*ic_get_fd)                    (IC_CONNECTION *conn);
   void (*ic_set_param)                 (IC_CONNECTION *conn,
                                         void *param);
@@ -158,8 +161,7 @@ struct ic_connect_operations
   */
   guint32 (*ic_get_port_number)        (IC_CONNECTION *conn);
   /* This call is used to check if there is data to be read on the socket */
-  gboolean (*ic_check_for_data)        (IC_CONNECTION *conn,
-                                        int timeout_in_ms);
+  gboolean (*ic_check_for_data)        (IC_CONNECTION *conn);
   /* This call is used to check if the hostname and port is the same as
      the connection, 0 means equal, 1 non-equal */
   int (*ic_cmp_connection)             (IC_CONNECTION *conn,

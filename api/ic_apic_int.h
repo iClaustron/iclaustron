@@ -261,6 +261,9 @@ struct ic_info_cluster_server
   /* Have we got a connection to this server yet. */
   gboolean cs_connect_state;
 
+  /* Are we client in the TCP/IP connection to this server or not */
+  gboolean is_client_side;
+
   /* Is start thread still running */
   gboolean is_start_thread_active;
 
@@ -300,6 +303,9 @@ struct ic_int_run_cluster_server
 
   /* The configuration of each cluster resident in memory */
   IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID];
+
+  /* The information about the clusters, name, id and password */
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
 
   /* The state of our cluster server */
   IC_RUN_CLUSTER_STATE state;
