@@ -19,6 +19,7 @@
 #include <ic_port.h>
 #include <ic_string.h>
 #include <ic_connection.h>
+#include <ic_protocol_support.h>
 #ifdef HAVE_READLINE
 #include <readline/readline.h>
 #endif

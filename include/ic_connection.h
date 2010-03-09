@@ -337,13 +337,4 @@ void ic_ssl_end();
   Debug print-outs
 */
 void ic_print_buf(char *buf, guint32 size);
-/*
-  Methods to send and receive buffers with Carriage Return
-*/
-int ic_send_with_cr(IC_CONNECTION *conn, const gchar *buf);
-int ic_rec_with_cr(IC_CONNECTION *conn,
-                   gchar **rec_buf,
-                   guint32 *read_size);
-void ic_step_back_rec_with_cr(IC_CONNECTION *conn, guint32 read_size);
 #endif
-

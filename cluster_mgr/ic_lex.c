@@ -20,6 +20,7 @@
 #include <ic_mc.h>
 #include <ic_string.h>
 #include <ic_connection.h>
+#include <ic_protocol_support.h>
 #include <ic_apic.h>
 #include <../cluster_mgr/ic_clmgr_int.h>
 #include "ic_parser.h"

@@ -342,7 +342,6 @@ add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
             util/ic_debug.c util/ic_err.c util/ic_string.c
             util/ic_bitmap.c util/ic_config_reader.c
             util/ic_parse_connectstring.c
-            util/ic_protocol_support.c
             include/ic_hashtable_itr.h include/ic_hashtable_private.h
             include/ic_base64.h include/ic_config_reader.h
             include/ic_protocol_support.h include/ic_sock_buf.h)
@@ -350,8 +349,8 @@ target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
 add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
-            comm/ic_connection_supp.c comm/ic_poll_set.c comm/ic_poll_set_int.h
-            comm/ic_base64.c)
+            comm/ic_protocol_support.c comm/ic_poll_set.c
+            comm/ic_poll_set_int.h comm/ic_base64.c)
 target_link_libraries(comm ic_port ic_util)
 
 #Build library to Cluster Server API and Data Server API
