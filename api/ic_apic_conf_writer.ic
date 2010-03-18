@@ -246,6 +246,7 @@ cmp_config_version_line(IC_STRING *str,
                         guint64 *len,
                         guint64 *value,
                         gchar **ptr);
+
 /* Here is the source code for the module */
 static int
 ic_write_full_config_to_disk(IC_STRING *config_dir,

@@ -93,6 +93,13 @@ get_error_str(IC_API_CONFIG_SERVER *ext_apic)
   return apic->err_str;
 }
 
+static IC_CLUSTER_CONFIG**
+get_all_cluster_config(IC_API_CONFIG_SERVER *ext_apic)
+{
+  IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
+  return (IC_CLUSTER_CONFIG**)&apic->conf_objects[0];
+}
+
 static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *ext_apic,
                                              guint32 cluster_id)
 {
@@ -250,6 +257,7 @@ set_up_apic_methods(IC_INT_API_CONFIG_SERVER *apic)
   apic->api_op.ic_fill_error_buffer= fill_error_buffer;
   apic->api_op.ic_get_error_str= get_error_str;
   apic->api_op.ic_get_cluster_config= get_cluster_config;
+  apic->api_op.ic_get_all_cluster_config= get_all_cluster_config;
   apic->api_op.ic_get_node_object= get_node_object;
   apic->api_op.ic_get_communication_object= get_communication_object;
   apic->api_op.ic_get_typed_node_object= get_typed_node_object;

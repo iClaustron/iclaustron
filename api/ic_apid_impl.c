@@ -30,6 +30,7 @@
 #include <ic_bitmap.h>
 #include <ic_dyn_array.h>
 #include <ic_connection.h>
+#include <ic_protocol_support.h>
 #include <ic_sock_buf.h>
 #include <ic_poll_set.h>
 #include <ic_threadpool.h>

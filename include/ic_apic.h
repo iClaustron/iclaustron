@@ -561,6 +561,8 @@ struct ic_api_cluster_operations
   IC_CLUSTER_CONFIG* (*ic_get_cluster_config)
        (IC_API_CONFIG_SERVER *apic, guint32 cluster_id);
 
+  IC_CLUSTER_CONFIG** (*ic_get_all_cluster_config)
+       (IC_API_CONFIG_SERVER *apic);
   guint32 (*ic_get_max_cluster_id) (IC_API_CONFIG_SERVER *apic);
 
   guint32 (*ic_get_node_id_from_name) (IC_API_CONFIG_SERVER *apic,
