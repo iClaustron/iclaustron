@@ -14,53 +14,6 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 /*
-  MODULE: Protect Cluster Server State
-  ------------------------------------
-*/
-static gboolean rc_start_update(IC_RUN_CLUSTER_STATE *rc_state);
-static void rc_stop_update(IC_RUN_CLUSTER_STATE *rc_state);
-
-static gboolean
-rc_start_update(IC_RUN_CLUSTER_STATE *rc_state)
-{
-  gboolean is_master;
-  g_mutex_lock(rc_state->protect_state);
-  is_master= is_cs_master(rc_state);
-  /*
-    We are the master of the Cluster Servers which means all updates
-    need to start in our Cluster Server.
-  */
-  while (rc_state->update_state)
-  {
-    /*
-      Someone is already performing an update, we need to wait until
-      this update is completed, the Cluster Servers can only handle
-      one update at a time.
-    */
-    rc_state->update_waiters++;
-    g_cond_wait(rc_state->update_cond, rc_state->protect_state);
-    g_assert(!rc_state->update_state);
-  }
-  rc_state->update_state= TRUE;
-  g_mutex_unlock(rc_state->protect_state);
-  return is_master;
-}
-
-static void
-rc_stop_update(IC_RUN_CLUSTER_STATE *rc_state)
-{
-  g_mutex_lock(rc_state->protect_state);
-  g_assert(rc_state->update_state);
-  if (rc_state->update_waiters)
-  {
-    rc_state->update_waiters--;
-    g_cond_signal(rc_state->update_cond);
-  }
-  rc_state->update_state= FALSE;
-  g_mutex_unlock(rc_state->protect_state);
-}
-
-/*
   MODULE: Support functions for Cluster Server
   --------------------------------------------
 
@@ -162,6 +115,53 @@ get_socket_link_config(guint32 node1_id,
        ic_hashtable_search(clu_conf->comm_hash, (void*)&search_comm_section)))
     return error;
   return 0;
+}
+
+/*
+  MODULE: Protect Cluster Server State
+  ------------------------------------
+*/
+static gboolean rc_start_update(IC_RUN_CLUSTER_STATE *rc_state);
+static void rc_stop_update(IC_RUN_CLUSTER_STATE *rc_state);
+
+static gboolean
+rc_start_update(IC_RUN_CLUSTER_STATE *rc_state)
+{
+  gboolean is_master;
+  g_mutex_lock(rc_state->protect_state);
+  is_master= is_cs_master(rc_state);
+  /*
+    We are the master of the Cluster Servers which means all updates
+    need to start in our Cluster Server.
+  */
+  while (rc_state->update_state)
+  {
+    /*
+      Someone is already performing an update, we need to wait until
+      this update is completed, the Cluster Servers can only handle
+      one update at a time.
+    */
+    rc_state->update_waiters++;
+    g_cond_wait(rc_state->update_cond, rc_state->protect_state);
+    g_assert(!rc_state->update_state);
+  }
+  rc_state->update_state= TRUE;
+  g_mutex_unlock(rc_state->protect_state);
+  return is_master;
+}
+
+static void
+rc_stop_update(IC_RUN_CLUSTER_STATE *rc_state)
+{
+  g_mutex_lock(rc_state->protect_state);
+  g_assert(rc_state->update_state);
+  if (rc_state->update_waiters)
+  {
+    rc_state->update_waiters--;
+    g_cond_signal(rc_state->update_cond);
+  }
+  rc_state->update_state= FALSE;
+  g_mutex_unlock(rc_state->protect_state);
 }
 
 /*
@@ -694,86 +694,6 @@ error:
 }
 
 /*
-  This function is called from run_cluster_server to complete the startup
-  handling. Some nodes may need to connect to other Cluster Servers to get
-  configuration before the node is able to start. State of start is
-  communicated through the heartbeat messages started in Cluster Server
-  Start handling.
-*/
-static int
-complete_startup_handling(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
-  IC_CONF_VERSION_TYPE max_version= find_max_version(run_obj);
-  int error;
-  gchar *err_str;
-  IC_CONF_VERSION_TYPE old_version;
-  IC_API_CONFIG_SERVER *new_apic;
-  IC_API_CLUSTER_CONNECTION api_cluster_conn;
-  DEBUG_ENTRY("complete_startup_handling");
-
-  if (my_info_cs->config_version_number != max_version)
-  {
-    /* Our Cluster Server is lagging behind */
-    g_assert(my_info_cs->config_version_number < max_version);
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Fetch config from up-to-date Cluster Server"));
-    new_apic= ic_get_configuration(&api_cluster_conn,
-                       run_obj->config_dir,
-                       run_obj->cs_nodeid,
-                       (guint32)1,
-                       &run_obj->apic->cluster_conn.cluster_server_ips[1],
-                       &run_obj->apic->cluster_conn.cluster_server_ports[1],
-                       (guint32)3,
-                       TRUE,
-                       &error,
-                       &err_str);
-    if (!new_apic)
-    {
-      goto error;
-    }
-    DEBUG_PRINT(CONFIG_LEVEL, ("Successful fetch of new configuration"));
-    /* Release memory for old apic */
-    run_obj->apic->api_op.ic_free_config((IC_API_CONFIG_SERVER*)run_obj->apic);
-    run_obj->apic= (IC_INT_API_CONFIG_SERVER*)new_apic;
-
-    /* Remove old config files in case we missed several updates */
-    DEBUG_PRINT(CONFIG_LEVEL, ("Remove old config files"));
-    if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
-    {
-      /* Make sure all config files are cleaned up, also the old committed */
-      (void)remove_config_files(run_obj->config_dir,
-                                run_obj->clu_infos,
-                                my_info_cs->config_version_number - 1);
-    }
-    (void)remove_config_files(run_obj->config_dir,
-                              run_obj->clu_infos,
-                              my_info_cs->config_version_number);
-
-    /* Write new configuration */
-    DEBUG_PRINT(CONFIG_LEVEL, ("Write configuration to disk"));
-    old_version= max_version - 1;
-    if ((error= ic_write_full_config_to_disk(run_obj->config_dir,
-                    &old_version,
-                    run_obj->clu_infos,
-                    new_apic->api_op.ic_get_all_cluster_config(new_apic))))
-      goto error;
-
-    my_info_cs->config_version_number= max_version;
-    my_info_cs->state= CONFIG_STATE_BUSY;
-  }
-  DEBUG_RETURN(0);
-error:
-  DEBUG_RETURN(error);
-}
-
-static void
-report_startup_completed(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  run_obj->state.cs_started= TRUE;
-}
-
-/*
   Protocol between Cluster Servers to start up.
 
   The first step is to connect to all Cluster Servers. We will wait until
@@ -1113,6 +1033,9 @@ handle_started_cs_node(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 /*
   Handle Start Protocol MODULE
   ----------------------------
+
+  This module takes care of the actions needed to start the Cluster
+  Server by interacting with other Cluster Servers.
 */
 static int send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                          IC_CONNECTION *conn);
@@ -1129,6 +1052,8 @@ static int rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                           guint32 cs_index);
 static int rec_start_cluster_server_ok(IC_CONNECTION *conn);
 static int send_start_cluster_server_ok(IC_CONNECTION *conn);
+static int verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static gboolean is_view_from_starting_node(IC_INFO_CLUSTER_SERVER *info_cs);
 
 static int
 handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -1428,19 +1353,6 @@ send_start_cluster_server_ok(IC_CONNECTION *conn)
   return 0;
 }
 
-static gboolean
-is_view_from_starting_node(IC_INFO_CLUSTER_SERVER *info_cs)
-{
-  guint32 i;
-  
-  for (i= 1; i < info_cs->master_index_size; i++)
-  {
-    if (info_cs->master_index_view[i] < info_cs->master_index_view[i-1])
-      return FALSE;
-  }
-  return TRUE;
-}
-
 static int
 verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
@@ -1509,209 +1421,44 @@ end:
   return error;
 }
 
-static guint32
-get_count_active_start_threads(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+static gboolean
+is_view_from_starting_node(IC_INFO_CLUSTER_SERVER *info_cs)
 {
   guint32 i;
-  guint32 num_started= 0;
-
-  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  
+  for (i= 1; i < info_cs->master_index_size; i++)
   {
-    if (run_obj->cs_servers[i].is_start_thread_active)
-      num_started++;
+    if (info_cs->master_index_view[i] < info_cs->master_index_view[i-1])
+      return FALSE;
   }
-  return num_started;
+  return TRUE;
 }
 
-static guint32
-get_count_connected_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  guint32 i;
-  guint32 num_connected= 0;
+/*
+  MODULE: Start threads for Cluster Server
+  ----------------------------------------
 
-  for (i= 0; i < run_obj->num_cluster_servers; i++)
-  {
-    if (run_obj->cs_servers[i].conn)
-      num_connected++;
-  }
-  return num_connected;
-}
+  When starting a Cluster Server one thread per other Cluster Server is
+  created to handle the communication with the correspondent Cluster
+  Server.
 
-static void
-release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                      IC_CONNECTION *conn,
-                      guint32 cs_index)
-{
-  run_obj->cs_servers[cs_index].conn= NULL;
-  run_obj->state.start_threads_stopped++;
-  run_obj->state.cs_starting= FALSE;
-  run_obj->state.cs_started= FALSE;
-  g_cond_broadcast(run_obj->state.start_cond);
-  g_mutex_unlock(run_obj->state.protect_state);
-  conn->conn_op.ic_free_connection(conn);
-}
+  The start method of this thread is start_cs_func.
+*/
 
-static void
-set_up_initial_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  guint32 min_node_id= 0;
-  guint32 lowest_node_id= IC_MAX_NODE_ID;
-  guint32 index_size= 0;
-  guint32 i, j;
-  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
-
-  /* Sort in lowest node number first */
-  for (i= 0; i < run_obj->num_cluster_servers; i++)
-  {
-    for (j= 0; j < run_obj->num_cluster_servers; j++)
-    {
-       if (run_obj->cs_servers[j].node_id > min_node_id &&
-           run_obj->cs_servers[j].node_id < lowest_node_id &&
-           run_obj->cs_servers[j].conn)
-         lowest_node_id= run_obj->cs_servers[j].node_id;
-    }
-    if (min_node_id != lowest_node_id)
-      index_size++;
-    my_info_cs->master_index_view[i]= lowest_node_id;
-    min_node_id= lowest_node_id;
-  }
-  my_info_cs->master_index_size= index_size;
-}
-
-static IC_CONF_VERSION_TYPE
-find_max_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  guint32 i;
-  IC_CONF_VERSION_TYPE version_number= (IC_CONF_VERSION_TYPE)0;
-
-  for (i= 0; i < run_obj->num_cluster_servers; i++)
-  {
-    if (run_obj->cs_servers[i].config_version_number > version_number)
-      version_number= run_obj->cs_servers[i].config_version_number;
-  }
-  return version_number;
-}
-
-static IC_CONF_VERSION_TYPE
-find_max_committed_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  guint32 i;
-  IC_CONF_VERSION_TYPE version_number= (IC_CONF_VERSION_TYPE)0;
-
-  for (i= 0; i < run_obj->num_cluster_servers; i++)
-  {
-    if (run_obj->cs_servers[i].state == CONFIG_STATE_BUSY &&
-        run_obj->cs_servers[i].config_version_number > version_number)
-      version_number= run_obj->cs_servers[i].config_version_number;
-  }
-  if (version_number == (IC_CONF_VERSION_TYPE)0)
-  {
-    /* All servers are in PREPARE state, max committed is -1 of max version */
-    return (IC_CONF_VERSION_TYPE)(find_max_version(run_obj) - 1);
-  }
-  return version_number;
-}
-
-static void
-check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
-  IC_CONF_VERSION_TYPE config_version_number= my_info_cs->config_version_number;
-  IC_CONF_STATE_TYPE status= my_info_cs->state;
-  IC_CONF_VERSION_TYPE max_committed_version;
-  guint32 i;
-  int error;
-
-  run_obj->state.cs_started= TRUE;
-  for (i= 1; i < run_obj->num_cluster_servers; i++)
-  {
-    if (run_obj->cs_servers[i].config_version_number !=
-        config_version_number ||
-        run_obj->cs_servers[i].state != status)
-    {
-      max_committed_version= find_max_committed_version(run_obj);
-      /* We haven't started yet, we still need to synchronize configs */
-      if (my_info_cs->config_version_number > max_committed_version)
-      {
-        /*
-          Our most recent version is a version in a prepared state which
-          which will not be committed, we need to remove this version
-          and set our state to committed of the previous version number.
-          After this our Cluster Server is in synch with the committed
-          version of the Cluster Servers. We can start our Cluster Server
-          and accept reads of the configuration, but we cannot writes until
-          all Cluster Servers are up-to-date.
-        */
-        DEBUG_PRINT(CONFIG_LEVEL,
-          ("Our version was never committed, go back one version"));
-        (void)remove_config_files(run_obj->config_dir,
-                                  run_obj->clu_infos,
-                                  my_info_cs->config_version_number);
-        my_info_cs->state= CONFIG_STATE_BUSY;
-        my_info_cs->config_version_number= max_committed_version;
-        if ((error= write_config_version_file(run_obj->config_dir,
-                                      my_info_cs->config_version_number,
-                                      my_info_cs->state,
-                                      my_info_cs->pid)))
-        {
-          ic_print_error(error);
-          ic_printf("Failed to write config version file at line %d",
-                    __LINE__);
-          abort();
-          return;
-        }
-      }
-      else if (my_info_cs->config_version_number < max_committed_version)
-      {
-        /*
-          Our configuration is out-of-date. We don't have access to the
-          latest committed configuration version. We need to get this using
-          the get configuration and then save this version on file before
-          the Cluster Servers are ready to accept updates of the
-          configuration.
-        */
-        DEBUG_PRINT(CONFIG_LEVEL, ("Our version is out-of-date"));
-        return;
-      }
-      else if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
-      {
-        /*
-          We have the right version of the configuration but it hasn't been
-          committed yet, since someone else have committed we are safe to
-          commit it by updating the config version file.
-        */
-        DEBUG_PRINT(CONFIG_LEVEL, ("Commit our prepared version"));
-        my_info_cs->state= CONFIG_STATE_BUSY;
-        if ((error= write_config_version_file(run_obj->config_dir,
-                                      my_info_cs->config_version_number,
-                                      my_info_cs->state,
-                                      my_info_cs->pid)))
-        {
-          ic_print_error(error);
-          ic_printf("Failed to write config version file at line %d",
-                    __LINE__);
-          abort();
-          return;
-        }
-      }
-      else
-      {
-        DEBUG_PRINT(CONFIG_LEVEL, ("Our Cluster Server is in synch"));
-        return;
-      }
-      /*
-        We have changed our state, it's possible that all Cluster Servers are
-        in synch now, so we retry check for this by a recursive call here.
-        Since our state will be CONFIG_STATE_BUSY and equal to
-        max_committed_version here, there is no risk of more than one
-        recursive call here.
-      */
-      check_if_cs_started(run_obj);
-      return;
-    }
-  }
-  run_obj->state.cs_starting= FALSE;
-}
+static guint32 get_count_active_start_threads(
+                     IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static guint32 get_count_connected_cluster_servers(
+                     IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static void release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                  IC_CONNECTION *conn,
+                                  guint32 cs_index);
+static void set_up_initial_master_index_view(
+                     IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static IC_CONF_VERSION_TYPE find_max_version(
+                     IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static IC_CONF_VERSION_TYPE find_max_committed_version(
+                     IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static void check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 
 static gpointer
 start_cs_func(gpointer data)
@@ -1926,17 +1673,291 @@ end:
   DEBUG_RETURN(NULL);
 }
 
-static void
-free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+static guint32
+get_count_active_start_threads(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  if (run_obj->state.protect_state)
-    g_mutex_free(run_obj->state.protect_state);
-  if (run_obj->state.update_cond)
-    g_cond_free(run_obj->state.update_cond);
-  if (run_obj->state.connect_cond)
-    g_cond_free(run_obj->state.connect_cond);
-  if (run_obj->state.start_cond)
-    g_cond_free(run_obj->state.start_cond);
+  guint32 i;
+  guint32 num_started= 0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].is_start_thread_active)
+      num_started++;
+  }
+  return num_started;
+}
+
+static guint32
+get_count_connected_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  guint32 num_connected= 0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].conn)
+      num_connected++;
+  }
+  return num_connected;
+}
+
+static void
+release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                      IC_CONNECTION *conn,
+                      guint32 cs_index)
+{
+  run_obj->cs_servers[cs_index].conn= NULL;
+  run_obj->state.start_threads_stopped++;
+  run_obj->state.cs_starting= FALSE;
+  run_obj->state.cs_started= FALSE;
+  g_cond_broadcast(run_obj->state.start_cond);
+  g_mutex_unlock(run_obj->state.protect_state);
+  conn->conn_op.ic_free_connection(conn);
+}
+
+static void
+set_up_initial_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 min_node_id= 0;
+  guint32 lowest_node_id= IC_MAX_NODE_ID;
+  guint32 index_size= 0;
+  guint32 i, j;
+  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
+
+  /* Sort in lowest node number first */
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    for (j= 0; j < run_obj->num_cluster_servers; j++)
+    {
+       if (run_obj->cs_servers[j].node_id > min_node_id &&
+           run_obj->cs_servers[j].node_id < lowest_node_id &&
+           run_obj->cs_servers[j].conn)
+         lowest_node_id= run_obj->cs_servers[j].node_id;
+    }
+    if (min_node_id != lowest_node_id)
+      index_size++;
+    my_info_cs->master_index_view[i]= lowest_node_id;
+    min_node_id= lowest_node_id;
+  }
+  my_info_cs->master_index_size= index_size;
+}
+
+static IC_CONF_VERSION_TYPE
+find_max_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  IC_CONF_VERSION_TYPE version_number= (IC_CONF_VERSION_TYPE)0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].config_version_number > version_number)
+      version_number= run_obj->cs_servers[i].config_version_number;
+  }
+  return version_number;
+}
+
+static IC_CONF_VERSION_TYPE
+find_max_committed_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  IC_CONF_VERSION_TYPE version_number= (IC_CONF_VERSION_TYPE)0;
+
+  for (i= 0; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].state == CONFIG_STATE_BUSY &&
+        run_obj->cs_servers[i].config_version_number > version_number)
+      version_number= run_obj->cs_servers[i].config_version_number;
+  }
+  if (version_number == (IC_CONF_VERSION_TYPE)0)
+  {
+    /* All servers are in PREPARE state, max committed is -1 of max version */
+    return (IC_CONF_VERSION_TYPE)(find_max_version(run_obj) - 1);
+  }
+  return version_number;
+}
+
+static void
+check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
+  IC_CONF_VERSION_TYPE config_version_number= my_info_cs->config_version_number;
+  IC_CONF_STATE_TYPE status= my_info_cs->state;
+  IC_CONF_VERSION_TYPE max_committed_version;
+  guint32 i;
+  int error;
+
+  run_obj->state.cs_started= TRUE;
+  for (i= 1; i < run_obj->num_cluster_servers; i++)
+  {
+    if (run_obj->cs_servers[i].config_version_number !=
+        config_version_number ||
+        run_obj->cs_servers[i].state != status)
+    {
+      max_committed_version= find_max_committed_version(run_obj);
+      /* We haven't started yet, we still need to synchronize configs */
+      if (my_info_cs->config_version_number > max_committed_version)
+      {
+        /*
+          Our most recent version is a version in a prepared state which
+          which will not be committed, we need to remove this version
+          and set our state to committed of the previous version number.
+          After this our Cluster Server is in synch with the committed
+          version of the Cluster Servers. We can start our Cluster Server
+          and accept reads of the configuration, but we cannot writes until
+          all Cluster Servers are up-to-date.
+        */
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Our version was never committed, go back one version"));
+        (void)remove_config_files(run_obj->config_dir,
+                                  run_obj->clu_infos,
+                                  my_info_cs->config_version_number);
+        my_info_cs->state= CONFIG_STATE_BUSY;
+        my_info_cs->config_version_number= max_committed_version;
+        if ((error= write_config_version_file(run_obj->config_dir,
+                                      my_info_cs->config_version_number,
+                                      my_info_cs->state,
+                                      my_info_cs->pid)))
+        {
+          ic_print_error(error);
+          ic_printf("Failed to write config version file at line %d",
+                    __LINE__);
+          abort();
+          return;
+        }
+      }
+      else if (my_info_cs->config_version_number < max_committed_version)
+      {
+        /*
+          Our configuration is out-of-date. We don't have access to the
+          latest committed configuration version. We need to get this using
+          the get configuration and then save this version on file before
+          the Cluster Servers are ready to accept updates of the
+          configuration.
+        */
+        DEBUG_PRINT(CONFIG_LEVEL, ("Our version is out-of-date"));
+        return;
+      }
+      else if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
+      {
+        /*
+          We have the right version of the configuration but it hasn't been
+          committed yet, since someone else have committed we are safe to
+          commit it by updating the config version file.
+        */
+        DEBUG_PRINT(CONFIG_LEVEL, ("Commit our prepared version"));
+        my_info_cs->state= CONFIG_STATE_BUSY;
+        if ((error= write_config_version_file(run_obj->config_dir,
+                                      my_info_cs->config_version_number,
+                                      my_info_cs->state,
+                                      my_info_cs->pid)))
+        {
+          ic_print_error(error);
+          ic_printf("Failed to write config version file at line %d",
+                    __LINE__);
+          abort();
+          return;
+        }
+      }
+      else
+      {
+        DEBUG_PRINT(CONFIG_LEVEL, ("Our Cluster Server is in synch"));
+        return;
+      }
+      /*
+        We have changed our state, it's possible that all Cluster Servers are
+        in synch now, so we retry check for this by a recursive call here.
+        Since our state will be CONFIG_STATE_BUSY and equal to
+        max_committed_version here, there is no risk of more than one
+        recursive call here.
+      */
+      check_if_cs_started(run_obj);
+      return;
+    }
+  }
+  run_obj->state.cs_starting= FALSE;
+}
+
+/*
+  MODULE: Complete Startup Handling as part of Run Cluster Server
+  ---------------------------------------------------------------
+
+  This function is called from run_cluster_server to complete the startup
+  handling. Some nodes may need to connect to other Cluster Servers to get
+  configuration before the node is able to start. State of start is
+  communicated through the heartbeat messages started in Cluster Server
+  Start handling.
+*/
+static int
+complete_startup_handling(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
+  IC_CONF_VERSION_TYPE max_version= find_max_version(run_obj);
+  int error;
+  gchar *err_str;
+  IC_CONF_VERSION_TYPE old_version;
+  IC_API_CONFIG_SERVER *new_apic;
+  IC_API_CLUSTER_CONNECTION api_cluster_conn;
+  DEBUG_ENTRY("complete_startup_handling");
+
+  if (my_info_cs->config_version_number != max_version)
+  {
+    /* Our Cluster Server is lagging behind */
+    g_assert(my_info_cs->config_version_number < max_version);
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Fetch config from up-to-date Cluster Server"));
+    new_apic= ic_get_configuration(&api_cluster_conn,
+                       run_obj->config_dir,
+                       run_obj->cs_nodeid,
+                       (guint32)1,
+                       &run_obj->apic->cluster_conn.cluster_server_ips[1],
+                       &run_obj->apic->cluster_conn.cluster_server_ports[1],
+                       (guint32)3,
+                       TRUE,
+                       &error,
+                       &err_str);
+    if (!new_apic)
+    {
+      goto error;
+    }
+    DEBUG_PRINT(CONFIG_LEVEL, ("Successful fetch of new configuration"));
+    /* Release memory for old apic */
+    run_obj->apic->api_op.ic_free_config((IC_API_CONFIG_SERVER*)run_obj->apic);
+    run_obj->apic= (IC_INT_API_CONFIG_SERVER*)new_apic;
+
+    /* Remove old config files in case we missed several updates */
+    DEBUG_PRINT(CONFIG_LEVEL, ("Remove old config files"));
+    if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
+    {
+      /* Make sure all config files are cleaned up, also the old committed */
+      (void)remove_config_files(run_obj->config_dir,
+                                run_obj->clu_infos,
+                                my_info_cs->config_version_number - 1);
+    }
+    (void)remove_config_files(run_obj->config_dir,
+                              run_obj->clu_infos,
+                              my_info_cs->config_version_number);
+
+    /* Write new configuration */
+    DEBUG_PRINT(CONFIG_LEVEL, ("Write configuration to disk"));
+    old_version= max_version - 1;
+    if ((error= ic_write_full_config_to_disk(run_obj->config_dir,
+                    &old_version,
+                    run_obj->clu_infos,
+                    new_apic->api_op.ic_get_all_cluster_config(new_apic))))
+      goto error;
+
+    my_info_cs->config_version_number= max_version;
+    my_info_cs->state= CONFIG_STATE_BUSY;
+  }
+  DEBUG_RETURN(0);
+error:
+  DEBUG_RETURN(error);
+}
+
+static void
+report_startup_completed(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  run_obj->state.cs_started= TRUE;
 }
 
 /*
@@ -1947,7 +1968,7 @@ free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     socket and port.
 
     The module implements the IC_RUN_CLUSTER_SERVER interface.
-    This interface has three methods:
+    This interface has seven methods:
 
     ic_create_run_cluster: This creates the IC_RUN_CLUSTER_SERVER object
     ic_start_cluster_server: This starts the cluster server, implemented in
@@ -1957,6 +1978,8 @@ free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                            Implemented in rcs_fill_error_buffer.
     ic_run_cluster_server: This runs the cluster server, it is implemented
                            in the routine run_cluster_server
+    ic_get_api_config:     This gets the IC_API_CONFIG_SERVER object of
+                           Cluster Server.
     ic_stop_cluster_server: Stops the cluster server in an orderly manner.
                             Implemented in stop cluster server
                             Implemented in the stop cluster server module.
@@ -1970,8 +1993,9 @@ static int run_cluster_server(IC_RUN_CLUSTER_SERVER *run_obj);
 static gchar* rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *run_obj,
                                     int error_code,
                                     gchar *error_buffer);
-static IC_API_CONFIG_SERVER*
-get_api_config(IC_RUN_CLUSTER_SERVER *ext_run_obj);
+static IC_API_CONFIG_SERVER* get_api_config(
+                             IC_RUN_CLUSTER_SERVER *ext_run_obj);
+static void free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 
 /*
  Here starts the code part of the Run Cluster Server Module
@@ -2132,6 +2156,19 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       run_obj->mc_ptr->mc_ops.ic_mc_free(run_obj->mc_ptr);
   }
   DEBUG_RETURN_EMPTY;
+}
+
+static void
+free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  if (run_obj->state.protect_state)
+    g_mutex_free(run_obj->state.protect_state);
+  if (run_obj->state.update_cond)
+    g_cond_free(run_obj->state.update_cond);
+  if (run_obj->state.connect_cond)
+    g_cond_free(run_obj->state.connect_cond);
+  if (run_obj->state.start_cond)
+    g_cond_free(run_obj->state.start_cond);
 }
 
 /*
@@ -2499,7 +2536,12 @@ error:
   goto end;
 }
 
-/* Handle get cluster list protocol action in Cluster Server */
+/*
+  MODULE: Get cluster list
+  ------------------------
+  Handle get cluster list protocol action in Cluster Server
+*/
+
 static int
 handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                         IC_CONNECTION *conn)
