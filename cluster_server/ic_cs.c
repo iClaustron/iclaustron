@@ -50,9 +50,6 @@ static gchar *glob_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 
 static GOptionEntry entries[] = 
 {
-  { "bootstrap", 0, 0, G_OPTION_ARG_NONE,
-    &glob_bootstrap,
-    "Is this bootstrap of a cluster", NULL},
   { "server_port", 0, 0, G_OPTION_ARG_STRING,
     &glob_server_port,
     "Set Cluster Server connection Port", NULL},
@@ -104,8 +101,6 @@ end:
     }
     run_obj->run_op.ic_free_run_cluster(run_obj);
   }
-  if (ic_glob_config_dir.str)
-    ic_free(ic_glob_config_dir.str);
   ic_end();
   return error;
 error:

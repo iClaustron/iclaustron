@@ -182,7 +182,6 @@ stop_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
   DEBUG_ENTRY("stop_cluster_server");
 
-  run_obj->tp_state->tp_ops.ic_threadpool_stop(run_obj->tp_state);
   DEBUG_RETURN(unlock_cv_file(run_obj));
 }
 
@@ -210,30 +209,69 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   Cluster Server Start Options:
   -----------------------------
 
-  The very first start of a Cluster Server always uses the --bootstrap flag.
-  When this flag is set one reads the cluster configuration file and each
-  of the configuration files for each cluster in the grid. After reading these
-  files the Cluster Server writes version 1 of the configuration.
+  The very first start of a Cluster Server always expects to find the same
+  configuration file in all Cluster Server nodes. The idea is that the
+  user will write those configuration file in a tool that assists them in
+  writing the needed configuration files. Then the cluster client can
+  read those files and connect to the process controller on each respective
+  node. The process controller will write the files into the correct place
+  of the files.
 
-  If there are several Cluster Servers in the cluster, then only one of them
-  should use the --bootstrap flag. The other ones should start without this
-  flag.
+  The process to bootstrap a cluster is the following:
 
-  When starting without the flag one will read the configuration version file,
-  the cluster configuration file for this version and the configuration files
-  for each cluster in this version.
+  Installation prerequisites:
+  ---------------------------
+  1) Install the iClaustron binaries into all machines where the iClaustron
+     Grid will be executing.
+  2) Start process controller on all machines (some machines might even need
+     multiple process controller, one for each port they listen to).
+  3) Ensure that all ports to be used by process controllers, Cluster Servers,
+     Cluster Managers, SQL Servers, replication servers and data servers are
+     not blocked by any firewall application.
 
-  In the case of a first start of a Cluster Server it won't be possible to
-  find those files since they haven't been created yet. However in order to
-  start at all, at least a cluster configuration file is required, this file
-  will contain name, id and password for each cluster and hostname and port
-  for each Cluster Server in the cluster. This file is required to start-up
-  any node in a iClaustron grid.
+  Configuration building
+  ----------------------
+  4) Start the configuration builder tool in an appropriate directory
+  5) Create an initial configuration
+  6) The tool writes the configuration files into the directory where the
+     tool executes.
+
+  Distribute configuration files
+  ------------------------------
+  7) Issue the command to distribute the configuration files to the
+     appropriate places using the already started process controllers
+     to ensure there is an allowed path to distribute the files. This
+     means distributing all configuration files to machines running
+     the Cluster Servers and the grid configuration files to all machines.
+
+  Start the Cluster Servers and Managers
+  --------------------------------------
+  8) Issue the command in the configuration builder tool to start the
+     Cluster Servers for the first time.
+  9) Issue the command in the configuration builder tool to start the
+     Cluster Managers for the first time.
+
+  iClaustron expects that Cluster Servers and Cluster Managers for a
+  specific Grid is kept up and running all the time. The reason for this is
+  that the configuration builder tool only have access to up-to-date
+  Grid configuration at initial start. After initial start the configuration
+  can change in every way possible. Thus it is harder to restart the Grid
+  if Cluster Servers and/or Cluster Managers are no longer available.
+
+  To restart cluster servers and cluster managers if all cluster servers
+  and/or all cluster managers are stopped we use a special tool that can
+  start these up using the process controller. The user of this tool must
+  however have knowledge of the current placement of the Cluster Servers. 
+
+  Start of a Cluster Server
+  -------------------------
+  When starting the Cluster Server one will read the configuration version
+  file, the common grid configuration file, the cluster configuration file for
+  this version and the configuration files for each cluster in this version.
 
   After reading the local configuration files a node will attempt to connect
-  to any other Cluster Servers. If this is unsuccessful and no configuration
-  files were present then the Cluster Server will fail with an error code
-  after waiting an appropriate time.
+  to any other Cluster Servers. The node will wait until a quorum has been
+  formed before the start is completed.
 
   If connect is successful and the version read from the connected server is
   equal to our own read version, then we will fetch configuration from the
@@ -262,7 +300,8 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   3 then the files created will be called config.ini.3 and the configuration
   files of the cluster will always be called the name of the cluster + .ini.
   Thus for a cluster called kalle it will kalle.ini and versioned it will be
-  kalle.ini.3
+  kalle.ini.3.
+
   The only parameter thus needed for the Cluster Server is which directory
   those files are stored in. The remaining information is always the same
   or provided in configuration files.
@@ -281,9 +320,6 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
    the clusters and loads each cluster configuration using the method
    ic_load_config_server_from files which also resides in another module.
 
-   After initialising the data structures the configuration is verified using
-   the method verify_grid_config.
-
    In a bootstrap situation it does also write version 1 of the configuration
    using the method ic_write_full_config_to_disk from another module.
 */
@@ -294,7 +330,6 @@ static void set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                              IC_CLUSTER_CONNECT_INFO **clu_infos);
-static int verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int start_connect_other_cluster_servers(
                              IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static gpointer start_cs_func(gpointer data);
@@ -414,8 +449,7 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                                 &run_obj->err_obj)))
     return error;
   run_obj->clu_infos= clu_infos;
-  if ((error= load_config_files(run_obj, clu_infos)) ||
-      (error= verify_grid_config(run_obj)))
+  if ((error= load_config_files(run_obj, clu_infos)))
     return error;
   if (info_cs->config_version_number == 0)
   {
@@ -433,11 +467,22 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                   IC_CLUSTER_CONNECT_INFO **clu_infos)
 {
   IC_CLUSTER_CONNECT_INFO *clu_info;
-  IC_CLUSTER_CONFIG *cluster;
+  IC_CLUSTER_CONFIG *cluster, *grid_cluster;
   IC_MEMORY_CONTAINER *mc_ptr= run_obj->mc_ptr;
   IC_STRING file_name_string;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
+
+  ic_create_config_file_name(&file_name_string,
+                             file_name,
+                             run_obj->config_dir,
+                             &ic_grid_common_config_string,
+                             info_cs->config_version_number);
+
+  if (!(grid_cluster= ic_load_grid_common_config_server_from_file(file_name,
+                                            &run_obj->conf_server_struct,
+                                            &run_obj->err_obj)))
+    return run_obj->err_obj.err_num;
 
   while (*clu_infos)
   {
@@ -454,6 +499,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       convert it into a IC_CLUSTER_CONFIG struct.
     */
     if (!(cluster= ic_load_config_server_from_files(file_name,
+                                              grid_cluster,
                                               &run_obj->conf_server_struct,
                                               &run_obj->err_obj)))
       return run_obj->err_obj.err_num;
@@ -489,64 +535,6 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     run_obj->num_clusters++;
   }
   return 0;
-}
-
-static int
-verify_grid_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  guint32 i;
-  guint32 max_grid_node_id= 0;
-  gboolean first_cs_or_cm= FALSE;
-  gboolean first;
-  IC_CLUSTER_CONFIG *cluster;
-  IC_NODE_TYPES node_type= IC_NOT_EXIST_NODE_TYPE;
-
-  for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
-  {
-    if ((cluster= run_obj->conf_objects[i]))
-      max_grid_node_id= IC_MAX(max_grid_node_id, cluster->max_node_id);
-  }
-  for (i= 1; i <= max_grid_node_id; i++)
-  {
-    first= TRUE;
-    for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
-    {
-      if (!(cluster= run_obj->conf_objects[i]))
-        continue;
-      if (first)
-      {
-        if (i <= cluster->max_node_id)
-          node_type= cluster->node_types[i];
-        else
-          node_type= IC_NOT_EXIST_NODE_TYPE;
-        first_cs_or_cm= node_type == IC_CLUSTER_SERVER_NODE ||
-                        node_type == IC_CLUSTER_MANAGER_NODE;
-        first= FALSE;
-      }
-      else
-      {
-        if (first_cs_or_cm)
-        {
-          if (i > cluster->max_node_id ||
-              cluster->node_types[i] != node_type)
-            goto error;
-        }
-        else
-        {
-          if (i <= cluster->max_node_id &&
-              (cluster->node_types[i] == IC_CLUSTER_SERVER_NODE ||
-               cluster->node_types[i] == IC_CLUSTER_MANAGER_NODE))
-            goto error;
-        }
-      }
-    }
-  }
-  return 0;
-error:
-  ic_printf("%s Grids require cluster managers/servers to be on "
-            "same nodeid in all clusters",
-            ic_err_str);
-  return 1;
 }
 
 static int
@@ -1481,6 +1469,9 @@ start_cs_func(gpointer data)
   DEBUG_ENTRY("start_cs_func");
 
   tp_state->ts_ops.ic_thread_started(thread_state);
+  if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
+    goto end;
+
   while (1)
   {
     err_str= NULL;

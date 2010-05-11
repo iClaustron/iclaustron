@@ -534,7 +534,10 @@ unix_open_file(IC_FILE_HANDLE *handle,
   if (!open_flag)
     flags|= O_TRUNC;
 
-  file_ptr= open(file_name, flags, 0);
+  if (create_flag)
+    file_ptr= open(file_name, flags, S_IWRITE | S_IREAD);
+  else
+    file_ptr= open(file_name, flags);
   if (file_ptr  == (int)-1)
     return errno;
   else
@@ -619,7 +622,7 @@ error:
 
 int
 ic_get_file_contents(const gchar *file,
-					 gchar **file_content,
+                     gchar **file_content,
                      guint64 *file_size)
 {
   IC_FILE_HANDLE file_ptr;

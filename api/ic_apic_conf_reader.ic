@@ -1,4 +1,4 @@
-/* Copyright (C) 2009 iClaustron AB
+/* Copyright (C) 2009-2010 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -36,8 +36,18 @@ static void ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
 
 static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
+                                 IC_CLUSTER_CONFIG *grid_clu_conf,
                                  IC_CONFIG_STRUCT *conf_server,
                                  IC_CONFIG_ERROR *err_obj);
+static IC_CLUSTER_CONFIG*
+ic_load_grid_common_config_server_from_file(gchar *config_file,
+                                     IC_CONFIG_STRUCT *conf_server,
+                                     IC_CONFIG_ERROR *err_obj);
+static IC_CLUSTER_CONFIG*
+load_config_server_from_files(gchar *config_file,
+                              IC_CONFIG_STRUCT *conf_server,
+                              IC_CONFIG_ERROR *err_obj,
+                              gboolean is_grid_common_config);
 
 static IC_CONFIG_ENTRY*
 get_config_entry_mandatory(guint32 bit_id,
@@ -244,7 +254,9 @@ ensure_node_name_set(void *current_config, IC_MEMORY_CONTAINER *mc_ptr)
   {
     /* Default name is node_1 for node 1 */
     memcpy(node_name_buffer, "node_", 5);
-    num_ptr= ic_guint64_str((guint64)ds_conf->node_id, &node_name_buffer[5], &num_len);
+    num_ptr= ic_guint64_str((guint64)ds_conf->node_id,
+                            &node_name_buffer[5],
+                            &num_len);
     num_ptr[num_len]= 0;
     alloc_len= num_len + 1 + 5;
     if (!(alloc_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, alloc_len)))
@@ -262,9 +274,12 @@ conf_serv_init(void *ic_conf, guint32 pass)
   IC_CLUSTER_CONFIG *clu_conf_perm;
   IC_MEMORY_CONTAINER *temp_mc_ptr;
   IC_MEMORY_CONTAINER *perm_mc_ptr;
+  IC_CLUSTER_CONFIG *grid_clu_conf= (IC_CLUSTER_CONFIG*)conf->data;
   guint32 max_node_id, num_nodes;
   guint32 size_structs= 0;
+  guint32 i;
   DEBUG_ENTRY("conf_serv_init");
+
   perm_mc_ptr= conf->perm_mc_ptr;
   if (pass == INITIAL_PASS)
   {
@@ -295,7 +310,8 @@ conf_serv_init(void *ic_conf, guint32 pass)
     DEBUG_RETURN(0);
   }
   clu_conf= conf->config_ptr.clu_conf;
-  max_node_id= clu_conf->conf->max_node_id;
+  clu_conf->conf->max_node_id= max_node_id=
+    IC_MAX(clu_conf->conf->max_node_id, grid_clu_conf->max_node_id);
   if (max_node_id == 0)
   {
     DEBUG_RETURN(IC_ERROR_NO_NODES_FOUND);
@@ -307,8 +323,6 @@ conf_serv_init(void *ic_conf, guint32 pass)
   size_structs+= clu_conf->conf->num_data_servers *
                  sizeof(IC_DATA_SERVER_CONFIG);
   size_structs+= clu_conf->conf->num_clients * sizeof(IC_CLIENT_CONFIG);
-  size_structs+= clu_conf->conf->num_cluster_servers *
-                 sizeof(IC_CLUSTER_SERVER_CONFIG);
   size_structs+= clu_conf->conf->num_sql_servers *
                  sizeof(IC_SQL_SERVER_CONFIG);
   size_structs+= clu_conf->conf->num_rep_servers *
@@ -317,8 +331,7 @@ conf_serv_init(void *ic_conf, guint32 pass)
                  sizeof(IC_FILE_SERVER_CONFIG);
   size_structs+= clu_conf->conf->num_restore_nodes *
                  sizeof(IC_RESTORE_CONFIG);
-  size_structs+= clu_conf->conf->num_cluster_mgrs *
-                   sizeof(IC_CLUSTER_MANAGER_CONFIG);
+  clu_conf->conf->num_nodes+= grid_clu_conf->num_nodes;
   num_nodes= clu_conf->conf->num_nodes;
   /*
     A fully connected set of nodes means n * n - 1 / 2 connections since
@@ -359,15 +372,18 @@ conf_serv_init(void *ic_conf, guint32 pass)
     DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
   }
 
+  for (i= 0; i <= grid_clu_conf->max_node_id; i++)
+  {
+    clu_conf->conf->node_config[i]= grid_clu_conf->node_config[i];
+    clu_conf->conf->node_types[i]= grid_clu_conf->node_types[i];
+  }
+
   init_config_object((gchar*)&clu_conf->default_data_server_config,
                      sizeof(clu_conf->default_data_server_config),
                      IC_DATA_SERVER_TYPE);
   init_config_object((gchar*)&clu_conf->default_client_config,
                      sizeof(clu_conf->default_client_config),
                      IC_CLIENT_TYPE);
-  init_config_object((gchar*)&clu_conf->default_cluster_server_config,
-                     sizeof(clu_conf->default_cluster_server_config),
-                     IC_CLUSTER_SERVER_TYPE);
   init_config_object((gchar*)&clu_conf->default_sql_server_config.client_conf,
                      sizeof(clu_conf->default_sql_server_config.client_conf),
                      IC_CLIENT_TYPE);
@@ -392,12 +408,98 @@ conf_serv_init(void *ic_conf, guint32 pass)
   init_config_object((gchar*)&clu_conf->default_restore_config,
                      sizeof(clu_conf->default_restore_config),
                      IC_RESTORE_TYPE);
-  init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
-                     sizeof(clu_conf->default_cluster_mgr_config),
-                     IC_CLUSTER_MANAGER_TYPE);
   init_config_object((gchar*)&clu_conf->default_socket_config,
                      sizeof(clu_conf->default_socket_config),
                      IC_COMM_TYPE);
+  DEBUG_RETURN(0);
+}
+
+static int
+conf_grid_common_serv_init(void *ic_conf, guint32 pass)
+{
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf;
+  IC_CLUSTER_CONFIG *clu_conf_perm;
+  IC_MEMORY_CONTAINER *temp_mc_ptr;
+  IC_MEMORY_CONTAINER *perm_mc_ptr;
+  guint32 max_node_id, num_nodes;
+  guint32 size_structs= 0;
+  DEBUG_ENTRY("conf_grid_common_serv_init");
+  perm_mc_ptr= conf->perm_mc_ptr;
+  if (pass == INITIAL_PASS)
+  {
+    /*
+      In this initial phase we allocate a temporary memory container and we
+      set up the pointers for deallocation, the memory to be returned is
+      allocated on a memory container supplied by the caller.
+    */
+    if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    {
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)temp_mc_ptr->mc_ops.ic_mc_calloc(
+                    temp_mc_ptr, sizeof(IC_CLUSTER_CONFIG_LOAD))))
+    {
+      temp_mc_ptr->mc_ops.ic_mc_free(temp_mc_ptr);
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
+    clu_conf->temp_mc_ptr= temp_mc_ptr;
+    if (!(clu_conf_perm= (IC_CLUSTER_CONFIG*)perm_mc_ptr->mc_ops.ic_mc_calloc(
+                         perm_mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
+    {
+      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    }
+    clu_conf->conf= clu_conf_perm;
+    clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
+    DEBUG_RETURN(0);
+  }
+  clu_conf= conf->config_ptr.clu_conf;
+  max_node_id= clu_conf->conf->max_node_id;
+  if (max_node_id == 0)
+  {
+    DEBUG_RETURN(IC_ERROR_NO_NODES_FOUND);
+  }
+  clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
+  /*
+    Calculate size of all node struct's and allocate them in one chunk.
+  */
+  size_structs+= clu_conf->conf->num_cluster_servers *
+                 sizeof(IC_CLUSTER_SERVER_CONFIG);
+  size_structs+= clu_conf->conf->num_cluster_mgrs *
+                   sizeof(IC_CLUSTER_MANAGER_CONFIG);
+  num_nodes= clu_conf->conf->num_nodes;
+
+  if (!(clu_conf->struct_memory= (gchar*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr, size_structs)))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->conf->node_config= (gchar**)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                                sizeof(gchar*)*(max_node_id + 1))))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->string_memory= (gchar*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                                         clu_conf->size_string_memory)))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+  if (!(clu_conf->conf->node_types= (IC_NODE_TYPES*)
+        perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
+                             sizeof(IC_NODE_TYPES)*(max_node_id+1))))
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
+
+  init_config_object((gchar*)&clu_conf->default_cluster_server_config,
+                     sizeof(clu_conf->default_cluster_server_config),
+                     IC_CLUSTER_SERVER_TYPE);
+  init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
+                     sizeof(clu_conf->default_cluster_mgr_config),
+                     IC_CLUSTER_MANAGER_TYPE);
   DEBUG_RETURN(0);
 }
 
@@ -452,19 +554,6 @@ conf_serv_add_section(void *ic_conf,
               (void*)&clu_conf->default_client_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found client group"));
   }
-  else if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
-  {
-    clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
-    if (pass == INITIAL_PASS)
-    {
-      clu_conf->conf->num_cluster_servers++;
-      clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
-    }
-    init_node(clu_conf, sizeof(IC_CLUSTER_SERVER_CONFIG),
-              (void*)&clu_conf->default_cluster_server_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group"));
-  }
   else if (ic_cmp_null_term_str(sql_server_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_SQL_SERVER_TYPE;
@@ -517,19 +606,6 @@ conf_serv_add_section(void *ic_conf,
               (void*)&clu_conf->default_restore_config);
     DEBUG_PRINT(CONFIG_LEVEL, ("Found restore node group"));
   }
-  else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
-  {
-    clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
-    if (pass == INITIAL_PASS)
-    {
-      clu_conf->conf->num_cluster_mgrs++;
-      clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
-    }
-    init_node(clu_conf, sizeof(IC_CLUSTER_MANAGER_CONFIG),
-              (void*)&clu_conf->default_cluster_mgr_config);
-    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group"));
-  }
   else if (ic_cmp_null_term_str(socket_str, section_name) == 0)
   {
     clu_conf->current_node_config_type= IC_COMM_TYPE;
@@ -557,12 +633,6 @@ conf_serv_add_section(void *ic_conf,
       clu_conf->current_node_config_type= IC_CLIENT_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found client default group"));
     }
-    else if (ic_cmp_null_term_str(cluster_server_def_str, section_name) == 0)
-    {
-      clu_conf->current_node_config= &clu_conf->default_cluster_server_config;
-      clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server default group"));
-    }
     else if (ic_cmp_null_term_str(sql_server_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_sql_server_config;
@@ -587,17 +657,78 @@ conf_serv_add_section(void *ic_conf,
       clu_conf->current_node_config_type= IC_RESTORE_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found restore default group"));
     }
-    else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
-    {
-      clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
-      clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group"));
-    }
     else if (ic_cmp_null_term_str(socket_def_str, section_name) == 0)
     {
       clu_conf->current_node_config= &clu_conf->default_socket_config;
       clu_conf->current_node_config_type= IC_COMM_TYPE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Found socket default group"));
+    }
+    else
+    {
+      DEBUG_PRINT(CONFIG_LEVEL, ("No such config section"));
+      DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
+    }
+  }
+  DEBUG_RETURN(0);
+}
+
+static int
+conf_serv_add_grid_common_section(void *ic_conf,
+                                  guint32 section_number,
+                                  guint32 line_number,
+                                  IC_STRING *section_name,
+                                  guint32 pass)
+{
+  int error;
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
+  DEBUG_ENTRY("conf_serv_add_grid_section");
+  DEBUG_IC_STRING(CONFIG_LEVEL, section_name);
+  (void)section_number;
+
+  if ((error= complete_section(ic_conf, line_number, pass)))
+    DEBUG_RETURN(error);
+  clu_conf->default_section= FALSE;
+  if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_cluster_servers++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_CLUSTER_SERVER_CONFIG),
+              (void*)&clu_conf->default_cluster_server_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server group"));
+  }
+  else if (ic_cmp_null_term_str(cluster_mgr_str, section_name) == 0)
+  {
+    clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
+    if (pass == INITIAL_PASS)
+    {
+      clu_conf->conf->num_cluster_mgrs++;
+      clu_conf->conf->num_nodes++;
+      DEBUG_RETURN(0);
+    }
+    init_node(clu_conf, sizeof(IC_CLUSTER_MANAGER_CONFIG),
+              (void*)&clu_conf->default_cluster_mgr_config);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster manager group"));
+  }
+  else
+  {
+    clu_conf->default_section= TRUE;
+    if (ic_cmp_null_term_str(cluster_server_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_cluster_server_config;
+      clu_conf->current_node_config_type= IC_CLUSTER_SERVER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster server default group"));
+    }
+    else if (ic_cmp_null_term_str(cluster_mgr_def_str, section_name) == 0)
+    {
+      clu_conf->current_node_config= &clu_conf->default_cluster_mgr_config;
+      clu_conf->current_node_config_type= IC_CLUSTER_MANAGER_TYPE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Found cluster_mgr default group"));
     }
     else
     {
@@ -669,9 +800,7 @@ conf_serv_add_key(void *ic_conf,
   num32_check<<= 32;
   if (!ic_cmp_null_term_str(node_id_str, key_name))
   {
-    /*
-      We have found a node id
-    */
+    /* We have found a node id */
     clu_conf->conf->max_node_id=
       (guint32)IC_MAX((guint32)value, clu_conf->conf->max_node_id);
     if (!clu_conf->default_section && pass != INITIAL_PASS)
@@ -809,19 +938,59 @@ static IC_CONFIG_OPERATIONS config_server_ops =
   /* .ic_config_end  =  */conf_serv_end
 };
 
+static IC_CONFIG_OPERATIONS grid_common_config_server_ops =
+{
+  /* .ic_config_init =  */ conf_grid_common_serv_init,
+  /* .ic_add_section =  */ conf_serv_add_grid_common_section,
+  /* .ic_add_key     =  */ conf_serv_add_key,
+  /* .ic_add_comment =  */ conf_serv_add_comment,
+  /* .ic_config_verify = */conf_serv_verify_conf,
+  /* .ic_init_end    =  */ conf_init_end,
+  /* .ic_config_end  =  */conf_serv_end
+};
+
 static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
+                                 IC_CLUSTER_CONFIG *grid_cluster_conf,
                                  IC_CONFIG_STRUCT *conf_server,
                                  IC_CONFIG_ERROR *err_obj)
+{
+  conf_server->data= (void*)grid_cluster_conf;
+  return load_config_server_from_files(config_file,
+                                       conf_server,
+                                       err_obj,
+                                       FALSE);
+}
+
+static IC_CLUSTER_CONFIG*
+ic_load_grid_common_config_server_from_file(gchar *config_file,
+                                     IC_CONFIG_STRUCT *conf_server,
+                                     IC_CONFIG_ERROR *err_obj)
+{
+  return load_config_server_from_files(config_file,
+                                       conf_server,
+                                       err_obj,
+                                       TRUE);
+}
+
+static IC_CLUSTER_CONFIG*
+load_config_server_from_files(gchar *config_file,
+                              IC_CONFIG_STRUCT *conf_server,
+                              IC_CONFIG_ERROR *err_obj,
+                              gboolean is_grid_common_config)
 {
   gchar *conf_data_str;
   guint64 conf_data_len;
   IC_STRING conf_data;
   int ret_val;
   IC_CLUSTER_CONFIG *ret_ptr;
-  DEBUG_ENTRY("ic_load_config_server_from_files");
+  DEBUG_ENTRY("load_config_server_from_files");
 
-  conf_server->clu_conf_ops= &config_server_ops;
+  if (is_grid_common_config)
+    conf_server->clu_conf_ops= &grid_common_config_server_ops;
+  else
+    conf_server->clu_conf_ops= &config_server_ops;
+
   conf_server->config_ptr.clu_conf= NULL;
   DEBUG_PRINT(CONFIG_LEVEL, ("config_file = %s", config_file));
   if (ic_get_file_contents(config_file, &conf_data_str,
@@ -843,11 +1012,14 @@ ic_load_config_server_from_files(gchar *config_file,
   else
   {
     ret_ptr= conf_server->config_ptr.clu_conf->conf;
-    if (build_hash_on_comms(ret_ptr, conf_server->config_ptr.clu_conf))
+    if (!is_grid_common_config)
     {
-      conf_serv_end(conf_server);
-      err_obj->err_num= IC_ERROR_MEM_ALLOC;
-      ret_ptr= NULL;
+      if (build_hash_on_comms(ret_ptr, conf_server->config_ptr.clu_conf))
+      {
+        conf_serv_end(conf_server);
+        err_obj->err_num= IC_ERROR_MEM_ALLOC;
+        ret_ptr= NULL;
+      }
     }
   }
   config_server_ops.ic_init_end(conf_server);

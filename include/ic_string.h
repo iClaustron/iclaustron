@@ -171,6 +171,7 @@ extern gchar *ic_err_str;
 */
 extern IC_STRING ic_version_file_str;
 extern IC_STRING ic_config_string;
+extern IC_STRING ic_grid_common_config_string;
 extern IC_STRING ic_config_ending_string;
 
 /*

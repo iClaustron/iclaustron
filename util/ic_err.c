@@ -67,7 +67,7 @@ ic_init_error_messages()
   ic_error_str[IC_ERROR_CONFIG_IMPROPER_KEY_VALUE - IC_FIRST_ERROR]=
     "Improper key-value pair";
   ic_error_str[IC_ERROR_CONFIG_NO_SUCH_SECTION - IC_FIRST_ERROR]=
-    "Section name doesn't exist in this configuration";
+    "Section name doesn't exist in this type of configuration file";
   ic_error_str[IC_ERROR_MEM_ALLOC - IC_FIRST_ERROR]=
     "Memory allocation failure";
   ic_error_str[IC_ERROR_NO_SECTION_DEFINED_YET - IC_FIRST_ERROR]=

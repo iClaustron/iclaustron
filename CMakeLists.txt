@@ -486,10 +486,25 @@ install (PROGRAMS scripts/check_process.sh.in DESTINATION bin
          RENAME check_process.sh)
 install (PROGRAMS scripts/windows_check_process.sh.in DESTINATION bin
          RENAME windows_check_process.sh)
+
 #Install examples directory into examples directory
 install (DIRECTORY examples DESTINATION ${CMAKE_INSTALL_PREFIX})
+install (FILES
+         examples/config.ini
+         examples/grid_common.ini
+         examples/jocke.ini
+         examples/kalle.ini
+         DESTINATION examples)
+
+
 #Install doc directory into doc directory
 install (DIRECTORY doc DESTINATION ${CMAKE_INSTALL_PREFIX})
-install (FILES README README-CONFIG AUTHORS NEWS AUTHORS
+install (FILES
+         COPYING
+         INSTALL
+         ChangeLog
+         README
+         README-CONFIG
+         AUTHORS
+         NEWS
          DESTINATION doc)
-

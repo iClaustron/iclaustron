@@ -152,7 +152,8 @@ write_grid_config_file(IC_STRING *config_dir,
 static int
 write_cluster_config_file(IC_STRING *config_dir,
                           IC_CLUSTER_CONFIG *clu_conf,
-                          IC_CONF_VERSION_TYPE config_version);
+                          IC_CONF_VERSION_TYPE config_version,
+                          gboolean is_grid_common_config);
 static int
 write_new_section_header(IC_DYNAMIC_ARRAY *dyn_array,
                          IC_DYNAMIC_ARRAY_OPS *da_ops,
@@ -164,7 +165,8 @@ write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
                        IC_DYNAMIC_ARRAY_OPS *da_ops,
                        gchar *buf,
                        IC_CLUSTER_CONFIG *clu_conf,
-                       IC_CLUSTER_CONFIG_LOAD *clu_def);
+                       IC_CLUSTER_CONFIG_LOAD *clu_def,
+                       gboolean is_grid_common_config);
 static int
 write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
                       IC_DYNAMIC_ARRAY_OPS *da_ops,
@@ -177,7 +179,8 @@ write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
                     IC_DYNAMIC_ARRAY_OPS *da_ops,
                     gchar *buf,
                     IC_CLUSTER_CONFIG *clu_conf,
-                    IC_CLUSTER_CONFIG_LOAD *clu_def);
+                    IC_CLUSTER_CONFIG_LOAD *clu_def,
+                    gboolean is_grid_common_config);
 static int
 write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
                    IC_DYNAMIC_ARRAY_OPS *da_ops,
@@ -394,11 +397,20 @@ remove_config_files(IC_STRING *config_dir,
   IC_CLUSTER_CONNECT_INFO *clu_info;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
 
+  /* Delete the 'config.ini' file */
   ic_create_config_file_name(&file_name_string, file_name,
                              config_dir, &ic_config_string,
                              config_version);
   if ((error= ic_delete_file((const gchar *)file_name)))
     return error;
+
+  /* Delete the 'grid_common.ini' file */
+  ic_create_config_file_name(&file_name_string, file_name,
+                             config_dir, &ic_config_string,
+                             config_version);
+  if ((error= ic_delete_file((const gchar *)file_name)))
+    return error;
+
   while (*clu_infos)
   {
     clu_info= *clu_infos;
@@ -432,10 +444,21 @@ write_config_files(IC_STRING *config_dir,
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *clu_conf;
   int error;
+
   if ((error= write_grid_config_file(config_dir,
                                      clu_infos,
                                      config_version)))
     return error;
+
+  /* Use first cluster to write grid_common.ini, any can be used */
+  clu_info= *clu_infos;
+  clu_conf= clusters[clu_info->cluster_id];
+  if ((error= write_cluster_config_file(config_dir,
+                                        clu_conf,
+                                        config_version,
+                                        TRUE)))
+    return error;
+
   while (*clu_infos)
   {
     clu_info= *clu_infos;
@@ -443,7 +466,8 @@ write_config_files(IC_STRING *config_dir,
     clu_conf= clusters[clu_info->cluster_id];
     if ((error= write_cluster_config_file(config_dir,
                                           clu_conf,
-                                          config_version)))
+                                          config_version,
+                                          FALSE)))
       return error;
   }
   return 0;
@@ -549,7 +573,8 @@ file_error:
 static int
 write_cluster_config_file(IC_STRING *config_dir,
                           IC_CLUSTER_CONFIG *clu_conf,
-                          IC_CONF_VERSION_TYPE config_version)
+                          IC_CONF_VERSION_TYPE config_version,
+                          gboolean is_grid_common_config)
 {
   IC_DYNAMIC_ARRAY *dyn_array;
   IC_DYNAMIC_ARRAY_OPS *da_ops;
@@ -558,17 +583,24 @@ write_cluster_config_file(IC_STRING *config_dir,
   IC_FILE_HANDLE file_ptr;
   IC_CLUSTER_CONFIG_LOAD clu_def;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
+  IC_STRING *file_name;
 
   ic_zero(&clu_def, sizeof(IC_CLUSTER_CONFIG_LOAD));
   /*
      We start by creating the new configuration file and a dynamic array
      used to fill in the content of this new file before we write it.
   */
+  if (is_grid_common_config)
+    file_name= &ic_grid_common_config_string;
+  else
+    file_name= &clu_conf->clu_info.cluster_name;
+
   ic_create_config_file_name(&file_name_str,
                              buf,
                              config_dir,
-                             &clu_conf->clu_info.cluster_name,
+                             file_name,
                              config_version);
+
   /* We are writing a new file here */
   if ((error= ic_create_file(&file_ptr, (const gchar *)buf)))
     goto file_error;
@@ -578,21 +610,27 @@ write_cluster_config_file(IC_STRING *config_dir,
   da_ops= &dyn_array->da_ops;
 
   if ((error= write_default_sections(dyn_array, da_ops, buf,
-                                     clu_conf, &clu_def)))
+                                     clu_conf, &clu_def,
+                                     is_grid_common_config)))
     goto error;
  
   if ((error= write_node_sections(dyn_array, da_ops, buf,
-                                  clu_conf, &clu_def)))
+                                  clu_conf, &clu_def,
+                                  is_grid_common_config)))
     goto error;
 
-  if ((error= write_comm_sections(dyn_array, da_ops, buf,
-                                  clu_conf, &clu_def)))
-    goto error;
+  if (!is_grid_common_config)
+  {
+    if ((error= write_comm_sections(dyn_array, da_ops, buf,
+                                    clu_conf, &clu_def)))
+      goto error;
+  }
 
   if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
                                                      file_ptr)))
     goto error;
   error= 0;
+
 error:
   ic_close_file(file_ptr);
   da_ops->ic_free_dynamic_array(dyn_array);
@@ -631,12 +669,32 @@ error:
   return error;
 }
 
+static gboolean
+should_write_this_section(gboolean is_grid_common_config,
+                          IC_CONFIG_TYPES node_type)
+{
+  if (is_grid_common_config)
+  {
+    if (!(node_type == IC_CLUSTER_SERVER_TYPE ||
+          node_type == IC_CLUSTER_MANAGER_TYPE))
+      return FALSE;
+  }
+  else
+  {
+    if (node_type == IC_CLUSTER_SERVER_TYPE ||
+        node_type == IC_CLUSTER_MANAGER_TYPE)
+      return FALSE;
+  }
+  return TRUE;
+}
+
 static int
 write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
                        IC_DYNAMIC_ARRAY_OPS *da_ops,
                        gchar *buf,
                        IC_CLUSTER_CONFIG *clu_conf,
-                       IC_CLUSTER_CONFIG_LOAD *clu_def)
+                       IC_CLUSTER_CONFIG_LOAD *clu_def,
+                       gboolean is_grid_common_config)
 {
   guint32 i;
   int error= 0;
@@ -646,6 +704,7 @@ write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
 
   for (i= 0; i < IC_NUMBER_OF_CONFIG_TYPES; i++)
     any_node_of_type[i]= FALSE;
+
   node_type_str[IC_NOT_EXIST_NODE_TYPE]= NULL;
   node_type_str[IC_DATA_SERVER_TYPE]= data_server_def_str;
   node_type_str[IC_CLIENT_TYPE]= client_node_def_str;
@@ -656,9 +715,11 @@ write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
   node_type_str[IC_RESTORE_TYPE]= restore_node_def_str;
   node_type_str[IC_CLUSTER_MANAGER_TYPE]= cluster_mgr_def_str;
   node_type_str[IC_COMM_TYPE]= socket_def_str;
+
   for (i= 1; i <= clu_conf->max_node_id; i++)
     any_node_of_type[clu_conf->node_types[i]]= TRUE;
-  any_node_of_type[IC_NOT_EXIST_NODE_TYPE]= FALSE;
+  any_node_of_type[IC_NO_CONFIG_TYPE]= FALSE;
+
   for (i= 0; i < IC_NUMBER_OF_CONFIG_TYPES; i++)
   {
     /*
@@ -672,6 +733,16 @@ write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
 
       We always write a default communication section.
     */
+
+    /*
+      grid_common.ini only writes Cluster Server and Cluster Manager
+      default sections. Cluster config files writes everything
+      excepts those two sections.
+    */
+    if (!should_write_this_section(is_grid_common_config,
+                                   (IC_CONFIG_TYPES)i))
+      continue;
+ 
     if (any_node_of_type[i] || ((IC_CONFIG_TYPES)i == IC_COMM_TYPE))
     {
       /* Write e.g. [data server default] and its defaults into the buffer */
@@ -693,7 +764,8 @@ write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
                     IC_DYNAMIC_ARRAY_OPS *da_ops,
                     gchar *buf,
                     IC_CLUSTER_CONFIG *clu_conf,
-                    IC_CLUSTER_CONFIG_LOAD *clu_def)
+                    IC_CLUSTER_CONFIG_LOAD *clu_def,
+                    gboolean is_grid_common_config)
 {
   IC_NODE_TYPES node_type;
   guint32 i;
@@ -712,6 +784,10 @@ write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
     if (!struct_ptr)
       continue;
     node_type= clu_conf->node_types[i];
+
+    if (!should_write_this_section(is_grid_common_config, node_type))
+      continue;
+
     switch (node_type)
     {
       case IC_DATA_SERVER_NODE:
@@ -1458,11 +1534,11 @@ read_config_version_file(IC_STRING *config_dir,
   IC_STRING str;
   int error;
   guint64 len;
-  gchar *ptr;
+  gchar *ptr, *release_ptr;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
 
   ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
-  if ((error= ic_get_file_contents(file_name, &ptr, &len)))
+  if ((error= ic_get_file_contents(file_name, &release_ptr, &len)))
   {
     if (error == ENOENT)
     {
@@ -1473,6 +1549,7 @@ read_config_version_file(IC_STRING *config_dir,
     }
     return error;
   }
+  ptr= release_ptr;
   /*
     Read a string like
     version: <config_version><CR>
@@ -1488,9 +1565,9 @@ read_config_version_file(IC_STRING *config_dir,
   IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
   if ((error= cmp_config_version_line(&str, &len, pid, &ptr)))
     goto file_error;
-  return 0;
+
 file_error:
-  ic_free(ptr);
+  ic_free(release_ptr);
   return error;
 }
 

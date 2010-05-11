@@ -36,16 +36,13 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
 
   if (tp_state->thread_state_allocation)
   {
-    if (tp_state->use_internal_mutex)
+    for (i= 0; i < tp_state->threadpool_size; i++)
     {
-      for (i= 0; i < tp_state->threadpool_size; i++)
-      {
-        thread_state= tp_state->thread_state[i];
-        if (thread_state->mutex)
-          g_mutex_free(thread_state->mutex);
-        if (thread_state->cond)
-          g_cond_free(thread_state->cond);
-      }
+      thread_state= tp_state->thread_state[i];
+      if (thread_state->mutex)
+        g_mutex_free(thread_state->mutex);
+      if (thread_state->cond)
+        g_cond_free(thread_state->cond);
     }
     ic_free((void*)tp_state->thread_state_allocation);
   }

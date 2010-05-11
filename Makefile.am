@@ -10,6 +10,7 @@ EXTRA_DIST = bootstrap.sh count_line.sh setup.sh
 dist-hook:
 	mkdir $(distdir)/examples
 	cp -p $(srcdir)/examples/config.ini $(distdir)/examples
+	cp -p $(srcdir)/examples/grid_common.ini $(distdir)/examples
 	cp -p $(srcdir)/examples/kalle.ini $(distdir)/examples
 	cp -p $(srcdir)/examples/jocke.ini $(distdir)/examples
 	mkdir $(distdir)/doc
@@ -20,6 +21,7 @@ dist-hook:
 install-data-hook:
 	mkdir -p $(prefix)/examples
 	cp -p $(srcdir)/examples/config.ini $(prefix)/examples
+	cp -p $(srcdir)/examples/grid_common.ini $(prefix)/examples
 	cp -p $(srcdir)/examples/kalle.ini $(prefix)/examples
 	cp -p $(srcdir)/examples/jocke.ini $(prefix)/examples
 	mkdir -p $(prefix)/doc

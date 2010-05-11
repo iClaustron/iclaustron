@@ -31,6 +31,8 @@ IC_STRING ic_version_file_string=
 {(gchar*)"_version", (guint32)8, (gboolean)TRUE};
 IC_STRING ic_config_string=
 {(gchar*)"config", (guint32)6, (gboolean)TRUE};
+IC_STRING ic_grid_common_config_string=
+{(gchar*)"grid_common", (guint32)11, (gboolean)TRUE};
 IC_STRING ic_config_ending_string=
 {(gchar*)".ini", (guint32)4, (gboolean)TRUE};
 IC_STRING ic_binary_string=
