@@ -414,6 +414,20 @@ int run_process(gchar **argv,
                 int *exit_status)
 {
   GError *error= NULL;
+  int ret_code= 0;
+  IC_PID_TYPE pid= ic_get_own_pid();
+  IC_STRING file_name_str;
+  IC_FILE_HANDLE file_ptr;
+  gchar pid_buf[64];
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+
+  IC_INIT_STRING(&file_name_str, file_name, 0, TRUE);
+  ic_guint64_str(pid, pid_buf, NULL);
+  ic_add_ic_string(&file_name_str, &ic_glob_config_dir);
+  ic_add_string(&file_name_str, pid_buf);
+  g_mutex_lock(exec_output_mutex);
+  if ((ret_code= ic_open_file(&file_ptr, file_name_str.str, TRUE)))
+    goto early_end;
   if (!g_spawn_sync(NULL,
                     argv,
                     NULL,
@@ -426,7 +440,7 @@ int run_process(gchar **argv,
                     &error))
   {
     ic_printf("Failed to run script, error: %s", error->message);
-    return 0;
+    goto end;
   }
   if (*exit_status)
   {
@@ -435,6 +449,10 @@ int run_process(gchar **argv,
       *exit_status= 2;
     return *exit_status;
   }
+end:
+  ic_delete_file(file_name);
+early_end:
+  g_mutex_unlock(exec_output_mutex);
   return 0;
 }
 

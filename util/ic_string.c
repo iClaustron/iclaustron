@@ -230,7 +230,6 @@ ic_set_config_dir(IC_STRING *config_dir,
 {
   int error;
   gchar node_str_buf[64];
-  gchar *node_str;
 
   if ((error= ic_set_data_dir(config_dir)))
     return error;
@@ -238,10 +237,11 @@ ic_set_config_dir(IC_STRING *config_dir,
     return error;
   if (is_cluster_server)
   {
-    node_str= ic_guint64_str((guint64)my_node_id,
-                             node_str_buf,
+    memcpy(node_str_buf, "node", 4);
+    ic_guint64_str((guint64)my_node_id,
+                             &node_str_buf[4],
                              NULL);
-    if ((error= ic_add_dir(config_dir, node_str)))
+    if ((error= ic_add_dir(config_dir, &node_str_buf[0])))
       return error;
   }
   DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", config_dir->str));
