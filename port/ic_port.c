@@ -57,7 +57,6 @@
 #include <signal.h>
 #endif
 
-static GMutex *exec_output_mutex= NULL;
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
 static GMutex *mem_mutex= NULL;
@@ -122,7 +121,6 @@ ic_get_stop_flag()
 void
 ic_port_init()
 {
-  exec_output_mutex= g_mutex_new();
 #ifdef DEBUG_BUILD
   mem_mutex= g_mutex_new();
 #endif
@@ -136,7 +134,6 @@ void ic_port_end()
     ic_printf("Memory leak found");
   g_mutex_free(mem_mutex);
 #endif
-  g_mutex_free(exec_output_mutex);
 }
 
 void
@@ -415,26 +412,18 @@ int run_process(gchar **argv,
 {
   GError *error= NULL;
   int ret_code= 0;
-  IC_PID_TYPE pid= ic_get_own_pid();
-  IC_STRING file_name_str;
-  IC_FILE_HANDLE file_ptr;
-  gchar pid_buf[64];
-  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  guint64 len= 1;
+  IC_FILE_HANDLE file_handle;
+  gchar *file_ptr= (gchar*)&file_handle;
+  gchar read_buf[4];
 
-  IC_INIT_STRING(&file_name_str, file_name, 0, TRUE);
-  ic_guint64_str(pid, pid_buf, NULL);
-  ic_add_ic_string(&file_name_str, &ic_glob_config_dir);
-  ic_add_string(&file_name_str, pid_buf);
-  g_mutex_lock(exec_output_mutex);
-  if ((ret_code= ic_open_file(&file_ptr, file_name_str.str, TRUE)))
-    goto early_end;
   if (!g_spawn_sync(NULL,
                     argv,
                     NULL,
                     0,
                     NULL,
                     NULL,
-                    NULL,
+                    &file_ptr,
                     NULL,
                     exit_status,
                     &error))
@@ -442,18 +431,20 @@ int run_process(gchar **argv,
     ic_printf("Failed to run script, error: %s", error->message);
     goto end;
   }
+  if ((ret_code= ic_read_file(file_handle, read_buf, 1, &len)))
+    *exit_status= 2;
+  if (read_buf[0] == '0')
+    *exit_status= 0;
+  else if (read_buf[1] == '1')
+    *exit_status= 1;
+  else
+    *exit_status= 2;
   if (*exit_status)
   {
     ic_printf("Exit status %d\n", *exit_status);
-    if (*exit_status < 0 || *exit_status > 2)
-      *exit_status= 2;
-    return *exit_status;
   }
 end:
-  ic_delete_file(file_name);
-early_end:
-  g_mutex_unlock(exec_output_mutex);
-  return 0;
+  return ret_code;
 }
 
 int
