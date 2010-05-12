@@ -72,6 +72,11 @@ main(int argc, char *argv[])
                                glob_process_name,
            "- iClaustron Cluster Server", TRUE)))
     return error;
+  if (ic_glob_node_id == 0)
+  {
+    error= IC_ERROR_NO_NODEID;
+    goto error;
+  }
   if (!(run_obj= ic_create_run_cluster(&ic_glob_config_dir,
                                        glob_process_name,
                                        glob_server_name,

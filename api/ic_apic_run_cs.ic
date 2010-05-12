@@ -324,7 +324,6 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
    using the method ic_write_full_config_to_disk from another module.
 */
 
-static void set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static void set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
@@ -379,6 +378,7 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   int error;
   IC_MEMORY_CONTAINER *mc_ptr= run_obj->mc_ptr;
   IC_API_CLUSTER_CONNECTION *cluster_conn= &apic->cluster_conn;
+  gboolean found_cs_nodeid= FALSE;
 
   set_up_apic_methods(apic);
   apic->api_op.ic_get_config= null_get_cs_config;
@@ -411,7 +411,10 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       /* We found a Cluster Server Node, record it in cluster_conn */
       cs_conf= (IC_CLUSTER_SERVER_CONFIG*)clu_conf->node_config[i];
       if (cs_conf->node_id == run_obj->cs_nodeid)
+      {
         used_index= 0;
+        found_cs_nodeid= TRUE;
+      }
       else
         used_index= ++cs_index;
       cluster_conn->cluster_server_ips[used_index]= cs_conf->hostname;
@@ -425,6 +428,8 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       cluster_conn->cs_nodeid[used_index]= cs_conf->node_id;
     }
   }
+  if (!found_cs_nodeid)
+    return IC_ERROR_NO_SUCH_CLUSTER_SERVER_NODEID;
   return 0;
 error:
   return error;

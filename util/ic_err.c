@@ -32,7 +32,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7082
+#define IC_LAST_ERROR 7084
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -220,6 +220,10 @@ ic_init_error_messages()
     "Cluster Servers have different views on master index";
   ic_error_str[IC_ERROR_CHANGE_VIEW - IC_FIRST_ERROR]=
     "Cluster Server changed view on master node order";
+  ic_error_str[IC_ERROR_NO_NODEID - IC_FIRST_ERROR]=
+    "Node id needs to be provided for Cluster Server";
+  ic_error_str[IC_ERROR_NO_SUCH_CLUSTER_SERVER_NODEID - IC_FIRST_ERROR]=
+    "Node id provided for Cluster Server didn't exist in config";
 }
 
 void
