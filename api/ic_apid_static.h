@@ -19,16 +19,10 @@
   using the iClaustron Data API.
 */
 
-IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
-IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
-IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};
-IC_STRING ic_glob_binary_dir= { NULL, 0, TRUE};
 gchar *ic_glob_cs_server_name= "127.0.0.1";
 gchar *ic_glob_cs_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 gchar *ic_glob_cs_connectstring= NULL;
-gchar *ic_glob_data_path= NULL;
 gchar *ic_glob_version_path= IC_VERSION_STR;
-gchar *ic_glob_base_path= NULL;
 guint32 ic_glob_node_id= 0;
 guint32 ic_glob_cs_timeout= 10;
 guint32 ic_glob_num_threads= 1;

@@ -20,6 +20,11 @@
 #include <ic_mc.h>
 #include <ic_string.h>
 
+IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_binary_dir= { NULL, 0, TRUE};
+
 /*
   MODULE:
   iClaustron STRING ROUTINES
@@ -170,17 +175,15 @@ end:
 }
 
 int
-ic_set_data_dir(IC_STRING *data_dir, const gchar *input_data_dir)
+ic_set_data_dir(IC_STRING *data_dir)
 {
-  return set_default_dir("iclaustron_data", data_dir,
-                         input_data_dir);
+  return set_default_dir("iclaustron_data", data_dir, NULL);
 }
 
 int
-ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir)
+ic_set_base_dir(IC_STRING *base_dir)
 {
-  return set_default_dir("iclaustron_install", base_dir,
-                         input_base_dir);
+  return set_default_dir("iclaustron_install", base_dir, NULL);
 }
 
 static int
@@ -195,14 +198,16 @@ ic_add_dir(IC_STRING *dir,
   return 0;
 }
 
-/* The default binary directory is ICLAUSTRON_BASE_DIR/version/bin */
+/*
+  The default binary directory is
+    ICLAUSTRON_BASE_DIR/ICLAUSTRON_VERSION/bin
+*/
 int
 ic_set_binary_dir(IC_STRING *binary_dir,
-                  gchar *base_path,
                   gchar *version)
 {
   int error;
-  if ((error= ic_set_base_dir(binary_dir, base_path)))
+  if ((error= ic_set_base_dir(binary_dir)))
     return error;
   if ((error= ic_add_dir(binary_dir, version)))
     return error;
@@ -212,16 +217,33 @@ ic_set_binary_dir(IC_STRING *binary_dir,
   return 0;
 }
 
-/* The default configuration directory is ICLAUSTRON_DATA_DIR/config */
+/*
+  The default configuration directory is
+    ICLAUSTRON_DATA_DIR/config/node1
+  for Cluster Servers (1 is nodeid), for other nodes it is
+    ICLAUSTRON_DATA_DIR/config
+*/
 int
 ic_set_config_dir(IC_STRING *config_dir,
-                  gchar *data_path)
+                  gboolean is_cluster_server,
+                  guint32 my_node_id)
 {
   int error;
-  if ((error= ic_set_data_dir(config_dir, data_path)))
+  gchar node_str_buf[64];
+  gchar *node_str;
+
+  if ((error= ic_set_data_dir(config_dir)))
     return error;
   if ((error= ic_add_dir(config_dir, ic_config_string.str)))
     return error;
+  if (is_cluster_server)
+  {
+    node_str= ic_guint64_str((guint64)my_node_id,
+                             node_str_buf,
+                             NULL);
+    if ((error= ic_add_dir(config_dir, node_str)))
+      return error;
+  }
   DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", config_dir->str));
   return 0;
 }

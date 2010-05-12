@@ -57,12 +57,14 @@
 #include <signal.h>
 #endif
 
+static GMutex *exec_output_mutex= NULL;
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
 static GMutex *mem_mutex= NULL;
 guint32 error_inject= 0;
 #endif
 static const gchar *port_binary_dir;
+static const gchar *port_config_dir;
 static guint32 ic_stop_flag= 0;
 
 #ifdef WINDOWS
@@ -118,20 +120,23 @@ ic_get_stop_flag()
 }
 
 void
-ic_mem_init()
+ic_port_init()
 {
+  exec_output_mutex= g_mutex_new();
 #ifdef DEBUG_BUILD
   mem_mutex= g_mutex_new();
 #endif
 }
 
-void ic_mem_end()
+void ic_port_end()
 {
 #ifdef DEBUG_BUILD
   ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
   if (num_mem_allocs != (guint64)0)
     ic_printf("Memory leak found");
+  g_mutex_free(mem_mutex);
 #endif
+  g_mutex_free(exec_output_mutex);
 }
 
 void
@@ -174,6 +179,13 @@ ic_get_last_socket_error()
   return errno;
 #endif
 }
+
+void
+ic_set_port_config_dir(const gchar *config_dir)
+{
+  port_config_dir= config_dir;
+}
+
 void
 ic_set_port_binary_dir(const gchar *binary_dir)
 {

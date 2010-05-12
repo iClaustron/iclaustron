@@ -13,6 +13,12 @@
 ## along with this program; if not, write to the Free Software
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
+exit_func()
+{
+  echo "$EXIT_CODE"
+  exit 0
+}
+
 check_os()
 {
   OS_NAME=`$UNAME -s`
@@ -136,7 +142,7 @@ EXIT_CODE=2
     --process_name )
       shift
       if test "x$PROCESS_NAME" = "x1" ; then
-        exit $EXIT_CODE
+        exit_func
       fi
       PROCESS_NAME="1"
       SEARCHED_PROCESS="$1"
@@ -144,28 +150,28 @@ EXIT_CODE=2
     --pid )
       shift
       if test "x$PROCESS_PID" = "x1" ; then
-        exit $EXIT_CODE
+        exit_func
       fi
       PROCESS_PID="1"
       SEARCHED_PID="$1"
       ;;
     * )
-      exit $EXIT_CODE
+      exit_func
     esac
     shift
   done
   if test "x$PROCESS_NAME" = "x" ; then
-    exit $EXIT_CODE
+    exit_func
   fi
   if test "x$PROCESS_PID" = "x" ; then
-    exit $EXIT_CODE
+    exit_func
   fi
 
   set_binaries
   if check_binaries; then
-    exit $EXIT_CODE
+    exit_func
   else
     check_os
     check_process_alive
   fi
-  exit $EXIT_CODE
+  exit_func

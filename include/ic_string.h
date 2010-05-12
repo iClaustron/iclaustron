@@ -15,6 +15,12 @@
 
 #ifndef IC_STRING_H
 #define IC_STRING_H
+
+IC_STRING ic_glob_config_dir;
+IC_STRING ic_glob_data_dir;
+IC_STRING ic_glob_base_dir;
+IC_STRING ic_glob_binary_dir;
+
 /*
   HEADER MODULE: iClaustron String handling
   -----------------------------------------
@@ -44,11 +50,12 @@ struct ic_string
  * A few functions to set default directory references to iClaustron
  * directories.
 */
-int ic_set_base_dir(IC_STRING *base_dir, const gchar *input_base_dir);
-int ic_set_data_dir(IC_STRING *base_dir, const gchar *input_base_dir);
-int ic_set_binary_dir(IC_STRING *binary_dir, gchar *base_path,
-                      gchar *version);
-int ic_set_config_dir(IC_STRING *config_dir, gchar *data_path);
+int ic_set_base_dir(IC_STRING *base_dir);
+int ic_set_data_dir(IC_STRING *data_dir);
+int ic_set_binary_dir(IC_STRING *binary_dir, gchar *version);
+int ic_set_config_dir(IC_STRING *config_dir,
+                      gboolean is_cluster_server,
+                      guint32 node_id);
 
 void ic_set_number_ending_string(gchar *buf, guint64 number);
 void ic_create_config_file_name(IC_STRING *file_name,

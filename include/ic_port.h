@@ -37,14 +37,18 @@ guint32 ic_get_stop_flag();
 
 /* Set reference to binary directory */
 void ic_set_port_binary_dir(const gchar *binary_dir);
+
+/* Set reference to config directory */
+void ic_set_port_config_dir(const gchar *config_dir);
+
 /*
   HEADER MODULE: iClaustron Portability Layer
   ------------------------------------
   iClaustron interface to memory allocation routines and various other
   portability interfaces.
 */
-void ic_mem_init(); /* Debug support */
-void ic_mem_end();  /* Debug support */
+void ic_port_init(); /* Debug support and global initialisations */
+void ic_port_end();
 gchar *ic_calloc(size_t size);
 gchar *ic_malloc(size_t size);
 gchar *ic_realloc(gchar *ptr, size_t size);

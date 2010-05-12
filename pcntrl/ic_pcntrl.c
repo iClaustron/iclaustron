@@ -61,7 +61,6 @@
 /* Configurable variables */
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_PCNTRL_PORT_STR;
-static gchar *glob_base_path= NULL;
 static guint32 glob_daemonize= 1;
 
 /* Global variables */
@@ -614,7 +613,6 @@ handle_start(IC_CONNECTION *conn)
     the bin directory where the binaries are placed.
   */
   if ((ret_code= ic_set_binary_dir(&working_dir,
-                                   glob_base_dir.str,
                                    pc_start->version_string.str)))
     goto late_error;
   /*
@@ -1181,16 +1179,10 @@ static GOptionEntry entries[] =
   { "server_port", 0, 0, G_OPTION_ARG_STRING,
     &glob_server_port,
     "Set server port, default = 11860", NULL},
-  { "basedir", 0, 0, G_OPTION_ARG_STRING,
-    &glob_base_path,
-    "Sets path to binaries controlled by this program", NULL},
   { "iclaustron_version", 0, 0, G_OPTION_ARG_STRING,
     &ic_glob_version_path,
     "Version string to find iClaustron binaries used by this program, default "
     IC_VERSION_STR, NULL},
-  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME,
-    &ic_glob_data_path,
-    "Sets path to data directory", NULL},
   { "daemonize", 0, 0, G_OPTION_ARG_INT,
      &glob_daemonize,
     "Daemonize program", NULL},
@@ -1208,10 +1200,6 @@ int main(int argc, char *argv[])
                                   glob_process_name,
            "- iClaustron Control Server", TRUE)))
     return ret_code;
-  if ((ret_code= ic_set_base_dir(&glob_base_dir, glob_base_path)))
-    goto error;
-  if ((ret_code= ic_set_data_dir(&ic_glob_data_dir, ic_glob_data_path)))
-    goto error;
   if (glob_daemonize)
   {
     if ((ret_code= ic_add_dup_string(&log_file, ic_glob_data_dir.str)) ||
@@ -1223,7 +1211,7 @@ int main(int argc, char *argv[])
   ic_set_die_handler(NULL, NULL);
   ic_set_sig_error_handler(NULL, NULL);
   DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
-                              glob_base_dir.str));
+                              ic_glob_base_dir.str));
   DEBUG_PRINT(PROGRAM_LEVEL, ("Data directory: %s",
                               ic_glob_data_dir.str));
   if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
@@ -1251,7 +1239,7 @@ int main(int argc, char *argv[])
     /var/lib/iclaustron_install.
 
     The resulting base directory is stored in the global variable
-    glob_base_dir. We set up the default strings for the
+    ic_glob_base_dir. We set up the default strings for the
     version we've compiled, the protocol to the process controller
     enables the Cluster Manager to specify which version to use.
 
@@ -1281,13 +1269,10 @@ error:
     ic_hashtable_destroy(glob_pc_hash);
   if (pc_hash_mutex)
     g_mutex_free(pc_hash_mutex);
-  if (glob_base_dir.str)
-    ic_free(glob_base_dir.str);
-  if (ic_glob_data_dir.str)
-    ic_free(ic_glob_data_dir.str);
   if (log_file.str)
     ic_free(log_file.str);
   if (glob_dyn_trans)
     glob_dyn_trans->dt_ops.ic_free_dynamic_translation(glob_dyn_trans);
+  ic_end();
   return ret_code;
 }

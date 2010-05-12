@@ -49,9 +49,6 @@ GOptionEntry ic_apid_entries[] =
   { "node_id", 0, 0, G_OPTION_ARG_INT,
     &ic_glob_node_id,
     "Node id of this server in all clusters", NULL},
-  { "data_dir", 0, 0, G_OPTION_ARG_FILENAME,
-    &ic_glob_data_path,
-    "Sets path to data directory, config files in subdirectory config", NULL},
   { "num_threads", 0, 0, G_OPTION_ARG_INT,
     &ic_glob_num_threads,
     "Number of threads executing in process", NULL},
@@ -245,9 +242,6 @@ static int ic_init();
 /* Base directory group */
 static GOptionEntry basedir_entries[] =
 {
-  { "basedir", 0, 0, G_OPTION_ARG_STRING,
-    &ic_glob_base_path,
-    "Sets path to binaries controlled by this program", NULL},
   { "iclaustron_version", 0, 0, G_OPTION_ARG_STRING,
     &ic_glob_version_path,
     "Version string to find iClaustron binaries used by this program, default "
@@ -277,6 +271,9 @@ The iClaustron process controller reuses the basedir as well for all\n\
 processes started by the process controller. However the version is\n\
 provided by the client (mostly the cluster manager which gets the\n\
 version from the commands sent to the cluster manager).\n\
+\n\
+For normal users basedir is $HOME/iclaustron_install/, for root users\n\
+it is /var/lib/iclaustron_install/.\n\
 ";
 
 /* Debug group */
@@ -323,8 +320,11 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   GOptionGroup *debug_group;
   GOptionGroup *basedir_group;
   GOptionContext *context;
+  gboolean is_cluster_server= FALSE;
 
   ic_printf("Starting %s program", program_name);
+  if (strcmp(program_name, "ic_csd") == 0)
+    is_cluster_server= TRUE;
   ic_glob_byte_order= ic_byte_order();
   use_config_vars= use_config; /* TRUE for Unit test programs */
   if (ic_start_socket_system())
@@ -353,13 +353,15 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   g_option_context_free(context);
   if ((ret_code= ic_init()))
     return ret_code;
-  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir, ic_glob_data_path)) ||
-      (ret_code= ic_set_base_dir(&ic_glob_base_dir, ic_glob_base_path)) ||
+  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir,
+                                   is_cluster_server,
+                                   ic_glob_node_id)) ||
+      (ret_code= ic_set_base_dir(&ic_glob_base_dir)) ||
       (ret_code= ic_set_binary_dir(&ic_glob_binary_dir,
-                                   ic_glob_base_path,
                                    IC_VERSION_STR)))
     return ret_code;
   ic_set_port_binary_dir(ic_glob_binary_dir.str);
+  ic_set_port_config_dir(ic_glob_config_dir.str);
   return 0;
 
 parse_error:
@@ -381,7 +383,7 @@ ic_init()
 
   if (!g_thread_supported())
     g_thread_init(NULL);
-  ic_mem_init();
+  ic_port_init();
   ic_init_error_messages();
   if (use_config_vars)
   {
@@ -428,5 +430,5 @@ void ic_end()
   }
   ic_stop_socket_system();
   DEBUG_CLOSE;
-  ic_mem_end();
+  ic_port_end();
 }
