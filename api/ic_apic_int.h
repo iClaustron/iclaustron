@@ -288,6 +288,9 @@ struct ic_info_cluster_server
   /* Node id of this particular Cluster Server in all clusters in the grid */
   guint32 node_id;
 
+  /* Thread id of thread connecting to this cluster server. */
+  guint32 thread_id;
+
   /* Number of nodes in this index */
   guint32 master_index_size;
 

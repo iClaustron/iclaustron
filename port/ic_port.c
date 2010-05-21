@@ -57,6 +57,8 @@
 #include <signal.h>
 #endif
 
+static GMutex *exec_output_mutex= NULL;
+
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
 static GMutex *mem_mutex= NULL;
@@ -121,6 +123,7 @@ ic_get_stop_flag()
 void
 ic_port_init()
 {
+  exec_output_mutex= g_mutex_new();
 #ifdef DEBUG_BUILD
   mem_mutex= g_mutex_new();
 #endif
@@ -134,6 +137,7 @@ void ic_port_end()
     ic_printf("Memory leak found");
   g_mutex_free(mem_mutex);
 #endif
+  g_mutex_free(exec_output_mutex);
 }
 
 void
@@ -408,13 +412,13 @@ int ic_start_process(gchar **argv,
 }
 
 int run_process(gchar **argv,
-                int *exit_status)
+                int *exit_status,
+                gchar *log_file_name)
 {
   GError *error= NULL;
   int ret_code= 0;
   guint64 len= 1;
   IC_FILE_HANDLE file_handle;
-  gchar *file_ptr= (gchar*)&file_handle;
   gchar read_buf[4];
 
   if (!g_spawn_sync(NULL,
@@ -423,19 +427,27 @@ int run_process(gchar **argv,
                     0,
                     NULL,
                     NULL,
-                    &file_ptr,
+                    NULL,
                     NULL,
                     exit_status,
                     &error))
   {
     ic_printf("Failed to run script, error: %s", error->message);
+    goto early_end;
+  }
+  if ((ret_code= ic_open_file(&file_handle, log_file_name, FALSE)))
+  {
+    *exit_status= 2;
     goto end;
   }
   if ((ret_code= ic_read_file(file_handle, read_buf, 1, &len)))
+  {
     *exit_status= 2;
+    goto end;
+  }
   if (read_buf[0] == '0')
     *exit_status= 0;
-  else if (read_buf[1] == '1')
+  else if (read_buf[0] == '1')
     *exit_status= 1;
   else
     *exit_status= 2;
@@ -443,7 +455,11 @@ int run_process(gchar **argv,
   {
     ic_printf("Exit status %d\n", *exit_status);
   }
+
 end:
+  ic_close_file(file_handle);
+  ic_delete_file(log_file_name);
+early_end:
   return ret_code;
 }
 
@@ -451,15 +467,17 @@ int
 ic_is_process_alive(IC_PID_TYPE pid,
                     const gchar *process_name)
 {
-  gchar *argv[6];
+  gchar *argv[8];
   gint exit_status;
   guint64 value= (guint64)pid;
   gchar *pid_number_str;
   IC_STRING script_string;
+  IC_STRING log_file_name_str;
   gchar *script_name;
   int error;
   gchar pid_buf[64];
   gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
+  gchar log_file_name_buf[IC_MAX_FILE_NAME_SIZE];
 
   pid_number_str= ic_guint64_str(value, pid_buf, NULL);
 #ifdef LINUX
@@ -481,14 +499,26 @@ ic_is_process_alive(IC_PID_TYPE pid,
   ic_add_string(&script_string, port_binary_dir);
   ic_add_string(&script_string, script_name);
 
+  value= (guint64)ic_get_own_pid();
+  pid_number_str= ic_guint64_str(value, pid_buf, NULL);
+  IC_INIT_STRING(&log_file_name_str, log_file_name_buf, 0, TRUE);
+  ic_add_ic_string(&log_file_name_str, &ic_glob_config_dir);
+  ic_add_string(&log_file_name_str, "tmp_");
+  ic_add_string(&log_file_name_str, pid_number_str);
+  ic_add_string(&log_file_name_str, ".txt");
+
   argv[0]= script_string.str;
   argv[1]= "--process_name";
   argv[2]= (gchar*)process_name;
   argv[3]= "--pid";
   argv[4]= pid_number_str;
-  argv[5]= NULL;
+  argv[5]= "--log_file";
+  argv[6]= log_file_name_str.str;
+  argv[7]= NULL;
 
-  error= run_process(argv, &exit_status);
+  g_mutex_lock(exec_output_mutex);
+  error= run_process(argv, &exit_status, log_file_name_str.str);
+  g_mutex_unlock(exec_output_mutex);
   if (error == (gint)1)
   {
     return 0; /* The process was alive */

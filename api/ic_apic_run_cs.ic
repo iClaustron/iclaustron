@@ -546,7 +546,7 @@ static int
 start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
-  guint32 thread_id, i;
+  guint32 i;
   int error;
   guint32 num_threads_started= 0;
   THREAD_DATA thread_data;
@@ -567,12 +567,12 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       thread_data.cs_index= i;
       run_obj->cs_servers[i].is_start_thread_active= TRUE;
       if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
-                                             tp_state,
-                                             &thread_id,
-                                             start_cs_func,
-                                             &thread_data,
-                                             IC_MEDIUM_STACK_SIZE,
-                                             TRUE)))
+                                        tp_state,
+                                        &run_obj->cs_servers[i].thread_id,
+                                        start_cs_func,
+                                        &thread_data,
+                                        IC_MEDIUM_STACK_SIZE,
+                                        TRUE)))
         goto error;
     
     }
@@ -589,6 +589,14 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     }
     else
     {
+      for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+      {
+        if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid)
+          continue;
+        tp_state->tp_ops.ic_threadpool_run_thread(
+                                          tp_state,
+                                          run_obj->cs_servers[i].thread_id);
+      }
       g_mutex_lock(run_obj->state.protect_state);
       /* Wait until start threads have completed startup phase */
       do
@@ -1185,10 +1193,12 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   guint32 found_index;
   IC_INFO_CLUSTER_SERVER *info_cs;
 
-  if ((error= ic_rec_number(conn, nodeid_str, &node_id)) ||
+  if ((error= ic_rec_simple_str(conn, ic_start_cluster_server_str)) ||
+      (error= ic_rec_number(conn, nodeid_str, &node_id)) ||
       (error= ic_rec_long_number(conn, ic_version_str, &version_num)) ||
       (error= ic_rec_number(conn, ic_status_str, &status)) ||
-      (error= ic_rec_long_number(conn, ic_pid_str, &pid)))
+      (error= ic_rec_long_number(conn, ic_pid_str, &pid)) ||
+      (error= ic_rec_empty_line(conn)))
   {
     *error_line= __LINE__; 
     return error;
@@ -1525,7 +1535,6 @@ start_cs_func(gpointer data)
       rc_state->start_threads_stopped++;
       g_cond_broadcast(rc_state->connect_cond);
       g_mutex_unlock(rc_state->protect_state);
-      conn->conn_op.ic_free_connection(conn);
       DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, others starting",
                   cs_index));
       return NULL;

@@ -15,7 +15,9 @@
 
 exit_func()
 {
-  echo "$EXIT_CODE"
+  if test "x$LOG_FILE" != "x" ; then
+    echo "$EXIT_CODE" > $LOG_FILE
+  fi
   exit 0
 }
 
@@ -135,7 +137,9 @@ SEARCHED_PROCESS=
 PROCESS_NAME=
 PROCESS_PID=
 TARGET_OS=
+LOG_FILE=
 EXIT_CODE=2
+
   while test $# -gt 0
   do
     case $1 in
@@ -155,6 +159,13 @@ EXIT_CODE=2
       PROCESS_PID="1"
       SEARCHED_PID="$1"
       ;;
+    --log_file )
+      shift
+      if test "x$LOG_FILE" != "x" ; then
+        exit_func
+      fi
+      LOG_FILE="$1"
+      ;;
     * )
       exit_func
     esac
@@ -164,6 +175,9 @@ EXIT_CODE=2
     exit_func
   fi
   if test "x$PROCESS_PID" = "x" ; then
+    exit_func
+  fi
+  if test "x$LOG_FILE" = "x" ; then
     exit_func
   fi
 
