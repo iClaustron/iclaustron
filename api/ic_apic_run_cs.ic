@@ -1496,7 +1496,6 @@ start_cs_func(gpointer data)
     if (!(error= connect_cluster_server(apic,
                                         &conn,
                                         cs_index,
-                                        &cs_index,
                                         (guint32)1,
                                         is_client,
                                         &err_str)))
@@ -1514,7 +1513,6 @@ start_cs_func(gpointer data)
     if (!(error= connect_cluster_server(apic,
                                         &conn,
                                         cs_index,
-                                        &cs_index,
                                         (guint32)1,
                                         is_client,
                                         &err_str)))
