@@ -30,7 +30,9 @@ static int ensure_node_name_set(void *current_config,
                                 IC_MEMORY_CONTAINER *mc_ptr);
 
 static void ensure_pcntrl_hostname_set(void *current_config);
-static void ensure_node_data_path_set(void *current_config);
+static int ensure_node_data_path_set(void *current_config,
+                                      IC_CONFIG_STRUCT *conf_server,
+                                      IC_MEMORY_CONTAINER *mc_ptr);
 static void ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
                                  IC_CLUSTER_CONFIG *clu_conf);
 
@@ -38,10 +40,12 @@ static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
                                  IC_CLUSTER_CONFIG *grid_clu_conf,
                                  IC_CONFIG_STRUCT *conf_server,
+                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info,
                                  IC_CONFIG_ERROR *err_obj);
 static IC_CLUSTER_CONFIG*
 ic_load_grid_common_config_server_from_file(gchar *config_file,
                                      IC_CONFIG_STRUCT *conf_server,
+                                     IC_CLUSTER_CONNECT_INFO *clu_connect_info,
                                      IC_CONFIG_ERROR *err_obj);
 static IC_CLUSTER_CONFIG*
 load_config_server_from_files(gchar *config_file,
@@ -101,14 +105,17 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       mandatory_bits= data_server_mandatory_bits;
       if (ds_conf->mandatory_bits != data_server_mandatory_bits)
         goto mandatory_error;
+      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
+        return error;
+      ensure_pcntrl_hostname_set(current_config);
+      if ((error= ensure_node_data_path_set(current_config,
+                                            ic_conf,
+                                            ic_conf->perm_mc_ptr)))
+        return error;
       if (ds_conf->filesystem_path == NULL)
         ds_conf->filesystem_path= ds_conf->node_data_path;
       if (ds_conf->data_server_checkpoint_path == NULL)
         ds_conf->data_server_checkpoint_path= ds_conf->filesystem_path;
-      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
-        return error;
-      ensure_pcntrl_hostname_set(current_config);
-      ensure_node_data_path_set(current_config);
       break;
     }
     case IC_CLIENT_TYPE:
@@ -125,7 +132,10 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
         return error;
       ensure_pcntrl_hostname_set(current_config);
-      ensure_node_data_path_set(current_config);
+      if ((error= ensure_node_data_path_set(current_config,
+                                            ic_conf,
+                                            ic_conf->perm_mc_ptr)))
+        return error;
       break;
     case IC_COMM_TYPE:
       mandatory_bits= comm_mandatory_bits;
@@ -204,23 +214,49 @@ ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
   }
 }
 
-static void
-ensure_node_data_path_set(void *current_config)
+static int
+ensure_node_data_path_set(void *current_config,
+                          IC_CONFIG_STRUCT *conf_server,
+                          IC_MEMORY_CONTAINER *mc_ptr)
 {
+  IC_CLUSTER_CONNECT_INFO *clu_connect_info;
   IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
+  gchar *path_str, *alloc_ptr;
+  guint32 path_str_len, node_name_str_len, alloc_len;
+  IC_STRING node_path_string;
+
   if (ds_conf->node_data_path == NULL)
   {
     /*
       Ensure all nodes have a node data path set. The default is
-      /var/lib/iclaustron on Unix platforms and
-      C:\Program Files\lib\iclaustron on Windows
+      /var/lib/iclaustron_data/ndb/cluster_name/node_name on Unix platforms and
+      C:\Program Files\lib\iclaustron_data\ndb\cluster_name\node_name on Windows
     */
+    clu_connect_info =(IC_CLUSTER_CONNECT_INFO*)conf_server->sec_data;
 #ifndef WINDOWS
-    ds_conf->node_data_path= "/var/lib/iclaustron";
+    path_str= "/var/lib/iclaustron_data/ndb/";
 #else
-    ds_conf->node_data_path= "C:\\Program Files\\lib\\iclaustron\\";
+    path_str= "C:\\Program Files\\lib\\iclaustron_data\\ndb\\";
 #endif
+    path_str_len= strlen(path_str);
+    node_name_str_len= strlen(ds_conf->node_name);
+    alloc_len= path_str_len + clu_connect_info->cluster_name.len +
+               1 + node_name_str_len + 1;
+    if (!(alloc_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, alloc_len)))
+      return IC_ERROR_MEM_ALLOC;
+
+    IC_INIT_STRING(&node_path_string, alloc_ptr, 0, TRUE);
+    ic_add_string(&node_path_string, path_str);
+    ic_add_ic_string(&node_path_string, &clu_connect_info->cluster_name);
+#ifndef WINDOWS
+    ic_add_string(&node_path_string, "/");
+#else
+    ic_add_string(&node_path_string, "\\");
+#endif
+    ic_add_string(&node_path_string, ds_conf->node_name);
+    ds_conf->node_data_path= alloc_ptr;
   }
+  return 0;
 }
 
 static void
@@ -262,6 +298,7 @@ ensure_node_name_set(void *current_config, IC_MEMORY_CONTAINER *mc_ptr)
     if (!(alloc_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, alloc_len)))
       return IC_ERROR_MEM_ALLOC;
     memcpy(alloc_ptr, node_name_buffer, alloc_len);
+    ds_conf->node_name= alloc_ptr;
   }
   return 0;
 }
@@ -274,7 +311,7 @@ conf_serv_init(void *ic_conf, guint32 pass)
   IC_CLUSTER_CONFIG *clu_conf_perm;
   IC_MEMORY_CONTAINER *temp_mc_ptr;
   IC_MEMORY_CONTAINER *perm_mc_ptr;
-  IC_CLUSTER_CONFIG *grid_clu_conf= (IC_CLUSTER_CONFIG*)conf->data;
+  IC_CLUSTER_CONFIG *grid_clu_conf= (IC_CLUSTER_CONFIG*)conf->first_data;
   guint32 max_node_id, num_nodes;
   guint32 size_structs= 0;
   guint32 i;
@@ -953,9 +990,11 @@ static IC_CLUSTER_CONFIG*
 ic_load_config_server_from_files(gchar *config_file,
                                  IC_CLUSTER_CONFIG *grid_cluster_conf,
                                  IC_CONFIG_STRUCT *conf_server,
+                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info,
                                  IC_CONFIG_ERROR *err_obj)
 {
-  conf_server->data= (void*)grid_cluster_conf;
+  conf_server->first_data= (void*)grid_cluster_conf;
+  conf_server->sec_data= (void*) clu_connect_info;
   return load_config_server_from_files(config_file,
                                        conf_server,
                                        err_obj,
@@ -965,8 +1004,10 @@ ic_load_config_server_from_files(gchar *config_file,
 static IC_CLUSTER_CONFIG*
 ic_load_grid_common_config_server_from_file(gchar *config_file,
                                      IC_CONFIG_STRUCT *conf_server,
+                                     IC_CLUSTER_CONNECT_INFO *clu_connect_info,
                                      IC_CONFIG_ERROR *err_obj)
 {
+  conf_server->sec_data= (void*) clu_connect_info;
   return load_config_server_from_files(config_file,
                                        conf_server,
                                        err_obj,

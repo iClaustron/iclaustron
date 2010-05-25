@@ -38,7 +38,8 @@ struct ic_config_struct
     struct ic_cluster_config_load *clu_conf;
     struct ic_cluster_config_temp *cluster_conf;
   } config_ptr;
-  void *data;
+  void *first_data;
+  void *sec_data;
   struct ic_config_operations *clu_conf_ops;
   struct ic_memory_container *perm_mc_ptr;
 };

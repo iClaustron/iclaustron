@@ -486,6 +486,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 
   if (!(grid_cluster= ic_load_grid_common_config_server_from_file(file_name,
                                             &run_obj->conf_server_struct,
+                                            *clu_infos,
                                             &run_obj->err_obj)))
     return run_obj->err_obj.err_num;
 
@@ -506,6 +507,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     if (!(cluster= ic_load_config_server_from_files(file_name,
                                               grid_cluster,
                                               &run_obj->conf_server_struct,
+                                              clu_info,
                                               &run_obj->err_obj)))
       return run_obj->err_obj.err_num;
     /*
