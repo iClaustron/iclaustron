@@ -1478,7 +1478,7 @@ start_cs_func(gpointer data)
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   IC_INFO_CLUSTER_SERVER *this_info_cs= &run_obj->cs_servers[cs_index];
   IC_CONNECTION *conn= NULL;
-  guint32 active_start_threads;
+  guint32 active_start_threads, connected_servers, num_servers;
   int error;
   gchar *err_str;
   GTimeVal stop_timer;
@@ -1487,13 +1487,13 @@ start_cs_func(gpointer data)
 
   tp_state->ts_ops.ic_thread_started(thread_state);
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
-    goto end;
+    goto early_end;
 
   while (1)
   {
     err_str= NULL;
     if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-      goto end;
+      goto early_end;
     is_client= TRUE;
     if (!(error= connect_cluster_server(apic,
                                         &conn,
@@ -1531,80 +1531,112 @@ start_cs_func(gpointer data)
         to connect to the node. When the node starts up we will have a port
         open to connect to.
       */
-      g_mutex_lock(rc_state->protect_state);
-      rc_state->start_threads_stopped++;
       g_cond_broadcast(rc_state->connect_cond);
-      g_mutex_unlock(rc_state->protect_state);
       DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, others starting",
                   cs_index));
-      return NULL;
+      goto lock_end;
     }
   }
   /* Inform the other cluster server of our intentions */
   g_mutex_lock(rc_state->protect_state);
   this_info_cs->conn= conn;
-  if ((get_count_connected_cluster_servers(run_obj) + 1) ==
-      run_obj->num_cluster_servers)
+  do
   {
-    /*
-      All cluster servers have connected, we will proceed after waking
-      all threads which have successfully connected to a Cluster Server.
-    */
-    g_cond_broadcast(rc_state->connect_cond);
-  }
-  else
-  {
-    /*
-      We don't have a sufficient number of connections to start-up
-      immediately. We will wait for a few seconds, after this wait we
-      will check if we've reached a quorum, if a quorum has been
-      established we will start although not all Cluster servers have
-      connected.
-    */
-    active_start_threads= get_count_active_start_threads(run_obj);
-    if ((active_start_threads + 1 == run_obj->num_cluster_servers) &&
-        (run_obj->num_cluster_servers > 2))
+    set_have_waited= FALSE;
+    if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
     {
-      g_get_current_time(&stop_timer);
-      g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
-      g_cond_timed_wait(rc_state->connect_cond,
-                        rc_state->protect_state,
-                        &stop_timer);
+      DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, stop flag set",
+                  cs_index));
+      goto end;
+    }
+    connected_servers= get_count_connected_cluster_servers(run_obj);
+    num_servers= run_obj->num_cluster_servers;
+    if ((connected_servers + 1) == num_servers)
+    {
+      /*
+        All cluster servers have connected, we will proceed after waking
+        all threads which have successfully connected to a Cluster Server.
+      */
       g_cond_broadcast(rc_state->connect_cond);
+      break;
     }
     else
     {
       /*
-         We will wait here for someone else to complete the connection
-         set-up, whereafter we can continue with the Cluster Server start
-         protocol.
+        We don't have a sufficient number of connections to start-up
+        immediately. We will check if there is a sufficient number of
+        threads still attempting the start, if not we will quit and
+        make another attempt later.
+        If there is a chance to start with a quorum we will wait for
+        a few seconds, after this wait we will check if we've reached
+        a quorum, if a quorum has been established we will start
+        although not all Cluster servers have connected.
+        If all active threads are already connected and they form
+        a quorum we can start immediately.
       */
-      g_cond_wait(rc_state->connect_cond, rc_state->protect_state);
+      active_start_threads= get_count_active_start_threads(run_obj);
+      if ((active_start_threads + 1) < num_servers ||
+          ((active_start_threads == 1) && (num_servers == 2)))
+      {
+        /* Too few threads to continue, this thread needs to stop */
+        DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, others starting",
+                    cs_index));
+        goto end;
+      }
+      else if ((active_start_threads + 1 == num_servers) &&
+               (num_servers > 2))
+      {
+        if (have_waited)
+        {
+          /* We're a quorum and we already waited, proceed */
+          g_cond_broadcast(rc_state->connect_cond);
+          break;
+        }
+        g_get_current_time(&stop_timer);
+        g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
+        g_cond_timed_wait(rc_state->connect_cond,
+                          rc_state->protect_state,
+                          &stop_timer);
+        have_waited= TRUE;
+        set_have_waited= TRUE;
+      }
+      else if (connected_servers == active_start_threads)
+      {
+        /*
+          We are a quorum and the missing connection thread has already
+          finished, thus we are ready to continue
+        */
+        g_cond_broadcast(rc_state->connect_cond);
+        break;
+      }
+      else
+      {
+        /*
+           We will wait here for someone else to complete the connection
+           set-up, whereafter we can continue with the Cluster Server start
+           protocol. We'll use a timed wait to ensure we'll notice a
+           stop or some other event needing attention.
+        */
+        g_get_current_time(&stop_timer);
+        g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
+        g_cond_timed_wait(rc_state->connect_cond,
+                          rc_state->protect_state,
+                          &stop_timer);
+      }
     }
-  }
+    if (!set_have_waited)
+      have_waited= FALSE;
+  } while (1);
   if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
-    g_mutex_unlock(rc_state->protect_state);
+    DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, stop flag set",
+                cs_index));
     goto end;
+    DEBUG_RETURN(NULL);
   }
   rc_state->cs_starting= TRUE;
-  if ((get_count_connected_cluster_servers(run_obj) !=
-       run_obj->num_cluster_servers) &&
-      (rc_state->start_threads_stopped == 0))
-  {
-    /*
-      We are starting with a quorum, wait for last connect thread to stop
-      or connect before we start the Cluster Server start protocol. This is
-      to ensure we don't have to handle a node connecting in the middle of
-      the start protocol.
-    */
-    g_cond_wait(rc_state->connect_cond,
-                rc_state->protect_state);
-  }
   set_up_initial_master_index_view(run_obj);
   g_mutex_unlock(rc_state->protect_state);
-  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-    goto end;
 
   /*
     We are now connected to the Cluster Server this thread is appointed to
@@ -1620,12 +1652,10 @@ start_cs_func(gpointer data)
   {
     /* Release connection, return and ensure we make another retry */
     DEBUG_PRINT(CONFIG_LEVEL, ("This thread failed with start protocol"));
-    g_mutex_lock(rc_state->protect_state);
-    release_cs_connection(run_obj, conn, cs_index);
-    return NULL;
+    goto lock_end;
   }
   if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-    goto end;
+    goto lock_end;
   g_mutex_lock(rc_state->protect_state);
   do
   {
@@ -1636,8 +1666,7 @@ start_cs_func(gpointer data)
         ensure we make another attempt at starting up.
       */
       DEBUG_PRINT(CONFIG_LEVEL, ("Other thread failed with start protocol"));
-      release_cs_connection(run_obj, conn, cs_index);
-      return NULL;
+      goto end;
     }
     if ((get_count_connected_cluster_servers(run_obj) +
          rc_state->start_threads_stopped + 1) ==
@@ -1647,6 +1676,9 @@ start_cs_func(gpointer data)
         Startup is completed, we can now set state to started and
         start working as a Cluster Server to others in the Cluster.
       */
+      g_assert(rc_state->start_threads_stopped < 2);
+      g_assert(!(run_obj->num_cluster_servers == 2 &&
+                 rc_state->start_threads_stopped > 0));
       check_if_cs_started(run_obj);
       g_cond_broadcast(rc_state->start_cond);
       DEBUG_PRINT(CONFIG_LEVEL, ("Completed startup of Cluster Server"));
@@ -1657,12 +1689,13 @@ start_cs_func(gpointer data)
       /* Wait for all other Cluster Servers to complete */
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Wait for other threads to complete startup"));
-      g_cond_wait(rc_state->start_cond, rc_state->protect_state);
+      g_get_current_time(&stop_timer);
+      g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
+      g_cond_timed_wait(rc_state->start_cond,
+                        rc_state->protect_state,
+                        &stop_timer);
       if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-      {
-        g_mutex_unlock(rc_state->protect_state);
         goto end;
-      }
     }
   } while (1);
   g_mutex_unlock(rc_state->protect_state);
@@ -1672,9 +1705,21 @@ start_cs_func(gpointer data)
     until the connection breaks or until we're about to quit.
   */
   handle_cs_heartbeat(run_obj, thread_state, cs_index);
+  DEBUG_RETURN(NULL);
+
+early_end:
+  g_mutex_lock(rc_state->protect_state);
+  rc_state->start_threads_stopped++;
+  run_obj->cs_servers[cs_index].is_start_thread_active= FALSE;
+  g_mutex_unlock(rc_state->protect_state);
+  DEBUG_RETURN(NULL);
+
+lock_end:
+  g_mutex_lock(rc_state->protect_state);
 end:
-  if (conn)
-    conn->conn_op.ic_free_connection(conn);
+  release_cs_connection(run_obj, conn, cs_index);
+  run_obj->cs_servers[cs_index].is_start_thread_active= FALSE;
+  g_mutex_unlock(rc_state->protect_state);
   DEBUG_RETURN(NULL);
 }
 
@@ -1713,7 +1758,11 @@ release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 {
   run_obj->cs_servers[cs_index].conn= NULL;
   run_obj->state.start_threads_stopped++;
-  run_obj->state.cs_starting= FALSE;
+  if (run_obj->state.cs_starting &&
+      (run_obj->num_cluster_servers == 2 ||
+       get_count_connected_cluster_servers(run_obj) + 1 <
+       run_obj->num_cluster_servers))
+    run_obj->state.cs_starting= FALSE;
   run_obj->state.cs_started= FALSE;
   g_cond_broadcast(run_obj->state.start_cond);
   g_mutex_unlock(run_obj->state.protect_state);
