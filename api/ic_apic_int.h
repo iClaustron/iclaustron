@@ -313,8 +313,11 @@ struct ic_int_run_cluster_server
   /* The state of our cluster server */
   IC_RUN_CLUSTER_STATE state;
 
-  /* A memory container to make it easy to deallocate resources */
-  IC_MEMORY_CONTAINER *mc_ptr;
+  /*
+    A memory container that contains memory allocated for the current
+    configuration contained in the apic object.
+  */
+  IC_MEMORY_CONTAINER *conf_mc_ptr;
 
   /* The thread pool handling all threads for the cluster server */
   IC_THREADPOOL_STATE *tp_state;

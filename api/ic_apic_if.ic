@@ -194,13 +194,6 @@ get_node_id_from_name(IC_API_CONFIG_SERVER *ext_apic,
 }
 
 static void
-null_free_cs_config(IC_API_CONFIG_SERVER *apic)
-{
-  (void)apic;
-  return;
-}
-
-static void
 free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
 {
   IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;

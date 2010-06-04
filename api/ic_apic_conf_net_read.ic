@@ -16,11 +16,12 @@
 /*
   MODULE: Read Configuration from network
   ---------------------------------------
-  This module is a single method that implements an overlay to creating
+  This module is a single method that implements an overlay of creating
   a IC_API_CONFIG_SERVER object and retrieving configuration from the
   provided cluster server. It's used by most every iClaustron except for
-  the Cluster Server, since all programs need to do this we supply a single
-  interface to provide this functionality.
+  the Cluster Server (even the Cluster Server uses it in rare cases,
+  since all programs need to do this we supply a single interface to
+  provide this functionality.
 
   ic_get_configuration: Retrieve configuration from Cluster Server
 */

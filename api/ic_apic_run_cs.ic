@@ -338,6 +338,30 @@ static gpointer start_cs_func(gpointer data);
   cluster configurations.
 */
 static void
+set_up_run_obj_master(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+  guint32 used_index;
+  guint32 cs_index= 0;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  IC_CLUSTER_CONFIG *clu_conf= get_any_cluster_config(run_obj);
+
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_types[i] == IC_CLUSTER_SERVER_NODE)
+    {
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)clu_conf->node_config[i];
+      if (cs_conf->node_id == run_obj->cs_nodeid)
+        used_index= 0;
+      else
+        used_index= ++cs_index;
+      run_obj->cs_servers[used_index].master_index= IC_MAX_CLUSTER_SERVERS;
+    }
+  }
+  run_obj->state.master_cs_index= IC_MAX_CLUSTER_SERVERS;
+}
+
+static void
 set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   guint32 cs_index= 0;
@@ -357,10 +381,24 @@ set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       else
         used_index= ++cs_index;
       run_obj->cs_servers[used_index].node_id= cs_conf->node_id;
-      run_obj->cs_servers[used_index].master_index= IC_MAX_CLUSTER_SERVERS;
     }
   }
-  run_obj->state.master_cs_index= IC_MAX_CLUSTER_SERVERS;
+}
+
+static void
+free_apic_from_run_cluster(IC_API_CONFIG_SERVER *ext_apic)
+{
+  guint32 i;
+  IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
+
+  for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
+  {
+    if (apic->conf_objects[i])
+    {
+      ic_hashtable_destroy(apic->conf_objects[i]->comm_hash);
+      apic->conf_objects[i]= NULL;
+    }
+  }
 }
 
 /*
@@ -376,18 +414,18 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 i, cs_index, dummy, num_cluster_servers, used_index;
   gchar buf[32], *buf_ptr, *port_number_str;
   int error;
-  IC_MEMORY_CONTAINER *mc_ptr= run_obj->mc_ptr;
-  IC_API_CLUSTER_CONNECTION *cluster_conn= &apic->cluster_conn;
   gboolean found_cs_nodeid= FALSE;
+  IC_MEMORY_CONTAINER *mc_ptr= run_obj->conf_mc_ptr;
+  IC_API_CLUSTER_CONNECTION *cluster_conn= &apic->cluster_conn;
 
   set_up_apic_methods(apic);
   apic->api_op.ic_get_config= null_get_cs_config;
-  apic->api_op.ic_free_config= null_free_cs_config;
+  apic->api_op.ic_free_config= free_apic_from_run_cluster;
 
   apic->max_cluster_id= run_obj->max_cluster_id;
   apic->use_ic_cs= TRUE;
   apic->conf_objects= (IC_CLUSTER_CONFIG**)run_obj->conf_objects;
-  apic->mc_ptr= run_obj->mc_ptr;
+  apic->mc_ptr= run_obj->conf_mc_ptr;
 
   clu_conf= get_any_cluster_config(run_obj);
   cluster_conn->num_cluster_servers= get_count_cluster_servers(clu_conf);
@@ -421,8 +459,7 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       buf_ptr= ic_guint64_str((guint64)cs_conf->cluster_server_port_number,
                               buf,
                               &dummy);
-      if ((error= ic_mc_chardup(run_obj->mc_ptr, &port_number_str,
-                                buf_ptr)))
+      if ((error= ic_mc_chardup(mc_ptr, &port_number_str, buf_ptr)))
         goto error;
       cluster_conn->cluster_server_ports[used_index]= port_number_str;
       cluster_conn->cs_nodeid[used_index]= cs_conf->node_id;
@@ -473,7 +510,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 {
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *cluster, *grid_cluster;
-  IC_MEMORY_CONTAINER *mc_ptr= run_obj->mc_ptr;
+  IC_MEMORY_CONTAINER *mc_ptr= run_obj->conf_mc_ptr;
   IC_STRING file_name_string;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
@@ -626,13 +663,63 @@ error:
   DEBUG_RETURN(error);
 }
 
+/* Used by Run Cluster Server module to read configuration from disk. */
+static int
+read_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  int error;
+  DEBUG_ENTRY("read_disk_config");
+
+  run_obj->conf_server_struct.perm_mc_ptr= run_obj->conf_mc_ptr;
+  run_obj->cluster_conf_struct.perm_mc_ptr= run_obj->conf_mc_ptr;
+  if ((error= load_local_config(run_obj)))
+    goto error;
+  if ((error= set_up_apic(run_obj)))
+    goto error;
+  set_up_run_obj(run_obj);
+  DEBUG_RETURN(0);
+error:
+  DEBUG_RETURN(error);
+}
+
+/*
+  This method is used by the Run Cluster Server module to reread disk
+  configuration after a successful update of the configuration and in
+  start cases where the original cluster configuration proved to be
+  out-of-date or even that our latest version were never committed.
+*/
+static int
+reread_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  IC_API_CONFIG_SERVER *apic;
+  IC_MEMORY_CONTAINER *mc_ptr;
+  int error;
+  DEBUG_ENTRY("reread_disk_config");
+
+  apic= (IC_API_CONFIG_SERVER*)run_obj->apic;
+  run_obj->apic= NULL;
+  apic->api_op.ic_free_config(apic); /* Free old apic version */
+  mc_ptr= run_obj->conf_mc_ptr;
+  /*
+    Free memory but keep memory container, all memory allocated is
+    freed, but the actual memory container is still there ready to
+    use for the next configuration object we retrieve.
+  */
+  mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
+  if ((error= read_disk_config(run_obj)))
+  {
+    ic_print_error(error);
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
+}
+
 /* Implements the start_cluster_server method */
 static int
 start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
   int error;
-  gchar *err_str;
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
   DEBUG_ENTRY("start_cluster_server");
 
@@ -645,20 +732,10 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
                                      &info_cs->pid)))
     goto error;
   /* Read configuration from disk configuration */
-  run_obj->conf_server_struct.perm_mc_ptr= run_obj->mc_ptr;
-  run_obj->cluster_conf_struct.perm_mc_ptr= run_obj->mc_ptr;
-  if ((error= load_local_config(run_obj)))
+  if ((error= read_disk_config(run_obj)))
     goto error;
-  if ((error= set_up_apic(run_obj)))
-    goto error;
-  set_up_run_obj(run_obj);
-  if (!(run_obj->apid_global= ic_create_apid_global(
-                     (IC_API_CONFIG_SERVER*)run_obj->apic,
-                     TRUE,
-                     &error,
-                     &err_str)))
-    goto late_error;
 
+  set_up_run_obj_master(run_obj);
   /*
     Before we start-up our server connection to listen to incoming events
     we first create some socket connections to connect to our fellow
@@ -689,8 +766,6 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 
   DEBUG_RETURN(0);
 
-late_error:
-  ic_printf("%s", err_str);
 error:
   unlock_cv_file(run_obj);
   DEBUG_RETURN(error);
@@ -1871,6 +1946,10 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_CONF_VERSION_TYPE max_committed_version;
   guint32 i;
   int error;
+  gchar *err_str;
+  IC_CONF_VERSION_TYPE old_version;
+  IC_API_CONFIG_SERVER *new_apic;
+  IC_API_CLUSTER_CONNECTION api_cluster_conn;
   DEBUG_ENTRY("check_if_cs_started");
 
   verify_cs_started(run_obj);
@@ -1889,7 +1968,7 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
           Our most recent version is a version in a prepared state which
           which will not be committed, we need to remove this version
           and set our state to committed of the previous version number.
-          After this our Cluster Server is in synch with the committed
+          After this our Clusteonr Server is in synch with the committed
           version of the Cluster Servers. We can start our Cluster Server
           and accept reads of the configuration, but we cannot accept writes
           until all Cluster Servers are up-to-date.
@@ -1916,6 +1995,8 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
           we need to get rid of the in-memory version and load the correct
           version instead.
         */
+        if ((error= reread_disk_config(run_obj)))
+          DEBUG_RETURN(error);
       }
       else if (my_info_cs->config_version_number < max_committed_version)
       {
@@ -1927,9 +2008,62 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
           configuration. This can happen when our node failed and the
           remaining Cluster Servers formed a quorum that continued
           operating and performing updates.
+
+          After reading the configuration from the network and writing it
+          to disk, we reread it from disk to ensure that we allocated the
+          configuration from the same code path in all instances of the
+          Run Cluster Server module.
         */
         DEBUG_PRINT(CONFIG_LEVEL, ("Our version is out-of-date"));
-        DEBUG_RETURN(0);
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Fetch config from up-to-date Cluster Server"));
+        if ((new_apic= ic_get_configuration(&api_cluster_conn,
+                       run_obj->config_dir,
+                       run_obj->cs_nodeid,
+                       (guint32)1,
+                       &run_obj->apic->cluster_conn.cluster_server_ips[1],
+                       &run_obj->apic->cluster_conn.cluster_server_ports[1],
+                       (guint32)3,
+                       TRUE,
+                       &error,
+                       &err_str)))
+        {
+          ic_printf("Failed to get config from network: %s", err_str);
+          ic_print_error(error);
+          DEBUG_RETURN(error);
+        }
+        DEBUG_PRINT(CONFIG_LEVEL, ("Successful fetch of new configuration"));
+
+        /* Remove old config files in case we missed several updates */
+        DEBUG_PRINT(CONFIG_LEVEL, ("Remove old config files"));
+        if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
+        {
+          /*
+            Make sure all config files are cleaned up,
+            also the old committed
+          */
+          (void)remove_config_files(run_obj->config_dir,
+                                    run_obj->clu_infos,
+                                    my_info_cs->config_version_number - 1);
+        }
+        (void)remove_config_files(run_obj->config_dir,
+                                  run_obj->clu_infos,
+                                  my_info_cs->config_version_number);
+
+        /* Write new configuration */
+        DEBUG_PRINT(CONFIG_LEVEL, ("Write configuration to disk"));
+        old_version= max_committed_version - 1;
+        if ((error= ic_write_full_config_to_disk(run_obj->config_dir,
+                      &old_version,
+                      run_obj->clu_infos,
+                      new_apic->api_op.ic_get_all_cluster_config(new_apic))))
+          DEBUG_RETURN(error);
+        my_info_cs->config_version_number= max_committed_version;
+        my_info_cs->state= CONFIG_STATE_BUSY;
+
+        DEBUG_PRINT(CONFIG_LEVEL, ("Reread configuration from disk"));
+        if ((error= reread_disk_config(run_obj)))
+          DEBUG_RETURN(error);
       }
       else if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
       {
@@ -1981,6 +2115,7 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       DEBUG_RETURN(check_if_cs_started(run_obj));
     }
   }
+  DEBUG_PRINT(CONFIG_LEVEL, ("All Cluster Servers are in synch"));
   run_obj->state.cs_starting= FALSE;
   DEBUG_RETURN(0);
 }
@@ -1999,68 +2134,25 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 static int
 complete_startup_handling(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
-  IC_CONF_VERSION_TYPE max_version= find_max_version(run_obj);
   int error;
   gchar *err_str;
-  IC_CONF_VERSION_TYPE old_version;
-  IC_API_CONFIG_SERVER *new_apic;
-  IC_API_CLUSTER_CONNECTION api_cluster_conn;
   DEBUG_ENTRY("complete_startup_handling");
 
-  if (my_info_cs->config_version_number != max_version)
+  /*
+    Now we have discovered the proper configuration to use in the
+    Cluster Server and we can create Data API object based on this
+    configuration.
+  */
+  if (!(run_obj->apid_global= ic_create_apid_global(
+                     (IC_API_CONFIG_SERVER*)run_obj->apic,
+                     TRUE,
+                     &error,
+                     &err_str)))
   {
-    /* Our Cluster Server is lagging behind */
-    g_assert(my_info_cs->config_version_number < max_version);
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Fetch config from up-to-date Cluster Server"));
-    new_apic= ic_get_configuration(&api_cluster_conn,
-                       run_obj->config_dir,
-                       run_obj->cs_nodeid,
-                       (guint32)1,
-                       &run_obj->apic->cluster_conn.cluster_server_ips[1],
-                       &run_obj->apic->cluster_conn.cluster_server_ports[1],
-                       (guint32)3,
-                       TRUE,
-                       &error,
-                       &err_str);
-    if (!new_apic)
-    {
-      goto error;
-    }
-    DEBUG_PRINT(CONFIG_LEVEL, ("Successful fetch of new configuration"));
-    /* Release memory for old apic */
-    run_obj->apic->api_op.ic_free_config((IC_API_CONFIG_SERVER*)run_obj->apic);
-    run_obj->apic= (IC_INT_API_CONFIG_SERVER*)new_apic;
-
-    /* Remove old config files in case we missed several updates */
-    DEBUG_PRINT(CONFIG_LEVEL, ("Remove old config files"));
-    if (my_info_cs->state == CONFIG_STATE_PREPARE_UPDATE)
-    {
-      /* Make sure all config files are cleaned up, also the old committed */
-      (void)remove_config_files(run_obj->config_dir,
-                                run_obj->clu_infos,
-                                my_info_cs->config_version_number - 1);
-    }
-    (void)remove_config_files(run_obj->config_dir,
-                              run_obj->clu_infos,
-                              my_info_cs->config_version_number);
-
-    /* Write new configuration */
-    DEBUG_PRINT(CONFIG_LEVEL, ("Write configuration to disk"));
-    old_version= max_version - 1;
-    if ((error= ic_write_full_config_to_disk(run_obj->config_dir,
-                    &old_version,
-                    run_obj->clu_infos,
-                    new_apic->api_op.ic_get_all_cluster_config(new_apic))))
-      goto error;
-
-    my_info_cs->config_version_number= max_version;
-    my_info_cs->state= CONFIG_STATE_BUSY;
+    ic_printf("%s", err_str);
+    DEBUG_RETURN(error);
   }
   DEBUG_RETURN(0);
-error:
-  DEBUG_RETURN(error);
 }
 
 static void
@@ -2120,19 +2212,22 @@ ic_create_run_cluster(IC_STRING *config_dir,
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= NULL;
   IC_CONNECTION *conn;
-  IC_MEMORY_CONTAINER *mc_ptr;
+  IC_MEMORY_CONTAINER *conf_mc_ptr;
   IC_THREADPOOL_STATE *tp_state= NULL;
   DEBUG_ENTRY("ic_create_run_cluster");
 
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+  if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ic_calloc(
+                sizeof(IC_INT_RUN_CLUSTER_SERVER))))
+  {
+    DEBUG_RETURN(NULL);
+  }
+  if (!(conf_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
     goto error;
   if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
-  if (!(run_obj= (IC_INT_RUN_CLUSTER_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
-                mc_ptr, sizeof(IC_INT_RUN_CLUSTER_SERVER))))
-    goto error;
-  if (!(run_obj->apic= (IC_INT_API_CONFIG_SERVER*)mc_ptr->mc_ops.ic_mc_calloc(
-                mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
+  if (!(run_obj->apic=
+        (IC_INT_API_CONFIG_SERVER*)conf_mc_ptr->mc_ops.ic_mc_calloc(
+                conf_mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
     goto error;
   if (!(run_obj->state.protect_state= g_mutex_new()))
     goto error;
@@ -2147,7 +2242,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
     ensure when several connections receive requests only one at a time can
     change the Cluster Server state.
   */
-  run_obj->mc_ptr= mc_ptr;
+  run_obj->conf_mc_ptr= conf_mc_ptr;
 
   run_obj->process_name= process_name;
   run_obj->config_dir= config_dir;
@@ -2187,18 +2282,16 @@ ic_create_run_cluster(IC_STRING *config_dir,
   DEBUG_RETURN((IC_RUN_CLUSTER_SERVER*)run_obj);
 
 error:
-  if (mc_ptr)
+  if (conf_mc_ptr)
   {
     if (tp_state)
       tp_state->tp_ops.ic_threadpool_stop(tp_state);
-    if (run_obj)
-    {
-      free_run_cluster_protect(run_obj);
-      if (run_obj->conn)
-        run_obj->conn->conn_op.ic_free_connection(run_obj->conn);
-    }
-    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+    free_run_cluster_protect(run_obj);
+    if (run_obj->conn)
+      run_obj->conn->conn_op.ic_free_connection(run_obj->conn);
+    conf_mc_ptr->mc_ops.ic_mc_free(conf_mc_ptr);
   }
+  ic_free(run_obj);
   DEBUG_RETURN(NULL);
 }
 
@@ -2261,8 +2354,9 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
         ic_hashtable_destroy(run_obj->conf_objects[i]->comm_hash);
     }
     free_run_cluster_protect(run_obj);
-    if (run_obj->mc_ptr)
-      run_obj->mc_ptr->mc_ops.ic_mc_free(run_obj->mc_ptr);
+    if (run_obj->conf_mc_ptr)
+      run_obj->conf_mc_ptr->mc_ops.ic_mc_free(run_obj->conf_mc_ptr);
+    ic_free(run_obj);
   }
   DEBUG_RETURN_EMPTY;
 }
