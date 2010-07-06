@@ -1558,13 +1558,14 @@ start_cs_func(gpointer data)
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   IC_INFO_CLUSTER_SERVER *this_info_cs= &run_obj->cs_servers[cs_index];
+  IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
   IC_CONNECTION *conn= NULL;
   guint32 active_start_threads, connected_servers, num_servers;
   int error;
   gchar *err_str;
-  GTimeVal stop_timer;
-  gboolean is_client= FALSE;
+  gboolean is_client= (this_info_cs->node_id > my_info_cs->node_id);
   gboolean set_have_waited, have_waited;
+  gboolean running_server= FALSE;
   DEBUG_ENTRY("start_cs_func");
 
   tp_state->ts_ops.ic_thread_started(thread_state);
@@ -1576,35 +1577,71 @@ start_cs_func(gpointer data)
     err_str= NULL;
     if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
       goto early_end;
-    is_client= TRUE;
-    if (!(error= connect_cluster_server(apic,
-                                        &conn,
-                                        cs_index,
-                                        (guint32)1,
-                                        is_client,
-                                        &err_str)))
+    if (is_client)
     {
-      DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
-                  cs_index));
-      this_info_cs->is_client_side= TRUE;
-      break;
+      if (!(error= connect_cluster_server(apic,
+                                          &conn,
+                                          cs_index,
+                                          (guint32)1,
+                                          is_client,
+                                          &err_str)))
+      {
+        DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
+                    cs_index));
+        this_info_cs->is_client_side= TRUE;
+        this_info_cs->conn= conn;
+        break;
+      }
+      /*
+        Another attempt to connect failed, check if the other node
+        connected to us.
+      */
     }
-    /*
-      Another attempt to connect failed, check if the other node
-      connected to us.
-    */
-    is_client= FALSE;
-    if (!(error= connect_cluster_server(apic,
-                                        &conn,
-                                        cs_index,
-                                        (guint32)1,
-                                        is_client,
-                                        &err_str)))
+    else
     {
-      DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
-                  cs_index));
-      this_info_cs->is_client_side= FALSE;
-      break;
+      if (!running_server)
+      {
+        /*
+          We are currently not running the Server part of the Connect to
+          Cluster Server code. Check if someone else is, if not we'll
+          assume this role.
+        */
+        g_mutex_lock(rc_state->protect_state);
+        if (!run_obj->running_server)
+        {
+          running_server= TRUE;
+          run_obj->running_server= TRUE;
+          g_mutex_unlock(rc_state->protect_state);
+        }
+        else
+        {
+          ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
+                             3 * IC_MICROSEC_PER_SECOND);
+          if (this_info_cs->conn)
+          {
+            /* The connect server thread connected for us */
+            DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
+                        cs_index));
+            break;
+          }
+        }
+      }
+      else
+      {
+        if (!(error= connect_cluster_server(apic,
+                                            &conn,
+                                            cs_index,
+                                            (guint32)1,
+                                            is_client,
+                                            &err_str)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
+                      cs_index));
+          this_info_cs->is_client_side= TRUE;
+          g_cond_broadcast(rc_state->connect_cond);
+          break;
+        }
+      }
     }
     if (rc_state->cs_starting)
     {
@@ -1621,7 +1658,7 @@ start_cs_func(gpointer data)
   }
   /* Inform the other cluster server of our intentions */
   g_mutex_lock(rc_state->protect_state);
-  this_info_cs->conn= conn;
+  conn= this_info_cs->conn;
   have_waited= FALSE;
   do
   {
@@ -1675,11 +1712,8 @@ start_cs_func(gpointer data)
           g_cond_broadcast(rc_state->connect_cond);
           break;
         }
-        g_get_current_time(&stop_timer);
-        g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
-        g_cond_timed_wait(rc_state->connect_cond,
-                          rc_state->protect_state,
-                          &stop_timer);
+        ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
+                           3 * IC_MICROSEC_PER_SECOND);
         have_waited= TRUE;
         set_have_waited= TRUE;
       }
@@ -1700,11 +1734,8 @@ start_cs_func(gpointer data)
            protocol. We'll use a timed wait to ensure we'll notice a
            stop or some other event needing attention.
         */
-        g_get_current_time(&stop_timer);
-        g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
-        g_cond_timed_wait(rc_state->connect_cond,
-                          rc_state->protect_state,
-                          &stop_timer);
+        ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
+                           3 * IC_MICROSEC_PER_SECOND);
       }
     }
     if (!set_have_waited)
@@ -1773,11 +1804,8 @@ start_cs_func(gpointer data)
       /* Wait for all other Cluster Servers to complete */
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Wait for other threads to complete startup"));
-      g_get_current_time(&stop_timer);
-      g_time_val_add(&stop_timer, 3 * IC_MICROSEC_PER_SECOND);
-      g_cond_timed_wait(rc_state->start_cond,
-                        rc_state->protect_state,
-                        &stop_timer);
+      ic_cond_timed_wait(rc_state->start_cond, rc_state->protect_state,
+                         3 * IC_MICROSEC_PER_SECOND);
       if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
         goto end;
       if (handle_cs_heartbeat(run_obj, thread_state, cs_index, TRUE))

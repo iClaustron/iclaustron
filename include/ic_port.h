@@ -95,6 +95,8 @@ IC_TIMER ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 void ic_sleep(guint32 seconds_to_sleep);
 void ic_microsleep(guint32 microseconds_to_sleep);
 
+void ic_cond_timed_wait(GCond *cond, GMutex *mutex, guint32 micros);
+
 /* Interface to daemonize a program */
 int ic_daemonize(gchar *log_file);
 /* Interface to set function to call at kill signal */

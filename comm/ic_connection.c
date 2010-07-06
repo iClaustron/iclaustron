@@ -533,7 +533,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   ok= ic_sock_ntop(client_addr_ptr,
                    conn->conn_stat.client_ip_addr,
                    sizeof(conn->conn_stat.client_ip_addr_str));
-  if (not_accepted)
+  if (not_accepted || !ok)
   {
     /*
       The caller only accepted connect's from certain IP address and
@@ -554,6 +554,61 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   conn->rw_sockfd= ret_sockfd;
   conn->error_code= 0;
   set_is_connected(conn);
+  return 0;
+}
+
+/* Implements ic_check_connection */
+static int
+check_connection(IC_CONNECTION *ext_conn,
+                 gchar *checked_client_name,
+                 gchar *checked_port_number,
+                 gboolean *equal)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  gchar checked_ip_str[256];
+  gchar *client_ip_str= conn->conn_stat.client_ip_addr_str;
+  struct addrinfo hints;
+  struct addrinfo *client_addrinfo= NULL;
+  struct addrinfo *loop_addrinfo;
+  int ok, ret_code;
+
+  *equal= FALSE;
+  /*
+    Use checked= _client_name to get numeric host strings that corresponds
+    to the hostname (can be a list of them) using getaddrinfo.
+  */
+  /* Get address information for Server part */
+  ic_zero(&hints, sizeof(struct addrinfo));
+#ifdef AI_NUMERICSERV
+  hints.ai_flags= AI_NUMERICSERV;
+#else
+  hints.ai_flags= 0;
+#endif
+  hints.ai_flags|= AI_PASSIVE;
+  hints.ai_family= PF_UNSPEC;
+  hints.ai_socktype= SOCK_STREAM;
+  hints.ai_protocol= IPPROTO_TCP;
+  if ((ret_code= getaddrinfo(checked_client_name, checked_port_number,
+       &hints, &client_addrinfo)) != 0)
+  {
+    conn->err_str= gai_strerror(ret_code);
+    return IC_ERROR_GETADDRINFO;
+  }
+  loop_addrinfo= client_addrinfo;
+  for (; loop_addrinfo;
+       loop_addrinfo= loop_addrinfo->ai_next)
+  {
+    ok= ic_sock_ntop(loop_addrinfo->ai_addr,
+                     checked_ip_str,
+                     sizeof(checked_ip_str));
+    if (ok && (strcmp(checked_ip_str, client_ip_str) == 0))
+    {
+      *equal= TRUE;
+      goto end;
+    }
+  }
+end:
+  freeaddrinfo(client_addrinfo);
   return 0;
 }
 
@@ -1806,6 +1861,7 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
   conn->conn_op.ic_login_connection= login_connection;
   conn->conn_op.ic_accept_connection= accept_socket_connection;
+  conn->conn_op.ic_check_connection= check_connection;
   conn->conn_op.ic_close_connection= close_socket_connection;
   conn->conn_op.ic_close_listen_connection= close_listen_socket_connection;
   conn->conn_op.ic_read_connection = read_socket_connection;

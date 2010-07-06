@@ -365,6 +365,9 @@ struct ic_int_run_cluster_server
   /* Stop has been ordered indicator */
   gboolean stop_flag;
 
+  /* Someone is running the server part of connect code during startup */
+  gboolean running_server;
+
   /* Error handling object */
   IC_CONFIG_ERROR err_obj;
 

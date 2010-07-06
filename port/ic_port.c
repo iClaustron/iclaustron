@@ -998,3 +998,14 @@ guint32 ic_byte_order()
   else
     return 1;
 }
+
+void ic_cond_timed_wait(GCond *cond,
+                        GMutex *mutex,
+                        guint32 micros)
+{
+  GTimeVal stop_timer;
+
+  g_get_current_time(&stop_timer);
+  g_time_val_add(&stop_timer, micros);
+  g_cond_timed_wait(cond, mutex, &stop_timer);
+}

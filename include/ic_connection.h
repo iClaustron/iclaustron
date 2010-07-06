@@ -135,6 +135,16 @@ struct ic_connect_operations
   int (*ic_accept_connection)          (IC_CONNECTION *conn);
   int (*ic_close_connection)           (IC_CONNECTION *conn);
   int (*ic_close_listen_connection)    (IC_CONNECTION *conn);
+
+  /*
+    This call is used to check if a client that connected to a server
+    part is coming from a certain hostname and port.
+  */
+  int (*ic_check_connection)           (IC_CONNECTION *conn,
+                                        gchar *checked_client_hostname,
+                                        gchar *checked_client_port,
+                                        gboolean *equal);
+
   /*
     These calls are used to read and write on a socket connection.
     There is support for memory buffering in front of the socket.

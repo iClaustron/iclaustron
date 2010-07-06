@@ -70,7 +70,6 @@ static IC_SOCK_BUF_PAGE*
 get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
                     glong wait_time_in_micros)
 {
-  GTimeVal stop_timer;
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   IC_THREAD_CONNECTION *thd_conn= apid_conn->thread_conn;
   IC_SOCK_BUF_PAGE *sock_buf_page;
@@ -82,10 +81,9 @@ get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
     set_sock_buf_page_empty(thd_conn);
   else if (wait_time_in_micros)
   {
-    g_get_current_time(&stop_timer);
-    g_time_val_add(&stop_timer, wait_time_in_micros);
     thd_conn->thread_wait_cond= TRUE;
-    g_cond_timed_wait(thd_conn->cond, thd_conn->mutex, &stop_timer);
+    ic_cond_timed_wait(thd_conn->cond, thd_conn->mutex,
+                       wait_time_in_micros);
     sock_buf_page= thd_conn->first_received_message;
     if (sock_buf_page)
       set_sock_buf_page_empty(thd_conn);
