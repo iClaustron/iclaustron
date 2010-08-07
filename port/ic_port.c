@@ -81,6 +81,7 @@ int ic_stop_socket_system()
   return ret_code;
 }
 
+/* This method can't use DEBUG system since it isn't initialised when called */
 int ic_start_socket_system()
 {
 #ifdef WINDOWS
@@ -120,6 +121,10 @@ ic_get_stop_flag()
   return ic_stop_flag;
 }
 
+/*
+  This method can't be debugged since it's called before debug system
+  has been started.
+*/
 void
 ic_port_init()
 {
@@ -684,11 +689,13 @@ ic_get_file_contents(const gchar *file,
   DEBUG_ENTRY("ic_get_file_contents");
 
   if ((error= ic_open_file(&file_ptr, file, FALSE)))
-    goto error;
+    goto get_error;
   if ((error= get_file_length(file_ptr, file_size)))
-    return error;
+    goto error;
   if (!(loc_ptr= ic_malloc((size_t)((*file_size) + 1))))
-    return IC_ERROR_MEM_ALLOC;
+  {
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+  }
   loc_ptr[*file_size]= 0;
   *file_content= loc_ptr;
   size_left= (size_t)*file_size;
@@ -698,16 +705,19 @@ ic_get_file_contents(const gchar *file,
     {
       ic_free(*file_content);
       *file_size= 0;
-      return error;
+      goto error;
     }
     if (read_size == size_left)
-      return 0;
+    {
+      DEBUG_RETURN(0);
+    }
     loc_ptr+= read_size;
     size_left-= (size_t)read_size;
   } while (1);
-error:
+get_error:
   error= ic_get_last_error();
-  return error;
+error:
+  DEBUG_RETURN(error);
 }
 
 static int

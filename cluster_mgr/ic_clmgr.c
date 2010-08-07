@@ -1006,16 +1006,20 @@ run_handle_new_connection(gpointer data)
   guint32 read_size;
   int ret_code;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
-  IC_CONNECTION *conn= (IC_CONNECTION*)
-    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_THREADPOOL_STATE *tp_state;
+  IC_CONNECTION *conn;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_API_CONFIG_SERVER *apic;
   gchar *parse_buf;
   guint32 parse_inx= 0;
   IC_PARSE_DATA parse_data;
+  DEBUG_THREAD_ENTRY("run_handle_new_connection");
+  tp_state= thread_state->ic_get_threadpool(thread_state);
+  conn= (IC_CONNECTION*)
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
 
   tp_state->ts_ops.ic_thread_started(thread_state);
+
   apic= (IC_API_CONFIG_SERVER*)conn->conn_op.ic_get_param(conn);
   ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
@@ -1067,7 +1071,7 @@ error:
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   conn->conn_op.ic_free_connection(conn);
   tp_state->ts_ops.ic_thread_stops(thread_state);
-  return NULL;
+  DEBUG_THREAD_RETURN;
 }
 
 static int

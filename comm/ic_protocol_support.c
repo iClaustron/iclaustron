@@ -39,7 +39,7 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
   send_size= strlen(send_buf);
   g_assert((send_size + 1) < conn->write_buf_size);
 
-  DEBUG_PRINT(COMM_LEVEL, ("Send: %s\n", send_buf));
+  DEBUG_PRINT(CONFIG_PROTO_LEVEL, ("Send: %s", send_buf));
   if ((conn->write_buf_pos + send_size + 1) > conn->write_buf_size)
   {
     /* Buffer is full, we need to send now */
@@ -120,7 +120,8 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
         /* Found a line to report */
         conn->size_curr_read_buf= size_curr_buf;
         conn->read_buf_pos= inx + 1; /* Take CR into account */
-        DEBUG(COMM_LEVEL, ic_debug_print_rec_buf(read_buf, inx));
+        DEBUG(CONFIG_PROTO_LEVEL,
+          ic_debug_print_rec_buf(read_buf, inx));
         *read_size= inx;
         *rec_buf= read_buf;
         return 0;
@@ -129,7 +130,8 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
         We had no complete lines to read in the buffer received so
         far.
       */
-      DEBUG_PRINT(COMM_LEVEL, ("No complete lines to report yet"));
+      DEBUG_PRINT(COMM_LEVEL,
+                  ("No complete lines to report yet"));
     }
     size_to_read= buffer_size - size_curr_buf;
     if (!conn->conn_op.ic_check_for_data((IC_CONNECTION*)conn))

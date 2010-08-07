@@ -285,7 +285,7 @@ struct ic_table_def_ops
 struct ic_index_def_ops
 {
   /*
-    The index definition objcet is used to get data about an index. Data
+    The index definition object is used to get data about an index. Data
     about its fields and the table it's part of is derived from the
     table definition object
   */
@@ -353,7 +353,7 @@ struct ic_metadata_transaction_ops
     performs creation of a table, adding an index, altering a table, drop of
     a table and so forth.
 
-    There are certain rules to what things can be combined into metadata
+    There are certain rutable_defles to what things can be combined into metadata
     transactions. For each operation one needs to create an IC_ALTER_TABLE
     object by ic_create_metadata_op which also connects this operation to
     a metadata transaction.
@@ -1222,7 +1222,7 @@ struct ic_conditional_assignment_ops
     address can be prepared by loading constants into memory and also by
     performing operations on constants and field values.
 
-    We can also make the entire assignment conditional, to do this, we reuse
+    We can also make the entire aic_define_partitioningssignment conditional, to do this, we reuse
     the IC_WHERE_CONDITION class. Thus a generic WHERE condition can be
     executed before we perform the assignment. If no WHERE condition is used
     the assignment is unconditional. For an API operation it is possible to

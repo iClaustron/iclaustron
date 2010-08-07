@@ -60,6 +60,7 @@ get_config_entry_mandatory(guint32 bit_id,
   guint32 i;
   IC_CONFIG_ENTRY *conf_entry;
   DEBUG_ENTRY("get_config_entry_mandatory");
+
   for (i= 1; i <= glob_max_config_id; i++)
   {
     conf_entry= &glob_conf_entry[i];
@@ -94,11 +95,11 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
   conf_type= clu_conf_load->current_node_config_type;
   current_config= clu_conf_load->current_node_config;
   if (clu_conf_load->default_section || pass == INITIAL_PASS)
-    DEBUG_RETURN(0);
+    goto end;
   switch (conf_type)
   {
     case IC_NO_CONFIG_TYPE:
-      return 0;
+      goto end;
     case IC_DATA_SERVER_TYPE:
     {
       IC_DATA_SERVER_CONFIG *ds_conf= (IC_DATA_SERVER_CONFIG*)current_config;
@@ -106,12 +107,12 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       if (ds_conf->mandatory_bits != data_server_mandatory_bits)
         goto mandatory_error;
       if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
-        return error;
+        goto error;
       ensure_pcntrl_hostname_set(current_config);
       if ((error= ensure_node_data_path_set(current_config,
                                             ic_conf,
                                             ic_conf->perm_mc_ptr)))
-        return error;
+        goto error;
       if (ds_conf->filesystem_path == NULL)
         ds_conf->filesystem_path= ds_conf->node_data_path;
       if (ds_conf->data_server_checkpoint_path == NULL)
@@ -130,12 +131,12 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
           client_mandatory_bits)
         goto mandatory_error;
       if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
-        return error;
+        goto error;
       ensure_pcntrl_hostname_set(current_config);
       if ((error= ensure_node_data_path_set(current_config,
                                             ic_conf,
                                             ic_conf->perm_mc_ptr)))
-        return error;
+        goto error;
       break;
     case IC_COMM_TYPE:
       mandatory_bits= comm_mandatory_bits;
@@ -152,8 +153,11 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       abort();
       break;
   }
+end:
   DEBUG_RETURN(0);
 
+error:
+  DEBUG_RETURN(error);
 mandatory_error:
   missing_bits= mandatory_bits ^
          ((IC_DATA_SERVER_CONFIG*)current_config)->mandatory_bits;
@@ -463,6 +467,7 @@ conf_grid_common_serv_init(void *ic_conf, guint32 pass)
   guint32 size_structs= 0;
   DEBUG_ENTRY("conf_grid_common_serv_init");
   perm_mc_ptr= conf->perm_mc_ptr;
+
   if (pass == INITIAL_PASS)
   {
     /*
@@ -926,7 +931,7 @@ conf_serv_verify_conf(void *ic_conf,
 {
   int error;
   if ((error= complete_section(ic_conf, line_number, pass)))
-    DEBUG_RETURN(error);
+    return error;
   return 0;
 }
 
@@ -956,6 +961,7 @@ conf_serv_end(void *ic_conf)
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   DEBUG_ENTRY("conf_serv_end");
+
   if (clu_conf)
   {
     if (clu_conf->conf->comm_hash)

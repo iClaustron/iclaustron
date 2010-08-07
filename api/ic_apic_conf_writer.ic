@@ -357,8 +357,10 @@ ic_load_config_version(IC_STRING *config_dir,
                                             *config_version,
                                             *state,
                                             *pid)))
-        return error;
-      return 0;
+      {
+        DEBUG_RETURN(error);
+      }
+      DEBUG_RETURN(0);
     }
     error= ic_is_process_alive(loc_pid, process_name);
     if (error == 0)
@@ -370,10 +372,12 @@ ic_load_config_version(IC_STRING *config_dir,
       */
       if (error == 0)
         error= IC_ERROR_COULD_NOT_LOCK_CONFIGURATION;
-      return error;
+      DEBUG_RETURN(error);
     }
     if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)
-      return error;
+    {
+      DEBUG_RETURN(error);
+    }
     g_assert(IC_ERROR_PROCESS_NOT_ALIVE);
     error= 0;
     *state= (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY;
@@ -381,10 +385,12 @@ ic_load_config_version(IC_STRING *config_dir,
                                           *config_version,
                                           *state,
                                           *pid)))
-      return error;
-    return 0;
+    {
+      DEBUG_RETURN(error);
+    }
+    DEBUG_RETURN(0);
   }
-  return error;
+  DEBUG_RETURN(error);
 }
 
 static int
@@ -1451,7 +1457,7 @@ write_config_version_file(IC_STRING *config_dir,
     error == 0 in this path.
   */
 error:
-  return error;
+  DEBUG_RETURN(error);
 }
 
 static int
@@ -1501,10 +1507,8 @@ write_cv_file(IC_STRING *config_dir,
     goto file_error;
   error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
   ic_close_file(file_ptr);
-  return error;
-
 file_error:
-  return error;
+  DEBUG_RETURN(error);
 }
 
 static void

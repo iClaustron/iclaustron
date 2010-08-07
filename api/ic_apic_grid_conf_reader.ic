@@ -207,7 +207,7 @@ cluster_config_add_key(void *ic_conf,
   }
   else
     DEBUG_RETURN(IC_ERROR_NO_SUCH_CONFIG_KEY);
-  return 0;
+  DEBUG_RETURN(0);
 }
 
 static int
@@ -250,7 +250,7 @@ cluster_config_init_end(void *ic_config)
     clu_info= temp->clu_info[temp->num_clusters-1];
     set_cluster_config(clu_info, temp);
   }
-  return;
+  DEBUG_RETURN_EMPTY;
 }
 
 static void

@@ -325,7 +325,6 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   ic_printf("Starting %s program", program_name);
   if (strcmp(program_name, "ic_csd") == 0)
     is_cluster_server= TRUE;
-  ic_glob_byte_order= ic_byte_order();
   use_config_vars= use_config; /* TRUE for Unit test programs */
   if (ic_start_socket_system())
     goto error;
@@ -353,6 +352,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   g_option_context_free(context);
   if ((ret_code= ic_init()))
     return ret_code;
+  ic_glob_byte_order= ic_byte_order();
   if ((ret_code= ic_set_config_dir(&ic_glob_config_dir,
                                    is_cluster_server,
                                    ic_glob_node_id)) ||
@@ -378,12 +378,18 @@ static int
 ic_init()
 {
   int ret_value;
-  DEBUG_OPEN;
-  DEBUG_ENTRY("ic_init");
 
+  /*
+    We need to initialise thread system and portability system
+    before initialising and using the debug system
+  */
   if (!g_thread_supported())
     g_thread_init(NULL);
   ic_port_init();
+
+  DEBUG_OPEN;
+  DEBUG_ENTRY("ic_init");
+
   ic_init_error_messages();
   if (use_config_vars)
   {

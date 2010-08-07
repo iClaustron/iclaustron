@@ -876,10 +876,10 @@ connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
     }
     if (error != IC_ERROR_CONNECT_TIMEOUT)
       return error;
-    timer++;
     if (cs_timeout && timer >= cs_timeout)
       break;
     ic_sleep(1);
+    timer++;
   } while (1);
   return error;
 }

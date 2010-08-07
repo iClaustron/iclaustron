@@ -56,6 +56,7 @@ ic_init_error_messages()
 {
   guint32 i;
   DEBUG_ENTRY("ic_init_error_messages");
+
   for (i= 0; i < IC_MAX_ERRORS; i++)
     ic_error_str[i]= NULL;
   ic_error_str[IC_ERROR_CONFIG_LINE_TOO_LONG -IC_FIRST_ERROR]=
@@ -224,6 +225,7 @@ ic_init_error_messages()
     "Node id needs to be provided for Cluster Server";
   ic_error_str[IC_ERROR_NO_SUCH_CLUSTER_SERVER_NODEID - IC_FIRST_ERROR]=
     "Node id provided for Cluster Server didn't exist in config";
+  DEBUG_RETURN_EMPTY;
 }
 
 void

@@ -168,17 +168,21 @@ static gpointer
 run_listen_thread(void *data)
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
-  IC_LISTEN_SERVER_THREAD *listen_server_thread= (IC_LISTEN_SERVER_THREAD*)
-    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_THREADPOOL_STATE *tp_state;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread;
   IC_CONNECTION *fork_conn, *conn;
   IC_SEND_NODE_CONNECTION *iter_send_node_conn;
   GList *list_iterator;
   gboolean found;
   int ret_code;
+  DEBUG_THREAD_ENTRY("run_send_thread");
+  tp_state= thread_state->ic_get_threadpool(thread_state);
+  listen_server_thread= (IC_LISTEN_SERVER_THREAD*)
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  conn= listen_server_thread->conn;
 
   tp_state->ts_ops.ic_thread_started(thread_state);
-  conn= listen_server_thread->conn;
+
   if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                            check_timeout_func,
                                            (void*)listen_server_thread)))
@@ -296,7 +300,7 @@ run_listen_thread(void *data)
   g_mutex_unlock(listen_server_thread->mutex);
 end:
   tp_state->ts_ops.ic_thread_stops(thread_state);
-  return NULL;
+  DEBUG_THREAD_RETURN;
 
 error:
   listen_server_thread->stop_ordered= TRUE;
@@ -843,8 +847,12 @@ run_send_thread(void *data)
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_THREADPOOL_STATE *send_tp= thread_state->ic_get_threadpool(thread_state);
-  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  DEBUG_THREAD_ENTRY("run_send_thread");
+  send_node_conn= (IC_SEND_NODE_CONNECTION*)
     send_tp->ts_ops.ic_thread_get_object(thread_state);
+  apid_global= send_node_conn->apid_global;
+
   /*
     First step is to create a connection object, then it's time to
     start setting it up when told to do so by the main thread. We want
@@ -853,18 +861,18 @@ run_send_thread(void *data)
     connect to the cluster we're immediately a real-time application and
     must avoid to heavy activities such as starting 100's of threads.
   */
-  apid_global= send_node_conn->apid_global;
   send_tp->ts_ops.ic_thread_started(thread_state);
+
   is_server_part= (send_node_conn->my_node_id ==
                    send_node_conn->link_config->server_node_id);
   if (!apid_global->use_external_connect)
   {
-     if (prepare_set_up_send_connection(send_node_conn,
-                                        apid_global,
-                                        is_server_part,
-                                        send_tp,
-                                        thread_state))
-       return NULL;
+    if (prepare_set_up_send_connection(send_node_conn,
+                                       apid_global,
+                                       is_server_part,
+                                       send_tp,
+                                       thread_state))    
+      goto end;
   }
   else /* apid_global->use_external_connect == TRUE */
   {
@@ -974,7 +982,7 @@ end:
   send_tp->ts_ops.ic_thread_unlock(thread_state);
   /* Thread is ready to stop */
   send_tp->ts_ops.ic_thread_stops(thread_state);
-  return NULL;
+  DEBUG_THREAD_RETURN;
 }
 
 static int

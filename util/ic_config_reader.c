@@ -135,7 +135,7 @@ ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len)
   guint64 this_number;
   gchar end_char;
   gchar reverse_str[64];
-  DEBUG_ENTRY("ic_conv_str_to_int");
+
   rev_str= reverse_str;
   *number= 0;
 
@@ -278,7 +278,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Line number %d in section %d is an empty line", line_number,
        *section_num));
-    return 0;
+    DEBUG_RETURN(0);
   }
   else if (*iter_data == '#')
   {
@@ -288,20 +288,24 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     */
     IC_STRING comment_str;
     IC_INIT_STRING(&comment_str, iter_data, line_len, FALSE);
-    return conf_ops->ic_add_comment(conf_obj, line_number, *section_num,
-                                    &comment_str, pass);
+    DEBUG_RETURN(conf_ops->ic_add_comment(conf_obj, line_number, *section_num,
+                                          &comment_str, pass));
   }
   else if (*iter_data == '[')
   {
     if (iter_data[line_len - 2] != ']')
-      return IC_ERROR_CONFIG_BRACKET;
+    {
+      DEBUG_RETURN(IC_ERROR_CONFIG_BRACKET);
+    }
     else
     {
       IC_STRING section_name;
       guint32 group_id_len= line_len - 3;
       gchar *group_id= conv_group_id(&iter_data[1], group_id_len);
       if (!group_id)
-        return IC_ERROR_CONFIG_INCORRECT_GROUP_ID;
+      {
+        DEBUG_RETURN(IC_ERROR_CONFIG_INCORRECT_GROUP_ID);
+      }
       /*
         We have found a correct group id, now tell the configuration
         object about this and let him decide if this group id is
@@ -310,8 +314,8 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
       */
       IC_INIT_STRING(&section_name, group_id, group_id_len, FALSE);
       (*section_num)++;
-      return conf_ops->ic_add_section(conf_obj, *section_num, line_number,
-                                      &section_name, pass);
+      DEBUG_RETURN(conf_ops->ic_add_section(conf_obj, *section_num, line_number,
+                                            &section_name, pass));
     }
   }
   else
@@ -328,7 +332,9 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     if (!(key_id= conv_key_id(&iter_data[space_len], &id_len)) ||
         ((val_len= line_len - (id_len + space_len)), FALSE) ||
         (!(val_str= conv_key_value(&iter_data[id_len+space_len], &val_len))))
-      return IC_ERROR_CONFIG_IMPROPER_KEY_VALUE;
+    {
+      DEBUG_RETURN(IC_ERROR_CONFIG_IMPROPER_KEY_VALUE);
+    }
     /*
       We have found a correct key-value pair. Now let the configuration object
       decide whether this key and value makes sense and if so insert it into
@@ -336,8 +342,8 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     */
     IC_INIT_STRING(&key_name, key_id, id_len, FALSE);
     IC_INIT_STRING(&data_str, val_str, val_len, FALSE);
-    return conf_ops->ic_add_key(conf_obj, *section_num, line_number,
-                                &key_name, &data_str, pass);
+    DEBUG_RETURN(conf_ops->ic_add_key(conf_obj, *section_num, line_number,
+                                      &key_name, &data_str, pass));
   }
 }
 /*

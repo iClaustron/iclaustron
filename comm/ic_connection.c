@@ -1994,12 +1994,17 @@ ic_ssl_init()
 {
   unsigned char dh_512_group[1]= {0x5};
   unsigned char dh_1024_group[1]= {0x5};
+  DEBUG_ENTRY("ic_ssl_init");
 
   if (!SSL_library_init())
-    return 1;
+  {
+    DEBUG_RETURN(1);
+  }
   if (!((dh_512= DH_new()) &&
       (dh_1024= DH_new())))
-    return 1;
+  {
+    DEBUG_RETURN(1);
+  }
   /*
     Check if BIN_bin2bn allocates memory, if so we need to deallocate it in
     the end routine.
@@ -2008,11 +2013,15 @@ ic_ssl_init()
         (dh_1024->p= BN_bin2bn(dh_1024_prime, sizeof(dh_1024_prime), NULL)) &&
         (dh_512->g= BN_bin2bn(dh_512_group, 1, NULL)) &&
         (dh_1024->g= BN_bin2bn(dh_1024_group, 1, NULL))))
-    return 1;
+  {
+    DEBUG_RETURN(1);
+  }
   /* Provide random entropy */
   if (!RAND_load_file("/dev/random", 1024))
-    return 1;
-  return 0;
+  {
+    DEBUG_RETURN(1);
+  }
+  DEBUG_RETURN(0);
 }
 
 void ic_ssl_end()
@@ -2365,7 +2374,9 @@ ic_create_ssl_object(gboolean is_client,
 #else
 int ic_ssl_init()
 {
-  return 0;
+  DEBUG_ENTRY("ic_ssl_init");
+  DEBUG_PRINT(COMM_LEVEL, ("SSL not compiled in"));
+  DEBUG_RETURN(0);
 }
 
 void ic_ssl_end()

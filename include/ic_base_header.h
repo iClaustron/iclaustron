@@ -51,6 +51,7 @@
 */
 extern guint32 error_inject;
 #ifdef DEBUG_BUILD
+#define IC_MAX_THREADS 1024 * 1024
 #define IC_ERROR_INJECT(a) \
   (error_inject == a)
 #else

@@ -131,17 +131,21 @@ run_heartbeat_thread(gpointer data)
 {
   int error= 0;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
-  IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
-  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)
-    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  IC_THREADPOOL_STATE *tp_state;
+  IC_INT_APID_GLOBAL *apid_global;
   IC_SEND_NODE_CONNECTION *last_send_node_conn= NULL;
   IC_SEND_NODE_CONNECTION *next_node;
   IC_SOCK_BUF_PAGE *free_pages= NULL;
   IC_SOCK_BUF_PAGE *hb_page;
-  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
-  IC_APID_CONNECTION *apid_conn= apid_global->heartbeat_conn;
+  IC_SOCK_BUF *send_buf_pool;
+  IC_APID_CONNECTION *apid_conn;
+  DEBUG_THREAD_ENTRY("run_heartbeat_thread");
+  tp_state= thread_state->ic_get_threadpool(thread_state);
+  apid_global= (IC_INT_APID_GLOBAL*)
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
+  send_buf_pool= apid_global->send_buf_pool;
+  apid_conn= apid_global->heartbeat_conn;
 
-  DEBUG_ENTRY("run_heartbeat_thread");
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     if (!(hb_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
@@ -214,7 +218,7 @@ end:
   send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                       free_pages);
   tp_state->ts_ops.ic_thread_stops(thread_state);
-  DEBUG_RETURN(NULL);
+  DEBUG_THREAD_RETURN;
 error:
   /* Serious error, heartbeat thread cannot continue, need to stop */
   ic_controlled_terminate();
