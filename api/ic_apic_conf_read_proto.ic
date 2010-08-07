@@ -860,16 +860,17 @@ connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
 {
   int error= 1;
   guint32 timer= 0;
+  guint32 server_id= is_client ? id : 0;
   
   do
   {
     if (!(error= set_up_cluster_server_connection(conn_ptr,
-                  apic->cluster_conn.cluster_server_ips[id],
-                  apic->cluster_conn.cluster_server_ports[id],
-                  apic->cluster_conn.cluster_server_ips[0],
-                  apic->cluster_conn.cluster_server_ports[0],
-                  err_str,
-                  is_client)))
+         apic->cluster_conn.cluster_server_ips[server_id],
+         apic->cluster_conn.cluster_server_ports[server_id],
+         is_client ? apic->cluster_conn.cluster_server_ips[0] : NULL,
+         is_client ? apic->cluster_conn.cluster_server_ports[0] : NULL,
+         err_str,
+         is_client)))
     {
       return 0;
     }

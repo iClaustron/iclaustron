@@ -591,6 +591,7 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   THREAD_DATA thread_data;
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
   gboolean break_flag;
+  gboolean first_loop= TRUE;
   DEBUG_ENTRY("start_connect_other_cluster_servers");
 
   do
@@ -599,7 +600,8 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     g_mutex_lock(run_obj->state.protect_state);
     for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
     {
-      if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid)
+      if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid ||
+          run_obj->cs_servers[i].is_start_thread_active)
         continue;
       num_threads_started++;
       thread_data.run_obj= run_obj;
@@ -613,10 +615,14 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                                         IC_MEDIUM_STACK_SIZE,
                                         TRUE)))
         goto error;
-    
+      g_mutex_unlock(run_obj->state.protect_state);
+      tp_state->tp_ops.ic_threadpool_run_thread(
+                                        tp_state,
+                                        run_obj->cs_servers[i].thread_id);
+      g_mutex_lock(run_obj->state.protect_state);
     }
     g_mutex_unlock(run_obj->state.protect_state);
-    if (num_threads_started == 0)
+    if (num_threads_started == 0 && first_loop)
     {
       /*
         Startup is completed, we're the only Cluster Server, record state
@@ -628,14 +634,6 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     }
     else
     {
-      for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
-      {
-        if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid)
-          continue;
-        tp_state->tp_ops.ic_threadpool_run_thread(
-                                          tp_state,
-                                          run_obj->cs_servers[i].thread_id);
-      }
       g_mutex_lock(run_obj->state.protect_state);
       /* Wait until start threads have completed startup phase */
       do
@@ -656,6 +654,7 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       g_mutex_unlock(run_obj->state.protect_state);
       if (break_flag)
         break;
+      first_loop= FALSE;
     }
   } while (1);
   DEBUG_RETURN(0);
@@ -1558,13 +1557,14 @@ start_cs_func(gpointer data)
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   IC_INFO_CLUSTER_SERVER *this_info_cs= &run_obj->cs_servers[cs_index];
+  IC_INFO_CLUSTER_SERVER *info_cs;
   IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
   IC_CONNECTION *conn= NULL;
-  guint32 active_start_threads, connected_servers, num_servers;
+  guint32 active_start_threads, connected_servers, num_servers, i;
   int error;
   gchar *err_str;
   gboolean is_client= (this_info_cs->node_id > my_info_cs->node_id);
-  gboolean set_have_waited, have_waited;
+  gboolean set_have_waited, have_waited, equal, found;
   gboolean running_server= FALSE;
   DEBUG_ENTRY("start_cs_func");
 
@@ -1615,13 +1615,18 @@ start_cs_func(gpointer data)
         }
         else
         {
-          ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
-                             3 * IC_MICROSEC_PER_SECOND);
+          if (!this_info_cs->conn)
+          {
+            this_info_cs->wait_server_connect_other_thread= TRUE;
+            ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
+                               3 * IC_MICROSEC_PER_SECOND);
+          }
           if (this_info_cs->conn)
           {
             /* The connect server thread connected for us */
             DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
                         cs_index));
+            my_info_cs->is_client_side= FALSE;
             break;
           }
         }
@@ -1635,11 +1640,46 @@ start_cs_func(gpointer data)
                                             is_client,
                                             &err_str)))
         {
-          DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
-                      cs_index));
-          this_info_cs->is_client_side= TRUE;
-          g_cond_broadcast(rc_state->connect_cond);
-          break;
+          found= FALSE;
+          for (i= 0; i < run_obj->num_cluster_servers; i++)
+          {
+            equal= FALSE;
+            info_cs= &run_obj->cs_servers[i];
+            if (info_cs->wait_server_connect_other_thread ||
+                i == cs_index)
+            {
+              if (!(conn->conn_op.ic_check_connection(conn,
+                   apic->cluster_conn.cluster_server_ips[i],
+                   apic->cluster_conn.cluster_server_ports[i],
+                   &equal)) && equal)
+              {
+                found= TRUE;
+                g_mutex_lock(rc_state->protect_state);
+                info_cs->conn= conn;
+                if (i == cs_index)
+                {
+                  /* Connection to node this thread is handling */
+                  run_obj->running_server= FALSE;
+                  info_cs->is_client_side= FALSE;
+                  DEBUG_PRINT(CONFIG_LEVEL,
+                              ("Connect to Cluster Server index %u",
+                              cs_index));
+                }
+                g_cond_broadcast(rc_state->connect_cond);
+                g_mutex_unlock(rc_state->protect_state);
+              }
+            }
+          }
+          if (!found)
+          {
+            /* Connect from unknown place or error */
+            conn->conn_op.ic_free_connection(conn);
+          }
+          else if (!run_obj->running_server)
+          {
+            /* Connect to this part breaks out of loop */
+            break;
+          }
         }
       }
     }

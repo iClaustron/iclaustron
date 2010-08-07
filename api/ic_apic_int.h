@@ -267,6 +267,9 @@ struct ic_info_cluster_server
   /* Is start thread still running */
   gboolean is_start_thread_active;
 
+  /* Are we waiting for thread running socket server to connect */
+  gboolean wait_server_connect_other_thread;
+
   /* The pid of this Cluster Server */
   IC_PID_TYPE pid;
 

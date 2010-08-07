@@ -576,8 +576,8 @@ check_connection(IC_CONNECTION *ext_conn,
   /*
     Use checked= _client_name to get numeric host strings that corresponds
     to the hostname (can be a list of them) using getaddrinfo.
+    Get address information for Server part
   */
-  /* Get address information for Server part */
   ic_zero(&hints, sizeof(struct addrinfo));
 #ifdef AI_NUMERICSERV
   hints.ai_flags= AI_NUMERICSERV;
