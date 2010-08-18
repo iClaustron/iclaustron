@@ -1323,6 +1323,7 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   info_cs->state= (IC_CONF_STATE_TYPE)status;
   info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
   g_mutex_unlock(run_obj->state.protect_state);
+error:
   DEBUG_RETURN(error);
 }
 

@@ -162,6 +162,7 @@ void
 ic_debug_print_rec_buf(char *buf, guint32 size)
 {
   char p_buf[2049];
+
   memcpy(p_buf, buf, size);
   p_buf[size]= NULL_BYTE;
   ic_debug_printf("Receive buffer, size %u: %s", size, p_buf);

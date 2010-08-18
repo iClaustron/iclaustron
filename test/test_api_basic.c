@@ -32,10 +32,11 @@ run_api_thread(IC_APID_CONNECTION *apid_conn,
                IC_THREAD_STATE *thread_state)
 {
   IC_APID_GLOBAL *apid_global;
+  DEBUG_ENTRY("run_api_thread");
 
   (void)thread_state;
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
-  return 0;
+  DEBUG_RETURN(0);
 }
 
 int main(int argc, char *argv[])

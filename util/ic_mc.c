@@ -29,6 +29,7 @@ static guint32
 mc_get_base_buf_size(guint64 max_size, guint32 base_size)
 {
   guint64 buf_size;
+
   if (max_size == 0) /* No max_size given */
     buf_size= 8;
   else
@@ -115,6 +116,7 @@ static gchar*
 mc_calloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
 {
   gchar *ptr;
+
   if (!(ptr= mc_alloc(ext_mc_ptr, size)))
     return NULL;
   ic_zero(ptr, size);

@@ -149,6 +149,7 @@ void
 ic_close_socket(int sockfd)
 {
   int error;
+
 #ifdef WINDOWS
   if (closesocket(sockfd))
     error= WSAGetLastError();
@@ -230,6 +231,7 @@ IC_TIMER
 ic_micros_elapsed(IC_TIMER start_time, IC_TIMER end_time)
 {
   IC_TIMER timer= ic_nanos_elapsed(start_time, end_time);
+
   return timer/1000;
 }
 
@@ -237,6 +239,7 @@ IC_TIMER
 ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time)
 {
   IC_TIMER timer= ic_nanos_elapsed(start_time, end_time);
+
   return timer/1000000;
 }
 
@@ -246,11 +249,13 @@ ic_gethrtime()
   IC_TIMER timer;
 #ifdef HAVE_GETHRTIME
   hrtime_t ghr_timer;
+
   ghr_timer= gethrtime();
   timer= (IC_TIMER)ghr_timer;
 #else
 #ifdef HAVE_CLOCK_GETTIME
   struct timespec ts_timer;
+
 #ifdef CLOCK_MONOTONIC
   clock_gettime(CLOCK_MONOTONIC, &ts_timer);
 #else
@@ -321,6 +326,7 @@ ic_realloc(gchar *ptr,
            size_t size)
 {
   gchar *alloc_ptr= g_try_realloc((gpointer)ptr, size);
+
   return alloc_ptr;
 }
 
@@ -351,6 +357,7 @@ IC_PID_TYPE
 ic_get_own_pid()
 {
   IC_PID_TYPE pid;
+
   pid= (IC_PID_TYPE)getpid();
   return pid;
 }
@@ -376,6 +383,7 @@ IC_PID_TYPE
 ic_get_own_pid()
 {
   IC_PID_TYPE pid;
+
   pid= (IC_PID_TYPE)GetCurrentProcessId();
   return pid;
 }
@@ -543,10 +551,10 @@ ic_delete_file(const gchar *file_name)
 
 #ifdef WINDOWS
 static int
-win_open_file(IC_FILE_HANDLE *handle,
-              const gchar *file_name,
-              gboolean create_flag,
-              gboolean open_flag)
+portable_open_file(IC_FILE_HANDLE *handle,
+                   const gchar *file_name,
+                   gboolean create_flag,
+                   gboolean open_flag)
 {
   DWORD create_value;
   HANDLE file_handle;
@@ -577,10 +585,10 @@ win_open_file(IC_FILE_HANDLE *handle,
 }
 #else
 static int
-unix_open_file(IC_FILE_HANDLE *handle,
-               const gchar *file_name,
-               gboolean create_flag,
-               gboolean open_flag)
+portable_open_file(IC_FILE_HANDLE *handle,
+                   const gchar *file_name,
+                   gboolean create_flag,
+                   gboolean open_flag)
 {
   int flags= O_RDWR | O_SYNC;
   int file_ptr;
@@ -609,22 +617,14 @@ ic_open_file(IC_FILE_HANDLE *handle,
              const gchar *file_name,
              gboolean create_flag)
 {
-#ifndef WINDOWS
-  return unix_open_file(handle, file_name, create_flag, TRUE);
-#else
-  return win_open_file(handle, file_name, create_flag, TRUE);
-#endif
+  return portable_open_file(handle, file_name, create_flag, TRUE);
 }
 
 int
 ic_create_file(IC_FILE_HANDLE *handle,
                const gchar *file_name)
 {
-#ifndef WINDOWS
-  return unix_open_file(handle, file_name, TRUE, FALSE);
-#else
-  return win_open_file(handle, file_name, TRUE, FALSE);
-#endif
+  return portable_open_file(handle, file_name, TRUE, FALSE);
 }
 
 int
@@ -649,6 +649,7 @@ get_file_length(IC_FILE_HANDLE file_ptr, guint64 *read_size)
   int error= 0;
 #ifndef WINDOWS
   gint64 size;
+
   size= lseek(file_ptr, (off_t)0, SEEK_END);
   if (size == (gint64)-1)
   {
@@ -820,6 +821,7 @@ sig_error_handler(int signum)
 {
   DEBUG_ENTRY("sig_error_handler");
   DEBUG_PRINT(COMM_LEVEL, ("signum = %d", signum));
+
   switch (signum)
   {
     case SIGSEGV:
@@ -856,6 +858,7 @@ static void
 kill_handler(int signum)
 {
   DEBUG_ENTRY("kill_handler");
+
   switch (signum)
   {
     case SIGTERM:
@@ -883,6 +886,7 @@ void
 ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
 {
   DEBUG_ENTRY("unix:ic_set_die_handler");
+
   glob_die_param= param;
   glob_die_handler= die_handler;
   signal(SIGTERM, kill_handler);
@@ -904,6 +908,7 @@ ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler,
                    void *param)
 {
   DEBUG_ENTRY("windows:ic_set_die_handler");
+
   (void)die_handler;
   (void)param;
   DEBUG_RETURN_EMPTY;
@@ -913,6 +918,7 @@ void
 ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
 {
   DEBUG_ENTRY("windows:ic_set_sig_error_handler");
+
   (void)error_handler;
   (void)param;
   DEBUG_RETURN_EMPTY;

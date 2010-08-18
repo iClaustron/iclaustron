@@ -93,6 +93,7 @@ void
 ic_set_number_ending_string(gchar *buf, guint64 number)
 {
   gchar *ignore_ptr;
+
   buf[0]= '.';
   ignore_ptr= ic_guint64_str(number,
                              &buf[1],
@@ -191,6 +192,7 @@ ic_add_dir(IC_STRING *dir,
            const gchar *dir_name)
 {
   int error;
+
   if ((error= ic_add_dup_string(dir, dir_name)))
     return error;
   if ((error= add_dir_slash(dir)))
@@ -207,6 +209,7 @@ ic_set_binary_dir(IC_STRING *binary_dir,
                   gchar *version)
 {
   int error;
+
   if ((error= ic_set_base_dir(binary_dir)))
     return error;
   if ((error= ic_add_dir(binary_dir, version)))
@@ -319,6 +322,7 @@ guint32
 ic_str_find_first(IC_STRING *ic_str, gchar searched_char)
 {
   guint32 i;
+
   for (i= 0; i < ic_str->len; i++)
   {
     if (ic_str->str[i] == searched_char)
@@ -343,6 +347,7 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   guint32 orig_len= dest_str->len;
   guint32 new_len= add_len + orig_len;
   gchar *new_str= ic_malloc(new_len + 1);
+
   if (new_str == NULL)
     return IC_ERROR_MEM_ALLOC;
   if (orig_len > 0)
@@ -364,6 +369,7 @@ ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
 {
   gchar *str;
   guint32 len= dest_str->len + in_str->len;
+
   if (!(str= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len + 1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str, dest_str->str, dest_str->len);
@@ -378,6 +384,7 @@ ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
 {
   gchar *start_ptr= dest_str->str+dest_str->len;
   gchar *end_ptr;
+
   memcpy(start_ptr, input_str->str, input_str->len);
   if (dest_str->is_null_terminated)
   {
@@ -390,6 +397,7 @@ ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
 {
   guint32 i;
+
   buf_ptr[0]= 0;
   if (str && str->str)
   {
@@ -423,6 +431,7 @@ int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str)
   guint32 second_len= second_str->len;
   gchar *first_char= first_str->str;
   gchar *second_char= second_str->str;
+
   if (first_len != second_len)
     return 1;
   return (memcmp(first_char, second_char, first_len));
@@ -433,6 +442,7 @@ int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
   guint32 iter_len= 0;
   gchar *cmp_char= cmp_str->str;
   guint32 str_len= cmp_str->len;
+
   if (cmp_str->is_null_terminated)
     return (strcmp(null_term_str, cmp_str->str) == 0) ? 1 : 0;
   while (iter_len < str_len)
@@ -452,6 +462,7 @@ void
 ic_set_up_ic_string(IC_STRING *in_out_str)
 {
   guint32 i;
+
   if (!in_out_str->str)
   {
     in_out_str->len= 0;
@@ -477,6 +488,7 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                  IC_STRING *in_str)
 {
   gchar *str;
+
   IC_INIT_STRING(out_str, NULL, 0, FALSE);
   if (in_str->len == 0)
     return 0;
@@ -545,6 +557,7 @@ ic_convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
                                  guint64 *ret_number)
 {
   char *end_ptr;
+
   if (num_chars == 0)
     return TRUE;
   *ret_number= g_ascii_strtoull(str, &end_ptr, (guint)10);
@@ -555,4 +568,3 @@ ic_convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
   }
   return TRUE;
 }
-

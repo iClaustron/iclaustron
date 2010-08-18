@@ -47,6 +47,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
   gchar *read_buf;
   guint32 read_size, i;
   int ret_code;
+  DEBUG_RETURN("execute_command");
 
   for (i= 0; i < num_lines; i++)
   {
@@ -62,10 +63,8 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
     read_buf[read_size]= 0;
     ic_printf("%s\n", read_buf);
   }
-  return ret_code;
-
 error:
-  return ret_code;
+  DEBUG_RETURN(ret_code);
 }
 
 static int
@@ -143,6 +142,7 @@ command_interpreter(IC_CONNECTION *conn)
   IC_STRING *line_ptr= &line_str;
   IC_STRING *line_ptrs[256];
   IC_STRING line_strs[256];
+  DEBUG_ENTRY("command_interpreter");
 
   for (i= 0; i < 256; i++)
     line_ptrs[i]= &line_strs[i];
@@ -160,7 +160,7 @@ command_interpreter(IC_CONNECTION *conn)
       if ((error= read_one_line(line_ptr)))
       {
         ic_print_error(error);
-        return error;
+        DEBUG_RETURN(error);
       }
       if (line_ptr->len == 0)
       {
@@ -189,12 +189,12 @@ command_interpreter(IC_CONNECTION *conn)
     for (i= 0; i < lines; i++)
       ic_free(line_ptrs[i]->str);
   } while (TRUE);
-  return 0;
+  DEBUG_RETURN(0);
 
 error:
   for (i= 0; i < lines; i++)
     ic_free(line_ptrs[i]->str);
-  return error;
+  DEBUG_RETURN(error);
 }
 
 static int
@@ -202,13 +202,14 @@ connect_cluster_mgr(IC_CONNECTION **conn)
 {
   IC_CONNECTION *loc_conn;
   int ret_code;
+  DEBUG_ENTRY("connect_cluster_mgr");
 
   if (!(loc_conn= ic_create_socket_object(TRUE, FALSE, FALSE,
                                           COMMAND_READ_BUF_SIZE,
                                           NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
-    return 1;
+    DEBUG_RETURN(1);
   }
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Connecting to Cluster Manager at %s:%s",
@@ -224,10 +225,10 @@ connect_cluster_mgr(IC_CONNECTION **conn)
      ("Failed to connect to Cluster Manager"));
     ic_print_error(ret_code);
     loc_conn->conn_op.ic_free_connection(loc_conn);
-    return 1;
+    DEBUG_RETURN(1);
   }
   *conn= loc_conn;
-  return 0;
+  DEBUG_RETURN(0);
 }
 
 int main(int argc, char *argv[])

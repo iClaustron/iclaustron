@@ -32,6 +32,7 @@ ic_create_bitmap(IC_BITMAP *bitmap, guint32 num_bits)
 {
   IC_BITMAP *loc_bitmap= bitmap;
   guint32 size= IC_BITMAP_SIZE(num_bits);
+
   if (!loc_bitmap)
   {
     /* Bitmap wasn't allocated on stack so we need to allocate it. */
@@ -67,6 +68,7 @@ ic_mc_create_bitmap(IC_MEMORY_CONTAINER *mc, guint32 num_bits)
 {
   IC_BITMAP *loc_bitmap;
   guint32 size= IC_BITMAP_SIZE(num_bits);
+
   if (!(loc_bitmap= (IC_BITMAP*)
         mc->mc_ops.ic_mc_calloc(mc, sizeof(IC_BITMAP))))
     goto end;
@@ -102,6 +104,7 @@ ic_count_highest_bit(guint32 bit_var)
 {
   guint32 i;
   guint32 bit_inx= 0;
+
   for (i= 0; i < 32; i++)
   {
     if (bit_var | (1 << i))

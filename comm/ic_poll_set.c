@@ -672,6 +672,7 @@ io_comp_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd,
                                 void *user_obj)
 {
   IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
+
   return 0;
 }
 
@@ -679,6 +680,7 @@ static int
 io_comp_poll_set_remove_connection(IC_POLL_SET *ext_poll_set, int fd)
 {
   IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
+
   return 0;
 }
 
@@ -686,6 +688,7 @@ static int
 io_comp_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
 {
   IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
+
   return 0;
 }
 

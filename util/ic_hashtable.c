@@ -45,6 +45,7 @@ ic_keys_equal_str(void *ptr1, void *ptr2)
 {
   IC_STRING *str1= (IC_STRING*)ptr1;
   IC_STRING *str2= (IC_STRING*)ptr2;
+
   if (str1->len != str2->len)
     return 0;
   return strncmp((const char*)str1->str,
@@ -60,6 +61,7 @@ ic_hash_str(void *ptr)
   unsigned char *char_ptr= (unsigned char*)str->str;
   unsigned len= str->len;
   unsigned int i;
+
   for (i= 0; i < len; i++)
   {
     hash= *char_ptr + (147*hash) + 5;
@@ -82,6 +84,7 @@ ic_create_hashtable(unsigned int minsize,
 {
     struct ic_hashtable *h;
     unsigned int pindex, size = primes[0];
+
     /* Check requested ic_hashtable isn't too large */
     if (minsize > (1u << 30)) return NULL;
     /* Enforce size as prime */
@@ -109,6 +112,7 @@ hash(struct ic_hashtable *h, void *k)
     /* Aim to protect against poor hash functions by adding logic here
      * - logic taken from java 1.4 ic_hashtable source */
     unsigned int i = h->hashfn(k);
+
     i += ~(i << 9);
     i ^=  ((i >> 14) | (i << 18)); /* >>> */
     i +=  (i << 4);
@@ -125,6 +129,7 @@ ic_hashtable_expand(struct ic_hashtable *h)
   struct entry *e;
   struct entry **pE;
   unsigned int newsize, i, index;
+
   /* Check we're not hitting max capacity */
   if (h->primeindex == (prime_table_length - 1))
     return 0;
@@ -198,6 +203,7 @@ ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v)
   /* This method allows duplicate keys - but they shouldn't be used */
   unsigned int index;
   struct entry *e;
+
   if (++(h->entrycount) > h->loadlimit)
   {
     /* Ignore the return value. If expand fails, we should
@@ -223,6 +229,7 @@ ic_hashtable_search(struct ic_hashtable *h, void *k)
 {
   struct entry *e;
   unsigned int hashvalue, index;
+
   hashvalue = hash(h,k);
   index = indexFor(h->tablelength,hashvalue);
   e = h->table[index];
@@ -277,6 +284,7 @@ ic_hashtable_destroy(struct ic_hashtable *h)
   unsigned int i;
   struct entry *e, *f;
   struct entry **table = h->table;
+
   for (i = 0; i < h->tablelength; i++)
   {
     e = table[i];
@@ -293,7 +301,7 @@ ic_hashtable_destroy(struct ic_hashtable *h)
 
 /*
  * Copyright (c) 2002, Christopher Clark
- * Copyright (c) 2007, iClaustron AB
+ * Copyright (c) 2007-2010 iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
@@ -324,4 +332,3 @@ ic_hashtable_destroy(struct ic_hashtable *h)
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-

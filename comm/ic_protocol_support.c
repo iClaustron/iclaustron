@@ -24,6 +24,7 @@ void
 ic_print_buf(char *buf, guint32 size)
 {
   char p_buf[2049];
+
   memcpy(p_buf, buf, size);
   p_buf[size]= NULL_BYTE;
   ic_printf("Receive buffer, size %u:\n%s", size, p_buf);
@@ -69,6 +70,7 @@ static void
 ic_step_back_rec_with_cr(IC_CONNECTION *ext_conn, guint32 read_size)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+
   conn->read_buf_pos-= (read_size + 1);
 }
 
@@ -268,6 +270,7 @@ ic_rec_simple_str_impl(IC_CONNECTION *conn,
   gchar *read_buf;
   guint32 read_size;
   int error;
+  DEBUG_ENTRY("ic_rec_simple_str_impl");
 
   if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
@@ -470,6 +473,7 @@ ic_send_with_cr_two_strings(IC_CONNECTION *conn,
 {
   const gchar *buf[2];
   const gchar **local_buf= &buf[0];
+
   buf[0]= buf1;
   buf[1]= buf2;
   return ic_send_with_cr_composed(conn, local_buf, (guint32)2);

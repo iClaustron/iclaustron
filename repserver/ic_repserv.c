@@ -31,9 +31,10 @@ static int
 run_replication_server_thread(IC_APID_CONNECTION *apid_conn,
                               IC_THREAD_STATE *thread_state)
 {
+  DEBUG_ENTRY("run_replication_server_thread");
   (void)apid_conn;
   (void)thread_state;
-  return 0;
+  DEBUG_RETURN(0);
 }
 
 int main(int argc,

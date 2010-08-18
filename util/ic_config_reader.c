@@ -181,6 +181,7 @@ conv_group_id(gchar *group_id, guint32 len)
 {
   guint32 iter_len= 0;
   gchar *save_group_id= group_id;
+
   while (iter_len < len)
   {
     gchar c= *group_id;
@@ -202,6 +203,7 @@ gchar *conv_key_id(gchar *key_id, guint32 *len)
 {
   gchar *save_key_id= key_id;
   guint32 iter_len= 0;
+
   while (iter_len < *len)
   {
     gchar c= *key_id;
@@ -378,7 +380,7 @@ int ic_build_config_data(IC_STRING *conf_data,
   {
     err_obj->err_num= 1;
     err_obj->line_number= 0;
-    return 1;
+    DEBUG_RETURN(1);
   }
   for (pass= 0; pass < 2; pass++)
   {
@@ -415,11 +417,10 @@ int ic_build_config_data(IC_STRING *conf_data,
                                            line_number - 1,
                                            pass - 1)))
     goto config_error;
-  return 0;
+  DEBUG_RETURN(0);
 config_error:
   ic_conf_op->ic_config_end(ic_config);
   err_obj->err_num= error;
   err_obj->line_number= line_number;
-  return 1;
+  DEBUG_RETURN(1);
 }
-

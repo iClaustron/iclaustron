@@ -56,6 +56,7 @@ static void
 release_dyn_index(IC_DYNAMIC_ARRAY_INDEX *dyn_index)
 {
   IC_DYNAMIC_ARRAY_INDEX *next_dyn_index;
+
   while (dyn_index)
   {
     next_dyn_index= dyn_index->next_dyn_index;
@@ -266,6 +267,7 @@ static void
 free_simple_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array)
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+
   release_dyn_buf(dyn_array->sd_array.first_dyn_buf);
   ic_free((void*)dyn_array);
 }
@@ -274,6 +276,7 @@ static guint64
 get_current_size(IC_DYNAMIC_ARRAY *ext_dyn_array)
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+
   return dyn_array->total_size_in_bytes;
 }
 
@@ -314,6 +317,7 @@ insert_dyn_index_list(IC_DYNAMIC_ARRAY_INT *dyn_array,
                       IC_DYNAMIC_ARRAY_INDEX *dyn_index)
 {
   IC_DYNAMIC_ARRAY_INDEX *prev_dyn_index= dyn_array->ord_array.last_dyn_index;
+
   dyn_array->ord_array.last_dyn_index= dyn_index;
   prev_dyn_index->next_dyn_index= dyn_index;
 }
@@ -849,4 +853,3 @@ ic_create_dynamic_translation()
   dyn_trans->dyn_array= dyn_array;
   DEBUG_RETURN((IC_DYNAMIC_TRANSLATION*)dyn_trans);
 }
-

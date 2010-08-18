@@ -29,6 +29,7 @@ ic_hashtable_iterator(struct ic_hashtable *h)
     unsigned int i, tablelength;
     struct ic_hashtable_itr *itr = (struct ic_hashtable_itr *)
         malloc(sizeof(struct ic_hashtable_itr));
+
     if (NULL == itr) return NULL;
     itr->h = h;
     itr->e = NULL;
@@ -64,6 +65,7 @@ ic_hashtable_iterator_advance(struct ic_hashtable_itr *itr)
     unsigned int j,tablelength;
     struct entry **table;
     struct entry *next;
+
     if (NULL == itr->e) return 0; /* stupidity check */
 
     next = itr->e->next;
@@ -195,4 +197,3 @@ ic_hashtable_iterator_search(struct ic_hashtable_itr *itr,
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-

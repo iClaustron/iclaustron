@@ -569,6 +569,7 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread,
                            IC_INT_APID_GLOBAL *apid_global)
 {
   IC_CONNECTION *conn;
+
   if (listen_server_thread)
   {
     apid_global->listen_server_thread[listen_server_thread->index]= NULL;
@@ -1040,7 +1041,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     The send thread is done with its start-up phase and we're ready to start
     the next send thread if the start thread was successful.
   */
-  DEBUG_RETURN(return ret_code);
+  DEBUG_RETURN(ret_code);
 }
 
 static int

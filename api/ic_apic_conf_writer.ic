@@ -597,7 +597,7 @@ write_cluster_config_file(IC_STRING *config_dir,
   IC_CLUSTER_CONFIG_LOAD clu_def;
   gchar buf[IC_MAX_FILE_NAME_SIZE];
   IC_STRING *file_name;
-  DEBUG_RETURN("write_cluster_config_file");
+  DEBUG_ENTRY("write_cluster_config_file");
 
   ic_zero(&clu_def, sizeof(IC_CLUSTER_CONFIG_LOAD));
   /*

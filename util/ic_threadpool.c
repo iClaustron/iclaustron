@@ -166,6 +166,7 @@ static void
 thread_wait(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   thread_state->wait_wakeup= TRUE;
   g_cond_wait(thread_state->cond, thread_state->mutex);
   thread_state->wait_wakeup= FALSE;
@@ -175,6 +176,7 @@ static void
 thread_wake(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   g_cond_signal(thread_state->cond);
 }
 
@@ -182,6 +184,7 @@ static void
 thread_lock_and_wait(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   g_mutex_lock(thread_state->mutex);
   thread_state->wait_wakeup= TRUE;
   g_cond_wait(thread_state->cond, thread_state->mutex);
@@ -192,6 +195,7 @@ static void
 thread_lock(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   g_mutex_lock(thread_state->mutex);
 }
 
@@ -199,6 +203,7 @@ static void
 thread_unlock(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   g_mutex_unlock(thread_state->mutex);
 }
 
@@ -508,6 +513,7 @@ void
 thread_started(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   /* By locking the mutex we ensure that start synch is done */
   g_mutex_lock(thread_state->mutex);
   thread_state->started= TRUE;
@@ -562,6 +568,7 @@ static void*
 get_object(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   return thread_state->object;
 }
 
@@ -569,6 +576,7 @@ static gboolean
 get_stop_flag(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   if (ic_get_stop_flag())
     thread_state->stop_flag= TRUE;
   return thread_state->stop_flag;
@@ -578,6 +586,7 @@ static IC_THREADPOOL_STATE*
 get_threadpool(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
   return (IC_THREADPOOL_STATE*)thread_state->tp_state;
 }
 

@@ -387,6 +387,8 @@ ic_call_parser(gchar *parse_string,
                void *ext_parse_data)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
+  DEBUG_ENTRY("ic_call_parser");
+  DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
 
   if (parse_string[str_len - 1] != ';')
   {
@@ -398,4 +400,5 @@ ic_call_parser(gchar *parse_string,
   parse_data->parse_str_len= str_len;
 
   yyparse(parse_data);
+  DEBUG_RETURN_EMPTY;
 }

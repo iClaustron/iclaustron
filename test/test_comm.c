@@ -344,4 +344,3 @@ int main(int argc, char *argv[])
    ic_end();
    return ret_code;
 }
-

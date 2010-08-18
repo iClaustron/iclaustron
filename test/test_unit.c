@@ -347,6 +347,7 @@ static int
 unit_test_dynamic_translation()
 {
   int ret_code;
+
   if ((ret_code= test_dynamic_translation(128, 2)))
     goto error;
   if ((ret_code= test_dynamic_translation(129, 2)))
@@ -553,6 +554,7 @@ static int
 unit_test_hashtable()
 {
   int ret_code;
+
   if ((ret_code= test_hashtable(128, 2)))
     goto error;
   if ((ret_code= test_hashtable(129, 2)))
@@ -1042,7 +1044,6 @@ test_sock_buf(guint32 size,
   guint32 run_loops= (page_size == 0) ? 16 : 4;
   guint32 extra_alloc_size= 100;
   guint32 num_extra_pages;
-
 
   for (i= 0; i < run_loops; i++)
   {

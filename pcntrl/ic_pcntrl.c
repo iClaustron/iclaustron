@@ -155,6 +155,7 @@ static int
 send_list_stop_reply(IC_CONNECTION *conn)
 {
   int error;
+
   if ((error= ic_send_with_cr(conn, ic_list_stop_str)) ||
       (error= ic_send_empty_line(conn)))
     return error;
@@ -361,6 +362,7 @@ rec_key_message(IC_CONNECTION *conn,
 {
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   int error;
+
   /*
     When we come here we already received the stop/kill string and we only
     need to fill in the key parameters (grid, cluster and node name).
@@ -493,6 +495,7 @@ book_process(IC_PC_START *pc_start)
   IC_PC_START *pc_start_found;
   guint64 prev_start_id= 0;
   int ret_code= 0;
+
   /*
     Insert the memory describing the started process in the hash table
     of all programs we have started, the key is the grid name, the cluster
@@ -1125,7 +1128,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
   if (!(conn= ic_create_socket_object(FALSE, FALSE, FALSE,
                                        CONFIG_READ_BUF_SIZE,
                                        NULL, NULL)))
-    return IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
   conn->conn_op.ic_prepare_server_connection(conn,
                                              glob_server_name,
                                              glob_server_port,
@@ -1135,7 +1138,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                              TRUE);
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code)
-    return ret_code;
+    DEBUG_RETURN(ret_code);
   do
   {
     do
@@ -1172,7 +1175,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
     } while (0);
   } while (!ic_get_stop_flag());
   ic_printf("iClaustron Process Controller was stopped");
-  return 0;
+  DEBUG_RETURN(0);
 }
 
 static GOptionEntry entries[] = 
