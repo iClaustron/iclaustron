@@ -49,6 +49,7 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
 {
   IC_APID_CONNECTION *heartbeat_conn;
   int error;
+  DEBUG_ENTRY("start_heartbeat_thread");
 
   ic_require(!apid_global->heartbeat_conn);
   if (!(heartbeat_conn= ic_create_apid_connection(
@@ -71,18 +72,20 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                         IC_MEDIUM_STACK_SIZE,
                         FALSE))))
     goto error;
-  return 0;
+  DEBUG_RETURN(0);
 mem_error:
   error= IC_ERROR_MEM_ALLOC;
 error:
   heartbeat_conn->apid_conn_ops->ic_free_apid_connection(heartbeat_conn);
-  return error;
+  DEBUG_RETURN(error);
 }
 
 static void
 add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                              IC_SEND_NODE_CONNECTION *send_node_conn)
 {
+  DEBUG_ENTRY("add_node_to_heartbeat_thread");
+
   ic_require(send_node_conn);
   g_mutex_lock(apid_global->heartbeat_mutex);
   /*
@@ -94,6 +97,7 @@ add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
   apid_global->first_heartbeat_node= send_node_conn;
   g_mutex_unlock(apid_global->heartbeat_mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
@@ -101,6 +105,7 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_SEND_NODE_CONNECTION *prev_node= NULL, *next_node;
+  DEBUG_ENTRY("rem_node_from_heartbeat_thread");
 
   g_mutex_lock(apid_global->heartbeat_mutex);
   next_node= apid_global->first_heartbeat_node;
@@ -117,6 +122,7 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   if (send_node_conn == apid_global->curr_heartbeat_node)
     apid_global->curr_heartbeat_node= send_node_conn->next_heartbeat_node;
   g_mutex_unlock(apid_global->heartbeat_mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 static int

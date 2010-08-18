@@ -198,6 +198,7 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
 {
   IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
   guint32 i;
+
   if (apic)
   {
     if (apic->config_mutex)

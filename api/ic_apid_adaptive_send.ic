@@ -64,6 +64,8 @@ adaptive_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   gboolean wake_send_thread;
   IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  DEBUG_ENTRY("adaptive_send_handling");
+
   wake_send_thread= FALSE;
   g_mutex_lock(send_node_conn->mutex);
   adaptive_send_algorithm_adjust(send_node_conn);
@@ -79,7 +81,7 @@ adaptive_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   g_mutex_unlock(send_node_conn->mutex);
   if (wake_send_thread)
     g_cond_signal(send_node_conn->cond);
-  return next_send_node_conn;
+  DEBUG_RETURN(next_send_node_conn);
 }
 
 static void
@@ -89,6 +91,8 @@ adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   guint32 num_waits= send_node_conn->num_waits;
   IC_TIMER first_buffered_timer= send_node_conn->first_buffered_timer;
+  DEBUG_ENTRY("adaptive_send_algorithm_decision");
+
   /*
     We start by checking whether it's allowed to wait any further based
     on how many we already buffered. Then we check that we haven't
@@ -109,13 +113,13 @@ adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
     send_node_conn->first_buffered_timer= current_time;
   send_node_conn->num_waits= num_waits + 1;
   *will_wait= TRUE;
-  return;
+  DEBUG_RETURN_EMPTY;
 
 no_wait:
   send_node_conn->first_buffered_timer= UNDEFINED_TIME;
   send_node_conn->num_waits= 0;
   *will_wait= FALSE;
-  return;
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
@@ -128,6 +132,7 @@ adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
   guint32 num_stats;
   IC_TIMER start_time1, start_time2, elapsed_time1, elapsed_time2;
   IC_TIMER tot_curr_wait_time, tot_wait_time_plus_one;
+  DEBUG_ENTRY("adaptive_send_algorithm_statistics");
 
   max_num_waits= send_node_conn->max_num_waits;
   max_num_waits_plus_one= max_num_waits + 1;
@@ -159,13 +164,14 @@ adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   send_node_conn->last_send_timers[last_send_timer_index]= current_time;
   send_node_conn->last_send_timer_index= last_send_timer_index;
-  return;
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
 adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   guint64 mean_curr_wait_time, mean_wait_time_plus_one, limit;
+  DEBUG_ENTRY("adaptive_send_algorithm_adjust");
 
   adaptive_send_algorithm_statistics(send_node_conn, ic_gethrtime());
   /*
@@ -200,4 +206,5 @@ adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
     if (send_node_conn->max_num_waits < IC_MAX_SENDS_TRACKED)
       send_node_conn->max_num_waits++;
   }
+  DEBUG_RETURN_EMPTY;
 }

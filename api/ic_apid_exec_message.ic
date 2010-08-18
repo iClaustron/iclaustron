@@ -89,7 +89,7 @@ get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
       set_sock_buf_page_empty(thd_conn);
   }
   g_mutex_unlock(thd_conn->mutex);
-  return sock_buf_page;
+  DEBUG_RETURN(sock_buf_page);
 }
 
 /* Create a IC_NDB_MESSAGE for execution by the user thread.  */

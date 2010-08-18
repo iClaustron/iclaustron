@@ -206,7 +206,9 @@ cluster_config_add_key(void *ic_conf,
     }
   }
   else
+  {
     DEBUG_RETURN(IC_ERROR_NO_SUCH_CONFIG_KEY);
+  }
   DEBUG_RETURN(0);
 }
 

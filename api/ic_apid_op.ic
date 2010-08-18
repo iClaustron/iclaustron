@@ -297,18 +297,19 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
   guint32 tot_size;
   guint32 i;
   guint32 num_key_fields= 0;
+  DEBUG_ENTRY("ic_create_apid_operation");
 
   if (!error)
-    return NULL;
+    goto error;
   if (num_fields > table_def->num_fields)
   {
     *error= IC_ERROR_TOO_MANY_FIELDS;
-    return NULL;
+    goto error;
   }
   if (!(data_buffer && null_buffer))
   {
     *error= IC_ERROR_BUFFER_MISSING_CREATE_APID_OP;
-    return NULL;
+    goto error;
   }
 
   if (!table_def->is_index || table_def->is_unique_index)
@@ -331,7 +332,7 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
   if ((loc_alloc= ic_calloc(tot_size)))
   {
     *error= IC_ERROR_MEM_ALLOC;
-    return NULL;
+    goto error;
   }
   apid_op= (IC_INT_APID_OPERATION*)loc_alloc;
   apid_op->fields= (IC_FIELD_IN_OP**)
@@ -378,5 +379,8 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
     set_up_fields_in_apid_op(apid_op, table_def);
   }
   *error= 0;
-  return (IC_APID_OPERATION*)apid_op;
+  DEBUG_RETURN((IC_APID_OPERATION*)apid_op);
+
+error:
+  DEBUG_RETURN(NULL);
 }

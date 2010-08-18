@@ -556,7 +556,6 @@ struct ic_int_run_cluster_server
   { \
     set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__); \
     DEBUG_RETURN(IC_PROTOCOL_ERROR); \
-    goto error; \
   } \
   DEBUG_RETURN(0); \
 }

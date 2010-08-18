@@ -249,6 +249,7 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
       grid_comm->thread_conn_array[thread_id] == thread_conn)
     grid_comm->thread_conn_array[thread_id]= NULL;
   g_mutex_unlock(apid_global->thread_id_mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 static IC_APID_CONNECTION_OPS glob_apid_conn_ops=
@@ -349,10 +350,10 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   /* Now initialise error object */
   apid_error_init_apid_error((IC_APID_ERROR*)&apid_conn->apid_error);
   apid_conn->apid_error.apid_error_ops= &glob_apid_error_ops;
-  return (IC_APID_CONNECTION*)apid_conn;
+  DEBUG_RETURN((IC_APID_CONNECTION*)apid_conn);
 
 error:
   apid_conn_free_apid_connection((IC_APID_CONNECTION*)apid_conn);
 end:
-  return NULL;
+  DEBUG_RETURN(NULL);
 }

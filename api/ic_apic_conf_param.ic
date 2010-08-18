@@ -225,8 +225,10 @@ ic_print_config_parameters(guint32 mask)
 {
   IC_CONFIG_ENTRY *conf_entry;
   guint32 inx, i;
+
   if (!glob_conf_entry_inited)
     return;
+
   for (i= 0; i < MAX_MAP_CONFIG_ID; i++)
   {
     if ((inx= map_config_id_to_inx[i]))
@@ -356,6 +358,7 @@ is_entry_used_in_version(IC_CONFIG_ENTRY *conf_entry,
 {
   guint32 ic_version_num= (guint32)(version_num >> 32);
   guint32 ndb_version_num= (guint32)(version_num & 0xFFFFFFFF);
+
   /* Check Ndb Version */
   if ((ic_version_num == 0) && conf_entry->is_only_iclaustron)
     return FALSE;
@@ -431,6 +434,7 @@ build_config_name_hash()
 {
   IC_CONFIG_ENTRY *conf_entry;
   guint32 i;
+
   for (i= 1; i <= glob_max_config_id; i++)
   {
     conf_entry= &glob_conf_entry[i];
@@ -494,6 +498,7 @@ init_config_parameters()
 {
   IC_CONFIG_ENTRY *conf_entry;
   guint32 mandatory_bits= 0;
+
 /*
   We add 1000 to the system configuration items.
   Id 10-15 for configuration ids of system
@@ -1760,7 +1765,7 @@ int ic_init_config_parameters()
   DEBUG_ENTRY("ic_init_config_parameters");
 
   if (glob_conf_entry_inited)
-    return 0;
+    DEBUG_RETURN(0);
   if (!(glob_conf_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_str,
                                             ic_keys_equal_str)))
     DEBUG_RETURN(1);

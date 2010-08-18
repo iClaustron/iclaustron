@@ -157,6 +157,7 @@ static void fill_in_message_id_in_ndb_message(
                           IC_SEND_NODE_CONNECTION *send_node_conn,
                           IC_SOCK_BUF_PAGE *first_page,
                           gboolean use_checksum);
+
 /*
   prepare_real_send_handling prepares send buffers that can be used
   immediately by the socket calls, it doesn't actually send the data.
@@ -388,7 +389,6 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   gboolean return_imm= TRUE;
   int error;
   IC_TIMER current_time;
-  DEBUG_ENTRY("ndb_send");
 
   /*
     We start by calculating the last page to send and the total send size
@@ -457,7 +457,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  send_size)))
     return error;
   /* Send done handling includes a new critical section for sending */
-  DEBUG_RETURN(send_done_handling(send_node_conn));
+  return send_done_handling(send_node_conn);
 }
 
 static int
@@ -480,7 +480,6 @@ prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   IC_SOCK_BUF_PAGE *loc_next_send, *loc_last_send;
   guint32 loc_send_size= 0, iovec_index= 0;
-  DEBUG_ENTRY("prepare_real_send_handling");
 
   loc_next_send= send_node_conn->first_sbp;
   loc_last_send= NULL;
@@ -503,7 +502,6 @@ prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
   *iovec_size= iovec_index;
   *send_size= loc_send_size;
   send_node_conn->queued_bytes-= loc_send_size;
-  DEBUG_RETURN_EMPTY;
 }
 
 /*
@@ -556,6 +554,7 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   gboolean signal_send_thread= FALSE;
   int error;
   DEBUG_ENTRY("send_done_handling");
+
   /* Handle send done */
   error= 0;
   g_mutex_lock(send_node_conn->mutex);

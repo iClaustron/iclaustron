@@ -64,4 +64,3 @@ static IC_RANGE_CONDITION_OPS glob_range_ops =
   /* .ic_define_range_part       = */ range_define_range_part,
   /* .ic_free_range_cond         = */ range_free
 };
-

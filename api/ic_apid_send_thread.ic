@@ -175,7 +175,7 @@ run_listen_thread(void *data)
   GList *list_iterator;
   gboolean found;
   int ret_code;
-  DEBUG_THREAD_ENTRY("run_send_thread");
+  DEBUG_THREAD_ENTRY("run_listen_thread");
   tp_state= thread_state->ic_get_threadpool(thread_state);
   listen_server_thread= (IC_LISTEN_SERVER_THREAD*)
     tp_state->ts_ops.ic_thread_get_object(thread_state);
@@ -313,6 +313,7 @@ remove_send_thread_from_listen_thread(
   IC_LISTEN_SERVER_THREAD *listen_server_thread)
 {
   IC_THREADPOOL_STATE *tp_state;
+  DEBUG_ENTRY("remove_send_thread_from_listen_thread");
 
   g_mutex_lock(listen_server_thread->mutex);
   listen_server_thread->first_send_node_conn=
@@ -339,6 +340,7 @@ remove_send_thread_from_listen_thread(
   }
   else
     g_mutex_unlock(listen_server_thread->mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 /*
@@ -673,6 +675,7 @@ static int
 server_api_connect(void *data)
 {
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+
   return authenticate_server_connection(send_node_conn->conn,
                                         send_node_conn->my_node_id,
                                         &send_node_conn->other_node_id);
@@ -688,6 +691,7 @@ static int
 client_api_connect(void *data)
 {
   IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
+
   return authenticate_client_connection(send_node_conn->conn,
                                         send_node_conn->my_node_id,
                                         send_node_conn->other_node_id);
@@ -992,6 +996,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_THREADPOOL_STATE *tp_state= apid_global->send_thread_pool;
   IC_THREAD_STATE *thread_state;
+  DEBUG_ENTRY("start_send_thread");
 
   if (send_node_conn->my_node_id == send_node_conn->other_node_id)
   {
@@ -1002,7 +1007,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
       connection and thus no need for a thread to start the connection.
     */
     send_node_conn->node_up= TRUE;
-    return 0;
+    DEBUG_RETURN(0);
   }
   /*
     We start the send thread, this thread is also used as the thread to
@@ -1016,7 +1021,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id(
                               tp_state,
                               &send_node_conn->thread_id)))
-    return ret_code;
+    DEBUG_RETURN(ret_code);
   thread_state= tp_state->tp_ops.ic_threadpool_get_thread_state(
                               tp_state,
                               send_node_conn->thread_id);
@@ -1035,7 +1040,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     The send thread is done with its start-up phase and we're ready to start
     the next send thread if the start thread was successful.
   */
-  return ret_code;
+  DEBUG_RETURN(return ret_code);
 }
 
 static int
@@ -1235,7 +1240,7 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
       }
     }
   }
-  return 0;
+  DEBUG_RETURN(0);
 error:
-  return error;
+  DEBUG_RETURN(error);
 }

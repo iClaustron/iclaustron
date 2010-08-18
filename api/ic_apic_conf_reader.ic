@@ -202,16 +202,16 @@ static void
 ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
                      IC_CLUSTER_CONFIG *clu_conf)
 {
+  IC_DATA_SERVER_CONFIG *ds_conf;
+
   if (!link_config->first_hostname)
   {
-    IC_DATA_SERVER_CONFIG *ds_conf;
     ds_conf= (IC_DATA_SERVER_CONFIG*)
       clu_conf->node_config[link_config->first_node_id];
     link_config->first_hostname= ds_conf->hostname;
   }
   if (!link_config->second_hostname)
   {
-    IC_DATA_SERVER_CONFIG *ds_conf;
     ds_conf= (IC_DATA_SERVER_CONFIG*)
       clu_conf->node_config[link_config->second_node_id];
     link_config->second_hostname= ds_conf->hostname;

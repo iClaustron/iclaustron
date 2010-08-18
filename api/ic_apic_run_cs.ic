@@ -50,6 +50,7 @@ static guint32 get_count_cluster_servers(IC_CLUSTER_CONFIG *clu_conf)
 {
   guint32 count= 0;
   guint32 i;
+
   /* Count number of Cluster Servers */
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
@@ -113,8 +114,10 @@ get_socket_link_config(guint32 node1_id,
   error= IC_ERROR_SET_CONNECTION_PARAMETER_WRONG_NODES;
   if (!(*comm_section= (IC_SOCKET_LINK_CONFIG*)
        ic_hashtable_search(clu_conf->comm_hash, (void*)&search_comm_section)))
-    return error;
-  return 0;
+  {
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
 }
 
 /*
@@ -128,6 +131,7 @@ static gboolean
 rc_start_update(IC_RUN_CLUSTER_STATE *rc_state)
 {
   gboolean is_master;
+
   g_mutex_lock(rc_state->protect_state);
   is_master= is_cs_master(rc_state);
   /*
@@ -189,6 +193,7 @@ static int
 unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int error= 0;
+
   if (run_obj->locked_configuration)
   {
     error= write_config_version_file(run_obj->config_dir,
@@ -1064,12 +1069,13 @@ send_heartbeat(IC_CONNECTION *conn,
   const gchar *start_state_str= run_obj->state.cs_started ?
                                   ic_started_str :
                                   ic_starting_str;
+  DEBUG_ENTRY("send_heartbeat");
 
   if ((error= ic_send_with_cr(conn, ic_heartbeat_str)) ||
       (error= ic_send_with_cr(conn, start_state_str)) ||
       (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+    DEBUG_RETURN(error);
+  DEBUG_RETURN(0);
 }
 
 static int
@@ -1080,6 +1086,7 @@ rec_heartbeat(IC_CONNECTION *conn,
   int error;
   gboolean found;
   IC_INFO_CLUSTER_SERVER *other_info_cs= &run_obj->cs_servers[cs_index];
+  DEBUG_ENTRY("rec_heartbeat");
 
   if (!(error= ic_rec_simple_str(conn, ic_heartbeat_str)))
   {
@@ -1107,10 +1114,10 @@ rec_heartbeat(IC_CONNECTION *conn,
     }
   }
   if (error)
-    return error;
-  if ((error= ic_rec_empty_line(conn)))
-    return error;
-  return 0;
+    goto error;
+  error= ic_rec_empty_line(conn);
+error:
+  DEBUG_RETURN(error);
 }
 
 static void
@@ -1158,6 +1165,7 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
   gchar *err_msg;
   gchar buf[IC_MAX_ERROR_STRING_SIZE];
+  DEBUG_ENTRY("handle_start_protocol");
 
   if (!is_client)
   {
@@ -1204,7 +1212,7 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
              &my_info_cs->master_index_view[0],
              sizeof(guint32)*IC_MAX_CLUSTER_SERVERS);
       g_mutex_unlock(run_obj->state.protect_state);
-      return 0;
+      DEBUG_RETURN(0);
     }
     /* Not found means we should expect to receive new reply */
   }
@@ -1239,14 +1247,14 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       goto error;
     }
   }
-  return 0;
+  DEBUG_RETURN(0);
 error:
   err_msg= ic_common_fill_error_buffer(NULL,
                                        error_line,
                                        error,
                                        buf);
   ic_printf("%s\n", err_msg);
-  return error;
+  DEBUG_RETURN(error);
 }
 
 /* Send start cluster server-message */
@@ -1256,6 +1264,7 @@ send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 {
   int error;
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
+  DEBUG_ENTRY("send_start_cluster_server_req");
 
   if ((error= ic_send_with_cr(conn, ic_start_cluster_server_str)) ||
       (error= ic_send_with_cr_with_num(conn, nodeid_str,
@@ -1267,8 +1276,10 @@ send_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       (error= ic_send_with_cr_with_num(conn, ic_pid_str,
                                   (guint64)info_cs->pid)) ||
       (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+  {
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
 }
 
 static int
@@ -1282,6 +1293,7 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   int error;
   guint32 found_index;
   IC_INFO_CLUSTER_SERVER *info_cs;
+  DEBUG_ENTRY("rec_start_cluster_server_req");
 
   if ((error= ic_rec_simple_str(conn, ic_start_cluster_server_str)) ||
       (error= ic_rec_number(conn, nodeid_str, &node_id)) ||
@@ -1291,18 +1303,18 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       (error= ic_rec_empty_line(conn)))
   {
     *error_line= __LINE__; 
-    return error;
+    goto error;
   }
   if ((error= find_cs_index(run_obj, node_id, &found_index)))
   {
     *error_line= __LINE__; 
-    return error;
+    goto error;
   }
   if (*cs_index != IC_MAX_CLUSTER_SERVERS &&
       *cs_index != found_index)
   {
     *error_line= __LINE__; 
-    return IC_PROTOCOL_ERROR;
+    DEBUG_RETURN(IC_PROTOCOL_ERROR);
   }
   *cs_index= found_index;
   info_cs= &run_obj->cs_servers[found_index];
@@ -1311,7 +1323,7 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   info_cs->state= (IC_CONF_STATE_TYPE)status;
   info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
   g_mutex_unlock(run_obj->state.protect_state);
-  return 0;
+  DEBUG_RETURN(error);
 }
 
 /*
@@ -1326,6 +1338,7 @@ send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
 {
   int error;
   guint32 i;
+  DEBUG_ENTRY("send_start_cluster_server_reply");
 
   if ((error= ic_send_with_cr(conn, ic_start_cluster_server_reply_str)) ||
       (error= ic_send_with_cr_with_num(conn, nodeid_str,
@@ -1358,7 +1371,7 @@ send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
   }
 end:
   g_mutex_unlock(run_obj->state.protect_state);
-  return error;
+  DEBUG_RETURN(error);
 }
 
 /* Receive start cluster server reply-message */
@@ -1373,6 +1386,7 @@ rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   guint32 node_id, status, index_size;
   IC_INFO_CLUSTER_SERVER *info_cs;
   guint32 master_node_index[IC_MAX_CLUSTER_SERVERS];
+  DEBUG_ENTRY("rec_start_cluster_server_reply");
 
   if ((error= ic_rec_simple_str(conn, ic_start_cluster_server_reply_str)) ||
       (error= ic_rec_number(conn, nodeid_str, &node_id)) ||
@@ -1380,16 +1394,16 @@ rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       (error= ic_rec_number(conn, ic_status_str, &status)) ||
       (error= ic_rec_long_number(conn, ic_pid_str, &pid)) ||
       (error= ic_rec_number(conn, ic_master_index_size_str, &index_size)))
-    return error;
+    goto no_lock_error;
   if (index_size > IC_MAX_CLUSTER_SERVERS)
-    return IC_PROTOCOL_ERROR;
+    DEBUG_RETURN(IC_PROTOCOL_ERROR);
   for (i= 0; i < index_size; i++)
   {
     if ((error= ic_rec_number(conn, nodeid_str, &master_node_index[i])))
-      return error;
+      goto no_lock_error;
   }
   if ((error= ic_rec_empty_line(conn)))
-    return error;
+    goto no_lock_error;
   /*
     We have received a correct protocol message describing a started
     Cluster Server.
@@ -1421,7 +1435,8 @@ rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   error= 0;
 error:
   g_mutex_unlock(run_obj->state.protect_state);
-  return error;
+no_lock_error:
+  DEBUG_RETURN(error);
 }
 
 static int
@@ -1439,11 +1454,14 @@ static int
 send_start_cluster_server_ok(IC_CONNECTION *conn)
 {
   int error;
+  DEBUG_ENTRY("send_start_cluster_server_ok");
 
   if ((error= ic_send_with_cr(conn, ic_start_cluster_server_ok_str)) ||
       (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+  {
+    DEBUG_RETURN(error);
+  }
+  DEBUG_RETURN(0);
 }
 
 static int
@@ -1453,6 +1471,7 @@ verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_INFO_CLUSTER_SERVER *curr_info_cs, *change_info_cs, *keep_info_cs;
   guint32 i;
   int error;
+  DEBUG_ENTRY("verify_master_index_view");
 
   for (i= 0; i < IC_MAX_CLUSTER_SERVERS; i++)
   {
@@ -1511,7 +1530,7 @@ change_view:
 error:
   error= IC_ERROR_MASTER_INDEX_VIEW_DIFFERS;
 end:
-  return error;
+  DEBUG_RETURN(error);
 }
 
 static gboolean
@@ -3279,6 +3298,7 @@ send_set_connection_param_message(IC_CONNECTION *conn,
                                   guint32 port_number)
 {
   int error;
+  DEBUG_ENTRY("send_set_connection_param_message");
 
   if ((error= ic_send_with_cr(conn, set_connection_parameter_str)) ||
       (error= ic_send_cluster_id(conn, cluster_id, TRUE)) ||
@@ -3289,9 +3309,9 @@ send_set_connection_param_message(IC_CONNECTION *conn,
       (error= ic_send_with_cr_with_num(conn, value_str, port_number)) ||
       (error= ic_send_empty_line(conn)))
   {
-    return error;
+    ;
   }
-  return error;
+  DEBUG_RETURN(error);
 }
 
 static int
@@ -3300,17 +3320,18 @@ rec_set_connection_param_message(IC_CONNECTION *conn)
   int error;
   gchar rec_message_buf[32];
   gchar rec_result_buf[IC_MAX_ERROR_STRING_SIZE];
+  DEBUG_ENTRY("rec_set_connection_param_message");
 
   if ((error= ic_rec_simple_str(conn,
                                 set_connection_parameter_reply_str)) ||
       (error= ic_rec_string(conn, message_str, rec_message_buf)) ||
       (error= ic_rec_string(conn, result_str, rec_result_buf)) ||
       (error= ic_rec_empty_line(conn)))
-    return error;
+    DEBUG_RETURN(error);
   if (strcmp(ic_empty_string, rec_message_buf) != 0 ||
       strcmp(ic_ok_str, rec_result_buf) != 0)
     error= ic_translate_error_string(rec_result_buf);
-  return error;
+  DEBUG_RETURN(error);
 }
 
 /*
@@ -3720,7 +3741,7 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
             ("Protocol error in wait empty state"));
           PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
         }
-        return 0;
+        DEBUG_RETURN(0);
       default:
         abort();
         break;
@@ -3764,19 +3785,20 @@ ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
   guint32 *key_value_array;
   guint32 key_value_array_len= 0;
   int ret_code;
+  DEBUG_ENTRY("ic_get_base64_config");
 
   *base64_array= 0;
   if ((ret_code= ic_get_key_value_sections_config(clu_conf, &key_value_array,
                                                   &key_value_array_len,
                                                   version_number)))
-    return ret_code;
+    DEBUG_RETURN(ret_code);
   ret_code= ic_base64_encode(base64_array,
                              base64_array_len,
                              (const guint8*)key_value_array,
                              key_value_array_len*4);
   DEBUG_PRINT_BUF(CONFIG_LEVEL, *(gchar**)base64_array);
   ic_free(key_value_array);
-  return ret_code;
+  DEBUG_RETURN(ret_code);
 }
 
 /*
@@ -3801,6 +3823,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   guint32 loc_key_value_array_len= 0;
   int ret_code;
   IC_SOCKET_LINK_CONFIG test1, *comm_section;
+  DEBUG_ENTRY("ic_get_key_value_sections_config");
 
   /*
    * Add 2 words for verification string in beginning
@@ -3861,7 +3884,7 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                     (gchar*)&clu_conf->sys_conf,
                                     version_number);
   if (system_len == 0)
-    return IC_ERROR_INCONSISTENT_DATA;
+    DEBUG_RETURN(IC_ERROR_INCONSISTENT_DATA);
   len+= system_len;
   DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u", len));
   /*
@@ -4057,12 +4080,12 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   /* Perform final set of checks */
   *key_value_array_len= loc_key_value_array_len;
   if (len == loc_key_value_array_len)
-    return 0;
+    DEBUG_RETURN(0);
 
   ret_code= IC_ERROR_INCONSISTENT_DATA;
 error:
   ic_free(*key_value_array);
-  return ret_code;
+  DEBUG_RETURN(ret_code);
 }
 
 /*
@@ -4077,6 +4100,7 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
   IC_SOCKET_LINK_CONFIG *local_comm_section;
   IC_DATA_SERVER_CONFIG *server_conf;
   IC_DATA_SERVER_CONFIG *client_conf;
+
   comm_section->first_node_id= node1;
   comm_section->second_node_id= node2;
   if ((local_comm_section= (IC_SOCKET_LINK_CONFIG*)
@@ -4128,6 +4152,7 @@ get_length_of_section(IC_CONFIG_TYPES config_type,
   IC_CONFIG_ENTRY *conf_entry;
   gchar **charptr;
   guint32 len= 0, i, str_len;
+
   for (i= 0; i < MAX_CONFIG_ID; i++)
   {
     conf_entry= &glob_conf_entry[i];
@@ -4179,6 +4204,8 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
   guint32 *assign_array;
   gchar **charptr;
   guint32 loc_key_value_array_len= *key_value_array_len;
+  DEBUG_ENTRY("fill_key_value_section");
+
   for (i= 0; i < MAX_CONFIG_ID; i++)
   {
     conf_entry= &glob_conf_entry[i];
@@ -4249,7 +4276,9 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
           break;
         }
         default:
-          return IC_ERROR_INCONSISTENT_DATA;
+        {
+          DEBUG_RETURN(IC_ERROR_INCONSISTENT_DATA);
+        }
       }
       /*
          Assign the key consisting of:
@@ -4314,7 +4343,7 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
   loc_key_value_array_len+= 2;
 
   *key_value_array_len= loc_key_value_array_len;
-  return 0;
+  DEBUG_RETURN(0);
 }
 
 static gboolean
