@@ -329,7 +329,8 @@ conf_serv_init(void *ic_conf, guint32 pass)
       set up the pointers for deallocation, the memory to be returned is
       allocated on a memory container supplied by the caller.
     */
-    if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                                  0, FALSE)))
     {
       DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
     }
@@ -475,7 +476,8 @@ conf_grid_common_serv_init(void *ic_conf, guint32 pass)
       set up the pointers for deallocation, the memory to be returned is
       allocated on a memory container supplied by the caller.
     */
-    if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+    if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                                  0, FALSE)))
     {
       DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
     }

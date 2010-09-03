@@ -368,7 +368,7 @@ error:
 }
 
 static int
-unit_test_mc()
+unit_test_mc(gboolean use_mutex)
 {
   IC_MEMORY_CONTAINER *mc_ptr;
   guint32 i, j, k, max_alloc_size, no_allocs;
@@ -377,7 +377,7 @@ unit_test_mc()
   for (i= 1; i < 1000; i++)
   {
     srandom(i);
-    mc_ptr= ic_create_memory_container(313*i, 0);
+    mc_ptr= ic_create_memory_container(313*i, 0, use_mutex);
     no_allocs= random() & 255;
     for (j= 0; j < 4; j++)
     {
@@ -1163,7 +1163,8 @@ int main(int argc, char *argv[])
   {
     case 0:
       ic_printf("Executing Unit test of Memory Container");
-      ret_code= unit_test_mc();
+      ret_code= unit_test_mc(FALSE);
+      ret_code= unit_test_mc(TRUE);
       break;
 
     case 1:

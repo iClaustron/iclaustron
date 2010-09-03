@@ -68,7 +68,7 @@ void ic_debug_close();
 #define DEBUG(level, a) if (ic_get_debug() & level) a
 #define DEBUG_THREAD_ENTRY(a) ic_debug_thread_init(a)
 #define DEBUG_ENTRY(a) ic_debug_entry(a)
-#define DEBUG_OPEN if (ic_debug_open()) return 1
+#define DEBUG_OPEN(a) if (ic_debug_open(a)) return 1
 /* Since we debug ic_end we have to return before closing debug system */
 #define DEBUG_CLOSE { ic_debug_return(); ic_debug_close(); }
 #define DEBUG_IC_STRING(level, a) \
@@ -84,7 +84,7 @@ void ic_debug_close();
 #define DEBUG(level, a)
 #define DEBUG_THREAD_ENTRY(a)
 #define DEBUG_ENTRY(a)
-#define DEBUG_OPEN
+#define DEBUG_OPEN(a)
 #define DEBUG_CLOSE
 #define DEBUG_IC_STRING(level, a)
 #endif

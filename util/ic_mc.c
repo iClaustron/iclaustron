@@ -38,7 +38,7 @@ mc_get_base_buf_size(guint64 max_size, guint32 base_size)
 }
 
 static gchar*
-mc_realloc_buf_array(IC_MEMORY_CONTAINER_INT *mc_ptr, guint32 new_size)
+mc_realloc_buf_array(IC_INT_MEMORY_CONTAINER *mc_ptr, guint32 new_size)
 {
   gchar *new_buf_array;
   guint32 old_buf_size, copy_buf_size;
@@ -58,23 +58,28 @@ mc_realloc_buf_array(IC_MEMORY_CONTAINER_INT *mc_ptr, guint32 new_size)
 static gchar*
 mc_alloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
 {
-  IC_MEMORY_CONTAINER_INT *mc_ptr= (IC_MEMORY_CONTAINER_INT*)ext_mc_ptr;
-  gchar *new_buf_array= NULL, *ptr, *new_buf;
+  IC_INT_MEMORY_CONTAINER *mc_ptr= (IC_INT_MEMORY_CONTAINER*)ext_mc_ptr;
+  gchar *new_buf_array= NULL;
+  gchar *ptr= NULL;
+  gchar *ret_ptr= NULL;
+  gchar *new_buf;
   guint32 alloc_size, buf_inx;
   guint64 new_total_size;
 
   size= ic_align(size, 8); /* Always allocate on 8 byte boundaries */
+  if (mc_ptr->mutex)
+    g_mutex_lock(mc_ptr->mutex);
   new_total_size= mc_ptr->total_size+size;
   if (mc_ptr->max_size > 0 && mc_ptr->max_size < new_total_size)
-    return NULL;
+    goto end;
   if (mc_ptr->current_free_len >= size)
   {
     /* Space is available, no need to allocate more */
-    ptr= mc_ptr->current_buf;
+    ret_ptr= mc_ptr->current_buf;
     mc_ptr->current_buf+= size;
     mc_ptr->current_free_len-= size;
     mc_ptr->total_size= new_total_size;
-    return ptr;
+    goto end;
   }
   alloc_size= mc_ptr->base_size;
   if (size > alloc_size)
@@ -84,10 +89,10 @@ mc_alloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
   {
     if (!(new_buf_array= mc_realloc_buf_array(mc_ptr,
           mc_ptr->buf_array_size+16)))
-      return NULL;
+      goto end;
   }
   if (!(new_buf= ic_calloc(alloc_size)))
-    return NULL;
+    goto end;
   mc_ptr->current_buf_inx= buf_inx;
   if (size == alloc_size)
   {
@@ -109,7 +114,11 @@ mc_alloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
     mc_ptr->buf_array[buf_inx]= new_buf;
   }
   mc_ptr->total_size= new_total_size;
-  return new_buf;
+  ret_ptr= new_buf;
+end:
+  if (mc_ptr->mutex)
+    g_mutex_unlock(mc_ptr->mutex);
+  return ptr;
 }
 
 static gchar*
@@ -126,11 +135,13 @@ mc_calloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
 static void
 mc_reset(IC_MEMORY_CONTAINER *ext_mc_ptr)
 {
-  IC_MEMORY_CONTAINER_INT *mc_ptr= (IC_MEMORY_CONTAINER_INT*)ext_mc_ptr;
+  IC_INT_MEMORY_CONTAINER *mc_ptr= (IC_INT_MEMORY_CONTAINER*)ext_mc_ptr;
   guint32 orig_arr_size, i;
   guint32 first_alloc_buf;
   gchar *tmp;
 
+  if (mc_ptr->use_mutex)
+    g_mutex_lock(mc_ptr->mutex);
   /*
     The first allocated buffer which is of appropriate length has been
     moved around, moved it to the first slot such that it is kept and
@@ -155,27 +166,32 @@ mc_reset(IC_MEMORY_CONTAINER *ext_mc_ptr)
   mc_ptr->total_size= 0;
   mc_ptr->current_buf_inx= 0;
   mc_ptr->current_free_len= mc_ptr->base_size;
+  if (mc_ptr->use_mutex)
+    g_mutex_unlock(mc_ptr->mutex);
   return;
 }
 
 static void
 mc_free(IC_MEMORY_CONTAINER *ext_mc_ptr)
 {
-  IC_MEMORY_CONTAINER_INT *mc_ptr= (IC_MEMORY_CONTAINER_INT*)ext_mc_ptr;
+  IC_INT_MEMORY_CONTAINER *mc_ptr= (IC_INT_MEMORY_CONTAINER*)ext_mc_ptr;
   guint32 i;
 
   for (i= 0; i <= mc_ptr->current_buf_inx; i++)
     ic_free(mc_ptr->buf_array[i]);
+  if (mc_ptr->use_mutex)
+    g_mutex_free(mc_ptr->mutex);
   ic_free(mc_ptr->buf_array);
   ic_free(mc_ptr);
 }
 
 IC_MEMORY_CONTAINER*
-ic_create_memory_container(guint32 base_size, guint32 max_size)
+ic_create_memory_container(guint32 base_size, guint32 max_size,
+                           gboolean use_mutex)
 {
   gchar *buf_array_ptr, *first_buf;
   guint32 buf_size;
-  IC_MEMORY_CONTAINER_INT *mc_ptr;
+  IC_INT_MEMORY_CONTAINER *mc_ptr;
 
   if (base_size < MC_MIN_BASE_SIZE)
     base_size= MC_MIN_BASE_SIZE;
@@ -190,8 +206,8 @@ ic_create_memory_container(guint32 base_size, guint32 max_size)
   */
   if (!(buf_array_ptr= ic_calloc(buf_size * sizeof(gchar*))))
     return NULL;
-  if (!(mc_ptr= (IC_MEMORY_CONTAINER_INT*)ic_calloc(
-         sizeof(IC_MEMORY_CONTAINER_INT))))
+  if (!(mc_ptr= (IC_INT_MEMORY_CONTAINER*)ic_calloc(
+         sizeof(IC_INT_MEMORY_CONTAINER))))
   {
     ic_free(buf_array_ptr);
     return NULL;
@@ -202,6 +218,14 @@ ic_create_memory_container(guint32 base_size, guint32 max_size)
     ic_free(mc_ptr);
     return NULL;
   }
+  if (use_mutex && !(mc_ptr->mutex= g_mutex_new()))
+  {
+    ic_free(first_buf);
+    ic_free(buf_array_ptr);
+    ic_free(mc_ptr);
+    return NULL;
+  }
+
   /* Initialise methods */
   mc_ptr->mc_ops.ic_mc_alloc= mc_alloc;
   mc_ptr->mc_ops.ic_mc_calloc= mc_calloc;
@@ -218,5 +242,6 @@ ic_create_memory_container(guint32 base_size, guint32 max_size)
   mc_ptr->current_buf_inx= 0;
   mc_ptr->current_free_len= base_size;
   mc_ptr->first_buf_inx= 0;
+  mc_ptr->use_mutex= use_mutex;
   return (IC_MEMORY_CONTAINER*)mc_ptr;
 }

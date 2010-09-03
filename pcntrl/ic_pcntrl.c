@@ -308,7 +308,7 @@ rec_start_message(IC_CONNECTION *conn,
     We put the data into an IC_PC_START struct which is self-contained
     and also contains a memory container for all the memory allocated.
   */
-  if ((mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0)))
+  if ((mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0, FALSE)))
     return IC_ERROR_MEM_ALLOC;
   if ((*pc_start= (IC_PC_START*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_START))))
@@ -347,7 +347,8 @@ static int
 init_pc_find(IC_MEMORY_CONTAINER **mc_ptr,
              IC_PC_FIND **pc_find)
 {
-  if (((*mc_ptr)= ic_create_memory_container((guint32)1024, (guint32) 0)))
+  if (((*mc_ptr)= ic_create_memory_container((guint32)1024,
+                                             (guint32)0, FALSE)))
     return IC_ERROR_MEM_ALLOC;
   if (((*pc_find)= (IC_PC_FIND*)
        (*mc_ptr)->mc_ops.ic_mc_calloc((*mc_ptr), sizeof(IC_PC_FIND))))
@@ -876,7 +877,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   guint32 read_size;
   gchar *read_buf;
 
-  if (!(mc_ptr= ic_create_memory_container(32768, 0)))
+  if (!(mc_ptr= ic_create_memory_container(32768, 0, FALSE)))
     goto mem_error;
   if ((error= rec_optional_key_message(conn, &pc_find)))
     goto error;

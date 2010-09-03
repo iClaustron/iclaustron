@@ -393,7 +393,7 @@ ic_init()
     g_thread_init(NULL);
   ic_port_init();
 
-  DEBUG_OPEN;
+  DEBUG_OPEN(ic_glob_node_id);
   DEBUG_ENTRY("ic_init");
 
   ic_init_error_messages();

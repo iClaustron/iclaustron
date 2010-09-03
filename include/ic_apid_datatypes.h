@@ -17,7 +17,7 @@
 #define IC_APID_DATATYPES_H
 enum ic_commit_state
 {
-  IC_STARTED = 0,
+  IC_TRANS_STARTED = 0,
   IC_COMMIT_REQUESTED = 1,
   IC_ROLLBACK_REQUESTED = 2,
   IC_COMMITTED = 3,

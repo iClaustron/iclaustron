@@ -16,7 +16,7 @@
 #ifndef IC_MC_INT_H
 #define IC_MC_INT_H
 
-struct ic_memory_container_int
+struct ic_int_memory_container
 {
   IC_MEMORY_CONTAINER_OPS mc_ops;
   gchar *current_buf;
@@ -28,6 +28,8 @@ struct ic_memory_container_int
   guint32 current_buf_inx;
   guint32 current_free_len;
   guint32 first_buf_inx;
+  gboolean use_mutex;
+  GMutex *mutex;
 };
-typedef struct ic_memory_container_int IC_MEMORY_CONTAINER_INT;
+typedef struct ic_int_memory_container IC_INT_MEMORY_CONTAINER;
 #endif

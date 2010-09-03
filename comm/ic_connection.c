@@ -620,18 +620,28 @@ static int
 translate_hostnames(IC_INT_CONNECTION *conn)
 {
   struct addrinfo hints;
-  int ret_code;
+  int ret_code= 0;
   guint64 server_port= 0LL;
   guint64 client_port= 0LL;
+  DEBUG_ENTRY("translate_hostnames");
 
   if (!conn->server_name)
-    return IC_ERROR_NO_SERVER_NAME;
+  {
+    ret_code= IC_ERROR_NO_SERVER_NAME;
+    goto end;
+  }
   if (!conn->server_port)
-    return IC_ERROR_NO_SERVER_PORT;
+  {
+    ret_code= IC_ERROR_NO_SERVER_PORT;
+    goto end;
+  }
   DEBUG_PRINT(COMM_LEVEL, ("Server port = %s", conn->server_port));
   if (ic_conv_str_to_int(conn->server_port, &server_port, NULL) ||
       server_port == 0LL || server_port > 65535)
-    return IC_ERROR_ILLEGAL_SERVER_PORT;
+  {
+    ret_code= IC_ERROR_ILLEGAL_SERVER_PORT;
+    goto end;
+  }
   conn->server_port_num= (guint16)server_port;
   /* Get address information for Server part */
   ic_zero(&hints, sizeof(struct addrinfo));
@@ -651,7 +661,8 @@ translate_hostnames(IC_INT_CONNECTION *conn)
        &hints, &conn->server_addrinfo)) != 0)
   {
     conn->err_str= gai_strerror(ret_code);
-    return IC_ERROR_GETADDRINFO;
+    ret_code= IC_ERROR_GETADDRINFO;
+    goto end;
   }
   conn->ret_server_addrinfo= conn->server_addrinfo;
   /* Record a human-readable address for the server part of the connection */
@@ -665,13 +676,16 @@ translate_hostnames(IC_INT_CONNECTION *conn)
       Client: Connections from all clients and ports possible
       Server: No bind used since no client host provided
     */
-    return 0;
+    goto end;
   }
   if (!conn->client_port)
     conn->client_port= "0"; /* Use "0" if user provided no port */
   if (ic_conv_str_to_int(conn->client_port, &client_port, NULL) ||
       client_port > 65535)
-    return IC_ERROR_ILLEGAL_CLIENT_PORT;
+  {
+    ret_code= IC_ERROR_ILLEGAL_CLIENT_PORT;
+    goto end;
+  }
   conn->client_port_num= (guint16)client_port;
   /* Get address information for Client part */
   ic_zero(&hints, sizeof(struct addrinfo));
@@ -689,7 +703,8 @@ translate_hostnames(IC_INT_CONNECTION *conn)
        &hints, &conn->client_addrinfo)) != 0)
   {
     conn->err_str= gai_strerror(ret_code);
-    return IC_ERROR_GETADDRINFO;
+    ret_code= IC_ERROR_GETADDRINFO;
+    goto end;
   }
   conn->ret_client_addrinfo= conn->client_addrinfo;
   for (; conn->client_addrinfo;
@@ -703,7 +718,10 @@ translate_hostnames(IC_INT_CONNECTION *conn)
       break;
   }
   if (!conn->client_addrinfo)
-    return IC_ERROR_DIFFERENT_IP_VERSIONS;
+  {
+    ret_code= IC_ERROR_DIFFERENT_IP_VERSIONS;
+    goto end;
+  }
   if (conn->is_client)
   {
     /* Record a human-readable address for the client part of the connection */
@@ -711,7 +729,8 @@ translate_hostnames(IC_INT_CONNECTION *conn)
                  conn->conn_stat.client_ip_addr,
                  sizeof(conn->conn_stat.client_ip_addr_str));
   }
-  return 0;
+end:
+  DEBUG_RETURN(ret_code);
 }
 
 static int
@@ -725,7 +744,6 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
   int timer= 0, ret_select;
   gboolean first= TRUE;
 
-  DEBUG_PRINT(COMM_LEVEL, ("Translating hostnames"));
   if ((error= translate_hostnames(conn)))
   {
     DEBUG_PRINT(COMM_LEVEL,
@@ -733,7 +751,6 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
     conn->error_code= error;
     return conn->error_code;
   }
-  DEBUG_PRINT(COMM_LEVEL, ("Translating hostnames done"));
 
   loc_addrinfo= conn->is_client ?
       conn->client_addrinfo : conn->server_addrinfo;

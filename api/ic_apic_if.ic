@@ -272,9 +272,9 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   guint32 i;
   DEBUG_ENTRY("ic_create_api_cluster");
 
-
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, TRUE)))
     DEBUG_RETURN(NULL);
+
   /*
     The idea with this method is that the user can set-up his desired usage
     of the clusters using stack variables. Then we copy those variables to

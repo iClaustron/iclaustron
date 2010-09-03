@@ -981,7 +981,7 @@ ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
 
   if (apid_conn->md_trans)
     return NULL;
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, TRUE)))
     return NULL;
   if (!(md_trans= (IC_INT_METADATA_TRANSACTION*)
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,

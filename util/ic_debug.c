@@ -184,21 +184,25 @@ ic_debug_printf(const char *format,...)
   va_end(args);
 }
 
-int ic_debug_open()
+int ic_debug_open(guint32 node_id)
 {
+  gchar file_buf[32];
+
   ic_require(debug_mutex= g_mutex_new());
   ic_require(debug_priv= g_private_new(NULL));
   ic_require(thread_id_array= (guint8*)ic_calloc(IC_MAX_THREADS));
+  g_snprintf(file_buf, 32, "debug_n%u.log", node_id);
+
 #ifndef WINDOWS
-  ic_fptr= fopen(glob_debug_file, "w");
+  ic_fptr= fopen(file_buf, "w");
 #else
-  errno_t error= fopen_s(&ic_fptr, glob_debug_file, "w");
+  errno_t error= fopen_s(&ic_fptr, file_buf, "w");
   if (error)
     ic_fptr= NULL;
 #endif
   if (ic_fptr == NULL)
   {
-    ic_printf("Failed to open %s", glob_debug_file);
+    ic_printf("Failed to open %s", file_buf);
     fflush(stdout);
     return 1;
   }

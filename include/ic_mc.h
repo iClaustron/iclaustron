@@ -43,5 +43,7 @@ struct ic_memory_container
 };
 
 IC_MEMORY_CONTAINER*
-ic_create_memory_container(guint32 base_size, guint32 max_size);
+ic_create_memory_container(guint32 base_size,
+                           guint32 max_size,
+                           gboolean use_mutex);
 #endif

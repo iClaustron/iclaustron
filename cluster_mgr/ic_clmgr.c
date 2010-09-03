@@ -1040,7 +1040,7 @@ run_handle_new_connection(gpointer data)
     ic_print_error(IC_ERROR_MEM_ALLOC);
     goto error;
   }
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, FALSE)))
   {
     ic_print_error(IC_ERROR_MEM_ALLOC);
     goto error;

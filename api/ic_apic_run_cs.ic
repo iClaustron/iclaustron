@@ -18,6 +18,7 @@
   --------------------------------------------
 
   get_my_cluster_info: Get my info cluster object
+  get_cluster_info: Get any info cluster object
   get_master_node_id: Get node id of master Cluster Server
   ic_cs_master: Are we master Cluster Server
   get_count_cluster_servers: Get current count of Cluster Servers
@@ -31,13 +32,19 @@
 static IC_INFO_CLUSTER_SERVER*
 get_my_cluster_info(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  return &run_obj->cs_servers[0];
+  return &run_obj->state.cs_servers[0];
+}
+
+static IC_INFO_CLUSTER_SERVER*
+get_cluster_info(IC_INT_RUN_CLUSTER_SERVER *run_obj, guint32 cs_index)
+{
+  return &run_obj->state.cs_servers[cs_index];
 }
 
 static guint32
 get_master_node_id(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  return run_obj->cs_servers[run_obj->state.master_cs_index].node_id;
+  return run_obj->state.cs_servers[run_obj->state.master_cs_index].node_id;
 }
 
 static gboolean
@@ -89,7 +96,7 @@ find_cs_index(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 
   for (i= 0; i < run_obj->num_cluster_servers; i++)
   {
-    if (run_obj->cs_servers[i].node_id == node_id)
+    if (get_cluster_info(run_obj, i)->node_id == node_id)
     {
       *index= i;
       return 0;
@@ -360,7 +367,8 @@ set_up_run_obj_master(IC_INT_RUN_CLUSTER_SERVER *run_obj)
         used_index= 0;
       else
         used_index= ++cs_index;
-      run_obj->cs_servers[used_index].master_index= IC_MAX_CLUSTER_SERVERS;
+      get_cluster_info(run_obj, used_index)->master_index=
+        IC_MAX_CLUSTER_SERVERS;
     }
   }
   run_obj->state.master_cs_index= IC_MAX_CLUSTER_SERVERS;
@@ -385,7 +393,7 @@ set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj)
         used_index= 0;
       else
         used_index= ++cs_index;
-      run_obj->cs_servers[used_index].node_id= cs_conf->node_id;
+      get_cluster_info(run_obj, used_index)->node_id= cs_conf->node_id;
     }
   }
 }
@@ -597,6 +605,7 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
   gboolean break_flag;
   gboolean first_loop= TRUE;
+  IC_INFO_CLUSTER_SERVER *info_cs;
   DEBUG_ENTRY("start_connect_other_cluster_servers");
 
   do
@@ -605,25 +614,27 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     g_mutex_lock(run_obj->state.protect_state);
     for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
     {
+      info_cs= get_cluster_info(run_obj, i);
       if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid ||
-          run_obj->cs_servers[i].is_start_thread_active)
+          info_cs->is_start_thread_active)
         continue;
       num_threads_started++;
       thread_data.run_obj= run_obj;
       thread_data.cs_index= i;
-      run_obj->cs_servers[i].is_start_thread_active= TRUE;
+      info_cs->is_start_thread_active= TRUE;
+      DEBUG_PRINT(CONFIG_LEVEL, ("Start new thread in start_cs_func"));
       if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
-                                        tp_state,
-                                        &run_obj->cs_servers[i].thread_id,
-                                        start_cs_func,
-                                        &thread_data,
-                                        IC_MEDIUM_STACK_SIZE,
-                                        TRUE)))
+                                    tp_state,
+                                    &info_cs->thread_id,
+                                    start_cs_func,
+                                    &thread_data,
+                                    IC_MEDIUM_STACK_SIZE,
+                                    TRUE)))
         goto error;
       g_mutex_unlock(run_obj->state.protect_state);
       tp_state->tp_ops.ic_threadpool_run_thread(
-                                        tp_state,
-                                        run_obj->cs_servers[i].thread_id);
+                                  tp_state,
+                                  info_cs->thread_id);
       g_mutex_lock(run_obj->state.protect_state);
     }
     g_mutex_unlock(run_obj->state.protect_state);
@@ -640,18 +651,20 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     else
     {
       g_mutex_lock(run_obj->state.protect_state);
-      /* Wait until start threads have completed startup phase */
       do
       {
+        DEBUG_PRINT(CONFIG_LEVEL,
+                    ("Wait until threads have completed startup phase"));
         g_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
         if (!run_obj->state.cs_started && !run_obj->state.cs_starting)
         {
-          /* Start failed, we need to retry */
+          DEBUG_PRINT(CONFIG_LEVEL, ("Start failed, we need to retry"));
           break;
         }
         if (run_obj->state.cs_started)
         {
-          /* Start successful, synchronization done in run part if needed */
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Start successful, synch done in run part if needed"));
           break_flag= TRUE;
           break;
         }
@@ -1009,6 +1022,8 @@ static int send_heartbeat(IC_CONNECTION *conn,
 static int rec_heartbeat(IC_CONNECTION *conn,
                          IC_INT_RUN_CLUSTER_SERVER *run_obj,
                          guint32 cs_index);
+static void handle_failed_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                    guint32 cs_index);
 static void handle_started_cs_node(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                    guint32 cs_index);
 
@@ -1018,14 +1033,15 @@ handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                     guint32 cs_index,
                     gboolean single_loop)
 {
-  IC_CONNECTION *conn= run_obj->cs_servers[cs_index].conn;
+  IC_INFO_CLUSTER_SERVER *info_cs= get_cluster_info(run_obj, cs_index);
+  IC_CONNECTION *conn= info_cs->conn;
   IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
   int error;
   DEBUG_ENTRY("handle_cs_heartbeat");
 
   conn->conn_op.ic_set_rec_wait_ms(conn, 6000); /* Set timeout to 6 seconds */
 
-  if (run_obj->cs_servers[cs_index].is_client_side)
+  if (info_cs->is_client_side)
   {
     /* We are the client side, means we are responsible initiating heartbeat */
     while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
@@ -1033,6 +1049,7 @@ handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       if ((error= send_heartbeat(conn, run_obj)) ||
           (error= rec_heartbeat(conn, run_obj, cs_index)))
       {
+        handle_failed_heartbeat(run_obj, cs_index);
         DEBUG_RETURN(error);
       }
       if (single_loop)
@@ -1050,6 +1067,7 @@ handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       if ((error= rec_heartbeat(conn, run_obj, cs_index)) ||
           (error= send_heartbeat(conn, run_obj)))
       {
+        handle_failed_heartbeat(run_obj, cs_index);
         DEBUG_RETURN(error);
       }
       if (single_loop)
@@ -1085,7 +1103,7 @@ rec_heartbeat(IC_CONNECTION *conn,
 {
   int error;
   gboolean found;
-  IC_INFO_CLUSTER_SERVER *other_info_cs= &run_obj->cs_servers[cs_index];
+  IC_INFO_CLUSTER_SERVER *other_info_cs= get_cluster_info(run_obj, cs_index);
   DEBUG_ENTRY("rec_heartbeat");
 
   if (!(error= ic_rec_simple_str(conn, ic_heartbeat_str)))
@@ -1094,21 +1112,31 @@ rec_heartbeat(IC_CONNECTION *conn,
     {
       if (found)
       {
-         if (other_info_cs->start_state == IC_NOT_STARTED)
+         DEBUG_PRINT(CONFIG_LEVEL, ("Found started string"));
+         g_mutex_lock(run_obj->state.protect_state);
+         if (other_info_cs->start_state == IC_CS_NOT_STARTED)
          {
-            /* State change from starting to started */
             handle_started_cs_node(run_obj, cs_index);
          }
+         g_mutex_unlock(run_obj->state.protect_state);
       }
       else
       {
          if (!(error= ic_rec_simple_str(conn, ic_starting_str)))
          {
-           if (other_info_cs->start_state == IC_STARTED)
+           DEBUG_PRINT(CONFIG_LEVEL, ("Found starting string"));
+           g_mutex_lock(run_obj->state.protect_state);
+           if (other_info_cs->start_state == IC_CS_STARTED)
            {
-              /* State change from started to starting */
-              abort(); /* Shouldn't happen */
+             /*
+               State change from started to starting
+               This is a breach of the protocol and we treat it as if
+               we had a heartbeat failure.
+             */
+             g_mutex_unlock(run_obj->state.protect_state);
+             DEBUG_RETURN(IC_PROTOCOL_ERROR);
            }
+           g_mutex_unlock(run_obj->state.protect_state);
          }
       }
     }
@@ -1121,11 +1149,26 @@ error:
 }
 
 static void
+handle_failed_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                        guint32 cs_index)
+{
+  DEBUG_PRINT(CONFIG_LEVEL, ("Failed heartbeat for index=%u", cs_index));
+  g_mutex_lock(run_obj->state.protect_state);
+  get_cluster_info(run_obj, cs_index)->start_state= IC_CS_NOT_STARTED;
+  g_mutex_unlock(run_obj->state.protect_state);
+}
+
+static void
 handle_started_cs_node(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                        guint32 cs_index)
 {
-  (void)run_obj;
-  (void)cs_index;
+  DEBUG_ENTRY("handle_started_cs_node");
+
+  /* State change from starting to started */
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("State change from starting to started for index=%u", cs_index));
+  get_cluster_info(run_obj, cs_index)->start_state= IC_CS_STARTED;
+  DEBUG_RETURN_EMPTY;
 }
 
 /*
@@ -1208,7 +1251,7 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
         accepted our view
       */
       g_mutex_lock(run_obj->state.protect_state);
-      memcpy(&run_obj->cs_servers[*cs_index].master_index_view[0],
+      memcpy(&get_cluster_info(run_obj, *cs_index)->master_index_view[0],
              &my_info_cs->master_index_view[0],
              sizeof(guint32)*IC_MAX_CLUSTER_SERVERS);
       g_mutex_unlock(run_obj->state.protect_state);
@@ -1248,6 +1291,7 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     }
   }
   DEBUG_RETURN(0);
+
 error:
   err_msg= ic_common_fill_error_buffer(NULL,
                                        error_line,
@@ -1317,7 +1361,7 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     DEBUG_RETURN(IC_PROTOCOL_ERROR);
   }
   *cs_index= found_index;
-  info_cs= &run_obj->cs_servers[found_index];
+  info_cs= get_cluster_info(run_obj, found_index);
   g_mutex_lock(run_obj->state.protect_state);
   info_cs->pid= (IC_PID_TYPE)pid;
   info_cs->state= (IC_CONF_STATE_TYPE)status;
@@ -1409,7 +1453,7 @@ rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     We have received a correct protocol message describing a started
     Cluster Server.
   */
-  info_cs= &run_obj->cs_servers[cs_index];
+  info_cs= get_cluster_info(run_obj, cs_index);
   g_mutex_lock(run_obj->state.protect_state);
   /* Verify node is using correct node id */
   if (info_cs->node_id != node_id)
@@ -1476,7 +1520,7 @@ verify_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 
   for (i= 0; i < IC_MAX_CLUSTER_SERVERS; i++)
   {
-    curr_info_cs= &run_obj->cs_servers[i];
+    curr_info_cs= get_cluster_info(run_obj, i);
     if (!curr_info_cs->cs_connect_state)
       continue;
     if (!first_info_cs)
@@ -1564,7 +1608,8 @@ static guint32 get_count_connected_cluster_servers(
                      IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static void release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                   IC_CONNECTION *conn,
-                                  guint32 cs_index);
+                                  guint32 cs_index,
+                                  gboolean lock);
 static void set_up_initial_master_index_view(
                      IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static IC_CONF_VERSION_TYPE find_max_version(
@@ -1592,6 +1637,7 @@ start_cs_func(gpointer data)
   gboolean is_client;
   gboolean set_have_waited, have_waited, equal, found;
   gboolean running_server= FALSE;
+  gboolean lock;
   DEBUG_THREAD_ENTRY("start_cs_func");
   tp_state= thread_state->ic_get_threadpool(thread_state);
   thread_data=
@@ -1600,7 +1646,7 @@ start_cs_func(gpointer data)
   cs_index= thread_data->cs_index;
   apic= run_obj->apic;
   rc_state= &run_obj->state;
-  this_info_cs= &run_obj->cs_servers[cs_index];
+  this_info_cs= get_cluster_info(run_obj, cs_index);
   my_info_cs= get_my_cluster_info(run_obj);
   is_client= (this_info_cs->node_id > my_info_cs->node_id);
 
@@ -1697,7 +1743,7 @@ start_cs_func(gpointer data)
           for (i= 0; i < run_obj->num_cluster_servers; i++)
           {
             equal= FALSE;
-            info_cs= &run_obj->cs_servers[i];
+            info_cs= get_cluster_info(run_obj, i);
             if (info_cs->wait_server_connect_other_thread ||
                 i == cs_index)
             {
@@ -1811,6 +1857,8 @@ start_cs_func(gpointer data)
            cs_index));
         ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
                            3 * IC_MICROSEC_PER_SECOND);
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Wakeup from waiting after quorum reached"));
         have_waited= TRUE;
         set_have_waited= TRUE;
       }
@@ -1837,6 +1885,8 @@ start_cs_func(gpointer data)
           ("No quorum reached, index %u, wait for more nodes", cs_index));
         ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
                            3 * IC_MICROSEC_PER_SECOND);
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Wakeup after waiting for quorum to be reached, we're connected"));
       }
     }
     if (!set_have_waited)
@@ -1872,6 +1922,14 @@ start_cs_func(gpointer data)
   }
   if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
     goto lock_end;
+
+  /* Handling one round of heartbeat is part of start protocol */
+  if (handle_cs_heartbeat(run_obj, thread_state, cs_index, TRUE))
+    goto lock_end;
+
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    goto lock_end;
+
   g_mutex_lock(rc_state->protect_state);
   do
   {
@@ -1908,10 +1966,11 @@ start_cs_func(gpointer data)
         ("Wait for other threads to complete startup"));
       ic_cond_timed_wait(rc_state->start_cond, rc_state->protect_state,
                          3 * IC_MICROSEC_PER_SECOND);
+      g_mutex_unlock(rc_state->protect_state);
       if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-        goto end;
+        goto lock_end;
       if (handle_cs_heartbeat(run_obj, thread_state, cs_index, TRUE))
-        goto end;
+        goto lock_end;
     }
   } while (1);
   g_mutex_unlock(rc_state->protect_state);
@@ -1926,16 +1985,17 @@ start_cs_func(gpointer data)
 early_end:
   g_mutex_lock(rc_state->protect_state);
   rc_state->start_threads_stopped++;
-  run_obj->cs_servers[cs_index].is_start_thread_active= FALSE;
+  get_cluster_info(run_obj, cs_index)->is_start_thread_active= FALSE;
   g_mutex_unlock(rc_state->protect_state);
   DEBUG_THREAD_RETURN;
 
-lock_end:
-  g_mutex_lock(rc_state->protect_state);
 end:
-  release_cs_connection(run_obj, conn, cs_index);
-  run_obj->cs_servers[cs_index].is_start_thread_active= FALSE;
-  g_mutex_unlock(rc_state->protect_state);
+  lock= TRUE;
+  goto real_end;
+lock_end:
+  lock= FALSE;
+real_end:
+  release_cs_connection(run_obj, conn, cs_index, lock);
   DEBUG_THREAD_RETURN;
 }
 
@@ -1947,7 +2007,7 @@ get_count_active_start_threads(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 
   for (i= 0; i < run_obj->num_cluster_servers; i++)
   {
-    if (run_obj->cs_servers[i].is_start_thread_active)
+    if (get_cluster_info(run_obj, i)->is_start_thread_active)
       num_started++;
   }
   return num_started;
@@ -1961,7 +2021,7 @@ get_count_connected_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 
   for (i= 0; i < run_obj->num_cluster_servers; i++)
   {
-    if (run_obj->cs_servers[i].conn)
+    if (get_cluster_info(run_obj, i)->conn)
       num_connected++;
   }
   return num_connected;
@@ -1970,19 +2030,35 @@ get_count_connected_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 static void
 release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                       IC_CONNECTION *conn,
-                      guint32 cs_index)
+                      guint32 cs_index,
+                      gboolean lock)
 {
-  run_obj->cs_servers[cs_index].conn= NULL;
+  IC_INFO_CLUSTER_SERVER *info_cs= get_cluster_info(run_obj, cs_index);
+  if (!lock)
+    g_mutex_lock(run_obj->state.protect_state);
+
+  info_cs->is_start_thread_active= FALSE;
+  info_cs->conn= NULL;
   run_obj->state.start_threads_stopped++;
+  /*
+    With only 2 Cluster Servers we know that losing one is sufficient
+    to not be able to proceed with the starting. If we have more than
+    2 (3 or 4 that is) then we can survive losing one of them, so
+    e.g. if we have 3 Cluster Servers, 2 connections is fully connected,
+    and 1 connection means there are 2 Cluster Servers that are connected
+    which is sufficient, thus number of connections + 2 must not be
+    smaller than the number of Cluster Servers.
+  */
   if (run_obj->state.cs_starting &&
       (run_obj->num_cluster_servers == 2 ||
-       get_count_connected_cluster_servers(run_obj) + 1 <
+       get_count_connected_cluster_servers(run_obj) + 2 <
        run_obj->num_cluster_servers))
     run_obj->state.cs_starting= FALSE;
-  run_obj->state.cs_started= FALSE;
+
   g_cond_broadcast(run_obj->state.start_cond);
   g_mutex_unlock(run_obj->state.protect_state);
-  conn->conn_op.ic_free_connection(conn);
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
 }
 
 static void
@@ -1993,16 +2069,18 @@ set_up_initial_master_index_view(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 index_size= 0;
   guint32 i, j;
   IC_INFO_CLUSTER_SERVER *my_info_cs= get_my_cluster_info(run_obj);
+  IC_INFO_CLUSTER_SERVER *info_cs;
 
   /* Sort in lowest node number first */
   for (i= 0; i < run_obj->num_cluster_servers; i++)
   {
     for (j= 0; j < run_obj->num_cluster_servers; j++)
     {
-       if (run_obj->cs_servers[j].node_id > min_node_id &&
-           run_obj->cs_servers[j].node_id < lowest_node_id &&
-           run_obj->cs_servers[j].conn)
-         lowest_node_id= run_obj->cs_servers[j].node_id;
+       info_cs= get_cluster_info(run_obj, j);
+       if (run_obj->state.cs_servers[j].node_id > min_node_id &&
+           run_obj->state.cs_servers[j].node_id < lowest_node_id &&
+           run_obj->state.cs_servers[j].conn)
+         lowest_node_id= run_obj->state.cs_servers[j].node_id;
     }
     if (min_node_id != lowest_node_id)
       index_size++;
@@ -2020,8 +2098,8 @@ find_max_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 
   for (i= 0; i < run_obj->num_cluster_servers; i++)
   {
-    if (run_obj->cs_servers[i].config_version_number > version_number)
-      version_number= run_obj->cs_servers[i].config_version_number;
+    if (run_obj->state.cs_servers[i].config_version_number > version_number)
+      version_number= run_obj->state.cs_servers[i].config_version_number;
   }
   return version_number;
 }
@@ -2034,9 +2112,9 @@ find_max_committed_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 
   for (i= 0; i < run_obj->num_cluster_servers; i++)
   {
-    if (run_obj->cs_servers[i].state == CONFIG_STATE_BUSY &&
-        run_obj->cs_servers[i].config_version_number > version_number)
-      version_number= run_obj->cs_servers[i].config_version_number;
+    if (run_obj->state.cs_servers[i].state == CONFIG_STATE_BUSY &&
+        run_obj->state.cs_servers[i].config_version_number > version_number)
+      version_number= run_obj->state.cs_servers[i].config_version_number;
   }
   if (version_number == (IC_CONF_VERSION_TYPE)0)
   {
@@ -2050,13 +2128,16 @@ static void
 verify_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   guint32 out_of_date= 0;
-  guint32 i;
+  guint32 i; 
   IC_CONF_VERSION_TYPE max_committed_version;
+  IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
 
+  g_mutex_lock(rc_state->protect_state);
   max_committed_version= find_max_committed_version(run_obj);
   for (i= 0; i < run_obj->num_cluster_servers; i++)
   {
-    if (run_obj->cs_servers[i].config_version_number < max_committed_version)
+    if (run_obj->state.cs_servers[i].config_version_number <
+        max_committed_version)
       out_of_date++;
   }
   if (out_of_date > 1)
@@ -2064,6 +2145,7 @@ verify_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     /* Impossible state occurred */
     abort();
   }
+  g_mutex_unlock(rc_state->protect_state);
 }
 
 static int
@@ -2080,15 +2162,15 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_CONF_VERSION_TYPE old_version;
   IC_API_CONFIG_SERVER *new_apic;
   IC_API_CLUSTER_CONNECTION api_cluster_conn;
+  IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   DEBUG_ENTRY("check_if_cs_started");
 
   verify_cs_started(run_obj);
-  run_obj->state.cs_started= TRUE;
   for (i= 1; i < run_obj->num_cluster_servers; i++)
   {
-    if (run_obj->cs_servers[i].config_version_number !=
+    if (run_obj->state.cs_servers[i].config_version_number !=
         config_version_number ||
-        run_obj->cs_servers[i].state != status)
+        run_obj->state.cs_servers[i].state != status)
     {
       max_committed_version= find_max_committed_version(run_obj);
       /* We haven't started yet, we still need to synchronize configs */
@@ -2252,7 +2334,10 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     }
   }
   DEBUG_PRINT(CONFIG_LEVEL, ("All Cluster Servers are in synch"));
+  g_mutex_lock(rc_state->protect_state);
+  run_obj->state.cs_started= TRUE;
   run_obj->state.cs_starting= FALSE;
+  g_mutex_unlock(rc_state->protect_state);
   DEBUG_RETURN(0);
 }
 
@@ -2294,6 +2379,7 @@ complete_startup_handling(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 static void
 report_startup_completed(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
+  DEBUG_PRINT(CONFIG_LEVEL, ("Startup is completed"));
   run_obj->state.cs_started= TRUE;
 }
 
@@ -2357,7 +2443,8 @@ ic_create_run_cluster(IC_STRING *config_dir,
   {
     DEBUG_RETURN(NULL);
   }
-  if (!(conf_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0)))
+  if (!(conf_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                                0, TRUE)))
     goto error;
   if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
@@ -2783,7 +2870,7 @@ run_cluster_server_thread(gpointer data)
                                             FALSE,
                                             &cs_index)))
             goto error;
-          run_obj->cs_servers[cs_index].is_client_side= FALSE;
+          run_obj->state.cs_servers[cs_index].is_client_side= FALSE;
           handle_cs_heartbeat(run_obj, thread_state, cs_index, FALSE);
           goto end;
         }
@@ -3270,9 +3357,9 @@ send_set_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     for (i= 0; i < IC_MAX_CLUSTER_SERVERS; i++)
     {
       if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid ||
-          run_obj->cs_servers[i].conn == NULL)
+          run_obj->state.cs_servers[i].conn == NULL)
         continue;
-      conn= run_obj->cs_servers[i].conn;
+      conn= run_obj->state.cs_servers[i].conn;
       if ((error= send_set_connection_param_message(conn,
                                                     cluster_id,
                                                     node1_id,

@@ -73,7 +73,7 @@ ic_parse_connectstring(gchar *connect_string,
   gboolean skip= FALSE;
   IC_MEMORY_CONTAINER *mc_ptr;
 
-  if (!(conn_str->mc_ptr= ic_create_memory_container(1024, 0)))
+  if (!(conn_str->mc_ptr= ic_create_memory_container(1024, 0, FALSE)))
     return IC_ERROR_MEM_ALLOC;
   mc_ptr= conn_str->mc_ptr;
   ret_code= IC_ERROR_MEM_ALLOC;
