@@ -65,7 +65,6 @@ static guint32 glob_daemonize= 1;
 
 /* Global variables */
 static const gchar *glob_process_name= "ic_pcntrld";
-static IC_STRING glob_base_dir;
 static GMutex *pc_hash_mutex= NULL;
 static IC_HASHTABLE *glob_pc_hash= NULL;
 static guint64 glob_start_id= 1;

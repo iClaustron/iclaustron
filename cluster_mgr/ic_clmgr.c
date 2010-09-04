@@ -511,7 +511,7 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
   guint32 cluster_id= clu_conf->clu_info.cluster_id;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
-  DEBUG_RETURN("start_specific_node");
+  DEBUG_ENTRY("start_specific_node");
 
   node_config= apic->api_op.ic_get_node_object(apic, cluster_id, node_id);
   if (!node_config)

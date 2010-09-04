@@ -44,7 +44,6 @@
 static const gchar *glob_process_name= "ic_csd";
 
 /* Option variables */
-static gboolean glob_bootstrap= FALSE;
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 

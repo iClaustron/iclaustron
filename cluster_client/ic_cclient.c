@@ -47,7 +47,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
   gchar *read_buf;
   guint32 read_size, i;
   int ret_code;
-  DEBUG_RETURN("execute_command");
+  DEBUG_ENTRY("execute_command");
 
   for (i= 0; i < num_lines; i++)
   {
