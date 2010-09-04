@@ -295,6 +295,14 @@ struct ic_run_cluster_state
   /* Number of threads waiting to update */
   guint32 update_waiters;
 
+  /*
+    Error handling object.
+    This object is currently only used when reading from disk which is
+    never done concurrently, the object is read when printing error
+    information before quitting the Cluster Server.
+  */
+  IC_CONFIG_ERROR err_obj;
+
   GMutex *protect_state;
   GCond  *start_cond;
   GCond  *connect_cond;
@@ -384,14 +392,6 @@ struct ic_int_run_cluster_server
 
   /* Someone is running the server part of connect code during startup */
   gboolean running_server;
-
-  /*
-    Error handling object.
-    This object is currently only used when reading from disk which is
-    never done concurrently, the object is read when printing error
-    information before quitting the Cluster Server.
-   */
-  IC_CONFIG_ERROR err_obj;
 
   /* 
     Object used read configuration from file.

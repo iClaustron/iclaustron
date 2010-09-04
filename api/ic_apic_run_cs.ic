@@ -338,12 +338,9 @@ unlock_cv_file(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 
 static int set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static void set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj);
-static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                             IC_CONFIG_STRUCT *conf_server_struct,
-                             IC_CONFIG_STRUCT *cluster_conf_struct);
+static int load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static int load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                             IC_CLUSTER_CONNECT_INFO **clu_infos,
-                             IC_CONFIG_STRUCT *conf_server_struct);
+                             IC_CLUSTER_CONNECT_INFO **clu_infos);
 static int start_connect_other_cluster_servers(
                              IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static gpointer start_cs_func(gpointer data);
@@ -495,9 +492,7 @@ typedef struct thread_data
 } THREAD_DATA;
 
 static int
-load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                  IC_CONFIG_STRUCT *conf_server_struct,
-                  IC_CONFIG_STRUCT *cluster_conf_struct)
+load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int error= 1;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
@@ -505,11 +500,11 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 
   if (!(clu_infos= ic_load_cluster_config_from_file(run_obj->config_dir,
                                 info_cs->config_version_number,
-                                cluster_conf_struct,
-                                &run_obj->err_obj)))
+                                run_obj->conf_mc_ptr,
+                                &run_obj->state.err_obj)))
     return error;
   run_obj->clu_infos= clu_infos;
-  if ((error= load_config_files(run_obj, clu_infos, conf_server_struct)))
+  if ((error= load_config_files(run_obj, clu_infos)))
     return error;
   if (info_cs->config_version_number == 0)
   {
@@ -524,8 +519,7 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 
 static int
 load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                  IC_CLUSTER_CONNECT_INFO **clu_infos,
-                  IC_CONFIG_STRUCT *conf_server_struct)
+                  IC_CLUSTER_CONNECT_INFO **clu_infos)
 {
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *cluster, *grid_cluster;
@@ -541,10 +535,10 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                              info_cs->config_version_number);
 
   if (!(grid_cluster= ic_load_grid_common_config_server_from_file(file_name,
-                                            conf_server_struct,
+                                            mc_ptr,
                                             *clu_infos,
-                                            &run_obj->err_obj)))
-    return run_obj->err_obj.err_num;
+                                            &run_obj->state.err_obj)))
+    return run_obj->state.err_obj.err_num;
 
   while (*clu_infos)
   {
@@ -560,12 +554,12 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       cluster. It's now time to open the configuration file and
       convert it into a IC_CLUSTER_CONFIG struct.
     */
-    if (!(cluster= ic_load_config_server_from_files(file_name,
+    if (!(cluster= ic_load_config_server_from_files(run_obj,
+                                              file_name,
                                               grid_cluster,
-                                              conf_server_struct,
-                                              clu_info,
-                                              &run_obj->err_obj)))
-      return run_obj->err_obj.err_num;
+                                              clu_info)))
+      return run_obj->state.err_obj.err_num;
+
     /*
       Copy information from cluster configuration file which isn't set in
       the configuration and ensure it's allocated on the proper memory
@@ -691,15 +685,9 @@ static int
 read_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int error;
-  IC_CONFIG_STRUCT conf_server_struct;
-  IC_CONFIG_STRUCT cluster_conf_struct;
   DEBUG_ENTRY("read_disk_config");
 
-  conf_server_struct.perm_mc_ptr= run_obj->conf_mc_ptr;
-  cluster_conf_struct.perm_mc_ptr= run_obj->conf_mc_ptr;
-  if ((error= load_local_config(run_obj,
-                                &conf_server_struct,
-                                &cluster_conf_struct)))
+  if ((error= load_local_config(run_obj)))
     goto error;
   if ((error= set_up_apic(run_obj)))
     goto error;
@@ -2483,8 +2471,8 @@ ic_create_run_cluster(IC_STRING *config_dir,
   run_obj->locked_configuration= FALSE;
   run_obj->max_cluster_id= 0;
   run_obj->num_clusters= 0;
-  run_obj->err_obj.err_num= 0;
-  run_obj->err_obj.line_number= 0;
+  run_obj->state.err_obj.err_num= 0;
+  run_obj->state.err_obj.line_number= 0;
   run_obj->tp_state= tp_state;
 
   /* Create the socket object for the Cluster Server */
@@ -2538,12 +2526,12 @@ rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *ext_run_obj,
   gchar *extra_err_str= NULL;
   guint32 err_line= 0;
 
-  if (error_code != run_obj->err_obj.err_num &&
-      run_obj->err_obj.err_num != 0)
+  if (error_code != run_obj->state.err_obj.err_num &&
+      run_obj->state.err_obj.err_num != 0)
   {
     extra_err_str= ic_get_error_message(error_code);
-    err_line= run_obj->err_obj.line_number;
-    error_code= run_obj->err_obj.err_num;
+    err_line= run_obj->state.err_obj.line_number;
+    error_code= run_obj->state.err_obj.err_num;
   }
   return ic_common_fill_error_buffer(extra_err_str,
                                      err_line,

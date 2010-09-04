@@ -37,14 +37,13 @@ static void ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
                                  IC_CLUSTER_CONFIG *clu_conf);
 
 static IC_CLUSTER_CONFIG*
-ic_load_config_server_from_files(gchar *config_file,
+ic_load_config_server_from_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                 gchar *config_file,
                                  IC_CLUSTER_CONFIG *grid_clu_conf,
-                                 IC_CONFIG_STRUCT *conf_server,
-                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info,
-                                 IC_CONFIG_ERROR *err_obj);
+                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info);
 static IC_CLUSTER_CONFIG*
 ic_load_grid_common_config_server_from_file(gchar *config_file,
-                                     IC_CONFIG_STRUCT *conf_server,
+                                     IC_MEMORY_CONTAINER *mc_ptr,
                                      IC_CLUSTER_CONNECT_INFO *clu_connect_info,
                                      IC_CONFIG_ERROR *err_obj);
 static IC_CLUSTER_CONFIG*
@@ -994,30 +993,51 @@ static IC_CONFIG_OPERATIONS grid_common_config_server_ops =
   /* .ic_config_end  =  */conf_serv_end
 };
 
+/* Prepared for multi-threaded handling of different clusters */
 static IC_CLUSTER_CONFIG*
-ic_load_config_server_from_files(gchar *config_file,
+ic_load_config_server_from_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                 gchar *config_file,
                                  IC_CLUSTER_CONFIG *grid_cluster_conf,
-                                 IC_CONFIG_STRUCT *conf_server,
-                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info,
-                                 IC_CONFIG_ERROR *err_obj)
+                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info)
 {
-  conf_server->first_data= (void*)grid_cluster_conf;
-  conf_server->sec_data= (void*) clu_connect_info;
-  return load_config_server_from_files(config_file,
-                                       conf_server,
-                                       err_obj,
-                                       FALSE);
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_CONFIG_STRUCT conf_server;
+  IC_CONFIG_ERROR err_obj;
+
+  ic_zero(&err_obj, sizeof(IC_CONFIG_ERROR));
+  ic_zero(&conf_server, sizeof(IC_CONFIG_STRUCT));
+  conf_server.perm_mc_ptr= run_obj->conf_mc_ptr;
+  conf_server.first_data= (void*)grid_cluster_conf;
+  conf_server.sec_data= (void*) clu_connect_info;
+  clu_conf= load_config_server_from_files(config_file,
+                                          &conf_server,
+                                          &err_obj,
+                                          FALSE);
+  if (clu_conf)
+  {
+    g_assert(!err_obj.err_num);
+    return clu_conf;
+  }
+  g_mutex_lock(run_obj->state.protect_state);
+  if (!run_obj->state.err_obj.err_num)
+    memcpy(&run_obj->state.err_obj, &err_obj, sizeof(IC_CONFIG_ERROR));
+  g_mutex_unlock(run_obj->state.protect_state);
+  return NULL;
 }
 
 static IC_CLUSTER_CONFIG*
 ic_load_grid_common_config_server_from_file(gchar *config_file,
-                                     IC_CONFIG_STRUCT *conf_server,
+                                     IC_MEMORY_CONTAINER *mc_ptr,
                                      IC_CLUSTER_CONNECT_INFO *clu_connect_info,
                                      IC_CONFIG_ERROR *err_obj)
 {
-  conf_server->sec_data= (void*) clu_connect_info;
+  IC_CONFIG_STRUCT conf_server;
+
+  ic_zero(&conf_server, sizeof(IC_CONFIG_STRUCT));
+  conf_server.perm_mc_ptr= mc_ptr;
+  conf_server.sec_data= (void*) clu_connect_info;
   return load_config_server_from_files(config_file,
-                                       conf_server,
+                                       &conf_server,
                                        err_obj,
                                        TRUE);
 }
@@ -1049,6 +1069,7 @@ load_config_server_from_files(gchar *config_file,
   IC_INIT_STRING(&conf_data, conf_data_str, (guint32)conf_data_len, TRUE);
   ret_val= ic_build_config_data(&conf_data, conf_server, err_obj);
   ic_free(conf_data.str);
+
   if (ret_val == 1)
   {
     g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,

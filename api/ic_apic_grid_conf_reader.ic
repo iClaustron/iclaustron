@@ -36,7 +36,7 @@
 static IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(IC_STRING *config_dir,
                                  IC_CONF_VERSION_TYPE config_version_number,
-                                 IC_CONFIG_STRUCT *cluster_conf,
+                                 IC_MEMORY_CONTAINER *mc_ptr,
                                  IC_CONFIG_ERROR *err_obj);
 
 static void
@@ -276,7 +276,7 @@ static IC_CONFIG_OPERATIONS cluster_config_ops =
 static IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(IC_STRING *config_dir,
                                  IC_CONF_VERSION_TYPE config_version_number,
-                                 IC_CONFIG_STRUCT *cluster_conf,
+                                 IC_MEMORY_CONTAINER *mc_ptr,
                                  IC_CONFIG_ERROR *err_obj)
 {
   gchar *conf_data_str;
@@ -286,16 +286,19 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
   int ret_val;
   IC_CLUSTER_CONNECT_INFO **ret_ptr;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  IC_CONFIG_STRUCT cluster_conf;
   DEBUG_ENTRY("ic_load_cluster_config_from_file");
 
+  ic_zero(&cluster_conf, sizeof(IC_CONFIG_STRUCT));
+  cluster_conf.perm_mc_ptr= mc_ptr;
   ic_create_config_file_name(&file_name_string,
                              file_name,
                              config_dir,
                              &ic_config_string,
                              config_version_number);
 
-  cluster_conf->clu_conf_ops= &cluster_config_ops;
-  cluster_conf->config_ptr.cluster_conf= NULL;
+  cluster_conf.clu_conf_ops= &cluster_config_ops;
+  cluster_conf.config_ptr.cluster_conf= NULL;
   DEBUG_PRINT(CONFIG_LEVEL, ("cluster_config_file = %s",
                              file_name));
   if ((ret_val= ic_get_file_contents(file_name, &conf_data_str,
@@ -303,7 +306,7 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
     goto file_open_error;
 
   IC_INIT_STRING(&conf_data, conf_data_str, (guint32)conf_data_len, TRUE);
-  ret_val= ic_build_config_data(&conf_data, cluster_conf, err_obj);
+  ret_val= ic_build_config_data(&conf_data, &cluster_conf, err_obj);
   ic_free(conf_data.str);
   if (ret_val == 1)
   {
@@ -316,8 +319,8 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
   }
   else
   {
-    ret_ptr= cluster_conf->config_ptr.cluster_conf->clu_info;
-    cluster_config_ops.ic_init_end(cluster_conf);
+    ret_ptr= cluster_conf.config_ptr.cluster_conf->clu_info;
+    cluster_config_ops.ic_init_end(&cluster_conf);
   }
   DEBUG_RETURN(ret_ptr);
 
