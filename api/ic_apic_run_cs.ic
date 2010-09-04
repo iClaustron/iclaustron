@@ -13,6 +13,10 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+static void inc_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static void dec_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj);
+static void check_ready_to_release_config(IC_INT_RUN_CLUSTER_SERVER *run_obj);
+
 /*
   MODULE: Support functions for Cluster Server
   --------------------------------------------
@@ -603,17 +607,19 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 num_threads_started= 0;
   THREAD_DATA thread_data;
   IC_INT_API_CONFIG_SERVER *apic= run_obj->apic;
-  gboolean break_flag;
   gboolean first_loop= TRUE;
   IC_INFO_CLUSTER_SERVER *info_cs;
+  gboolean thread_started_flag[IC_MAX_CLUSTER_SERVERS];
   DEBUG_ENTRY("start_connect_other_cluster_servers");
 
   do
   {
-    break_flag= FALSE;
+    /* Make sure we start threads based on one state */
     g_mutex_lock(run_obj->state.protect_state);
     for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
     {
+      ic_require(i < IC_MAX_CLUSTER_SERVERS);
+      thread_started_flag[i]= FALSE;
       info_cs= get_cluster_info(run_obj, i);
       if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid ||
           info_cs->is_start_thread_active)
@@ -630,53 +636,70 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                                     &thread_data,
                                     IC_MEDIUM_STACK_SIZE,
                                     TRUE)))
-        goto error;
-      g_mutex_unlock(run_obj->state.protect_state);
-      tp_state->tp_ops.ic_threadpool_run_thread(
-                                  tp_state,
-                                  info_cs->thread_id);
-      g_mutex_lock(run_obj->state.protect_state);
+        goto locked_error;
+
+      thread_started_flag[i]= TRUE;
     }
     g_mutex_unlock(run_obj->state.protect_state);
+
+    /* Now start all threads at the same time */
+    for (i= 0; i < apic->cluster_conn.num_cluster_servers; i++)
+    {
+      if (thread_started_flag[i])
+      {
+        info_cs= get_cluster_info(run_obj, i);
+        tp_state->tp_ops.ic_threadpool_run_thread(tp_state,
+                                                  info_cs->thread_id);
+      }
+    }
+
+    /* Special handling of case with only 1 Cluster Server */
     if (num_threads_started == 0 && first_loop)
     {
       /*
         Startup is completed, we're the only Cluster Server, record state
-        and proceed.
+        and proceed. We need no special threads to handle heartbeat to
+        other Cluster Servers since we're the only Cluster Server in the
+        configuration.
       */
       run_obj->state.master_cs_index= 0;
       run_obj->state.cs_started= TRUE;
-      break;
+      DEBUG_RETURN(0);
     }
-    else
+
+    /*
+      We have at least 2 Cluster Servers in the configuration. We will
+      wait here for the threads to signal completion. In some cases one
+      or more thread decides to die and wants to be restarted for
+      another attempt.
+    */
+    g_mutex_lock(run_obj->state.protect_state);
+    do
     {
-      g_mutex_lock(run_obj->state.protect_state);
-      do
+      DEBUG_PRINT(CONFIG_LEVEL,
+                  ("Wait until threads have completed startup phase"));
+      g_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
+      if (!run_obj->state.cs_started && !run_obj->state.cs_starting)
+      {
+        DEBUG_PRINT(CONFIG_LEVEL, ("Start failed, we need to retry"));
+        break;
+      }
+      if (run_obj->state.cs_started)
       {
         DEBUG_PRINT(CONFIG_LEVEL,
-                    ("Wait until threads have completed startup phase"));
-        g_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
-        if (!run_obj->state.cs_started && !run_obj->state.cs_starting)
-        {
-          DEBUG_PRINT(CONFIG_LEVEL, ("Start failed, we need to retry"));
-          break;
-        }
-        if (run_obj->state.cs_started)
-        {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Start successful, synch done in run part if needed"));
-          break_flag= TRUE;
-          break;
-        }
-      } while (1);
-      g_mutex_unlock(run_obj->state.protect_state);
-      if (break_flag)
-        break;
-      first_loop= FALSE;
-    }
+          ("Start successful, synch done in run part if needed"));
+        g_mutex_unlock(run_obj->state.protect_state);
+        DEBUG_RETURN(0);
+      }
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Start thread completed, but start not completed and not failed"));
+    } while (1);
+    g_mutex_unlock(run_obj->state.protect_state);
+    first_loop= FALSE;
   } while (1);
   DEBUG_RETURN(0);
-error:
+locked_error:
+  g_mutex_unlock(run_obj->state.protect_state);
   DEBUG_RETURN(error);
 }
 
@@ -706,8 +729,8 @@ error:
 static int
 reread_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  IC_API_CONFIG_SERVER *apic;
-  IC_MEMORY_CONTAINER *mc_ptr;
+  IC_API_CONFIG_SERVER *old_apic;
+  IC_MEMORY_CONTAINER *old_mc_ptr, *new_mc_ptr;
   int error;
   DEBUG_ENTRY("reread_disk_config");
 
@@ -726,6 +749,17 @@ reread_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     ic_print_error(error);
     DEBUG_RETURN(error);
   }
+  /*
+    We have successfully loaded a new configuration from disk. We can
+    now destroy the old configuration, this configuration has a
+    reference count to keep track of users of it. This is to ensure
+    that we don't destroy it until no more threads are using it.
+  */
+  g_mutex_lock(run_obj->config_mutex);
+  run_obj->state.config_change_ongoing= TRUE;
+  check_ready_to_release_config(run_obj);
+  g_mutex_unlock(run_obj->config_mutex);
+
   DEBUG_RETURN(0);
 }
 
@@ -2963,6 +2997,52 @@ error:
 }
 
 /*
+  MODULE: Cluster Configuration Concurrency Control
+  -------------------------------------------------
+  Methods to handle configuration reads and writes.
+  We can have two active configurations. Reads of a
+  configuration is allowed to continue until done. Then
+  when all readers of the old configuration are done
+  we allow new readers to start reading the new configuration.
+*/
+static void
+inc_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  g_mutex_lock(run_obj->config_mutex);
+  while (run_obj->config_change_ongoing)
+  {
+    g_cond_wait(run_obj->config_mutex,
+                run_obj->config_cond);
+  }
+  run_obj->conf_ref_count++;
+  g_mutex_unlock(run_obj->config_mutex);
+}
+
+static void
+dec_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  g_mutex_lock(run_obj->config_mutex);
+  run_obj->conf_ref_count--;
+  if (run_obj->config_change_ongoing)
+    check_ready_to_release_config(run_obj);
+  g_mutex_unlock(run_obj->config_mutex);
+}
+
+static void
+check_ready_to_release_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  if (run_obj->conf_ref_count == 0)
+  {
+    run_obj->config_change_ongoing= FALSE;
+    run_obj->locked_configuration= FALSE;
+    memcpy(&run_obj->config,
+           &run_obj->new_config,
+           sizeof(IC_RC_CONFIG_STATE));
+    g_cond_broadcast(run_obj->config_cond);
+  }
+}
+
+/*
   MODULE: Get cluster list
   ------------------------
   Handle get cluster list protocol action in Cluster Server
@@ -2979,6 +3059,7 @@ handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_STRING cluster_name;
   DEBUG_ENTRY("handle_get_cluster_list");
 
+  inc_config_ref_count(run_obj);
   if ((error= ic_send_with_cr(conn, get_cluster_list_reply_str)))
     goto error;
   for (i= 0; i <= run_obj->max_cluster_id; i++)
@@ -2996,8 +3077,10 @@ handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   }
   if ((error= ic_send_with_cr(conn, end_get_cluster_list_str)))
     goto error;
+  dec_config_ref_count(run_obj);
   DEBUG_RETURN(0);
 error:
+  dec_config_ref_count(run_obj);
   DEBUG_PRINT(CONFIG_LEVEL,
               ("Protocol error in get cluster list, code = %d", error));
   PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);

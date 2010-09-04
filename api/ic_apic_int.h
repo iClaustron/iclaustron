@@ -269,6 +269,7 @@ struct ic_info_cluster_server
 };
 typedef struct ic_info_cluster_server IC_INFO_CLUSTER_SERVER;
 
+/* IC_RUN_CLUSTER_STATE */
 struct ic_run_cluster_state
 {
   /* Info on the other cluster servers and their state */
@@ -309,6 +310,25 @@ struct ic_run_cluster_state
   GCond  *update_cond;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
+
+struct ic_rc_config_state
+{
+  /* The configuration of each cluster resident in memory */
+  IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID];
+
+  /* The information about the clusters, name, id and password */
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
+
+  /* Number of cluster servers in the grid */
+  guint32 num_cluster_servers;
+
+  /* Max cluster id in the grid */
+  guint32 max_cluster_id;
+
+  /* Number of clusters in this grid */
+  guint32 num_clusters;
+};
+typedef struct ic_rc_config_state IC_RC_CONFIG_STATE;
 
 struct ic_int_run_cluster_server
 {
@@ -393,16 +413,6 @@ struct ic_int_run_cluster_server
   /* Someone is running the server part of connect code during startup */
   gboolean running_server;
 
-  /* 
-    Object used read configuration from file.
-    Read from configuration files are only performed at startup.
-    This happens in start_cluster_server and in check_if_cs_started
-    when our configuration files showed to be out-of-date.
-    Thus there are no concurrency issues with those variables.
-  */
-  IC_CONFIG_STRUCT conf_server_struct;
-  IC_CONFIG_STRUCT cluster_conf_struct;
-
   /*
     The below variables contains the configuration of the grid. This
     is only updated by configuration changes. Configuration changes
@@ -418,20 +428,11 @@ struct ic_int_run_cluster_server
   /* Configuration has been locked indicator */
   gboolean locked_configuration;
 
-  /* The configuration of each cluster resident in memory */
-  IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID];
+  /* Indicator if we're currently changing to new configuration */
+  gboolean config_change_ongoing;
 
-  /* The information about the clusters, name, id and password */
-  IC_CLUSTER_CONNECT_INFO **clu_infos;
-
-  /* Number of cluster servers in the grid */
-  guint32 num_cluster_servers;
-
-  /* Max cluster id in the grid */
-  guint32 max_cluster_id;
-
-  /* Number of clusters in this grid */
-  guint32 num_clusters;
+  IC_RC_CONFIG_STATE config;
+  IC_RC_CONFIG_STATE new_config;
 };
 
 #define IC_SET_CONFIG_MAP(name, id) \

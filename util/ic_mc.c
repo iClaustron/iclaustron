@@ -60,7 +60,6 @@ mc_alloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
 {
   IC_INT_MEMORY_CONTAINER *mc_ptr= (IC_INT_MEMORY_CONTAINER*)ext_mc_ptr;
   gchar *new_buf_array= NULL;
-  gchar *ptr= NULL;
   gchar *ret_ptr= NULL;
   gchar *new_buf;
   guint32 alloc_size, buf_inx;
@@ -118,7 +117,7 @@ mc_alloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
 end:
   if (mc_ptr->mutex)
     g_mutex_unlock(mc_ptr->mutex);
-  return ptr;
+  return ret_ptr;
 }
 
 static gchar*
