@@ -274,9 +274,6 @@ struct ic_run_cluster_state
   /* Info on the other cluster servers and their state */
   IC_INFO_CLUSTER_SERVER cs_servers[IC_MAX_CLUSTER_SERVERS];
 
-  /* Points to our Cluster Server Info, should always be 0 */
-  guint32 my_cs_index;
-
   /* Points to Cluster Server info of master */
   guint32 master_cs_index;
 
