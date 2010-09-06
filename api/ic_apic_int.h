@@ -319,6 +319,13 @@ struct ic_rc_config_state
   /* The information about the clusters, name, id and password */
   IC_CLUSTER_CONNECT_INFO **clu_infos;
 
+  /*
+    This object is normally used by clients, we fill it up with what
+    is needed to allow us to reuse a number of methods from the
+    client handling part of the iClaustron configuration management.
+  */
+  IC_INT_API_CONFIG_SERVER *apic;
+
   /* Number of cluster servers in the grid */
   guint32 num_cluster_servers;
 
@@ -351,6 +358,7 @@ struct ic_int_run_cluster_server
     threads.
   */
   IC_MEMORY_CONTAINER *conf_mc_ptr;
+  IC_MEMORY_CONTAINER *old_conf_mc_ptr;
 
   /*
     The thread pool handling all threads for the cluster server.
@@ -367,13 +375,6 @@ struct ic_int_run_cluster_server
     protect this variable since it's only used from one thread.
   */
   IC_CONNECTION *conn;
-
-  /*
-    This object is normally used by clients, we fill it up with what
-    is needed to allow us to reuse a number of methods from the
-    client handling part of the iClaustron configuration management.
-  */
-  IC_INT_API_CONFIG_SERVER *apic;
 
   /* The object handling heartbeats on the NDB API connections */
   IC_APID_CONNECTION *heartbeat_conn;
@@ -424,6 +425,7 @@ struct ic_int_run_cluster_server
   /* Variables used to control access to configuration */
   GMutex *config_mutex;
   GCond *config_cond;
+  guint32 conf_ref_count;
 
   /* Configuration has been locked indicator */
   gboolean locked_configuration;

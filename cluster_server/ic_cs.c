@@ -63,7 +63,6 @@ main(int argc, char *argv[])
 {
   int error, stop_error;
   gchar *err_str;
-  IC_API_CONFIG_SERVER *apic;
   gchar error_buffer[ERROR_MESSAGE_SIZE];
   IC_RUN_CLUSTER_SERVER *run_obj;
 
@@ -89,7 +88,6 @@ main(int argc, char *argv[])
     ("Starting the iClaustron Cluster Server"));
   if ((error= run_obj->run_op.ic_start_cluster_server(run_obj)))
     goto start_error;
-  apic= run_obj->run_op.ic_get_api_config(run_obj);
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Running the iClaustron Cluster Server"));
   if ((error= run_obj->run_op.ic_run_cluster_server(run_obj)))
