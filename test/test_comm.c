@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_base_header.h>
+#include <ic_port.h>
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_mc.h>

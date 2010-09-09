@@ -34,7 +34,7 @@ run_replication_server_thread(IC_APID_CONNECTION *apid_conn,
   DEBUG_ENTRY("run_replication_server_thread");
   (void)apid_conn;
   (void)thread_state;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 int main(int argc,

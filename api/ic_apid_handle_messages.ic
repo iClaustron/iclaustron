@@ -180,12 +180,12 @@ execRECORD_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   {
     attrinfo_data= ndb_message->segment_ptr[1];
     data_size= ndb_message->segment_size[1];
-    g_assert(header_size == 3);
+    ic_assert(header_size == 3);
   }
   else
   {
-    g_assert(ndb_message->num_segments == 0);
-    g_assert(header_size <= 25);
+    ic_assert(ndb_message->num_segments == 0);
+    ic_assert(header_size <= 25);
     attrinfo_data= &header_data[3];
     data_size= header_size - 3;
   }
@@ -194,7 +194,7 @@ execRECORD_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   if (transid[0] != transid_part1 ||
       transid[1] != transid_part2)
   {
-    g_assert(FALSE);
+    ic_assert(FALSE);
     return 1;
   }
   if (apid_op->op_type == IC_SCAN_OPERATION)
@@ -889,7 +889,7 @@ execAPI_HBCONF_v0(IC_NDB_MESSAGE *ndb_message,
   DEBUG_ENTRY("execAPI_HBCONF_v0");
   (void)ndb_message;
   (void)error_object;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -899,7 +899,7 @@ execAPI_HBREF_v0(IC_NDB_MESSAGE *ndb_message,
   DEBUG_ENTRY("execAPI_HBREF_v0");
   (void)ndb_message;
   (void)error_object;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 /*

@@ -297,7 +297,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
   {
     /* Step 0 */
     if ((error= remove_config_files(config_dir, clu_infos, old_version - 1)))
-      DEBUG_RETURN(error);
+      DEBUG_RETURN_INT(error);
   }
   /* Step 1 */
   if ((error= write_config_files(config_dir, clu_infos, clusters,
@@ -313,16 +313,16 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
   {
     /* Step 3 */
     if ((error= remove_config_files(config_dir, clu_infos, old_version)))
-      DEBUG_RETURN(error);
+      DEBUG_RETURN_INT(error);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 error:
   (void)remove_config_files(config_dir, clu_infos, old_version + 1);
   if (old_version == 0)
   {
     remove_config_version_file(config_dir);
   }
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -358,9 +358,9 @@ ic_load_config_version(IC_STRING *config_dir,
                                             *state,
                                             *pid)))
       {
-        DEBUG_RETURN(error);
+        DEBUG_RETURN_INT(error);
       }
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     error= ic_is_process_alive(loc_pid, process_name);
     if (error == 0)
@@ -372,13 +372,13 @@ ic_load_config_version(IC_STRING *config_dir,
       */
       if (error == 0)
         error= IC_ERROR_COULD_NOT_LOCK_CONFIGURATION;
-      DEBUG_RETURN(error);
+      DEBUG_RETURN_INT(error);
     }
     if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)
     {
-      DEBUG_RETURN(error);
+      DEBUG_RETURN_INT(error);
     }
-    g_assert(IC_ERROR_PROCESS_NOT_ALIVE);
+    ic_assert(IC_ERROR_PROCESS_NOT_ALIVE);
     error= 0;
     *state= (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY;
     if ((error= write_config_version_file(config_dir,
@@ -386,11 +386,11 @@ ic_load_config_version(IC_STRING *config_dir,
                                           *state,
                                           *pid)))
     {
-      DEBUG_RETURN(error);
+      DEBUG_RETURN_INT(error);
     }
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -429,9 +429,9 @@ remove_config_files(IC_STRING *config_dir,
     if ((error= ic_delete_file((const gchar *)file_name)))
       goto error;
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -480,9 +480,9 @@ write_config_files(IC_STRING *config_dir,
                                           FALSE)))
       goto error;
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -510,7 +510,7 @@ write_grid_config_file(IC_STRING *config_dir,
     goto file_error;
 
   if (!(dyn_array= ic_create_simple_dynamic_array()))
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   da_ops= &dyn_array->da_ops;
 
   while (*clu_infos)
@@ -580,7 +580,7 @@ error:
   ic_close_file(file_ptr);
   da_ops->ic_free_dynamic_array(dyn_array);
 file_error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -620,7 +620,7 @@ write_cluster_config_file(IC_STRING *config_dir,
     goto file_error;
 
   if (!(dyn_array= ic_create_simple_dynamic_array()))
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   da_ops= &dyn_array->da_ops;
 
   if ((error= write_default_sections(dyn_array, da_ops, buf,
@@ -649,7 +649,7 @@ error:
   ic_close_file(file_ptr);
   da_ops->ic_free_dynamic_array(dyn_array);
 file_error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -682,7 +682,7 @@ write_new_section_header(IC_DYNAMIC_ARRAY *dyn_array,
     goto error;
   error= 0;
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static gboolean
@@ -773,7 +773,7 @@ write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
     }
   }
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -841,7 +841,7 @@ write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
         default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
         break;
       default:
-        g_assert(FALSE);
+        ic_assert(FALSE);
         return 1;
     }
     if ((error= write_new_section_header(dyn_array, da_ops,
@@ -852,7 +852,7 @@ write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
       goto error;
   }
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -1037,7 +1037,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
     }
   }
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -1108,7 +1108,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
                                                 conf_entry->data_type)))
         {
           if (error == 2)
-            DEBUG_RETURN(1);
+            DEBUG_RETURN_INT(1);
           /*
             There was differing values in the nodes and thus we need to
             the standard default value.
@@ -1123,7 +1123,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
                                                     &val_str)))
         {
           if (error == 2)
-            DEBUG_RETURN(1);
+            DEBUG_RETURN_INT(1);
           val_str= conf_entry->default_string;
         }
       }
@@ -1146,22 +1146,22 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
           *(gchar**)data_ptr= val_str;
           break;
         default:
-          g_assert(FALSE);
-          DEBUG_RETURN(1);
+          ic_assert(FALSE);
+          DEBUG_RETURN_INT(1);
       }
       if (conf_entry->data_type != IC_CHARPTR)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
                                               &conf_entry->config_entry_name,
                                               value)))
-          DEBUG_RETURN(error);
+          DEBUG_RETURN_INT(error);
       }
       else
       {
         if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
                                                &conf_entry->config_entry_name,
                                                val_str)))
-          DEBUG_RETURN(error);
+          DEBUG_RETURN_INT(error);
       }
     }
   }
@@ -1224,10 +1224,10 @@ write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
                                                 str_ptr)))
           continue;
       }
-      DEBUG_RETURN(error);
+      DEBUG_RETURN_INT(error);
     }
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -1258,7 +1258,7 @@ write_line_with_int_value(IC_DYNAMIC_ARRAY *dyn_array,
     goto error;
   error= 0;
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -1287,7 +1287,7 @@ write_line_with_char_value(IC_DYNAMIC_ARRAY *dyn_array,
     goto error;
   error= 0;
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -1308,7 +1308,7 @@ check_if_all_same_value_charptr(IC_CLUSTER_CONFIG *clu_conf,
     {
       if (clu_conf->node_types[i] == (IC_NODE_TYPES)section_type)
       {
-        g_assert(clu_conf->node_config[i]);
+        ic_assert(clu_conf->node_config[i]);
         if (clu_conf->node_config[i] == NULL)
           return 2;
         str_ptr= (gchar**)(clu_conf->node_config[i] + offset);
@@ -1351,7 +1351,7 @@ check_if_all_same_value_int(IC_CLUSTER_CONFIG *clu_conf,
     {
       if (clu_conf->node_types[i] == (IC_NODE_TYPES)section_type)
       {
-        g_assert(clu_conf->node_config[i]);
+        ic_assert(clu_conf->node_config[i]);
         if (clu_conf->node_config[i] == NULL)
           return 2;
         data= get_node_data(clu_conf->node_config[i], offset, data_type);
@@ -1365,7 +1365,7 @@ check_if_all_same_value_int(IC_CLUSTER_CONFIG *clu_conf,
     num_comms= clu_conf->num_comms;
     for (i= 0; i < num_comms; i++)
     {
-      g_assert(clu_conf->comm_config[i]);
+      ic_assert(clu_conf->comm_config[i]);
       if (clu_conf->comm_config[i] == NULL)
         return 2;
       data= get_node_data(clu_conf->comm_config[i], offset, data_type);
@@ -1397,7 +1397,7 @@ get_node_data(const gchar *struct_ptr, guint32 offset,
       value= *(guint64*)(struct_ptr+offset);
       break;
     default:
-      g_assert(FALSE);
+      ic_assert(FALSE);
   }
   return value;
 }
@@ -1476,7 +1476,7 @@ write_config_version_file(IC_STRING *config_dir,
     error == 0 in this path.
   */
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -1527,7 +1527,7 @@ write_cv_file(IC_STRING *config_dir,
   error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
   ic_close_file(file_ptr);
 file_error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static void
@@ -1569,9 +1569,9 @@ read_config_version_file(IC_STRING *config_dir,
       *config_version= 0;
       *state= CONFIG_STATE_IDLE;
       *pid= 0;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
-    DEBUG_RETURN(error);
+    DEBUG_RETURN_INT(error);
   }
   ptr= release_ptr;
   /*
@@ -1592,7 +1592,7 @@ read_config_version_file(IC_STRING *config_dir,
 
 file_error:
   ic_free(release_ptr);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int

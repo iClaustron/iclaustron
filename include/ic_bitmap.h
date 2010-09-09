@@ -53,7 +53,7 @@ void ic_free_bitmap(IC_BITMAP* bitmap);
 #define ic_bitmap_get_num_bits(bitmap) (bitmap->num_bits)
 #define ic_bitmap_copy(dest_bitmap, src_bitmap) \
 { \
-  g_assert(IC_BITMAP_SIZE((dest_bitmap)->num_bits) == \
+  ic_assert(IC_BITMAP_SIZE((dest_bitmap)->num_bits) == \
            IC_BITMAP_SIZE((src_bitmap)->num_bits)); \
   memcpy((dest_bitmap)->bitmap_area, (src_bitmap)->bitmap_area, \
          IC_BITMAP_SIZE((src_bitmap)->num_bits)); \

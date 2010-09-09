@@ -52,17 +52,50 @@ void ic_debug_print_char_buf(gchar *buf, IC_THREAD_DEBUG *thread_debug);
 void ic_debug_printf(const char *format,...);
 void ic_debug_print_rec_buf(gchar *buf, guint32 read_size);
 void ic_debug_entry(const char *entry_point);
-void ic_debug_return();
+void ic_debug_return(gboolean ptr_val,
+                     int return_int,
+                     gchar *return_ptr);
 void ic_debug_thread_return();
 void ic_debug_thread_init(const gchar *entry_point);
 int ic_debug_open();
 void ic_debug_close();
-#define DEBUG_RETURN_EMPTY { ic_debug_return(); return; }
-#define DEBUG_RETURN(a) { ic_debug_return(); return a; }
-#define DEBUG_THREAD_RETURN { ic_debug_thread_return(); return NULL; }
+#define INT_DEBUG_RETURN_TYPE (int)0
+#define PTR_DEBUG_RETURN_TYPE (int)1
+#define VOID_DEBUG_RETURN_TYPE (int)2
+#define DEBUG_RETURN_INT(a) \
+{ \
+  ic_debug_return(INT_DEBUG_RETURN_TYPE, \
+                  (int)(a), \
+                  NULL); \
+  return (a); \
+}
+#define DEBUG_RETURN_PTR(a) \
+{ \
+  ic_debug_return(PTR_DEBUG_RETURN_TYPE, \
+                  (int)0, \
+                  (gchar*)(a)); \
+  return (a); \
+}
+#define DEBUG_RETURN_EMPTY \
+{ \
+  ic_debug_return(VOID_DEBUG_RETURN_TYPE, \
+                  (int)0, \
+                  NULL); \
+  return; \
+}
+#define DEBUG_THREAD_RETURN \
+{ \
+  ic_debug_thread_return(); \
+  return NULL; \
+}
 #define DEBUG_DECL(a) a
 #define DEBUG_PRINT_BUF(level, buf) \
-  { if (ic_get_debug() & level) { ic_debug_print_char_buf(buf, NULL); }}
+{ \
+  if (ic_get_debug() & (level)) \
+  { \
+    ic_debug_print_char_buf((buf), NULL); \
+  } \
+}
 #define DEBUG_PRINT(level, printf_args) \
   { if (ic_get_debug() & level) { ic_debug_printf printf_args; }}
 #define DEBUG(level, a) if (ic_get_debug() & level) a
@@ -70,13 +103,19 @@ void ic_debug_close();
 #define DEBUG_ENTRY(a) ic_debug_entry(a)
 #define DEBUG_OPEN(a) if (ic_debug_open(a)) return 1
 /* Since we debug ic_end we have to return before closing debug system */
-#define DEBUG_CLOSE { ic_debug_return(); ic_debug_close(); }
+#define DEBUG_CLOSE \
+{ \
+  ic_debug_return(VOID_DEBUG_RETURN_TYPE, (int)0, NULL); \
+  ic_debug_close(); \
+}
 #define DEBUG_IC_STRING(level, a) \
-  if (ic_get_debug() & level) ic_debug_print_rec_buf(a->str, a->len)
+  if (ic_get_debug() & (level)) \
+    ic_debug_print_rec_buf((a)->str, (a)->len)
 #else
 #define DEBUG_THREAD_RETURN return NULL
 #define DEBUG_RETURN_EMPTY return
-#define DEBUG_RETURN(a) return a
+#define DEBUG_RETURN_INT(a) return (a)
+#define DEBUG_RETURN_PTR(a) return (a)
 /* Define a variable only used in debug builds */
 #define DEBUG_DECL(a)
 #define DEBUG_PRINT_BUF(level, buf)

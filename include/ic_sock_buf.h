@@ -99,7 +99,7 @@ struct ic_sock_buf
   guint32 page_size;
   guint32 alloc_segments;
   gchar *alloc_segments_ref[MAX_ALLOC_SEGMENTS];
-  GMutex *ic_buf_mutex;
+  IC_MUTEX *ic_buf_mutex;
 };
 
 /*

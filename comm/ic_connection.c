@@ -100,14 +100,14 @@ static void
 lock_connect_mutex(IC_INT_CONNECTION *conn)
 {
   if (conn->is_mutex_used)
-    g_mutex_lock(conn->connect_mutex);
+    ic_mutex_lock(conn->connect_mutex);
 }
 
 static void
 unlock_connect_mutex(IC_INT_CONNECTION *conn)
 {
   if (conn->is_mutex_used)
-    g_mutex_unlock(conn->connect_mutex);
+    ic_mutex_unlock(conn->connect_mutex);
 }
 
 static void
@@ -136,9 +136,9 @@ is_mutex_conn_connected(IC_CONNECTION *ext_conn)
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   gboolean is_connected;
 
-  g_mutex_lock(conn->connect_mutex);
+  ic_mutex_lock(conn->connect_mutex);
   is_connected= conn->conn_stat.is_connected;
-  g_mutex_unlock(conn->connect_mutex);
+  ic_mutex_unlock(conn->connect_mutex);
   return is_connected;
 }
 
@@ -170,9 +170,9 @@ is_mutex_conn_thread_active(IC_CONNECTION *ext_conn)
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   gboolean is_thread_active;
 
-  g_mutex_lock(conn->connect_mutex);
+  ic_mutex_lock(conn->connect_mutex);
   is_thread_active= conn->conn_stat.is_connect_thread_active;
-  g_mutex_unlock(conn->connect_mutex);
+  ic_mutex_unlock(conn->connect_mutex);
   join_connect_thread(conn, is_thread_active);
   return is_thread_active;
 }
@@ -730,7 +730,7 @@ translate_hostnames(IC_INT_CONNECTION *conn)
                  sizeof(conn->conn_stat.client_ip_addr_str));
   }
 end:
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -1352,7 +1352,7 @@ open_write_socket_session_mutex(IC_CONNECTION *ext_conn,
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
 
   (void)total_size;
-  g_mutex_lock(conn->write_mutex);
+  ic_mutex_lock(conn->write_mutex);
   return 0;
 }
 
@@ -1362,7 +1362,7 @@ close_write_socket_session_mutex(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
 
-  g_mutex_unlock(conn->write_mutex);
+  ic_mutex_unlock(conn->write_mutex);
   return 0;
 }
 
@@ -1372,7 +1372,7 @@ open_read_socket_session_mutex(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
 
-  g_mutex_lock(conn->read_mutex);
+  ic_mutex_lock(conn->read_mutex);
   return 0; 
 }
 
@@ -1382,7 +1382,7 @@ close_read_socket_session_mutex(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
 
-  g_mutex_unlock(conn->read_mutex);
+  ic_mutex_unlock(conn->read_mutex);
   return 0;
 }
 
@@ -1454,13 +1454,13 @@ safe_read_stat_socket_conn(IC_CONNECTION *ext_conn,
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
 
-  g_mutex_lock(conn->connect_mutex);
-  g_mutex_lock(conn->write_mutex);
-  g_mutex_lock(conn->read_mutex);
+  ic_mutex_lock(conn->connect_mutex);
+  ic_mutex_lock(conn->write_mutex);
+  ic_mutex_lock(conn->read_mutex);
   read_stat_socket_connection(ext_conn, conn_stat, clear_stat_timer);
-  g_mutex_unlock(conn->read_mutex);
-  g_mutex_unlock(conn->write_mutex);
-  g_mutex_unlock(conn->connect_mutex);
+  ic_mutex_unlock(conn->read_mutex);
+  ic_mutex_unlock(conn->write_mutex);
+  ic_mutex_unlock(conn->connect_mutex);
 }
 
 /* Implements ic_read_connection_time */
@@ -1517,11 +1517,11 @@ static void
 destroy_mutexes(IC_INT_CONNECTION *conn)
 {
   if (conn->read_mutex)
-    g_mutex_free(conn->read_mutex);
+    ic_mutex_destroy(conn->read_mutex);
   if (conn->write_mutex)
-    g_mutex_free(conn->write_mutex);
+    ic_mutex_destroy(conn->write_mutex);
   if (conn->connect_mutex)
-    g_mutex_free(conn->connect_mutex);
+    ic_mutex_destroy(conn->connect_mutex);
   conn->read_mutex= NULL;
   conn->write_mutex= NULL;
   conn->connect_mutex= NULL;
@@ -1530,9 +1530,9 @@ destroy_mutexes(IC_INT_CONNECTION *conn)
 static gboolean
 create_mutexes(IC_INT_CONNECTION *conn)
 {
-  if (!((conn->read_mutex= g_mutex_new()) &&
-        (conn->write_mutex= g_mutex_new()) &&
-        (conn->connect_mutex= g_mutex_new())))
+  if (!((conn->read_mutex= ic_mutex_create()) &&
+        (conn->write_mutex= ic_mutex_create()) &&
+        (conn->connect_mutex= ic_mutex_create())))
   {
     destroy_mutexes(conn);
     return TRUE;
@@ -1984,11 +1984,14 @@ ic_create_socket_object(gboolean is_client,
                         void *auth_obj)
 {
   DEBUG_ENTRY("ic_create_socket_object");
-  DEBUG_RETURN(int_create_socket_object(is_client, is_mutex_used,
-                                        is_connect_thread_used,
-                                        FALSE, FALSE,
-                                        read_buf_size,
-                                        auth_func, auth_obj));
+  DEBUG_RETURN_PTR(int_create_socket_object(is_client,
+                                            is_mutex_used,
+                                            is_connect_thread_used,
+                                            FALSE,
+                                            FALSE,
+                                            read_buf_size,
+                                            auth_func,
+                                            auth_obj));
 }
 
 #ifdef HAVE_SSL
@@ -2049,12 +2052,12 @@ ic_ssl_init()
 
   if (!SSL_library_init())
   {
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   if (!((dh_512= DH_new()) &&
       (dh_1024= DH_new())))
   {
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   /*
     Check if BIN_bin2bn allocates memory, if so we need to deallocate it in
@@ -2065,14 +2068,14 @@ ic_ssl_init()
         (dh_512->g= BN_bin2bn(dh_512_group, 1, NULL)) &&
         (dh_1024->g= BN_bin2bn(dh_1024_group, 1, NULL))))
   {
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   /* Provide random entropy */
   if (!RAND_load_file("/dev/random", 1024))
   {
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 void ic_ssl_end()
@@ -2251,7 +2254,7 @@ set_up_ssl_connection(IC_CONNECTION *ext_in_conn,
   lock_connect_mutex(in_conn);
   error= set_up_socket_connection(ext_in_conn, timeout_func, timeout_obj);
   unlock_connect_mutex(in_conn);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 /* Implements ic_accept_connection */
@@ -2265,7 +2268,7 @@ accept_ssl_connection(IC_CONNECTION *ext_conn)
   lock_connect_mutex(conn);
   error= accept_socket_connection(ext_conn)
   unlock_connect_mutex(conn);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 /* Implements ic_free_connection */
@@ -2313,12 +2316,12 @@ fork_accept_ssl_connection(IC_CONNECTION *ext_orig_conn,
       goto error_handler;
   }
   unlock_connect_mutex(orig_conn);
-  DEBUG_RETURN(new_conn);
+  DEBUG_RETURN_PTR(new_conn);
 
 error_handler:
   unlock_connect_mutex(orig_conn);
   free_ssl_connection(new_conn);
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }
 
 /* Implements ic_read_connection */
@@ -2333,7 +2336,7 @@ read_ssl_connection(IC_CONNECTION *ext_conn, void *buf, guint32 buf_size,
   lock_connect_mutex(conn);
   error= read_socket_connection(ext_conn, buf, buf_size, read_size);
   unlock_connect_mutex(conn);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 /* Implements ic_write_connection */
@@ -2349,7 +2352,7 @@ write_ssl_connection(IC_CONNECTION *ext_conn,
   lock_connect_mutex(conn);
   error= write_socket_connection(ext_conn, buf, size, prio_level, secs_to_try);
   unlock_connect_mutex(conn);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 /* Implements ic_writev_connection */
@@ -2367,7 +2370,7 @@ writev_ssl_connection(IC_CONNECTION *ext_conn,
   error= writev_socket_connection(ext_conn, write_vector, iovec_size,
                                   tot_size, secs_to_try);
   unlock_connect_mutex(conn);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 IC_CONNECTION*
@@ -2392,7 +2395,7 @@ ic_create_ssl_object(gboolean is_client,
                                            read_buf_size,
                                            auth_func, auth_obj)))
   {
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   }
   ssl_conn= (IC_SSL_CONNECTION*)ext_conn;
   conn= (IC_INT_CONNECTION*)ext_conn;
@@ -2401,7 +2404,7 @@ ic_create_ssl_object(gboolean is_client,
       ic_strdup(&ssl_conn->passwd_string, passwd_string))
   {
     free_ssl_connection(ext_conn);
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   }
   conn->conn_op.ic_set_up_connection= set_up_ssl_connection;
   conn->conn_op.ic_accept_connection= accept_ssl_connection;
@@ -2421,14 +2424,14 @@ ic_create_ssl_object(gboolean is_client,
 
   set_up_rw_methods_mutex(conn, FALSE);
   conn->conn_op.ic_fork_accept_connection= fork_accept_ssl_connection;
-  DEBUG_RETURN(conn);
+  DEBUG_RETURN_PTR(conn);
 }
 #else
 int ic_ssl_init()
 {
   DEBUG_ENTRY("ic_ssl_init");
   DEBUG_PRINT(COMM_LEVEL, ("SSL not compiled in"));
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 void ic_ssl_end()

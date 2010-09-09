@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_base_header.h>
+#include <ic_err.h>
 #include <ic_port.h>
 #include <ic_mc.h>
 #include <ic_bitmap.h>
@@ -83,14 +84,14 @@ end:
 void
 ic_bitmap_set_bit(IC_BITMAP *bitmap, guint32 bit_number)
 {
-  g_assert(bit_number < bitmap->num_bits);
+  ic_assert(bit_number < bitmap->num_bits);
   macro_ic_bitmap_set_bit(bitmap, bit_number);
 }
 
 gboolean
 ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
 {
-  g_assert(bit_number < bitmap->num_bits);
+  ic_assert(bit_number < bitmap->num_bits);
   return macro_ic_is_bitmap_set(bitmap, bit_number);
 }
 #endif

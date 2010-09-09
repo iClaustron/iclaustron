@@ -95,8 +95,6 @@ IC_TIMER ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 void ic_sleep(guint32 seconds_to_sleep);
 void ic_microsleep(guint32 microseconds_to_sleep);
 
-void ic_cond_timed_wait(GCond *cond, GMutex *mutex, guint32 micros);
-
 /* Interface to daemonize a program */
 int ic_daemonize(gchar *log_file);
 /* Interface to set function to call at kill signal */
@@ -125,4 +123,25 @@ void ic_controlled_terminate();
   result_char[3]= input_char[0]; \
 }
 guint32 ic_byte_order();
+
+#define IC_MUTEX GMutex
+#define IC_COND GCond
+#define IC_SPINLOCK GMutex
+
+void ic_cond_signal(IC_COND *cond);
+void ic_cond_broadcast(IC_COND *cond);
+void ic_cond_wait(IC_COND *cond, IC_MUTEX *mutex);
+void ic_cond_timed_wait(IC_COND *cond, IC_MUTEX *mutex, guint32 micros);
+IC_COND* ic_cond_create();
+void ic_cond_destroy(IC_COND *cond);
+
+void ic_mutex_lock(IC_MUTEX *mutex);
+void ic_mutex_unlock(IC_MUTEX *mutex);
+IC_MUTEX* ic_mutex_create();
+void ic_mutex_destroy(IC_MUTEX *mutex);
+
+void ic_spin_lock(IC_SPINLOCK *spinlock);
+void ic_spin_unlock(IC_SPINLOCK *spinlock);
+IC_SPINLOCK* ic_spinlock_create();
+void ic_spinlock_destroy();
 #endif

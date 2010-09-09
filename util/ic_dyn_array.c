@@ -257,8 +257,8 @@ write_simple_dynamic_array_to_disk(IC_DYNAMIC_ARRAY *ext_dyn_array,
       return ret_code;
     old_dyn_buf= dyn_buf;
     dyn_buf= dyn_buf->next_dyn_buf;
-    g_assert((old_dyn_buf != last_dyn_buf && dyn_buf) ||
-             (old_dyn_buf == last_dyn_buf && !dyn_buf));
+    ic_assert((old_dyn_buf != last_dyn_buf && dyn_buf) ||
+              (old_dyn_buf == last_dyn_buf && !dyn_buf));
   }
   return 0;
 }
@@ -435,7 +435,7 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   {
     loop_dyn_buf= loop_dyn_buf->next_dyn_buf;
     buf_size+= SIMPLE_DYNAMIC_ARRAY_BUF_SIZE;
-    g_assert(size + (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - 1) >= buf_size);
+    ic_assert(size + (SIMPLE_DYNAMIC_ARRAY_BUF_SIZE - 1) >= buf_size);
     last_dyn_index= dyn_array->ord_array.last_dyn_index;
     if ((ret_code= insert_buf_in_ordered_dynamic_index(dyn_array,
                                                        last_dyn_index,
@@ -830,11 +830,11 @@ ic_create_dynamic_translation()
   if (IC_ERROR_INJECT(30) ||
       !(dyn_trans= (IC_DYNAMIC_TRANSLATION_INT*)ic_calloc(
                       sizeof(IC_DYNAMIC_TRANSLATION_INT))))
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   if (!(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_create_ordered_dynamic_array()))
   {
     ic_free((void*)dyn_trans);
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   }
   transl_entry.position= (guint64)0;
   if (insert_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array,
@@ -843,7 +843,7 @@ ic_create_dynamic_translation()
   {
     ic_free((void*)dyn_trans);
     free_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array);
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   }
   dyn_trans->dt_ops.ic_insert_translation_object= insert_translation_object;
   dyn_trans->dt_ops.ic_remove_translation_object= remove_translation_object;
@@ -851,5 +851,5 @@ ic_create_dynamic_translation()
   dyn_trans->dt_ops.ic_get_translation_object= get_translation_object;
   dyn_trans->dt_ops.ic_get_max_index= get_max_index;
   dyn_trans->dyn_array= dyn_array;
-  DEBUG_RETURN((IC_DYNAMIC_TRANSLATION*)dyn_trans);
+  DEBUG_RETURN_PTR((IC_DYNAMIC_TRANSLATION*)dyn_trans);
 }

@@ -66,9 +66,9 @@ get_config_entry_mandatory(guint32 bit_id,
     if (conf_entry && conf_entry->is_mandatory &&
         (guint32)conf_entry->mandatory_bit == bit_id &&
         conf_entry->config_types & (1 << conf_type))
-      DEBUG_RETURN(conf_entry);
+      DEBUG_RETURN_PTR(conf_entry);
   }
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }
 
 static int
@@ -153,10 +153,10 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       break;
   }
 end:
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 mandatory_error:
   missing_bits= mandatory_bits ^
          ((IC_DATA_SERVER_CONFIG*)current_config)->mandatory_bits;
@@ -174,7 +174,7 @@ mandatory_error:
       ic_guint64_hex_str(missing_bits,
                          (gchar*)&buf)));
   }
-  g_assert(missing_bits);
+  ic_assert(missing_bits);
   for (i= 0; i < 64; i++)
   {
     bit64= 1;
@@ -194,7 +194,7 @@ mandatory_error:
       ic_printf("Missing item is %s", conf_entry->config_entry_name.str);
     }
   }
-  DEBUG_RETURN(1);
+  DEBUG_RETURN_INT(1);
 }
 
 static void
@@ -331,31 +331,31 @@ conf_serv_init(void *ic_conf, guint32 pass)
     if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
                                                   0, FALSE)))
     {
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)temp_mc_ptr->mc_ops.ic_mc_calloc(
                     temp_mc_ptr, sizeof(IC_CLUSTER_CONFIG_LOAD))))
     {
       temp_mc_ptr->mc_ops.ic_mc_free(temp_mc_ptr);
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
     clu_conf->temp_mc_ptr= temp_mc_ptr;
     if (!(clu_conf_perm= (IC_CLUSTER_CONFIG*)perm_mc_ptr->mc_ops.ic_mc_calloc(
                          perm_mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
     {
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     clu_conf->conf= clu_conf_perm;
     clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
   clu_conf= conf->config_ptr.clu_conf;
   clu_conf->conf->max_node_id= max_node_id=
     IC_MAX(clu_conf->conf->max_node_id, grid_clu_conf->max_node_id);
   if (max_node_id == 0)
   {
-    DEBUG_RETURN(IC_ERROR_NO_NODES_FOUND);
+    DEBUG_RETURN_INT(IC_ERROR_NO_NODES_FOUND);
   }
   clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
   /*
@@ -386,31 +386,31 @@ conf_serv_init(void *ic_conf, guint32 pass)
   if (!(clu_conf->struct_memory= (gchar*)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr, size_structs)))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   if (!(clu_conf->conf->node_config= (gchar**)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                                 sizeof(gchar*)*(max_node_id + 1))))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   if (!(clu_conf->conf->comm_config= (gchar**)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                   sizeof(gchar*)*(clu_conf->total_num_comms + 1))))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   if (!(clu_conf->string_memory= (gchar*)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                                          clu_conf->size_string_memory)))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   if (!(clu_conf->conf->node_types= (IC_NODE_TYPES*)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                              sizeof(IC_NODE_TYPES)*(max_node_id+1))))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
 
   for (i= 0; i <= grid_clu_conf->max_node_id; i++)
@@ -452,7 +452,7 @@ conf_serv_init(void *ic_conf, guint32 pass)
   init_config_object((gchar*)&clu_conf->default_socket_config,
                      sizeof(clu_conf->default_socket_config),
                      IC_COMM_TYPE);
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -478,30 +478,30 @@ conf_grid_common_serv_init(void *ic_conf, guint32 pass)
     if (!(temp_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
                                                   0, FALSE)))
     {
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     if (!(clu_conf= (IC_CLUSTER_CONFIG_LOAD*)temp_mc_ptr->mc_ops.ic_mc_calloc(
                     temp_mc_ptr, sizeof(IC_CLUSTER_CONFIG_LOAD))))
     {
       temp_mc_ptr->mc_ops.ic_mc_free(temp_mc_ptr);
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     conf->config_ptr.clu_conf= (struct ic_cluster_config_load*)clu_conf;
     clu_conf->temp_mc_ptr= temp_mc_ptr;
     if (!(clu_conf_perm= (IC_CLUSTER_CONFIG*)perm_mc_ptr->mc_ops.ic_mc_calloc(
                          perm_mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
     {
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     clu_conf->conf= clu_conf_perm;
     clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
   clu_conf= conf->config_ptr.clu_conf;
   max_node_id= clu_conf->conf->max_node_id;
   if (max_node_id == 0)
   {
-    DEBUG_RETURN(IC_ERROR_NO_NODES_FOUND);
+    DEBUG_RETURN_INT(IC_ERROR_NO_NODES_FOUND);
   }
   clu_conf->current_node_config_type= IC_NO_CONFIG_TYPE;
   /*
@@ -516,25 +516,25 @@ conf_grid_common_serv_init(void *ic_conf, guint32 pass)
   if (!(clu_conf->struct_memory= (gchar*)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr, size_structs)))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   if (!(clu_conf->conf->node_config= (gchar**)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                                 sizeof(gchar*)*(max_node_id + 1))))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   if (!(clu_conf->string_memory= (gchar*)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                                          clu_conf->size_string_memory)))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   if (!(clu_conf->conf->node_types= (IC_NODE_TYPES*)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr,
                              sizeof(IC_NODE_TYPES)*(max_node_id+1))))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
 
   init_config_object((gchar*)&clu_conf->default_cluster_server_config,
@@ -543,7 +543,7 @@ conf_grid_common_serv_init(void *ic_conf, guint32 pass)
   init_config_object((gchar*)&clu_conf->default_cluster_mgr_config,
                      sizeof(clu_conf->default_cluster_mgr_config),
                      IC_CLUSTER_MANAGER_TYPE);
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static void
@@ -569,7 +569,7 @@ conf_serv_add_section(void *ic_conf,
   (void)section_number;
 
   if ((error= complete_section(ic_conf, line_number, pass)))
-    DEBUG_RETURN(error);
+    DEBUG_RETURN_INT(error);
   clu_conf->default_section= FALSE;
   if (ic_cmp_null_term_str(data_server_str, section_name) == 0)
   {
@@ -578,7 +578,7 @@ conf_serv_add_section(void *ic_conf,
     {
       clu_conf->conf->num_nodes++;
       clu_conf->conf->num_data_servers++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_DATA_SERVER_CONFIG),
               (void*)&clu_conf->default_data_server_config);
@@ -591,7 +591,7 @@ conf_serv_add_section(void *ic_conf,
     {
       clu_conf->conf->num_clients++;
       clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_CLIENT_CONFIG),
               (void*)&clu_conf->default_client_config);
@@ -604,7 +604,7 @@ conf_serv_add_section(void *ic_conf,
     {
       clu_conf->conf->num_sql_servers++;
       clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_SQL_SERVER_CONFIG),
               (void*)&clu_conf->default_sql_server_config);
@@ -617,7 +617,7 @@ conf_serv_add_section(void *ic_conf,
     {
       clu_conf->conf->num_rep_servers++;
       clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_REP_SERVER_CONFIG),
               (void*)&clu_conf->default_rep_server_config);
@@ -630,7 +630,7 @@ conf_serv_add_section(void *ic_conf,
     {
       clu_conf->conf->num_file_servers++;
       clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_FILE_SERVER_CONFIG),
               (void*)&clu_conf->default_file_server_config);
@@ -643,7 +643,7 @@ conf_serv_add_section(void *ic_conf,
     {
       clu_conf->conf->num_restore_nodes++;
       clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_RESTORE_CONFIG),
               (void*)&clu_conf->default_restore_config);
@@ -655,7 +655,7 @@ conf_serv_add_section(void *ic_conf,
     if (pass == INITIAL_PASS)
     {
       clu_conf->conf->num_comms++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_SOCKET_LINK_CONFIG),
               (void*)&clu_conf->default_socket_config);
@@ -709,10 +709,10 @@ conf_serv_add_section(void *ic_conf,
     else
     {
       DEBUG_PRINT(CONFIG_LEVEL, ("No such config section"));
-      DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
+      DEBUG_RETURN_INT(IC_ERROR_CONFIG_NO_SUCH_SECTION);
     }
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -730,7 +730,7 @@ conf_serv_add_grid_common_section(void *ic_conf,
   (void)section_number;
 
   if ((error= complete_section(ic_conf, line_number, pass)))
-    DEBUG_RETURN(error);
+    DEBUG_RETURN_INT(error);
   clu_conf->default_section= FALSE;
   if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
   {
@@ -739,7 +739,7 @@ conf_serv_add_grid_common_section(void *ic_conf,
     {
       clu_conf->conf->num_cluster_servers++;
       clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_CLUSTER_SERVER_CONFIG),
               (void*)&clu_conf->default_cluster_server_config);
@@ -752,7 +752,7 @@ conf_serv_add_grid_common_section(void *ic_conf,
     {
       clu_conf->conf->num_cluster_mgrs++;
       clu_conf->conf->num_nodes++;
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     init_node(clu_conf, sizeof(IC_CLUSTER_MANAGER_CONFIG),
               (void*)&clu_conf->default_cluster_mgr_config);
@@ -776,10 +776,10 @@ conf_serv_add_grid_common_section(void *ic_conf,
     else
     {
       DEBUG_PRINT(CONFIG_LEVEL, ("No such config section"));
-      DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
+      DEBUG_RETURN_INT(IC_ERROR_CONFIG_NO_SUCH_SECTION);
     }
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -808,13 +808,13 @@ conf_serv_add_key(void *ic_conf,
   (void)buf;
 
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
-    DEBUG_RETURN(IC_ERROR_NO_SECTION_DEFINED_YET);
+    DEBUG_RETURN_INT(IC_ERROR_NO_SECTION_DEFINED_YET);
   if (!(conf_entry= (IC_CONFIG_ENTRY*)ic_hashtable_search(glob_conf_hash,
                                                           (void*)key_name)))
-    DEBUG_RETURN(IC_ERROR_NO_SUCH_CONFIG_KEY);
+    DEBUG_RETURN_INT(IC_ERROR_NO_SUCH_CONFIG_KEY);
   struct_ptr= (gchar*)clu_conf->current_node_config + conf_entry->offset;
   if (!(conf_entry->config_types & (1 << clu_conf->current_node_config_type)))
-    DEBUG_RETURN(IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION);
+    DEBUG_RETURN_INT(IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION);
   if (conf_entry->is_mandatory && (pass != INITIAL_PASS))
   {
     ((IC_DATA_SERVER_CONFIG*)clu_conf->current_node_config)->mandatory_bits|=
@@ -833,12 +833,12 @@ conf_serv_add_key(void *ic_conf,
       *(gchar**)struct_ptr= clu_conf->string_memory;
       clu_conf->string_memory+= (data->len+1);
     }
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
   if (ic_conv_config_str_to_int(&value, data))
-    DEBUG_RETURN(IC_ERROR_WRONG_CONFIG_NUMBER);
+    DEBUG_RETURN_INT(IC_ERROR_WRONG_CONFIG_NUMBER);
   if (conf_entry->is_boolean && value > 1)
-    DEBUG_RETURN(IC_ERROR_NO_BOOLEAN_VALUE);
+    DEBUG_RETURN_INT(IC_ERROR_NO_BOOLEAN_VALUE);
   num32_check= 1;
   num32_check<<= 32;
   if (!ic_cmp_null_term_str(node_id_str, key_name))
@@ -852,7 +852,7 @@ conf_serv_add_key(void *ic_conf,
       {
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Trying to define node %u twice", (guint32)value));
-        DEBUG_RETURN(IC_ERROR_NODE_ALREADY_DEFINED);
+        DEBUG_RETURN_INT(IC_ERROR_NODE_ALREADY_DEFINED);
       }
       clu_conf->conf->node_config[value]= (gchar*)clu_conf->current_node_config;
       clu_conf->conf->node_types[value]= 
@@ -864,14 +864,14 @@ conf_serv_add_key(void *ic_conf,
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Parameter %s is smaller than min_value = %u",
        ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->min_value));
-    DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+    DEBUG_RETURN_INT(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
   else if (conf_entry->is_max_value_defined && conf_entry->max_value < value)
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Parameter %s is larger than min_value = %u",
       ic_get_ic_string(key_name, (gchar*)&buf), conf_entry->max_value));
-    DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+    DEBUG_RETURN_INT(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
   else if ((conf_entry->data_type == IC_UINT16 && value > 65535) ||
            (conf_entry->data_type == IC_CHAR && value > 255) ||
@@ -880,10 +880,10 @@ conf_serv_add_key(void *ic_conf,
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("Parameter %s is larger than its type",
            ic_get_ic_string(key_name, (gchar*)&buf)));
-    DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+    DEBUG_RETURN_INT(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
   if (pass == INITIAL_PASS)
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   /* Assign value of configuration variable according to its data type.  */
   if (conf_entry->data_type == IC_CHAR ||
       conf_entry->data_type == IC_BOOLEAN)
@@ -896,11 +896,11 @@ conf_serv_add_key(void *ic_conf,
     *(guint64*)struct_ptr= value;
   else
   {
-    g_assert(FALSE);
+    ic_assert(FALSE);
     abort();
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -922,7 +922,7 @@ conf_serv_add_comment(void *ic_conf,
 
   if (pass == INITIAL_PASS)
     clu_conf->comments.num_comments++;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -1015,13 +1015,13 @@ ic_load_config_server_from_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                           FALSE);
   if (clu_conf)
   {
-    g_assert(!err_obj.err_num);
+    ic_assert(!err_obj.err_num);
     return clu_conf;
   }
-  g_mutex_lock(run_obj->state.protect_state);
+  ic_mutex_lock(run_obj->state.protect_state);
   if (!run_obj->state.err_obj.err_num)
     memcpy(&run_obj->state.err_obj, &err_obj, sizeof(IC_CONFIG_ERROR));
-  g_mutex_unlock(run_obj->state.protect_state);
+  ic_mutex_unlock(run_obj->state.protect_state);
   return NULL;
 }
 
@@ -1093,11 +1093,11 @@ load_config_server_from_files(gchar *config_file,
     }
   }
   config_server_ops.ic_init_end(conf_server);
-  DEBUG_RETURN(ret_ptr);
+  DEBUG_RETURN_PTR(ret_ptr);
 
 file_open_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
         "Couldn't open file %s\n", config_file);
   err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }

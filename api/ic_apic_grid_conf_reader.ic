@@ -83,7 +83,7 @@ cluster_config_init(void *ic_conf, guint32 pass)
   {
     if (!(temp= (IC_CLUSTER_CONFIG_TEMP*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
                       sizeof(IC_CLUSTER_CONFIG_TEMP))))
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     temp->string_memory= NULL;
     conf->config_ptr.cluster_conf= temp;
   }
@@ -93,25 +93,25 @@ cluster_config_init(void *ic_conf, guint32 pass)
     if (!(clusters= (IC_CLUSTER_CONNECT_INFO**)
            mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
            (temp->num_clusters + 1) * sizeof(IC_CLUSTER_CONNECT_INFO*))))
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     temp->clu_info= clusters;
     for (i= 0; i < temp->num_clusters; i++)
     {
       if (!(clusters[i]= (IC_CLUSTER_CONNECT_INFO*)
           mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
             sizeof(IC_CLUSTER_CONNECT_INFO))))
-        DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+        DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     if (!(temp->string_memory= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
           temp->size_string_memory)))
-      DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     clusters[temp->num_clusters]= NULL;
   }
   temp->num_clusters= 0;
   temp->init_state= TRUE;
   temp->size_string_memory= 0;
   init_cluster_params(temp);
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -151,9 +151,9 @@ cluster_config_add_section(void *ic_conf,
   else
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("No such cluster config section"));
-    DEBUG_RETURN(IC_ERROR_CONFIG_NO_SUCH_SECTION);
+    DEBUG_RETURN_INT(IC_ERROR_CONFIG_NO_SUCH_SECTION);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -179,7 +179,7 @@ cluster_config_add_key(void *ic_conf,
 
   temp= conf->config_ptr.cluster_conf;
   if (temp->init_state)
-    DEBUG_RETURN(IC_ERROR_NO_SECTION_DEFINED_YET);
+    DEBUG_RETURN_INT(IC_ERROR_NO_SECTION_DEFINED_YET);
   if (pass == INITIAL_PASS)
     temp->size_string_memory+= (data->len + 1);
   else
@@ -199,17 +199,17 @@ cluster_config_add_key(void *ic_conf,
     if (pass != INITIAL_PASS)
     {
       if (ic_conv_config_str_to_int(&value, data))
-        DEBUG_RETURN(IC_ERROR_WRONG_CONFIG_NUMBER);
+        DEBUG_RETURN_INT(IC_ERROR_WRONG_CONFIG_NUMBER);
       temp->cluster_id= (guint32)value;
       if (temp->cluster_id > IC_MAX_CLUSTER_ID)
-        DEBUG_RETURN(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
+        DEBUG_RETURN_INT(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
     }
   }
   else
   {
-    DEBUG_RETURN(IC_ERROR_NO_SUCH_CONFIG_KEY);
+    DEBUG_RETURN_INT(IC_ERROR_NO_SUCH_CONFIG_KEY);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -322,11 +322,11 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
     ret_ptr= cluster_conf.config_ptr.cluster_conf->clu_info;
     cluster_config_ops.ic_init_end(&cluster_conf);
   }
-  DEBUG_RETURN(ret_ptr);
+  DEBUG_RETURN_PTR(ret_ptr);
 
 file_open_error:
   g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
         "Failed reading cluster config file %s\n", file_name);
   err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }

@@ -150,14 +150,14 @@ translate_config(IC_INT_API_CONFIG_SERVER *apic,
   int error;
   DEBUG_ENTRY("translate_config");
 
-  g_assert((config_size & 3) == 0);
+  ic_assert((config_size & 3) == 0);
   bin_config_size= (config_size >> 2) * 3;
   /*
     This memory allocation is temporary allocation simply because size is
     variable and can be larger than stack.
   */
   if (!(bin_buf= ic_calloc(bin_config_size)))
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   if ((error= ic_base64_decode((guint8*)bin_buf, &bin_config_size,
                                (const guint8*)config_buf, config_size)))
   {
@@ -199,7 +199,7 @@ translate_config(IC_INT_API_CONFIG_SERVER *apic,
 error:
 end:
   ic_free(bin_buf);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -413,7 +413,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
   }
   if ((error= arrange_node_arrays(apic, conf_obj)))
     goto error;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 error:
   if (!first)
   {
@@ -427,7 +427,7 @@ error:
     conf_obj->node_ids= NULL;
     conf_obj->node_config= NULL;
   }
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -473,7 +473,7 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Node id = %u for index %u", value, node_index));
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -578,7 +578,7 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
         size_config_objects+= sizeof(IC_CLUSTER_MANAGER_CONFIG);
         break;
       default:
-        g_assert(FALSE);
+        ic_assert(FALSE);
         break;
     }
   }
@@ -594,7 +594,7 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                      size_config_objects)))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
 
   conf_obj_ptr= apic->temp->config_memory_to_return;
@@ -632,7 +632,7 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
         size_struct= sizeof(IC_CLUSTER_MANAGER_CONFIG);
         break;
       default:
-        g_assert(FALSE);
+        ic_assert(FALSE);
         break;
     }
     init_config_object(conf_obj_ptr, size_struct,
@@ -646,9 +646,9 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
     conf_obj->comm_config[i]= conf_obj_ptr;
     conf_obj_ptr+= sizeof(IC_COMM_LINK_CONFIG);
   }
-  g_assert(conf_obj_ptr == (apic->temp->config_memory_to_return +
+  ic_assert(conf_obj_ptr == (apic->temp->config_memory_to_return +
                             size_config_objects));
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -664,7 +664,7 @@ assign_system_section(IC_CLUSTER_CONFIG *clu_conf,
   DEBUG_ENTRY("assign_system_section");
 
   if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE)
-    DEBUG_RETURN(0); /* Ignore */
+    DEBUG_RETURN_INT(0); /* Ignore */
   /*
     We have stored the system entries as 1001, 1002 and so forth
     although in the protocol they are 1,2 and so forth. This is
@@ -676,16 +676,16 @@ assign_system_section(IC_CLUSTER_CONFIG *clu_conf,
     PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
   }
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
-    DEBUG_RETURN(0); /* Ignore */
+    DEBUG_RETURN_INT(0); /* Ignore */
   sys_conf= &clu_conf->sys_conf;
-  DEBUG_RETURN(assign_config_value(conf_entry,
-                                   apic,
-                                   IC_SYSTEM_TYPE,
-                                   key_type,
-                                   (gchar*)sys_conf,
-                                   value,
-                                   (gchar**)key_value,
-                                   hash_key));
+  DEBUG_RETURN_INT(assign_config_value(conf_entry,
+                                       apic,
+                                       IC_SYSTEM_TYPE,
+                                       key_type,
+                                       (gchar*)sys_conf,
+                                       value,
+                                       (gchar**)key_value,
+                                       hash_key));
 }
 
 static int
@@ -702,7 +702,7 @@ assign_node_section(IC_CLUSTER_CONFIG *conf_obj,
 
   if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE ||
       hash_key == IC_NODE_ID)
-    DEBUG_RETURN(0); /* Ignore for now */
+    DEBUG_RETURN_INT(0); /* Ignore for now */
   if (!(conf_entry= get_conf_entry(hash_key)))
   {
     PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
@@ -720,14 +720,14 @@ assign_node_section(IC_CLUSTER_CONFIG *conf_obj,
     PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
   }
   node_type= conf_obj->node_types[node_sect_id];
-  DEBUG_RETURN(assign_config_value(conf_entry,
-                                   apic,
-                                   (IC_CONFIG_TYPES)node_type,
-                                   key_type,
-                                   node_config,
-                                   value,
-                                   (gchar**)key_value,
-                                   hash_key));
+  DEBUG_RETURN_INT(assign_config_value(conf_entry,
+                                       apic,
+                                       (IC_CONFIG_TYPES)node_type,
+                                       key_type,
+                                       node_config,
+                                       value,
+                                       (gchar**)key_value,
+                                       hash_key));
 }
 
 static int
@@ -742,23 +742,23 @@ assign_comm_section(IC_CLUSTER_CONFIG *conf_obj,
   DEBUG_ENTRY("assign_comm_section");
 
   if (hash_key == IC_PARENT_ID || hash_key == IC_NODE_TYPE)
-    DEBUG_RETURN(0); /* Ignore */
+    DEBUG_RETURN_INT(0); /* Ignore */
   if (!(conf_entry= get_conf_entry(hash_key)))
   {
     PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
   }
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
-    DEBUG_RETURN(0); /* Ignore */
-  g_assert(comm_sect_id < conf_obj->num_comms);
+    DEBUG_RETURN_INT(0); /* Ignore */
+  ic_assert(comm_sect_id < conf_obj->num_comms);
   socket_conf= (IC_SOCKET_LINK_CONFIG*)conf_obj->comm_config[comm_sect_id];
-  DEBUG_RETURN(assign_config_value(conf_entry,
-                                   apic,
-                                   IC_COMM_TYPE,
-                                   key_type,
-                                   (gchar*)socket_conf,
-                                   value,
-                                   (gchar**)key_value,
-                                   hash_key));
+  DEBUG_RETURN_INT(assign_config_value(conf_entry,
+                                       apic,
+                                       IC_COMM_TYPE,
+                                       key_type,
+                                       (gchar*)socket_conf,
+                                       value,
+                                       (gchar**)key_value,
+                                       hash_key));
 }
 
 static int
@@ -778,7 +778,7 @@ arrange_node_arrays(IC_INT_API_CONFIG_SERVER *apic,
     mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, (conf_obj->max_node_id + 1) *
                                         sizeof(gchar*));
   if (!new_node_types || !new_node_config)
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 
   for (i= 0; i < conf_obj->num_nodes; i++)
   {
@@ -794,7 +794,7 @@ arrange_node_arrays(IC_INT_API_CONFIG_SERVER *apic,
   conf_obj->node_config= new_node_config;
   conf_obj->node_types= new_node_types;
   conf_obj->node_ids= NULL;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -808,7 +808,7 @@ assign_config_value_int(IC_INT_API_CONFIG_SERVER *apic,
   DEBUG_ENTRY("assign_config_value_int");
 
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   if (!(conf_entry->config_types & (1 << conf_type)) ||
       (conf_entry->is_boolean && (value > 1)) ||
       (conf_entry->is_min_value_defined &&
@@ -856,7 +856,7 @@ assign_config_value_int(IC_INT_API_CONFIG_SERVER *apic,
     {
       PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
     }
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
   else if (data_type == IC_CL_INT64_TYPE)
   {
@@ -868,10 +868,10 @@ assign_config_value_int(IC_INT_API_CONFIG_SERVER *apic,
     {
       PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
     }
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
-  g_assert(FALSE);
-  DEBUG_RETURN(0);
+  ic_assert(FALSE);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -899,7 +899,7 @@ assign_config_string(IC_INT_API_CONFIG_SERVER *apic,
   memcpy(string_memory, *string_val, string_len);
   DEBUG_PRINT(CONFIG_LEVEL,
     ("String value = %s", string_memory));
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -982,7 +982,7 @@ update_string_data(IC_INT_API_CONFIG_SERVER *apic,
 {
   guint32 len_words= (value + 3)/4;
   apic->temp->next_string_memory+= value;
-  g_assert(apic->temp->next_string_memory <= apic->temp->end_string_memory);
+  ic_assert(apic->temp->next_string_memory <= apic->temp->end_string_memory);
   (*key_value)+= len_words;
 }
 

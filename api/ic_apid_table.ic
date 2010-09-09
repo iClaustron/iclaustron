@@ -934,13 +934,13 @@ mdt_md_commit(IC_METADATA_TRANSACTION *ext_md_trans)
 
   if (md_trans->first_alter_ts)
   {
-    g_assert(!md_trans->first_alter_table);
+    ic_assert(!md_trans->first_alter_table);
     ret_code= md_commit_alter_tablespace(md_trans,
                                          md_trans->first_alter_ts);
   }
   else if (md_trans->first_alter_table)
   {
-    g_assert(!md_trans->first_alter_ts);
+    ic_assert(!md_trans->first_alter_ts);
     ret_code= md_commit_alter_table(md_trans,
                                     md_trans->first_alter_table);
   }

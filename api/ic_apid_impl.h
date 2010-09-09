@@ -66,8 +66,8 @@ struct ic_ndb_receive_state
   /* Thread id in receive thread pool of receiver thread */
   guint32 thread_id;
 
-  GMutex *mutex;
-  GCond *cond;
+  IC_MUTEX *mutex;
+  IC_COND *cond;
 };
 
 #define IC_MESSAGE_FRAGMENT_FIRST_AND_LAST 0
@@ -145,8 +145,8 @@ struct ic_thread_connection
   IC_SOCK_BUF_PAGE *last_received_message;
   IC_INT_APID_CONNECTION *apid_conn;
   gboolean thread_wait_cond;
-  GMutex *mutex;
-  GCond *cond;
+  IC_MUTEX *mutex;
+  IC_COND *cond;
 };
 
 struct ic_temp_thread_connection
@@ -166,8 +166,8 @@ struct ic_listen_server_thread
   guint32 listen_port;
   gboolean started;
   gboolean stop_ordered;
-  GMutex *mutex;
-  GCond *cond;
+  IC_MUTEX *mutex;
+  IC_COND *cond;
   GList *first_send_node_conn;
 };
 
@@ -230,9 +230,9 @@ struct ic_send_node_connection
   IC_THREAD_STATE *thread_state;
   guint32 thread_id;
   /* Mutex protecting this struct */
-  GMutex *mutex;
+  IC_MUTEX *mutex;
   /* Condition used to wake up send thread when it's needed */
-  GCond *cond;
+  IC_COND *cond;
 
   /* Linked list of send buffers awaiting sending */
   IC_SOCK_BUF_PAGE *first_sbp;

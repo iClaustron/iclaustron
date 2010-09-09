@@ -280,7 +280,7 @@ yylex(YYSTYPE *yylval,
     /* Skip space, tab and newline characters */
     if (!is_ignore(parse_char))
       break;
-    g_assert(current_pos < parse_data->parse_str_len);
+    ic_assert(current_pos < parse_data->parse_str_len);
   }
 
   if (is_end_character(parse_char))
@@ -340,7 +340,7 @@ yylex(YYSTYPE *yylval,
         goto error;
       if (version_char_found)
       {
-        g_assert(!symbol_value);
+        ic_assert(!symbol_value);
         ret_sym= VERSION_IDENTIFIER_SYM;
         goto end;
       }

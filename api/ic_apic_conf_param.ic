@@ -213,11 +213,11 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
     }
     ic_require(clu_conf->num_comms == clu_conf_load->total_num_comms);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 error:
   if (comm_hash)
     ic_hashtable_destroy(comm_hash);
-  DEBUG_RETURN(1);
+  DEBUG_RETURN_INT(1);
 }
 
 void
@@ -299,7 +299,7 @@ ic_print_config_parameters(guint32 mask)
             "Parameter can only be changed using backup, change, restore");
           break;
         default:
-          g_assert(0);
+          ic_assert(FALSE);
       }
       if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
         ic_printf("This config variable is used in a client node");
@@ -1765,15 +1765,15 @@ int ic_init_config_parameters()
   DEBUG_ENTRY("ic_init_config_parameters");
 
   if (glob_conf_entry_inited)
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   if (!(glob_conf_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_str,
                                             ic_keys_equal_str)))
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   glob_conf_entry_inited= TRUE;
   glob_max_config_id= 0;
   ic_zero(map_config_id_to_inx, MAX_MAP_CONFIG_ID * sizeof(guint16));
   ic_zero(glob_conf_entry, MAX_CONFIG_ID * sizeof(IC_CONFIG_ENTRY));
   init_config_parameters();
   calculate_mandatory_bits();
-  DEBUG_RETURN(build_config_name_hash());
+  DEBUG_RETURN_INT(build_config_name_hash());
 }

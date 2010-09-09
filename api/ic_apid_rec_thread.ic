@@ -113,7 +113,7 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 
   while (send_node_conn)
   {
-    g_mutex_lock(send_node_conn->mutex);
+    ic_mutex_lock(send_node_conn->mutex);
     /* move to next node to add */
     next_send_node_conn= send_node_conn->next_add_node;
     send_node_conn->next_add_node= NULL;
@@ -135,7 +135,7 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
         rec_state->first_send_node= send_node_conn;
       }
     }
-    g_mutex_unlock(send_node_conn->mutex);
+    ic_mutex_unlock(send_node_conn->mutex);
     send_node_conn= next_send_node_conn;
   }
   DEBUG_RETURN_EMPTY;
@@ -152,7 +152,7 @@ rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 
   while (send_node_conn)
   {
-    g_mutex_lock(send_node_conn->mutex);
+    ic_mutex_lock(send_node_conn->mutex);
     send_node_conn= send_node_conn->next_rem_node;
     send_node_conn->next_rem_node= NULL;
     if (send_node_conn->node_up && !send_node_conn->stop_ordered)
@@ -166,7 +166,7 @@ rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
         node_failure_handling(send_node_conn);
       }
     }
-    g_mutex_unlock(send_node_conn->mutex);
+    ic_mutex_unlock(send_node_conn->mutex);
   }
   DEBUG_RETURN_EMPTY;
 }
@@ -174,7 +174,7 @@ rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 static void
 check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
 {
-  g_mutex_lock(rec_state->mutex);
+  ic_mutex_lock(rec_state->mutex);
   /*
     We need to check for:
     1) Someone ordering this node to stop, as part of this the
@@ -191,7 +191,7 @@ check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
   rem_node_receive_thread(rec_state);
   rec_state->first_add_node= NULL;
   rec_state->first_rem_node= NULL;
-  g_mutex_unlock(rec_state->mutex);
+  ic_mutex_unlock(rec_state->mutex);
 }
 
 static void
@@ -294,7 +294,7 @@ post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
 
 
     /* START Critical Section, delivering NDB messages to application thread */
-    g_mutex_lock(loc_thd_conn->mutex);
+    ic_mutex_lock(loc_thd_conn->mutex);
     /* Link it into list on this thread connection object */
     if (loc_thd_conn->first_received_message)
     {
@@ -315,7 +315,7 @@ post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
       loc_thd_conn->thread_wait_cond= FALSE;
       signal_flag= TRUE;
     }
-    g_mutex_unlock(loc_thd_conn->mutex);
+    ic_mutex_unlock(loc_thd_conn->mutex);
     /* END Critical Section with delayed wake up signal */
     if (signal_flag)
     {
@@ -330,7 +330,7 @@ post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
         the objective to wake it up to consume the NDB messages and this
         was achieved in all cases.
       */
-      g_cond_signal(loc_thd_conn->cond);
+      ic_cond_signal(loc_thd_conn->cond);
       signal_flag= FALSE;
     }
   }
@@ -454,7 +454,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
   IC_SOCK_BUF *sock_buf_container;
   DEBUG_ENTRY("ndb_receive_node");
 
-  g_assert(message_pool->page_size == 0);
+  ic_assert(message_pool->page_size == 0);
 
   /*
     We get a receive buffer from the global pool of free buffers.
@@ -654,7 +654,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
     }
   }
 end:
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 mem_pool_error:
   ret_code= IC_ERROR_MEM_ALLOC;
   goto end;
@@ -786,9 +786,9 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global)
   if (!(rec_state=
          (IC_NDB_RECEIVE_STATE*)ic_calloc(sizeof(IC_NDB_RECEIVE_STATE))))
     return ret_code;
-  if (!(rec_state->mutex= g_mutex_new()))
+  if (!(rec_state->mutex= ic_mutex_create()))
     goto error;
-  if (!(rec_state->cond= g_cond_new()))
+  if (!(rec_state->cond= ic_cond_create()))
     goto error;
   rec_state->apid_global= apid_global;
   rec_state->rec_buf_pool= apid_global->send_buf_pool;
@@ -803,19 +803,19 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global)
                         TRUE)))
     goto error;
   /* Wait for receive thread to complete start-up */
-  g_mutex_lock(apid_global->mutex);
+  ic_mutex_lock(apid_global->mutex);
   apid_global->receive_threads[apid_global->num_receive_threads]= rec_state;
   apid_global->num_receive_threads++;
-  g_mutex_unlock(apid_global->mutex);
-  DEBUG_RETURN(0);
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_INT(0);
 
 error:
   if (rec_state->poll_set)
     rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
   if (rec_state->mutex)
-    g_mutex_free(rec_state->mutex);
+    ic_mutex_destroy(rec_state->mutex);
   if (rec_state->cond)
-    g_cond_free(rec_state->cond);
+    ic_cond_destroy(rec_state->cond);
   ic_free((void*)rec_state);
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }

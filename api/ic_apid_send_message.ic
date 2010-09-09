@@ -402,10 +402,10 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
     last_page_to_send= last_page_to_send->next_sock_buf_page;
   }
   /* Start critical section for sending */
-  g_mutex_lock(send_node_conn->mutex);
+  ic_mutex_lock(send_node_conn->mutex);
   if (!send_node_conn->node_up)
   {
-    g_mutex_unlock(send_node_conn->mutex);
+    ic_mutex_unlock(send_node_conn->mutex);
     return IC_ERROR_NODE_DOWN;
   }
   if (send_node_conn->link_config->use_message_id)
@@ -423,7 +423,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   /* Link the buffers into the linked list of pages to send */
   if (send_node_conn->last_sbp == NULL)
   {
-    g_assert(send_node_conn->queued_bytes == 0);
+    ic_assert(send_node_conn->queued_bytes == 0);
     send_node_conn->first_sbp= first_page_to_send;
     send_node_conn->last_sbp= last_page_to_send;
   }
@@ -449,7 +449,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   adaptive_send_algorithm_statistics(send_node_conn, current_time);
   /* End critical section for sending */
-  g_mutex_unlock(send_node_conn->mutex);
+  ic_mutex_unlock(send_node_conn->mutex);
   if (return_imm)
     return 0;
   /* We will send now */
@@ -540,12 +540,12 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
       handling since either the connection was broken or it was slow to
       the point of being similar to broken.
     */
-    g_mutex_lock(send_node_conn->mutex);
+    ic_mutex_lock(send_node_conn->mutex);
     node_failure_handling(send_node_conn);
-    g_mutex_unlock(send_node_conn->mutex);
-    DEBUG_RETURN(error);
+    ic_mutex_unlock(send_node_conn->mutex);
+    DEBUG_RETURN_INT(error);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -557,7 +557,7 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 
   /* Handle send done */
   error= 0;
-  g_mutex_lock(send_node_conn->mutex);
+  ic_mutex_lock(send_node_conn->mutex);
   if (!send_node_conn->node_up)
     error= IC_ERROR_NODE_DOWN;
   else if (send_node_conn->first_sbp)
@@ -574,10 +574,10 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
     /* All buffers have been sent, we can return immediately */
     send_node_conn->send_active= FALSE;
   }
-  g_mutex_unlock(send_node_conn->mutex);
+  ic_mutex_unlock(send_node_conn->mutex);
   if (signal_send_thread)
-    g_cond_signal(send_node_conn->cond);
-  DEBUG_RETURN(error);
+    ic_cond_signal(send_node_conn->cond);
+  DEBUG_RETURN_INT(error);
 }
 
 static int

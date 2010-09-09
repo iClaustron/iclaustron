@@ -168,7 +168,7 @@ get_next_connection(IC_POLL_SET *ext_poll_set)
   IC_INT_POLL_SET *poll_set= (IC_INT_POLL_SET*)ext_poll_set;
   guint32 num_ready_connections= poll_set->num_ready_connections;
 
-  g_assert(poll_set->poll_scan_ongoing);
+  ic_assert(poll_set->poll_scan_ongoing);
   if (num_ready_connections == 0)
   {
     poll_set->poll_scan_ongoing= FALSE;
@@ -773,7 +773,7 @@ poll_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
           poll_set->poll_connections[i]->ret_code= 0;
         }
       }
-      g_assert((int)poll_set->num_ready_connections == ret_code);
+      ic_assert((int)poll_set->num_ready_connections == ret_code);
       return 0;
     }
     else if (ret_code == 0)

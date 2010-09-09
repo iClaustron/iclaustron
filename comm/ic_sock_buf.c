@@ -93,19 +93,19 @@ low_get_sock_buf_page(IC_SOCK_BUF *buf,
     num_pages_to_preallocate= 1;
   }
 
-  g_mutex_lock(buf->ic_buf_mutex);
+  ic_mutex_lock(buf->ic_buf_mutex);
   /* Retrieve objects in a linked list */
   first_page= buf->first_page;
   next_page= first_page;
   for (i= 0; i < num_pages_to_preallocate && next_page; i++)
     next_page= next_page->next_sock_buf_page;
   buf->first_page= next_page;
-  g_mutex_unlock(buf->ic_buf_mutex);
+  ic_mutex_unlock(buf->ic_buf_mutex);
 
   /* Initialise the returned page objects */
   next_page= first_page;
   last_page= NULL;
-  g_assert(num_pages_to_preallocate > 0);
+  ic_assert(num_pages_to_preallocate > 0);
   for (i= 0; i < num_pages_to_preallocate && next_page; i++)
   {
     next_page->size= 0;
@@ -182,7 +182,7 @@ return_sock_buf_page(IC_SOCK_BUF *buf,
 
   ic_require(page);
   page_size= buf->page_size;
-  g_mutex_lock(buf->ic_buf_mutex);
+  ic_mutex_lock(buf->ic_buf_mutex);
   do
   {
     /* Return page to linked list at first page */
@@ -214,7 +214,7 @@ return_sock_buf_page(IC_SOCK_BUF *buf,
     }
     page= next_page;
   } while (page != NULL);
-  g_mutex_unlock(buf->ic_buf_mutex);
+  ic_mutex_unlock(buf->ic_buf_mutex);
 }
 
 void
@@ -223,7 +223,7 @@ free_sock_buf(IC_SOCK_BUF *buf)
   guint32 i;
   guint32 alloc_segments= buf->alloc_segments;
 
-  g_mutex_free(buf->ic_buf_mutex);
+  ic_mutex_destroy(buf->ic_buf_mutex);
   for (i= 0; i < alloc_segments; i++)
     ic_free(buf->alloc_segments_ref[i]);
   ic_free(buf);
@@ -246,7 +246,7 @@ set_up_pages_in_linked_list(IC_SOCK_BUF *sock_buf_container,
   buf_page_ptr= ptr;
   if (page_size == 0)
     loop_ptr= NULL;
-  g_assert(no_of_pages);
+  ic_assert(no_of_pages);
   for (i= 0; i < no_of_pages; i++)
   {
     sock_buf_page_ptr= (IC_SOCK_BUF_PAGE*)buf_page_ptr;
@@ -281,7 +281,7 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
                                                   page_size,
                                                   no_of_pages,
                                                   sock_buf_page_size);
-  g_mutex_lock(buf->ic_buf_mutex);
+  ic_mutex_lock(buf->ic_buf_mutex);
   if (buf->alloc_segments < MAX_ALLOC_SEGMENTS)
   {
     last_sock_buf_page->next_sock_buf_page= buf->first_page;
@@ -294,7 +294,7 @@ inc_sock_buf(IC_SOCK_BUF *buf, guint64 no_of_pages)
     ic_free(ptr);
     error= IC_ERROR_MEM_ALLOC;
   }
-  g_mutex_unlock(buf->ic_buf_mutex);
+  ic_mutex_unlock(buf->ic_buf_mutex);
   return error;
 }
 
@@ -314,7 +314,7 @@ ic_create_sock_buf(guint32 page_size,
     return NULL;
   if (!(buf= (IC_SOCK_BUF*)ic_malloc(sizeof(IC_SOCK_BUF))))
     return NULL;
-  if (!(buf->ic_buf_mutex= g_mutex_new()))
+  if (!(buf->ic_buf_mutex= ic_mutex_create()))
     goto error;
   if (!(ptr= ic_malloc(
 	  (size_t)(page_size * no_of_pages +
@@ -341,7 +341,7 @@ ic_create_sock_buf(guint32 page_size,
 
 error:
   if (buf->ic_buf_mutex)
-    g_mutex_free(buf->ic_buf_mutex);
+    ic_mutex_destroy(buf->ic_buf_mutex);
   ic_free(buf);
   return NULL;
 }

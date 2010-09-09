@@ -40,20 +40,20 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
     {
       thread_state= tp_state->thread_state[i];
       if (thread_state->mutex)
-        g_mutex_free(thread_state->mutex);
+        ic_mutex_destroy(thread_state->mutex);
       if (thread_state->cond)
-        g_cond_free(thread_state->cond);
+        ic_cond_destroy(thread_state->cond);
     }
     ic_free((void*)tp_state->thread_state_allocation);
   }
   if (tp_state->thread_state)
     ic_free((void*)tp_state->thread_state);
   if (tp_state->stop_list_mutex)
-    g_mutex_free(tp_state->stop_list_mutex);
+    ic_mutex_destroy(tp_state->stop_list_mutex);
   if (tp_state->stop_list_cond)
-    g_cond_free(tp_state->stop_list_cond);
+    ic_cond_destroy(tp_state->stop_list_cond);
   if (tp_state->free_list_mutex)
-    g_mutex_free(tp_state->free_list_mutex);
+    ic_mutex_destroy(tp_state->free_list_mutex);
   ic_free((void*)tp_state);
 }
 
@@ -67,19 +67,19 @@ stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
 
   for (i= 0; i < tp_state->threadpool_size; i++)
   {
-    g_mutex_lock(tp_state->thread_state[i]->mutex);
+    ic_mutex_lock(tp_state->thread_state[i]->mutex);
     tp_state->thread_state[i]->stop_flag= TRUE;
     if (tp_state->thread_state[i]->wait_wakeup)
-      g_cond_signal(tp_state->thread_state[i]->cond);
-    g_mutex_unlock(tp_state->thread_state[i]->mutex);
+      ic_cond_signal(tp_state->thread_state[i]->cond);
+    ic_mutex_unlock(tp_state->thread_state[i]->mutex);
   }
   while (1)
   {
     check_threads(ext_tp_state);
-    g_mutex_lock(tp_state->free_list_mutex);
+    ic_mutex_lock(tp_state->free_list_mutex);
     num_free_threads= tp_state->num_free_threads;
     pool_size= tp_state->threadpool_size;
-    g_mutex_unlock(tp_state->free_list_mutex);
+    ic_mutex_unlock(tp_state->free_list_mutex);
     if (num_free_threads == pool_size)
       break;
     if (loop_count > IC_MAX_WAIT_THREADPOOL_STOP)
@@ -104,7 +104,7 @@ insert_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id)
   if (!thread_state)
     abort();
 
-  g_mutex_lock(tp_state->stop_list_mutex);
+  ic_mutex_lock(tp_state->stop_list_mutex);
   first_stopped_thread_id= tp_state->first_stopped_thread_id;
   if (first_stopped_thread_id != IC_MAX_UINT32)
   {
@@ -114,17 +114,17 @@ insert_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id)
 
   thread_state->next_thread_id= first_stopped_thread_id;
   thread_state->prev_thread_id= IC_MAX_UINT32;
-  g_assert(!thread_state->stopped);
+  ic_assert(!thread_state->stopped);
   thread_state->stopped= TRUE;
   if (thread_state->wait_for_stop)
   {
     thread_state->wait_for_stop= FALSE;
-    g_cond_signal(tp_state->stop_list_cond);
+    ic_cond_signal(tp_state->stop_list_cond);
   }
 
   tp_state->first_stopped_thread_id= thread_id;
   tp_state->num_stopped_threads++;
-  g_mutex_unlock(tp_state->stop_list_mutex);
+  ic_mutex_unlock(tp_state->stop_list_mutex);
 }
 
 static void
@@ -139,7 +139,7 @@ remove_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id,
     abort();
 
   if (!own_mutex)
-    g_mutex_lock(tp_state->stop_list_mutex);
+    ic_mutex_lock(tp_state->stop_list_mutex);
   prev_thread_id= thread_state->prev_thread_id;
   next_thread_id= thread_state->next_thread_id;
   if (prev_thread_id != IC_MAX_UINT32)
@@ -156,10 +156,10 @@ remove_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id,
     next_thread_state= tp_state->thread_state[next_thread_id];
     next_thread_state->prev_thread_id= prev_thread_id;
   }
-  g_assert(thread_state->stopped);
+  ic_assert(thread_state->stopped);
   tp_state->num_stopped_threads--;
   thread_state->stopped= FALSE;
-  g_mutex_unlock(tp_state->stop_list_mutex);
+  ic_mutex_unlock(tp_state->stop_list_mutex);
 }
 
 static void
@@ -168,7 +168,7 @@ thread_wait(IC_THREAD_STATE *ext_thread_state)
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
   thread_state->wait_wakeup= TRUE;
-  g_cond_wait(thread_state->cond, thread_state->mutex);
+  ic_cond_wait(thread_state->cond, thread_state->mutex);
   thread_state->wait_wakeup= FALSE;
 }
 
@@ -177,7 +177,7 @@ thread_wake(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
-  g_cond_signal(thread_state->cond);
+  ic_cond_signal(thread_state->cond);
 }
 
 static void
@@ -185,9 +185,9 @@ thread_lock_and_wait(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
-  g_mutex_lock(thread_state->mutex);
+  ic_mutex_lock(thread_state->mutex);
   thread_state->wait_wakeup= TRUE;
-  g_cond_wait(thread_state->cond, thread_state->mutex);
+  ic_cond_wait(thread_state->cond, thread_state->mutex);
   thread_state->wait_wakeup= FALSE;
 }
 
@@ -196,7 +196,7 @@ thread_lock(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
-  g_mutex_lock(thread_state->mutex);
+  ic_mutex_lock(thread_state->mutex);
 }
 
 static void
@@ -204,28 +204,28 @@ thread_unlock(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
 }
 
 static void
-thread_set_mutex(IC_THREAD_STATE *ext_thread_state, GMutex *mutex)
+thread_set_mutex(IC_THREAD_STATE *ext_thread_state, IC_MUTEX *mutex)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
   IC_INT_THREADPOOL_STATE *tp_state= thread_state->tp_state;
 
   ic_require(tp_state->use_internal_mutex);
-  g_mutex_free(thread_state->mutex);
+  ic_mutex_destroy(thread_state->mutex);
   thread_state->mutex= mutex;
 }
 
 static void
-thread_set_cond(IC_THREAD_STATE *ext_thread_state, GCond *cond)
+thread_set_cond(IC_THREAD_STATE *ext_thread_state, IC_COND *cond)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
   IC_INT_THREADPOOL_STATE *tp_state= thread_state->tp_state;
 
   ic_require(tp_state->use_internal_mutex);
-  g_cond_free(thread_state->cond);
+  ic_cond_destroy(thread_state->cond);
   thread_state->cond= cond;
 }
 
@@ -238,22 +238,22 @@ get_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   IC_INT_THREAD_STATE *thread_state;
   guint32 first_free_thread_id;
 
-  g_mutex_lock(tp_state->free_list_mutex);
+  ic_mutex_lock(tp_state->free_list_mutex);
   first_free_thread_id= tp_state->first_free_thread_id;
   if (first_free_thread_id == IC_MAX_UINT32)
   {
     /* No free thread objects */
-    g_mutex_unlock(tp_state->free_list_mutex);
+    ic_mutex_unlock(tp_state->free_list_mutex);
     return IC_ERROR_THREADPOOL_FULL;
   }
   thread_state= tp_state->thread_state[first_free_thread_id];
-  g_assert(thread_state->free);
+  ic_assert(thread_state->free);
   tp_state->first_free_thread_id= thread_state->next_thread_id;
   tp_state->num_free_threads--;
   thread_state->next_thread_id= IC_MAX_UINT32;
   *thread_id= first_free_thread_id;
   thread_state->free= FALSE;
-  g_mutex_unlock(tp_state->free_list_mutex);
+  ic_mutex_unlock(tp_state->free_list_mutex);
   return 0;
 }
 
@@ -295,21 +295,21 @@ free_thread(IC_INT_THREADPOOL_STATE *tp_state,
   thread_state->thread= NULL;
   thread_state->object= NULL;
   /* Put thread into free list */
-  g_mutex_lock(tp_state->free_list_mutex);
+  ic_mutex_lock(tp_state->free_list_mutex);
   first_free_thread_id= tp_state->first_free_thread_id;
   thread_state->next_thread_id= first_free_thread_id;
   tp_state->first_free_thread_id= thread_id;
   tp_state->num_free_threads++;
-  g_assert(!thread_state->free);
+  ic_assert(!thread_state->free);
   thread_state->free= TRUE;
-  g_mutex_unlock(tp_state->free_list_mutex);
+  ic_mutex_unlock(tp_state->free_list_mutex);
   /* Set all state variables to free and not occupied */
-  g_mutex_lock(thread_state->mutex);
+  ic_mutex_lock(thread_state->mutex);
   thread_state->started= FALSE;
-  g_assert(!thread_state->synch_startup);
+  ic_assert(!thread_state->synch_startup);
   thread_state->synch_startup= FALSE;
   thread_state->stop_flag= FALSE;
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
 }
 
 /* Check for stopped threads that require to be joined */
@@ -322,7 +322,7 @@ check_threads(IC_THREADPOOL_STATE *ext_tp_state)
 
   while (1)
   {
-    g_mutex_lock(tp_state->stop_list_mutex);
+    ic_mutex_lock(tp_state->stop_list_mutex);
     first_stopped_thread_id= tp_state->first_stopped_thread_id;
     if (first_stopped_thread_id != IC_MAX_UINT32)
     {
@@ -332,7 +332,7 @@ check_threads(IC_THREADPOOL_STATE *ext_tp_state)
       internal_join_thread(ext_tp_state, first_stopped_thread_id, TRUE);
       continue;
     }
-    g_mutex_unlock(tp_state->stop_list_mutex);
+    ic_mutex_unlock(tp_state->stop_list_mutex);
     break;
   }
 }
@@ -356,8 +356,8 @@ start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
   ic_require(thread_state->mutex && thread_state->cond);
-  g_mutex_lock(thread_state->mutex);
-  g_assert(!thread_state->free);
+  ic_mutex_lock(thread_state->mutex);
+  ic_assert(!thread_state->free);
   thread_state->object= thread_obj;
   thread_state->synch_startup= synch_startup;
   thread= g_thread_create_full(thread_func,
@@ -373,10 +373,10 @@ start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
     if (synch_startup)
     {
       /* Wait until thread startup handling is completed */
-      g_cond_wait(thread_state->cond, thread_state->mutex);
+      ic_cond_wait(thread_state->cond, thread_state->mutex);
       if ((stop_flag= thread_state->stop_flag))
-        g_cond_signal(thread_state->cond);
-      g_mutex_unlock(thread_state->mutex);
+        ic_cond_signal(thread_state->cond);
+      ic_mutex_unlock(thread_state->mutex);
       if (stop_flag)
       {
         ret_code= IC_ERROR_START_THREAD_FAILED;
@@ -384,11 +384,11 @@ start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
       }
     }
     else
-      g_mutex_unlock(thread_state->mutex);
+      ic_mutex_unlock(thread_state->mutex);
   }
   else
   {
-    g_mutex_unlock(thread_state->mutex);
+    ic_mutex_unlock(thread_state->mutex);
     free_thread(tp_state, thread_state, thread_id);
     ret_code= IC_ERROR_START_THREAD_FAILED;
   }
@@ -442,11 +442,11 @@ run_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
-  g_mutex_lock(thread_state->mutex);
+  ic_mutex_lock(thread_state->mutex);
   /* Start thread waiting for command to start run phase */
-  g_cond_signal(thread_state->cond);
+  ic_cond_signal(thread_state->cond);
   thread_state->synch_startup= FALSE; /* No longer used after this */
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
 }
 
 static void
@@ -479,12 +479,12 @@ stop_thread_without_wait(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
-  g_mutex_lock(thread_state->mutex);
+  ic_mutex_lock(thread_state->mutex);
   if (thread_state->synch_startup ||
       thread_state->wait_wakeup)
-    g_cond_signal(thread_state->cond);
+    ic_cond_signal(thread_state->cond);
   thread_state->stop_flag= TRUE;
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
 }
 
 static void
@@ -495,11 +495,11 @@ stop_thread_wait(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 
   stop_thread_without_wait(ext_tp_state, thread_id);
   thread_state= tp_state->thread_state[thread_id];
-  g_mutex_lock(tp_state->stop_list_mutex);
+  ic_mutex_lock(tp_state->stop_list_mutex);
   while (!thread_state->stopped)
   {
     thread_state->wait_for_stop= TRUE;
-    g_cond_wait(tp_state->stop_list_cond, tp_state->stop_list_mutex);
+    ic_cond_wait(tp_state->stop_list_cond, tp_state->stop_list_mutex);
   }
   internal_join_thread(ext_tp_state, thread_id, TRUE);
 }
@@ -515,9 +515,9 @@ thread_started(IC_THREAD_STATE *ext_thread_state)
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
   /* By locking the mutex we ensure that start synch is done */
-  g_mutex_lock(thread_state->mutex);
+  ic_mutex_lock(thread_state->mutex);
   thread_state->started= TRUE;
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
 }
 
 void
@@ -529,15 +529,15 @@ thread_stops(IC_THREAD_STATE *ext_thread_state)
   insert_stopped_list(tp_state, thread_state->thread_id);
   DEBUG_PRINT(THREAD_LEVEL, ("thread with id %d stops",
                              thread_state->thread_id));
-  g_mutex_lock(thread_state->mutex);
-  g_assert(thread_state->started);
+  ic_mutex_lock(thread_state->mutex);
+  ic_assert(thread_state->started);
   thread_state->started= FALSE;
   if (thread_state->synch_startup)
   {
-    g_cond_signal(thread_state->cond);
+    ic_cond_signal(thread_state->cond);
     thread_state->synch_startup= FALSE;
   }
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
 }
 
 static gboolean
@@ -545,22 +545,22 @@ thread_startup_done(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
-  g_mutex_lock(thread_state->mutex);
-  g_assert(thread_state->synch_startup);
-  g_cond_signal(thread_state->cond);
+  ic_mutex_lock(thread_state->mutex);
+  ic_assert(thread_state->synch_startup);
+  ic_cond_signal(thread_state->cond);
   if (thread_state->stop_flag)
     goto stop_end;
   /* Wait for management thread to signal us to continue */
-  g_cond_wait(thread_state->cond, thread_state->mutex);
+  ic_cond_wait(thread_state->cond, thread_state->mutex);
   /* Check whether we're requested to stop or not */
   if (thread_state->stop_flag)
     goto stop_end;
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
   return FALSE;
 
 stop_end:
   thread_state->synch_startup= FALSE;
-  g_mutex_unlock(thread_state->mutex);
+  ic_mutex_unlock(thread_state->mutex);
   return TRUE;
 }
 
@@ -602,7 +602,7 @@ ic_create_threadpool(guint32 pool_size,
   DEBUG_ENTRY("ic_create_threadpool");
   if (!(tp_state= (IC_INT_THREADPOOL_STATE*)
         ic_calloc(sizeof(IC_INT_THREADPOOL_STATE))))
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   if (!(tp_state->thread_state= (IC_INT_THREAD_STATE**)
         ic_calloc(pool_size * sizeof(IC_INT_THREAD_STATE*))))
     goto mem_alloc_error;
@@ -615,11 +615,11 @@ ic_create_threadpool(guint32 pool_size,
   if (!(tp_state->thread_state_allocation=
         ic_calloc(pool_size * thread_state_size)))
     goto mem_alloc_error;
-  if (!(tp_state->stop_list_mutex= g_mutex_new()))
+  if (!(tp_state->stop_list_mutex= ic_mutex_create()))
     goto mem_alloc_error;
-  if (!(tp_state->stop_list_cond= g_cond_new()))
+  if (!(tp_state->stop_list_cond= ic_cond_create()))
     goto mem_alloc_error;
-  if (!(tp_state->free_list_mutex= g_mutex_new()))
+  if (!(tp_state->free_list_mutex= ic_mutex_create()))
     goto mem_alloc_error;
 
   thread_state_ptr= tp_state->thread_state_allocation;
@@ -635,8 +635,8 @@ ic_create_threadpool(guint32 pool_size,
     thread_state_ptr+= thread_state_size;
     thread_state->tp_state= tp_state;
     thread_state->thread_id= i;
-    thread_state->mutex= g_mutex_new();
-    thread_state->cond= g_cond_new();
+    thread_state->mutex= ic_mutex_create();
+    thread_state->cond= ic_cond_create();
     thread_state->ic_get_threadpool= get_threadpool;
     if (thread_state->mutex == NULL ||
         thread_state->cond == NULL)
@@ -672,9 +672,9 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->ts_ops.ic_thread_set_mutex= thread_set_mutex;
   tp_state->ts_ops.ic_thread_set_cond= thread_set_cond;
 
-  DEBUG_RETURN((IC_THREADPOOL_STATE*)tp_state);
+  DEBUG_RETURN_PTR((IC_THREADPOOL_STATE*)tp_state);
 
 mem_alloc_error:
   free_threadpool(tp_state);
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }

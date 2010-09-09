@@ -64,9 +64,9 @@ struct ic_thread_state_ops
   void (*ic_thread_wake) (IC_THREAD_STATE *thread_state);
 
   void (*ic_thread_set_mutex) (IC_THREAD_STATE *thread_state,
-                               GMutex *mutex);
+                               IC_MUTEX *mutex);
   void (*ic_thread_set_cond) (IC_THREAD_STATE *thread_state,
-                              GCond *cond);
+                              IC_COND *cond);
 
   void* (*ic_thread_get_object) (IC_THREAD_STATE *thread_state);
   gboolean (*ic_thread_get_stop_flag) (IC_THREAD_STATE *thread_state);

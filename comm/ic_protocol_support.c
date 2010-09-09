@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_base_header.h>
+#include <ic_port.h>
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_string.h>
@@ -38,7 +39,7 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
   int res;
 
   send_size= strlen(send_buf);
-  g_assert((send_size + 1) < conn->write_buf_size);
+  ic_assert((send_size + 1) < conn->write_buf_size);
 
   DEBUG_PRINT(CONFIG_PROTO_LEVEL, ("Send: %s", send_buf));
   if ((conn->write_buf_pos + send_size + 1) > conn->write_buf_size)
@@ -252,14 +253,14 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
     {
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Protocol error in waiting for %s", prefix_str));
-      DEBUG_RETURN(IC_PROTOCOL_ERROR);
+      DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
     }
     remaining_len= read_size - prefix_str_len;
     memcpy(read_str, &read_buf[prefix_str_len], remaining_len);
     read_str[remaining_len]= 0;
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -281,17 +282,17 @@ ic_rec_simple_str_impl(IC_CONNECTION *conn,
       {
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Protocol error in waiting for %s", str));
-        DEBUG_RETURN(IC_PROTOCOL_ERROR);
+        DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
       }
       ic_step_back_rec_with_cr(conn, read_size);
       *optional_and_found= FALSE;
     }
     else
       *optional_and_found= TRUE;
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
   *optional_and_found= FALSE;
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 int
@@ -437,7 +438,7 @@ ic_send_empty_line(IC_CONNECTION *ext_conn)
 
   if ((error= ic_send_with_cr(ext_conn, "")))
     return error;
-  g_assert(conn->write_buf_pos);
+  ic_assert(conn->write_buf_pos);
   /* We need to flush buffer */
   error= ext_conn->conn_op.ic_write_connection(ext_conn,
                                            (const void*)conn->write_buf,

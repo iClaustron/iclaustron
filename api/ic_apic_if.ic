@@ -202,7 +202,7 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
   if (apic)
   {
     if (apic->config_mutex)
-      g_mutex_free(apic->config_mutex);
+      ic_mutex_destroy(apic->config_mutex);
     if (apic->conf_objects)
     {
       for (i= 0; i <= apic->max_cluster_id; i++)
@@ -210,7 +210,7 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
         IC_CLUSTER_CONFIG *conf_obj= apic->conf_objects[i];
         if (!conf_obj)
           continue;
-        g_assert(!conf_obj->node_ids);
+        ic_assert(!conf_obj->node_ids);
         if (conf_obj->comm_hash)
           ic_hashtable_destroy(conf_obj->comm_hash);
       }
@@ -273,7 +273,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
   DEBUG_ENTRY("ic_create_api_cluster");
 
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, TRUE)))
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
 
   /*
     The idea with this method is that the user can set-up his desired usage
@@ -288,13 +288,13 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
   {
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   }
   if (!(apic->temp= (IC_TEMP_API_CONFIG_SERVER*)
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_TEMP_API_CONFIG_SERVER))))
   {
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   }
   apic->mc_ptr= mc_ptr;
   apic->cluster_conn.num_cluster_servers= num_cluster_servers;
@@ -311,7 +311,7 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
       !(apic->cluster_conn.cluster_srv_conns= (IC_CONNECTION**)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, num_cluster_servers *
                                    sizeof(IC_CONNECTION*))) ||
-      !(apic->config_mutex= g_mutex_new()))
+      !(apic->config_mutex= ic_mutex_create()))
     goto error;
 
   for (i= 0; i < num_cluster_servers; i++)
@@ -325,8 +325,8 @@ ic_create_api_cluster(IC_API_CLUSTER_CONNECTION *cluster_conn,
                       cluster_conn->cluster_server_ports[i]))
       goto error;
   }
-  DEBUG_RETURN((IC_API_CONFIG_SERVER*)apic);
+  DEBUG_RETURN_PTR((IC_API_CONFIG_SERVER*)apic);
 error:
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }

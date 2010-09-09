@@ -83,7 +83,7 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
 
   if (!(*tp_state=
           ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   if (daemonize)
   {
     if ((ret_code= ic_daemonize("/dev/null")))
@@ -120,10 +120,10 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                                              err_str)))
     goto error;
   *err_str= NULL;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 
 error:
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 void
@@ -240,7 +240,7 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
     tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
   }
   tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int ic_init();
@@ -402,15 +402,15 @@ ic_init()
     if ((ret_value= ic_init_config_parameters()))
     {
       ic_end();
-      DEBUG_RETURN(ret_value);
+      DEBUG_RETURN_INT(ret_value);
     }
   }
   if ((ret_value= ic_ssl_init()))
   {
     ic_end();
-    DEBUG_RETURN(ret_value);
+    DEBUG_RETURN_INT(ret_value);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 void ic_end()

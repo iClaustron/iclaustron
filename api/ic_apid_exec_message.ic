@@ -75,7 +75,7 @@ get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
   IC_SOCK_BUF_PAGE *sock_buf_page;
   DEBUG_ENTRY("get_thread_messages");
 
-  g_mutex_lock(thd_conn->mutex);
+  ic_mutex_lock(thd_conn->mutex);
   sock_buf_page= thd_conn->first_received_message;
   if (sock_buf_page)
     set_sock_buf_page_empty(thd_conn);
@@ -88,8 +88,8 @@ get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
     if (sock_buf_page)
       set_sock_buf_page_empty(thd_conn);
   }
-  g_mutex_unlock(thd_conn->mutex);
-  DEBUG_RETURN(sock_buf_page);
+  ic_mutex_unlock(thd_conn->mutex);
+  DEBUG_RETURN_PTR(sock_buf_page);
 }
 
 /* Create a IC_NDB_MESSAGE for execution by the user thread.  */
@@ -127,7 +127,7 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   ndb_message->fragmentation_bits= fragmentation_bits;
   /* Get short data size from Bit 26-30 (Max 25 words) in word 1 */
   ndb_message->segment_size[0]= (word1 >> 26) & 0x1F;
-  g_assert(ndb_message->segment_size[0] <= 25);
+  ic_assert(ndb_message->segment_size[0] <= 25);
 
   /* Get message id from Bit 0-19 in word 2 */
   ndb_message->message_id= word2 & 0x7FFFF;

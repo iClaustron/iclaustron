@@ -29,7 +29,7 @@ struct ic_int_memory_container
   guint32 current_free_len;
   guint32 first_buf_inx;
   gboolean use_mutex;
-  GMutex *mutex;
+  IC_MUTEX *mutex;
 };
 typedef struct ic_int_memory_container IC_INT_MEMORY_CONTAINER;
 #endif

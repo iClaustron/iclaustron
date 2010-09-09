@@ -56,8 +56,8 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                 (IC_APID_GLOBAL*)apid_global, NULL)))
     goto mem_error;
   apid_global->heartbeat_conn= heartbeat_conn;
-  if ((!(apid_global->heartbeat_mutex= g_mutex_new())) ||
-      (!(apid_global->heartbeat_cond= g_cond_new())))
+  if ((!(apid_global->heartbeat_mutex= ic_mutex_create())) ||
+      (!(apid_global->heartbeat_cond= ic_cond_create())))
     goto mem_error;
   /* Start heartbeat thread */
   if ((error= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
@@ -72,12 +72,12 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                         IC_MEDIUM_STACK_SIZE,
                         FALSE))))
     goto error;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 mem_error:
   error= IC_ERROR_MEM_ALLOC;
 error:
   heartbeat_conn->apid_conn_ops->ic_free_apid_connection(heartbeat_conn);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static void
@@ -87,16 +87,16 @@ add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   DEBUG_ENTRY("add_node_to_heartbeat_thread");
 
   ic_require(send_node_conn);
-  g_mutex_lock(apid_global->heartbeat_mutex);
+  ic_mutex_lock(apid_global->heartbeat_mutex);
   /*
     If this is the first node added the heartbeat thread is waiting for
     the first node to be connected before starting its activity.
   */
   if (apid_global->heartbeat_thread_waiting)
-    g_cond_signal(apid_global->heartbeat_cond);
+    ic_cond_signal(apid_global->heartbeat_cond);
   send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
   apid_global->first_heartbeat_node= send_node_conn;
-  g_mutex_unlock(apid_global->heartbeat_mutex);
+  ic_mutex_unlock(apid_global->heartbeat_mutex);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -107,7 +107,7 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   IC_SEND_NODE_CONNECTION *prev_node= NULL, *next_node;
   DEBUG_ENTRY("rem_node_from_heartbeat_thread");
 
-  g_mutex_lock(apid_global->heartbeat_mutex);
+  ic_mutex_lock(apid_global->heartbeat_mutex);
   next_node= apid_global->first_heartbeat_node;
   while (next_node != send_node_conn && next_node)
   {
@@ -121,7 +121,7 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     apid_global->first_heartbeat_node= next_node->next_heartbeat_node;
   if (send_node_conn == apid_global->curr_heartbeat_node)
     apid_global->curr_heartbeat_node= send_node_conn->next_heartbeat_node;
-  g_mutex_unlock(apid_global->heartbeat_mutex);
+  ic_mutex_unlock(apid_global->heartbeat_mutex);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -161,14 +161,14 @@ run_heartbeat_thread(gpointer data)
                    IC_PREALLOC_NUM_MESSAGES,
                    IC_WAIT_SEND_BUF_POOL)))
       goto error;
-    g_mutex_lock(apid_global->heartbeat_mutex);
+    ic_mutex_lock(apid_global->heartbeat_mutex);
     if (!apid_global->first_heartbeat_node)
     {
       last_send_node_conn= NULL;
       apid_global->heartbeat_thread_waiting= TRUE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Need to wait for nodes to connect"));
-      g_cond_wait(apid_global->heartbeat_cond, apid_global->heartbeat_mutex);
-      g_mutex_unlock(apid_global->heartbeat_mutex);
+      ic_cond_wait(apid_global->heartbeat_cond, apid_global->heartbeat_mutex);
+      ic_mutex_unlock(apid_global->heartbeat_mutex);
       DEBUG_PRINT(CONFIG_LEVEL,
       ("First node connected, heartbeat needs to be sent"));
       send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
@@ -192,7 +192,7 @@ run_heartbeat_thread(gpointer data)
         {
           /* We have sent to all nodes, sleep for a while and start again */
           apid_global->curr_heartbeat_node= NULL;
-          g_mutex_unlock(apid_global->heartbeat_mutex);
+          ic_mutex_unlock(apid_global->heartbeat_mutex);
           send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                               hb_page);
           apid_conn->apid_conn_ops->ic_poll(apid_conn, 10000);
@@ -212,12 +212,12 @@ run_heartbeat_thread(gpointer data)
     }
     prepare_send_heartbeat(last_send_node_conn, hb_page,
          ((IC_INT_APID_CONNECTION*)apid_global->heartbeat_conn)->thread_id);
-    g_mutex_unlock(apid_global->heartbeat_mutex);
+    ic_mutex_unlock(apid_global->heartbeat_mutex);
     if ((error= real_send_heartbeat(last_send_node_conn, hb_page)))
     {
-      g_mutex_lock(last_send_node_conn->mutex);
+      ic_mutex_lock(last_send_node_conn->mutex);
       node_failure_handling(last_send_node_conn);
-      g_mutex_unlock(last_send_node_conn->mutex);
+      ic_mutex_unlock(last_send_node_conn->mutex);
     }
   }
 end:

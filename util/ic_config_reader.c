@@ -280,7 +280,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Line number %d in section %d is an empty line", line_number,
        *section_num));
-    DEBUG_RETURN(0);
+    DEBUG_RETURN_INT(0);
   }
   else if (*iter_data == '#')
   {
@@ -290,14 +290,17 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     */
     IC_STRING comment_str;
     IC_INIT_STRING(&comment_str, iter_data, line_len, FALSE);
-    DEBUG_RETURN(conf_ops->ic_add_comment(conf_obj, line_number, *section_num,
-                                          &comment_str, pass));
+    DEBUG_RETURN_INT(conf_ops->ic_add_comment(conf_obj,
+                                              line_number,
+                                              *section_num,
+                                              &comment_str,
+                                              pass));
   }
   else if (*iter_data == '[')
   {
     if (iter_data[line_len - 2] != ']')
     {
-      DEBUG_RETURN(IC_ERROR_CONFIG_BRACKET);
+      DEBUG_RETURN_INT(IC_ERROR_CONFIG_BRACKET);
     }
     else
     {
@@ -306,7 +309,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
       gchar *group_id= conv_group_id(&iter_data[1], group_id_len);
       if (!group_id)
       {
-        DEBUG_RETURN(IC_ERROR_CONFIG_INCORRECT_GROUP_ID);
+        DEBUG_RETURN_INT(IC_ERROR_CONFIG_INCORRECT_GROUP_ID);
       }
       /*
         We have found a correct group id, now tell the configuration
@@ -316,8 +319,11 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
       */
       IC_INIT_STRING(&section_name, group_id, group_id_len, FALSE);
       (*section_num)++;
-      DEBUG_RETURN(conf_ops->ic_add_section(conf_obj, *section_num, line_number,
-                                            &section_name, pass));
+      DEBUG_RETURN_INT(conf_ops->ic_add_section(conf_obj,
+                                                *section_num,
+                                                line_number,
+                                                &section_name,
+                                                pass));
     }
   }
   else
@@ -335,7 +341,7 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
         ((val_len= line_len - (id_len + space_len)), FALSE) ||
         (!(val_str= conv_key_value(&iter_data[id_len+space_len], &val_len))))
     {
-      DEBUG_RETURN(IC_ERROR_CONFIG_IMPROPER_KEY_VALUE);
+      DEBUG_RETURN_INT(IC_ERROR_CONFIG_IMPROPER_KEY_VALUE);
     }
     /*
       We have found a correct key-value pair. Now let the configuration object
@@ -344,8 +350,12 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     */
     IC_INIT_STRING(&key_name, key_id, id_len, FALSE);
     IC_INIT_STRING(&data_str, val_str, val_len, FALSE);
-    DEBUG_RETURN(conf_ops->ic_add_key(conf_obj, *section_num, line_number,
-                                      &key_name, &data_str, pass));
+    DEBUG_RETURN_INT(conf_ops->ic_add_key(conf_obj,
+                                          *section_num,
+                                          line_number,
+                                          &key_name,
+                                          &data_str,
+                                          pass));
   }
 }
 /*
@@ -380,7 +390,7 @@ int ic_build_config_data(IC_STRING *conf_data,
   {
     err_obj->err_num= 1;
     err_obj->line_number= 0;
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   for (pass= 0; pass < 2; pass++)
   {
@@ -417,10 +427,10 @@ int ic_build_config_data(IC_STRING *conf_data,
                                            line_number - 1,
                                            pass - 1)))
     goto config_error;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 config_error:
   ic_conf_op->ic_config_end(ic_config);
   err_obj->err_num= error;
   err_obj->line_number= line_number;
-  DEBUG_RETURN(1);
+  DEBUG_RETURN_INT(1);
 }

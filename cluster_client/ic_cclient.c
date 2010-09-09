@@ -64,7 +64,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
     ic_printf("%s\n", read_buf);
   }
 error:
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -160,7 +160,7 @@ command_interpreter(IC_CONNECTION *conn)
       if ((error= read_one_line(line_ptr)))
       {
         ic_print_error(error);
-        DEBUG_RETURN(error);
+        DEBUG_RETURN_INT(error);
       }
       if (line_ptr->len == 0)
       {
@@ -189,12 +189,12 @@ command_interpreter(IC_CONNECTION *conn)
     for (i= 0; i < lines; i++)
       ic_free(line_ptrs[i]->str);
   } while (TRUE);
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 
 error:
   for (i= 0; i < lines; i++)
     ic_free(line_ptrs[i]->str);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -209,7 +209,7 @@ connect_cluster_mgr(IC_CONNECTION **conn)
                                           NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Connecting to Cluster Manager at %s:%s",
@@ -225,10 +225,10 @@ connect_cluster_mgr(IC_CONNECTION **conn)
      ("Failed to connect to Cluster Manager"));
     ic_print_error(ret_code);
     loc_conn->conn_op.ic_free_connection(loc_conn);
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   *conn= loc_conn;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 int main(int argc, char *argv[])

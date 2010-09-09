@@ -379,8 +379,8 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
     set_up_fields_in_apid_op(apid_op, table_def);
   }
   *error= 0;
-  DEBUG_RETURN((IC_APID_OPERATION*)apid_op);
+  DEBUG_RETURN_PTR((IC_APID_OPERATION*)apid_op);
 
 error:
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }

@@ -40,9 +40,9 @@ struct ic_int_connection
   /* Should connection be nonblocking */
   gboolean is_nonblocking;
 
-  GMutex *read_mutex;
-  GMutex *write_mutex;
-  GMutex *connect_mutex;
+  IC_MUTEX *read_mutex;
+  IC_MUTEX *write_mutex;
+  IC_MUTEX *connect_mutex;
 
   gchar *read_buf;
   guint32 read_buf_size;

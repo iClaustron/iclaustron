@@ -510,8 +510,8 @@ struct ic_int_apid_global
   IC_BITMAP *cluster_bitmap;
   /* Hidden part */
   /* Internal part */
-  GMutex *mutex;
-  GCond *cond;
+  IC_MUTEX *mutex;
+  IC_COND *cond;
   guint32 num_user_threads_started;
   gboolean stop_flag;
   gboolean use_external_connect;
@@ -541,15 +541,15 @@ struct ic_int_apid_global
   IC_APID_CONNECTION *heartbeat_conn;
   IC_SEND_NODE_CONNECTION *first_heartbeat_node;
   IC_SEND_NODE_CONNECTION *curr_heartbeat_node;
-  GMutex *heartbeat_mutex;
-  GCond *heartbeat_cond;
+  IC_MUTEX *heartbeat_mutex;
+  IC_COND *heartbeat_cond;
   guint32 heartbeat_thread_id;
   guint32 heartbeat_thread_waiting;
   /* End heartbeat thread variables */
 
   IC_THREADPOOL_STATE *rec_thread_pool;
   IC_THREADPOOL_STATE *send_thread_pool;
-  GMutex *thread_id_mutex;
+  IC_MUTEX *thread_id_mutex;
   guint32 num_receive_threads;
   guint32 num_listen_server_threads;
   IC_RUN_APID_THREAD_FUNC apid_func;

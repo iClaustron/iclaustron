@@ -185,7 +185,7 @@ struct ic_int_api_config_server
   IC_MEMORY_CONTAINER *mc_ptr;
   IC_TEMP_API_CONFIG_SERVER *temp;
   IC_API_CLUSTER_CONNECTION cluster_conn;
-  GMutex *config_mutex;
+  IC_MUTEX *config_mutex;
 
   gchar *err_str;
   guint32 max_cluster_id;
@@ -304,10 +304,10 @@ struct ic_run_cluster_state
   */
   IC_CONFIG_ERROR err_obj;
 
-  GMutex *protect_state;
-  GCond  *start_cond;
-  GCond  *connect_cond;
-  GCond  *update_cond;
+  IC_MUTEX *protect_state;
+  IC_COND  *start_cond;
+  IC_COND  *connect_cond;
+  IC_COND  *update_cond;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 
@@ -423,8 +423,8 @@ struct ic_int_run_cluster_server
   */
 
   /* Variables used to control access to configuration */
-  GMutex *config_mutex;
-  GCond *config_cond;
+  IC_MUTEX *config_mutex;
+  IC_COND *config_cond;
   guint32 conf_ref_count;
 
   /* Configuration has been locked indicator */
@@ -613,9 +613,9 @@ struct ic_int_run_cluster_server
   if (!(cond)) \
   { \
     set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__); \
-    DEBUG_RETURN(IC_PROTOCOL_ERROR); \
+    DEBUG_RETURN_INT(IC_PROTOCOL_ERROR); \
   } \
-  DEBUG_RETURN(0); \
+  DEBUG_RETURN_INT(0); \
 }
 
 #define PROTOCOL_CONN_CHECK_DEBUG_RETURN(cond) \
@@ -623,9 +623,9 @@ struct ic_int_run_cluster_server
   if (!(cond)) \
   { \
     conn->conn_op.ic_set_error_line(conn, (guint32)__LINE__); \
-    DEBUG_RETURN(IC_PROTOCOL_ERROR); \
+    DEBUG_RETURN_INT(IC_PROTOCOL_ERROR); \
   } \
-  DEBUG_RETURN(0); \
+  DEBUG_RETURN_INT(0); \
 }
 
 #define PROTOCOL_CHECK_RETURN(cond) \

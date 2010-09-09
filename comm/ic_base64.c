@@ -154,6 +154,6 @@ ic_base64_encode(guint8 **dest,
   }
   *dst= 0;
   dst++;
-  g_assert(dst == end_dst);
+  ic_assert(dst == end_dst);
   return 0;
 }

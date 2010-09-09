@@ -67,7 +67,7 @@ adaptive_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   DEBUG_ENTRY("adaptive_send_handling");
 
   wake_send_thread= FALSE;
-  g_mutex_lock(send_node_conn->mutex);
+  ic_mutex_lock(send_node_conn->mutex);
   adaptive_send_algorithm_adjust(send_node_conn);
   if (send_node_conn->first_sbp)
   {
@@ -78,10 +78,10 @@ adaptive_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
     wake_send_thread= TRUE;
   }
   next_send_node_conn= send_node_conn->next_send_node;
-  g_mutex_unlock(send_node_conn->mutex);
+  ic_mutex_unlock(send_node_conn->mutex);
   if (wake_send_thread)
-    g_cond_signal(send_node_conn->cond);
-  DEBUG_RETURN(next_send_node_conn);
+    ic_cond_signal(send_node_conn->cond);
+  DEBUG_RETURN_PTR(next_send_node_conn);
 }
 
 static void

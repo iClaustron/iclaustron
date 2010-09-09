@@ -71,10 +71,10 @@ connect_pcntrl(IC_CONNECTION **conn, const gchar *node_config)
                                                           NULL)))
     goto error;
   *conn= local_conn;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 error:
   local_conn->conn_op.ic_free_connection(local_conn);
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static gchar*
@@ -160,7 +160,7 @@ add_connectstring(IC_PARSE_DATA *parse_data, const gchar *param_str,
       found++;
     }
   }
-  g_assert(found == clu_conf->num_cluster_servers);
+  ic_assert(found == clu_conf->num_cluster_servers);
   if (!found)
     return NULL;
   return dest_str.str;
@@ -292,7 +292,7 @@ start_node(IC_PARSE_DATA *parse_data,
 error:
   if (conn)
     conn->conn_op.ic_free_connection(conn);
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -336,7 +336,7 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
       !(param_array[num_params++]= add_connectstring(parse_data,
               ic_ndb_connectstring_str,
               clu_conf)))
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   /*
     This functionality requires a NDB that has been adapted to use
     cluster ids and some other iClaustron functionality.
@@ -349,16 +349,16 @@ start_data_server_node(IC_PARSE_DATA *parse_data,
   if (parse_data->initial_flag)
     param_array[num_params++]= ic_initial_flag_str;
 
-  DEBUG_RETURN(start_node(parse_data,
-                          node_config,
-                          ic_def_grid_str,
-                          clu_conf->clu_info.cluster_name.str,
-                          ds_conf->node_name,
-                          ic_data_server_program_str,
-                          parse_data->ndb_version_name.str,
-                          num_params,
-                          (const gchar**)&param_array[0],
-                          parse_data->restart_flag));
+  DEBUG_RETURN_INT(start_node(parse_data,
+                              node_config,
+                             ic_def_grid_str,
+                             clu_conf->clu_info.cluster_name.str,
+                             ds_conf->node_name,
+                             ic_data_server_program_str,
+                             parse_data->ndb_version_name.str,
+                             num_params,
+                             (const gchar**)&param_array[0],
+                             parse_data->restart_flag));
 }
 
 static int
@@ -419,18 +419,18 @@ start_apid_server_node(IC_PARSE_DATA *parse_data,
       !(param_array[num_params++]= add_param_num(parse_data,
                                            ic_num_threads_str,
                                            client_conf->apid_num_threads)))
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 
-  DEBUG_RETURN(start_node(parse_data,
-                          node_config,
-                          ic_def_grid_str,
-                          clu_conf->clu_info.cluster_name.str,
-                          client_conf->node_name,
-                          program_str,
-                          parse_data->iclaustron_version_name.str,
-                          num_params,
-                          (const gchar**)&param_array[0],
-                          parse_data->restart_flag));
+  DEBUG_RETURN_INT(start_node(parse_data,
+                              node_config,
+                              ic_def_grid_str,
+                              clu_conf->clu_info.cluster_name.str,
+                              client_conf->node_name,
+                              program_str,
+                              parse_data->iclaustron_version_name.str,
+                              num_params,
+                              (const gchar**)&param_array[0],
+                              parse_data->restart_flag));
 }
 
 static int
@@ -486,18 +486,18 @@ start_cluster_node(IC_PARSE_DATA *parse_data,
       !(param_array[num_params++]= add_connectstring(parse_data,
                                                      ic_cs_connectstring_str,
                                                      clu_conf)))
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 
-  DEBUG_RETURN(start_node(parse_data,
-                          node_config,
-                          ic_def_grid_str,
-                          clu_conf->clu_info.cluster_name.str,
-                          cs_conf->node_name,
-                          program_str,
-                          parse_data->iclaustron_version_name.str,
-                          num_params,
-                          (const gchar**)&param_array[0],
-                          parse_data->restart_flag));
+  DEBUG_RETURN_INT(start_node(parse_data,
+                              node_config,
+                              ic_def_grid_str,
+                              clu_conf->clu_info.cluster_name.str,
+                              cs_conf->node_name,
+                              program_str,
+                              parse_data->iclaustron_version_name.str,
+                              num_params,
+                              (const gchar**)&param_array[0],
+                              parse_data->restart_flag));
 }
 
 static int
@@ -516,7 +516,7 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
   node_config= apic->api_op.ic_get_node_object(apic, cluster_id, node_id);
   if (!node_config)
   {
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   initial_flag= parse_data->initial_flag;
   if (parse_data->binary_type_flag)
@@ -525,7 +525,7 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     {
       if (parse_data->node_all)
       {
-        DEBUG_RETURN(0);
+        DEBUG_RETURN_INT(0);
       }
       report_error(parse_data, wrong_node_type);
     }
@@ -534,22 +534,22 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
   {
     case IC_DATA_SERVER_NODE:
     {
-      DEBUG_RETURN(start_data_server_node(parse_data,
-                                          node_config,
-                                          clu_conf));
+      DEBUG_RETURN_INT(start_data_server_node(parse_data,
+                                              node_config,
+                                              clu_conf));
       break;
     }
     case IC_CLIENT_NODE:
     {
-      DEBUG_RETURN(start_client_node(parse_data,
-                                     node_config,
-                                     clu_conf));
+      DEBUG_RETURN_INT(start_client_node(parse_data,
+                                         node_config,
+                                         clu_conf));
       break;
     }
     case IC_CLUSTER_SERVER_NODE:
     {
       cs_conf= (IC_CLUSTER_SERVER_CONFIG*)node_config;
-      DEBUG_RETURN(start_cluster_node(parse_data,
+      DEBUG_RETURN_INT(start_cluster_node(parse_data,
                                       node_config,
                                       ic_cluster_server_program_str,
                                       cs_conf->cluster_server_port_number,
@@ -559,7 +559,7 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     case IC_CLUSTER_MANAGER_NODE:
     {
       mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)node_config;
-      DEBUG_RETURN(start_cluster_node(parse_data,
+      DEBUG_RETURN_INT(start_cluster_node(parse_data,
                                       node_config,
                                       ic_cluster_manager_program_str,
                                       mgr_conf->cluster_manager_port_number,
@@ -568,38 +568,38 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
     }
     case IC_SQL_SERVER_NODE:
     {
-      DEBUG_RETURN(start_sql_server_node(parse_data,
-                                         node_config,
-                                         clu_conf));
+      DEBUG_RETURN_INT(start_sql_server_node(parse_data,
+                                             node_config,
+                                             clu_conf));
       break;
     }
     case IC_REP_SERVER_NODE:
     {
-      DEBUG_RETURN(start_apid_server_node(parse_data,
-                                          node_config,
-                                          ic_rep_server_program_str,
-                                          clu_conf));
+      DEBUG_RETURN_INT(start_apid_server_node(parse_data,
+                                              node_config,
+                                              ic_rep_server_program_str,
+                                              clu_conf));
        break;
     }
     case IC_FILE_SERVER_NODE:
     {
-      DEBUG_RETURN(start_apid_server_node(parse_data,
-                                          node_config,
-                                          ic_file_server_program_str,
-                                          clu_conf));
+      DEBUG_RETURN_INT(start_apid_server_node(parse_data,
+                                              node_config,
+                                              ic_file_server_program_str,
+                                              clu_conf));
        break;
     }
     case IC_RESTORE_NODE:
     {
-      DEBUG_RETURN(start_restore_node(parse_data,
-                                      node_config,
-                                      clu_conf));
+      DEBUG_RETURN_INT(start_restore_node(parse_data,
+                                          node_config,
+                                          clu_conf));
       break;
     }
     default:
       break;
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static void
@@ -1105,9 +1105,9 @@ handle_new_connection(IC_CONNECTION *conn,
                             IC_MEDIUM_STACK_SIZE,
                             FALSE)))
   {
-    DEBUG_RETURN(ret_code);
+    DEBUG_RETURN_INT(ret_code);
   }
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
   return 0;
 }
 static int
@@ -1146,10 +1146,10 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
       goto error;
     }
   } while (1);
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 
 error:
-  DEBUG_RETURN(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -1164,7 +1164,7 @@ set_up_server_connection(IC_CONNECTION **conn)
                                           NULL, NULL)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   DEBUG_PRINT(COMM_LEVEL,
     ("Setting up server connection for Cluster Manager at %s:%s",
@@ -1180,12 +1180,12 @@ set_up_server_connection(IC_CONNECTION **conn)
     DEBUG_PRINT(COMM_LEVEL,
       ("Failed to set-up connection for Cluster Manager"));
     loc_conn->conn_op.ic_free_connection(loc_conn);
-    DEBUG_RETURN(1);
+    DEBUG_RETURN_INT(1);
   }
   ic_printf("Successfully set-up connection for Cluster Manager at %s:%s",
             glob_cluster_mgr_ip, glob_cluster_mgr_port);
   *conn= loc_conn;
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 }
 
 static GOptionEntry entries[] = 

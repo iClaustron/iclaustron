@@ -72,8 +72,8 @@ struct ic_int_thread_state
   guint32 prev_thread_id;
 
   /* The mutex and condition is mainly used for startup synchronisation.  */
-  GMutex *mutex;
-  GCond *cond;
+  IC_MUTEX *mutex;
+  IC_COND *cond;
 };
 
 struct ic_int_threadpool_state
@@ -115,8 +115,8 @@ struct ic_int_threadpool_state
     is included in this list. There is also a condition used to wait
     on stopped threads.
   */
-  GMutex *stop_list_mutex;
-  GCond *stop_list_cond;
+  IC_MUTEX *stop_list_mutex;
+  IC_COND *stop_list_cond;
 
   /*
     The free list mutex protects the free list, this means the first
@@ -124,7 +124,7 @@ struct ic_int_threadpool_state
     Also the free variable in the thread objects which is merely a
     debug variable.
   */
-  GMutex *free_list_mutex;
+  IC_MUTEX *free_list_mutex;
 
   /* Thread state objects, set once, not protected */
   IC_INT_THREAD_STATE **thread_state;

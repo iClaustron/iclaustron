@@ -140,7 +140,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   initialize_message_func_array();
   if (!(apid_global= (IC_INT_APID_GLOBAL*)
        ic_calloc(sizeof(IC_INT_APID_GLOBAL))))
-    DEBUG_RETURN(NULL);
+    DEBUG_RETURN_PTR(NULL);
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
                         IC_MAX_RECEIVE_THREADS + 1, FALSE)))
     goto error;
@@ -162,16 +162,16 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL,
                                                       IC_MAX_CLUSTER_ID)))
     goto error;
-  if (!(apid_global->mutex= g_mutex_new()))
+  if (!(apid_global->mutex= ic_mutex_create()))
     goto error;
-  if (!(apid_global->cond= g_cond_new()))
+  if (!(apid_global->cond= ic_cond_create()))
     goto error;
   if (!(apid_global->send_buf_pool= ic_create_sock_buf(IC_MEMBUF_SIZE,
                                                        1024)))
     goto error;
   if (!(apid_global->ndb_message_pool= ic_create_sock_buf(0, 16384)))
     goto error;
-  if (!(apid_global->thread_id_mutex= g_mutex_new()))
+  if (!(apid_global->thread_id_mutex= ic_mutex_create()))
     goto error;
   for (i= 0; i <= apic->max_cluster_id; i++)
   {
@@ -192,18 +192,18 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
               ic_calloc(sizeof(IC_SEND_NODE_CONNECTION))))
             goto error;
           cluster_comm->send_node_conn_array[j]= send_node_conn;
-          if (!(send_node_conn->mutex= g_mutex_new()))
+          if (!(send_node_conn->mutex= ic_mutex_create()))
             goto error;
-          if (!(send_node_conn->cond= g_cond_new()))
+          if (!(send_node_conn->cond= ic_cond_create()))
             goto error;
         }
       }
     }
   }
-  DEBUG_RETURN(apid_global);
+  DEBUG_RETURN_PTR(apid_global);
 error:
   ic_end_apid(apid_global);
-  DEBUG_RETURN(NULL);
+  DEBUG_RETURN_PTR(NULL);
 }
 
 static void
@@ -212,9 +212,9 @@ free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
   if (send_node_conn == NULL)
     return;
   if (send_node_conn->mutex)
-    g_mutex_free(send_node_conn->mutex);
+    ic_mutex_destroy(send_node_conn->mutex);
   if (send_node_conn->cond)
-    g_cond_free(send_node_conn->cond);
+    ic_cond_destroy(send_node_conn->cond);
   if (send_node_conn->string_memory)
     ic_free(send_node_conn->string_memory);
   if (send_node_conn->dynamic_port_number_to_release)
@@ -252,16 +252,16 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
   if (ndb_message_pool)
     ndb_message_pool->sock_buf_ops.ic_free_sock_buf(ndb_message_pool);
   if (apid_global->heartbeat_mutex)
-    g_mutex_free(apid_global->heartbeat_mutex);
+    ic_mutex_destroy(apid_global->heartbeat_mutex);
   if (apid_global->heartbeat_cond)
-    g_cond_free(apid_global->heartbeat_cond);
+    ic_cond_destroy(apid_global->heartbeat_cond);
   if (apid_global->heartbeat_conn)
     apid_global->heartbeat_conn->apid_conn_ops->ic_free_apid_connection(
                                       apid_global->heartbeat_conn);
   if (apid_global->mutex)
-    g_mutex_free(apid_global->mutex);
+    ic_mutex_destroy(apid_global->mutex);
   if (apid_global->cond)
-    g_cond_free(apid_global->cond);
+    ic_cond_destroy(apid_global->cond);
   for (i= 0; i < apid_global->num_listen_server_threads; i++)
     close_listen_server_thread(apid_global->listen_server_thread[i],
                                apid_global);
@@ -288,16 +288,16 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
         if (!grid_comm->thread_conn_array[j])
           continue;
         if (grid_comm->thread_conn_array[j]->mutex)
-          g_mutex_free(grid_comm->thread_conn_array[j]->mutex);
+          ic_mutex_destroy(grid_comm->thread_conn_array[j]->mutex);
         if (grid_comm->thread_conn_array[j]->cond)
-          g_cond_free(grid_comm->thread_conn_array[j]->cond);
+          ic_cond_destroy(grid_comm->thread_conn_array[j]->cond);
       }
       ic_free(grid_comm->thread_conn_array);
     }
     ic_free(grid_comm);
   }
   if (apid_global->thread_id_mutex)
-    g_mutex_free(apid_global->thread_id_mutex);
+    ic_mutex_destroy(apid_global->thread_id_mutex);
   ic_free(apid_global);
   DEBUG_RETURN_EMPTY;
 }
@@ -323,11 +323,11 @@ ic_apid_global_connect(IC_INT_APID_GLOBAL *apid_global)
     connect process to the other nodes in the cluster.
   */
   start_connect_phase(apid_global, FALSE, TRUE);
-  DEBUG_RETURN(0);
+  DEBUG_RETURN_INT(0);
 error:
   apid_global->stop_flag= TRUE;
   start_connect_phase(apid_global, TRUE, TRUE);
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static void
@@ -365,13 +365,13 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
         send_node_conn= cluster_comm->send_node_conn_array[node_id];
         if (send_node_conn)
         {
-          g_mutex_lock(send_node_conn->mutex);
+          ic_mutex_lock(send_node_conn->mutex);
           if (!send_node_conn->send_thread_ended)
           {
             if (stop_ordered)
               send_node_conn->stop_ordered= TRUE;
             thread_id= send_node_conn->thread_id;
-            g_mutex_unlock(send_node_conn->mutex);
+            ic_mutex_unlock(send_node_conn->mutex);
             /* Wake up send thread to connect/shutdown */
             if (stop_ordered)
             {
@@ -389,7 +389,7 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
             }
             continue;
           }
-          g_mutex_unlock(send_node_conn->mutex);
+          ic_mutex_unlock(send_node_conn->mutex);
         }
       }
     }
@@ -397,30 +397,30 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
   if (signal_flag)
   {
     /* Wake all receive threads in start position */
-    g_mutex_lock(apid_global->mutex);
+    ic_mutex_lock(apid_global->mutex);
     for (i= 0; i < apid_global->num_receive_threads; i++)
     {
       rec_state= apid_global->receive_threads[i];
       rec_tp_state->tp_ops.ic_threadpool_run_thread(rec_tp_state,
                                                     rec_state->thread_id);
     }
-    g_mutex_unlock(apid_global->mutex);
+    ic_mutex_unlock(apid_global->mutex);
   }
   if (stop_ordered)
   {
     /* Wait for all receive threads to have exited */
     while (1)
     {
-      g_mutex_lock(apid_global->mutex);
+      ic_mutex_lock(apid_global->mutex);
       if (apid_global->num_receive_threads == 0)
       {
-        g_mutex_unlock(apid_global->mutex);
+        ic_mutex_unlock(apid_global->mutex);
         break;
       }
       thread_id= apid_global->num_receive_threads - 1;
       rec_state= apid_global->receive_threads[thread_id];
       apid_global->num_receive_threads--;
-      g_mutex_unlock(apid_global->mutex);
+      ic_mutex_unlock(apid_global->mutex);
       rec_tp_state->tp_ops.ic_threadpool_stop_thread_wait(rec_tp_state,
                                               rec_state->thread_id);
     }
@@ -437,10 +437,10 @@ apid_global_cond_wait(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
 
-  g_mutex_lock(apid_global->mutex);
+  ic_mutex_lock(apid_global->mutex);
   if (apid_global->num_user_threads_started > 0)
-    g_cond_wait(apid_global->cond, apid_global->mutex);
-  g_mutex_unlock(apid_global->mutex);
+    ic_cond_wait(apid_global->cond, apid_global->mutex);
+  ic_mutex_unlock(apid_global->mutex);
 }
 
 static gboolean
@@ -449,11 +449,11 @@ apid_global_get_stop(IC_APID_GLOBAL *ext_apid_global)
   gboolean stop_flag;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
 
-  g_mutex_lock(apid_global->mutex);
+  ic_mutex_lock(apid_global->mutex);
   if (ic_get_stop_flag())
     apid_global->stop_flag= TRUE;
   stop_flag= apid_global->stop_flag;
-  g_mutex_unlock(apid_global->mutex);
+  ic_mutex_unlock(apid_global->mutex);
   return stop_flag;
 }
 
@@ -462,9 +462,9 @@ apid_global_set_stop(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
 
-  g_mutex_lock(apid_global->mutex);
+  ic_mutex_lock(apid_global->mutex);
   apid_global->stop_flag= TRUE;
-  g_mutex_unlock(apid_global->mutex);
+  ic_mutex_unlock(apid_global->mutex);
 }
 
 static guint32
@@ -473,9 +473,9 @@ apid_global_get_num_user_threads(IC_APID_GLOBAL *ext_apid_global)
   guint32 num_user_threads;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
 
-  g_mutex_lock(apid_global->mutex);
+  ic_mutex_lock(apid_global->mutex);
   num_user_threads= apid_global->num_user_threads_started;
-  g_mutex_unlock(apid_global->mutex);
+  ic_mutex_unlock(apid_global->mutex);
   return num_user_threads;
 }
 
@@ -484,19 +484,19 @@ apid_global_add_user_thread(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
 
-  g_mutex_lock(apid_global->mutex);
+  ic_mutex_lock(apid_global->mutex);
   apid_global->num_user_threads_started++;
-  g_mutex_unlock(apid_global->mutex);
+  ic_mutex_unlock(apid_global->mutex);
 }
 
 void
 apid_global_remove_user_thread(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
-  g_mutex_lock(apid_global->mutex);
+  ic_mutex_lock(apid_global->mutex);
   apid_global->num_user_threads_started--;
-  g_cond_signal(apid_global->cond);
-  g_mutex_unlock(apid_global->mutex);
+  ic_cond_signal(apid_global->cond);
+  ic_mutex_unlock(apid_global->mutex);
 }
 
 void
@@ -539,17 +539,17 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
                                              node_id,
                                              &send_node_conn)))
     goto error;
-  g_mutex_lock(send_node_conn->mutex);
+  ic_mutex_lock(send_node_conn->mutex);
   send_node_conn->conn= conn;
   send_node_conn->node_up= TRUE;
-  g_cond_signal(send_node_conn->cond);
-  g_mutex_unlock(send_node_conn->mutex);
-  DEBUG_RETURN(0);
+  ic_cond_signal(send_node_conn->cond);
+  ic_mutex_unlock(send_node_conn->mutex);
+  DEBUG_RETURN_INT(0);
 
 error:
   DEBUG_PRINT(CONFIG_LEVEL,
     ("Error from ic_external_connect, code = %u", error));
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -689,9 +689,9 @@ ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
     *ret_code= error;
     goto error;
   }
-  DEBUG_RETURN((IC_APID_GLOBAL*)apid_global);
+  DEBUG_RETURN_PTR((IC_APID_GLOBAL*)apid_global);
 error:
   err_string= ic_common_fill_error_buffer(NULL, 0, *ret_code, *err_str);
-  g_assert(err_string == *err_str);
-  DEBUG_RETURN(NULL);
+  ic_assert(err_string == *err_str);
+  DEBUG_RETURN_PTR(NULL);
 }

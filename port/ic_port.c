@@ -57,11 +57,11 @@
 #include <signal.h>
 #endif
 
-static GMutex *exec_output_mutex= NULL;
+static IC_MUTEX *exec_output_mutex= NULL;
 
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
-static GMutex *mem_mutex= NULL;
+static IC_MUTEX *mem_mutex= NULL;
 guint32 error_inject= 0;
 #endif
 static const gchar *port_binary_dir;
@@ -128,9 +128,9 @@ ic_get_stop_flag()
 void
 ic_port_init()
 {
-  exec_output_mutex= g_mutex_new();
+  exec_output_mutex= ic_mutex_create();
 #ifdef DEBUG_BUILD
-  mem_mutex= g_mutex_new();
+  mem_mutex= ic_mutex_create();
 #endif
 }
 
@@ -140,9 +140,9 @@ void ic_port_end()
   ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
   if (num_mem_allocs != (guint64)0)
     ic_printf("Memory leak found");
-  g_mutex_free(mem_mutex);
+  ic_mutex_destroy(mem_mutex);
 #endif
-  g_mutex_free(exec_output_mutex);
+  ic_mutex_destroy(exec_output_mutex);
 }
 
 void
@@ -314,9 +314,9 @@ gchar *
 ic_calloc(size_t size)
 {
 #ifdef DEBUG_BUILD
-  g_mutex_lock(mem_mutex);
+  ic_mutex_lock(mem_mutex);
   num_mem_allocs++;
-  g_mutex_unlock(mem_mutex);
+  ic_mutex_unlock(mem_mutex);
 #endif
   return g_try_malloc0(size);
 }
@@ -334,9 +334,9 @@ gchar *
 ic_malloc(size_t size)
 {
 #ifdef DEBUG_BUILD
-  g_mutex_lock(mem_mutex);
+  ic_mutex_lock(mem_mutex);
   num_mem_allocs++;
-  g_mutex_unlock(mem_mutex);
+  ic_mutex_unlock(mem_mutex);
 #endif
   return g_try_malloc(size);
 }
@@ -345,9 +345,9 @@ void
 ic_free(void *ret_obj)
 {
 #ifdef DEBUG_BUILD
-  g_mutex_lock(mem_mutex);
+  ic_mutex_lock(mem_mutex);
   num_mem_allocs--;
-  g_mutex_unlock(mem_mutex);
+  ic_mutex_unlock(mem_mutex);
 #endif
   g_free(ret_obj);
 }
@@ -529,9 +529,9 @@ ic_is_process_alive(IC_PID_TYPE pid,
   argv[6]= log_file_name_str.str;
   argv[7]= NULL;
 
-  g_mutex_lock(exec_output_mutex);
+  ic_mutex_lock(exec_output_mutex);
   error= run_process(argv, &exit_status, log_file_name_str.str);
-  g_mutex_unlock(exec_output_mutex);
+  ic_mutex_unlock(exec_output_mutex);
   if (error == (gint)1)
   {
     return 0; /* The process was alive */
@@ -695,7 +695,7 @@ ic_get_file_contents(const gchar *file,
     goto error;
   if (!(loc_ptr= ic_malloc((size_t)((*file_size) + 1))))
   {
-    DEBUG_RETURN(IC_ERROR_MEM_ALLOC);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
   loc_ptr[*file_size]= 0;
   *file_content= loc_ptr;
@@ -710,7 +710,7 @@ ic_get_file_contents(const gchar *file,
     }
     if (read_size == size_left)
     {
-      DEBUG_RETURN(0);
+      DEBUG_RETURN_INT(0);
     }
     loc_ptr+= read_size;
     size_left-= (size_t)read_size;
@@ -718,7 +718,7 @@ ic_get_file_contents(const gchar *file,
 get_error:
   error= ic_get_last_error();
 error:
-  DEBUG_RETURN(error);
+  DEBUG_RETURN_INT(error);
 }
 
 static int
@@ -1015,8 +1015,23 @@ guint32 ic_byte_order()
     return 1;
 }
 
-void ic_cond_timed_wait(GCond *cond,
-                        GMutex *mutex,
+void ic_cond_signal(IC_COND *cond)
+{
+  g_cond_signal(cond);
+}
+
+void ic_cond_broadcast(IC_COND *cond)
+{
+  g_cond_broadcast(cond);
+}
+
+void ic_cond_wait(IC_COND *cond, IC_MUTEX *mutex)
+{
+  g_cond_wait(cond, mutex);
+}
+
+void ic_cond_timed_wait(IC_COND *cond,
+                        IC_MUTEX *mutex,
                         guint32 micros)
 {
   GTimeVal stop_timer;
@@ -1024,4 +1039,54 @@ void ic_cond_timed_wait(GCond *cond,
   g_get_current_time(&stop_timer);
   g_time_val_add(&stop_timer, micros);
   g_cond_timed_wait(cond, mutex, &stop_timer);
+}
+
+IC_COND* ic_cond_create()
+{
+  return g_cond_new();
+}
+
+void ic_cond_destroy(IC_COND *cond)
+{
+  g_cond_free(cond);
+}
+
+void ic_mutex_lock(IC_MUTEX *mutex)
+{
+  g_mutex_lock(mutex);
+}
+
+void ic_mutex_unlock(IC_MUTEX *mutex)
+{
+  g_mutex_unlock(mutex);
+}
+
+IC_MUTEX* ic_mutex_create()
+{
+  return g_mutex_new();
+}
+
+void ic_mutex_destroy(IC_MUTEX *mutex)
+{
+  g_mutex_free(mutex);
+}
+
+void ic_spin_lock(IC_SPINLOCK *spinlock)
+{
+  g_mutex_lock(spinlock);
+}
+
+void ic_spin_unlock(IC_SPINLOCK *spinlock)
+{
+  g_mutex_unlock(spinlock);
+}
+
+IC_SPINLOCK* ic_spin_create()
+{
+  return g_mutex_new();
+}
+
+void ic_spin_destroy(IC_SPINLOCK *spinlock)
+{
+  g_mutex_free(spinlock);
 }
