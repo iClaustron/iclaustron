@@ -128,7 +128,7 @@ void ic_debug_return(int ret_type,
 
       case PTR_DEBUG_RETURN_TYPE:
         ic_guint64_hex_str((guint64)return_ptr, ptr_buf);
-        len= g_snprintf(buf, 256, "Exit from %s, ptr_val= %s",
+        len= g_snprintf(buf, 256, "Exit from %s, ptr_val= 0x%s",
                         entry_point, ptr_buf);
         break;
 

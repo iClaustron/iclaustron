@@ -1983,15 +1983,17 @@ ic_create_socket_object(gboolean is_client,
                         authenticate_func auth_func,
                         void *auth_obj)
 {
+  IC_CONNECTION *conn_ptr;
   DEBUG_ENTRY("ic_create_socket_object");
-  DEBUG_RETURN_PTR(int_create_socket_object(is_client,
-                                            is_mutex_used,
-                                            is_connect_thread_used,
-                                            FALSE,
-                                            FALSE,
-                                            read_buf_size,
-                                            auth_func,
-                                            auth_obj));
+  conn_ptr= int_create_socket_object(is_client,
+                                     is_mutex_used,
+                                     is_connect_thread_used,
+                                     FALSE,
+                                     FALSE,
+                                     read_buf_size,
+                                     auth_func,
+                                     auth_obj);
+  DEBUG_RETURN_PTR(conn_ptr);
 }
 
 #ifdef HAVE_SSL

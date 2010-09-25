@@ -725,7 +725,7 @@ conf_serv_add_grid_common_section(void *ic_conf,
   int error;
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
-  DEBUG_ENTRY("conf_serv_add_grid_section");
+  DEBUG_ENTRY("conf_serv_add_grid_common_section");
   DEBUG_IC_STRING(CONFIG_LEVEL, section_name);
   (void)section_number;
 

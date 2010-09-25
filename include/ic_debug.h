@@ -64,16 +64,22 @@ void ic_debug_close();
 #define VOID_DEBUG_RETURN_TYPE (int)2
 #define DEBUG_RETURN_INT(a) \
 { \
+  int __ret_val= (int)(a); \
   ic_debug_return(INT_DEBUG_RETURN_TYPE, \
-                  (int)(a), \
+                  __ret_val, \
                   NULL); \
-  return (a); \
+  return __ret_val; \
 }
+/*
+  It's not allowed to use function calls in this macro since it will be
+  evaluated twice.
+*/
 #define DEBUG_RETURN_PTR(a) \
 { \
+  gchar *__ret_ptr= (gchar*)(a); \
   ic_debug_return(PTR_DEBUG_RETURN_TYPE, \
                   (int)0, \
-                  (gchar*)(a)); \
+                  __ret_ptr); \
   return (a); \
 }
 #define DEBUG_RETURN_EMPTY \

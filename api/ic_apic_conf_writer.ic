@@ -1087,7 +1087,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
       default_struct_ptr= (gchar*)&clu_def->default_socket_config;
       break;
     default:
-      return 1;
+      DEBUG_RETURN_INT(1);
   }
   for (i= 0; i < glob_max_config_id; i++)
   {
@@ -1165,7 +1165,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
       }
     }
   }
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int
