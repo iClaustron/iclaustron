@@ -13,6 +13,8 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+#define IC_CS_HEARTBEAT_INTERVAL 2
+
 static void inc_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static void dec_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static void check_ready_to_release_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -839,9 +841,16 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     goto error;
 
   set_up_run_obj_master(run_obj);
-
   install_new_config(run_obj);
   /*
+    Completed loading local configuration from disk.
+    ------------------------------------------------
+    We have completed loading up our configuration from the local disk
+    configuration. It is now time to synchronize our view of the world
+    with the view of the other Cluster Servers.
+
+    Start synchronization with other Cluster Servers in the iClaustron Grid.
+    ------------------------------------------------------------------------
     Before we start-up our server connection to listen to incoming events
     we first create some socket connections to connect to our fellow
     Cluster Servers. In the start-up phase this is necessary to handle
@@ -883,9 +892,15 @@ error:
   at least a quorum of Cluster Servers have connected before proceeding
   with the start of the Cluster Server.
 
-  When a quorum of cluster servers have started up we will start the
-  Cluster Server start protocol. Whoever of the two nodes which became
-  server part in the setup will start by sending:
+  A quorum is byy definition a majority of the nodes, thus with one and two
+  nodes it is all nodes, with 3 and 4 nodes it is all nodes except one node.
+  The recommended number of Cluster Servers is threee and in this case thus
+  two nodes are required at least to start the Cluster Servers.
+
+  When a quorum of cluster servers have connected we will start the
+  Cluster Server start protocol after waiting for a short time (3 seconds).
+  Whoever of the two nodes which became server part in the setup will start
+  by sending (handled in handle_start_protocol method):
 
   start cluster server<CR>
   nodeid: node_number<CR>
@@ -919,65 +934,47 @@ error:
   message as above with a new nodeid list. In response to the the same
   "start cluster server ok" message is sent.
 
-  At this point the starting node has information about its own need of
-  synchronisation with another Cluster Server.
+  Handling one round of heartbeats is part of the start protocol (handled
+  by the handle_cs_heartbeat method). It is always the client side that
+  initiates sending of heartbeat messages.
 
-  The starting cluster server waits for replies from other Cluster Servers,
-  it also waits for similar messages from other starting Cluster Servers.
-  It waits for a maximum of 10 seconds before it proceeds.
+  heartbeat<CR>
+  started<CR> or starting<CR>
+  <CR>
 
-  An already started Cluster Server responds to this message with the
-  following reply if the Cluster Server is the current master.
+  The server side responds by sending the same protocol message. The
+  starting/started indicates the state of the sending node. The client side
+  sends a heartbeat messsage every 2 seconds, it waits a maximum of 6 seconds
+  before declaring the other side as dead.
 
-  start cluster server master reply<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  status: status_code<CR>
-  pid: pid_number<CR>
-  master node: node_number_of_master<CR>
-  slave node: first_slave_node_number<CR>
-  slave node: second_slave_node_number<CR>
-  slave node: third_slave_node_number<CR>
+  If any node fails the start protocol such that it isn't possible to start
+  up the Cluster Server, the start cluster server thread will quit and be
+  restarted and make another attempt.
 
-  Given that the maximum number of Cluster Servers are 4, it isn't possible
-  to get more than 3 slave nodes in the list. When this message arrives, the
-  new Cluster Server will immediately know its place in the set of Cluster
-  Servers. The new node starting is immediately placed into the list of
-  slave nodes. This message is actually sent to all Cluster Servers to ensure
-  the information is in all Cluster Servers to ensure that all Cluster Servers
-  will choose the new master in the same manner.
+  When a node pair has successfully handled its startup logic it will wait for
+  up to 2 seconds before doing another round of heartbeats and wait again.
 
-  To confirm the reception of this message all nodes should send the following
-  message.
+  When a quorum has successfully started, it's time to check our local state
+  to the cluster state. If our state is an old outdated state we need to
+  fetch the cluster state from one of the starting nodes. Since this means
+  that some other node have to be ready to accept this request for the
+  grid configuration it means that other nodes that have an up-to-date state
+  must proceed to the running of the cluster although still with limited
+  service.
 
-  start cluster server reply<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-  master index size: size_number<CR>
-  nodeid: node_number_of_master<CR>
-  nodeid: first_slave_node_number<CR>
-  nodeid: second_slave_node_number<CR>
-  nodeid: third_slave_node_number<CR>
+  This means that the run cluster server thread must check its state before
+  responding to the protocol messages from other clients in the grid.
 
-  In the case where no master was assigned before the Cluster Server started,
-  the Cluster Server will collect all messages received for 10 seconds. These
-  messages should be other "start cluster server"-messages from other
-  starting Cluster Servers. After 10 seconds each starting node will make a
-  decision if they are to be the master. They will choose this path if they
-  are the Cluster Server starting with lowest node number.
+  After a successful start, the start cluster server thread will remain and
+  continue to send the heartbeat messages.
 
-  If we receive another start message after selecting to become master we
-  know that this node will wait for 10 seconds before attempting to become
-  master. Thus we have time to ensure we can become the new master node
-  and respond to the new nodes start message.
+  Here the start_cluster_server method returns.
 
-  The other nodes that decides to not become master will wait for another
-  10 seconds for the master to send his start confirmed message. If no
-  message arrive, they will make a renewed election of new master. This
-  procedure will be repeated every 10 seconds until either the elected
-  master will send his start reply message or until the node itself becomes
-  master and will start the master start procedure.
+************************ TODO *********************************************
+---------------------------------------------------------------------------
+The rest of this comment must be edited to conform to what gets implemented
+to handle the synchronisation at startup.
+---------------------------------------------------------------------------
 
   When the master have received replies from all other nodes about a starting
   node, the master starts the synchronisation procedure if a quorum of Cluster
@@ -1144,7 +1141,7 @@ handle_cs_heartbeat(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       {
         DEBUG_RETURN_INT(0);
       }
-      ic_sleep(2);
+      ic_sleep(IC_CS_HEARTBEAT_INTERVAL);
     }
   }
   else
@@ -2053,7 +2050,7 @@ start_cs_func(gpointer data)
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Wait for other threads to complete startup"));
       ic_cond_timed_wait(rc_state->start_cond, rc_state->protect_state,
-                         3 * IC_MICROSEC_PER_SECOND);
+                         IC_CS_HEARTBEAT_INTERVAL * IC_MICROSEC_PER_SECOND);
       ic_mutex_unlock(rc_state->protect_state);
       if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
         goto lock_end;
