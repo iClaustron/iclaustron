@@ -1096,8 +1096,9 @@ load_config_server_from_files(gchar *config_file,
   DEBUG_RETURN_PTR(ret_ptr);
 
 file_open_error:
-  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-        "Couldn't open file %s\n", config_file);
-  err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
+  if (is_grid_common_config)
+    err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_COMMON_GRID_CONFIG;
+  else
+    err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_CLUSTER_CONFIG;
   DEBUG_RETURN_PTR(NULL);
 }

@@ -1527,6 +1527,8 @@ write_cv_file(IC_STRING *config_dir,
   error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
   ic_close_file(file_ptr);
 file_error:
+  if (error == ENOENT)
+    error= IC_ERROR_FAILED_TO_CREATE_CONFIG_VERSION;
   DEBUG_RETURN_INT(error);
 }
 

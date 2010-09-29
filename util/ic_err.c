@@ -32,7 +32,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7084
+#define IC_LAST_ERROR 7088
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -225,6 +225,16 @@ ic_init_error_messages()
     "Node id needs to be provided for Cluster Server";
   ic_error_str[IC_ERROR_NO_SUCH_CLUSTER_SERVER_NODEID - IC_FIRST_ERROR]=
     "Node id provided for Cluster Server didn't exist in config";
+  ic_error_str[IC_ERROR_FAILED_TO_OPEN_COMMON_GRID_CONFIG -
+               IC_FIRST_ERROR]=
+    "Failed to open common grid configuration file grid_common.ini";
+  ic_error_str[IC_ERROR_FAILED_TO_OPEN_CLUSTER_CONFIG - IC_FIRST_ERROR]=
+    "Failed to open configuration file of a cluster";
+  ic_error_str[IC_ERROR_FAILED_TO_OPEN_CLUSTER_LIST - IC_FIRST_ERROR]=
+    "Failed to open configuration file of clusters in the grid, config.ini";
+  ic_error_str[IC_ERROR_FAILED_TO_CREATE_CONFIG_VERSION - IC_FIRST_ERROR]=
+    "Failed to create config_version.ini, need to create "
+    "iclaustron_data/config/nodeX directory";
   DEBUG_RETURN_EMPTY;
 }
 
@@ -237,12 +247,13 @@ ic_print_error(int error_number)
       error_number > IC_LAST_ERROR ||
       !ic_error_str[error_number - IC_FIRST_ERROR])
   {
-    ic_printf("%d: %s", error_number, no_such_error_str);
+    ic_printf("OS Error number = %d", error_number);
     if (ic_get_strerror(error_number, buf, sizeof(buf)))
-      perror(ic_get_strerror(error_number, buf, sizeof(buf)));
+      ic_printf("OS Error: %s", buf);
   }
   else
     ic_printf("%s", ic_error_str[error_number - IC_FIRST_ERROR]);
+  perror("Last reported OS Error:");
 }
 
 gchar *ic_get_error_message(int error_number)

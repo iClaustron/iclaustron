@@ -325,8 +325,6 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
   DEBUG_RETURN_PTR(ret_ptr);
 
 file_open_error:
-  g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-        "Failed reading cluster config file %s\n", file_name);
-  err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_FILE;
+  err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_CLUSTER_LIST;
   DEBUG_RETURN_PTR(NULL);
 }

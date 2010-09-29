@@ -78,14 +78,14 @@ static guint32 get_count_cluster_servers(IC_CLUSTER_CONFIG *clu_conf)
   the same host, port and node id in all clusters.
 */
 static IC_CLUSTER_CONFIG*
-get_any_cluster_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+get_any_cluster_config(IC_RC_CONFIG_STATE *config)
 {
   guint32 i= 0;
   IC_CLUSTER_CONFIG *clu_conf;
 
-  for (i= 0; i <= run_obj->config.max_cluster_id; i++)
+  for (i= 0; i <= config->max_cluster_id; i++)
   {
-    if (!(clu_conf= run_obj->config.conf_objects[i]))
+    if (!(clu_conf= config->conf_objects[i]))
       continue;
   }
   ic_assert(clu_conf);
@@ -361,7 +361,7 @@ set_up_run_obj_master(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 used_index;
   guint32 cs_index= 0;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
-  IC_CLUSTER_CONFIG *clu_conf= get_any_cluster_config(run_obj);
+  IC_CLUSTER_CONFIG *clu_conf= get_any_cluster_config(&run_obj->new_config);
 
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
@@ -386,9 +386,9 @@ set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 used_index;
   guint32 i;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
-  IC_CLUSTER_CONFIG *clu_conf= get_any_cluster_config(run_obj);
+  IC_CLUSTER_CONFIG *clu_conf= get_any_cluster_config(&run_obj->new_config);
 
-  run_obj->config.num_cluster_servers=
+  run_obj->new_config.num_cluster_servers=
     get_count_cluster_servers(clu_conf);
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
@@ -442,12 +442,12 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   apic->api_op.ic_get_config= null_get_cs_config;
   apic->api_op.ic_free_config= free_apic_from_run_cluster;
 
-  apic->max_cluster_id= run_obj->config.max_cluster_id;
+  apic->max_cluster_id= run_obj->new_config.max_cluster_id;
   apic->use_ic_cs= TRUE;
-  apic->conf_objects= (IC_CLUSTER_CONFIG**)run_obj->config.conf_objects;
+  apic->conf_objects= (IC_CLUSTER_CONFIG**)run_obj->new_config.conf_objects;
   apic->mc_ptr= run_obj->conf_mc_ptr;
 
-  clu_conf= get_any_cluster_config(run_obj);
+  clu_conf= get_any_cluster_config(&run_obj->new_config);
   cluster_conn->num_cluster_servers= get_count_cluster_servers(clu_conf);
   error= IC_ERROR_MEM_ALLOC;
   num_cluster_servers= cluster_conn->num_cluster_servers;
@@ -501,7 +501,7 @@ typedef struct thread_data
 static int
 load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  int error= 1;
+  int error;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
 
@@ -509,8 +509,8 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                                 info_cs->config_version_number,
                                 run_obj->conf_mc_ptr,
                                 &run_obj->state.err_obj)))
-    return error;
-  run_obj->config.clu_infos= clu_infos;
+    return run_obj->state.err_obj.err_num;
+  run_obj->new_config.clu_infos= clu_infos;
   if ((error= load_config_files(run_obj, clu_infos)))
     return error;
   if (info_cs->config_version_number == 0)
@@ -595,8 +595,8 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       return IC_ERROR_CONFLICTING_CLUSTER_IDS;
     }
     run_obj->new_config.conf_objects[clu_info->cluster_id]= cluster;
-    run_obj->new_config.max_cluster_id= IC_MAX(run_obj->config.max_cluster_id,
-                                    clu_info->cluster_id);
+    run_obj->new_config.max_cluster_id= IC_MAX(run_obj->new_config.max_cluster_id,
+                                               clu_info->cluster_id);
     run_obj->new_config.num_clusters++;
   }
   return 0;
@@ -712,7 +712,16 @@ static int
 read_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int error;
+  IC_INT_API_CONFIG_SERVER *apic;
   DEBUG_ENTRY("read_disk_config");
+
+  /*
+    The apic object is preallocated before calling this method,
+    so don't forget it. Clear remainder of new_config object.
+  */
+  apic= run_obj->new_config.apic;
+  ic_zero(&run_obj->new_config, sizeof(run_obj->new_config));
+  run_obj->new_config.apic= apic;
 
   if ((error= load_local_config(run_obj)))
     goto error;
@@ -798,6 +807,16 @@ error:
   DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 }
 
+static void
+install_new_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  /* Install new configuration directly since no config was there before */
+  memcpy(&run_obj->config,
+         &run_obj->new_config,
+         sizeof(IC_RC_CONFIG_STATE));
+  ic_zero(&run_obj->new_config, sizeof(run_obj->new_config));
+}
+
 /* Implements the start_cluster_server method */
 static int
 start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
@@ -814,12 +833,14 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
                                      &info_cs->state,
                                      &info_cs->pid)))
     goto error;
+
   /* Read configuration from disk configuration */
   if ((error= read_disk_config(run_obj)))
     goto error;
 
   set_up_run_obj_master(run_obj);
 
+  install_new_config(run_obj);
   /*
     Before we start-up our server connection to listen to incoming events
     we first create some socket connections to connect to our fellow
@@ -2511,7 +2532,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
     goto error;
   if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
-  if (!(run_obj->config.apic=
+  if (!(run_obj->new_config.apic=
         (IC_INT_API_CONFIG_SERVER*)conf_mc_ptr->mc_ops.ic_mc_calloc(
                 conf_mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
     goto error;
@@ -2540,8 +2561,10 @@ ic_create_run_cluster(IC_STRING *config_dir,
   run_obj->locked_configuration= FALSE;
   run_obj->config_change_ongoing= FALSE;
   run_obj->conf_ref_count= 0;
-  run_obj->config.max_cluster_id= 0;
-  run_obj->config.num_clusters= 0;
+
+  run_obj->new_config.max_cluster_id= 0;
+  run_obj->new_config.num_clusters= 0;
+
   run_obj->state.err_obj.err_num= 0;
   run_obj->state.err_obj.line_number= 0;
   run_obj->tp_state= tp_state;
@@ -2609,12 +2632,24 @@ rcs_fill_error_buffer(IC_RUN_CLUSTER_SERVER *ext_run_obj,
                                      error_buffer);
 }
 
+/* Free hash on communication objects per cluster */
+static void
+release_hash_on_cluster_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
+{
+  guint32 i;
+
+  for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
+  {
+    if (run_obj->config.conf_objects[i])
+      ic_hashtable_destroy(run_obj->config.conf_objects[i]->comm_hash);
+  }
+}
+
 /* Free IC_RUN_CLUSTER_SERVER object, implements ic_free_run_cluster method */
 static void
 free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
-  guint32 i;
   IC_APID_GLOBAL *apid_global;
   IC_THREADPOOL_STATE *tp_state;
   IC_CONNECTION *conn;
@@ -2631,11 +2666,7 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     apid_global= run_obj->apid_global;
     if (apid_global)
       apid_global->apid_global_ops->ic_free_apid_global(apid_global);
-    for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
-    {
-      if (run_obj->config.conf_objects[i])
-        ic_hashtable_destroy(run_obj->config.conf_objects[i]->comm_hash);
-    }
+    release_hash_on_cluster_config(run_obj);
     free_run_cluster_protect(run_obj);
     if (run_obj->conf_mc_ptr)
       run_obj->conf_mc_ptr->mc_ops.ic_mc_free(run_obj->conf_mc_ptr);
@@ -3044,7 +3075,7 @@ inc_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   while (run_obj->config_change_ongoing)
   {
     ic_cond_wait(run_obj->config_cond,
-                run_obj->config_mutex);
+                 run_obj->config_mutex);
   }
   run_obj->conf_ref_count++;
   ic_mutex_unlock(run_obj->config_mutex);
@@ -3078,9 +3109,8 @@ check_ready_to_release_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     run_obj->locked_configuration= FALSE;
     old_apic= (IC_API_CONFIG_SERVER*)run_obj->config.apic;
     old_mc_ptr= run_obj->old_conf_mc_ptr;
-    memcpy(&run_obj->config,
-           &run_obj->new_config,
-           sizeof(IC_RC_CONFIG_STATE));
+    release_hash_on_cluster_config(run_obj);
+    install_new_config(run_obj);
     ic_cond_broadcast(run_obj->config_cond);
     ic_mutex_unlock(run_obj->config_mutex);
     old_apic->api_op.ic_free_config(old_apic); /* Free old apic version */

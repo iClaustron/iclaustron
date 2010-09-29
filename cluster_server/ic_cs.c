@@ -109,7 +109,8 @@ error:
   ic_print_error(error);
   goto end;
 start_error:
+  ic_print_error(error);
   err_str= run_obj->run_op.ic_fill_error_buffer(run_obj, error, error_buffer);
-  ic_printf("%s", err_str);
+  ic_printf("Error reported by Run Cluster Server object: %s", err_str);
   goto end;
 }
