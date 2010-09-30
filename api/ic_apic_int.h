@@ -304,10 +304,17 @@ struct ic_run_cluster_state
   */
   IC_CONFIG_ERROR err_obj;
 
+  /*
+    State variable indicating return code from
+   check_if_cs_started_thread_func, -1 before returning
+  */
+  int check_if_cs_started_ret_code;
+
   IC_MUTEX *protect_state;
   IC_COND  *start_cond;
   IC_COND  *connect_cond;
   IC_COND  *update_cond;
+  IC_COND  *check_if_cs_started_cond;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 
