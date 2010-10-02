@@ -285,6 +285,7 @@ ic_rec_simple_str_impl(IC_CONNECTION *conn,
         DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
       }
       ic_step_back_rec_with_cr(conn, read_size);
+      DEBUG_PRINT(CONFIG_LEVEL, ("Step back, didn't find %s", str));
       *optional_and_found= FALSE;
     }
     else

@@ -22,6 +22,7 @@
 #define NO_WAIT 0
 #define WAIT_LOCK_INFO 1
 #define WAIT_CHANGE_INFO 2
+#define IC_WAIT_OTHER_CS_START_TIMER 3
 
 enum ic_communication_type
 {

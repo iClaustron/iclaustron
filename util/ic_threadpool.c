@@ -466,8 +466,8 @@ internal_join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id,
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
 
-  remove_stopped_list(tp_state, thread_id, own_mutex);
   g_thread_join(thread_state->thread);
+  remove_stopped_list(tp_state, thread_id, own_mutex);
   free_thread(tp_state, thread_state, thread_id);
 }
 

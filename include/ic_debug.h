@@ -42,10 +42,11 @@ void ic_printf(const char *format,...);
 /* Various parts to debug. */
 #define COMM_LEVEL 1
 #define ENTRY_LEVEL 2
-#define CONFIG_LEVEL 3
-#define PROGRAM_LEVEL 4
-#define THREAD_LEVEL 5
-#define CONFIG_PROTO_LEVEL 6
+#define CONFIG_LEVEL 4
+#define PROGRAM_LEVEL 8
+#define THREAD_LEVEL 16 
+#define CONFIG_PROTO_LEVEL 32
+#define MUTEX_LEVEL 64
 
 #ifdef DEBUG_BUILD
 void ic_debug_print_char_buf(gchar *buf, IC_THREAD_DEBUG *thread_debug);

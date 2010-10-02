@@ -485,31 +485,6 @@ error:
   return ret_code;
 }
 
-static unsigned int
-hash_function(void *key)
-{
-  gchar *val_str= (gchar*)key;
-  unsigned int hash_value= 23;
-  guint32 i;
-
-  for (i= 0; i < 8; i++)
-    hash_value= ((147*hash_value) + val_str[i]);
-  return hash_value;
-}
-
-static int
-equal_function(void *key1, void* key2)
-{
-  guint64 *val_ptr1= (guint64*)key1;
-  guint64 *val_ptr2= (guint64*)key2;
-  guint64 val1= *val_ptr1;
-  guint64 val2= *val_ptr2;
-
-  if (val1 == val2)
-    return 1;
-  return 0;
-}
-
 static void
 init_test_hashtable(IC_TEST_HASHTABLE *test_hashtable,
                     guint32 num_inserts)
@@ -530,7 +505,7 @@ test_hashtable(guint32 num_inserts, guint32 num_removes)
 
   ic_printf("Testing with %u number of inserts and %u number of removes",
             num_inserts, num_removes);
-  hashtable= ic_create_hashtable(4096, hash_function, equal_function);
+  hashtable= ic_create_hashtable(4096, ic_hash_uint64, ic_keys_equal_uint64);
   if (hashtable == NULL)
   {
     ic_free(test_hashtable);

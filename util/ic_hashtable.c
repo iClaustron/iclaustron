@@ -40,19 +40,6 @@ static const unsigned int primes[] = {
 const unsigned int prime_table_length = sizeof(primes)/sizeof(primes[0]);
 const double max_load_factor = 0.65;
 
-int
-ic_keys_equal_str(void *ptr1, void *ptr2)
-{
-  IC_STRING *str1= (IC_STRING*)ptr1;
-  IC_STRING *str2= (IC_STRING*)ptr2;
-
-  if (str1->len != str2->len)
-    return 0;
-  return strncmp((const char*)str1->str,
-                 (const char*)str2->str,
-                 str1->len) ? 0 : 1;
-}
-
 unsigned int
 ic_hash_str(void *ptr)
 {
@@ -70,10 +57,58 @@ ic_hash_str(void *ptr)
   return hash;
 }
 
+unsigned int
+ic_hash_ptr(void *key)
+{
+  gchar *val_str= (gchar*)key;
+  unsigned int hash_value= 23;
+  guint32 i;
+
+  for (i= 0; i < sizeof(int*); i++)
+    hash_value= ((147*hash_value) + val_str[i]);
+  return hash_value;
+}
+
+unsigned int
+ic_hash_uint64(void *key)
+{
+  gchar *val_str= (gchar*)key;
+  unsigned int hash_value= 23;
+  guint32 i;
+
+  for (i= 0; i < 8; i++)
+    hash_value= ((147*hash_value) + val_str[i]);
+  return hash_value;
+}
+
+int
+ic_keys_equal_str(void *ptr1, void *ptr2)
+{
+  IC_STRING *str1= (IC_STRING*)ptr1;
+  IC_STRING *str2= (IC_STRING*)ptr2;
+
+  if (str1->len != str2->len)
+    return 0;
+  return strncmp((const char*)str1->str,
+                 (const char*)str2->str,
+                 str1->len) ? 0 : 1;
+}
+
 int
 ic_keys_equal_ptr(void *ptr1, void *ptr2)
 {
-  return (ptr1 == ptr2) ? 0 : 1;
+  return (ptr1 == ptr2) ? 1 : 0;
+}
+
+int
+ic_keys_equal_uint64(void *key1, void* key2)
+{
+  guint64 *val_ptr1= (guint64*)key1;
+  guint64 *val_ptr2= (guint64*)key2;
+  guint64 val1= *val_ptr1;
+  guint64 val2= *val_ptr2;
+
+  return (val1 == val2) ? 1 : 0;
 }
 
 /*****************************************************************************/

@@ -75,11 +75,13 @@
  *
  */
 
-unsigned int ic_hash_nodeids(void *ptr);
 unsigned int ic_hash_str(void *ptr);
+unsigned int ic_hash_ptr(void *ptr);
+unsigned int ic_hash_uint64(void *key);
+
 int ic_keys_equal_str(void *ptr1, void *ptr2);
 int ic_keys_equal_ptr(void *ptr1, void *ptr2);
-int ic_keys_equal_nodeids(void *ptr1, void *ptr2);
+int ic_keys_equal_uint64(void *key1, void *key2);
 
 /*****************************************************************************
  * ic_create_hashtable
@@ -103,7 +105,7 @@ ic_create_hashtable(unsigned int minsize,
  * @param   h   the ic_hashtable to insert into
  * @param   k   the key - ic_hashtable claims ownership and will free on removal
  * @param   v   the value - does not claim ownership
- * @return      non-zero for successful insertion
+ * @return      zero for successful insertion
  *
  * This function will cause the table to expand if the insertion would take
  * the ratio of entries to table size over the maximum load factor.

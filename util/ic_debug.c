@@ -166,11 +166,11 @@ void ic_debug_thread_return()
     ic_debug_print_char_buf(buf, thread_debug);
   }
   ic_require(thread_debug->indent_level == 0);
-  ic_mutex_lock(debug_mutex);
+  ic_mutex_lock_low(debug_mutex);
   ic_num_threads_debugged--;
   /* Mark thread id as used */
   thread_id_array[thread_debug->thread_id]= 0;
-  ic_mutex_unlock(debug_mutex);
+  ic_mutex_unlock_low(debug_mutex);
   ic_free((void*)thread_debug);
 }
 
@@ -182,7 +182,7 @@ void ic_debug_thread_init(const gchar *entry_point)
   /* We're in debug mode and if those calls fail we can't debug */
   ic_require(thread_debug= (IC_THREAD_DEBUG*)
                            ic_calloc(sizeof(IC_THREAD_DEBUG)));
-  ic_mutex_lock(debug_mutex);
+  ic_mutex_lock_low(debug_mutex);
   for (thread_id= 1; thread_id < IC_MAX_THREADS; thread_id++)
   {
     if (thread_id_array[thread_id] == 0)
@@ -192,7 +192,7 @@ void ic_debug_thread_init(const gchar *entry_point)
   /* Mark thread id as used */
   thread_id_array[thread_id]= 1;
   ic_num_threads_debugged++;
-  ic_mutex_unlock(debug_mutex);
+  ic_mutex_unlock_low(debug_mutex);
   thread_debug->thread_id= thread_id;
   g_private_set(debug_priv, (gpointer)thread_debug);
   if (entry_point)
@@ -258,6 +258,7 @@ ic_debug_close()
   fflush(stdout);
   fflush(ic_fptr);
   fclose(ic_fptr);
+  ic_mutex_destroy(debug_mutex);
   ic_free((void*)thread_id_array);
   ic_require(ic_num_threads_debugged == 0);
 }

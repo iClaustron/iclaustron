@@ -31,6 +31,7 @@
 #include <ic_err.h>
 #include <ic_debug.h>
 #include <ic_string.h>
+#include <ic_hashtable.h>
 #include <glib/gstdio.h>
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -121,6 +122,11 @@ ic_get_stop_flag()
   return ic_stop_flag;
 }
 
+#ifdef DEBUG_BUILD
+/* Hash table containing locked mutexes */
+static IC_HASHTABLE *mutex_hash= NULL;
+static IC_MUTEX *mutex_hash_protect= NULL;
+#endif
 /*
   This method can't be debugged since it's called before debug system
   has been started.
@@ -128,9 +134,14 @@ ic_get_stop_flag()
 void
 ic_port_init()
 {
-  exec_output_mutex= ic_mutex_create();
+  ic_require(exec_output_mutex= ic_mutex_create());
 #ifdef DEBUG_BUILD
-  mem_mutex= ic_mutex_create();
+  ic_require(mem_mutex= ic_mutex_create());
+#endif
+#ifdef DEBUG_BUILD
+  mutex_hash= ic_create_hashtable(4096, ic_hash_ptr, ic_keys_equal_ptr);
+  mutex_hash_protect= g_mutex_new();
+  ic_require(mutex_hash && mutex_hash_protect);
 #endif
 }
 
@@ -143,6 +154,10 @@ void ic_port_end()
   ic_mutex_destroy(mem_mutex);
 #endif
   ic_mutex_destroy(exec_output_mutex);
+#ifdef DEBUG_BUILD
+  ic_hashtable_destroy(mutex_hash);
+  ic_mutex_destroy(mutex_hash_protect);
+#endif
 }
 
 void
@@ -314,9 +329,9 @@ gchar *
 ic_calloc(size_t size)
 {
 #ifdef DEBUG_BUILD
-  ic_mutex_lock(mem_mutex);
+  ic_mutex_lock_low(mem_mutex);
   num_mem_allocs++;
-  ic_mutex_unlock(mem_mutex);
+  ic_mutex_unlock_low(mem_mutex);
 #endif
   return g_try_malloc0(size);
 }
@@ -334,9 +349,9 @@ gchar *
 ic_malloc(size_t size)
 {
 #ifdef DEBUG_BUILD
-  ic_mutex_lock(mem_mutex);
+  ic_mutex_lock_low(mem_mutex);
   num_mem_allocs++;
-  ic_mutex_unlock(mem_mutex);
+  ic_mutex_unlock_low(mem_mutex);
 #endif
   return g_try_malloc(size);
 }
@@ -345,9 +360,9 @@ void
 ic_free(void *ret_obj)
 {
 #ifdef DEBUG_BUILD
-  ic_mutex_lock(mem_mutex);
+  ic_mutex_lock_low(mem_mutex);
   num_mem_allocs--;
-  ic_mutex_unlock(mem_mutex);
+  ic_mutex_unlock_low(mem_mutex);
 #endif
   g_free(ret_obj);
 }
@@ -529,9 +544,9 @@ ic_is_process_alive(IC_PID_TYPE pid,
   argv[6]= log_file_name_str.str;
   argv[7]= NULL;
 
-  ic_mutex_lock(exec_output_mutex);
+  ic_mutex_lock_low(exec_output_mutex);
   error= run_process(argv, &exit_status, log_file_name_str.str);
-  ic_mutex_unlock(exec_output_mutex);
+  ic_mutex_unlock_low(exec_output_mutex);
   if (error == (gint)1)
   {
     return 0; /* The process was alive */
@@ -1015,6 +1030,34 @@ guint32 ic_byte_order()
     return 1;
 }
 
+#ifdef DEBUG_BUILD
+static void debug_lock_mutex(IC_MUTEX *mutex)
+{
+  int ret_code;
+  void *key;
+
+  g_mutex_lock(mutex_hash_protect);
+  key= ic_hashtable_search(mutex_hash, (void*)mutex);
+  ret_code= ic_hashtable_insert(mutex_hash,
+                                (void*)mutex,
+                                (void*)mutex);
+  g_mutex_unlock(mutex_hash_protect);
+  if (key || ret_code)
+    abort();
+}
+
+static void debug_release_mutex(IC_MUTEX *mutex)
+{
+  void *key;
+
+  g_mutex_lock(mutex_hash_protect);
+  key= ic_hashtable_remove(mutex_hash, (void*)mutex);
+  g_mutex_unlock(mutex_hash_protect);
+  if (!key)
+    abort();
+}
+#endif
+
 void ic_cond_signal(IC_COND *cond)
 {
   g_cond_signal(cond);
@@ -1027,7 +1070,13 @@ void ic_cond_broadcast(IC_COND *cond)
 
 void ic_cond_wait(IC_COND *cond, IC_MUTEX *mutex)
 {
+#ifdef DEBUG_BUILD
+  debug_release_mutex(mutex);
+#endif
   g_cond_wait(cond, mutex);
+#ifdef DEBUG_BUILD
+  debug_lock_mutex(mutex);
+#endif
 }
 
 void ic_cond_timed_wait(IC_COND *cond,
@@ -1038,7 +1087,13 @@ void ic_cond_timed_wait(IC_COND *cond,
 
   g_get_current_time(&stop_timer);
   g_time_val_add(&stop_timer, micros);
+#ifdef DEBUG_BUILD
+  debug_release_mutex(mutex);
+#endif
   g_cond_timed_wait(cond, mutex, &stop_timer);
+#ifdef DEBUG_BUILD
+  debug_lock_mutex(mutex);
+#endif
 }
 
 IC_COND* ic_cond_create()
@@ -1054,16 +1109,34 @@ void ic_cond_destroy(IC_COND *cond)
 void ic_mutex_lock(IC_MUTEX *mutex)
 {
   g_mutex_lock(mutex);
+#ifdef DEBUG_BUILD
+  debug_lock_mutex(mutex);
+#endif
+}
+
+void ic_mutex_lock_low(IC_MUTEX *mutex)
+{
+  g_mutex_lock(mutex);
 }
 
 void ic_mutex_unlock(IC_MUTEX *mutex)
+{
+#ifdef DEBUG_BUILD
+  debug_release_mutex(mutex);
+#endif
+  g_mutex_unlock(mutex);
+}
+
+void ic_mutex_unlock_low(IC_MUTEX *mutex)
 {
   g_mutex_unlock(mutex);
 }
 
 IC_MUTEX* ic_mutex_create()
 {
-  return g_mutex_new();
+  IC_MUTEX *mutex;
+  mutex= g_mutex_new();
+  return mutex;
 }
 
 void ic_mutex_destroy(IC_MUTEX *mutex)

@@ -151,6 +151,7 @@ run_heartbeat_thread(gpointer data)
     tp_state->ts_ops.ic_thread_get_object(thread_state);
   send_buf_pool= apid_global->send_buf_pool;
   apid_conn= apid_global->heartbeat_conn;
+  tp_state->ts_ops.ic_thread_started(thread_state);
 
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
@@ -167,7 +168,9 @@ run_heartbeat_thread(gpointer data)
       last_send_node_conn= NULL;
       apid_global->heartbeat_thread_waiting= TRUE;
       DEBUG_PRINT(CONFIG_LEVEL, ("Need to wait for nodes to connect"));
-      ic_cond_wait(apid_global->heartbeat_cond, apid_global->heartbeat_mutex);
+      ic_cond_timed_wait(apid_global->heartbeat_cond,
+                         apid_global->heartbeat_mutex,
+                         IC_MICROSEC_PER_SECOND * IC_STOP_CHECK_TIMER);
       ic_mutex_unlock(apid_global->heartbeat_mutex);
       DEBUG_PRINT(CONFIG_LEVEL,
       ("First node connected, heartbeat needs to be sent"));
@@ -220,7 +223,7 @@ run_heartbeat_thread(gpointer data)
       ic_mutex_unlock(last_send_node_conn->mutex);
     }
   }
-end:
+end_thread:
   send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                       free_pages);
   tp_state->ts_ops.ic_thread_stops(thread_state);
@@ -228,5 +231,5 @@ end:
 error:
   /* Serious error, heartbeat thread cannot continue, need to stop */
   ic_controlled_terminate();
-  goto end;
+  goto end_thread;
 }

@@ -634,7 +634,8 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       thread_data.run_obj= run_obj;
       thread_data.cs_index= i;
       info_cs->is_start_thread_active= TRUE;
-      DEBUG_PRINT(CONFIG_LEVEL, ("Start new thread in start_cs_func"));
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Start new thread with index %u in start_cs_func", i));
       if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
                                     tp_state,
                                     &info_cs->thread_id,
@@ -1270,7 +1271,6 @@ static int rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                         guint32 *cs_index,
                                         guint32 *error_line);
 static int send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
-                                           IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                            IC_CONNECTION *conn,
                                            guint32 *error_line);
 static int rec_start_cluster_server_reply(IC_INT_RUN_CLUSTER_SERVER *run_obj,
@@ -1309,7 +1309,6 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                              cs_index,
                                              &error_line)) ||
         (error= send_start_cluster_server_reply(my_info_cs,
-                                                run_obj,
                                                 conn,
                                                 &error_line)))
     {
@@ -1357,7 +1356,6 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     }
     /* We had a more up-to-date view on master node order */
     if ((error= send_start_cluster_server_reply(my_info_cs,
-                                                run_obj,
                                                 conn,
                                                 &error_line)) ||
         (error= rec_start_cluster_server_ok(conn)))
@@ -1462,7 +1460,6 @@ error:
 */
 static int
 send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
-                                IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                 IC_CONNECTION *conn,
                                 guint32 *error_line)
 {
@@ -1500,7 +1497,6 @@ send_start_cluster_server_reply(IC_INFO_CLUSTER_SERVER *my_info_cs,
     goto end;
   }
 end:
-  ic_mutex_unlock(run_obj->state.protect_state);
   DEBUG_RETURN_INT(error);
 }
 
@@ -1800,11 +1796,12 @@ start_cs_func(gpointer data)
             connection to itself such that another thread (likely ours) will
             take over the socket server role.
           */
+          ic_mutex_lock(rc_state->protect_state);
           if (!this_info_cs->conn)
           {
             this_info_cs->wait_server_connect_other_thread= TRUE;
             ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
-                               3 * IC_MICROSEC_PER_SECOND);
+                               IC_STOP_CHECK_TIMER * IC_MICROSEC_PER_SECOND);
           }
           if (this_info_cs->conn)
           {
@@ -1812,13 +1809,17 @@ start_cs_func(gpointer data)
             DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
                         cs_index));
             my_info_cs->is_client_side= FALSE;
+            ic_mutex_unlock(rc_state->protect_state);
             break;
           }
+          ic_mutex_unlock(rc_state->protect_state);
         }
       }
       else
       {
+        ic_mutex_lock(rc_state->protect_state);
         this_info_cs->wait_server_connect_other_thread= FALSE;
+        ic_mutex_unlock(rc_state->protect_state);
         if (!(error= connect_cluster_server(apic,
                                             &conn,
                                             cs_index,
@@ -1829,6 +1830,7 @@ start_cs_func(gpointer data)
           found= FALSE;
           DEBUG_PRINT(CONFIG_LEVEL,
                  ("Successful connect at server side to Cluster Server"));
+          ic_mutex_lock(rc_state->protect_state);
           for (i= 0; i < run_obj->config.num_cluster_servers; i++)
           {
             equal= FALSE;
@@ -1842,7 +1844,6 @@ start_cs_func(gpointer data)
                    &equal)) && equal)
               {
                 found= TRUE;
-                ic_mutex_lock(rc_state->protect_state);
                 info_cs->conn= conn;
                 info_cs->wait_server_connect_other_thread= FALSE;
                 if (i == cs_index)
@@ -1855,7 +1856,6 @@ start_cs_func(gpointer data)
                               cs_index));
                 }
                 ic_cond_broadcast(rc_state->connect_cond);
-                ic_mutex_unlock(rc_state->protect_state);
               }
             }
           }
@@ -1867,11 +1867,14 @@ start_cs_func(gpointer data)
           else if (!run_obj->running_server)
           {
             /* Connect to this part breaks out of loop */
+            ic_mutex_unlock(rc_state->protect_state);
             break;
           }
+          ic_mutex_unlock(rc_state->protect_state);
         }
       }
     }
+    ic_mutex_lock(rc_state->protect_state);
     if (rc_state->cs_starting)
     {
       /*
@@ -1882,8 +1885,9 @@ start_cs_func(gpointer data)
       ic_cond_broadcast(rc_state->connect_cond);
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Close thread for index %u, others already starting", cs_index));
-      goto lock_end;
+      goto end;
     }
+    ic_mutex_unlock(rc_state->protect_state);
   }
   /* Inform the other cluster server of our intentions */
   ic_mutex_lock(rc_state->protect_state);
@@ -1945,7 +1949,7 @@ start_cs_func(gpointer data)
           ("Quorum reached, wait 3 secs for other Cluster Servers index %u",
            cs_index));
         ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
-                           3 * IC_MICROSEC_PER_SECOND);
+                     IC_WAIT_OTHER_CS_START_TIMER * IC_MICROSEC_PER_SECOND);
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Wakeup from waiting after quorum reached"));
         have_waited= TRUE;
@@ -2042,8 +2046,10 @@ start_cs_func(gpointer data)
       ic_assert(rc_state->start_threads_stopped < 2);
       ic_assert(!(run_obj->config.num_cluster_servers == 2 &&
                   rc_state->start_threads_stopped > 0));
+      ic_mutex_unlock(rc_state->protect_state);
       if (check_if_cs_started(run_obj, thread_state, cs_index))
         goto end;
+      ic_mutex_lock(rc_state->protect_state);
       ic_cond_broadcast(rc_state->start_cond);
       DEBUG_PRINT(CONFIG_LEVEL, ("Completed startup of Cluster Server"));
       break;
@@ -2060,6 +2066,7 @@ start_cs_func(gpointer data)
         goto lock_end;
       if (handle_cs_heartbeat(run_obj, thread_state, cs_index, TRUE))
         goto lock_end;
+      ic_mutex_lock(rc_state->protect_state);
     }
   } while (1);
   ic_mutex_unlock(rc_state->protect_state);
@@ -2069,6 +2076,11 @@ start_cs_func(gpointer data)
     until the connection breaks or until we're about to quit.
   */
   handle_cs_heartbeat(run_obj, thread_state, cs_index, FALSE);
+  lock= FALSE;
+real_end:
+  release_cs_connection(run_obj, conn, cs_index, lock);
+end_thread:
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 
 early_end:
@@ -2076,16 +2088,14 @@ early_end:
   rc_state->start_threads_stopped++;
   get_cluster_info(run_obj, cs_index)->is_start_thread_active= FALSE;
   ic_mutex_unlock(rc_state->protect_state);
-  DEBUG_THREAD_RETURN;
+  goto end_thread;
 
 end:
   lock= TRUE;
   goto real_end;
 lock_end:
   lock= FALSE;
-real_end:
-  release_cs_connection(run_obj, conn, cs_index, lock);
-  DEBUG_THREAD_RETURN;
+  goto real_end;
 }
 
 static guint32
@@ -2213,30 +2223,6 @@ find_max_committed_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   return version_number;
 }
 
-static void
-verify_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj)
-{
-  guint32 out_of_date= 0;
-  guint32 i; 
-  IC_CONF_VERSION_TYPE max_committed_version;
-  IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
-
-  ic_mutex_lock(rc_state->protect_state);
-  max_committed_version= find_max_committed_version(run_obj);
-  for (i= 0; i < run_obj->config.num_cluster_servers; i++)
-  {
-    if (run_obj->state.cs_servers[i].config_version_number <
-        max_committed_version)
-      out_of_date++;
-  }
-  if (out_of_date > 1)
-  {
-    /* Impossible state occurred */
-    abort();
-  }
-  ic_mutex_unlock(rc_state->protect_state);
-}
-
 static gpointer
 check_if_cs_started_thread_func(gpointer data)
 {
@@ -2261,6 +2247,8 @@ check_if_cs_started_thread_func(gpointer data)
   tp_state->ts_ops.ic_thread_started(thread_state);
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
     goto error;
+
+beginning:
 
   ic_mutex_lock(rc_state->protect_state);
   my_info_cs= get_my_cluster_info(run_obj);
@@ -2436,10 +2424,9 @@ check_if_cs_started_thread_func(gpointer data)
         in synch now, so we retry check for this by a recursive call here.
         Since our state will be CONFIG_STATE_BUSY and equal to
         max_committed_version here, there is no risk of more than one
-        recursive call here.
+        loop here.
       */
-      check_if_cs_started_thread_func((void*)run_obj);
-      DEBUG_THREAD_RETURN;
+      goto beginning;
     }
   }
 end:
@@ -2450,6 +2437,8 @@ end:
   rc_state->check_if_cs_started_ret_code= 0;
   ic_cond_signal(rc_state->check_if_cs_started_cond);
   ic_mutex_unlock(rc_state->protect_state);
+end_thread:
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 
 error:
@@ -2457,7 +2446,7 @@ error:
   rc_state->check_if_cs_started_ret_code= error;
   ic_cond_signal(rc_state->check_if_cs_started_cond);
   ic_mutex_unlock(rc_state->protect_state);
-  DEBUG_THREAD_RETURN;
+  goto end_thread;
 }
 
 static int
@@ -2471,9 +2460,6 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   DEBUG_ENTRY("check_if_cs_started");
 
-  verify_cs_started(run_obj);
-
-  ic_mutex_lock(rc_state->protect_state);
   if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
                 tp_state,
                 &thread_id,
@@ -2482,10 +2468,11 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                 IC_MEDIUM_STACK_SIZE,
                 TRUE)))
   {
-    ic_mutex_unlock(rc_state->protect_state);
     DEBUG_RETURN_INT(error);
   }
+  tp_state->tp_ops.ic_threadpool_run_thread(tp_state, thread_id);
 
+  ic_mutex_lock(rc_state->protect_state);
   rc_state->check_if_cs_started_ret_code= (int)-1;
   while (rc_state->check_if_cs_started_ret_code == (int)-1)
   {
@@ -2549,7 +2536,9 @@ static void
 report_startup_completed(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   DEBUG_PRINT(CONFIG_LEVEL, ("Startup is completed"));
+  ic_mutex_lock(run_obj->state.protect_state);
   run_obj->state.cs_started= TRUE;
+  ic_mutex_unlock(run_obj->state.protect_state);
 }
 
 /*
@@ -3038,7 +3027,8 @@ run_cluster_server_thread(gpointer data)
             error_line= __LINE__;
             goto error;
           }
-          goto end; /* Always sent as only message in separate connection */
+          /* Always sent as only message in separate connection */
+          goto end_thread;
         }
         if (!ic_check_buf(read_buf, read_size,
                           ic_start_cluster_server_str,
@@ -3052,7 +3042,7 @@ run_cluster_server_thread(gpointer data)
             goto error;
           run_obj->state.cs_servers[cs_index].is_client_side= FALSE;
           handle_cs_heartbeat(run_obj, thread_state, cs_index, FALSE);
-          goto end;
+          goto end_thread;
         }
         /* Fall through since get connection parameter is also allowed */
       case GET_CONNECTION_PARAMETER:
@@ -3131,7 +3121,7 @@ break_out:
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("Connection taken over by Data API"));
   }
-end:
+end_thread:
   if (conn)
     conn->conn_op.ic_free_connection(conn);
   rcs_tp->ts_ops.ic_thread_stops(thread_state);
@@ -3141,7 +3131,7 @@ error:
   read_buf[read_size]= 0;
   ic_printf("Protocol error line %d", error_line);
   ic_printf("Protocol message: %s", read_buf);
-  goto end;
+  goto end_thread;
 }
 
 /*

@@ -136,7 +136,9 @@ IC_COND* ic_cond_create();
 void ic_cond_destroy(IC_COND *cond);
 
 void ic_mutex_lock(IC_MUTEX *mutex);
+void ic_mutex_lock_low(IC_MUTEX *mutex);
 void ic_mutex_unlock(IC_MUTEX *mutex);
+void ic_mutex_unlock_low(IC_MUTEX *mutex);
 IC_MUTEX* ic_mutex_create();
 void ic_mutex_destroy(IC_MUTEX *mutex);
 

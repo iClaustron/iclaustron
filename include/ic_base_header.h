@@ -168,6 +168,8 @@ typedef struct ic_iovec IC_IOVEC;
 #define IC_MICROSEC_PER_SECOND 1000000
 #define IC_MICROSEC_PER_MILLI 1000
 
+#define IC_STOP_CHECK_TIMER 3
+
 #define ERROR_MESSAGE_SIZE 512
 #define IC_VERSION 0x000001
 #define IC_VERSION_STR "iclaustron-0.0.1"
