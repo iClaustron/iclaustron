@@ -241,19 +241,22 @@ struct ic_cluster_config
 };
 typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 
+/* Mandatory bits is first in all node types and also in comm type */
+#define IC_NODE_COMMON_DECLARES \
+  guint64 mandatory_bits; \
+  gchar *hostname;        \
+  gchar *node_data_path;  \
+  gchar *node_name;       \
+  gchar *pcntrl_hostname; \
+  guint32 node_id;        \
+  guint32 port_number;    \
+  guint32 network_buffer_size; \
+  guint32 pcntrl_port
+  
 struct ic_data_server_config
 {
   /* Common for all nodes */
-  /* Mandatory bits is first in all node types and also in comm type */
-  guint64 mandatory_bits;
-  gchar *hostname;
-  gchar *node_data_path;
-  gchar *node_name;
-  gchar *pcntrl_hostname;
-  guint32 node_id;
-  guint32 port_number;
-  guint32 network_buffer_size;
-  guint32 pcntrl_port;
+  IC_NODE_COMMON_DECLARES;
   /* End common part */
 
   gchar *filesystem_path;
@@ -359,21 +362,16 @@ struct ic_data_server_config
 };
 typedef struct ic_data_server_config IC_DATA_SERVER_CONFIG;
 
+#define IC_CLIENT_COMMON_DECLARES \
+  guint32 client_resolve_rank; \
+  guint32 client_resolve_timer
+
 struct ic_client_config
 {
   /* Common part */
-  guint64 mandatory_bits;
-  gchar *hostname;
-  gchar *node_data_path;
-  gchar *node_name;
-  gchar *pcntrl_hostname;
-  guint32 node_id;
-  guint32 port_number;
-  guint32 network_buffer_size;
-  guint32 pcntrl_port;
+  IC_NODE_COMMON_DECLARES;
   /* End common part */
-  guint32 client_resolve_rank;
-  guint32 client_resolve_timer;
+  IC_CLIENT_COMMON_DECLARES;
 
   guint32 client_max_batch_byte_size;
   guint32 client_batch_byte_size;
@@ -391,18 +389,9 @@ struct ic_cluster_server_config
      above to ensure offset of variables with same name are the same.
   */
   /* Common part */
-  guint64 mandatory_bits;
-  gchar *hostname;
-  gchar *node_data_path;
-  gchar *node_name;
-  gchar *pcntrl_hostname;
-  guint32 node_id;
-  guint32 port_number;
-  guint32 network_buffer_size;
-  guint32 pcntrl_port;
+  IC_NODE_COMMON_DECLARES;
   /* End common part */
-  guint32 client_resolve_rank;
-  guint32 client_resolve_timer;
+  IC_CLIENT_COMMON_DECLARES;
   /* End of section in common with Client config */
   guint32 cluster_server_port_number;
   gchar *cluster_server_event_log;

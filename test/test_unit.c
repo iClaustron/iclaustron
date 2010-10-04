@@ -496,7 +496,9 @@ init_test_hashtable(IC_TEST_HASHTABLE *test_hashtable,
 }
 
 static int
-test_hashtable(guint32 num_inserts, guint32 num_removes)
+test_hashtable(guint32 num_inserts,
+               guint32 num_removes,
+               gboolean use_ptr)
 {
   int ret_code;
   IC_HASHTABLE *hashtable;
@@ -505,7 +507,11 @@ test_hashtable(guint32 num_inserts, guint32 num_removes)
 
   ic_printf("Testing with %u number of inserts and %u number of removes",
             num_inserts, num_removes);
-  hashtable= ic_create_hashtable(4096, ic_hash_uint64, ic_keys_equal_uint64);
+  if (use_ptr)
+    hashtable= ic_create_hashtable(4096, ic_hash_uint64, ic_keys_equal_uint64);
+  else
+    hashtable= ic_create_hashtable(4096, ic_hash_ptr, ic_keys_equal_ptr);
+
   if (hashtable == NULL)
   {
     ic_free(test_hashtable);
@@ -529,21 +535,27 @@ static int
 unit_test_hashtable()
 {
   int ret_code;
+  guint32 i;
+  gboolean test_case;
 
-  if ((ret_code= test_hashtable(128, 2)))
-    goto error;
-  if ((ret_code= test_hashtable(129, 2)))
-    goto error;
-  if ((ret_code= test_hashtable(128*128, 2)))
-    goto error;
-  if ((ret_code= test_hashtable(128*128+1, 2)))
-    goto error;
-  if ((ret_code= test_hashtable(128*128*128, 2)))
-    goto error;
-  if ((ret_code= test_hashtable(128*128*128+1, 2)))
-    goto error;
-  if ((ret_code= test_hashtable(128*128*128+1, 128*128*128+1)))
-    goto error;
+  for (i= 0; i < 2; i++)
+  {
+    test_case= (gboolean)i;
+    if ((ret_code= test_hashtable(128, 2, test_case)))
+      goto error;
+    if ((ret_code= test_hashtable(129, 2, test_case)))
+      goto error;
+    if ((ret_code= test_hashtable(128*128, 2, test_case)))
+      goto error;
+    if ((ret_code= test_hashtable(128*128+1, 2, test_case)))
+      goto error;
+    if ((ret_code= test_hashtable(128*128*128, 2, test_case)))
+      goto error;
+    if ((ret_code= test_hashtable(128*128*128+1, 2, test_case)))
+      goto error;
+    if ((ret_code= test_hashtable(128*128*128+1, 128*128*128+1, test_case)))
+      goto error;
+  }
   return 0;
 error:
   return ret_code;

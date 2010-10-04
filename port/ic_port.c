@@ -147,16 +147,16 @@ ic_port_init()
 
 void ic_port_end()
 {
-#ifdef DEBUG_BUILD
-  ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
-  if (num_mem_allocs != (guint64)0)
-    ic_printf("Memory leak found");
-  ic_mutex_destroy(mem_mutex);
-#endif
   ic_mutex_destroy(exec_output_mutex);
 #ifdef DEBUG_BUILD
   ic_hashtable_destroy(mutex_hash);
   ic_mutex_destroy(mutex_hash_protect);
+#endif
+#ifdef DEBUG_BUILD
+  ic_mutex_destroy(mem_mutex);
+  ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
+  if (num_mem_allocs != (guint64)0)
+    ic_printf("Memory leak found");
 #endif
 }
 
@@ -1036,6 +1036,7 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
   int ret_code;
   void *key;
 
+  printf("Lock mutex %x\n", (int)mutex);
   g_mutex_lock(mutex_hash_protect);
   key= ic_hashtable_search(mutex_hash, (void*)mutex);
   ret_code= ic_hashtable_insert(mutex_hash,
@@ -1050,6 +1051,7 @@ static void debug_release_mutex(IC_MUTEX *mutex)
 {
   void *key;
 
+  printf("Release mutex %x\n", (int)mutex);
   g_mutex_lock(mutex_hash_protect);
   key= ic_hashtable_remove(mutex_hash, (void*)mutex);
   g_mutex_unlock(mutex_hash_protect);
@@ -1085,7 +1087,6 @@ void ic_cond_timed_wait(IC_COND *cond,
 {
   GTimeVal stop_timer;
 
-  g_get_current_time(&stop_timer);
   g_time_val_add(&stop_timer, micros);
 #ifdef DEBUG_BUILD
   debug_release_mutex(mutex);

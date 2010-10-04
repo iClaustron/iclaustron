@@ -32,7 +32,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7088
+#define IC_LAST_ERROR 7089
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -235,6 +235,8 @@ ic_init_error_messages()
   ic_error_str[IC_ERROR_FAILED_TO_CREATE_CONFIG_VERSION - IC_FIRST_ERROR]=
     "Failed to create config_version.ini, need to create "
     "iclaustron_data/config/nodeX directory";
+  ic_error_str[IC_ERROR_TWO_NODES_USING_SAME_HOST_PORT_PAIR - IC_FIRST_ERROR]=
+    "Configuration has two nodes using the same host + port pair";
   DEBUG_RETURN_EMPTY;
 }
 

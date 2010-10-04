@@ -232,8 +232,9 @@ ensure_node_data_path_set(void *current_config,
   {
     /*
       Ensure all nodes have a node data path set. The default is
-      /var/lib/iclaustron_data/ndb/cluster_name/node_name on Unix platforms and
-      C:\Program Files\lib\iclaustron_data\ndb\cluster_name\node_name on Windows
+      /var/lib/iclaustron_data/ndb/cluster_name/node_name on Unix platforms
+      and C:\Program Files\lib\iclaustron_data\ndb\cluster_name\node_name
+      on Windows
     */
     clu_connect_info =(IC_CLUSTER_CONNECT_INFO*)conf_server->sec_data;
 #ifndef WINDOWS
@@ -926,13 +927,79 @@ conf_serv_add_comment(void *ic_conf,
 }
 
 static int
+verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
+{
+  IC_NODE_TYPES first_node_type, second_node_type;
+  guint32 i, j;
+  guint32 first_port_number, second_port_number;
+  gchar *first_hostname, *second_hostname;
+  IC_DATA_SERVER_CONFIG *ds1_conf, *ds2_conf;
+
+  for (i= 0; i <= clu_conf->max_node_id; i++)
+  {
+    first_node_type= clu_conf->node_types[i];
+    ds1_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[i];
+    if (first_node_type != IC_NOT_EXIST_NODE_TYPE)
+      continue;
+    first_port_number= ds1_conf->port_number;
+    first_hostname= ds1_conf->hostname;
+    ic_require(first_hostname);
+    if (first_port_number == 0)
+      continue; /* Dynamic port number used, can't collide */
+    for (j= i + 1; j <= clu_conf->max_node_id; j++)
+    {
+      second_node_type= clu_conf->node_types[j];
+      ds2_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[j];
+      if (second_node_type != IC_NOT_EXIST_NODE_TYPE)
+        continue;
+      /*
+        Node id i and j are both nodes in the cluster, we need to verify that
+        they aren't using the same hostname and port number. Both hostname
+        and port number are part of common part for all node types, so we can
+        pick one type e.g. the data node type and use this to find if there
+        are two nodes with the same hostname and/or port number.
+      */
+      second_port_number= ds2_conf->port_number;
+      second_hostname= ds2_conf->hostname;
+      ic_require(second_hostname);
+      if (second_port_number == 0)
+        continue; /* Dynamic port number used, can't collide */
+      if (strcmp(first_hostname, second_hostname) == 0 &&
+                 first_port_number == second_port_number)
+      {
+        /*
+          Two nodes aren't allowed to have the same hostname AND
+          port number, this won't work since only one socket can
+          be defined per such pair.
+        */
+        ic_printf("Error: Two nodes using same hostname + port pair");
+        ic_printf("Node1: id = %u, name = %s, host = %s, port = %u",
+                  ds1_conf->node_id, ds1_conf->node_name,
+                  ds1_conf->hostname, ds1_conf->port_number);
+        ic_printf("Node2: id = %u, name = %s, host = %s, port = %u",
+                  ds2_conf->node_id, ds2_conf->node_name,
+                  ds2_conf->hostname, ds2_conf->port_number);
+        return IC_ERROR_TWO_NODES_USING_SAME_HOST_PORT_PAIR;
+      }
+    }
+  }
+  return 0;
+}
+static int
 conf_serv_verify_conf(void *ic_conf,
                       guint32 line_number,
                       guint32 pass)
 {
+  IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
+  IC_CLUSTER_CONFIG_LOAD *clu_conf_load= conf->config_ptr.clu_conf;
+  IC_CLUSTER_CONFIG *clu_conf= clu_conf_load->conf;
   int error;
   if ((error= complete_section(ic_conf, line_number, pass)))
     return error;
+/*
+  if ((error= verify_hostname_port(clu_conf)))
+    return error;
+*/
   return 0;
 }
 
