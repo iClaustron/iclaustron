@@ -60,9 +60,19 @@ ic_hash_str(void *ptr)
 unsigned int
 ic_hash_ptr(void *key)
 {
-  gchar *val_str= (gchar*)key;
+  gchar val_str[8];
+  guint64 val= (guint64)key;
   unsigned int hash_value= 23;
   guint32 i;
+
+  val_str[0]= val & 0xFF;
+  val_str[1]= (val >> 8) & 0xFF;
+  val_str[2]= (val >> 16) & 0xFF;
+  val_str[3]= (val >> 24) & 0xFF;
+  val_str[4]= (val >> 32) & 0xFF;
+  val_str[5]= (val >> 40) & 0xFF;
+  val_str[6]= (val >> 48) & 0xFF;
+  val_str[7]= (val >> 56) & 0xFF;
 
   for (i= 0; i < sizeof(int*); i++)
     hash_value= ((147*hash_value) + val_str[i]);
