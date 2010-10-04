@@ -1085,6 +1085,7 @@ void ic_cond_timed_wait(IC_COND *cond,
 {
   GTimeVal stop_timer;
 
+  g_get_current_time(&stop_timer);
   g_time_val_add(&stop_timer, micros);
 #ifdef DEBUG_BUILD
   debug_release_mutex(mutex);
