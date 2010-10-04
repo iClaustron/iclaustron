@@ -28,7 +28,7 @@ ic_hashtable_iterator(struct ic_hashtable *h)
 {
     unsigned int i, tablelength;
     struct ic_hashtable_itr *itr = (struct ic_hashtable_itr *)
-        malloc(sizeof(struct ic_hashtable_itr));
+        ic_malloc_hash(sizeof(struct ic_hashtable_itr));
 
     if (NULL == itr) return NULL;
     itr->h = h;
@@ -129,7 +129,7 @@ ic_hashtable_iterator_remove(struct ic_hashtable_itr *itr)
     remember_parent = itr->parent;
     ret = ic_hashtable_iterator_advance(itr);
     if (itr->parent == remember_e) { itr->parent = remember_parent; }
-    free(remember_e);
+    ic_free_hash(remember_e);
     return ret;
 }
 

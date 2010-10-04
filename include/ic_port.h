@@ -45,14 +45,19 @@ void ic_set_port_config_dir(const gchar *config_dir);
   HEADER MODULE: iClaustron Portability Layer
   ------------------------------------
   iClaustron interface to memory allocation routines and various other
-  portability interfaces.
+  portability interfaces. There is different allocation and free routines
+  per module to make it easier to find and root out memory leaks.
 */
 void ic_port_init(); /* Debug support and global initialisations */
 void ic_port_end();
 gchar *ic_calloc(size_t size);
+gchar *ic_calloc_conn(size_t size);
 gchar *ic_malloc(size_t size);
+gchar *ic_malloc_hash(size_t size);
 gchar *ic_realloc(gchar *ptr, size_t size);
 void ic_free(void *ret_obj);
+void ic_free_hash(void *ret_obj);
+void ic_free_conn(void *ret_obj);
 
 /* Process start/stop/check calls */
 IC_PID_TYPE ic_get_own_pid();

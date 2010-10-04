@@ -1426,10 +1426,10 @@ free_socket_connection(IC_CONNECTION *ext_conn)
   destroy_timers(conn);
   destroy_mutexes(conn);
   if (conn->read_buf)
-    ic_free(conn->read_buf);
+    ic_free_conn(conn->read_buf);
   if (conn->write_buf)
-    ic_free(conn->write_buf);
-  ic_free(conn);
+    ic_free_conn(conn->write_buf);
+  ic_free_conn(conn);
 }
 
 /* Implements ic_read_stat_connection */
@@ -1643,14 +1643,15 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
   int size_object= orig_conn->is_ssl_connection ?
                    sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
 
-  if ((fork_conn= (IC_INT_CONNECTION*)ic_calloc(size_object)) == NULL)
+  if ((fork_conn= (IC_INT_CONNECTION*)ic_calloc_conn(size_object)) == NULL)
     return NULL;
   if (orig_conn->read_buf_size)
   {
     fork_conn->read_buf_size= orig_conn->read_buf_size;
     fork_conn->read_buf_pos= 0;
     fork_conn->size_curr_read_buf= 0;
-    if ((fork_conn->read_buf= ic_calloc(orig_conn->read_buf_size)) == NULL)
+    if ((fork_conn->read_buf= ic_calloc_conn(orig_conn->read_buf_size)) ==
+         NULL)
       return NULL;
   }
   memcpy(fork_conn, orig_conn, size_object);
@@ -1693,7 +1694,7 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
 
 error:
   destroy_mutexes(fork_conn);
-  ic_free(fork_conn);
+  ic_free_conn(fork_conn);
   return NULL;
 }
 
@@ -1891,21 +1892,21 @@ int_create_socket_object(gboolean is_client,
       sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
   IC_INT_CONNECTION *conn;
 
-  if ((conn= (IC_INT_CONNECTION*)ic_calloc(size_object)) == NULL)
+  if ((conn= (IC_INT_CONNECTION*)ic_calloc_conn(size_object)) == NULL)
     return NULL;
   if (read_buf_size)
   {
     conn->read_buf_size= read_buf_size;
-    if ((conn->read_buf= ic_calloc(read_buf_size)) == NULL)
+    if ((conn->read_buf= ic_calloc_conn(read_buf_size)) == NULL)
     {
-      ic_free((gchar*)conn);
+      ic_free_conn((gchar*)conn);
       return NULL;
     }
     conn->write_buf_size= read_buf_size;
-    if ((conn->write_buf= ic_calloc(read_buf_size)) == NULL)
+    if ((conn->write_buf= ic_calloc_conn(read_buf_size)) == NULL)
     {
-      ic_free(conn->read_buf);
-      ic_free((gchar*)conn);
+      ic_free_conn(conn->read_buf);
+      ic_free_conn((gchar*)conn);
       return NULL;
     }
   }
@@ -1968,10 +1969,10 @@ error:
   if (conn)
     destroy_mutexes(conn);
   if (conn->read_buf)
-    ic_free(conn->read_buf);
+    ic_free_conn(conn->read_buf);
   if (conn->write_buf)
-    ic_free(conn->write_buf);
-  ic_free(conn);
+    ic_free_conn(conn->write_buf);
+  ic_free_conn(conn);
   return NULL;
 }
 
@@ -2101,11 +2102,11 @@ free_ssl_session(IC_SSL_CONNECTION *conn)
   if (conn->ssl_dh)
     DH_free(conn->ssl_dh);
   if (conn->root_certificate_path.str)
-    ic_free(conn->root_certificate_path.str);
+    ic_free_conn(conn->root_certificate_path.str);
   if (conn->loc_certificate_path.str)
-    ic_free(conn->loc_certificate_path.str);
+    ic_free_conn(conn->loc_certificate_path.str);
   if (conn->passwd_string.str)
-    ic_free(conn->passwd_string.str);
+    ic_free_conn(conn->passwd_string.str);
   conn->ssl_ctx= NULL;
   conn->ssl_conn= NULL;
   conn->ssl_dh= NULL;

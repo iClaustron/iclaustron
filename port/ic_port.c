@@ -62,7 +62,11 @@ static IC_MUTEX *exec_output_mutex= NULL;
 
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
+static guint64 num_mem_conn_allocs= 0;
+static guint64 num_mem_hash_allocs= 0;
 static IC_MUTEX *mem_mutex= NULL;
+static IC_MUTEX *mem_conn_mutex= NULL;
+static IC_MUTEX *mem_hash_mutex= NULL;
 guint32 error_inject= 0;
 #endif
 static const gchar *port_binary_dir;
@@ -137,6 +141,8 @@ ic_port_init()
   ic_require(exec_output_mutex= ic_mutex_create());
 #ifdef DEBUG_BUILD
   ic_require(mem_mutex= ic_mutex_create());
+  ic_require(mem_conn_mutex= ic_mutex_create());
+  ic_require(mem_hash_mutex= ic_mutex_create());
 #endif
 #ifdef DEBUG_BUILD
   mutex_hash= ic_create_hashtable(4096, ic_hash_ptr, ic_keys_equal_ptr);
@@ -154,9 +160,17 @@ void ic_port_end()
 #endif
 #ifdef DEBUG_BUILD
   ic_mutex_destroy(mem_mutex);
+  ic_mutex_destroy(mem_conn_mutex);
+  ic_mutex_destroy(mem_hash_mutex);
   ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
+  ic_printf("num_mem_conn_allocs = %u", (guint32)num_mem_conn_allocs);
+  ic_printf("num_mem_hash_allocs = %u", (guint32)num_mem_hash_allocs);
   if (num_mem_allocs != (guint64)0)
     ic_printf("Memory leak found");
+  if (num_mem_conn_allocs != (guint64)0)
+    ic_printf("Memory leak found in use of comm subsystem or in it");
+  if (num_mem_hash_allocs != (guint64)0)
+    ic_printf("Memory leak found in use of hash tables or in it");
 #endif
 }
 
@@ -325,7 +339,18 @@ ic_microsleep(guint32 microseconds_to_sleep)
   select(0, NULL, NULL, NULL, &time);
 }
 
-gchar *
+gchar*
+ic_calloc_conn(size_t size)
+{
+#ifdef DEBUG_BUILD
+  ic_mutex_lock_low(mem_conn_mutex);
+  num_mem_conn_allocs++;
+  ic_mutex_unlock_low(mem_conn_mutex);
+#endif
+  return g_try_malloc0(size);
+}
+
+gchar*
 ic_calloc(size_t size)
 {
 #ifdef DEBUG_BUILD
@@ -346,6 +371,17 @@ ic_realloc(gchar *ptr,
 }
 
 gchar *
+ic_malloc_hash(size_t size)
+{
+#ifdef DEBUG_BUILD
+  ic_mutex_lock_low(mem_hash_mutex);
+  num_mem_hash_allocs++;
+  ic_mutex_unlock_low(mem_hash_mutex);
+#endif
+  return g_try_malloc(size);
+}
+
+gchar *
 ic_malloc(size_t size)
 {
 #ifdef DEBUG_BUILD
@@ -354,6 +390,28 @@ ic_malloc(size_t size)
   ic_mutex_unlock_low(mem_mutex);
 #endif
   return g_try_malloc(size);
+}
+
+void
+ic_free_conn(void *ret_obj)
+{
+#ifdef DEBUG_BUILD
+  ic_mutex_lock_low(mem_conn_mutex);
+  num_mem_conn_allocs--;
+  ic_mutex_unlock_low(mem_conn_mutex);
+#endif
+  g_free(ret_obj);
+}
+
+void
+ic_free_hash(void *ret_obj)
+{
+#ifdef DEBUG_BUILD
+  ic_mutex_lock_low(mem_hash_mutex);
+  num_mem_hash_allocs--;
+  ic_mutex_unlock_low(mem_hash_mutex);
+#endif
+  g_free(ret_obj);
 }
 
 void

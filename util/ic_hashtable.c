@@ -136,10 +136,14 @@ ic_create_hashtable(unsigned int minsize,
     for (pindex=0; pindex < prime_table_length; pindex++) {
         if (primes[pindex] > minsize) { size = primes[pindex]; break; }
     }
-    h = (struct ic_hashtable *)ic_malloc(sizeof(struct ic_hashtable));
+    h = (struct ic_hashtable *)ic_malloc_hash(sizeof(struct ic_hashtable));
     if (NULL == h) return NULL; /*oom*/
-    h->table = (struct entry **)ic_malloc(sizeof(struct entry*) * size);
-    if (NULL == h->table) { ic_free(h); return NULL; } /*oom*/
+    h->table = (struct entry **)ic_malloc_hash(sizeof(struct entry*) * size);
+    if (NULL == h->table)
+    {
+      ic_free_hash(h); /*oom*/
+      return NULL;
+    }
     ic_zero(h->table, size * sizeof(struct entry *));
     h->tablelength  = size;
     h->primeindex   = pindex;
@@ -180,7 +184,7 @@ ic_hashtable_expand(struct ic_hashtable *h)
     return 0;
   newsize = primes[++(h->primeindex)];
 
-  newtable = (struct entry **)ic_malloc(sizeof(struct entry*) * newsize);
+  newtable = (struct entry **)ic_malloc_hash(sizeof(struct entry*) * newsize);
   if (NULL != newtable)
   {
     ic_zero(newtable, newsize * sizeof(struct entry *));
@@ -196,14 +200,14 @@ ic_hashtable_expand(struct ic_hashtable *h)
         newtable[index] = e;
       }
     }
-    ic_free(h->table);
+    ic_free_hash(h->table);
     h->table = newtable;
   }
   /* Plan B: realloc instead */
   else 
   {
     newtable = (struct entry **)
-               realloc(h->table, newsize * sizeof(struct entry *));
+               ic_realloc(h->table, newsize * sizeof(struct entry *));
     if (NULL == newtable)
     {
       (h->primeindex)--;
@@ -257,7 +261,7 @@ ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v)
      * element may be ok. Next time we insert, we'll try expanding again.*/
     ic_hashtable_expand(h);
   }
-  e = (struct entry *)ic_malloc(sizeof(struct entry));
+  e = (struct entry *)ic_malloc_hash(sizeof(struct entry));
   if (NULL == e) { --(h->entrycount); return IC_ERROR_MEM_ALLOC; } /*oom*/
   e->h = hash(h,k);
   index = indexFor(h->tablelength,e->h);
@@ -312,7 +316,7 @@ ic_hashtable_remove(struct ic_hashtable *h, void *k)
       *pE = e->next;
       h->entrycount--;
       v = e->v;
-      ic_free(e);
+      ic_free_hash(e);
       return v;
     }
     pE = &(e->next);
@@ -337,11 +341,11 @@ ic_hashtable_destroy(struct ic_hashtable *h)
     {
       f = e;
       e = e->next;
-      ic_free(f);
+      ic_free_hash(f);
     }
   }
-  ic_free(h->table);
-  ic_free(h);
+  ic_free_hash(h->table);
+  ic_free_hash(h);
 }
 
 /*
