@@ -1457,7 +1457,9 @@ init_config_parameters()
 /* Id 301-339 and 342-350 not used */
 
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 170);
-  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry, cluster_server_port_number, IC_UINT32,
+  IC_SET_CLUSTER_SERVER_CONFIG(conf_entry,
+                               cluster_server_port_number,
+                               IC_UINT32,
                                IC_DEF_CLUSTER_SERVER_PORT,
                                IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
@@ -1466,7 +1468,9 @@ init_config_parameters()
   "Port number of Cluster Server";
 
   IC_SET_CONFIG_MAP(CLUSTER_MANAGER_PORT_NUMBER, 171);
-  IC_SET_CLUSTER_MANAGER_CONFIG(conf_entry, cluster_manager_port_number, IC_UINT32,
+  IC_SET_CLUSTER_MANAGER_CONFIG(conf_entry,
+                                cluster_manager_port_number,
+                                IC_UINT32,
                                 IC_DEF_CLUSTER_MANAGER_PORT,
                                 IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);

@@ -310,9 +310,9 @@ ic_load_cluster_config_from_file(IC_STRING *config_dir,
   ic_free(conf_data.str);
   if (ret_val == 1)
   {
-    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Error at Line number %u:\n%s\n", err_obj->line_number,
-          ic_get_error_message(err_obj->err_num));
+    ic_printf("Error at Line number %u:\n%s",
+              err_obj->line_number,
+              ic_get_error_message(err_obj->err_num));
     ret_ptr= NULL;
     ic_printf("%s Failed to load the cluster configuration file %s",
               ic_err_str, file_name);

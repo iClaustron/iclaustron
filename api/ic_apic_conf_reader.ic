@@ -926,31 +926,107 @@ conf_serv_add_comment(void *ic_conf,
   DEBUG_RETURN_INT(0);
 }
 
+static void
+set_port_number(IC_SOCKET_LINK_CONFIG *comm_obj,
+                guint32 first_node_id,
+                guint32 *first_node_port_number,
+                guint32 *second_node_port_number)
+{
+  if (first_node_id == comm_obj->server_node_id)
+  {
+    *first_node_port_number= comm_obj->server_port_number;
+    *second_node_port_number= comm_obj->client_port_number;
+  }
+  else
+  {
+    *first_node_port_number= comm_obj->client_port_number;
+    *second_node_port_number= comm_obj->server_port_number;
+  }
+}
+
+static void
+get_node_port_number(guint32 first_node_id,
+                     guint32 second_node_id,
+                     guint32 *first_node_port_number,
+                     gchar **first_hostname,
+                     guint32 *second_node_port_number,
+                     gchar **second_hostname,
+                     IC_CLUSTER_CONFIG *clu_conf)
+{
+  IC_SOCKET_LINK_CONFIG *comm_obj;
+  guint32 i;
+
+  for (i= 0; i < clu_conf->num_comms; i++)
+  {
+    comm_obj= (IC_SOCKET_LINK_CONFIG*)clu_conf->comm_config[i];
+    if (comm_obj->first_node_id == first_node_id)
+    {
+      if (comm_obj->second_node_id == second_node_id)
+      {
+        /* We found a match */
+        *first_hostname= comm_obj->first_hostname;
+        set_port_number(comm_obj,
+                        first_node_id,
+                        first_node_port_number,
+                        second_node_port_number);
+        return;
+      }
+    }
+    else if (comm_obj->second_node_id == first_node_id)
+    {
+      if (comm_obj->first_node_id == second_node_id)
+      {
+        /* We found a match */
+        *second_hostname= comm_obj->second_hostname;
+        set_port_number(comm_obj,
+                        first_node_id,
+                        first_node_port_number,
+                        second_node_port_number);
+        return;
+      }
+    }
+  }
+}
+
 static int
 verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
 {
   IC_NODE_TYPES first_node_type, second_node_type;
   guint32 i, j;
-  guint32 first_port_number, second_port_number;
+  guint32 first_node_port_number1, first_node_port_number2;
+  guint32 second_node_port_number1, second_node_port_number2;
   gchar *first_hostname, *second_hostname;
   IC_DATA_SERVER_CONFIG *ds1_conf, *ds2_conf;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  IC_CLUSTER_MANAGER_CONFIG *cm_conf;
 
   for (i= 0; i <= clu_conf->max_node_id; i++)
   {
     first_node_type= clu_conf->node_types[i];
     ds1_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[i];
-    if (first_node_type != IC_NOT_EXIST_NODE_TYPE)
+    if (first_node_type == IC_NOT_EXIST_NODE_TYPE)
       continue;
-    first_port_number= ds1_conf->port_number;
+    first_node_port_number1= ds1_conf->port_number;
     first_hostname= ds1_conf->hostname;
     ic_require(first_hostname);
-    if (first_port_number == 0)
-      continue; /* Dynamic port number used, can't collide */
+    if (first_node_type == IC_CLUSTER_SERVER_TYPE)
+    {
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)ds1_conf;
+      first_node_port_number2= cs_conf->cluster_server_port_number;
+    }
+    else if (first_node_type == IC_CLUSTER_MANAGER_TYPE)
+    {
+      cm_conf= (IC_CLUSTER_MANAGER_CONFIG*)ds1_conf;
+      first_node_port_number2= cm_conf->cluster_manager_port_number;
+    }
+    else
+      first_node_port_number2= 0;
+
     for (j= i + 1; j <= clu_conf->max_node_id; j++)
     {
       second_node_type= clu_conf->node_types[j];
       ds2_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[j];
-      if (second_node_type != IC_NOT_EXIST_NODE_TYPE)
+      if (second_node_type == IC_NOT_EXIST_NODE_TYPE)
         continue;
       /*
         Node id i and j are both nodes in the cluster, we need to verify that
@@ -959,13 +1035,45 @@ verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
         pick one type e.g. the data node type and use this to find if there
         are two nodes with the same hostname and/or port number.
       */
-      second_port_number= ds2_conf->port_number;
+      second_node_port_number1= ds2_conf->port_number;
       second_hostname= ds2_conf->hostname;
+
+      /*
+        Hostname and port numbers are derived from node configurations
+        unless there is a specific socket configuration.
+        get_node_port_number checks for a matching socket configuration.
+      */
+      get_node_port_number(i,                          /* First node id */
+                           j,                          /* Second node id */
+                           &first_node_port_number1,   /* First port number */
+                           &first_hostname,            /* First hostname */
+                           &second_node_port_number1,  /* Sec port number */
+                           &second_hostname,           /* Second hostname */
+                           clu_conf);
+      if (second_node_type == IC_CLUSTER_SERVER_TYPE)
+      {
+        cs_conf= (IC_CLUSTER_SERVER_CONFIG*)ds2_conf;
+        second_node_port_number2= cs_conf->cluster_server_port_number;
+      }
+      else if (second_node_type == IC_CLUSTER_MANAGER_TYPE)
+      {
+        cm_conf= (IC_CLUSTER_MANAGER_CONFIG*)ds2_conf;
+        second_node_port_number2= cm_conf->cluster_manager_port_number;
+      }
+      else
+        second_node_port_number2= 0;
+
       ic_require(second_hostname);
-      if (second_port_number == 0)
-        continue; /* Dynamic port number used, can't collide */
+
       if (strcmp(first_hostname, second_hostname) == 0 &&
-                 first_port_number == second_port_number)
+          ((first_node_port_number1 == second_node_port_number1 &&
+            first_node_port_number1 != 0) ||
+           (first_node_port_number1 == second_node_port_number2 &&
+            first_node_port_number1 != 0) ||
+           (first_node_port_number2 == second_node_port_number1 &&
+            first_node_port_number2 != 0) ||
+           (first_node_port_number2 == second_node_port_number2 &&
+            first_node_port_number2)))
       {
         /*
           Two nodes aren't allowed to have the same hostname AND
@@ -973,18 +1081,23 @@ verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
           be defined per such pair.
         */
         ic_printf("Error: Two nodes using same hostname + port pair");
-        ic_printf("Node1: id = %u, name = %s, host = %s, port = %u",
+        ic_printf("Node1: id = %u, name = %s, host = %s, node port = %u"
+                  " server port = %u",
                   ds1_conf->node_id, ds1_conf->node_name,
-                  ds1_conf->hostname, ds1_conf->port_number);
-        ic_printf("Node2: id = %u, name = %s, host = %s, port = %u",
+                  ds1_conf->hostname, first_node_port_number1,
+                  first_node_port_number2);
+        ic_printf("Node2: id = %u, name = %s, host = %s, node port = %u"
+                  " server port = %u",
                   ds2_conf->node_id, ds2_conf->node_name,
-                  ds2_conf->hostname, ds2_conf->port_number);
+                  ds2_conf->hostname, second_node_port_number1,
+                  second_node_port_number2);
         return IC_ERROR_TWO_NODES_USING_SAME_HOST_PORT_PAIR;
       }
     }
   }
   return 0;
 }
+
 static int
 conf_serv_verify_conf(void *ic_conf,
                       guint32 line_number,
@@ -996,10 +1109,8 @@ conf_serv_verify_conf(void *ic_conf,
   int error;
   if ((error= complete_section(ic_conf, line_number, pass)))
     return error;
-/*
   if ((error= verify_hostname_port(clu_conf)))
     return error;
-*/
   return 0;
 }
 
@@ -1139,11 +1250,10 @@ load_config_server_from_files(gchar *config_file,
 
   if (ret_val == 1)
   {
-    g_log(G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL,
-          "Error at Line number %u in file %s:\n%s\n",
-          err_obj->line_number,
-          config_file,
-          ic_get_error_message(err_obj->err_num));
+    ic_printf("Error at Line number %u in file %s:\n%s",
+              err_obj->line_number,
+              config_file,
+              ic_get_error_message(err_obj->err_num));
     ret_ptr= NULL;
   }
   else
