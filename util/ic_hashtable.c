@@ -122,7 +122,7 @@ ic_keys_equal_uint64(void *key1, void* key2)
 }
 
 /*****************************************************************************/
-struct ic_hashtable *
+IC_HASHTABLE*
 ic_create_hashtable(unsigned int minsize,
                     unsigned int (*hashf) (void*),
                     int (*eqf) (void*,void*))
@@ -136,15 +136,15 @@ ic_create_hashtable(unsigned int minsize,
     for (pindex=0; pindex < prime_table_length; pindex++) {
         if (primes[pindex] > minsize) { size = primes[pindex]; break; }
     }
-    h = (struct ic_hashtable *)ic_malloc_hash(sizeof(struct ic_hashtable));
+    h = (IC_HASHTABLE*)ic_malloc_hash(sizeof(IC_HASHTABLE));
     if (NULL == h) return NULL; /*oom*/
-    h->table = (struct entry **)ic_malloc_hash(sizeof(struct entry*) * size);
+    h->table = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * size);
     if (NULL == h->table)
     {
       ic_free_hash(h); /*oom*/
       return NULL;
     }
-    ic_zero(h->table, size * sizeof(struct entry *));
+    ic_zero(h->table, size * sizeof(IC_HASH_ENTRY*));
     h->tablelength  = size;
     h->primeindex   = pindex;
     h->entrycount   = 0;
@@ -156,7 +156,7 @@ ic_create_hashtable(unsigned int minsize,
 
 /*****************************************************************************/
 unsigned int
-hash(struct ic_hashtable *h, void *k)
+hash(IC_HASHTABLE *h, void *k)
 {
     /* Aim to protect against poor hash functions by adding logic here
      * - logic taken from java 1.4 ic_hashtable source */
@@ -171,12 +171,12 @@ hash(struct ic_hashtable *h, void *k)
 
 /*****************************************************************************/
 static int
-ic_hashtable_expand(struct ic_hashtable *h)
+ic_hashtable_expand(IC_HASHTABLE *h)
 {
   /* Double the size of the table to accomodate more entries */
-  struct entry **newtable;
-  struct entry *e;
-  struct entry **pE;
+  IC_HASH_ENTRY **newtable;
+  IC_HASH_ENTRY *e;
+  IC_HASH_ENTRY **pE;
   unsigned int newsize, i, index;
 
   /* Check we're not hitting max capacity */
@@ -184,10 +184,10 @@ ic_hashtable_expand(struct ic_hashtable *h)
     return 0;
   newsize = primes[++(h->primeindex)];
 
-  newtable = (struct entry **)ic_malloc_hash(sizeof(struct entry*) * newsize);
+  newtable = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * newsize);
   if (NULL != newtable)
   {
-    ic_zero(newtable, newsize * sizeof(struct entry *));
+    ic_zero(newtable, newsize * sizeof(IC_HASH_ENTRY*));
     /* This algorithm is not 'stable'. ie. it reverses the list
      * when it transfers entries between the tables */
     for (i = 0; i < h->tablelength; i++)
@@ -206,8 +206,9 @@ ic_hashtable_expand(struct ic_hashtable *h)
   /* Plan B: realloc instead */
   else 
   {
-    newtable = (struct entry **)
-               ic_realloc(h->table, newsize * sizeof(struct entry *));
+    newtable = (IC_HASH_ENTRY**)
+               ic_realloc((gchar*)h->table,
+                          (size_t)(newsize * sizeof(IC_HASH_ENTRY*)));
     if (NULL == newtable)
     {
       (h->primeindex)--;
@@ -240,18 +241,18 @@ ic_hashtable_expand(struct ic_hashtable *h)
 
 /*****************************************************************************/
 unsigned int
-ic_hashtable_count(struct ic_hashtable *h)
+ic_hashtable_count(IC_HASHTABLE *h)
 {
   return h->entrycount;
 }
 
 /*****************************************************************************/
 int
-ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v)
+ic_hashtable_insert(IC_HASHTABLE *h, void *k, void *v)
 {
   /* This method allows duplicate keys - but they shouldn't be used */
   unsigned int index;
-  struct entry *e;
+  IC_HASH_ENTRY *e;
 
   if (++(h->entrycount) > h->loadlimit)
   {
@@ -261,7 +262,7 @@ ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v)
      * element may be ok. Next time we insert, we'll try expanding again.*/
     ic_hashtable_expand(h);
   }
-  e = (struct entry *)ic_malloc_hash(sizeof(struct entry));
+  e = (IC_HASH_ENTRY*)ic_malloc_hash(sizeof(IC_HASH_ENTRY));
   if (NULL == e) { --(h->entrycount); return IC_ERROR_MEM_ALLOC; } /*oom*/
   e->h = hash(h,k);
   index = indexFor(h->tablelength,e->h);
@@ -274,9 +275,9 @@ ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v)
 
 /*****************************************************************************/
 void * /* returns value associated with key */
-ic_hashtable_search(struct ic_hashtable *h, void *k)
+ic_hashtable_search(IC_HASHTABLE *h, void *k)
 {
-  struct entry *e;
+  IC_HASH_ENTRY *e;
   unsigned int hashvalue, index;
 
   hashvalue = hash(h,k);
@@ -294,13 +295,13 @@ ic_hashtable_search(struct ic_hashtable *h, void *k)
 
 /*****************************************************************************/
 void * /* returns value associated with key */
-ic_hashtable_remove(struct ic_hashtable *h, void *k)
+ic_hashtable_remove(IC_HASHTABLE *h, void *k)
 {
   /* TODO: consider compacting the table when the load factor drops enough,
    *       or provide a 'compact' method. */
 
-  struct entry *e;
-  struct entry **pE;
+  IC_HASH_ENTRY *e;
+  IC_HASH_ENTRY **pE;
   void *v;
   unsigned int hashvalue, index;
 
@@ -328,11 +329,11 @@ ic_hashtable_remove(struct ic_hashtable *h, void *k)
 /*****************************************************************************/
 /* destroy */
 void
-ic_hashtable_destroy(struct ic_hashtable *h)
+ic_hashtable_destroy(IC_HASHTABLE *h)
 {
   unsigned int i;
-  struct entry *e, *f;
-  struct entry **table = h->table;
+  IC_HASH_ENTRY *e, *f;
+  IC_HASH_ENTRY **table = h->table;
 
   for (i = 0; i < h->tablelength; i++)
   {

@@ -32,6 +32,7 @@
 #include <ic_debug.h>
 #include <ic_string.h>
 #include <ic_hashtable.h>
+#include <ic_hashtable_itr.h>
 #include <glib/gstdio.h>
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -64,9 +65,11 @@ static IC_MUTEX *exec_output_mutex= NULL;
 static guint64 num_mem_allocs= 0;
 static guint64 num_mem_conn_allocs= 0;
 static guint64 num_mem_hash_allocs= 0;
+static guint64 num_mem_mc_allocs= 0;
 static IC_MUTEX *mem_mutex= NULL;
 static IC_MUTEX *mem_conn_mutex= NULL;
 static IC_MUTEX *mem_hash_mutex= NULL;
+static IC_MUTEX *mem_mc_mutex= NULL;
 guint32 error_inject= 0;
 #endif
 static const gchar *port_binary_dir;
@@ -130,6 +133,10 @@ ic_get_stop_flag()
 /* Hash table containing locked mutexes */
 static IC_HASHTABLE *mutex_hash= NULL;
 static IC_MUTEX *mutex_hash_protect= NULL;
+
+/* Hash table containing memory allocations */
+static IC_HASHTABLE *mem_entry_hash= NULL;
+static IC_MUTEX *mem_entry_hash_mutex= NULL;
 #endif
 /*
   This method can't be debugged since it's called before debug system
@@ -143,35 +150,64 @@ ic_port_init()
   ic_require(mem_mutex= ic_mutex_create());
   ic_require(mem_conn_mutex= ic_mutex_create());
   ic_require(mem_hash_mutex= ic_mutex_create());
-#endif
-#ifdef DEBUG_BUILD
-  mutex_hash= ic_create_hashtable(4096, ic_hash_ptr, ic_keys_equal_ptr);
-  mutex_hash_protect= g_mutex_new();
-  ic_require(mutex_hash && mutex_hash_protect);
+  ic_require(mem_mc_mutex= ic_mutex_create());
+
+  ic_require(mem_entry_hash_mutex= g_mutex_new());
+
+  ic_require(mutex_hash_protect= g_mutex_new());
+
+  ic_require(mem_entry_hash= ic_create_hashtable(4096,
+                                                 ic_hash_ptr,
+                                                 ic_keys_equal_ptr));
+  ic_require(mutex_hash= ic_create_hashtable(4096,
+                                             ic_hash_ptr,
+                                             ic_keys_equal_ptr));
 #endif
 }
 
 void ic_port_end()
 {
-  ic_mutex_destroy(exec_output_mutex);
 #ifdef DEBUG_BUILD
+  IC_HASHTABLE_ITR itr, *hash_itr;
+  void *key;
+  gchar ptr_str[32];
+
   ic_hashtable_destroy(mutex_hash);
   ic_mutex_destroy(mutex_hash_protect);
-#endif
-#ifdef DEBUG_BUILD
+
   ic_mutex_destroy(mem_mutex);
   ic_mutex_destroy(mem_conn_mutex);
   ic_mutex_destroy(mem_hash_mutex);
+  ic_mutex_destroy(mem_mc_mutex);
+
   ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
+  if (num_mem_allocs != (guint64)0)
+  {
+    ic_printf("Memory leak found");
+    hash_itr= ic_hashtable_iterator(mem_entry_hash, &itr);
+    while (ic_hashtable_iterator_advance(hash_itr) != 0)
+    {
+      key= ic_hashtable_iterator_key(hash_itr);
+      ic_guint64_hex_str((guint64)key, ptr_str);
+      ic_printf("Leaked memory address = 0x%s", ptr_str);
+    }
+  }
+
+  ic_hashtable_destroy(mem_entry_hash);
+  ic_mutex_destroy(mem_entry_hash_mutex);
+
   ic_printf("num_mem_conn_allocs = %u", (guint32)num_mem_conn_allocs);
   ic_printf("num_mem_hash_allocs = %u", (guint32)num_mem_hash_allocs);
-  if (num_mem_allocs != (guint64)0)
-    ic_printf("Memory leak found");
+  ic_printf("num_mem_mc_allocs = %u", (guint32)num_mem_mc_allocs);
+
   if (num_mem_conn_allocs != (guint64)0)
     ic_printf("Memory leak found in use of comm subsystem or in it");
   if (num_mem_hash_allocs != (guint64)0)
     ic_printf("Memory leak found in use of hash tables or in it");
+  if (num_mem_mc_allocs != (guint64)0)
+    ic_printf("Memory leak found in use of memory container or in it");
 #endif
+  ic_mutex_destroy(exec_output_mutex);
 }
 
 void
@@ -340,24 +376,8 @@ ic_microsleep(guint32 microseconds_to_sleep)
 }
 
 gchar*
-ic_calloc_conn(size_t size)
+ic_calloc_low(size_t size)
 {
-#ifdef DEBUG_BUILD
-  ic_mutex_lock_low(mem_conn_mutex);
-  num_mem_conn_allocs++;
-  ic_mutex_unlock_low(mem_conn_mutex);
-#endif
-  return g_try_malloc0(size);
-}
-
-gchar*
-ic_calloc(size_t size)
-{
-#ifdef DEBUG_BUILD
-  ic_mutex_lock_low(mem_mutex);
-  num_mem_allocs++;
-  ic_mutex_unlock_low(mem_mutex);
-#endif
   return g_try_malloc0(size);
 }
 
@@ -371,59 +391,138 @@ ic_realloc(gchar *ptr,
 }
 
 gchar *
+ic_malloc_low(size_t size)
+{
+  return g_try_malloc(size);
+}
+
+void
+ic_free_low(void *ret_obj)
+{
+  g_free(ret_obj);
+}
+
+#ifdef DEBUG_BUILD
+static void
+insert_alloc_entry(gchar *entry)
+{
+  ic_mutex_lock_low(mem_entry_hash_mutex);
+  ic_hashtable_insert(mem_entry_hash, (void*)entry, (void*)entry);
+  ic_mutex_unlock_low(mem_entry_hash_mutex);
+}
+
+static void
+remove_alloc_entry(void *entry)
+{
+  void *key;
+  ic_mutex_lock_low(mem_entry_hash_mutex);
+  key= ic_hashtable_remove(mem_entry_hash, (void*)entry);
+  ic_mutex_unlock_low(mem_entry_hash_mutex);
+  ic_require(key);
+}
+
+gchar*
+ic_calloc_conn(size_t size)
+{
+  ic_mutex_lock_low(mem_conn_mutex);
+  num_mem_conn_allocs++;
+  ic_mutex_unlock_low(mem_conn_mutex);
+  return ic_calloc_low(size);
+}
+
+gchar*
+ic_calloc_mc(size_t size)
+{
+  ic_mutex_lock_low(mem_mc_mutex);
+  num_mem_mc_allocs++;
+  ic_mutex_unlock_low(mem_mc_mutex);
+  return ic_calloc_low(size);
+}
+
+gchar*
+ic_calloc(size_t size)
+{
+  gchar *ret_ptr;
+  gchar ptr_str[32];
+
+  ic_mutex_lock_low(mem_mutex);
+  num_mem_allocs++;
+  ic_mutex_unlock_low(mem_mutex);
+  ret_ptr= ic_calloc_low(size);
+  insert_alloc_entry(ret_ptr);
+  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
+  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
+              size, ptr_str));
+  return ret_ptr;
+}
+
+gchar *
 ic_malloc_hash(size_t size)
 {
-#ifdef DEBUG_BUILD
   ic_mutex_lock_low(mem_hash_mutex);
   num_mem_hash_allocs++;
   ic_mutex_unlock_low(mem_hash_mutex);
-#endif
-  return g_try_malloc(size);
+  return ic_calloc_low(size);
 }
 
 gchar *
 ic_malloc(size_t size)
 {
-#ifdef DEBUG_BUILD
+  gchar *ret_ptr;
+  gchar ptr_str[32];
+
   ic_mutex_lock_low(mem_mutex);
   num_mem_allocs++;
   ic_mutex_unlock_low(mem_mutex);
-#endif
-  return g_try_malloc(size);
+  ret_ptr= ic_malloc_low(size);
+  insert_alloc_entry(ret_ptr);
+  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
+  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u bytes at %s",
+              size, ptr_str));
+  return ret_ptr;
 }
 
 void
 ic_free_conn(void *ret_obj)
 {
-#ifdef DEBUG_BUILD
   ic_mutex_lock_low(mem_conn_mutex);
   num_mem_conn_allocs--;
   ic_mutex_unlock_low(mem_conn_mutex);
-#endif
-  g_free(ret_obj);
+  ic_free_low(ret_obj);
 }
 
 void
 ic_free_hash(void *ret_obj)
 {
-#ifdef DEBUG_BUILD
   ic_mutex_lock_low(mem_hash_mutex);
   num_mem_hash_allocs--;
   ic_mutex_unlock_low(mem_hash_mutex);
-#endif
-  g_free(ret_obj);
+  ic_free_low(ret_obj);
+}
+
+void
+ic_free_mc(void *ret_obj)
+{
+  ic_mutex_lock_low(mem_mc_mutex);
+  num_mem_mc_allocs--;
+  ic_mutex_unlock_low(mem_mc_mutex);
+  ic_free_low(ret_obj);
 }
 
 void
 ic_free(void *ret_obj)
 {
-#ifdef DEBUG_BUILD
+  gchar ptr_str[32];
+
   ic_mutex_lock_low(mem_mutex);
   num_mem_allocs--;
   ic_mutex_unlock_low(mem_mutex);
-#endif
-  g_free(ret_obj);
+  remove_alloc_entry(ret_obj);
+  ic_free_low(ret_obj);
+  ic_guint64_hex_str((guint64)ret_obj, ptr_str);
+  DEBUG_PRINT(MALLOC_LEVEL, ("Freed memory at %s", ptr_str));
 }
+#endif
 
 #ifndef WINDOWS
 IC_PID_TYPE

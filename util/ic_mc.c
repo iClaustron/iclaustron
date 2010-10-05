@@ -46,10 +46,10 @@ mc_realloc_buf_array(IC_INT_MEMORY_CONTAINER *mc_ptr, guint32 new_size)
   old_buf_size= mc_ptr->buf_array_size;
   copy_buf_size= IC_MIN(old_buf_size, new_size);
 
-  if (!(new_buf_array= ic_calloc(new_size*sizeof(gchar*))))
+  if (!(new_buf_array= ic_calloc_mc(new_size*sizeof(gchar*))))
     return NULL;
   memcpy(new_buf_array, mc_ptr->buf_array, copy_buf_size * sizeof(gchar*));
-  ic_free(mc_ptr->buf_array);
+  ic_free_mc(mc_ptr->buf_array);
   mc_ptr->buf_array= (gchar**)new_buf_array;
   mc_ptr->buf_array_size= new_size;
   return new_buf_array;
@@ -90,7 +90,7 @@ mc_alloc(IC_MEMORY_CONTAINER *ext_mc_ptr, guint32 size)
           mc_ptr->buf_array_size+16)))
       goto end;
   }
-  if (!(new_buf= ic_calloc(alloc_size)))
+  if (!(new_buf= ic_calloc_mc(alloc_size)))
     goto end;
   mc_ptr->current_buf_inx= buf_inx;
   if (size == alloc_size)
@@ -154,7 +154,7 @@ mc_reset(IC_MEMORY_CONTAINER *ext_mc_ptr)
 
   /* Deallocate all extra buffers except the first one */
   for (i= 1; i <= mc_ptr->current_buf_inx; i++)
-    ic_free(mc_ptr->buf_array[i]);
+    ic_free_mc(mc_ptr->buf_array[i]);
  
   orig_arr_size= mc_get_base_buf_size(mc_ptr->max_size, mc_ptr->base_size);
   if (mc_ptr->buf_array_size > orig_arr_size)
@@ -177,11 +177,11 @@ mc_free(IC_MEMORY_CONTAINER *ext_mc_ptr)
   guint32 i;
 
   for (i= 0; i <= mc_ptr->current_buf_inx; i++)
-    ic_free(mc_ptr->buf_array[i]);
+    ic_free_mc(mc_ptr->buf_array[i]);
   if (mc_ptr->use_mutex)
     ic_mutex_destroy(mc_ptr->mutex);
-  ic_free(mc_ptr->buf_array);
-  ic_free(mc_ptr);
+  ic_free_mc(mc_ptr->buf_array);
+  ic_free_mc(mc_ptr);
 }
 
 IC_MEMORY_CONTAINER*
@@ -203,25 +203,25 @@ ic_create_memory_container(guint32 base_size, guint32 max_size,
     Allocate buffer array indepently to be able to easily grow it without
     the need to handle complex lists of arrays.
   */
-  if (!(buf_array_ptr= ic_calloc(buf_size * sizeof(gchar*))))
+  if (!(buf_array_ptr= ic_calloc_mc(buf_size * sizeof(gchar*))))
     return NULL;
-  if (!(mc_ptr= (IC_INT_MEMORY_CONTAINER*)ic_calloc(
+  if (!(mc_ptr= (IC_INT_MEMORY_CONTAINER*)ic_calloc_mc(
          sizeof(IC_INT_MEMORY_CONTAINER))))
   {
-    ic_free(buf_array_ptr);
+    ic_free_mc(buf_array_ptr);
     return NULL;
   }
-  if (!(first_buf= ic_calloc(base_size)))
+  if (!(first_buf= ic_calloc_mc(base_size)))
   {
-    ic_free(buf_array_ptr);
-    ic_free(mc_ptr);
+    ic_free_mc(buf_array_ptr);
+    ic_free_mc(mc_ptr);
     return NULL;
   }
   if (use_mutex && !(mc_ptr->mutex= ic_mutex_create()))
   {
-    ic_free(first_buf);
-    ic_free(buf_array_ptr);
-    ic_free(mc_ptr);
+    ic_free_mc(first_buf);
+    ic_free_mc(buf_array_ptr);
+    ic_free_mc(mc_ptr);
     return NULL;
   }
 

@@ -50,14 +50,31 @@ void ic_set_port_config_dir(const gchar *config_dir);
 */
 void ic_port_init(); /* Debug support and global initialisations */
 void ic_port_end();
+gchar *ic_calloc_low(size_t size);
+gchar *ic_malloc_low(size_t size);
+void ic_free_low(void *ret_obj);
+gchar *ic_realloc(gchar *ptr, size_t size);
+#ifdef DEBUG_BUILD
 gchar *ic_calloc(size_t size);
 gchar *ic_calloc_conn(size_t size);
+gchar *ic_calloc_mc(size_t size);
 gchar *ic_malloc(size_t size);
 gchar *ic_malloc_hash(size_t size);
-gchar *ic_realloc(gchar *ptr, size_t size);
 void ic_free(void *ret_obj);
-void ic_free_hash(void *ret_obj);
 void ic_free_conn(void *ret_obj);
+void ic_free_hash(void *ret_obj);
+void ic_free_mc(void *ret_obj);
+#else
+#define ic_calloc(a) ic_calloc_low(a)
+#define ic_calloc_conn(a) ic_calloc_low(a)
+#define ic_calloc_mc(a) ic_calloc_low(a)
+#define ic_malloc(a) ic_malloc_low(a)
+#define ic_malloc_hash(a) ic_malloc_low(a)
+#define ic_free(a) ic_free_low(a)
+#define ic_free_conn(a) ic_free_low(a)
+#define ic_free_hash(a) ic_free_low(a)
+#define ic_free_mc(a) ic_free_low(a)
+#endif
 
 /* Process start/stop/check calls */
 IC_PID_TYPE ic_get_own_pid();

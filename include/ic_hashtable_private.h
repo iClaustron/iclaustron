@@ -21,16 +21,16 @@
 #include "ic_hashtable.h"
 
 /*****************************************************************************/
-struct entry
+struct ic_hash_entry
 {
     void *k, *v;
     unsigned int h;
-    struct entry *next;
+    IC_HASH_ENTRY *next;
 };
 
 struct ic_hashtable {
     unsigned int tablelength;
-    struct entry **table;
+    IC_HASH_ENTRY **table;
     unsigned int entrycount;
     unsigned int loadlimit;
     unsigned int primeindex;
@@ -40,7 +40,7 @@ struct ic_hashtable {
 
 /*****************************************************************************/
 unsigned int
-hash(struct ic_hashtable *h, void *k);
+hash(IC_HASHTABLE *h, void *k);
 
 /*****************************************************************************/
 /* indexFor */
@@ -56,11 +56,6 @@ indexFor(unsigned int tablelength, unsigned int hashvalue)
     return (hashvalue & (tablelength - 1u));
 }
 */
-
-/*****************************************************************************/
-#define freekey(X) free(X)
-/*define freekey(X) ; */
-
 
 /*****************************************************************************/
 

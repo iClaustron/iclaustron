@@ -368,7 +368,7 @@ error:
 }
 
 static int
-unit_test_mc(gboolean use_mutex)
+unit_test_mc(gboolean use_mutex, gboolean use_large)
 {
   IC_MEMORY_CONTAINER *mc_ptr;
   guint32 i, j, k, max_alloc_size, no_allocs;
@@ -384,7 +384,7 @@ unit_test_mc(gboolean use_mutex)
       for (k= 0; k < no_allocs; k++)
       {
         large= ((random() & 3) == 1); /* 25% of allocations are large */
-        if (large)
+        if (large && use_large)
           max_alloc_size= 32767;
         else
           max_alloc_size= 511;
@@ -1150,8 +1150,10 @@ int main(int argc, char *argv[])
   {
     case 0:
       ic_printf("Executing Unit test of Memory Container");
-      ret_code= unit_test_mc(FALSE);
-      ret_code= unit_test_mc(TRUE);
+      ret_code= unit_test_mc(FALSE, FALSE);
+      ret_code= unit_test_mc(FALSE, TRUE);
+      ret_code= unit_test_mc(TRUE, FALSE);
+      ret_code= unit_test_mc(TRUE, TRUE);
       break;
 
     case 1:

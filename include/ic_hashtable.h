@@ -1,4 +1,4 @@
-/* Copyright (C) 2007 iClaustron AB
+/* Copyright (C) 2007-2010 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 #include <ic_base_header.h>
 /* Example of use:
  *
- *      struct ic_hashtable  *h;
+ *      IC_HASHTABLE  *h;
  *      struct some_key      *k;
  *      struct some_value    *v;
  *
@@ -93,7 +93,7 @@ int ic_keys_equal_uint64(void *key1, void *key2);
  * @return                  newly created ic_hashtable or NULL on failure
  */
 
-struct ic_hashtable *
+IC_HASHTABLE*
 ic_create_hashtable(unsigned int minsize,
                     unsigned int (*hashfunction) (void*),
                     int (*key_eq_fn) (void*,void*));
@@ -118,10 +118,10 @@ ic_create_hashtable(unsigned int minsize,
  */
 
 int 
-ic_hashtable_insert(struct ic_hashtable *h, void *k, void *v);
+ic_hashtable_insert(IC_HASHTABLE *h, void *k, void *v);
 
 #define DEFINE_HASHTABLE_INSERT(fnname, keytype, valuetype) \
-int fnname (struct ic_hashtable *h, keytype *k, valuetype *v) \
+int fnname (IC_HASHTABLE *h, keytype *k, valuetype *v) \
 { \
     return ic_hashtable_insert(h,k,v); \
 }
@@ -136,10 +136,10 @@ int fnname (struct ic_hashtable *h, keytype *k, valuetype *v) \
  */
 
 void *
-ic_hashtable_search(struct ic_hashtable *h, void *k);
+ic_hashtable_search(IC_HASHTABLE *h, void *k);
 
 #define DEFINE_HASHTABLE_SEARCH(fnname, keytype, valuetype) \
-valuetype * fnname (struct ic_hashtable *h, keytype *k) \
+valuetype * fnname (IC_HASHTABLE *h, keytype *k) \
 { \
     return (valuetype *) (ic_hashtable_search(h,k)); \
 }
@@ -154,10 +154,10 @@ valuetype * fnname (struct ic_hashtable *h, keytype *k) \
  */
 
 void * /* returns value */
-ic_hashtable_remove(struct ic_hashtable *h, void *k);
+ic_hashtable_remove(IC_HASHTABLE *h, void *k);
 
 #define DEFINE_HASHTABLE_REMOVE(fnname, keytype, valuetype) \
-valuetype * fnname (struct ic_hashtable *h, keytype *k) \
+valuetype * fnname (IC_HASHTABLE *h, keytype *k) \
 { \
     return (valuetype *) (ic_hashtable_remove(h,k)); \
 }
@@ -171,7 +171,7 @@ valuetype * fnname (struct ic_hashtable *h, keytype *k) \
  * @return      the number of items stored in the ic_hashtable
  */
 unsigned int
-ic_hashtable_count(struct ic_hashtable *h);
+ic_hashtable_count(IC_HASHTABLE *h);
 
 
 /*****************************************************************************
@@ -182,7 +182,7 @@ ic_hashtable_count(struct ic_hashtable *h);
  */
 
 void
-ic_hashtable_destroy(struct ic_hashtable *h);
+ic_hashtable_destroy(IC_HASHTABLE *h);
 
 #endif /* __HASHTABLE_CWC22_H__ */
 
@@ -219,4 +219,3 @@ ic_hashtable_destroy(struct ic_hashtable *h);
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-

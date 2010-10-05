@@ -660,6 +660,18 @@ mem_pool_error:
   goto end;
 }
 
+static void
+free_rec_thread(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  if (rec_state->poll_set)
+    rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
+  if (rec_state->mutex)
+    ic_mutex_destroy(rec_state->mutex);
+  if (rec_state->cond)
+    ic_cond_destroy(rec_state->cond);
+  ic_free((void*)rec_state);
+}
+
 static gpointer
 run_receive_thread(void *data)
 {
@@ -771,6 +783,7 @@ end:
     ic_free(list_modules_received);
   if (temp_thd_conn)
     ic_free(temp_thd_conn);
+  free_rec_thread(rec_state);
   rec_tp->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 }
@@ -810,12 +823,6 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global)
   DEBUG_RETURN_INT(0);
 
 error:
-  if (rec_state->poll_set)
-    rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
-  if (rec_state->mutex)
-    ic_mutex_destroy(rec_state->mutex);
-  if (rec_state->cond)
-    ic_cond_destroy(rec_state->cond);
-  ic_free((void*)rec_state);
+  free_rec_thread(rec_state);
   DEBUG_RETURN_INT(ret_code);
 }

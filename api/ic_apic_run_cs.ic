@@ -2729,15 +2729,15 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 
   if (run_obj)
   {
+    apid_global= run_obj->apid_global;
+    if (apid_global)
+      apid_global->apid_global_ops->ic_free_apid_global(apid_global);
     tp_state= run_obj->tp_state;
     if (tp_state)
       tp_state->tp_ops.ic_threadpool_stop(tp_state);
     conn= run_obj->conn;
     if (conn)
       conn->conn_op.ic_free_connection(conn);
-    apid_global= run_obj->apid_global;
-    if (apid_global)
-      apid_global->apid_global_ops->ic_free_apid_global(apid_global);
     release_hash_on_cluster_config(run_obj);
     free_run_cluster_protect(run_obj);
     if (run_obj->conf_mc_ptr)

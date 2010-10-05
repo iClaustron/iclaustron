@@ -13,88 +13,86 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-/* Copyright (C) 2002, 2004 Christopher Clark  <firstname.lastname@cl.cam.ac.uk> */
+/*
+  Copyright (C) 2002, 2004 Christopher Clark <firstname.lastname@cl.cam.ac.uk>
+*/
 
+#include <ic_base_header.h>
+#include <ic_port.h>
+#include <ic_err.h>
 #include <ic_hashtable.h>
 #include <ic_hashtable_private.h>
 #include <ic_hashtable_itr.h>
-#include <stdlib.h> /* defines NULL */
 
 /*****************************************************************************/
 /* ic_hashtable_iterator    - iterator constructor */
 
-struct ic_hashtable_itr *
-ic_hashtable_iterator(struct ic_hashtable *h)
+IC_HASHTABLE_ITR*
+ic_hashtable_iterator(IC_HASHTABLE *h,
+                      IC_HASHTABLE_ITR *itr)
 {
-    unsigned int i, tablelength;
-    struct ic_hashtable_itr *itr = (struct ic_hashtable_itr *)
-        ic_malloc_hash(sizeof(struct ic_hashtable_itr));
-
-    if (NULL == itr) return NULL;
-    itr->h = h;
-    itr->e = NULL;
-    itr->parent = NULL;
-    tablelength = h->tablelength;
-    itr->index = tablelength;
-    if (0 == h->entrycount) return itr;
-
-    for (i = 0; i < tablelength; i++)
-    {
-        if (NULL != h->table[i])
-        {
-            itr->e = h->table[i];
-            itr->index = i;
-            break;
-        }
-    }
-    return itr;
+  itr->h = h;
+  itr->e = NULL;
+  itr->parent = NULL;
+  return itr;
 }
-
-/*****************************************************************************/
-/* key      - return the key of the (key,value) pair at the current position */
-/* value    - return the value of the (key,value) pair at the current position */
-
 
 /*****************************************************************************/
 /* advance - advance the iterator to the next element
  *           returns zero if advanced to end of table */
 
 int
-ic_hashtable_iterator_advance(struct ic_hashtable_itr *itr)
+ic_hashtable_iterator_advance(IC_HASHTABLE_ITR *itr)
 {
-    unsigned int j,tablelength;
-    struct entry **table;
-    struct entry *next;
+  unsigned int i, j,tablelength;
+  IC_HASH_ENTRY **table;
+  IC_HASH_ENTRY *next;
+  IC_HASHTABLE *h= itr->h;
 
-    if (NULL == itr->e) return 0; /* stupidity check */
-
-    next = itr->e->next;
-    if (NULL != next)
+  if (NULL == itr->e)
+  {
+    /* First call to advance */
+    tablelength = h->tablelength;
+    for (i = 0; i < tablelength; i++)
     {
-        itr->parent = itr->e;
-        itr->e = next;
+      if (NULL != h->table[i])
+      {
+        itr->e = h->table[i];
+        itr->index = i;
         return -1;
+      }
     }
-    tablelength = itr->h->tablelength;
-    itr->parent = NULL;
-    if (tablelength <= (j = ++(itr->index)))
-    {
-        itr->e = NULL;
-        return 0;
-    }
-    table = itr->h->table;
-    while (NULL == (next = table[j]))
-    {
-        if (++j >= tablelength)
-        {
-            itr->index = tablelength;
-            itr->e = NULL;
-            return 0;
-        }
-    }
-    itr->index = j;
+    ic_require(h->entrycount == 0);
+    return 0;
+  }
+
+  next = itr->e->next;
+  if (NULL != next)
+  {
+    itr->parent = itr->e;
     itr->e = next;
     return -1;
+  }
+  tablelength = itr->h->tablelength;
+  itr->parent = NULL;
+  if (tablelength <= (j = ++(itr->index)))
+  {
+    itr->e = NULL;
+    return 0;
+  }
+  table = itr->h->table;
+  while (NULL == (next = table[j]))
+  {
+    if (++j >= tablelength)
+    {
+      itr->index = tablelength;
+      itr->e = NULL;
+      return 0;
+    }
+  }
+  itr->index = j;
+  itr->e = next;
+  return -1;
 }
 
 /*****************************************************************************/
@@ -106,9 +104,9 @@ ic_hashtable_iterator_advance(struct ic_hashtable_itr *itr)
  *          Returns zero if end of iteration. */
 
 int
-ic_hashtable_iterator_remove(struct ic_hashtable_itr *itr)
+ic_hashtable_iterator_remove(IC_HASHTABLE_ITR *itr)
 {
-    struct entry *remember_e, *remember_parent;
+    IC_HASH_ENTRY *remember_e, *remember_parent;
     int ret;
 
     /* Do the removal */
@@ -123,7 +121,7 @@ ic_hashtable_iterator_remove(struct ic_hashtable_itr *itr)
     /* itr->e is now outside the ic_hashtable */
     remember_e = itr->e;
     itr->h->entrycount--;
-    freekey(remember_e->k);
+    ic_free_hash(remember_e->k);
 
     /* Advance the iterator, correcting the parent */
     remember_parent = itr->parent;
@@ -135,10 +133,11 @@ ic_hashtable_iterator_remove(struct ic_hashtable_itr *itr)
 
 /*****************************************************************************/
 int /* returns zero if not found */
-ic_hashtable_iterator_search(struct ic_hashtable_itr *itr,
-                             struct ic_hashtable *h, void *k)
+ic_hashtable_iterator_search(IC_HASHTABLE_ITR *itr,
+                             IC_HASHTABLE *h,
+                             void *k)
 {
-    struct entry *e, *parent;
+    IC_HASH_ENTRY *e, *parent;
     unsigned int hashvalue, index;
 
     hashvalue = hash(h,k);
@@ -163,10 +162,9 @@ ic_hashtable_iterator_search(struct ic_hashtable_itr *itr,
     return 0;
 }
 
-
 /*
  * Copyright (c) 2002, 2004, Christopher Clark
- * Copyright (c) 2007, iClaustron AB
+ * Copyright (c) 2007-2010 iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
