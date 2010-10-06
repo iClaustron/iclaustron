@@ -261,6 +261,7 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
   IC_CONF_VERSION_TYPE old_version= *old_config_version_number;
   IC_PID_TYPE own_pid;
   DEBUG_ENTRY("ic_write_full_config_to_disk");
+
   /*
    The first step before writing anything is to ensure that the previous
    write was successfully completed. This is accomplished by removing any
@@ -315,6 +316,8 @@ ic_write_full_config_to_disk(IC_STRING *config_dir,
     if ((error= remove_config_files(config_dir, clu_infos, old_version)))
       DEBUG_RETURN_INT(error);
   }
+  /* Step 4, update the version number */
+  *old_config_version_number= old_version + 1;
   DEBUG_RETURN_INT(0);
 error:
   (void)remove_config_files(config_dir, clu_infos, old_version + 1);
@@ -1089,7 +1092,7 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
     default:
       DEBUG_RETURN_INT(1);
   }
-  for (i= 0; i < glob_max_config_id; i++)
+  for (i= 0; i <= glob_max_config_id; i++)
   {
     if ((inx= map_inx_to_config_id[i]))
     {
@@ -1186,7 +1189,7 @@ write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
   int error;
   DEBUG_ENTRY("write_node_section");
 
-  for (i= 0; i < glob_max_config_id; i++)
+  for (i= 0; i <= glob_max_config_id; i++)
   {
     if ((inx= map_inx_to_config_id[i]))
     {
@@ -1424,7 +1427,7 @@ check_int_value(guint64 data, guint64 *value, gboolean *first)
   if (*first)
   {
     *value= data;
-    first= FALSE;
+    *first= FALSE;
   }
   else
   {

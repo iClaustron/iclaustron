@@ -2200,6 +2200,7 @@ find_max_version(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     if (run_obj->state.cs_servers[i].config_version_number > version_number)
       version_number= run_obj->state.cs_servers[i].config_version_number;
   }
+  ic_require(version_number > 0);
   return version_number;
 }
 
