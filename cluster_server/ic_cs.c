@@ -44,17 +44,9 @@
 static const gchar *glob_process_name= "ic_csd";
 
 /* Option variables */
-static gchar *glob_server_name= "127.0.0.1";
-static gchar *glob_server_port= IC_DEF_CLUSTER_SERVER_PORT_STR;
 
 static GOptionEntry entries[] = 
 {
-  { "server_port", 0, 0, G_OPTION_ARG_STRING,
-    &glob_server_port,
-    "Set Cluster Server connection Port", NULL},
-  { "server_name", 0, 0, G_OPTION_ARG_STRING,
-    &glob_server_name,
-    "Set Cluster Server Hostname", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -77,8 +69,6 @@ main(int argc, char *argv[])
   }
   if (!(run_obj= ic_create_run_cluster(&ic_glob_config_dir,
                                        glob_process_name,
-                                       glob_server_name,
-                                       glob_server_port,
                                        ic_glob_node_id)))
   {
     error= IC_ERROR_MEM_ALLOC;

@@ -191,6 +191,7 @@ typedef struct ic_iovec IC_IOVEC;
 #define IC_MAX_INT_STRING 32
 #define IC_MAX_APID_NUM_THREADS 256
 
+#define IC_NUMBER_SIZE 32
 /* Define a number of constants used in various places */
 #define SPACE_CHAR (gchar)32
 #define CARRIAGE_RETURN (gchar)10

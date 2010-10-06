@@ -627,8 +627,6 @@ struct ic_run_cluster_server
 IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_STRING *config_dir,
                       const gchar *process_name,
-                      gchar *server_name,
-                      gchar *server_port,
                       guint32 my_node_id);
 
 IC_API_CONFIG_SERVER*

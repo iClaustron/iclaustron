@@ -434,7 +434,7 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   guint32 i, cs_index, dummy, num_cluster_servers, used_index;
-  gchar buf[32], *buf_ptr, *port_number_str;
+  gchar buf[IC_NUMBER_SIZE], *buf_ptr, *port_number_str;
   int error;
   gboolean found_cs_nodeid= FALSE;
   IC_MEMORY_CONTAINER *mc_ptr= run_obj->conf_mc_ptr;
@@ -505,6 +505,7 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int error;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
+  IC_CLUSTER_CONFIG *clu_conf;
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
 
   if (!(clu_infos= ic_load_cluster_config_from_file(run_obj->config_dir,
@@ -515,6 +516,29 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   run_obj->new_config.clu_infos= clu_infos;
   if ((error= load_config_files(run_obj, clu_infos)))
     return error;
+
+  /*
+    At this point we're ready to confirm that we've been started with a
+    valid node id. It needs to be a node id which is a Cluster Server.
+    Possibly we should also find a way to check that the node's hostname
+    can be reached from this computer, otherwise we've been started on
+    the wrong host.
+
+    If we make it possible to change the hostname and/or node id of a
+    Cluster Server, then this needs to be carefully considered how this
+    will be treated in all error cases. It would definitely be a change
+    that can only be done if all Cluster Servers are up and running and
+    the PREPARE state needs to be taken into consideration properly.
+  */
+  clu_conf= get_any_cluster_config(&run_obj->new_config);
+  if (clu_conf->node_types[run_obj->cs_nodeid] != IC_CLUSTER_SERVER_NODE)
+  {
+    /* We've been started with an incorrect node id */
+    ic_printf("Error: The Cluster Server have been started with a node id"
+              " which isn't a Cluster Server in the configuration");
+    return IC_ERROR_CS_STARTED_WITH_WRONG_NODEID;
+  }
+
   if (info_cs->config_version_number == 0)
   {
     if ((error= ic_write_full_config_to_disk(run_obj->config_dir,
@@ -2583,8 +2607,6 @@ static void free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 IC_RUN_CLUSTER_SERVER*
 ic_create_run_cluster(IC_STRING *config_dir,
                       const gchar *process_name,
-                      gchar *server_name,
-                      gchar *server_port,
                       guint32 my_node_id)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= NULL;
@@ -2653,14 +2675,6 @@ ic_create_run_cluster(IC_STRING *config_dir,
     goto error;
 
   conn= run_obj->conn;
-  conn->conn_op.ic_prepare_server_connection(conn,
-                                             server_name,
-                                             server_port,
-                                             NULL,
-                                             NULL,
-                                             0,
-                                             TRUE);
-
   run_obj->run_op.ic_start_cluster_server= start_cluster_server;
   run_obj->run_op.ic_fill_error_buffer= rcs_fill_error_buffer;
   run_obj->run_op.ic_run_cluster_server= run_cluster_server;
@@ -2860,10 +2874,15 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= (IC_INT_RUN_CLUSTER_SERVER*)ext_run_obj;
   IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
+  gchar str_port[IC_NUMBER_SIZE];
   int ret_code= 0;
   guint32 thread_id;
+  guint32 my_nodeid;
   IC_CONNECTION *conn, *fork_conn;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  IC_CLUSTER_CONFIG *clu_conf;
   int error;
+  guint32 str_len;
   DEBUG_ENTRY("run_cluster_server");
 
   if ((error= complete_startup_handling(run_obj)))
@@ -2873,7 +2892,30 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 
   report_startup_completed(run_obj);
 
+  /*
+    Startup for our Cluster Server node is completed. It's now time to
+    start the socket that listens to incoming requests. We get our
+    hostname and port number from the Grid configuration. At this
+    point no one can change the configuration, so we don't need to
+    lock it while reading it.
+  */
   conn= run_obj->conn;
+  my_nodeid= run_obj->cs_nodeid;
+  clu_conf= get_any_cluster_config(&run_obj->config);
+  cs_conf= (IC_CLUSTER_SERVER_CONFIG*)clu_conf->node_config[my_nodeid];
+  ic_require(clu_conf->node_types[my_nodeid] == IC_CLUSTER_SERVER_NODE);
+  ic_guint64_str((guint64)cs_conf->cluster_server_port_number,
+                 str_port,
+                 &str_len);
+
+  conn->conn_op.ic_prepare_server_connection(conn,
+                                      cs_conf->hostname,
+                                      str_port,
+                                      NULL,
+                                      NULL,
+                                      0,
+                                      TRUE);
+
   if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                                check_for_stopped_rcs_threads,
                                                (void*)tp_state)))
