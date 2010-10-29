@@ -513,7 +513,9 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                                 run_obj->conf_mc_ptr,
                                 &run_obj->state.err_obj)))
     return run_obj->state.err_obj.err_num;
+
   run_obj->new_config.clu_infos= clu_infos;
+
   if ((error= load_config_files(run_obj, clu_infos)))
     return error;
 
@@ -806,7 +808,6 @@ reread_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     ic_print_error(error);
     /* Rollback change */
     goto error;
-    DEBUG_RETURN_INT(error);
   }
   /*
     We have successfully loaded a new configuration from disk. We can
@@ -994,133 +995,6 @@ error:
   continue to send the heartbeat messages.
 
   Here the start_cluster_server method returns.
-
-************************ TODO *********************************************
----------------------------------------------------------------------------
-The rest of this comment must be edited to conform to what gets implemented
-to handle the synchronisation at startup.
----------------------------------------------------------------------------
-
-  When the master have received replies from all other nodes about a starting
-  node, the master starts the synchronisation procedure if a quorum of Cluster
-  Servers have started. If no quorum has started, the master will wait for
-  more Cluster Servers and use the heartbeat protocol which means sending
-  the following message every 3 seconds:
-
-  heartbeat<CR>
-  
-  and receive the reply:
-
-  heartbeat reply<CR>
-
-  from all other started Cluster Server.
-
-  When a quorum of Cluster Servers are started, it means that at least one
-  node participated in the latest update of the configuration. If all nodes
-  did participate in this update and have same version and the same state,
-  then the master will send the following message to indicate that
-  synchronisation is done.
-
-  synchronization done<CR>
-
-  and receive the reply
-
-  synchronization done reply<CR>
-
-  When a slave receives this message and when the master sends this message
-  the Cluster Servers are started and are ready to receive requests for new
-  updates of the configuration including requests to get the configuration.
-
-  If one of the nodes isn't up-to-date with state, but has the right version
-  number, the Cluster Server will send a commit message to this node.
-
-  cluster server commit<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-
-  and will receive the response when commit is done:
-
-  cluster server commit reply<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-
-  When at least one of the nodes are not having the right version number or
-  have the right version number but is in a state which isn't possible to
-  commit from, then the node needs to receive the configuration from another
-  node.
-
-  To prepare for this the master first notifies the node to send the
-  configuration with the message.
-
-  prepare send configuration<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-  receiver node id: node_number<CR>
-
-  The master sends one such message for each node to receive a new
-  configuration. The node responds with the message (one response
-  for each request).
-
-  prepare send configuration reply<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-  receiver node id: node_number<CR>
-
-  When this message have been received the node have been prepared for a
-  message requesting the configuration on a new channel and will allow
-  for such a message if it arrives from the node for which it has opened
-  up for.
-
-  The master will then request the node to receive the configuration to fetch
-  it from the given node. It will request it through.
-
-  fetch configuration<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-  sender node id: node_number<CR>
-
-  The receiver will immediately respond to this message to the master through
-  the message.
-
-  fetch configuration reply<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-  sender node id: node_number<CR>
-
-  After sending this message it will connect to the given Cluster Server using
-  another connection and get a configuration using the normal procedure to
-  fetch a configuration. When it has received this configuration it will
-  save this version on disk.
-
-  Finally when it has retrieved the new configuration and saved it on disk, it
-  will respond to the master again by using the message
-
-  cluster server commit reply<CR>
-  nodeid: node_number<CR>
-  version: version_number<CR>
-  pid: pid_number<CR>
-
-  During this time the heartbeat protocol will ensure that we detect nodes
-  no longer working.
-
-  When all nodes have completed their fetch of a new configuration we will
-  use the "synchronization done" protocol to complete the Cluster Server
-  start-up.
-
-  A new node cannot accept get configuration requests or update configuration
-  requests from any other node (other than when specifically told to do so)
-  before receiving the "synchronization done" message. A starting master
-  cannot start accepting before sending synchronization done to the other
-  Cluster Servers.
-
-  During the time of inclusion of a new Cluster Server we will temporarily
-  disable the ability to update the configuration.
 */
 
 /*
@@ -1707,6 +1581,20 @@ is_view_from_starting_node(IC_INFO_CLUSTER_SERVER *info_cs)
   The start method of this thread is start_cs_func.
 */
 
+static int get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                             IC_THREADPOOL_STATE *tp_state,
+                             IC_THREAD_STATE *thread_state,
+                             guint32 cs_index,
+                             IC_CONNECTION **conn);
+static int wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                       IC_THREADPOOL_STATE *tp_state,
+                                       IC_THREAD_STATE *thread_state,
+                                       guint32 cs_index,
+                                       IC_CONNECTION *conn);
+static int wait_for_enough_started_nodes(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                                         IC_THREADPOOL_STATE *tp_state,
+                                         IC_THREAD_STATE *thread_state,
+                                         guint32 cs_index);
 static guint32 get_count_active_start_threads(
                      IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static guint32 get_count_connected_cluster_servers(
@@ -1734,18 +1622,12 @@ start_cs_func(gpointer data)
   THREAD_DATA *thread_data;
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   guint32 cs_index;
-  IC_INT_API_CONFIG_SERVER *apic;
   IC_RUN_CLUSTER_STATE *rc_state;
-  IC_INFO_CLUSTER_SERVER *this_info_cs, *my_info_cs;
-  IC_INFO_CLUSTER_SERVER *info_cs;
+  IC_INFO_CLUSTER_SERVER *this_info_cs;
+  IC_INFO_CLUSTER_SERVER *my_info_cs;
   IC_CONNECTION *conn= NULL;
-  guint32 active_start_threads, connected_servers, num_servers, i;
   int error;
-  gchar *err_str;
   gboolean is_client;
-  gboolean set_have_waited, have_waited, equal, found;
-  gboolean running_server= FALSE;
-  gboolean lock;
   DEBUG_THREAD_ENTRY("start_cs_func");
 
   tp_state= thread_state->ic_get_threadpool(thread_state);
@@ -1753,7 +1635,6 @@ start_cs_func(gpointer data)
     (THREAD_DATA*)tp_state->ts_ops.ic_thread_get_object(thread_state);
   run_obj= thread_data->run_obj;
   cs_index= thread_data->cs_index;
-  apic= run_obj->config.apic;
   rc_state= &run_obj->state;
   this_info_cs= get_cluster_info(run_obj, cs_index);
   my_info_cs= get_my_cluster_info(run_obj);
@@ -1763,15 +1644,104 @@ start_cs_func(gpointer data)
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
     goto early_end;
 
+  if (get_cs_connection(run_obj,
+                        tp_state,
+                        thread_state,
+                        cs_index,
+                        &conn))
+    goto early_end;
+
+  if (wait_for_enough_connections(run_obj,
+                                  tp_state,
+                                  thread_state,
+                                  cs_index,
+                                  conn))
+    goto end;
+                                  
+  /*
+    We are now connected to the Cluster Server this thread is appointed to
+    handle. Also enough nodes have connected to form at least a quorum of
+    Cluster Servers. We need to give our start up data and receive information
+    about the other node's state. If any node fails as part of the start
+    protocol we will disconnect all connections and try again.
+  */
+  if ((error= handle_start_protocol(run_obj,
+                                    conn,
+                                    is_client,
+                                    &cs_index)))
+  {
+    /* Release connection, return and ensure we make another retry */
+    DEBUG_PRINT(CONFIG_LEVEL, ("This thread failed with start protocol"));
+    goto end;
+  }
+
+  /* Handling one round of heartbeat is part of start protocol */
+  if (handle_cs_heartbeat(run_obj, thread_state, cs_index, TRUE))
+    goto end;
+
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    goto end;
+
+  if (wait_for_enough_started_nodes(run_obj,
+                                    tp_state,
+                                    thread_state,
+                                    cs_index))
+    goto end;
+
+  /*
+    We are now connected to the other Cluster Server and we have
+    successfully exchanged start-up data. We keep this thread
+    until the connection breaks or until we're about to quit.
+  */
+  handle_cs_heartbeat(run_obj, thread_state, cs_index, FALSE);
+end:
+  release_cs_connection(run_obj, conn, cs_index, FALSE);
+end_thread:
+  tp_state->ts_ops.ic_thread_stops(thread_state);
+  DEBUG_THREAD_RETURN;
+
+early_end:
+  ic_mutex_lock(rc_state->protect_state);
+  rc_state->start_threads_stopped++;
+  get_cluster_info(run_obj, cs_index)->is_start_thread_active= FALSE;
+  ic_mutex_unlock(rc_state->protect_state);
+  goto end_thread;
+}
+
+static int
+get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                  IC_THREADPOOL_STATE *tp_state,
+                  IC_THREAD_STATE *thread_state,
+                  guint32 cs_index,
+                  IC_CONNECTION **conn)
+{
+  gchar *err_str;
+  IC_INFO_CLUSTER_SERVER *this_info_cs, *my_info_cs, *info_cs;
+  IC_RUN_CLUSTER_STATE *rc_state;
+  gboolean is_client;
+  gboolean found;
+  gboolean equal;
+  guint32 i;
+  IC_INT_API_CONFIG_SERVER *apic;
+  gboolean running_server= FALSE;
+  int error;
+  DEBUG_ENTRY("get_cs_connection");
+
+  apic= run_obj->config.apic;
+  my_info_cs= get_my_cluster_info(run_obj);
+  this_info_cs= get_cluster_info(run_obj, cs_index);
+  rc_state= &run_obj->state;
+  is_client= (this_info_cs->node_id > my_info_cs->node_id);
+
   while (1)
   {
     err_str= NULL;
     if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-      goto early_end;
+      goto error;
     if (is_client)
     {
       if (!(error= connect_cluster_server(apic,
-                                          &conn,
+                                          conn,
                                           cs_index,
                                           (guint32)1,
                                           is_client,
@@ -1780,7 +1750,7 @@ start_cs_func(gpointer data)
         DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
                     cs_index));
         this_info_cs->is_client_side= TRUE;
-        this_info_cs->conn= conn;
+        this_info_cs->conn= *conn;
         break;
       }
       DEBUG_PRINT(CONFIG_LEVEL,
@@ -1845,7 +1815,7 @@ start_cs_func(gpointer data)
         this_info_cs->wait_server_connect_other_thread= FALSE;
         ic_mutex_unlock(rc_state->protect_state);
         if (!(error= connect_cluster_server(apic,
-                                            &conn,
+                                            conn,
                                             cs_index,
                                             (guint32)3,
                                             is_client,
@@ -1862,13 +1832,13 @@ start_cs_func(gpointer data)
             if (info_cs->wait_server_connect_other_thread ||
                 i == cs_index)
             {
-              if (!(conn->conn_op.ic_check_connection(conn,
+              if (!((*conn)->conn_op.ic_check_connection(*conn,
                    apic->cluster_conn.cluster_server_ips[i],
                    apic->cluster_conn.cluster_server_ports[i],
                    &equal)) && equal)
               {
                 found= TRUE;
-                info_cs->conn= conn;
+                info_cs->conn= *conn;
                 info_cs->wait_server_connect_other_thread= FALSE;
                 if (i == cs_index)
                 {
@@ -1886,7 +1856,7 @@ start_cs_func(gpointer data)
           if (!found)
           {
             /* Connect from unknown place or error */
-            conn->conn_op.ic_free_connection(conn);
+            (*conn)->conn_op.ic_free_connection(*conn);
           }
           else if (!run_obj->running_server)
           {
@@ -1909,10 +1879,35 @@ start_cs_func(gpointer data)
       ic_cond_broadcast(rc_state->connect_cond);
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Close thread for index %u, others already starting", cs_index));
-      goto end;
+      ic_mutex_unlock(rc_state->protect_state);
+      goto error;
     }
     ic_mutex_unlock(rc_state->protect_state);
   }
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(1);
+}
+
+static int
+wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                            IC_THREADPOOL_STATE *tp_state,
+                            IC_THREAD_STATE *thread_state,
+                            guint32 cs_index,
+                            IC_CONNECTION *conn)
+{
+  IC_INFO_CLUSTER_SERVER *this_info_cs, *my_info_cs;
+  IC_RUN_CLUSTER_STATE *rc_state;
+  gboolean set_have_waited, have_waited;
+  guint32 connected_servers;
+  guint32 num_servers;
+  guint32 active_start_threads;
+  DEBUG_ENTRY("wait_for_enough_connections");
+
+  my_info_cs= get_my_cluster_info(run_obj);
+  this_info_cs= get_cluster_info(run_obj, cs_index);
+  rc_state= &run_obj->state;
+
   /* Inform the other cluster server of our intentions */
   ic_mutex_lock(rc_state->protect_state);
   conn= this_info_cs->conn;
@@ -1924,7 +1919,7 @@ start_cs_func(gpointer data)
     {
       DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, stop flag set",
                   cs_index));
-      goto end;
+      goto error;
     }
     connected_servers= get_count_connected_cluster_servers(run_obj);
     num_servers= run_obj->config.num_cluster_servers;
@@ -1958,7 +1953,7 @@ start_cs_func(gpointer data)
         /* Too few threads to continue, this thread needs to stop */
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Too few threads to start, index %u, stop and restart", cs_index));
-        goto end;
+        goto error;
       }
       else if ((active_start_threads + 1 == num_servers) &&
                (num_servers > 2))
@@ -2013,40 +2008,28 @@ start_cs_func(gpointer data)
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("Close thread for index %u, stop flag set",
                 cs_index));
-    goto end;
+    goto error;
   }
   DEBUG_PRINT(CONFIG_LEVEL,
     ("A quorum has been reached, set cs_starting to TRUE"));
   rc_state->cs_starting= TRUE;
   set_up_initial_master_index_view(run_obj);
   ic_mutex_unlock(rc_state->protect_state);
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(1);
+}
 
-  /*
-    We are now connected to the Cluster Server this thread is appointed to
-    handle. Also enough nodes have connected to form at least a quorum of
-    Cluster Servers. We need to give our start up data and receive information
-    about the other node's state. If any node fails as part of the start
-    protocol we will disconnect all connections and try again.
-  */
-  if ((error= handle_start_protocol(run_obj,
-                                    conn,
-                                    is_client,
-                                    &cs_index)))
-  {
-    /* Release connection, return and ensure we make another retry */
-    DEBUG_PRINT(CONFIG_LEVEL, ("This thread failed with start protocol"));
-    goto lock_end;
-  }
-  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-    goto lock_end;
+static int
+wait_for_enough_started_nodes(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                              IC_THREADPOOL_STATE *tp_state,
+                              IC_THREAD_STATE *thread_state,
+                              guint32 cs_index)
+{
+  IC_RUN_CLUSTER_STATE *rc_state;
+  DEBUG_ENTRY("wait_for_enough_started_nodes");
 
-  /* Handling one round of heartbeat is part of start protocol */
-  if (handle_cs_heartbeat(run_obj, thread_state, cs_index, TRUE))
-    goto lock_end;
-
-  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-    goto lock_end;
-
+  rc_state= &run_obj->state;
   ic_mutex_lock(rc_state->protect_state);
   do
   {
@@ -2057,7 +2040,8 @@ start_cs_func(gpointer data)
         ensure we make another attempt at starting up.
       */
       DEBUG_PRINT(CONFIG_LEVEL, ("Other thread failed with start protocol"));
-      goto end;
+      ic_mutex_unlock(rc_state->protect_state);
+      goto error;
     }
     if ((get_count_connected_cluster_servers(run_obj) +
          rc_state->start_threads_stopped + 1) ==
@@ -2072,7 +2056,7 @@ start_cs_func(gpointer data)
                   rc_state->start_threads_stopped > 0));
       ic_mutex_unlock(rc_state->protect_state);
       if (check_if_cs_started(run_obj, thread_state, cs_index))
-        goto end;
+        goto error;
       ic_mutex_lock(rc_state->protect_state);
       ic_cond_broadcast(rc_state->start_cond);
       DEBUG_PRINT(CONFIG_LEVEL, ("Completed startup of Cluster Server"));
@@ -2087,39 +2071,16 @@ start_cs_func(gpointer data)
                          IC_CS_HEARTBEAT_INTERVAL * IC_MICROSEC_PER_SECOND);
       ic_mutex_unlock(rc_state->protect_state);
       if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-        goto lock_end;
+        goto error;
       if (handle_cs_heartbeat(run_obj, thread_state, cs_index, TRUE))
-        goto lock_end;
+        goto error;
       ic_mutex_lock(rc_state->protect_state);
     }
   } while (1);
   ic_mutex_unlock(rc_state->protect_state);
-  /*
-    We are now connected to the other Cluster Server and we have
-    successfully exchanged start-up data. We keep this thread
-    until the connection breaks or until we're about to quit.
-  */
-  handle_cs_heartbeat(run_obj, thread_state, cs_index, FALSE);
-  lock= FALSE;
-real_end:
-  release_cs_connection(run_obj, conn, cs_index, lock);
-end_thread:
-  tp_state->ts_ops.ic_thread_stops(thread_state);
-  DEBUG_THREAD_RETURN;
-
-early_end:
-  ic_mutex_lock(rc_state->protect_state);
-  rc_state->start_threads_stopped++;
-  get_cluster_info(run_obj, cs_index)->is_start_thread_active= FALSE;
-  ic_mutex_unlock(rc_state->protect_state);
-  goto end_thread;
-
-end:
-  lock= TRUE;
-  goto real_end;
-lock_end:
-  lock= FALSE;
-  goto real_end;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(1);
 }
 
 static guint32
@@ -2909,12 +2870,12 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
                  &str_len);
 
   conn->conn_op.ic_prepare_server_connection(conn,
-                                      cs_conf->hostname,
-                                      str_port,
-                                      NULL,
-                                      NULL,
-                                      0,
-                                      TRUE);
+                                             cs_conf->hostname,
+                                             str_port,
+                                             NULL,
+                                             NULL,
+                                             0,
+                                             TRUE);
 
   if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                                check_for_stopped_rcs_threads,
