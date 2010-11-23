@@ -855,15 +855,21 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   DEBUG_ENTRY("start_cluster_server");
 
   /* Try to lock the configuration and get configuration version */
+  DEBUG_DISABLE(CONFIG_READ_LEVEL);
   if ((error= ic_load_config_version(run_obj->config_dir,
                                      run_obj->process_name,
                                      &info_cs->config_version_number,
                                      &info_cs->state,
                                      &info_cs->pid)))
+  {
+    DEBUG_ENABLE();
     goto error;
+  }
 
   /* Read configuration from disk configuration */
-  if ((error= read_disk_config(run_obj)))
+  error= read_disk_config(run_obj);
+  DEBUG_ENABLE();
+  if (error)
     goto error;
 
   set_up_run_obj_master(run_obj);
@@ -1071,13 +1077,13 @@ send_heartbeat(IC_CONNECTION *conn,
   const gchar *start_state_str= run_obj->state.cs_started ?
                                   ic_started_str :
                                   ic_starting_str;
-  DEBUG_ENTRY("send_heartbeat");
-
+  DEBUG_DISABLE(HEARTBEAT_LEVEL);
   if ((error= ic_send_with_cr(conn, ic_heartbeat_str)) ||
       (error= ic_send_with_cr(conn, start_state_str)) ||
       (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
+    (void)error; /* Empty statement */
+  DEBUG_ENABLE();
+  return error;
 }
 
 static int
@@ -1088,7 +1094,7 @@ rec_heartbeat(IC_CONNECTION *conn,
   int error;
   gboolean found;
   IC_INFO_CLUSTER_SERVER *other_info_cs= get_cluster_info(run_obj, cs_index);
-  DEBUG_ENTRY("rec_heartbeat");
+  DEBUG_DISABLE(HEARTBEAT_LEVEL);
 
   if (!(error= ic_rec_simple_str(conn, ic_heartbeat_str)))
   {
@@ -1100,7 +1106,10 @@ rec_heartbeat(IC_CONNECTION *conn,
          ic_mutex_lock(run_obj->state.protect_state);
          if (other_info_cs->start_state == IC_CS_NOT_STARTED)
          {
-            handle_started_cs_node(run_obj, cs_index);
+           DEBUG_ENABLE();
+           DEBUG_PRINT(CONFIG_LEVEL, ("Found started and need to handle it"));
+           handle_started_cs_node(run_obj, cs_index);
+           DEBUG_DISABLE(HEARTBEAT_LEVEL);
          }
          ic_mutex_unlock(run_obj->state.protect_state);
       }
@@ -1118,7 +1127,7 @@ rec_heartbeat(IC_CONNECTION *conn,
                we had a heartbeat failure.
              */
              ic_mutex_unlock(run_obj->state.protect_state);
-             DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+             goto error;
            }
            ic_mutex_unlock(run_obj->state.protect_state);
          }
@@ -1129,7 +1138,8 @@ rec_heartbeat(IC_CONNECTION *conn,
     goto error;
   error= ic_rec_empty_line(conn);
 error:
-  DEBUG_RETURN_INT(error);
+  DEBUG_ENABLE();
+  return error;
 }
 
 static void
@@ -1193,15 +1203,15 @@ handle_start_protocol(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   gchar buf[IC_MAX_ERROR_STRING_SIZE];
   DEBUG_ENTRY("handle_start_protocol");
 
-  if (!is_client)
+  if (is_client)
   {
-    /* Server starts protocol */
+    /* Client starts protocol */
     if ((error= send_start_cluster_server_req(run_obj, conn)))
       goto error;
   }
   else
   {
-    /* Client waits for start request and sends response */
+    /* Server waits for start request and sends response */
     if ((error= rec_start_cluster_server_req(run_obj,
                                              conn,
                                              cs_index,
@@ -1725,6 +1735,8 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_INT_API_CONFIG_SERVER *apic;
   gboolean running_server= FALSE;
   int error;
+  guint32 loop_count= 0;
+  gboolean client_flag;
   DEBUG_ENTRY("get_cs_connection");
 
   apic= run_obj->config.apic;
@@ -1736,21 +1748,36 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   while (1)
   {
     err_str= NULL;
+    /*
+      We use the node id to derive whether to use a server or a client.
+      But the first time we always try with a client and we also do this
+      regularly in case there is already a number of Cluster Servers
+      started which only listens to a client connections.
+    */
+    loop_count++;
+    if (loop_count == 10)
+      loop_count= 1;
     if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
       goto error;
-    if (is_client)
+    client_flag= is_client || loop_count == 1;
+    if (client_flag)
     {
       if (!(error= connect_cluster_server(apic,
                                           conn,
                                           cs_index,
                                           (guint32)1,
-                                          is_client,
+                                          client_flag,
                                           &err_str)))
       {
         DEBUG_PRINT(CONFIG_LEVEL, ("Connect to Cluster Server index %u",
                     cs_index));
+        running_server= FALSE;
+        ic_mutex_lock(rc_state->protect_state);
         this_info_cs->is_client_side= TRUE;
+        run_obj->running_server= FALSE;
         this_info_cs->conn= *conn;
+        ic_mutex_unlock(rc_state->protect_state);
+        ic_cond_broadcast(rc_state->connect_cond);
         break;
       }
       DEBUG_PRINT(CONFIG_LEVEL,
@@ -1790,7 +1817,6 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
             connection to itself such that another thread (likely ours) will
             take over the socket server role.
           */
-          ic_mutex_lock(rc_state->protect_state);
           if (!this_info_cs->conn)
           {
             this_info_cs->wait_server_connect_other_thread= TRUE;

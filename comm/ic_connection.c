@@ -1408,10 +1408,14 @@ no_op_with_size_socket_method(IC_CONNECTION *ext_conn,
 static void
 free_socket_connection(IC_CONNECTION *ext_conn)
 {
+  DEBUG_DECL(char buf[64];)
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  DEBUG_ENTRY("free_socket_connection");
+  DEBUG_DECL(ic_guint64_hex_str((guint64)ext_conn, buf);)
+  DEBUG_PRINT(COMM_LEVEL, ("free connection 0x%s", buf));
 
   if (!conn)
-    return;
+    goto end;
   if (conn->thread)
   {
     conn->stop_flag= TRUE;
@@ -1430,6 +1434,8 @@ free_socket_connection(IC_CONNECTION *ext_conn)
   if (conn->write_buf)
     ic_free_conn(conn->write_buf);
   ic_free_conn(conn);
+end:
+  DEBUG_RETURN_EMPTY;
 }
 
 /* Implements ic_read_stat_connection */
@@ -1642,9 +1648,10 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
   IC_INT_CONNECTION *fork_conn;
   int size_object= orig_conn->is_ssl_connection ?
                    sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
+  DEBUG_ENTRY("fork_accept_connection");
 
   if ((fork_conn= (IC_INT_CONNECTION*)ic_calloc_conn(size_object)) == NULL)
-    return NULL;
+    goto end;
   if (orig_conn->read_buf_size)
   {
     fork_conn->read_buf_size= orig_conn->read_buf_size;
@@ -1652,7 +1659,11 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
     fork_conn->size_curr_read_buf= 0;
     if ((fork_conn->read_buf= ic_calloc_conn(orig_conn->read_buf_size)) ==
          NULL)
-      return NULL;
+    fork_conn->write_buf_size= orig_conn->write_buf_size;
+    fork_conn->write_buf_pos= 0;
+    if ((fork_conn->write_buf= ic_calloc_conn(orig_conn->write_buf_size)) ==
+         NULL)
+      goto end;
   }
   memcpy(fork_conn, orig_conn, size_object);
 
@@ -1690,12 +1701,13 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
     goto error;
   if (create_timers(fork_conn))
     goto error;
-  return (IC_CONNECTION*)fork_conn;
+  DEBUG_RETURN_PTR((IC_CONNECTION*)fork_conn);
 
 error:
   destroy_mutexes(fork_conn);
   ic_free_conn(fork_conn);
-  return NULL;
+end:
+  DEBUG_RETURN_PTR(NULL);
 }
 
 /* Implements ic_prepare_client_connection */
@@ -1891,23 +1903,24 @@ int_create_socket_object(gboolean is_client,
   int size_object= is_ssl ?
       sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
   IC_INT_CONNECTION *conn;
+  DEBUG_ENTRY("int_create_socket_object");
 
   if ((conn= (IC_INT_CONNECTION*)ic_calloc_conn(size_object)) == NULL)
-    return NULL;
+    goto end;
   if (read_buf_size)
   {
     conn->read_buf_size= read_buf_size;
     if ((conn->read_buf= ic_calloc_conn(read_buf_size)) == NULL)
     {
       ic_free_conn((gchar*)conn);
-      return NULL;
+      goto end;
     }
     conn->write_buf_size= read_buf_size;
     if ((conn->write_buf= ic_calloc_conn(read_buf_size)) == NULL)
     {
       ic_free_conn(conn->read_buf);
       ic_free_conn((gchar*)conn);
-      return NULL;
+      goto end;
     }
   }
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
@@ -1964,7 +1977,7 @@ int_create_socket_object(gboolean is_client,
     goto error;
   if (create_timers(conn))
     goto error;
-  return (IC_CONNECTION*)conn;
+  DEBUG_RETURN_PTR((IC_CONNECTION*)conn);
 error:
   if (conn)
     destroy_mutexes(conn);
@@ -1973,7 +1986,8 @@ error:
   if (conn->write_buf)
     ic_free_conn(conn->write_buf);
   ic_free_conn(conn);
-  return NULL;
+end:
+  DEBUG_RETURN_PTR(NULL);
 }
 
 IC_CONNECTION*

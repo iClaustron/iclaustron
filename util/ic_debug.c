@@ -49,6 +49,27 @@ set_indent_buf(gchar *indent_buf, guint32 indent_level)
 }
 
 void
+ic_debug_disable(guint32 level)
+{
+  IC_THREAD_DEBUG *thread_debug;
+
+  if (!(glob_debug & level))
+  {
+    thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+    thread_debug->enabled= FALSE;
+  }
+}
+
+void
+ic_debug_enable()
+{
+  IC_THREAD_DEBUG *thread_debug;
+
+  thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+  thread_debug->enabled= TRUE;
+}
+
+void
 ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
 {
   gchar print_buf[2049 + 32 + (2 * IC_DEBUG_MAX_INDENT_LEVEL) + 1];
@@ -56,6 +77,9 @@ ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
 
   if (!thread_debug)
     thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+
+  if (!thread_debug->enabled)
+    return;
 
   set_indent_buf(indent_buf, thread_debug->indent_level);
 
@@ -194,6 +218,7 @@ void ic_debug_thread_init(const gchar *entry_point)
   ic_num_threads_debugged++;
   ic_mutex_unlock_low(debug_mutex);
   thread_debug->thread_id= thread_id;
+  thread_debug->enabled= TRUE;
   g_private_set(debug_priv, (gpointer)thread_debug);
   if (entry_point)
     ic_debug_entry(entry_point);

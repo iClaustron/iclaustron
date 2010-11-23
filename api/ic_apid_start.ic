@@ -311,6 +311,10 @@ Current levels defined: \n\
   Level 2 (= 4): Configuration debugging\n\
   Level 3 (= 8): Debugging specific to the currently executing program\n\
   Level 4 (=16): Debugging of threads\n\
+  Level 5 (=32): Debugging of Configuration Protocol\n\
+  Level 6 (=64): Debugging of memory allocation\n\
+  Level 7 (=128): Debugging of heartbeat handling\n\
+  Level 8 (=256): Debugging of read of configuration\n\
 ";
 static int use_config_vars;
 

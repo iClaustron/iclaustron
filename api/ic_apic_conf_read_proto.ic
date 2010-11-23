@@ -883,7 +883,7 @@ connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
   int error= 1;
   guint32 timer= 0;
   guint32 server_id= is_client ? id : 0;
-  DEBUG_ENTRY("connect_cluster");
+  DEBUG_ENTRY("connect_cluster_server");
   
   do
   {
@@ -895,7 +895,8 @@ connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
          err_str,
          is_client)))
       goto end;
-    if (error != IC_ERROR_CONNECT_TIMEOUT)
+    if (error != IC_ERROR_CONNECT_TIMEOUT &&
+        error != IC_ERROR_ACCEPT_TIMEOUT)
       goto error;
     if (cs_timeout && timer >= cs_timeout)
       break;

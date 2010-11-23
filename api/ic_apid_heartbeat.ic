@@ -167,6 +167,7 @@ run_heartbeat_thread(gpointer data)
     {
       last_send_node_conn= NULL;
       apid_global->heartbeat_thread_waiting= TRUE;
+      DEBUG_DISABLE(HEARTBEAT_LEVEL);
       DEBUG_PRINT(CONFIG_LEVEL, ("Need to wait for nodes to connect"));
       ic_cond_timed_wait(apid_global->heartbeat_cond,
                          apid_global->heartbeat_mutex,
@@ -174,6 +175,7 @@ run_heartbeat_thread(gpointer data)
       ic_mutex_unlock(apid_global->heartbeat_mutex);
       DEBUG_PRINT(CONFIG_LEVEL,
       ("First node connected, heartbeat needs to be sent"));
+      DEBUG_ENABLE();
       send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                           hb_page);
       continue;
