@@ -1650,8 +1650,10 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
                    sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
   DEBUG_ENTRY("fork_accept_connection");
 
-  if ((fork_conn= (IC_INT_CONNECTION*)ic_calloc_conn(size_object)) == NULL)
+  if ((fork_conn= (IC_INT_CONNECTION*)ic_malloc_conn(size_object)) == NULL)
     goto end;
+
+  memcpy(fork_conn, orig_conn, size_object);
   if (orig_conn->read_buf_size)
   {
     fork_conn->read_buf_size= orig_conn->read_buf_size;
@@ -1665,7 +1667,6 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
          NULL)
       goto end;
   }
-  memcpy(fork_conn, orig_conn, size_object);
 
   init_connect_stat(fork_conn);
   fork_conn->orig_conn= orig_conn;

@@ -641,6 +641,7 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_INT_API_CONFIG_SERVER *apic= run_obj->config.apic;
   gboolean first_loop= TRUE;
   IC_INFO_CLUSTER_SERVER *info_cs;
+  gboolean sleep_flag= FALSE;
   gboolean thread_started_flag[IC_MAX_CLUSTER_SERVERS];
   DEBUG_ENTRY("start_connect_other_cluster_servers");
 
@@ -714,6 +715,7 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       ic_cond_wait(run_obj->state.start_cond, run_obj->state.protect_state);
       if (!run_obj->state.cs_started && !run_obj->state.cs_starting)
       {
+        sleep_flag= TRUE;
         DEBUG_PRINT(CONFIG_LEVEL, ("Start failed, we need to retry"));
         break;
       }
@@ -728,6 +730,13 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
         ("Start thread completed, but start not completed and not failed"));
     } while (1);
     ic_mutex_unlock(run_obj->state.protect_state);
+    if (sleep_flag)
+    {
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("We sleep for 5 seconds before retrying start to avoid overload"));
+      ic_sleep(5);
+      sleep_flag= FALSE;
+    }
     first_loop= FALSE;
   } while (1);
   DEBUG_RETURN_INT(0);
@@ -1637,7 +1646,6 @@ start_cs_func(gpointer data)
   IC_INFO_CLUSTER_SERVER *my_info_cs;
   IC_CONNECTION *conn= NULL;
   int error;
-  gboolean is_client;
   DEBUG_THREAD_ENTRY("start_cs_func");
 
   tp_state= thread_state->ic_get_threadpool(thread_state);
@@ -1648,7 +1656,6 @@ start_cs_func(gpointer data)
   rc_state= &run_obj->state;
   this_info_cs= get_cluster_info(run_obj, cs_index);
   my_info_cs= get_my_cluster_info(run_obj);
-  is_client= (this_info_cs->node_id > my_info_cs->node_id);
 
   tp_state->ts_ops.ic_thread_started(thread_state);
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
@@ -1677,7 +1684,7 @@ start_cs_func(gpointer data)
   */
   if ((error= handle_start_protocol(run_obj,
                                     conn,
-                                    is_client,
+                                    this_info_cs->is_client_side,
                                     &cs_index)))
   {
     /* Release connection, return and ensure we make another retry */
@@ -1844,7 +1851,7 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                             conn,
                                             cs_index,
                                             (guint32)3,
-                                            is_client,
+                                            FALSE,
                                             &err_str)))
         {
           found= FALSE;
@@ -1978,7 +1985,8 @@ wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       {
         /* Too few threads to continue, this thread needs to stop */
         DEBUG_PRINT(CONFIG_LEVEL,
-          ("Too few threads to start, index %u, stop and restart", cs_index));
+          ("Too few threads to start, index %u, stop thread and restart",
+           cs_index));
         goto error;
       }
       else if ((active_start_threads + 1 == num_servers) &&
@@ -3065,6 +3073,12 @@ run_cluster_server_thread(gpointer data)
                           strlen(ic_start_cluster_server_str)))
         {
           cs_index= IC_MAX_CLUSTER_SERVERS;
+          /*
+            handle_start_protocol expects first message to be
+            start cluster server
+            we need to step back to achieve this.
+          */
+          ic_step_back_rec_with_cr(conn, read_size);
           if ((error= handle_start_protocol(run_obj,
                                             conn,
                                             FALSE,

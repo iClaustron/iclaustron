@@ -116,6 +116,7 @@ int ic_rec_long_number(IC_CONNECTION *conn,
 int ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
 int ic_rec_int_number(IC_CONNECTION *conn, const gchar *str, int *number);
 int ic_rec_empty_line(IC_CONNECTION *conn);
+int ic_step_back_rec_with_cr(IC_CONNECTION *conn, guint32 read_size);
 
 /* Send routines */
 int ic_send_with_cr(IC_CONNECTION *conn, const gchar *buf);

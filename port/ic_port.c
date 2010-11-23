@@ -442,6 +442,12 @@ ic_calloc_conn(size_t size)
 }
 
 gchar*
+ic_malloc_conn(size_t size)
+{
+  return ic_calloc_conn(size);
+}
+
+gchar*
 ic_calloc_mc(size_t size)
 {
   gchar *ret_ptr;

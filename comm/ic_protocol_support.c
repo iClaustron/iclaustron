@@ -67,7 +67,7 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
   such that ic_rec_with_cr can be used many times on the same line in
   cases where the protocol contains optional parts such as cluster id.
 */
-static void
+void
 ic_step_back_rec_with_cr(IC_CONNECTION *ext_conn, guint32 read_size)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;

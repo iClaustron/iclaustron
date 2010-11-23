@@ -57,6 +57,7 @@ gchar *ic_realloc(gchar *ptr, size_t size);
 #ifdef DEBUG_BUILD
 gchar *ic_calloc(size_t size);
 gchar *ic_calloc_conn(size_t size);
+gchar *ic_malloc_conn(size_t size);
 gchar *ic_calloc_mc(size_t size);
 gchar *ic_malloc(size_t size);
 gchar *ic_malloc_hash(size_t size);
@@ -67,6 +68,7 @@ void ic_free_mc(void *ret_obj);
 #else
 #define ic_calloc(a) ic_calloc_low(a)
 #define ic_calloc_conn(a) ic_calloc_low(a)
+#define ic_malloc_conn(a) ic_malloc_low(a)
 #define ic_calloc_mc(a) ic_calloc_low(a)
 #define ic_malloc(a) ic_malloc_low(a)
 #define ic_malloc_hash(a) ic_malloc_low(a)
