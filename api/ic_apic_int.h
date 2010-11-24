@@ -297,6 +297,9 @@ struct ic_run_cluster_state
   /* Number of threads waiting to update */
   guint32 update_waiters;
 
+  /* Number of threads ready with wait_for_enough_connections */
+  guint32 threads_ready_connected;
+
   /*
     Error handling object.
     This object is currently only used when reading from disk which is

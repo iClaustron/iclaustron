@@ -389,6 +389,23 @@ error:
   return error;
 }
 
+#ifdef DEBUG_BUILD
+static void
+debug_new_connect(IC_INT_CONNECTION *conn)
+{
+  DEBUG_PRINT(COMM_LEVEL,
+    ("Server: %s, Server Port: %s",
+    conn->server_name,
+    conn->server_port));
+  DEBUG_PRINT(COMM_LEVEL,
+    ("Client: %s, Client Port: %s",
+    conn->client_name ? conn->client_name : "NULL client_name",
+    conn->client_port ? conn->client_port : "NULL client_port"));
+}
+#else
+#define debug_new_connect(conn)
+#endif
+
 /* Implements ic_accept_connection */
 static int
 accept_socket_connection(IC_CONNECTION *ext_conn)
@@ -558,6 +575,8 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   conn->rw_sockfd= ret_sockfd;
   conn->error_code= 0;
   set_is_connected(conn);
+  DEBUG_PRINT(COMM_LEVEL, ("Successful server socket connect"));
+  debug_new_connect(conn);
   return 0;
 }
 
@@ -850,6 +869,8 @@ renew_connect:
     conn->rw_sockfd= sockfd;
     set_is_connected(conn);
     set_socket_nonblocking(sockfd, conn->is_nonblocking);
+    DEBUG_PRINT(COMM_LEVEL, ("Successful client socket connect"));
+    debug_new_connect(conn);
   }
   else
   {
@@ -1905,6 +1926,8 @@ int_create_socket_object(gboolean is_client,
       sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
   IC_INT_CONNECTION *conn;
   DEBUG_ENTRY("int_create_socket_object");
+  DEBUG_PRINT(COMM_LEVEL, ("Creating new socket, is_client = %u",
+                           is_client));
 
   if ((conn= (IC_INT_CONNECTION*)ic_calloc_conn(size_object)) == NULL)
     goto end;
