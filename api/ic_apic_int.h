@@ -235,9 +235,6 @@ struct ic_info_cluster_server
   /* Is start thread still running */
   gboolean is_start_thread_active;
 
-  /* Are we waiting for thread running socket server to connect */
-  gboolean wait_server_connect_other_thread;
-
   /* The pid of this Cluster Server */
   IC_PID_TYPE pid;
 
@@ -410,6 +407,9 @@ struct ic_int_run_cluster_server
   /* Background thread id handling cluster servers coming up and down. */
   guint32 bg_thread_id;
 
+  /* Connect server thread id */
+  guint32 connect_server_thread_id;
+
   /*
     The name of this process, normally ic_csd. 
     This variable is set at start-up and is a read-only variable
@@ -424,9 +424,6 @@ struct ic_int_run_cluster_server
     possible with it.
   */
   gboolean stop_flag;
-
-  /* Someone is running the server part of connect code during startup */
-  gboolean running_server;
 
   /*
     The below variables contains the configuration of the grid. This

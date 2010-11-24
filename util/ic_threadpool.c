@@ -57,12 +57,21 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
   ic_free((void*)tp_state);
 }
 
+static gboolean
+tp_get_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
+{
+  IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
+  return (gboolean)tp_state->stop_flag;
+}
+
 /* Set stop flag for all threads in thread pool */
 static void
 set_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   guint32 i;
+
+  tp_state->stop_flag= TRUE;
 
   for (i= 0; i < tp_state->threadpool_size; i++)
   {
@@ -73,13 +82,14 @@ set_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
     ic_mutex_unlock(tp_state->thread_state[i]->mutex);
   }
 }
+
 /* Stop the thread pool */
 static void
 stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   guint32 loop_count= 0;
-  guint32 i, num_free_threads, pool_size;
+  guint32 num_free_threads, pool_size;
 
   set_stop_flag(ext_tp_state);
 
@@ -583,7 +593,7 @@ get_object(IC_THREAD_STATE *ext_thread_state)
 }
 
 static gboolean
-get_stop_flag(IC_THREAD_STATE *ext_thread_state)
+ts_get_stop_flag(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
@@ -666,6 +676,7 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->tp_ops.ic_threadpool_stop_thread= stop_thread_without_wait;
   tp_state->tp_ops.ic_threadpool_stop_thread_wait= stop_thread_wait;
   tp_state->tp_ops.ic_threadpool_check_threads= check_threads;
+  tp_state->tp_ops.ic_threadpool_get_stop_flag= tp_get_stop_flag;
   tp_state->tp_ops.ic_threadpool_set_stop_flag= set_stop_flag;
   tp_state->tp_ops.ic_threadpool_stop= stop_threadpool;
 
@@ -674,7 +685,7 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->ts_ops.ic_thread_startup_done= thread_startup_done;
   tp_state->ts_ops.ic_thread_started= thread_started;
   tp_state->ts_ops.ic_thread_get_object= get_object;
-  tp_state->ts_ops.ic_thread_get_stop_flag= get_stop_flag;
+  tp_state->ts_ops.ic_thread_get_stop_flag= ts_get_stop_flag;
   tp_state->ts_ops.ic_thread_wait= thread_wait;
   tp_state->ts_ops.ic_thread_lock_and_wait= thread_lock_and_wait;
   tp_state->ts_ops.ic_thread_lock= thread_lock;

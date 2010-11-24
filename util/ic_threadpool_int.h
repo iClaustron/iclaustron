@@ -85,6 +85,10 @@ struct ic_int_threadpool_state
     list mutex
   */
   guint32 num_free_threads;
+
+  /* Variable keeping track if thread pool is stopped */
+  volatile int stop_flag;
+
   /* Pointer to first free thread object, protected by free list mutex */
   guint32 first_free_thread_id;
   /* Use internal mutex or not */
