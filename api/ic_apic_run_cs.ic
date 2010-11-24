@@ -695,8 +695,19 @@ start_connect_cs_threads(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 static int
 handle_cluster_server_up_and_down(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  (void)run_obj;
-  return 0;
+  int error;
+  IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
+  DEBUG_ENTRY("handle_cluster_server_up_and_down");
+
+  DEBUG_PRINT(CONFIG_LEVEL, ("Start background thread"));
+  error= tp_state->tp_ops.ic_threadpool_start_thread(
+       tp_state,
+       &run_obj->bg_thread_id,
+       start_connect_missing_cluster_servers,
+       (void*)run_obj,
+       IC_MEDIUM_STACK_SIZE,
+       FALSE);
+  DEBUG_RETURN_INT(error);
 }
 
 static gpointer
@@ -713,8 +724,6 @@ start_connect_missing_cluster_servers(gpointer data)
   run_obj= (IC_INT_RUN_CLUSTER_SERVER*)
     tp_state->ts_ops.ic_thread_get_object(thread_state);
   tp_state->ts_ops.ic_thread_started(thread_state);
-  if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
-    goto end_thread;
 
   rc_state= &run_obj->state;
 
@@ -725,22 +734,15 @@ start_connect_missing_cluster_servers(gpointer data)
     {
       goto end_thread;
     }
-    if (num_threads_started == 0)
-    {
-      /*
-        All Cluster Servers are part of the start-up, so no need to wait
-        around for more servers. We will however wait here in case a server
-        drops and later rejoins.
-      */
-      ic_mutex_lock(rc_state->protect_state);
-      ic_cond_wait(rc_state->connect_cond, rc_state->protect_state);
-      ic_mutex_unlock(rc_state->protect_state);
-      if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-        goto end_thread;
-    }
-    else
-    {
-    }
+    /*
+      We will wait here until the Cluster Server needs to restart start
+      threads again.
+    */
+    if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+      goto end_thread;
+    ic_mutex_lock(rc_state->protect_state);
+    ic_cond_wait(rc_state->connect_cond, rc_state->protect_state);
+    ic_mutex_unlock(rc_state->protect_state);
   } while (1);
 end_thread:
   tp_state->ts_ops.ic_thread_stops(thread_state);
@@ -1477,7 +1479,6 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   info_cs->pid= (IC_PID_TYPE)pid;
   info_cs->state= (IC_CONF_STATE_TYPE)status;
   info_cs->config_version_number= (IC_CONF_VERSION_TYPE)version_num;
-  update_master_index_view(my_info_cs, node_id);
   ic_mutex_unlock(run_obj->state.protect_state);
 error:
   DEBUG_RETURN_INT(error);
@@ -1853,8 +1854,6 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_INT_API_CONFIG_SERVER *apic;
   gboolean running_server= FALSE;
   int error;
-  guint32 loop_count= 0;
-  gboolean client_flag;
   DEBUG_ENTRY("get_cs_connection");
 
   apic= run_obj->config.apic;
@@ -1872,19 +1871,15 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       regularly in case there is already a number of Cluster Servers
       started which only listens to a client connections.
     */
-    loop_count++;
-    if (loop_count == 10)
-      loop_count= 1;
     if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
       goto error;
-    client_flag= is_client || loop_count == 1;
-    if (client_flag)
+    if (is_client)
     {
       if (!(error= connect_cluster_server(apic,
                                           conn,
                                           cs_index,
                                           (guint32)3,
-                                          client_flag,
+                                          TRUE,
                                           &err_str)))
       {
         DEBUG_PRINT(CONFIG_LEVEL,
@@ -2154,49 +2149,59 @@ wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                 cs_index));
     goto error;
   }
-  DEBUG_PRINT(CONFIG_LEVEL,
-    ("A quorum has been reached, set cs_starting to TRUE"));
-  rc_state->cs_starting= TRUE;
-  rc_state->threads_ready_connected++;
-  set_up_initial_master_index_view(run_obj);
-  if (my_info_cs->master_index_size > 2)
+  if (rc_state->cs_started)
   {
-    /*
-      At least 2 threads will pass this point, we need to ensure that they
-      wait for each other before proceeding. Otherwise the first to start
-      might decide that the start failed before the next thread has arrived
-      here.
-    */
-    if ((rc_state->threads_ready_connected + 1) ==
-        my_info_cs->master_index_size)
+    ic_mutex_lock(rc_state->protect_state);
+    update_master_index_view(my_info_cs,
+                             this_info_cs->node_id);
+    ic_mutex_unlock(rc_state->protect_state);
+  }
+  else
+  {
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("A quorum has been reached, set cs_starting to TRUE"));
+    rc_state->cs_starting= TRUE;
+    rc_state->threads_ready_connected++;
+    set_up_initial_master_index_view(run_obj);
+    if (my_info_cs->master_index_size > 2)
     {
       /*
-        The last thread arrived here, set threads_ready back to 0 and
-        wake all threads so that start handling can proceed.
+        At least 2 threads will pass this point, we need to ensure that they
+        wait for each other before proceeding. Otherwise the first to start
+        might decide that the start failed before the next thread has arrived
+        here.
       */
-      rc_state->threads_ready_connected= 0;
-      ic_cond_broadcast(rc_state->connect_cond);
-      DEBUG_PRINT(CONFIG_LEVEL, ("Wake other threads waiting"));
-    }
-    else
-    {
-      DEBUG_PRINT(CONFIG_LEVEL,
-        ("Wait for other threads to reach this point"));
-      do
+      if ((rc_state->threads_ready_connected + 1) ==
+          my_info_cs->master_index_size)
       {
-        ic_cond_timed_wait(rc_state->connect_cond,
-                           rc_state->protect_state,
-                           IC_STOP_CHECK_TIMER * IC_MICROSEC_PER_SECOND);
-        if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+        /*
+          The last thread arrived here, set threads_ready back to 0 and
+          wake all threads so that start handling can proceed.
+        */
+        rc_state->threads_ready_connected= 0;
+        ic_cond_broadcast(rc_state->connect_cond);
+        DEBUG_PRINT(CONFIG_LEVEL, ("Wake other threads waiting"));
+      }
+      else
+      {
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Wait for other threads to reach this point"));
+        do
         {
-          ic_mutex_unlock(rc_state->protect_state);
-          goto error;
-        }
-      } while (rc_state->threads_ready_connected > 0);
-      DEBUG_PRINT(CONFIG_LEVEL, ("Cleared to proceed"));
+          ic_cond_timed_wait(rc_state->connect_cond,
+                             rc_state->protect_state,
+                             IC_STOP_CHECK_TIMER * IC_MICROSEC_PER_SECOND);
+          if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+          {
+            ic_mutex_unlock(rc_state->protect_state);
+            goto error;
+          }
+        } while (rc_state->threads_ready_connected > 0);
+        DEBUG_PRINT(CONFIG_LEVEL, ("Cleared to proceed"));
+      }
     }
+    ic_mutex_unlock(rc_state->protect_state);
   }
-  ic_mutex_unlock(rc_state->protect_state);
   DEBUG_RETURN_INT(0);
 error:
   DEBUG_RETURN_INT(1);
@@ -2790,8 +2795,6 @@ ic_create_run_cluster(IC_STRING *config_dir,
   if (!(conf_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
                                                 0, TRUE)))
     goto error;
-  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
-    goto error;
   if (!(run_obj->new_config.apic=
         (IC_INT_API_CONFIG_SERVER*)conf_mc_ptr->mc_ops.ic_mc_calloc(
                 conf_mc_ptr, sizeof(IC_INT_API_CONFIG_SERVER))))
@@ -2809,6 +2812,8 @@ ic_create_run_cluster(IC_STRING *config_dir,
   if (!(run_obj->config_mutex= ic_mutex_create()))
     goto error;
   if (!(run_obj->config_cond= ic_cond_create()))
+    goto error;
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
   /*
     Initialise the Cluster Server state, the state is protected by a mutex to
@@ -2916,7 +2921,16 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       apid_global->apid_global_ops->ic_free_apid_global(apid_global);
     tp_state= run_obj->tp_state;
     if (tp_state)
+    {
+      tp_state->tp_ops.ic_threadpool_set_stop_flag(tp_state);
+      /* Ensure no threads is sleeping on ic_cond_wait */
+      ic_cond_broadcast(run_obj->config_cond);
+      ic_cond_broadcast(run_obj->state.start_cond);
+      ic_cond_broadcast(run_obj->state.connect_cond);
+      ic_cond_broadcast(run_obj->state.update_cond);
+      ic_cond_broadcast(run_obj->state.check_if_cs_started_cond);
       tp_state->tp_ops.ic_threadpool_stop(tp_state);
+    }
     conn= run_obj->conn;
     if (conn)
       conn->conn_op.ic_free_connection(conn);
@@ -3178,7 +3192,6 @@ run_cluster_server_thread(gpointer data)
   IC_CONNECTION *conn;
   IC_INT_RUN_CLUSTER_SERVER *run_obj;
   int error;
-  guint32 cs_index;
   guint32 error_line= 0;
   int state= INITIAL_STATE;
   IC_RC_PARAM param;
@@ -3243,29 +3256,6 @@ run_cluster_server_thread(gpointer data)
             goto error;
           }
           /* Always sent as only message in separate connection */
-          goto end_thread;
-        }
-        if (!ic_check_buf(read_buf, read_size,
-                          ic_start_cluster_server_str,
-                          strlen(ic_start_cluster_server_str)))
-        {
-          cs_index= IC_MAX_CLUSTER_SERVERS;
-          /*
-            handle_start_protocol expects first message to be
-            start cluster server
-            we need to step back to achieve this.
-          */
-          ic_step_back_rec_with_cr(conn, read_size);
-          if ((error= handle_start_protocol(run_obj,
-                                            conn,
-                                            FALSE,
-                                            &cs_index)))
-            goto error;
-          ic_mutex_lock(run_obj->state.protect_state);
-          run_obj->state.cs_servers[cs_index].is_client_side= FALSE;
-          run_obj->state.cs_servers[cs_index].conn= conn;
-          ic_mutex_unlock(run_obj->state.protect_state);
-          handle_cs_heartbeat(run_obj, thread_state, cs_index, FALSE);
           goto end_thread;
         }
         /* Fall through since get connection parameter is also allowed */

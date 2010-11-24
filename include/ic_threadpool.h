@@ -168,6 +168,9 @@ struct ic_threadpool_ops
   void (*ic_threadpool_stop_thread_wait) (IC_THREADPOOL_STATE *tp_state,
                                           guint32 thread_id);
 
+  /* Set stop flag for all threads in the pool */
+  void (*ic_threadpool_set_stop_flag) (IC_THREADPOOL_STATE *tp_state);
+
   /* Stop threadpool and release all its resources */
   void (*ic_threadpool_stop) (IC_THREADPOOL_STATE *tp_state);
 };

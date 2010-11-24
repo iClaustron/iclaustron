@@ -407,6 +407,9 @@ struct ic_int_run_cluster_server
   */
   guint32 cs_nodeid;
 
+  /* Background thread id handling cluster servers coming up and down. */
+  guint32 bg_thread_id;
+
   /*
     The name of this process, normally ic_csd. 
     This variable is set at start-up and is a read-only variable

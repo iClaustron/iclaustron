@@ -57,13 +57,12 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
   ic_free((void*)tp_state);
 }
 
-/* Stop the thread pool */
+/* Set stop flag for all threads in thread pool */
 static void
-stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
+set_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
-  guint32 loop_count= 0;
-  guint32 i, num_free_threads, pool_size;
+  guint32 i;
 
   for (i= 0; i < tp_state->threadpool_size; i++)
   {
@@ -73,6 +72,17 @@ stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
       ic_cond_signal(tp_state->thread_state[i]->cond);
     ic_mutex_unlock(tp_state->thread_state[i]->mutex);
   }
+}
+/* Stop the thread pool */
+static void
+stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
+{
+  IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
+  guint32 loop_count= 0;
+  guint32 i, num_free_threads, pool_size;
+
+  set_stop_flag(ext_tp_state);
+
   while (1)
   {
     check_threads(ext_tp_state);
@@ -656,6 +666,7 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->tp_ops.ic_threadpool_stop_thread= stop_thread_without_wait;
   tp_state->tp_ops.ic_threadpool_stop_thread_wait= stop_thread_wait;
   tp_state->tp_ops.ic_threadpool_check_threads= check_threads;
+  tp_state->tp_ops.ic_threadpool_set_stop_flag= set_stop_flag;
   tp_state->tp_ops.ic_threadpool_stop= stop_threadpool;
 
   /* Thread state functions */
