@@ -408,6 +408,18 @@ target_link_libraries(ic_csd ic_port ic_util ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_csd DESTINATION bin)
 
+#Build Bootstrap binary
+add_executable(ic_bootstrap bootstrap/ic_bootstrap.c)
+target_link_libraries(ic_bootstrap ic_port ic_util ic_api
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS ic_bootstrap DESTINATION bin)
+
+#Build Configurator binary
+add_executable(ic_configurator cfg/ic_configurator.c)
+target_link_libraries(ic_configurator ic_port ic_util ic_api
+                      ${ICLAUSTRON_LIBS})
+install(TARGETS ic_configurator DESTINATION bin)
+
 #Build File Server binary
 add_executable(ic_fsd fileserver/ic_fileserv.c)
 target_link_libraries(ic_fsd ic_port ic_util ic_api

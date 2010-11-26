@@ -5,6 +5,7 @@ wc -l *.ac *.sh.in *.am */*.am \
   api/*.[ch] api/*.ic \
   bootstrap/*.c \
   build_test/*.c \
+  cfg/*.c \
   cluster_client/*.[ch] \
   cluster_mgr/*.y cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c \
   cluster_mgr/ic_clmgr_int.h \
