@@ -9,7 +9,7 @@ wc -l *.ac *.sh.in *.am */*.am \
   cluster_mgr/ic_clmgr_int.h \
   cluster_server/*.[ch] \
   comm/*.[ch] \
-  docs/*.txt \
+  doc/*.txt \
   examples/*.ini \
   fileserver/*.[ch] \
   include/ic*.h \
