@@ -748,6 +748,34 @@ connect_server_thread(gpointer data)
 
   do
   {
+    found= FALSE;
+    ic_mutex_lock(rc_state->protect_state);
+    if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    {
+      ic_mutex_unlock(rc_state->protect_state);
+      goto end;
+    }
+    for (i= 1; i < run_obj->config.num_cluster_servers; i++)
+    {
+      info_cs= get_cluster_info(run_obj, i);
+      if (info_cs->wait_connect_server_thread)
+      {
+        found= TRUE;
+        break;
+      }
+    }
+    if (!found)
+    {
+      /*
+        No one is waiting for a connection so no need to start accepting
+        connections yet.
+      */
+      ic_cond_wait(rc_state->wait_server_connect_cond,
+                   rc_state->protect_state);
+      ic_mutex_unlock(rc_state->protect_state);
+      continue;
+    }
+    ic_mutex_unlock(rc_state->protect_state);
     if ((error= conn->conn_op.ic_accept_connection(conn)))
       goto error;
 
@@ -768,7 +796,7 @@ connect_server_thread(gpointer data)
     {
       equal= FALSE;
       info_cs= get_cluster_info(run_obj, i);
-      if (!info_cs->conn)
+      if (info_cs->wait_connect_server_thread)
       {
         if (!((fork_conn)->conn_op.ic_check_connection(fork_conn,
                apic->cluster_conn.cluster_server_ips[i],
@@ -777,6 +805,7 @@ connect_server_thread(gpointer data)
         {
           found= TRUE;
           info_cs->conn= fork_conn;
+          info_cs->wait_connect_server_thread= FALSE;
           info_cs->is_client_side= FALSE;
           ic_cond_broadcast(rc_state->connect_cond);
         }
@@ -886,6 +915,7 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   int num_threads_started;
   gboolean first_loop= TRUE;
   gboolean sleep_flag= FALSE;
+  int error;
   DEBUG_ENTRY("start_connect_other_cluster_servers");
 
   do
@@ -916,6 +946,11 @@ start_connect_other_cluster_servers(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       or more thread decides to die and wants to be restarted for
       another attempt.
     */
+    if ((error= start_connect_server_thread(run_obj)))
+    {
+      DEBUG_RETURN_INT((-error));
+    }
+    
     ic_mutex_lock(run_obj->state.protect_state);
     do
     {
@@ -1123,8 +1158,6 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     the Cluster Server is still starting up.
   */
 
-  if ((error= start_connect_server_thread(run_obj)))
-    goto error;
   if ((error= start_connect_other_cluster_servers(run_obj)))
     goto error;
 
@@ -2023,7 +2056,8 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       }
       DEBUG_PRINT(CONFIG_LEVEL,
        ("Failed client side connect to Cluster Server, index %u", cs_index));
-      /* Another attempt to connect failed, continue trying */
+      /* Another attempt to connect failed, continue trying, sleep first */
+      ic_sleep(1);
     }
     else
     {
@@ -2035,6 +2069,8 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       */
       if (!this_info_cs->conn)
       {
+        this_info_cs->wait_connect_server_thread= TRUE;
+        ic_cond_signal(rc_state->wait_server_connect_cond);
         ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
                            IC_STOP_CHECK_TIMER * IC_MICROSEC_PER_SECOND);
       }
@@ -2861,12 +2897,15 @@ ic_create_run_cluster(IC_STRING *config_dir,
     goto error;
   if (!(run_obj->state.check_if_cs_started_cond= ic_cond_create()))
     goto error;
+  if (!(run_obj->state.wait_server_connect_cond= ic_cond_create()))
+    goto error;
   if (!(run_obj->config_mutex= ic_mutex_create()))
     goto error;
   if (!(run_obj->config_cond= ic_cond_create()))
     goto error;
   if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     goto error;
+
   /*
     Initialise the Cluster Server state, the state is protected by a mutex to
     ensure when several connections receive requests only one at a time can
@@ -2976,11 +3015,14 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     {
       tp_state->tp_ops.ic_threadpool_set_stop_flag(tp_state);
       /* Ensure no threads is sleeping on ic_cond_wait */
+      ic_mutex_lock(run_obj->state.protect_state);
       ic_cond_broadcast(run_obj->config_cond);
       ic_cond_broadcast(run_obj->state.start_cond);
       ic_cond_broadcast(run_obj->state.connect_cond);
       ic_cond_broadcast(run_obj->state.update_cond);
       ic_cond_broadcast(run_obj->state.check_if_cs_started_cond);
+      ic_cond_signal(run_obj->state.wait_server_connect_cond);
+      ic_mutex_unlock(run_obj->state.protect_state);
       tp_state->tp_ops.ic_threadpool_stop(tp_state);
     }
     conn= run_obj->conn;
@@ -3008,6 +3050,8 @@ free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     ic_cond_destroy(run_obj->state.update_cond);
   if (run_obj->state.check_if_cs_started_cond)
     ic_cond_destroy(run_obj->state.check_if_cs_started_cond);
+  if (run_obj->state.wait_server_connect_cond)
+    ic_cond_destroy(run_obj->state.wait_server_connect_cond);
   if (run_obj->config_mutex)
     ic_mutex_destroy(run_obj->config_mutex);
   if (run_obj->config_cond)

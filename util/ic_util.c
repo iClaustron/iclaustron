@@ -18,3 +18,4 @@
 guint32 glob_debug= 0;
 gchar *glob_debug_file= NULL;
 guint32 glob_debug_screen= 0;
+guint32 glob_debug_timestamp= 0;

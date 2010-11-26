@@ -291,6 +291,8 @@ static GOptionEntry debug_entries[] =
     "Set Debug File", NULL},
   { "debug_screen", 0, 0, G_OPTION_ARG_INT, &glob_debug_screen,
     "Flag whether to print debug info to stdout", NULL},
+  { "debug_timestamp", 0, 0, G_OPTION_ARG_INT, &glob_debug_timestamp,
+    "Flag whether to print timestamps in debug info", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -315,6 +317,14 @@ Current levels defined: \n\
   Level 6 (=64): Debugging of memory allocation\n\
   Level 7 (=128): Debugging of heartbeat handling\n\
   Level 8 (=256): Debugging of read of configuration\n\
+\n\
+It is possible to pipe output also to the screen in addition to a debug\n\
+file by setting --debug_screen=1. It's possible to set the whereabouts\n\
+of the debug file by --debug_file=filename. Default is that the debug\n\
+file is created where the binary is started. It is also possible to add\n\
+a timestamp to every debug line to make it easier to understand timing of\n\
+the program, this is done by setting --debug_timestamp=1. The time reported\n\
+is number of microseconds since the program started.\n\
 ";
 static int use_config_vars;
 

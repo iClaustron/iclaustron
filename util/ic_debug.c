@@ -28,6 +28,8 @@ static GPrivate *debug_priv= NULL;
 static guint8 *thread_id_array= NULL;
 /* File pointer to the debug output file */
 static FILE *ic_fptr;
+/* Start time of the program */
+static IC_TIMER debug_start_time;
 
 
 guint32
@@ -72,6 +74,10 @@ ic_debug_enable()
 void
 ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
 {
+  IC_TIMER current_time, micros_time;
+  guint32 seconds, micros;
+  gchar time_buf[64];
+  gchar *time_ptr= NULL;
   gchar print_buf[2049 + 32 + (2 * IC_DEBUG_MAX_INDENT_LEVEL) + 1];
   gchar indent_buf[2 * IC_DEBUG_MAX_INDENT_LEVEL + 1];
 
@@ -83,11 +89,24 @@ ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
 
   set_indent_buf(indent_buf, thread_debug->indent_level);
 
+  if (glob_debug_timestamp)
+  {
+    current_time= ic_gethrtime();
+    micros_time= ic_micros_elapsed(debug_start_time, current_time);
+    seconds= (guint32)(micros_time / IC_MICROSEC_PER_SECOND);
+    micros= (guint32)(micros_time - (seconds * IC_MICROSEC_PER_SECOND));
+    g_snprintf(time_buf,
+               sizeof(time_buf),
+               "%.10u:%.6u: ",
+               seconds, micros);
+    time_ptr= &time_buf[0];
+  }
   if (glob_debug_screen)
   {
     g_snprintf(print_buf,
                sizeof(print_buf),
-              "T%u: %s%s",
+              "%sT%u: %s%s",
+              time_ptr ? time_ptr : "",
               thread_debug->thread_id,
               indent_buf,
               in_buf);
@@ -96,7 +115,8 @@ ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
   }
   g_snprintf(print_buf,
              sizeof(print_buf),
-             "T%u:%s%s\n",
+             "%sT%u:%s%s\n",
+             time_ptr ? time_ptr : "",
              thread_debug->thread_id,
              indent_buf,
              in_buf);
@@ -272,6 +292,9 @@ int ic_debug_open(guint32 node_id)
     fflush(stdout);
     return 1;
   }
+  /* Set debug starting time */
+  debug_start_time= ic_gethrtime();
+
   ic_debug_thread_init("main");
   return 0;
 }

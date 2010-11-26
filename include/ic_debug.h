@@ -25,6 +25,7 @@
 extern guint32 glob_debug;
 extern gchar *glob_debug_file;
 extern guint32 glob_debug_screen;
+extern guint32 glob_debug_timestamp;
 
 #define IC_DEBUG_MAX_INDENT_LEVEL 128
 struct ic_thread_debug

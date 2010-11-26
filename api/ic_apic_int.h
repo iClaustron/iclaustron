@@ -259,6 +259,9 @@ struct ic_info_cluster_server
   /* Thread id of thread connecting to this cluster server. */
   guint32 thread_id;
 
+  /* Are we waiting for server connect for this Cluster Server */
+  gboolean wait_connect_server_thread;
+
   /* Number of nodes in this index */
   guint32 master_index_size;
 
@@ -316,6 +319,7 @@ struct ic_run_cluster_state
   IC_COND  *connect_cond;
   IC_COND  *update_cond;
   IC_COND  *check_if_cs_started_cond;
+  IC_COND  *wait_server_connect_cond;
 };
 typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 

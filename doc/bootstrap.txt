@@ -1,0 +1,84 @@
+The main part of the iClaustron program which requires bootstrap is the
+Cluster Servers.
+
+The first step in setting up an iClaustron Grid is always to write up the
+initial configuration files. This can be done by hand or by using a tool
+someone developed for this purpose.
+
+The next step is how to start the iClaustron Cluster Servers the very
+first time.
+
+The recommended manner is to use the bootstrap method. It is also possible
+to use a normal file copy method. We will describe both methods here.
+
+Step 1: Install the iClaustron software package on each computer (virtual
+machine) which is part of the iClaustron Grid. The software should be
+installed by the same user as is used to run the iClaustron programs.
+If this is the root user then the software is installed at
+/usr/local/iclaustron. If the iClaustron version is iclaustron-0.0.1 the
+software will be installed at
+/usr/local/iclaustron_install/iclaustron-0.0.1
+If it's not a root user the software will be installed at
+$HOME/iclaustron_install/iclaustron-0.0.1
+
+It's perfectly ok to have multiple iClaustron versions installed at the
+same time. It would even be normal as part of a software upgrade of a
+running iClaustron Grid.
+
+As part of installing the iClaustron a service will be created that ensures
+that the iClaustron process controller runs also after a restart of the
+computer (virtual machine).
+
+Step 2: Write initial configuration files.
+
+Step 1 and 2 can be done in any order.
+
+This step requires writing at least 3 configuration files.
+The first file is always called config.ini, an example of this file is
+found in examples/config.ini. This file is needed in all nodes of the
+iClaustron Grid. This file contains the set of clusters that can be
+accessed from this node. Naturally for nodes containing iClaustron Cluster
+Servers all clusters need to be present in this file.
+
+The config.ini contains a list of clusters with their id, name and
+password. The password is use to authenticate that the program accessing
+the iClaustron API have authority to do this. This means that the iClaustron
+Grid administrator can decide that a certain node in the Grid only have
+access to a subset of the Clusters inside the Grid.
+
+The next file to write up is the grid_common.ini file. This file contains
+the nodes which are present in all clusters in the grid, these are the
+Cluster Servers and the Cluster Managers. There cannot be more than 4
+Clusters Servers. There is no limit on the number of Cluster Managers.
+However each cluster can have only 255 nodes and each Cluster Server and
+Cluster Manager have the same node id in all the clusters of the grid.
+Thus we define these nodes in a separate file. The node ids used in this
+file cannot be reused for any other node.
+
+Finally one need to write one cluster configuration file per cluster. This
+file is called cluster_name.ini where cluster_name is the actual name of
+the cluster. There is no specific limit to the number of clusters in the
+iClaustron Grid at the moment. This file defines the configuration of the
+Data Nodes, the File Server nodes, the Replication Server nodes and any
+other client programs that are developed in the future.
+
+The next step is dependent on the method used. We will start by describing
+the bootstrap method.
+
+Step 3: Install the configuration files on one of the Cluster Servers nodes.
+All the files written in step 1 now needs to be installed in its proper
+location. It is only necessary to install the files in one of the Cluster
+Server nodes. The files should be installed as follows:
+config.ini should be installed in
+$HOME/iclaustron_data/config/config.ini
+AND
+$HOME/iclaustron_data/config/node1/config.ini
+assuming the node id of the Cluster Server is 1.
+The grid_common.ini is installed in
+$HOME/iclaustron_data/config/node1/grid_common.ini
+Then the cluster configuration files (e.g. kalle.ini and jocke.ini
+as used in the examples directory) is placed in
+$HOME/iclaustron_data/config/node1/kalle.ini
+AND
+$HOME/iclaustron_data/config/node1/jocke.ini
+
