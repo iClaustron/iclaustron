@@ -51,5 +51,12 @@ but other programs can also operate on it using the network protocol it
 implements. The iClaustron Cluster Manager can also use it to access various
 statistics on the computer it operates on.
 
+Finally the iClaustron package also contains a program ic_configurator to
+assist the user in writing the initial configuration files, another program
+ic_bootstrap to start up the Cluster Servers and Cluster Managers as part
+of the initial start of the iClaustron Grid. Finally another important
+program is the ic_client which is used to enter client commands to the
+Cluster Manager to manage the iClaustron Grid.
+
 It is possible to also integrate MySQL Servers inside the iClaustron Grid,
 this is not part of the current development.

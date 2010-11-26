@@ -1,15 +1,16 @@
 The main part of the iClaustron program which requires bootstrap is the
-Cluster Servers.
+start of the Cluster Servers and the Cluster Managers.
 
 The first step in setting up an iClaustron Grid is always to write up the
-initial configuration files. This can be done by hand or by using a tool
-someone developed for this purpose.
+initial configuration files and install the software on all the required
+machines. Writing the configuration files can be done by hand or by using
+the ic_configurator program developed to assist in writing up
+configuration files.
 
-The next step is how to start the iClaustron Cluster Servers the very
-first time.
+The next step is to start the iClaustron Cluster Servers the very first time.
 
-The recommended manner is to use the bootstrap method. It is also possible
-to use a normal file copy method. We will describe both methods here.
+Here is a detailed description of the steps:
+Step 1 and 2 can be done in any order.
 
 Step 1: Install the iClaustron software package on each computer (virtual
 machine) which is part of the iClaustron Grid. The software should be
@@ -21,17 +22,23 @@ software will be installed at
 If it's not a root user the software will be installed at
 $HOME/iclaustron_install/iclaustron-0.0.1
 
+There are three exceptions to this, the first is that the ic_bootstrap
+program which is installed into /usr/local/bin and the same applies
+to the ic_client program. These programs are started by the user and
+it's desirable that these programs are easily accessible and also
+they don't need any software upgrade process, it is sufficient to
+simply replace them. The same goes for the ic_configurator program
+used to assist the user in writing up configiuration files.
+
 It's perfectly ok to have multiple iClaustron versions installed at the
 same time. It would even be normal as part of a software upgrade of a
 running iClaustron Grid.
 
 As part of installing the iClaustron a service will be created that ensures
-that the iClaustron process controller runs also after a restart of the
+that the iClaustron Process Controller runs also after a restart of the
 computer (virtual machine).
 
 Step 2: Write initial configuration files.
-
-Step 1 and 2 can be done in any order.
 
 This step requires writing at least 3 configuration files.
 The first file is always called config.ini, an example of this file is
@@ -65,20 +72,116 @@ other client programs that are developed in the future.
 The next step is dependent on the method used. We will start by describing
 the bootstrap method.
 
-Step 3: Install the configuration files on one of the Cluster Servers nodes.
-All the files written in step 1 now needs to be installed in its proper
-location. It is only necessary to install the files in one of the Cluster
-Server nodes. The files should be installed as follows:
-config.ini should be installed in
-$HOME/iclaustron_data/config/config.ini
-AND
-$HOME/iclaustron_data/config/node1/config.ini
-assuming the node id of the Cluster Server is 1.
-The grid_common.ini is installed in
-$HOME/iclaustron_data/config/node1/grid_common.ini
-Then the cluster configuration files (e.g. kalle.ini and jocke.ini
-as used in the examples directory) is placed in
-$HOME/iclaustron_data/config/node1/kalle.ini
-AND
-$HOME/iclaustron_data/config/node1/jocke.ini
+Step 3: Place the configuration files in a directory from where you want
+to distribute the files to the Cluster Servers.
 
+Step 4: Bootstrap the Cluster Servers
+The first step to do this is to start the bootstrap program.
+This is done by invoking it as
+ic_bootstrap --config-dir=/where/files/are/placed
+             --command-file=/file/with/commands
+
+The default of --config-dir is the directory from where the ic_bootstrap
+is run. The default of --command-file is to use a command file placed in
+the directory where the program is run and called startup.cmd. To use
+command input one can call it with --text-input.
+
+So in the case of 3 Cluster Servers running on
+172.168.1.21 (this is where the files are stored)
+172.168.1.22
+172.168.1.23
+we need to execute the following commands in the ic_bootstrap program.
+START CLUSTER SERVER HOST=172.168.1.21;
+START CLUSTER SERVER HOST=172.168.1.22;
+START CLUSTER SERVER HOST=172.168.1.23;
+SEND FILES;
+RUN;
+
+The START CLUSTER SERVER commands are not performed immediately.  They are
+registered as the Cluster Servers to start.
+
+The command SEND FILES will copy the configuration files from the directory
+where the ic_bootstrap program retrieves them to the proper directories in
+the Cluster Server machines where the Cluster Server expects to find them.
+
+When receiving the RUN command the ic_bootstrap program will send the start
+commands to the iClaustron Process Controller running on those machines.
+There are a couple of parameters that are silently set here.
+1. PCNTRL_HOST is set to HOST, it is possible that the Cluster Server should
+use a hostname which is different from the hostname used by the Process
+Controller. In this case one can set PCNTRL_HOST on the same line.
+2. PCNTRL_PORT is set to the default Process Controller port which is
+11860.
+3. CS_INTERNAL_PORT is set to the default port number of the Cluster Server
+internal port number (port used to communicate between Cluster Servers).
+4. NODE_ID is set to 1 for the first Cluster Server, 2 for the next and 3
+for the last Cluster Server by default. Otherwise it is possible to set the
+NODE_ID on the command line.
+5. Even HOST could be avoided, but the default hostname is 127.0.0.1 so this
+only makes sense for a test set-up.
+
+After issuing those commands and allowing the Cluster Servers some time to
+complete the start-up, it is possible to verify that the Cluster Servers
+are working properly and that the configuration has the Cluster Servers
+which was started by issuing the command.
+
+VERIFY CLUSTER SERVERS;
+
+After this command has been entered the ic_bootstrap program will try to
+retrieve the configuration from the above Cluster Servers. It will verify
+that the configuration is actually using the above Cluster Servers.
+
+The final step of the bootstrap program is to start the Cluster Managers.
+This is done either by the command:
+START CLUSTER MANAGERS;
+or by only starting one or more of them by issuing the command:
+START CLUSTER MANAGER NODE_ID=4
+e.g. to start a cluster manager configured to be node id 4.
+
+At this point the bootstrap program has completed.
+
+So all in all in this case the command file would contain the commands:
+START CLUSTER SERVER HOST=172.168.1.21;
+START CLUSTER SERVER HOST=172.168.1.22;
+START CLUSTER SERVER HOST=172.168.1.23;
+SEND FILES;
+RUN;
+VERIFY CLUSTER SERVERS;
+START CLUSTER MANAGERS;
+
+and would be executed by
+ic_bootstrap --command-file=bootstrap.cmd
+if we assume that the startup.cmd file is placed in the directory where
+the ic_bootstrap program is started from.
+
+So a very simple manner of performing the inital configuration and startup
+of the iClaustron Grid is to perform the commands:
+ic_configurator
+ic_bootstrap --command-file=bootstrap.cmd
+
+The ic_configurator will ask a lot of questions and direct the user to
+specify the configuration at an appropriate level of detail. If the user
+is ok with defaults in most places the ic_configurator will be able to
+generate a configuration very quickly. If the user wants to specify the
+configuration in great detail then it is even possible to run the
+ic_configurator in steps to allow the user to take a break while working
+on the iClaustron configuration.
+
+When the ic_bootstrap program has completed the Cluster Servers and the
+Cluster Manager is up and running. At this point the user can start
+managing the iClaustron Grid by connecting an iClaustron Client to an
+iClaustron Cluster Manager and start processes, stop processes, upgrade
+software and so forth.
+
+It is possible to use ic_bootstrap also to start up the Cluster Servers
+after a crash of all them. In this case one uses only the commands
+START CLUSTER SERVER HOST=172.168.1.21
+START CLUSTER SERVER HOST=172.168.1.22
+START CLUSTER SERVER HOST=172.168.1.23
+RUN;
+VERIFY CLUSTER SERVERS;
+START CLUSTER MANAGERS;
+
+This information is stored in a file called startup.cmd which is also
+generated by the ic_configurator program. In this case it isn't
+necessary to send the configuration files.
