@@ -3,6 +3,7 @@ wc -l *.ac *.sh.in *.am */*.am \
   *.txt */*.txt FindGLIB2.cmake include/cmake_config.h.in \
   svn_tags.sh \
   api/*.[ch] api/*.ic \
+  bootstrap/*.c \
   build_test/*.c \
   cluster_client/*.[ch] \
   cluster_mgr/*.y cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c \
