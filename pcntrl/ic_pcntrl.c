@@ -940,11 +940,13 @@ error:
   The command handler is a thread that is executed on behalf of one of the
   Cluster Managers in a Grid.
 
-  The Cluster Manager can ask the iClaustron Process Controller for 4 tasks.
+  The Cluster Manager can ask the iClaustron Process Controller for 5 tasks.
   1) It can ask to get a node started
   2) It can ask to stop a node gracefully (kill)
   3) It can ask to stop a node in a hard manner (kill -9)
   4) It can also ask for a list of the programs currently running in the Grid
+  5) As part of the bootstrap it can be asked to install the configuration
+     files of the Cluster Servers.
 
   GENERIC PROTOCOL
   ----------------
@@ -1051,6 +1053,34 @@ error:
   send the Process Controller will respond with:
   Line 1: list stop
   Line 2: Empty Line
+
+  INSTALL CONFIGURATION FILES PROTOCOL
+  ------------------------------------
+  Line 1: copy cluster server files
+  Line 2: receive config.ini
+  Line 3: number of lines: #lines
+  Line 4 - Line x: Contains the data from the config.ini file
+
+  Response:
+  Line 1: receive config file ok
+
+  Then the next file is copied with the same protocol but replacing
+  config.ini by grid_common.ini.
+
+  Then the protocol is repeated once per cluster to install where the
+  filename is cluster_name.ini, so e.g. kalle.ini if the name of the
+  cluster is kalle.
+
+  Finally when last file have been sent the protocol is:
+  Line 1: installed cluster server files
+  Line 2: end
+
+  Upon receiving the end message the server sends
+  Line 1: installed cluster server files
+  Line 2: Ok
+
+  After receiving this message the server waits for other protocol
+  messages or that the client closes the connection.
 */
 
 static gpointer

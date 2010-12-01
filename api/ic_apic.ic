@@ -605,6 +605,17 @@ const gchar *ic_pid_str= "pid: ";
 const gchar *ic_status_str= "status: ";
 const gchar *ic_master_index_size_str= "master index size: ";
 
+/* Messages for copy cluster server files protocol */
+const gchar *ic_copy_cluster_server_files_str= "copy cluster server files";
+const gchar *ic_receive_config_ini_str= "receive config.ini";
+const gchar *ic_number_of_lines_str= "number of lines: ";
+const gchar *ic_receive_grid_common_ini_str= "receive grid_common.ini";
+const gchar *ic_receive_cluster_name_ini_str= "receive ";
+const gchar *ic_installed_cluster_server_files=
+  "installed cluster server files";
+const gchar *ic_end_str= "end";
+const gchar *ic_receive_config_file_ok_str= "receive config file ok";
+
 const gchar *ic_def_grid_str= "iclaustron";
 const gchar *ic_data_server_program_str= "ndbmtd";
 const gchar *ic_file_server_program_str= "ic_fsd";
