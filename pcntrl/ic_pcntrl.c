@@ -1081,6 +1081,41 @@ error:
 
   After receiving this message the server waits for other protocol
   messages or that the client closes the connection.
+
+  GET CPU INFO PROTOCOL
+  ---------------------
+  This protocol asks the iClaustron Process Controller about the number
+  of CPUs, how many cores, how many threads and how many NUMA nodes there
+  are in the computer. If the process runs on a virtual machine it is the
+  resources this virtual machine have access to which is asked for.
+
+  The information provided here is 3 levels of CPU information, it is
+  assumed that CPUs consists of NUMA nodes which usually is equal to
+  CPU chips and often also a CPU socket. Each NUMA node have a set of
+  CPU cores. Finally each CPU core can have multiple CPU threads. We
+  call the lowest level cpu here, there are different names used for it
+  in different products.
+
+  Line 1: get processor info
+
+  Response:
+  Line 1: number of cpus: #cpus
+  Line 2: number of NUMA nodes: #nodes
+  Line 3: number of cpus per core: #cpus_per_core
+  Line 4: number of cores per NUMA node: #cores_per_node
+  Line 5: cpu type: cpu_type
+  Line 6 - (5 + #cpus): cpu 0: node: 0, core: 0
+
+  cpu_type is either of:
+    Unknown
+    Barcelona
+    Shanghai
+    Istanbul
+    Magny-Cours
+    ? (next-gen AMD CPU)
+    Core2
+    Nehalem
+    Westmere
 */
 
 static gpointer
