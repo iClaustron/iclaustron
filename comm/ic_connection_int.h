@@ -16,6 +16,13 @@
 #ifndef IC_CONNECTION_INT_H
 #define IC_CONNECTION_INT_H
 
+#ifdef HAVE_SSL
+#include <openssl/ssl.h>
+#include <openssl/rand.h>
+#include <openssl/x509v3.h>
+#include <openssl/dh.h>
+#endif
+
 struct ic_int_connection;
 typedef struct ic_int_connection IC_INT_CONNECTION;
 struct ic_int_connection

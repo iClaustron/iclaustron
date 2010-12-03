@@ -20,6 +20,12 @@
 #include <ic_bitmap.h>
 #include <ic_port.h>
 #include <ic_connection.h>
+#ifdef HAVE_SSL
+#include <openssl/ssl.h>
+#include <openssl/rand.h>
+#include <openssl/x509v3.h>
+#include <openssl/dh.h>
+#endif
 #include "ic_connection_int.h"
 
 #ifdef HAVE_FCNTL_H
@@ -61,6 +67,13 @@
 #endif
 #ifdef HAVE_SSL
 static int ssl_create_connection(IC_SSL_CONNECTION *conn);
+static int ic_ssl_write(IC_INT_CONNECTION *conn,
+                        const void *buf,
+                        guint32 buf_size);
+static int ic_ssl_read(IC_INT_CONNECTION *conn,
+                       void *buf,
+                       guint32 buf_size,
+                       guint32 *read_size);
 #endif
 static void destroy_timers(IC_INT_CONNECTION *conn);
 static void destroy_mutexes(IC_INT_CONNECTION *conn);
@@ -946,33 +959,6 @@ set_up_socket_connection(IC_CONNECTION *ext_conn,
   return 0;
 }
 
-#ifdef HAVE_SSL
-static int
-ic_ssl_write(IC_INT_CONNECTION *conn, const void *buf, guint32 buf_size)
-{
-  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
-  int ret_code= SSL_write(ssl_conn->ssl_conn, buf, buf_size);
-  int error;
-
-  switch ((error= SSL_get_error(ssl_conn->ssl_conn, ret_code)))
-  {
-    case SSL_ERROR_NONE:
-      /* Data successfully written */
-      return ret_code;
-    case SSL_ERROR_ZERO_RETURN:
-      /* SSL connection closed */
-      return 0;
-    case SSL_ERROR_WANT_READ:
-    case SSL_ERROR_WANT_WRITE:
-      return -EINTR;
-    default:
-      DEBUG_PRINT(COMM_LEVEL, ("SSL error %d", error));
-      return 0;
-  }
-  return 0;
-}
-#endif
-
 struct ic_send_state
 {
   GTimer *time_measure;
@@ -1266,38 +1252,6 @@ close_listen_socket_connection(IC_CONNECTION *ext_conn)
   unlock_connect_mutex(conn);
   return 0;
 }
-
-#ifdef HAVE_SSL
-static int
-ic_ssl_read(IC_INT_CONNECTION *conn,
-            void *buf, guint32 buf_size,
-            guint32 *read_size)
-{
-  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
-  int ret_code= SSL_read(ssl_conn->ssl_conn, buf, buf_size);
-  int error;
-
-  ic_printf("Wrote %d bytes through SSL", buf_size);
-
-  switch ((error= SSL_get_error(ssl_conn->ssl_conn, ret_code)))
-  {
-    case SSL_ERROR_NONE:
-      /* Data successfully read */
-      *read_size= (guint32)ret_code;
-      return ret_code;
-    case SSL_ERROR_ZERO_RETURN:
-      /* SSL connection closed */
-      return 0;
-    case SSL_ERROR_WANT_READ:
-    case SSL_ERROR_WANT_WRITE:
-      return -EINTR;
-    default:
-      DEBUG_PRINT(COMM_LEVEL, ("SSL error %d", error));
-      return 0;
-  }
-  return 0;
-}
-#endif
 
 /* Implements ic_read_connection */
 static int
@@ -2044,11 +1998,6 @@ ic_create_socket_object(gboolean is_client,
     back-end methods there are lots of new methods although many of the
     old methods are reused also for SSL connections.
 */
-#include <openssl/ssl.h>
-#include <openssl/rand.h>
-#include <openssl/x509v3.h>
-#include <openssl/dh.h>
-
 static unsigned char dh_512_prime[]=
 {
   0xc2, 0x38, 0x44, 0x9a, 0x7f, 0x9c, 0x22, 0xc9,
@@ -2202,7 +2151,7 @@ ssl_create_connection(IC_SSL_CONNECTION *conn)
   gchar buf [256];
   gchar *buf_ptr;
   int error;
-  IC_INT_CONNECTION *sock_conn= (IC_CONNECTION*)conn;
+  IC_INT_CONNECTION *sock_conn= (IC_INT_CONNECTION*)conn;
 
   if (!(conn->ssl_ctx= SSL_CTX_new(SSLv3_method())))
     goto error_handler;
@@ -2278,7 +2227,7 @@ ssl_create_connection(IC_SSL_CONNECTION *conn)
   return 0;
 error_handler:
   ic_printf("Session creation failed");
-  free_ssl_session((IC_CONNECTION*)conn);
+  free_ssl_session(conn);
   return 1;
 }
 
@@ -2307,7 +2256,7 @@ accept_ssl_connection(IC_CONNECTION *ext_conn)
   DEBUG_ENTRY("accept_ssl_connection");
 
   lock_connect_mutex(conn);
-  error= accept_socket_connection(ext_conn)
+  error= accept_socket_connection(ext_conn);
   unlock_connect_mutex(conn);
   DEBUG_RETURN_INT(error);
 }
@@ -2339,7 +2288,7 @@ fork_accept_ssl_connection(IC_CONNECTION *ext_orig_conn,
   DEBUG_ENTRY("fork_accept_ssl_connection");
 
   lock_connect_mutex(orig_conn);
-  if ((new_conn= fork_accept_connection(orig_conn, use_mutex)))
+  if ((new_conn= fork_accept_connection(ext_orig_conn, use_mutex)))
   {
     new_ssl_conn= (IC_SSL_CONNECTION*)new_conn;
     /* Assign SSL specific variables to new connection */
@@ -2391,7 +2340,7 @@ write_ssl_connection(IC_CONNECTION *ext_conn,
   DEBUG_ENTRY("write_ssl_connection");
 
   lock_connect_mutex(conn);
-  error= write_socket_connection(ext_conn, buf, size, prio_level, secs_to_try);
+  error= write_socket_connection(ext_conn, buf, size, secs_to_try);
   unlock_connect_mutex(conn);
   DEBUG_RETURN_INT(error);
 }
@@ -2465,8 +2414,64 @@ ic_create_ssl_object(gboolean is_client,
 
   set_up_rw_methods_mutex(conn, FALSE);
   conn->conn_op.ic_fork_accept_connection= fork_accept_ssl_connection;
-  DEBUG_RETURN_PTR(conn);
+  DEBUG_RETURN_PTR(ext_conn);
 }
+
+static int
+ic_ssl_write(IC_INT_CONNECTION *conn, const void *buf, guint32 buf_size)
+{
+  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
+  int ret_code= SSL_write(ssl_conn->ssl_conn, buf, buf_size);
+  int error;
+
+  switch ((error= SSL_get_error(ssl_conn->ssl_conn, ret_code)))
+  {
+    case SSL_ERROR_NONE:
+      /* Data successfully written */
+      return ret_code;
+    case SSL_ERROR_ZERO_RETURN:
+      /* SSL connection closed */
+      return 0;
+    case SSL_ERROR_WANT_READ:
+    case SSL_ERROR_WANT_WRITE:
+      return -EINTR;
+    default:
+      DEBUG_PRINT(COMM_LEVEL, ("SSL error %d", error));
+      return 0;
+  }
+  return 0;
+}
+
+static int
+ic_ssl_read(IC_INT_CONNECTION *conn,
+            void *buf, guint32 buf_size,
+            guint32 *read_size)
+{
+  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
+  int ret_code= SSL_read(ssl_conn->ssl_conn, buf, buf_size);
+  int error;
+
+  ic_printf("Wrote %d bytes through SSL", buf_size);
+
+  switch ((error= SSL_get_error(ssl_conn->ssl_conn, ret_code)))
+  {
+    case SSL_ERROR_NONE:
+      /* Data successfully read */
+      *read_size= (guint32)ret_code;
+      return ret_code;
+    case SSL_ERROR_ZERO_RETURN:
+      /* SSL connection closed */
+      return 0;
+    case SSL_ERROR_WANT_READ:
+    case SSL_ERROR_WANT_WRITE:
+      return -EINTR;
+    default:
+      DEBUG_PRINT(COMM_LEVEL, ("SSL error %d", error));
+      return 0;
+  }
+  return 0;
+}
+
 #else
 int ic_ssl_init()
 {

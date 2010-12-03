@@ -30,6 +30,11 @@ static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_client_ip= "127.0.0.1";
 static gchar *glob_server_port= "10006";
 static gchar *glob_client_port= "12002";
+#ifdef HAVE_SSL
+static gchar *glob_root_certificate_path= NULL;
+static gchar *glob_certificate_path= NULL;
+static gchar *glob_passwd_string= NULL;
+#endif
 
 static int glob_tcp_maxseg= 0;
 static int glob_tcp_rec_size= 0;
@@ -59,6 +64,14 @@ static GOptionEntry entries[] =
     "Set Server Port", NULL},
   { "client_port", 0, 0, G_OPTION_ARG_STRING, &glob_client_port,
     "Set Client port", NULL},
+#ifdef HAVE_SSL
+  { "root_certificate", 0, 0, G_OPTION_ARG_STRING, &glob_root_certificate_path,
+    "Filename of SSL root certificate", NULL},
+  { "certificate", 0, 0, G_OPTION_ARG_STRING, &glob_certificate_path,
+    "Filename of SSL certificate", NULL},
+  { "password", 0, 0, G_OPTION_ARG_STRING, &glob_passwd_string,
+    "SSL password", NULL},
+#endif
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -68,16 +81,24 @@ connection_test(gboolean use_ssl)
   IC_CONNECTION *conn;
   char buf[8192];
   int ret_code;
+#ifdef HAVE_SSL
+  IC_STRING root_certificate_path;
+  IC_STRING certificate_path;
+  IC_STRING passwd_string;
+#endif
 
   ic_printf("Connection Test Started");
   if (use_ssl)
   {
 #ifdef HAVE_SSL
-    IC_STRING root_certificate_path;
-    IC_STRING server_certificate_path;
-    IC_STRING client_certificate_path;
-    IC_STRING passwd_string;
-    IC_STRING *loc_cert_path;
+    if (!glob_root_certificate_path ||
+        !glob_certificate_path ||
+        !glob_passwd_string)
+    {
+      ic_printf("Need password, root certificate + certificate");
+      return 1;
+    }
+
     IC_INIT_STRING(&passwd_string,
                    glob_passwd_string,
                    strlen(glob_passwd_string),
@@ -86,20 +107,13 @@ connection_test(gboolean use_ssl)
                    glob_root_certificate_path,
                    strlen(glob_root_certificate_path),
                    TRUE);
-    IC_INIT_STRING(&server_certificate_path,
-                   glob_server_certificate_path,
-                   strlen(glob_server_certificate_path),
+    IC_INIT_STRING(&certificate_path,
+                   glob_certificate_path,
+                   strlen(glob_certificate_path),
                    TRUE);
-    IC_INIT_STRING(&client_certificate_path,
-                   glob_client_certificate_path,
-                   strlen(glob_client_certificate_path),
-                   TRUE);
-    loc_cert_path= glob_is_client ?
-           &client_certificate_path :
-           &server_certificate_path;
     if (!(conn= ic_create_ssl_object(glob_is_client,
                                      &root_certificate_path,
-                                     loc_cert_path,
+                                     &certificate_path,
                                      &passwd_string,
                                      TRUE, FALSE,
                                      CONFIG_READ_BUF_SIZE,

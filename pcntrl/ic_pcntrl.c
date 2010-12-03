@@ -1021,9 +1021,9 @@ error:
   Line 4: node: Node Name (optional)
   Line 5: Empty Line
 
-  Only Grid Name is required, if Cluster Name is provided, only programs in this
-  cluster will be provided, if Node Name is also provided then only a program
-  running this node will be provided.
+  Only Grid Name is required, if Cluster Name is provided, only programs in
+  this cluster will be provided, if Node Name is also provided then only a
+  program running this node will be provided.
 
   The response is a set of program descriptions as:
   NOTE: It is very likely this list will be expanded with more data on the
@@ -1037,7 +1037,8 @@ error:
   Line 7: start time: Start Time
   Line 8: pid: Process Id
   Line 9: Number of parameters
-  Line 10 - Line x: Parameter in same format as when starting (only if list full)
+  Line 10 - Line x: Parameter in same format as when starting (only if list
+    full)
   The protocol to check status is:
   Line x+1: Empty Line
 
@@ -1096,26 +1097,41 @@ error:
   call the lowest level cpu here, there are different names used for it
   in different products.
 
+  We report the number of cpus, number of NUMA nodes and number of cpus
+  per core. Then the mapping is provided by specifying cpu id together
+  with information onto which NUMA node and CPU core this is related.
+
+  The receiver of this information can use this information to discover
+  how to bind iClaustron processes to the correct set of CPUs. It can
+  also bind memory allocation to a certain set of NUMA nodes for the
+  iClaustron programs.
+
+  This information is valuable for any configurator program that tries to
+  assist the user in providing a reasonable configuration based on the HW
+  the user have provided.
+
   Line 1: get processor info
 
   Response:
   Line 1: number of cpus: #cpus
   Line 2: number of NUMA nodes: #nodes
   Line 3: number of cpus per core: #cpus_per_core
-  Line 4: number of cores per NUMA node: #cores_per_node
-  Line 5: cpu type: cpu_type
-  Line 6 - (5 + #cpus): cpu 0: node: 0, core: 0
+  Line 4 - (3 + #cpus): cpu 0: node: 0, core: 0
+  Line 4 + #cpus: Ok
 
-  cpu_type is either of:
-    Unknown
-    Barcelona
-    Shanghai
-    Istanbul
-    Magny-Cours
-    ? (next-gen AMD CPU)
-    Core2
-    Nehalem
-    Westmere
+  GET MEMORY INFORMATION PROTOCOL
+  -------------------------------
+  This protocol provides the ability to ask the iClaustron Process Controller
+  about how much user memory is available to the iClaustron programs on the
+  computer, it also lists this information per NUMA node.
+
+  Line 1: get memory info
+
+  Response:
+  Line 1: number of MByte user memory: #MB_user_memory
+  Line 2: number of NUMA nodes: #nodes
+  Line 3 - (2 + #nodes): node: 0, MB user memory: #MB_user_memory_in_node
+  Line 3 + #nodes: Ok
 */
 
 static gpointer
