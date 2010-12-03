@@ -20,12 +20,6 @@
 #include <ic_bitmap.h>
 #include <ic_port.h>
 #include <ic_connection.h>
-#ifdef HAVE_SSL
-#include <openssl/ssl.h>
-#include <openssl/rand.h>
-#include <openssl/x509v3.h>
-#include <openssl/dh.h>
-#endif
 #include "ic_connection_int.h"
 
 #ifdef HAVE_FCNTL_H
