@@ -369,15 +369,6 @@ login_connection(IC_CONNECTION *ext_conn)
   int error;
   gboolean save_ssl_used_for_data;
 
-#ifdef HAVE_SSL
-  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
-  if (conn->is_ssl_connection &&
-      (error= ssl_create_connection(ssl_conn)))
-  {
-    error= IC_SSL_ERROR;
-    goto error;
-  }
-#endif
   if (conn->auth_func)
   {
     save_ssl_used_for_data= conn->is_ssl_used_for_data;
@@ -411,6 +402,24 @@ debug_new_connect(IC_INT_CONNECTION *conn)
 }
 #else
 #define debug_new_connect(conn)
+#endif
+
+#ifdef HAVE_SSL
+static int
+perform_ssl_connect(IC_INT_CONNECTION *conn)
+{
+  int error;
+
+  IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
+  if (conn->is_ssl_connection &&
+      (error= ssl_create_connection(ssl_conn)))
+  {
+    return IC_SSL_ERROR;
+  }
+  return 0;
+}
+#else
+#define perform_ssl_connect(conn)
 #endif
 
 /* Implements ic_accept_connection */
@@ -581,6 +590,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   }
   conn->rw_sockfd= ret_sockfd;
   conn->error_code= 0;
+  perform_ssl_connect(conn);
   set_is_connected(conn);
   DEBUG_PRINT(COMM_LEVEL, ("Successful server socket connect"));
   debug_new_connect(conn);
@@ -874,6 +884,7 @@ renew_connect:
       break;
     } while (1);
     conn->rw_sockfd= sockfd;
+    perform_ssl_connect(conn);
     set_is_connected(conn);
     set_socket_nonblocking(sockfd, conn->is_nonblocking);
     DEBUG_PRINT(COMM_LEVEL, ("Successful client socket connect"));
@@ -2055,7 +2066,7 @@ ic_ssl_init()
     DEBUG_RETURN_INT(1);
   }
   /* Provide random entropy */
-  if (!RAND_load_file("/dev/random", 1024))
+  if (!RAND_load_file("/dev/urandom", 1024))
   {
     DEBUG_RETURN_INT(1);
   }
