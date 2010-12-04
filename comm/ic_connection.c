@@ -414,13 +414,14 @@ perform_ssl_connect(IC_INT_CONNECTION *conn)
   if (conn->is_ssl_connection &&
       (error= ssl_create_connection(ssl_conn)))
   {
+    ic_close_socket(conn->rw_sockfd);
     return IC_SSL_ERROR;
   }
   return 0;
-}
 #else
-#define perform_ssl_connect(conn)
+  return 0;
 #endif
+}
 
 /* Implements ic_accept_connection */
 static int
@@ -589,8 +590,10 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
     return IC_ACCEPT_ERROR;
   }
   conn->rw_sockfd= ret_sockfd;
-  conn->error_code= 0;
-  perform_ssl_connect(conn);
+  if ((conn->error_code= perform_ssl_connect(conn)))
+  {
+    return conn->error_code;
+  }
   set_is_connected(conn);
   DEBUG_PRINT(COMM_LEVEL, ("Successful server socket connect"));
   debug_new_connect(conn);
@@ -884,7 +887,10 @@ renew_connect:
       break;
     } while (1);
     conn->rw_sockfd= sockfd;
-    perform_ssl_connect(conn);
+    if ((conn->error_code= perform_ssl_connect(conn)))
+    {
+      return conn->error_code;
+    }
     set_is_connected(conn);
     set_socket_nonblocking(sockfd, conn->is_nonblocking);
     DEBUG_PRINT(COMM_LEVEL, ("Successful client socket connect"));
