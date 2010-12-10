@@ -225,12 +225,12 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
       ic_free_bitmap(apid_conn->cluster_id_bitmap);
     if (apid_conn->trans_bindings)
     {
-      apid_conn->trans_bindings->dt_ops.ic_free_dynamic_translation(
+      apid_conn->trans_bindings->dpa_ops.ic_free_dynamic_ptr_array(
         apid_conn->trans_bindings);
     }
     if (apid_conn->op_bindings)
     {
-      apid_conn->op_bindings->dt_ops.ic_free_dynamic_translation(
+      apid_conn->op_bindings->dpa_ops.ic_free_dynamic_ptr_array(
         apid_conn->op_bindings);
     }
     ic_free(apid_conn);
@@ -309,9 +309,9 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
     }
   }
 
-  if (!(apid_conn->trans_bindings= ic_create_dynamic_translation()))
+  if (!(apid_conn->trans_bindings= ic_create_dynamic_ptr_array()))
     goto error;
-  if (!(apid_conn->op_bindings= ic_create_dynamic_translation()))
+  if (!(apid_conn->op_bindings= ic_create_dynamic_ptr_array()))
     goto error;
 
   /* Initialise Thread Connection object */

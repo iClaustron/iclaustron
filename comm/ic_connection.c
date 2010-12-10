@@ -2165,50 +2165,66 @@ ssl_create_connection(IC_SSL_CONNECTION *conn)
   int error;
   IC_INT_CONNECTION *sock_conn= (IC_INT_CONNECTION*)conn;
 
+  /* Create an SSL context for this socket connection. */
   if (!(conn->ssl_ctx= SSL_CTX_new(SSLv3_method())))
     goto error_handler;
+
+  /* We specify where the root certificate is stored. */
+  if (((error= SSL_CTX_load_verify_locations(conn->ssl_ctx,
+                                             conn->root_certificate_path.str,
+                                             NULL)) != IC_SSL_SUCCESS))
+    goto error_handler;
+  if ((error= SSL_CTX_set_default_verify_paths(conn->ssl_ctx))
+               != IC_SSL_SUCCESS)
+    goto error_handler;
+
   /*
     Set-up password to use for this SSL session object. This password is the
     private key which the SSL certificates have been signed with.
   */
-  loc_cert_file= &conn->loc_certificate_path;
   buf_ptr= ic_get_ic_string(&conn->passwd_string, buf);
   SSL_CTX_set_default_passwd_cb_userdata(conn->ssl_ctx, (void*)buf_ptr);
+
   /*
-    We use a local certificate chain file, normally either server.pem or
-    client.pem.
-    This file is also the file where the private key is stored.
-    We specify where the root certificate is stored. Then we specify that both
-    server and client need to have a certificate and we specify that we are
-    going to use SHA1 of the greatest strength as the cipher for the
-    encryption of the data channel. Finally we load the Diffie-Hellman keys
-    used for key management, this is only performed by the server part of the
-    connection.
+    We use a local certificate chain file, This file is also the file where
+    the private key is stored.
   */
-  if ((error= SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
-                                                 loc_cert_file->str) !=
+  loc_cert_file= &conn->loc_certificate_path;
+  if (((error= SSL_CTX_use_certificate_chain_file(conn->ssl_ctx,
+                                                 loc_cert_file->str)) !=
                                                  IC_SSL_SUCCESS))
     goto error_handler;
-  if ((error= SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
-                                          loc_cert_file->str,
-                                          SSL_FILETYPE_PEM) != IC_SSL_SUCCESS))
+  if (((error= SSL_CTX_use_PrivateKey_file(conn->ssl_ctx,
+                                           loc_cert_file->str,
+                                           SSL_FILETYPE_PEM)) !=
+                                           IC_SSL_SUCCESS))
     goto error_handler;
-  if ((error= SSL_CTX_load_verify_locations(conn->ssl_ctx,
-                                            conn->root_certificate_path.str,
-                                            NULL) != IC_SSL_SUCCESS))
-    goto error_handler;
-  if ((error= SSL_CTX_set_default_verify_paths(conn->ssl_ctx)
-               != IC_SSL_SUCCESS))
-    goto error_handler;
+
+  /*
+    Specify that we want to verify the other side. Fail if the other
+    connecting side don't supply a certificate. Thus both sides need
+    to supply a certificate in the connect phase.
+  */
   SSL_CTX_set_verify(conn->ssl_ctx,
                      SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
                      ic_ssl_verify_callback);
   SSL_CTX_set_verify_depth(conn->ssl_ctx, 3);
+
+  /*
+    SHA1 ciphering of the highest strength will be used to cipher the
+    communication on the channel.
+  */
   if ((error= SSL_CTX_set_cipher_list(conn->ssl_ctx, "SHA1:@STRENGTH")) !=
               IC_SSL_SUCCESS)
     goto error_handler;
+
+  /*
+    We load the Diffie-Hellman keys used for key management, this is only
+    performed by the client part of the connection.
+  */
   if (sock_conn->is_client)
     SSL_CTX_set_tmp_dh_callback(conn->ssl_ctx, ssl_get_dh_callback);
+
   if (!(conn->ssl_conn= SSL_new(conn->ssl_ctx)))
     goto error_handler;
   ic_printf("Successfully created a new SSL session");

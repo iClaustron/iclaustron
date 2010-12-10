@@ -453,8 +453,8 @@ struct ic_int_apid_connection
 {
   IC_APID_CONNECTION_OPS *apid_conn_ops;
   IC_INT_APID_GLOBAL *apid_global;
-  IC_DYNAMIC_TRANSLATION *trans_bindings;
-  IC_DYNAMIC_TRANSLATION *op_bindings;
+  IC_DYNAMIC_PTR_ARRAY *trans_bindings;
+  IC_DYNAMIC_PTR_ARRAY *op_bindings;
   IC_API_CONFIG_SERVER *apic;
   IC_BITMAP *cluster_id_bitmap;
   IC_THREAD_CONNECTION *thread_conn;

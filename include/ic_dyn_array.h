@@ -43,28 +43,28 @@ struct ic_dynamic_array
 IC_DYNAMIC_ARRAY* ic_create_simple_dynamic_array();
 IC_DYNAMIC_ARRAY* ic_create_ordered_dynamic_array();
 
-struct ic_dynamic_translation;
-typedef struct ic_dynamic_translation IC_DYNAMIC_TRANSLATION;
-struct ic_dynamic_translation_ops
+struct ic_dynamic_ptr_array;
+typedef struct ic_dynamic_ptr_array IC_DYNAMIC_PTR_ARRAY;
+struct ic_dynamic_ptr_array_ops
 {
-  int (*ic_get_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
-                                    guint64 index,
-                                    void **object);
-  int (*ic_insert_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
-                                       guint64 *index,
-                                       void *object);
-  int (*ic_remove_translation_object) (IC_DYNAMIC_TRANSLATION *dyn_trans,
-                                       guint64 index,
-                                        void *object);
-  guint64 (*ic_get_max_index) (IC_DYNAMIC_TRANSLATION *dyn_trans);
-  void (*ic_free_dynamic_translation) (IC_DYNAMIC_TRANSLATION *dyn_trans);
+  int (*ic_get_ptr) (IC_DYNAMIC_PTR_ARRAY *dyn_ptr,
+                     guint64 index,
+                     void **object);
+  int (*ic_insert_ptr) (IC_DYNAMIC_PTR_ARRAY *dyn_ptr,
+                        guint64 *index,
+                        void *object);
+  int (*ic_remove_ptr) (IC_DYNAMIC_PTR_ARRAY *dyn_ptr,
+                        guint64 index,
+                        void *object);
+  guint64 (*ic_get_max_index) (IC_DYNAMIC_PTR_ARRAY *dyn_ptr);
+  void (*ic_free_dynamic_ptr_array) (IC_DYNAMIC_PTR_ARRAY *dyn_ptr);
 };
-typedef struct ic_dynamic_translation_ops IC_DYNAMIC_TRANSLATION_OPS;
+typedef struct ic_dynamic_ptr_array_ops IC_DYNAMIC_PTR_ARRAY_OPS;
 
-struct ic_dynamic_translation
+struct ic_dynamic_ptr_array
 {
-  IC_DYNAMIC_TRANSLATION_OPS dt_ops;
+  IC_DYNAMIC_PTR_ARRAY_OPS dpa_ops;
 };
 
-IC_DYNAMIC_TRANSLATION* ic_create_dynamic_translation();
+IC_DYNAMIC_PTR_ARRAY* ic_create_dynamic_ptr_array();
 #endif

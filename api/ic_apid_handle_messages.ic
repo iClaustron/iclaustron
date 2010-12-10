@@ -162,16 +162,16 @@ execRECORD_INFO_v0(IC_NDB_MESSAGE *ndb_message,
   void *connection_obj;
   IC_INT_APID_OPERATION *apid_op;
   IC_TRANSACTION *trans_op;
-  IC_DYNAMIC_TRANSLATION *dyn_trans= 0;
+  IC_DYNAMIC_PTR_ARRAY *dyn_trans= 0;
   guint32 data_size;
   guint32 transid[2];
   guint64 connection_ptr= header_data[0];
   guint32 transid_part1= header_data[1];
   guint32 transid_part2= header_data[2];
 
-  if (dyn_trans->dt_ops.ic_get_translation_object(dyn_trans,
-                                                  connection_ptr,
-                                                  &connection_obj))
+  if (dyn_trans->dpa_ops.ic_get_ptr(dyn_trans,
+                                    connection_ptr,
+                                    &connection_obj))
   { 
     return 1;
   }

@@ -167,6 +167,7 @@ connection_test(gboolean use_ssl)
   if (ret_code != 0)
   {
     ic_printf("Error in connection set-up: ret_code = %d", ret_code);
+    conn->conn_op.ic_free_connection(conn);
     return ret_code;
   }
   if (glob_is_client)

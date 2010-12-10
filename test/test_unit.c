@@ -241,19 +241,19 @@ unit_test_simple_dynamic_array()
   return test_dynamic_array(dyn_array, buf_size);
 }
 
-struct ic_test_dyn_trans
+struct ic_test_dyn_ptr_array
 {
   int object;
-  gboolean in_dyn_trans;
+  gboolean in_dyn_ptr;
   guint64 index;
 };
-typedef struct ic_test_dyn_trans IC_TEST_DYN_TRANS;
+typedef struct ic_test_dyn_ptr_array IC_TEST_DYN_PTR_ARRAY;
 
 static int
-test_translation_object(IC_DYNAMIC_TRANSLATION *dyn_trans,
-                        IC_TEST_DYN_TRANS *test_dyn_trans,
-                        guint32 num_inserts,
-                        guint32 num_removes)
+test_ptr_array(IC_DYNAMIC_PTR_ARRAY *dyn_ptr,
+               IC_TEST_DYN_PTR_ARRAY *test_dyn_ptr,
+               guint32 num_inserts,
+               guint32 num_removes)
 {
   guint32 i;
   int ret_code;
@@ -261,38 +261,34 @@ test_translation_object(IC_DYNAMIC_TRANSLATION *dyn_trans,
 
   for (i= 0; i < num_inserts; i++) 
   {
-    if ((ret_code= dyn_trans->dt_ops.ic_insert_translation_object(
-                       dyn_trans,
-                       &test_dyn_trans[i].index,
-                       (void*)&test_dyn_trans[i].object)))
+    if ((ret_code= dyn_ptr->dpa_ops.ic_insert_ptr(dyn_ptr,
+                                            &test_dyn_ptr[i].index,
+                                            (void*)&test_dyn_ptr[i].object)))
       goto error;
-    test_dyn_trans[i].in_dyn_trans= TRUE;
+    test_dyn_ptr[i].in_dyn_ptr= TRUE;
   }
   for (i= 0; i < num_removes; i++)
   {
-     if ((ret_code= dyn_trans->dt_ops.ic_remove_translation_object(
-                       dyn_trans,
-                       test_dyn_trans[i].index,
-                       (void*)&test_dyn_trans[i].object)))
+     if ((ret_code= dyn_ptr->dpa_ops.ic_remove_ptr(dyn_ptr,
+                                            test_dyn_ptr[i].index,
+                                            (void*)&test_dyn_ptr[i].object)))
        goto error;
-     test_dyn_trans[i].in_dyn_trans= FALSE;
+     test_dyn_ptr[i].in_dyn_ptr= FALSE;
   }
   for (i= num_removes; i < num_inserts; i++)
   {
-    if ((ret_code= dyn_trans->dt_ops.ic_get_translation_object(
-                       dyn_trans,
-                       test_dyn_trans[i].index,
-                       (void**)&ret_object)))
+    if ((ret_code= dyn_ptr->dpa_ops.ic_get_ptr(dyn_ptr,
+                                               test_dyn_ptr[i].index,
+                                               (void**)&ret_object)))
       goto error;
-    if (ret_object != (void*)&test_dyn_trans[i].object)
+    if (ret_object != (void*)&test_dyn_ptr[i].object)
       return 1;
   }
   for (i= 0; i < num_removes; i++)
   {
-    if (!(ret_code= dyn_trans->dt_ops.ic_get_translation_object(
-                       dyn_trans,
-                       test_dyn_trans[i].index,
-                       (void**)&ret_object)))
+    if (!(ret_code= dyn_ptr->dpa_ops.ic_get_ptr(dyn_ptr,
+                                                test_dyn_ptr[i].index,
+                                                (void**)&ret_object)))
     {
       ret_code= 1;
       goto error;
@@ -304,63 +300,63 @@ return ret_code;
 }
 
 static void
-init_test_dyn_trans(IC_TEST_DYN_TRANS *test_dyn_trans,
-                    guint32 num_inserts)
+init_test_dyn_ptr(IC_TEST_DYN_PTR_ARRAY *test_dyn_ptr,
+                  guint32 num_inserts)
 {
   guint32 i;
 
   for (i= 0; i < num_inserts; i++)
-    test_dyn_trans[i].object= i;
+    test_dyn_ptr[i].object= i;
 }
 
 static int
-test_dynamic_translation(guint32 num_inserts, guint32 num_removes)
+test_dynamic_ptr_array(guint32 num_inserts, guint32 num_removes)
 {
   int ret_code;
-  IC_DYNAMIC_TRANSLATION *dyn_trans;
-  IC_TEST_DYN_TRANS *test_dyn_trans= (IC_TEST_DYN_TRANS*)
-    ic_calloc(sizeof(IC_TEST_DYN_TRANS)*num_inserts);
+  IC_DYNAMIC_PTR_ARRAY *dyn_ptr;
+  IC_TEST_DYN_PTR_ARRAY *test_dyn_ptr= (IC_TEST_DYN_PTR_ARRAY*)
+    ic_calloc(sizeof(IC_TEST_DYN_PTR_ARRAY)*num_inserts);
 
   ic_printf("Testing with %u number of inserts and %u number of removes",
             num_inserts, num_removes);
-  dyn_trans= ic_create_dynamic_translation();
-  if (dyn_trans == NULL)
+  dyn_ptr= ic_create_dynamic_ptr_array();
+  if (dyn_ptr == NULL)
   {
-    ic_free(test_dyn_trans);
+    ic_free(test_dyn_ptr);
     return IC_ERROR_MEM_ALLOC;
   }
-  if (!test_dyn_trans)
+  if (!test_dyn_ptr)
     abort();
-  init_test_dyn_trans(test_dyn_trans, num_inserts);
-  if ((ret_code= test_translation_object(dyn_trans,
-                                         test_dyn_trans,
-                                         num_inserts,
-                                         num_removes)))
+  init_test_dyn_ptr(test_dyn_ptr, num_inserts);
+  if ((ret_code= test_ptr_array(dyn_ptr,
+                                test_dyn_ptr,
+                                num_inserts,
+                                num_removes)))
     goto error;
 error:
-  dyn_trans->dt_ops.ic_free_dynamic_translation(dyn_trans);
-  ic_free(test_dyn_trans);
+  dyn_ptr->dpa_ops.ic_free_dynamic_ptr_array(dyn_ptr);
+  ic_free(test_dyn_ptr);
   return ret_code;
 }
 
 static int
-unit_test_dynamic_translation()
+unit_test_dynamic_ptr_array()
 {
   int ret_code;
 
-  if ((ret_code= test_dynamic_translation(128, 2)))
+  if ((ret_code= test_dynamic_ptr_array(128, 2)))
     goto error;
-  if ((ret_code= test_dynamic_translation(129, 2)))
+  if ((ret_code= test_dynamic_ptr_array(129, 2)))
     goto error;
-  if ((ret_code= test_dynamic_translation(128*128, 2)))
+  if ((ret_code= test_dynamic_ptr_array(128*128, 2)))
     goto error;
-  if ((ret_code= test_dynamic_translation(128*128+1, 2)))
+  if ((ret_code= test_dynamic_ptr_array(128*128+1, 2)))
     goto error;
-  if ((ret_code= test_dynamic_translation(128*128*128, 2)))
+  if ((ret_code= test_dynamic_ptr_array(128*128*128, 2)))
     goto error;
-  if ((ret_code= test_dynamic_translation(128*128*128+1, 2)))
+  if ((ret_code= test_dynamic_ptr_array(128*128*128+1, 2)))
     goto error;
-  if ((ret_code= test_dynamic_translation(128*128*128+1, 128*128*128+1)))
+  if ((ret_code= test_dynamic_ptr_array(128*128*128+1, 128*128*128+1)))
     goto error;
   return 0;
 error:
@@ -1138,56 +1134,75 @@ unit_test_sock_buf()
   return 0;
 }
                          
-int main(int argc, char *argv[])
+static int
+run_test(guint32 test_type)
 {
   int ret_code;
 
-  if ((ret_code= ic_start_program(argc, argv, entries, NULL,
-                                  glob_process_name,
-           "- Unit test program", FALSE)))
-    return ret_code;
-  switch (glob_test_type)
+  switch (test_type)
   {
-    case 0:
-      ic_printf("Executing Unit test of Memory Container");
+    case 1:
+      ic_printf("Test 1: Executing Unit test of Memory Container");
       ret_code= unit_test_mc(FALSE, FALSE);
       ret_code= unit_test_mc(FALSE, TRUE);
       ret_code= unit_test_mc(TRUE, FALSE);
       ret_code= unit_test_mc(TRUE, TRUE);
       break;
 
-    case 1:
-      ic_printf("Executing Unit test of Simple Dynamic Array");
+    case 2:
+      ic_printf("Test 2: Executing Unit test of Simple Dynamic Array");
       ret_code= unit_test_simple_dynamic_array();
       break;
-    case 2:
-      ic_printf("Executing Unit test of Ordered Dynamic Array");
+    case 3:
+      ic_printf("Test 3: Executing Unit test of Ordered Dynamic Array");
       ret_code= unit_test_ordered_dynamic_array();
       break;
-    case 3:
-      ic_printf("Executing Unit test of Dynamic translation");
-      ret_code= unit_test_dynamic_translation();
-      break;
     case 4:
-      ic_printf("Executing Unit test of Bitmap");
+      ic_printf("Test 4: Executing Unit test of Dynamic Ptr Array");
+      ret_code= unit_test_dynamic_ptr_array();
+      break;
+    case 5:
+      ic_printf("Test 5: Executing Unit test of Bitmap");
       ret_code= unit_test_bitmap();
       break;      
-    case 5:
-      ic_printf("Executing Unit test of Hashtable");
+    case 6:
+      ic_printf("Test 6: Executing Unit test of Hashtable");
       ret_code= unit_test_hashtable();
       break;
-    case 6:
-      ic_printf("Executing unit test of Parse Connectstring");
+    case 7:
+      ic_printf("Test 7: Executing unit test of Parse Connectstring");
       ret_code= unit_test_parse_connectstring();
       break;
-    case 7:
-      ic_printf("Executing unit test of Socket Buffer");
+    case 8:
+      ic_printf("Test 8: Executing unit test of Socket Buffer");
       ret_code= unit_test_sock_buf();
       break;
     default:
       break;
-   }
-   ic_end();
-   ic_printf("iClaustron Test return code: %d", ret_code);
-   return ret_code;
+  }
+  return ret_code;
+}
+
+int main(int argc, char *argv[])
+{
+  int ret_code;
+  guint32 i;
+
+  if ((ret_code= ic_start_program(argc, argv, entries, NULL,
+                                  glob_process_name,
+           "- Unit test program", FALSE)))
+    return ret_code;
+  if (glob_test_type == 0)
+  {
+    for (i= 1; i < 9; i++)
+    {
+      if ((ret_code= run_test(i)))
+        break;
+    }
+  }
+  else
+    ret_code= run_test(glob_test_type);
+  ic_end();
+  ic_printf("iClaustron Test return code: %d", ret_code);
+  return ret_code;
 }

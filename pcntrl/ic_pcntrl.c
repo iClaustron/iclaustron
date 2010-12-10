@@ -25,6 +25,39 @@
 #include <ic_protocol_support.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
+
+
+/* Messages for copy cluster server files protocol */
+const gchar *ic_copy_cluster_server_files_str= "copy cluster server files";
+const gchar *ic_receive_config_ini_str= "receive config.ini";
+const gchar *ic_number_of_lines_str= "number of lines: ";
+const gchar *ic_receive_grid_common_ini_str= "receive grid_common.ini";
+const gchar *ic_receive_cluster_name_ini_str= "receive ";
+const gchar *ic_installed_cluster_server_files=
+  "installed cluster server files";
+const gchar *ic_end_str= "end";
+const gchar *ic_receive_config_file_ok_str= "receive config file ok";
+
+/* Messages for the Get CPU info protocol */
+const gchar *ic_get_cpu_info_str= "get cpu info";
+const gchar *ic_number_of_cpus_str= "number of cpus: ";
+const gchar *ic_number_of_numa_nodes_str= "number of NUMA nodes: ";
+const gchar *ic_number_of_cpus_per_core_str= "number of cpus per core: ";
+const gchar *ic_cpu_str= "cpu ";
+const gchar *ic_cpu_node_str= ", node: ";
+const gchar *ic_core_str= ", core: ";
+
+/* Messages for the Get Memory Information Protocol */
+const gchar *ic_get_memory_info_str= "get memory info";
+const gchar *ic_number_of_mbyte_user_memory_str=
+  "number of MByte user memory: ";
+const gchar *ic_mb_user_memory_str= ", MB user memory: ";
+
+/* Messages for Get Disk Information Protocol */
+const gchar *ic_get_disk_info_str= "get disk info";
+const gchar *ic_dir_str= "dir: ";
+const gchar *ic_disk_space_str= "disk space: ";
+
 /*
   This program is also used to gather information from local log files as 
   part of any process to gather information about mishaps in the cluster(s).
@@ -68,7 +101,7 @@ static const gchar *glob_process_name= "ic_pcntrld";
 static IC_MUTEX *pc_hash_mutex= NULL;
 static IC_HASHTABLE *glob_pc_hash= NULL;
 static guint64 glob_start_id= 1;
-static IC_DYNAMIC_TRANSLATION *glob_dyn_trans= NULL;
+static IC_DYNAMIC_PTR_ARRAY *glob_pc_array= NULL;
 
 static int
 send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
@@ -461,9 +494,9 @@ remove_pc_entry(IC_PC_START *pc_start)
   pc_start_check= ic_hashtable_remove(glob_pc_hash,
                                       (void*)pc_start);
   ic_assert(pc_start_check == pc_start);
-  glob_dyn_trans->dt_ops.ic_remove_translation_object(glob_dyn_trans,
-                                               pc_start->dyn_trans_index,
-                                               (void*)pc_start);
+  glob_pc_array->dpa_ops.ic_remove_ptr(glob_pc_array,
+                                       pc_start->dyn_trans_index,
+                                       (void*)pc_start);
   /* Release memory associated with the process */
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
 }
@@ -473,18 +506,17 @@ insert_pc_entry(IC_PC_START *pc_start)
 {
   int ret_code= 0;
   guint64 index;
-  if ((ret_code= glob_dyn_trans->dt_ops.ic_insert_translation_object(
-                                                       glob_dyn_trans,
-                                                       &index,
-                                                       (void*)pc_start)))
+  if ((ret_code= glob_pc_array->dpa_ops.ic_insert_ptr(glob_pc_array,
+                                                      &index,
+                                                      (void*)pc_start)))
     return ret_code;
   pc_start->dyn_trans_index= index;
   if ((ret_code= ic_hashtable_insert(glob_pc_hash,
                                      (void*)pc_start, (void*)pc_start)))
   {
-    glob_dyn_trans->dt_ops.ic_remove_translation_object(glob_dyn_trans,
-                                                 pc_start->dyn_trans_index,
-                                                 (void*)pc_start);
+    glob_pc_array->dpa_ops.ic_remove_ptr(glob_pc_array,
+                                         pc_start->dyn_trans_index,
+                                         (void*)pc_start);
   }
   return ret_code;
 }
@@ -882,13 +914,12 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
     goto error;
   
   ic_mutex_lock(pc_hash_mutex);
-  max_index= glob_dyn_trans->dt_ops.ic_get_max_index(glob_dyn_trans);
+  max_index= glob_pc_array->dpa_ops.ic_get_max_index(glob_pc_array);
   for (current_index= 0; current_index < max_index; current_index++)
   {
-    if ((error= glob_dyn_trans->dt_ops.ic_get_translation_object(
-                              glob_dyn_trans,
-                              current_index,
-                              &void_pc_start)))
+    if ((error= glob_pc_array->dpa_ops.ic_get_ptr(glob_pc_array,
+                                                  current_index,
+                                                  &void_pc_start)))
       goto error;
     pc_start= (IC_PC_START*)void_pc_start;
     if (pc_start && is_list_match(pc_start, pc_find))
@@ -934,6 +965,105 @@ error:
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   return send_error_reply(conn,
                           ic_get_error_message(error));
+}
+
+static int
+handle_receive_file(IC_CONNECTION *conn,
+                    IC_FILE_HANDLE file_ptr,
+                    guint32 number_of_lines)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  guint32 i;
+  int error;
+
+  for (i= 0; i < number_of_lines; i++)
+  {
+    if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+      return error;
+    /* Write line received to file */
+    if ((error= ic_write_file(file_ptr, read_buf, read_size)))
+      return error;
+  }
+  if ((error= ic_rec_empty_line(conn)))
+    return error;
+  if ((error= ic_close_file(file_ptr)))
+    return error;
+  return 0;
+}
+
+/*
+  This method receives a number of files with their content from the client
+  and installs those as configuration files in the proper directory where
+  iClaustron expects to find the configuration files.
+
+  This method is atomic, it will either write and create all files sent and
+  received or it will remove all the files it created and wrote if anything
+  goes wrong before the entire file transfer is completed.
+
+  To aid in this we use a dynamic pointer array.
+*/
+static int
+handle_copy_cluster_server_files(IC_CONNECTION *conn)
+{
+  int error;
+  void *mem_alloc_object;
+  guint32 number_of_lines;
+  guint32 i;
+  guint32 num_files= 0;
+  IC_FILE_HANDLE file_ptr;
+  IC_DYNAMIC_PTR_ARRAY *file_name_array;
+
+  if (!(file_name_array= ic_create_dynamic_ptr_array()))
+    return IC_ERROR_MEM_ALLOC;
+
+  if ((error= ic_rec_simple_str(conn, ic_receive_config_ini_str)) ||
+      (error= ic_rec_number(conn, ic_number_of_lines_str,
+                            &number_of_lines)))
+    goto error_delete_files;
+  /* Open the file config.ini in the proper place */
+  if ((error= ic_create_file(&file_ptr,
+                             "config.ini"))) /* TODO */
+    goto error_delete_files;
+  if ((error= handle_receive_file(conn, file_ptr, number_of_lines)))
+    goto error_delete_files;
+  if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)))
+    goto error_delete_files;
+  file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
+  return 0;
+
+error_delete_files:
+  for (i= 0; i < num_files; i++)
+  {
+    ic_require(file_name_array->dpa_ops.ic_get_ptr(file_name_array,
+                                                   (guint64)i,
+                                                   &mem_alloc_object));
+    (void)ic_delete_file((gchar*)mem_alloc_object); /* Ignore error */
+    ic_free((gchar*)mem_alloc_object);
+  }
+  file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
+  return error;
+}
+
+static int
+handle_get_cpu_info(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int
+handle_get_memory_info(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int
+handle_get_disk_info(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
 }
 
 /*
@@ -1110,7 +1240,7 @@ error:
   assist the user in providing a reasonable configuration based on the HW
   the user have provided.
 
-  Line 1: get processor info
+  Line 1: get cpu info
 
   Response:
   Line 1: number of cpus: #cpus
@@ -1195,6 +1325,34 @@ run_command_handler(gpointer data)
                           strlen(ic_list_full_str)))
     {
       if ((ret_code= handle_list(conn, TRUE)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size,
+                          ic_copy_cluster_server_files_str,
+                          strlen(ic_copy_cluster_server_files_str)))
+    {
+      if ((ret_code= handle_copy_cluster_server_files(conn)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size,
+                          ic_get_cpu_info_str,
+                          strlen(ic_get_cpu_info_str)))
+    {
+      if ((ret_code= handle_get_cpu_info(conn)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size,
+                          ic_get_memory_info_str,
+                          strlen(ic_get_memory_info_str)))
+    {
+      if ((ret_code= handle_get_memory_info(conn)))
+        break;
+    }
+    else if (ic_check_buf(read_buf, read_size,
+                          ic_get_disk_info_str,
+                          strlen(ic_get_disk_info_str)))
+    {
+      if ((ret_code= handle_get_disk_info(conn)))
         break;
     }
     else if (read_size)
@@ -1323,7 +1481,7 @@ int main(int argc, char *argv[])
     goto error;
   if (!(pc_hash_mutex= ic_mutex_create()))
     goto error;
-  if (!(glob_dyn_trans= ic_create_dynamic_translation()))
+  if (!(glob_pc_array= ic_create_dynamic_ptr_array()))
     goto error;
   /*
     First step is to set-up path to where the binaries reside. All binaries
@@ -1374,8 +1532,8 @@ error:
     ic_mutex_destroy(pc_hash_mutex);
   if (log_file.str)
     ic_free(log_file.str);
-  if (glob_dyn_trans)
-    glob_dyn_trans->dt_ops.ic_free_dynamic_translation(glob_dyn_trans);
+  if (glob_pc_array)
+    glob_pc_array->dpa_ops.ic_free_dynamic_ptr_array(glob_pc_array);
   ic_end();
   return ret_code;
 }

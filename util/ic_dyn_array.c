@@ -537,49 +537,6 @@ write_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
 }
 
 static int
-read_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
-                         guint64 position,
-                         guint64 size,
-                         gchar *buf)
-{
-  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
-  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
-  guint64 buf_pos;
-  gchar *read_buf;
-  int ret_code;
-
-  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
-                                            &dyn_buf, &buf_pos)))
-    return ret_code;
-  read_buf= (gchar*)&dyn_buf->buf[0];
-  read_buf+= buf_pos;
-  memcpy(buf, read_buf, (size_t)size);
-  return 0;
-}
-
-static int
-write_dynamic_translation(IC_DYNAMIC_ARRAY *ext_dyn_array,
-                          guint64 position,
-                          guint64 size,
-                          const gchar *buf)
-{
-  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
-  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
-  guint64 buf_pos= 0;
-  gchar *write_buf;
-  int ret_code;
-
-  (void)size;
-  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
-                                            &dyn_buf, &buf_pos)))
-    return ret_code;
-  write_buf= (gchar*)&dyn_buf->buf[0];
-  write_buf+= buf_pos;
-  memcpy(write_buf, buf, sizeof(IC_TRANSLATION_ENTRY));
-  return 0;
-}
-
-static int
 read_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
                            guint64 position,
                            guint64 size,
@@ -653,26 +610,69 @@ ic_create_ordered_dynamic_array()
   return (IC_DYNAMIC_ARRAY*)dyn_array;
 }
 
+static int
+read_dynamic_ptr_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
+                       guint64 position,
+                       guint64 size,
+                       gchar *buf)
+{
+  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
+  guint64 buf_pos;
+  gchar *read_buf;
+  int ret_code;
+
+  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
+                                            &dyn_buf, &buf_pos)))
+    return ret_code;
+  read_buf= (gchar*)&dyn_buf->buf[0];
+  read_buf+= buf_pos;
+  memcpy(buf, read_buf, (size_t)size);
+  return 0;
+}
+
+static int
+write_dynamic_ptr_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
+                        guint64 position,
+                        guint64 size,
+                        const gchar *buf)
+{
+  IC_DYNAMIC_ARRAY_INT *dyn_array= (IC_DYNAMIC_ARRAY_INT*)ext_dyn_array;
+  IC_SIMPLE_DYNAMIC_BUF *dyn_buf= NULL;
+  guint64 buf_pos= 0;
+  gchar *write_buf;
+  int ret_code;
+
+  (void)size;
+  if ((ret_code= find_pos_ordered_dyn_array(dyn_array, position,
+                                            &dyn_buf, &buf_pos)))
+    return ret_code;
+  write_buf= (gchar*)&dyn_buf->buf[0];
+  write_buf+= buf_pos;
+  memcpy(write_buf, buf, sizeof(IC_PTR_ARRAY_ENTRY));
+  return 0;
+}
+
 #define HIGHEST_BIT_SET (guint64)((guint64)1 << 63)
 static int
-insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
-                          guint64 *position,
-                          void *object)
+insert_ptr(IC_DYNAMIC_PTR_ARRAY *ext_dyn_ptr,
+           guint64 *position,
+           void *object)
 {
-  IC_TRANSLATION_ENTRY transl_entry, first_entry;
+  IC_PTR_ARRAY_ENTRY ptr_entry, first_entry;
   guint64 pos_first= (guint64)0;
   guint64 pos_first_free;
-  guint64 entry_size= sizeof(IC_TRANSLATION_ENTRY);
-  IC_DYNAMIC_TRANSLATION_INT *dyn_trans=
-    (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
-  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_trans->dyn_array;
+  guint64 entry_size= sizeof(IC_PTR_ARRAY_ENTRY);
+  IC_DYNAMIC_PTR_ARRAY_INT *dyn_ptr=
+    (IC_DYNAMIC_PTR_ARRAY_INT*)ext_dyn_ptr;
+  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_ptr->dyn_array;
 
-  if (read_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                               pos_first,
-                               entry_size,
-                               (gchar*)&transl_entry))
+  if (read_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                             pos_first,
+                             entry_size,
+                             (gchar*)&ptr_entry))
     abort();
-  pos_first_free= transl_entry.position;
+  pos_first_free= ptr_entry.position;
   if (pos_first_free == (guint64)0)
   {
     /*
@@ -681,9 +681,9 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
     */
     pos_first_free= dyn_array->da_ops.ic_get_current_size(
       (IC_DYNAMIC_ARRAY*)dyn_array);
-    transl_entry.object= object;
+    ptr_entry.object= object;
     if (insert_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array,
-                                     (const gchar*)&transl_entry,
+                                     (const gchar*)&ptr_entry,
                                      entry_size))
     {
       /* Memory allocation error */
@@ -696,160 +696,160 @@ insert_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
       Use the free entry but also keep the free list up to date
       by reading the next free from the first free.
     */
-    if (read_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                                 pos_first_free,
-                                 entry_size,
-                                 (gchar*)&transl_entry))
+    if (read_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                               pos_first_free,
+                               entry_size,
+                               (gchar*)&ptr_entry))
       abort();
-    if (transl_entry.position < HIGHEST_BIT_SET)
+    if (ptr_entry.position < HIGHEST_BIT_SET)
       abort();
-    first_entry.position= transl_entry.position - HIGHEST_BIT_SET;
-    if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                                  pos_first,
-                                  entry_size,
-                                  (const gchar*)&first_entry))
+    first_entry.position= ptr_entry.position - HIGHEST_BIT_SET;
+    if (write_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                                pos_first,
+                                entry_size,
+                                (const gchar*)&first_entry))
       abort();
-    transl_entry.object= object;
-    if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                                  pos_first_free,
-                                  entry_size,
-                                  (gchar*)&transl_entry))
+    ptr_entry.object= object;
+    if (write_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                                pos_first_free,
+                                entry_size,
+                                (gchar*)&ptr_entry))
       abort();
   }
-  *position= pos_first_free/sizeof(IC_TRANSLATION_ENTRY);
+  *position= pos_first_free/sizeof(IC_PTR_ARRAY_ENTRY);
   return 0;
 }
 
 static int
-get_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
-                       guint64 index,
-                       void **object)
+get_ptr(IC_DYNAMIC_PTR_ARRAY *ext_dyn_ptr,
+        guint64 index,
+        void **object)
 {
-  IC_DYNAMIC_TRANSLATION_INT *dyn_trans=
-    (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
-  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_trans->dyn_array;
-  IC_TRANSLATION_ENTRY transl_entry;
-  guint64 position= index * sizeof(IC_TRANSLATION_ENTRY);
+  IC_DYNAMIC_PTR_ARRAY_INT *dyn_ptr=
+    (IC_DYNAMIC_PTR_ARRAY_INT*)ext_dyn_ptr;
+  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_ptr->dyn_array;
+  IC_PTR_ARRAY_ENTRY ptr_entry;
+  guint64 position= index * sizeof(IC_PTR_ARRAY_ENTRY);
 
-  if (read_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                               position,
-                               sizeof(IC_TRANSLATION_ENTRY),
-                               (gchar*)&transl_entry))
+  if (read_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                             position,
+                             sizeof(IC_PTR_ARRAY_ENTRY),
+                             (gchar*)&ptr_entry))
   {
-    return IC_ERROR_TRANSLATION_INDEX_OUT_OF_BOUND;
+    return IC_ERROR_PTR_ARRAY_INDEX_OUT_OF_BOUND;
   }
-  if (transl_entry.position >= HIGHEST_BIT_SET)
-    return IC_ERROR_TRANSLATION_INDEX_ERROR;
-  *object= transl_entry.object;
+  if (ptr_entry.position >= HIGHEST_BIT_SET)
+    return IC_ERROR_PTR_ARRAY_INDEX_ERROR;
+  *object= ptr_entry.object;
   return 0;
 }
 
 static int
-remove_translation_object(IC_DYNAMIC_TRANSLATION *ext_dyn_trans,
-                          guint64 index,
-                          void *object)
+remove_ptr(IC_DYNAMIC_PTR_ARRAY *ext_dyn_ptr,
+           guint64 index,
+           void *object)
 {
-  IC_TRANSLATION_ENTRY transl_entry, first_pos_transl_entry;
+  IC_PTR_ARRAY_ENTRY ptr_entry, first_pos_ptr_entry;
   guint64 pos_first= (guint64)0;
-  guint64 position= index * sizeof(IC_TRANSLATION_ENTRY);
-  guint64 entry_size= sizeof(IC_TRANSLATION_ENTRY);
-  IC_DYNAMIC_TRANSLATION_INT *dyn_trans=
-    (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
-  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_trans->dyn_array;
+  guint64 position= index * sizeof(IC_PTR_ARRAY_ENTRY);
+  guint64 entry_size= sizeof(IC_PTR_ARRAY_ENTRY);
+  IC_DYNAMIC_PTR_ARRAY_INT *dyn_ptr=
+    (IC_DYNAMIC_PTR_ARRAY_INT*)ext_dyn_ptr;
+  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_ptr->dyn_array;
 
   if (index == (guint64)0)
     return IC_ERROR_INDEX_ZERO_NOT_ALLOWED;
-  if (read_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                               position,
-                               entry_size,
-                               (gchar*)&transl_entry))
+  if (read_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                             position,
+                             entry_size,
+                             (gchar*)&ptr_entry))
   {
     /* Serious error cannot find entry to remove */
     abort();
   }
-  if (transl_entry.object != object)
+  if (ptr_entry.object != object)
   {
     /* Serious error, wrong object where positioned */
     abort();
   }
-  if (read_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                               pos_first,
-                               entry_size,
-                               (gchar*)&transl_entry))
+  if (read_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                             pos_first,
+                             entry_size,
+                             (gchar*)&ptr_entry))
   {
     /* Serious error cannot find entry to remove */
     abort();
   }
-  first_pos_transl_entry= transl_entry;
-  transl_entry.position+= HIGHEST_BIT_SET;
-  if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                                position,
-                                entry_size,
-                                (gchar*)&transl_entry))
+  first_pos_ptr_entry= ptr_entry;
+  ptr_entry.position+= HIGHEST_BIT_SET;
+  if (write_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                              position,
+                              entry_size,
+                              (gchar*)&ptr_entry))
     abort();
-  transl_entry.position= position;
-  if (write_dynamic_translation((IC_DYNAMIC_ARRAY*)dyn_array,
-                                pos_first,
-                                entry_size,
-                                (gchar*)&first_pos_transl_entry))
+  ptr_entry.position= position;
+  if (write_dynamic_ptr_array((IC_DYNAMIC_ARRAY*)dyn_array,
+                              pos_first,
+                              entry_size,
+                              (gchar*)&first_pos_ptr_entry))
     abort();
   return 0;
 }
 
 static void
-free_dynamic_translation(IC_DYNAMIC_TRANSLATION *ext_dyn_trans)
+free_dynamic_ptr_array(IC_DYNAMIC_PTR_ARRAY *ext_dyn_ptr)
 {
-  IC_DYNAMIC_TRANSLATION_INT *dyn_trans=
-    (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
-  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_trans->dyn_array;
+  IC_DYNAMIC_PTR_ARRAY_INT *dyn_ptr=
+    (IC_DYNAMIC_PTR_ARRAY_INT*)ext_dyn_ptr;
+  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_ptr->dyn_array;
 
   free_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array);
-  ic_free((void*)dyn_trans);
+  ic_free((void*)dyn_ptr);
 }
 
 guint64
-get_max_index(IC_DYNAMIC_TRANSLATION *ext_dyn_trans)
+get_max_index(IC_DYNAMIC_PTR_ARRAY *ext_dyn_ptr)
 {
   guint64 size;
-  IC_DYNAMIC_TRANSLATION_INT *dyn_trans=
-    (IC_DYNAMIC_TRANSLATION_INT*)ext_dyn_trans;
-  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_trans->dyn_array;
+  IC_DYNAMIC_PTR_ARRAY_INT *dyn_ptr=
+    (IC_DYNAMIC_PTR_ARRAY_INT*)ext_dyn_ptr;
+  IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_ptr->dyn_array;
 
   size= dyn_array->total_size_in_bytes;
-  return (size / sizeof(IC_TRANSLATION_ENTRY));
+  return (size / sizeof(IC_PTR_ARRAY_ENTRY));
 }
 
-IC_DYNAMIC_TRANSLATION*
-ic_create_dynamic_translation()
+IC_DYNAMIC_PTR_ARRAY*
+ic_create_dynamic_ptr_array()
 {
   IC_DYNAMIC_ARRAY_INT *dyn_array;
-  IC_TRANSLATION_ENTRY transl_entry;
-  IC_DYNAMIC_TRANSLATION_INT *dyn_trans;
+  IC_PTR_ARRAY_ENTRY ptr_entry;
+  IC_DYNAMIC_PTR_ARRAY_INT *dyn_ptr;
 
-  DEBUG_ENTRY("ic_create_dynamic_translation");
+  DEBUG_ENTRY("ic_create_dynamic_ptr_array");
   if (IC_ERROR_INJECT(30) ||
-      !(dyn_trans= (IC_DYNAMIC_TRANSLATION_INT*)ic_calloc(
-                      sizeof(IC_DYNAMIC_TRANSLATION_INT))))
+      !(dyn_ptr= (IC_DYNAMIC_PTR_ARRAY_INT*)ic_calloc(
+                      sizeof(IC_DYNAMIC_PTR_ARRAY_INT))))
     DEBUG_RETURN_PTR(NULL);
   if (!(dyn_array= (IC_DYNAMIC_ARRAY_INT*)ic_create_ordered_dynamic_array()))
   {
-    ic_free((void*)dyn_trans);
+    ic_free((void*)dyn_ptr);
     DEBUG_RETURN_PTR(NULL);
   }
-  transl_entry.position= (guint64)0;
+  ptr_entry.position= (guint64)0;
   if (insert_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array,
-                                    (const gchar*)&transl_entry,
-                                    sizeof(transl_entry)))
+                                    (const gchar*)&ptr_entry,
+                                    sizeof(ptr_entry)))
   {
-    ic_free((void*)dyn_trans);
+    ic_free((void*)dyn_ptr);
     free_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array);
     DEBUG_RETURN_PTR(NULL);
   }
-  dyn_trans->dt_ops.ic_insert_translation_object= insert_translation_object;
-  dyn_trans->dt_ops.ic_remove_translation_object= remove_translation_object;
-  dyn_trans->dt_ops.ic_free_dynamic_translation= free_dynamic_translation;
-  dyn_trans->dt_ops.ic_get_translation_object= get_translation_object;
-  dyn_trans->dt_ops.ic_get_max_index= get_max_index;
-  dyn_trans->dyn_array= dyn_array;
-  DEBUG_RETURN_PTR((IC_DYNAMIC_TRANSLATION*)dyn_trans);
+  dyn_ptr->dpa_ops.ic_insert_ptr= insert_ptr;
+  dyn_ptr->dpa_ops.ic_remove_ptr= remove_ptr;
+  dyn_ptr->dpa_ops.ic_free_dynamic_ptr_array= free_dynamic_ptr_array;
+  dyn_ptr->dpa_ops.ic_get_ptr= get_ptr;
+  dyn_ptr->dpa_ops.ic_get_max_index= get_max_index;
+  dyn_ptr->dyn_array= dyn_array;
+  DEBUG_RETURN_PTR((IC_DYNAMIC_PTR_ARRAY*)dyn_ptr);
 }

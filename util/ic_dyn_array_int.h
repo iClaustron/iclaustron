@@ -70,7 +70,7 @@ struct ic_dynamic_array_int
 };
 typedef struct ic_dynamic_array_int IC_DYNAMIC_ARRAY_INT;
 
-struct ic_translation_entry
+struct ic_ptr_array_entry
 {
   union
   {
@@ -78,12 +78,12 @@ struct ic_translation_entry
     guint64 position;
   };
 };
-typedef struct ic_translation_entry IC_TRANSLATION_ENTRY;
+typedef struct ic_ptr_array_entry IC_PTR_ARRAY_ENTRY;
 
-struct ic_dynamic_translation_int
+struct ic_dynamic_ptr_array_int
 {
-  IC_DYNAMIC_TRANSLATION_OPS dt_ops;
+  IC_DYNAMIC_PTR_ARRAY_OPS dpa_ops;
   IC_DYNAMIC_ARRAY_INT *dyn_array;
 };
-typedef struct ic_dynamic_translation_int IC_DYNAMIC_TRANSLATION_INT;
+typedef struct ic_dynamic_ptr_array_int IC_DYNAMIC_PTR_ARRAY_INT;
 #endif

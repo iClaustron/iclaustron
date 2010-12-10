@@ -165,10 +165,10 @@ ic_init_error_messages()
     "Set/Get connection parameter only supports client node as server side";
   ic_error_str[IC_ERROR_INDEX_ZERO_NOT_ALLOWED - IC_FIRST_ERROR]=
     "Index 0 isn't allowed in dynamic translations";
-  ic_error_str[IC_ERROR_TRANSLATION_INDEX_OUT_OF_BOUND - IC_FIRST_ERROR]=
-    "Index out of bound in dynamic translation";
-  ic_error_str[IC_ERROR_TRANSLATION_INDEX_ERROR - IC_FIRST_ERROR]=
-    "Trying to read non-existent entry in dynamic translation";
+  ic_error_str[IC_ERROR_PTR_ARRAY_INDEX_OUT_OF_BOUND - IC_FIRST_ERROR]=
+    "Index out of bound in dynamic pointer array";
+  ic_error_str[IC_ERROR_PTR_ARRAY_INDEX_ERROR - IC_FIRST_ERROR]=
+    "Trying to read non-existent entry in dynamic pointer array";
   ic_error_str[IC_ERROR_PARSE_CONNECTSTRING - IC_FIRST_ERROR]=
     "Error when parsing connect string";
   ic_error_str[IC_ERROR_TOO_MANY_CS_HOSTS - IC_FIRST_ERROR]=
