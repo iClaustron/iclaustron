@@ -404,10 +404,10 @@ debug_new_connect(IC_INT_CONNECTION *conn)
 #define debug_new_connect(conn)
 #endif
 
-#ifdef HAVE_SSL
 static int
 perform_ssl_connect(IC_INT_CONNECTION *conn)
 {
+#ifdef HAVE_SSL
   int error;
 
   IC_SSL_CONNECTION *ssl_conn= (IC_SSL_CONNECTION*)conn;
@@ -419,6 +419,7 @@ perform_ssl_connect(IC_INT_CONNECTION *conn)
   }
   return 0;
 #else
+  (void)conn;
   return 0;
 #endif
 }

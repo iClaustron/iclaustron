@@ -616,6 +616,26 @@ const gchar *ic_installed_cluster_server_files=
 const gchar *ic_end_str= "end";
 const gchar *ic_receive_config_file_ok_str= "receive config file ok";
 
+/* Messages for the Get CPU info protocol */
+const gchar *ic_get_processor_info_str= "get processor info";
+const gchar *ic_number_of_cpus_str= "number of cpus: ";
+const gchar *ic_number_of_numa_nodes_str= "number of NUMA nodes: ";
+const gchar *ic_number_of_cpus_per_core_str= "number of cpus per core: ";
+const gchar *ic_cpu_str= "cpu ";
+const gchar *ic_cpu_node_str= ", node: ";
+const gchar *ic_core_str= ", core: ";
+
+/* Messages for the Get Memory Information Protocol */
+const gchar *ic_get_memory_info_str= "get memory info";
+const gchar *ic_number_of_mbyte_user_memory_str=
+  "number of MByte user memory: ";
+const gchar *ic_mb_user_memory_str= ", MB user memory: ";
+
+/* Messages for Get Disk Information Protocol */
+const gchar *ic_get_disk_info_str= "get disk info";
+const gchar *ic_dir_str= "dir: ";
+const gchar *ic_disk_space_str= "disk space: ";
+
 const gchar *ic_def_grid_str= "iclaustron";
 const gchar *ic_data_server_program_str= "ndbmtd";
 const gchar *ic_file_server_program_str= "ic_fsd";

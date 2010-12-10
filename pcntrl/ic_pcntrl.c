@@ -1116,7 +1116,7 @@ error:
   Line 1: number of cpus: #cpus
   Line 2: number of NUMA nodes: #nodes
   Line 3: number of cpus per core: #cpus_per_core
-  Line 4 - (3 + #cpus): cpu 0: node: 0, core: 0
+  Line 4 - (3 + #cpus): cpu: 0, node: 0, core: 0
   Line 4 + #cpus: Ok
 
   GET MEMORY INFORMATION PROTOCOL
@@ -1132,6 +1132,21 @@ error:
   Line 2: number of NUMA nodes: #nodes
   Line 3 - (2 + #nodes): node: 0, MB user memory: #MB_user_memory_in_node
   Line 3 + #nodes: Ok
+
+  GET DISK INFORMATION PROTOCOL
+  -----------------------------
+  This protocol provides the ability to ask the iClaustron Process Controller
+  about 
+  Line 1: get disk info
+  Line 2: dir: @directory
+
+  Response:
+  Line 1: dir: @directory
+  Line 2: disk space: #GBytes
+
+  Or:
+  Line 1: dir: @directory
+  Line 2: error string: @error_string
 */
 
 static gpointer
