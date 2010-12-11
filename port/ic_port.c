@@ -1360,3 +1360,12 @@ int ic_get_cpu_info(guint32 *num_cpus,
   *cpu_info= NULL;
   return 0;
 }
+
+int ic_get_mem_info(guint32 *num_numa_nodes,
+                    guint64 *total_memory_size,
+                    IC_MEM_INFO **mem_info)
+{
+  *num_numa_nodes= 0;
+  *total_memory_size= 0;
+  *mem_info= 0;
+}

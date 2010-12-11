@@ -55,6 +55,7 @@ const gchar *ic_get_memory_info_str= "get memory info";
 const gchar *ic_number_of_mbyte_user_memory_str=
   "number of MByte user memory: ";
 const gchar *ic_mb_user_memory_str= ", MB user memory: ";
+const gchar *ic_no_mem_info_available_str= "no memory info available";
 
 /* Messages for Get Disk Information Protocol */
 const gchar *ic_get_disk_info_str= "get disk info";
@@ -1196,7 +1197,7 @@ handle_get_cpu_info(IC_CONNECTION *conn)
                                        (guint64)num_numa_nodes)) ||
       (error= ic_send_with_cr_with_num(conn, ic_number_of_cpus_per_core_str,
                                        (guint64)cpus_per_core)))
-    return error;
+    goto error;
   for (i= 0; i < num_cpus; i++)
   {
     buf_array[0]= ic_cpu_str;
@@ -1211,19 +1212,58 @@ handle_get_cpu_info(IC_CONNECTION *conn)
     buf_array[5]= ic_guint64_str((guint64)cpu_info[i].core_id,
                                  core_num_str,
                                  &len);
-    if ((error= ic_send_with_cr_composed(conn, buf_array, 6)))
-      return error;
+    if ((error= ic_send_with_cr_composed(conn, buf_array, (guint32)6)))
+      goto error;
   }
-  if ((error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+  error= ic_send_empty_line(conn);
+
+error:
+  ic_free((gchar*)cpu_info);
+  return error;
 }
 
 static int
 handle_get_memory_info(IC_CONNECTION *conn)
 {
-  (void)conn;
-  return 0;
+  int error;
+  guint32 num_numa_nodes;
+  guint32 i;
+  guint64 total_memory_size;
+  IC_MEM_INFO *mem_info;
+  const gchar *buf_array[6];
+  gchar cpu_num_str[IC_NUMBER_SIZE];
+  gchar numa_node_str[IC_NUMBER_SIZE];
+  gchar core_num_str[IC_NUMBER_SIZE];
+
+  if ((error= ic_rec_empty_line(conn)))
+    return error;
+
+  if ((error= ic_get_mem_info(&num_numa_nodes,
+                              &total_memory_size,
+                              &mem_info)) ||
+      num_numa_nodes == 0)
+  {
+    if ((error= ic_send_with_cr(conn, ic_no_mem_info_available_str)) ||
+        (error= ic_send_empty_line(conn)))
+      return error;
+    return 0;
+  }
+  if ((error= ic_send_with_cr_with_num(conn,
+                                       ic_number_of_mbyte_user_memory_str,
+                                       (guint64)(total_memory_size/(1024 * 1024)))) ||
+      (error= ic_send_with_cr_with_num(conn, ic_number_of_numa_nodes_str,
+                                       (guint64)num_numa_nodes)))
+    goto error;
+  for (i= 0; i < num_numa_nodes; i++)
+  {
+    if ((error= ic_send_with_cr_composed(conn, buf_array, (guint32)4)))
+      goto error;
+  }
+  error= ic_send_empty_line(conn);
+
+error:
+  ic_free((gchar*)mem_info);
+  return error;
 }
 
 static int

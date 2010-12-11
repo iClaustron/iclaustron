@@ -183,4 +183,15 @@ int ic_get_cpu_info(guint32 *num_cpus,
                     guint32 *num_numa_nodes,
                     guint32 *cpus_per_core,
                     IC_CPU_INFO **cpu_info);
+
+struct ic_mem_info
+{
+  guint32 numa_node_id;
+  guint64 memory_size;
+};
+typedef struct ic_mem_info IC_MEM_INFO;
+
+int ic_get_mem_info(guint32 *num_numa_nodes,
+                    guint64 *total_memory_size,
+                    IC_MEM_INFO **mem_info);
 #endif
