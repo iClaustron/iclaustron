@@ -1054,7 +1054,6 @@ error:
   goes wrong before the entire file transfer is completed.
 
   To aid in this we use a dynamic pointer array.
-
 */
 static int
 handle_copy_cluster_server_files(IC_CONNECTION *conn)
@@ -1067,7 +1066,7 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
   guint32 node_id;
   guint64 num_files= 0;
   IC_STRING file_name;
-  gchar buf[IC_MAX_FILE_NAME_SIZE];
+  gchar file_name_buf[IC_MAX_FILE_NAME_SIZE];
   IC_DYNAMIC_PTR_ARRAY *file_name_array;
 
   if (!(file_name_array= ic_create_dynamic_ptr_array()))
@@ -1085,7 +1084,7 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
 
   /* Create the config.ini file name */
   ic_create_config_file_name(&file_name,
-                             buf,
+                             file_name_buf,
                              NULL,
                              &ic_config_string,
                              0);
@@ -1096,6 +1095,9 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
                                   node_id,
                                   num_lines)))
     goto error_delete_files;
+  if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
+      (error= ic_send_empty_line(conn)))
+    goto error_delete_files;
 
   /* Receive grid_common.ini */
   if ((error= ic_rec_simple_str(conn, ic_receive_grid_common_ini_str)) ||
@@ -1105,7 +1107,7 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
 
   /* Create the grid_common.ini file name */
   ic_create_config_file_name(&file_name,
-                             buf,
+                             file_name_buf,
                              NULL,
                              &ic_grid_common_config_string,
                              0);
@@ -1116,25 +1118,31 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
                                   node_id,
                                   num_lines)))
     goto error_delete_files;
+  if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
+      (error= ic_send_empty_line(conn)))
+    goto error_delete_files;
 
   /* Receive all cluster config files */
   for (i= 0; i < num_clusters; i++)
   {
-    /* TODO: Need to read out config file name from protocol */
-    if ((error= ic_rec_simple_str(conn, ic_receive_cluster_name_ini_str)) ||
+    if ((error= ic_rec_string(conn,
+                              ic_receive_cluster_name_ini_str,
+                              file_name_buf)) ||
         (error= ic_rec_number(conn, ic_number_of_lines_str,
                               &num_lines)))
       goto error_delete_files;
     if ((error= handle_receive_file(conn,
                                     file_name_array,
-                                    file_name.str,
+                                    file_name_buf,
                                     &num_files,
                                     node_id,
                                     num_lines)))
       goto error_delete_files;
+    if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
+        (error= ic_send_empty_line(conn)))
+      goto error_delete_files;
   }
-  if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)))
-    goto error_delete_files;
+  /* Protocol complete and worked ok, clean up dynamic pointer array */
   file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
   return 0;
 
@@ -1303,6 +1311,9 @@ handle_get_disk_info(IC_CONNECTION *conn)
   Response:
   Line 1: receive config file ok
 
+  As usual in the iClaustron Protocol an empty lines indicates end of
+  the communication from one side.
+
   Then the next file is copied with the same protocol but replacing
   config.ini by grid_common.ini.
 
@@ -1310,15 +1321,7 @@ handle_get_disk_info(IC_CONNECTION *conn)
   filename is cluster_name.ini, so e.g. kalle.ini if the name of the
   cluster is kalle.
 
-  Finally when last file have been sent the protocol is:
-  Line 1: installed cluster server files
-  Line 2: end
-
-  Upon receiving the end message the server sends
-  Line 1: installed cluster server files
-  Line 2: Ok
-
-  After receiving this message the server waits for other protocol
+  After receiving the last file the server waits for other protocol
   messages or that the client closes the connection.
 
   GET CPU INFO PROTOCOL
