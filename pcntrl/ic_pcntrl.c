@@ -62,6 +62,7 @@ const gchar *ic_no_mem_info_available_str= "no memory info available";
 const gchar *ic_get_disk_info_str= "get disk info";
 const gchar *ic_dir_str= "dir: ";
 const gchar *ic_disk_space_str= "disk space: ";
+const gchar *ic_no_disk_info_available_str= "no disk info available";
 
 /*
   This program is also used to gather information from local log files as 
@@ -1278,8 +1279,41 @@ error:
 static int
 handle_get_disk_info(IC_CONNECTION *conn)
 {
-  (void)conn;
-  return 0;
+  int error;
+  guint64 disk_space;
+  gchar dir_name_buf[IC_MAX_FILE_NAME_SIZE];
+
+  /* Get directory which we want to analyze how much disk space can be used */
+  if ((error= ic_rec_string(conn, ic_dir_str,
+                            dir_name_buf)) ||
+      (error= ic_rec_empty_line(conn)))
+    return error;
+
+  /* Check disk space now */
+  ic_get_disk_info(dir_name_buf, &disk_space);
+  if (disk_space == 0)
+  {
+    /*
+      Report that info isn't accessible, we don't report any info on why for
+      security reasons. We don't want a user to be able to check the existence
+      of a directory if he doesn't have permission to it.
+    */
+    if ((error= ic_send_with_cr(conn, ic_no_disk_info_available_str)))
+      return error;
+  }
+  else
+  {
+    /* Report disk space found available in this directory */
+    if ((error= ic_send_with_cr_two_strings(conn,
+                                            ic_dir_str,
+                                            dir_name_buf)) ||
+        (error= ic_send_with_cr_with_num(conn,
+                                         ic_disk_space_str,
+                                         disk_space)))
+      return error;
+  }
+  error= ic_send_empty_line(conn);
+  return error;
 }
 
 /*

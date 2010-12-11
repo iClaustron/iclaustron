@@ -1369,3 +1369,10 @@ int ic_get_mem_info(guint32 *num_numa_nodes,
   *total_memory_size= 0;
   *mem_info= 0;
 }
+
+void ic_get_disk_info(gchar *dir_name,
+                      guint64 *disk_space)
+{
+  *disk_space= 0;
+  return;
+}
