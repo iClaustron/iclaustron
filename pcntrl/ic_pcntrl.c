@@ -48,6 +48,7 @@ const gchar *ic_number_of_cpus_per_core_str= "number of cpus per core: ";
 const gchar *ic_cpu_str= "cpu ";
 const gchar *ic_cpu_node_str= ", node: ";
 const gchar *ic_core_str= ", core: ";
+const gchar *ic_no_cpu_info_available_str= "no cpu info available";
 
 /* Messages for the Get Memory Information Protocol */
 const gchar *ic_get_memory_info_str= "get memory info";
@@ -1162,7 +1163,59 @@ error_delete_files:
 static int
 handle_get_cpu_info(IC_CONNECTION *conn)
 {
-  (void)conn;
+  int error;
+  guint32 num_cpus;
+  guint32 num_numa_nodes;
+  guint32 cpus_per_core;
+  guint32 len;
+  guint32 i;
+  IC_CPU_INFO *cpu_info;
+  const gchar *buf_array[6];
+  gchar cpu_num_str[IC_NUMBER_SIZE];
+  gchar numa_node_str[IC_NUMBER_SIZE];
+  gchar core_num_str[IC_NUMBER_SIZE];
+
+  if ((error= ic_rec_empty_line(conn)))
+    return error;
+
+  if ((error= ic_get_cpu_info(&num_cpus,
+                              &num_numa_nodes,
+                              &cpus_per_core,
+                              &cpu_info)) ||
+      num_cpus == 0)
+  {
+    if ((error= ic_send_with_cr(conn, ic_no_cpu_info_available_str)) ||
+        (error= ic_send_empty_line(conn)))
+      return error;
+    return 0;
+  }
+
+  if ((error= ic_send_with_cr_with_num(conn, ic_number_of_cpus_str,
+                                       (guint64)num_cpus)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_number_of_numa_nodes_str,
+                                       (guint64)num_numa_nodes)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_number_of_cpus_per_core_str,
+                                       (guint64)cpus_per_core)))
+    return error;
+  for (i= 0; i < num_cpus; i++)
+  {
+    buf_array[0]= ic_cpu_str;
+    buf_array[1]= ic_guint64_str((guint64)cpu_info[i].cpu_id,
+                                 cpu_num_str,
+                                 &len);
+    buf_array[2]= ic_cpu_node_str;
+    buf_array[3]= ic_guint64_str((guint64)cpu_info[i].numa_node_id,
+                                 numa_node_str,
+                                 &len);
+    buf_array[4]= ic_core_str;
+    buf_array[5]= ic_guint64_str((guint64)cpu_info[i].core_id,
+                                 core_num_str,
+                                 &len);
+    if ((error= ic_send_with_cr_composed(conn, buf_array, 6)))
+      return error;
+  }
+  if ((error= ic_send_empty_line(conn)))
+    return error;
   return 0;
 }
 
@@ -1358,7 +1411,6 @@ handle_get_disk_info(IC_CONNECTION *conn)
   Line 2: number of NUMA nodes: #nodes
   Line 3: number of cpus per core: #cpus_per_core
   Line 4 - (3 + #cpus): cpu: 0, node: 0, core: 0
-  Line 4 + #cpus: Ok
 
   GET MEMORY INFORMATION PROTOCOL
   -------------------------------
@@ -1372,7 +1424,6 @@ handle_get_disk_info(IC_CONNECTION *conn)
   Line 1: number of MByte user memory: #MB_user_memory
   Line 2: number of NUMA nodes: #nodes
   Line 3 - (2 + #nodes): node: 0, MB user memory: #MB_user_memory_in_node
-  Line 3 + #nodes: Ok
 
   GET DISK INFORMATION PROTOCOL
   -----------------------------

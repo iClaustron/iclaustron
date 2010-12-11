@@ -1348,3 +1348,15 @@ void ic_spin_destroy(IC_SPINLOCK *spinlock)
 {
   g_mutex_free(spinlock);
 }
+
+int ic_get_cpu_info(guint32 *num_cpus,
+                    guint32 *num_numa_nodes,
+                    guint32 *cpus_per_core,
+                    IC_CPU_INFO **cpu_info)
+{
+  *num_cpus= 0;
+  *num_numa_nodes= 0;
+  *cpus_per_core= 0;
+  *cpu_info= NULL;
+  return 0;
+}

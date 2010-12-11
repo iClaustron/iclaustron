@@ -170,4 +170,17 @@ void ic_spin_lock(IC_SPINLOCK *spinlock);
 void ic_spin_unlock(IC_SPINLOCK *spinlock);
 IC_SPINLOCK* ic_spinlock_create();
 void ic_spinlock_destroy();
+
+struct ic_cpu_info
+{
+  guint32 cpu_id;
+  guint32 numa_node_id;
+  guint32 core_id;
+};
+typedef struct ic_cpu_info IC_CPU_INFO;
+
+int ic_get_cpu_info(guint32 *num_cpus,
+                    guint32 *num_numa_nodes,
+                    guint32 *cpus_per_core,
+                    IC_CPU_INFO **cpu_info);
 #endif
