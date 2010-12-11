@@ -47,8 +47,11 @@ struct ic_string
   (dest_obj)->is_null_terminated= (src_obj)->is_null_terminated;
 
 /*
- * A few functions to set default directory references to iClaustron
- * directories.
+  A few functions to set default directory references to iClaustron
+  directories.
+ 
+  The calculated directory name will be placed in the first IC_STRING
+  parameter.
 */
 int ic_set_base_dir(IC_STRING *base_dir);
 int ic_set_data_dir(IC_STRING *data_dir);

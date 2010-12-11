@@ -172,6 +172,11 @@ set_default_dir(const gchar *default_dir, IC_STRING *dir,
   }
   error= 0;
 end:
+  if (dir->str)
+  {
+    ic_free(dir->str);
+    IC_INIT_STRING(dir, NULL, 0, TRUE);
+  }
   return error;
 }
 
@@ -194,10 +199,14 @@ ic_add_dir(IC_STRING *dir,
   int error;
 
   if ((error= ic_add_dup_string(dir, dir_name)))
-    return error;
+    goto error;
   if ((error= add_dir_slash(dir)))
-    return error;
+    goto error;
   return 0;
+error:
+  ic_free(dir->str);
+  IC_INIT_STRING(dir, NULL, 0, TRUE);
+  return error;
 }
 
 /*
@@ -242,8 +251,8 @@ ic_set_config_dir(IC_STRING *config_dir,
   {
     memcpy(node_str_buf, "node", 4);
     ic_guint64_str((guint64)my_node_id,
-                             &node_str_buf[4],
-                             NULL);
+                   &node_str_buf[4],
+                   NULL);
     if ((error= ic_add_dir(config_dir, &node_str_buf[0])))
       return error;
   }
@@ -343,13 +352,21 @@ ic_add_string(IC_STRING *dest_str, const gchar *input_str)
 int
 ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
 {
-  guint32 add_len= strlen(add_str);
-  guint32 orig_len= dest_str->len;
-  guint32 new_len= add_len + orig_len;
-  gchar *new_str= ic_malloc(new_len + 1);
+  guint32 add_len, orig_len, new_len;
+  gchar *new_str;
 
+  if (!add_str)
+    return 0;
+  add_len= strlen(add_str);
+  orig_len= dest_str->len;
+  new_len= add_len + orig_len;
+  new_str= (gchar*)ic_malloc(new_len + 1);
   if (new_str == NULL)
+  {
+    ic_free(dest_str->str);
+    IC_INIT_STRING(dest_str, NULL, 0, FALSE);
     return IC_ERROR_MEM_ALLOC;
+  }
   if (orig_len > 0)
     memcpy(new_str, dest_str->str, orig_len);
   memcpy(new_str + orig_len, add_str, add_len);
@@ -368,8 +385,11 @@ ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
                     IC_STRING *in_str)
 {
   gchar *str;
-  guint32 len= dest_str->len + in_str->len;
+  guint32 len;
 
+  if (!in_str)
+    return 0;
+  len= dest_str->len + in_str->len;
   if (!(str= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len + 1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str, dest_str->str, dest_str->len);
@@ -385,6 +405,8 @@ ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
   gchar *start_ptr= dest_str->str+dest_str->len;
   gchar *end_ptr;
 
+  if (!input_str)
+    return;
   memcpy(start_ptr, input_str->str, input_str->len);
   if (dest_str->is_null_terminated)
   {

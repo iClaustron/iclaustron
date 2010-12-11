@@ -29,6 +29,8 @@
 
 /* Messages for copy cluster server files protocol */
 const gchar *ic_copy_cluster_server_files_str= "copy cluster server files";
+const gchar *ic_cluster_server_node_id_str= "cluster server node id: ";
+const gchar *ic_number_of_clusters_str= "number of clusters: ";
 const gchar *ic_receive_config_ini_str= "receive config.ini";
 const gchar *ic_number_of_lines_str= "number of lines: ";
 const gchar *ic_receive_grid_common_ini_str= "receive grid_common.ini";
@@ -86,6 +88,17 @@ const gchar *ic_disk_space_str= "disk space: ";
   the configuration file.
 */
 
+/*
+  TODO: Need to write basic tests for the functions that can be used in this
+        program.
+        1) Create a connection locally in basic test for client and server
+        2) Provide the server part to this function
+        3) Start writing to the interface
+        4) Use error inject to test errors in all sorts of places
+        5) Put the basic test program at the end of this file and build it
+           only when unit tests are to built
+        6) Call unit test program when built for unit tests
+*/
 
 #define REC_PROG_NAME 0
 #define REC_PARAM 1
@@ -967,29 +980,68 @@ error:
                           ic_get_error_message(error));
 }
 
+/*
+  Handle the receive file and write the file to the provided file name.
+  For security reasons this function can only write files into the
+  config directory. We don't want the client to be able to specify the
+  directory since that could be used for too many malicious reasons.
+*/
 static int
 handle_receive_file(IC_CONNECTION *conn,
-                    IC_FILE_HANDLE file_ptr,
+                    IC_DYNAMIC_PTR_ARRAY *file_name_array,
+                    gchar *file_name,
+                    guint64 *num_files,
+                    guint32 node_id,
                     guint32 number_of_lines)
 {
   gchar *read_buf;
   guint32 read_size;
   guint32 i;
   int error;
+  IC_FILE_HANDLE file_ptr;
+  IC_STRING file_str;
 
+  if ((error= ic_set_config_dir(&file_str,
+                                TRUE,
+                                node_id)))
+    return error;
+  if ((error= ic_add_dup_string(&file_str, file_name)))
+    return error;
+
+  /* Record the file name to be able to clean up after an error */
+  if ((error= file_name_array->dpa_ops.ic_insert_ptr(file_name_array,
+                                                     num_files,
+                                                     (void*)file_str.str)))
+  {
+    ic_free(file_str.str);
+    return error;
+  }
+  if ((error= ic_create_file(&file_ptr,
+                             file_str.str)))
+  {
+    /*
+      Clean up since error handling will attempt to delete file. We don't
+      want the file deleted since the error could have been that the file
+      already existed.
+    */
+    ic_free(file_str.str);
+    (*num_files)--;
+    return error;
+  }
   for (i= 0; i < number_of_lines; i++)
   {
-    if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-      return error;
-    /* Write line received to file */
-    if ((error= ic_write_file(file_ptr, read_buf, read_size)))
-      return error;
+    /* Receive line from connection and write line received to file */
+    if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+        (error= ic_write_file(file_ptr, read_buf, read_size)))
+      goto error;
   }
-  if ((error= ic_rec_empty_line(conn)))
-    return error;
-  if ((error= ic_close_file(file_ptr)))
-    return error;
+  if ((error= ic_rec_empty_line(conn)) ||
+      (error= ic_close_file(file_ptr)))
+    goto error;
   return 0;
+error:
+  (void)ic_close_file(file_ptr); /* Ignore error here */
+  return error;
 }
 
 /*
@@ -1002,31 +1054,85 @@ handle_receive_file(IC_CONNECTION *conn,
   goes wrong before the entire file transfer is completed.
 
   To aid in this we use a dynamic pointer array.
+
 */
 static int
 handle_copy_cluster_server_files(IC_CONNECTION *conn)
 {
   int error;
   void *mem_alloc_object;
-  guint32 number_of_lines;
+  guint32 num_lines;
+  guint32 num_clusters;
   guint32 i;
-  guint32 num_files= 0;
-  IC_FILE_HANDLE file_ptr;
+  guint32 node_id;
+  guint64 num_files= 0;
+  IC_STRING file_name;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
   IC_DYNAMIC_PTR_ARRAY *file_name_array;
 
   if (!(file_name_array= ic_create_dynamic_ptr_array()))
     return IC_ERROR_MEM_ALLOC;
 
-  if ((error= ic_rec_simple_str(conn, ic_receive_config_ini_str)) ||
+  /* Receive config.ini */
+  if ((error= ic_rec_number(conn, ic_cluster_server_node_id_str,
+                            &node_id)) ||
+      (error= ic_rec_number(conn, ic_number_of_clusters_str,
+                            &num_clusters)) ||
+      (error= ic_rec_simple_str(conn, ic_receive_config_ini_str)) ||
       (error= ic_rec_number(conn, ic_number_of_lines_str,
-                            &number_of_lines)))
+                            &num_lines)))
     goto error_delete_files;
-  /* Open the file config.ini in the proper place */
-  if ((error= ic_create_file(&file_ptr,
-                             "config.ini"))) /* TODO */
+
+  /* Create the config.ini file name */
+  ic_create_config_file_name(&file_name,
+                             buf,
+                             NULL,
+                             &ic_config_string,
+                             0);
+  if ((error= handle_receive_file(conn,
+                                  file_name_array,
+                                  file_name.str,
+                                  &num_files,
+                                  node_id,
+                                  num_lines)))
     goto error_delete_files;
-  if ((error= handle_receive_file(conn, file_ptr, number_of_lines)))
+
+  /* Receive grid_common.ini */
+  if ((error= ic_rec_simple_str(conn, ic_receive_grid_common_ini_str)) ||
+      (error= ic_rec_number(conn, ic_number_of_lines_str,
+                            &num_lines)))
     goto error_delete_files;
+
+  /* Create the grid_common.ini file name */
+  ic_create_config_file_name(&file_name,
+                             buf,
+                             NULL,
+                             &ic_grid_common_config_string,
+                             0);
+  if ((error= handle_receive_file(conn,
+                                  file_name_array,
+                                  file_name.str,
+                                  &num_files,
+                                  node_id,
+                                  num_lines)))
+    goto error_delete_files;
+
+  /* Receive all cluster config files */
+  for (i= 0; i < num_clusters; i++)
+  {
+    /* TODO: Need to read out config file name from protocol */
+    if ((error= ic_rec_simple_str(conn, ic_receive_cluster_name_ini_str)) ||
+        (error= ic_rec_number(conn, ic_number_of_lines_str,
+                              &num_lines)))
+      goto error_delete_files;
+    if ((error= handle_receive_file(conn,
+                                    file_name_array,
+                                    file_name.str,
+                                    &num_files,
+                                    node_id,
+                                    num_lines)))
+      goto error_delete_files;
+  }
   if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)))
     goto error_delete_files;
   file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
@@ -1188,9 +1294,11 @@ handle_get_disk_info(IC_CONNECTION *conn)
   INSTALL CONFIGURATION FILES PROTOCOL
   ------------------------------------
   Line 1: copy cluster server files
-  Line 2: receive config.ini
-  Line 3: number of lines: #lines
-  Line 4 - Line x: Contains the data from the config.ini file
+  Line 2: cluster server node id: #node
+  Line 3: number of clusters: #clusters
+  Line 4: receive config.ini
+  Line 5: number of lines: #lines
+  Line 6 - Line x: Contains the data from the config.ini file
 
   Response:
   Line 1: receive config file ok

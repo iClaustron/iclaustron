@@ -45,6 +45,11 @@ IC_DYNAMIC_ARRAY* ic_create_ordered_dynamic_array();
 
 struct ic_dynamic_ptr_array;
 typedef struct ic_dynamic_ptr_array IC_DYNAMIC_PTR_ARRAY;
+
+/*
+  First index will be 1 and it will continue to increase as long as there is
+  only ic_insert_ptr calls made and no ic_remove_ptr calls.
+*/
 struct ic_dynamic_ptr_array_ops
 {
   int (*ic_get_ptr) (IC_DYNAMIC_PTR_ARRAY *dyn_ptr,
