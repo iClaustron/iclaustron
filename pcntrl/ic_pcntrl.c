@@ -54,6 +54,7 @@ const gchar *ic_no_cpu_info_available_str= "no cpu info available";
 const gchar *ic_get_memory_info_str= "get memory info";
 const gchar *ic_number_of_mbyte_user_memory_str=
   "number of MByte user memory: ";
+const gchar *ic_mem_node_str= "node: ";
 const gchar *ic_mb_user_memory_str= ", MB user memory: ";
 const gchar *ic_no_mem_info_available_str= "no memory info available";
 
@@ -1228,12 +1229,12 @@ handle_get_memory_info(IC_CONNECTION *conn)
   int error;
   guint32 num_numa_nodes;
   guint32 i;
+  guint32 len;
   guint64 total_memory_size;
   IC_MEM_INFO *mem_info;
-  const gchar *buf_array[6];
-  gchar cpu_num_str[IC_NUMBER_SIZE];
+  const gchar *buf_array[4];
   gchar numa_node_str[IC_NUMBER_SIZE];
-  gchar core_num_str[IC_NUMBER_SIZE];
+  gchar memory_size_str[IC_NUMBER_SIZE];
 
   if ((error= ic_rec_empty_line(conn)))
     return error;
@@ -1256,6 +1257,14 @@ handle_get_memory_info(IC_CONNECTION *conn)
     goto error;
   for (i= 0; i < num_numa_nodes; i++)
   {
+    buf_array[0]= ic_mem_node_str;
+    buf_array[1]= ic_guint64_str((guint64)mem_info[i].numa_node_id,
+                                 numa_node_str,
+                                 &len);
+    buf_array[2]= ic_mb_user_memory_str;
+    buf_array[3]= ic_guint64_str(mem_info[i].memory_size,
+                                 memory_size_str,
+                                 &len);
     if ((error= ic_send_with_cr_composed(conn, buf_array, (guint32)4)))
       goto error;
   }
