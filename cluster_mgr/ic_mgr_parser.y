@@ -23,11 +23,13 @@
 #include <ic_apic.h>
 #include <../cluster_mgr/ic_clmgr_int.h>
 
-int yylex(void *parse_data, void *scanner);
+int ic_lex(void *parse_data, void *scanner);
 
 #define YYMALLOC ic_malloc
 #define YYFREE ic_free
 
+#define yylex ic_mgr_lex
+#define yyerror ic_mgr_parse_error
 %}
 %union{
   guint64 int_val;

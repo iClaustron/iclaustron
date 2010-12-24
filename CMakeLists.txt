@@ -341,10 +341,11 @@ add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
             util/ic_threadpool_int.h util/ic_threadpool.c
             util/ic_debug.c util/ic_err.c util/ic_string.c
             util/ic_bitmap.c util/ic_config_reader.c
-            util/ic_parse_connectstring.c
+            util/ic_parse_connectstring.c util/ic_lex_support.c
             include/ic_hashtable_itr.h include/ic_hashtable_private.h
             include/ic_base64.h include/ic_config_reader.h
-            include/ic_protocol_support.h include/ic_sock_buf.h)
+            include/ic_protocol_support.h include/ic_sock_buf.h
+            include/ic_lex_support.h)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
@@ -433,7 +434,7 @@ target_link_libraries(ic_repd ic_port ic_util ic_api
 install(TARGETS ic_repd DESTINATION bin)
 
 #Create target for the building of the parser of the Cluster Manager
-SET(ClusterManagerSource cluster_mgr/ic_clmgr.c cluster_mgr/ic_lex.c)
+SET(ClusterManagerSource cluster_mgr/ic_clmgr.c cluster_mgr/ic_mgr_lex.c)
 
 if (WIN32)
   ADD_CUSTOM_COMMAND(
@@ -442,25 +443,25 @@ if (WIN32)
 endif (WIN32)
 
 ADD_CUSTOM_COMMAND(
-  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
+  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_mgr_parser.y
   COMMAND ${BISON_EXECUTABLE}
   ARGS -d
-       -y ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_parser.y
-       -o ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
-  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
-          ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h)
+       -y ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_mgr_parser.y
+       -o ${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.c
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.c
+          ${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.h)
 
-#Add ic_parser.c to source files
+#Add ic_mgr_parser.c to source files
 SET(ClusterManagerSource ${ClusterManagerSource}
-    ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
-    ${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
+    ${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.c
+    ${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_clmgr_int.h)
-#Mark ic_parser.c as a generated file
-SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.c
+#Mark ic_mgr_parser.c as a generated file
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.c
                             GENERATED)
-SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_parser.h
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.h
                             GENERATED)
-#Include binary directory to ensure ic_parser.c is included as well
+#Include binary directory to ensure ic_mgr_parser.c is included as well
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(ic_clmgrd ${ClusterManagerSource})

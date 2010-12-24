@@ -1059,7 +1059,7 @@ run_handle_new_connection(gpointer data)
       parse_inx+= 2;
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Ready to execute command:\n%s", parse_buf));
-      ic_call_parser(parse_buf, parse_inx, &parse_data);
+      ic_mgr_call_parser(parse_buf, parse_inx, &parse_data);
       if (parse_data.exit_flag)
         goto exit;
       ic_execute(&parse_data);
@@ -1216,7 +1216,7 @@ int main(int argc,
                                   ic_apid_entries, glob_process_name,
            "- iClaustron Cluster Manager", TRUE)))
     goto end;
-  if (ic_find_hash_function())
+  if (ic_mgr_find_hash_function())
   {
     ic_printf("Failed to setup a proper hash function");
     return 1;

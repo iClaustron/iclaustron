@@ -39,4 +39,5 @@ noinst_HEADERS    = ic_base64.h \
                     ic_config_reader.h \
                     ic_sock_buf.h \
                     ic_hashtable_itr.h \
-		    ic_hashtable_private.h
+		    ic_hashtable_private.h \
+		    ic_lex_support.h

@@ -17,10 +17,13 @@
 ## This directory is used to build the iClaustron Bootstrap program
 ##
 
-bin_PROGRAMS = ic_bootstrap
-ic_bootstrap_SOURCES = ic_bootstrap.c
+BUILT_SOURCES          = ic_boot_parser.h
+bin_PROGRAMS           = ic_bootstrap
+ic_bootstrap_SOURCES   = ic_bootstrap.c ic_boot_parser.y ic_boot_lex.c
 ic_bootstrap_LDADD = $(LDADD) \
 			../port/libic_port.la \
 			../util/libic_util.la \
 			../comm/libic_comm.la \
 			../api/libic_api.la
+AM_YFLAGS              = -d --verbose
+EXTRA_DIST             = ic_bootstrap_int.h

@@ -590,3 +590,17 @@ ic_convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
   }
   return TRUE;
 }
+
+void
+ic_convert_to_uppercase(gchar *out_str, gchar *in_str, guint32 str_len)
+{
+  guint32 i;
+
+  for (i= 0; i < str_len; i++)
+  {
+    if (islower((int)in_str[i]))
+      out_str[i]= in_str[i] - ('a' - 'A');
+    else
+      out_str[i]= in_str[i];
+  }
+}

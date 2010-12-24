@@ -17,9 +17,9 @@
 ## This directory is used to build the iClaustron Cluster Manager
 ##
 
-BUILT_SOURCES          = ic_parser.h
+BUILT_SOURCES          = ic_mgr_parser.h
 bin_PROGRAMS           = ic_clmgrd
-ic_clmgrd_SOURCES       = ic_clmgr.c ic_parser.y ic_lex.c
+ic_clmgrd_SOURCES       = ic_clmgr.c ic_mgr_parser.y ic_mgr_lex.c
 ic_clmgrd_LDADD = $(LDADD) \
 			../port/libic_port.la \
 			../util/libic_util.la \

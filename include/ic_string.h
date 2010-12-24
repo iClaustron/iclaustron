@@ -121,6 +121,9 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char);
   ic_convert_file_to_dir
     Converts a filename string to a directory name. Searches for the last
     '\' in the filename ('/' on Windows).
+
+  ic_convert_to_uppercase
+    Converts a C string to all UPPERCASE.
 */
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr);
 void ic_add_string(IC_STRING *dest_str, const gchar *input_str);
@@ -144,6 +147,7 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                  IC_STRING *out_str, IC_STRING *in_str);
 int ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
 gchar *ic_convert_file_to_dir(gchar *buf, gchar *file_name);
+void ic_convert_to_uppercase(gchar *out_str, gchar *in_str, guint32 str_len);
 
 /*
   ic_set_up_ic_string()

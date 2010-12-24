@@ -16,11 +16,11 @@
 #ifndef IC_CLMGR_INT_H
 #define IC_CLMGR_INT_H
 
-void ic_call_parser(gchar *parse_string,
-                    guint32 str_len,
-                    void *parse_data);
+void ic_mgr_call_parser(gchar *parse_string,
+                        guint32 str_len,
+                        void *parse_data);
 
-gboolean ic_find_hash_function();
+gboolean ic_mgr_find_hash_function();
 
 enum ic_parse_commands
 {
@@ -102,7 +102,7 @@ struct ic_parse_data
 typedef struct ic_parse_data IC_PARSE_DATA;
 
 /*#define YY_EXTRA_TYPE IC_PARSE_DATA */
-void yyerror(void *parse_data, char *s);
+void ic_mgr_parse_error(void *parse_data, char *s);
 int yyparse(IC_PARSE_DATA *parse_data);
 
 #define PARSE_DATA ((IC_PARSE_DATA*)parse_data)

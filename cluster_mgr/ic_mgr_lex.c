@@ -23,14 +23,9 @@
 #include <ic_protocol_support.h>
 #include <ic_apic.h>
 #include <../cluster_mgr/ic_clmgr_int.h>
-#include "ic_parser.h"
+#include "ic_mgr_parser.h"
 #include <ctype.h>
-
-typedef struct ic_parse_symbols
-{
-  gchar *symbol_str;
-  guint32 symbol_id;
-} IC_PARSE_SYMBOLS;
+#include <ic_lex_support.h>
 
 static IC_PARSE_SYMBOLS parse_symbols[]=
 {
@@ -85,80 +80,10 @@ static IC_PARSE_SYMBOLS parse_symbols[]=
   { NULL,           0}
 };
 
-#define SIZE_MAP_SYMBOL 4096
 static guint16 id_map_symbol[SIZE_MAP_SYMBOL];
 
 static int hash_multiplier= 1024;
 static int hash_divider= 64;
-
-static int
-lex_hash(gchar *str, guint32 str_len)
-{
-  guint32 hash_val= 0;
-  guint32 i;
-
-  for (i= 0; i < str_len; i++)
-  {
-     hash_val+= (guint32)str[i];
-     hash_val+= (hash_val * hash_multiplier);
-     hash_val^= (hash_val / hash_divider);
-  }
-  hash_val+= (hash_val * 8);
-  hash_val^= (hash_val / 2048);
-  hash_val+= (hash_val * 32);
-  return hash_val & (SIZE_MAP_SYMBOL - 1);
-}
-
-gboolean
-ic_find_hash_function()
-{
-  int loop_count= 0;
-  gchar *sym_string;
-  guint32 id, i;
-  gboolean failed= TRUE;
-  
-  while (loop_count++ < 10000 && failed)
-  {
-    if (loop_count % 3 == 0)
-      hash_multiplier+= 2;
-    if (loop_count % 3 == 1)
-      hash_divider+= 2;
-    if (loop_count % 3 == 2)
-      hash_multiplier+= 2;
-    ic_zero(id_map_symbol, sizeof(guint16) * SIZE_MAP_SYMBOL);
-    i= 0;
-    failed= FALSE;
-    while ((sym_string= parse_symbols[i].symbol_str))
-    {
-      id= lex_hash(parse_symbols[i].symbol_str,
-                   strlen(parse_symbols[i].symbol_str));
-      if (id_map_symbol[id] == 0)
-      {
-        id_map_symbol[id]= (guint16)parse_symbols[i].symbol_id;
-      }
-      else
-      {
-        failed= TRUE;
-      }
-      i++;
-    }
-  }
-  return failed;
-}
-
-static void
-convert_to_uppercase(gchar *out_str, gchar *in_str, guint32 str_len)
-{
-  guint32 i;
-
-  for (i= 0; i < str_len; i++)
-  {
-    if (islower((int)in_str[i]))
-      out_str[i]= in_str[i] - ('a' - 'A');
-    else
-      out_str[i]= in_str[i];
-  }
-}
 
 static int
 found_identifier(YYSTYPE *yylval,
@@ -174,8 +99,8 @@ found_identifier(YYSTYPE *yylval,
   int id, symbol_id;
 
   /* Check if it is a symbol first */
-  convert_to_uppercase(symbol_buf, str, str_len);
-  id= lex_hash(symbol_buf, str_len);
+  ic_convert_to_uppercase(symbol_buf, str, str_len);
+  id= ic_lex_hash(symbol_buf, str_len, hash_multiplier, hash_divider);
   symbol_id= id_map_symbol[id];
   if (symbol_id != SIZE_MAP_SYMBOL &&
       memcmp(parse_symbols->symbol_str, symbol_buf, str_len))
@@ -187,10 +112,7 @@ found_identifier(YYSTYPE *yylval,
   if (!(ic_str_ptr=
         (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
       !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, str_len+1)))
-  {
-    yyerror((void*)parse_data, "Memory allocation failure");
     return IC_ERROR_MEM_ALLOC;
-  }
   memcpy(buf_ptr, str, str_len);
   buf_ptr[str_len]= 0;
   IC_INIT_STRING(ic_str_ptr, buf_ptr, str_len, TRUE);
@@ -198,29 +120,8 @@ found_identifier(YYSTYPE *yylval,
   return 0;
 }
 
-static int
-found_num(YYSTYPE *yylval,
-          IC_PARSE_DATA *parse_data,
-          gchar *str,
-          guint32 str_len)
-{
-  IC_STRING int_str;
-  guint64 int_val;
-  int error;
-
-  (void)parse_data;
-  IC_INIT_STRING(&int_str, str, str_len, FALSE);
-  if ((error= ic_conv_config_str_to_int(&int_val, &int_str)))
-  {
-    yyerror((void*)parse_data, "Integer Overflow");
-    return error;
-  }
-  yylval->int_val= int_val;
-  return 0;
-}
-
 void
-yyerror(void *ext_parse_data,
+ic_mgr_parse_error(void *ext_parse_data,
         char *s)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
@@ -233,37 +134,10 @@ yyerror(void *ext_parse_data,
     parse_data->exit_flag= TRUE;
 }
 
-static inline int
-is_ignore(int parse_char)
-{
-  if (parse_char == ' ' ||
-      parse_char == '\t' ||
-      parse_char == '\n')
-    return TRUE;
-  return FALSE;
-}
-
-static inline int
-is_end_character(int parse_char)
-{
-  if (parse_char == ';')
-    return TRUE;
-  return FALSE;
-}
-
-static inline int
-is_end_symbol_character(int parse_char)
-{
-  if (is_ignore(parse_char) ||
-      is_end_character(parse_char))
-    return TRUE;
-  return FALSE;
-}
-
 #define get_next_char() parse_buf[current_pos++]
 int
-yylex(YYSTYPE *yylval,
-      IC_PARSE_DATA *parse_data)
+ic_mgr_lex(YYSTYPE *yylval,
+           IC_PARSE_DATA *parse_data)
 {
   register guint32 current_pos= parse_data->parse_current_pos;
   register gchar *parse_buf= parse_data->parse_buf;
@@ -273,10 +147,11 @@ yylex(YYSTYPE *yylval,
   gboolean version_char_found= FALSE;
   int ret_sym= 0;
   int symbol_value= 0;
+  guint64 int_val;
 
   for (;;)
   {
-    parse_char= parse_buf[current_pos++];
+    parse_char= get_next_char();
     /* Skip space, tab and newline characters */
     if (!is_ignore(parse_char))
       break;
@@ -294,17 +169,20 @@ yylex(YYSTYPE *yylval,
   {
     for (;;)
     {
-      parse_char= parse_buf[current_pos++];
+      parse_char= get_next_char();
       if (!isdigit(parse_char))
         break;
     }
     if (!is_end_symbol_character(parse_char))
       goto number_error;
-    if (found_num(yylval,
-                  parse_data,
-                  &parse_buf[start_pos],
-                  (current_pos - start_pos)))
+    if (ic_found_num(&int_val,
+                     &parse_buf[start_pos],
+                     (current_pos - start_pos)))
+    {
+      ic_mgr_parse_error((void*)parse_data, "Integer Overflow");
       goto error;
+    }
+    yylval->int_val= int_val;
     ret_sym= INTEGER_SYM;
     goto end;
   }
@@ -314,7 +192,7 @@ yylex(YYSTYPE *yylval,
       upper_found= TRUE;
     for (;;)
     {
-      parse_char= parse_buf[current_pos++];
+      parse_char= get_next_char();
       if (isupper(parse_char))
         upper_found= TRUE;
       if (parse_char == '-' ||
@@ -325,6 +203,7 @@ yylex(YYSTYPE *yylval,
       }
       if (parse_char == '_' ||
           islower(parse_char) ||
+          isupper(parse_char) ||
           isdigit(parse_char))
         continue;
       /* Check for correct end of symbol character */
@@ -337,7 +216,10 @@ yylex(YYSTYPE *yylval,
                            &parse_buf[start_pos],
                            (current_pos - start_pos),
                            &symbol_value))
+      {
+        ic_mgr_parse_error((void*)parse_data, "Memory allocation failure");
         goto error;
+      }
       if (version_char_found)
       {
         ic_assert(!symbol_value);
@@ -365,24 +247,28 @@ error:
   return 0;
 
 number_error:
-  yyerror((void*)parse_data, "Incorrect character at end of number, lex error");
+  ic_mgr_parse_error((void*)parse_data,
+                     "Incorrect character at end of number, lex error");
   return 0;
 
 identifier_error:
-  yyerror((void*)parse_data, "Incorrect character at end of identifier, lex error");
+  ic_mgr_parse_error((void*)parse_data,
+                     "Incorrect character at end of identifier, lex error");
   return 0;
 
 lex_error:
-  yyerror((void*)parse_data, "Incorrect character, lex error");
+  ic_mgr_parse_error((void*)parse_data,
+                     "Incorrect character, lex error");
   return 0;
 
 version_identifier_error:
-  yyerror((void*)parse_data, "Upper case in version identifier not allowed");
+  ic_mgr_parse_error((void*)parse_data,
+          "Upper case in version identifier not allowed");
   return 0;
 }
 
 void
-ic_call_parser(gchar *parse_string,
+ic_mgr_call_parser(gchar *parse_string,
                guint32 str_len,
                void *ext_parse_data)
 {
@@ -392,7 +278,7 @@ ic_call_parser(gchar *parse_string,
 
   if (parse_string[str_len - 1] != ';')
   {
-    yyerror(ext_parse_data, "Missing ; at end of command");
+    ic_mgr_parse_error(ext_parse_data, "Missing ; at end of command");
     parse_data->exit_flag= TRUE;
   }
   parse_data->parse_buf= parse_string;
@@ -401,4 +287,13 @@ ic_call_parser(gchar *parse_string,
 
   yyparse(parse_data);
   DEBUG_RETURN_EMPTY;
+}
+
+int
+ic_mgr_find_hash_function()
+{
+  return ic_find_hash_function(parse_symbols,
+                               id_map_symbol,
+                               &hash_multiplier,
+                               &hash_divider);
 }
