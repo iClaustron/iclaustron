@@ -32,7 +32,6 @@ int main(int argc, char *argv[])
   int ret_code;
   IC_API_CONFIG_SERVER *apic= NULL;
   IC_APID_GLOBAL *apid_global= NULL;
-  gchar error_str[ERROR_MESSAGE_SIZE];
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state= NULL;
 

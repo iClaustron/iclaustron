@@ -410,10 +410,41 @@ target_link_libraries(ic_csd ic_port ic_util ic_api
 install(TARGETS ic_csd DESTINATION bin)
 
 #Build Bootstrap binary
-add_executable(ic_bootstrap bootstrap/ic_bootstrap.c)
-target_link_libraries(ic_bootstrap ic_port ic_util ic_api
+#Create target for the building of the parser of the bootstrapper
+SET(BootstrapSource cluster_mgr/ic_bootstrap.c cluster_mgr/ic_boot_lex.c)
+
+if (WIN32)
+  ADD_CUSTOM_COMMAND(
+    COMMAND copy ${BISON_PATH}/m4.exe ${CMAKE_CURRENT_BINARY_DIR}
+    OUTPUT ${BISON_PATH}/m4.exe)
+endif (WIN32)
+
+ADD_CUSTOM_COMMAND(
+  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/ic_boot_parser.y
+  COMMAND ${BISON_EXECUTABLE}
+  ARGS -d
+       -y ${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/ic_boot_parser.y
+       -o ${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.c
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.c
+          ${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.h)
+
+#Add ic_boot_parser.c to source files
+SET(BootstrapSource ${BootstrapSource}
+    ${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.c
+    ${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/ic_boot_int.h)
+#Mark ic_boot_parser.c as a generated file
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.c
+                            GENERATED)
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.h
+                            GENERATED)
+#Include binary directory to ensure ic_boot_parser.c is included as well
+INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
+
+add_executable(ic_bootstrap ${BootstrapSource})
+target_link_libraries(ic_bootstrap ic_port ic_util comm ic_api
                       ${ICLAUSTRON_LIBS})
-install(TARGETS ic_bootstrap DESTINATION bin)
+install (TARGETS ic_bootstrap DESTINATION bin)
 
 #Build Configurator binary
 add_executable(ic_configurator cfg/ic_configurator.c)
@@ -435,12 +466,6 @@ install(TARGETS ic_repd DESTINATION bin)
 
 #Create target for the building of the parser of the Cluster Manager
 SET(ClusterManagerSource cluster_mgr/ic_clmgr.c cluster_mgr/ic_mgr_lex.c)
-
-if (WIN32)
-  ADD_CUSTOM_COMMAND(
-    COMMAND copy ${BISON_PATH}/m4.exe ${CMAKE_CURRENT_BINARY_DIR}
-    OUTPUT ${BISON_PATH}/m4.exe)
-endif (WIN32)
 
 ADD_CUSTOM_COMMAND(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cluster_mgr/ic_mgr_parser.y

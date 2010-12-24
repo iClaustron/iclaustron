@@ -19,6 +19,7 @@
 #include <ic_port.h>
 #include <ic_mc.h>
 #include <ic_string.h>
+#include <ctype.h>
 
 IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};

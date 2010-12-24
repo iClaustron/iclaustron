@@ -22,8 +22,8 @@
 #include <ic_connection.h>
 #include <ic_protocol_support.h>
 #include <ic_apic.h>
-#include <../cluster_mgr/ic_clmgr_int.h>
-#include "ic_mgr_parser.h"
+#include <../bootstrap/ic_boot_int.h>
+#include "ic_boot_parser.h"
 #include <ctype.h>
 #include <ic_lex_support.h>
 
@@ -121,8 +121,8 @@ found_identifier(YYSTYPE *yylval,
 }
 
 void
-ic_mgr_parse_error(void *ext_parse_data,
-        char *s)
+ic_boot_parse_error(void *ext_parse_data,
+                    char *s)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
   IC_CONNECTION *conn= parse_data->conn;
@@ -136,8 +136,8 @@ ic_mgr_parse_error(void *ext_parse_data,
 
 #define get_next_char() parse_buf[current_pos++]
 int
-ic_mgr_lex(YYSTYPE *yylval,
-           IC_PARSE_DATA *parse_data)
+ic_boot_lex(YYSTYPE *yylval,
+            IC_PARSE_DATA *parse_data)
 {
   register guint32 current_pos= parse_data->parse_current_pos;
   register gchar *parse_buf= parse_data->parse_buf;
@@ -179,7 +179,7 @@ ic_mgr_lex(YYSTYPE *yylval,
                      &parse_buf[start_pos],
                      (current_pos - start_pos)))
     {
-      ic_mgr_parse_error((void*)parse_data, "Integer Overflow");
+      ic_boot_parse_error((void*)parse_data, "Integer Overflow");
       goto error;
     }
     yylval->int_val= int_val;
@@ -217,7 +217,7 @@ ic_mgr_lex(YYSTYPE *yylval,
                            (current_pos - start_pos),
                            &symbol_value))
       {
-        ic_mgr_parse_error((void*)parse_data, "Memory allocation failure");
+        ic_boot_parse_error((void*)parse_data, "Memory allocation failure");
         goto error;
       }
       if (version_char_found)
@@ -247,38 +247,38 @@ error:
   return 0;
 
 number_error:
-  ic_mgr_parse_error((void*)parse_data,
-                     "Incorrect character at end of number, lex error");
+  ic_boot_parse_error((void*)parse_data,
+                      "Incorrect character at end of number, lex error");
   return 0;
 
 identifier_error:
-  ic_mgr_parse_error((void*)parse_data,
-                     "Incorrect character at end of identifier, lex error");
+  ic_boot_parse_error((void*)parse_data,
+                      "Incorrect character at end of identifier, lex error");
   return 0;
 
 lex_error:
-  ic_mgr_parse_error((void*)parse_data,
-                     "Incorrect character, lex error");
+  ic_boot_parse_error((void*)parse_data,
+                      "Incorrect character, lex error");
   return 0;
 
 version_identifier_error:
-  ic_mgr_parse_error((void*)parse_data,
-          "Upper case in version identifier not allowed");
+  ic_boot_parse_error((void*)parse_data,
+                      "Upper case in version identifier not allowed");
   return 0;
 }
 
 void
-ic_mgr_call_parser(gchar *parse_string,
-               guint32 str_len,
-               void *ext_parse_data)
+ic_boot_call_parser(gchar *parse_string,
+                    guint32 str_len,
+                    void *ext_parse_data)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
-  DEBUG_ENTRY("ic_call_parser");
+  DEBUG_ENTRY("ic_boot_call_parser");
   DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
 
   if (parse_string[str_len - 1] != ';')
   {
-    ic_mgr_parse_error(ext_parse_data, "Missing ; at end of command");
+    ic_boot_parse_error(ext_parse_data, "Missing ; at end of command");
     parse_data->exit_flag= TRUE;
   }
   parse_data->parse_buf= parse_string;
@@ -290,7 +290,7 @@ ic_mgr_call_parser(gchar *parse_string,
 }
 
 int
-ic_mgr_find_hash_function()
+ic_boot_find_hash_function()
 {
   return ic_find_hash_function(parse_symbols,
                                id_map_symbol,

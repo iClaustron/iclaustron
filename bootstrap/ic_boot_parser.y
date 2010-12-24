@@ -21,15 +21,15 @@
 #include <ic_string.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
-#include <../cluster_mgr/ic_clmgr_int.h>
+#include <../bootstrap/ic_boot_int.h>
 
-int ic_lex(void *parse_data, void *scanner);
+int ic_boot_lex(void *parse_data, void *scanner);
 
 #define YYMALLOC ic_malloc
 #define YYFREE ic_free
 
-#define yylex ic_mgr_lex
-#define yyerror ic_mgr_parse_error
+#define yylex ic_boot_lex
+#define yyerror ic_boot_parse_error
 %}
 %union{
   guint64 int_val;

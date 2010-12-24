@@ -23,7 +23,7 @@
 #include <ic_apic.h>
 #include <../cluster_mgr/ic_clmgr_int.h>
 
-int ic_lex(void *parse_data, void *scanner);
+int ic_mgr_lex(void *parse_data, void *scanner);
 
 #define YYMALLOC ic_malloc
 #define YYFREE ic_free
