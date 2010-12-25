@@ -22,10 +22,10 @@
 #include <ic_connection.h>
 #include <ic_protocol_support.h>
 #include <ic_apic.h>
+#include <ic_lex_support.h>
 #include <../cluster_mgr/ic_clmgr_int.h>
 #include "ic_mgr_parser.h"
 #include <ctype.h>
-#include <ic_lex_support.h>
 
 static IC_PARSE_SYMBOLS parse_symbols[]=
 {
@@ -87,36 +87,26 @@ static int hash_divider= 64;
 
 static int
 found_identifier(YYSTYPE *yylval,
-                 IC_PARSE_DATA *parse_data,
+                 IC_LEX_DATA *lex_data,
                  gchar *str,
                  guint32 str_len,
                  int *symbol_value)
 {
+  int error;
   IC_STRING *ic_str_ptr;
-  IC_MEMORY_CONTAINER *mc_ptr= parse_data->mc_ptr;
-  gchar *buf_ptr;
-  gchar symbol_buf[1024];
-  int id, symbol_id;
 
-  /* Check if it is a symbol first */
-  ic_convert_to_uppercase(symbol_buf, str, str_len);
-  id= ic_lex_hash(symbol_buf, str_len, hash_multiplier, hash_divider);
-  symbol_id= id_map_symbol[id];
-  if (symbol_id != SIZE_MAP_SYMBOL &&
-      memcmp(parse_symbols->symbol_str, symbol_buf, str_len))
+  *symbol_value= 0;
+  if ((error= ic_found_identifier(lex_data,
+                                  parse_symbols,
+                                  &ic_str_ptr,
+                                  str,
+                                  str_len,
+                                  symbol_value)))
+    return error;
+  if ((*symbol_value) == 0)
   {
-    *symbol_value= symbol_id;
-    return 0;
+    yylval->ic_str= ic_str_ptr;
   }
-
-  if (!(ic_str_ptr=
-        (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
-      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, str_len+1)))
-    return IC_ERROR_MEM_ALLOC;
-  memcpy(buf_ptr, str, str_len);
-  buf_ptr[str_len]= 0;
-  IC_INIT_STRING(ic_str_ptr, buf_ptr, str_len, TRUE);
-  yylval->ic_str= ic_str_ptr;
   return 0;
 }
 
@@ -139,8 +129,9 @@ int
 ic_mgr_lex(YYSTYPE *yylval,
            IC_PARSE_DATA *parse_data)
 {
-  register guint32 current_pos= parse_data->parse_current_pos;
-  register gchar *parse_buf= parse_data->parse_buf;
+  IC_LEX_DATA *lex_data= (IC_LEX_DATA*)parse_data;
+  register guint32 current_pos= lex_data->parse_current_pos;
+  register gchar *parse_buf= lex_data->parse_buf;
   register int parse_char;
   guint32 start_pos;
   gboolean upper_found= FALSE;
@@ -153,12 +144,12 @@ ic_mgr_lex(YYSTYPE *yylval,
   {
     parse_char= get_next_char();
     /* Skip space, tab and newline characters */
-    if (!is_ignore(parse_char))
+    if (!ic_is_ignore(parse_char))
       break;
-    ic_assert(current_pos < parse_data->parse_str_len);
+    ic_assert(current_pos < lex_data->parse_str_len);
   }
 
-  if (is_end_character(parse_char))
+  if (ic_is_end_character(parse_char))
   {
     ret_sym= END_SYM;
     goto end;
@@ -173,7 +164,7 @@ ic_mgr_lex(YYSTYPE *yylval,
       if (!isdigit(parse_char))
         break;
     }
-    if (!is_end_symbol_character(parse_char))
+    if (!ic_is_end_symbol_character(parse_char))
       goto number_error;
     if (ic_found_num(&int_val,
                      &parse_buf[start_pos],
@@ -207,12 +198,12 @@ ic_mgr_lex(YYSTYPE *yylval,
           isdigit(parse_char))
         continue;
       /* Check for correct end of symbol character */
-      if (!is_end_symbol_character(parse_char))
+      if (!ic_is_end_symbol_character(parse_char))
         goto identifier_error;
       if (upper_found && version_char_found)
         goto version_identifier_error;
       if (found_identifier(yylval,
-                           parse_data,
+                           (IC_LEX_DATA*)parse_data,
                            &parse_buf[start_pos],
                            (current_pos - start_pos),
                            &symbol_value))
@@ -240,7 +231,7 @@ ic_mgr_lex(YYSTYPE *yylval,
     goto lex_error;
 
 end:
-  parse_data->parse_current_pos= current_pos;  
+  lex_data->parse_current_pos= current_pos;  
   return ret_sym;
 
 error:
@@ -273,6 +264,7 @@ ic_mgr_call_parser(gchar *parse_string,
                void *ext_parse_data)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
+  IC_LEX_DATA *lex_data= (IC_LEX_DATA*)ext_parse_data;
   DEBUG_ENTRY("ic_call_parser");
   DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
 
@@ -281,9 +273,12 @@ ic_mgr_call_parser(gchar *parse_string,
     ic_mgr_parse_error(ext_parse_data, "Missing ; at end of command");
     parse_data->exit_flag= TRUE;
   }
-  parse_data->parse_buf= parse_string;
-  parse_data->parse_current_pos= 0;
-  parse_data->parse_str_len= str_len;
+  lex_data->parse_buf= parse_string;
+  lex_data->parse_current_pos= 0;
+  lex_data->parse_str_len= str_len;
+  lex_data->hash_multiplier= hash_multiplier;
+  lex_data->hash_divider= hash_divider;
+  lex_data->symbol_map= id_map_symbol;
 
   yyparse(parse_data);
   DEBUG_RETURN_EMPTY;

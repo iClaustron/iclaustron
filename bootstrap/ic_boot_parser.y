@@ -21,6 +21,7 @@
 #include <ic_string.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
+#include <ic_lex_support.h>
 #include <../bootstrap/ic_boot_int.h>
 
 int ic_boot_lex(void *parse_data, void *scanner);
@@ -80,7 +81,7 @@ any_command:
 prepare_cluster_server_command:
     PREPARE_SYM CLUSTER_SYM SERVER_SYM
     {
-      PARSE_DATA->command= IC_PREPARE_CLUSTER_SERVER;
+      PARSE_DATA->command= IC_PREPARE_CLUSTER_SERVER_CMD;
       PARSE_DATA->cs_index= PARSE_DATA->next_cs_index;
       PARSE_DATA->next_cs_index++;
     }
@@ -91,25 +92,25 @@ prepare_cluster_server_command:
 send_command:
     SEND_SYM FILES_SYM
     {
-      PARSE_DATA->command= IC_SEND_FILES;
+      PARSE_DATA->command= IC_SEND_FILES_CMD;
     }
 
 start_cluster_servers_command:
     START_SYM CLUSTER_SYM SERVERS_SYM
     {
-      PARSE_DATA->command= IC_START_CLUSTER_SERVERS;
+      PARSE_DATA->command= IC_START_CLUSTER_SERVERS_CMD;
     }
 
 verify_command:
     VERIFY_SYM CLUSTER_SYM SERVERS_SYM
     {
-      PARSER_DATA->command= IC_VERIFY_CLUSTER_SERVERS;
+      PARSE_DATA->command= IC_VERIFY_CLUSTER_SERVERS_CMD;
     }
 
 start_cluster_managers_command:
     START_SYM CLUSTER_SYM MANAGERS_SYM
     {
-      PARSE_DATA->command= IC_START_CLUSTER_MANAGERS;
+      PARSE_DATA->command= IC_START_CLUSTER_MANAGERS_CMD;
     }
 
 host:

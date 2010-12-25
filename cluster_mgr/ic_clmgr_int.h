@@ -58,12 +58,8 @@ struct ic_parse_data
     These variables are initialised before
     call to parser and only used by lexer.
   */
-  gchar *parse_buf;
-  guint32 parse_current_pos;
-  guint32 parse_str_len;
+  IC_LEX_DATA *lex_data;
 
-  /* Memory container for parser/lexer */
-  IC_MEMORY_CONTAINER *mc_ptr;
   /* Configuration of the grid of clusters */
   IC_API_CONFIG_SERVER *apic;
   /* Command sent by user */

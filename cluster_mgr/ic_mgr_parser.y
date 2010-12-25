@@ -21,6 +21,7 @@
 #include <ic_string.h>
 #include <ic_connection.h>
 #include <ic_apic.h>
+#include <ic_lex_support.h>
 #include <../cluster_mgr/ic_clmgr_int.h>
 
 int ic_mgr_lex(void *parse_data, void *scanner);

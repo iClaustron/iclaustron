@@ -14,14 +14,16 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #include <ic_base_header.h>
+#include <ic_err.h>
 #include <ic_string.h>
+#include <ic_mc.h>
 #include <ic_lex_support.h>
 
-int
-ic_lex_hash(gchar *str,
-            guint32 str_len,
-            int hash_multiplier,
-            int hash_divider)
+static int
+lex_hash(gchar *str,
+         guint32 str_len,
+         int hash_multiplier,
+         int hash_divider)
 {
   guint32 hash_val= 0;
   guint32 i;
@@ -64,10 +66,10 @@ ic_find_hash_function(IC_PARSE_SYMBOLS *parse_symbols,
     failed= FALSE;
     while ((sym_string= parse_symbols[i].symbol_str))
     {
-      id= ic_lex_hash(parse_symbols[i].symbol_str,
-                      strlen(parse_symbols[i].symbol_str),
-                      loc_hash_multiplier,
-                      loc_hash_divider);
+      id= lex_hash(parse_symbols[i].symbol_str,
+                   strlen(parse_symbols[i].symbol_str),
+                   loc_hash_multiplier,
+                   loc_hash_divider);
       if (symbol_map[id] == 0)
       {
         symbol_map[id]= (IC_MAP_SYMBOL_TYPE)parse_symbols[i].symbol_id;
@@ -82,6 +84,45 @@ ic_find_hash_function(IC_PARSE_SYMBOLS *parse_symbols,
   *hash_multiplier= loc_hash_multiplier;
   *hash_divider= loc_hash_divider;
   return failed;
+}
+
+int
+ic_found_identifier(IC_LEX_DATA *lex_data,
+                    IC_PARSE_SYMBOLS *parse_symbols,
+                    IC_STRING **ic_str_ptr,
+                    gchar *str,
+                    guint32 str_len,
+                    int *symbol_value)
+{
+  IC_STRING *loc_ic_str_ptr;
+  IC_MEMORY_CONTAINER *mc_ptr= lex_data->mc_ptr;
+  gchar *buf_ptr;
+  gchar symbol_buf[1024];
+  int id, symbol_id;
+
+  /* Check if it is a symbol first */
+  ic_convert_to_uppercase(symbol_buf, str, str_len);
+  id= lex_hash(symbol_buf,
+               str_len,
+               lex_data->hash_multiplier,
+               lex_data->hash_divider);
+  symbol_id= lex_data->symbol_map[id];
+  if (symbol_id != SIZE_MAP_SYMBOL &&
+      memcmp(parse_symbols->symbol_str, symbol_buf, str_len))
+  {
+    *symbol_value= symbol_id;
+    return 0;
+  }
+
+  if (!(loc_ic_str_ptr=
+        (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
+      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, str_len+1)))
+    return IC_ERROR_MEM_ALLOC;
+  memcpy(buf_ptr, str, str_len);
+  buf_ptr[str_len]= 0;
+  IC_INIT_STRING(loc_ic_str_ptr, buf_ptr, str_len, TRUE);
+  *ic_str_ptr= loc_ic_str_ptr;
+  return 0;
 }
 
 int

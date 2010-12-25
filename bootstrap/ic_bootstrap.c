@@ -24,6 +24,8 @@
 #include <ic_connection.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
+#include <ic_lex_support.h>
+#include "ic_boot_int.h"
 
 static const gchar *glob_process_name= "ic_bootstrap";
 

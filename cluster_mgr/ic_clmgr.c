@@ -25,6 +25,7 @@
 #include <ic_protocol_support.h>
 #include <ic_parse_connectstring.h>
 #include <ic_apid.h>
+#include <ic_lex_support.h>
 #include "ic_clmgr_int.h"
 
 /* Option variables */
@@ -90,7 +91,9 @@ IC_STRING dest_str;
   number_ptr= ic_guint64_str((guint64)number, number_buf, &len);
   IC_INIT_STRING(&number_str, number_ptr, len, TRUE);
   IC_INIT_STRING(&dest_str, (gchar*)param_str, strlen(param_str), TRUE);
-  if (ic_mc_add_ic_string(parse_data->mc_ptr, &dest_str, &number_str))
+  if (ic_mc_add_ic_string(parse_data->lex_data->mc_ptr,
+                          &dest_str,
+                          &number_str))
     return NULL;
   return dest_str.str;
 }
@@ -104,7 +107,9 @@ add_param_string(IC_PARSE_DATA *parse_data, const gchar *param_str,
 
   IC_INIT_STRING(&dest_str, (gchar*)param_str, strlen(param_str), TRUE);
   IC_INIT_STRING(&value_str, param_value, strlen(param_value), TRUE);
-  if (ic_mc_add_ic_string(parse_data->mc_ptr, &dest_str, &value_str))
+  if (ic_mc_add_ic_string(parse_data->lex_data->mc_ptr,
+                          &dest_str,
+                          &value_str))
     return NULL;
   return dest_str.str;
 }
@@ -155,7 +160,9 @@ add_connectstring(IC_PARSE_DATA *parse_data, const gchar *param_str,
         IC_INIT_STRING(&number_str, number_ptr, len, TRUE);
         ic_add_ic_string(&host_str, &number_str);
       }
-      if (ic_mc_add_ic_string(parse_data->mc_ptr, &dest_str, &host_str))
+      if (ic_mc_add_ic_string(parse_data->lex_data->mc_ptr,
+                              &dest_str,
+                              &host_str))
         return NULL;
       found++;
     }
@@ -1045,7 +1052,7 @@ run_handle_new_connection(gpointer data)
     ic_print_error(IC_ERROR_MEM_ALLOC);
     goto error;
   }
-  parse_data.mc_ptr= mc_ptr;
+  parse_data.lex_data->mc_ptr= mc_ptr;
   parse_data.apic= apic;
   parse_data.conn= conn;
   parse_data.current_cluster_id= IC_MAX_UINT32;
