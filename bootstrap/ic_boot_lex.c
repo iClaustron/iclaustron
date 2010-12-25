@@ -29,54 +29,21 @@
 
 static IC_PARSE_SYMBOLS parse_symbols[]=
 {
-  { "AS",           AS_SYM },
-  { "ALL",          ALL_SYM },
-  { "BACKUP",       BACKUP_SYM },
   { "CLUSTER",      CLUSTER_SYM },
-  { "CLUSTERS",     CLUSTERS_SYM },
-  { "CLUSTER_LOG",  CLUSTER_LOG_SYM },
-  { "CONFIG",       CONFIG_SYM },
-  { "CONNECTIONS",  CONNECTIONS_SYM },
-  { "DATA",         DATA_SYM },
-  { "DIE",          DIE_SYM },
-  { "DISPLAY",      DISPLAY_SYM },
-  { "FILE",         FILE_SYM },
-  { "FROM",         FROM_SYM },
-  { "GROUP",        GROUP_SYM },
-  { "ICLAUSTRON",   ICLAUSTRON_SYM },
-  { "INITIAL",      INITIAL_SYM },
-  { "KILL",         KILL_SYM },
-  { "LIST",         LIST_SYM },
-  { "LISTEN",       LISTEN_SYM },
-  { "MANAGER",      MANAGER_SYM },
-  { "MEMORY",       MEMORY_SYM },
-  { "MOVE",         MOVE_SYM },
-  { "NDB",          NDB_SYM },
-  { "NODE",         NODE_SYM },
-  { "NODEGROUP",    NODEGROUP_SYM },
-  { "NODEGROUPS",   NODEGROUPS_SYM },
-  { "RESTORE",      RESTORE_SYM },
-  { "PERFORM",      PERFORM_SYM },
-  { "REPLICATION",  REPLICATION_SYM },
-  { "RESTART",      RESTART_SYM },
-  { "ROLLING",      ROLLING_SYM },
-  { "SEEN",         SEEN_SYM },
+  { "CS_INTERNAL_PORT", CS_INTERNAL_PORT_SYM },
+  { "=",            EQUAL_SYM },
+  { "FILES",        FILES_SYM },
+  { "HOST",         HOST_SYM },
+  { "MANAGERS",     MANAGERS_SYM },
+  { "NODE_ID",      NODE_ID_SYM },
+  { "PCNTRL_HOST",  PCNTRL_HOST_SYM },
+  { "PCNTRL_PORT",  PCNTRL_PORT_SYM },
+  { "PREPARE",      PREPARE_SYM },
+  { "SEND",         SEND_SYM },
   { "SERVER",       SERVER_SYM },
-  { "SET",          SET_SYM },
-  { "SHOW",         SHOW_SYM },
-  { "SQL",          SQL_SYM },
+  { "SERVERS",      SERVERS_SYM },
   { "START",        START_SYM },
-  { "STATUS",       STATUS_SYM },
-  { "STATS",        STATS_SYM },
-  { "STATVARS",     STATVARS_SYM },
-  { "STAT_LEVEL",   STAT_LEVEL_SYM },
-  { "STOP",         STOP_SYM },
-  { "TO",           TO_SYM },
-  { "TOP",          TOP_SYM },
-  { "UPGRADE",      UPGRADE_SYM },
-  { "USE",          USE_SYM },
-  { "VARIABLE",     VARIABLE_SYM },
-  { "VERSION",      VERSION_SYM },
+  { "VERIFY",       VERIFY_SYM },
   { NULL,           0}
 };
 
@@ -143,9 +110,8 @@ ic_boot_lex(YYSTYPE *yylval,
   register gchar *parse_buf= parse_data->parse_buf;
   register int parse_char;
   guint32 start_pos;
-  gboolean upper_found= FALSE;
-  gboolean version_char_found= FALSE;
   int ret_sym= 0;
+  gboolean dot_found;
   int symbol_value= 0;
   guint64 int_val;
 
@@ -167,14 +133,22 @@ ic_boot_lex(YYSTYPE *yylval,
   start_pos= current_pos;
   if (isdigit(parse_char))
   {
+    dot_found= FALSE;
     for (;;)
     {
       parse_char= get_next_char();
-      if (!isdigit(parse_char))
+      if (parse_char == '.')
+        dot_found= TRUE;
+      else if (!isdigit(parse_char))
         break;
     }
     if (!is_end_symbol_character(parse_char))
       goto number_error;
+    if (dot_found)
+    {
+      ret_sym= IDENTIFIER_SYM;
+      goto end;
+    }
     if (ic_found_num(&int_val,
                      &parse_buf[start_pos],
                      (current_pos - start_pos)))
@@ -188,20 +162,12 @@ ic_boot_lex(YYSTYPE *yylval,
   }
   else if (isalpha(parse_char))
   {
-    if (isupper(parse_char))
-      upper_found= TRUE;
     for (;;)
     {
       parse_char= get_next_char();
-      if (isupper(parse_char))
-        upper_found= TRUE;
-      if (parse_char == '-' ||
-          parse_char == '.')
-      {
-        version_char_found= TRUE;
-        continue;
-      }
       if (parse_char == '_' ||
+          parse_char == '.' ||
+          parse_char == '-' ||
           islower(parse_char) ||
           isupper(parse_char) ||
           isdigit(parse_char))
@@ -235,6 +201,18 @@ ic_boot_lex(YYSTYPE *yylval,
         goto end;
       }
     } 
+  }
+  else if (parse_char == '=')
+  {
+    parse_char= get_next_char();
+    /*
+      Equal signs always need something after it, no rule has this as the
+      last symbol
+    */
+    if (!ic_is_ignore(parse_char))
+      goto identifier_error;
+    ret_sym= EQUAL_SYM;
+    goto end;
   }
   else
     goto lex_error;

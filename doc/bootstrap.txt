@@ -91,22 +91,23 @@ So in the case of 3 Cluster Servers running on
 172.168.1.22
 172.168.1.23
 we need to execute the following commands in the ic_bootstrap program.
-START CLUSTER SERVER HOST=172.168.1.21;
-START CLUSTER SERVER HOST=172.168.1.22;
-START CLUSTER SERVER HOST=172.168.1.23;
+PREPARE CLUSTER SERVER HOST=172.168.1.21;
+PREPARE CLUSTER SERVER HOST=172.168.1.22;
+PREPARE CLUSTER SERVER HOST=172.168.1.23;
 SEND FILES;
-RUN;
+START CLUSTER SERVERS;
 
-The START CLUSTER SERVER commands are not performed immediately.  They are
+The PREPARE CLUSTER SERVER commands are not performed immediately.  They are
 registered as the Cluster Servers to start.
 
 The command SEND FILES will copy the configuration files from the directory
 where the ic_bootstrap program retrieves them to the proper directories in
 the Cluster Server machines where the Cluster Server expects to find them.
 
-When receiving the RUN command the ic_bootstrap program will send the start
-commands to the iClaustron Process Controller running on those machines.
-There are a couple of parameters that are silently set here.
+When receiving the START CLUSTER SERVERS command the ic_bootstrap program
+will send the start commands to the iClaustron Process Controller running on
+those machines.  There are a couple of parameters that are silently set here.
+
 1. PCNTRL_HOST is set to HOST, it is possible that the Cluster Server should
 use a hostname which is different from the hostname used by the Process
 Controller. In this case one can set PCNTRL_HOST on the same line.
@@ -141,11 +142,11 @@ e.g. to start a cluster manager configured to be node id 4.
 At this point the bootstrap program has completed.
 
 So all in all in this case the command file would contain the commands:
-START CLUSTER SERVER HOST=172.168.1.21;
-START CLUSTER SERVER HOST=172.168.1.22;
-START CLUSTER SERVER HOST=172.168.1.23;
+PREPARE CLUSTER SERVER HOST=172.168.1.21;
+PREPARE CLUSTER SERVER HOST=172.168.1.22;
+PREPARE CLUSTER SERVER HOST=172.168.1.23;
 SEND FILES;
-RUN;
+START CLUSTER SERVERS;
 VERIFY CLUSTER SERVERS;
 START CLUSTER MANAGERS;
 
