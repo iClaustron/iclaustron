@@ -1,4 +1,4 @@
-## Copyright (C) 2007-2009 iClaustron AB
+## Copyright (C) 2007-2011 iClaustron AB
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation; version 2 of the License.
@@ -40,4 +40,5 @@ noinst_HEADERS    = ic_base64.h \
                     ic_sock_buf.h \
                     ic_hashtable_itr.h \
 		    ic_hashtable_private.h \
-		    ic_lex_support.h
+		    ic_lex_support.h \
+                    ic_readline.h

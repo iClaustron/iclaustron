@@ -1,3 +1,5 @@
+Copyright (C) 2009-2011 iClaustron AB. All Rights Reserved.
+
 max_number_of_trace_files:
 Each time the kernel node crashes an entry in the error log is
 produced and a trace file is produced. There is a preset number

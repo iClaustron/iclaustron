@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 iClaustron AB
+/* Copyright (C) 2010-2011 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -31,16 +31,24 @@ static const gchar *glob_process_name= "ic_bootstrap";
 
 int main(int argc, char *argv[])
 {
-  int ret_code;
+  int ret_code= 0;
   IC_API_CONFIG_SERVER *apic= NULL;
   IC_APID_GLOBAL *apid_global= NULL;
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state= NULL;
 
+  if (ic_boot_find_hash_function())
+  {
+    ic_printf("Failed to set-up a proper hash function");
+    return 1;
+  }
+
   if ((ret_code= ic_start_program(argc, argv, ic_apid_entries, NULL,
                                   glob_process_name,
             "- iClaustron Bootstrap program", TRUE)))
     goto end;
+  
+
 end:
   ic_stop_apid_program(ret_code,
                        err_str,

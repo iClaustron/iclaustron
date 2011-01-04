@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 iClaustron AB
+/* Copyright (C) 2007-2011 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -18,11 +18,9 @@
 #include <ic_debug.h>
 #include <ic_port.h>
 #include <ic_string.h>
+#include <ic_readline.h>
 #include <ic_connection.h>
 #include <ic_protocol_support.h>
-#ifdef HAVE_READLINE
-#include <readline/readline.h>
-#endif
 
 static const gchar *glob_process_name= "ic_cclient";
 static gchar *glob_server_ip= "127.0.0.1";
@@ -67,72 +65,12 @@ error:
   DEBUG_RETURN_INT(ret_code);
 }
 
-static int
-read_one_line(IC_STRING *out_str)
-{
-#ifdef HAVE_LIBREADLINE
-  IC_STRING line_str;
-  int ret_value;
-
-  line_str.str= readline(ic_prompt);
-  if (!line_str.str)
-    return 1;
-  line_str.len= 2048;
-  ic_set_up_ic_string(&line_str);
-  if (!line_str.is_null_terminated)
-  {
-    ic_free(line_str.str);
-    return 1;
-  }
-  if (line_str.len)
-    add_history(line_str.str);
-  ret_value= ic_strdup(out_str, &line_str);
-  ic_free(line_str.str);
-  return ret_value;
-#else
-  IC_STRING line_str;
-  int ret_value;
-  gchar line[2048];
-
-  ic_printf("%s", ic_prompt);
-  line_str.str= fgets(line, sizeof(line), stdin);
-  if (!line_str.str)
-    return 1;
-  line_str.len= 2048;
-  ic_set_up_ic_string(&line_str);
-  if (!line_str.is_null_terminated)
-    return 1;
-  if (line_str.str[line_str.len - 1] == CARRIAGE_RETURN)
-  {
-    line_str.str[line_str.len - 1]= NULL_BYTE;
-    line_str.len--;
-  }
-  ret_value= ic_strdup(out_str, &line_str);
-  return ret_value;
-#endif
-}
-
-static gboolean
-check_last_line(IC_STRING *ic_str)
-{
-  if (ic_str->str[ic_str->len - 1] == ';')
-    return TRUE;
-  return FALSE;
-}
-
 static gchar *help_str[] =
 {
   "help",
   NULL,
 };
 
-static void
-output_help(void)
-{
-  gchar **loc_help_str= help_str;
-  for ( ; *loc_help_str ; loc_help_str++)
-    ic_printf("%s\n", *loc_help_str);
-}
 static int
 command_interpreter(IC_CONNECTION *conn)
 {
@@ -157,7 +95,7 @@ command_interpreter(IC_CONNECTION *conn)
         lines--;
         goto error;
       }
-      if ((error= read_one_line(line_ptr)))
+      if ((error= ic_read_one_line(ic_prompt, line_ptr)))
       {
         ic_print_error(error);
         DEBUG_RETURN_INT(error);
@@ -170,7 +108,7 @@ command_interpreter(IC_CONNECTION *conn)
       }
       IC_COPY_STRING(line_ptrs[lines], line_ptr);
       lines++;
-    } while (!check_last_line(line_ptr));
+    } while (!ic_check_last_line(line_ptr));
     if (lines == 1 &&
         ((ic_cmp_null_term_str("quit;", line_ptrs[0])) ||
          (ic_cmp_null_term_str("exit;", line_ptrs[0])) ||
@@ -180,7 +118,7 @@ command_interpreter(IC_CONNECTION *conn)
       break;
     }
     if (lines == 1 && (ic_cmp_null_term_str("help;", line_ptrs[0])))
-      output_help();
+      ic_output_help(help_str);
     else if ((error= execute_command(conn, &line_ptrs[0], lines)))
     {
       ic_print_error(error);
@@ -240,17 +178,13 @@ int main(int argc, char *argv[])
                                   glob_process_name,
            "- iClaustron Command Client", TRUE)))
     return ret_code;
-#ifdef HAVE_LIBREADLINE
-  using_history();
-  stifle_history(glob_history_size);
-#endif
+
+  ic_init_readline(glob_history_size);
   if ((ret_code= connect_cluster_mgr(&conn)))
     goto error;
   ret_code= command_interpreter(conn);
   conn->conn_op.ic_free_connection(conn);
-#ifdef HAVE_LIBREADLINE
-  clear_history();
-#endif
+  ic_close_readline();
   ic_end();
   return ret_code;
 

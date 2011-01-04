@@ -22,7 +22,7 @@ libic_util_la_SOURCES = ic_util.c ic_hashtable.c ic_hashtable_itr.c \
                         ic_dyn_array.c ic_mc.c ic_bitmap.c ic_debug.c \
 			ic_err.c ic_string.c ic_config_reader.c \
 			ic_threadpool.c ic_parse_connectstring.c \
-			ic_lex_support.c
+			ic_lex_support.c ic_readline.c
 
 libic_util_la_LIBADD = $(LDADD) \
 			../port/libic_port.la

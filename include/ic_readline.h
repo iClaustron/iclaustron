@@ -13,13 +13,13 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#ifndef IC_BASE64_H
-#define IC_BASE64_H
-/*
-  Methods to encode and decode base64 data
-*/
-int ic_base64_encode(guint8 **dest, guint32 *dest_len,
-                     const guint8 *src, guint32 src_len);
-int ic_base64_decode(guint8 *dest, guint32 *dest_len,
-                     const guint8 *src, guint32 src_len);
+#ifndef IC_READLINE_H
+#define IC_READLINE_H
+
+int ic_read_one_line(gchar *prompt, IC_STRING *out_str);
+void ic_init_readline(guint32 history_size);
+void ic_close_readline();
+
+gboolean ic_check_last_line(IC_STRING *ic_str);
+void ic_output_help(gchar **help_str);
 #endif
