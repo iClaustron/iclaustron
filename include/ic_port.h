@@ -99,7 +99,8 @@ int ic_read_file(IC_FILE_HANDLE file_ptr,
                  size_t size,
                  guint64 *len);
 int ic_delete_file(const gchar *file_name);
-int ic_get_file_contents(const gchar *file, gchar **file_content,
+int ic_get_file_contents(const gchar *file,
+                         gchar **file_content,
                          guint64 *file_size);
 
 /* Error routines */

@@ -32,7 +32,7 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
   line_str.str= readline(prompt);
   if (!line_str.str)
     return 1;
-  line_str.len= 2048;
+  line_str.len= COMMAND_READ_BUF_SIZE;
   ic_set_up_ic_string(&line_str);
   if (!line_str.is_null_terminated)
   {
@@ -47,13 +47,13 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
 #else
   IC_STRING line_str;
   int ret_value;
-  gchar line[2048];
+  gchar line[COMMAND_READ_BUF_SIZE];
 
   ic_printf("%s", prompt);
   line_str.str= fgets(line, sizeof(line), stdin);
   if (!line_str.str)
     return 1;
-  line_str.len= 2048;
+  line_str.len= COMMAND_READ_BUF_SIZE;
   ic_set_up_ic_string(&line_str);
   if (!line_str.is_null_terminated)
     return 1;

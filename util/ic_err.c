@@ -32,7 +32,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7090
+#define IC_LAST_ERROR 7091
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -239,6 +239,8 @@ ic_init_error_messages()
     "Configuration has two nodes using the same host + port pair";
   ic_error_str[IC_ERROR_CS_STARTED_WITH_WRONG_NODEID - IC_FIRST_ERROR]=
     "The Cluster Server was started with the wrong nodeid";
+  ic_error_str[IC_ERROR_COMMAND_TOO_LONG - IC_FIRST_ERROR]=
+    "Command was too long";
   DEBUG_RETURN_EMPTY;
 }
 

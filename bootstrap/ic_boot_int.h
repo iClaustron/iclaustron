@@ -44,8 +44,6 @@ struct ic_parse_data
 
   /* Command sent by user */
   IC_PARSE_COMMANDS command;
-  /* Representation of connection to command client */
-  IC_CONNECTION *conn;
   /* Flag for parser and executer to flag exit */
   gboolean exit_flag;
 

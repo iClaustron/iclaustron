@@ -1061,8 +1061,8 @@ run_handle_new_connection(gpointer data)
     if (read_size == 0)
     {
       init_parse_data(&parse_data);
-      parse_buf[parse_inx]= 0;
-      parse_buf[parse_inx+1]= 0;
+      parse_buf[parse_inx]= NULL_BYTE;
+      parse_buf[parse_inx+1]= NULL_BYTE;
       parse_inx+= 2;
       DEBUG_PRINT(PROGRAM_LEVEL,
         ("Ready to execute command:\n%s", parse_buf));
@@ -1195,7 +1195,7 @@ set_up_server_connection(IC_CONNECTION **conn)
   DEBUG_RETURN_INT(0);
 }
 
-static GOptionEntry entries[] = 
+static GOptionEntry entries[]= 
 {
   { "server_name", 0, 0, G_OPTION_ARG_STRING,
      &glob_cluster_mgr_ip,

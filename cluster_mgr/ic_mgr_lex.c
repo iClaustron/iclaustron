@@ -260,15 +260,15 @@ version_identifier_error:
 
 void
 ic_mgr_call_parser(gchar *parse_string,
-               guint32 str_len,
-               void *ext_parse_data)
+                   guint32 str_len,
+                   void *ext_parse_data)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
   IC_LEX_DATA *lex_data= (IC_LEX_DATA*)ext_parse_data;
   DEBUG_ENTRY("ic_call_parser");
   DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
 
-  if (parse_string[str_len - 1] != ';')
+  if (parse_string[str_len - 1] != CMD_SEPARATOR)
   {
     ic_mgr_parse_error(ext_parse_data, "Missing ; at end of command");
     parse_data->exit_flag= TRUE;

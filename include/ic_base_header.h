@@ -197,6 +197,7 @@ typedef struct ic_iovec IC_IOVEC;
 #define CARRIAGE_RETURN (gchar)10
 #define LINE_FEED (gchar)13
 #define NULL_BYTE (gchar)0
+#define CMD_SEPARATOR (gchar)';'
 
 #if defined(HAVE_MEMSET)
 #define bzero(buf, bytes) ((void) memset(buf, 0, bytes))
@@ -230,6 +231,12 @@ typedef struct ic_iovec IC_IOVEC;
 #define IC_DIFF(a,b) (IC_MAX(a,b) - IC_MIN(a,b))
 
 /*
+  Macros to assist in generating optimized code.
+*/
+#define ic_likely(a) a
+#define ic_unlikely(a) a
+
+/*
   HEADER MODULE: iClaustron Initialise and End Functions
   ------------------------------------------------------
   This function is used by all iClaustron programs to read program parameters
@@ -237,9 +244,12 @@ typedef struct ic_iovec IC_IOVEC;
   shared by all iClaustron programs. ic_end is used at the end of each
   iClaustron program.
 */
-int ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+int ic_start_program(int argc,
+                     gchar *argv[],
+                     GOptionEntry entries[],
                      GOptionEntry add_entries[],
                      const gchar *program_name,
-                     gchar *start_text, gboolean use_config);
+                     gchar *start_text,
+                     gboolean use_config);
 void ic_end();
 #endif

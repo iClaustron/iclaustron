@@ -57,13 +57,10 @@ ic_boot_parse_error(void *ext_parse_data,
                     char *s)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
-  IC_CONNECTION *conn= parse_data->conn;
   gchar buf[1024];
 
-  g_snprintf(buf, 1024, "Error: %s", s);
-  if (ic_send_with_cr(conn, buf) ||
-      ic_send_with_cr(conn, ic_empty_string))
-    parse_data->exit_flag= TRUE;
+  ic_printf(buf, 1024, "Error: %s", s);
+  parse_data->exit_flag= TRUE;
 }
 
 static int
@@ -233,7 +230,7 @@ ic_boot_call_parser(gchar *parse_string,
   DEBUG_ENTRY("ic_boot_call_parser");
   DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
 
-  if (parse_string[str_len - 1] != ';')
+  if (parse_string[str_len - 1] != CMD_SEPARATOR)
   {
     ic_boot_parse_error(ext_parse_data, "Missing ; at end of command");
     parse_data->exit_flag= TRUE;
