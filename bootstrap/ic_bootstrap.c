@@ -39,15 +39,66 @@ static GOptionEntry entries[]=
 };
 
 static void
-boot_execute(IC_PARSE_DATA *parse_data)
+ic_prepare_cluster_server_cmd(IC_PARSE_DATA *parse_data)
 {
   (void)parse_data;
 }
 
 static void
-init_parse_data(IC_PARSE_DATA *parse_data)
+ic_send_files_cmd(IC_PARSE_DATA *parse_data)
 {
   (void)parse_data;
+}
+
+static void
+ic_start_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
+{
+  (void)parse_data;
+}
+
+static void
+ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
+{
+  (void)parse_data;
+}
+
+static void
+ic_verify_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
+{
+  (void)parse_data;
+}
+
+static void
+boot_execute(IC_PARSE_DATA *parse_data)
+{
+  switch (parse_data->command)
+  {
+    case IC_PREPARE_CLUSTER_SERVER_CMD:
+      ic_prepare_cluster_server_cmd(parse_data);
+      return;
+    case IC_SEND_FILES_CMD:
+      ic_send_files_cmd(parse_data);
+      return;
+    case IC_START_CLUSTER_SERVERS_CMD:
+      ic_start_cluster_servers_cmd(parse_data);
+      return;
+    case IC_START_CLUSTER_MANAGERS_CMD:
+      ic_start_cluster_managers_cmd(parse_data);
+      return;
+    case IC_VERIFY_CLUSTER_SERVERS_CMD:
+      ic_verify_cluster_servers_cmd(parse_data);
+      return;
+    default:
+      ic_printf("No such command");
+      parse_data->exit_flag= TRUE;
+      return;
+  }
+}
+
+static void
+init_parse_data(IC_PARSE_DATA *parse_data)
+{
+  parse_data->command= IC_NO_SUCH_CMD;
 }
 
 static void

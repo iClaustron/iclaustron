@@ -929,82 +929,82 @@ ic_use_iclaustron_version_cmd(IC_PARSE_DATA *parse_data)
 }
 
 static void
-ic_execute(IC_PARSE_DATA *parse_data)
+mgr_execute(IC_PARSE_DATA *parse_data)
 {
   switch (parse_data->command)
   {
     case IC_DIE_CMD:
       ic_die_cmd(parse_data);
-	  return;
+      return;
     case IC_KILL_CMD:
       ic_kill_cmd(parse_data);
-	  return;
+      return;
     case IC_MOVE_CMD:
       ic_move_cmd(parse_data);
-	  return;
+      return;
     case IC_PERFORM_BACKUP_CMD:
       ic_perform_backup_cmd(parse_data);
-	  return;
+      return;
     case IC_PERFORM_ROLLING_UPGRADE_CMD:
       ic_perform_rolling_upgrade_cmd(parse_data);
-	  return;
+      return;
     case IC_RESTART_CMD:
       ic_restart_cmd(parse_data);
-	  return;
+      return;
     case IC_START_CMD:
       ic_start_cmd(parse_data);
-	  return;
+      return;
     case IC_STOP_CMD:
       ic_stop_cmd(parse_data);
-	  return;
+      return;
     case IC_LIST_CMD:
       ic_list_cmd(parse_data);
-	  return;
+      return;
     case IC_LISTEN_CMD:
       ic_listen_cmd(parse_data);
-	  return;
+      return;
     case IC_SHOW_CLUSTER_CMD:
       ic_show_cluster_cmd(parse_data);
-	  return;
+      return;
     case IC_SHOW_CLUSTER_STATUS_CMD:
       ic_show_cluster_status_cmd(parse_data);
-	  return;
+      return;
     case IC_SHOW_CONNECTIONS_CMD:
       ic_show_connections_cmd(parse_data);
-	  return;
+      return;
     case IC_SHOW_CONFIG_CMD:
       ic_show_config_cmd(parse_data);
-	  return;
+      return;
     case IC_SHOW_MEMORY_CMD:
       ic_show_memory_cmd(parse_data);
-	  return;
+      return;
     case IC_SHOW_STATVARS_CMD:
       ic_show_statvars_cmd(parse_data);
-	  return;
+      return;
     case IC_SHOW_STATS_CMD:
       ic_show_stats_cmd(parse_data);
-	  return;
+      return;
     case IC_SET_STAT_LEVEL_CMD:
       ic_set_stat_level_cmd(parse_data);
-	  return;
+      return;
     case IC_USE_CLUSTER_CMD:
       ic_use_cluster_cmd(parse_data);
-	  return;
+      return;
     case IC_DISPLAY_STATS_CMD:
       ic_display_stats_cmd(parse_data);
-	  return;
+      return;
     case IC_TOP_CMD:
       ic_top_cmd(parse_data);
-	  return;
+      return;
     case IC_USE_VERSION_NDB_CMD:
       ic_use_ndb_version_cmd(parse_data);
-	  return;
+      return;
     case IC_USE_VERSION_ICLAUSTRON_CMD:
       ic_use_iclaustron_version_cmd(parse_data);
-	  return;
+      return;
     default:
       report_error(parse_data, not_impl_string);
-	  return;
+      return;
   }
   return;
 }
@@ -1069,7 +1069,7 @@ run_handle_new_connection(gpointer data)
       ic_mgr_call_parser(parse_buf, parse_inx, &parse_data);
       if (parse_data.exit_flag)
         goto exit;
-      ic_execute(&parse_data);
+      mgr_execute(&parse_data);
       if (parse_data.exit_flag)
         goto exit;
       /* Initialise index to parser buffer before beginning of new cmd */
