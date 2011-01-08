@@ -38,10 +38,10 @@ int ic_boot_lex(void *parse_data, void *scanner);
 }
 
 %token CLUSTER_SYM
-%token CS_INTERNAL_PORT_SYM
 %token EQUAL_SYM
 %token FILES_SYM
 %token HOST_SYM
+%token MANAGER_SYM
 %token MANAGERS_SYM
 %token NODE_ID_SYM
 %token PCNTRL_HOST_SYM
@@ -61,8 +61,8 @@ int ic_boot_lex(void *parse_data, void *scanner);
 %parse-param { IC_PARSE_DATA *parse_data }
 %lex-param   { IC_PARSE_DATA *parse_data }
 
-%type <ic_str> IDENTIFIER_SYM hostname
-%type <int_val> INTEGER_SYM number
+%type <ic_str> IDENTIFIER_SYM hostname opt_pcntrl_host host
+%type <int_val> INTEGER_SYM number node opt_pcntrl_port
 
 %%
 
@@ -71,22 +71,49 @@ command:
     ;
 
 any_command:
-    prepare_cluster_server_command
+    prepare_command
     | send_command
     | start_cluster_servers_command
     | verify_command
     | start_cluster_managers_command
     ;
 
-prepare_cluster_server_command:
-    PREPARE_SYM CLUSTER_SYM SERVER_SYM
+prepare_command:
+     PREPARE_SYM CLUSTER_SYM prep_cmd
+
+prep_cmd:
+    server_cmd {}
+    | mgr_cmd {}
+    ;
+
+server_cmd:
+    SERVER_SYM host opt_pcntrl_host opt_pcntrl_port node
     {
+      IC_CLUSTER_SERVER_DATA *cs_data;
       PARSE_DATA->command= IC_PREPARE_CLUSTER_SERVER_CMD;
       PARSE_DATA->cs_index= PARSE_DATA->next_cs_index;
       PARSE_DATA->next_cs_index++;
+      cs_data= &PARSE_DATA->cs_data[PARSE_DATA->cs_index];
+      cs_data->hostname= $2->str;
+      cs_data->pcntrl_hostname= $3 ? $3->str : $2->str;
+      cs_data->pcntrl_port= $4;
+      cs_data->node_id= $5;
     }
-    host opt_pcntrl_host opt_pcntrl_port opt_cs_int_host opt_node
-    {}
+    ;
+
+mgr_cmd:
+    MANAGER_SYM host opt_pcntrl_host opt_pcntrl_port node
+    {
+      IC_CLUSTER_MANAGER_DATA *mgr_data;
+      PARSE_DATA->command= IC_PREPARE_CLUSTER_MANAGER_CMD;
+      PARSE_DATA->mgr_index= PARSE_DATA->next_mgr_index;
+      PARSE_DATA->next_mgr_index++;
+      mgr_data= &PARSE_DATA->mgr_data[PARSE_DATA->mgr_index];
+      mgr_data->hostname= $2->str;
+      mgr_data->pcntrl_hostname= $3 ? $3->str : $2->str;
+      mgr_data->pcntrl_port= $4;
+      mgr_data->node_id= $5;
+    }
     ;
 
 send_command:
@@ -115,43 +142,35 @@ start_cluster_managers_command:
 
 host:
     HOST_SYM opt_equal hostname
-    {
-    }
+    { $$= $3; }
 
 opt_pcntrl_host:
     /* empty */
-    {}
+    { $$= NULL; }
     | PCNTRL_HOST_SYM opt_equal hostname
-    {}
+    { $$= $3; }
     ;
 
 opt_pcntrl_port:
     /* empty */
-    {}
+    { $$= IC_DEF_PCNTRL_PORT; }
     | PCNTRL_PORT_SYM opt_equal number
-    {}
+    { $$= $3; }
     ;
 
-opt_cs_int_host:
-    /* empty */
-    {}
-    | CS_INTERNAL_PORT_SYM opt_equal number
-    {}
-    ;
-
-opt_node:
-    /* empty */
-    {}
-    | NODE_ID_SYM opt_equal number
-    {}
+node:
+    NODE_ID_SYM opt_equal number
+    { $$= $3;}
     ;
 
 number:
-    INTEGER_SYM { $$= $1; }
+    INTEGER_SYM
+    { $$= $1; }
     ;
 
 hostname:
-    IDENTIFIER_SYM { $$= $1; }
+    IDENTIFIER_SYM
+    { $$= $1; }
     ;
 
 opt_equal:

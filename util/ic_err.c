@@ -32,7 +32,7 @@
 */
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7091
+#define IC_LAST_ERROR 7092
 #define IC_MAX_ERRORS 200
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -241,6 +241,8 @@ ic_init_error_messages()
     "The Cluster Server was started with the wrong nodeid";
   ic_error_str[IC_ERROR_COMMAND_TOO_LONG - IC_FIRST_ERROR]=
     "Command was too long";
+  ic_error_str[IC_ERROR_TWO_COMMAND_FILES - IC_FIRST_ERROR]=
+    "Not allowed to set both generate-command-file and command-file";
   DEBUG_RETURN_EMPTY;
 }
 

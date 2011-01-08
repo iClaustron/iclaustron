@@ -124,7 +124,7 @@ ic_mgr_parse_error(void *ext_parse_data,
     parse_data->exit_flag= TRUE;
 }
 
-#define get_next_char() parse_buf[current_pos++]
+#define get_next_char() parse_buf[current_pos]
 int
 ic_mgr_lex(YYSTYPE *yylval,
            IC_PARSE_DATA *parse_data)
@@ -146,6 +146,7 @@ ic_mgr_lex(YYSTYPE *yylval,
     /* Skip space, tab and newline characters */
     if (!ic_is_ignore(parse_char))
       break;
+    current_pos++;
     ic_assert(current_pos < lex_data->parse_str_len);
   }
 
@@ -163,6 +164,7 @@ ic_mgr_lex(YYSTYPE *yylval,
       parse_char= get_next_char();
       if (!isdigit(parse_char))
         break;
+      current_pos++;
     }
     if (!ic_is_end_symbol_character(parse_char))
       goto number_error;
@@ -190,13 +192,17 @@ ic_mgr_lex(YYSTYPE *yylval,
           parse_char == '.')
       {
         version_char_found= TRUE;
+        current_pos++;
         continue;
       }
       if (parse_char == '_' ||
           islower(parse_char) ||
           isupper(parse_char) ||
           isdigit(parse_char))
+      {
+        current_pos++;
         continue;
+      }
       /* Check for correct end of symbol character */
       if (!ic_is_end_symbol_character(parse_char))
         goto identifier_error;

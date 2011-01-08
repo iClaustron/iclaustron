@@ -25,10 +25,11 @@ gboolean ic_boot_find_hash_function();
 enum ic_parse_commands
 {
   IC_PREPARE_CLUSTER_SERVER_CMD = 0,
-  IC_SEND_FILES_CMD = 1,
-  IC_START_CLUSTER_SERVERS_CMD = 2,
-  IC_START_CLUSTER_MANAGERS_CMD = 3,
-  IC_VERIFY_CLUSTER_SERVERS_CMD = 4,
+  IC_PREPARE_CLUSTER_MANAGER_CMD = 1,
+  IC_SEND_FILES_CMD = 2,
+  IC_START_CLUSTER_SERVERS_CMD = 3,
+  IC_START_CLUSTER_MANAGERS_CMD = 4,
+  IC_VERIFY_CLUSTER_SERVERS_CMD = 5,
   IC_NO_SUCH_CMD = 999
 };
 typedef enum ic_parse_commands IC_PARSE_COMMANDS;
@@ -38,10 +39,18 @@ struct ic_cluster_server_data
   gchar *hostname;
   gchar *pcntrl_hostname;
   guint32 pcntrl_port;
-  guint32 internal_port;
   guint32 node_id;
 };
 typedef struct ic_cluster_server_data IC_CLUSTER_SERVER_DATA;
+
+struct ic_cluster_manager_data
+{
+  gchar *hostname;
+  gchar *pcntrl_hostname;
+  guint32 pcntrl_port;
+  guint32 node_id;
+};
+typedef struct ic_cluster_manager_data IC_CLUSTER_MANAGER_DATA;
 
 struct ic_parse_data
 {
@@ -55,26 +64,20 @@ struct ic_parse_data
   /* Data representing the Cluster Servers */
   IC_CLUSTER_SERVER_DATA cs_data[IC_MAX_CLUSTER_SERVERS];
 
-  /* Information about which clusters we have */
-  IC_CLUSTER_CONNECT_INFO **clu_infos;
-
-  /* Information about Cluster Servers and Cluster Managers */
-  IC_CLUSTER_CONFIG *grid_cluster;
+  /* Data representing the Cluster Servers */
+  IC_CLUSTER_MANAGER_DATA mgr_data[IC_MAX_CLUSTER_MANAGERS];
 
   /* Command sent by user */
   IC_PARSE_COMMANDS command;
-
-  /* Memory container for Cluster Server information */
-  IC_MEMORY_CONTAINER *mc_ptr;
-
-  /* Error object to load config files */
-  IC_CONFIG_ERROR err_obj;
 
   /* Flag for parser and executer to flag exit */
   gboolean exit_flag;
 
   guint32 cs_index;
   guint32 next_cs_index;
+
+  guint32 mgr_index;
+  guint32 next_mgr_index;
 };
 typedef struct ic_parse_data IC_PARSE_DATA;
 

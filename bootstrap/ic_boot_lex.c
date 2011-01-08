@@ -30,13 +30,13 @@
 static IC_PARSE_SYMBOLS parse_symbols[]=
 {
   { "CLUSTER",      CLUSTER_SYM },
-  { "CS_INTERNAL_PORT", CS_INTERNAL_PORT_SYM },
   { "=",            EQUAL_SYM },
   { "FILES",        FILES_SYM },
   { "HOST",         HOST_SYM },
+  { "MANAGER",      MANAGER_SYM },
   { "MANAGERS",     MANAGERS_SYM },
   { "NODE_ID",      NODE_ID_SYM },
-  { "PCNTRLo_HOST",  PCNTRL_HOST_SYM },
+  { "PCNTRL_HOST",  PCNTRL_HOST_SYM },
   { "PCNTRL_PORT",  PCNTRL_PORT_SYM },
   { "PREPARE",      PREPARE_SYM },
   { "SEND",         SEND_SYM },
@@ -57,9 +57,8 @@ ic_boot_parse_error(void *ext_parse_data,
                     char *s)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
-  gchar buf[1024];
 
-  ic_printf(buf, 1024, "Error: %s", s);
+  ic_printf("Error: %s", s);
   parse_data->exit_flag= TRUE;
 }
 
@@ -88,7 +87,7 @@ found_identifier(YYSTYPE *yylval,
   return 0;
 }
 
-#define get_next_char() parse_buf[current_pos++]
+#define get_next_char() parse_buf[current_pos]
 int
 ic_boot_lex(YYSTYPE *yylval,
             IC_PARSE_DATA *parse_data)
@@ -109,6 +108,7 @@ ic_boot_lex(YYSTYPE *yylval,
     /* Skip space, tab and newline characters */
     if (!ic_is_ignore(parse_char))
       break;
+    current_pos++;
     ic_assert(current_pos < lex_data->parse_str_len);
   }
 
@@ -119,6 +119,7 @@ ic_boot_lex(YYSTYPE *yylval,
   }
 
   start_pos= current_pos;
+  current_pos++;
   if (isdigit(parse_char))
   {
     dot_found= FALSE;
@@ -129,6 +130,7 @@ ic_boot_lex(YYSTYPE *yylval,
         dot_found= TRUE;
       else if (!isdigit(parse_char))
         break;
+      current_pos++;
     }
     if (!ic_is_end_symbol_character(parse_char))
       goto number_error;
@@ -159,7 +161,10 @@ ic_boot_lex(YYSTYPE *yylval,
           islower(parse_char) ||
           isupper(parse_char) ||
           isdigit(parse_char))
+      {
+        current_pos++;
         continue;
+      }
       /* Check for correct end of symbol character */
       if (!ic_is_end_symbol_character(parse_char))
         goto identifier_error;
@@ -191,6 +196,7 @@ ic_boot_lex(YYSTYPE *yylval,
     */
     if (!ic_is_ignore(parse_char))
       goto identifier_error;
+    current_pos++;
     ret_sym= EQUAL_SYM;
     goto end;
   }

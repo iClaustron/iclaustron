@@ -27,6 +27,7 @@
 
 static const gchar *glob_process_name= "ic_bootstrap";
 static gchar *glob_command_file= NULL;
+static gchar *glob_generate_command_file= NULL;
 static guint32 glob_history_size= 100;
 static gchar *ic_prompt= "iClaustron bootstrap> ";
 
@@ -35,65 +36,197 @@ static GOptionEntry entries[]=
   { "command-file", 0, 0, G_OPTION_ARG_STRING,
     &glob_command_file,
     "Use a command file and provide its name", NULL},
+  { "generate-command-file", 0, 0, G_OPTION_ARG_STRING,
+    &glob_generate_command_file,
+    "Use a command file and provide its name", NULL},
   { "history_size", 0, 0, G_OPTION_ARG_INT, &glob_history_size,
     "Set Size of Command Line History", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL}
 };
 
 static int
-load_ic_config_files(IC_PARSE_DATA *parse_data)
+generate_command_file(gchar *parse_buf)
 {
+  int ret_code;
+  int len;
+  guint32 node_id;
+  IC_CONFIG_ERROR err_obj;
+  IC_MEMORY_CONTAINER *mc_ptr;
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   IC_STRING config_dir;
   IC_CLUSTER_CONFIG *grid_cluster;
+  IC_FILE_HANDLE cmd_file_handle;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
+
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                           0, FALSE)))
+    return IC_ERROR_MEM_ALLOC;
 
   ic_set_current_dir(&config_dir);
 
+  /* Read the config.ini file to get cluster information */
   if (!(clu_infos= ic_load_cluster_config_from_file(&config_dir,
                                                     (IC_CONF_VERSION_TYPE)0,
-                                                    parse_data->mc_ptr,
-                                                    &parse_data->err_obj)))
-    return parse_data->err_obj.err_num;
-  parse_data->clu_infos= clu_infos;
+                                                    mc_ptr,
+                                                    &err_obj)))
+  {
+    ret_code= err_obj.err_num;
+    goto end;
+  }
 
+  /* Read the grid_common.ini to get info about Cluster Servers/Managers */
   if (!(grid_cluster= ic_load_grid_common_config_server_from_file(
                          &config_dir,
                          (IC_CONF_VERSION_TYPE)0,
-                         parse_data->mc_ptr,
+                         mc_ptr,
                          *clu_infos,
-                         &parse_data->err_obj)))
-    return parse_data->err_obj.err_num;
-  parse_data->grid_cluster= grid_cluster;
-  return 0;
+                         &err_obj)))
+  {
+    ret_code= err_obj.err_num;
+    goto end;
+  }
+
+  /* Create file to store generated file */
+  if ((ret_code= ic_create_file(&cmd_file_handle,
+                                (const gchar*)glob_generate_command_file)))
+    goto end;
+
+  /* grid_cluster can now be used to generate the command file */
+  for (node_id = 1; node_id <= grid_cluster->max_node_id; node_id++)
+  {
+    if (grid_cluster->node_types[node_id] == IC_CLUSTER_SERVER_NODE)
+    {
+      /* Found a Cluster Server, now generate a command line */
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)grid_cluster->node_config[node_id];
+      /*
+        Generate a command line like this:
+        PREPARE CLUSTER SERVER HOST=hostname
+                               PCNTRL_HOST=hostname
+                               PCNTRL_PORT=port_number
+                               CS_INTERNAL_PORT=port_number
+                               NODE_ID=node_id;
+      */
+      len= g_snprintf(parse_buf,
+                      COMMAND_READ_BUF_SIZE,
+                      "PREPARE CLUSTER SERVER HOST=%s "
+                      "PCNTRL_HOST=%s "
+                      "PCNTRL_PORT=%u "
+                      "NODE_ID=%u;\n",
+                      cs_conf->hostname,
+                      cs_conf->pcntrl_hostname,
+                      cs_conf->pcntrl_port,
+                      node_id);
+      if ((ret_code= ic_write_file(cmd_file_handle,
+                                   parse_buf,
+                                   len)))
+        goto late_end;
+    }
+    if (grid_cluster->node_types[node_id] == IC_CLUSTER_MANAGER_NODE)
+    {
+      /* Found a Cluster Server, now generate a command line */
+      mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)grid_cluster->node_config[node_id];
+      /*
+        Generate a command line like this:
+        PREPARE CLUSTER MANAGER HOST=hostname
+                                PCNTRL_HOST=hostname
+                                PCNTRL_PORT=port_number
+                                CS_INTERNAL_PORT=port_number
+                                NODE_ID=node_id;
+      */
+      len= g_snprintf(parse_buf,
+                      COMMAND_READ_BUF_SIZE,
+                      "PREPARE CLUSTER MANAGER HOST=%s "
+                      "PCNTRL_HOST=%s "
+                      "PCNTRL_PORT=%u "
+                      "NODE_ID=%u;\n",
+                      mgr_conf->client_conf.hostname,
+                      mgr_conf->client_conf.pcntrl_hostname,
+                      mgr_conf->client_conf.pcntrl_port,
+                      node_id);
+      if ((ret_code= ic_write_file(cmd_file_handle,
+                                   parse_buf,
+                                   len)))
+        goto late_end;
+    }
+  }
+  len= g_snprintf(parse_buf,
+                  COMMAND_READ_BUF_SIZE,
+                  "SEND FILES;\n");
+  if ((ret_code= ic_write_file(cmd_file_handle,
+                               parse_buf,
+                               len)))
+    goto late_end;
+  len= g_snprintf(parse_buf,
+                  COMMAND_READ_BUF_SIZE,
+                  "START CLUSTER SERVERS;\n");
+  if ((ret_code= ic_write_file(cmd_file_handle,
+                               parse_buf,
+                               len)))
+    goto late_end;
+  len= g_snprintf(parse_buf,
+                  COMMAND_READ_BUF_SIZE,
+                  "VERIFY CLUSTER SERVERS;\n");
+  if ((ret_code= ic_write_file(cmd_file_handle,
+                               parse_buf,
+                               len)))
+    goto late_end;
+  len= g_snprintf(parse_buf,
+                  COMMAND_READ_BUF_SIZE,
+                  "START CLUSTER MANAGERS;\n");
+  if ((ret_code= ic_write_file(cmd_file_handle,
+                               parse_buf,
+                               len)))
+    goto late_end;
+
+late_end:
+  (void)ic_close_file(cmd_file_handle);
+  if (ret_code)
+    (void)ic_delete_file(glob_command_file);
+end:
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return ret_code;
 }
 
 static void
 ic_prepare_cluster_server_cmd(IC_PARSE_DATA *parse_data)
 {
+  ic_printf("Found prepare cluster server command");
+  (void)parse_data;
+}
+
+static void
+ic_prepare_cluster_manager_cmd(IC_PARSE_DATA *parse_data)
+{
+  ic_printf("Found prepare cluster manager command");
   (void)parse_data;
 }
 
 static void
 ic_send_files_cmd(IC_PARSE_DATA *parse_data)
 {
+  ic_printf("Found send files command");
   (void)parse_data;
 }
 
 static void
 ic_start_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  ic_printf("Found start cluster servers command");
   (void)parse_data;
 }
 
 static void
 ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
 {
+  ic_printf("Found start cluster managers command");
   (void)parse_data;
 }
 
 static void
 ic_verify_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  ic_printf("Found verify cluster servers command");
   (void)parse_data;
 }
 
@@ -104,6 +237,9 @@ boot_execute(IC_PARSE_DATA *parse_data)
   {
     case IC_PREPARE_CLUSTER_SERVER_CMD:
       ic_prepare_cluster_server_cmd(parse_data);
+      return;
+    case IC_PREPARE_CLUSTER_MANAGER_CMD:
+      ic_prepare_cluster_manager_cmd(parse_data);
       return;
     case IC_SEND_FILES_CMD:
       ic_send_files_cmd(parse_data);
@@ -236,8 +372,7 @@ end:
 int main(int argc, char *argv[])
 {
   int ret_code;
-  IC_MEMORY_CONTAINER *lex_mc_ptr= NULL;
-  IC_MEMORY_CONTAINER *parse_mc_ptr= NULL;
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_PARSE_DATA parse_data;
   gchar *parse_buf= NULL;
   gchar *read_buf;
@@ -253,14 +388,11 @@ int main(int argc, char *argv[])
             "- iClaustron Bootstrap program", TRUE)))
     goto end;
 
-  if (!(lex_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
-                                               0, FALSE)))
-  {
-    ret_code= IC_ERROR_MEM_ALLOC;
+  if ((ret_code= ic_boot_find_hash_function()))
     goto end;
-  }
-  if (!(parse_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
-                                                 0, FALSE)))
+
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                               0, FALSE)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
     goto end;
@@ -271,12 +403,20 @@ int main(int argc, char *argv[])
     goto end;
   }
   ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
-  parse_data.lex_data.mc_ptr= lex_mc_ptr;
-  parse_data.mc_ptr= parse_mc_ptr;
+  parse_data.lex_data.mc_ptr= mc_ptr;
 
   /* Start by loading the config files */
-  if ((ret_code= load_ic_config_files(&parse_data)))
-    goto end;
+  if (glob_generate_command_file)
+  {
+    if (glob_command_file)
+    {
+      ret_code= IC_ERROR_TWO_COMMAND_FILES;
+      goto end;
+    }
+    glob_command_file= glob_generate_command_file;
+    if ((ret_code= generate_command_file(parse_buf)))
+      goto end;
+  }
 
   if (glob_command_file)
   {
@@ -294,7 +434,7 @@ int main(int argc, char *argv[])
       execute_command(&parse_data,
                       parse_buf,
                       line_size,
-                      lex_mc_ptr);
+                      mc_ptr);
       if (parse_data.exit_flag)
         goto end;
     }
@@ -309,7 +449,7 @@ int main(int argc, char *argv[])
                                            &curr_length,
                                            &read_buf)))
     {
-      execute_command(&parse_data, read_buf, line_size, lex_mc_ptr);
+      execute_command(&parse_data, read_buf, line_size, mc_ptr);
       if (parse_data.exit_flag)
         goto end;
     }
@@ -320,10 +460,8 @@ end:
     ic_close_readline();
   if (file_content)
     ic_free(file_content);
-  if (lex_mc_ptr)
-    lex_mc_ptr->mc_ops.ic_mc_free(lex_mc_ptr);
-  if (parse_mc_ptr)
-    parse_mc_ptr->mc_ops.ic_mc_free(parse_mc_ptr);
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   if (parse_buf)
     ic_free(parse_buf);
   ic_print_error(ret_code);

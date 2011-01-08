@@ -115,12 +115,10 @@ use a hostname which is different from the hostname used by the Process
 Controller. In this case one can set PCNTRL_HOST on the same line.
 2. PCNTRL_PORT is set to the default Process Controller port which is
 11860.
-3. CS_INTERNAL_PORT is set to the default port number of the Cluster Server
-internal port number (port used to communicate between Cluster Servers).
-4. NODE_ID is set to 1 for the first Cluster Server, 2 for the next and 3
+3. NODE_ID is set to 1 for the first Cluster Server, 2 for the next and 3
 for the last Cluster Server by default. Otherwise it is possible to set the
 NODE_ID on the command line.
-5. Even HOST could be avoided, but the default hostname is 127.0.0.1 so this
+4. Even HOST could be avoided, but the default hostname is 127.0.0.1 so this
 only makes sense for a test set-up.
 
 After issuing those commands and allowing the Cluster Servers some time to
