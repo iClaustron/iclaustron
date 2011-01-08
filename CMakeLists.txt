@@ -373,6 +373,7 @@ add_library(ic_api STATIC api/ic_apic_impl.c api/ic_apid_impl.c
             api/ic_apic_grid_conf_reader.ic api/ic_apic_if.ic
             api/ic_apic_run_cs.ic api/ic_apic_conf_net_read.ic
             api/ic_apic_int.h api/ic_apid_int.h
+            include/ic_proto_str.h
             api/ic_apid_impl.h api/ic_apid_static.h)
 target_link_libraries(ic_api ic_port ic_util comm)
 
@@ -498,6 +499,10 @@ install (TARGETS ic_clmgrd DESTINATION bin)
 #Install header files
 install (FILES
          include/ic_apic.h
+         include/ic_apic_data.h
+         include/ic_apic_load_cfg.h
+         include/ic_apic_acs.h
+         include/ic_apic_rcs.h
          include/ic_apid.h
          include/ic_apid_datatypes.h
          include/ic_apid_hidden.h

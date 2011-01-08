@@ -13,6 +13,10 @@
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 include_HEADERS = ic_apic.h \
+                  ic_apic_data.h \
+                  ic_apic_load_cfg.h \
+                  ic_apic_acs.h \
+                  ic_apic_rcs.h \
                   ic_apid.h \
                   ic_apid_datatypes.h \
                   ic_apid_hidden.h \
@@ -35,6 +39,7 @@ include_HEADERS = ic_apic.h \
                   ic_hashtable.h
 
 noinst_HEADERS    = ic_base64.h \
+                    ic_proto_str.h \
                     ic_protocol_support.h \
                     ic_config_reader.h \
                     ic_sock_buf.h \
