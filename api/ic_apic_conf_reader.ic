@@ -37,16 +37,6 @@ static void ensure_hostnames_set(IC_SOCKET_LINK_CONFIG *link_config,
                                  IC_CLUSTER_CONFIG *clu_conf);
 
 static IC_CLUSTER_CONFIG*
-ic_load_config_server_from_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                                 gchar *config_file,
-                                 IC_CLUSTER_CONFIG *grid_clu_conf,
-                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info);
-static IC_CLUSTER_CONFIG*
-ic_load_grid_common_config_server_from_file(gchar *config_file,
-                                     IC_MEMORY_CONTAINER *mc_ptr,
-                                     IC_CLUSTER_CONNECT_INFO *clu_connect_info,
-                                     IC_CONFIG_ERROR *err_obj);
-static IC_CLUSTER_CONFIG*
 load_config_server_from_files(gchar *config_file,
                               IC_CONFIG_STRUCT *conf_server,
                               IC_CONFIG_ERROR *err_obj,
@@ -1172,49 +1162,63 @@ static IC_CONFIG_OPERATIONS grid_common_config_server_ops =
 };
 
 /* Prepared for multi-threaded handling of different clusters */
-static IC_CLUSTER_CONFIG*
-ic_load_config_server_from_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
-                                 gchar *config_file,
+IC_CLUSTER_CONFIG*
+ic_load_config_server_from_files(IC_STRING *config_dir,
+                                 IC_CONF_VERSION_TYPE cfg_version_number,
+                                 IC_MEMORY_CONTAINER *mc_ptr,
                                  IC_CLUSTER_CONFIG *grid_cluster_conf,
-                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info)
+                                 IC_CLUSTER_CONNECT_INFO *clu_connect_info,
+                                 IC_CONFIG_ERROR *err_obj)
 {
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  IC_STRING file_name_string;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CONFIG_STRUCT conf_server;
-  IC_CONFIG_ERROR err_obj;
 
-  ic_zero(&err_obj, sizeof(IC_CONFIG_ERROR));
+  ic_create_config_file_name(&file_name_string,
+                             file_name,
+                             config_dir,
+                             &clu_connect_info->cluster_name,
+                             cfg_version_number);
+
+  ic_zero(err_obj, sizeof(IC_CONFIG_ERROR));
   ic_zero(&conf_server, sizeof(IC_CONFIG_STRUCT));
-  conf_server.perm_mc_ptr= run_obj->conf_mc_ptr;
+  conf_server.perm_mc_ptr= mc_ptr;
   conf_server.first_data= (void*)grid_cluster_conf;
   conf_server.sec_data= (void*) clu_connect_info;
-  clu_conf= load_config_server_from_files(config_file,
+  clu_conf= load_config_server_from_files(file_name,
                                           &conf_server,
-                                          &err_obj,
+                                          err_obj,
                                           FALSE);
   if (clu_conf)
   {
-    ic_assert(!err_obj.err_num);
+    ic_assert(!err_obj->err_num);
     return clu_conf;
   }
-  ic_mutex_lock(run_obj->state.protect_state);
-  if (!run_obj->state.err_obj.err_num)
-    memcpy(&run_obj->state.err_obj, &err_obj, sizeof(IC_CONFIG_ERROR));
-  ic_mutex_unlock(run_obj->state.protect_state);
   return NULL;
 }
 
-static IC_CLUSTER_CONFIG*
-ic_load_grid_common_config_server_from_file(gchar *config_file,
+IC_CLUSTER_CONFIG*
+ic_load_grid_common_config_server_from_file(IC_STRING *config_dir,
+                                     IC_CONF_VERSION_TYPE cfg_version_number,
                                      IC_MEMORY_CONTAINER *mc_ptr,
                                      IC_CLUSTER_CONNECT_INFO *clu_connect_info,
                                      IC_CONFIG_ERROR *err_obj)
 {
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  IC_STRING file_name_string;
   IC_CONFIG_STRUCT conf_server;
+
+  ic_create_config_file_name(&file_name_string,
+                             file_name,
+                             config_dir,
+                             &ic_grid_common_config_string,
+                             cfg_version_number);
 
   ic_zero(&conf_server, sizeof(IC_CONFIG_STRUCT));
   conf_server.perm_mc_ptr= mc_ptr;
   conf_server.sec_data= (void*) clu_connect_info;
-  return load_config_server_from_files(config_file,
+  return load_config_server_from_files(file_name,
                                        &conf_server,
                                        err_obj,
                                        TRUE);

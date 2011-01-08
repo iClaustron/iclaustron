@@ -33,6 +33,16 @@ enum ic_parse_commands
 };
 typedef enum ic_parse_commands IC_PARSE_COMMANDS;
 
+struct ic_cluster_server_data
+{
+  gchar *hostname;
+  gchar *pcntrl_hostname;
+  guint32 pcntrl_port;
+  guint32 internal_port;
+  guint32 node_id;
+};
+typedef struct ic_cluster_server_data IC_CLUSTER_SERVER_DATA;
+
 struct ic_parse_data
 {
   /*
@@ -42,8 +52,24 @@ struct ic_parse_data
   */
   IC_LEX_DATA lex_data;
 
+  /* Data representing the Cluster Servers */
+  IC_CLUSTER_SERVER_DATA cs_data[IC_MAX_CLUSTER_SERVERS];
+
+  /* Information about which clusters we have */
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
+
+  /* Information about Cluster Servers and Cluster Managers */
+  IC_CLUSTER_CONFIG *grid_cluster;
+
   /* Command sent by user */
   IC_PARSE_COMMANDS command;
+
+  /* Memory container for Cluster Server information */
+  IC_MEMORY_CONTAINER *mc_ptr;
+
+  /* Error object to load config files */
+  IC_CONFIG_ERROR err_obj;
+
   /* Flag for parser and executer to flag exit */
   gboolean exit_flag;
 

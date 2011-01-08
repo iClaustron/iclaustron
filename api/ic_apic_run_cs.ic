@@ -563,45 +563,47 @@ static int
 load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                   IC_CLUSTER_CONNECT_INFO **clu_infos)
 {
+  IC_CONFIG_ERROR err_obj;
   IC_CLUSTER_CONNECT_INFO *clu_info;
   IC_CLUSTER_CONFIG *cluster, *grid_cluster;
   IC_MEMORY_CONTAINER *mc_ptr= run_obj->conf_mc_ptr;
-  IC_STRING file_name_string;
-  gchar file_name[IC_MAX_FILE_NAME_SIZE];
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
 
-  ic_create_config_file_name(&file_name_string,
-                             file_name,
-                             run_obj->config_dir,
-                             &ic_grid_common_config_string,
-                             info_cs->config_version_number);
-
-  if (!(grid_cluster= ic_load_grid_common_config_server_from_file(file_name,
+  if (!(grid_cluster= ic_load_grid_common_config_server_from_file(
+                                            run_obj->config_dir,
+                                            info_cs->config_version_number,
                                             mc_ptr,
                                             *clu_infos,
-                                            &run_obj->state.err_obj)))
-    return run_obj->state.err_obj.err_num;
+                                            &err_obj)))
+    ic_mutex_lock(run_obj->state.protect_state);
+    if (!run_obj->state.err_obj.err_num)
+      memcpy(&run_obj->state.err_obj, &err_obj, sizeof(IC_CONFIG_ERROR));
+    ic_mutex_unlock(run_obj->state.protect_state);
+    return err_obj.err_num;
 
   while (*clu_infos)
   {
     clu_info= *clu_infos;
     clu_infos++;
-    ic_create_config_file_name(&file_name_string,
-                               file_name,
-                               run_obj->config_dir,
-                               &clu_info->cluster_name,
-                               info_cs->config_version_number);
 
     /*
       We have now formed the filename of the configuration of this
       cluster. It's now time to open the configuration file and
       convert it into a IC_CLUSTER_CONFIG struct.
     */
-    if (!(cluster= ic_load_config_server_from_files(run_obj,
-                                              file_name,
-                                              grid_cluster,
-                                              clu_info)))
-      return run_obj->state.err_obj.err_num;
+    if (!(cluster= ic_load_config_server_from_files(run_obj->config_dir,
+                                             info_cs->config_version_number,
+                                             run_obj->conf_mc_ptr,
+                                             grid_cluster,
+                                             clu_info,
+                                             &err_obj)))
+    {
+      ic_mutex_lock(run_obj->state.protect_state);
+      if (!run_obj->state.err_obj.err_num)
+        memcpy(&run_obj->state.err_obj, &err_obj, sizeof(IC_CONFIG_ERROR));
+      ic_mutex_unlock(run_obj->state.protect_state);
+      return err_obj.err_num;
+    }
 
     /*
       Copy information from cluster configuration file which isn't set in

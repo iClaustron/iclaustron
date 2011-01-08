@@ -21,6 +21,8 @@
 #include <ic_string.h>
 #include <ic_readline.h>
 #include <ic_lex_support.h>
+#include <ic_apic.h>
+#include <ic_apid.h>
 #include "ic_boot_int.h"
 
 static const gchar *glob_process_name= "ic_bootstrap";
@@ -37,6 +39,33 @@ static GOptionEntry entries[]=
     "Set Size of Command Line History", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL}
 };
+
+static int
+load_ic_config_files(IC_PARSE_DATA *parse_data)
+{
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
+  IC_STRING config_dir;
+  IC_CLUSTER_CONFIG *grid_cluster;
+
+  ic_set_current_dir(&config_dir);
+
+  if (!(clu_infos= ic_load_cluster_config_from_file(&config_dir,
+                                                    (IC_CONF_VERSION_TYPE)0,
+                                                    parse_data->mc_ptr,
+                                                    &parse_data->err_obj)))
+    return parse_data->err_obj.err_num;
+  parse_data->clu_infos= clu_infos;
+
+  if (!(grid_cluster= ic_load_grid_common_config_server_from_file(
+                         &config_dir,
+                         (IC_CONF_VERSION_TYPE)0,
+                         parse_data->mc_ptr,
+                         *clu_infos,
+                         &parse_data->err_obj)))
+    return parse_data->err_obj.err_num;
+  parse_data->grid_cluster= grid_cluster;
+  return 0;
+}
 
 static void
 ic_prepare_cluster_server_cmd(IC_PARSE_DATA *parse_data)
@@ -207,7 +236,8 @@ end:
 int main(int argc, char *argv[])
 {
   int ret_code;
-  IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  IC_MEMORY_CONTAINER *lex_mc_ptr= NULL;
+  IC_MEMORY_CONTAINER *parse_mc_ptr= NULL;
   IC_PARSE_DATA parse_data;
   gchar *parse_buf= NULL;
   gchar *read_buf;
@@ -223,7 +253,14 @@ int main(int argc, char *argv[])
             "- iClaustron Bootstrap program", TRUE)))
     goto end;
 
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, FALSE)))
+  if (!(lex_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                               0, FALSE)))
+  {
+    ret_code= IC_ERROR_MEM_ALLOC;
+    goto end;
+  }
+  if (!(parse_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                                 0, FALSE)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
     goto end;
@@ -234,7 +271,12 @@ int main(int argc, char *argv[])
     goto end;
   }
   ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
-  parse_data.lex_data.mc_ptr= mc_ptr;
+  parse_data.lex_data.mc_ptr= lex_mc_ptr;
+  parse_data.mc_ptr= parse_mc_ptr;
+
+  /* Start by loading the config files */
+  if ((ret_code= load_ic_config_files(&parse_data)))
+    goto end;
 
   if (glob_command_file)
   {
@@ -252,7 +294,7 @@ int main(int argc, char *argv[])
       execute_command(&parse_data,
                       parse_buf,
                       line_size,
-                      mc_ptr);
+                      lex_mc_ptr);
       if (parse_data.exit_flag)
         goto end;
     }
@@ -267,7 +309,7 @@ int main(int argc, char *argv[])
                                            &curr_length,
                                            &read_buf)))
     {
-      execute_command(&parse_data, read_buf, line_size, mc_ptr);
+      execute_command(&parse_data, read_buf, line_size, lex_mc_ptr);
       if (parse_data.exit_flag)
         goto end;
     }
@@ -278,8 +320,10 @@ end:
     ic_close_readline();
   if (file_content)
     ic_free(file_content);
-  if (mc_ptr)
-    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  if (lex_mc_ptr)
+    lex_mc_ptr->mc_ops.ic_mc_free(lex_mc_ptr);
+  if (parse_mc_ptr)
+    parse_mc_ptr->mc_ops.ic_mc_free(parse_mc_ptr);
   if (parse_buf)
     ic_free(parse_buf);
   ic_print_error(ret_code);

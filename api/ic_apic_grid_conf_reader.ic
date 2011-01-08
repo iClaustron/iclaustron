@@ -33,12 +33,6 @@
 
   This is a support module for the Run Cluster Server module.
 */
-static IC_CLUSTER_CONNECT_INFO**
-ic_load_cluster_config_from_file(IC_STRING *config_dir,
-                                 IC_CONF_VERSION_TYPE config_version_number,
-                                 IC_MEMORY_CONTAINER *mc_ptr,
-                                 IC_CONFIG_ERROR *err_obj);
-
 static void
 init_cluster_params(IC_CLUSTER_CONFIG_TEMP *temp)
 {
@@ -273,7 +267,7 @@ static IC_CONFIG_OPERATIONS cluster_config_ops =
   /* .ic_config_end  = */  cluster_config_end,
 };
 
-static IC_CLUSTER_CONNECT_INFO**
+IC_CLUSTER_CONNECT_INFO**
 ic_load_cluster_config_from_file(IC_STRING *config_dir,
                                  IC_CONF_VERSION_TYPE config_version_number,
                                  IC_MEMORY_CONTAINER *mc_ptr,

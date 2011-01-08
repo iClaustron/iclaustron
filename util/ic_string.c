@@ -193,6 +193,16 @@ ic_set_base_dir(IC_STRING *base_dir)
   return set_default_dir("iclaustron_install", base_dir, NULL);
 }
 
+void
+ic_set_current_dir(IC_STRING *dir)
+{
+#ifdef WINDOWS
+  IC_INIT_STRING(dir, ".\\", 2, TRUE);
+#else
+  IC_INIT_STRING(dir, "./", 2, TRUE);
+#endif
+}
+
 static int
 ic_add_dir(IC_STRING *dir,
            const gchar *dir_name)

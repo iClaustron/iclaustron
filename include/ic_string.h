@@ -53,6 +53,7 @@ struct ic_string
   The calculated directory name will be placed in the first IC_STRING
   parameter.
 */
+void ic_set_current_dir(IC_STRING *dir);
 int ic_set_base_dir(IC_STRING *base_dir);
 int ic_set_data_dir(IC_STRING *data_dir);
 int ic_set_binary_dir(IC_STRING *binary_dir, gchar *version);
