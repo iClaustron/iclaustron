@@ -58,6 +58,8 @@ struct ic_parse_data
     Support variables for buffer to lexer
     These variables are initialised before
     call to parser and only used by lexer.
+    This must be first variable in this struct, this knowledge is used
+    in some casts in the lexer.
   */
   IC_LEX_DATA lex_data;
 

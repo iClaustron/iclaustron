@@ -74,10 +74,19 @@ ic_is_end_character(int parse_char)
 }
 
 IC_INLINE int
+ic_is_equal_character(int parse_char)
+{
+  if (parse_char == '=')
+    return TRUE;
+  return FALSE;
+}
+
+IC_INLINE int
 ic_is_end_symbol_character(int parse_char)
 {
   if (ic_is_ignore(parse_char) ||
-      ic_is_end_character(parse_char))
+      ic_is_end_character(parse_char) ||
+      ic_is_equal_character(parse_char))
     return TRUE;
   return FALSE;
 }

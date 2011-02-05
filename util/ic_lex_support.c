@@ -98,17 +98,32 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
   IC_MEMORY_CONTAINER *mc_ptr= lex_data->mc_ptr;
   gchar *buf_ptr;
   gchar symbol_buf[1024];
-  int id, symbol_id;
+  int i, symbol_id;
 
   /* Check if it is a symbol first */
   ic_convert_to_uppercase(symbol_buf, str, str_len);
-  id= lex_hash(symbol_buf,
-               str_len,
-               lex_data->hash_multiplier,
-               lex_data->hash_divider);
-  symbol_id= lex_data->symbol_map[id];
-  if (symbol_id != SIZE_MAP_SYMBOL &&
-      memcmp(parse_symbols->symbol_str, symbol_buf, str_len))
+  i= lex_hash(symbol_buf,
+              str_len,
+              lex_data->hash_multiplier,
+              lex_data->hash_divider);
+  symbol_id= lex_data->symbol_map[i];
+#ifdef DEBUG
+  if (symbol_id != SIZE_MAP_SYMBOL)
+  {
+    i= 0;
+    do
+    {
+      if (parse_symbols[i].symbol_id == symbol_id)
+        break;
+      ic_require(parse_symbols[i].symbol_id != 0));
+      i++;
+    } while (1);
+    ic_require(!memcmp(parse_symbols[i].symbol_str,
+               symbol_buf,
+               str_len));
+  }
+#endif
+  if (symbol_id != SIZE_MAP_SYMBOL)
   {
     *symbol_value= symbol_id;
     return 0;
@@ -122,6 +137,7 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
   buf_ptr[str_len]= 0;
   IC_INIT_STRING(loc_ic_str_ptr, buf_ptr, str_len, TRUE);
   *ic_str_ptr= loc_ic_str_ptr;
+  *symbol_value= 0;
   return 0;
 }
 

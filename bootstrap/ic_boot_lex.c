@@ -72,7 +72,6 @@ found_identifier(YYSTYPE *yylval,
   int error;
   IC_STRING *ic_str_ptr;
 
-  *symbol_value= 0;
   if ((error= ic_found_identifier(lex_data,
                                   parse_symbols,
                                   &ic_str_ptr,
@@ -87,18 +86,24 @@ found_identifier(YYSTYPE *yylval,
   return 0;
 }
 
+#define DOTS_IN_IP_ADDRESS 3
+#define MAX_DIGITS_IN_IP_NUMBER_PARTS 3
 #define get_next_char() parse_buf[current_pos]
 int
 ic_boot_lex(YYSTYPE *yylval,
             IC_PARSE_DATA *parse_data)
 {
+  /*
+    The first variable defined in IC_PARSE_DATA is the IC_LEX_DATA struct.
+    This means that this cast is ok.
+  */
   IC_LEX_DATA *lex_data= (IC_LEX_DATA*)parse_data;
   register guint32 current_pos= lex_data->parse_current_pos;
   register gchar *parse_buf= lex_data->parse_buf;
   register int parse_char;
   guint32 start_pos;
   int ret_sym= 0;
-  gboolean dot_found;
+  int dot_found, max_digits_before_dot, min_digits_before_dot, count_digits;
   int symbol_value= 0;
   guint64 int_val;
 
@@ -122,20 +127,41 @@ ic_boot_lex(YYSTYPE *yylval,
   current_pos++;
   if (isdigit(parse_char))
   {
-    dot_found= FALSE;
+    dot_found= 0;
+    min_digits_before_dot= DOTS_IN_IP_ADDRESS + 1;
+    max_digits_before_dot= 1;
+    count_digits= 1;
     for (;;)
     {
       parse_char= get_next_char();
-      if (parse_char == '.')
-        dot_found= TRUE;
-      else if (!isdigit(parse_char))
-        break;
+      if (parse_char == '.' || !isdigit(parse_char))
+      {
+        if (count_digits > max_digits_before_dot)
+          max_digits_before_dot= count_digits;
+        if (count_digits < min_digits_before_dot)
+          min_digits_before_dot= count_digits;
+        count_digits= 0;
+        if (parse_char == '.')
+          dot_found++;
+        else
+          break;
+      }
+      else
+        count_digits++;
       current_pos++;
     }
     if (!ic_is_end_symbol_character(parse_char))
       goto number_error;
     if (dot_found)
     {
+      if (dot_found != DOTS_IN_IP_ADDRESS ||
+          min_digits_before_dot < 1 || /* Would indicate found .. */
+          max_digits_before_dot > MAX_DIGITS_IN_IP_NUMBER_PARTS)
+      {
+        /* We only allow IPv4 addresses when dots are in numbers */
+        ic_boot_parse_error((void*)parse_data, "Not well-formed IP address");
+        goto error;
+      }
       ret_sym= IDENTIFIER_SYM;
       goto end;
     }
@@ -187,16 +213,15 @@ ic_boot_lex(YYSTYPE *yylval,
       }
     } 
   }
-  else if (parse_char == '=')
+  else if (ic_is_equal_character(parse_char))
   {
     parse_char= get_next_char();
     /*
       Equal signs always need something after it, no rule has this as the
       last symbol
     */
-    if (!ic_is_ignore(parse_char))
+    if (ic_is_end_character(parse_char))
       goto identifier_error;
-    current_pos++;
     ret_sym= EQUAL_SYM;
     goto end;
   }
