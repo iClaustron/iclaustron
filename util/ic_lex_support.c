@@ -94,7 +94,6 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
                     guint32 str_len,
                     int *symbol_value)
 {
-  IC_STRING *loc_ic_str_ptr;
   IC_MEMORY_CONTAINER *mc_ptr= lex_data->mc_ptr;
   gchar *buf_ptr;
   gchar symbol_buf[1024];
@@ -128,17 +127,8 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
     *symbol_value= symbol_id;
     return 0;
   }
-
-  if (!(loc_ic_str_ptr=
-        (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_STRING))) ||
-      !(buf_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, str_len+1)))
-    return IC_ERROR_MEM_ALLOC;
-  memcpy(buf_ptr, str, str_len);
-  buf_ptr[str_len]= 0;
-  IC_INIT_STRING(loc_ic_str_ptr, buf_ptr, str_len, TRUE);
-  *ic_str_ptr= loc_ic_str_ptr;
   *symbol_value= 0;
-  return 0;
+  return ic_mc_char_to_strdup(mc_ptr, ic_str_ptr, str, str_len);
 }
 
 int

@@ -528,18 +528,42 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   if (mc_ptr)
   {
     if (!(str= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, in_str->len+1)))
-      return 1;
+      return IC_ERROR_MEM_ALLOC;
   }
   else
   {
     if (!(str= ic_malloc(in_str->len+1)))
-      return 1;
+      return IC_ERROR_MEM_ALLOC;
   }
   IC_COPY_STRING(out_str, in_str);
   out_str->str= str;
   memcpy(out_str->str, in_str->str, in_str->len);
   if (out_str->is_null_terminated)
     out_str->str[out_str->len]= NULL_BYTE;
+  return 0;
+}
+
+/*
+  Deliver a string where both IC_STRING object and string itself
+  is allocated from memory container. The returned string is
+  always NULL terminated.
+*/
+int ic_mc_char_to_strdup(IC_MEMORY_CONTAINER *mc_ptr,
+                         IC_STRING **out_str,
+                         gchar *str,
+                         guint32 str_len)
+{
+  IC_STRING *loc_ic_str_ptr;
+  IC_STRING loc_str;
+
+  if (!(loc_ic_str_ptr=
+        (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
+                                               sizeof(IC_STRING))))
+    return IC_ERROR_MEM_ALLOC;
+  IC_INIT_STRING(&loc_str, str, str_len, TRUE);
+  if (ic_mc_strdup(mc_ptr, loc_ic_str_ptr, &loc_str))
+    return IC_ERROR_MEM_ALLOC;
+  *out_str= loc_ic_str_ptr;
   return 0;
 }
 

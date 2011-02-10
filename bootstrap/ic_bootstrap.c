@@ -290,28 +290,34 @@ get_line(const gchar *file_content,
          guint64 file_size,
          guint64 *curr_pos,
          gchar *parse_buf,
-         guint32 *line_size)
+         guint32 *line_size,
+         gboolean *end_of_input)
 {
   guint64 inx;
   guint32 parse_inx= 0;
 
+  *end_of_input= FALSE;
   for (inx= *curr_pos; inx < file_size; inx++)
   {
     if (ic_unlikely(parse_inx == COMMAND_READ_BUF_SIZE))
       return IC_ERROR_COMMAND_TOO_LONG;
-    if (ic_unlikely(file_content[inx] == CARRIAGE_RETURN ||
-                    file_content[inx] == CMD_SEPARATOR))
+    if (ic_unlikely(file_content[inx] == CARRIAGE_RETURN))
+      continue; /* Ignore Carriage Return */
+    parse_buf[parse_inx]= file_content[inx];
+    parse_inx++;
+    if (ic_unlikely(file_content[inx] == CMD_SEPARATOR))
     {
-      parse_buf[parse_inx]= CMD_SEPARATOR;
-      parse_inx++;
       /* Step past the last byte for next command line */
       *curr_pos= inx + 1;
       goto end;
     }
-    parse_buf[parse_inx]= file_content[inx];
-    parse_inx++;
   }
   *curr_pos= file_size;
+  if (!parse_inx)
+  {
+    *end_of_input= TRUE;
+    return 0;
+  }
   parse_buf[parse_inx]= CMD_SEPARATOR;
   parse_inx++;
 
@@ -325,7 +331,8 @@ get_line_from_stdin(gchar *parse_buf,
                     guint32 *line_size,
                     guint64 *curr_pos,
                     guint64 *curr_length,
-                    gchar **read_buf)
+                    gchar **read_buf,
+                    gboolean *end_of_input)
 {
   int ret_code;
   guint64 start_pos= *curr_pos;
@@ -333,6 +340,7 @@ get_line_from_stdin(gchar *parse_buf,
   IC_STRING ic_str;
   guint64 inx;
 
+  *end_of_input= FALSE;
   do
   {
     if (ic_unlikely(start_pos == 0))
@@ -363,6 +371,11 @@ get_line_from_stdin(gchar *parse_buf,
   } while (1);
 
 end:
+  if (inx == 1)
+  {
+    *end_of_input= TRUE;
+    return 0;
+  }
   parse_buf[inx]= CMD_SEPARATOR;
   *line_size= (inx - start_pos) + 1;
   *read_buf= &parse_buf[start_pos];
@@ -381,6 +394,7 @@ int main(int argc, char *argv[])
   guint64 curr_pos= 0;
   guint64 curr_length= 0;
   guint32 line_size;
+  gboolean end_of_input;
   gboolean readline_inited= FALSE;
 
   if ((ret_code= ic_start_program(argc, argv, entries, NULL,
@@ -428,9 +442,12 @@ int main(int argc, char *argv[])
                                 file_size,
                                 &curr_pos,
                                 parse_buf,
-                                &line_size)))
+                                &line_size,
+                                &end_of_input)))
     {
       /* We have a command to execute in read_buf, size = line_size */
+      if (end_of_input)
+        goto end;
       execute_command(&parse_data,
                       parse_buf,
                       line_size,
@@ -447,8 +464,11 @@ int main(int argc, char *argv[])
                                            &line_size,
                                            &curr_pos,
                                            &curr_length,
-                                           &read_buf)))
+                                           &read_buf,
+                                           &end_of_input)))
     {
+      if (end_of_input)
+        goto end;
       execute_command(&parse_data, read_buf, line_size, mc_ptr);
       if (parse_data.exit_flag)
         goto end;
@@ -464,6 +484,7 @@ end:
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   if (parse_buf)
     ic_free(parse_buf);
-  ic_print_error(ret_code);
+  if (ret_code)
+    ic_print_error(ret_code);
   return ret_code;
 }

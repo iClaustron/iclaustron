@@ -111,6 +111,11 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char);
     ic_mc_strdup does the same thing but allocates memory from a memory
     container instead.
 
+  ic_mc_char_to_strdup
+    Create a copy of the input str with its given length. This copy
+    is returned in an IC_STRING object where both the IC_STRING object
+    and the string is allocated using the provided memory container.
+
   ic_chardup, ic_mc_chardup
     Create a copy of a NULL terminated string
 
@@ -146,6 +151,10 @@ int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr, gchar **out_str,
 int ic_strdup(IC_STRING *out_str, IC_STRING *in_str);
 int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                  IC_STRING *out_str, IC_STRING *in_str);
+int ic_mc_char_to_strdup(IC_MEMORY_CONTAINER *mc_ptr,
+                         IC_STRING **out_str,
+                         gchar *str,
+                         guint32 str_len);
 int ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str);
 gchar *ic_convert_file_to_dir(gchar *buf, gchar *file_name);
 void ic_convert_to_uppercase(gchar *out_str, gchar *in_str, guint32 str_len);

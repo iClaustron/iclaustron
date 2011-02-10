@@ -67,7 +67,7 @@ int ic_boot_lex(void *parse_data, void *scanner);
 %%
 
 command:
-    any_command END_SYM
+    any_command
     ;
 
 any_command:
@@ -90,6 +90,7 @@ server_cmd:
     SERVER_SYM host opt_pcntrl_host opt_pcntrl_port node
     {
       IC_CLUSTER_SERVER_DATA *cs_data;
+ 
       PARSE_DATA->command= IC_PREPARE_CLUSTER_SERVER_CMD;
       PARSE_DATA->cs_index= PARSE_DATA->next_cs_index;
       PARSE_DATA->next_cs_index++;
@@ -105,6 +106,7 @@ mgr_cmd:
     MANAGER_SYM host opt_pcntrl_host opt_pcntrl_port node
     {
       IC_CLUSTER_MANAGER_DATA *mgr_data;
+
       PARSE_DATA->command= IC_PREPARE_CLUSTER_MANAGER_CMD;
       PARSE_DATA->mgr_index= PARSE_DATA->next_mgr_index;
       PARSE_DATA->next_mgr_index++;
