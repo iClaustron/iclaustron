@@ -38,7 +38,7 @@ static GOptionEntry entries[]=
     "Use a command file and provide its name", NULL},
   { "generate-command-file", 0, 0, G_OPTION_ARG_STRING,
     &glob_generate_command_file,
-    "Use a command file and provide its name", NULL},
+    "Generate a command file from config files, provide its name", NULL},
   { "history_size", 0, 0, G_OPTION_ARG_INT, &glob_history_size,
     "Set Size of Command Line History", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL}
@@ -285,102 +285,165 @@ execute_command(IC_PARSE_DATA *parse_data,
   mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
 }
 
-static int
-get_line(const gchar *file_content,
-         guint64 file_size,
-         guint64 *curr_pos,
-         gchar *parse_buf,
-         guint32 *line_size,
-         gboolean *end_of_input)
+static void
+get_line_from_file_content(gchar **file_ptr,
+                           gchar *file_end,
+                           IC_STRING *ic_str)
 {
-  guint64 inx;
-  guint32 parse_inx= 0;
+  gchar parse_char;
 
-  *end_of_input= FALSE;
-  for (inx= *curr_pos; inx < file_size; inx++)
+  ic_str->str= *file_ptr;
+  while (*file_ptr < file_end)
   {
-    if (ic_unlikely(parse_inx == COMMAND_READ_BUF_SIZE))
-      return IC_ERROR_COMMAND_TOO_LONG;
-    if (ic_unlikely(file_content[inx] == CARRIAGE_RETURN))
-      continue; /* Ignore Carriage Return */
-    parse_buf[parse_inx]= file_content[inx];
-    parse_inx++;
-    if (ic_unlikely(file_content[inx] == CMD_SEPARATOR))
-    {
-      /* Step past the last byte for next command line */
-      *curr_pos= inx + 1;
-      goto end;
-    }
+    parse_char= *(*file_ptr);
+    (*file_ptr)++; /* Move to next character */
+    if (parse_char == CMD_SEPARATOR)
+      break;
   }
-  *curr_pos= file_size;
-  if (!parse_inx)
-  {
-    *end_of_input= TRUE;
-    return 0;
-  }
-  parse_buf[parse_inx]= CMD_SEPARATOR;
-  parse_inx++;
-
-end:
-  *line_size= parse_inx;
-  return 0;
+  ic_str->len= (int)((*file_ptr) - ic_str->str); /* Pointer arithmetics */
+  ic_str->is_null_terminated= FALSE;
 }
 
 static int
-get_line_from_stdin(gchar *parse_buf,
-                    guint32 *line_size,
-                    guint64 *curr_pos,
-                    guint64 *curr_length,
-                    gchar **read_buf,
-                    gboolean *end_of_input)
+get_line(gchar **file_ptr,
+         gchar *file_end,
+         gchar *parse_buf,
+         guint32 *line_size,
+         guint32 *curr_pos,
+         guint32 *curr_length,
+         gchar **read_buf,
+         gboolean *end_of_input)
 {
   int ret_code;
-  guint64 start_pos= *curr_pos;
-  guint64 buf_length= *curr_length;
+  guint32 start_pos= *curr_pos;
+  guint32 buf_length= *curr_length;
   IC_STRING ic_str;
-  guint64 inx;
+  guint32 i;
+  gboolean end_of_file= FALSE;
 
   *end_of_input= FALSE;
   do
   {
     if (ic_unlikely(start_pos == 0))
     {
-      if (!(ret_code= ic_read_one_line(ic_prompt, &ic_str)))
-        return ret_code;
-      memcpy(parse_buf, ic_str.str, ic_str.len); 
-      ic_free(ic_str.str);
-      start_pos= *curr_pos= 0;
-      buf_length= *curr_length= ic_str.len;
-    }
-    for (inx= start_pos; inx < buf_length; inx++)
-    {
-      if (ic_unlikely(parse_buf[inx] == CMD_SEPARATOR))
+      if (*file_ptr)
       {
-        *curr_pos= inx + 1;
+        /* Get next line from buffer read from file */
+        get_line_from_file_content(file_ptr, file_end, &ic_str);
+        if (ic_str.len + buf_length > COMMAND_READ_BUF_SIZE)
+          return IC_ERROR_COMMAND_TOO_LONG;
+        /* "Intelligent" memcpy removing CARRIAGE RETURN's */
+        for (i= 0; i < ic_str.len; i++)
+        {
+          if (ic_str.str[i] != CARRIAGE_RETURN)
+          {
+            parse_buf[buf_length]= ic_str.str[i];
+            buf_length++;
+          }
+        }
+        if (*file_ptr == file_end)
+          end_of_file= TRUE;
+      }
+      else
+      {
+        /* Get next line by reading next command line */
+        if ((ret_code= ic_read_one_line(ic_prompt, &ic_str)))
+          return ret_code;
+        if (ic_str.len + buf_length > COMMAND_READ_BUF_SIZE)
+          return IC_ERROR_COMMAND_TOO_LONG;
+        memcpy(&parse_buf[buf_length], ic_str.str, ic_str.len);
+        buf_length+= ic_str.len;
+        if (parse_buf[buf_length - 1] != CMD_SEPARATOR)
+        {
+          /*
+            Always add a space at the end instead of the CARRIAGE RETURN
+            when the end of line isn't a ; ending the command. Otherwise
+            PREPARE<CR>CLUSTER will be interpreted as PREPARECLUSTER
+            instead of as PREPARE CLUSTER which is the correct.
+          */
+          parse_buf[buf_length]= SPACE_CHAR;
+          buf_length++;
+        }
+        ic_free(ic_str.str);
+      }
+      *curr_length= buf_length;
+    }
+    for (i= start_pos; i < buf_length; i++)
+    {
+      if (ic_unlikely(parse_buf[i] == CMD_SEPARATOR))
+      {
+        *curr_pos= i + 1;
         goto end;
       }
     }
-    if (inx > start_pos)
+    /*
+      We have read the entire line and haven't found a CMD_SEPARATOR,
+      we need to read another line and continue reading until we don't
+      fit in the parse buffer or until we find a CMD_SEPARATOR.
+    */
+    if (buf_length > start_pos)
     {
-      *curr_pos= 0;
-      *curr_length= 0;
-      goto end;
+      /* Move everything to beginning of parse buffer */
+      if (start_pos > 0)
+      {
+        buf_length= *curr_length= buf_length - start_pos;
+        memmove(parse_buf, &parse_buf[start_pos], buf_length);
+      }
     }
-    /* We already processed all the commands in this line */
-    start_pos= 0;
+    else
+    {
+      /* Buffer is empty, start from empty buffer again */
+      buf_length= 0;
+    }
+    start_pos= *curr_pos= 0;
+    if (end_of_file)
+    {
+      /* We've reached the end of file */
+      if (buf_length == 0)
+      {
+        /* No command at end of file is ok, we report end of input */
+        *end_of_input= TRUE;
+        return 0;
+      }
+      else
+      {
+        /* Command without ; at end, this isn't ok */
+        return IC_ERROR_NO_FINAL_COMMAND;
+      }
+    }
   } while (1);
 
 end:
-  if (inx == 1)
+  if (i == start_pos)
   {
+    /* An empty command with a single ; signals end of input (also in file) */
     *end_of_input= TRUE;
     return 0;
   }
-  parse_buf[inx]= CMD_SEPARATOR;
-  *line_size= (inx - start_pos) + 1;
+  *line_size= (*curr_pos - start_pos);
   *read_buf= &parse_buf[start_pos];
   return 0;
 }
+
+static gchar *start_text= "\
+- iClaustron Bootstrap program\n\
+\n\
+This program runs by default in command line editing mode.\n\
+To finish program in this mode, enter a single command ;\n\
+Commands are always separated by ;\n\
+The program can also run from a command file provided in the\n\
+--command-file parameter.\n\
+Finally the program can also run from a directory where\n\
+iClaustron configuration files are provided. The main file will\n\
+always be called config.ini and the file grid_common.ini will\n\
+will always contain the definition of the common Cluster Servers\n\
+and Cluster Managers in the Grid. The remaining files will be one\n\
+for each cluster with the name as given in config.ini.\n\
+Based on this configuration the program will generate a bootstrap\n\
+command file and also execute it.\n\
+The generation of a command file is done when the option\n\
+--generate-command-file is given with file name of command file\n\
+";
 
 int main(int argc, char *argv[])
 {
@@ -390,16 +453,18 @@ int main(int argc, char *argv[])
   gchar *parse_buf= NULL;
   gchar *read_buf;
   gchar *file_content= NULL;
+  gchar *file_ptr= NULL;
+  gchar *file_end= NULL;
   guint64 file_size;
-  guint64 curr_pos= 0;
-  guint64 curr_length= 0;
+  guint32 curr_pos= 0;
+  guint32 curr_length= 0;
   guint32 line_size;
   gboolean end_of_input;
   gboolean readline_inited= FALSE;
 
   if ((ret_code= ic_start_program(argc, argv, entries, NULL,
                                   glob_process_name,
-            "- iClaustron Bootstrap program", TRUE)))
+                                  start_text, TRUE)))
     goto end;
 
   if ((ret_code= ic_boot_find_hash_function()))
@@ -438,41 +503,28 @@ int main(int argc, char *argv[])
                                         &file_content,
                                         &file_size)))
       goto end;
-    while (!(ret_code= get_line(file_content,
-                                file_size,
-                                &curr_pos,
-                                parse_buf,
-                                &line_size,
-                                &end_of_input)))
-    {
-      /* We have a command to execute in read_buf, size = line_size */
-      if (end_of_input)
-        goto end;
-      execute_command(&parse_data,
-                      parse_buf,
-                      line_size,
-                      mc_ptr);
-      if (parse_data.exit_flag)
-        goto end;
-    }
+    file_ptr= file_content;
+    file_end= file_content + file_size;
   }
   else
   {
     ic_init_readline(glob_history_size);
     readline_inited= TRUE;
-    while (!(ret_code= get_line_from_stdin(parse_buf,
-                                           &line_size,
-                                           &curr_pos,
-                                           &curr_length,
-                                           &read_buf,
-                                           &end_of_input)))
-    {
-      if (end_of_input)
-        goto end;
-      execute_command(&parse_data, read_buf, line_size, mc_ptr);
-      if (parse_data.exit_flag)
-        goto end;
-    }
+  }
+  while (!(ret_code= get_line(&file_ptr,
+                              file_end,
+                              parse_buf,
+                              &line_size,
+                              &curr_pos,
+                              &curr_length,
+                              &read_buf,
+                              &end_of_input)))
+  {
+    if (end_of_input)
+      goto end;
+    execute_command(&parse_data, read_buf, line_size, mc_ptr);
+    if (parse_data.exit_flag)
+      goto end;
   }
 
 end:

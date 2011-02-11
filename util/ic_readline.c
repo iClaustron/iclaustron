@@ -18,8 +18,9 @@
 #include <ic_debug.h>
 #include <ic_port.h>
 #include <ic_string.h>
-#ifdef HAVE_READLINE
+#ifdef HAVE_LIBREADLINE
 #include <readline/readline.h>
+#include <readline/history.h>
 #endif
 
 int
@@ -31,32 +32,33 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
 
   line_str.str= readline(prompt);
   if (!line_str.str)
-    return 1;
+    return IC_ERROR_MEM_ALLOC;
   line_str.len= COMMAND_READ_BUF_SIZE;
   ic_set_up_ic_string(&line_str);
   if (!line_str.is_null_terminated)
   {
-    ic_free(line_str.str);
-    return 1;
+    /* We cannot use ic_free since it wasn't allocated with ic_malloc */
+    free(line_str.str);
+    return IC_ERROR_COMMAND_TOO_LONG;
   }
   if (line_str.len)
     add_history(line_str.str);
   ret_value= ic_strdup(out_str, &line_str);
-  ic_free(line_str.str);
+  free(line_str.str);
   return ret_value;
 #else
   IC_STRING line_str;
   int ret_value;
   gchar line[COMMAND_READ_BUF_SIZE];
 
-  ic_printf("%s", prompt);
+  printf("%s", prompt);
   line_str.str= fgets(line, sizeof(line), stdin);
   if (!line_str.str)
-    return 1;
+    return IC_ERROR_MEM_ALLOC;
   line_str.len= COMMAND_READ_BUF_SIZE;
   ic_set_up_ic_string(&line_str);
   if (!line_str.is_null_terminated)
-    return 1;
+    return IC_ERROR_COMMAND_TOO_LONG;
   if (line_str.str[line_str.len - 1] == CARRIAGE_RETURN)
   {
     line_str.str[line_str.len - 1]= NULL_BYTE;
@@ -72,7 +74,7 @@ ic_init_readline(guint32 history_size)
 {
 #ifdef HAVE_LIBREADLINE
   using_history();
-  stifle_history(glob_history_size);
+  stifle_history(history_size);
 #else
   (void)history_size;
 #endif

@@ -243,6 +243,8 @@ ic_init_error_messages()
     "Command was too long";
   ic_error_str[IC_ERROR_TWO_COMMAND_FILES - IC_FIRST_ERROR]=
     "Not allowed to set both generate-command-file and command-file";
+  ic_error_str[IC_ERROR_NO_FINAL_COMMAND - IC_FIRST_ERROR]=
+    "Last command in command file must end with ;";
   DEBUG_RETURN_EMPTY;
 }
 
