@@ -471,7 +471,7 @@ int main(int argc, char *argv[])
     goto end;
 
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
-                                               0, FALSE)))
+                                           0, FALSE)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
     goto end;

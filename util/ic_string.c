@@ -114,7 +114,8 @@ add_dir_slash(IC_STRING *dir)
 }
 
 static int
-set_default_dir(const gchar *default_dir, IC_STRING *dir,
+set_default_dir(const gchar *default_dir,
+                IC_STRING *dir,
                 const gchar *input_dir)
 {
   int error= IC_ERROR_MEM_ALLOC;
@@ -141,25 +142,23 @@ set_default_dir(const gchar *default_dir, IC_STRING *dir,
     {
       if (ic_add_dup_string(dir, "C:\\Program Files\\lib\\"))
 #endif
-        goto end;
+        goto error;
     }
     else
     {
       const gchar *home_var= g_getenv("HOME");
-      if (ic_add_dup_string(dir, home_var))
-        goto end;
-      if (add_dir_slash(dir))
-        goto end;
+      if (ic_add_dup_string(dir, home_var) ||
+          add_dir_slash(dir))
+        goto error;
     }
-    if (ic_add_dup_string(dir, default_dir))
-      goto end;
-    if (add_dir_slash(dir))
-      goto end;
+    if (ic_add_dup_string(dir, default_dir) ||
+        add_dir_slash(dir))
+      goto error;
   }
   else
   {
     if (ic_add_dup_string(dir, input_dir))
-      goto end;
+      goto error;
 #ifdef WINDOWS
     c_str= "\\";
 #else
@@ -168,11 +167,12 @@ set_default_dir(const gchar *default_dir, IC_STRING *dir,
     if (dir->str[dir->len - 1] != c_str[0])
     {
       if (ic_add_dup_string(dir, c_str))
-        goto end;
+        goto error;
     }
   }
-  error= 0;
-end:
+  return 0;
+
+error:
   if (dir->str)
   {
     ic_free(dir->str);

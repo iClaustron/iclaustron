@@ -33,6 +33,7 @@ extern const gchar *ic_true_str;
 extern const gchar *ic_false_str;
 extern const gchar *ic_auto_restart_str;
 extern const gchar *ic_num_parameters_str;
+extern const gchar *ic_parameter_str;
 extern const gchar *ic_pid_str;
 extern const gchar *ic_grid_str;
 extern const gchar *ic_cluster_str;

@@ -606,16 +606,16 @@ int ic_start_process(gchar **argv,
   GError *error;
   GPid loc_pid;
 
-  if (g_spawn_async_with_pipes(working_dir,
-                               argv,
-                               NULL, /* environment */
-                               0,    /* Flags */
-                               NULL, NULL, /* Child setup stuff */
-                               &loc_pid, /* Pid of program started */
-                               NULL, /* stdin */
-                               NULL, /* stdout */
-                               NULL, /* stderr */
-                               &error)) /* Error object */
+  if (!g_spawn_async_with_pipes(working_dir,
+                                argv,
+                                NULL, /* environment */
+                                0,    /* Flags */
+                                NULL, NULL, /* Child setup stuff */
+                                &loc_pid, /* Pid of program started */
+                                NULL, /* stdin */
+                                NULL, /* stdout */
+                                NULL, /* stderr */
+                                &error)) /* Error object */
   {
     /* Unsuccessful start */
     return 1;
@@ -682,17 +682,15 @@ ic_is_process_alive(IC_PID_TYPE pid,
 {
   gchar *argv[8];
   gint exit_status;
-  guint64 value= (guint64)pid;
   gchar *pid_number_str;
   IC_STRING script_string;
   IC_STRING log_file_name_str;
   gchar *script_name;
   int error;
-  gchar pid_buf[64];
+  gchar pid_buf[IC_MAX_INT_STRING];
   gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
   gchar log_file_name_buf[IC_MAX_FILE_NAME_SIZE];
 
-  pid_number_str= ic_guint64_str(value, pid_buf, NULL);
 #ifdef LINUX
   script_name= "check_process.sh";
 #endif
@@ -712,8 +710,7 @@ ic_is_process_alive(IC_PID_TYPE pid,
   ic_add_string(&script_string, port_binary_dir);
   ic_add_string(&script_string, script_name);
 
-  value= (guint64)ic_get_own_pid();
-  pid_number_str= ic_guint64_str(value, pid_buf, NULL);
+  pid_number_str= ic_guint64_str((guint64)pid, pid_buf, NULL);
   IC_INIT_STRING(&log_file_name_str, log_file_name_buf, 0, TRUE);
   ic_add_ic_string(&log_file_name_str, &ic_glob_config_dir);
   ic_add_string(&log_file_name_str, "tmp_");

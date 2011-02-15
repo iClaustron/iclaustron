@@ -445,9 +445,6 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   struct timeval time_out;
   int timer= 0;
 
-  time_out.tv_usec= 0;
-  time_out.tv_sec= 1; /* Timeout is 1 second */
-
   /*
     The socket used to listen to a port can be reused many times.
     accept will return a new socket that can be used to read and
@@ -459,6 +456,9 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   set_socket_nonblocking(conn->listen_sockfd, TRUE);
   do
   {
+    time_out.tv_usec= 0;
+    time_out.tv_sec= 1; /* Timeout is 1 second */
+
     if (ic_get_stop_flag())
       return IC_ERROR_APPLICATION_STOPPED;
     FD_ZERO(&select_set);

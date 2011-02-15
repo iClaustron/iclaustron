@@ -120,6 +120,164 @@ static IC_HASHTABLE *glob_pc_hash= NULL;
 static guint64 glob_start_id= 1;
 static IC_DYNAMIC_PTR_ARRAY *glob_pc_array= NULL;
 
+/* Unit test functions */
+#ifdef WITH_UNIT_TEST
+static gchar *ic_csd= "program: ic_csd";
+static gchar *version= "version: iclaustron-0.0.1";
+static gchar *my_grid= "grid: my_grid";
+static gchar *my_cluster= "cluster: my_cluster";
+static gchar *my_csd_node= "node: my_csd_node";
+
+static int start_client_connection(IC_CONNECTION **conn)
+{
+  int ret_code;
+
+  if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
+                                      CONFIG_READ_BUF_SIZE,
+                                      NULL, NULL)))
+    return IC_ERROR_MEM_ALLOC;
+  (*conn)->conn_op.ic_prepare_client_connection(*conn,
+                                                glob_server_name,
+                                                glob_server_port,
+                                                NULL, NULL);
+  ret_code= (*conn)->conn_op.ic_set_up_connection(*conn, NULL, NULL);
+  return ret_code;
+}
+
+static int test_successful_start(IC_CONNECTION *conn)
+{
+  int ret_code;
+  guint32 pid;
+
+  /* Start a cluster server */
+  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
+      (ret_code= ic_send_with_cr(conn, ic_csd)) ||
+      (ret_code= ic_send_with_cr(conn, version)) ||
+      (ret_code= ic_send_with_cr(conn, my_grid)) ||
+      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
+      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
+      (ret_code= ic_send_with_cr(conn, "autorestart: false")) ||
+      (ret_code= ic_send_with_cr(conn, "num parameters: 2")) ||
+      (ret_code= ic_send_with_cr(conn, "parameter: --node_id")) ||
+      (ret_code= ic_send_with_cr(conn, "parameter: 1")) ||
+      (ret_code= ic_send_empty_line(conn)))
+    return ret_code;
+
+  if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    return ret_code;
+
+  ic_printf("Successfully started ic_csd with pid %u", pid);
+  return 0;
+}
+
+static int test_unsuccessful_start(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int test_successful_stop(IC_CONNECTION *conn)
+{
+  int ret_code;
+
+  /* Stop the Cluster Server */
+  if ((ret_code= ic_send_with_cr(conn, ic_stop_str)) ||
+      (ret_code= ic_send_with_cr(conn, my_grid)) ||
+      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
+      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    return ret_code;
+
+  if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    return ret_code;
+
+  ic_printf("Successful stop of ic_csd");
+  return 0;
+}
+
+static int test_unsuccessful_stop(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int test_list(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int test_copy_files(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int test_cpu_info(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int test_mem_info(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static int test_disk_info(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+static void*
+run_unit_test(gpointer data)
+{
+  int ret_code;
+  IC_CONNECTION *conn;
+  DEBUG_THREAD_ENTRY("run_unit_test");
+
+  (void)data; /* Ignore parameter */
+
+  if ((ret_code= start_client_connection(&conn)))
+    goto error;
+  if ((ret_code= test_successful_start(conn)) ||
+      (ret_code= test_unsuccessful_start(conn)) ||
+      (ret_code= test_successful_stop(conn)) ||
+      (ret_code= test_unsuccessful_stop(conn)) ||
+      (ret_code= test_list(conn)) ||
+      (ret_code= test_copy_files(conn)) ||
+      (ret_code= test_cpu_info(conn)) ||
+      (ret_code= test_mem_info(conn)) ||
+      (ret_code= test_disk_info(conn)))
+    goto error;
+  DEBUG_THREAD_RETURN;
+error:
+  DEBUG_THREAD_RETURN;
+}
+
+static int
+start_unit_test(void)
+{
+  GThread *thread;
+  GError *error= NULL;
+
+  thread= g_thread_create_full(run_unit_test,
+                               NULL,
+                               IC_MEDIUM_STACK_SIZE,
+                               TRUE,
+                               TRUE,
+                               G_THREAD_PRIORITY_NORMAL,
+                               &error);
+  if (!thread)
+    return IC_ERROR_START_THREAD_FAILED;
+  return 0;
+}
+#endif
+
 static int
 send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
 {
@@ -301,7 +459,7 @@ get_autorestart(IC_CONNECTION *conn,
     return error;
   if (read_size <= auto_restart_size)
     goto protocol_error;
-  if (!memcmp(read_buf, ic_auto_restart_str, auto_restart_size))
+  if (memcmp(read_buf, ic_auto_restart_str, auto_restart_size))
     goto protocol_error;
   read_size-= auto_restart_size;
   read_buf+= auto_restart_size;
@@ -332,11 +490,9 @@ get_num_parameters(IC_CONNECTION *conn,
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
   if (read_size <= num_param_len ||
-      memcmp(read_buf, ic_num_parameters_str, read_size))
-    return IC_PROTOCOL_ERROR;
-  if ((read_size <= num_param_len) ||
-      (ic_conv_str_to_int(read_buf+num_param_len, &loc_num_params, &len)) ||
-      (loc_num_params >= IC_MAX_UINT32))
+      memcmp(read_buf, ic_num_parameters_str, num_param_len) ||
+     (ic_conv_str_to_int(read_buf+num_param_len, &loc_num_params, &len)) ||
+     (loc_num_params >= IC_MAX_UINT32))
     return IC_PROTOCOL_ERROR;
   *num_parameters= (guint32)loc_num_params;
   return 0;
@@ -357,9 +513,9 @@ rec_start_message(IC_CONNECTION *conn,
     We put the data into an IC_PC_START struct which is self-contained
     and also contains a memory container for all the memory allocated.
   */
-  if ((mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0, FALSE)))
+  if (!(mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0, FALSE)))
     return IC_ERROR_MEM_ALLOC;
-  if ((*pc_start= (IC_PC_START*)
+  if (!(*pc_start= (IC_PC_START*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_START))))
     goto mem_error;
   loc_pc_start= *pc_start;
@@ -373,13 +529,15 @@ rec_start_message(IC_CONNECTION *conn,
       (error= get_autorestart(conn, &loc_pc_start->autorestart)) ||
       (error= get_num_parameters(conn, &loc_pc_start->num_parameters)))
     goto error;
-  if ((loc_pc_start->parameters= (IC_STRING*)
+  if (!(loc_pc_start->parameters= (IC_STRING*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_STRING)*
          loc_pc_start->num_parameters)))
     goto mem_error;
   for (i= 0; i < loc_pc_start->num_parameters; i++)
   {
-    if ((error= get_str(conn, mc_ptr, NULL, &loc_pc_start->parameters[i])))
+    if ((error= get_str(conn, mc_ptr,
+                        ic_parameter_str,
+                        &loc_pc_start->parameters[i])))
       goto error;
   }
   if ((error= ic_rec_simple_str(conn, ic_empty_string)))
@@ -643,9 +801,9 @@ handle_start(IC_CONNECTION *conn)
   IC_INIT_STRING(&working_dir, NULL, 0, FALSE);
   if ((ret_code= rec_start_message(conn, &pc_start)))
     return ret_code;
-  if ((arg_vector= (gchar**)pc_start->mc_ptr->mc_ops.ic_mc_calloc(
-                   pc_start->mc_ptr,
-                   (pc_start->num_parameters+2) * sizeof(gchar*))))
+  if (!(arg_vector= (gchar**)pc_start->mc_ptr->mc_ops.ic_mc_calloc(
+                     pc_start->mc_ptr,
+                     (pc_start->num_parameters+2) * sizeof(gchar*))))
     goto mem_error;
   /*
     Prepare the argument vector, first program name and then all the
@@ -1353,13 +1511,16 @@ handle_get_disk_info(IC_CONNECTION *conn)
   Line 7: autorestart true OR autorestart false
   Line 8: num parameters: Number of parameters
   Line 9 - Line x: Program Parameters on the format:
-    Parameter name, 1 space, Type of parameter, 1 space, Parameter Value
+    parameter: Parameter Key/Value
   Line x+1: Empty line to indicate end of message
 
-  Example: start\nprogram: ic_fsd?\nversion: iclaustron-0.0.1\n
-           grid: my_grid\ncluster: my_cluster\nnode: my_node\n
-           autorestart: true\nnum parameters: 2\n
-           parameter: data_dir string /home/mikael/iclaustron\n\n
+  Example: start\nprogram: ic_fsd\nversion: iclaustron-0.0.1\n
+           grid: my_grid\ncluster: my_cluster\nnode: my_csd_node\n
+           autorestart: false\nnum parameters: 2\n
+           parameter: node_id\nparameter: 1\n\n
+
+  Most parameters are sent as two parameters with a key and a value
+  parameter.
 
   The successful response is:
   Line 1: Ok
@@ -1542,60 +1703,60 @@ run_command_handler(gpointer data)
 
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (ic_check_buf(read_buf, read_size, ic_start_str,
-                     strlen(ic_start_str)))
+    if (!ic_check_buf(read_buf, read_size, ic_start_str,
+                      strlen(ic_start_str)))
     {
       if ((ret_code= handle_start(conn)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, ic_stop_str,
-                          strlen(ic_stop_str)))
+    else if (!ic_check_buf(read_buf, read_size, ic_stop_str,
+                           strlen(ic_stop_str)))
     {
       if ((ret_code= handle_stop(conn, FALSE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, ic_kill_str,
-                          strlen(ic_kill_str)))
+    else if (!ic_check_buf(read_buf, read_size, ic_kill_str,
+                           strlen(ic_kill_str)))
     {
       if ((ret_code= handle_stop(conn, TRUE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, ic_list_str,
-                          strlen(ic_list_str)))
+    else if (!ic_check_buf(read_buf, read_size, ic_list_str,
+                           strlen(ic_list_str)))
     {
       if ((ret_code= handle_list(conn, FALSE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size, ic_list_full_str,
-                          strlen(ic_list_full_str)))
+    else if (!ic_check_buf(read_buf, read_size, ic_list_full_str,
+                           strlen(ic_list_full_str)))
     {
       if ((ret_code= handle_list(conn, TRUE)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size,
-                          ic_copy_cluster_server_files_str,
-                          strlen(ic_copy_cluster_server_files_str)))
+    else if (!ic_check_buf(read_buf, read_size,
+                           ic_copy_cluster_server_files_str,
+                           strlen(ic_copy_cluster_server_files_str)))
     {
       if ((ret_code= handle_copy_cluster_server_files(conn)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size,
-                          ic_get_cpu_info_str,
-                          strlen(ic_get_cpu_info_str)))
+    else if (!ic_check_buf(read_buf, read_size,
+                           ic_get_cpu_info_str,
+                           strlen(ic_get_cpu_info_str)))
     {
       if ((ret_code= handle_get_cpu_info(conn)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size,
-                          ic_get_memory_info_str,
-                          strlen(ic_get_memory_info_str)))
+    else if (!ic_check_buf(read_buf, read_size,
+                           ic_get_memory_info_str,
+                           strlen(ic_get_memory_info_str)))
     {
       if ((ret_code= handle_get_memory_info(conn)))
         break;
     }
-    else if (ic_check_buf(read_buf, read_size,
-                          ic_get_disk_info_str,
-                          strlen(ic_get_disk_info_str)))
+    else if (!ic_check_buf(read_buf, read_size,
+                           ic_get_disk_info_str,
+                           strlen(ic_get_disk_info_str)))
     {
       if ((ret_code= handle_get_disk_info(conn)))
         break;
@@ -1625,8 +1786,8 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
 
   DEBUG_ENTRY("start_connection_loop");
   if (!(conn= ic_create_socket_object(FALSE, FALSE, FALSE,
-                                       CONFIG_READ_BUF_SIZE,
-                                       NULL, NULL)))
+                                      CONFIG_READ_BUF_SIZE,
+                                      NULL, NULL)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   conn->conn_op.ic_prepare_server_connection(conn,
                                              glob_server_name,
@@ -1728,6 +1889,10 @@ int main(int argc, char *argv[])
     goto error;
   if (!(glob_pc_array= ic_create_dynamic_ptr_array()))
     goto error;
+#ifdef WITH_UNIT_TEST
+  if ((ret_code= start_unit_test()))
+    goto error;
+#endif
   /*
     First step is to set-up path to where the binaries reside. All binaries
     we control will reside under this directory. Under this directory the
