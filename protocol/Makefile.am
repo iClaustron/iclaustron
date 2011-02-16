@@ -12,16 +12,31 @@
 ## along with this program; if not, write to the Free Software
 ## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
-##
-## This is the template to produce Makefile.in for this directory
-## This directory is used to build the iClaustron File Server
+## This file is used to produce the Makefile.in for this directory
+## This directory is used to build iClaustron Communication Functions
 ##
 
-bin_PROGRAMS = ic_fsd
-ic_fsd_SOURCES = ic_fileserv.c
-ic_fsd_LDADD = $(LDADD) \
-			../port/libic_port.la \
-			../util/libic_util.la \
-			../comm/libic_comm.la \
-			../protocol/libic_proto.la \
-			../api/libic_api.la
+DTRACE= @DTRACE@
+DTRACEFLAGS= @DTRACEFLAGS@
+DTRACEFILES= ic_protocol_support.o ic_base64.o
+
+lib_LTLIBRARIES = libic_proto.la
+
+libic_proto_la_SOURCES = ic_base64.c ic_proto_str.c
+
+libic_proto_la_LIBADD = $(LDADD) \
+				../port/libic_port.la \
+				../comm/libic_comm.la \
+				../util/libic_util.la
+
+if HAVE_DTRACE
+  libic_proto_la_SOURCES += probes.d
+endif
+
+probes.h: probes.d
+	$(DTRACE) $(DTRACEFLAGS) -h -s probe.d
+
+SUFFIXES : .d
+
+.d.o : $(DTRACEFILES)
+	$(DTRACE) $(DTRACEFLAGS) -G -s $< $(DTRACEFILES)

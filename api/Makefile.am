@@ -23,7 +23,8 @@ libic_api_la_SOURCES = ic_apic_impl.c ic_apid_impl.c
 libic_api_la_LIBADD = $(LDADD) \
 				../port/libic_port.la \
 				../util/libic_util.la \
-				../comm/libic_comm.la
+				../comm/libic_comm.la \
+				../protocol/libic_proto.la
 
 EXTRA_DIST =              ic_apic_int.h ic_apid_int.h \
                           ic_apid_impl.h ic_apid_static.h \

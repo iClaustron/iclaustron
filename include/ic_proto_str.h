@@ -18,9 +18,13 @@
 
 /* Strings used in MGM API protocols */
 extern const gchar *ic_ok_str;
-extern const gchar *ic_error_str;
 extern const gchar *ic_version_str;
+extern const gchar *ic_grid_str;
+extern const gchar *ic_cluster_str;
+extern const gchar *ic_node_str;
 extern const gchar *ic_program_str;
+extern const gchar *ic_start_time_str;
+extern const gchar *ic_error_str;
 extern const gchar *ic_start_str;
 extern const gchar *ic_stop_str;
 extern const gchar *ic_kill_str;
@@ -35,19 +39,17 @@ extern const gchar *ic_auto_restart_str;
 extern const gchar *ic_num_parameters_str;
 extern const gchar *ic_parameter_str;
 extern const gchar *ic_pid_str;
-extern const gchar *ic_grid_str;
-extern const gchar *ic_cluster_str;
-extern const gchar *ic_node_str;
-extern const gchar *ic_program_str;
-extern const gchar *ic_start_time_str;
+extern const gchar *ic_status_str;
+extern const gchar *ic_master_index_size_str;
 
 extern const gchar *ic_def_grid_str;
 extern const gchar *ic_data_server_program_str;
 extern const gchar *ic_file_server_program_str;
-extern const gchar *ic_sql_server_program_str;
 extern const gchar *ic_rep_server_program_str;
+extern const gchar *ic_sql_server_program_str;
 extern const gchar *ic_cluster_manager_program_str;
 extern const gchar *ic_cluster_server_program_str;
+extern const gchar *ic_restore_program_str;
 
 extern const gchar *ic_ndb_node_id_str;
 extern const gchar *ic_ndb_connectstring_str;
@@ -59,4 +61,42 @@ extern const gchar *ic_server_name_str;
 extern const gchar *ic_server_port_str;
 extern const gchar *ic_data_dir_str;
 extern const gchar *ic_num_threads_str;
+
+/* Messages for Copy Cluster Server files protocol */
+extern const gchar *ic_copy_cluster_server_files_str;
+extern const gchar *ic_cluster_server_node_id_str;
+extern const gchar *ic_number_of_clusters_str;
+extern const gchar *ic_receive_config_ini_str;
+extern const gchar *ic_number_of_lines_str;
+extern const gchar *ic_receive_grid_common_ini_str;
+extern const gchar *ic_receive_cluster_name_ini_str;
+extern const gchar *ic_installed_cluster_server_files_str;
+extern const gchar *ic_end_str;
+extern const gchar *ic_receive_config_file_ok_str;
+
+/* Messages for the Get CPU Info protocol */
+extern const gchar *ic_get_cpu_info_str;
+extern const gchar *ic_number_of_cpus_str;
+extern const gchar *ic_number_of_numa_nodes_str;
+extern const gchar *ic_number_of_cpus_per_core_str;
+extern const gchar *ic_cpu_str;
+extern const gchar *ic_cpu_node_str;
+extern const gchar *ic_core_str;
+extern const gchar *ic_no_cpu_info_available_str;
+
+/* Messages for the Get Memory Info protocol */
+extern const gchar *ic_get_mem_info_str;
+extern const gchar *ic_number_of_mbyte_user_memory_str;
+extern const gchar *ic_mem_node_str;
+extern const gchar *ic_mb_user_memory_str;
+extern const gchar *ic_no_mem_info_available_str;
+
+/* Messages for the Get Disk Info protocol */
+extern const gchar *ic_get_disk_info_str;
+extern const gchar *ic_dir_str;
+extern const gchar *ic_disk_space_str;
+extern const gchar *ic_no_disk_info_available_str;
+
+extern gchar *ic_empty_string;
+extern gchar *ic_err_str;
 #endif

@@ -484,8 +484,6 @@
   retrieving the config from the cluster server.
 */
 
-gchar *ic_empty_string= "";
-gchar *ic_err_str= "Error:";
 /* Strings used in config version file */
 /*
   version_str is defined in section defining strings used in MGM API
@@ -580,51 +578,6 @@ static const gchar *ic_start_cluster_server_ok_str=
 static const gchar *ic_heartbeat_str= "heartbeat";
 static const gchar *ic_started_str= "started";
 static const gchar *ic_starting_str= "starting";
-
-const gchar *ic_ok_str= "Ok";
-const gchar *ic_version_str= "version: ";
-const gchar *ic_grid_str= "grid: ";
-const gchar *ic_cluster_str= "cluster: ";
-const gchar *ic_node_str= "node: ";
-const gchar *ic_program_str= "program: ";
-const gchar *ic_start_time_str= "start time: ";
-const gchar *ic_error_str= "Error";
-const gchar *ic_start_str= "start";
-const gchar *ic_stop_str= "stop";
-const gchar *ic_kill_str= "kill";
-const gchar *ic_list_str= "list";
-const gchar *ic_list_full_str= "list full";
-const gchar *ic_list_next_str= "list next";
-const gchar *ic_list_node_str= "list node";
-const gchar *ic_list_stop_str= "list stop";
-const gchar *ic_true_str= "true";
-const gchar *ic_false_str= "false";
-const gchar *ic_auto_restart_str= "autorestart: ";
-const gchar *ic_num_parameters_str= "num parameters: ";
-const gchar *ic_parameter_str= "parameter: ";
-const gchar *ic_pid_str= "pid: ";
-const gchar *ic_status_str= "status: ";
-const gchar *ic_master_index_size_str= "master index size: ";
-
-const gchar *ic_def_grid_str= "iclaustron";
-const gchar *ic_data_server_program_str= "ndbmtd";
-const gchar *ic_file_server_program_str= "ic_fsd";
-const gchar *ic_rep_server_program_str= "ic_repd";
-const gchar *ic_sql_server_program_str= "mysqld";
-const gchar *ic_cluster_manager_program_str= "ic_clmgrd";
-const gchar *ic_cluster_server_program_str= "ic_csd";
-const gchar *ic_restore_program_str= "ndb_restore";
-
-const gchar *ic_ndb_node_id_str= " --ndb-node-id=";
-const gchar *ic_ndb_connectstring_str= " --ndb-connectstring=";
-const gchar *ic_cs_connectstring_str= " --cs_connectstring=";
-const gchar *ic_initial_flag_str= " --initial";
-const gchar *ic_cluster_id_str= " --cluster_id=";
-const gchar *ic_node_id_str= " --node_id=";
-const gchar *ic_server_name_str= " --server_name=";
-const gchar *ic_server_port_str=" --server_port=";
-const gchar *ic_data_dir_str= " --data_dir=";
-const gchar *ic_num_threads_str= " --num_threads=";
 
 #define IC_MIN_PORT 0
 #define IC_MAX_PORT 65535

@@ -12,6 +12,7 @@ wc -l *.ac *.sh.in *.am */*.am \
   cluster_mgr/ic_clmgr_int.h \
   cluster_server/*.[ch] \
   comm/*.[ch] \
+  protocol/*.[ch] \
   doc/*.txt \
   examples/*.ini \
   fileserver/*.[ch] \

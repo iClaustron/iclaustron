@@ -350,10 +350,15 @@ add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
-add_library(comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
-            comm/ic_protocol_support.c comm/ic_poll_set.c
-            comm/ic_poll_set_int.h comm/ic_base64.c)
-target_link_libraries(comm ic_port ic_util)
+add_library(ic_comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
+            comm/ic_poll_set.c comm/ic_poll_set_int.h)
+target_link_libraries(ic_comm ic_port ic_util)
+
+#Build library for protocol support utilities
+add_library(ic_proto STATIC protocol/ic_protocol_support.c protocol/ic_base64.c
+            include/ic_proto_str.h
+            include/ic_protocol_support.h include/ic_base64.h)
+target_link_libraries(ic_proto ic_port ic_util ic_comm)
 
 #Build library to Cluster Server API and Data Server API
 add_library(ic_api STATIC api/ic_apic_impl.c api/ic_apid_impl.c
@@ -373,9 +378,8 @@ add_library(ic_api STATIC api/ic_apic_impl.c api/ic_apid_impl.c
             api/ic_apic_grid_conf_reader.ic api/ic_apic_if.ic
             api/ic_apic_run_cs.ic api/ic_apic_conf_net_read.ic
             api/ic_apic_int.h api/ic_apid_int.h
-            include/ic_proto_str.h
             api/ic_apid_impl.h api/ic_apid_static.h)
-target_link_libraries(ic_api ic_port ic_util comm)
+target_link_libraries(ic_api ic_port ic_util ic_comm ic_proto)
 
 #install(TARGETS ic_api
 #        RUNTIME DESTINATION bin
@@ -384,30 +388,30 @@ target_link_libraries(ic_api ic_port ic_util comm)
 
 #Build test binaries
 add_executable(test_comm test/test_comm.c)
-target_link_libraries(test_comm ic_port ic_util ic_api
+target_link_libraries(test_comm ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS test_comm DESTINATION bin)
 
 add_executable(test_api_basic test/test_api_basic.c)
-target_link_libraries(test_api_basic ic_port ic_util ic_api
+target_link_libraries(test_api_basic ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS test_api_basic DESTINATION bin)
 
 #Build Process Control Binary
 add_executable(ic_pcntrld pcntrl/ic_pcntrl.c)
-target_link_libraries(ic_pcntrld ic_port ic_util ic_api
+target_link_libraries(ic_pcntrld ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_pcntrld DESTINATION bin)
 
 #Build Cluster client binary
 add_executable(ic_cclient cluster_client/ic_cclient.c)
-target_link_libraries(ic_cclient comm ic_util ic_port ic_api
+target_link_libraries(ic_cclient ic_port ic_util ic_comm ic_proto ic_api
                       ${READLINE_LIBS} ${ICLAUSTRON_LIBS})
 install (TARGETS ic_cclient DESTINATION bin)
 
 #Build Cluster Server binary
 add_executable(ic_csd cluster_server/ic_cs.c)
-target_link_libraries(ic_csd ic_port ic_util ic_api
+target_link_libraries(ic_csd ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_csd DESTINATION bin)
 
@@ -444,25 +448,25 @@ SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_boot_parser.h
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(ic_bootstrap ${BootstrapSource})
-target_link_libraries(ic_bootstrap ic_port ic_util comm ic_api
+target_link_libraries(ic_bootstrap ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install (TARGETS ic_bootstrap DESTINATION bin)
 
 #Build Configurator binary
 add_executable(ic_configurator cfg/ic_configurator.c)
-target_link_libraries(ic_configurator ic_port ic_util ic_api
+target_link_libraries(ic_configurator ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_configurator DESTINATION bin)
 
 #Build File Server binary
 add_executable(ic_fsd fileserver/ic_fileserv.c)
-target_link_libraries(ic_fsd ic_port ic_util ic_api
+target_link_libraries(ic_fsd ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_fsd DESTINATION bin)
 
 #Build Replication Server binary
 add_executable(ic_repd repserver/ic_repserv.c)
-target_link_libraries(ic_repd ic_port ic_util ic_api
+target_link_libraries(ic_repd ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_repd DESTINATION bin)
 
@@ -492,7 +496,7 @@ SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_BINARY_DIR}/ic_mgr_parser.h
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(ic_clmgrd ${ClusterManagerSource})
-target_link_libraries(ic_clmgrd ic_port ic_util comm ic_api
+target_link_libraries(ic_clmgrd ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install (TARGETS ic_clmgrd DESTINATION bin)
 

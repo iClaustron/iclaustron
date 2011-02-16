@@ -23,46 +23,9 @@
 #include <ic_hashtable.h>
 #include <ic_dyn_array.h>
 #include <ic_protocol_support.h>
+#include <ic_proto_str.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
-
-
-/* Messages for copy cluster server files protocol */
-const gchar *ic_copy_cluster_server_files_str= "copy cluster server files";
-const gchar *ic_cluster_server_node_id_str= "cluster server node id: ";
-const gchar *ic_number_of_clusters_str= "number of clusters: ";
-const gchar *ic_receive_config_ini_str= "receive config.ini";
-const gchar *ic_number_of_lines_str= "number of lines: ";
-const gchar *ic_receive_grid_common_ini_str= "receive grid_common.ini";
-const gchar *ic_receive_cluster_name_ini_str= "receive ";
-const gchar *ic_installed_cluster_server_files=
-  "installed cluster server files";
-const gchar *ic_end_str= "end";
-const gchar *ic_receive_config_file_ok_str= "receive config file ok";
-
-/* Messages for the Get CPU info protocol */
-const gchar *ic_get_cpu_info_str= "get cpu info";
-const gchar *ic_number_of_cpus_str= "number of cpus: ";
-const gchar *ic_number_of_numa_nodes_str= "number of NUMA nodes: ";
-const gchar *ic_number_of_cpus_per_core_str= "number of cpus per core: ";
-const gchar *ic_cpu_str= "cpu ";
-const gchar *ic_cpu_node_str= ", node: ";
-const gchar *ic_core_str= ", core: ";
-const gchar *ic_no_cpu_info_available_str= "no cpu info available";
-
-/* Messages for the Get Memory Information Protocol */
-const gchar *ic_get_memory_info_str= "get memory info";
-const gchar *ic_number_of_mbyte_user_memory_str=
-  "number of MByte user memory: ";
-const gchar *ic_mem_node_str= "node: ";
-const gchar *ic_mb_user_memory_str= ", MB user memory: ";
-const gchar *ic_no_mem_info_available_str= "no memory info available";
-
-/* Messages for Get Disk Information Protocol */
-const gchar *ic_get_disk_info_str= "get disk info";
-const gchar *ic_dir_str= "dir: ";
-const gchar *ic_disk_space_str= "disk space: ";
-const gchar *ic_no_disk_info_available_str= "no disk info available";
 
 /*
   This program is also used to gather information from local log files as 
@@ -1383,7 +1346,7 @@ error:
 }
 
 static int
-handle_get_memory_info(IC_CONNECTION *conn)
+handle_get_mem_info(IC_CONNECTION *conn)
 {
   int error;
   guint32 num_numa_nodes;
@@ -1748,10 +1711,10 @@ run_command_handler(gpointer data)
         break;
     }
     else if (!ic_check_buf(read_buf, read_size,
-                           ic_get_memory_info_str,
-                           strlen(ic_get_memory_info_str)))
+                           ic_get_mem_info_str,
+                           strlen(ic_get_mem_info_str)))
     {
-      if ((ret_code= handle_get_memory_info(conn)))
+      if ((ret_code= handle_get_mem_info(conn)))
         break;
     }
     else if (!ic_check_buf(read_buf, read_size,

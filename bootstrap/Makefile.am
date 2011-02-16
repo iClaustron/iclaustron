@@ -24,6 +24,7 @@ ic_bootstrap_LDADD = $(LDADD) \
 			../port/libic_port.la \
 			../util/libic_util.la \
 			../comm/libic_comm.la \
+			../protocol/libic_proto.la \
 			../api/libic_api.la
 AM_YFLAGS              = -d --verbose
 EXTRA_DIST             = ic_boot_int.h

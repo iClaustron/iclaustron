@@ -22,8 +22,8 @@ DTRACEFILES= socket_conn.o
 
 lib_LTLIBRARIES = libic_comm.la
 
-libic_comm_la_SOURCES = ic_connection.c ic_sock_buf.c ic_protocol_support.c \
-                        ic_poll_set.c ic_base64.c
+libic_comm_la_SOURCES = ic_connection.c ic_sock_buf.c ic_poll_set.c \
+                        ic_protocol_support.c
 
 libic_comm_la_LIBADD = $(LDADD) \
 				../port/libic_port.la \

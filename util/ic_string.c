@@ -21,6 +21,9 @@
 #include <ic_string.h>
 #include <ctype.h>
 
+gchar *ic_empty_string= "";
+gchar *ic_err_str= "Error:";
+
 IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};

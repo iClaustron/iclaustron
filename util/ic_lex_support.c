@@ -95,7 +95,6 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
                     int *symbol_value)
 {
   IC_MEMORY_CONTAINER *mc_ptr= lex_data->mc_ptr;
-  gchar *buf_ptr;
   gchar symbol_buf[1024];
   int i, symbol_id;
 
@@ -121,6 +120,8 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
                symbol_buf,
                str_len));
   }
+#else
+  (void)parse_symbols;
 #endif
   if (symbol_id != SIZE_MAP_SYMBOL)
   {
