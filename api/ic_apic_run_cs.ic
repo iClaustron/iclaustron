@@ -560,6 +560,17 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 }
 
 static int
+load_config_files_error(IC_INT_RUN_CLUSTER_SERVER *run_obj,
+                        IC_CONFIG_ERROR *err_obj)
+{
+  ic_mutex_lock(run_obj->state.protect_state);
+  if (!run_obj->state.err_obj.err_num)
+    memcpy(&run_obj->state.err_obj, err_obj, sizeof(IC_CONFIG_ERROR));
+  ic_mutex_unlock(run_obj->state.protect_state);
+  return err_obj->err_num;
+}
+
+static int
 load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                   IC_CLUSTER_CONNECT_INFO **clu_infos)
 {
@@ -575,12 +586,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                             mc_ptr,
                                             *clu_infos,
                                             &err_obj)))
-    ic_mutex_lock(run_obj->state.protect_state);
-    if (!run_obj->state.err_obj.err_num)
-      memcpy(&run_obj->state.err_obj, &err_obj, sizeof(IC_CONFIG_ERROR));
-    ic_mutex_unlock(run_obj->state.protect_state);
-    return err_obj.err_num;
-
+    return load_config_files_error(run_obj, &err_obj);
   while (*clu_infos)
   {
     clu_info= *clu_infos;
@@ -597,13 +603,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                              grid_cluster,
                                              clu_info,
                                              &err_obj)))
-    {
-      ic_mutex_lock(run_obj->state.protect_state);
-      if (!run_obj->state.err_obj.err_num)
-        memcpy(&run_obj->state.err_obj, &err_obj, sizeof(IC_CONFIG_ERROR));
-      ic_mutex_unlock(run_obj->state.protect_state);
-      return err_obj.err_num;
-    }
+      return load_config_files_error(run_obj, &err_obj);
 
     /*
       Copy information from cluster configuration file which isn't set in

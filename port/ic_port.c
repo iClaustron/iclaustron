@@ -729,13 +729,13 @@ ic_is_process_alive(IC_PID_TYPE pid,
   ic_mutex_lock_low(exec_output_mutex);
   error= run_process(argv, &exit_status, log_file_name_str.str);
   ic_mutex_unlock_low(exec_output_mutex);
-  if (error == (gint)1)
-  {
-    return 0; /* The process was alive */
-  }
-  else if (error == (gint)2)
+  if (error || exit_status == (gint)2)
   {
     return IC_ERROR_CHECK_PROCESS_SCRIPT;
+  }
+  if (exit_status == (gint)1)
+  {
+    return 0; /* The process was alive */
   }
   return IC_ERROR_PROCESS_NOT_ALIVE;
 }

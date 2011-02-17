@@ -111,6 +111,9 @@ static int test_successful_start(IC_CONNECTION *conn)
 {
   int ret_code;
   guint32 pid;
+  gchar *read_buf;
+  guint32 read_size;
+  gchar print_buf[ERROR_MESSAGE_SIZE];
 
   /* Start a cluster server */
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
@@ -120,16 +123,28 @@ static int test_successful_start(IC_CONNECTION *conn)
       (ret_code= ic_send_with_cr(conn, my_cluster)) ||
       (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
       (ret_code= ic_send_with_cr(conn, "autorestart: false")) ||
-      (ret_code= ic_send_with_cr(conn, "num parameters: 2")) ||
+      (ret_code= ic_send_with_cr(conn, "num parameters: 4")) ||
       (ret_code= ic_send_with_cr(conn, "parameter: --node_id")) ||
       (ret_code= ic_send_with_cr(conn, "parameter: 1")) ||
+      (ret_code= ic_send_with_cr(conn, "parameter: --debug_level")) ||
+      (ret_code= ic_send_with_cr(conn, "parameter: 63")) ||
       (ret_code= ic_send_empty_line(conn)))
     return ret_code;
 
+  if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
+  {
+    /* Not ok, expect error message instead */
+    if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
+        (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+      return ret_code;
+    memcpy(print_buf, read_buf, read_size);
+    print_buf[read_size]= (gchar)0;
+    ic_printf("Error message: %s from start ic_csd", print_buf);
+    return 1;
+  }
   if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
       (ret_code= ic_rec_empty_line(conn)))
     return ret_code;
-
   ic_printf("Successfully started ic_csd with pid %u", pid);
   return 0;
 }
@@ -615,8 +630,8 @@ ic_pc_key_equal(void *ptr1, void *ptr2)
   if ((ic_cmp_str(&pc_key1->grid_name, &pc_key2->grid_name)) ||
       (ic_cmp_str(&pc_key1->cluster_name, &pc_key2->cluster_name)) ||
       (ic_cmp_str(&pc_key1->node_name, &pc_key2->node_name)))
-    return 1;
-  return 0;
+    return 0;
+  return 1; /* Equal */
 }
 
 IC_HASHTABLE*

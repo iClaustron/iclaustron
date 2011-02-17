@@ -273,11 +273,13 @@ ic_debug_printf(const char *format,...)
 int ic_debug_open(guint32 node_id)
 {
   gchar file_buf[32];
+  IC_PID_TYPE my_pid= ic_get_own_pid();
+  guint32 pid= (guint32)my_pid;
 
   ic_require(debug_mutex= ic_mutex_create());
   ic_require(debug_priv= g_private_new(NULL));
   ic_require(thread_id_array= (guint8*)ic_calloc_low(IC_MAX_THREADS));
-  g_snprintf(file_buf, 32, "debug_n%u.log", node_id);
+  g_snprintf(file_buf, 32, "debug_n%u_p%u.log", node_id, pid);
 
 #ifndef WINDOWS
   ic_fptr= fopen(file_buf, "w");
