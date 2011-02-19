@@ -33,6 +33,7 @@ static int
 ic_rec_cluster_id(IC_CONNECTION *conn,
                   guint32 *cluster_id)
 {
+  *cluster_id= 0; /* Default value */
   return ic_rec_opt_number(conn, cluster_id_str, cluster_id);
 }
 

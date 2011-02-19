@@ -107,6 +107,11 @@ static int start_client_connection(IC_CONNECTION **conn)
   return ret_code;
 }
 
+/**
+  Test starting an ic_csd process
+
+  @parameter conn        The connection to the process controller
+*/
 static int test_successful_start(IC_CONNECTION *conn)
 {
   int ret_code;
@@ -126,8 +131,6 @@ static int test_successful_start(IC_CONNECTION *conn)
       (ret_code= ic_send_with_cr(conn, "num parameters: 4")) ||
       (ret_code= ic_send_with_cr(conn, "parameter: --node_id")) ||
       (ret_code= ic_send_with_cr(conn, "parameter: 1")) ||
-      (ret_code= ic_send_with_cr(conn, "parameter: --debug_level")) ||
-      (ret_code= ic_send_with_cr(conn, "parameter: 63")) ||
       (ret_code= ic_send_empty_line(conn)))
     return ret_code;
 
@@ -149,12 +152,23 @@ static int test_successful_start(IC_CONNECTION *conn)
   return 0;
 }
 
+/**
+  Test starting an ic_csd process which is already started, this function
+  should always return with an appropriate error message.
+
+  @parameter conn        The connection to the process controller
+*/
 static int test_unsuccessful_start(IC_CONNECTION *conn)
 {
   (void)conn;
   return 0;
 }
 
+/**
+  Test stopping the previously successfully started ic_csd process
+
+  @parameter conn        The connection to the process controller
+*/
 static int test_successful_stop(IC_CONNECTION *conn)
 {
   int ret_code;
@@ -175,12 +189,25 @@ static int test_successful_stop(IC_CONNECTION *conn)
   return 0;
 }
 
+/**
+  Test stopping the previously successfully started ic_csd process
+  which has also already been stopped. Thus this function should
+  get an error message in response.
+
+  @parameter conn        The connection to the process controller
+*/
 static int test_unsuccessful_stop(IC_CONNECTION *conn)
 {
   (void)conn;
   return 0;
 }
 
+/**
+  Test listing the single ic_csd process we previously started with all
+  its parameters.
+
+  @parameter conn        The connection to the process controller
+*/
 static int test_list(IC_CONNECTION *conn)
 {
   (void)conn;
@@ -211,6 +238,12 @@ static int test_disk_info(IC_CONNECTION *conn)
   return 0;
 }
 
+/**
+  Start function for unit tests of the process controller. This function
+  will be run in a separate thread from the rest of the process controller.
+
+  @parameter data          Ignored parameter
+*/
 static void*
 run_unit_test(gpointer data)
 {
@@ -237,6 +270,14 @@ error:
   DEBUG_THREAD_RETURN;
 }
 
+/**
+  Start unit test thread
+  This function will start up a thread starting function
+  run_unit_test
+
+  This thread will although running in the same process be able to communicate
+  with the process controller and test its functionality.
+*/
 static int
 start_unit_test(void)
 {
@@ -256,6 +297,18 @@ start_unit_test(void)
 }
 #endif
 
+/**
+  Send a protocol line with the message:
+  error<CR>
+  <error message><CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+  @parameter error_message     IN:  The error message to send
+
+  @note
+    This message is sent as a negative response to messages to the
+    process controller.
+*/
 static int
 send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
 {
@@ -267,6 +320,15 @@ send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
   return 0;
 }
 
+/**
+  Send a protocol line with the message:
+  Ok<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+
+  @note
+    This message is sent as a positive response to the stop message
+*/
 static int
 send_ok_reply(IC_CONNECTION *conn)
 {
@@ -277,6 +339,16 @@ send_ok_reply(IC_CONNECTION *conn)
   return 0;
 }
 
+/**
+  Send a protocol line with the message:
+  Ok<CR>pid: <pid_number><CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+  @parameter pid               IN:  The pid of the process
+
+  @note
+    This message is sent as a positive response to the start message
+*/
 static int
 send_ok_pid_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
 {
@@ -289,6 +361,16 @@ send_ok_pid_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
   return 0;
 }
 
+/**
+  Send the protocol message describing one process under our control
+  describing its key, program, version, start time, pid and the
+  number of parameters and the start parameters.
+
+  @parameter conn              IN:  The connection from the client
+  @parameter pc_start          IN:  The data structure describing the process
+  @parameter list_full_flag    IN:  Flag indicating if we should send parameter
+                                    data
+*/
 static int
 send_list_entry(IC_CONNECTION *conn,
                 IC_PC_START *pc_start,
@@ -336,6 +418,12 @@ send_list_entry(IC_CONNECTION *conn,
   return 0;
 }
 
+/**
+  Send a protocol line containing:
+  list stop<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
 static int
 send_list_stop_reply(IC_CONNECTION *conn)
 {
@@ -347,69 +435,23 @@ send_list_stop_reply(IC_CONNECTION *conn)
   return 0;
 }
 
-static int
-get_optional_str(IC_CONNECTION *conn,
-                 IC_MEMORY_CONTAINER *mc_ptr,
-                 const gchar *head_str,
-                 IC_STRING *str)
-{
-  int error;
-  guint32 read_size;
-  gchar *str_ptr;
-  gchar *read_buf;
-  guint32 head_len= 0;
+/**
+  Get optional string, we either will find the key string and the string
+  value or we will find an empty string.
 
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
-  if (read_size == 0)
-  {
-    IC_INIT_STRING(str, NULL, 0, FALSE);
-    return 0;
-  }
-  if (head_str)
-    head_len= strlen(head_str);
-  if (read_size <= head_len)
-    return IC_PROTOCOL_ERROR;
-  if (head_len && memcmp(read_buf, head_str, head_len))
-    return IC_PROTOCOL_ERROR;
-  read_buf+= head_len;
-  read_size-= head_len;
-  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
-    return IC_ERROR_MEM_ALLOC;
-  memcpy(str_ptr, read_buf, read_size);
-  IC_INIT_STRING(str, str_ptr, read_size, TRUE);
-  return 0;
-}
+  @parameter conn              IN:  The connection from the client
+  @parameter mc_ptr            IN:  Memory container to allocate string objects
+  @parameter head_str          IN:  Key string
+  @parameter str               OUT: The string object found in protocol
+*/
+/**
+  Get the key to the process from the protocol. The key consists of a
+  triplet, node name, cluster name and grid name.
 
-static int
-get_str(IC_CONNECTION *conn,
-        IC_MEMORY_CONTAINER *mc_ptr,
-        const gchar *head_str,
-        IC_STRING *str)
-{
-  int error;
-  guint32 read_size;
-  gchar *str_ptr;
-  gchar *read_buf;
-  guint32 head_len= 0;
-
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
-  if (head_str)
-    head_len= strlen(head_str);
-  if (read_size <= head_len)
-    return IC_PROTOCOL_ERROR;
-  if (head_len && memcmp(read_buf, head_str, head_len))
-    return IC_PROTOCOL_ERROR;
-  read_buf+= head_len;
-  read_size-= head_len;
-  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
-    return IC_ERROR_MEM_ALLOC;
-  memcpy(str_ptr, read_buf, read_size);
-  IC_INIT_STRING(str, str_ptr, read_size, TRUE);
-  return 0;
-}
-
+  @parameter conn              IN:  The connection from the client
+  @parameter mc_ptr            IN:  Memory container to allocate string objects
+  @parameter pc_key            OUT: Data structure containing the key elements
+*/
 static int
 get_key(IC_CONNECTION *conn,
         IC_MEMORY_CONTAINER *mc_ptr,
@@ -417,65 +459,30 @@ get_key(IC_CONNECTION *conn,
 {
   int error;
 
-  if ((error= get_str(conn, mc_ptr, ic_grid_str, &pc_key->grid_name)) ||
-      (error= get_str(conn, mc_ptr, ic_cluster_str, &pc_key->cluster_name)) ||
-      (error= get_str(conn, mc_ptr, ic_node_str, &pc_key->node_name)))
+  if ((error= ic_mc_rec_string(conn, mc_ptr,
+                               ic_grid_str, &pc_key->grid_name)) ||
+      (error= ic_mc_rec_string(conn, mc_ptr,
+                               ic_cluster_str, &pc_key->cluster_name)) ||
+      (error= ic_mc_rec_string(conn, mc_ptr,
+                               ic_node_str, &pc_key->node_name)))
     return error;
   return 0;
 }
 
-static int
-get_autorestart(IC_CONNECTION *conn,
-                gboolean *auto_restart)
-{
-  int error;
-  guint32 read_size;
-  gchar *read_buf;
-  guint32 auto_restart_size= strlen(ic_auto_restart_str);
 
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
-  if (read_size <= auto_restart_size)
-    goto protocol_error;
-  if (memcmp(read_buf, ic_auto_restart_str, auto_restart_size))
-    goto protocol_error;
-  read_size-= auto_restart_size;
-  read_buf+= auto_restart_size;
-  if (read_size == strlen(ic_true_str) &&
-      !memcmp(read_buf, ic_true_str, read_size))
-    *auto_restart= 1;
-  else if (read_size == strlen(ic_false_str) &&
-           !memcmp(read_buf, ic_false_str, read_size))
-    *auto_restart= 0;
-  else
-    goto protocol_error;
-  return 0;
-protocol_error:
-  return IC_PROTOCOL_ERROR;
-}
+/**
+  Read the start message from the socket represented by conn and put the
+  information into the pc_start data structure.
 
-static int
-get_num_parameters(IC_CONNECTION *conn,
-                   guint32 *num_parameters)
-{
-  int error;
-  guint32 read_size;
-  guint64 loc_num_params;
-  guint32 num_param_len= strlen(ic_num_parameters_str);
-  guint32 len;
-  gchar *read_buf;
+  @parameter conn              IN:  The connection from the client
+  @parameter pc_start          OUT: The place to put the reference to the
+                               IC_PC_START data structure.
 
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
-  if (read_size <= num_param_len ||
-      memcmp(read_buf, ic_num_parameters_str, num_param_len) ||
-     (ic_conv_str_to_int(read_buf+num_param_len, &loc_num_params, &len)) ||
-     (loc_num_params >= IC_MAX_UINT32))
-    return IC_PROTOCOL_ERROR;
-  *num_parameters= (guint32)loc_num_params;
-  return 0;
-}
-
+  @note
+    pc_start is allocated by this function and it's allocated on a
+    memory container and the reference to this memory container is
+    stored in the allocated pc_start object.
+*/
 static int
 rec_start_message(IC_CONNECTION *conn,
                   IC_PC_START **pc_start)
@@ -499,13 +506,15 @@ rec_start_message(IC_CONNECTION *conn,
   loc_pc_start= *pc_start;
   loc_pc_start->mc_ptr= mc_ptr;
 
-  if ((error= get_str(conn, mc_ptr, ic_program_str,
-                      &loc_pc_start->program_name)) ||
-      (error= get_str(conn, mc_ptr, ic_version_str,
-                      &loc_pc_start->version_string)) ||
+  if ((error= ic_mc_rec_string(conn, mc_ptr, ic_program_str,
+                               &loc_pc_start->program_name)) ||
+      (error= ic_mc_rec_string(conn, mc_ptr, ic_version_str,
+                               &loc_pc_start->version_string)) ||
       (error= get_key(conn, mc_ptr, &loc_pc_start->key)) ||
-      (error= get_autorestart(conn, &loc_pc_start->autorestart)) ||
-      (error= get_num_parameters(conn, &loc_pc_start->num_parameters)))
+      (error= ic_rec_boolean(conn, ic_auto_restart_str,
+                             &loc_pc_start->autorestart)) ||
+      (error= ic_rec_number(conn, ic_num_parameters_str,
+                            &loc_pc_start->num_parameters)))
     goto error;
   if (!(loc_pc_start->parameters= (IC_STRING*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_STRING)*
@@ -513,9 +522,10 @@ rec_start_message(IC_CONNECTION *conn,
     goto mem_error;
   for (i= 0; i < loc_pc_start->num_parameters; i++)
   {
-    if ((error= get_str(conn, mc_ptr,
-                        ic_parameter_str,
-                        &loc_pc_start->parameters[i])))
+    if ((error= ic_mc_rec_string(conn,
+                                 mc_ptr,
+                                 ic_parameter_str,
+                                 &loc_pc_start->parameters[i])))
       goto error;
   }
   if ((error= ic_rec_simple_str(conn, ic_empty_string)))
@@ -528,83 +538,16 @@ error:
   return error;
 }
 
-static int
-init_pc_find(IC_MEMORY_CONTAINER **mc_ptr,
-             IC_PC_FIND **pc_find)
-{
-  if (((*mc_ptr)= ic_create_memory_container((guint32)1024,
-                                             (guint32)0, FALSE)))
-    return IC_ERROR_MEM_ALLOC;
-  if (((*pc_find)= (IC_PC_FIND*)
-       (*mc_ptr)->mc_ops.ic_mc_calloc((*mc_ptr), sizeof(IC_PC_FIND))))
-    return IC_ERROR_MEM_ALLOC;
-  (*pc_find)->mc_ptr= (*mc_ptr);
-  return 0;
-}
+/**
+  Support function used by hash table implementation, it calculates a hash
+  value based on the void pointer (which here is a IC_PC_KEY object. It does
+  so by using the standard hash value of a string and then XOR:ing all three
+  hash values of the individual strings.
 
-static int
-rec_key_message(IC_CONNECTION *conn,
-                 IC_PC_FIND **pc_find)
-{
-  IC_MEMORY_CONTAINER *mc_ptr= NULL;
-  int error;
+  @parameter ptr              The key to calculate the hash value based on
 
-  /*
-    When we come here we already received the stop/kill string and we only
-    need to fill in the key parameters (grid, cluster and node name).
-  */
-  if ((error= init_pc_find(&mc_ptr, pc_find)))
-    goto error;
-  if ((error= get_key(conn, mc_ptr, &(*pc_find)->key)))
-    goto error;
-  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
-    goto error;
-  (*pc_find)->mc_ptr= mc_ptr;
-  return 0;
-error:
-  if (mc_ptr)
-    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return error;
-}
-
-static int
-rec_optional_key_message(IC_CONNECTION *conn,
-                         IC_PC_FIND **pc_find)
-{
-  IC_MEMORY_CONTAINER *mc_ptr= NULL;
-  int error;
-
-  /*
-    When we come here we already received the list [full] string and we
-    only need to fill in key parameters. All key parameters are optional
-    here.
-  */
-  if ((error= init_pc_find(&mc_ptr, pc_find)))
-    goto error;
-  if ((error= get_optional_str(conn, mc_ptr, ic_grid_str,
-                               &(*pc_find)->key.grid_name)))
-    goto error;
-  if ((*pc_find)->key.grid_name.len == 0)
-    return 0; /* No grid name provided, list all programs */
-  if ((error= get_optional_str(conn, mc_ptr, ic_cluster_str,
-                               &(*pc_find)->key.cluster_name)))
-    goto error;
-  if ((*pc_find)->key.cluster_name.len == 0)
-    return 0; /* No cluster name provided, list all programs in grid */
-  if ((error= get_optional_str(conn, mc_ptr, ic_node_str,
-                               &(*pc_find)->key.node_name)))
-    goto error;
-  if ((*pc_find)->key.node_name.len == 0)
-    return 0; /* No node name provided, list all programs in cluster */
-  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
-    goto error;
-  return 0;
-error:
-  if (mc_ptr)
-    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return error;
-}
-
+  @retval The hash value
+*/
 static unsigned int
 ic_pc_hash_key(void *ptr)
 {
@@ -621,6 +564,16 @@ ic_pc_hash_key(void *ptr)
   return (hash1 ^ hash2 ^ hash3);
 }
 
+/**
+  Support function used by hash table implementation, it gets two void
+  pointers that actually point to IC_PC_KEY objects. The two objects are
+  compared for equality.
+
+  @parameter ptr1       The first process key to compare
+  @parameter ptr2       The second process key to compare
+
+  @retval 1 means equal, 0 not equal
+*/
 static int
 ic_pc_key_equal(void *ptr1, void *ptr2)
 {
@@ -634,12 +587,21 @@ ic_pc_key_equal(void *ptr1, void *ptr2)
   return 1; /* Equal */
 }
 
+/**
+  Create the hash table containing all processes under our control.
+  The key is the node name, cluster name and grid name.
+*/
 IC_HASHTABLE*
 create_pc_hash()
 {
   return ic_create_hashtable(4096, ic_pc_hash_key, ic_pc_key_equal);
 }
 
+/**
+  Remove entry from both hash table and dynamic array.
+
+  @parameter pc_start  The process entry reference
+*/
 static void
 remove_pc_entry(IC_PC_START *pc_start)
 {
@@ -654,6 +616,14 @@ remove_pc_entry(IC_PC_START *pc_start)
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
 }
 
+/**
+  Insert process entry into hash table and dynamic array. All process
+  entries are stored both in a dynamic array and a hash table. Thus
+  we can find the IC_PC_START object either by the key or through the
+  dynamic index.
+
+  @parameter pc_start  The process entry reference
+*/
 static int
 insert_pc_entry(IC_PC_START *pc_start)
 {
@@ -674,8 +644,16 @@ insert_pc_entry(IC_PC_START *pc_start)
   return ret_code;
 }
 
+/**
+  As part of the starting of a new process we will insert the process into
+  our control structures. However the process might already be there. It
+  might also be dead although it's in our control structure. So we need to
+  also check reality through the ic_is_process_alive call.
+
+  @parameter pc_start       The data structure describing the process
+*/
 static int
-book_process(IC_PC_START *pc_start)
+insert_process(IC_PC_START *pc_start)
 {
   IC_PC_START *pc_start_found;
   guint64 prev_start_id= 0;
@@ -766,6 +744,11 @@ end:
   return ret_code;
 }
 
+/**
+  Handle a start process request to the process controller
+
+  @parameter conn              The connection from the client
+*/
 static int
 handle_start(IC_CONNECTION *conn)
 {
@@ -793,7 +776,7 @@ handle_start(IC_CONNECTION *conn)
     arg_vector[i+1]= pc_start->parameters[i].str;
   }
   /* Book the process in the hash table */
-  if ((ret_code= book_process(pc_start)))
+  if ((ret_code= insert_process(pc_start)))
     goto error;
   /*
     Create the working directory which is the base directory
@@ -851,19 +834,79 @@ error:
                           ic_get_error_message(ret_code));
 }
 
-static int
-handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
-{
-  IC_PC_FIND *pc_find= NULL;
-  IC_PC_START *pc_start_found;
-  int error;
-  IC_PID_TYPE pid;
-  guint64 start_id= 0;
-  int loop_count= 0;
-  gchar *program_name;
+/**
+  Initialize a IC_PC_FIND object which is used to find a process
 
-  if ((error= rec_key_message(conn, &pc_find)))
+  @parameter mc_ptr           IN:  The memory container to allocate pc_find in
+  @parameter pc_find          OUT: The place to put the reference to the
+                                   pc_find object allocated
+*/
+static int
+init_pc_find(IC_MEMORY_CONTAINER **mc_ptr,
+             IC_PC_FIND **pc_find)
+{
+  if (((*mc_ptr)= ic_create_memory_container((guint32)1024,
+                                             (guint32)0, FALSE)))
+    return IC_ERROR_MEM_ALLOC;
+  if (((*pc_find)= (IC_PC_FIND*)
+       (*mc_ptr)->mc_ops.ic_mc_calloc((*mc_ptr), sizeof(IC_PC_FIND))))
+    return IC_ERROR_MEM_ALLOC;
+  (*pc_find)->mc_ptr= (*mc_ptr);
+  return 0;
+}
+
+/**
+  Receive a protocol message containing a key to a process, fill the data
+  into the pc_find container.
+
+  @parameter conn               IN:  The connection from the client
+  @parameter pc_find            OUT: The process find object to create
+*/
+static int
+rec_key_message(IC_CONNECTION *conn,
+                 IC_PC_FIND **pc_find)
+{
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  int error;
+
+  /*
+    When we come here we already received the stop/kill string and we only
+    need to fill in the key parameters (grid, cluster and node name).
+  */
+  if ((error= init_pc_find(&mc_ptr, pc_find)))
     goto error;
+  if ((error= get_key(conn, mc_ptr, &(*pc_find)->key)))
+    goto error;
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+    goto error;
+  (*pc_find)->mc_ptr= mc_ptr;
+  return 0;
+error:
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return error;
+}
+
+/**
+  Delete the process as requested by the protocol action.  The flag indicates
+  whether the client ordered a kill or a stop to be performed.
+  Before killing the process we will discover whether we have such a process
+  under our control.
+
+  @parameter pc_find           IN: Key of process to stop
+  @parameter kill_flag         IN: Flag to indicate a kill or a stop
+*/
+static int delete_process(IC_PC_FIND *pc_find,
+                          gboolean kill_flag)
+{
+  IC_PC_START *pc_start_found;
+  IC_MEMORY_CONTAINER *mc_ptr= pc_find->mc_ptr;
+  int error= 0;
+  guint32 loop_count= 0;
+  guint64 start_id;
+  IC_PID_TYPE pid;
+  IC_STRING program_name;
+  DEBUG_ENTRY("delete_process");
 
 try_again:
   ic_mutex_lock(pc_hash_mutex);
@@ -892,14 +935,22 @@ try_again:
       We release the mutex on the hash, try to stop the process and
       then check if we were successful in stopping it after waiting
       for a few seconds.
+
+      We have to get the data out of the pc_start object since someone
+      else might destroy the object while we're waiting for the process
+      to be killed.
     */
     start_id= pc_start_found->start_id;
     pid= pc_start_found->pid;
-    program_name= pc_start_found->program_name.str;
+    error= ic_mc_strdup(mc_ptr,
+                        &program_name,
+                        &pc_start_found->program_name);
     ic_mutex_unlock(pc_hash_mutex);
-    ic_kill_process(pc_start_found->pid, kill_flag);
-    ic_sleep(3); /* Sleep 3 seconds */
-    error= ic_is_process_alive(pid, program_name);
+    if (error)
+      goto error;
+    ic_kill_process(pid, kill_flag);
+    ic_sleep(3); /* Sleep 3 seconds to give OS a chance to complete kill */
+    error= ic_is_process_alive(pid, program_name.str);
     if (error == 0)
     {
       error= IC_ERROR_FAILED_TO_STOP_PROCESS;
@@ -938,11 +989,38 @@ try_again:
     */
     ic_mutex_unlock(pc_hash_mutex);
   }
-  pc_find->mc_ptr->mc_ops.ic_mc_free(pc_find->mc_ptr); 
-  return send_ok_reply(conn);
 error:
-  if (pc_find && pc_find->mc_ptr)
-    pc_find->mc_ptr->mc_ops.ic_mc_free(pc_find->mc_ptr); 
+  return error;
+}
+
+/**
+  Handle the protocol message to stop a process. The flag indicates whether
+  the client ordered a kill or a stop to be performed.
+  Before killing the process we will discover whether we have such a process
+  under our control.
+
+  @parameter conn              IN: The connection from the client
+  @parameter kill_flag         IN: Flag to indicate a kill or a stop
+
+  @note
+    Kill means the same as kill -9 pid
+    Stop means the same as kill -15 pid
+*/
+static int
+handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
+{
+  IC_PC_FIND *pc_find= NULL;
+  int error;
+  DEBUG_ENTRY("handle_stop");
+
+  if ((error= rec_key_message(conn, &pc_find)))
+    goto error;
+  mc_ptr= pc_find->mc_ptr; /* Memory container used by this function */
+  error= delete_process(pc_find, kill_flag);
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  if (!error)
+    return send_ok_reply(conn);
+error:
   return send_error_reply(conn,
                           ic_get_error_message(error));
 }
@@ -1045,6 +1123,50 @@ copy_pc_start(IC_PC_START *pc_start,
 
 mem_error:
   return NULL;
+}
+
+static int
+rec_optional_key_message(IC_CONNECTION *conn,
+                         IC_PC_FIND **pc_find)
+{
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  int error;
+
+  /*
+    When we come here we already received the list [full] string and we
+    only need to fill in key parameters. All key parameters are optional
+    here.
+  */
+  if ((error= init_pc_find(&mc_ptr, pc_find)))
+    goto error;
+  if ((error= ic_mc_rec_opt_string(conn,
+                                   mc_ptr,
+                                   ic_grid_str,
+                                   &(*pc_find)->key.grid_name)))
+    goto error;
+  if ((*pc_find)->key.grid_name.len == 0)
+    return 0; /* No grid name provided, list all programs */
+  if ((error= ic_mc_rec_opt_string(conn,
+                                   mc_ptr,
+                                   ic_cluster_str,
+                                   &(*pc_find)->key.cluster_name)))
+    goto error;
+  if ((*pc_find)->key.cluster_name.len == 0)
+    return 0; /* No cluster name provided, list all programs in grid */
+  if ((error= ic_mc_rec_opt_string(conn,
+                                   mc_ptr,
+                                   ic_node_str,
+                                   &(*pc_find)->key.node_name)))
+    goto error;
+  if ((*pc_find)->key.node_name.len == 0)
+    return 0; /* No node name provided, list all programs in cluster */
+  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+    goto error;
+  return 0;
+error:
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return error;
 }
 
 static int

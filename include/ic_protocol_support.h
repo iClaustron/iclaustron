@@ -51,18 +51,32 @@
     - ic_rec_string
       Wait for fixed string plus a string with variable content
 
+    - ic_mc_rec_string
+      Wait for fixed string plus a string with variable content, store
+      resulting string in string allocated from provided memory
+      container
+
+    - ic_mc_rec_opt_string
+      Wait for fixed string plus a string with variable content, store
+      resulting string in string allocated from provided memory
+      container. The parameter is optional, lack of it will initialize
+      the IC_STRING object to the NULL string object.
+
+    - ic_rec_boolean
+      Wait for fixed string plus a 32-bit unsigned number
+
     - ic_rec_number
-      Wait for fixed number plus a 32-bit unsigned number
+      Wait for fixed string plus a 32-bit unsigned number
 
     - ic_rec_int_number
-      Wait for fixed number plus a 32-bit signed number
+      Wait for fixed string plus a 32-bit signed number
 
     - ic_rec_long_number
-      Wait for fixed number plus a 64-bit unsigned number
+      Wait for fixed string plus a 64-bit unsigned number
 
     - ic_rec_opt_number
-      Wait for fixed number plus a 32-bit unsigned number, however this
-      is optional and if not found we'll return 0 in number field.
+      Wait for fixed string plus a 32-bit unsigned number, however this
+      is optional and if not found we'll not touch the number field.
 
     - ic_rec_empty_line
       Wait for a Carriage Return, always means reverse order of communication
@@ -88,42 +102,75 @@
 */
 
 /* Check buffer routines after ic_rec_with_cr */
-int ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str,
+int ic_check_buf(gchar *read_buf,
+                 guint32 read_size,
+                 const gchar *str,
                  int str_len);
-int ic_check_buf_with_many_int(gchar *read_buf, guint32 read_size,
-                               const gchar *str, int str_len,
-                               guint32 num_elements, guint64 *number);
-int ic_check_buf_with_int(gchar *read_buf, guint32 read_size,
-                          const gchar *str, int str_len, guint64 *number);
-int ic_check_buf_with_string(gchar *read_buf, guint32 read_size,
-                             const gchar *str, int str_len,
+int ic_check_buf_with_many_int(gchar *read_buf,
+                               guint32 read_size,
+                               const gchar *str,
+                               int str_len,
+                               guint32 num_elements,
+                               guint64 *number);
+int ic_check_buf_with_int(gchar *read_buf,
+                          guint32 read_size,
+                          const gchar *str,
+                          int str_len,
+                          guint64 *number);
+int ic_check_buf_with_string(gchar *read_buf,
+                             guint32 read_size,
+                             const gchar *str,
+                             int str_len,
                              IC_STRING **string);
 
 /* Receive routines */
 int ic_rec_with_cr(IC_CONNECTION *conn,
                    gchar **rec_buf,
                    guint32 *read_size);
-int ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str);
+int ic_rec_simple_str(IC_CONNECTION *conn,
+                      const gchar *str);
 int ic_rec_simple_str_opt(IC_CONNECTION *conn,
                           const gchar *str,
                           gboolean *found);
-int ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str,
+int ic_mc_rec_string(IC_CONNECTION *conn,
+                     IC_MEMORY_CONTAINER *mc_ptr,
+                     const gchar *prefix_str,
+                     IC_STRING *str);
+int ic_mc_rec_opt_string(IC_CONNECTION *conn,
+                         IC_MEMORY_CONTAINER *mc_ptr,
+                         const gchar *prefix_str,
+                         IC_STRING *str);
+int ic_rec_string(IC_CONNECTION *conn,
+                  const gchar *prefix_str,
                   gchar *read_str);
-int ic_rec_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
+int ic_rec_boolean(IC_CONNECTION *conn,
+                   const gchar *prefix_str,
+                   gboolean *bool_value);
+int ic_rec_number(IC_CONNECTION *conn,
+                  const gchar *prefix_str,
+                  guint32 *number);
 int ic_rec_long_number(IC_CONNECTION *conn,
-                       const gchar *str,
+                       const gchar *prefix_str,
                        guint64 *number);
-int ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number);
-int ic_rec_int_number(IC_CONNECTION *conn, const gchar *str, int *number);
+int ic_rec_opt_number(IC_CONNECTION *conn,
+                      const gchar *prefix_str,
+                      guint32 *number);
+int ic_rec_int_number(IC_CONNECTION *conn,
+                      const gchar *prefix_str,
+                      int *number);
 int ic_rec_empty_line(IC_CONNECTION *conn);
-int ic_step_back_rec_with_cr(IC_CONNECTION *conn, guint32 read_size);
+int ic_step_back_rec_with_cr(IC_CONNECTION *conn,
+                             guint32 read_size);
 
 /* Send routines */
-int ic_send_with_cr(IC_CONNECTION *conn, const gchar *buf);
+int ic_send_with_cr(IC_CONNECTION *conn,
+                    const gchar *buf);
 int ic_send_empty_line(IC_CONNECTION *conn);
-int ic_send_with_cr_with_num(IC_CONNECTION *conn, const gchar *buf,
+int ic_send_with_cr_with_num(IC_CONNECTION *conn,
+                             const gchar *buf,
                              guint64 number);
-int ic_send_with_cr_composed(IC_CONNECTION *conn, const gchar **buf,
+int ic_send_with_cr_composed(IC_CONNECTION *conn,
+                             const gchar **buf,
                              guint32 num_strings);
 int ic_send_with_cr_two_strings(IC_CONNECTION *conn,
                                 const gchar *buf1,

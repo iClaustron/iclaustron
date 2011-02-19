@@ -17,9 +17,11 @@
 #include <ic_port.h>
 #include <ic_err.h>
 #include <ic_debug.h>
+#include <ic_mc.h>
 #include <ic_string.h>
 #include <ic_connection.h>
 #include "ic_connection_int.h"
+#include <ic_proto_str.h>
 
 void
 ic_print_buf(char *buf, guint32 size)
@@ -237,6 +239,102 @@ ic_check_buf_with_string(gchar *read_buf, guint32 read_size, const gchar *str,
   return FALSE;
 }
 
+/**
+  Support function to ic_mc_rec_string and ic_mc_rec_opt_string
+
+  @parameter mc_ptr            IN:  Memory container to allocate string objects
+  @parameter prefix_str        IN:  Key string
+  @parameter read_buf          IN:  The protocol buffer read
+  @parameter read_size         IN:  The size of the protocol buffer
+  @parameter str               OUT: The string object found in protocol
+*/
+static int mc_rec_string_impl(IC_MEMORY_CONTAINER *mc_ptr,
+                              const gchar *prefix_str,
+                              gchar *read_buf,
+                              guint32 read_size,
+                              IC_STRING *str)
+{
+  guint32 prefix_len= 0;
+  if (prefix_str)
+    prefix_len= strlen(prefix_str);
+  if (read_size <= prefix_len)
+    return IC_PROTOCOL_ERROR;
+  if (prefix_len && memcmp(read_buf, prefix_str, prefix_len))
+    return IC_PROTOCOL_ERROR;
+  read_buf+= prefix_len;
+  read_size-= prefix_len;
+  if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
+    return IC_ERROR_MEM_ALLOC;
+  memcpy(str_ptr, read_buf, read_size);
+  IC_INIT_STRING(str, str_ptr, read_size, TRUE);
+  return 0;
+}
+
+/**
+  Get a string in a protocol, return it in provided IC_STRING object
+
+  @parameter conn              IN:  The connection from the client
+  @parameter mc_ptr            IN:  Memory container to allocate string objects
+  @parameter prefix_str        IN:  Key string
+  @parameter str               OUT: The string object found in protocol
+*/
+int
+ic_mc_rec_string(IC_CONNECTION *conn,
+                 IC_MEMORY_CONTAINER *mc_ptr,
+                 const gchar *prefix_str,
+                 IC_STRING *str)
+{
+  int error;
+  guint32 read_size;
+  gchar *str_ptr;
+  gchar *read_buf;
+  guint32 prefix_len= 0;
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return error;
+  return mc_rec_string_impl(mc_ptr,
+                            prefix_str,
+                            read_buf,
+                            read_size,
+                            str);
+}
+
+/**
+  Get a string in a protocol, return it in provided IC_STRING object
+  The string is optional in protocol, we'll initialize IC_STRING
+  object to NULL object if the string isn't found.
+
+  @parameter conn              IN:  The connection from the client
+  @parameter mc_ptr            IN:  Memory container to allocate string objects
+  @parameter head_str          IN:  Key string
+  @parameter str               OUT: The string object found in protocol
+*/
+int
+ic_mc_rec_opt_string(IC_CONNECTION *conn,
+                     IC_MEMORY_CONTAINER *mc_ptr,
+                     const gchar *prefix_str,
+                     IC_STRING *str)
+{
+  int error;
+  guint32 read_size;
+  gchar *read_buf;
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return error;
+  if (read_size == 0)
+  {
+    /* Found only last empty string, step back to be able to read this again */
+    ic_step_back_rec_with_cr(conn, read_size);
+    IC_INIT_STRING(str, NULL, 0, FALSE);
+    return 0;
+  }
+  return mc_rec_string_impl(mc_ptr,
+                            prefix_str,
+                            read_buf,
+                            read_size,
+                            str);
+}
+
 int
 ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
 {
@@ -343,14 +441,65 @@ ic_rec_number_impl(IC_CONNECTION *conn,
     if (!optional)
       return IC_PROTOCOL_ERROR;
     ic_step_back_rec_with_cr(conn, read_size);
-    *id= 0;
     return 0;
   }
   return error;
 }
 
+/**
+  Get the autorestart indicator from the protocol
+
+  @parameter conn              IN:  The connection
+  @parameter prefix_str        IN:  The prefix string defined by the protocol
+  @parameter bool_value        OUT: The boolean value (true/false) read from protocol
+*/
 int
-ic_rec_long_number(IC_CONNECTION *conn, const gchar *str, guint64 *number)
+ic_rec_boolean(IC_CONNECTION *conn,
+               const gchar *prefix_str,
+               gboolean *bool_value)
+{
+  int error;
+  guint32 read_size;
+  gchar *read_buf;
+  guint32 prefix_len= strlen(prefix_str);
+
+  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return error;
+  if (read_size <= prefix_len)
+    goto protocol_error;
+  if (memcmp(read_buf, prefix_str, prefix_len))
+    goto protocol_error;
+  read_size-= prefix_len;
+  read_buf+= prefix_len;
+  if (read_size == strlen(ic_true_str) &&
+      !memcmp(read_buf, ic_true_str, read_size))
+    *bool_value= 1;
+  else if (read_size == strlen(ic_false_str) &&
+           !memcmp(read_buf, ic_false_str, read_size))
+    *bool_value= 0;
+  else
+    goto protocol_error;
+  return 0;
+protocol_error:
+  return IC_PROTOCOL_ERROR;
+}
+
+/**
+  Get a numeric variable from the protocol with prefix_str as word describing
+  the parameter.
+
+  @parameter conn              IN:  The connection
+  @parameter prefix_str        IN:  The prefix string defined by the protocol
+  @parameter number            OUT: Integer sent in protocol
+
+  @note
+    This function is used where the protocol accepts nothing bigger than
+    2^64 - 1, thus a 64-bit unsigned variable.
+*/
+int
+ic_rec_long_number(IC_CONNECTION *conn,
+                   const gchar *prefix_str,
+                   guint64 *number)
 {
   gchar *read_buf;
   guint32 read_size;
@@ -359,8 +508,10 @@ ic_rec_long_number(IC_CONNECTION *conn, const gchar *str, guint64 *number)
 
   if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (!ic_check_buf_with_int(read_buf, read_size, str,
-                               strlen(str),
+    if (!ic_check_buf_with_int(read_buf,
+                               read_size,
+                               prefix_str,
+                               strlen(prefix_str),
                                &local_id))
     {
       *number= local_id;
@@ -372,40 +523,80 @@ ic_rec_long_number(IC_CONNECTION *conn, const gchar *str, guint64 *number)
   return error;
 }
 
+/**
+  Get a numeric variable from the protocol with prefix_str as word describing
+  the parameter.
+
+  @parameter conn              IN:  The connection
+  @parameter prefix_str        IN:  The prefix string defined by the protocol
+  @parameter number            OUT: Integer sent in protocol
+
+  @note
+    This function is used where the protocol accepts nothing bigger than
+    2^32 - 1, thus a 32-bit unsigned variable.
+*/
 int
-ic_rec_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
+ic_rec_number(IC_CONNECTION *conn, const gchar *prefix_str, guint32 *number)
 {
-  return ic_rec_number_impl(conn, str, number, FALSE);
+  return ic_rec_number_impl(conn, prefix_str, number, FALSE);
 }
 
+/**
+  Get a numeric variable from the protocol with prefix_str as word describing
+  the parameter.
+  
+  The protocol defines this parameter as optional. If this is the case the
+  variable will not be changed. This means that the user of this function
+  should assign it a default value before calling this function.
+
+  @parameter conn              IN:  The connection
+  @parameter prefix_str        IN:  The prefix string defined by the protocol
+  @parameter number            OUT: Integer sent in protocol
+
+  @note
+    This function is used where the protocol accepts nothing bigger than
+    2^32 - 1, thus a 32-bit unsigned variable.
+*/
 int
 ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
 {
   return ic_rec_number_impl(conn, str, number, TRUE);
 }
 
+/**
+  Get a numeric variable from the protocol with prefix_str as word describing
+  the parameter.
+
+  @parameter conn              IN:  The connection
+  @parameter prefix_str        IN:  The prefix string defined by the protocol
+  @parameter number            OUT: Integer sent in protocol
+
+  @note
+    This function is used where the protocol accepts nothing bigger than
+    2^32 - 1, thus a 32-bit unsigned variable.
+*/
 int
 ic_rec_int_number(IC_CONNECTION *conn,
                   const gchar *str,
-                  int *id)
+                  int *number)
 {
   gchar *read_buf;
   guint32 read_size;
   int error;
   gboolean sign_flag;
-  guint64 local_id;
+  guint64 local_number;
 
   if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (!ic_check_buf_with_signed_int(read_buf, read_size, str,
                                       strlen(str),
-                                      &local_id, &sign_flag))
+                                      &local_number, &sign_flag))
     {
-      if (local_id >= IC_MAX_UINT32)
+      if (local_number >= IC_MAX_UINT32)
         return IC_PROTOCOL_ERROR;
-      *id= (guint32)local_id;
+      *number= (guint32)local_number;
       if (sign_flag)
-        *id= -(*id);
+        *number= -(*number);
       return 0;
     }
     return IC_PROTOCOL_ERROR;
