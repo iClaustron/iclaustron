@@ -837,13 +837,11 @@ error:
 /**
   Initialize a IC_PC_FIND object which is used to find a process
 
-  @parameter mc_ptr           IN:  The memory container to allocate pc_find in
   @parameter pc_find          OUT: The place to put the reference to the
                                    pc_find object allocated
 */
 static int
-init_pc_find(IC_MEMORY_CONTAINER **mc_ptr,
-             IC_PC_FIND **pc_find)
+init_pc_find(IC_PC_FIND **pc_find)
 {
   if (((*mc_ptr)= ic_create_memory_container((guint32)1024,
                                              (guint32)0, FALSE)))
@@ -873,13 +871,13 @@ rec_key_message(IC_CONNECTION *conn,
     When we come here we already received the stop/kill string and we only
     need to fill in the key parameters (grid, cluster and node name).
   */
-  if ((error= init_pc_find(&mc_ptr, pc_find)))
+  if ((error= init_pc_find(pc_find)))
     goto error;
+  mc_ptr= (*pc_find)->mc_ptr;
   if ((error= get_key(conn, mc_ptr, &(*pc_find)->key)))
     goto error;
   if ((error= ic_rec_simple_str(conn, ic_empty_string)))
     goto error;
-  (*pc_find)->mc_ptr= mc_ptr;
   return 0;
 error:
   if (mc_ptr)
@@ -1015,9 +1013,8 @@ handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
 
   if ((error= rec_key_message(conn, &pc_find)))
     goto error;
-  mc_ptr= pc_find->mc_ptr; /* Memory container used by this function */
   error= delete_process(pc_find, kill_flag);
-  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  pc_find->mc_ptr->mc_ops.ic_mc_free(pc_find->mc_ptr);
   if (!error)
     return send_ok_reply(conn);
 error:
@@ -1025,6 +1022,16 @@ error:
                           ic_get_error_message(error));
 }
 
+/**
+  This performs a key match. The key here can have parts of the key
+  being NULL. We support searching for processes given only grid name,
+  only grid and cluster name and the full key.
+
+  @parameter pc_start           IN: The process descriptor currently matched
+  @parameter pc_find            IN: The search description
+
+  @retval          TRUE if matching, FALSE if not matching
+*/
 static gboolean
 is_list_match(IC_PC_START *pc_start, IC_PC_FIND *pc_find)
 {
@@ -1126,8 +1133,8 @@ mem_error:
 }
 
 static int
-rec_optional_key_message(IC_CONNECTION *conn,
-                         IC_PC_FIND **pc_find)
+rec_opt_key_message(IC_CONNECTION *conn,
+                    IC_PC_FIND **pc_find)
 {
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   int error;
@@ -1137,26 +1144,27 @@ rec_optional_key_message(IC_CONNECTION *conn,
     only need to fill in key parameters. All key parameters are optional
     here.
   */
-  if ((error= init_pc_find(&mc_ptr, pc_find)))
+  if ((error= init_pc_find(pc_find)))
     goto error;
+  (*pc_find)->mc_ptr= mc_ptr;
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
                                    ic_grid_str,
-                                   &(*pc_find)->key.grid_name)))
+                                   &((*pc_find)->key.grid_name))))
     goto error;
   if ((*pc_find)->key.grid_name.len == 0)
     return 0; /* No grid name provided, list all programs */
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
                                    ic_cluster_str,
-                                   &(*pc_find)->key.cluster_name)))
+                                   &((*pc_find)->key.cluster_name))))
     goto error;
   if ((*pc_find)->key.cluster_name.len == 0)
     return 0; /* No cluster name provided, list all programs in grid */
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
                                    ic_node_str,
-                                   &(*pc_find)->key.node_name)))
+                                   &((*pc_find)->key.node_name))))
     goto error;
   if ((*pc_find)->key.node_name.len == 0)
     return 0; /* No node name provided, list all programs in cluster */
@@ -1182,12 +1190,11 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   void *void_pc_start;
   guint32 read_size;
   gchar *read_buf;
+  gboolean stop_flag;
 
-  if (!(mc_ptr= ic_create_memory_container(32768, 0, FALSE)))
-    goto mem_error;
-  if ((error= rec_optional_key_message(conn, &pc_find)))
+  if ((error= rec_opt_key_message(conn, &pc_find)))
     goto error;
-  
+  mc_ptr= pc_find->mc_ptr;
   ic_mutex_lock(pc_hash_mutex);
   max_index= glob_pc_array->dpa_ops.ic_get_max_index(glob_pc_array);
   for (current_index= 0; current_index < max_index; current_index++)
@@ -1210,7 +1217,8 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   }
   ic_mutex_unlock(pc_hash_mutex);
   loop_pc_start= first_pc_start;
-  while (loop_pc_start)
+  stop_flag= FALSE;
+  while (loop_pc_start && !stop_flag)
   {
     if ((error= send_list_entry(conn, loop_pc_start, list_full_flag)))
       goto error;
@@ -1218,15 +1226,15 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
     {
       if (ic_check_buf(read_buf, read_size, ic_list_stop_str,
                        strlen(ic_list_stop_str)))
-        break;
-      if (!(ic_check_buf(read_buf, read_size, ic_list_next_str,
+        stop_flag= TRUE;
+      else if (!(ic_check_buf(read_buf, read_size, ic_list_next_str,
                          strlen(ic_list_next_str))))
         goto protocol_error;
     }
+    if (!(ic_rec_simple_str(conn, ic_empty_string)))
+      goto protocol_error;
     loop_pc_start= loop_pc_start->next_pc_start;
   }
-  if (!(ic_rec_simple_str(conn, ic_empty_string)))
-    goto protocol_error;
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   return send_list_stop_reply(conn);
 
