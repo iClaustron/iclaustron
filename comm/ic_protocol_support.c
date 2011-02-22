@@ -255,6 +255,8 @@ static int mc_rec_string_impl(IC_MEMORY_CONTAINER *mc_ptr,
                               IC_STRING *str)
 {
   guint32 prefix_len= 0;
+  gchar *str_ptr;
+
   if (prefix_str)
     prefix_len= strlen(prefix_str);
   if (read_size <= prefix_len)
@@ -286,9 +288,7 @@ ic_mc_rec_string(IC_CONNECTION *conn,
 {
   int error;
   guint32 read_size;
-  gchar *str_ptr;
   gchar *read_buf;
-  guint32 prefix_len= 0;
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;

@@ -91,6 +91,11 @@ static gchar *my_grid= "grid: my_grid";
 static gchar *my_cluster= "cluster: my_cluster";
 static gchar *my_csd_node= "node: my_csd_node";
 
+/**
+  Start a new client socket connection
+
+  @parameter conn         OUT: The new connection created
+*/
 static int start_client_connection(IC_CONNECTION **conn)
 {
   int ret_code;
@@ -110,7 +115,7 @@ static int start_client_connection(IC_CONNECTION **conn)
 /**
   Test starting an ic_csd process
 
-  @parameter conn        The connection to the process controller
+  @parameter conn        IN: The connection to the process controller
 */
 static int test_successful_start(IC_CONNECTION *conn)
 {
@@ -156,7 +161,7 @@ static int test_successful_start(IC_CONNECTION *conn)
   Test starting an ic_csd process which is already started, this function
   should always return with an appropriate error message.
 
-  @parameter conn        The connection to the process controller
+  @parameter conn        IN: The connection to the process controller
 */
 static int test_unsuccessful_start(IC_CONNECTION *conn)
 {
@@ -167,7 +172,7 @@ static int test_unsuccessful_start(IC_CONNECTION *conn)
 /**
   Test stopping the previously successfully started ic_csd process
 
-  @parameter conn        The connection to the process controller
+  @parameter conn        IN: The connection to the process controller
 */
 static int test_successful_stop(IC_CONNECTION *conn)
 {
@@ -194,7 +199,7 @@ static int test_successful_stop(IC_CONNECTION *conn)
   which has also already been stopped. Thus this function should
   get an error message in response.
 
-  @parameter conn        The connection to the process controller
+  @parameter conn        IN: The connection to the process controller
 */
 static int test_unsuccessful_stop(IC_CONNECTION *conn)
 {
@@ -206,7 +211,7 @@ static int test_unsuccessful_stop(IC_CONNECTION *conn)
   Test listing the single ic_csd process we previously started with all
   its parameters.
 
-  @parameter conn        The connection to the process controller
+  @parameter conn        IN: The connection to the process controller
 */
 static int test_list(IC_CONNECTION *conn)
 {
@@ -436,15 +441,6 @@ send_list_stop_reply(IC_CONNECTION *conn)
 }
 
 /**
-  Get optional string, we either will find the key string and the string
-  value or we will find an empty string.
-
-  @parameter conn              IN:  The connection from the client
-  @parameter mc_ptr            IN:  Memory container to allocate string objects
-  @parameter head_str          IN:  Key string
-  @parameter str               OUT: The string object found in protocol
-*/
-/**
   Get the key to the process from the protocol. The key consists of a
   triplet, node name, cluster name and grid name.
 
@@ -544,7 +540,7 @@ error:
   so by using the standard hash value of a string and then XOR:ing all three
   hash values of the individual strings.
 
-  @parameter ptr              The key to calculate the hash value based on
+  @parameter ptr              IN: The key to calculate the hash value based on
 
   @retval The hash value
 */
@@ -569,8 +565,8 @@ ic_pc_hash_key(void *ptr)
   pointers that actually point to IC_PC_KEY objects. The two objects are
   compared for equality.
 
-  @parameter ptr1       The first process key to compare
-  @parameter ptr2       The second process key to compare
+  @parameter ptr1       IN: The first process key to compare
+  @parameter ptr2       IN: The second process key to compare
 
   @retval 1 means equal, 0 not equal
 */
@@ -590,6 +586,8 @@ ic_pc_key_equal(void *ptr1, void *ptr2)
 /**
   Create the hash table containing all processes under our control.
   The key is the node name, cluster name and grid name.
+
+  @retval The hash table object
 */
 IC_HASHTABLE*
 create_pc_hash()
@@ -600,7 +598,7 @@ create_pc_hash()
 /**
   Remove entry from both hash table and dynamic array.
 
-  @parameter pc_start  The process entry reference
+  @parameter pc_start  IN: The process entry reference
 */
 static void
 remove_pc_entry(IC_PC_START *pc_start)
@@ -622,7 +620,7 @@ remove_pc_entry(IC_PC_START *pc_start)
   we can find the IC_PC_START object either by the key or through the
   dynamic index.
 
-  @parameter pc_start  The process entry reference
+  @parameter pc_start  IN: The process entry reference
 */
 static int
 insert_pc_entry(IC_PC_START *pc_start)
@@ -650,7 +648,7 @@ insert_pc_entry(IC_PC_START *pc_start)
   might also be dead although it's in our control structure. So we need to
   also check reality through the ic_is_process_alive call.
 
-  @parameter pc_start       The data structure describing the process
+  @parameter pc_start       IN: The data structure describing the process
 */
 static int
 insert_process(IC_PC_START *pc_start)
@@ -747,7 +745,7 @@ end:
 /**
   Handle a start process request to the process controller
 
-  @parameter conn              The connection from the client
+  @parameter conn              IN: The connection from the client
 */
 static int
 handle_start(IC_CONNECTION *conn)
@@ -758,10 +756,11 @@ handle_start(IC_CONNECTION *conn)
   IC_PID_TYPE pid;
   IC_STRING working_dir;
   IC_PC_START *pc_start, *pc_start_check;
+  DEBUG_ENTRY("handle_start");
 
   IC_INIT_STRING(&working_dir, NULL, 0, FALSE);
   if ((ret_code= rec_start_message(conn, &pc_start)))
-    return ret_code;
+    DEBUG_RETURN_INT(ret_code);
   if (!(arg_vector= (gchar**)pc_start->mc_ptr->mc_ops.ic_mc_calloc(
                      pc_start->mc_ptr,
                      (pc_start->num_parameters+2) * sizeof(gchar*))))
@@ -815,7 +814,7 @@ handle_start(IC_CONNECTION *conn)
   pc_start->pid= pid;
   pc_start->start_id= glob_start_id++;
   ic_mutex_unlock(pc_hash_mutex);
-  return send_ok_pid_reply(conn, pc_start->pid);
+  DEBUG_RETURN_INT(send_ok_pid_reply(conn, pc_start->pid));
 
 late_error:
   ic_mutex_lock(pc_hash_mutex);
@@ -830,8 +829,8 @@ error:
   if (working_dir.str)
     ic_free(working_dir.str);
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
-  return send_error_reply(conn, 
-                          ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(send_error_reply(conn, 
+                                    ic_get_error_message(ret_code)));
 }
 
 /**
@@ -843,14 +842,18 @@ error:
 static int
 init_pc_find(IC_PC_FIND **pc_find)
 {
-  if (((*mc_ptr)= ic_create_memory_container((guint32)1024,
-                                             (guint32)0, FALSE)))
-    return IC_ERROR_MEM_ALLOC;
+  IC_MEMORY_CONTAINER *mc_ptr;
+  DEBUG_ENTRY("init_pc_find");
+
+  if ((mc_ptr= ic_create_memory_container((guint32)1024,
+                                          (guint32)0,
+                                          FALSE)))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   if (((*pc_find)= (IC_PC_FIND*)
-       (*mc_ptr)->mc_ops.ic_mc_calloc((*mc_ptr), sizeof(IC_PC_FIND))))
-    return IC_ERROR_MEM_ALLOC;
-  (*pc_find)->mc_ptr= (*mc_ptr);
-  return 0;
+       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_FIND))))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  (*pc_find)->mc_ptr= mc_ptr;
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -1062,6 +1065,18 @@ is_list_match(IC_PC_START *pc_start, IC_PC_FIND *pc_find)
   return TRUE;
 }
 
+/**
+  Copy an IC_PC_START object found in hash table to make it available
+  for use without worry of concurrent users of the object.
+
+  @parameter pc_start          The object to copy
+  @parameter mc_ptr            The memory container to allocate the new
+                               object from
+  @parameter list_full_flag    Copy also parameter list if this is TRUE
+
+  @note
+    All parameters are IN-parameters
+*/
 static IC_PC_START*
 copy_pc_start(IC_PC_START *pc_start,
               IC_MEMORY_CONTAINER *mc_ptr,
@@ -1132,6 +1147,13 @@ mem_error:
   return NULL;
 }
 
+/**
+  Receive a range of keys to search for. One can either receive nothing,
+  only grid name, only grid name and cluster name or receive the full key.
+
+  @parameter conn              IN:  The connection
+  @parameter pc_find           OUT: The search object to create
+*/
 static int
 rec_opt_key_message(IC_CONNECTION *conn,
                     IC_PC_FIND **pc_find)
@@ -1177,6 +1199,12 @@ error:
   return error;
 }
 
+/**
+  Handle a list protocol action, either a full list or a simple list
+
+  @parameter conn                  IN: The connection
+  @parameter list_full_flag        IN: List with parameters list
+*/
 static int
 handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
 {
@@ -1255,6 +1283,15 @@ error:
   For security reasons this function can only write files into the
   config directory. We don't want the client to be able to specify the
   directory since that could be used for too many malicious reasons.
+
+  @parameter conn               The connection
+  @parameter file_name_array    Dynamic array of file names received
+  @parameter file_name          Name of file to be received in this method
+  @parameter num_files          OUT: Number of files opened so far
+                                Incremented by this function when successful
+  @parameter node_id            Node id of the Cluster Server, this gives us
+                                name of the directory to write the file into
+  @parameter number_of_lines    Number of lines in file
 */
 static int
 handle_receive_file(IC_CONNECTION *conn,
@@ -1324,6 +1361,8 @@ error:
   goes wrong before the entire file transfer is completed.
 
   To aid in this we use a dynamic pointer array.
+
+  @parameter conn           IN: The connection
 */
 static int
 handle_copy_cluster_server_files(IC_CONNECTION *conn)
@@ -1429,6 +1468,11 @@ error_delete_files:
   return error;
 }
 
+/**
+  Handle the protocol to get CPU information
+
+  @parameter conn          IN: The connection
+*/
 static int
 handle_get_cpu_info(IC_CONNECTION *conn)
 {
@@ -1490,6 +1534,11 @@ error:
   return error;
 }
 
+/**
+  Handle the protocol to get memory information
+
+  @parameter conn                 IN: The connection
+*/
 static int
 handle_get_mem_info(IC_CONNECTION *conn)
 {
@@ -1542,6 +1591,11 @@ error:
   return error;
 }
 
+/**
+  Handle the protocol to get disk information
+
+  @parameter conn                 IN: The connection
+*/
 static int
 handle_get_disk_info(IC_CONNECTION *conn)
 {
@@ -1582,7 +1636,7 @@ handle_get_disk_info(IC_CONNECTION *conn)
   return error;
 }
 
-/*
+/**
   The command handler is a thread that is executed on behalf of one of the
   Cluster Managers in a Grid.
 
@@ -1793,6 +1847,11 @@ handle_get_disk_info(IC_CONNECTION *conn)
   Line 2: error string: @error_string
 */
 
+/**
+  Handle a process controller client connection
+
+  @parameter data             Contains reference from which we get connection
+*/
 static gpointer
 run_command_handler(gpointer data)
 {
@@ -1885,6 +1944,14 @@ run_command_handler(gpointer data)
   DEBUG_THREAD_RETURN;
 }
 
+/**
+  Client connection factory. This method sets up a server connection,
+  listens to new connections on this connection and spawns off a new
+  thread to handle the new connection until the connection is closed
+  when also the thread is closed.
+
+  @parameter tp_state         The thread pool object to create threads from
+*/
 int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
 {
   int ret_code;
@@ -1946,6 +2013,9 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
   DEBUG_RETURN_INT(0);
 }
 
+/**
+  Parameters used to start ic_pcntrld program
+*/
 static GOptionEntry entries[] = 
 {
   { "server_name", 0, 0, G_OPTION_ARG_STRING,
@@ -1964,6 +2034,12 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+/**
+  Main function of ic_pcntrld program
+
+  @parameter argc            Number of arguments in start of program
+  @parameter argv            Array of strings where arguments are found
+*/
 int main(int argc, char *argv[])
 {
   int ret_code= 0;
