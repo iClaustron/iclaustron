@@ -47,11 +47,19 @@ IC_STRING ic_config_ending_string=
 IC_STRING ic_binary_string=
 {(gchar*)"bin", (guint32)3, (gboolean)TRUE};
 
-/*
+/**
   A couple of functions to set references to directories in the iClaustron
   installation.
 */
 
+/**
+  Create a string with the file name:
+  CONFIG_DIR/config_version.ini
+
+  @parameter file_name         OUT: String placeholder to place created name
+  @parameter buf               IN:  Buffer used by file_name string
+  @parameter config_dir        IN:  Config directory
+*/
 void
 ic_create_config_version_file_name(IC_STRING *file_name,
                                    gchar *buf,
@@ -65,9 +73,16 @@ ic_create_config_version_file_name(IC_STRING *file_name,
   ic_add_ic_string(file_name, &ic_config_ending_string);
 }
 
-/*
+/**
   Create a file name like $CONFIG_PATH/config.ini for initial version
   and $CONFIG_PATH/config.ini.3 if version number is 3.
+
+  @parameter file_name         OUT: String placeholder to place created name
+  @parameter buf               IN:  Buffer used by file_name string
+  @parameter config_dir        IN:  Config directory
+  @parameter name              IN:  Name of config file
+                                    config, grid_common or cluster name
+  @parameter config_version_number IN: Version number of config
 */
 void
 ic_create_config_file_name(IC_STRING *file_name,
@@ -92,7 +107,12 @@ ic_create_config_file_name(IC_STRING *file_name,
   }
 }
 
-/* Create a string like ".3" if number is 3 */
+/**
+  Create a string like ".3" if number is 3
+
+  @parameter buf             IN/OUT: Buffer to place the resulting string
+  @parameter number          IN:     Number to stringify
+*/
 void
 ic_set_number_ending_string(gchar *buf, guint64 number)
 {
@@ -104,6 +124,12 @@ ic_set_number_ending_string(gchar *buf, guint64 number)
                              NULL);
 }
 
+/**
+  Add a directory separator in a portable manner, / on non-Windows
+  and \ on Windows.
+
+  @parameter dir             IN/OUT: String which is updated
+*/
 static int
 add_dir_slash(IC_STRING *dir)
 {
@@ -116,63 +142,51 @@ add_dir_slash(IC_STRING *dir)
   return 0;
 }
 
+/**
+  Create a string containing a reference to the default directory, this
+  could either be the installation directory of binaries and libraries
+  or it could be the data directory.
+
+  @parameter default_dir          IN:  iclaustron_install/iclaustron_data
+  @parameter dir                  OUT: String output
+*/
 static int
 set_default_dir(const gchar *default_dir,
-                IC_STRING *dir,
-                const gchar *input_dir)
+                IC_STRING *dir)
 {
   int error= IC_ERROR_MEM_ALLOC;
-  gchar *c_str;
 
   IC_INIT_STRING(dir, NULL, 0, TRUE);
-  if (input_dir == NULL)
-  {
-    /*
-      The user specified no base/data directory himself, in this case we'll
-      use $HOME/iclaustron_install as the base directory unless the user is
-      the root user, in this case we'll instead use
-      /var/lib/iclaustron_install as the default directory. This is also how
-      the iClaustron will install the software by default. (iclaustron_data
-      for data dir).
-    */
-    const gchar *user_name= g_get_user_name();
+  /*
+    The user specified no base/data directory himself, in this case we'll
+    use $HOME/iclaustron_install as the base directory unless the user is
+    the root user, in this case we'll instead use
+    /var/lib/iclaustron_install as the default directory. This is also how
+    the iClaustron will install the software by default. (iclaustron_data
+    for data dir).
+  */
+  const gchar *user_name= g_get_user_name();
 #ifndef WINDOWS
-    if (strcmp(user_name, "root") == 0)
-    {
-      if (ic_add_dup_string(dir, "/var/lib/"))
+  if (strcmp(user_name, "root") == 0)
+  {
+    if (ic_add_dup_string(dir, "/var/lib/"))
 #else
-    if (strcmp(user_name, "root") == 0)
-    {
-      if (ic_add_dup_string(dir, "C:\\Program Files\\lib\\"))
+  if (strcmp(user_name, "root") == 0)
+  {
+    if (ic_add_dup_string(dir, "C:\\Program Files\\lib\\"))
 #endif
-        goto error;
-    }
-    else
-    {
-      const gchar *home_var= g_getenv("HOME");
-      if (ic_add_dup_string(dir, home_var) ||
-          add_dir_slash(dir))
-        goto error;
-    }
-    if (ic_add_dup_string(dir, default_dir) ||
-        add_dir_slash(dir))
       goto error;
   }
   else
   {
-    if (ic_add_dup_string(dir, input_dir))
+    const gchar *home_var= g_getenv("HOME");
+    if (ic_add_dup_string(dir, home_var) ||
+        add_dir_slash(dir))
       goto error;
-#ifdef WINDOWS
-    c_str= "\\";
-#else
-    c_str= "/";
-#endif
-    if (dir->str[dir->len - 1] != c_str[0])
-    {
-      if (ic_add_dup_string(dir, c_str))
-        goto error;
-    }
   }
+  if (ic_add_dup_string(dir, default_dir) ||
+      add_dir_slash(dir))
+    goto error;
   return 0;
 
 error:
@@ -184,18 +198,33 @@ error:
   return error;
 }
 
+/**
+  Create a string referring to the iClaustron data directory
+
+  @parameter data_dir            OUT: String referring to data directory
+*/
 int
 ic_set_data_dir(IC_STRING *data_dir)
 {
-  return set_default_dir("iclaustron_data", data_dir, NULL);
+  return set_default_dir("iclaustron_data", data_dir);
 }
 
+/**
+  Create a string referring to the iClaustron base directory
+
+  @parameter base_dir            OUT: String referring to base directory
+*/
 int
 ic_set_base_dir(IC_STRING *base_dir)
 {
-  return set_default_dir("iclaustron_install", base_dir, NULL);
+  return set_default_dir("iclaustron_install", base_dir);
 }
 
+/**
+  Create the string ./ in a portable referring to the current directory
+
+  @parameter dir             OUT: String to place resulting string
+*/
 void
 ic_set_current_dir(IC_STRING *dir)
 {
@@ -206,6 +235,12 @@ ic_set_current_dir(IC_STRING *dir)
 #endif
 }
 
+/**
+  Add the string dir_name/ to the input string
+
+  @parameter dir               IN/OUT: The string to add to
+  @parameter dir_name          IN:     The directory name to add
+*/
 static int
 ic_add_dir(IC_STRING *dir,
            const gchar *dir_name)
@@ -224,8 +259,12 @@ error:
 }
 
 /*
-  The default binary directory is
-    ICLAUSTRON_BASE_DIR/ICLAUSTRON_VERSION/bin
+  The default binary directory is ICLAUSTRON_BASE_DIR/ICLAUSTRON_VERSION/bin
+  As an example this could be:
+  /home/mikael/iclaustron_install/iclaustron-0.0.1/bin
+
+  @parameter binary_dir            OUT: The place to put the resulting string
+  @parameter version               IN:  String containing iClaustron version
 */
 int
 ic_set_binary_dir(IC_STRING *binary_dir,
@@ -244,10 +283,17 @@ ic_set_binary_dir(IC_STRING *binary_dir,
 }
 
 /*
-  The default configuration directory is
-    ICLAUSTRON_DATA_DIR/config/node1
+  The default configuration directory is ICLAUSTRON_DATA_DIR/config/node1
   for Cluster Servers (1 is nodeid), for other nodes it is
-    ICLAUSTRON_DATA_DIR/config
+  ICLAUSTRON_DATA_DIR/config.
+  So as an example a cluster server config directory could be:
+  /home/mikael/iclaustron_data/config/node1
+  and an example of another node directory could be:
+  /home/mikael/iclaustron_data/node1
+
+  @parameter config_dir         OUT: The place to put the resulting string
+  @parameter is_cluster_server  IN:  Is it the directory of the cluster server
+  @parameter my_node_id         IN:  My node id
 */
 int
 ic_set_config_dir(IC_STRING *config_dir,
@@ -274,6 +320,13 @@ ic_set_config_dir(IC_STRING *config_dir,
   return 0;
 }
 
+/**
+  Reverse a string with a given final character
+
+  @parameter in_buf         IN:  The input string
+  @parameter out_buf        OUT: The output buffer containing reversed string
+  @parameter end_char       IN:  The end character
+*/
 void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char)
 {
   guint32 i= 0;
@@ -286,6 +339,13 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char)
     out_buf[j++]= in_buf[--i];
 }
 
+/**
+  Create a string given a 64-bit integer
+
+  @parameter val          IN:  The 64-bit integer
+  @parameter ptr          OUT: The buffer to place the resulting string
+  @parameter len          OUT: The length of the resulting string
+*/
 gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
 {
   guint32 i= 0;
@@ -313,15 +373,26 @@ gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
   return ptr;
 }
 
+/**
+  Create a string given a 64-bit integer in hexadecimal format, thus on
+  the form 0x0A8
+
+  @parameter val          IN:  The 64-bit integer
+  @parameter ptr          OUT: The buffer to place the resulting string
+  @parameter len          OUT: The length of the resulting string
+*/
 gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
 {
-  guint32 i= 0;
-  gchar buf[128];
+  guint32 i;
+  gchar buf[IC_MAX_INT_STRING];
   guint64 tmp;
 
+  buf[0]= '0';
+  buf[1]= 'x';
+  i= 2;
   if (val == 0)
   {
-    buf[0]= '0';
+    buf[i]= '0';
     i++;
   }
   while (val != 0)
@@ -341,6 +412,16 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
   return ptr;
 }
 
+/**
+  Search for given character in string and return index of its first
+  occurrence in the string
+
+  @parameter ic_str           IN: Input string
+  @parameter searched_char    IN: Character to search for
+
+  @retval index of found character, if character not found one returns the
+          string length instead
+*/
 guint32
 ic_str_find_first(IC_STRING *ic_str, gchar searched_char)
 {
@@ -354,6 +435,47 @@ ic_str_find_first(IC_STRING *ic_str, gchar searched_char)
   return ic_str->len;
 }
 
+/**
+  Add dest_str and input_str and put result in dest_str
+  dest_str + input_str = dest_str
+
+  @parameter dest_str         IN/OUT: Destination string
+  @parameter input_str        IN:     Added string
+
+  @note
+    The function assumes that the destination string has sufficient
+    memory to contain the sum of the two strings
+*/
+void
+ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
+{
+  gchar *start_ptr= dest_str->str+dest_str->len;
+  gchar *end_ptr;
+
+  if (!input_str)
+    return;
+  memcpy(start_ptr, input_str->str, input_str->len);
+  if (dest_str->is_null_terminated)
+  {
+    end_ptr= start_ptr + input_str->len;
+    *end_ptr= 0;
+  }
+  dest_str->len+= input_str->len;
+}
+
+/**
+  Add dest_str and input_str and put result in dest_str
+  Type of dest_str is IC_STRING and type of input_str is
+  gchar*.
+  dest_str + input_str = dest_str
+
+  @parameter dest_str         IN/OUT: Destination string
+  @parameter input_str        IN:     Added string
+
+  @note
+    The function assumes that the destination string has sufficient
+    memory to contain the sum of the two strings
+*/
 void
 ic_add_string(IC_STRING *dest_str, const gchar *input_str)
 {
@@ -363,6 +485,16 @@ ic_add_string(IC_STRING *dest_str, const gchar *input_str)
   ic_add_ic_string(dest_str, &input_ic_str);
 }
 
+/**
+  Add dest_str and add_str and place result in dest_str
+  dest_str + add_str = dest_str
+  In this case the dest_str is of type IC_STRING and add_str is of type
+  gchar*. The resulting string is allocated using malloc. The old string
+  is always free'd, even in case we fail to allocate the new string.
+
+  @parameter dest_str                IN/OUT: The input and output string
+  @parameter add_str                 IN:     The string added
+*/
 int
 ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
 {
@@ -393,43 +525,47 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   return 0;
 }
 
+/**
+  Add dest_str and in_str and put resulting string in dest_str
+  dest_str + in_str = dest_str
+  Both input strings are of type IC_STRING. The new string is allocated
+  from the provided memory container.
+
+  @parameter mc_ptr               IN:     The memory container to use
+  @parameter dest_str             IN/OUT: The input and output string
+  @parameter in_str               IN:     The added string
+*/
 int
 ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
                     IC_STRING *dest_str,
                     IC_STRING *in_str)
 {
-  gchar *str;
-  guint32 len;
+  gchar *new_str;
+  guint32 new_len;
 
   if (!in_str)
     return 0;
-  len= dest_str->len + in_str->len;
-  if (!(str= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len + 1)))
+  new_len= dest_str->len + in_str->len;
+  if (!(new_str= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, new_len + 1)))
     return IC_ERROR_MEM_ALLOC;
-  memcpy(str, dest_str->str, dest_str->len);
-  memcpy(&str[dest_str->len], in_str->str, in_str->len);
-  str[len]= 0;
-  IC_INIT_STRING(dest_str, str, len, TRUE);
+  memcpy(new_str, dest_str->str, dest_str->len);
+  memcpy(&new_str[dest_str->len], in_str->str, in_str->len);
+  if (dest_str->is_null_terminated)
+    new_str[new_len]= 0;
+  dest_str->str= new_str;
+  dest_str->len= new_len;
   return 0;
 }
 
-void
-ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
-{
-  gchar *start_ptr= dest_str->str+dest_str->len;
-  gchar *end_ptr;
+/**
+  strcpy variant, copy str to buf_ptr
+  Copy str to buf_ptr, make resulting string a NULL-terminated string
 
-  if (!input_str)
-    return;
-  memcpy(start_ptr, input_str->str, input_str->len);
-  if (dest_str->is_null_terminated)
-  {
-    end_ptr= start_ptr + input_str->len;
-    *end_ptr= 0;
-  }
-  dest_str->len+= input_str->len;
-}
+  @parameter str                IN: String to copy
+  @parameter buf_ptr            IN: Buffer to place result in
 
+  @retval Pointer to buf_ptr where resulting string is placed
+*/
 gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
 {
   guint32 i;
@@ -444,6 +580,11 @@ gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
   return buf_ptr;
 }
 
+/**
+  Print str to stdout with a final <CR>
+
+  @parameter str         IN: String to print
+*/
 void ic_print_ic_string(IC_STRING *str)
 {
   if (str->is_null_terminated)
@@ -461,6 +602,14 @@ void ic_print_ic_string(IC_STRING *str)
   }
 }
 
+/**
+  strcmp using two IC_STRING objects
+
+  @parameter first_str           IN: First string to compare
+  @parameter second_str          IN: Second string to compare
+
+  @retval return 0 if equal, otherwise non-zero is returned
+*/
 int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str)
 {
   guint32 first_len= first_str->len;
@@ -473,6 +622,14 @@ int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str)
   return (memcmp(first_char, second_char, first_len));
 }
 
+/**
+  strcmp using IC_STRING object and null-terminated string
+
+  @parameter null_term_str          IN: Null-terminated string to compare
+  @parameter cmp_str                IN: String to compare to
+
+  @retval 0 if equal, otherwise 1
+*/
 int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
 {
   guint32 iter_len= 0;
@@ -480,7 +637,7 @@ int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
   guint32 str_len= cmp_str->len;
 
   if (cmp_str->is_null_terminated)
-    return (strcmp(null_term_str, cmp_str->str) == 0) ? 1 : 0;
+    return (strcmp(null_term_str, cmp_str->str) == 0) ? 0 : 1;
   while (iter_len < str_len)
   {
     if (*null_term_str != *cmp_char)
@@ -494,6 +651,15 @@ int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
   return 1;
 }
 
+/**
+  Set up a complete IC_STRING object where only the str field have been
+  initialised with a null-terminated string and length is the buffer length.
+  Search for a NULL that terminates the string to get length, if no
+  terminating NULL is found the resulting string is simply the provided
+  string.
+
+  @parameter in_out_str         IN/OUT: Resulting string
+*/
 void
 ic_set_up_ic_string(IC_STRING *in_out_str)
 {

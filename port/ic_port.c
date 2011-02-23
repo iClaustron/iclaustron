@@ -189,7 +189,7 @@ void ic_port_end()
     {
       key= ic_hashtable_iterator_key(hash_itr);
       ic_guint64_hex_str((guint64)key, ptr_str);
-      ic_printf("Leaked memory address = 0x%s", ptr_str);
+      ic_printf("Leaked memory address = %s", ptr_str);
     }
   }
 
@@ -436,7 +436,7 @@ ic_calloc_conn(size_t size)
   ic_require(ret_ptr);
   insert_alloc_entry(ret_ptr);
   ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at 0x%s",
+  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
               size, ptr_str));
   return ret_ptr;
 }
@@ -473,7 +473,7 @@ ic_calloc(size_t size)
   ic_require(ret_ptr);
   insert_alloc_entry(ret_ptr);
   ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at 0x%s",
+  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
               size, ptr_str));
   return ret_ptr;
 }
@@ -499,7 +499,7 @@ ic_malloc(size_t size)
   ret_ptr= ic_malloc_low(size);
   insert_alloc_entry(ret_ptr);
   ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u bytes at 0x%s",
+  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u bytes at %s",
               size, ptr_str));
   return ret_ptr;
 }
@@ -513,7 +513,7 @@ ic_free_conn(void *ret_obj)
   num_mem_conn_allocs--;
   ic_mutex_unlock_low(mem_conn_mutex);
   ic_guint64_hex_str((guint64)ret_obj, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Freeing conn memory at 0x%s", ptr_str));
+  DEBUG_PRINT(MALLOC_LEVEL, ("Freeing conn memory at %s", ptr_str));
   remove_alloc_entry(ret_obj);
   ic_free_low(ret_obj);
 }
@@ -546,7 +546,7 @@ ic_free(void *ret_obj)
   num_mem_allocs--;
   ic_mutex_unlock_low(mem_mutex);
   ic_guint64_hex_str((guint64)ret_obj, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Freeing memory at 0x%s", ptr_str));
+  DEBUG_PRINT(MALLOC_LEVEL, ("Freeing memory at %s", ptr_str));
   remove_alloc_entry(ret_obj);
   ic_free_low(ret_obj);
 }

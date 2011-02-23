@@ -2398,7 +2398,7 @@ release_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   DEBUG_DECL(char buf[64];)
   DEBUG_ENTRY("release_cs_connection");
   DEBUG_DECL(ic_guint64_hex_str((guint64)conn, buf);)
-  DEBUG_PRINT(CONFIG_LEVEL, ("conn = 0x%s", buf));
+  DEBUG_PRINT(CONFIG_LEVEL, ("conn = %s", buf));
 
   if (!lock)
     ic_mutex_lock(run_obj->state.protect_state);

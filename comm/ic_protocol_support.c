@@ -23,6 +23,12 @@
 #include "ic_connection_int.h"
 #include <ic_proto_str.h>
 
+/**
+  Print a buffer with specified size as 1 line with CR at end.
+
+  @parameter buf             The string buffer
+  @parameter size            The number of characters to print
+*/
 void
 ic_print_buf(char *buf, guint32 size)
 {
@@ -33,6 +39,16 @@ ic_print_buf(char *buf, guint32 size)
   ic_printf("Receive buffer, size %u:\n%s", size, p_buf);
 }
 
+/**
+  This method is used very commonly by loads of functions that implement
+  the iClaustron management protocols. It sends the string buffer provided
+  plus a final <CR>. It uses buffering, so it doesn't necessarily send
+  this message until later when buffer is full or when an empty line is
+  sent.
+
+  @parameter ext_conn              The connection
+  @parameter send_buf              A null terminated string to send
+*/
 int
 ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
 {
@@ -68,6 +84,11 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
   This puts back the just read line to simplify programming interface
   such that ic_rec_with_cr can be used many times on the same line in
   cases where the protocol contains optional parts such as cluster id.
+
+  @parameter ext_conn           IN: The connection
+  @parameter read_size          IN: The size to step back in the receive
+                                    buffer This size doesn't include the
+                                    <CR> which we will also step back.
 */
 void
 ic_step_back_rec_with_cr(IC_CONNECTION *ext_conn, guint32 read_size)
@@ -77,17 +98,15 @@ ic_step_back_rec_with_cr(IC_CONNECTION *ext_conn, guint32 read_size)
   conn->read_buf_pos-= (read_size + 1);
 }
 
-/*
-  ic_rec_with_cr:
+/**
   Receive a line ended with CARRIAGE RETURN from connection
-  Parameters:
-    conn                IN: Connection object
-    rec_buf             IN/OUT: Pointer to receive buffer
-    read_size           IN: Size of previous read data
+  This function is heavily used by protocol implementations.
+
+  @parameter conn       IN: Connection object
+  @parameter rec_buf    IN/OUT: Pointer to receive buffer
+  @parameter read_size  IN: Size of previous read data
                         OUT: Size of line read
                         Neither includes CR
-    size_curr_buf       OUT: Size of current buffer read
-    buffer_size         IN: Total size of buffer
 */
 
 int
@@ -154,6 +173,16 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
   return 0;
 }
 
+/**
+  Check if the read buffer is equal to the expected string to receive
+
+  @parameter read_buf                 IN: The buffer read
+  @parameter read_size                IN: The buffer size
+  @parameter str                      IN: The expected string
+  @parameter str_len                  IN: The expected string size
+
+  @retval  returns TRUE if not equal, FALSE if equal
+*/
 int
 ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
 {
@@ -164,9 +193,12 @@ ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
 }
 
 int
-ic_check_buf_with_many_int(gchar *read_buf, guint32 read_size, const gchar *str,
-                        int str_len, guint32 num_elements,
-                        guint64 *number)
+ic_check_buf_with_many_int(gchar *read_buf,
+                           guint32 read_size,
+                           const gchar *str,
+                           int str_len,
+                           guint32 num_elements,
+                           guint64 *number)
 {
   gchar *ptr, *end_ptr;
   guint32 i, num_chars;
