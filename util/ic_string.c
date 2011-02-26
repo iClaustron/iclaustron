@@ -685,6 +685,14 @@ ic_set_up_ic_string(IC_STRING *in_out_str)
   in_out_str->is_null_terminated= FALSE;
 }
 
+/**
+  strdup variant which allocates memory from memory container or from
+  malloc (when mc_ptr == NULL). Input is IC_STRING and so is output.
+
+  @parameter mc_ptr        IN:  Memory container to allocate from
+  @parameter out_str       OUT: Output string
+  @parameter in_str        OUT: Input string
+*/
 int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                  IC_STRING *out_str,
                  IC_STRING *in_str)
@@ -715,7 +723,14 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
 /*
   Deliver a string where both IC_STRING object and string itself
   is allocated from memory container. The returned string is
-  always NULL terminated.
+  always NULL terminated. The input string is of type gchar* and
+  need not be NULL-terminated since we also supply the length of
+  the string.
+
+   @parameter mc_ptr           The memory container to allocate from
+   @parameter out_str          The output string
+   @parameter str              The input string
+   @parameter str_len          The length of the input string
 */
 int ic_mc_char_to_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                          IC_STRING **out_str,
@@ -725,6 +740,7 @@ int ic_mc_char_to_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   IC_STRING *loc_ic_str_ptr;
   IC_STRING loc_str;
 
+  ic_assert(mc_ptr);
   if (!(loc_ic_str_ptr=
         (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
                                                sizeof(IC_STRING))))
@@ -736,6 +752,15 @@ int ic_mc_char_to_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   return 0;
 }
 
+/**
+  strdup variant that uses either memory container or malloc to allocate
+  new string. Both input and output strings are of type gchar* and thus
+  must be NULL-terminated strings.
+
+  @parameter mc_ptr        IN:  Memory container to allocate from
+  @parameter out_str       OUT: Output string
+  @parameter in_str        OUT: Input string
+*/
 int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
                   gchar **out_str,
                   gchar *in_str)
@@ -751,18 +776,39 @@ int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
   return 0;
 }
 
+/**
+  strdup variant that allocates using malloc, input and output string
+  are of the type IC_STRING.
+ 
+  @parameter out_str       OUT: Output string
+  @parameter in_str        IN:  Input string
+*/
 int
 ic_strdup(IC_STRING *out_str, IC_STRING *in_str)
 {
   return ic_mc_strdup(NULL, out_str, in_str);
 }
 
+/**
+  strdup variant that allocates using malloc, input and output string
+  are of the type gchar*.
+ 
+  @parameter out_str       OUT: Output string
+  @parameter in_str        IN:  Input string
+*/
 int
 ic_chardup(gchar **out_str, gchar *in_str)
 {
   return ic_mc_chardup(NULL, out_str, in_str);
 }
 
+/**
+  Count number of characters before separator is found, separator is
+  SPACE, NULL-byte or <CR>.
+
+  @parameter str             String
+  @parameter max_chars       String length
+*/
 guint32
 ic_count_characters(gchar *str, guint32 max_chars)
 {
@@ -778,8 +824,17 @@ ic_count_characters(gchar *str, guint32 max_chars)
   return num_chars;
 }
 
-gboolean
-ic_convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
+/**
+  Convert a string to unsigned 64-bit integer. The input string need not be
+  NULL-terminated since we supply the length of the string.
+
+  @parameter str              The number string
+  @parameter num_chars        The length of the number string
+  @parameter ret_number       OUT: The 64-bit unsigned integer converted to
+*/
+int
+ic_convert_str_to_int_fixed_size(gchar *str,
+                                 guint32 num_chars,
                                  guint64 *ret_number)
 {
   char *end_ptr;
@@ -795,6 +850,16 @@ ic_convert_str_to_int_fixed_size(gchar *str, guint32 num_chars,
   return TRUE;
 }
 
+/**
+  Copy and convert string. Copy in_str to out_str, convert all lowercase
+  characters to uppercase characters.
+  It is assumed that the output string has sufficient space to fit the
+  entire input string.
+
+  @parameter out_str           OUT: The uppercased output string
+  @parameter in_str            IN:  The input string
+  @parameter str_len           IN:  The lenght of the input string
+*/
 void
 ic_convert_to_uppercase(gchar *out_str, gchar *in_str, guint32 str_len)
 {

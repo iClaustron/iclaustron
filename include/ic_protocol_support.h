@@ -121,7 +121,7 @@ int ic_check_buf_with_string(gchar *read_buf,
                              guint32 read_size,
                              const gchar *str,
                              int str_len,
-                             IC_STRING **string);
+                             IC_STRING *string);
 
 /* Receive routines */
 int ic_rec_with_cr(IC_CONNECTION *conn,

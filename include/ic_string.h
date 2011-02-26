@@ -198,10 +198,9 @@ extern IC_STRING ic_config_string;
 extern IC_STRING ic_grid_common_config_string;
 extern IC_STRING ic_config_ending_string;
 
-/*
-  Methods to handle conversion to integers from strings
-*/
+/* Methods to handle conversion to integers from strings */
 guint32 ic_count_characters(gchar *str, guint32 max_chars);
-gboolean ic_convert_str_to_int_fixed_size(char *str, guint32 num_chars,
-                                          guint64 *ret_number);
+int ic_convert_str_to_int_fixed_size(gchar *str,
+                                     guint32 num_chars,
+                                     guint64 *ret_number);
 #endif

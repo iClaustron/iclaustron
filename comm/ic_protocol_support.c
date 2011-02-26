@@ -40,45 +40,159 @@ ic_print_buf(char *buf, guint32 size)
 }
 
 /**
-  This method is used very commonly by loads of functions that implement
-  the iClaustron management protocols. It sends the string buffer provided
-  plus a final <CR>. It uses buffering, so it doesn't necessarily send
-  this message until later when buffer is full or when an empty line is
-  sent.
+  Check if the read buffer is equal to the expected string to receive
 
-  @parameter ext_conn              The connection
-  @parameter send_buf              A null terminated string to send
+  @parameter read_buf                 IN: The buffer read
+  @parameter read_size                IN: The buffer size
+  @parameter str                      IN: The expected string
+  @parameter str_len                  IN: The expected string size
+
+  @retval  returns TRUE if not equal, FALSE if equal
 */
 int
-ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
+ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
 {
-  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  guint32 send_size;
-  int res;
-
-  send_size= strlen(send_buf);
-  ic_assert((send_size + 1) < conn->write_buf_size);
-
-  DEBUG_PRINT(CONFIG_PROTO_LEVEL, ("Send: %s", send_buf));
-  if ((conn->write_buf_pos + send_size + 1) > conn->write_buf_size)
-  {
-    /* Buffer is full, we need to send now */
-    res= ext_conn->conn_op.ic_write_connection(ext_conn,
-                                           (const void*)conn->write_buf,
-                                           conn->write_buf_pos,
-                                           1);
-    conn->write_buf_pos= 0;
-    if (res)
-      return res;
-  }
-  /* Copy into buffer, send at least empty line instead or when full */
-  memcpy(conn->write_buf+conn->write_buf_pos, send_buf, send_size);
-  conn->write_buf_pos+= send_size;
-  conn->write_buf[conn->write_buf_pos]= CARRIAGE_RETURN;
-  conn->write_buf_pos++;
-  return 0;
+  if ((read_size != (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) != 0))
+    return TRUE;
+  return FALSE;
 }
 
+/**
+  Check read buffer for a protocol line that consists of the string provided
+  by the str, str_len pair followed by an list of 64-bit unsigned integer
+  numbers that are SPACE-separated.
+
+  @parameter read_buf         IN:  Buffer containing one line read
+  @parameter read_size        IN:  Size of buffer read
+  @parameter str              IN:  Initial string expected in read buffer
+  @parameter str_len          IN:  Length of expected string
+  @parameter num_elements     IN:  Number of elements expected
+  @parameter number           OUT: The array of 64-bit unsigned integers read
+*/
+int
+ic_check_buf_with_many_int(gchar *read_buf,
+                           guint32 read_size,
+                           const gchar *str,
+                           int str_len,
+                           guint32 num_elements,
+                           guint64 *number)
+{
+  gchar *ptr, *end_ptr;
+  guint32 i, num_chars;
+
+  if ((read_size < (guint32)str_len) ||
+      (memcmp(read_buf, str, str_len) == 0))
+  {
+    ptr= read_buf+str_len;
+    end_ptr= read_buf + read_size;
+    for (i= 0; i < num_elements; i++)
+    {
+      num_chars= ic_count_characters(ptr, end_ptr - ptr);
+      if (ptr + num_chars >= end_ptr)
+        goto error;
+      if (ic_convert_str_to_int_fixed_size(ptr, num_chars, &number[i]))
+        goto error;
+      ptr+= num_chars;
+      if (*ptr == SPACE_CHAR)
+        ptr++;
+      else if (*ptr != '\n' || i != (num_elements - 1))
+        goto error;
+    }
+  }
+  return FALSE;
+error:
+  return TRUE;
+}
+
+/**
+  Check read buffer for a protocol line that consists of the string provided
+  by the str, str_len pair followed by one 64-bit signed integer.
+
+  @parameter read_buf         IN:  Buffer containing one line read
+  @parameter read_size        IN:  Size of buffer read
+  @parameter str              IN:  Initial string expected in read buffer
+  @parameter str_len          IN:  Length of expected string
+  @parameter number           OUT: Number read (unsigned)
+  @parameter sign_flag        OUT: Set if number is negative
+*/
+int
+ic_check_buf_with_signed_int(gchar *read_buf, guint32 read_size,
+                             const gchar *str,
+                             int str_len,
+                             guint64 *number,
+                             int *sign_flag)
+{
+  *sign_flag= FALSE;
+  if ((read_size <= (guint32)str_len + 1) ||
+      (memcmp(read_buf, str, str_len) != 0) ||
+      read_buf[str_len] != SPACE_CHAR ||
+      (str_len++, FALSE) ||
+      ((str_len= (read_buf[str_len] == '-') ? str_len+1 : str_len), FALSE) ||
+      (ic_convert_str_to_int_fixed_size(read_buf+str_len,
+                                        read_size - str_len,
+                                        number)))
+    return TRUE;
+  if (read_buf[str_len] == '-')
+    *sign_flag= TRUE;
+  return FALSE;
+}
+
+/**
+  Check read buffer for a protocol line that consists of the string provided
+  by the str, str_len pair followed by one 64-bit unsigned integer.
+
+  @parameter read_buf         IN:  Buffer containing one line read
+  @parameter read_size        IN:  Size of buffer read
+  @parameter str              IN:  Initial string expected in read buffer
+  @parameter str_len          IN:  Length of expected string
+  @parameter number           OUT: Number read (unsigned)
+*/
+int
+ic_check_buf_with_int(gchar *read_buf,
+                      guint32 read_size,
+                      const gchar *str,
+                      int str_len,
+                      guint64 *number)
+{
+  if ((read_size <= (guint32)str_len + 1) ||
+      (memcmp(read_buf, str, str_len) != 0) ||
+      read_buf[str_len] != SPACE_CHAR ||
+      (str_len++, FALSE) ||
+      (ic_convert_str_to_int_fixed_size(read_buf+str_len,
+                                        read_size - str_len,
+                                        number)))
+    return TRUE;
+  return FALSE;
+}
+
+/**
+  Check read buffer for a protocol line that consists of the string provided
+  by the str, str_len pair followed by one string returned in string object.
+
+  @parameter read_buf         IN:  Buffer containing one line read
+  @parameter read_size        IN:  Size of buffer read
+  @parameter str              IN:  Initial string expected in read buffer
+  @parameter str_len          IN:  Length of expected string
+  @parameter string           OUT: The string read
+*/
+int
+ic_check_buf_with_string(gchar *read_buf,
+                         guint32 read_size,
+                         const gchar *str,
+                         int str_len,
+                         IC_STRING *string)
+{
+  if ((read_size <= (guint32)str_len + 1) ||
+      (memcmp(read_buf, str, str_len) != 0) ||
+      read_buf[str_len] != SPACE_CHAR ||
+      (str_len++, FALSE))
+    return TRUE;
+  string->len= read_size - str_len;
+  string->str= read_buf+str_len;
+  string->is_null_terminated= FALSE;
+  return FALSE;
+}
 /*
   ic_step_back_rec_with_cr
   This puts back the just read line to simplify programming interface
@@ -108,7 +222,6 @@ ic_step_back_rec_with_cr(IC_CONNECTION *ext_conn, guint32 read_size)
                         OUT: Size of line read
                         Neither includes CR
 */
-
 int
 ic_rec_with_cr(IC_CONNECTION *ext_conn,
                gchar **rec_buf,
@@ -174,104 +287,6 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
 }
 
 /**
-  Check if the read buffer is equal to the expected string to receive
-
-  @parameter read_buf                 IN: The buffer read
-  @parameter read_size                IN: The buffer size
-  @parameter str                      IN: The expected string
-  @parameter str_len                  IN: The expected string size
-
-  @retval  returns TRUE if not equal, FALSE if equal
-*/
-int
-ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
-{
-  if ((read_size != (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0))
-    return TRUE;
-  return FALSE;
-}
-
-int
-ic_check_buf_with_many_int(gchar *read_buf,
-                           guint32 read_size,
-                           const gchar *str,
-                           int str_len,
-                           guint32 num_elements,
-                           guint64 *number)
-{
-  gchar *ptr, *end_ptr;
-  guint32 i, num_chars;
-
-  if ((read_size < (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) == 0))
-  {
-    ptr= read_buf+str_len;
-    end_ptr= read_buf + read_size;
-    for (i= 0; i < num_elements; i++)
-    {
-      num_chars= ic_count_characters(ptr, end_ptr - ptr);
-      if (ptr + num_chars > end_ptr)
-        goto error;
-      if (ic_convert_str_to_int_fixed_size(ptr, num_chars, &number[i]))
-        goto error;
-      ptr+= num_chars;
-      if (*ptr == ' ')
-        ptr++;
-      else if (*ptr != '\n' || i != (num_elements - 1))
-        goto error;
-    }
-  }
-  return FALSE;
-error:
-  return TRUE;
-}
-
-int
-ic_check_buf_with_signed_int(gchar *read_buf, guint32 read_size,
-                             const gchar *str,
-                             int str_len,
-                             guint64 *number,
-                             int *sign_flag)
-{
-  *sign_flag= FALSE;
-  if ((read_size < (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0) ||
-      ((str_len= (read_buf[str_len] == '-') ? str_len+1 : str_len), FALSE) ||
-      (ic_convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
-                                        number)))
-    return TRUE;
-  if (read_buf[str_len] == '-')
-    *sign_flag= TRUE;
-  return FALSE;
-}
-
-int
-ic_check_buf_with_int(gchar *read_buf, guint32 read_size, const gchar *str,
-                   int str_len, guint64 *number)
-{
-  if ((read_size < (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0) ||
-      (ic_convert_str_to_int_fixed_size(read_buf+str_len, read_size - str_len,
-                                        number)))
-    return TRUE;
-  return FALSE;
-}
-
-int
-ic_check_buf_with_string(gchar *read_buf, guint32 read_size, const gchar *str,
-                         int str_len, IC_STRING **string)
-{
-  if ((read_size < (guint32)str_len) ||
-      (memcmp(read_buf, str, str_len) != 0))
-    return TRUE;
-  (*string)->len= read_size - str_len;
-  (*string)->str= read_buf+str_len;
-  (*string)->is_null_terminated= FALSE;
-  return FALSE;
-}
-
-/**
   Support function to ic_mc_rec_string and ic_mc_rec_opt_string
 
   @parameter mc_ptr            IN:  Memory container to allocate string objects
@@ -289,11 +304,12 @@ static int mc_rec_string_impl(IC_MEMORY_CONTAINER *mc_ptr,
   guint32 prefix_len= 0;
   gchar *str_ptr;
 
-  if (prefix_str)
-    prefix_len= strlen(prefix_str);
-  if (read_size <= prefix_len)
+  prefix_len= strlen(prefix_str);
+  ic_require(prefix_len);
+  if (read_size <= (prefix_len + 1))
     return IC_PROTOCOL_ERROR;
-  if (prefix_len && memcmp(read_buf, prefix_str, prefix_len))
+  if (memcmp(read_buf, prefix_str, prefix_len) ||
+      read_buf[prefix_len] != SPACE_CHAR)
     return IC_PROTOCOL_ERROR;
   read_buf+= prefix_len;
   read_size-= prefix_len;
@@ -483,7 +499,8 @@ ic_rec_number_impl(IC_CONNECTION *conn,
 
   @parameter conn              IN:  The connection
   @parameter prefix_str        IN:  The prefix string defined by the protocol
-  @parameter bool_value        OUT: The boolean value (true/false) read from protocol
+  @parameter bool_value        OUT: The boolean value (true/false) read from
+                                    protocol
 */
 int
 ic_rec_boolean(IC_CONNECTION *conn,
@@ -636,6 +653,65 @@ ic_rec_int_number(IC_CONNECTION *conn,
   return error;
 }
 
+/**
+  Receive an empty line as a protocol action
+
+  @parameter conn             The connection
+*/
+int
+ic_rec_empty_line(IC_CONNECTION *conn)
+{
+  return ic_rec_simple_str(conn, "");
+}
+
+/**
+  This method is used very commonly by loads of functions that implement
+  the iClaustron management protocols. It sends the string buffer provided
+  plus a final <CR>. It uses buffering, so it doesn't necessarily send
+  this message until later when buffer is full or when an empty line is
+  sent.
+
+  @parameter ext_conn              The connection
+  @parameter send_buf              A null terminated string to send
+*/
+int
+ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  guint32 send_size;
+  int res;
+
+  send_size= strlen(send_buf);
+  ic_assert((send_size + 1) < conn->write_buf_size);
+
+  DEBUG_PRINT(CONFIG_PROTO_LEVEL, ("Send: %s", send_buf));
+  if ((conn->write_buf_pos + send_size + 1) > conn->write_buf_size)
+  {
+    /* Buffer is full, we need to send now */
+    res= ext_conn->conn_op.ic_write_connection(ext_conn,
+                                           (const void*)conn->write_buf,
+                                           conn->write_buf_pos,
+                                           1);
+    conn->write_buf_pos= 0;
+    if (res)
+      return res;
+  }
+  /* Copy into buffer, send at least empty line instead or when full */
+  memcpy(conn->write_buf+conn->write_buf_pos, send_buf, send_size);
+  conn->write_buf_pos+= send_size;
+  conn->write_buf[conn->write_buf_pos]= CARRIAGE_RETURN;
+  conn->write_buf_pos++;
+  return 0;
+}
+
+/**
+  Send a protocol line like "string: number" where string is contained in
+  in_buf and the number is contained in number.
+
+  @parameter conn               The connection
+  @parameter in_buf             The input string
+  @parameter number             The input number
+*/
 int
 ic_send_with_cr_with_num(IC_CONNECTION *conn,
                          const gchar *in_buf,
@@ -643,15 +719,50 @@ ic_send_with_cr_with_num(IC_CONNECTION *conn,
 {
   gchar out_buf[128], buf[64];
 
-  g_snprintf(out_buf, 128, "%s%s", in_buf,
+  g_snprintf(out_buf, 128, "%s %s", in_buf,
              ic_guint64_str(number, buf, NULL));
   return ic_send_with_cr(conn, out_buf);
 }
 
+/**
+  Send a protocol line like "string: str1 str2" where num_strings specifies
+  the number of strings and buf is an array of those strings.
+
+  @parameter conn              The connection
+  @parameter buf               An array of input strings
+  @parameter num_strings       Number of strings in array
+*/
 int
-ic_rec_empty_line(IC_CONNECTION *conn)
+ic_send_with_cr_composed(IC_CONNECTION *conn,
+                         const gchar **buf,
+                         guint32 num_strings)
 {
-  return ic_rec_simple_str(conn, "");
+  gchar local_buf[COMMAND_READ_BUF_SIZE];
+  guint32 local_pos= 0;
+  guint32 i, len;
+
+  for (i= 0; i < num_strings; i++)
+  {
+    len= strlen(buf[i]);
+    memcpy(local_buf + local_pos, buf[i], len);
+    local_buf[local_pos]= SPACE_CHAR;
+    local_pos+= (len + 1);
+  }
+  local_buf[local_pos - 1]= 0;
+  return ic_send_with_cr(conn, local_buf);
+}
+
+int
+ic_send_with_cr_two_strings(IC_CONNECTION *conn,
+                            const gchar *buf1,
+                            const gchar *buf2)
+{
+  const gchar *buf[2];
+  const gchar **local_buf= &buf[0];
+
+  buf[0]= buf1;
+  buf[1]= buf2;
+  return ic_send_with_cr_composed(conn, local_buf, (guint32)2);
 }
 
 int
@@ -670,36 +781,4 @@ ic_send_empty_line(IC_CONNECTION *ext_conn)
                                            1);
   conn->write_buf_pos= 0;
   return error;
-}
-
-int
-ic_send_with_cr_composed(IC_CONNECTION *conn,
-                         const gchar **buf,
-                         guint32 num_strings)
-{
-  gchar local_buf[256];
-  guint32 local_pos= 0;
-  guint32 i, len;
-
-  for (i= 0; i < num_strings; i++)
-  {
-    len= strlen(buf[i]);
-    memcpy(local_buf + local_pos, buf[i], len);
-    local_pos+= len;
-  }
-  local_buf[local_pos]= 0;
-  return ic_send_with_cr(conn, local_buf);
-}
-
-int
-ic_send_with_cr_two_strings(IC_CONNECTION *conn,
-                            const gchar *buf1,
-                            const gchar *buf2)
-{
-  const gchar *buf[2];
-  const gchar **local_buf= &buf[0];
-
-  buf[0]= buf1;
-  buf[1]= buf2;
-  return ic_send_with_cr_composed(conn, local_buf, (guint32)2);
 }
