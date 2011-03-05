@@ -85,8 +85,8 @@ static IC_DYNAMIC_PTR_ARRAY *glob_pc_array= NULL;
 
 /* Unit test functions */
 #ifdef WITH_UNIT_TEST
-static gchar *ic_csd= "program: ic_csd";
-static gchar *version= "version: iclaustron-0.0.1";
+static gchar *ic_csd_program_str= "program: ic_csd";
+static gchar *version_str= "version: iclaustron-0.0.1";
 static gchar *my_grid= "grid: my_grid";
 static gchar *my_cluster= "cluster: my_cluster";
 static gchar *my_csd_node= "node: my_csd_node";
@@ -113,6 +113,48 @@ static int start_client_connection(IC_CONNECTION **conn)
 }
 
 /**
+  Send a start cluster server message protocol
+
+  @parameter conn           The connection
+*/
+static int
+send_start_cluster_server(IC_CONNECTION *conn)
+{
+  int ret_code;
+
+  /* Start a cluster server */
+  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
+      (ret_code= ic_send_with_cr(conn, ic_csd_program_str)) ||
+      (ret_code= ic_send_with_cr(conn, version_str)) ||
+      (ret_code= ic_send_with_cr(conn, my_grid)) ||
+      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
+      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
+      (ret_code= ic_send_with_cr(conn, "autorestart: false")) ||
+      (ret_code= ic_send_with_cr(conn, "num parameters: 2")) ||
+      (ret_code= ic_send_with_cr(conn, "parameter: --node_id")) ||
+      (ret_code= ic_send_with_cr(conn, "parameter: 1")) ||
+      (ret_code= ic_send_empty_line(conn)))
+    return ret_code;
+  return 0;
+}
+
+static int receive_error_message(IC_CONNECTION *conn)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  int ret_code;
+  gchar print_buf[ERROR_MESSAGE_SIZE];
+
+  if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
+      (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    return ret_code;
+  memcpy(print_buf, read_buf, read_size);
+  print_buf[read_size]= (gchar)0;
+  ic_printf("Error message: %s from start ic_csd", print_buf);
+  return 0;
+}
+
+/**
   Test starting an ic_csd process
 
   @parameter conn        IN: The connection to the process controller
@@ -121,33 +163,14 @@ static int test_successful_start(IC_CONNECTION *conn)
 {
   int ret_code;
   guint32 pid;
-  gchar *read_buf;
-  guint32 read_size;
-  gchar print_buf[ERROR_MESSAGE_SIZE];
 
-  /* Start a cluster server */
-  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
-      (ret_code= ic_send_with_cr(conn, ic_csd)) ||
-      (ret_code= ic_send_with_cr(conn, version)) ||
-      (ret_code= ic_send_with_cr(conn, my_grid)) ||
-      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
-      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
-      (ret_code= ic_send_with_cr(conn, "autorestart: false")) ||
-      (ret_code= ic_send_with_cr(conn, "num parameters: 4")) ||
-      (ret_code= ic_send_with_cr(conn, "parameter: --node_id")) ||
-      (ret_code= ic_send_with_cr(conn, "parameter: 1")) ||
-      (ret_code= ic_send_empty_line(conn)))
+  if ((ret_code= send_start_cluster_server(conn)))
     return ret_code;
-
   if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
   {
     /* Not ok, expect error message instead */
-    if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
-        (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    if ((ret_code= receive_error_message(conn)))
       return ret_code;
-    memcpy(print_buf, read_buf, read_size);
-    print_buf[read_size]= (gchar)0;
-    ic_printf("Error message: %s from start ic_csd", print_buf);
     return 1;
   }
   if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
@@ -165,7 +188,32 @@ static int test_successful_start(IC_CONNECTION *conn)
 */
 static int test_unsuccessful_start(IC_CONNECTION *conn)
 {
-  (void)conn;
+  int ret_code;
+
+  if ((ret_code= send_start_cluster_server(conn)))
+    return ret_code;
+  if ((ret_code= receive_error_message(conn)))
+    return ret_code;
+  /* Error message was expected here */
+  return 0;
+}
+
+/**
+  Send a message to stop a Cluster Server
+
+  @parameter conn              The connection
+*/
+static int send_stop_cluster_server(IC_CONNECTION *conn)
+{
+  int ret_code;
+
+  /* Stop the Cluster Server */
+  if ((ret_code= ic_send_with_cr(conn, ic_stop_str)) ||
+      (ret_code= ic_send_with_cr(conn, my_grid)) ||
+      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
+      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    return ret_code;
   return 0;
 }
 
@@ -178,15 +226,8 @@ static int test_successful_stop(IC_CONNECTION *conn)
 {
   int ret_code;
 
-  /* Stop the Cluster Server */
-  if ((ret_code= ic_send_with_cr(conn, ic_stop_str)) ||
-      (ret_code= ic_send_with_cr(conn, my_grid)) ||
-      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
-      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
-      (ret_code= ic_send_empty_line(conn)))
-    return ret_code;
-
-  if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)) ||
+  if ((ret_code= send_stop_cluster_server(conn)) ||
+      (ret_code= ic_rec_simple_str(conn, ic_ok_str)) ||
       (ret_code= ic_rec_empty_line(conn)))
     return ret_code;
 
@@ -203,7 +244,13 @@ static int test_successful_stop(IC_CONNECTION *conn)
 */
 static int test_unsuccessful_stop(IC_CONNECTION *conn)
 {
-  (void)conn;
+  int ret_code;
+
+  if ((ret_code= send_stop_cluster_server(conn)))
+    return ret_code;
+  if ((ret_code= receive_error_message(conn)))
+    return ret_code;
+  /* Error message was expected here */
   return 0;
 }
 

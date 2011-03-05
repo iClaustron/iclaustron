@@ -605,8 +605,10 @@ rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           get nodeid reply<CR>
         */
-        if (ic_check_buf(read_buf, read_size, get_nodeid_reply_str,
-                         GET_NODEID_REPLY_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         get_nodeid_reply_str,
+                         strlen(get_nodeid_reply_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in Get nodeid reply state"));
@@ -621,7 +623,10 @@ rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
           Where __nodeid is an integer giving the nodeid of the starting
           process
         */
-        if (ic_check_buf_with_int(read_buf, read_size, nodeid_str, NODEID_LEN,
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  nodeid_str,
+                                  strlen(nodeid_str),
                                   &node_number) ||
             (node_number > IC_MAX_NODE_ID))
         {
@@ -638,7 +643,10 @@ rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           result: Ok<CR>
         */
-        if (ic_check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         result_ok_str,
+                         strlen(result_ok_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in result ok state"));
@@ -694,8 +702,10 @@ rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           get config reply<CR>
         */
-        if (ic_check_buf(read_buf, read_size, get_config_reply_str,
-                         GET_CONFIG_REPLY_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         get_config_reply_str,
+                         strlen(get_config_reply_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in get config reply state"));
@@ -708,7 +718,10 @@ rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           result: Ok<CR>
         */
-        if (ic_check_buf(read_buf, read_size, result_ok_str, RESULT_OK_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         result_ok_str,
+                         strlen(result_ok_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in result ok state"));
@@ -722,8 +735,11 @@ rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
           Content-Length: __length<CR>
           Where __length is a decimal-coded number indicating length in bytes
         */
-        if (ic_check_buf_with_int(read_buf, read_size, content_len_str,
-                                  CONTENT_LENGTH_LEN, &content_length) ||
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  content_len_str,
+                                  strlen(content_len_str),
+                                  &content_length) ||
             (content_length > MAX_CONTENT_LEN))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -737,8 +753,10 @@ rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           Content-Type: ndbconfig/octet-stream<CR>
         */
-        if (ic_check_buf(read_buf, read_size, octet_stream_str,
-                         OCTET_STREAM_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         octet_stream_str,
+                         strlen(octet_stream_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in octet stream state"));
@@ -751,8 +769,10 @@ rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
           Receive:
           Content-Transfer-Encoding: base64
         */
-        if (ic_check_buf(read_buf, read_size, content_encoding_str,
-                      CONTENT_ENCODING_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         content_encoding_str,
+                         strlen(content_encoding_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in content encoding state"));
@@ -803,8 +823,10 @@ rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
             and are ready to translate it.
           */
           DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding"));
-          if ((error= translate_config(apic, cluster_id,
-                                       config_buf, config_size)))
+          if ((error= translate_config(apic,
+                                       cluster_id,
+                                       config_buf,
+                                       config_size)))
             goto error;
           state= WAIT_LAST_EMPTY_RETURN_STATE;
         }

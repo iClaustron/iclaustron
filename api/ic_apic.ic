@@ -489,10 +489,7 @@
   version_str is defined in section defining strings used in MGM API
   protocol
 */
-static const gchar *state_str= "state: ";
-static const gchar *pid_str= "pid: ";
-#define STATE_STR_LEN 7
-#define PID_STR_LEN 5
+static const gchar *state_str= "state:";
 
 #define CONFIG_STATE_IDLE 0
 #define CONFIG_STATE_BUSY 1
@@ -528,8 +525,8 @@ static const gchar *node_id_str= "node_id";
 /* Strings used in NDB MGMAPI Protocol, first group additions */
 static const gchar *get_cluster_list_str= "get cluster list";
 static const gchar *get_cluster_list_reply_str= "get cluster list reply";
-static const gchar *cluster_name_string= "clustername: ";
-static const gchar *cluster_id_str= "clusterid: ";
+static const gchar *cluster_name_string= "clustername:";
+static const gchar *cluster_id_str= "clusterid:";
 static const gchar *end_get_cluster_list_str= "end get cluster list";
 
 static const gchar *get_mgmd_nodeid_str= "get mgmd nodeid";
@@ -540,33 +537,33 @@ static const gchar *set_connection_parameter_reply_str=
 static const gchar *get_connection_parameter_str= "get connection parameter";
 static const gchar *get_connection_parameter_reply_str=
   "get connection parameter reply";
-static const gchar *message_str= "message: ";
+static const gchar *message_str= "message:";
 static const gchar *convert_transporter_str= "transporter connect";
 static const gchar *report_event_str= "report event";
 static const gchar *report_event_reply_str= "report event reply";
-static const gchar *length_str= "length: ";
-static const gchar *data_str= "data:  ";
+static const gchar *length_str= "length:";
+static const gchar *data_str= "data:";
 
 static const gchar *get_nodeid_str= "get nodeid";
 static const gchar *get_nodeid_reply_str= "get nodeid reply";
 static const gchar *get_config_str= "get config";
 static const gchar *get_config_reply_str= "get config reply";
-static const gchar *nodeid_str= "nodeid: ";
-static const gchar *node1_str= "node1: ";
-static const gchar *node2_str= "node2: ";
-static const gchar *param_str= "param: ";
-static const gchar *value_str= "value: ";
-static const gchar *nodetype_str= "nodetype: ";
+static const gchar *nodeid_str= "nodeid:";
+static const gchar *node1_str= "node1:";
+static const gchar *node2_str= "node2:";
+static const gchar *param_str= "param:";
+static const gchar *value_str= "value:";
+static const gchar *nodetype_str= "nodetype:";
 static const gchar *user_str= "user: mysqld";
 static const gchar *password_str= "password: mysqld";
 static const gchar *public_key_str= "public key: a public key";
-static const gchar *endian_str= "endian: ";
+static const gchar *endian_str= "endian:";
 static const gchar *little_endian_str= "little";
 static const gchar *big_endian_str= "big";
 static const gchar *log_event_str= "log_event: 0";
 static const gchar *result_ok_str= "result: Ok";
-static const gchar *result_str= "result: ";
-static const gchar *content_len_str= "Content-Length: ";
+static const gchar *result_str= "result:";
+static const gchar *content_len_str= "Content-Length:";
 static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 
@@ -625,10 +622,7 @@ static const gchar *ic_starting_str= "starting";
 #define GET_CONNECTION_PARAMETER 5
 #define CLUSTER_SERVER_CONNECTION 6
 
-#define GET_NODEID_LEN 10
-#define GET_NODEID_REPLY_LEN 16
-#define NODEID_LEN 8
-#define VERSION_REQ_LEN 9
+#define VERSION_REQ_LEN 8
 #define NODETYPE_REQ_LEN 10
 #define USER_REQ_LEN 12
 #define PASSWORD_REQ_LEN 16

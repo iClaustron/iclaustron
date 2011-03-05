@@ -80,6 +80,9 @@ static guint32 ic_stop_flag= 0;
 IC_POLL_FUNCTION ic_poll;
 #endif
 
+/**
+  On Windows it's necessary to stop socket subsystem.
+*/
 int ic_stop_socket_system()
 {
   int ret_code= 0;
@@ -89,7 +92,12 @@ int ic_stop_socket_system()
   return ret_code;
 }
 
-/* This method can't use DEBUG system since it isn't initialised when called */
+/**
+  On Windows it's necessary to start the socket subsystem.
+
+  @note
+    This method can't use DEBUG system since it isn't initialised when called
+*/
 int ic_start_socket_system()
 {
 #ifdef WINDOWS
@@ -123,6 +131,13 @@ int ic_start_socket_system()
 #endif
 }
 
+/**
+  Anyone wanting to stop the iClaustron subsystem can indicate this
+  by setting the stop flag. The iClaustron code needs to check this
+  regularly (at least every 3 seconds or so).
+
+  @retval 1 if iClaustron is stopped, 0 otherwise
+*/
 guint32
 ic_get_stop_flag()
 {
@@ -138,9 +153,14 @@ static IC_MUTEX *mutex_hash_protect= NULL;
 static IC_HASHTABLE *mem_entry_hash= NULL;
 static IC_MUTEX *mem_entry_hash_mutex= NULL;
 #endif
-/*
-  This method can't be debugged since it's called before debug system
-  has been started.
+
+/**
+  It is necessary to initialise the portability subsystem before
+  we can use it, especially so when using it in debug mode.
+
+  @note
+    This method can't be debugged since it's called before debug system
+    has been started.
 */
 void
 ic_port_init()
@@ -165,6 +185,9 @@ ic_port_init()
 #endif
 }
 
+/**
+  End the use of the portability subsystem
+*/
 void ic_port_end()
 {
 #ifdef DEBUG_BUILD
@@ -210,6 +233,15 @@ void ic_port_end()
   ic_mutex_destroy(exec_output_mutex);
 }
 
+/**
+  Portable manner to close a socket
+
+  @parameter sockfd        The socket fd to close
+
+  @note
+    Errors are indicated through errno/WSAGetLastError in the cases
+    it's necessary to actually check the error from the close socket.
+*/
 void
 ic_close_socket(int sockfd)
 {
@@ -232,6 +264,9 @@ ic_close_socket(int sockfd)
   }
 }
 
+/**
+  Portable manner to get last error reported by OS
+*/
 int
 ic_get_last_error()
 {
@@ -242,6 +277,9 @@ ic_get_last_error()
 #endif
 }
 
+/**
+  Portable manner to get last socket error reported by OS
+*/
 int
 ic_get_last_socket_error()
 {

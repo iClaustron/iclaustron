@@ -1509,11 +1509,11 @@ write_cv_file(IC_STRING *config_dir,
     finally it can be in a number of states which is used
     when the configuration is updated.
   */
-  IC_INIT_STRING(&str, (gchar*)ic_version_str, VERSION_REQ_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)ic_version_str, strlen(ic_version_str), TRUE);
   insert_line_config_version_file(&str, &ptr, (guint64)config_version);
-  IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)state_str, strlen(state_str), TRUE);
   insert_line_config_version_file(&str, &ptr, (guint64)state);
-  IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)ic_pid_str, strlen(ic_pid_str), TRUE);
   insert_line_config_version_file(&str, &ptr, (guint64)pid);
 
   ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
@@ -1585,13 +1585,13 @@ read_config_version_file(IC_STRING *config_dir,
     state: <state><CR>
     pid: <pid><CR>
   */
-  IC_INIT_STRING(&str, (gchar*)ic_version_str, VERSION_REQ_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)ic_version_str, strlen(ic_version_str), TRUE);
   if ((error= cmp_config_version_line(&str, &len, config_version, &ptr)))
     goto file_error;
-  IC_INIT_STRING(&str, (gchar*)state_str, STATE_STR_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)state_str, strlen(state_str), TRUE);
   if ((error= cmp_config_version_line(&str, &len, state, &ptr)))
     goto file_error;
-  IC_INIT_STRING(&str, (gchar*)pid_str, PID_STR_LEN, TRUE);
+  IC_INIT_STRING(&str, (gchar*)ic_pid_str, strlen(ic_pid_str), TRUE);
   if ((error= cmp_config_version_line(&str, &len, pid, &ptr)))
     goto file_error;
 

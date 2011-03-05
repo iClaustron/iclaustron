@@ -4143,7 +4143,8 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     param->client_nodeid= param->node_number;
   }
   if ((ret_code= send_get_nodeid_reply(conn, (guint32)param->client_nodeid)) ||
-      (ret_code= rec_get_config_req(conn, param->version_number,
+      (ret_code= rec_get_config_req(conn,
+                                    param->version_number,
                                     param->node_type)) ||
       (ret_code= ic_get_base64_config(
               run_obj->config.conf_objects[param->cluster_id],
@@ -4174,6 +4175,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
 {
   gchar *read_buf;
   guint32 read_size;
+  guint32 endian_req_len, little_endian_len, big_endian_len;
   guint32 state= VERSION_REQ_STATE; /* get nodeid already received */
   int error;
   DEBUG_ENTRY("rec_get_nodeid_req");
@@ -4183,8 +4185,11 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
     switch (state)
     {
       case VERSION_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, ic_version_str,
-                                  VERSION_REQ_LEN, version_number))
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  ic_version_str,
+                                  strlen(ic_version_str),
+                                  version_number))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in version request state"));
@@ -4193,8 +4198,11 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= NODETYPE_REQ_STATE;
         break;
       case NODETYPE_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, nodetype_str,
-                                  NODETYPE_REQ_LEN, node_type))
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  nodetype_str,
+                                  strlen(nodetype_str),
+                                  node_type))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in nodetype request state"));
@@ -4203,8 +4211,11 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= NODEID_REQ_STATE;
         break;
       case NODEID_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, nodeid_str,
-                                  NODEID_LEN, node_number) ||
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  nodeid_str,
+                                  strlen(nodeid_str),
+                                  node_number) ||
             (*node_number > IC_MAX_NODE_ID))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -4214,7 +4225,10 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= USER_REQ_STATE;
         break;
       case USER_REQ_STATE:
-        if (ic_check_buf(read_buf, read_size, user_str, USER_REQ_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         user_str,
+                         strlen(user_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in user request state"));
@@ -4223,7 +4237,10 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= PASSWORD_REQ_STATE;
         break;
       case PASSWORD_REQ_STATE:
-        if (ic_check_buf(read_buf, read_size, password_str, PASSWORD_REQ_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         password_str,
+                         strlen(password_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in password request state"));
@@ -4232,8 +4249,10 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= PUBLIC_KEY_REQ_STATE;
         break;
       case PUBLIC_KEY_REQ_STATE:
-        if (ic_check_buf(read_buf, read_size, public_key_str,
-                         PUBLIC_KEY_REQ_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         public_key_str,
+                         strlen(public_key_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in public key request state"));
@@ -4242,19 +4261,24 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= ENDIAN_REQ_STATE;
         break;
       case ENDIAN_REQ_STATE:
-        if ((read_size < ENDIAN_REQ_LEN) ||
-            (memcmp(read_buf, endian_str, ENDIAN_REQ_LEN) != 0))
+        endian_req_len= strlen(endian_str);
+        if ((read_size < endian_req_len) ||
+            (memcmp(read_buf, endian_str, endian_req_len) != 0))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in endian request state"));
           PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
         }
-        if (!((read_size == ENDIAN_REQ_LEN + LITTLE_ENDIAN_LEN &&
-              memcmp(read_buf+ENDIAN_REQ_LEN, little_endian_str,
-                     LITTLE_ENDIAN_LEN) == 0) ||
-             (read_size == ENDIAN_REQ_LEN + BIG_ENDIAN_LEN &&
-              memcmp(read_buf+ENDIAN_REQ_LEN, big_endian_str,
-                     BIG_ENDIAN_LEN) == 0)))
+        little_endian_len= strlen(little_endian_str);
+        big_endian_len= strlen(big_endian_str);
+        if (!((read_size == (endian_req_len + little_endian_len) &&
+              memcmp(read_buf+endian_req_len,
+                     little_endian_str,
+                     little_endian_len) == 0) ||
+             (read_size == endian_req_len + big_endian_len &&
+              memcmp(read_buf+ENDIAN_REQ_LEN,
+                     big_endian_str,
+                     big_endian_len) == 0)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Failure in representation of what endian type"));

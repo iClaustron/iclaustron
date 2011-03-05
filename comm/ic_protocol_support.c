@@ -301,7 +301,7 @@ static int mc_rec_string_impl(IC_MEMORY_CONTAINER *mc_ptr,
                               guint32 read_size,
                               IC_STRING *str)
 {
-  guint32 prefix_len= 0;
+  guint32 prefix_len;
   gchar *str_ptr;
 
   prefix_len= strlen(prefix_str);
@@ -311,8 +311,8 @@ static int mc_rec_string_impl(IC_MEMORY_CONTAINER *mc_ptr,
   if (memcmp(read_buf, prefix_str, prefix_len) ||
       read_buf[prefix_len] != SPACE_CHAR)
     return IC_PROTOCOL_ERROR;
-  read_buf+= prefix_len;
-  read_size-= prefix_len;
+  read_buf+= (prefix_len + 1);
+  read_size-= (prefix_len + 1);
   if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
@@ -383,6 +383,17 @@ ic_mc_rec_opt_string(IC_CONNECTION *conn,
                             str);
 }
 
+/**
+  Receive a line with a predefined string followed by a stras part string
+  as part of a protocol line.
+
+  @parameter conn          IN:  The connection
+  @parameter prefix_str    IN:  The predefined string (prescribed by protocol)
+  @parameter read_str      OUT: The string read
+
+  @note
+    The read_str must come with a buffer of at least size COMMAND_READ_BUF_SIZE
+*/
 int
 ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
 {
@@ -409,6 +420,22 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
   DEBUG_RETURN_INT(error);
 }
 
+/**
+  Receive a simple protocol line without variable parts. It is however
+  optional. The parameter optional_and_found is used both as input and
+  output parameter. If it is set then it is ok that the line isn't the
+  prescribed string, if it isn't set we will return an error if the
+  string isn't found. The optional_and_found is also used to flag back
+  whether we found the prescribed string.
+
+  @parameter conn                IN:    The connection
+  @parameter str                 IN:    The predefined string
+  @parameter optional_and_found IN/OUT: If set as input the string is optional,
+                                        If set in output the string was found.
+
+  @note
+    This function is a local support function
+*/
 static int
 ic_rec_simple_str_impl(IC_CONNECTION *conn,
                        const gchar *str,
@@ -442,6 +469,13 @@ ic_rec_simple_str_impl(IC_CONNECTION *conn,
   DEBUG_RETURN_INT(error);
 }
 
+/**
+  Receive a simple string as one line in the protocol. Implemented using the
+  ic_rec_simple_str_impl function above.
+
+  @parameter conn            IN: The connection
+  @parameter str             IN: The expected predefined string
+*/
 int
 ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
 {
@@ -449,6 +483,15 @@ ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
   return ic_rec_simple_str_impl(conn, str, &optional);
 }
 
+/**
+  Receive a simple string as one line in the protocol. Implemented using the
+  ic_rec_simple_str_impl function above. In this function the protocol line is
+  optional.
+
+  @parameter conn            IN:  The connection
+  @parameter str             IN:  The expected predefined string
+  @parameter found           OUT: Is the protocol line found or not
+*/
 int
 ic_rec_simple_str_opt(IC_CONNECTION *conn,
                       const gchar *str,
@@ -463,6 +506,11 @@ ic_rec_simple_str_opt(IC_CONNECTION *conn,
   Here str contains "node1: " and 12 is returned in id.
   If optional is set the line is optional and ok will
   be returned even if there is no such line.
+
+  @parameter conn                IN:  The connection
+  @parameter str                 IN:  The predefined string
+  @parameter id                  OUT: The read number
+  @parameter optional            IN:  Is the protocol line optional or not
 */
 static int
 ic_rec_number_impl(IC_CONNECTION *conn,
@@ -514,12 +562,13 @@ ic_rec_boolean(IC_CONNECTION *conn,
 
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     return error;
-  if (read_size <= prefix_len)
+  if (read_size <= (prefix_len + 1))
     goto protocol_error;
-  if (memcmp(read_buf, prefix_str, prefix_len))
+  if (memcmp(read_buf, prefix_str, prefix_len) ||
+      read_buf[prefix_len] != SPACE_CHAR)
     goto protocol_error;
-  read_size-= prefix_len;
-  read_buf+= prefix_len;
+  read_size-= (prefix_len + 1);
+  read_buf+= (prefix_len + 1);
   if (read_size == strlen(ic_true_str) &&
       !memcmp(read_buf, ic_true_str, read_size))
     *bool_value= 1;
@@ -752,6 +801,13 @@ ic_send_with_cr_composed(IC_CONNECTION *conn,
   return ic_send_with_cr(conn, local_buf);
 }
 
+/**
+  Send a protocol line with 2 input strings that are space separated.
+
+  @parameter conn               The connection
+  @parameter buf1               The first input string
+  @parameter buf2               The second input string
+*/
 int
 ic_send_with_cr_two_strings(IC_CONNECTION *conn,
                             const gchar *buf1,
@@ -765,6 +821,12 @@ ic_send_with_cr_two_strings(IC_CONNECTION *conn,
   return ic_send_with_cr_composed(conn, local_buf, (guint32)2);
 }
 
+/**
+  Send an empty line as part of the protocol, always the last protocol
+  action that gives the other side the chance to send a number of lines.
+
+  @conn                        The connection
+*/
 int
 ic_send_empty_line(IC_CONNECTION *ext_conn)
 {
