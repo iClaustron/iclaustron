@@ -4272,11 +4272,11 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         little_endian_len= strlen(little_endian_str);
         big_endian_len= strlen(big_endian_str);
         if (!((read_size == (endian_req_len + little_endian_len) &&
-              memcmp(read_buf+endian_req_len,
+              memcmp(read_buf + endian_req_len,
                      little_endian_str,
                      little_endian_len) == 0) ||
              (read_size == endian_req_len + big_endian_len &&
-              memcmp(read_buf+ENDIAN_REQ_LEN,
+              memcmp(read_buf + endian_req_len,
                      big_endian_str,
                      big_endian_len) == 0)))
         {
@@ -4287,8 +4287,10 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= LOG_EVENT_REQ_STATE;
         break;
       case LOG_EVENT_REQ_STATE:
-        if (ic_check_buf(read_buf, read_size, log_event_str,
-                         LOG_EVENT_REQ_LEN))
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         log_event_str,
+                         strlen(log_event_str)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in log_event request state"));
@@ -4303,8 +4305,11 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
           state= CLUSTER_ID_REQ_STATE;
         break;
       case CLUSTER_ID_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, cluster_id_str,
-                                  CLUSTER_ID_REQ_LEN, cluster_id))
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  cluster_id_str,
+                                  strlen(cluster_id_str),
+                                  cluster_id))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in cluster id request state"));
@@ -4373,8 +4378,11 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
         state= VERSION_REQ_STATE;
         break;
       case VERSION_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, ic_version_str,
-                                  VERSION_REQ_LEN, &read_version_num) ||
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  ic_version_str,
+                                  strlen(ic_version_str),
+                                  &read_version_num) ||
             (version_number != read_version_num))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
@@ -4384,8 +4392,11 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
         state= NODETYPE_REQ_STATE;
         break;
       case NODETYPE_REQ_STATE:
-        if (ic_check_buf_with_int(read_buf, read_size, nodetype_str,
-                                  NODETYPE_REQ_LEN, &read_node_type) ||
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  nodetype_str,
+                                  strlen(nodetype_str),
+                                  &read_node_type) ||
             (node_type != read_node_type))
         {
           DEBUG_PRINT(CONFIG_LEVEL,

@@ -361,6 +361,7 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
   guint32 read_size;
   guint32 state, num_clusters_found= 0;
   guint32 num_clusters= 0;
+  guint32 cluster_name_req_len;
   guint64 cluster_id;
   IC_CLUSTER_CONNECT_INFO *found_clu_info= NULL;
   IC_CLUSTER_CONNECT_INFO **clu_info_iter, *clu_info;
@@ -378,14 +379,17 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
   state= RECEIVE_CLUSTER_NAME;
   while (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (!ic_check_buf(read_buf, read_size, end_get_cluster_list_str,
+    if (!ic_check_buf(read_buf,
+                      read_size,
+                      end_get_cluster_list_str,
                       strlen(end_get_cluster_list_str)))
       break;
     switch (state)
     {
       case RECEIVE_CLUSTER_NAME:
-        if ((read_size < CLUSTER_NAME_REQ_LEN) ||
-            (memcmp(read_buf, cluster_name_string, CLUSTER_NAME_REQ_LEN) != 0))
+        cluster_name_req_len= strlen(cluster_name_string);
+        if ((read_size < cluster_name_req_len) ||
+            (memcmp(read_buf, cluster_name_string, cluster_name_req_len) != 0))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in receive cluster name state"));
@@ -397,9 +401,9 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
         {
           clu_info= *clu_info_iter;
           if ((clu_info->cluster_name.len ==
-               (read_size - CLUSTER_NAME_REQ_LEN)) &&
+               (read_size - cluster_name_req_len)) &&
               (memcmp(clu_info->cluster_name.str,
-                      read_buf+CLUSTER_NAME_REQ_LEN,
+                      read_buf + cluster_name_req_len,
                       clu_info->cluster_name.len) == 0))
           {
             found_clu_info= clu_info;
@@ -410,8 +414,11 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
         state= RECEIVE_CLUSTER_ID;
         break;
       case RECEIVE_CLUSTER_ID:
-        if (ic_check_buf_with_int(read_buf, read_size, cluster_id_str,
-                                  CLUSTER_ID_REQ_LEN, &cluster_id))
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  cluster_id_str,
+                                  strlen(cluster_id_str),
+                                  &cluster_id))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in receive cluster id state"));

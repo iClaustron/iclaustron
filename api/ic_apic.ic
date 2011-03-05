@@ -622,19 +622,7 @@ static const gchar *ic_starting_str= "starting";
 #define GET_CONNECTION_PARAMETER 5
 #define CLUSTER_SERVER_CONNECTION 6
 
-#define VERSION_REQ_LEN 8
-#define NODETYPE_REQ_LEN 10
-#define USER_REQ_LEN 12
-#define PASSWORD_REQ_LEN 16
-#define PUBLIC_KEY_REQ_LEN 24
-#define ENDIAN_REQ_LEN 8
-#define LITTLE_ENDIAN_LEN 6
-#define BIG_ENDIAN_LEN 3
-#define LOG_EVENT_REQ_LEN 12
-#define CLUSTER_ID_REQ_LEN 11
 #define RESULT_OK_LEN 10
-
-#define CLUSTER_NAME_REQ_LEN 13
 
 #define GET_CONFIG_LEN 10
 #define GET_CONFIG_REPLY_LEN 16
