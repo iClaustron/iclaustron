@@ -1545,6 +1545,8 @@ insert_line_config_version_file(IC_STRING *str,
 
   memcpy(loc_ptr, str->str, str->len);
   loc_ptr+= str->len;
+  loc_ptr[0]= SPACE_CHAR;
+  loc_ptr++;
   loc_ptr= ic_guint64_str(value, loc_ptr, &str_len);
   loc_ptr+= str_len;
   *loc_ptr= CARRIAGE_RETURN;
@@ -1594,6 +1596,10 @@ read_config_version_file(IC_STRING *config_dir,
   IC_INIT_STRING(&str, (gchar*)ic_pid_str, strlen(ic_pid_str), TRUE);
   if ((error= cmp_config_version_line(&str, &len, pid, &ptr)))
     goto file_error;
+  error= IC_ERROR_TOO_MANY_LINES_IN_CONFIG_VERSION_FILE;
+  if (len != 0) /* Verify that there are no more lines in the file */
+    goto file_error;
+  error= 0;
 
 file_error:
   ic_free(release_ptr);
@@ -1610,12 +1616,14 @@ cmp_config_version_line(IC_STRING *str,
   guint32 value_len;
   guint64 loc_len= *len;
   gchar *loc_ptr= *ptr;
-  int error= 1;
+  int error= IC_ERROR_SYNTAX_ERROR_IN_CONFIG_VERSION_FILE;
 
   if (memcmp(loc_ptr, str->str, str->len) || loc_len < str->len)
     goto file_error;
-  loc_len-= str->len;
-  loc_ptr+= str->len;
+  if (loc_ptr[str->len] != SPACE_CHAR)
+    goto file_error;
+  loc_len-= (str->len + 1);
+  loc_ptr+= (str->len + 1);
   if (ic_conv_str_to_int(loc_ptr, &loc_value, &value_len))
     goto file_error;
   if ((loc_len < (value_len + 1)) ||
