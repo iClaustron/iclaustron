@@ -373,8 +373,7 @@ ic_load_config_version(IC_STRING *config_dir,
         configuration files. We will report this as an error to the
         caller.
       */
-      if (error == 0)
-        error= IC_ERROR_COULD_NOT_LOCK_CONFIGURATION;
+      error= IC_ERROR_COULD_NOT_LOCK_CONFIGURATION;
       DEBUG_RETURN_INT(error);
     }
     if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)

@@ -105,7 +105,7 @@ ic_init_error_messages()
     "Node failure occurred";
   ic_error_str[IC_ERROR_NO_SUCH_CLUSTER - IC_FIRST_ERROR]=
     "No such cluster";
-  ic_error_str[IC_ERROR_NODE_DOWN - IC_FIRST_ERROR]=
+  ic_error_str[IC_ERROR_NO_SUCH_NODE - IC_FIRST_ERROR]=
     "No such node exists in this cluster";
   ic_error_str[IC_ERROR_MESSAGE_CHECKSUM - IC_FIRST_ERROR]=
     "Message received with wrong checksum";
@@ -120,7 +120,7 @@ ic_init_error_messages()
   ic_error_str[IC_ERROR_PROCESS_NOT_ALIVE - IC_FIRST_ERROR]=
     "The process is not alive";
   ic_error_str[IC_ERROR_COULD_NOT_LOCK_CONFIGURATION - IC_FIRST_ERROR]=
-    "The Cluster Server failed to lock the configuration";
+    "The Cluster Server failed to lock the configuration, other Cluster Server already running";
   ic_error_str[IC_ERROR_CHECK_PROCESS_SCRIPT - IC_FIRST_ERROR]=
     "The check process script failed";
   ic_error_str[IC_ERROR_BOOTSTRAP_ALREADY_PERFORMED - IC_FIRST_ERROR]=
@@ -155,6 +155,10 @@ ic_init_error_messages()
     "SSL error on socket";
   ic_error_str[IC_ERROR_PC_START_ALREADY_ONGOING - IC_FIRST_ERROR]=
     "An attempt to start this process is already ongoing";
+  ic_error_str[IC_ERROR_PC_PROCESS_ALREADY_RUNNING - IC_FIRST_ERROR]=
+    "This process is already running";
+  ic_error_str[IC_ERROR_PROCESS_STUCK_IN_START_PHASE - IC_FIRST_ERROR]=
+    "Process is stuck in start phase";
   ic_error_str[IC_ERROR_FAILED_TO_STOP_PROCESS - IC_FIRST_ERROR]=
     "Failed to stop/kill process";
   ic_error_str[IC_ERROR_PROCESS_STUCK_IN_START_PHASE - IC_FIRST_ERROR]=
@@ -219,6 +223,8 @@ ic_init_error_messages()
     "No such error";
   ic_error_str[IC_ERROR_MASTER_INDEX_VIEW_DIFFERS - IC_FIRST_ERROR]=
     "Cluster Servers have different views on master index";
+  ic_error_str[IC_ERROR_WRONG_NODE_ID - IC_FIRST_ERROR]=
+    "Wrong node id";
   ic_error_str[IC_ERROR_CHANGE_VIEW - IC_FIRST_ERROR]=
     "Cluster Server changed view on master node order";
   ic_error_str[IC_ERROR_NO_NODEID - IC_FIRST_ERROR]=
@@ -249,6 +255,14 @@ ic_init_error_messages()
     "Too many lines in config_version.ini file";
   ic_error_str[IC_ERROR_SYNTAX_ERROR_IN_CONFIG_VERSION_FILE - IC_FIRST_ERROR]=
     "Syntax error in config_version.ini file";
+#ifdef DEBUG
+  /* Verify we have set an error message for all error codes */
+  for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)
+  {
+    if (!ic_error_str[i - IC_FIRST_ERROR])
+      abort();
+  }
+#endif
   DEBUG_RETURN_EMPTY;
 }
 

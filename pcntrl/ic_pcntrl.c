@@ -164,20 +164,24 @@ static int test_successful_start(IC_CONNECTION *conn)
   int ret_code;
   guint32 pid;
 
+  ic_printf("Testing successful start of ic_csd");
   if ((ret_code= send_start_cluster_server(conn)))
-    return ret_code;
+    goto error;
   if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
   {
     /* Not ok, expect error message instead */
     if ((ret_code= receive_error_message(conn)))
-      return ret_code;
+      goto error;
     return 1;
   }
   if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
       (ret_code= ic_rec_empty_line(conn)))
-    return ret_code;
+    goto error;
   ic_printf("Successfully started ic_csd with pid %u", pid);
   return 0;
+error:
+  ic_print_error(ret_code);
+  return ret_code;
 }
 
 /**
@@ -190,12 +194,17 @@ static int test_unsuccessful_start(IC_CONNECTION *conn)
 {
   int ret_code;
 
+  ic_printf("Testing unsuccessful start of ic_csd");
   if ((ret_code= send_start_cluster_server(conn)))
-    return ret_code;
+    goto error;
   if ((ret_code= receive_error_message(conn)))
-    return ret_code;
-  /* Error message was expected here */
+    goto error;
+  ic_printf("Error message was expected here");
   return 0;
+
+error:
+  ic_print_error(ret_code);
+  return ret_code;
 }
 
 /**
@@ -226,13 +235,17 @@ static int test_successful_stop(IC_CONNECTION *conn)
 {
   int ret_code;
 
+  ic_printf("Testing successful stop of ic_csd");
   if ((ret_code= send_stop_cluster_server(conn)) ||
       (ret_code= ic_rec_simple_str(conn, ic_ok_str)) ||
       (ret_code= ic_rec_empty_line(conn)))
-    return ret_code;
-
+    goto error;
   ic_printf("Successful stop of ic_csd");
   return 0;
+
+error:
+  ic_print_error(ret_code);
+  return ret_code;
 }
 
 /**
@@ -246,12 +259,17 @@ static int test_unsuccessful_stop(IC_CONNECTION *conn)
 {
   int ret_code;
 
+  ic_printf("Testing unsuccessful stop of ic_csd");
   if ((ret_code= send_stop_cluster_server(conn)))
-    return ret_code;
+    goto error;
   if ((ret_code= receive_error_message(conn)))
-    return ret_code;
-  /* Error message was expected here */
+    goto error;
+  ic_printf("Error message was expected here");
   return 0;
+
+error:
+  ic_print_error(ret_code);
+  return ret_code;
 }
 
 /**
@@ -876,8 +894,9 @@ error:
   if (working_dir.str)
     ic_free(working_dir.str);
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
-  DEBUG_RETURN_INT(send_error_reply(conn, 
-                                    ic_get_error_message(ret_code)));
+  send_error_reply(conn, 
+                   ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1066,10 +1085,11 @@ handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
   error= delete_process(pc_find, kill_flag);
   pc_find->mc_ptr->mc_ops.ic_mc_free(pc_find->mc_ptr);
   if (!error)
-    return send_ok_reply(conn);
+    DEBUG_RETURN_INT(send_ok_reply(conn));
 error:
-  return send_error_reply(conn,
-                          ic_get_error_message(error));
+  send_error_reply(conn,
+                   ic_get_error_message(error));
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -1266,6 +1286,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   guint32 read_size;
   gchar *read_buf;
   gboolean stop_flag;
+  DEBUG_ENTRY("handle_list");
 
   if ((error= rec_opt_key_message(conn, &pc_find)))
     goto error;
@@ -1311,7 +1332,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
     loop_pc_start= loop_pc_start->next_pc_start;
   }
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return send_list_stop_reply(conn);
+  DEBUG_RETURN_INT(send_list_stop_reply(conn));
 
 protocol_error:
   error= IC_PROTOCOL_ERROR;
@@ -1321,8 +1342,9 @@ mem_error:
 error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return send_error_reply(conn,
-                          ic_get_error_message(error));
+  send_error_reply(conn,
+                   ic_get_error_message(error));
+  DEBUG_RETURN_INT(error);
 }
 
 /*

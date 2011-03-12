@@ -702,10 +702,12 @@ int run_process(gchar **argv,
     *exit_status= 1;
   else
     *exit_status= 2;
+#ifdef DEBUG
   if (*exit_status)
   {
-    ic_printf("Exit status %d\n", *exit_status);
+    ic_printf("Exit status %d from run_process", *exit_status);
   }
+#endif
 
 end:
   ic_close_file(file_handle);
