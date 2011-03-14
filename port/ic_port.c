@@ -603,16 +603,21 @@ ic_get_own_pid()
 void 
 ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill)
 {
+  DEBUG_ENTRY("ic_kill_process");
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Kill pid %u", (guint32)pid));
+
   if (hard_kill)
     kill((pid_t)pid, SIGKILL);
   else
     kill((pid_t)pid, SIGTERM);
+  DEBUG_RETURN_EMPTY;
 }
 
 void ic_controlled_terminate()
 {
   IC_PID_TYPE my_pid;
 
+  DEBUG_PRINT(PROGRAM_LEVEL, ("ic_controlled_terminate called"));
   my_pid= ic_get_own_pid();
   kill((pid_t)my_pid, SIGTERM);
 }
@@ -629,6 +634,10 @@ ic_get_own_pid()
 void 
 ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill)
 {
+  DEBUG_ENTRY("ic_kill_process");
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Kill pid %u", (guint32)pid));
+  /* Windows variant of kill */
+  DEBUG_RETURN_EMPTY;
 }
 
 void
@@ -643,7 +652,16 @@ int ic_start_process(gchar **argv,
 {
   GError *error;
   GPid loc_pid;
-
+#ifdef DEBUG_BUILD
+  guint32 i= 1;
+  DEBUG_ENTRY("ic_start_process");
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Starting process %s", argv[0]));
+  while (argv[i])
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Argument %d = %s", i, argv[i]));
+    i++;
+  }
+#endif
   if (!g_spawn_async_with_pipes(working_dir,
                                 argv,
                                 NULL, /* environment */
@@ -656,10 +674,12 @@ int ic_start_process(gchar **argv,
                                 &error)) /* Error object */
   {
     /* Unsuccessful start */
-    return 1;
+    DEBUG_RETURN_INT(1);
   }
   *pid= (IC_PID_TYPE)loc_pid;
-  return 0;
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Process with pid %d successfully started",
+                              (int)*pid));
+  DEBUG_RETURN_INT(0);
 }
 
 int run_process(gchar **argv,
@@ -671,6 +691,7 @@ int run_process(gchar **argv,
   guint64 len= 1;
   IC_FILE_HANDLE file_handle;
   gchar read_buf[4];
+  DEBUG_ENTRY("run_process");
 
   if (!g_spawn_sync(NULL,
                     argv,
@@ -713,7 +734,7 @@ end:
   ic_close_file(file_handle);
   ic_delete_file(log_file_name);
 early_end:
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 int
@@ -730,6 +751,7 @@ ic_is_process_alive(IC_PID_TYPE pid,
   gchar pid_buf[IC_MAX_INT_STRING];
   gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
   gchar log_file_name_buf[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("ic_is_process_alive");
 
 #ifdef LINUX
   script_name= "check_process.sh";
@@ -771,19 +793,24 @@ ic_is_process_alive(IC_PID_TYPE pid,
   ic_mutex_unlock_low(exec_output_mutex);
   if (error || exit_status == (gint)2)
   {
-    return IC_ERROR_CHECK_PROCESS_SCRIPT;
+    DEBUG_RETURN_INT(IC_ERROR_CHECK_PROCESS_SCRIPT);
   }
   if (exit_status == (gint)1)
   {
-    return 0; /* The process was alive */
+    DEBUG_RETURN_INT(0); /* The process was alive */
   }
-  return IC_ERROR_PROCESS_NOT_ALIVE;
+  DEBUG_RETURN_INT(IC_ERROR_PROCESS_NOT_ALIVE);
 }
 
 int
 ic_delete_file(const gchar *file_name)
 {
-  return g_unlink(file_name);
+  int error;
+  DEBUG_ENTRY("ic_delete_file");
+  DEBUG_PRINT(FILE_LEVEL, ("Delete file %s", file_name));
+
+  error= g_unlink(file_name);
+  DEBUG_RETURN_INT(error);
 }
 
 #ifdef WINDOWS
@@ -854,64 +881,81 @@ ic_open_file(IC_FILE_HANDLE *handle,
              const gchar *file_name,
              gboolean create_flag)
 {
-  return portable_open_file(handle, file_name, create_flag, TRUE);
+  int error;
+  DEBUG_ENTRY("ic_open_file");
+
+  error= portable_open_file(handle, file_name, create_flag, TRUE);
+  DEBUG_PRINT(FILE_LEVEL, ("Open file %s with fd = %d", file_name, *handle));
+  DEBUG_RETURN_INT(error);
 }
 
 int
 ic_create_file(IC_FILE_HANDLE *handle,
                const gchar *file_name)
 {
-  return portable_open_file(handle, file_name, TRUE, FALSE);
+  int error;
+  DEBUG_ENTRY("ic_create_file");
+
+  error= portable_open_file(handle, file_name, TRUE, FALSE);
+  DEBUG_PRINT(FILE_LEVEL, ("Create file %s with fd = %d", file_name, *handle));
+  DEBUG_RETURN_INT(error);
 }
 
 int
 ic_close_file(IC_FILE_HANDLE file_ptr)
 {
+  int error;
+  DEBUG_ENTRY("ic_close_file");
+
 #ifndef WINDOWS
   if ((close(file_ptr)) == (int)-1)
-    return errno;
+    error= errno;
   else
-    return 0;
+    error= 0;
 #else
   if (!CloseHandle(file_ptr))
-    return GetLastError();
+    error= GetLastError();
   else
-    return 0;
+    error= 0;
 #endif
+  DEBUG_RETURN_INT(error);
 }
 
 static int
 get_file_length(IC_FILE_HANDLE file_ptr, guint64 *read_size)
 {
   int error= 0;
-#ifndef WINDOWS
   gint64 size;
+  DEBUG_ENTRY("get_file_length");
+#ifndef WINDOWS
 
   size= lseek(file_ptr, (off_t)0, SEEK_END);
   if (size == (gint64)-1)
   {
     error= errno;
-    goto error;
+    goto end;
   }
   *read_size= size;
   size= lseek(file_ptr, (off_t)0, SEEK_SET);
   if (size == (gint64)-1)
   {
     error= errno;
-    goto error;
+    goto end;
   }
+  error= 0;
   if (size != 0)
-    return 1;
-  return 0;
-error:
-  return error;
+    error= 1;
+  goto end;
 #else
+  (void)size;
   if (!GetFileSizeEx(file_ptr, (LARGE_INTEGER*)read_size))
   {
     error= GetLastError();
   }
-  return error;
+  goto end;
 #endif
+end:
+  DEBUG_RETURN_INT(error);
 }
 
 int
@@ -989,21 +1033,26 @@ portable_write(IC_FILE_HANDLE file_ptr,
 int
 ic_write_file(IC_FILE_HANDLE file_ptr, const gchar *buf, size_t size)
 {
-  int ret_code;
+  int ret_code= 0;
   size_t ret_size= 0;
+  DEBUG_ENTRY("ic_write_file");
+  DEBUG_PRINT(FILE_LEVEL, ("Write file fd = %d, size = %d", (int)file_ptr,
+                           (int)size));
+
   do
   {
     if ((ret_code= portable_write(file_ptr,
                                   (const void*)buf,
                                   size,
                                   &ret_size)))
-      return ret_code;
+      goto end;
     if (ret_size == size)
-      return 0;
+      goto end;
     buf+= ret_size;
     size-= ret_size;
   } while (1);
-  return 0;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -1039,11 +1088,16 @@ ic_read_file(IC_FILE_HANDLE file_ptr, gchar *buf, size_t size, guint64 *len)
 {
   int ret_code;
   size_t ret_size= 0;
+  DEBUG_ENTRY("ic_read_file");
+  DEBUG_PRINT(FILE_LEVEL, ("Read file fd = %d, size = %d", (int)file_ptr,
+                           (int)size));
 
   if ((ret_code= portable_read(file_ptr, (void*)buf, size, &ret_size)))
-    return ret_code;
+    DEBUG_RETURN_INT(ret_code);
+
   *len= (guint32)ret_size;
-  return 0;
+  DEBUG_PRINT(FILE_LEVEL, ("Read = %d", (int)*len));
+  DEBUG_RETURN_INT(0);
 }
 
 #ifndef WINDOWS

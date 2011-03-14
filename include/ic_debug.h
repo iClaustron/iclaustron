@@ -48,9 +48,10 @@ void ic_printf(const char *format,...);
 #define PROGRAM_LEVEL 8
 #define THREAD_LEVEL 16 
 #define CONFIG_PROTO_LEVEL 32
-#define MALLOC_LEVEL 64
-#define HEARTBEAT_LEVEL 128
-#define CONFIG_READ_LEVEL 256
+#define FILE_LEVEL 64
+#define MALLOC_LEVEL 128 
+#define HEARTBEAT_LEVEL 256
+#define CONFIG_READ_LEVEL 512
 
 #ifdef DEBUG_BUILD
 void ic_debug_print_char_buf(gchar *buf, IC_THREAD_DEBUG *thread_debug);

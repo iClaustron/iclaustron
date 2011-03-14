@@ -99,17 +99,18 @@ static gchar *my_csd_node= "node: my_csd_node";
 static int start_client_connection(IC_CONNECTION **conn)
 {
   int ret_code;
+  DEBUG_ENTRY("start_client_connection");
 
   if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
                                       CONFIG_READ_BUF_SIZE,
                                       NULL, NULL)))
-    return IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   (*conn)->conn_op.ic_prepare_client_connection(*conn,
                                                 glob_server_name,
                                                 glob_server_port,
                                                 NULL, NULL);
   ret_code= (*conn)->conn_op.ic_set_up_connection(*conn, NULL, NULL);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -121,6 +122,7 @@ static int
 send_start_cluster_server(IC_CONNECTION *conn)
 {
   int ret_code;
+  DEBUG_ENTRY("send_start_cluster_server");
 
   /* Start a cluster server */
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
@@ -134,8 +136,8 @@ send_start_cluster_server(IC_CONNECTION *conn)
       (ret_code= ic_send_with_cr(conn, "parameter: --node_id")) ||
       (ret_code= ic_send_with_cr(conn, "parameter: 1")) ||
       (ret_code= ic_send_empty_line(conn)))
-    return ret_code;
-  return 0;
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
 }
 
 static int receive_error_message(IC_CONNECTION *conn)
@@ -144,14 +146,15 @@ static int receive_error_message(IC_CONNECTION *conn)
   guint32 read_size;
   int ret_code;
   gchar print_buf[ERROR_MESSAGE_SIZE];
+  DEBUG_ENTRY("receive_error_message");
 
   if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
       (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return ret_code;
+    DEBUG_RETURN_INT(ret_code);
   memcpy(print_buf, read_buf, read_size);
   print_buf[read_size]= (gchar)0;
   ic_printf("Error message: %s from start ic_csd", print_buf);
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -163,6 +166,7 @@ static int test_successful_start(IC_CONNECTION *conn)
 {
   int ret_code;
   guint32 pid;
+  DEBUG_ENTRY("test_successful_start");
 
   ic_printf("Testing successful start of ic_csd");
   if ((ret_code= send_start_cluster_server(conn)))
@@ -172,16 +176,16 @@ static int test_successful_start(IC_CONNECTION *conn)
     /* Not ok, expect error message instead */
     if ((ret_code= receive_error_message(conn)))
       goto error;
-    return 1;
+    DEBUG_RETURN_INT(1);
   }
   if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
       (ret_code= ic_rec_empty_line(conn)))
     goto error;
   ic_printf("Successfully started ic_csd with pid %u", pid);
-  return 0;
+  DEBUG_RETURN_INT(0);
 error:
   ic_print_error(ret_code);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -193,6 +197,7 @@ error:
 static int test_unsuccessful_start(IC_CONNECTION *conn)
 {
   int ret_code;
+  DEBUG_ENTRY("test_unsuccessful_start");
 
   ic_printf("Testing unsuccessful start of ic_csd");
   if ((ret_code= send_start_cluster_server(conn)))
@@ -200,11 +205,11 @@ static int test_unsuccessful_start(IC_CONNECTION *conn)
   if ((ret_code= receive_error_message(conn)))
     goto error;
   ic_printf("Error message was expected here");
-  return 0;
+  DEBUG_RETURN_INT(0);
 
 error:
   ic_print_error(ret_code);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -215,6 +220,7 @@ error:
 static int send_stop_cluster_server(IC_CONNECTION *conn)
 {
   int ret_code;
+  DEBUG_ENTRY("send_stop_cluster_server");
 
   /* Stop the Cluster Server */
   if ((ret_code= ic_send_with_cr(conn, ic_stop_str)) ||
@@ -222,8 +228,8 @@ static int send_stop_cluster_server(IC_CONNECTION *conn)
       (ret_code= ic_send_with_cr(conn, my_cluster)) ||
       (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
       (ret_code= ic_send_empty_line(conn)))
-    return ret_code;
-  return 0;
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -234,6 +240,7 @@ static int send_stop_cluster_server(IC_CONNECTION *conn)
 static int test_successful_stop(IC_CONNECTION *conn)
 {
   int ret_code;
+  DEBUG_ENTRY("test_successful_stop");
 
   ic_printf("Testing successful stop of ic_csd");
   if ((ret_code= send_stop_cluster_server(conn)) ||
@@ -241,11 +248,11 @@ static int test_successful_stop(IC_CONNECTION *conn)
       (ret_code= ic_rec_empty_line(conn)))
     goto error;
   ic_printf("Successful stop of ic_csd");
-  return 0;
+  DEBUG_RETURN_INT(0);
 
 error:
   ic_print_error(ret_code);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -258,6 +265,7 @@ error:
 static int test_unsuccessful_stop(IC_CONNECTION *conn)
 {
   int ret_code;
+  DEBUG_ENTRY("test_unsuccessful_stop");
 
   ic_printf("Testing unsuccessful stop of ic_csd");
   if ((ret_code= send_stop_cluster_server(conn)))
@@ -265,11 +273,11 @@ static int test_unsuccessful_stop(IC_CONNECTION *conn)
   if ((ret_code= receive_error_message(conn)))
     goto error;
   ic_printf("Error message was expected here");
-  return 0;
+  DEBUG_RETURN_INT(0);
 
 error:
   ic_print_error(ret_code);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -280,32 +288,37 @@ error:
 */
 static int test_list(IC_CONNECTION *conn)
 {
+  DEBUG_ENTRY("test_list");
   (void)conn;
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int test_copy_files(IC_CONNECTION *conn)
 {
+  DEBUG_ENTRY("test_copy_files");
   (void)conn;
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int test_cpu_info(IC_CONNECTION *conn)
 {
+  DEBUG_ENTRY("test_cpu_info");
   (void)conn;
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int test_mem_info(IC_CONNECTION *conn)
 {
+  DEBUG_ENTRY("test_mem_info");
   (void)conn;
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int test_disk_info(IC_CONNECTION *conn)
 {
+  DEBUG_ENTRY("test_disk_info");
   (void)conn;
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -353,6 +366,9 @@ start_unit_test(void)
 {
   GThread *thread;
   GError *error= NULL;
+  DEBUG_ENTRY("start_unit_test");
+
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Start unit test thread in run_unit_test"));
 
   thread= g_thread_create_full(run_unit_test,
                                NULL,
@@ -362,8 +378,8 @@ start_unit_test(void)
                                G_THREAD_PRIORITY_NORMAL,
                                &error);
   if (!thread)
-    return IC_ERROR_START_THREAD_FAILED;
-  return 0;
+    DEBUG_RETURN_INT(IC_ERROR_START_THREAD_FAILED);
+  DEBUG_RETURN_INT(0);
 }
 #endif
 
@@ -383,11 +399,13 @@ static int
 send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
 {
   int error;
+  DEBUG_ENTRY("send_error_reply");
+
   if ((error= ic_send_with_cr(conn, ic_error_str)) ||
       (error= ic_send_with_cr(conn, error_message)) ||
       (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -403,10 +421,12 @@ static int
 send_ok_reply(IC_CONNECTION *conn)
 {
   int error;
+  DEBUG_ENTRY("send_ok_reply");
+
   if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
       (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -657,7 +677,8 @@ ic_pc_key_equal(void *ptr1, void *ptr2)
 IC_HASHTABLE*
 create_pc_hash()
 {
-  return ic_create_hashtable(4096, ic_pc_hash_key, ic_pc_key_equal);
+  DEBUG_ENTRY("create_pc_hash");
+  DEBUG_RETURN_PTR(ic_create_hashtable(4096, ic_pc_hash_key, ic_pc_key_equal));
 }
 
 /**
@@ -669,6 +690,8 @@ static void
 remove_pc_entry(IC_PC_START *pc_start)
 {
   IC_PC_START *pc_start_check;
+  DEBUG_ENTRY("remove_pc_entry");
+
   pc_start_check= ic_hashtable_remove(glob_pc_hash,
                                       (void*)pc_start);
   ic_assert(pc_start_check == pc_start);
@@ -677,6 +700,7 @@ remove_pc_entry(IC_PC_START *pc_start)
                                        (void*)pc_start);
   /* Release memory associated with the process */
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
+  DEBUG_RETURN_EMPTY;
 }
 
 /**
@@ -692,10 +716,12 @@ insert_pc_entry(IC_PC_START *pc_start)
 {
   int ret_code= 0;
   guint64 index;
+  DEBUG_ENTRY("insert_pc_entry");
+
   if ((ret_code= glob_pc_array->dpa_ops.ic_insert_ptr(glob_pc_array,
                                                       &index,
                                                       (void*)pc_start)))
-    return ret_code;
+    goto end;
   pc_start->dyn_trans_index= index;
   if ((ret_code= ic_hashtable_insert(glob_pc_hash,
                                      (void*)pc_start, (void*)pc_start)))
@@ -704,7 +730,8 @@ insert_pc_entry(IC_PC_START *pc_start)
                                          pc_start->dyn_trans_index,
                                          (void*)pc_start);
   }
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -721,6 +748,7 @@ insert_process(IC_PC_START *pc_start)
   IC_PC_START *pc_start_found;
   guint64 prev_start_id= 0;
   int ret_code= 0;
+  DEBUG_ENTRY("insert_process");
 
   /*
     Insert the memory describing the started process in the hash table
@@ -773,7 +801,7 @@ try_again:
                                          pc_start_found->program_name.str)))
       {
         if (ret_code == IC_ERROR_CHECK_PROCESS_SCRIPT)
-          return ret_code;
+          goto final_end;
         ic_assert(ret_code == IC_ERROR_PROCESS_NOT_ALIVE);
         /*
           Process is dead, we need to acquire the mutex again and verify that
@@ -789,7 +817,8 @@ try_again:
       else
       {
         /* Process is still alive, so no use for us to continue */
-        return IC_ERROR_PC_PROCESS_ALREADY_RUNNING;
+        ret_code= IC_ERROR_PC_PROCESS_ALREADY_RUNNING;
+        goto final_end;
       }
     }
   }
@@ -804,7 +833,8 @@ try_again:
   }
 end:
   ic_mutex_unlock(pc_hash_mutex);
-  return ret_code;
+final_end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -839,6 +869,7 @@ handle_start(IC_CONNECTION *conn)
   {
     arg_vector[i+1]= pc_start->parameters[i].str;
   }
+
   /* Book the process in the hash table */
   if ((ret_code= insert_process(pc_start)))
     goto error;
@@ -879,6 +910,7 @@ handle_start(IC_CONNECTION *conn)
   pc_start->pid= pid;
   pc_start->start_id= glob_start_id++;
   ic_mutex_unlock(pc_hash_mutex);
+  DEBUG_PRINT(PROGRAM_LEVEL, ("New process with pid %d started", (int)pid));
   DEBUG_RETURN_INT(send_ok_pid_reply(conn, pc_start->pid));
 
 late_error:
@@ -2130,10 +2162,12 @@ int main(int argc, char *argv[])
   }
   ic_set_die_handler(NULL, NULL);
   ic_set_sig_error_handler(NULL, NULL);
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s",
-                              ic_glob_base_dir.str));
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Data directory: %s",
-                              ic_glob_data_dir.str));
+
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s", ic_glob_base_dir.str));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Data directory: %s", ic_glob_data_dir.str));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Binary directory: %s", ic_glob_binary_dir.str));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Config directory: %s", ic_glob_config_dir.str));
+
   if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     return IC_ERROR_MEM_ALLOC;
   if (!(glob_pc_hash= create_pc_hash()))

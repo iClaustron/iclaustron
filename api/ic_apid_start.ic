@@ -371,18 +371,21 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
     goto parse_error;
   g_option_context_free(context);
   if ((ret_code= ic_init()))
-    return ret_code;
+    goto error;
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Returning to ic_start_program"));
+  DEBUG_ENTRY("ic_start_program");
   ic_glob_byte_order= ic_byte_order();
-  if ((ret_code= ic_set_config_dir(&ic_glob_config_dir,
+  if ((ret_code= ic_set_data_dir(&ic_glob_data_dir)) ||
+      (ret_code= ic_set_config_dir(&ic_glob_config_dir,
                                    is_cluster_server,
                                    ic_glob_node_id)) ||
       (ret_code= ic_set_base_dir(&ic_glob_base_dir)) ||
       (ret_code= ic_set_binary_dir(&ic_glob_binary_dir,
                                    IC_VERSION_STR)))
-    return ret_code;
+    goto error;
   ic_set_port_binary_dir(ic_glob_binary_dir.str);
   ic_set_port_config_dir(ic_glob_config_dir.str);
-  return 0;
+  DEBUG_RETURN_INT(0);
 
 parse_error:
   ic_printf("No such program option: %s", error->message);
@@ -391,7 +394,7 @@ mem_error:
   ic_printf("Memory allocation error");
   goto error;
 error:
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int

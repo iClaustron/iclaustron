@@ -65,12 +65,14 @@ ic_create_config_version_file_name(IC_STRING *file_name,
                                    gchar *buf,
                                    IC_STRING *config_dir)
 {
+  DEBUG_ENTRY("ic_create_config_version_file_name");
   buf[0]= 0;
   IC_INIT_STRING(file_name, buf, 0, TRUE);
   ic_add_ic_string(file_name, config_dir);
   ic_add_ic_string(file_name, &ic_config_string);
   ic_add_ic_string(file_name, &ic_version_file_string);
   ic_add_ic_string(file_name, &ic_config_ending_string);
+  DEBUG_RETURN_EMPTY;
 }
 
 /**
@@ -93,6 +95,7 @@ ic_create_config_file_name(IC_STRING *file_name,
 {
   gchar int_buf[IC_MAX_INT_STRING];
   IC_STRING ending_string;
+  DEBUG_ENTRY("ic_create_config_file_name");
 
   buf[0]= 0;
   IC_INIT_STRING(file_name, buf, 0, TRUE);
@@ -105,6 +108,7 @@ ic_create_config_file_name(IC_STRING *file_name,
     IC_INIT_STRING(&ending_string, int_buf, strlen(int_buf), TRUE);
     ic_add_ic_string(file_name, &ending_string);
   }
+  DEBUG_RETURN_EMPTY;
 }
 
 /**
@@ -155,6 +159,7 @@ set_default_dir(const gchar *default_dir,
                 IC_STRING *dir)
 {
   int error= IC_ERROR_MEM_ALLOC;
+  DEBUG_ENTRY("set_default_dir");
 
   IC_INIT_STRING(dir, NULL, 0, TRUE);
   /*
@@ -187,7 +192,7 @@ set_default_dir(const gchar *default_dir,
   if (ic_add_dup_string(dir, default_dir) ||
       add_dir_slash(dir))
     goto error;
-  return 0;
+  DEBUG_RETURN_INT(0);
 
 error:
   if (dir->str)
@@ -195,7 +200,7 @@ error:
     ic_free(dir->str);
     IC_INIT_STRING(dir, NULL, 0, TRUE);
   }
-  return error;
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -206,7 +211,13 @@ error:
 int
 ic_set_data_dir(IC_STRING *data_dir)
 {
-  return set_default_dir("iclaustron_data", data_dir);
+  int error;
+  DEBUG_ENTRY("ic_set_data_dir");
+
+  error= set_default_dir("iclaustron_data", data_dir);
+  if (!error)
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Data dir: %s", data_dir->str));
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -217,7 +228,13 @@ ic_set_data_dir(IC_STRING *data_dir)
 int
 ic_set_base_dir(IC_STRING *base_dir)
 {
-  return set_default_dir("iclaustron_install", base_dir);
+  int error;
+  DEBUG_ENTRY("ic_set_base_dir");
+
+  error= set_default_dir("iclaustron_install", base_dir);
+  if (!error)
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Base dir: %s", base_dir->str));
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -246,16 +263,17 @@ ic_add_dir(IC_STRING *dir,
            const gchar *dir_name)
 {
   int error;
+  DEBUG_ENTRY("ic_add_dir");
 
   if ((error= ic_add_dup_string(dir, dir_name)))
     goto error;
   if ((error= add_dir_slash(dir)))
     goto error;
-  return 0;
+  DEBUG_RETURN_INT(0);
 error:
   ic_free(dir->str);
   IC_INIT_STRING(dir, NULL, 0, TRUE);
-  return error;
+  DEBUG_RETURN_INT(error);
 }
 
 /*
@@ -271,6 +289,7 @@ ic_set_binary_dir(IC_STRING *binary_dir,
                   gchar *version)
 {
   int error;
+  DEBUG_ENTRY("ic_set_binary_dir");
 
   if ((error= ic_set_base_dir(binary_dir)))
     return error;
@@ -279,7 +298,9 @@ ic_set_binary_dir(IC_STRING *binary_dir,
   if ((error= ic_add_dir(binary_dir, ic_binary_string.str)))
     return error;
   DEBUG_PRINT(CONFIG_LEVEL, ("Binary dir: %s", binary_dir->str));
-  return 0;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(error);
 }
 
 /*
@@ -302,11 +323,12 @@ ic_set_config_dir(IC_STRING *config_dir,
 {
   int error;
   gchar node_str_buf[64];
+  DEBUG_ENTRY("ic_set_config_dir");
 
   if ((error= ic_set_data_dir(config_dir)))
-    return error;
+    goto error;
   if ((error= ic_add_dir(config_dir, ic_config_string.str)))
-    return error;
+    goto error;
   if (is_cluster_server)
   {
     memcpy(node_str_buf, "node", 4);
@@ -314,10 +336,12 @@ ic_set_config_dir(IC_STRING *config_dir,
                    &node_str_buf[4],
                    NULL);
     if ((error= ic_add_dir(config_dir, &node_str_buf[0])))
-      return error;
+      goto error;
   }
   DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", config_dir->str));
-  return 0;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(error);
 }
 
 /**
