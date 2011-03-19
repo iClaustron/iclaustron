@@ -144,6 +144,15 @@ ic_get_stop_flag()
   return ic_stop_flag;
 }
 
+/**
+  A function used to stop the iClaustron subsystem.
+*/
+void
+ic_set_stop_flag()
+{
+  ic_stop_flag= 1;
+}
+
 #ifdef DEBUG_BUILD
 /* Hash table containing locked mutexes */
 static IC_HASHTABLE *mutex_hash= NULL;
@@ -1124,7 +1133,7 @@ sig_error_handler(int signum)
     default:
       DEBUG_RETURN_EMPTY;
   }
-  ic_stop_flag= 1;
+  ic_set_stop_flag();
   if (glob_sig_error_handler)
     glob_sig_error_handler(glob_sig_error_param);
   DEBUG_RETURN_EMPTY;
@@ -1167,7 +1176,7 @@ kill_handler(int signum)
     default:
       DEBUG_RETURN_EMPTY;
   }
-  ic_stop_flag= 1;
+  ic_set_stop_flag();
   if (glob_die_handler)
     glob_die_handler(glob_die_param);
   DEBUG_RETURN_EMPTY;

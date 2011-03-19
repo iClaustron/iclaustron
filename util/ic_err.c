@@ -31,10 +31,6 @@
   3) Add the new error code in ic_err.h
 */
 
-#define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7095
-#define IC_MAX_ERRORS 200
-
 static gchar* ic_error_str[IC_MAX_ERRORS];
 static gchar *no_such_error_str= "No such error";
 

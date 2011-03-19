@@ -17,6 +17,11 @@
 #define IC_ERR_H
 /* Basic system error handling header file */
 #include <errno.h>
+
+#define IC_FIRST_ERROR 7000
+#define IC_LAST_ERROR 7095
+#define IC_MAX_ERRORS 200
+
 /*
   HEADER MODULE: iClaustron Error Handling
   ----------------------------------------

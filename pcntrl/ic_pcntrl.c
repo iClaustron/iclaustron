@@ -149,7 +149,8 @@ static int receive_error_message(IC_CONNECTION *conn)
   DEBUG_ENTRY("receive_error_message");
 
   if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
-      (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+      (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (ret_code= ic_rec_empty_line(conn)))
     DEBUG_RETURN_INT(ret_code);
   memcpy(print_buf, read_buf, read_size);
   print_buf[read_size]= (gchar)0;
@@ -234,6 +235,8 @@ static int send_stop_cluster_server(IC_CONNECTION *conn)
 
 /**
   Test stopping the previously successfully started ic_csd process
+  This function should be successful also when stopping an already
+  stopped process. Thus can be used also to test unsuccessful stop.
 
   @parameter conn        IN: The connection to the process controller
 */
@@ -248,31 +251,6 @@ static int test_successful_stop(IC_CONNECTION *conn)
       (ret_code= ic_rec_empty_line(conn)))
     goto error;
   ic_printf("Successful stop of ic_csd");
-  DEBUG_RETURN_INT(0);
-
-error:
-  ic_print_error(ret_code);
-  DEBUG_RETURN_INT(ret_code);
-}
-
-/**
-  Test stopping the previously successfully started ic_csd process
-  which has also already been stopped. Thus this function should
-  get an error message in response.
-
-  @parameter conn        IN: The connection to the process controller
-*/
-static int test_unsuccessful_stop(IC_CONNECTION *conn)
-{
-  int ret_code;
-  DEBUG_ENTRY("test_unsuccessful_stop");
-
-  ic_printf("Testing unsuccessful stop of ic_csd");
-  if ((ret_code= send_stop_cluster_server(conn)))
-    goto error;
-  if ((ret_code= receive_error_message(conn)))
-    goto error;
-  ic_printf("Error message was expected here");
   DEBUG_RETURN_INT(0);
 
 error:
@@ -341,13 +319,15 @@ run_unit_test(gpointer data)
   if ((ret_code= test_successful_start(conn)) ||
       (ret_code= test_unsuccessful_start(conn)) ||
       (ret_code= test_successful_stop(conn)) ||
-      (ret_code= test_unsuccessful_stop(conn)) ||
+      (ret_code= test_successful_stop(conn)) ||
       (ret_code= test_list(conn)) ||
       (ret_code= test_copy_files(conn)) ||
       (ret_code= test_cpu_info(conn)) ||
       (ret_code= test_mem_info(conn)) ||
       (ret_code= test_disk_info(conn)))
     goto error;
+  /* When running unit test we're done after completing tests */
+  ic_set_stop_flag();
   DEBUG_THREAD_RETURN;
 error:
   DEBUG_THREAD_RETURN;
@@ -443,12 +423,13 @@ static int
 send_ok_pid_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
 {
   int error;
+  DEBUG_ENTRY("send_ok_pid_reply");
 
   if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
       (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
       (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -468,6 +449,7 @@ send_list_entry(IC_CONNECTION *conn,
 {
   guint32 i;
   int error;
+  DEBUG_ENTRY("send_list_entry");
 
   if ((error= ic_send_with_cr(conn, ic_list_node_str)) ||
       (error= ic_send_with_cr_two_strings(conn,
@@ -494,18 +476,18 @@ send_list_entry(IC_CONNECTION *conn,
       (error= ic_send_with_cr_with_num(conn,
                                        ic_num_parameters_str,
                                        (guint64)pc_start->num_parameters)))
-    return error;
+    DEBUG_RETURN_INT(error);
   if (list_full_flag)
   {
     for (i= 0; i < pc_start->num_parameters; i++)
     {
       if ((error= ic_send_with_cr(conn, pc_start->parameters[i].str)))
-        return error;
+        DEBUG_RETURN_INT(error);
     }
   }
   if ((error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -518,11 +500,12 @@ static int
 send_list_stop_reply(IC_CONNECTION *conn)
 {
   int error;
+  DEBUG_ENTRY("send_list_stop_reply");
 
   if ((error= ic_send_with_cr(conn, ic_list_stop_str)) ||
       (error= ic_send_empty_line(conn)))
-    return error;
-  return 0;
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -539,6 +522,7 @@ get_key(IC_CONNECTION *conn,
         IC_PC_KEY *pc_key)
 {
   int error;
+  DEBUG_ENTRY("get_key");
 
   if ((error= ic_mc_rec_string(conn, mc_ptr,
                                ic_grid_str, &pc_key->grid_name)) ||
@@ -546,8 +530,8 @@ get_key(IC_CONNECTION *conn,
                                ic_cluster_str, &pc_key->cluster_name)) ||
       (error= ic_mc_rec_string(conn, mc_ptr,
                                ic_node_str, &pc_key->node_name)))
-    return error;
-  return 0;
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
 }
 
 
@@ -572,6 +556,7 @@ rec_start_message(IC_CONNECTION *conn,
   IC_PC_START *loc_pc_start;
   guint32 i;
   int error;
+  DEBUG_ENTRY("rec_start_message");
 
   /*
     When we come here we have already received the start string, we now
@@ -580,7 +565,7 @@ rec_start_message(IC_CONNECTION *conn,
     and also contains a memory container for all the memory allocated.
   */
   if (!(mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0, FALSE)))
-    return IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   if (!(*pc_start= (IC_PC_START*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_START))))
     goto mem_error;
@@ -609,14 +594,14 @@ rec_start_message(IC_CONNECTION *conn,
                                  &loc_pc_start->parameters[i])))
       goto error;
   }
-  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+  if ((error= ic_rec_empty_line(conn)))
     goto error;
-  return 0;
+  DEBUG_RETURN_INT(0);
 mem_error:
   error= IC_ERROR_MEM_ALLOC;
 error:
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return error;
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -660,12 +645,13 @@ ic_pc_key_equal(void *ptr1, void *ptr2)
 {
   IC_PC_KEY *pc_key1= ptr1;
   IC_PC_KEY *pc_key2= ptr2;
+  DEBUG_ENTRY("ic_pc_key_equal");
 
   if ((ic_cmp_str(&pc_key1->grid_name, &pc_key2->grid_name)) ||
       (ic_cmp_str(&pc_key1->cluster_name, &pc_key2->cluster_name)) ||
       (ic_cmp_str(&pc_key1->node_name, &pc_key2->node_name)))
-    return 0;
-  return 1; /* Equal */
+    DEBUG_RETURN_INT(0);
+  DEBUG_RETURN_INT(1); /* Equal */
 }
 
 /**
@@ -943,11 +929,11 @@ init_pc_find(IC_PC_FIND **pc_find)
   IC_MEMORY_CONTAINER *mc_ptr;
   DEBUG_ENTRY("init_pc_find");
 
-  if ((mc_ptr= ic_create_memory_container((guint32)1024,
-                                          (guint32)0,
-                                          FALSE)))
+  if (!(mc_ptr= ic_create_memory_container((guint32)1024,
+                                           (guint32)0,
+                                           FALSE)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
-  if (((*pc_find)= (IC_PC_FIND*)
+  if (!((*pc_find)= (IC_PC_FIND*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_FIND))))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   (*pc_find)->mc_ptr= mc_ptr;
@@ -977,7 +963,7 @@ rec_key_message(IC_CONNECTION *conn,
   mc_ptr= (*pc_find)->mc_ptr;
   if ((error= get_key(conn, mc_ptr, &(*pc_find)->key)))
     goto error;
-  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+  if ((error= ic_rec_empty_line(conn)))
     goto error;
   return 0;
 error:
@@ -1064,6 +1050,7 @@ try_again:
         We were successful in stopping the process, now we need to
         remove the entry from the hash.
       */
+      error= 0;
       ic_mutex_lock(pc_hash_mutex);
       pc_start_found= (IC_PC_START*)ic_hashtable_search(glob_pc_hash,
                                                         (void*)pc_find);
@@ -1289,7 +1276,7 @@ rec_opt_key_message(IC_CONNECTION *conn,
     goto error;
   if ((*pc_find)->key.node_name.len == 0)
     return 0; /* No node name provided, list all programs in cluster */
-  if ((error= ic_rec_simple_str(conn, ic_empty_string)))
+  if ((error= ic_rec_empty_line(conn)))
     goto error;
   return 0;
 error:
@@ -1359,7 +1346,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
                          strlen(ic_list_next_str))))
         goto protocol_error;
     }
-    if (!(ic_rec_simple_str(conn, ic_empty_string)))
+    if (!(ic_rec_empty_line(conn)))
       goto protocol_error;
     loop_pc_start= loop_pc_start->next_pc_start;
   }
@@ -1973,68 +1960,55 @@ run_command_handler(gpointer data)
   {
     if (!ic_check_buf(read_buf, read_size, ic_start_str,
                       strlen(ic_start_str)))
-    {
-      if ((ret_code= handle_start(conn)))
-        break;
-    }
+      ret_code= handle_start(conn);
     else if (!ic_check_buf(read_buf, read_size, ic_stop_str,
                            strlen(ic_stop_str)))
-    {
-      if ((ret_code= handle_stop(conn, FALSE)))
-        break;
-    }
+      ret_code= handle_stop(conn, FALSE);
     else if (!ic_check_buf(read_buf, read_size, ic_kill_str,
                            strlen(ic_kill_str)))
-    {
-      if ((ret_code= handle_stop(conn, TRUE)))
-        break;
-    }
+      ret_code= handle_stop(conn, TRUE);
     else if (!ic_check_buf(read_buf, read_size, ic_list_str,
                            strlen(ic_list_str)))
-    {
-      if ((ret_code= handle_list(conn, FALSE)))
-        break;
-    }
+      ret_code= handle_list(conn, FALSE);
     else if (!ic_check_buf(read_buf, read_size, ic_list_full_str,
                            strlen(ic_list_full_str)))
-    {
-      if ((ret_code= handle_list(conn, TRUE)))
-        break;
-    }
+      ret_code= handle_list(conn, TRUE);
     else if (!ic_check_buf(read_buf, read_size,
                            ic_copy_cluster_server_files_str,
                            strlen(ic_copy_cluster_server_files_str)))
-    {
-      if ((ret_code= handle_copy_cluster_server_files(conn)))
-        break;
-    }
+      ret_code= handle_copy_cluster_server_files(conn);
     else if (!ic_check_buf(read_buf, read_size,
                            ic_get_cpu_info_str,
                            strlen(ic_get_cpu_info_str)))
-    {
-      if ((ret_code= handle_get_cpu_info(conn)))
-        break;
-    }
+      ret_code= handle_get_cpu_info(conn);
     else if (!ic_check_buf(read_buf, read_size,
                            ic_get_mem_info_str,
                            strlen(ic_get_mem_info_str)))
-    {
-      if ((ret_code= handle_get_mem_info(conn)))
-        break;
-    }
+      ret_code= handle_get_mem_info(conn);
     else if (!ic_check_buf(read_buf, read_size,
                            ic_get_disk_info_str,
                            strlen(ic_get_disk_info_str)))
-    {
-      if ((ret_code= handle_get_disk_info(conn)))
-        break;
-    }
+      ret_code= handle_get_disk_info(conn);
     else if (read_size)
     {
       read_buf[read_size]= 0;
       ic_printf("Received a message not expected: %s", read_buf);
       ret_code= IC_PROTOCOL_ERROR;
       /* Closing connection */
+      break;
+    }
+    if (ret_code == IC_PROTOCOL_ERROR ||
+        ret_code == IC_ERROR_MEM_ALLOC ||
+        (ret_code < IC_FIRST_ERROR && ret_code != 0))
+    {
+      /*
+        We cannot recover from protocol error and in the case of out of memory
+        we simply want to decrease the pressure on the system by
+        disconnecting. Also OS errors and other errors we won't continue after.
+        We will however continue after a correctly sent message which was
+        declined because of an environmental error, such as attempting to start
+        a process already alive.
+      */
       break;
     }
   }

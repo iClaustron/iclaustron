@@ -34,6 +34,8 @@ int ic_stop_socket_system();
 
 /* Get stop flag (set by SIGTERM and similar signals) */
 guint32 ic_get_stop_flag();
+/* Set stop flag */
+void ic_set_stop_flag();
 
 /* Set reference to binary directory */
 void ic_set_port_binary_dir(const gchar *binary_dir);
