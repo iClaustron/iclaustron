@@ -87,9 +87,17 @@ static IC_DYNAMIC_PTR_ARRAY *glob_pc_array= NULL;
 #ifdef WITH_UNIT_TEST
 static gchar *ic_csd_program_str= "program: ic_csd";
 static gchar *version_str= "version: iclaustron-0.0.1";
+static gchar *not_my_grid= "grid: not_my_grid";
 static gchar *my_grid= "grid: my_grid";
 static gchar *my_cluster= "cluster: my_cluster";
 static gchar *my_csd_node= "node: my_csd_node";
+static gchar *autorestart_false_str= "autorestart: false";
+static gchar *num_parameters_str= "num parameters: 2";
+static gchar *node_parameter_str= "parameter: --node_id";
+static gchar *node_id_parameter_str= "parameter: 1";
+
+static int send_list_stop_reply(IC_CONNECTION *conn);
+static int send_list_next_reply(IC_CONNECTION *conn);
 
 /**
   Start a new client socket connection
@@ -131,10 +139,10 @@ send_start_cluster_server(IC_CONNECTION *conn)
       (ret_code= ic_send_with_cr(conn, my_grid)) ||
       (ret_code= ic_send_with_cr(conn, my_cluster)) ||
       (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
-      (ret_code= ic_send_with_cr(conn, "autorestart: false")) ||
-      (ret_code= ic_send_with_cr(conn, "num parameters: 2")) ||
-      (ret_code= ic_send_with_cr(conn, "parameter: --node_id")) ||
-      (ret_code= ic_send_with_cr(conn, "parameter: 1")) ||
+      (ret_code= ic_send_with_cr(conn, autorestart_false_str)) ||
+      (ret_code= ic_send_with_cr(conn, num_parameters_str)) ||
+      (ret_code= ic_send_with_cr(conn, node_parameter_str)) ||
+      (ret_code= ic_send_with_cr(conn, node_id_parameter_str)) ||
       (ret_code= ic_send_empty_line(conn)))
     DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
@@ -259,16 +267,238 @@ error:
 }
 
 /**
+  Receive list stop followed by end (empty line).
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+rec_list_stop(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("rec_list_stop");
+
+  if ((ret_code= ic_rec_simple_str(conn, ic_list_stop_str)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Handle stop of list by either sending list next followed by
+  receiving list stop or by sending list stop and also here
+  receiving list stop.
+
+  @parameter conn          IN: The connection to the process controller
+  @parameter stop_flag     Flag indicating whether to use list stop or
+                           list next.
+*/
+static int
+handle_list_stop(IC_CONNECTION *conn, gboolean stop_flag)
+{
+  int ret_code;
+  DEBUG_ENTRY("handle_list_stop");
+
+  if (stop_flag)
+  {
+    if ((ret_code= send_list_stop_reply(conn)))
+      DEBUG_RETURN_INT(ret_code);
+  }
+  else
+  {
+    if ((ret_code= send_list_next_reply(conn)))
+      DEBUG_RETURN_INT(ret_code);
+  }
+  DEBUG_RETURN_INT(rec_list_stop(conn));
+}
+
+/**
+  Send a protocol line containing:
+  list full<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_list_full(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("send_list_full");
+
+  if ((error= ic_send_with_cr(conn, ic_list_full_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a command to list all nodes within my grid
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_list_grid(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("send_list_grid");
+
+  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
+      (ret_code= ic_send_with_cr(conn, my_grid)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a command to list all nodes within a grid where no nodes exist.
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_list_unsuccessful_grid(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("send_list_unsuccessful_grid");
+
+  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
+      (ret_code= ic_send_with_cr(conn, not_my_grid)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a command to list all nodes within my cluster
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_list_cluster(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("send_list_cluster");
+
+  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
+      (ret_code= ic_send_with_cr(conn, my_grid)) ||
+      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a command to list my node
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_list_node(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("send_list_node");
+
+  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
+      (ret_code= ic_send_with_cr(conn, my_grid)) ||
+      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
+      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Receive a list node message
+
+  @parameter conn              IN:  The connection from the client
+  @parameter rec_empty_line    Flag indicating whether to receive an empty
+                               line at the end
+*/
+static int
+rec_list_node(IC_CONNECTION *conn, gboolean rec_empty_line)
+{
+  int ret_code;
+  gchar time_buf[128], pid_buf[128];
+
+  if ((ret_code= ic_rec_simple_str(conn, ic_list_node_str)) ||
+      (ret_code= ic_rec_simple_str(conn, ic_csd_program_str)) ||
+      (ret_code= ic_rec_simple_str(conn, version_str)) ||
+      (ret_code= ic_rec_simple_str(conn, my_grid)) ||
+      (ret_code= ic_rec_simple_str(conn, my_cluster)) ||
+      (ret_code= ic_rec_simple_str(conn, my_csd_node)) ||
+      (ret_code= ic_rec_string(conn, ic_start_time_str, time_buf)) ||
+      (ret_code= ic_rec_string(conn, ic_pid_str, pid_buf)))
+    DEBUG_RETURN_INT(ret_code);
+  ic_printf("Start_time: %s, pid: %s", time_buf, pid_buf);
+  if (rec_empty_line && (ret_code= ic_rec_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Receive a list full node message
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+rec_list_node_full(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("rec_list_node_full");
+
+  if ((ret_code= rec_list_node(conn, FALSE)))
+    DEBUG_RETURN_INT(ret_code);
+
+  if ((ret_code= ic_rec_simple_str(conn, num_parameters_str)) ||
+      (ret_code= ic_rec_simple_str(conn, node_parameter_str)) ||
+      (ret_code= ic_rec_simple_str(conn, node_id_parameter_str)))
+    DEBUG_RETURN_INT(ret_code);
+  if ((ret_code= ic_rec_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
   Test listing the single ic_csd process we previously started with all
   its parameters.
 
+  We first list with full description where we get all nodes, next we
+  list only one grid, then only one cluster and finally only one node.
+  We try both successful and unsuccessful searches.
+
   @parameter conn        IN: The connection to the process controller
 */
-static int test_list(IC_CONNECTION *conn)
+static int test_list(IC_CONNECTION *conn, gboolean stop_flag)
 {
+  int ret_code;
   DEBUG_ENTRY("test_list");
-  (void)conn;
+
+  ic_printf("Testing list full of processes in ic_pcntrld");
+  if ((ret_code= send_list_full(conn)) ||
+      (ret_code= rec_list_node_full(conn)) ||
+      (ret_code= handle_list_stop(conn, stop_flag)))
+    goto error;
+  ic_printf("Testing list of processes from grid in ic_pcntrld");
+  if ((ret_code= send_list_grid(conn)) ||
+      (ret_code= rec_list_node(conn, TRUE)) ||
+      (ret_code= handle_list_stop(conn, stop_flag)))
+    goto error;
+  ic_printf("Testing list of processes from cluster in ic_pcntrld");
+  if ((ret_code= send_list_cluster(conn)) ||
+      (ret_code= rec_list_node(conn, TRUE)) ||
+      (ret_code= handle_list_stop(conn, stop_flag)))
+    goto error;
+  ic_printf("Testing list of processes from node in ic_pcntrld");
+  if ((ret_code= send_list_node(conn)) ||
+      (ret_code= rec_list_node(conn, TRUE)) ||
+      (ret_code= handle_list_stop(conn, stop_flag)))
+    goto error;
+  ic_printf("Testing unsuccessful search from grid in ic_pcntrld");
+  if ((ret_code= send_list_unsuccessful_grid(conn)) ||
+      (ret_code= rec_list_stop(conn)))
+    goto error;
   DEBUG_RETURN_INT(0);
+
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int test_copy_files(IC_CONNECTION *conn)
@@ -318,9 +548,10 @@ run_unit_test(gpointer data)
     goto error;
   if ((ret_code= test_successful_start(conn)) ||
       (ret_code= test_unsuccessful_start(conn)) ||
+      (ret_code= test_list(conn, TRUE)) ||
+      (ret_code= test_list(conn, FALSE)) ||
       (ret_code= test_successful_stop(conn)) ||
       (ret_code= test_successful_stop(conn)) ||
-      (ret_code= test_list(conn)) ||
       (ret_code= test_copy_files(conn)) ||
       (ret_code= test_cpu_info(conn)) ||
       (ret_code= test_mem_info(conn)) ||
@@ -503,6 +734,24 @@ send_list_stop_reply(IC_CONNECTION *conn)
   DEBUG_ENTRY("send_list_stop_reply");
 
   if ((error= ic_send_with_cr(conn, ic_list_stop_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a protocol line containing:
+  list next<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_list_next_reply(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("send_list_next_reply");
+
+  if ((error= ic_send_with_cr(conn, ic_list_next_str)) ||
       (error= ic_send_empty_line(conn)))
     DEBUG_RETURN_INT(error);
   DEBUG_RETURN_INT(0);
@@ -1854,12 +2103,15 @@ handle_get_disk_info(IC_CONNECTION *conn)
   Line 4: receive config.ini
   Line 5: number of lines: #lines
   Line 6 - Line x: Contains the data from the config.ini file
+  Line x+1: Empty Line
 
   Response:
   Line 1: receive config file ok
+  Line 2: Empty Line
 
   As usual in the iClaustron Protocol an empty lines indicates end of
-  the communication from one side.
+  the communication from one side. This is assumed in descriptions here
+  below.
 
   Then the next file is copied with the same protocol but replacing
   config.ini by grid_common.ini.
