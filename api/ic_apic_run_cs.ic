@@ -423,7 +423,7 @@ free_apic_from_run_cluster(IC_API_CONFIG_SERVER *ext_apic)
   {
     if (apic->conf_objects[i])
     {
-      ic_hashtable_destroy(apic->conf_objects[i]->comm_hash);
+      ic_hashtable_destroy(apic->conf_objects[i]->comm_hash, FALSE);
       apic->conf_objects[i]= NULL;
     }
   }
@@ -628,7 +628,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 
     if (run_obj->new_config.conf_objects[clu_info->cluster_id])
     {
-      ic_hashtable_destroy(cluster->comm_hash);
+      ic_hashtable_destroy(cluster->comm_hash, FALSE);
       return IC_ERROR_CONFLICTING_CLUSTER_IDS;
     }
     run_obj->new_config.conf_objects[clu_info->cluster_id]= cluster;
@@ -2993,7 +2993,7 @@ release_hash_on_cluster_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
   {
     if (run_obj->config.conf_objects[i])
-      ic_hashtable_destroy(run_obj->config.conf_objects[i]->comm_hash);
+      ic_hashtable_destroy(run_obj->config.conf_objects[i]->comm_hash, FALSE);
   }
 }
 

@@ -28,7 +28,7 @@
  *      static unsigned int         hash_from_key_fn( void *k );
  *      static int                  keys_equal_fn ( void *key1, void *key2 );
  *
- *      h = ic_create_hashtable(16, hash_from_key_fn, keys_equal_fn);
+ *      h = ic_create_hashtable(16, hash_from_key_fn, keys_equal_fn, FALSE);
  *      k = (struct some_key *)     malloc(sizeof(struct some_key));
  *      v = (struct some_value *)   malloc(sizeof(struct some_value));
  *
@@ -90,13 +90,15 @@ int ic_keys_equal_uint64(void *key1, void *key2);
  * @param   minsize         minimum initial size of ic_hashtable
  * @param   hashfunction    function for hashing keys
  * @param   key_eq_fn       function for determining key equality
+ * @param   initial         always set to FALSE except from ic_port_init/end
  * @return                  newly created ic_hashtable or NULL on failure
  */
 
 IC_HASHTABLE*
 ic_create_hashtable(unsigned int minsize,
                     unsigned int (*hashfunction) (void*),
-                    int (*key_eq_fn) (void*,void*));
+                    int (*key_eq_fn) (void*,void*),
+                    gboolean initial);
 
 /*****************************************************************************
  * ic_hashtable_insert
@@ -177,12 +179,14 @@ ic_hashtable_count(IC_HASHTABLE *h);
 /*****************************************************************************
  * ic_hashtable_destroy
    
- * @name        ic_hashtable_destroy
- * @param   h   the ic_hashtable
+ * @name               ic_hashtable_destroy
+ * @param   h          the ic_hashtable
+ * @param   initial    Always set to FALSE except by ic_port_init/ic_port_end
  */
 
 void
-ic_hashtable_destroy(IC_HASHTABLE *h);
+ic_hashtable_destroy(IC_HASHTABLE *h,
+                     gboolean initial);
 
 #endif /* __HASHTABLE_CWC22_H__ */
 

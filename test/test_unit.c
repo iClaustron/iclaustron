@@ -504,9 +504,19 @@ test_hashtable(guint32 num_inserts,
   ic_printf("Testing with %u number of inserts and %u number of removes",
             num_inserts, num_removes);
   if (use_ptr)
-    hashtable= ic_create_hashtable(4096, ic_hash_uint64, ic_keys_equal_uint64);
+  {
+    hashtable= ic_create_hashtable(4096,
+                                   ic_hash_uint64,
+                                   ic_keys_equal_uint64,
+                                   FALSE);
+  }
   else
-    hashtable= ic_create_hashtable(4096, ic_hash_ptr, ic_keys_equal_ptr);
+  {
+    hashtable= ic_create_hashtable(4096,
+                                   ic_hash_ptr,
+                                   ic_keys_equal_ptr,
+                                   FALSE);
+  }
 
   if (hashtable == NULL)
   {
@@ -522,7 +532,7 @@ test_hashtable(guint32 num_inserts,
                                          num_removes)))
     goto error;
 error:
-  ic_hashtable_destroy(hashtable);
+  ic_hashtable_destroy(hashtable, FALSE);
   ic_free(test_hashtable);
   return ret_code;
 }

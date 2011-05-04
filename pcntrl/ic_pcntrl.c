@@ -158,9 +158,9 @@ static int receive_error_message(IC_CONNECTION *conn)
 
   if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
       (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (memcpy(print_buf, read_buf, read_size), FALSE) ||
       (ret_code= ic_rec_empty_line(conn)))
     DEBUG_RETURN_INT(ret_code);
-  memcpy(print_buf, read_buf, read_size);
   print_buf[read_size]= (gchar)0;
   ic_printf("Error message: %s from start ic_csd", print_buf);
   DEBUG_RETURN_INT(0);
@@ -540,7 +540,11 @@ run_unit_test(gpointer data)
 {
   int ret_code;
   IC_CONNECTION *conn;
+  IC_THREADPOOL_STATE *tp_state;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   DEBUG_THREAD_ENTRY("run_unit_test");
+  tp_state= thread_state->ic_get_threadpool(thread_state);
+  tp_state->ts_ops.ic_thread_started(thread_state);
 
   (void)data; /* Ignore parameter */
 
@@ -558,9 +562,11 @@ run_unit_test(gpointer data)
       (ret_code= test_disk_info(conn)))
     goto error;
   /* When running unit test we're done after completing tests */
-  ic_set_stop_flag();
-  DEBUG_THREAD_RETURN;
 error:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
+  ic_set_stop_flag();
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 }
 
@@ -573,23 +579,23 @@ error:
   with the process controller and test its functionality.
 */
 static int
-start_unit_test(void)
+start_unit_test(IC_THREADPOOL_STATE *tp_state)
 {
-  GThread *thread;
-  GError *error= NULL;
+  guint32 thread_id;
   DEBUG_ENTRY("start_unit_test");
 
   DEBUG_PRINT(PROGRAM_LEVEL, ("Start unit test thread in run_unit_test"));
 
-  thread= g_thread_create_full(run_unit_test,
-                               NULL,
-                               IC_MEDIUM_STACK_SIZE,
-                               TRUE,
-                               TRUE,
-                               G_THREAD_PRIORITY_NORMAL,
-                               &error);
-  if (!thread)
+  if (tp_state->tp_ops.ic_threadpool_start_thread(tp_state,
+                                                  &thread_id,
+                                                  run_unit_test,
+                                                  NULL,
+                                                  IC_MEDIUM_STACK_SIZE,
+                                                  FALSE))
+  {
+    ic_printf("Failed to create unit test thread");
     DEBUG_RETURN_INT(IC_ERROR_START_THREAD_FAILED);
+  }
   DEBUG_RETURN_INT(0);
 }
 #endif
@@ -913,7 +919,10 @@ IC_HASHTABLE*
 create_pc_hash()
 {
   DEBUG_ENTRY("create_pc_hash");
-  DEBUG_RETURN_PTR(ic_create_hashtable(4096, ic_pc_hash_key, ic_pc_key_equal));
+  DEBUG_RETURN_PTR(ic_create_hashtable(4096,
+                                       ic_pc_hash_key,
+                                       ic_pc_key_equal,
+                                       FALSE));
 }
 
 /**
@@ -1184,7 +1193,10 @@ init_pc_find(IC_PC_FIND **pc_find)
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   if (!((*pc_find)= (IC_PC_FIND*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_FIND))))
+  {
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
   (*pc_find)->mc_ptr= mc_ptr;
   DEBUG_RETURN_INT(0);
 }
@@ -1420,20 +1432,20 @@ copy_pc_start(IC_PC_START *pc_start,
   IC_PC_START *new_pc_start;
   guint32 i;
 
-  if ((new_pc_start= (IC_PC_START*)
+  if (!(new_pc_start= (IC_PC_START*)
         mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, sizeof(IC_PC_START))))
     goto mem_error;
   memcpy(new_pc_start, pc_start, sizeof(IC_PC_START));
-  if ((new_pc_start->key.grid_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
-       mc_ptr, new_pc_start->key.grid_name.len + 1)) ||
+  if (!((new_pc_start->key.grid_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
+       mc_ptr, new_pc_start->key.grid_name.len + 1)) &&
       (new_pc_start->key.cluster_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
-       mc_ptr, new_pc_start->key.cluster_name.len + 1)) ||
+       mc_ptr, new_pc_start->key.cluster_name.len + 1)) &&
       (new_pc_start->key.node_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
-       mc_ptr, new_pc_start->key.node_name.len + 1)) ||
+       mc_ptr, new_pc_start->key.node_name.len + 1)) &&
       (new_pc_start->version_string.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
-       mc_ptr, new_pc_start->version_string.len + 1)) ||
+       mc_ptr, new_pc_start->version_string.len + 1)) &&
       (new_pc_start->program_name.str= (gchar*)mc_ptr->mc_ops.ic_mc_calloc(
-       mc_ptr, new_pc_start->program_name.len + 1)))
+       mc_ptr, new_pc_start->program_name.len + 1))))
     goto mem_error;
   memcpy(new_pc_start->key.grid_name.str,
          pc_start->key.grid_name.str,
@@ -1462,13 +1474,13 @@ copy_pc_start(IC_PC_START *pc_start,
 
   if (list_full_flag)
   {
-    if ((new_pc_start->parameters= (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(
-         mc_ptr, pc_start->num_parameters * sizeof(IC_STRING))))
+    if (!(new_pc_start->parameters= (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(
+          mc_ptr, pc_start->num_parameters * sizeof(IC_STRING))))
       goto mem_error;
     for (i= 0; i < pc_start->num_parameters; i++)
     {
-      if ((new_pc_start->parameters[i].str= mc_ptr->mc_ops.ic_mc_calloc(
-           mc_ptr, pc_start->parameters[i].len + 1)))
+      if (!(new_pc_start->parameters[i].str= mc_ptr->mc_ops.ic_mc_calloc(
+            mc_ptr, pc_start->parameters[i].len + 1)))
         goto mem_error;
       memcpy(new_pc_start->parameters[i].str,
              pc_start->parameters[i].str,
@@ -1495,6 +1507,7 @@ rec_opt_key_message(IC_CONNECTION *conn,
 {
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   int error;
+  DEBUG_ENTRY("rec_opt_key_message");
 
   /*
     When we come here we already received the list [full] string and we
@@ -1503,35 +1516,44 @@ rec_opt_key_message(IC_CONNECTION *conn,
   */
   if ((error= init_pc_find(pc_find)))
     goto error;
-  (*pc_find)->mc_ptr= mc_ptr;
+  mc_ptr= (*pc_find)->mc_ptr;
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
                                    ic_grid_str,
                                    &((*pc_find)->key.grid_name))))
     goto error;
   if ((*pc_find)->key.grid_name.len == 0)
-    return 0; /* No grid name provided, list all programs */
+  {
+    /* No grid name provided, list all programs */
+    DEBUG_RETURN_INT(0);
+  }
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
                                    ic_cluster_str,
                                    &((*pc_find)->key.cluster_name))))
     goto error;
   if ((*pc_find)->key.cluster_name.len == 0)
-    return 0; /* No cluster name provided, list all programs in grid */
+  {
+    /* No cluster name provided, list all programs in grid */
+    DEBUG_RETURN_INT(0);
+  }
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
                                    ic_node_str,
                                    &((*pc_find)->key.node_name))))
     goto error;
   if ((*pc_find)->key.node_name.len == 0)
-    return 0; /* No node name provided, list all programs in cluster */
+  {
+    /* No node name provided, list all programs in cluster */
+    DEBUG_RETURN_INT(0);
+  }
   if ((error= ic_rec_empty_line(conn)))
     goto error;
-  return 0;
+  DEBUG_RETURN_INT(0);
 error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return error;
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -2403,7 +2425,7 @@ int main(int argc, char *argv[])
   if (!(glob_pc_array= ic_create_dynamic_ptr_array()))
     goto error;
 #ifdef WITH_UNIT_TEST
-  if ((ret_code= start_unit_test()))
+  if ((ret_code= start_unit_test(tp_state)))
     goto error;
 #endif
   /*
@@ -2432,8 +2454,7 @@ int main(int argc, char *argv[])
     again even after we had to restart this program. This file is stored in
     the iclaustron_data placed beside the iclaustron_install directory. The
     file is called pcntrl_state.
-  */
-  /*
+
     Next step is to wait for Cluster Managers to connect to us, after they
     have connected they can request action from us as well. Any server can
     connect as a Cluster Manager, but they have to provide the proper
@@ -2450,7 +2471,7 @@ error:
   if (tp_state)
     tp_state->tp_ops.ic_threadpool_stop(tp_state);
   if (glob_pc_hash)
-    ic_hashtable_destroy(glob_pc_hash);
+    ic_hashtable_destroy(glob_pc_hash, FALSE);
   if (pc_hash_mutex)
     ic_mutex_destroy(pc_hash_mutex);
   if (log_file.str)

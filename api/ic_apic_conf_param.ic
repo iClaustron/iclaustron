@@ -146,8 +146,10 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
   guint32 i, node_id, other_node_id;
   DEBUG_ENTRY("build_hash_on_comms");
 
-  if ((comm_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_comms,
-                                      ic_keys_equal_comms)))
+  if ((comm_hash= ic_create_hashtable(MAX_CONFIG_ID,
+                                      ic_hash_comms,
+                                      ic_keys_equal_comms,
+                                      FALSE)))
   {
     for (i= 0; i < clu_conf->num_comms; i++)
     {
@@ -216,7 +218,7 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
   DEBUG_RETURN_INT(0);
 error:
   if (comm_hash)
-    ic_hashtable_destroy(comm_hash);
+    ic_hashtable_destroy(comm_hash, FALSE);
   DEBUG_RETURN_INT(1);
 }
 
@@ -453,7 +455,7 @@ void
 ic_destroy_conf_hash()
 {
   if (glob_conf_hash)
-    ic_hashtable_destroy(glob_conf_hash);
+    ic_hashtable_destroy(glob_conf_hash, FALSE);
   glob_conf_entry_inited= FALSE;
 }
 
@@ -1770,8 +1772,10 @@ int ic_init_config_parameters()
 
   if (glob_conf_entry_inited)
     DEBUG_RETURN_INT(0);
-  if (!(glob_conf_hash= ic_create_hashtable(MAX_CONFIG_ID, ic_hash_str,
-                                            ic_keys_equal_str)))
+  if (!(glob_conf_hash= ic_create_hashtable(MAX_CONFIG_ID,
+                                            ic_hash_str,
+                                            ic_keys_equal_str,
+                                            FALSE)))
     DEBUG_RETURN_INT(1);
   glob_conf_entry_inited= TRUE;
   glob_max_config_id= 0;

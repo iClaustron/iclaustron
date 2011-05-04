@@ -62,10 +62,10 @@ gchar *ic_calloc_conn(size_t size);
 gchar *ic_malloc_conn(size_t size);
 gchar *ic_calloc_mc(size_t size);
 gchar *ic_malloc(size_t size);
-gchar *ic_malloc_hash(size_t size);
+gchar *ic_malloc_hash(size_t size, gboolean is_create);
 void ic_free(void *ret_obj);
 void ic_free_conn(void *ret_obj);
-void ic_free_hash(void *ret_obj);
+void ic_free_hash(void *ret_obj, gboolean is_destroy);
 void ic_free_mc(void *ret_obj);
 #else
 #define ic_calloc(a) ic_calloc_low(a)

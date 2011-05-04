@@ -121,13 +121,13 @@ ic_hashtable_iterator_remove(IC_HASHTABLE_ITR *itr)
     /* itr->e is now outside the ic_hashtable */
     remember_e = itr->e;
     itr->h->entrycount--;
-    ic_free_hash(remember_e->k);
+    ic_free_hash(remember_e->k, FALSE);
 
     /* Advance the iterator, correcting the parent */
     remember_parent = itr->parent;
     ret = ic_hashtable_iterator_advance(itr);
     if (itr->parent == remember_e) { itr->parent = remember_parent; }
-    ic_free_hash(remember_e);
+    ic_free_hash(remember_e, FALSE);
     return ret;
 }
 

@@ -125,7 +125,8 @@ ic_keys_equal_uint64(void *key1, void* key2)
 IC_HASHTABLE*
 ic_create_hashtable(unsigned int minsize,
                     unsigned int (*hashf) (void*),
-                    int (*eqf) (void*,void*))
+                    int (*eqf) (void*,void*),
+                    gboolean initial)
 {
     struct ic_hashtable *h;
     unsigned int pindex, size = primes[0];
@@ -136,12 +137,13 @@ ic_create_hashtable(unsigned int minsize,
     for (pindex=0; pindex < prime_table_length; pindex++) {
         if (primes[pindex] > minsize) { size = primes[pindex]; break; }
     }
-    h = (IC_HASHTABLE*)ic_malloc_hash(sizeof(IC_HASHTABLE));
+    h = (IC_HASHTABLE*)ic_malloc_hash(sizeof(IC_HASHTABLE), !initial);
     if (NULL == h) return NULL; /*oom*/
-    h->table = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * size);
+    h->table = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * size,
+                                               FALSE);
     if (NULL == h->table)
     {
-      ic_free_hash(h); /*oom*/
+      ic_free_hash(h, TRUE); /*oom*/
       return NULL;
     }
     ic_zero(h->table, size * sizeof(IC_HASH_ENTRY*));
@@ -184,7 +186,8 @@ ic_hashtable_expand(IC_HASHTABLE *h)
     return 0;
   newsize = primes[++(h->primeindex)];
 
-  newtable = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * newsize);
+  newtable = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * newsize,
+                                             FALSE);
   if (NULL != newtable)
   {
     ic_zero(newtable, newsize * sizeof(IC_HASH_ENTRY*));
@@ -200,7 +203,7 @@ ic_hashtable_expand(IC_HASHTABLE *h)
         newtable[index] = e;
       }
     }
-    ic_free_hash(h->table);
+    ic_free_hash(h->table, FALSE);
     h->table = newtable;
   }
   /* Plan B: realloc instead */
@@ -262,7 +265,7 @@ ic_hashtable_insert(IC_HASHTABLE *h, void *k, void *v)
      * element may be ok. Next time we insert, we'll try expanding again.*/
     ic_hashtable_expand(h);
   }
-  e = (IC_HASH_ENTRY*)ic_malloc_hash(sizeof(IC_HASH_ENTRY));
+  e = (IC_HASH_ENTRY*)ic_malloc_hash(sizeof(IC_HASH_ENTRY), FALSE);
   if (NULL == e) { --(h->entrycount); return IC_ERROR_MEM_ALLOC; } /*oom*/
   e->h = hash(h,k);
   index = indexFor(h->tablelength,e->h);
@@ -317,7 +320,7 @@ ic_hashtable_remove(IC_HASHTABLE *h, void *k)
       *pE = e->next;
       h->entrycount--;
       v = e->v;
-      ic_free_hash(e);
+      ic_free_hash(e, FALSE);
       return v;
     }
     pE = &(e->next);
@@ -329,7 +332,7 @@ ic_hashtable_remove(IC_HASHTABLE *h, void *k)
 /*****************************************************************************/
 /* destroy */
 void
-ic_hashtable_destroy(IC_HASHTABLE *h)
+ic_hashtable_destroy(IC_HASHTABLE *h, gboolean initial)
 {
   unsigned int i;
   IC_HASH_ENTRY *e, *f;
@@ -342,11 +345,11 @@ ic_hashtable_destroy(IC_HASHTABLE *h)
     {
       f = e;
       e = e->next;
-      ic_free_hash(f);
+      ic_free_hash(f, FALSE);
     }
   }
-  ic_free_hash(h->table);
-  ic_free_hash(h);
+  ic_free_hash(h->table, FALSE);
+  ic_free_hash(h, !initial);
 }
 
 /*

@@ -1134,7 +1134,7 @@ conf_serv_end(void *ic_conf)
   if (clu_conf)
   {
     if (clu_conf->conf->comm_hash)
-      ic_hashtable_destroy(clu_conf->conf->comm_hash);
+      ic_hashtable_destroy(clu_conf->conf->comm_hash, FALSE);
   }
   DEBUG_RETURN_EMPTY;
 }

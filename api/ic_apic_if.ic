@@ -212,7 +212,7 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
           continue;
         ic_assert(!conf_obj->node_ids);
         if (conf_obj->comm_hash)
-          ic_hashtable_destroy(conf_obj->comm_hash);
+          ic_hashtable_destroy(conf_obj->comm_hash, FALSE);
       }
     }
     apic->mc_ptr->mc_ops.ic_mc_free(apic->mc_ptr);
