@@ -1481,6 +1481,13 @@ error:
   DEBUG_RETURN_INT(error);
 }
 
+#define CV_FILE_SIZE 64
+static void init_cv_buf(gchar *space_buf)
+{
+  memset(space_buf, SPACE_CHAR, CV_FILE_SIZE);
+  space_buf[CV_FILE_SIZE - 1]= CARRIAGE_RETURN;
+}
+
 static int
 write_cv_file(IC_STRING *config_dir,
               IC_CONF_VERSION_TYPE config_version,
@@ -1490,16 +1497,18 @@ write_cv_file(IC_STRING *config_dir,
   IC_FILE_HANDLE file_ptr;
   int error;
   IC_STRING file_name_string, str;
-  gchar buf[128];
+  gchar buf[CV_FILE_SIZE];
   gchar *ptr= buf;
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   DEBUG_ENTRY("write_cv_file");
 
+  init_cv_buf(buf);
   /*
     Create a string like
     version: <config_version><CR>
     state: <state><CR>
     pid: <pid><CR>
+    Last line is space filled up to 64 bytes
 
     The version is the current version of the configuration
     State is either idle if no one is currently running the
@@ -1526,7 +1535,7 @@ write_cv_file(IC_STRING *config_dir,
   /* Open config.version for writing */
   if ((error= ic_open_file(&file_ptr, (const gchar *)file_name, FALSE)))
     goto file_error;
-  error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)(ptr-buf));
+  error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)CV_FILE_SIZE);
   ic_close_file(file_ptr);
 file_error:
   if (error == ENOENT)
@@ -1564,9 +1573,11 @@ read_config_version_file(IC_STRING *config_dir,
   int error;
   guint64 len;
   gchar *ptr, *release_ptr;
+  gchar space_buf[CV_FILE_SIZE];
   gchar file_name[IC_MAX_FILE_NAME_SIZE];
   DEBUG_ENTRY("read_config_version_file");
 
+  init_cv_buf(space_buf);
   ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
   if ((error= ic_get_file_contents(file_name, &release_ptr, &len)))
   {
@@ -1579,6 +1590,12 @@ read_config_version_file(IC_STRING *config_dir,
     }
     DEBUG_RETURN_INT(error);
   }
+
+  /* config_version.ini is always 64 bytes in size.  */
+  error= IC_ERROR_INCONSISTENT_CONTENT_IN_CONFIG_VERSION_FILE;
+  if (len != CV_FILE_SIZE)
+    goto file_error;
+
   ptr= release_ptr;
   /*
     Read a string like
@@ -1595,8 +1612,10 @@ read_config_version_file(IC_STRING *config_dir,
   IC_INIT_STRING(&str, (gchar*)ic_pid_str, strlen(ic_pid_str), TRUE);
   if ((error= cmp_config_version_line(&str, &len, pid, &ptr)))
     goto file_error;
-  error= IC_ERROR_TOO_MANY_LINES_IN_CONFIG_VERSION_FILE;
-  if (len != 0) /* Verify that there are no more lines in the file */
+
+  /* config_version.ini is always filled with spaces at the end + CR */
+  error= IC_ERROR_INCONSISTENT_CONTENT_IN_CONFIG_VERSION_FILE;
+  if ((memcmp(ptr, &space_buf[CV_FILE_SIZE - len], len)))
     goto file_error;
   error= 0;
 

@@ -247,8 +247,9 @@ ic_init_error_messages()
     "Not allowed to set both generate-command-file and command-file";
   ic_error_str[IC_ERROR_NO_FINAL_COMMAND - IC_FIRST_ERROR]=
     "Last command in command file must end with ;";
-  ic_error_str[IC_ERROR_TOO_MANY_LINES_IN_CONFIG_VERSION_FILE - IC_FIRST_ERROR]=
-    "Too many lines in config_version.ini file";
+  ic_error_str[IC_ERROR_INCONSISTENT_CONTENT_IN_CONFIG_VERSION_FILE -
+               IC_FIRST_ERROR]=
+    "Inconsistent content in config_version.ini file";
   ic_error_str[IC_ERROR_SYNTAX_ERROR_IN_CONFIG_VERSION_FILE - IC_FIRST_ERROR]=
     "Syntax error in config_version.ini file";
 #ifdef DEBUG
