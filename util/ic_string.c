@@ -407,13 +407,10 @@ gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
 */
 gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
 {
-  guint32 i;
+  guint32 i= 0;
   gchar buf[IC_MAX_INT_STRING];
   guint64 tmp;
 
-  buf[0]= '0';
-  buf[1]= 'x';
-  i= 2;
   if (val == 0)
   {
     buf[i]= '0';
@@ -432,7 +429,9 @@ gchar *ic_guint64_hex_str(guint64 val, gchar *ptr)
     i++;
   }
   buf[i]= 0;
-  ic_reverse_str((gchar*)&buf, ptr, 0);
+  ic_reverse_str((gchar*)&buf, &ptr[2], 0);
+  ptr[0]= '0';
+  ptr[1]= 'x';
   return ptr;
 }
 

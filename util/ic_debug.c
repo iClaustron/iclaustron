@@ -159,6 +159,7 @@ void ic_debug_return(int ret_type,
 
   /* Update indent_level, we're returning from debugged function */
   ic_require(thread_debug= g_private_get(debug_priv));
+  ic_require(thread_debug->indent_level > 0);
   entry_point= thread_debug->entry_point[thread_debug->indent_level-1];
 
   if (ic_get_debug() & ENTRY_LEVEL)
@@ -188,7 +189,6 @@ void ic_debug_return(int ret_type,
     ic_require(len < 256);
     ic_debug_print_char_buf(buf, thread_debug);
   }
-  ic_require(thread_debug->indent_level > 0);
   thread_debug->indent_level--;
 }
 

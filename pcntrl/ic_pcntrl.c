@@ -82,6 +82,7 @@ static IC_MUTEX *pc_hash_mutex= NULL;
 static IC_HASHTABLE *glob_pc_hash= NULL;
 static guint64 glob_start_id= 1;
 static IC_DYNAMIC_PTR_ARRAY *glob_pc_array= NULL;
+static gboolean shutdown_processes_flag= FALSE;
 
 /* Unit test functions */
 #ifdef WITH_UNIT_TEST
@@ -416,6 +417,7 @@ rec_list_node(IC_CONNECTION *conn, gboolean rec_empty_line)
 {
   int ret_code;
   gchar time_buf[128], pid_buf[128];
+  DEBUG_ENTRY("rec_list_node");
 
   if ((ret_code= ic_rec_simple_str(conn, ic_list_node_str)) ||
       (ret_code= ic_rec_simple_str(conn, ic_csd_program_str)) ||
@@ -424,7 +426,8 @@ rec_list_node(IC_CONNECTION *conn, gboolean rec_empty_line)
       (ret_code= ic_rec_simple_str(conn, my_cluster)) ||
       (ret_code= ic_rec_simple_str(conn, my_csd_node)) ||
       (ret_code= ic_rec_string(conn, ic_start_time_str, time_buf)) ||
-      (ret_code= ic_rec_string(conn, ic_pid_str, pid_buf)))
+      (ret_code= ic_rec_string(conn, ic_pid_str, pid_buf)) ||
+      (ret_code= ic_rec_simple_str(conn, num_parameters_str)))
     DEBUG_RETURN_INT(ret_code);
   ic_printf("Start_time: %s, pid: %s", time_buf, pid_buf);
   if (rec_empty_line && (ret_code= ic_rec_empty_line(conn)))
@@ -446,8 +449,7 @@ rec_list_node_full(IC_CONNECTION *conn)
   if ((ret_code= rec_list_node(conn, FALSE)))
     DEBUG_RETURN_INT(ret_code);
 
-  if ((ret_code= ic_rec_simple_str(conn, num_parameters_str)) ||
-      (ret_code= ic_rec_simple_str(conn, node_parameter_str)) ||
+  if ((ret_code= ic_rec_simple_str(conn, node_parameter_str)) ||
       (ret_code= ic_rec_simple_str(conn, node_id_parameter_str)))
     DEBUG_RETURN_INT(ret_code);
   if ((ret_code= ic_rec_empty_line(conn)))
@@ -586,6 +588,7 @@ start_unit_test(IC_THREADPOOL_STATE *tp_state)
 
   DEBUG_PRINT(PROGRAM_LEVEL, ("Start unit test thread in run_unit_test"));
 
+  shutdown_processes_flag= TRUE;
   if (tp_state->tp_ops.ic_threadpool_start_thread(tp_state,
                                                   &thread_id,
                                                   run_unit_test,
@@ -690,6 +693,12 @@ send_list_entry(IC_CONNECTION *conn,
 
   if ((error= ic_send_with_cr(conn, ic_list_node_str)) ||
       (error= ic_send_with_cr_two_strings(conn,
+                                          ic_program_str,
+                                          pc_start->program_name.str)) ||
+      (error= ic_send_with_cr_two_strings(conn,
+                                          ic_version_str,
+                                          pc_start->version_string.str)) ||
+      (error= ic_send_with_cr_two_strings(conn,
                                           ic_grid_str,
                                           pc_start->key.grid_name.str)) ||
       (error= ic_send_with_cr_two_strings(conn,
@@ -698,12 +707,6 @@ send_list_entry(IC_CONNECTION *conn,
       (error= ic_send_with_cr_two_strings(conn,
                                           ic_node_str,
                                           pc_start->key.node_name.str)) ||
-      (error= ic_send_with_cr_two_strings(conn,
-                                          ic_program_str,
-                                          pc_start->program_name.str)) ||
-      (error= ic_send_with_cr_two_strings(conn,
-                                          ic_version_str,
-                                          pc_start->version_string.str)) ||
       (error= ic_send_with_cr_with_num(conn,
                                        ic_start_time_str,
                                        pc_start->start_id)) ||
@@ -718,7 +721,9 @@ send_list_entry(IC_CONNECTION *conn,
   {
     for (i= 0; i < pc_start->num_parameters; i++)
     {
-      if ((error= ic_send_with_cr(conn, pc_start->parameters[i].str)))
+      if ((error= ic_send_with_cr_two_strings(conn,
+                                              ic_parameter_str,
+                                              pc_start->parameters[i].str)))
         DEBUG_RETURN_INT(error);
     }
   }
@@ -918,11 +923,13 @@ ic_pc_key_equal(void *ptr1, void *ptr2)
 IC_HASHTABLE*
 create_pc_hash()
 {
+  IC_HASHTABLE *ret_ptr;
   DEBUG_ENTRY("create_pc_hash");
-  DEBUG_RETURN_PTR(ic_create_hashtable(4096,
-                                       ic_pc_hash_key,
-                                       ic_pc_key_equal,
-                                       FALSE));
+  ret_ptr= ic_create_hashtable(4096,
+                               ic_pc_hash_key,
+                               ic_pc_key_equal,
+                               FALSE);
+  DEBUG_RETURN_PTR(ret_ptr);
 }
 
 /**
@@ -938,12 +945,10 @@ remove_pc_entry(IC_PC_START *pc_start)
 
   pc_start_check= ic_hashtable_remove(glob_pc_hash,
                                       (void*)pc_start);
-  ic_assert(pc_start_check == pc_start);
+  ic_require(pc_start_check == pc_start);
   glob_pc_array->dpa_ops.ic_remove_ptr(glob_pc_array,
                                        pc_start->dyn_trans_index,
                                        (void*)pc_start);
-  /* Release memory associated with the process */
-  pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -992,6 +997,7 @@ insert_process(IC_PC_START *pc_start)
   IC_PC_START *pc_start_found;
   guint64 prev_start_id= 0;
   int ret_code= 0;
+  guint32 retry_count= 0;
   DEBUG_ENTRY("insert_process");
 
   /*
@@ -1020,6 +1026,23 @@ try_again:
       /* Someone is already trying to start, we won't continue or attempt */
       ret_code= IC_ERROR_PC_START_ALREADY_ONGOING;
     }
+    else if (pc_start->kill_ongoing)
+    {
+      /*
+        Someone is attempting to kill this process, we'll wait for a few
+        seconds for this to complete in the hope that we'll be successful
+        in starting it after it has been killed.
+      */
+      ic_mutex_unlock(pc_hash_mutex);
+      retry_count++;
+      if (retry_count > 10)
+      {
+        ret_code= IC_ERROR_PC_PROCESS_ALREADY_RUNNING;
+        goto end;
+      }
+      ic_sleep(1);
+      goto try_again;
+    }
     else
     {
       if (pc_start_found->start_id == prev_start_id)
@@ -1032,6 +1055,9 @@ try_again:
         */
         remove_pc_entry(pc_start_found);
         ret_code= insert_pc_entry(pc_start);
+        ic_mutex_unlock(pc_hash_mutex);
+        /* Release memory associated with the deleted process */
+        pc_start_found->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
         goto end;
       }
       prev_start_id= pc_start_found->start_id;
@@ -1045,7 +1071,7 @@ try_again:
                                          pc_start_found->program_name.str)))
       {
         if (ret_code == IC_ERROR_CHECK_PROCESS_SCRIPT)
-          goto final_end;
+          goto end;
         ic_assert(ret_code == IC_ERROR_PROCESS_NOT_ALIVE);
         /*
           Process is dead, we need to acquire the mutex again and verify that
@@ -1062,7 +1088,7 @@ try_again:
       {
         /* Process is still alive, so no use for us to continue */
         ret_code= IC_ERROR_PC_PROCESS_ALREADY_RUNNING;
-        goto final_end;
+        goto end;
       }
     }
   }
@@ -1075,9 +1101,8 @@ try_again:
     */
     ret_code= insert_pc_entry(pc_start);
   }
-end:
   ic_mutex_unlock(pc_hash_mutex);
-final_end:
+end:
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1143,6 +1168,7 @@ handle_start(IC_CONNECTION *conn)
     goto late_error;
   if (working_dir.str)
     ic_free(working_dir.str);
+  working_dir.str= NULL;
   ic_mutex_lock(pc_hash_mutex);
   /*
     pc_start struct is protected by mutex, as soon as the pid is nonzero
@@ -1154,8 +1180,10 @@ handle_start(IC_CONNECTION *conn)
   pc_start->pid= pid;
   pc_start->start_id= glob_start_id++;
   ic_mutex_unlock(pc_hash_mutex);
+
   DEBUG_PRINT(PROGRAM_LEVEL, ("New process with pid %d started", (int)pid));
-  DEBUG_RETURN_INT(send_ok_pid_reply(conn, pc_start->pid));
+  ret_code= send_ok_pid_reply(conn, pc_start->pid);
+  DEBUG_RETURN_INT(ret_code);
 
 late_error:
   ic_mutex_lock(pc_hash_mutex);
@@ -1234,6 +1262,89 @@ error:
 }
 
 /**
+  Perform the actual killing of a process handled by the process controller.
+
+  @parameter pc_start_found    IN: The data structure describing the process
+                                   we're controlling
+  @parameter pc_find           IN: The data structure used to find the process
+  @parameter kill_flag         IN: Flag to indicate a kill or a stop
+*/
+static int
+kill_process(IC_PC_START *pc_start_found,
+             IC_PC_FIND *pc_find,
+             gboolean kill_flag)
+{
+  guint32 loop_count= 0;
+  guint64 start_id;
+  IC_PID_TYPE pid;
+  int error;
+  DEBUG_ENTRY("kill_process");
+
+  /*
+    We release the mutex on the hash, try to stop the process and
+    then check if we were successful in stopping it after waiting
+    for a few seconds.
+
+    By setting the kill_ongoing flag we ensure that no one else is
+    removing the object.
+  */
+  start_id= pc_start_found->start_id;
+  pid= pc_start_found->pid;
+  pc_start_found->kill_ongoing= TRUE;
+  ic_mutex_unlock(pc_hash_mutex);
+
+  ic_kill_process(pid, kill_flag);
+
+  loop_count= 0;
+retry_kill_check:
+  ic_sleep(1); /* Sleep 1 seconds to give OS a chance to complete kill */
+  error= ic_is_process_alive(pid, pc_start_found->program_name.str);
+  if (error == 0)
+  {
+    loop_count++;
+    if (loop_count > 3)
+    {
+      error= IC_ERROR_FAILED_TO_STOP_PROCESS;
+      goto error;
+    }
+    goto retry_kill_check;
+  }
+  else if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)
+    goto error;
+  else
+  {
+    ic_assert(error == IC_ERROR_PROCESS_NOT_ALIVE);
+    /*
+      We were successful in stopping the process, now we need to
+      remove the entry from the hash.
+    */
+    error= 0;
+    ic_mutex_lock(pc_hash_mutex);
+    pc_start_found= (IC_PC_START*)ic_hashtable_search(glob_pc_hash,
+                                                      (void*)pc_find);
+    ic_require(pc_start_found &&
+               pc_start_found->pid == pid &&
+               pc_start_found->start_id == start_id);
+    /*
+      The process we set out to stop is still in the hash so we remove it.
+      Since we set the kill_ongoing flag no one else should remove it,
+      if it is removed it's a bug.
+    */
+    remove_pc_entry(pc_start_found);
+    ic_mutex_unlock(pc_hash_mutex);
+    /* Release memory associated with the deleted process */
+    pc_start_found->mc_ptr->mc_ops.ic_mc_free(pc_start_found->mc_ptr);
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_mutex_lock(pc_hash_mutex);
+  pc_start_found->kill_ongoing= FALSE;
+  ic_mutex_unlock(pc_hash_mutex);
+  DEBUG_RETURN_INT(error);
+}
+
+/**
   Delete the process as requested by the protocol action.  The flag indicates
   whether the client ordered a kill or a stop to be performed.
   Before killing the process we will discover whether we have such a process
@@ -1242,16 +1353,13 @@ error:
   @parameter pc_find           IN: Key of process to stop
   @parameter kill_flag         IN: Flag to indicate a kill or a stop
 */
-static int delete_process(IC_PC_FIND *pc_find,
-                          gboolean kill_flag)
+static int
+delete_process(IC_PC_FIND *pc_find,
+               gboolean kill_flag)
 {
   IC_PC_START *pc_start_found;
-  IC_MEMORY_CONTAINER *mc_ptr= pc_find->mc_ptr;
   int error= 0;
   guint32 loop_count= 0;
-  guint64 start_id;
-  IC_PID_TYPE pid;
-  IC_STRING program_name;
   DEBUG_ENTRY("delete_process");
 
 try_again:
@@ -1277,55 +1385,12 @@ try_again:
       ic_sleep(1);
       goto try_again;
     }
-    /*
-      We release the mutex on the hash, try to stop the process and
-      then check if we were successful in stopping it after waiting
-      for a few seconds.
-
-      We have to get the data out of the pc_start object since someone
-      else might destroy the object while we're waiting for the process
-      to be killed.
-    */
-    start_id= pc_start_found->start_id;
-    pid= pc_start_found->pid;
-    error= ic_mc_strdup(mc_ptr,
-                        &program_name,
-                        &pc_start_found->program_name);
-    ic_mutex_unlock(pc_hash_mutex);
-    if (error)
-      goto error;
-    ic_kill_process(pid, kill_flag);
-    ic_sleep(3); /* Sleep 3 seconds to give OS a chance to complete kill */
-    error= ic_is_process_alive(pid, program_name.str);
-    if (error == 0)
+    if (pc_start_found->kill_ongoing)
     {
-      error= IC_ERROR_FAILED_TO_STOP_PROCESS;
+      error= IC_ERROR_PROCESS_ALREADY_BEING_KILLED;
       goto error;
     }
-    else if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)
-      goto error;
-    else
-    {
-      ic_assert(error == IC_ERROR_PROCESS_NOT_ALIVE);
-      /*
-        We were successful in stopping the process, now we need to
-        remove the entry from the hash.
-      */
-      error= 0;
-      ic_mutex_lock(pc_hash_mutex);
-      pc_start_found= (IC_PC_START*)ic_hashtable_search(glob_pc_hash,
-                                                        (void*)pc_find);
-      if (pc_start_found &&
-          pc_start_found->pid == pid &&
-          pc_start_found->start_id == start_id)
-      {
-        /*
-          The process we set out to stop is still in the hash so we remove it.
-        */
-        remove_pc_entry(pc_start_found);
-      }
-      ic_mutex_unlock(pc_hash_mutex);
-    }
+    error= kill_process(pc_start_found, pc_find, kill_flag);
   }
   else
   {
@@ -1337,7 +1402,7 @@ try_again:
     ic_mutex_unlock(pc_hash_mutex);
   }
 error:
-  return error;
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -1525,7 +1590,7 @@ rec_opt_key_message(IC_CONNECTION *conn,
   if ((*pc_find)->key.grid_name.len == 0)
   {
     /* No grid name provided, list all programs */
-    DEBUG_RETURN_INT(0);
+    goto end;
   }
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
@@ -1535,7 +1600,7 @@ rec_opt_key_message(IC_CONNECTION *conn,
   if ((*pc_find)->key.cluster_name.len == 0)
   {
     /* No cluster name provided, list all programs in grid */
-    DEBUG_RETURN_INT(0);
+    goto end;
   }
   if ((error= ic_mc_rec_opt_string(conn,
                                    mc_ptr,
@@ -1545,8 +1610,9 @@ rec_opt_key_message(IC_CONNECTION *conn,
   if ((*pc_find)->key.node_name.len == 0)
   {
     /* No node name provided, list all programs in cluster */
-    DEBUG_RETURN_INT(0);
+    goto end;
   }
+end:
   if ((error= ic_rec_empty_line(conn)))
     goto error;
   DEBUG_RETURN_INT(0);
@@ -1610,14 +1676,14 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
       goto error;
     if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
     {
-      if (ic_check_buf(read_buf, read_size, ic_list_stop_str,
+      if (!ic_check_buf(read_buf, read_size, ic_list_stop_str,
                        strlen(ic_list_stop_str)))
         stop_flag= TRUE;
-      else if (!(ic_check_buf(read_buf, read_size, ic_list_next_str,
+      else if ((ic_check_buf(read_buf, read_size, ic_list_next_str,
                          strlen(ic_list_next_str))))
         goto protocol_error;
     }
-    if (!(ic_rec_empty_line(conn)))
+    if (ic_rec_empty_line(conn))
       goto protocol_error;
     loop_pc_start= loop_pc_start->next_pc_start;
   }
@@ -1996,6 +2062,68 @@ handle_get_disk_info(IC_CONNECTION *conn)
 }
 
 /**
+  Remove all entries from process hash before we remove the hash itself
+  as part of clean up in shutting down process controller.
+
+  When we call this all other threads have been stopped, thus we need not
+  worry about that memory will go away under our feets. Also there should
+  be no new entries to the array of processes under our control while
+  this method is executing.
+
+  In the presence of errors here, we clean up as good as we can. This is
+  part of the cleanup process, so no need to report errors here. We do
+  however report if we failed to stop a process.
+*/
+static void
+clean_process_hash(gboolean stop_processes)
+{
+  guint64 max_index;
+  guint32 i;
+  int error;
+  void *void_pc_start;
+  IC_PC_START *pc_start;
+  IC_PC_FIND pc_find;
+  DEBUG_ENTRY("clean_process_hash");
+
+  pc_find.mc_ptr= NULL;
+
+  ic_mutex_lock(pc_hash_mutex);
+  max_index= glob_pc_array->dpa_ops.ic_get_max_index(glob_pc_array);
+  for (i= 0; i < max_index; i++)
+  {
+    if (!(error= glob_pc_array->dpa_ops.ic_get_ptr(glob_pc_array,
+                                                   i,
+                                                   &void_pc_start)))
+    {
+      pc_start= (IC_PC_START*)void_pc_start;
+      if (stop_processes && pc_start)
+      {
+        pc_find.key= pc_start->key;
+        ic_assert(pc_start->kill_ongoing == FALSE);
+        ic_assert(pc_start->pid != 0);
+        ic_mutex_unlock(pc_hash_mutex);
+        error= delete_process(&pc_find, FALSE);
+        if (error)
+          delete_process(&pc_find, TRUE);
+        if (error)
+        {
+          /* Print error message about failure to stop process */
+          pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
+        }
+        ic_mutex_lock(pc_hash_mutex);
+      }
+      else
+      {
+        if (pc_start)
+          pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
+      }
+    }
+  }
+  ic_mutex_unlock(pc_hash_mutex);
+  DEBUG_RETURN_EMPTY;
+}
+
+/**
   The command handler is a thread that is executed on behalf of one of the
   Cluster Managers in a Grid.
 
@@ -2359,6 +2487,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
     } while (0);
   } while (!ic_get_stop_flag());
   ic_printf("iClaustron Process Controller was stopped");
+  conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_INT(0);
 }
 
@@ -2470,6 +2599,7 @@ int main(int argc, char *argv[])
 error:
   if (tp_state)
     tp_state->tp_ops.ic_threadpool_stop(tp_state);
+  clean_process_hash(shutdown_processes_flag);
   if (glob_pc_hash)
     ic_hashtable_destroy(glob_pc_hash, FALSE);
   if (pc_hash_mutex)

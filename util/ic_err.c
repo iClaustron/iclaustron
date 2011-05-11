@@ -252,6 +252,8 @@ ic_init_error_messages()
     "Inconsistent content in config_version.ini file";
   ic_error_str[IC_ERROR_SYNTAX_ERROR_IN_CONFIG_VERSION_FILE - IC_FIRST_ERROR]=
     "Syntax error in config_version.ini file";
+  ic_error_str[IC_ERROR_PROCESS_ALREADY_BEING_KILLED - IC_FIRST_ERROR]=
+    "The process is already in the process of being killed";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

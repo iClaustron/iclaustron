@@ -214,13 +214,11 @@ void ic_port_end()
   ic_mutex_destroy(mem_hash_mutex);
   ic_mutex_destroy(mem_mc_mutex);
 
-  ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
   if (num_mem_allocs != (guint64)0 ||
       num_mem_conn_allocs != (guint64)0 ||
       num_mem_hash_allocs != (guint64)0 ||
       num_mem_mc_allocs != (guint64)0)
   {
-    ic_printf("Memory leak found");
     hash_itr= ic_hashtable_iterator(mem_entry_hash, &itr);
     while (ic_hashtable_iterator_advance(hash_itr) != 0)
     {
@@ -233,16 +231,25 @@ void ic_port_end()
   ic_hashtable_destroy(mem_entry_hash, TRUE);
   ic_mutex_destroy(mem_entry_hash_mutex);
 
-  ic_printf("num_mem_conn_allocs = %u", (guint32)num_mem_conn_allocs);
-  ic_printf("num_mem_hash_allocs = %u", (guint32)num_mem_hash_allocs);
-  ic_printf("num_mem_mc_allocs = %u", (guint32)num_mem_mc_allocs);
+  if (num_mem_allocs != (guint64)0 ||
+      num_mem_conn_allocs != (guint64)0 ||
+      num_mem_hash_allocs != (guint64)0 ||
+      num_mem_mc_allocs != (guint64)0)
+  {
+    ic_printf("num_mem_allocs = %u", (guint32)num_mem_allocs);
+    ic_printf("num_mem_conn_allocs = %u", (guint32)num_mem_conn_allocs);
+    ic_printf("num_mem_hash_allocs = %u", (guint32)num_mem_hash_allocs);
+    ic_printf("num_mem_mc_allocs = %u", (guint32)num_mem_mc_allocs);
 
-  if (num_mem_conn_allocs != (guint64)0)
-    ic_printf("Memory leak found in use of comm subsystem or in it");
-  if (num_mem_hash_allocs != (guint64)0)
-    ic_printf("Memory leak found in use of hash tables or in it");
-  if (num_mem_mc_allocs != (guint64)0)
-    ic_printf("Memory leak found in use of memory container or in it");
+    if (num_mem_conn_allocs != (guint64)0)
+      ic_printf("Memory leak found in use of comm subsystem or in it");
+    if (num_mem_hash_allocs != (guint64)0)
+      ic_printf("Memory leak found in use of hash tables or in it");
+    if (num_mem_mc_allocs != (guint64)0)
+      ic_printf("Memory leak found in use of memory container or in it");
+  }
+  else
+    ic_printf("No memory leaks found");
 #endif
   ic_mutex_destroy(exec_output_mutex);
 }
@@ -503,12 +510,17 @@ gchar*
 ic_calloc_mc(size_t size)
 {
   gchar *ret_ptr;
+  gchar ptr_str[32];
+
   ic_mutex_lock_low(mem_mc_mutex);
   num_mem_mc_allocs++;
   ic_mutex_unlock_low(mem_mc_mutex);
   ret_ptr= ic_calloc_low(size);
   ic_require(ret_ptr);
   insert_alloc_entry(ret_ptr);
+  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
+  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
+              size, ptr_str));
   return ret_ptr;
 }
 

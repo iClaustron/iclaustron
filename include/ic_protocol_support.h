@@ -200,6 +200,7 @@ struct ic_pc_start
   guint64 dyn_trans_index;
   guint32 num_parameters;
   gboolean autorestart;
+  gboolean kill_ongoing;
 };
 
 struct ic_pc_find

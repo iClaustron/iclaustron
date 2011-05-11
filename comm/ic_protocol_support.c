@@ -400,8 +400,10 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
   gchar *read_buf;
   guint32 read_size, remaining_len;
   int error;
-  guint32 prefix_str_len= strlen(prefix_str);
+  guint32 prefix_str_len;
+  DEBUG_ENTRY("ic_rec_string");
 
+  prefix_str_len= strlen(prefix_str);
   if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (read_size >= prefix_str_len &&
@@ -480,7 +482,10 @@ int
 ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
 {
   gboolean optional= FALSE;
-  return ic_rec_simple_str_impl(conn, str, &optional);
+  int ret_code;
+
+  ret_code= ic_rec_simple_str_impl(conn, str, &optional);
+  return ret_code;
 }
 
 /**
@@ -497,8 +502,11 @@ ic_rec_simple_str_opt(IC_CONNECTION *conn,
                       const gchar *str,
                       gboolean *found)
 {
+  int ret_code;
+
   *found= TRUE;
-  return ic_rec_simple_str_impl(conn, str, found);
+  ret_code= ic_rec_simple_str_impl(conn, str, found);
+  return ret_code;
 }
 
 /*
@@ -636,7 +644,10 @@ ic_rec_long_number(IC_CONNECTION *conn,
 int
 ic_rec_number(IC_CONNECTION *conn, const gchar *prefix_str, guint32 *number)
 {
-  return ic_rec_number_impl(conn, prefix_str, number, FALSE);
+  int ret_code;
+
+  ret_code= ic_rec_number_impl(conn, prefix_str, number, FALSE);
+  return ret_code;
 }
 
 /**
@@ -658,7 +669,9 @@ ic_rec_number(IC_CONNECTION *conn, const gchar *prefix_str, guint32 *number)
 int
 ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
 {
-  return ic_rec_number_impl(conn, str, number, TRUE);
+  int ret_code;
+
+  ret_code= ic_rec_number_impl(conn, str, number, TRUE);
 }
 
 /**
@@ -710,7 +723,10 @@ ic_rec_int_number(IC_CONNECTION *conn,
 int
 ic_rec_empty_line(IC_CONNECTION *conn)
 {
-  return ic_rec_simple_str(conn, "");
+  int ret_code;
+
+  ret_code= ic_rec_simple_str(conn, "");
+  return ret_code;
 }
 
 /**
@@ -794,7 +810,7 @@ ic_send_with_cr_composed(IC_CONNECTION *conn,
   {
     len= strlen(buf[i]);
     memcpy(local_buf + local_pos, buf[i], len);
-    local_buf[local_pos]= SPACE_CHAR;
+    local_buf[local_pos + len]= SPACE_CHAR;
     local_pos+= (len + 1);
   }
   local_buf[local_pos - 1]= 0;
