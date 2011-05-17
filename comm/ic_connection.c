@@ -91,7 +91,7 @@ check_for_data_on_connection(IC_CONNECTION *ext_conn)
     timeout_in_ms= 1;
   while (timeout_in_ms)
   {
-    if (ic_get_stop_flag())
+    if (ic_tp_get_stop_flag())
       return TRUE;
     time_out= IC_MIN(timeout_in_ms, 1000);
     timeout_in_ms-= time_out;
@@ -459,7 +459,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
     time_out.tv_usec= 0;
     time_out.tv_sec= 1; /* Timeout is 1 second */
 
-    if (ic_get_stop_flag())
+    if (ic_tp_get_stop_flag())
       return IC_ERROR_APPLICATION_STOPPED;
     FD_ZERO(&select_set);
     FD_SET(conn->listen_sockfd, &select_set);
@@ -806,7 +806,7 @@ renew_connect:
       still waiting for a successful connect.
     */
     ic_close_socket(sockfd);
-    if (ic_get_stop_flag())
+    if (ic_tp_get_stop_flag())
       return IC_ERROR_APPLICATION_STOPPED;
     timer++;
     if (conn->timeout_func &&

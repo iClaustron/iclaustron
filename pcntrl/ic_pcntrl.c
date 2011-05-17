@@ -564,6 +564,8 @@ run_unit_test(gpointer data)
       (ret_code= test_disk_info(conn)))
     goto error;
   /* When running unit test we're done after completing tests */
+  ic_printf("Unit test passed successfully");
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Unit test passed successfully"));
 error:
   if (conn)
     conn->conn_op.ic_free_connection(conn);
@@ -2414,7 +2416,11 @@ run_command_handler(gpointer data)
     }
   }
   if (ret_code)
+  {
     ic_print_error(ret_code);
+    DEBUG_PRINT(PROGRAM_LEVEL,
+      ("Command handler exit, error %d", ret_code));
+  }
   conn->conn_op.ic_free_connection(conn);
   tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
@@ -2462,6 +2468,8 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
       if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       {
         ic_printf("Error %d received in accept connection", ret_code);
+        DEBUG_PRINT(COMM_LEVEL, ("Error %d received in accept connection",
+                                 ret_code));
         break;
       }
       if (!(fork_conn= 
@@ -2469,6 +2477,9 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                         FALSE)))  /* No mutex */
       {
         ic_printf("Error %d received in fork accepted connection", ret_code);
+        DEBUG_PRINT(COMM_LEVEL,
+                    ("Error %d received in forking accepted connection",
+                     ret_code));
         break;
       }
       /*
@@ -2483,12 +2494,15 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                                       FALSE))
       {
         ic_printf("Failed to create thread after forking accept connection");
+        DEBUG_PRINT(COMM_LEVEL,
+          ("Failed to create thread after forking accepted connection"));
         fork_conn->conn_op.ic_free_connection(fork_conn);
         break;
       }
     } while (0);
-  } while (!ic_get_stop_flag());
+  } while (!ic_tp_get_stop_flag());
   ic_printf("iClaustron Process Controller was stopped");
+  DEBUG_PRINT(PROGRAM_LEVEL, ("iClaustron Process Controller was stopped"));
   conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_INT(0);
 }

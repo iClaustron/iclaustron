@@ -189,4 +189,11 @@ struct ic_threadpool_state
 
 IC_THREADPOOL_STATE*
 ic_create_threadpool(guint32 pool_size, gboolean use_internal_mutex);
+
+/* Get threadpool state from thread local storage */
+IC_THREADPOOL_STATE*
+ic_get_threadpool();
+
+gboolean
+ic_tp_get_stop_flag();
 #endif

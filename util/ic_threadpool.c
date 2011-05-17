@@ -20,6 +20,9 @@
 #include <ic_threadpool.h>
 #include "ic_threadpool_int.h"
 
+/* Key to thread local storage for thread pool */
+static GPrivate *thread_priv= NULL;
+
 static void check_threads(IC_THREADPOOL_STATE *ext_tp_state);
 static gboolean thread_startup_done(IC_THREAD_STATE *ext_thread_state);
 static void join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id);
@@ -538,6 +541,7 @@ thread_started(IC_THREAD_STATE *ext_thread_state)
   ic_mutex_lock(thread_state->mutex);
   thread_state->started= TRUE;
   ic_mutex_unlock(thread_state->mutex);
+  g_private_set(thread_priv, (void*)thread_state->tp_state);
 }
 
 void
@@ -618,8 +622,13 @@ ic_create_threadpool(guint32 pool_size,
   guint32 thread_state_size, i;
   IC_INT_THREAD_STATE *thread_state;
   IC_INT_THREADPOOL_STATE *tp_state;
-
   DEBUG_ENTRY("ic_create_threadpool");
+
+  if (!thread_priv)
+  {
+    /* Create thread local storage environment for thread pool */
+    ic_require(thread_priv= g_private_new(NULL));
+  }
   if (!(tp_state= (IC_INT_THREADPOOL_STATE*)
         ic_calloc(sizeof(IC_INT_THREADPOOL_STATE))))
     DEBUG_RETURN_PTR(NULL);
@@ -699,4 +708,29 @@ ic_create_threadpool(guint32 pool_size,
 mem_alloc_error:
   free_threadpool(tp_state);
   DEBUG_RETURN_PTR(NULL);
+}
+
+/**
+  This method is used to retrieve the threadpool state variable
+  from thread local storage.
+*/
+IC_THREADPOOL_STATE*
+ic_get_threadpool()
+{
+  IC_THREADPOOL_STATE *tp_state;
+  tp_state= (IC_THREADPOOL_STATE*)g_private_get(thread_priv);
+  return tp_state;
+}
+
+gboolean
+ic_tp_get_stop_flag()
+{
+  IC_INT_THREADPOOL_STATE *tp_state;
+
+  if (ic_get_stop_flag())
+    return TRUE;
+  tp_state= (IC_INT_THREADPOOL_STATE*)ic_get_threadpool();
+  if (tp_state)
+    return (gboolean)tp_state->stop_flag;
+  return FALSE;
 }
