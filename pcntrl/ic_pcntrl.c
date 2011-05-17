@@ -2100,7 +2100,6 @@ clean_process_hash(gboolean stop_processes)
       {
         pc_find.key= pc_start->key;
         ic_assert(pc_start->kill_ongoing == FALSE);
-        ic_assert(pc_start->pid != 0);
         ic_mutex_unlock(pc_hash_mutex);
         error= delete_process(&pc_find, FALSE);
         if (error)
@@ -2450,7 +2449,10 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                              TRUE);
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
   if (ret_code)
+  {
+    conn->conn_op.ic_free_connection(conn);
     DEBUG_RETURN_INT(ret_code);
+  }
   do
   {
     do
@@ -2597,6 +2599,7 @@ int main(int argc, char *argv[])
   */
   ret_code= start_connection_loop(tp_state);
 error:
+  ic_set_stop_flag();
   if (tp_state)
     tp_state->tp_ops.ic_threadpool_stop(tp_state);
   clean_process_hash(shutdown_processes_flag);
