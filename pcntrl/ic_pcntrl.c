@@ -200,21 +200,32 @@ error:
 
 /**
   Test starting an ic_csd process which is already started, this function
-  should always return with an appropriate error message.
+  should always return with an appropriate message.
 
   @parameter conn        IN: The connection to the process controller
 */
 static int test_unsuccessful_start(IC_CONNECTION *conn)
 {
   int ret_code;
+  guint32 pid;
   DEBUG_ENTRY("test_unsuccessful_start");
 
   ic_printf("Testing unsuccessful start of ic_csd");
   if ((ret_code= send_start_cluster_server(conn)))
     goto error;
-  if ((ret_code= receive_error_message(conn)))
+  if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
+  {
+    /* Not ok, expect error message instead */
+    if ((ret_code= receive_error_message(conn)))
+      goto error;
+    DEBUG_RETURN_INT(1);
+  }
+  if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
+      (ret_code= ic_rec_simple_str(conn, ic_process_already_started_str)) ||
+      (ret_code= ic_rec_empty_line(conn)))
     goto error;
-  ic_printf("Error message was expected here");
+  ic_printf("Process already started, pid %u", pid);
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Process already started, pid = %u", pid));
   DEBUG_RETURN_INT(0);
 
 error:
@@ -675,6 +686,30 @@ send_ok_pid_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
 }
 
 /**
+  Send a protocol line with the message:
+  Ok<CR>pid: <pid_number><CR>Process already started<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+  @parameter pid               IN:  The pid of the process
+
+  @note
+    This message is sent as a positive response to the start message
+*/
+static int
+send_ok_pid_started_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
+{
+  int error;
+  DEBUG_ENTRY("send_ok_pid_started_reply");
+
+  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
+      (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
+      (error= ic_send_with_cr(conn, ic_process_already_started_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
   Send the protocol message describing one process under our control
   describing its key, program, version, start time, pid and the
   number of parameters and the start parameters.
@@ -994,7 +1029,7 @@ end:
   @parameter pc_start       IN: The data structure describing the process
 */
 static int
-insert_process(IC_PC_START *pc_start)
+insert_process(IC_PC_START *pc_start, IC_PC_START **pc_start_hash)
 {
   IC_PC_START *pc_start_found;
   guint64 prev_start_id= 0;
@@ -1018,6 +1053,7 @@ try_again:
   if ((pc_start_found= (IC_PC_START*)
        ic_hashtable_search(glob_pc_hash, (void*)pc_start)))
   {
+    *pc_start_hash= pc_start_found;
     /*
       We found a process with the same key, it could be a process which
       has already stopped so we first verify that the process is still
@@ -1121,7 +1157,7 @@ handle_start(IC_CONNECTION *conn)
   guint32 i;
   IC_PID_TYPE pid;
   IC_STRING working_dir;
-  IC_PC_START *pc_start, *pc_start_check;
+  IC_PC_START *pc_start, *pc_start_check, *pc_start_hash;
   DEBUG_ENTRY("handle_start");
 
   IC_INIT_STRING(&working_dir, NULL, 0, FALSE);
@@ -1142,7 +1178,7 @@ handle_start(IC_CONNECTION *conn)
   }
 
   /* Book the process in the hash table */
-  if ((ret_code= insert_process(pc_start)))
+  if ((ret_code= insert_process(pc_start, &pc_start_hash)))
     goto error;
   /*
     Create the working directory which is the base directory
@@ -1200,8 +1236,11 @@ error:
   if (working_dir.str)
     ic_free(working_dir.str);
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
-  send_error_reply(conn, 
-                   ic_get_error_message(ret_code));
+  if (ret_code == IC_ERROR_PC_PROCESS_ALREADY_RUNNING)
+    ret_code= send_ok_pid_started_reply(conn, pc_start_hash->pid);
+  else
+    send_error_reply(conn, 
+                     ic_get_error_message(ret_code));
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -2178,6 +2217,11 @@ clean_process_hash(gboolean stop_processes)
   Line 3: Empty line
 
   Example: ok\npid: 1234\n\n
+
+  In the special case where the process is already running we report this
+  as a success with an extra line added before the empty line that says:
+  Line 3: Process already started
+  Line 4: Empty Line
 
   The unsuccessful response is:
   Line 1: Error

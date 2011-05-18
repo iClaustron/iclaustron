@@ -54,6 +54,7 @@ const gchar *ic_no_disk_info_available_str= "no disk info available";
 
 /* Messages used by Start/Stop/Kill/List process protocols */
 const gchar *ic_ok_str= "Ok";
+const gchar *ic_process_already_started_str= "Process already started";
 const gchar *ic_version_str= "version:";
 const gchar *ic_grid_str= "grid:";
 const gchar *ic_cluster_str= "cluster:";

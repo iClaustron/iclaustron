@@ -672,6 +672,7 @@ ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
   int ret_code;
 
   ret_code= ic_rec_number_impl(conn, str, number, TRUE);
+  return ret_code;
 }
 
 /**

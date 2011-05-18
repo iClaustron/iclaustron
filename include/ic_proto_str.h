@@ -18,6 +18,7 @@
 
 /* Strings used in MGM API protocols */
 extern const gchar *ic_ok_str;
+extern const gchar *ic_process_already_started_str;
 extern const gchar *ic_version_str;
 extern const gchar *ic_grid_str;
 extern const gchar *ic_cluster_str;
