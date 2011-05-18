@@ -18,11 +18,11 @@
 
 DTRACE= @DTRACE@
 DTRACEFLAGS= @DTRACEFLAGS@
-DTRACEFILES= ic_protocol_support.o ic_base64.o
+DTRACEFILES= ic_protocol_support.o ic_base64.o ic_pcntrl_proto.o
 
 lib_LTLIBRARIES = libic_proto.la
 
-libic_proto_la_SOURCES = ic_base64.c ic_proto_str.c
+libic_proto_la_SOURCES = ic_base64.c ic_proto_str.c ic_pcntrl_proto.c
 
 libic_proto_la_LIBADD = $(LDADD) \
 				../port/libic_port.la \

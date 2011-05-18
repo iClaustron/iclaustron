@@ -1491,10 +1491,24 @@ int ic_get_cpu_info(guint32 *num_cpus,
                     guint32 *cpus_per_core,
                     IC_CPU_INFO **cpu_info)
 {
+  IC_CPU_INFO *loc_cpu_info;
+
+  loc_cpu_info= NULL;
   *num_cpus= 0;
   *num_numa_nodes= 0;
   *cpus_per_core= 0;
   *cpu_info= NULL;
+#ifdef WITH_UNIT_TEST
+  /* We fake something to test the protocol */
+
+  if ((loc_cpu_info= (IC_CPU_INFO*)ic_malloc(sizeof(IC_CPU_INFO))))
+    return 0; /* Report no info available in this case */
+  *num_cpus= 1;
+  loc_cpu_info->cpu_id= 0;
+  loc_cpu_info->numa_node_id= 0;
+  loc_cpu_info->core_id= 0;
+  *cpu_info= loc_cpu_info;
+#endif
   return 0;
 }
 

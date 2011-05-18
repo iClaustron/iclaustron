@@ -24,6 +24,7 @@
 #include <ic_dyn_array.h>
 #include <ic_protocol_support.h>
 #include <ic_proto_str.h>
+#include <ic_pcntrl_proto.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
 
@@ -88,17 +89,68 @@ static gboolean shutdown_processes_flag= FALSE;
 #ifdef WITH_UNIT_TEST
 static gchar *ic_csd_program_str= "program: ic_csd";
 static gchar *version_str= "version: iclaustron-0.0.1";
-static gchar *not_my_grid= "grid: not_my_grid";
-static gchar *my_grid= "grid: my_grid";
-static gchar *my_cluster= "cluster: my_cluster";
-static gchar *my_csd_node= "node: my_csd_node";
+static gchar *not_my_grid= "not_my_grid";
+static gchar *my_grid= "my_grid";
+static gchar *my_cluster= "my_cluster";
+static gchar *my_csd_node= "my_csd_node";
 static gchar *autorestart_false_str= "autorestart: false";
 static gchar *num_parameters_str= "num parameters: 2";
 static gchar *node_parameter_str= "parameter: --node_id";
 static gchar *node_id_parameter_str= "parameter: 1";
 
-static int send_list_stop_reply(IC_CONNECTION *conn);
-static int send_list_next_reply(IC_CONNECTION *conn);
+/**
+  Send a protocol line with the message:
+  get memory info<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_mem_info_req(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("send_mem_info_req");
+
+  if ((error= ic_send_with_cr(conn, ic_get_mem_info_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a protocol line with the message:
+  get disk info<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_disk_info_req(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("send_disk_info_req");
+
+  if ((error= ic_send_with_cr(conn, ic_get_disk_info_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a protocol line with the message:
+  get cpu info<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+send_cpu_info_req(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("send_cpu_info_req");
+
+  if ((error= ic_send_with_cr(conn, ic_get_cpu_info_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
 
 /**
   Start a new client socket connection
@@ -149,22 +201,21 @@ send_start_cluster_server(IC_CONNECTION *conn)
   DEBUG_RETURN_INT(0);
 }
 
-static int receive_error_message(IC_CONNECTION *conn)
+static int
+receive_error_message(IC_CONNECTION *conn)
 {
-  gchar *read_buf;
-  guint32 read_size;
   int ret_code;
   gchar print_buf[ERROR_MESSAGE_SIZE];
   DEBUG_ENTRY("receive_error_message");
 
-  if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
-      (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-      (memcpy(print_buf, read_buf, read_size), FALSE) ||
-      (ret_code= ic_rec_empty_line(conn)))
-    DEBUG_RETURN_INT(ret_code);
-  print_buf[read_size]= (gchar)0;
+  if ((ret_code= ic_receive_error_message(conn, print_buf)))
+    goto error;
   ic_printf("Error message: %s from start ic_csd", print_buf);
   DEBUG_RETURN_INT(0);
+
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -176,12 +227,15 @@ static int test_successful_start(IC_CONNECTION *conn)
 {
   int ret_code;
   guint32 pid;
+  gboolean found= FALSE;
   DEBUG_ENTRY("test_successful_start");
 
   ic_printf("Testing successful start of ic_csd");
   if ((ret_code= send_start_cluster_server(conn)))
     goto error;
-  if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
+    goto error;
+  if (!found)
   {
     /* Not ok, expect error message instead */
     if ((ret_code= receive_error_message(conn)))
@@ -208,12 +262,15 @@ static int test_unsuccessful_start(IC_CONNECTION *conn)
 {
   int ret_code;
   guint32 pid;
+  gboolean found= FALSE;
   DEBUG_ENTRY("test_unsuccessful_start");
 
   ic_printf("Testing unsuccessful start of ic_csd");
   if ((ret_code= send_start_cluster_server(conn)))
     goto error;
-  if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
+    goto error;
+  if (!found)
   {
     /* Not ok, expect error message instead */
     if ((ret_code= receive_error_message(conn)))
@@ -279,51 +336,6 @@ error:
 }
 
 /**
-  Receive list stop followed by end (empty line).
-
-  @parameter conn              IN:  The connection from the client
-*/
-static int
-rec_list_stop(IC_CONNECTION *conn)
-{
-  int ret_code;
-  DEBUG_ENTRY("rec_list_stop");
-
-  if ((ret_code= ic_rec_simple_str(conn, ic_list_stop_str)) ||
-      (ret_code= ic_rec_empty_line(conn)))
-    DEBUG_RETURN_INT(ret_code);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
-  Handle stop of list by either sending list next followed by
-  receiving list stop or by sending list stop and also here
-  receiving list stop.
-
-  @parameter conn          IN: The connection to the process controller
-  @parameter stop_flag     Flag indicating whether to use list stop or
-                           list next.
-*/
-static int
-handle_list_stop(IC_CONNECTION *conn, gboolean stop_flag)
-{
-  int ret_code;
-  DEBUG_ENTRY("handle_list_stop");
-
-  if (stop_flag)
-  {
-    if ((ret_code= send_list_stop_reply(conn)))
-      DEBUG_RETURN_INT(ret_code);
-  }
-  else
-  {
-    if ((ret_code= send_list_next_reply(conn)))
-      DEBUG_RETURN_INT(ret_code);
-  }
-  DEBUG_RETURN_INT(rec_list_stop(conn));
-}
-
-/**
   Send a protocol line containing:
   list full<CR><CR>
 
@@ -332,12 +344,15 @@ handle_list_stop(IC_CONNECTION *conn, gboolean stop_flag)
 static int
 send_list_full(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("send_list_full");
 
-  if ((error= ic_send_with_cr(conn, ic_list_full_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_list_node(conn,
+                                   NULL,
+                                   NULL,
+                                   NULL,
+                                   TRUE)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -352,9 +367,11 @@ send_list_grid(IC_CONNECTION *conn)
   int ret_code;
   DEBUG_ENTRY("send_list_grid");
 
-  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
-      (ret_code= ic_send_with_cr(conn, my_grid)) ||
-      (ret_code= ic_send_empty_line(conn)))
+  if ((ret_code= ic_send_list_node(conn,
+                                   my_grid,
+                                   NULL,
+                                   NULL,
+                                   FALSE)))
     DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
@@ -370,9 +387,11 @@ send_list_unsuccessful_grid(IC_CONNECTION *conn)
   int ret_code;
   DEBUG_ENTRY("send_list_unsuccessful_grid");
 
-  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
-      (ret_code= ic_send_with_cr(conn, not_my_grid)) ||
-      (ret_code= ic_send_empty_line(conn)))
+  if ((ret_code= ic_send_list_node(conn,
+                                   not_my_grid,
+                                   NULL,
+                                   NULL,
+                                   FALSE)))
     DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
@@ -388,16 +407,17 @@ send_list_cluster(IC_CONNECTION *conn)
   int ret_code;
   DEBUG_ENTRY("send_list_cluster");
 
-  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
-      (ret_code= ic_send_with_cr(conn, my_grid)) ||
-      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
-      (ret_code= ic_send_empty_line(conn)))
+  if ((ret_code= ic_send_list_node(conn,
+                                   my_grid,
+                                   my_cluster,
+                                   NULL,
+                                   FALSE)))
     DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
 /**
-  Send a command to list my node
+  Send a command to list my node within my cluster
 
   @parameter conn              IN:  The connection from the client
 */
@@ -407,13 +427,81 @@ send_list_node(IC_CONNECTION *conn)
   int ret_code;
   DEBUG_ENTRY("send_list_node");
 
-  if ((ret_code= ic_send_with_cr(conn, ic_list_str)) ||
-      (ret_code= ic_send_with_cr(conn, my_grid)) ||
-      (ret_code= ic_send_with_cr(conn, my_cluster)) ||
-      (ret_code= ic_send_with_cr(conn, my_csd_node)) ||
-      (ret_code= ic_send_empty_line(conn)))
+  if ((ret_code= ic_send_list_node(conn,
+                                   my_grid,
+                                   my_cluster,
+                                   my_csd_node,
+                                   FALSE)))
     DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
+}
+
+/**
+  Receive CPU info reply
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+rec_cpu_info_reply(IC_CONNECTION *conn)
+{
+  int ret_code;
+  guint32 num_cpus, num_numa_nodes, num_cpus_per_core;
+  gboolean found= FALSE;
+  DEBUG_ENTRY("rec_cpu_info_reply");
+
+  if ((ret_code= ic_rec_simple_str_opt(conn,
+                                       ic_no_cpu_info_available_str,
+                                       &found)))
+    goto error;
+  if (!found)
+  {
+    if ((ret_code= ic_rec_number(conn,
+                                 ic_number_of_cpus_str,
+                                 &num_cpus)) ||
+        (ret_code= ic_rec_number(conn,
+                                 ic_number_of_numa_nodes_str,
+                                 &num_numa_nodes)) ||
+        (ret_code= ic_rec_number(conn,
+                                 ic_number_of_cpus_per_core_str,
+                                 &num_cpus_per_core)))
+      goto error;
+  }
+  else
+  {
+    /* No CPU info available */
+    if ((ret_code= ic_rec_empty_line(conn)))
+      goto error;
+    ic_printf("No CPU info available");
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/**
+  Receive memory info reply
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+rec_mem_info_reply(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
+}
+
+/**
+  Receive disk info reply
+
+  @parameter conn              IN:  The connection from the client
+*/
+static int
+rec_disk_info_reply(IC_CONNECTION *conn)
+{
+  (void)conn;
+  return 0;
 }
 
 /**
@@ -486,26 +574,26 @@ static int test_list(IC_CONNECTION *conn, gboolean stop_flag)
   ic_printf("Testing list full of processes in ic_pcntrld");
   if ((ret_code= send_list_full(conn)) ||
       (ret_code= rec_list_node_full(conn)) ||
-      (ret_code= handle_list_stop(conn, stop_flag)))
+      (ret_code= ic_handle_list_stop(conn, stop_flag)))
     goto error;
   ic_printf("Testing list of processes from grid in ic_pcntrld");
   if ((ret_code= send_list_grid(conn)) ||
       (ret_code= rec_list_node(conn, TRUE)) ||
-      (ret_code= handle_list_stop(conn, stop_flag)))
+      (ret_code= ic_handle_list_stop(conn, stop_flag)))
     goto error;
   ic_printf("Testing list of processes from cluster in ic_pcntrld");
   if ((ret_code= send_list_cluster(conn)) ||
       (ret_code= rec_list_node(conn, TRUE)) ||
-      (ret_code= handle_list_stop(conn, stop_flag)))
+      (ret_code= ic_handle_list_stop(conn, stop_flag)))
     goto error;
   ic_printf("Testing list of processes from node in ic_pcntrld");
   if ((ret_code= send_list_node(conn)) ||
       (ret_code= rec_list_node(conn, TRUE)) ||
-      (ret_code= handle_list_stop(conn, stop_flag)))
+      (ret_code= ic_handle_list_stop(conn, stop_flag)))
     goto error;
   ic_printf("Testing unsuccessful search from grid in ic_pcntrld");
   if ((ret_code= send_list_unsuccessful_grid(conn)) ||
-      (ret_code= rec_list_stop(conn)))
+      (ret_code= ic_rec_list_stop(conn)))
     goto error;
   DEBUG_RETURN_INT(0);
 
@@ -523,23 +611,50 @@ static int test_copy_files(IC_CONNECTION *conn)
 
 static int test_cpu_info(IC_CONNECTION *conn)
 {
+  int ret_code;
   DEBUG_ENTRY("test_cpu_info");
-  (void)conn;
+
+  ic_printf("Testing CPU info protocol");
+  if ((ret_code= send_cpu_info_req(conn)) ||
+      (ret_code= rec_cpu_info_reply(conn)))
+    goto error;
   DEBUG_RETURN_INT(0);
+
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int test_mem_info(IC_CONNECTION *conn)
 {
+  int ret_code;
   DEBUG_ENTRY("test_mem_info");
-  (void)conn;
+
+  ic_printf("Testing memory info protocol");
+  if ((ret_code= send_mem_info_req(conn)) ||
+      (ret_code= rec_mem_info_reply(conn)))
+    goto error;
   DEBUG_RETURN_INT(0);
+
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int test_disk_info(IC_CONNECTION *conn)
 {
+  int ret_code;
   DEBUG_ENTRY("test_disk_info");
-  (void)conn;
+
+  ic_printf("Testing disk info protocol");
+  if ((ret_code= send_disk_info_req(conn)) ||
+      (ret_code= rec_disk_info_reply(conn)))
+    goto error;
   DEBUG_RETURN_INT(0);
+
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -642,74 +757,6 @@ send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
 }
 
 /**
-  Send a protocol line with the message:
-  Ok<CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-
-  @note
-    This message is sent as a positive response to the stop message
-*/
-static int
-send_ok_reply(IC_CONNECTION *conn)
-{
-  int error;
-  DEBUG_ENTRY("send_ok_reply");
-
-  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
-  Send a protocol line with the message:
-  Ok<CR>pid: <pid_number><CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-  @parameter pid               IN:  The pid of the process
-
-  @note
-    This message is sent as a positive response to the start message
-*/
-static int
-send_ok_pid_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
-{
-  int error;
-  DEBUG_ENTRY("send_ok_pid_reply");
-
-  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
-  Send a protocol line with the message:
-  Ok<CR>pid: <pid_number><CR>Process already started<CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-  @parameter pid               IN:  The pid of the process
-
-  @note
-    This message is sent as a positive response to the start message
-*/
-static int
-send_ok_pid_started_reply(IC_CONNECTION *conn, IC_PID_TYPE pid)
-{
-  int error;
-  DEBUG_ENTRY("send_ok_pid_started_reply");
-
-  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
-      (error= ic_send_with_cr(conn, ic_process_already_started_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
   Send the protocol message describing one process under our control
   describing its key, program, version, start time, pid and the
   number of parameters and the start parameters.
@@ -765,42 +812,6 @@ send_list_entry(IC_CONNECTION *conn,
     }
   }
   if ((error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
-  Send a protocol line containing:
-  list stop<CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-*/
-static int
-send_list_stop_reply(IC_CONNECTION *conn)
-{
-  int error;
-  DEBUG_ENTRY("send_list_stop_reply");
-
-  if ((error= ic_send_with_cr(conn, ic_list_stop_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
-  Send a protocol line containing:
-  list next<CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-*/
-static int
-send_list_next_reply(IC_CONNECTION *conn)
-{
-  int error;
-  DEBUG_ENTRY("send_list_next_reply");
-
-  if ((error= ic_send_with_cr(conn, ic_list_next_str)) ||
-      (error= ic_send_empty_line(conn)))
     DEBUG_RETURN_INT(error);
   DEBUG_RETURN_INT(0);
 }
@@ -1220,7 +1231,7 @@ handle_start(IC_CONNECTION *conn)
   ic_mutex_unlock(pc_hash_mutex);
 
   DEBUG_PRINT(PROGRAM_LEVEL, ("New process with pid %d started", (int)pid));
-  ret_code= send_ok_pid_reply(conn, pc_start->pid);
+  ret_code= ic_send_ok_pid(conn, pc_start->pid);
   DEBUG_RETURN_INT(ret_code);
 
 late_error:
@@ -1237,7 +1248,7 @@ error:
     ic_free(working_dir.str);
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
   if (ret_code == IC_ERROR_PC_PROCESS_ALREADY_RUNNING)
-    ret_code= send_ok_pid_started_reply(conn, pc_start_hash->pid);
+    ret_code= ic_send_ok_pid_started(conn, pc_start_hash->pid);
   else
     send_error_reply(conn, 
                      ic_get_error_message(ret_code));
@@ -1471,7 +1482,7 @@ handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
   error= delete_process(pc_find, kill_flag);
   pc_find->mc_ptr->mc_ops.ic_mc_free(pc_find->mc_ptr);
   if (!error)
-    DEBUG_RETURN_INT(send_ok_reply(conn));
+    DEBUG_RETURN_INT(ic_send_ok(conn));
 error:
   send_error_reply(conn,
                    ic_get_error_message(error));
@@ -1729,7 +1740,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
     loop_pc_start= loop_pc_start->next_pc_start;
   }
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  DEBUG_RETURN_INT(send_list_stop_reply(conn));
+  DEBUG_RETURN_INT(ic_send_list_stop(conn));
 
 protocol_error:
   error= IC_PROTOCOL_ERROR;
@@ -1948,14 +1959,15 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   guint32 cpus_per_core;
   guint32 len;
   guint32 i;
-  IC_CPU_INFO *cpu_info;
+  IC_CPU_INFO *cpu_info= NULL;
   const gchar *buf_array[6];
   gchar cpu_num_str[IC_NUMBER_SIZE];
   gchar numa_node_str[IC_NUMBER_SIZE];
   gchar core_num_str[IC_NUMBER_SIZE];
+  DEBUG_ENTRY("handle_get_cpu_info");
 
   if ((error= ic_rec_empty_line(conn)))
-    return error;
+    goto error;
 
   if ((error= ic_get_cpu_info(&num_cpus,
                               &num_numa_nodes,
@@ -1965,8 +1977,8 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   {
     if ((error= ic_send_with_cr(conn, ic_no_cpu_info_available_str)) ||
         (error= ic_send_empty_line(conn)))
-      return error;
-    return 0;
+      goto error;
+    goto error;
   }
 
   if ((error= ic_send_with_cr_with_num(conn, ic_number_of_cpus_str,
@@ -1996,8 +2008,9 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   error= ic_send_empty_line(conn);
 
 error:
-  ic_free((gchar*)cpu_info);
-  return error;
+  if (cpu_info)
+    ic_free((gchar*)cpu_info);
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -2032,8 +2045,8 @@ handle_get_mem_info(IC_CONNECTION *conn)
     return 0;
   }
   if ((error= ic_send_with_cr_with_num(conn,
-                                       ic_number_of_mbyte_user_memory_str,
-                                       (guint64)(total_memory_size/(1024 * 1024)))) ||
+                            ic_number_of_mbyte_user_memory_str,
+                            (guint64)(total_memory_size/(1024 * 1024)))) ||
       (error= ic_send_with_cr_with_num(conn, ic_number_of_numa_nodes_str,
                                        (guint64)num_numa_nodes)))
     goto error;

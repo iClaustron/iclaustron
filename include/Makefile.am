@@ -41,6 +41,7 @@ include_HEADERS = ic_apic.h \
 noinst_HEADERS    = ic_base64.h \
                     ic_proto_str.h \
                     ic_protocol_support.h \
+                    ic_pcntrl_proto.h \
                     ic_config_reader.h \
                     ic_sock_buf.h \
                     ic_hashtable_itr.h \

@@ -327,6 +327,7 @@ ic_printf(const char *format,...)
   vsprintf_s(buf, sizeof(buf), format, args);
 #endif
   printf("%s\n", buf);
+  DEBUG_PRINT(PROGRAM_LEVEL, ("%s", buf));
   fflush(stdout);
   va_end(args);
 }

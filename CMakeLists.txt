@@ -332,53 +332,94 @@ configure_file (
   )
 
 #Build library for iClaustron portability layer
-add_library(ic_port STATIC port/ic_port.c)
+add_library(ic_port STATIC
+            port/ic_port.c)
 
 #Build library for iClaustron utility functions
-add_library(ic_util STATIC util/ic_hashtable.c util/ic_hashtable_itr.c
-            util/ic_util.c util/ic_mc.c util/ic_dyn_array.c
-            util/ic_mc_int.h util/ic_dyn_array_int.h
-            util/ic_threadpool_int.h util/ic_threadpool.c
-            util/ic_debug.c util/ic_err.c util/ic_string.c
-            util/ic_bitmap.c util/ic_config_reader.c
-            util/ic_parse_connectstring.c util/ic_lex_support.c
+add_library(ic_util STATIC
+            util/ic_hashtable.c
+            util/ic_hashtable_itr.c
+            util/ic_util.c
+            util/ic_mc.c
+            util/ic_dyn_array.c
+            util/ic_mc_int.h
+            util/ic_dyn_array_int.h
+            util/ic_threadpool_int.h
+            util/ic_threadpool.c
+            util/ic_debug.c
+            util/ic_err.c
+            util/ic_string.c
+            util/ic_bitmap.c
+            util/ic_config_reader.c
+            util/ic_parse_connectstring.c
+            util/ic_lex_support.c
             util/ic_readline.c
-            include/ic_hashtable_itr.h include/ic_hashtable_private.h
-            include/ic_base64.h include/ic_config_reader.h
-            include/ic_protocol_support.h include/ic_sock_buf.h
-            include/ic_lex_support.h include/ic_readline.h)
+            include/ic_hashtable_itr.h
+            include/ic_hashtable_private.h
+            include/ic_base64.h
+            include/ic_config_reader.h
+            include/ic_sock_buf.h
+            include/ic_lex_support.h
+            include/ic_readline.h)
 target_link_libraries(ic_util ic_port)
 
 #Build library for communication utilities
-add_library(ic_comm STATIC comm/ic_connection.c comm/ic_sock_buf.c
-            comm/ic_poll_set.c comm/ic_poll_set_int.h)
+add_library(ic_comm STATIC
+            comm/ic_connection.c
+            comm/ic_sock_buf.c
+            comm/ic_poll_set.c
+            comm/ic_poll_set_int.h)
 target_link_libraries(ic_comm ic_port ic_util)
 
 #Build library for protocol support utilities
-add_library(ic_proto STATIC protocol/ic_protocol_support.c protocol/ic_base64.c
+add_library(ic_proto STATIC
+            protocol/ic_protocol_support.c
+            protocol/ic_base64.c
+            protocol/ic_pcntrl_proto.c
+            protocol/ic_proto_str.c
             include/ic_proto_str.h
-            include/ic_protocol_support.h include/ic_base64.h)
+            include/ic_pcntrl_proto.h
+            include/ic_protocol_support.h
+            include/ic_base64.h)
 target_link_libraries(ic_proto ic_port ic_util ic_comm)
 
 #Build library to Cluster Server API and Data Server API
-add_library(ic_api STATIC api/ic_apic_impl.c api/ic_apid_impl.c
-            api/ic_apid_global.ic api/ic_apid_common.ic
-            api/ic_apid_heartbeat.ic api/ic_apid_adaptive_send.ic
-            api/ic_apid_send_message.ic api/ic_apid_send_thread.ic
-            api/ic_apid_handle_messages.ic api/ic_apid_exec_message.ic
-            api/ic_apid_rec_thread.ic api/ic_apid_start.ic
-            api/ic_apid_range.ic api/ic_apid_where.ic
-            api/ic_apid_cond_assign.ic api/ic_apid_op.ic
-            api/ic_apid_error.ic api/ic_apid_conn.ic
-            api/ic_apid_table.ic api/ic_apid_tablespace.ic
+add_library(ic_api STATIC
+            api/ic_apic_impl.c
+            api/ic_apid_impl.c
+            api/ic_apid_global.ic
+            api/ic_apid_common.ic
+            api/ic_apid_heartbeat.ic
+            api/ic_apid_adaptive_send.ic
+            api/ic_apid_send_message.ic
+            api/ic_apid_send_thread.ic
+            api/ic_apid_handle_messages.ic
+            api/ic_apid_exec_message.ic
+            api/ic_apid_rec_thread.ic
+            api/ic_apid_start.ic
+            api/ic_apid_range.ic
+            api/ic_apid_where.ic
+            api/ic_apid_cond_assign.ic
+            api/ic_apid_op.ic
+            api/ic_apid_error.ic
+            api/ic_apid_conn.ic
+            api/ic_apid_table.ic
+            api/ic_apid_tablespace.ic
             api/ic_apic.ic
-            api/ic_apic_conf_param.ic api/ic_apic_conf_read_transl.ic
-            api/ic_apic_proto_supp.ic api/ic_apic_conf_read_proto.ic
-            api/ic_apic_conf_reader.ic api/ic_apic_conf_writer.ic
-            api/ic_apic_grid_conf_reader.ic api/ic_apic_if.ic
-            api/ic_apic_run_cs.ic api/ic_apic_conf_net_read.ic
-            api/ic_apic_int.h api/ic_apid_int.h
-            api/ic_apid_impl.h api/ic_apid_static.h)
+            api/ic_apic_conf_param.ic
+            api/ic_apic_conf_read_transl.ic
+            api/ic_apic_proto_supp.ic
+            api/ic_apic_conf_read_proto.ic
+            api/ic_apic_conf_reader.ic
+            api/ic_apic_conf_writer.ic
+            api/ic_apic_grid_conf_reader.ic
+            api/ic_apic_if.ic
+            api/ic_apic_run_cs.ic
+            api/ic_apic_conf_net_read.ic
+            api/ic_apic_int.h
+            api/ic_apid_int.h
+            api/ic_apid_impl.h
+            api/ic_apid_static.h)
 target_link_libraries(ic_api ic_port ic_util ic_comm ic_proto)
 
 #install(TARGETS ic_api
