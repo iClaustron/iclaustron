@@ -46,7 +46,7 @@ void ic_set_debug(guint32 val)
 static void
 set_indent_buf(gchar *indent_buf, guint32 indent_level)
 {
-  memset(indent_buf, ' ', 2 * indent_level);
+  memset(indent_buf, SPACE_CHAR, 2 * indent_level);
   indent_buf[2 * indent_level]= 0;
 }
 

@@ -52,10 +52,11 @@ ic_print_buf(char *buf, guint32 size)
 int
 ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
 {
+  DEBUG_ENTRY("ic_check_buf");
   if ((read_size != (guint32)str_len) ||
       (memcmp(read_buf, str, str_len) != 0))
-    return TRUE;
-  return FALSE;
+    DEBUG_RETURN_INT(TRUE);
+  DEBUG_RETURN_INT(FALSE);
 }
 
 /**
@@ -384,8 +385,8 @@ ic_mc_rec_opt_string(IC_CONNECTION *conn,
 }
 
 /**
-  Receive a line with a predefined string followed by a stras part string
-  as part of a protocol line.
+  Receive a line with a predefined string followed by any string
+  as part of a protocol line. The strings are always separated by a comma.
 
   @parameter conn          IN:  The connection
   @parameter prefix_str    IN:  The predefined string (prescribed by protocol)
@@ -406,20 +407,48 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
   prefix_str_len= strlen(prefix_str);
   if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (read_size >= prefix_str_len &&
-        ic_check_buf(read_buf, prefix_str_len, prefix_str,
+    if (read_size < (prefix_str_len + 2) || 
+        read_buf[prefix_str_len] != SPACE_CHAR ||
+        ic_check_buf(read_buf,
+                     prefix_str_len,
+                     prefix_str,
                      prefix_str_len))
     {
+      /* Length must be prefix length + space char + at least 1 character */
       DEBUG_PRINT(CONFIG_LEVEL,
         ("Protocol error in waiting for %s", prefix_str));
       DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
     }
-    remaining_len= read_size - prefix_str_len;
-    memcpy(read_str, &read_buf[prefix_str_len], remaining_len);
+    remaining_len= read_size - (prefix_str_len + 1);
+    memcpy(read_str, &read_buf[prefix_str_len + 1], remaining_len);
     read_str[remaining_len]= 0;
     DEBUG_RETURN_INT(0);
   }
   DEBUG_RETURN_INT(error);
+}
+
+/**
+  Receive two comma separated strings
+
+  @parameter conn                IN:    The connection
+  @parameter first_str           IN:    The first string
+  @parameter second_str          IN:    The second string
+*/
+int
+ic_rec_two_strings(IC_CONNECTION *conn,
+                   const gchar *first_str,
+                   const gchar *second_str)
+{
+  int ret_code;
+  gchar buf[CONFIG_READ_BUF_SIZE];
+  size_t second_str_len= strlen(second_str);
+  DEBUG_ENTRY("ic_rec_two_strings");
+
+  if ((ret_code= ic_rec_string(conn, first_str, buf)))
+    DEBUG_RETURN_INT(ret_code);
+  if ((memcmp(second_str, buf, second_str_len) != 0))
+    DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+  DEBUG_RETURN_INT(0);
 }
 
 /**

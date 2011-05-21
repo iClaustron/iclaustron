@@ -232,3 +232,90 @@ ic_send_ok_pid_started(IC_CONNECTION *conn, IC_PID_TYPE pid)
   DEBUG_RETURN_INT(0);
 }
 
+/**
+  Send a protocol line with the message:
+  get memory info<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+int
+ic_send_mem_info_req(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("ic_send_mem_info_req");
+
+  if ((error= ic_send_with_cr(conn, ic_get_mem_info_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a protocol line with the message:
+  get disk info<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+int
+ic_send_disk_info_req(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("ic_send_disk_info_req");
+
+  if ((error= ic_send_with_cr(conn, ic_get_disk_info_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a protocol line with the message:
+  get cpu info<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+*/
+int
+ic_send_cpu_info_req(IC_CONNECTION *conn)
+{
+  int error;
+  DEBUG_ENTRY("ic_send_cpu_info_req");
+
+  if ((error= ic_send_with_cr(conn, ic_get_cpu_info_str)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a message to stop a node, can only stop one node at a time.
+
+  @parameter conn              The connection
+  @parameter grid_str          The grid in which to stop the node
+  @parameter cluster_str       The cluster in which to stop the node
+  @parameter node_str          The node which to stop
+*/
+int
+ic_send_stop_node(IC_CONNECTION *conn,
+                  const gchar *grid_str,
+                  const gchar *cluster_str,
+                  const gchar *node_str)
+{
+  int ret_code;
+  DEBUG_ENTRY("ic_send_stop_node");
+
+  /* Stop the Cluster Server */
+  if ((ret_code= ic_send_with_cr(conn, ic_stop_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_grid_str,
+                                             grid_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_cluster_str,
+                                             cluster_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_node_str,
+                                             node_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+

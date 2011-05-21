@@ -121,6 +121,8 @@ typedef struct ic_iovec IC_IOVEC;
 #define CONFIG_READ_BUF_SIZE 256
 #define IC_MAX_ERROR_STRING_SIZE 256
 #define COMMAND_READ_BUF_SIZE 2048
+#define IC_NUMBER_SIZE 32
+#define IC_IP_ADDRESS_SIZE 128
 
 #ifndef PTHREAD_STACK_MIN
 #define PTHREAD_STACK_MIN 64*1024
@@ -192,7 +194,6 @@ typedef struct ic_iovec IC_IOVEC;
 #define IC_MAX_INT_STRING 32
 #define IC_MAX_APID_NUM_THREADS 256
 
-#define IC_NUMBER_SIZE 32
 /* Define a number of constants used in various places */
 #define SPACE_CHAR (gchar)32
 #define CARRIAGE_RETURN (gchar)10
@@ -201,12 +202,11 @@ typedef struct ic_iovec IC_IOVEC;
 #define CMD_SEPARATOR (gchar)';'
 
 #if defined(HAVE_MEMSET)
-#define bzero(buf, bytes) ((void) memset(buf, 0, bytes))
 #define ic_zero(buf, bytes) ((void) memset(buf, 0, bytes))
 #else
+#define memset(buf, val, num_bytes) ic_memset(buf, val, bytes)
 #if defined(HAVE_BZERO) && !defined(HAVE_MEMSET)
 #define ic_zero(buf, num_bytes) ((void) bzero(buf, num_bytes))
-#define memset(buf, val, bytes)  ((void) bzero(buf, bytes))
 #endif
 #endif
 
@@ -222,7 +222,7 @@ typedef struct ic_iovec IC_IOVEC;
 
   IC_MAX(a,b)
     Return maximum of a and b
-
+it
   IC_DIFF(a, b)
     Return difference of a and b == | a - b | in mathematical terms
 */
@@ -237,7 +237,7 @@ typedef struct ic_iovec IC_IOVEC;
 #define ic_likely(a) a
 #define ic_unlikely(a) a
 
-/*
+/*it
   HEADER MODULE: iClaustron Initialise and End Functions
   ------------------------------------------------------
   This function is used by all iClaustron programs to read program parameters

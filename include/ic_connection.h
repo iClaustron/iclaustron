@@ -275,8 +275,8 @@ struct ic_connect_stat
     if it is connected, if it is the server or client endpoint and if we have
     a connect thread active
   */
-  gchar server_ip_addr_str[128];
-  gchar client_ip_addr_str[128];
+  gchar server_ip_addr_str[IC_IP_ADDRESS_SIZE];
+  gchar client_ip_addr_str[IC_IP_ADDRESS_SIZE];
   gchar *server_ip_addr;
   gchar *client_ip_addr;
   gboolean is_client_used;

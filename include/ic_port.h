@@ -200,4 +200,8 @@ int ic_get_mem_info(guint32 *num_numa_nodes,
 
 void ic_get_disk_info(gchar *directory_name,
                       guint64 *disk_space);
+
+#ifndef HAVE_MEMSET
+void ic_memset(gchar *buf, gchar val, int num_bytes);
+#endif
 #endif

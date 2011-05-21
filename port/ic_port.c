@@ -1529,3 +1529,12 @@ void ic_get_disk_info(gchar *dir_name,
   *disk_space= 0;
   return;
 }
+
+#ifndef HAVE_MEMSET
+void ic_memset(gchar *buf, gchar val, int num_bytes)
+{
+  int i;
+  for (i= 0; i < num_bytes; i++)
+    buf[i]= val;
+}
+#endif

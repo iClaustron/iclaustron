@@ -129,6 +129,9 @@ int ic_rec_with_cr(IC_CONNECTION *conn,
                    guint32 *read_size);
 int ic_rec_simple_str(IC_CONNECTION *conn,
                       const gchar *str);
+int ic_rec_two_strings(IC_CONNECTION *conn,
+                       const gchar *first_str,
+                       const gchar *second_str);
 int ic_rec_simple_str_opt(IC_CONNECTION *conn,
                           const gchar *str,
                           gboolean *found);
