@@ -408,8 +408,10 @@ static int
 rec_cpu_info_reply(IC_CONNECTION *conn)
 {
   int ret_code;
-  guint32 num_cpus, num_numa_nodes, num_cpus_per_core;
+  guint32 num_cpus, num_numa_nodes, num_cores_per_cpu;
   gboolean found= FALSE;
+  guint32 i;
+  guint32 cpu_number, numa_node, core_id;
   DEBUG_ENTRY("rec_cpu_info_reply");
 
   if ((ret_code= ic_rec_simple_str_opt(conn,
@@ -426,8 +428,11 @@ rec_cpu_info_reply(IC_CONNECTION *conn)
                                  &num_numa_nodes)) ||
         (ret_code= ic_rec_number(conn,
                                  ic_number_of_cpus_per_core_str,
-                                 &num_cpus_per_core)))
+                                 &num_cores_per_cpu)))
       goto error;
+    ic_printf(
+      "Num CPUs: %u, Num NUMA nodes: %u, Num Cores per CPU: %u",
+      num_cpus, num_numa_nodes, num_cores_per_cpu);
   }
   else
   {
@@ -435,7 +440,20 @@ rec_cpu_info_reply(IC_CONNECTION *conn)
     if ((ret_code= ic_rec_empty_line(conn)))
       goto error;
     ic_printf("No CPU info available");
+    DEBUG_RETURN_INT(0);
   }
+  for (i= 0; i < num_cpus; i++)
+  {
+    if ((ret_code= ic_rec_number(conn, ic_cpu_str, &cpu_number)) ||
+        (ret_code= ic_rec_number(conn, ic_cpu_node_str, &numa_node)) ||
+        (ret_code= ic_rec_number(conn, ic_core_str, &core_id)))
+      goto error;
+    ic_printf(
+      "CPU id: %u, Numa node: %u, Core ID: %u",
+      cpu_number, numa_node, core_id);
+  }
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
   DEBUG_RETURN_INT(0);
 
 error:
@@ -596,18 +614,14 @@ static int test_cpu_info(IC_CONNECTION *conn)
   DEBUG_ENTRY("test_cpu_info");
 
   ic_printf("Testing CPU info protocol");
-#if 0
   if ((ret_code= ic_send_cpu_info_req(conn)) ||
       (ret_code= rec_cpu_info_reply(conn)))
     goto error;
-#endif
   DEBUG_RETURN_INT(0);
 
-#if 0
 error:
   ic_print_error(ret_code);
   DEBUG_RETURN_INT(ret_code);
-#endif
 }
 
 static int test_mem_info(IC_CONNECTION *conn)
@@ -1956,11 +1970,9 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   guint32 cpus_per_core;
   guint32 len;
   guint32 i;
+  gchar *buf;
   IC_CPU_INFO *cpu_info= NULL;
-  const gchar *buf_array[6];
-  gchar cpu_num_str[IC_NUMBER_SIZE];
-  gchar numa_node_str[IC_NUMBER_SIZE];
-  gchar core_num_str[IC_NUMBER_SIZE];
+  gchar num_str[IC_NUMBER_SIZE];
   DEBUG_ENTRY("handle_get_cpu_info");
 
   if ((error= ic_rec_empty_line(conn)))
@@ -1987,19 +1999,28 @@ handle_get_cpu_info(IC_CONNECTION *conn)
     goto error;
   for (i= 0; i < num_cpus; i++)
   {
-    buf_array[0]= ic_cpu_str;
-    buf_array[1]= ic_guint64_str((guint64)cpu_info[i].cpu_id,
-                                 cpu_num_str,
-                                 &len);
-    buf_array[2]= ic_cpu_node_str;
-    buf_array[3]= ic_guint64_str((guint64)cpu_info[i].numa_node_id,
-                                 numa_node_str,
-                                 &len);
-    buf_array[4]= ic_core_str;
-    buf_array[5]= ic_guint64_str((guint64)cpu_info[i].core_id,
-                                 core_num_str,
-                                 &len);
-    if ((error= ic_send_with_cr_composed(conn, buf_array, (guint32)6)))
+    buf= ic_guint64_str((guint64)cpu_info[i].cpu_id,
+                        num_str,
+                        &len);
+    if ((error= ic_send_with_cr_two_strings(conn,
+                                            ic_cpu_str,
+                                            (const gchar*)buf)))
+      goto error;
+
+    buf= ic_guint64_str((guint64)cpu_info[i].numa_node_id,
+                        num_str,
+                        &len);
+    if ((error= ic_send_with_cr_two_strings(conn,
+                                            ic_cpu_node_str,
+                                            (const gchar*)buf)))
+      goto error;
+
+    buf= ic_guint64_str((guint64)cpu_info[i].core_id,
+                        num_str,
+                        &len);
+    if ((error= ic_send_with_cr_two_strings(conn,
+                                            ic_core_str,
+                                            (const gchar*)buf)))
       goto error;
   }
   error= ic_send_empty_line(conn);

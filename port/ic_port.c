@@ -1488,7 +1488,7 @@ void ic_spin_destroy(IC_SPINLOCK *spinlock)
 
 int ic_get_cpu_info(guint32 *num_cpus,
                     guint32 *num_numa_nodes,
-                    guint32 *cpus_per_core,
+                    guint32 *num_cores_per_cpu,
                     IC_CPU_INFO **cpu_info)
 {
   IC_CPU_INFO *loc_cpu_info;
@@ -1496,14 +1496,16 @@ int ic_get_cpu_info(guint32 *num_cpus,
   loc_cpu_info= NULL;
   *num_cpus= 0;
   *num_numa_nodes= 0;
-  *cpus_per_core= 0;
+  *num_cores_per_cpu= 0;
   *cpu_info= NULL;
 #ifdef WITH_UNIT_TEST
   /* We fake something to test the protocol */
 
-  if ((loc_cpu_info= (IC_CPU_INFO*)ic_malloc(sizeof(IC_CPU_INFO))))
-    return 0; /* Report no info available in this case */
+  if (!(loc_cpu_info= (IC_CPU_INFO*)ic_malloc(sizeof(IC_CPU_INFO))))
+    return 1; /* Report no info available in this case */
   *num_cpus= 1;
+  *num_numa_nodes= 1;
+  *num_cores_per_cpu= 1;
   loc_cpu_info->cpu_id= 0;
   loc_cpu_info->numa_node_id= 0;
   loc_cpu_info->core_id= 0;
