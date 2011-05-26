@@ -75,6 +75,7 @@ const gchar *ic_auto_restart_str= "autorestart:";
 const gchar *ic_num_parameters_str= "num parameters:";
 const gchar *ic_parameter_str= "parameter:";
 const gchar *ic_pid_str= "pid:";
+const gchar *ic_receive_str= "receive ";
 const gchar *ic_status_str= "status:";
 const gchar *ic_master_index_size_str= "master index size:";
 

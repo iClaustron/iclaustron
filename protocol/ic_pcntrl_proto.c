@@ -40,6 +40,104 @@ ic_receive_error_message(IC_CONNECTION *conn, gchar *err_msg)
 }
 
 /**
+  Send a protocol line with the message:
+  error<CR>
+  <error message><CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+  @parameter error_message     IN:  The error message to send
+
+  @note
+    This message is sent as a negative response to messages to the
+    process controller.
+*/
+int
+ic_send_error_message(IC_CONNECTION *conn, const gchar *error_message)
+{
+  int error;
+  DEBUG_ENTRY("ic_send_error_message");
+
+  if ((error= ic_send_with_cr(conn, ic_error_str)) ||
+      (error= ic_send_with_cr(conn, error_message)) ||
+      (error= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(0);
+}
+
+int
+ic_proto_send_file(IC_CONNECTION *conn,
+                   gchar *file_name,
+                   gchar *dir_name)
+{
+  IC_STRING file_str;
+  IC_STRING str;
+  guint64 file_size, loop_file_size;
+  gchar *file_content, *loop_file_content;
+  int ret_code;
+  guint64 num_lines;
+  guint32 line_size;
+  gchar line_buf[IC_MAX_CONFIG_LINE_LEN + 1];
+  gchar file_buf[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("ic_proto_send_file");
+
+  /* Calculate file name */
+  file_buf[0]= 0;
+  IC_INIT_STRING(&file_str, file_buf, 0, TRUE);
+  IC_INIT_STRING(&str, dir_name, strlen(dir_name), TRUE);
+  ic_add_ic_string(&file_str, &str);
+  IC_INIT_STRING(&str, file_name, strlen(file_name), TRUE);
+  ic_add_ic_string(&file_str, &str);
+
+  if ((ret_code= ic_get_file_contents((const gchar*)file_str.str,
+                                      &file_content,
+                                      &file_size)))
+    goto error;
+
+  /* Calculate receive file_name, reuse file_buf */
+  file_buf[0]= 0;
+  IC_INIT_STRING(&file_str, file_buf, 0, TRUE);
+  IC_INIT_STRING(&str, ic_receive_str, strlen(ic_receive_str), TRUE);
+  ic_add_ic_string(&file_str, &str);
+  IC_INIT_STRING(&str, file_name, strlen(file_name), TRUE);
+  ic_add_ic_string(&file_str, &str);
+
+  /* Send 'receive file_name' */
+  if ((ret_code= ic_send_with_cr(conn,
+                                 file_str.str)))
+    goto error;
+
+  /* Send number of lines */
+  num_lines= ic_count_lines(file_content, file_size);
+  if ((ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_number_of_lines_str,
+                                          num_lines)))
+    goto error;
+
+  /* Send line by line */
+  loop_file_content= file_content;
+  loop_file_size= file_size;
+  while (loop_file_size > 0)
+  {
+    num_lines--;
+    if ((ret_code= ic_get_next_line(&loop_file_content,
+                                    &loop_file_size,
+                                    line_buf,
+                                    IC_MAX_CONFIG_LINE_LEN + 1,
+                                    &line_size)))
+      goto error;
+
+    if ((ret_code= ic_send_with_cr(conn, line_buf)))
+      goto error;
+  }
+  ic_require(num_lines == 0);
+  if ((ret_code= ic_send_empty_line(conn)))
+    goto error;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/**
   Send a protocol line containing:
   list stop<CR><CR>
 

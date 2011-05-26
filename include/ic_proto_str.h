@@ -40,6 +40,7 @@ extern const gchar *ic_auto_restart_str;
 extern const gchar *ic_num_parameters_str;
 extern const gchar *ic_parameter_str;
 extern const gchar *ic_pid_str;
+extern const gchar *ic_receive_str;
 extern const gchar *ic_status_str;
 extern const gchar *ic_master_index_size_str;
 

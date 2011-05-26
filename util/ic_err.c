@@ -55,8 +55,8 @@ ic_init_error_messages()
 
   for (i= 0; i < IC_MAX_ERRORS; i++)
     ic_error_str[i]= NULL;
-  ic_error_str[IC_ERROR_CONFIG_LINE_TOO_LONG -IC_FIRST_ERROR]=
-    "Line was longer than 120 characters";
+  ic_error_str[IC_ERROR_LINE_TOO_LONG -IC_FIRST_ERROR]=
+    "Line was too long";
   ic_error_str[IC_ERROR_CONFIG_BRACKET - IC_FIRST_ERROR]=
     "Missing ] after initial [";
   ic_error_str[IC_ERROR_CONFIG_INCORRECT_GROUP_ID - IC_FIRST_ERROR]=

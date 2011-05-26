@@ -21,6 +21,7 @@ int ic_send_list_node(IC_CONNECTION *conn,
                       const gchar *cluster,
                       const gchar *node,
                       gboolean full_flag);
+int ic_send_error_message(IC_CONNECTION *conn, gchar *error_message);
 int ic_send_list_stop(IC_CONNECTION *conn);
 int ic_send_list_next(IC_CONNECTION *conn);
 int ic_send_ok(IC_CONNECTION *conn);

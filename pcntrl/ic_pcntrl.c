@@ -797,31 +797,6 @@ start_unit_test(IC_THREADPOOL_STATE *tp_state)
 #endif
 
 /**
-  Send a protocol line with the message:
-  error<CR>
-  <error message><CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-  @parameter error_message     IN:  The error message to send
-
-  @note
-    This message is sent as a negative response to messages to the
-    process controller.
-*/
-static int
-send_error_reply(IC_CONNECTION *conn, const gchar *error_message)
-{
-  int error;
-  DEBUG_ENTRY("send_error_reply");
-
-  if ((error= ic_send_with_cr(conn, ic_error_str)) ||
-      (error= ic_send_with_cr(conn, error_message)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
   Send the protocol message describing one process under our control
   describing its key, program, version, start time, pid and the
   number of parameters and the start parameters.
@@ -1315,8 +1290,8 @@ error:
   if (ret_code == IC_ERROR_PC_PROCESS_ALREADY_RUNNING)
     ret_code= ic_send_ok_pid_started(conn, pc_start_hash->pid);
   else
-    send_error_reply(conn, 
-                     ic_get_error_message(ret_code));
+    ic_send_error_message(conn, 
+                          ic_get_error_message(ret_code));
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1549,8 +1524,8 @@ handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
   if (!error)
     DEBUG_RETURN_INT(ic_send_ok(conn));
 error:
-  send_error_reply(conn,
-                   ic_get_error_message(error));
+  ic_send_error_message(conn,
+                        ic_get_error_message(error));
   DEBUG_RETURN_INT(error);
 }
 
@@ -1819,8 +1794,8 @@ mem_error:
 error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  send_error_reply(conn,
-                   ic_get_error_message(error));
+  ic_send_error_message(conn,
+                        ic_get_error_message(error));
   DEBUG_RETURN_INT(error);
 }
 

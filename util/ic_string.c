@@ -899,3 +899,94 @@ ic_convert_to_uppercase(gchar *out_str, gchar *in_str, guint32 str_len)
       out_str[i]= in_str[i];
   }
 }
+
+/**
+  Count the number of lines in a character array.
+
+  @parameter str               IN: The character array
+  @parameter str_size          IN: The size of the character array
+
+  @return value                OUT: The number of lines found
+
+  This function can be used to count the number of lines in a file
+  by first using ic_get_file_contents and then using this function
+  on the character array returned from this function.
+*/
+guint64
+ic_count_lines(gchar *str, guint64 str_size)
+{
+  guint64 i;
+  guint64 lines= 0;
+  guint64 last_carriage_return;
+  for (i= 0; i < str_size; i++)
+  {
+    if (str[i] == CARRIAGE_RETURN)
+    {
+      last_carriage_return= i;
+      lines++;
+    }
+  }
+  if ((last_carriage_return + 1) == str_size)
+    lines++; /* Count also last line which isn't ended by a carriage return */
+  return lines;
+}
+
+/**
+  Get the next line in a character array, move the string pointer forward
+  and decrement the remaining string size and return the line size, put the
+  resulting string into the provided buffer. Ensure the line isn't longer
+  than the buffer can contain.
+
+  @parameter str                    IN/OUT: String, return new position
+  @parameter str_size               IN/OUT: String size, return remaining size
+  @parameter buf                    IN: Buffer to put line into
+  @parameter buf_size               IN: Buffer size
+  @parameter line_size              OUT: Line size
+
+  Note:
+    This function can be used in conjunction with ic_get_file_contents to
+    get the content of a file, line by line.
+
+  Note:
+    The buffer must be big enough to also contain the final NULL byte.
+*/
+int
+ic_get_next_line(gchar **str,
+                 guint64 *str_size,
+                 gchar *buf,
+                 guint32 buf_size,
+                 guint32 *line_size)
+{
+  gchar *loc_str= *str;
+  guint64 loc_str_size= *str_size;
+  guint64 i;
+  guint64 max_size= IC_MAX(loc_str_size, (buf_size - 1));
+
+  *line_size= 0;
+  for (i= 0; i < max_size; i++)
+  {
+    if (loc_str[i] == CARRIAGE_RETURN)
+      goto end;
+    buf[i]= loc_str[i];
+  }
+  if (i == loc_str_size)
+  {
+    /*
+      It is ok that the last line isn't terminated by a CARRIAGE_RETURN.
+      It must however still not be longer than the maximum buffer size.
+    */
+    goto end;
+  }
+  /*
+    If we come here the line was too long, we couldn't fit the line in the
+    buffer that was provided for this purpose.
+  */
+  DEBUG_RETURN_INT(IC_ERROR_LINE_TOO_LONG);
+
+end:
+  buf[i]= (gchar)0;
+  *str_size= (loc_str_size - (i + 1));
+  *str= (loc_str + i + 1);
+  *line_size= i;
+  DEBUG_RETURN_INT(0);
+}

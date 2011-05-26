@@ -203,4 +203,11 @@ guint32 ic_count_characters(gchar *str, guint32 max_chars);
 int ic_convert_str_to_int_fixed_size(gchar *str,
                                      guint32 num_chars,
                                      guint64 *ret_number);
+/* Method to calculate number of lines in a character array */
+guint64 ic_count_lines(gchar *str, guint64 str_size);
+int ic_get_next_line(gchar **str,
+                     guint64 *str_size,
+                     gchar *buf,
+                     guint32 buf_size,
+                     guint32 *line_size);
 #endif
