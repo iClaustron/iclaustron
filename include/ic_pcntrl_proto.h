@@ -27,7 +27,7 @@ int ic_send_ok(IC_CONNECTION *conn);
 int ic_send_ok_pid(IC_CONNECTION *conn, IC_PID_TYPE pid);
 int ic_send_ok_pid_started(IC_CONNECTION *conn, IC_PID_TYPE pid);
 int ic_send_mem_info_req(IC_CONNECTION *conn);
-int ic_send_disk_info_req(IC_CONNECTION *conn);
+int ic_send_disk_info_req(IC_CONNECTION *conn, gchar *dir_name);
 int ic_send_cpu_info_req(IC_CONNECTION *conn);
 int ic_send_stop_node(IC_CONNECTION *conn,
                       const gchar *grid_str,

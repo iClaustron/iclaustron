@@ -257,12 +257,13 @@ ic_send_mem_info_req(IC_CONNECTION *conn)
   @parameter conn              IN:  The connection from the client
 */
 int
-ic_send_disk_info_req(IC_CONNECTION *conn)
+ic_send_disk_info_req(IC_CONNECTION *conn, gchar *dir_name)
 {
   int error;
   DEBUG_ENTRY("ic_send_disk_info_req");
 
   if ((error= ic_send_with_cr(conn, ic_get_disk_info_str)) ||
+      (error= ic_send_with_cr_two_strings(conn, ic_dir_str, dir_name)) ||
       (error= ic_send_empty_line(conn)))
     DEBUG_RETURN_INT(error);
   DEBUG_RETURN_INT(0);

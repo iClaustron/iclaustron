@@ -433,29 +433,24 @@ rec_cpu_info_reply(IC_CONNECTION *conn)
     ic_printf(
       "Num CPUs: %u, Num NUMA nodes: %u, Num Cores per CPU: %u",
       num_cpus, num_numa_nodes, num_cores_per_cpu);
+    for (i= 0; i < num_cpus; i++)
+    {
+      if ((ret_code= ic_rec_number(conn, ic_cpu_str, &cpu_number)) ||
+          (ret_code= ic_rec_number(conn, ic_cpu_node_str, &numa_node)) ||
+          (ret_code= ic_rec_number(conn, ic_core_str, &core_id)))
+        goto error;
+      ic_printf(
+        "CPU id: %u, Numa node: %u, Core ID: %u",
+        cpu_number, numa_node, core_id);
+    }
   }
   else
   {
-    /* No CPU info available */
-    if ((ret_code= ic_rec_empty_line(conn)))
-      goto error;
     ic_printf("No CPU info available");
-    DEBUG_RETURN_INT(0);
-  }
-  for (i= 0; i < num_cpus; i++)
-  {
-    if ((ret_code= ic_rec_number(conn, ic_cpu_str, &cpu_number)) ||
-        (ret_code= ic_rec_number(conn, ic_cpu_node_str, &numa_node)) ||
-        (ret_code= ic_rec_number(conn, ic_core_str, &core_id)))
-      goto error;
-    ic_printf(
-      "CPU id: %u, Numa node: %u, Core ID: %u",
-      cpu_number, numa_node, core_id);
   }
   if ((ret_code= ic_rec_empty_line(conn)))
     goto error;
   DEBUG_RETURN_INT(0);
-
 error:
   ic_print_error(ret_code);
   DEBUG_RETURN_INT(ret_code);
@@ -469,8 +464,50 @@ error:
 static int
 rec_mem_info_reply(IC_CONNECTION *conn)
 {
-  (void)conn;
-  return 0;
+  int ret_code;
+  gboolean found= FALSE;
+  guint32 total_memory_size= 0;
+  guint32 num_numa_nodes= 0;
+  guint32 numa_node_id= 0;
+  guint32 memory_size= 0;
+  guint32 i;
+  DEBUG_ENTRY("rec_mem_info_reply");
+
+  if ((ret_code= ic_rec_simple_str_opt(conn,
+                                       ic_no_mem_info_available_str,
+                                       &found)))
+    goto error;
+
+  if (!found)
+  {
+    if ((ret_code= ic_rec_number(conn,
+                                 ic_number_of_mbyte_user_memory_str,
+                                 &total_memory_size)) ||
+        (ret_code= ic_rec_number(conn,
+                                 ic_number_of_numa_nodes_str,
+                                 &num_numa_nodes)))
+      goto error;
+    ic_printf("Total memory size is %u MBytes, Num NUMA nodes: %u",
+              total_memory_size, num_numa_nodes);
+    for (i= 0; i < num_numa_nodes; i++)
+    {
+      if ((ret_code= ic_rec_number(conn, ic_mem_node_str, &numa_node_id)) ||
+          (ret_code= ic_rec_number(conn, ic_mb_user_memory_str, &memory_size)))
+        goto error;
+      ic_printf("NUMA node id: %u has %u MBytes of memory",
+                numa_node_id, memory_size);
+    }
+  }
+  else
+  {
+    ic_printf("No memory information available");
+  }
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
+  DEBUG_RETURN_INT(0);
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -481,8 +518,33 @@ rec_mem_info_reply(IC_CONNECTION *conn)
 static int
 rec_disk_info_reply(IC_CONNECTION *conn)
 {
-  (void)conn;
-  return 0;
+  int ret_code;
+  gboolean found= FALSE;
+  guint32 disk_space= 0;
+  DEBUG_ENTRY("rec_disk_info_reply");
+
+  if ((ret_code= ic_rec_simple_str_opt(conn,
+                                       ic_no_disk_info_available_str,
+                                       &found)))
+    goto error;
+  if (!found)
+  {
+    if ((ret_code= ic_rec_number(conn, ic_disk_space_str, &disk_space)) ||
+        (ret_code= ic_rec_empty_line(conn)))
+      goto error;
+    ic_printf("Available disk space = %u MBytes", disk_space);
+  }
+  else
+  {
+    /* No disk info available */
+    if ((ret_code= ic_rec_empty_line(conn)))
+      goto error;
+    ic_printf("No disk information available");
+  }
+  DEBUG_RETURN_INT(0);
+error:
+  ic_print_error(ret_code);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -630,38 +692,34 @@ static int test_mem_info(IC_CONNECTION *conn)
   DEBUG_ENTRY("test_mem_info");
 
   ic_printf("Testing memory info protocol");
-#if 0
   if ((ret_code= ic_send_mem_info_req(conn)) ||
       (ret_code= rec_mem_info_reply(conn)))
     goto error;
-#endif
   DEBUG_RETURN_INT(0);
 
-#if 0
 error:
   ic_print_error(ret_code);
   DEBUG_RETURN_INT(ret_code);
-#endif
 }
 
 static int test_disk_info(IC_CONNECTION *conn)
 {
   int ret_code;
+  IC_STRING dir_name;
   DEBUG_ENTRY("test_disk_info");
 
   ic_printf("Testing disk info protocol");
-#if 0
-  if ((ret_code= ic_send_disk_info_req(conn)) ||
+  if ((ret_code= ic_set_data_dir(&dir_name)) ||
+      (ret_code= ic_send_disk_info_req(conn, dir_name.str)) ||
       (ret_code= rec_disk_info_reply(conn)))
     goto error;
-#endif
-  DEBUG_RETURN_INT(0);
 
-#if 0
 error:
-  ic_print_error(ret_code);
+  if (dir_name.str)
+    ic_free(dir_name.str);
+  if (ret_code)
+    ic_print_error(ret_code);
   DEBUG_RETURN_INT(ret_code);
-#endif
 }
 
 /**
@@ -1968,21 +2026,18 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   guint32 num_cpus;
   guint32 num_numa_nodes;
   guint32 cpus_per_core;
-  guint32 len;
   guint32 i;
-  gchar *buf;
   IC_CPU_INFO *cpu_info= NULL;
-  gchar num_str[IC_NUMBER_SIZE];
   DEBUG_ENTRY("handle_get_cpu_info");
 
   if ((error= ic_rec_empty_line(conn)))
     goto error;
 
-  if ((error= ic_get_cpu_info(&num_cpus,
-                              &num_numa_nodes,
-                              &cpus_per_core,
-                              &cpu_info)) ||
-      num_cpus == 0)
+  ic_get_cpu_info(&num_cpus,
+                  &num_numa_nodes,
+                  &cpus_per_core,
+                  &cpu_info);
+  if (num_cpus == 0)
   {
     if ((error= ic_send_with_cr(conn, ic_no_cpu_info_available_str)) ||
         (error= ic_send_empty_line(conn)))
@@ -1999,28 +2054,17 @@ handle_get_cpu_info(IC_CONNECTION *conn)
     goto error;
   for (i= 0; i < num_cpus; i++)
   {
-    buf= ic_guint64_str((guint64)cpu_info[i].cpu_id,
-                        num_str,
-                        &len);
-    if ((error= ic_send_with_cr_two_strings(conn,
-                                            ic_cpu_str,
-                                            (const gchar*)buf)))
+    if ((error= ic_send_with_cr_with_num(conn,
+                                         ic_cpu_str,
+                                         (guint64)cpu_info[i].cpu_id)))
       goto error;
-
-    buf= ic_guint64_str((guint64)cpu_info[i].numa_node_id,
-                        num_str,
-                        &len);
-    if ((error= ic_send_with_cr_two_strings(conn,
-                                            ic_cpu_node_str,
-                                            (const gchar*)buf)))
+    if ((error= ic_send_with_cr_with_num(conn,
+                                         ic_cpu_node_str,
+                                         (guint64)cpu_info[i].numa_node_id)))
       goto error;
-
-    buf= ic_guint64_str((guint64)cpu_info[i].core_id,
-                        num_str,
-                        &len);
-    if ((error= ic_send_with_cr_two_strings(conn,
-                                            ic_core_str,
-                                            (const gchar*)buf)))
+    if ((error= ic_send_with_cr_with_num(conn,
+                                         ic_core_str,
+                                         (guint64)cpu_info[i].core_id)))
       goto error;
   }
   error= ic_send_empty_line(conn);
@@ -2042,50 +2086,47 @@ handle_get_mem_info(IC_CONNECTION *conn)
   int error;
   guint32 num_numa_nodes;
   guint32 i;
-  guint32 len;
   guint64 total_memory_size;
   IC_MEM_INFO *mem_info;
-  const gchar *buf_array[4];
-  gchar numa_node_str[IC_NUMBER_SIZE];
-  gchar memory_size_str[IC_NUMBER_SIZE];
+  DEBUG_ENTRY("handle_get_mem_info");
 
   if ((error= ic_rec_empty_line(conn)))
     return error;
 
-  if ((error= ic_get_mem_info(&num_numa_nodes,
-                              &total_memory_size,
-                              &mem_info)) ||
-      num_numa_nodes == 0)
+  ic_get_mem_info(&num_numa_nodes,
+                  &total_memory_size,
+                  &mem_info);
+
+  if (num_numa_nodes == 0)
   {
     if ((error= ic_send_with_cr(conn, ic_no_mem_info_available_str)) ||
         (error= ic_send_empty_line(conn)))
-      return error;
-    return 0;
+      goto error;
+    goto error;
   }
   if ((error= ic_send_with_cr_with_num(conn,
                             ic_number_of_mbyte_user_memory_str,
-                            (guint64)(total_memory_size/(1024 * 1024)))) ||
+                            (guint64)total_memory_size)) ||
       (error= ic_send_with_cr_with_num(conn, ic_number_of_numa_nodes_str,
                                        (guint64)num_numa_nodes)))
     goto error;
   for (i= 0; i < num_numa_nodes; i++)
   {
-    buf_array[0]= ic_mem_node_str;
-    buf_array[1]= ic_guint64_str((guint64)mem_info[i].numa_node_id,
-                                 numa_node_str,
-                                 &len);
-    buf_array[2]= ic_mb_user_memory_str;
-    buf_array[3]= ic_guint64_str(mem_info[i].memory_size,
-                                 memory_size_str,
-                                 &len);
-    if ((error= ic_send_with_cr_composed(conn, buf_array, (guint32)4)))
+    if ((error= ic_send_with_cr_with_num(conn,
+                                         ic_mem_node_str,
+                                         (guint64)mem_info[i].numa_node_id)))
+      goto error;
+    if ((error= ic_send_with_cr_with_num(conn,
+                                         ic_mb_user_memory_str,
+                                         (guint64)mem_info[i].memory_size)))
       goto error;
   }
   error= ic_send_empty_line(conn);
 
 error:
-  ic_free((gchar*)mem_info);
-  return error;
+  if (mem_info)
+    ic_free((gchar*)mem_info);
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -2099,12 +2140,13 @@ handle_get_disk_info(IC_CONNECTION *conn)
   int error;
   guint64 disk_space;
   gchar dir_name_buf[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("handle_get_disk_info");
 
   /* Get directory which we want to analyze how much disk space can be used */
   if ((error= ic_rec_string(conn, ic_dir_str,
                             dir_name_buf)) ||
       (error= ic_rec_empty_line(conn)))
-    return error;
+    goto error;
 
   /* Check disk space now */
   ic_get_disk_info(dir_name_buf, &disk_space);
@@ -2116,21 +2158,19 @@ handle_get_disk_info(IC_CONNECTION *conn)
       of a directory if he doesn't have permission to it.
     */
     if ((error= ic_send_with_cr(conn, ic_no_disk_info_available_str)))
-      return error;
+      goto error;
   }
   else
   {
     /* Report disk space found available in this directory */
-    if ((error= ic_send_with_cr_two_strings(conn,
-                                            ic_dir_str,
-                                            dir_name_buf)) ||
-        (error= ic_send_with_cr_with_num(conn,
+    if ((error= ic_send_with_cr_with_num(conn,
                                          ic_disk_space_str,
                                          disk_space)))
-      return error;
+      goto error;
   }
   error= ic_send_empty_line(conn);
-  return error;
+error:
+  DEBUG_RETURN_INT(error);
 }
 
 /**
@@ -2412,12 +2452,10 @@ clean_process_hash(gboolean stop_processes)
   Line 2: dir: @directory
 
   Response:
-  Line 1: dir: @directory
-  Line 2: disk space: #GBytes
+  Line 1: disk space: #GBytes
 
   Or:
-  Line 1: dir: @directory
-  Line 2: error string: @error_string
+  Line 1: error string: @error_string
 */
 
 /**
@@ -2499,7 +2537,14 @@ run_command_handler(gpointer data)
   }
   if (ret_code)
   {
-    ic_print_error(ret_code);
+    if (ret_code != IC_END_OF_FILE)
+    {
+      /*
+        We don't print any errors when other side closed connection.
+        Closing the connection in this position is normal behaviour.
+      */
+      ic_print_error(ret_code);
+    }
     DEBUG_PRINT(PROGRAM_LEVEL,
       ("Command handler exit, error %d", ret_code));
   }
@@ -2522,12 +2567,13 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
   guint32 thread_id;
   IC_CONNECTION *conn= NULL;
   IC_CONNECTION *fork_conn;
-
   DEBUG_ENTRY("start_connection_loop");
+
   if (!(conn= ic_create_socket_object(FALSE, FALSE, FALSE,
                                       CONFIG_READ_BUF_SIZE,
                                       NULL, NULL)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+
   conn->conn_op.ic_prepare_server_connection(conn,
                                              glob_server_name,
                                              glob_server_port,
@@ -2535,7 +2581,9 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                              NULL,
                                              0,
                                              TRUE);
+
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
+
   if (ret_code)
   {
     conn->conn_op.ic_free_connection(conn);
@@ -2549,19 +2597,27 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
       /* Wait for someone to connect to us. */
       if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       {
-        ic_printf("Error %d received in accept connection", ret_code);
-        DEBUG_PRINT(COMM_LEVEL, ("Error %d received in accept connection",
-                                 ret_code));
-        break;
+        if (ret_code != IC_ERROR_APPLICATION_STOPPED)
+        {
+          /*
+            This error can occur simply because the client decided to
+            close the connection before we had a chance to accept the
+            connection.
+          */
+          ic_printf("Error %d received in accept connection", ret_code);
+          ic_print_error(ret_code);
+          DEBUG_PRINT(COMM_LEVEL, ("Error %d received in accept connection",
+                                   ret_code));
+          continue;
+        }
+        else
+          break;
       }
       if (!(fork_conn= 
             conn->conn_op.ic_fork_accept_connection(conn,
                                         FALSE)))  /* No mutex */
       {
-        ic_printf("Error %d received in fork accepted connection", ret_code);
-        DEBUG_PRINT(COMM_LEVEL,
-                    ("Error %d received in forking accepted connection",
-                     ret_code));
+        ic_printf("Error occurred in fork of an accepted connection");
         break;
       }
       /*
@@ -2576,15 +2632,12 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                                       FALSE))
       {
         ic_printf("Failed to create thread after forking accept connection");
-        DEBUG_PRINT(COMM_LEVEL,
-          ("Failed to create thread after forking accepted connection"));
         fork_conn->conn_op.ic_free_connection(fork_conn);
         break;
       }
     } while (0);
   } while (!ic_tp_get_stop_flag());
   ic_printf("iClaustron Process Controller was stopped");
-  DEBUG_PRINT(PROGRAM_LEVEL, ("iClaustron Process Controller was stopped"));
   conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_INT(0);
 }

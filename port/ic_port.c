@@ -1486,10 +1486,26 @@ void ic_spin_destroy(IC_SPINLOCK *spinlock)
   g_mutex_free(spinlock);
 }
 
-int ic_get_cpu_info(guint32 *num_cpus,
-                    guint32 *num_numa_nodes,
-                    guint32 *num_cores_per_cpu,
-                    IC_CPU_INFO **cpu_info)
+/**
+  Get information about CPUs on this machine
+
+  @parameter num_cpus           OUT: Number of CPUs/sockets
+  @parameter num_numa_nodes     OUT: Number of NUMA nodes in machine
+  @parameter num_cores_per_cpu  OUT: Number of cores per CPU
+  @parameter cpu_info           OUT: Array describing each CPU
+
+  Note: This function allocates memory when num_cpus > 0, in this
+  case it's the responsibility of the caller to call ic_free on
+  the cpu_info pointer returned.
+
+  If we fail to retrieve CPU information for some reason we will return
+  num_cpus == 0 to indicate no CPU information is available.
+*/
+void
+ic_get_cpu_info(guint32 *num_cpus,
+                guint32 *num_numa_nodes,
+                guint32 *num_cores_per_cpu,
+                IC_CPU_INFO **cpu_info)
 {
   IC_CPU_INFO *loc_cpu_info;
 
@@ -1502,7 +1518,7 @@ int ic_get_cpu_info(guint32 *num_cpus,
   /* We fake something to test the protocol */
 
   if (!(loc_cpu_info= (IC_CPU_INFO*)ic_malloc(sizeof(IC_CPU_INFO))))
-    return 1; /* Report no info available in this case */
+    return; /* Report no info available in this case */
   *num_cpus= 1;
   *num_numa_nodes= 1;
   *num_cores_per_cpu= 1;
@@ -1511,24 +1527,61 @@ int ic_get_cpu_info(guint32 *num_cpus,
   loc_cpu_info->core_id= 0;
   *cpu_info= loc_cpu_info;
 #endif
-  return 0;
+  return;
 }
 
-int ic_get_mem_info(guint32 *num_numa_nodes,
-                    guint64 *total_memory_size,
-                    IC_MEM_INFO **mem_info)
+/**
+  Get information about memory size and about the NUMA nodes in the
+  machine how much memory each such node has.
+
+  @parameter num_numa_nodes      OUT: Number of NUMA nodes
+  @parameter total_memory_size   OUT: Total memory size in MBytes
+  @parameter mem_info            OUT: Array describing each NUMA node
+
+  Note: When memory information is available we allocate the mem_info
+  data structure, this needs to be freed by caller of this function.
+
+  When no memory information is available or we fail somehow to retrieve
+  memory information we will return total_memory_size == 0 to indicate
+  no memory information is available.
+*/
+void ic_get_mem_info(guint32 *num_numa_nodes,
+                     guint64 *total_memory_size,
+                     IC_MEM_INFO **mem_info)
 {
+  IC_MEM_INFO *loc_mem_info;
   *num_numa_nodes= 0;
   *total_memory_size= 0;
   *mem_info= 0;
-  return 0;
+#ifdef WITH_UNIT_TEST
+  /* We fake something to test the protocol */
+
+  if (!(loc_mem_info= (IC_MEM_INFO*)ic_malloc(sizeof(IC_MEM_INFO))))
+    return; /* Report no info available in this case */
+  *num_numa_nodes= 1;
+  *total_memory_size= 16 * 1024; /* Fake 16 GByte of memory */
+  loc_mem_info->numa_node_id= 0;
+  loc_mem_info->memory_size= 16 * 1024;
+  *mem_info= loc_mem_info;
+#endif
+  return;
 }
 
+/**
+  Get information about the disk space available below a certain directory
+  name.
+
+  @dir_name                      IN: The directory name
+  @disk_space                    OUT: The disk space in MBytes
+*/
 void ic_get_disk_info(gchar *dir_name,
                       guint64 *disk_space)
 {
   (void)dir_name;
   *disk_space= 0;
+#ifdef WITH_UNIT_TEST
+  *disk_space= 128 * 1024;
+#endif
   return;
 }
 

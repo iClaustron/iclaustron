@@ -271,7 +271,8 @@ ic_add_dir(IC_STRING *dir,
     goto error;
   DEBUG_RETURN_INT(0);
 error:
-  ic_free(dir->str);
+  if (dir->str)
+    ic_free(dir->str);
   IC_INIT_STRING(dir, NULL, 0, TRUE);
   DEBUG_RETURN_INT(error);
 }
@@ -292,13 +293,14 @@ ic_set_binary_dir(IC_STRING *binary_dir,
   DEBUG_ENTRY("ic_set_binary_dir");
 
   if ((error= ic_set_base_dir(binary_dir)))
-    return error;
+    goto error;
   if ((error= ic_add_dir(binary_dir, version)))
     return error;
   if ((error= ic_add_dir(binary_dir, ic_binary_string.str)))
-    return error;
+    goto error;
   DEBUG_PRINT(CONFIG_LEVEL, ("Binary dir: %s", binary_dir->str));
   DEBUG_RETURN_INT(0);
+
 error:
   DEBUG_RETURN_INT(error);
 }
@@ -532,7 +534,8 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   new_str= (gchar*)ic_malloc(new_len + 1);
   if (new_str == NULL)
   {
-    ic_free(dest_str->str);
+    if (dest_str->str)
+      ic_free(dest_str->str);
     IC_INIT_STRING(dest_str, NULL, 0, FALSE);
     return IC_ERROR_MEM_ALLOC;
   }

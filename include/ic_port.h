@@ -182,10 +182,10 @@ struct ic_cpu_info
 };
 typedef struct ic_cpu_info IC_CPU_INFO;
 
-int ic_get_cpu_info(guint32 *num_cpus,
-                    guint32 *num_numa_nodes,
-                    guint32 *num_cores_per_cpu,
-                    IC_CPU_INFO **cpu_info);
+void ic_get_cpu_info(guint32 *num_cpus,
+                     guint32 *num_numa_nodes,
+                     guint32 *num_cores_per_cpu,
+                     IC_CPU_INFO **cpu_info);
 
 struct ic_mem_info
 {
@@ -194,9 +194,9 @@ struct ic_mem_info
 };
 typedef struct ic_mem_info IC_MEM_INFO;
 
-int ic_get_mem_info(guint32 *num_numa_nodes,
-                    guint64 *total_memory_size,
-                    IC_MEM_INFO **mem_info);
+void ic_get_mem_info(guint32 *num_numa_nodes,
+                     guint64 *total_memory_size,
+                     IC_MEM_INFO **mem_info);
 
 void ic_get_disk_info(gchar *directory_name,
                       guint64 *disk_space);
