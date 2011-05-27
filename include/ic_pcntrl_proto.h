@@ -34,3 +34,6 @@ int ic_send_stop_node(IC_CONNECTION *conn,
                       const gchar *grid_str,
                       const gchar *cluster_str,
                       const gchar *node_str);
+int ic_proto_send_file(IC_CONNECTION *conn,
+                       gchar *file_name,
+                       gchar *dir_name);

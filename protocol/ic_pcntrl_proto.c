@@ -64,6 +64,20 @@ ic_send_error_message(IC_CONNECTION *conn, const gchar *error_message)
   DEBUG_RETURN_INT(0);
 }
 
+/**
+  This function sends a file as part of the process controller protocol.
+  It starts by sending the lines:
+  receive config.ini
+  number of lines: 12
+  (We used an example where file_name is "config.ini" and it has 12 lines
+   in it).
+  After this each line is sent one by one over the connection, finally an
+  empty line is sent to indicate end of file.
+
+  @parameter conn               IN: The connection
+  @parameter file_name          IN: The file name
+  @parameter dir_name           IN: The directory where the file is placed
+*/
 int
 ic_proto_send_file(IC_CONNECTION *conn,
                    gchar *file_name,
@@ -88,6 +102,7 @@ ic_proto_send_file(IC_CONNECTION *conn,
   IC_INIT_STRING(&str, file_name, strlen(file_name), TRUE);
   ic_add_ic_string(&file_str, &str);
 
+  /* Get file content */
   if ((ret_code= ic_get_file_contents((const gchar*)file_str.str,
                                       &file_content,
                                       &file_size)))
@@ -96,7 +111,7 @@ ic_proto_send_file(IC_CONNECTION *conn,
   /* Calculate receive file_name, reuse file_buf */
   file_buf[0]= 0;
   IC_INIT_STRING(&file_str, file_buf, 0, TRUE);
-  IC_INIT_STRING(&str, ic_receive_str, strlen(ic_receive_str), TRUE);
+  IC_INIT_STRING(&str, (gchar*)ic_receive_str, strlen(ic_receive_str), TRUE);
   ic_add_ic_string(&file_str, &str);
   IC_INIT_STRING(&str, file_name, strlen(file_name), TRUE);
   ic_add_ic_string(&file_str, &str);
@@ -113,7 +128,7 @@ ic_proto_send_file(IC_CONNECTION *conn,
                                           num_lines)))
     goto error;
 
-  /* Send line by line */
+  /* Send file line by line */
   loop_file_content= file_content;
   loop_file_size= file_size;
   while (loop_file_size > 0)
@@ -130,6 +145,7 @@ ic_proto_send_file(IC_CONNECTION *conn,
       goto error;
   }
   ic_require(num_lines == 0);
+  /* Send empty line */
   if ((ret_code= ic_send_empty_line(conn)))
     goto error;
   DEBUG_RETURN_INT(0);
