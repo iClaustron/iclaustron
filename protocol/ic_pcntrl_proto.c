@@ -32,9 +32,14 @@ ic_receive_error_message(IC_CONNECTION *conn, gchar *err_msg)
 
   if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
       (ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+      (read_size >= IC_MAX_ERROR_STRING_SIZE) ||
       (memcpy(err_msg, read_buf, read_size), FALSE) ||
       (ret_code= ic_rec_empty_line(conn)))
+  {
+    if (!ret_code)
+      ret_code= IC_ERROR_TOO_LARGE_ERROR_MESSAGE;
     DEBUG_RETURN_INT(ret_code);
+  }
   err_msg[read_size]= (gchar)0;
   DEBUG_RETURN_INT(0);
 }
@@ -69,8 +74,9 @@ ic_send_error_message(IC_CONNECTION *conn, const gchar *error_message)
   It starts by sending the lines:
   receive config.ini
   number of lines: 12
+  number of bytes: 189
   (We used an example where file_name is "config.ini" and it has 12 lines
-   in it).
+   in it and the file size is 189 bytes).
   After this each line is sent one by one over the connection, finally an
   empty line is sent to indicate end of file.
 
@@ -148,6 +154,37 @@ ic_proto_send_file(IC_CONNECTION *conn,
   /* Send empty line */
   if ((ret_code= ic_send_empty_line(conn)))
     goto error;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+int
+ic_receive_config_file_ok(IC_CONNECTION *conn,
+                          gboolean print_error)
+{
+  int ret_code;
+  gboolean found= FALSE;
+  gchar error_str[IC_MAX_ERROR_STRING_SIZE];
+  DEBUG_ENTRY("ic_receive_config_file_ok");
+
+  if ((ret_code= ic_rec_simple_str_opt(conn,
+                                       ic_receive_config_file_ok_str,
+                                       &found)))
+    goto error;
+  if (found)
+  {
+    if ((ret_code= ic_rec_empty_line(conn)))
+      goto error;
+  }
+  else
+  {
+    if ((ret_code= ic_receive_error_message(conn, error_str)))
+      goto error;
+    if (print_error)
+      ic_print_error(ret_code);
+    goto error;
+  }
   DEBUG_RETURN_INT(0);
 error:
   DEBUG_RETURN_INT(ret_code);

@@ -37,3 +37,4 @@ int ic_send_stop_node(IC_CONNECTION *conn,
 int ic_proto_send_file(IC_CONNECTION *conn,
                        gchar *file_name,
                        gchar *dir_name);
+int ic_receive_config_file_ok(IC_CONNECTION *conn, gboolean print_error);

@@ -665,9 +665,40 @@ error:
 
 static int test_copy_files(IC_CONNECTION *conn)
 {
+  int ret_code;
+  IC_STRING current_dir;
   DEBUG_ENTRY("test_copy_files");
-  (void)conn;
+
+  ic_set_current_dir(&current_dir);
+
+  if ((ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_cluster_server_node_id_str,
+                                          (guint64)1)) ||
+       (ret_code= ic_send_with_cr_with_num(conn,
+                                           ic_number_of_clusters_str,
+                                           (guint64)2)))
+    goto error;
+  if ((ret_code= ic_proto_send_file(conn,
+                                    "config.ini",
+                                    current_dir.str)) ||
+      (ret_code= ic_receive_config_file_ok(conn, TRUE)) ||
+      (ret_code= ic_proto_send_file(conn,
+                                    "grid_common.ini",
+                                    current_dir.str)) ||
+      (ret_code= ic_receive_config_file_ok(conn, TRUE)) ||
+      (ret_code= ic_proto_send_file(conn,
+                                    "kalle.ini",
+                                    current_dir.str)) ||
+      (ret_code= ic_receive_config_file_ok(conn, TRUE)) ||
+      (ret_code= ic_proto_send_file(conn,
+                                    "jocke.ini",
+                                    current_dir.str)) ||
+      (ret_code= ic_receive_config_file_ok(conn, TRUE)))
+    goto error;
   DEBUG_RETURN_INT(0);
+
+error:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int test_cpu_info(IC_CONNECTION *conn)
@@ -812,47 +843,47 @@ send_list_entry(IC_CONNECTION *conn,
                 gboolean list_full_flag)
 {
   guint32 i;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("send_list_entry");
 
-  if ((error= ic_send_with_cr(conn, ic_list_node_str)) ||
-      (error= ic_send_with_cr_two_strings(conn,
-                                          ic_program_str,
-                                          pc_start->program_name.str)) ||
-      (error= ic_send_with_cr_two_strings(conn,
-                                          ic_version_str,
-                                          pc_start->version_string.str)) ||
-      (error= ic_send_with_cr_two_strings(conn,
-                                          ic_grid_str,
-                                          pc_start->key.grid_name.str)) ||
-      (error= ic_send_with_cr_two_strings(conn,
-                                          ic_cluster_str,
-                                          pc_start->key.cluster_name.str)) ||
-      (error= ic_send_with_cr_two_strings(conn,
-                                          ic_node_str,
-                                          pc_start->key.node_name.str)) ||
-      (error= ic_send_with_cr_with_num(conn,
-                                       ic_start_time_str,
-                                       pc_start->start_id)) ||
-      (error= ic_send_with_cr_with_num(conn,
-                                       ic_pid_str,
-                                       (guint64)pc_start->pid)) ||
-      (error= ic_send_with_cr_with_num(conn,
+  if ((ret_code= ic_send_with_cr(conn, ic_list_node_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_program_str,
+                                             pc_start->program_name.str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_version_str,
+                                             pc_start->version_string.str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_grid_str,
+                                             pc_start->key.grid_name.str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_cluster_str,
+                                             pc_start->key.cluster_name.str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_node_str,
+                                             pc_start->key.node_name.str)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_start_time_str,
+                                          pc_start->start_id)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_pid_str,
+                                          (guint64)pc_start->pid)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
                                        ic_num_parameters_str,
                                        (guint64)pc_start->num_parameters)))
-    DEBUG_RETURN_INT(error);
+    DEBUG_RETURN_INT(ret_code);
   if (list_full_flag)
   {
     for (i= 0; i < pc_start->num_parameters; i++)
     {
-      if ((error= ic_send_with_cr_two_strings(conn,
-                                              ic_parameter_str,
-                                              pc_start->parameters[i].str)))
-        DEBUG_RETURN_INT(error);
+      if ((ret_code= ic_send_with_cr_two_strings(conn,
+                                                 ic_parameter_str,
+                                                 pc_start->parameters[i].str)))
+        DEBUG_RETURN_INT(ret_code);
     }
   }
-  if ((error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -869,16 +900,16 @@ get_key(IC_CONNECTION *conn,
         IC_MEMORY_CONTAINER *mc_ptr,
         IC_PC_KEY *pc_key)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("get_key");
 
-  if ((error= ic_mc_rec_string(conn, mc_ptr,
-                               ic_grid_str, &pc_key->grid_name)) ||
-      (error= ic_mc_rec_string(conn, mc_ptr,
-                               ic_cluster_str, &pc_key->cluster_name)) ||
-      (error= ic_mc_rec_string(conn, mc_ptr,
-                               ic_node_str, &pc_key->node_name)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_mc_rec_string(conn, mc_ptr,
+                                  ic_grid_str, &pc_key->grid_name)) ||
+      (ret_code= ic_mc_rec_string(conn, mc_ptr,
+                                  ic_cluster_str, &pc_key->cluster_name)) ||
+      (ret_code= ic_mc_rec_string(conn, mc_ptr,
+                                  ic_node_str, &pc_key->node_name)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -903,7 +934,7 @@ rec_start_message(IC_CONNECTION *conn,
   IC_MEMORY_CONTAINER *mc_ptr;
   IC_PC_START *loc_pc_start;
   guint32 i;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("rec_start_message");
 
   /*
@@ -920,36 +951,42 @@ rec_start_message(IC_CONNECTION *conn,
   loc_pc_start= *pc_start;
   loc_pc_start->mc_ptr= mc_ptr;
 
-  if ((error= ic_mc_rec_string(conn, mc_ptr, ic_program_str,
-                               &loc_pc_start->program_name)) ||
-      (error= ic_mc_rec_string(conn, mc_ptr, ic_version_str,
-                               &loc_pc_start->version_string)) ||
-      (error= get_key(conn, mc_ptr, &loc_pc_start->key)) ||
-      (error= ic_rec_boolean(conn, ic_auto_restart_str,
-                             &loc_pc_start->autorestart)) ||
-      (error= ic_rec_number(conn, ic_num_parameters_str,
-                            &loc_pc_start->num_parameters)))
+  if ((ret_code= ic_mc_rec_string(conn,
+                                  mc_ptr,
+                                  ic_program_str,
+                                  &loc_pc_start->program_name)) ||
+      (ret_code= ic_mc_rec_string(conn,
+                                  mc_ptr,
+                                  ic_version_str,
+                                  &loc_pc_start->version_string)) ||
+      (ret_code= get_key(conn, mc_ptr, &loc_pc_start->key)) ||
+      (ret_code= ic_rec_boolean(conn,
+                                ic_auto_restart_str,
+                                &loc_pc_start->autorestart)) ||
+      (ret_code= ic_rec_number(conn,
+                               ic_num_parameters_str,
+                               &loc_pc_start->num_parameters)))
     goto error;
   if (!(loc_pc_start->parameters= (IC_STRING*)
-       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_STRING)*
-         loc_pc_start->num_parameters)))
+       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+           sizeof(IC_STRING)* loc_pc_start->num_parameters)))
     goto mem_error;
   for (i= 0; i < loc_pc_start->num_parameters; i++)
   {
-    if ((error= ic_mc_rec_string(conn,
-                                 mc_ptr,
-                                 ic_parameter_str,
-                                 &loc_pc_start->parameters[i])))
+    if ((ret_code= ic_mc_rec_string(conn,
+                                    mc_ptr,
+                                    ic_parameter_str,
+                                    &loc_pc_start->parameters[i])))
       goto error;
   }
-  if ((error= ic_rec_empty_line(conn)))
+  if ((ret_code= ic_rec_empty_line(conn)))
     goto error;
   DEBUG_RETURN_INT(0);
 mem_error:
-  error= IC_ERROR_MEM_ALLOC;
+  ret_code= IC_ERROR_MEM_ALLOC;
 error:
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1333,24 +1370,26 @@ rec_key_message(IC_CONNECTION *conn,
                  IC_PC_FIND **pc_find)
 {
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
-  int error;
+  int ret_code;
+  DEBUG_ENTRY("rec_key_message");
 
   /*
     When we come here we already received the stop/kill string and we only
     need to fill in the key parameters (grid, cluster and node name).
   */
-  if ((error= init_pc_find(pc_find)))
+  if ((ret_code= init_pc_find(pc_find)))
     goto error;
   mc_ptr= (*pc_find)->mc_ptr;
-  if ((error= get_key(conn, mc_ptr, &(*pc_find)->key)))
+  if ((ret_code= get_key(conn, mc_ptr, &(*pc_find)->key)))
     goto error;
-  if ((error= ic_rec_empty_line(conn)))
+  if ((ret_code= ic_rec_empty_line(conn)))
     goto error;
-  return 0;
+  DEBUG_RETURN_INT(0);
+
 error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return error;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1369,7 +1408,7 @@ kill_process(IC_PC_START *pc_start_found,
   guint32 loop_count= 0;
   guint64 start_id;
   IC_PID_TYPE pid;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("kill_process");
 
   /*
@@ -1390,27 +1429,27 @@ kill_process(IC_PC_START *pc_start_found,
   loop_count= 0;
 retry_kill_check:
   ic_sleep(1); /* Sleep 1 seconds to give OS a chance to complete kill */
-  error= ic_is_process_alive(pid, pc_start_found->program_name.str);
-  if (error == 0)
+  ret_code= ic_is_process_alive(pid, pc_start_found->program_name.str);
+  if (ret_code == 0)
   {
     loop_count++;
     if (loop_count > 3)
     {
-      error= IC_ERROR_FAILED_TO_STOP_PROCESS;
+      ret_code= IC_ERROR_FAILED_TO_STOP_PROCESS;
       goto error;
     }
     goto retry_kill_check;
   }
-  else if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)
+  else if (ret_code == IC_ERROR_CHECK_PROCESS_SCRIPT)
     goto error;
   else
   {
-    ic_assert(error == IC_ERROR_PROCESS_NOT_ALIVE);
+    ic_assert(ret_code == IC_ERROR_PROCESS_NOT_ALIVE);
     /*
       We were successful in stopping the process, now we need to
       remove the entry from the hash.
     */
-    error= 0;
+    ret_code= 0;
     ic_mutex_lock(pc_hash_mutex);
     pc_start_found= (IC_PC_START*)ic_hashtable_search(glob_pc_hash,
                                                       (void*)pc_find);
@@ -1433,7 +1472,7 @@ error:
   ic_mutex_lock(pc_hash_mutex);
   pc_start_found->kill_ongoing= FALSE;
   ic_mutex_unlock(pc_hash_mutex);
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1450,7 +1489,7 @@ delete_process(IC_PC_FIND *pc_find,
                gboolean kill_flag)
 {
   IC_PC_START *pc_start_found;
-  int error= 0;
+  int ret_code= 0;
   guint32 loop_count= 0;
   DEBUG_ENTRY("delete_process");
 
@@ -1471,7 +1510,7 @@ try_again:
       ic_mutex_unlock(pc_hash_mutex);
       if (++loop_count == 10)
       {
-        error= IC_ERROR_PROCESS_STUCK_IN_START_PHASE;
+        ret_code= IC_ERROR_PROCESS_STUCK_IN_START_PHASE;
         goto error;
       }
       ic_sleep(1);
@@ -1479,10 +1518,10 @@ try_again:
     }
     if (pc_start_found->kill_ongoing)
     {
-      error= IC_ERROR_PROCESS_ALREADY_BEING_KILLED;
+      ret_code= IC_ERROR_PROCESS_ALREADY_BEING_KILLED;
       goto error;
     }
-    error= kill_process(pc_start_found, pc_find, kill_flag);
+    ret_code= kill_process(pc_start_found, pc_find, kill_flag);
   }
   else
   {
@@ -1494,7 +1533,7 @@ try_again:
     ic_mutex_unlock(pc_hash_mutex);
   }
 error:
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1514,19 +1553,19 @@ static int
 handle_stop(IC_CONNECTION *conn, gboolean kill_flag)
 {
   IC_PC_FIND *pc_find= NULL;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("handle_stop");
 
-  if ((error= rec_key_message(conn, &pc_find)))
+  if ((ret_code= rec_key_message(conn, &pc_find)))
     goto error;
-  error= delete_process(pc_find, kill_flag);
+  ret_code= delete_process(pc_find, kill_flag);
   pc_find->mc_ptr->mc_ops.ic_mc_free(pc_find->mc_ptr);
-  if (!error)
+  if (!ret_code)
     DEBUG_RETURN_INT(ic_send_ok(conn));
 error:
   ic_send_error_message(conn,
-                        ic_get_error_message(error));
-  DEBUG_RETURN_INT(error);
+                        ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1663,7 +1702,7 @@ rec_opt_key_message(IC_CONNECTION *conn,
                     IC_PC_FIND **pc_find)
 {
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("rec_opt_key_message");
 
   /*
@@ -1671,33 +1710,33 @@ rec_opt_key_message(IC_CONNECTION *conn,
     only need to fill in key parameters. All key parameters are optional
     here.
   */
-  if ((error= init_pc_find(pc_find)))
+  if ((ret_code= init_pc_find(pc_find)))
     goto error;
   mc_ptr= (*pc_find)->mc_ptr;
-  if ((error= ic_mc_rec_opt_string(conn,
-                                   mc_ptr,
-                                   ic_grid_str,
-                                   &((*pc_find)->key.grid_name))))
+  if ((ret_code= ic_mc_rec_opt_string(conn,
+                                      mc_ptr,
+                                      ic_grid_str,
+                                      &((*pc_find)->key.grid_name))))
     goto error;
   if ((*pc_find)->key.grid_name.len == 0)
   {
     /* No grid name provided, list all programs */
     goto end;
   }
-  if ((error= ic_mc_rec_opt_string(conn,
-                                   mc_ptr,
-                                   ic_cluster_str,
-                                   &((*pc_find)->key.cluster_name))))
+  if ((ret_code= ic_mc_rec_opt_string(conn,
+                                      mc_ptr,
+                                      ic_cluster_str,
+                                      &((*pc_find)->key.cluster_name))))
     goto error;
   if ((*pc_find)->key.cluster_name.len == 0)
   {
     /* No cluster name provided, list all programs in grid */
     goto end;
   }
-  if ((error= ic_mc_rec_opt_string(conn,
-                                   mc_ptr,
-                                   ic_node_str,
-                                   &((*pc_find)->key.node_name))))
+  if ((ret_code= ic_mc_rec_opt_string(conn,
+                                      mc_ptr,
+                                      ic_node_str,
+                                      &((*pc_find)->key.node_name))))
     goto error;
   if ((*pc_find)->key.node_name.len == 0)
   {
@@ -1705,13 +1744,13 @@ rec_opt_key_message(IC_CONNECTION *conn,
     goto end;
   }
 end:
-  if ((error= ic_rec_empty_line(conn)))
+  if ((ret_code= ic_rec_empty_line(conn)))
     goto error;
   DEBUG_RETURN_INT(0);
 error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1724,7 +1763,7 @@ static int
 handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
 {
   IC_PC_FIND *pc_find= NULL;
-  int error;
+  int ret_code;
   IC_PC_START *first_pc_start= NULL;
   IC_PC_START *last_pc_start= NULL;
   IC_PC_START *pc_start, *loop_pc_start, *new_pc_start;
@@ -1736,16 +1775,16 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   gboolean stop_flag;
   DEBUG_ENTRY("handle_list");
 
-  if ((error= rec_opt_key_message(conn, &pc_find)))
+  if ((ret_code= rec_opt_key_message(conn, &pc_find)))
     goto error;
   mc_ptr= pc_find->mc_ptr;
   ic_mutex_lock(pc_hash_mutex);
   max_index= glob_pc_array->dpa_ops.ic_get_max_index(glob_pc_array);
   for (current_index= 0; current_index < max_index; current_index++)
   {
-    if ((error= glob_pc_array->dpa_ops.ic_get_ptr(glob_pc_array,
-                                                  current_index,
-                                                  &void_pc_start)))
+    if ((ret_code= glob_pc_array->dpa_ops.ic_get_ptr(glob_pc_array,
+                                                     current_index,
+                                                     &void_pc_start)))
       goto error;
     pc_start= (IC_PC_START*)void_pc_start;
     if (pc_start && is_list_match(pc_start, pc_find))
@@ -1764,9 +1803,9 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   stop_flag= FALSE;
   while (loop_pc_start && !stop_flag)
   {
-    if ((error= send_list_entry(conn, loop_pc_start, list_full_flag)))
+    if ((ret_code= send_list_entry(conn, loop_pc_start, list_full_flag)))
       goto error;
-    if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
     {
       if (!ic_check_buf(read_buf,
                         read_size,
@@ -1787,16 +1826,16 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   DEBUG_RETURN_INT(ic_send_list_stop(conn));
 
 protocol_error:
-  error= IC_PROTOCOL_ERROR;
+  ret_code= IC_PROTOCOL_ERROR;
   goto error;
 mem_error:
-  error= IC_ERROR_MEM_ALLOC;
+  ret_code= IC_ERROR_MEM_ALLOC;
 error:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   ic_send_error_message(conn,
-                        ic_get_error_message(error));
-  DEBUG_RETURN_INT(error);
+                        ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /*
@@ -1825,27 +1864,28 @@ handle_receive_file(IC_CONNECTION *conn,
   gchar *read_buf;
   guint32 read_size;
   guint32 i;
-  int error;
+  int ret_code;
   IC_FILE_HANDLE file_ptr;
   IC_STRING file_str;
+  DEBUG_ENTRY("handle_receive_file");
 
-  if ((error= ic_set_config_dir(&file_str,
-                                TRUE,
-                                node_id)))
-    return error;
-  if ((error= ic_add_dup_string(&file_str, file_name)))
-    return error;
+  if ((ret_code= ic_set_config_dir(&file_str,
+                                   TRUE,
+                                   node_id)))
+    goto early_error;
+  if ((ret_code= ic_add_dup_string(&file_str, file_name)))
+    goto early_error;
 
   /* Record the file name to be able to clean up after an error */
-  if ((error= file_name_array->dpa_ops.ic_insert_ptr(file_name_array,
-                                                     num_files,
-                                                     (void*)file_str.str)))
+  if ((ret_code= file_name_array->dpa_ops.ic_insert_ptr(file_name_array,
+                                                        num_files,
+                                                        (void*)file_str.str)))
   {
     ic_free(file_str.str);
-    return error;
+    goto early_error;
   }
-  if ((error= ic_create_file(&file_ptr,
-                             file_str.str)))
+  if ((ret_code= ic_create_file(&file_ptr,
+                                file_str.str)))
   {
     /*
       Clean up since error handling will attempt to delete file. We don't
@@ -1854,22 +1894,23 @@ handle_receive_file(IC_CONNECTION *conn,
     */
     ic_free(file_str.str);
     (*num_files)--;
-    return error;
+    goto error;
   }
   for (i= 0; i < number_of_lines; i++)
   {
     /* Receive line from connection and write line received to file */
-    if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
-        (error= ic_write_file(file_ptr, read_buf, read_size)))
+    if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+        (ret_code= ic_write_file(file_ptr, read_buf, read_size)))
       goto error;
   }
-  if ((error= ic_rec_empty_line(conn)) ||
-      (error= ic_close_file(file_ptr)))
+  if ((ret_code= ic_rec_empty_line(conn)) ||
+      (ret_code= ic_close_file(file_ptr)))
     goto error;
-  return 0;
+  DEBUG_RETURN_INT(0);
 error:
   (void)ic_close_file(file_ptr); /* Ignore error here */
-  return error;
+early_error:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /*
@@ -1888,7 +1929,7 @@ error:
 static int
 handle_copy_cluster_server_files(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   void *mem_alloc_object;
   guint32 num_lines;
   guint32 num_clusters;
@@ -1898,18 +1939,22 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
   IC_STRING file_name;
   gchar file_name_buf[IC_MAX_FILE_NAME_SIZE];
   IC_DYNAMIC_PTR_ARRAY *file_name_array;
+  DEBUG_ENTRY("handle_copy_cluster_server_files");
 
   if (!(file_name_array= ic_create_dynamic_ptr_array()))
-    return IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 
   /* Receive config.ini */
-  if ((error= ic_rec_number(conn, ic_cluster_server_node_id_str,
-                            &node_id)) ||
-      (error= ic_rec_number(conn, ic_number_of_clusters_str,
-                            &num_clusters)) ||
-      (error= ic_rec_simple_str(conn, ic_receive_config_ini_str)) ||
-      (error= ic_rec_number(conn, ic_number_of_lines_str,
-                            &num_lines)))
+  if ((ret_code= ic_rec_number(conn,
+                               ic_cluster_server_node_id_str,
+                               &node_id)) ||
+      (ret_code= ic_rec_number(conn,
+                               ic_number_of_clusters_str,
+                               &num_clusters)) ||
+      (ret_code= ic_rec_simple_str(conn, ic_receive_config_ini_str)) ||
+      (ret_code= ic_rec_number(conn,
+                               ic_number_of_lines_str,
+                               &num_lines)))
     goto error_delete_files;
 
   /* Create the config.ini file name */
@@ -1918,21 +1963,20 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
                              NULL,
                              &ic_config_string,
                              0);
-  if ((error= handle_receive_file(conn,
-                                  file_name_array,
-                                  file_name.str,
-                                  &num_files,
-                                  node_id,
-                                  num_lines)))
+  if ((ret_code= handle_receive_file(conn,
+                                     file_name_array,
+                                     file_name.str,
+                                     &num_files,
+                                     node_id,
+                                     num_lines)))
     goto error_delete_files;
-  if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
-      (error= ic_send_empty_line(conn)))
+  if ((ret_code= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
     goto error_delete_files;
 
   /* Receive grid_common.ini */
-  if ((error= ic_rec_simple_str(conn, ic_receive_grid_common_ini_str)) ||
-      (error= ic_rec_number(conn, ic_number_of_lines_str,
-                            &num_lines)))
+  if ((ret_code= ic_rec_simple_str(conn, ic_receive_grid_common_ini_str)) ||
+      (ret_code= ic_rec_number(conn, ic_number_of_lines_str, &num_lines)))
     goto error_delete_files;
 
   /* Create the grid_common.ini file name */
@@ -1941,40 +1985,41 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
                              NULL,
                              &ic_grid_common_config_string,
                              0);
-  if ((error= handle_receive_file(conn,
-                                  file_name_array,
-                                  file_name.str,
-                                  &num_files,
-                                  node_id,
-                                  num_lines)))
+  if ((ret_code= handle_receive_file(conn,
+                                     file_name_array,
+                                     file_name.str,
+                                     &num_files,
+                                     node_id,
+                                     num_lines)))
     goto error_delete_files;
-  if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
-      (error= ic_send_empty_line(conn)))
+  if ((ret_code= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
     goto error_delete_files;
 
   /* Receive all cluster config files */
   for (i= 0; i < num_clusters; i++)
   {
-    if ((error= ic_rec_string(conn,
-                              ic_receive_cluster_name_ini_str,
-                              file_name_buf)) ||
-        (error= ic_rec_number(conn, ic_number_of_lines_str,
-                              &num_lines)))
+    if ((ret_code= ic_rec_string(conn,
+                                 ic_receive_cluster_name_ini_str,
+                                 file_name_buf)) ||
+        (ret_code= ic_rec_number(conn,
+                                 ic_number_of_lines_str,
+                                 &num_lines)))
       goto error_delete_files;
-    if ((error= handle_receive_file(conn,
-                                    file_name_array,
-                                    file_name_buf,
-                                    &num_files,
-                                    node_id,
-                                    num_lines)))
+    if ((ret_code= handle_receive_file(conn,
+                                       file_name_array,
+                                       file_name_buf,
+                                       &num_files,
+                                       node_id,
+                                       num_lines)))
       goto error_delete_files;
-    if ((error= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
-        (error= ic_send_empty_line(conn)))
+    if ((ret_code= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
+        (ret_code= ic_send_empty_line(conn)))
       goto error_delete_files;
   }
   /* Protocol complete and worked ok, clean up dynamic pointer array */
   file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
-  return 0;
+  DEBUG_RETURN_INT(0);
 
 error_delete_files:
   for (i= 0; i < num_files; i++)
@@ -1986,7 +2031,9 @@ error_delete_files:
     ic_free((gchar*)mem_alloc_object);
   }
   file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
-  return error;
+  ic_send_error_message(conn,
+                        ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -1997,7 +2044,7 @@ error_delete_files:
 static int
 handle_get_cpu_info(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   guint32 num_cpus;
   guint32 num_numa_nodes;
   guint32 cpus_per_core;
@@ -2005,7 +2052,7 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   IC_CPU_INFO *cpu_info= NULL;
   DEBUG_ENTRY("handle_get_cpu_info");
 
-  if ((error= ic_rec_empty_line(conn)))
+  if ((ret_code= ic_rec_empty_line(conn)))
     goto error;
 
   ic_get_cpu_info(&num_cpus,
@@ -2014,40 +2061,46 @@ handle_get_cpu_info(IC_CONNECTION *conn)
                   &cpu_info);
   if (num_cpus == 0)
   {
-    if ((error= ic_send_with_cr(conn, ic_no_cpu_info_available_str)) ||
-        (error= ic_send_empty_line(conn)))
+    if ((ret_code= ic_send_with_cr(conn, ic_no_cpu_info_available_str)) ||
+        (ret_code= ic_send_empty_line(conn)))
       goto error;
     goto error;
   }
 
-  if ((error= ic_send_with_cr_with_num(conn, ic_number_of_cpus_str,
-                                       (guint64)num_cpus)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_number_of_numa_nodes_str,
-                                       (guint64)num_numa_nodes)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_number_of_cpus_per_core_str,
-                                       (guint64)cpus_per_core)))
+  if ((ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_number_of_cpus_str,
+                                          (guint64)num_cpus)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_number_of_numa_nodes_str,
+                                          (guint64)num_numa_nodes)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_number_of_cpus_per_core_str,
+                                          (guint64)cpus_per_core)))
     goto error;
   for (i= 0; i < num_cpus; i++)
   {
-    if ((error= ic_send_with_cr_with_num(conn,
-                                         ic_cpu_str,
-                                         (guint64)cpu_info[i].cpu_id)))
+    if ((ret_code= ic_send_with_cr_with_num(conn,
+                                            ic_cpu_str,
+                                            (guint64)cpu_info[i].cpu_id)))
       goto error;
-    if ((error= ic_send_with_cr_with_num(conn,
-                                         ic_cpu_node_str,
-                                         (guint64)cpu_info[i].numa_node_id)))
+    if ((ret_code= ic_send_with_cr_with_num(conn,
+                                            ic_cpu_node_str,
+                                            (guint64)cpu_info[i].numa_node_id)))
       goto error;
-    if ((error= ic_send_with_cr_with_num(conn,
-                                         ic_core_str,
-                                         (guint64)cpu_info[i].core_id)))
+    if ((ret_code= ic_send_with_cr_with_num(conn,
+                                            ic_core_str,
+                                            (guint64)cpu_info[i].core_id)))
       goto error;
   }
-  error= ic_send_empty_line(conn);
+  ret_code= ic_send_empty_line(conn);
 
 error:
   if (cpu_info)
     ic_free((gchar*)cpu_info);
-  DEBUG_RETURN_INT(error);
+  if (ret_code)
+    ic_send_error_message(conn,
+                          ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -2058,15 +2111,15 @@ error:
 static int
 handle_get_mem_info(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   guint32 num_numa_nodes;
   guint32 i;
   guint64 total_memory_size;
-  IC_MEM_INFO *mem_info;
+  IC_MEM_INFO *mem_info= NULL;
   DEBUG_ENTRY("handle_get_mem_info");
 
-  if ((error= ic_rec_empty_line(conn)))
-    return error;
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
 
   ic_get_mem_info(&num_numa_nodes,
                   &total_memory_size,
@@ -2074,34 +2127,38 @@ handle_get_mem_info(IC_CONNECTION *conn)
 
   if (num_numa_nodes == 0)
   {
-    if ((error= ic_send_with_cr(conn, ic_no_mem_info_available_str)) ||
-        (error= ic_send_empty_line(conn)))
+    if ((ret_code= ic_send_with_cr(conn, ic_no_mem_info_available_str)) ||
+        (ret_code= ic_send_empty_line(conn)))
       goto error;
     goto error;
   }
-  if ((error= ic_send_with_cr_with_num(conn,
-                            ic_number_of_mbyte_user_memory_str,
-                            (guint64)total_memory_size)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_number_of_numa_nodes_str,
-                                       (guint64)num_numa_nodes)))
+  if ((ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_number_of_mbyte_user_memory_str,
+                                          (guint64)total_memory_size)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_number_of_numa_nodes_str,
+                                          (guint64)num_numa_nodes)))
     goto error;
   for (i= 0; i < num_numa_nodes; i++)
   {
-    if ((error= ic_send_with_cr_with_num(conn,
-                                         ic_mem_node_str,
-                                         (guint64)mem_info[i].numa_node_id)))
+    if ((ret_code= ic_send_with_cr_with_num(conn,
+                                            ic_mem_node_str,
+                                            (guint64)mem_info[i].numa_node_id)))
       goto error;
-    if ((error= ic_send_with_cr_with_num(conn,
-                                         ic_mb_user_memory_str,
-                                         (guint64)mem_info[i].memory_size)))
+    if ((ret_code= ic_send_with_cr_with_num(conn,
+                                            ic_mb_user_memory_str,
+                                            (guint64)mem_info[i].memory_size)))
       goto error;
   }
-  error= ic_send_empty_line(conn);
+  ret_code= ic_send_empty_line(conn);
 
 error:
   if (mem_info)
     ic_free((gchar*)mem_info);
-  DEBUG_RETURN_INT(error);
+  if (ret_code)
+    ic_send_error_message(conn,
+                          ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -2112,15 +2169,16 @@ error:
 static int
 handle_get_disk_info(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   guint64 disk_space;
   gchar dir_name_buf[IC_MAX_FILE_NAME_SIZE];
   DEBUG_ENTRY("handle_get_disk_info");
 
   /* Get directory which we want to analyze how much disk space can be used */
-  if ((error= ic_rec_string(conn, ic_dir_str,
-                            dir_name_buf)) ||
-      (error= ic_rec_empty_line(conn)))
+  if ((ret_code= ic_rec_string(conn,
+                               ic_dir_str,
+                               dir_name_buf)) ||
+      (ret_code= ic_rec_empty_line(conn)))
     goto error;
 
   /* Check disk space now */
@@ -2132,20 +2190,23 @@ handle_get_disk_info(IC_CONNECTION *conn)
       security reasons. We don't want a user to be able to check the existence
       of a directory if he doesn't have permission to it.
     */
-    if ((error= ic_send_with_cr(conn, ic_no_disk_info_available_str)))
+    if ((ret_code= ic_send_with_cr(conn, ic_no_disk_info_available_str)))
       goto error;
   }
   else
   {
     /* Report disk space found available in this directory */
-    if ((error= ic_send_with_cr_with_num(conn,
-                                         ic_disk_space_str,
-                                         disk_space)))
+    if ((ret_code= ic_send_with_cr_with_num(conn,
+                                            ic_disk_space_str,
+                                            disk_space)))
       goto error;
   }
-  error= ic_send_empty_line(conn);
+  ret_code= ic_send_empty_line(conn);
 error:
-  DEBUG_RETURN_INT(error);
+  if (ret_code)
+    ic_send_error_message(conn,
+                          ic_get_error_message(ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -2166,7 +2227,7 @@ clean_process_hash(gboolean stop_processes)
 {
   guint64 max_index;
   guint32 i;
-  int error;
+  int ret_code;
   void *void_pc_start;
   IC_PC_START *pc_start;
   IC_PC_FIND pc_find;
@@ -2178,9 +2239,9 @@ clean_process_hash(gboolean stop_processes)
   max_index= glob_pc_array->dpa_ops.ic_get_max_index(glob_pc_array);
   for (i= 0; i < max_index; i++)
   {
-    if (!(error= glob_pc_array->dpa_ops.ic_get_ptr(glob_pc_array,
-                                                   i,
-                                                   &void_pc_start)))
+    if (!(ret_code= glob_pc_array->dpa_ops.ic_get_ptr(glob_pc_array,
+                                                      i,
+                                                      &void_pc_start)))
     {
       pc_start= (IC_PC_START*)void_pc_start;
       if (stop_processes && pc_start)
@@ -2188,10 +2249,10 @@ clean_process_hash(gboolean stop_processes)
         pc_find.key= pc_start->key;
         ic_assert(pc_start->kill_ongoing == FALSE);
         ic_mutex_unlock(pc_hash_mutex);
-        error= delete_process(&pc_find, FALSE);
-        if (error)
+        ret_code= delete_process(&pc_find, FALSE);
+        if (ret_code)
           delete_process(&pc_find, TRUE);
-        if (error)
+        if (ret_code)
         {
           /* Print error message about failure to stop process */
           ic_printf(
@@ -2200,7 +2261,7 @@ clean_process_hash(gboolean stop_processes)
                     pc_start->key.cluster_name.str,
                     pc_start->key.node_name.str,
                     (guint32)pc_start->pid);
-          ic_print_error(error);
+          ic_print_error(ret_code);
           pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
         }
         ic_mutex_lock(pc_hash_mutex);

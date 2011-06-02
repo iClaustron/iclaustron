@@ -254,6 +254,8 @@ ic_init_error_messages()
     "Syntax error in config_version.ini file";
   ic_error_str[IC_ERROR_PROCESS_ALREADY_BEING_KILLED - IC_FIRST_ERROR]=
     "The process is already in the process of being killed";
+  ic_error_str[IC_ERROR_TOO_LARGE_ERROR_MESSAGE - IC_FIRST_ERROR]=
+    "Error message received is too large";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)
