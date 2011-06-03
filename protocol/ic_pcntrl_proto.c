@@ -92,7 +92,8 @@ ic_proto_send_file(IC_CONNECTION *conn,
   IC_STRING file_str;
   IC_STRING str;
   guint64 file_size, loop_file_size;
-  gchar *file_content, *loop_file_content;
+  gchar *file_content= NULL;
+  gchar *loop_file_content;
   int ret_code;
   guint64 num_lines;
   guint32 line_size;
@@ -154,8 +155,9 @@ ic_proto_send_file(IC_CONNECTION *conn,
   /* Send empty line */
   if ((ret_code= ic_send_empty_line(conn)))
     goto error;
-  DEBUG_RETURN_INT(0);
 error:
+  if (file_content)
+    ic_free(file_content);
   DEBUG_RETURN_INT(ret_code);
 }
 

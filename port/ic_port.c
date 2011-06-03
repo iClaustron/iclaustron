@@ -463,6 +463,26 @@ ic_free_low(void *ret_obj)
 
 #ifdef DEBUG_BUILD
 static void
+print_alloc(size_t size, gchar *ret_ptr, gchar *place)
+{
+  gchar ptr_str[32];
+
+  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
+  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u bytes at %s for %s",
+              size, ptr_str, place));
+}
+
+static void
+print_free(gchar *ret_ptr, gchar *place)
+{
+  gchar ptr_str[32];
+
+  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
+  DEBUG_PRINT(MALLOC_LEVEL, ("Freed at %s for %s",
+              ptr_str, place));
+}
+
+static void
 insert_alloc_entry(gchar *entry)
 {
   ic_mutex_lock_low(mem_entry_hash_mutex);
@@ -486,7 +506,6 @@ gchar*
 ic_calloc_conn(size_t size)
 {
   gchar *ret_ptr;
-  gchar ptr_str[32];
 
   ic_mutex_lock_low(mem_conn_mutex);
   num_mem_conn_allocs++;
@@ -494,9 +513,7 @@ ic_calloc_conn(size_t size)
   ret_ptr= ic_calloc_low(size);
   ic_require(ret_ptr);
   insert_alloc_entry(ret_ptr);
-  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
-              size, ptr_str));
+  print_alloc(size, ret_ptr, "conn");
   return ret_ptr;
 }
 
@@ -510,7 +527,6 @@ gchar*
 ic_calloc_mc(size_t size)
 {
   gchar *ret_ptr;
-  gchar ptr_str[32];
 
   ic_mutex_lock_low(mem_mc_mutex);
   num_mem_mc_allocs++;
@@ -518,9 +534,7 @@ ic_calloc_mc(size_t size)
   ret_ptr= ic_calloc_low(size);
   ic_require(ret_ptr);
   insert_alloc_entry(ret_ptr);
-  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
-              size, ptr_str));
+  print_alloc(size, ret_ptr, "mc");
   return ret_ptr;
 }
 
@@ -528,7 +542,6 @@ gchar*
 ic_calloc(size_t size)
 {
   gchar *ret_ptr;
-  gchar ptr_str[32];
 
   ic_mutex_lock_low(mem_mutex);
   num_mem_allocs++;
@@ -536,9 +549,7 @@ ic_calloc(size_t size)
   ret_ptr= ic_calloc_low(size);
   ic_require(ret_ptr);
   insert_alloc_entry(ret_ptr);
-  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
-              size, ptr_str));
+  print_alloc(size, ret_ptr, "genc");
   return ret_ptr;
 }
 
@@ -546,20 +557,15 @@ gchar *
 ic_malloc_hash(size_t size, gboolean is_create)
 {
   gchar *ret_ptr;
-  gchar ptr_str[32];
 
   ic_mutex_lock_low(mem_hash_mutex);
   num_mem_hash_allocs++;
   ic_mutex_unlock_low(mem_hash_mutex);
-  ret_ptr= ic_calloc_low(size);
+  ret_ptr= ic_malloc_low(size);
   ic_require(ret_ptr);
   if (is_create)
-  {
     insert_alloc_entry(ret_ptr);
-    ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-    DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u zeroed bytes at %s",
-                size, ptr_str));
-  }
+  print_alloc(size, ret_ptr, "hash");
   return ret_ptr;
 }
 
@@ -567,72 +573,59 @@ gchar *
 ic_malloc(size_t size)
 {
   gchar *ret_ptr;
-  gchar ptr_str[32];
 
   ic_mutex_lock_low(mem_mutex);
   num_mem_allocs++;
   ic_mutex_unlock_low(mem_mutex);
   ret_ptr= ic_malloc_low(size);
   insert_alloc_entry(ret_ptr);
-  ic_guint64_hex_str((guint64)ret_ptr, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Allocated %u bytes at %s",
-              size, ptr_str));
+  print_alloc(size, ret_ptr, "gen");
   return ret_ptr;
 }
 
 void
-ic_free_conn(void *ret_obj)
+ic_free_conn(void *ret_ptr)
 {
-  gchar ptr_str[32];
-
   ic_mutex_lock_low(mem_conn_mutex);
   num_mem_conn_allocs--;
   ic_mutex_unlock_low(mem_conn_mutex);
-  ic_guint64_hex_str((guint64)ret_obj, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Freeing conn memory at %s", ptr_str));
-  remove_alloc_entry(ret_obj);
-  ic_free_low(ret_obj);
+  print_free(ret_ptr, "conn");
+  remove_alloc_entry(ret_ptr);
+  ic_free_low(ret_ptr);
 }
 
 void
-ic_free_hash(void *ret_obj, gboolean is_destroy)
+ic_free_hash(void *ret_ptr, gboolean is_destroy)
 {
-  gchar ptr_str[32];
-
   ic_mutex_lock_low(mem_hash_mutex);
   num_mem_hash_allocs--;
   ic_mutex_unlock_low(mem_hash_mutex);
+  print_free(ret_ptr, "hash");
   if (is_destroy)
-  {
-    ic_guint64_hex_str((guint64)ret_obj, ptr_str);
-    DEBUG_PRINT(MALLOC_LEVEL, ("Freeing conn memory at %s", ptr_str));
-    remove_alloc_entry(ret_obj);
-  }
-  ic_free_low(ret_obj);
+    remove_alloc_entry(ret_ptr);
+  ic_free_low(ret_ptr);
 }
 
 void
-ic_free_mc(void *ret_obj)
+ic_free_mc(void *ret_ptr)
 {
   ic_mutex_lock_low(mem_mc_mutex);
   num_mem_mc_allocs--;
   ic_mutex_unlock_low(mem_mc_mutex);
-  remove_alloc_entry(ret_obj);
-  ic_free_low(ret_obj);
+  remove_alloc_entry(ret_ptr);
+  print_free(ret_ptr, "mc");
+  ic_free_low(ret_ptr);
 }
 
 void
-ic_free(void *ret_obj)
+ic_free(void *ret_ptr)
 {
-  gchar ptr_str[32];
-
   ic_mutex_lock_low(mem_mutex);
   num_mem_allocs--;
   ic_mutex_unlock_low(mem_mutex);
-  ic_guint64_hex_str((guint64)ret_obj, ptr_str);
-  DEBUG_PRINT(MALLOC_LEVEL, ("Freeing memory at %s", ptr_str));
-  remove_alloc_entry(ret_obj);
-  ic_free_low(ret_obj);
+  print_free(ret_ptr, "gen");
+  remove_alloc_entry(ret_ptr);
+  ic_free_low(ret_ptr);
 }
 #endif
 

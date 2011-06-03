@@ -403,16 +403,16 @@ ic_init()
   int ret_value;
 
   /*
-    We need to initialise thread system and portability system
-    before initialising and using the debug system
+    We need to initialise thread system before initialising and using
+    the debug system, the portability system start can be debugged.
   */
   if (!g_thread_supported())
     g_thread_init(NULL);
-  ic_port_init();
 
   DEBUG_OPEN(ic_glob_node_id);
   DEBUG_ENTRY("ic_init");
 
+  ic_port_init();
   ic_init_error_messages();
   if (use_config_vars)
   {
@@ -458,6 +458,6 @@ void ic_end()
     ic_glob_binary_dir.str= NULL;
   }
   ic_stop_socket_system();
-  DEBUG_CLOSE;
   ic_port_end();
+  DEBUG_CLOSE;
 }

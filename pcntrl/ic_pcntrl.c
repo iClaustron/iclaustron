@@ -671,7 +671,8 @@ static int test_copy_files(IC_CONNECTION *conn)
 
   ic_set_current_dir(&current_dir);
 
-  if ((ret_code= ic_send_with_cr_with_num(conn,
+  if ((ret_code= ic_send_with_cr(conn, ic_copy_cluster_server_files_str)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
                                           ic_cluster_server_node_id_str,
                                           (guint64)1)) ||
        (ret_code= ic_send_with_cr_with_num(conn,
@@ -774,13 +775,14 @@ run_unit_test(gpointer data)
 
   if ((ret_code= start_client_connection(&conn)))
     goto error;
-  if ((ret_code= test_successful_start(conn)) ||
+      
+  if ((ret_code= test_copy_files(conn)) ||
+      (ret_code= test_successful_start(conn)) ||
       (ret_code= test_unsuccessful_start(conn)) ||
       (ret_code= test_list(conn, TRUE)) ||
       (ret_code= test_list(conn, FALSE)) ||
       (ret_code= test_successful_stop(conn)) ||
       (ret_code= test_successful_stop(conn)) ||
-      (ret_code= test_copy_files(conn)) ||
       (ret_code= test_cpu_info(conn)) ||
       (ret_code= test_mem_info(conn)) ||
       (ret_code= test_disk_info(conn)))
@@ -1872,18 +1874,15 @@ handle_receive_file(IC_CONNECTION *conn,
   if ((ret_code= ic_set_config_dir(&file_str,
                                    TRUE,
                                    node_id)))
-    goto early_error;
+    goto end;
   if ((ret_code= ic_add_dup_string(&file_str, file_name)))
-    goto early_error;
+    goto end;
 
   /* Record the file name to be able to clean up after an error */
   if ((ret_code= file_name_array->dpa_ops.ic_insert_ptr(file_name_array,
                                                         num_files,
                                                         (void*)file_str.str)))
-  {
-    ic_free(file_str.str);
-    goto early_error;
-  }
+    goto end;
   if ((ret_code= ic_create_file(&file_ptr,
                                 file_str.str)))
   {
@@ -1892,7 +1891,6 @@ handle_receive_file(IC_CONNECTION *conn,
       want the file deleted since the error could have been that the file
       already existed.
     */
-    ic_free(file_str.str);
     (*num_files)--;
     goto error;
   }
@@ -1906,11 +1904,13 @@ handle_receive_file(IC_CONNECTION *conn,
   if ((ret_code= ic_rec_empty_line(conn)) ||
       (ret_code= ic_close_file(file_ptr)))
     goto error;
-  DEBUG_RETURN_INT(0);
+end:
+  if (file_str.str)
+    ic_free(file_str.str);
+  DEBUG_RETURN_INT(ret_code);
 error:
   (void)ic_close_file(file_ptr); /* Ignore error here */
-early_error:
-  DEBUG_RETURN_INT(ret_code);
+  goto end;
 }
 
 /*

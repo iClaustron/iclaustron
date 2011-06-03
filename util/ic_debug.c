@@ -120,7 +120,9 @@ ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
              thread_debug->thread_id,
              indent_buf,
              in_buf);
+  ic_mutex_lock_low(debug_mutex);
   fprintf(ic_fptr, "%s", print_buf);
+  ic_mutex_unlock_low(debug_mutex);
   fflush(ic_fptr);
 }
 

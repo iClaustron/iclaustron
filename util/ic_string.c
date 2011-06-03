@@ -926,7 +926,7 @@ ic_count_lines(gchar *str, guint64 str_size)
       lines++;
     }
   }
-  if ((last_carriage_return + 1) == str_size)
+  if ((last_carriage_return + 1) != str_size)
     lines++; /* Count also last line which isn't ended by a carriage return */
   return lines;
 }
@@ -961,6 +961,7 @@ ic_get_next_line(gchar **str,
   guint64 loc_str_size= *str_size;
   guint64 i;
   guint64 max_size= IC_MAX(loc_str_size, (buf_size - 1));
+  DEBUG_ENTRY("ic_get_next_line");
 
   *line_size= 0;
   for (i= 0; i < max_size; i++)

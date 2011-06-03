@@ -143,7 +143,7 @@ ic_create_hashtable(unsigned int minsize,
                                                FALSE);
     if (NULL == h->table)
     {
-      ic_free_hash(h, TRUE); /*oom*/
+      ic_free_hash(h, !initial); /*oom*/
       return NULL;
     }
     ic_zero(h->table, size * sizeof(IC_HASH_ENTRY*));
