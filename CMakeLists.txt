@@ -140,6 +140,9 @@ configure_file("${PROJECT_SOURCE_DIR}/count_line.sh.in"
 configure_file("${PROJECT_SOURCE_DIR}/scripts/check_process.sh.in"
                "${PROJECT_BINARY_DIR}/scripts/check_process.sh"
                @ONLY)
+configure_file("${PROJECT_SOURCE_DIR}/scripts/linux_get_hw_info.sh.in"
+               "${PROJECT_BINARY_DIR}/scripts/linux_get_hw_info.sh"
+               @ONLY)
 configure_file("${PROJECT_SOURCE_DIR}/scripts/windows_check_process.sh.in"
                "${PROJECT_BINARY_DIR}/scripts/windows_check_process.sh"
                @ONLY)
@@ -573,6 +576,8 @@ install (FILES
 #Install scripts into bin directory
 install (PROGRAMS scripts/check_process.sh.in DESTINATION bin
          RENAME check_process.sh)
+install (PROGRAMS scripts/linux_get_hw_info.sh.in DESTINATION bin
+         RENAME linux_get_hw_info.sh)
 install (PROGRAMS scripts/windows_check_process.sh.in DESTINATION bin
          RENAME windows_check_process.sh)
 

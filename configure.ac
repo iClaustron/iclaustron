@@ -71,6 +71,7 @@ AC_CONFIG_FILES([bootstrap.sh], [chmod +x bootstrap.sh])
 AC_CONFIG_FILES([setup.sh], [chmod +x setup.sh])
 AC_CONFIG_FILES([count_line.sh], [chmod +x count_line.sh])
 AC_CONFIG_FILES([scripts/check_process.sh], [chmod +x scripts/check_process.sh])
+AC_CONFIG_FILES([scripts/linux_get_hw_info.sh], [chmod +x scripts/linux_get_hw_info.sh])
 AC_CONFIG_FILES([scripts/windows_check_process.sh], [chmod +x scripts/windows_check_process.sh])
 
 AC_PATH_PROG(PKG_CONFIG, pkg-config, no)

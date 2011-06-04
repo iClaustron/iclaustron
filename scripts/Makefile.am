@@ -17,5 +17,5 @@
 ## This directory is used to build iClaustron Scripts
 ##
 
-dist_bin_SCRIPTS = check_process.sh \
+dist_bin_SCRIPTS = check_process.sh linux_get_hw_info.sh \
                    windows_check_process.sh

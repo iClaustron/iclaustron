@@ -1,5 +1,5 @@
 #!/bin/bash
-## Copyright (C) 2008-2011 iClaustron AB
+## Copyright (C) 2011 iClaustron AB
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation; version 2 of the License.
@@ -27,15 +27,25 @@ set_binaries()
   fi
   if ! test -x $WHICH ; then
     CAT="/bin/cat"
+    ECHO="/bin/echo"
     GREP="/bin/grep"
     AWK="/usr/bin/awk"
+    WC="/usr/bin/wc"
+    RM="/bin/rm"
+    UNIQ="/usr/bin/uniq"
   else
     CAT=`$WHICH cat`
+    ECHO=`$WHICH echo`
     GREP=`$WHICH grep`
     AWK=`$WHICH awk`
+    WC=`$WHICH wc`
+    RM=`$WHICH rm`
+    UNIQ=`$WHICH uniq`
     if test "x$CAT" = "x" || \
        test "x$GREP" = "x" || \
-       test "x$AWK" = "x" ; then
+       test "x$AWK" = "x" || \
+       test "x$UNIQ" = "x" || \
+       test "x$WC" = "x" ; then
       exit_func
     fi
   fi
@@ -56,27 +66,76 @@ check_binaries()
     FAULTY_PROCESS="awk"
     return $ret
   fi
+  if test -x $WC ; then
+    FAULTY_PROCESS="wc"
+    return $ret
+  fi
   ret=0
   return $ret
 }
 
 get_cpu_info()
 {
+  CPUINFO="/proc/cpuinfo"
+  NUM_PROCESSORS=`$CAT $CPUINFO | $GREP processor | $WC -l`
+  NUM_CORES=`$CAT $CPUINFO | $GREP 'core id' | uniq | $WC -l`
+  NUM_SOCKETS=`$CAT $CPUINFO | $GREP 'physical id' |  uniq |$WC -l`
+  ((NUM_THREADS_PER_CPU=NUM_PROCESSORS/NUM_CORES))
+
+  CPU_ID_ARRAY=`$CAT $CPUINFO | $GREP 'physical id' | $AWK '{print $4}'`
+  CORE_ID_ARRAY=`$CAT $CPUINFO | $GREP 'core id' | $AWK '{print $4}'`
+  $ECHO "Number of CPU threads: ${NUM_PROCESSORS}" > $OUT_FILE
+  $ECHO "Number of CPU sockets: ${NUM_SOCKETS}" >> $OUT_FILE
+  $ECHO "Number of CPU cores: ${NUM_CORES}" >> $OUT_FILE
+
+  i="0"
+  $CAT $CPUINFO | $GREP processor | $AWK '{print $3}' > $TMP_FILE
+  while read PROC_ID
+  do
+    PROCESSOR_ARRAY[${i}]="$PROC_ID"
+    ((i+=1))
+  done < $TMP_FILE
+  i="0"
+  $CAT $CPUINFO | $GREP 'core id' | $AWK '{print $4}' > $TMP_FILE
+  while read CORE_ID
+  do
+    CORE_ID_ARRAY[${i}]="$CORE_ID"
+    ((i+=1))
+  done < $TMP_FILE
+  i="0"
+  $CAT $CPUINFO | $GREP 'physical id' | $AWK '{print $4}' > $TMP_FILE
+  while read SOCKET_ID
+  do
+    SOCKET_ID_ARRAY[${i}]="$SOCKET_ID"
+    ((i+=1))
+  done < $TMP_FILE
+  $RM $TMP_FILE
+  for ((i = 0; i < NUM_PROCESSORS; i+=1 ))
+  do
+    PROC_ID="${PROCESSOR_ARRAY[${i}]}"
+    CORE_ID="${CORE_ID_ARRAY[${i}]}"
+    SOCKET_ID="${SOCKET_ID_ARRAY[${i}]}"
+    $ECHO "CPU thread $PROC_ID, core id = $CORE_ID, cpu id = $SOCKET_ID" \
+      >> $OUT_FILE
+  done
 }
 
-get_mem_info()
-{
-}
-
-get_disk_info()
-{
-}
+#get_mem_info()
+#{
+#}
+#
+#get_disk_info()
+#{
+#}
 
 WHICH=
 CAT=
 GREP=
 AWK=
+WC=
+RM=
 OUT_FILE=
+TMP_FILE=
 
   while test $# -gt 0
   do
@@ -87,6 +146,13 @@ OUT_FILE=
           exit_func
         fi
         OUT_FILE="$1"
+        ;;
+      --tmp_file )
+        shift
+        if test "x$TMP_FILE" != "x" ; then
+          exit_func
+        fi
+        TMP_FILE="$1"
         ;;
       --get_cpu_info )
         CHECK_CPU="yes"
@@ -104,6 +170,9 @@ OUT_FILE=
   done
   if test "x$OUT_FILE" = "x" ; then
     exit 0 # No file to report error to
+  fi
+  if test "x$TMP_FILE" = "x" ; then
+    exit 0 # No file to use for temporary storage
   fi
   set_binaries
   if check_binaries; then
