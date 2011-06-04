@@ -1,0 +1,122 @@
+#!/bin/bash
+## Copyright (C) 2008-2011 iClaustron AB
+## This program is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation; version 2 of the License.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+exit_func()
+{
+  echo "Failed" > $OUT_FILE
+  exit 0
+}
+
+set_binaries()
+{
+  WHICH=`which which`
+  if test "x$WHICH" = "x" ; then
+    WHICH="/usr_bin/which"
+  fi
+  if ! test -x $WHICH ; then
+    CAT="/bin/cat"
+    GREP="/bin/grep"
+    AWK="/usr/bin/awk"
+  else
+    CAT=`$WHICH cat`
+    GREP=`$WHICH grep`
+    AWK=`$WHICH awk`
+    if test "x$CAT" = "x" || \
+       test "x$GREP" = "x" || \
+       test "x$AWK" = "x" ; then
+      exit_func
+    fi
+  fi
+}
+
+check_binaries()
+{
+  ret=1
+  if test -x $CAT ; then
+    FAULTY_PROCESS="cat"
+    return $ret
+  fi
+  if test -x $GREP ; then
+    FAULTY_PROCESS="grep"
+    return $ret
+  fi
+  if test -x $AWK ; then
+    FAULTY_PROCESS="awk"
+    return $ret
+  fi
+  ret=0
+  return $ret
+}
+
+get_cpu_info()
+{
+}
+
+get_mem_info()
+{
+}
+
+get_disk_info()
+{
+}
+
+WHICH=
+CAT=
+GREP=
+AWK=
+OUT_FILE=
+
+  while test $# -gt 0
+  do
+    case $1 in
+      --output_file )
+        shift
+        if test "x$OUT_FILE" != "x" ; then
+          exit_func
+        fi
+        OUT_FILE="$1"
+        ;;
+      --get_cpu_info )
+        CHECK_CPU="yes"
+        ;;
+      --get_mem_info )
+        CHECK_MEM="yes"
+        ;;
+      --get_disk_info )
+        CHECK_DISK="yes"
+        ;;
+      * )
+        exit_func
+    esac
+    shift
+  done
+  if test "x$OUT_FILE" = "x" ; then
+    exit 0 # No file to report error to
+  fi
+  set_binaries
+  if check_binaries; then
+    exit_func
+  fi
+  if test "x$CHECK_CPU" = "xyes" ; then
+    get_cpu_info
+  fi
+  if test "x$CHECK_MEM" = "xyes" ; then
+    get_mem_info
+  fi
+  if test "x$CHECK_DISK" = "xyes" ; then
+    get_disk_info
+  fi
+  # Exit script successfully
+  exit 0
