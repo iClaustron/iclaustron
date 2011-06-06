@@ -134,7 +134,7 @@ GREP=
 AWK=
 WC=
 RM=
-OUT_FILE=
+OUT_FILE="out.tmp"
 TMP_FILE=
 
   while test $# -gt 0
