@@ -462,7 +462,7 @@ install(TARGETS ic_csd DESTINATION bin)
 
 #Build Bootstrap binary
 #Create target for the building of the parser of the bootstrapper
-SET(BootstrapSource cluster_mgr/ic_bootstrap.c cluster_mgr/ic_boot_lex.c)
+SET(BootstrapSource bootstrap/ic_bootstrap.c bootstrap/ic_boot_lex.c)
 
 if (WIN32)
   ADD_CUSTOM_COMMAND(
