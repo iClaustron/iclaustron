@@ -78,12 +78,14 @@ extern const gchar *ic_receive_config_file_ok_str;
 
 /* Messages for the Get CPU Info protocol */
 extern const gchar *ic_get_cpu_info_str;
-extern const gchar *ic_number_of_cpus_str;
+extern const gchar *ic_number_of_processors_str;
+extern const gchar *ic_number_of_cpu_sockets_str;
+extern const gchar *ic_number_of_cpu_cores_str;
 extern const gchar *ic_number_of_numa_nodes_str;
-extern const gchar *ic_number_of_cpus_per_core_str;
-extern const gchar *ic_cpu_str;
-extern const gchar *ic_cpu_node_str;
+extern const gchar *ic_processor_str;
 extern const gchar *ic_core_str;
+extern const gchar *ic_cpu_node_str;
+extern const gchar *ic_socket_str;
 extern const gchar *ic_no_cpu_info_available_str;
 
 /* Messages for the Get Memory Info protocol */

@@ -18,6 +18,7 @@
 #include <ic_debug.h>
 #include <ic_port.h>
 #include <ic_string.h>
+#include <ic_hw_info.h>
 #include <ic_connection.h>
 #include <ic_threadpool.h>
 #include <ic_hashtable.h>
@@ -408,10 +409,10 @@ static int
 rec_cpu_info_reply(IC_CONNECTION *conn)
 {
   int ret_code;
-  guint32 num_cpus, num_numa_nodes, num_cores_per_cpu;
+  guint32 num_processors, num_cores, num_numa_nodes, num_sockets;
   gboolean found= FALSE;
   guint32 i;
-  guint32 cpu_number, numa_node, core_id;
+  guint32 processor_id, core_id, numa_node_id, socket_id;
   DEBUG_ENTRY("rec_cpu_info_reply");
 
   if ((ret_code= ic_rec_simple_str_opt(conn,
@@ -421,27 +422,31 @@ rec_cpu_info_reply(IC_CONNECTION *conn)
   if (!found)
   {
     if ((ret_code= ic_rec_number(conn,
-                                 ic_number_of_cpus_str,
-                                 &num_cpus)) ||
+                                 ic_number_of_processors_str,
+                                 &num_processors)) ||
+        (ret_code= ic_rec_number(conn,
+                                 ic_number_of_cpu_sockets_str,
+                                 &num_sockets)) ||
+        (ret_code= ic_rec_number(conn,
+                                 ic_number_of_cpu_cores_str,
+                                 &num_cores)) ||
         (ret_code= ic_rec_number(conn,
                                  ic_number_of_numa_nodes_str,
-                                 &num_numa_nodes)) ||
-        (ret_code= ic_rec_number(conn,
-                                 ic_number_of_cpus_per_core_str,
-                                 &num_cores_per_cpu)))
+                                 &num_numa_nodes)))
       goto error;
     ic_printf(
-      "Num CPUs: %u, Num NUMA nodes: %u, Num Cores per CPU: %u",
-      num_cpus, num_numa_nodes, num_cores_per_cpu);
-    for (i= 0; i < num_cpus; i++)
+    "Num processors: %u, Num Sockets: %u, Num NUMA nodes: %u, Num Cores: %u",
+      num_processors, num_sockets, num_numa_nodes, num_cores);
+    for (i= 0; i < num_processors; i++)
     {
-      if ((ret_code= ic_rec_number(conn, ic_cpu_str, &cpu_number)) ||
-          (ret_code= ic_rec_number(conn, ic_cpu_node_str, &numa_node)) ||
-          (ret_code= ic_rec_number(conn, ic_core_str, &core_id)))
+      if ((ret_code= ic_rec_number(conn, ic_processor_str, &processor_id)) ||
+          (ret_code= ic_rec_number(conn, ic_core_str, &core_id)) ||
+          (ret_code= ic_rec_number(conn, ic_cpu_node_str, &numa_node_id)) ||
+          (ret_code= ic_rec_number(conn, ic_socket_str, &socket_id)))
         goto error;
       ic_printf(
-        "CPU id: %u, Numa node: %u, Core ID: %u",
-        cpu_number, numa_node, core_id);
+        "Processor ID: %u, Core ID: %u, Numa node: %u, Socket ID: %u",
+        processor_id, core_id, numa_node_id, socket_id);
     }
   }
   else
@@ -2045,9 +2050,10 @@ static int
 handle_get_cpu_info(IC_CONNECTION *conn)
 {
   int ret_code;
-  guint32 num_cpus;
+  guint32 num_processors;
+  guint32 num_cpu_sockets;
+  guint32 num_cpu_cores;
   guint32 num_numa_nodes;
-  guint32 cpus_per_core;
   guint32 i;
   IC_CPU_INFO *cpu_info= NULL;
   DEBUG_ENTRY("handle_get_cpu_info");
@@ -2055,11 +2061,12 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   if ((ret_code= ic_rec_empty_line(conn)))
     goto error;
 
-  ic_get_cpu_info(&num_cpus,
+  ic_get_cpu_info(&num_processors,
+                  &num_cpu_sockets,
+                  &num_cpu_cores,
                   &num_numa_nodes,
-                  &cpus_per_core,
                   &cpu_info);
-  if (num_cpus == 0)
+  if (num_processors == 0)
   {
     if ((ret_code= ic_send_with_cr(conn, ic_no_cpu_info_available_str)) ||
         (ret_code= ic_send_empty_line(conn)))
@@ -2068,28 +2075,35 @@ handle_get_cpu_info(IC_CONNECTION *conn)
   }
 
   if ((ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_number_of_cpus_str,
-                                          (guint64)num_cpus)) ||
+                                        ic_number_of_processors_str,
+                                        (guint64)num_processors)) ||
       (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_number_of_numa_nodes_str,
-                                          (guint64)num_numa_nodes)) ||
+                                        ic_number_of_cpu_sockets_str,
+                                        (guint64)num_cpu_sockets)) ||
       (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_number_of_cpus_per_core_str,
-                                          (guint64)cpus_per_core)))
+                                        ic_number_of_cpu_cores_str,
+                                        (guint64)num_cpu_cores)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                        ic_number_of_numa_nodes_str,
+                                        (guint64)num_numa_nodes)))
     goto error;
-  for (i= 0; i < num_cpus; i++)
+  for (i= 0; i < num_processors; i++)
   {
     if ((ret_code= ic_send_with_cr_with_num(conn,
-                                            ic_cpu_str,
-                                            (guint64)cpu_info[i].cpu_id)))
+                                        ic_processor_str,
+                                        (guint64)cpu_info[i].processor_id)))
       goto error;
     if ((ret_code= ic_send_with_cr_with_num(conn,
-                                            ic_cpu_node_str,
-                                            (guint64)cpu_info[i].numa_node_id)))
+                                        ic_core_str,
+                                        (guint64)cpu_info[i].core_id)))
       goto error;
     if ((ret_code= ic_send_with_cr_with_num(conn,
-                                            ic_core_str,
-                                            (guint64)cpu_info[i].core_id)))
+                                        ic_cpu_node_str,
+                                        (guint64)cpu_info[i].numa_node_id)))
+      goto error;
+    if ((ret_code= ic_send_with_cr_with_num(conn,
+                                        ic_socket_str,
+                                        (guint64)cpu_info[i].cpu_id)))
       goto error;
   }
   ret_code= ic_send_empty_line(conn);

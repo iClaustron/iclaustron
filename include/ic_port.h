@@ -174,32 +174,18 @@ void ic_spin_unlock(IC_SPINLOCK *spinlock);
 IC_SPINLOCK* ic_spinlock_create();
 void ic_spinlock_destroy();
 
-struct ic_cpu_info
+/* Interface to read HW information into a file */
+typedef enum ic_hw_info_type IC_HW_INFO_TYPE;
+enum ic_hw_info_type
 {
-  guint32 cpu_id;
-  guint32 numa_node_id;
-  guint32 core_id;
+  IC_GET_CPU_INFO= 0,
+  IC_GET_MEM_INFO= 1,
+  IC_GET_DISK_INFO= 2
 };
-typedef struct ic_cpu_info IC_CPU_INFO;
 
-void ic_get_cpu_info(guint32 *num_cpus,
-                     guint32 *num_numa_nodes,
-                     guint32 *num_cores_per_cpu,
-                     IC_CPU_INFO **cpu_info);
-
-struct ic_mem_info
-{
-  guint32 numa_node_id;
-  guint64 memory_size;
-};
-typedef struct ic_mem_info IC_MEM_INFO;
-
-void ic_get_mem_info(guint32 *num_numa_nodes,
-                     guint64 *total_memory_size,
-                     IC_MEM_INFO **mem_info);
-
-void ic_get_disk_info(gchar *directory_name,
-                      guint64 *disk_space);
+int ic_get_hw_info(IC_HW_INFO_TYPE type,
+                   gchar *disk_handle_ptr,
+                   gchar **out_file_str);
 
 #ifndef HAVE_MEMSET
 void ic_memset(gchar *buf, gchar val, int num_bytes);

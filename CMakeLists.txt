@@ -351,6 +351,7 @@ add_library(ic_util STATIC
             util/ic_threadpool.c
             util/ic_debug.c
             util/ic_err.c
+            util/ic_hw_info.c
             util/ic_string.c
             util/ic_bitmap.c
             util/ic_config_reader.c
@@ -563,6 +564,7 @@ install (FILES
          include/ic_dyn_array.h
          include/ic_err.h
          include/ic_hashtable.h
+         include/ic_hw_info.h
          include/ic_mc.h
          include/ic_parse_connectstring.h
          include/ic_poll_set.h

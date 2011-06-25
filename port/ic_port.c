@@ -59,7 +59,14 @@
 #include <signal.h>
 #endif
 
+static gchar *ic_underscore_str= "_";
+static gchar *ic_tmp_str= "tmp";
+static gchar *ic_hw_str= "hw";
+static gchar *ic_ps_str= "hw";
+static gchar *ic_log_str= "log";
+static gchar *ic_out_str= "out";
 static IC_MUTEX *exec_output_mutex= NULL;
+static guint64 file_number= 0;
 
 #ifdef DEBUG_BUILD
 static guint64 num_mem_allocs= 0;
@@ -786,8 +793,11 @@ ic_is_process_alive(IC_PID_TYPE pid,
   IC_STRING script_string;
   IC_STRING log_file_name_str;
   gchar *script_name;
+  gchar *file_number_str;
   int error;
+  guint64 loc_file_number;
   gchar pid_buf[IC_MAX_INT_STRING];
+  gchar file_number_buf[IC_MAX_INT_STRING];
   gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
   gchar log_file_name_buf[IC_MAX_FILE_NAME_SIZE];
   DEBUG_ENTRY("ic_is_process_alive");
@@ -807,15 +817,29 @@ ic_is_process_alive(IC_PID_TYPE pid,
 #ifdef WINDOWS
   script_name= "windows_check_process.sh";
 #endif
+  /* Create script string name */
   IC_INIT_STRING(&script_string, full_script_name, 0, TRUE);
   ic_add_string(&script_string, port_binary_dir);
   ic_add_string(&script_string, script_name);
 
+  /* Create pid string */
   pid_number_str= ic_guint64_str((guint64)pid, pid_buf, NULL);
+
+  /* Create unique file number string for this pid */
+  ic_mutex_lock_low(exec_output_mutex);
+  loc_file_number= file_number++;
+  ic_mutex_unlock_low(exec_output_mutex);
+  file_number_str= ic_guint64_str(loc_file_number, file_number_buf, NULL);
+
+  /* Create log file name as $ICLAUSTRON_DIR/tmp_ps_#PID_#FILE_NUMBER.txt */
   IC_INIT_STRING(&log_file_name_str, log_file_name_buf, 0, TRUE);
   ic_add_ic_string(&log_file_name_str, &ic_glob_config_dir);
-  ic_add_string(&log_file_name_str, "tmp_");
+  ic_add_string(&log_file_name_str, ic_tmp_str);
+  ic_add_string(&log_file_name_str, ic_underscore_str);
+  ic_add_string(&log_file_name_str, ic_ps_str);
   ic_add_string(&log_file_name_str, pid_number_str);
+  ic_add_string(&log_file_name_str, ic_underscore_str);
+  ic_add_string(&log_file_name_str, file_number_str);
   ic_add_string(&log_file_name_str, ".txt");
 
   argv[0]= script_string.str;
@@ -827,9 +851,7 @@ ic_is_process_alive(IC_PID_TYPE pid,
   argv[6]= log_file_name_str.str;
   argv[7]= NULL;
 
-  ic_mutex_lock_low(exec_output_mutex);
   error= run_process(argv, &exit_status, log_file_name_str.str);
-  ic_mutex_unlock_low(exec_output_mutex);
   if (error || exit_status == (gint)2)
   {
     DEBUG_RETURN_INT(IC_ERROR_CHECK_PROCESS_SCRIPT);
@@ -1480,102 +1502,177 @@ void ic_spin_destroy(IC_SPINLOCK *spinlock)
 }
 
 /**
-  Get information about CPUs on this machine
+  Get HW information into a file
 
-  @parameter num_cpus           OUT: Number of CPUs/sockets
-  @parameter num_numa_nodes     OUT: Number of NUMA nodes in machine
-  @parameter num_cores_per_cpu  OUT: Number of cores per CPU
-  @parameter cpu_info           OUT: Array describing each CPU
+  @parameter   type            IN: What type of HW info is requested
+                                   (CPU/Mem/Disk)
+  @parameter   disk_handle_ptr IN: File which to check disk space for
+  @parameter   out_file_ptr    OUT: File pointer of output information
 
-  Note: This function allocates memory when num_cpus > 0, in this
-  case it's the responsibility of the caller to call ic_free on
-  the cpu_info pointer returned.
+  NOTE:
+    The caller of the function is expected to delete the output file as soon
+    as the information have been processed in it. He's also expected to free
+    the memory allocated for the file name of the output file. This is only
+    necessary at successful return from this method.
 
-  If we fail to retrieve CPU information for some reason we will return
-  num_cpus == 0 to indicate no CPU information is available.
+  NOTE:
+    type can have the values IC_GET_CPU_INFO, IC_GET_MEM_INFO,
+    IC_GET_DISK_INFO
+
+  NOTE:
+    disk_handle_ptr should only be non-NULL for IC_GET_DISK_INFO
+
+  NOTE:
+    The output file format for IC_GET_CPU_INFO is:
+    Number of CPU processors: 6
+    Number of CPU sockets: 1
+    Number of CPU cores: 6
+    Number of NUMA nodes: 1
+    CPU processor id = 0, core id = 0, numa node id = 0, cpu id = 0
+    CPU processor id = 1, core id = 1, numa node id = 0, cpu id = 0
+    CPU processor id = 2, core id = 2, numa node id = 0, cpu id = 0
+    CPU processor id = 3, core id = 3, numa node id = 0, cpu id = 0
+    CPU processor id = 4, core id = 4, numa node id = 0, cpu id = 0
+    CPU processor id = 5, core id = 5, numa node id = 0, cpu id = 0
+
+    This is from an example with a single socket box with a 6-core CPU.
+
+  NOTE:
+    The output file format for IC_GET_MEM_INFO is:
+    Number of NUMA nodes: 1
+    Memory size = 6127 MBytes
+    Numa node id = 0, Memory size = 6127 MBytes
+
+    This is from an example with 1 Numa node on a machine with 6GB of memory.
+
+  NOTE:
+    The output file format for IC_GET_DISK_INFO is:
+    Disk space = 393723 MBytes
+
+    This is an example with 400 GB disk space available.
 */
-void
-ic_get_cpu_info(guint32 *num_cpus,
-                guint32 *num_numa_nodes,
-                guint32 *num_cores_per_cpu,
-                IC_CPU_INFO **cpu_info)
+int
+ic_get_hw_info(IC_HW_INFO_TYPE type,
+               gchar *disk_handle_str,
+               gchar **out_file_str)
 {
-  IC_CPU_INFO *loc_cpu_info;
+  gchar *argv[10];
+  gint exit_status;
+  gchar *pid_number_str;
+  gchar *file_number_str;
+  IC_STRING script_string;
+  IC_STRING log_file_name_str;
+  IC_STRING tmp_file_name_str;
+  IC_STRING out_file_name_str;
+  IC_PID_TYPE pid;
+  IC_STRING out_str;
+  gchar *script_name;
+  int ret_code;
+  guint64 loc_file_number;
+  guint32 last_inx;
+  gchar pid_buf[IC_MAX_INT_STRING];
+  gchar file_number_buf[IC_MAX_INT_STRING];
+  gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
+  gchar log_file_name_buf[IC_MAX_FILE_NAME_SIZE];
+  gchar tmp_file_name_buf[IC_MAX_FILE_NAME_SIZE];
+  gchar out_file_name_buf[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("ic_get_hw_info");
 
-  loc_cpu_info= NULL;
-  *num_cpus= 0;
-  *num_numa_nodes= 0;
-  *num_cores_per_cpu= 0;
-  *cpu_info= NULL;
-#ifdef WITH_UNIT_TEST
-  /* We fake something to test the protocol */
-
-  if (!(loc_cpu_info= (IC_CPU_INFO*)ic_malloc(sizeof(IC_CPU_INFO))))
-    return; /* Report no info available in this case */
-  *num_cpus= 1;
-  *num_numa_nodes= 1;
-  *num_cores_per_cpu= 1;
-  loc_cpu_info->cpu_id= 0;
-  loc_cpu_info->numa_node_id= 0;
-  loc_cpu_info->core_id= 0;
-  *cpu_info= loc_cpu_info;
+#ifdef LINUX
+  script_name= "linux_get_hw_info.sh";
 #endif
-  return;
-}
-
-/**
-  Get information about memory size and about the NUMA nodes in the
-  machine how much memory each such node has.
-
-  @parameter num_numa_nodes      OUT: Number of NUMA nodes
-  @parameter total_memory_size   OUT: Total memory size in MBytes
-  @parameter mem_info            OUT: Array describing each NUMA node
-
-  Note: When memory information is available we allocate the mem_info
-  data structure, this needs to be freed by caller of this function.
-
-  When no memory information is available or we fail somehow to retrieve
-  memory information we will return total_memory_size == 0 to indicate
-  no memory information is available.
-*/
-void ic_get_mem_info(guint32 *num_numa_nodes,
-                     guint64 *total_memory_size,
-                     IC_MEM_INFO **mem_info)
-{
-  IC_MEM_INFO *loc_mem_info;
-  *num_numa_nodes= 0;
-  *total_memory_size= 0;
-  *mem_info= 0;
-#ifdef WITH_UNIT_TEST
-  /* We fake something to test the protocol */
-
-  if (!(loc_mem_info= (IC_MEM_INFO*)ic_malloc(sizeof(IC_MEM_INFO))))
-    return; /* Report no info available in this case */
-  *num_numa_nodes= 1;
-  *total_memory_size= 16 * 1024; /* Fake 16 GByte of memory */
-  loc_mem_info->numa_node_id= 0;
-  loc_mem_info->memory_size= 16 * 1024;
-  *mem_info= loc_mem_info;
+#ifdef MACOSX
+  script_name= "macosx_get_hw_info.sh";
 #endif
-  return;
-}
-
-/**
-  Get information about the disk space available below a certain directory
-  name.
-
-  @dir_name                      IN: The directory name
-  @disk_space                    OUT: The disk space in MBytes
-*/
-void ic_get_disk_info(gchar *dir_name,
-                      guint64 *disk_space)
-{
-  (void)dir_name;
-  *disk_space= 0;
-#ifdef WITH_UNIT_TEST
-  *disk_space= 128 * 1024;
+#ifdef SOLARIS
+  script_name= "solaris_get_hw_info.sh";
 #endif
-  return;
+#ifdef FREEBSD
+  script_name= "free_bsd_get_hw_info.sh";
+#endif
+#ifdef WINDOWS
+  script_name= "windows_check_process.sh";
+#endif
+  /* Create script string with full path*/
+  IC_INIT_STRING(&script_string, full_script_name, 0, TRUE);
+  ic_add_string(&script_string, port_binary_dir);
+  ic_add_string(&script_string, script_name);
+
+  pid= ic_get_own_pid();
+  pid_number_str= ic_guint64_str((guint64)pid, pid_buf, NULL);
+
+  ic_mutex_lock_low(exec_output_mutex);
+  loc_file_number= file_number++;
+  ic_mutex_unlock_low(exec_output_mutex);
+  file_number_str= ic_guint64_str(loc_file_number, file_number_buf, NULL);
+
+  /* Create log file name as tmp_hw_log#PID_#FILE_NUMBER.txt */
+  IC_INIT_STRING(&log_file_name_str, log_file_name_buf, 0, TRUE);
+  ic_add_ic_string(&log_file_name_str, &ic_glob_config_dir);
+  ic_add_string(&log_file_name_str, ic_tmp_str);
+  ic_add_string(&log_file_name_str, ic_underscore_str);
+  ic_add_string(&log_file_name_str, ic_hw_str);
+  ic_add_string(&log_file_name_str, ic_underscore_str);
+  ic_add_string(&log_file_name_str, ic_log_str);
+  ic_add_string(&log_file_name_str, pid_number_str);
+  ic_add_string(&log_file_name_str, ic_underscore_str);
+  ic_add_string(&log_file_name_str, file_number_str);
+  ic_add_string(&log_file_name_str, ".txt");
+
+  /* Create tmp file name as tmp_hw#PID_#FILE_NUMBER.txt */
+  IC_INIT_STRING(&tmp_file_name_str, tmp_file_name_buf, 0, TRUE);
+  ic_add_ic_string(&tmp_file_name_str, &ic_glob_config_dir);
+  ic_add_string(&tmp_file_name_str, ic_tmp_str);
+  ic_add_string(&tmp_file_name_str, ic_underscore_str);
+  ic_add_string(&tmp_file_name_str, ic_hw_str);
+  ic_add_string(&tmp_file_name_str, pid_number_str);
+  ic_add_string(&tmp_file_name_str, ic_underscore_str);
+  ic_add_string(&tmp_file_name_str, file_number_str);
+  ic_add_string(&tmp_file_name_str, ".txt");
+
+  /* Create tmp file name as out_hw#PID_#FILE_NUMBER.txt */
+  IC_INIT_STRING(&out_file_name_str, out_file_name_buf, 0, TRUE);
+  ic_add_ic_string(&out_file_name_str, &ic_glob_config_dir);
+  ic_add_string(&out_file_name_str, ic_out_str);
+  ic_add_string(&out_file_name_str, ic_underscore_str);
+  ic_add_string(&out_file_name_str, ic_hw_str);
+  ic_add_string(&out_file_name_str, pid_number_str);
+  ic_add_string(&out_file_name_str, ic_underscore_str);
+  ic_add_string(&out_file_name_str, file_number_str);
+  ic_add_string(&out_file_name_str, ".txt");
+
+  argv[0]= script_string.str;
+  argv[1]= "--tmp_file";
+  argv[2]= tmp_file_name_str.str;
+  argv[3]= "--output_file";
+  argv[4]= out_file_name_str.str;
+  argv[5]= "--log_file";
+  argv[6]= log_file_name_str.str;
+  if (type == IC_GET_CPU_INFO)
+  {
+    argv[7]= "--get_cpu_info";
+    last_inx= 8;
+  }
+  else if (type == IC_GET_MEM_INFO)
+  {
+    argv[7]= "--get_mem_info";
+    last_inx= 8;
+  }
+  else if (type == IC_GET_DISK_INFO)
+  {
+    argv[7]= "--get_disk_info";
+    argv[8]= disk_handle_str;
+    last_inx= 9;
+  }
+  argv[last_inx]= NULL;
+  ret_code= run_process(argv, &exit_status, log_file_name_str.str);
+  if (ret_code)
+    goto end;
+  if ((ret_code= ic_mc_strdup(NULL, &out_str, &out_file_name_str)))
+    goto end;
+  *out_file_str= out_str.str;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 #ifndef HAVE_MEMSET

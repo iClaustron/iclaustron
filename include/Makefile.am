@@ -27,6 +27,7 @@ include_HEADERS = ic_apic.h \
                   ic_dyn_array.h \
                   ic_bitmap.h \
                   ic_err.h \
+                  ic_hw_info.h \
                   ic_linked_list.h \
                   ic_mc.h \
                   ic_parse_connectstring.h \

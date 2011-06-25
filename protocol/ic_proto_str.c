@@ -29,12 +29,14 @@ const gchar *ic_receive_config_file_ok_str= "receive config file ok";
 
 /* Messages for the Get CPU info protocol */
 const gchar *ic_get_cpu_info_str= "get cpu info";
-const gchar *ic_number_of_cpus_str= "number of cpus:";
+const gchar *ic_number_of_processors_str= "number of processors:";
+const gchar *ic_number_of_cpu_sockets_str= "number of CPU sockets:";
+const gchar *ic_number_of_cpu_cores_str= "number of CPU cores:";
 const gchar *ic_number_of_numa_nodes_str= "number of NUMA nodes:";
-const gchar *ic_number_of_cpus_per_core_str= "number of cpus per core:";
-const gchar *ic_cpu_str= "cpu";
-const gchar *ic_cpu_node_str= ", node:";
+const gchar *ic_processor_str= "processor: ";
 const gchar *ic_core_str= ", core:";
+const gchar *ic_cpu_node_str= ", node:";
+const gchar *ic_socket_str= ", socket:";
 const gchar *ic_no_cpu_info_available_str= "no cpu info available";
 
 /* Messages for the Get Memory Information Protocol */
