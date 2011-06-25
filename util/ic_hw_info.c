@@ -43,7 +43,7 @@ ic_get_cpu_info(guint32 *num_processors,
 {
   int ret_code;
   gchar *file_str= NULL;
-  gchar *loop_file_str;
+  gchar *loop_file_content;
   gchar *file_content= NULL;
   guint64 file_size;
   gchar buf[200];
@@ -51,7 +51,7 @@ ic_get_cpu_info(guint32 *num_processors,
   guint32 i;
   guint32 loc_num_processors;
   guint64 num_lines;
-  IC_CPU_INFO *loc_cpu_info;
+  IC_CPU_INFO *loc_cpu_info= NULL;
   DEBUG_ENTRY("ic_get_cpu_info");
 
   if (!(ret_code= ic_get_hw_info(IC_GET_CPU_INFO,
@@ -62,10 +62,10 @@ ic_get_cpu_info(guint32 *num_processors,
                                         &file_content,
                                         &file_size)))
       goto no_info;
-    num_lines= ic_count_lines(file_str, file_size);
-    loop_file_str= file_str;
+    num_lines= ic_count_lines(file_content, file_size);
+    loop_file_content= file_content;
     /* Get first line which provides number of CPU threads */
-    if ((ret_code= ic_get_next_line(&loop_file_str,
+    if ((ret_code= ic_get_next_line(&loop_file_content,
                                     &file_size,
                                     buf,
                                     sizeof(buf),
@@ -88,7 +88,7 @@ ic_get_cpu_info(guint32 *num_processors,
              (*num_processors) * sizeof(IC_CPU_INFO))))
       goto no_info; /* Report no info available in this case */
     /* Get line which provides number of CPU sockets */
-    if ((ret_code= ic_get_next_line(&loop_file_str,
+    if ((ret_code= ic_get_next_line(&loop_file_content,
                                     &file_size,
                                     buf,
                                     sizeof(buf),
@@ -102,7 +102,7 @@ ic_get_cpu_info(guint32 *num_processors,
       goto no_info;
     }
     /* Get line which provides number of NUMA nodes */
-    if ((ret_code= ic_get_next_line(&loop_file_str,
+    if ((ret_code= ic_get_next_line(&loop_file_content,
                                     &file_size,
                                     buf,
                                     sizeof(buf),
@@ -117,7 +117,7 @@ ic_get_cpu_info(guint32 *num_processors,
     }
       goto no_info;
     /* Get first line which provides number of CPU threads */
-    if ((ret_code= ic_get_next_line(&loop_file_str,
+    if ((ret_code= ic_get_next_line(&loop_file_content,
                                     &file_size,
                                     buf,
                                     sizeof(buf),
@@ -132,7 +132,7 @@ ic_get_cpu_info(guint32 *num_processors,
     }
     for (i= 0; i < loc_num_processors; i++)
     {
-      if ((ret_code= ic_get_next_line(&loop_file_str,
+      if ((ret_code= ic_get_next_line(&loop_file_content,
                                       &file_size,
                                       buf,
                                       sizeof(buf),
@@ -158,7 +158,7 @@ end:
   }
   if (file_content)
     ic_free(file_content);
-  return;
+  DEBUG_RETURN_EMPTY;
 
 no_info:
   *num_processors= 0;
@@ -166,6 +166,8 @@ no_info:
   *num_numa_nodes= 0;
   *num_cpu_cores= 0;
   *cpu_info= NULL;
+  if (loc_cpu_info)
+    ic_free(loc_cpu_info);
   goto end;
 }
 
@@ -185,25 +187,96 @@ no_info:
   no memory information is available.
 */
 void ic_get_mem_info(guint32 *num_numa_nodes,
-                     guint64 *total_memory_size,
+                     guint32 *total_memory_size,
                      IC_MEM_INFO **mem_info)
 {
   int ret_code;
-  gchar *file_str;
+  guint32 num_lines;
+  guint32 line_size;
+  guint32 i;
+  gchar *file_str= NULL;
   IC_MEM_INFO *loc_mem_info;
+  gchar *file_content= NULL;
+  gchar *loop_file_content;
+  guint64 file_size;
+  gchar buf[200];
+  DEBUG_ENTRY("ic_get_mem_info");
 
   if (!(ret_code= ic_get_hw_info(IC_GET_MEM_INFO,
                                  NULL,
                                  &file_str)))
   {
-    if (!(loc_mem_info= (IC_MEM_INFO*)ic_malloc(sizeof(IC_MEM_INFO))))
+    if ((ret_code= ic_get_file_contents((const gchar*)file_str,
+                                        &file_content,
+                                        &file_size)))
+      goto no_info;
+    num_lines= ic_count_lines(file_content, file_size);
+    loop_file_content= file_content;
+
+    if ((ret_code= ic_get_next_line(&loop_file_content,
+                                    &file_size,
+                                    buf,
+                                    sizeof(buf),
+                                    &line_size)))
+      goto no_info;
+    if ((ret_code= sscanf(buf,
+                          "Number of NUMA nodes: %u",
+                          num_numa_nodes)) != 1)
+    {
+      DEBUG_PRINT(PORT_LEVEL, ("Failed to get number of NUMA nodes"));
+      goto no_info;
+    }
+
+    if ((ret_code= ic_get_next_line(&loop_file_content,
+                                    &file_size,
+                                    buf,
+                                    sizeof(buf),
+                                    &line_size)))
+      goto no_info;
+    if ((ret_code= sscanf(buf,
+                          "Memory size = %u MBytes",
+                          total_memory_size)) != 1)
+    {
+      DEBUG_PRINT(PORT_LEVEL, ("Failed to get memory size"));
+      goto no_info;
+    }
+    if (!(loc_mem_info= (IC_MEM_INFO*)ic_malloc(
+          sizeof(IC_MEM_INFO) * (*num_numa_nodes))))
       goto no_info; /* Report no info available in this case */
+
+    for (i= 0; i < (*num_numa_nodes); i++)
+    {
+      if ((ret_code= ic_get_next_line(&loop_file_content,
+                                      &file_size,
+                                      buf,
+                                      sizeof(buf),
+                                      &line_size)))
+        goto no_info;
+      if ((ret_code= sscanf(buf,
+                            "Numa node id = %u, Memory size = %u MBytes",
+                            &loc_mem_info[i].numa_node_id,
+                            &loc_mem_info[i].memory_size)) != 1)
+      {
+        DEBUG_PRINT(PORT_LEVEL, ("Failed to get number of CPU cores"));
+        goto no_info;
+      }
+    }
   }
+end:
+  if (file_str)
+  {
+    ic_delete_file(file_str);
+    ic_free(file_str);
+  }
+  if (file_content)
+    ic_free(file_content);
+  DEBUG_RETURN_EMPTY;
+
 no_info:
   *num_numa_nodes= 0;
   *total_memory_size= 0;
   *mem_info= 0;
-  return;
+  goto end;
 }
 
 /**
@@ -211,21 +284,58 @@ no_info:
   name.
 
   @dir_name                      IN: The directory name
-  @disk_space                    OUT: The disk space in MBytes
+  @disk_space                    OUT: The disk space in GBytes
 */
 void ic_get_disk_info(gchar *dir_name,
-                      guint64 *disk_space)
+                      guint32 *disk_space)
 {
+
   int ret_code;
+  guint32 line_size;
+  guint32 num_lines;
+  gchar *file_content= NULL;
+  gchar *loop_file_content;
+  guint64 file_size;
   gchar *file_str;
+  gchar buf[200];
+  DEBUG_ENTRY("ic_get_disk_info");
 
   if (!(ret_code= ic_get_hw_info(IC_GET_MEM_INFO,
                                  dir_name,
                                  &file_str)))
   {
-    goto no_info;
+    if ((ret_code= ic_get_file_contents((const gchar*)file_str,
+                                        &file_content,
+                                        &file_size)))
+      goto no_info;
+    loop_file_content= file_content;
+    num_lines= ic_count_lines(file_content, file_size);
+    if (num_lines != 1)
+      goto no_info;
+    if ((ret_code= ic_get_next_line(&loop_file_content,
+                                    &file_size,
+                                    buf,
+                                    sizeof(buf),
+                                    &line_size)))
+      goto no_info;
+    if ((ret_code= sscanf(buf, "Disk space = %u GBytes", disk_space)) != 1)
+    {
+      DEBUG_PRINT(PORT_LEVEL, ("Failed to get disk space"));
+      goto no_info;
+    }
   }
+
+end:
+  if (file_str)
+  {
+    ic_delete_file(file_str);
+    ic_free(file_str);
+  }
+  if (file_content)
+    ic_free(file_content);
+  DEBUG_RETURN_EMPTY;
+
 no_info:
   *disk_space= 0;
-  return;
+  goto end;
 }

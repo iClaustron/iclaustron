@@ -50,7 +50,7 @@ const gchar *ic_no_mem_info_available_str= "no memory info available";
 /* Messages for Get Disk Information Protocol */
 const gchar *ic_get_disk_info_str= "get disk info";
 const gchar *ic_dir_str= "dir: ";
-const gchar *ic_disk_space_str= "disk space:";
+const gchar *ic_disk_space_str= "number of GBytes disk space:";
 const gchar *ic_no_disk_info_available_str= "no disk info available";
 
 /* Messages used by Start/Stop/Kill/List process protocols */

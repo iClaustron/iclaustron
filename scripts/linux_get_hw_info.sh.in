@@ -238,7 +238,7 @@ get_disk_info()
 {
   $DF -k $DISK_FILE | \
     $GREP -v 'Available' | \
-    $AWK '{printf("Disk space = %u MBytes\n", $2/1024)}' \
+    $AWK '{printf("Disk space = %u GBytes\n", $2/(1024*1024))}' \
       > $OUT_FILE
 }
 

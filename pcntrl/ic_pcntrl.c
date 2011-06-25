@@ -537,7 +537,7 @@ rec_disk_info_reply(IC_CONNECTION *conn)
     if ((ret_code= ic_rec_number(conn, ic_disk_space_str, &disk_space)) ||
         (ret_code= ic_rec_empty_line(conn)))
       goto error;
-    ic_printf("Available disk space = %u MBytes", disk_space);
+    ic_printf("Available disk space = %u GBytes", disk_space);
   }
   else
   {
@@ -2128,7 +2128,7 @@ handle_get_mem_info(IC_CONNECTION *conn)
   int ret_code;
   guint32 num_numa_nodes;
   guint32 i;
-  guint64 total_memory_size;
+  guint32 total_memory_size;
   IC_MEM_INFO *mem_info= NULL;
   DEBUG_ENTRY("handle_get_mem_info");
 
@@ -2184,7 +2184,7 @@ static int
 handle_get_disk_info(IC_CONNECTION *conn)
 {
   int ret_code;
-  guint64 disk_space;
+  guint32 disk_space;
   gchar dir_name_buf[IC_MAX_FILE_NAME_SIZE];
   DEBUG_ENTRY("handle_get_disk_info");
 
