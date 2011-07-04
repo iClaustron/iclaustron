@@ -19,8 +19,12 @@
 #include <ic_port.h>
 #include <ic_mc.h>
 #include <ic_string.h>
+#include <ic_connection.h>
 #include <ic_readline.h>
 #include <ic_lex_support.h>
+#include <ic_protocol_support.h>
+#include <ic_proto_str.h>
+#include <ic_pcntrl_proto.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
 #include "ic_boot_int.h"
@@ -58,10 +62,11 @@ generate_command_file(gchar *parse_buf)
   IC_FILE_HANDLE cmd_file_handle;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
+  DEBUG_ENTRY("generate_command_file");
 
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
                                            0, FALSE)))
-    return IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 
   ic_set_current_dir(&config_dir);
 
@@ -185,79 +190,250 @@ late_end:
     (void)ic_delete_file(glob_command_file);
 end:
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static void
 ic_prepare_cluster_server_cmd(IC_PARSE_DATA *parse_data)
 {
-  ic_printf("Found prepare cluster server command");
-  (void)parse_data;
+  DEBUG_ENTRY("ic_prepare_cluster_server_cmd");
+  if (parse_data->cs_index >= IC_MAX_CLUSTER_SERVERS)
+  {
+    ic_printf("Defined too many Cluster Servers");
+    parse_data->exit_flag= TRUE;
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared cluster server with node id %u",
+    parse_data->cs_data[parse_data->cs_index].node_id);
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
 ic_prepare_cluster_manager_cmd(IC_PARSE_DATA *parse_data)
 {
-  ic_printf("Found prepare cluster manager command");
-  (void)parse_data;
+  DEBUG_ENTRY("ic_prepare_cluster_manager_cmd");
+  if (parse_data->mgr_index >= IC_MAX_CLUSTER_SERVERS)
+  {
+    ic_printf("Defined too many Cluster Managers");
+    parse_data->exit_flag= TRUE;
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared cluster manager with node id %u",
+    parse_data->mgr_data[parse_data->mgr_index].node_id);
+  DEBUG_RETURN_EMPTY;
+}
+
+/**
+  Start a new client socket connection
+
+  @parameter conn         OUT: The new connection created
+  @parameter hostname     IN: The hostname to connect to
+  @parameter port         IN: The port to connect to
+*/
+static int start_client_connection(IC_CONNECTION **conn,
+                                   gchar *server_name,
+                                   gchar *server_port)
+{
+  int ret_code;
+  DEBUG_ENTRY("start_client_connection");
+
+  if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
+                                      CONFIG_READ_BUF_SIZE,
+                                      NULL, NULL)))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  (*conn)->conn_op.ic_prepare_client_connection(*conn,
+                                                server_name,
+                                                server_port,
+                                                NULL, NULL);
+  ret_code= (*conn)->conn_op.ic_set_up_connection(*conn, NULL, NULL);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/**
+  Send configuration files to a cluster server through the ic_pcntrld
+  agent process.
+
+  @parameter conn              IN: The connection to the process controller
+  @parameter clu_infos         IN: An array through which we get cluster names
+  @parameter node_id           IN: Node id of cluster
+*/
+static int
+send_files_to_node(IC_CONNECTION *conn,
+                   IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   guint32 node_id)
+{
+  int ret_code;
+  guint32 num_clusters= 0;
+  guint32 i;
+  IC_STRING current_dir;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+  IC_STRING cluster_file_name;
+  DEBUG_ENTRY("send_files_to_node");
+
+  ic_set_current_dir(&current_dir);
+  while (clu_infos[num_clusters])
+    num_clusters++; /* Count number of clusters looking for end NULL */
+
+  if ((ret_code= ic_send_with_cr(conn, ic_copy_cluster_server_files_str)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_cluster_server_node_id_str,
+                                          (guint64)node_id)) ||
+       (ret_code= ic_send_with_cr_with_num(conn,
+                                           ic_number_of_clusters_str,
+                                           (guint64)num_clusters)))
+    goto error;
+
+  if ((ret_code= ic_proto_send_file(conn,
+                                    "config.ini",
+                                    current_dir.str)) ||
+      (ret_code= ic_receive_config_file_ok(conn, TRUE)) ||
+      (ret_code= ic_proto_send_file(conn,
+                                    "grid_common.ini",
+                                    current_dir.str)) ||
+      (ret_code= ic_receive_config_file_ok(conn, TRUE)))
+    goto error;
+
+  for (i= 0; i < num_clusters; i++)
+  {
+    clu_info= clu_infos[i];
+    /* Create cluster_name.ini string */
+    buf[0]= 0;
+    IC_INIT_STRING(&cluster_file_name, buf, 0, TRUE);
+    ic_add_ic_string(&cluster_file_name, &clu_info->cluster_name);
+    ic_add_ic_string(&cluster_file_name, &ic_config_ending_string);
+    if ((ret_code= ic_proto_send_file(conn,
+                                      cluster_file_name.str,
+                                      current_dir.str)) ||
+        (ret_code= ic_receive_config_file_ok(conn, TRUE)))
+      goto error;
+  }
+error:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static void
 ic_send_files_cmd(IC_PARSE_DATA *parse_data)
 {
-  ic_printf("Found send files command");
+  IC_MEMORY_CONTAINER *mc_ptr;
+  IC_CONFIG_ERROR err_obj;
+  IC_STRING config_dir;
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
+  IC_CONNECTION *conn= NULL;
+  IC_CLUSTER_SERVER_DATA *cs_data;
+  int ret_code;
+  guint32 i;
+  DEBUG_ENTRY("ic_send_files_cmd");
+
   (void)parse_data;
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                           0, FALSE)))
+    goto end;
+
+  ic_set_current_dir(&config_dir);
+  /* Read the config.ini file to get information about cluster names */
+  if (!(clu_infos= ic_load_cluster_config_from_file(&config_dir,
+                                                    (IC_CONF_VERSION_TYPE)0,
+                                                    mc_ptr,
+                                                    &err_obj)))
+  {
+    ret_code= err_obj.err_num;
+    ic_printf("Failed to open config.ini");
+    ic_print_error(ret_code);
+    parse_data->exit_flag= TRUE;
+    goto end;
+  }
+  for (i= 0; i < parse_data->cs_index; i++)
+  {
+    cs_data= &parse_data->cs_data[i];
+    /* Send files to all cluster servers one by one */
+    if ((ret_code= start_client_connection(&conn,
+      cs_data->pcntrl_hostname,
+      cs_data->pcntrl_port)))
+    {
+      ic_printf("Failed to open connection to cluster server id %u",
+        cs_data->node_id);
+      ic_print_error(ret_code);
+      goto end;
+    }
+    if ((ret_code= send_files_to_node(conn,
+                                      clu_infos,
+                                      cs_data->node_id)))
+    {
+      ic_printf("Failed to copy files to cluster server id %u",
+        cs_data->node_id);
+      ic_print_error(ret_code);
+      goto end;
+    }
+    conn->conn_op.ic_free_connection(conn);
+    conn= NULL;
+  }
+  ic_printf("Copied configuration files to all cluster servers");
+end:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
 ic_start_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_start_cluster_servers_cmd");
   ic_printf("Found start cluster servers command");
   (void)parse_data;
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
 ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_start_cluster_managers_cmd");
   ic_printf("Found start cluster managers command");
   (void)parse_data;
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
 ic_verify_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_verify_cluster_servers_cmd");
   ic_printf("Found verify cluster servers command");
   (void)parse_data;
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
 boot_execute(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("boot_execute");
   switch (parse_data->command)
   {
     case IC_PREPARE_CLUSTER_SERVER_CMD:
       ic_prepare_cluster_server_cmd(parse_data);
-      return;
+      break;
     case IC_PREPARE_CLUSTER_MANAGER_CMD:
       ic_prepare_cluster_manager_cmd(parse_data);
-      return;
+      break;
     case IC_SEND_FILES_CMD:
       ic_send_files_cmd(parse_data);
-      return;
+      break;
     case IC_START_CLUSTER_SERVERS_CMD:
       ic_start_cluster_servers_cmd(parse_data);
-      return;
+      break;
     case IC_START_CLUSTER_MANAGERS_CMD:
       ic_start_cluster_managers_cmd(parse_data);
-      return;
+      break;
     case IC_VERIFY_CLUSTER_SERVERS_CMD:
       ic_verify_cluster_servers_cmd(parse_data);
-      return;
+      break;
     default:
       ic_printf("No such command");
       parse_data->exit_flag= TRUE;
-      return;
+      break;
   }
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
@@ -272,17 +448,20 @@ execute_command(IC_PARSE_DATA *parse_data,
                 const guint32 line_size,
                 IC_MEMORY_CONTAINER *mc_ptr)
 {
+  DEBUG_ENTRY("execute_command");
   if (parse_data->exit_flag)
-    return;
+    goto end;
   init_parse_data(parse_data);
   ic_boot_call_parser(parse_buf, line_size, parse_data);
   if (parse_data->exit_flag)
-    return;
+    goto end;
   boot_execute(parse_data);
   if (parse_data->exit_flag)
-    return;
+    goto end;
   /* Release memory allocated by parser, but keep memory container */
   mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
+end:
+  DEBUG_RETURN_EMPTY;
 }
 
 static void

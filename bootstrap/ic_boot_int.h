@@ -38,7 +38,7 @@ struct ic_cluster_server_data
 {
   gchar *hostname;
   gchar *pcntrl_hostname;
-  guint32 pcntrl_port;
+  gchar *pcntrl_port;
   guint32 node_id;
 };
 typedef struct ic_cluster_server_data IC_CLUSTER_SERVER_DATA;
@@ -47,7 +47,7 @@ struct ic_cluster_manager_data
 {
   gchar *hostname;
   gchar *pcntrl_hostname;
-  guint32 pcntrl_port;
+  gchar *pcntrl_port;
   guint32 node_id;
 };
 typedef struct ic_cluster_manager_data IC_CLUSTER_MANAGER_DATA;
