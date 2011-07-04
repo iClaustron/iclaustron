@@ -704,6 +704,7 @@ static int test_copy_files(IC_CONNECTION *conn)
   DEBUG_RETURN_INT(0);
 
 error:
+  ic_print_error(ret_code);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1845,6 +1846,22 @@ error:
   DEBUG_RETURN_INT(ret_code);
 }
 
+/**
+  The protocol removes carriage return, before writing to the file we need
+  to put it back again to ensure normal lines are created in the file.
+
+  @parameter read_buf           IN/OUT: The buffer to add a CR to
+  @parameter read_size          IN/OUT: The buffer size
+*/
+static int
+add_cr(gchar *read_buf,
+       guint32 *read_size)
+{
+  read_buf[*read_size]= CARRIAGE_RETURN;
+  (*read_size)++;
+  return 0;
+}
+
 /*
   Handle the receive file and write the file to the provided file name.
   For security reasons this function can only write files into the
@@ -1903,6 +1920,7 @@ handle_receive_file(IC_CONNECTION *conn,
   {
     /* Receive line from connection and write line received to file */
     if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
+        (ret_code= add_cr(read_buf, &read_size)) ||
         (ret_code= ic_write_file(file_ptr, read_buf, read_size)))
       goto error;
   }
@@ -1960,6 +1978,15 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
       (ret_code= ic_rec_number(conn,
                                ic_number_of_lines_str,
                                &num_lines)))
+    goto error_delete_files;
+
+  /* Need to make sure the node directory is created */
+  if ((ret_code= ic_set_config_dir(&file_name, TRUE, node_id)))
+    goto error_delete_files;
+  ret_code= ic_mkdir(file_name.str);
+  ic_free(file_name.str);
+  IC_INIT_STRING(&file_name, NULL, 0, FALSE);
+  if (ret_code)
     goto error_delete_files;
 
   /* Create the config.ini file name */

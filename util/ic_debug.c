@@ -55,20 +55,32 @@ ic_debug_disable(guint32 level)
 {
   IC_THREAD_DEBUG *thread_debug;
 
-  if (!(glob_debug & level))
+  if (glob_debug & level)
   {
     thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
-    thread_debug->enabled= FALSE;
+    if (thread_debug->disable_count == 0)
+    {
+      thread_debug->save_enabled= thread_debug->enabled;
+      thread_debug->enabled= FALSE;
+    }
+    thread_debug->disable_count++;
   }
 }
 
 void
-ic_debug_enable()
+ic_debug_enable(guint32 level)
 {
   IC_THREAD_DEBUG *thread_debug;
 
-  thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
-  thread_debug->enabled= TRUE;
+  if (glob_debug & level)
+  {
+    thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+    thread_debug->disable_count--;
+    if (thread_debug->disable_count == 0)
+    {
+      thread_debug->enabled= thread_debug->save_enabled;
+    }
+  }
 }
 
 void

@@ -87,6 +87,8 @@ ic_get_cpu_info(guint32 *num_processors,
     if (!(loc_cpu_info= (IC_CPU_INFO*)ic_malloc(
              (*num_processors) * sizeof(IC_CPU_INFO))))
       goto no_info; /* Report no info available in this case */
+
+    *cpu_info= loc_cpu_info;
     /* Get line which provides number of CPU sockets */
     if ((ret_code= ic_get_next_line(&loop_file_content,
                                     &file_size,
@@ -101,21 +103,6 @@ ic_get_cpu_info(guint32 *num_processors,
       DEBUG_PRINT(PORT_LEVEL, ("Failed to get number of CPU sockets"));
       goto no_info;
     }
-    /* Get line which provides number of NUMA nodes */
-    if ((ret_code= ic_get_next_line(&loop_file_content,
-                                    &file_size,
-                                    buf,
-                                    sizeof(buf),
-                                    &line_size)))
-      goto no_info;
-    if ((ret_code= sscanf(buf,
-                          "Number of NUMA nodes: %u",
-                          num_numa_nodes) != 1))
-    {
-      DEBUG_PRINT(PORT_LEVEL, ("Failed to get number of NUMA nodes"));
-      goto no_info;
-    }
-      goto no_info;
     /* Get first line which provides number of CPU threads */
     if ((ret_code= ic_get_next_line(&loop_file_content,
                                     &file_size,
@@ -128,6 +115,20 @@ ic_get_cpu_info(guint32 *num_processors,
                           num_cpu_cores)) != 1)
     {
       DEBUG_PRINT(PORT_LEVEL, ("Failed to get number of CPU cores"));
+      goto no_info;
+    }
+    /* Get line which provides number of NUMA nodes */
+    if ((ret_code= ic_get_next_line(&loop_file_content,
+                                    &file_size,
+                                    buf,
+                                    sizeof(buf),
+                                    &line_size)))
+      goto no_info;
+    if ((ret_code= sscanf(buf,
+                          "Number of NUMA nodes: %u",
+                          num_numa_nodes) != 1))
+    {
+      DEBUG_PRINT(PORT_LEVEL, ("Failed to get number of NUMA nodes"));
       goto no_info;
     }
     for (i= 0; i < loc_num_processors; i++)
@@ -195,7 +196,7 @@ void ic_get_mem_info(guint32 *num_numa_nodes,
   guint32 line_size;
   guint32 i;
   gchar *file_str= NULL;
-  IC_MEM_INFO *loc_mem_info;
+  IC_MEM_INFO *loc_mem_info= NULL;
   gchar *file_content= NULL;
   gchar *loop_file_content;
   guint64 file_size;
@@ -244,6 +245,7 @@ void ic_get_mem_info(guint32 *num_numa_nodes,
           sizeof(IC_MEM_INFO) * (*num_numa_nodes))))
       goto no_info; /* Report no info available in this case */
 
+    *mem_info= loc_mem_info;
     for (i= 0; i < (*num_numa_nodes); i++)
     {
       if ((ret_code= ic_get_next_line(&loop_file_content,
@@ -255,7 +257,7 @@ void ic_get_mem_info(guint32 *num_numa_nodes,
       if ((ret_code= sscanf(buf,
                             "Numa node id = %u, Memory size = %u MBytes",
                             &loc_mem_info[i].numa_node_id,
-                            &loc_mem_info[i].memory_size)) != 1)
+                            &loc_mem_info[i].memory_size)) != 2)
       {
         DEBUG_PRINT(PORT_LEVEL, ("Failed to get number of CPU cores"));
         goto no_info;
@@ -276,6 +278,8 @@ no_info:
   *num_numa_nodes= 0;
   *total_memory_size= 0;
   *mem_info= 0;
+  if (loc_mem_info)
+    ic_free((gchar*)loc_mem_info);
   goto end;
 }
 
@@ -300,7 +304,7 @@ void ic_get_disk_info(gchar *dir_name,
   gchar buf[200];
   DEBUG_ENTRY("ic_get_disk_info");
 
-  if (!(ret_code= ic_get_hw_info(IC_GET_MEM_INFO,
+  if (!(ret_code= ic_get_hw_info(IC_GET_DISK_INFO,
                                  dir_name,
                                  &file_str)))
   {

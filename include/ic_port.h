@@ -92,6 +92,7 @@ int ic_open_file(IC_FILE_HANDLE *handle,
                  gboolean create_flag);
 int ic_create_file(IC_FILE_HANDLE *handle,
                    const gchar *buf);
+int ic_mkdir(const gchar *dir_name);
 int ic_close_file(IC_FILE_HANDLE file_ptr);
 int ic_write_file(IC_FILE_HANDLE file_ptr,
                   const gchar *buf,

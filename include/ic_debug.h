@@ -33,6 +33,8 @@ struct ic_thread_debug
   guint32 thread_id;
   guint32 indent_level;
   guint32 enabled;
+  guint32 save_enabled;
+  guint32 disable_count;
   const gchar *entry_point[IC_DEBUG_MAX_INDENT_LEVEL];
 };
 typedef struct ic_thread_debug IC_THREAD_DEBUG;
@@ -67,7 +69,7 @@ void ic_debug_thread_init(const gchar *entry_point);
 int ic_debug_open();
 void ic_debug_close();
 void ic_debug_disable(guint32 level);
-void ic_debug_enable();
+void ic_debug_enable(guint32 level);
 
 #define INT_DEBUG_RETURN_TYPE (int)0
 #define PTR_DEBUG_RETURN_TYPE (int)1
@@ -127,8 +129,8 @@ void ic_debug_enable();
 #define DEBUG_IC_STRING(level, a) \
   if (ic_get_debug() & (level)) \
     ic_debug_print_rec_buf((a)->str, (a)->len)
-#define DEBUG_DISABLE(level) ic_debug_disable((guint32)level)
-#define DEBUG_ENABLE() ic_debug_enable()
+#define DEBUG_DISABLE(level) ic_debug_disable(((guint32)(level)))
+#define DEBUG_ENABLE(level) ic_debug_enable(((guint32)(level)))
 #else
 #define DEBUG_THREAD_RETURN return NULL
 #define DEBUG_RETURN_EMPTY return
@@ -145,6 +147,6 @@ void ic_debug_enable();
 #define DEBUG_CLOSE
 #define DEBUG_IC_STRING(level, a)
 #define DEBUG_DISABLE(level)
-#define DEBUG_ENABLE()
+#define DEBUG_ENABLE(level)
 #endif
 #endif

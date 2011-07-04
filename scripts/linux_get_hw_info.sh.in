@@ -199,7 +199,7 @@ get_cpu_info()
     CORE_ID="${CORE_ID_ARRAY[${i}]}"
     SOCKET_ID="${SOCKET_ID_ARRAY[${i}]}"
     NUMA_NODE_ID="${NUMA_NODE_ID_ARRAY[${i}]}"
-    $ECHO "CPU processor = $PROC_ID, core id = $CORE_ID, numa node id = $NUMA_NODE_ID, cpu id = $SOCKET_ID" \
+    $ECHO "CPU processor id = $PROC_ID, core id = $CORE_ID, numa node id = $NUMA_NODE_ID, cpu id = $SOCKET_ID" \
       >> $OUT_FILE
   done
 }

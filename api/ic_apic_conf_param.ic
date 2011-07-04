@@ -436,19 +436,25 @@ build_config_name_hash()
 {
   IC_CONFIG_ENTRY *conf_entry;
   guint32 i;
+  DEBUG_ENTRY("build_config_name_hash");
 
   for (i= 1; i <= glob_max_config_id; i++)
   {
     conf_entry= &glob_conf_entry[i];
     if (conf_entry->config_entry_name.str != NULL)
     {
+      DEBUG_DISABLE(MALLOC_LEVEL);
       if (ic_hashtable_insert(glob_conf_hash,
                               (void*)&conf_entry->config_entry_name,
                               (void*)conf_entry))
-        return 1;
+      {
+        DEBUG_ENABLE(MALLOC_LEVEL);
+        DEBUG_RETURN_INT(1);
+      }
+      DEBUG_ENABLE(MALLOC_LEVEL);
     }
   }
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 void

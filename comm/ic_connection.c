@@ -19,6 +19,7 @@
 #include <ic_string.h>
 #include <ic_bitmap.h>
 #include <ic_port.h>
+#include <ic_threadpool.h>
 #include <ic_connection.h>
 #include "ic_connection_int.h"
 

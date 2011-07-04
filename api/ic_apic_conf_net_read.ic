@@ -47,7 +47,7 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
   *err_str= NULL;
   ret_code= 0;
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, FALSE)))
-    goto end;
+    goto early_end;
 
   DEBUG_DISABLE(CONFIG_READ_LEVEL);
   if (!(clu_infos= ic_load_cluster_config_from_file(config_dir,
@@ -80,7 +80,8 @@ ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
     apic= NULL;
   }
 end:
-  DEBUG_ENABLE();
+  DEBUG_ENABLE(CONFIG_READ_LEVEL);
+early_end:
   if (mc_ptr)
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   *error= ret_code;

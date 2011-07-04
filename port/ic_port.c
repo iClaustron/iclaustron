@@ -737,8 +737,20 @@ int run_process(gchar **argv,
   guint64 len= 1;
   IC_FILE_HANDLE file_handle;
   gchar read_buf[4];
+#ifdef DEBUG_BUILD
+  guint32 i;
+#endif
   DEBUG_ENTRY("run_process");
 
+#ifdef DEBUG_BUILD
+  DEBUG_PRINT(THREAD_LEVEL, ("Running script with parameters:"));
+  i= 0;
+  while (argv[i] != NULL)
+  {
+    DEBUG_PRINT(THREAD_LEVEL, ("argv[%u] = %s", i, argv[i]));
+    i++;
+  }
+#endif
   if (!g_spawn_sync(NULL,
                     argv,
                     NULL,
@@ -934,6 +946,23 @@ portable_open_file(IC_FILE_HANDLE *handle,
     *handle= file_ptr;
     return 0;
   }
+}
+
+int
+ic_mkdir(const gchar *dir_name)
+{
+  int ret_code;
+  DEBUG_ENTRY("mkdir");
+  DEBUG_PRINT(FILE_LEVEL, ("dir_name = %s", dir_name));
+
+  if ((ret_code= mkdir(dir_name, 448)) == (int)-1)
+  {
+    ret_code= errno;
+    if (ret_code == EEXIST)
+      DEBUG_RETURN_INT(0);
+    DEBUG_RETURN_INT(ret_code);
+  }
+  DEBUG_RETURN_INT(0);
 }
 #endif
 
@@ -1380,7 +1409,7 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
                                 (void*)mutex,
                                 (void*)mutex);
   g_mutex_unlock(mutex_hash_protect);
-  DEBUG_ENABLE();
+  DEBUG_ENABLE(MALLOC_LEVEL);
   if (key || ret_code)
     abort();
 }
@@ -1393,7 +1422,7 @@ static void debug_release_mutex(IC_MUTEX *mutex)
   g_mutex_lock(mutex_hash_protect);
   key= ic_hashtable_remove(mutex_hash, (void*)mutex);
   g_mutex_unlock(mutex_hash_protect);
-  DEBUG_ENABLE();
+  DEBUG_ENABLE(MALLOC_LEVEL);
   if (!key)
     abort();
 }

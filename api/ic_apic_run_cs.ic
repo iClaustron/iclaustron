@@ -1114,13 +1114,13 @@ start_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
                                      &info_cs->state,
                                      &info_cs->pid)))
   {
-    DEBUG_ENABLE();
+    DEBUG_ENABLE(CONFIG_READ_LEVEL);
     goto error;
   }
 
   /* Read configuration from disk configuration */
   error= read_disk_config(run_obj);
-  DEBUG_ENABLE();
+  DEBUG_ENABLE(CONFIG_READ_LEVEL);
   if (error)
     goto error;
 
@@ -1335,7 +1335,7 @@ send_heartbeat(IC_CONNECTION *conn,
       (error= ic_send_with_cr(conn, start_state_str)) ||
       (error= ic_send_empty_line(conn)))
     (void)error; /* Empty statement */
-  DEBUG_ENABLE();
+  DEBUG_ENABLE(HEARTBEAT_LEVEL);
   return error;
 }
 
@@ -1359,7 +1359,7 @@ rec_heartbeat(IC_CONNECTION *conn,
          ic_mutex_lock(run_obj->state.protect_state);
          if (other_info_cs->start_state == IC_CS_NOT_STARTED)
          {
-           DEBUG_ENABLE();
+           DEBUG_ENABLE(HEARTBEAT_LEVEL);
            DEBUG_PRINT(CONFIG_LEVEL, ("Found started and need to handle it"));
            handle_started_cs_node(run_obj, cs_index);
            DEBUG_DISABLE(HEARTBEAT_LEVEL);
@@ -1391,7 +1391,7 @@ rec_heartbeat(IC_CONNECTION *conn,
     goto error;
   error= ic_rec_empty_line(conn);
 error:
-  DEBUG_ENABLE();
+  DEBUG_ENABLE(HEARTBEAT_LEVEL);
   return error;
 }
 

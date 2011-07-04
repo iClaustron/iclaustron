@@ -175,7 +175,7 @@ run_heartbeat_thread(gpointer data)
       ic_mutex_unlock(apid_global->heartbeat_mutex);
       DEBUG_PRINT(CONFIG_LEVEL,
       ("First node connected, heartbeat needs to be sent"));
-      DEBUG_ENABLE();
+      DEBUG_ENABLE(HEARTBEAT_LEVEL);
       send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                           hb_page);
       continue;
