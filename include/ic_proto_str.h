@@ -43,6 +43,8 @@ extern const gchar *ic_pid_str;
 extern const gchar *ic_receive_str;
 extern const gchar *ic_status_str;
 extern const gchar *ic_master_index_size_str;
+extern const gchar *ic_csd_program_str;
+extern const gchar *ic_node_parameter_str;
 
 extern const gchar *ic_def_grid_str;
 extern const gchar *ic_data_server_program_str;

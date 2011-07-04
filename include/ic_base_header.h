@@ -178,6 +178,7 @@ typedef struct ic_iovec IC_IOVEC;
 #define ERROR_MESSAGE_SIZE 512
 #define IC_VERSION 0x000001
 #define IC_VERSION_STR "iclaustron-0.0.1"
+#define IC_GRID_STR "grid"
 #define NDB_VERSION 0x070100
 #define MYSQL_VERSION 0x050135
 #define MYSQL_VERSION_STRING "mysql-5.1.35-ndb-7.1.0"

@@ -80,6 +80,8 @@ const gchar *ic_pid_str= "pid:";
 const gchar *ic_receive_str= "receive ";
 const gchar *ic_status_str= "status:";
 const gchar *ic_master_index_size_str= "master index size:";
+const gchar *ic_csd_program_str= "ic_csd";
+const gchar *ic_node_parameter_str= "--node_id";
 
 const gchar *ic_def_grid_str= "iclaustron";
 const gchar *ic_data_server_program_str= "ndbmtd";

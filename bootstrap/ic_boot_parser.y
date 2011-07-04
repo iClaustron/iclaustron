@@ -61,8 +61,8 @@ int ic_boot_lex(void *parse_data, void *scanner);
 %parse-param { IC_PARSE_DATA *parse_data }
 %lex-param   { IC_PARSE_DATA *parse_data }
 
-%type <ic_str> IDENTIFIER_SYM name opt_pcntrl_host host opt_pcntrl_port
-%type <int_val> INTEGER_SYM number node
+%type <ic_str> IDENTIFIER_SYM name opt_pcntrl_host host
+%type <int_val> INTEGER_SYM number node opt_pcntrl_port
 
 %%
 
@@ -90,16 +90,17 @@ server_cmd:
     SERVER_SYM host opt_pcntrl_host opt_pcntrl_port node
     {
       IC_CLUSTER_SERVER_DATA *cs_data;
+      guint32 cs_index;
  
       PARSE_DATA->command= IC_PREPARE_CLUSTER_SERVER_CMD;
-      PARSE_DATA->cs_index= PARSE_DATA->next_cs_index;
+      cs_index= PARSE_DATA->next_cs_index;
+      PARSE_DATA->next_cs_index++;
       if (PARSE_DATA->next_cs_index < IC_MAX_CLUSTER_SERVERS)
       {
-        PARSE_DATA->next_cs_index++;
-        cs_data= &PARSE_DATA->cs_data[PARSE_DATA->cs_index];
+        cs_data= &PARSE_DATA->cs_data[cs_index];
         cs_data->hostname= $2->str;
         cs_data->pcntrl_hostname= $3 ? $3->str : $2->str;
-        cs_data->pcntrl_port= $4 ? $4->str : IC_DEF_PCNTRL_PORT_STR;
+        cs_data->pcntrl_port= $4;
         cs_data->node_id= $5;
       }
     }
@@ -109,16 +110,17 @@ mgr_cmd:
     MANAGER_SYM host opt_pcntrl_host opt_pcntrl_port node
     {
       IC_CLUSTER_MANAGER_DATA *mgr_data;
+      guint32 mgr_index;
 
       PARSE_DATA->command= IC_PREPARE_CLUSTER_MANAGER_CMD;
-      PARSE_DATA->mgr_index= PARSE_DATA->next_mgr_index;
+      mgr_index= PARSE_DATA->next_mgr_index;
+      PARSE_DATA->next_mgr_index++;
       if (PARSE_DATA->next_mgr_index < IC_MAX_CLUSTER_MANAGERS)
       {
-        PARSE_DATA->next_mgr_index++;
-        mgr_data= &PARSE_DATA->mgr_data[PARSE_DATA->mgr_index];
+        mgr_data= &PARSE_DATA->mgr_data[mgr_index];
         mgr_data->hostname= $2->str;
         mgr_data->pcntrl_hostname= $3 ? $3->str : $2->str;
-        mgr_data->pcntrl_port= $4 ? $4->str : IC_DEF_PCNTRL_PORT_STR;
+        mgr_data->pcntrl_port= $4;
         mgr_data->node_id= $5;
       }
     }
@@ -161,8 +163,8 @@ opt_pcntrl_host:
 
 opt_pcntrl_port:
     /* empty */
-    { $$= NULL; }
-    | PCNTRL_PORT_SYM opt_equal name
+    { $$= IC_DEF_PCNTRL_PORT; }
+    | PCNTRL_PORT_SYM opt_equal number
     { $$= $3; }
     ;
 

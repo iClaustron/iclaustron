@@ -91,7 +91,7 @@ struct ic_connect_operations
     Finally an authenticate function and object can be provided in the
     create socket call.
     We've added a number of initialisation support routines which should
-    be used afyer ic_create_socket_object but before ic_set_up_connection.
+    be used after ic_create_socket_object but before ic_set_up_connection.
     For ic_prepare_extra_parameters all parameters are optional. To set the
     default for optional parameters use NULL for pointers and 0 for 
     integer parameters. These prepare functions return an error code if

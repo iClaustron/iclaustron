@@ -38,7 +38,7 @@ struct ic_cluster_server_data
 {
   gchar *hostname;
   gchar *pcntrl_hostname;
-  gchar *pcntrl_port;
+  guint32 pcntrl_port;
   guint32 node_id;
 };
 typedef struct ic_cluster_server_data IC_CLUSTER_SERVER_DATA;
@@ -47,7 +47,7 @@ struct ic_cluster_manager_data
 {
   gchar *hostname;
   gchar *pcntrl_hostname;
-  gchar *pcntrl_port;
+  guint32 pcntrl_port;
   guint32 node_id;
 };
 typedef struct ic_cluster_manager_data IC_CLUSTER_MANAGER_DATA;
@@ -75,10 +75,7 @@ struct ic_parse_data
   /* Flag for parser and executer to flag exit */
   gboolean exit_flag;
 
-  guint32 cs_index;
   guint32 next_cs_index;
-
-  guint32 mgr_index;
   guint32 next_mgr_index;
 };
 typedef struct ic_parse_data IC_PARSE_DATA;

@@ -281,8 +281,6 @@ ic_boot_call_parser(gchar *parse_string,
   lex_data->hash_multiplier= hash_multiplier;
   lex_data->hash_divider= hash_divider;
   lex_data->symbol_map= id_map_symbol;
-  parse_data->cs_index= 0;
-  parse_data->next_cs_index= 0;
 
   yyparse(parse_data);
   DEBUG_RETURN_EMPTY;

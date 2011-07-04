@@ -91,13 +91,11 @@ static gboolean shutdown_processes_flag= FALSE;
 
 /* Unit test functions */
 #ifdef WITH_UNIT_TEST
-static gchar *ic_csd_program_str= "ic_csd";
-static gchar *version_str= "iclaustron-0.0.1";
+static gchar *version_str= IC_VERSION_STR;
 static gchar *not_my_grid= "not_my_grid";
 static gchar *my_grid= "my_grid";
 static gchar *my_cluster= "my_cluster";
 static gchar *my_csd_node= "my_csd_node";
-static gchar *node_parameter_str= "--node_id";
 
 /**
   Start a new client socket connection
@@ -157,7 +155,7 @@ send_start_cluster_server(IC_CONNECTION *conn)
                                           (guint64)2)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
-                                             node_parameter_str)) ||
+                                             ic_node_parameter_str)) ||
       (ret_code= ic_send_with_cr_with_num(conn,
                                           ic_parameter_str,
                                           (guint64)1)) ||
@@ -612,7 +610,7 @@ rec_list_node_full(IC_CONNECTION *conn)
 
   if ((ret_code= ic_rec_two_strings(conn,
                                     ic_parameter_str,
-                                    node_parameter_str)) ||
+                                    ic_node_parameter_str)) ||
       (ret_code= ic_rec_number(conn, ic_parameter_str, &node_id)))
     DEBUG_RETURN_INT(ret_code);
   if (node_id != 1)

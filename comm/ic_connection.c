@@ -809,7 +809,7 @@ renew_connect:
     ic_close_socket(sockfd);
     if (ic_tp_get_stop_flag())
       return IC_ERROR_APPLICATION_STOPPED;
-    timer++;
+    timer+= 3;
     if (conn->timeout_func &&
         conn->timeout_func(conn->timeout_obj, timer))
     {
