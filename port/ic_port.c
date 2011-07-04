@@ -1373,12 +1373,14 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
   int ret_code;
   void *key;
 
+  DEBUG_DISABLE(MALLOC_LEVEL);
   g_mutex_lock(mutex_hash_protect);
   key= ic_hashtable_search(mutex_hash, (void*)mutex);
   ret_code= ic_hashtable_insert(mutex_hash,
                                 (void*)mutex,
                                 (void*)mutex);
   g_mutex_unlock(mutex_hash_protect);
+  DEBUG_ENABLE();
   if (key || ret_code)
     abort();
 }
@@ -1387,9 +1389,11 @@ static void debug_release_mutex(IC_MUTEX *mutex)
 {
   void *key;
 
+  DEBUG_DISABLE(MALLOC_LEVEL);
   g_mutex_lock(mutex_hash_protect);
   key= ic_hashtable_remove(mutex_hash, (void*)mutex);
   g_mutex_unlock(mutex_hash_protect);
+  DEBUG_ENABLE();
   if (!key)
     abort();
 }
