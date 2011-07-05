@@ -81,6 +81,8 @@ const gchar *ic_receive_str= "receive ";
 const gchar *ic_status_str= "status:";
 const gchar *ic_master_index_size_str= "master index size:";
 const gchar *ic_csd_program_str= "ic_csd";
+const gchar *ic_clmgrd_program_str= "ic_clmgrd";
+const gchar *ic_ndb_program_str= "ndbmtd";
 const gchar *ic_node_parameter_str= "--node_id";
 
 const gchar *ic_def_grid_str= "iclaustron";
@@ -102,3 +104,6 @@ const gchar *ic_server_name_str= " --server_name=";
 const gchar *ic_server_port_str=" --server_port=";
 const gchar *ic_data_dir_str= " --data_dir=";
 const gchar *ic_num_threads_str= " --num_threads=";
+#ifdef DEBUG_BUILD
+const gchar *ic_debug_level_str= "--debug_level";
+#endif

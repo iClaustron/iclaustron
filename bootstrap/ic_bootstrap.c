@@ -37,6 +37,7 @@ static guint32 glob_connect_timer= 10;
 static gchar *ic_prompt= "iClaustron bootstrap> ";
 static IC_MEMORY_CONTAINER *glob_mc_ptr= NULL;
 static IC_CLUSTER_CONNECT_INFO **glob_clu_infos= NULL;
+static IC_CLUSTER_CONFIG *glob_grid_cluster= NULL;
 
 static GOptionEntry entries[]=
 {
@@ -59,43 +60,10 @@ generate_command_file(gchar *parse_buf)
   int ret_code;
   int len;
   guint32 node_id;
-  IC_CONFIG_ERROR err_obj;
-  IC_MEMORY_CONTAINER *mc_ptr;
-  IC_CLUSTER_CONNECT_INFO **clu_infos;
-  IC_STRING config_dir;
-  IC_CLUSTER_CONFIG *grid_cluster;
   IC_FILE_HANDLE cmd_file_handle;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
   DEBUG_ENTRY("generate_command_file");
-
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
-                                           0, FALSE)))
-    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
-
-  ic_set_current_dir(&config_dir);
-
-  /* Read the config.ini file to get cluster information */
-  if (!(clu_infos= ic_load_cluster_config_from_file(&config_dir,
-                                                    (IC_CONF_VERSION_TYPE)0,
-                                                    mc_ptr,
-                                                    &err_obj)))
-  {
-    ret_code= err_obj.err_num;
-    goto end;
-  }
-
-  /* Read the grid_common.ini to get info about Cluster Servers/Managers */
-  if (!(grid_cluster= ic_load_grid_common_config_server_from_file(
-                         &config_dir,
-                         (IC_CONF_VERSION_TYPE)0,
-                         mc_ptr,
-                         *clu_infos,
-                         &err_obj)))
-  {
-    ret_code= err_obj.err_num;
-    goto end;
-  }
 
   /* Create file to store generated file */
   if ((ret_code= ic_create_file(&cmd_file_handle,
@@ -103,12 +71,13 @@ generate_command_file(gchar *parse_buf)
     goto end;
 
   /* grid_cluster can now be used to generate the command file */
-  for (node_id = 1; node_id <= grid_cluster->max_node_id; node_id++)
+  for (node_id = 1; node_id <= glob_grid_cluster->max_node_id; node_id++)
   {
-    if (grid_cluster->node_types[node_id] == IC_CLUSTER_SERVER_NODE)
+    if (glob_grid_cluster->node_types[node_id] == IC_CLUSTER_SERVER_NODE)
     {
       /* Found a Cluster Server, now generate a command line */
-      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)grid_cluster->node_config[node_id];
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)
+        glob_grid_cluster->node_config[node_id];
       /*
         Generate a command line like this:
         PREPARE CLUSTER SERVER HOST=hostname
@@ -132,10 +101,11 @@ generate_command_file(gchar *parse_buf)
                                    len)))
         goto late_end;
     }
-    if (grid_cluster->node_types[node_id] == IC_CLUSTER_MANAGER_NODE)
+    if (glob_grid_cluster->node_types[node_id] == IC_CLUSTER_MANAGER_NODE)
     {
-      /* Found a Cluster Server, now generate a command line */
-      mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)grid_cluster->node_config[node_id];
+      /* Found a Cluster Manager, now generate a command line */
+      mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)
+        glob_grid_cluster->node_config[node_id];
       /*
         Generate a command line like this:
         PREPARE CLUSTER MANAGER HOST=hostname
@@ -194,7 +164,6 @@ late_end:
   if (ret_code)
     (void)ic_delete_file(glob_command_file);
 end:
-  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -339,8 +308,6 @@ error:
 static void
 ic_send_files_cmd(IC_PARSE_DATA *parse_data)
 {
-  IC_CONFIG_ERROR err_obj;
-  IC_STRING config_dir;
   IC_CONNECTION *conn= NULL;
   IC_CLUSTER_SERVER_DATA *cs_data;
   int ret_code;
@@ -348,22 +315,6 @@ ic_send_files_cmd(IC_PARSE_DATA *parse_data)
   DEBUG_ENTRY("ic_send_files_cmd");
 
   (void)parse_data;
-  if (!(glob_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
-                                           0, FALSE)))
-    goto error;
-
-  ic_set_current_dir(&config_dir);
-  /* Read the config.ini file to get information about cluster names */
-  if (!(glob_clu_infos= ic_load_cluster_config_from_file(&config_dir,
-                                                    (IC_CONF_VERSION_TYPE)0,
-                                                    glob_mc_ptr,
-                                                    &err_obj)))
-  {
-    ret_code= err_obj.err_num;
-    ic_printf("Failed to open config.ini");
-    ic_print_error(ret_code);
-    goto error;
-  }
   if (parse_data->next_cs_index == 0)
   {
     ic_printf("No Cluster Servers prepared");
@@ -405,7 +356,31 @@ error:
 }
 
 static int
-start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
+ic_send_debug_level(IC_CONNECTION *conn)
+{
+#ifdef DEBUG_BUILD
+  int ret_code;
+  /* If we're debugging the bootstrap we'll also debug the started process */
+  if (ic_get_debug())
+  {
+    if ((ret_code= ic_send_with_cr_two_strings(conn,
+                                               ic_parameter_str,
+                                               ic_debug_level_str)) ||
+        (ret_code= ic_send_with_cr_with_num(conn,
+                                            ic_parameter_str,
+                                            (guint64)ic_get_debug())))
+      return ret_code;
+  }
+#else
+  (void)conn;
+#endif
+  return 0;
+}
+
+static int
+start_cluster_manager(IC_CONNECTION *conn,
+                      IC_CLUSTER_MANAGER_DATA *mgr_data,
+                      IC_CLUSTER_MANAGER_CONFIG *mgr_conf)
 {
   int ret_code;
   gchar buf[IC_NUMBER_SIZE + 4];
@@ -414,14 +389,15 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
   guint32 dummy;
   guint32 pid;
   gboolean found;
-  DEBUG_ENTRY("start_cluster_server");
+  guint64 num_params;
+  DEBUG_ENTRY("start_cluster_manager");
 
-  node_str= ic_guint64_str((guint64)cs_data->node_id, buf, &dummy);
+  node_str= ic_guint64_str((guint64)mgr_data->node_id, buf, &dummy);
   /* Start a cluster server */
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_program_str,
-                                             ic_csd_program_str)) ||
+                                   ic_cluster_manager_program_str)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_version_str,
                                              IC_VERSION_STR)) ||
@@ -436,10 +412,103 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
                                              node_str)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_auto_restart_str,
-                                             ic_false_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
+                                             ic_false_str)))
+    goto end;
+#ifdef DEBUG_BUILD
+  num_params= ic_get_debug() ? (guint64)8 : (guint64)6;
+#else
+  num_params= 6;
+#endif
+  if ((ret_code= ic_send_with_cr_with_num(conn,
                                           ic_num_parameters_str,
-                                          (guint64)2)) ||
+                                          num_params)) ||
+      (ret_code= ic_send_debug_level(conn)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_node_parameter_str)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_parameter_str,
+                                          (guint64)mgr_data->node_id)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_server_name_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                   mgr_conf->client_conf.hostname)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_server_port_str)) ||
+      (ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_parameter_str,
+                                   mgr_conf->cluster_manager_port_number)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    goto end;
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
+    goto end;
+  if (!found)
+  {
+    /* Not ok, expect error message instead */
+    if (ic_receive_error_message(conn, err_buf))
+      ic_printf("Error: %s", err_buf);
+    goto end;
+  }
+  if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    goto end;
+  ic_printf("Successfully started Cluster Manager id %u with pid %u"
+            ", on host = %s, listening to port number = %u",
+            mgr_data->node_id,
+            pid,
+            mgr_conf->client_conf.hostname,
+            mgr_conf->cluster_manager_port_number);
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
+{
+  int ret_code;
+  gchar buf[IC_NUMBER_SIZE + 4];
+  gchar err_buf[ERROR_MESSAGE_SIZE];
+  gchar *node_str;
+  guint32 dummy;
+  guint32 pid;
+  guint64 num_params;
+  gboolean found;
+  DEBUG_ENTRY("start_cluster_server");
+
+  node_str= ic_guint64_str((guint64)cs_data->node_id, buf, &dummy);
+  /* Start a cluster server */
+  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_program_str,
+                                             ic_cluster_server_program_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_version_str,
+                                             IC_VERSION_STR)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_grid_str,
+                                             IC_GRID_STR)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_cluster_str,
+                                   glob_clu_infos[0]->cluster_name.str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_node_str,
+                                             node_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_auto_restart_str,
+                                             ic_false_str)))
+    goto end;
+#ifdef DEBUG_BUILD
+  num_params= ic_get_debug() ? (guint64)4 : (guint64)2;
+#else
+  num_params= (guint64)2;
+#endif
+  if ((ret_code= ic_send_with_cr_with_num(conn,
+                                          ic_num_parameters_str,
+                                          num_params)) ||
+      (ret_code= ic_send_debug_level(conn)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
                                              ic_node_parameter_str)) ||
@@ -489,8 +558,11 @@ ic_start_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
       cs_data->pcntrl_hostname,
       cs_data->pcntrl_port)))
     {
-      ic_printf("Failed to open connection to cluster server id %u",
+      ic_printf("Failed to open connection to Cluster Server id %u",
         cs_data->node_id);
+      ic_printf("Most likely not started ic_pcntrld on host %s at port %u",
+                cs_data->pcntrl_hostname,
+                cs_data->pcntrl_port);
       ic_print_error(ret_code);
       goto error;
     }
@@ -516,14 +588,50 @@ error:
 static void
 ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
 {
+  IC_CLUSTER_MANAGER_DATA *mgr_data;
+  IC_CONNECTION *conn= NULL;
+  guint32 i;
+  int ret_code;
+  IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
   DEBUG_ENTRY("ic_start_cluster_managers_cmd");
+
   if (parse_data->next_mgr_index == 0)
   {
     ic_printf("No Cluster Managers prepared");
     goto error;
   }
+  for (i= 0; i < parse_data->next_cs_index; i++)
+  {
+    mgr_data= &parse_data->mgr_data[i];
+    ic_require(glob_grid_cluster->node_types[mgr_data->node_id] ==
+               IC_CLUSTER_MANAGER_NODE);
+    mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)
+      glob_grid_cluster->node_config[mgr_data->node_id];
+    if ((ret_code= start_client_connection(&conn,
+      mgr_data->pcntrl_hostname,
+      mgr_data->pcntrl_port)))
+    {
+      ic_printf("Failed to open connection to Cluster Manager id %u",
+        mgr_data->node_id);
+      ic_printf("Most likely not started ic_pcntrld on host %s at port %u",
+                mgr_data->pcntrl_hostname,
+                mgr_data->pcntrl_port);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    if ((ret_code= start_cluster_manager(conn, mgr_data, mgr_conf)))
+    {
+      ic_printf("Failed to start Cluster Manager id %u", mgr_data->node_id);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    conn->conn_op.ic_free_connection(conn);
+    conn= NULL;
+  }
   ic_printf("Found start cluster managers command");
 end:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_EMPTY;
 error:
   parse_data->exit_flag= TRUE;
@@ -772,6 +880,46 @@ The generation of a command file is done when the option\n\
 --generate-command-file is given with file name of command file\n\
 ";
 
+static int
+init_global_data(void)
+{
+  IC_STRING config_dir;
+  IC_CONFIG_ERROR err_obj;
+  int ret_code= IC_ERROR_MEM_ALLOC;
+  DEBUG_ENTRY("init_global_data");
+
+  if (!(glob_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+                                           0, FALSE)))
+    goto error;
+
+  ret_code= 0;
+  ic_set_current_dir(&config_dir);
+  /* Read the config.ini file to get information about cluster names */
+  if (!(glob_clu_infos= ic_load_cluster_config_from_file(&config_dir,
+                                                    (IC_CONF_VERSION_TYPE)0,
+                                                    glob_mc_ptr,
+                                                    &err_obj)))
+  {
+    ret_code= err_obj.err_num;
+    ic_printf("Failed to open config.ini");
+    ic_print_error(ret_code);
+    goto error;
+  }
+  /* Read the grid_common.ini to get info about Cluster Servers/Managers */
+  if (!(glob_grid_cluster= ic_load_grid_common_config_server_from_file(
+                         &config_dir,
+                         (IC_CONF_VERSION_TYPE)0,
+                         glob_mc_ptr,
+                         *glob_clu_infos,
+                         &err_obj)))
+  {
+    ret_code= err_obj.err_num;
+    goto error;
+  }
+error:
+  DEBUG_RETURN_INT(ret_code);
+}
+
 /**
   Initialise parse_data before first use
 
@@ -822,6 +970,9 @@ int main(int argc, char *argv[])
   }
   ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
   parse_data.lex_data.mc_ptr= mc_ptr;
+
+  if ((ret_code= init_global_data()))
+    goto end;
 
   /* Start by loading the config files */
   if (glob_generate_command_file)

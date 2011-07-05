@@ -65,6 +65,9 @@ extern const gchar *ic_server_name_str;
 extern const gchar *ic_server_port_str;
 extern const gchar *ic_data_dir_str;
 extern const gchar *ic_num_threads_str;
+#ifdef DEBUG_BUILD
+extern const gchar *ic_debug_level_str;
+#endif
 
 /* Messages for Copy Cluster Server files protocol */
 extern const gchar *ic_copy_cluster_server_files_str;

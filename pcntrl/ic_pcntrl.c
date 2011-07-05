@@ -1,4 +1,5 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2011 iClaustron Ak
+ * B
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -134,7 +135,7 @@ send_start_cluster_server(IC_CONNECTION *conn)
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_program_str,
-                                             ic_csd_program_str)) ||
+                                             ic_cluster_server_program_str)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_version_str,
                                              version_str)) ||
@@ -568,7 +569,7 @@ rec_list_node(IC_CONNECTION *conn, gboolean rec_empty_line)
   if ((ret_code= ic_rec_simple_str(conn, ic_list_node_str)) ||
       (ret_code= ic_rec_two_strings(conn,
                                     ic_program_str,
-                                    ic_csd_program_str)) ||
+                                    ic_cluster_server_program_str)) ||
       (ret_code= ic_rec_two_strings(conn,
                                    ic_version_str,
                                    version_str)) ||
@@ -1239,6 +1240,32 @@ end:
 }
 
 /**
+  Verify that the starting program is a program handled by iClaustron
+
+  @program_name              IN: The program name
+
+  NOTE:
+  Current program handled is:
+  1) ic_csd == iClaustron Cluster Server
+  2) ic_clmgrd == iClaustron Cluster Manager
+  3) ic_fsd == iClaustron File Server
+  4) ic_repd == iClaustron Replication Server
+  5) ndbmtd == NDB Data Node
+*/
+static int
+check_certified_program(gchar *program_name)
+{
+  DEBUG_ENTRY("check_certified_program");
+  if ((strcmp(program_name, ic_cluster_server_program_str) == 0) ||
+      (strcmp(program_name, ic_cluster_manager_program_str) == 0) ||
+      (strcmp(program_name, ic_file_server_program_str) == 0) ||
+      (strcmp(program_name, ic_rep_server_program_str) == 0) ||
+      (strcmp(program_name, ic_data_server_program_str) == 0))
+    DEBUG_RETURN_INT(1);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
   Handle a start process request to the process controller
 
   @parameter conn              IN: The connection from the client
@@ -1266,6 +1293,8 @@ handle_start(IC_CONNECTION *conn)
     parameters passed to the program.
   */
   arg_vector[0]= pc_start->program_name.str;
+  if (check_certified_program(arg_vector[0]))
+    goto error;
   for (i= 0; i < pc_start->num_parameters; i++)
   {
     arg_vector[i+1]= pc_start->parameters[i].str;
