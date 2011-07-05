@@ -71,6 +71,7 @@ extern const gchar *ic_debug_level_str;
 
 /* Messages for Copy Cluster Server files protocol */
 extern const gchar *ic_copy_cluster_server_files_str;
+extern const gchar *ic_copy_config_ini_str;
 extern const gchar *ic_cluster_server_node_id_str;
 extern const gchar *ic_number_of_clusters_str;
 extern const gchar *ic_receive_config_ini_str;

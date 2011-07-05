@@ -38,6 +38,8 @@ static gchar *ic_prompt= "iClaustron bootstrap> ";
 static IC_MEMORY_CONTAINER *glob_mc_ptr= NULL;
 static IC_CLUSTER_CONNECT_INFO **glob_clu_infos= NULL;
 static IC_CLUSTER_CONFIG *glob_grid_cluster= NULL;
+static IC_CLUSTER_CONFIG *glob_clusters[IC_MAX_CLUSTER_ID + 1];
+static guint32 glob_num_clusters= 0;
 
 static GOptionEntry entries[]=
 {
@@ -305,6 +307,74 @@ error:
   DEBUG_RETURN_INT(ret_code);
 }
 
+/**
+  Copy config.ini to a node where it is needed
+*/
+static int
+node_copy_config_ini(IC_DATA_SERVER_CONFIG *node_conf)
+{
+  IC_STRING current_dir;
+  int ret_code;
+  IC_CONNECTION *conn= NULL;
+  DEBUG_ENTRY("node_copy_config_ini");
+
+  if ((ret_code= start_client_connection(&conn,
+                                         node_conf->pcntrl_hostname,
+                                         node_conf->pcntrl_port)))
+    goto error;
+  ic_set_current_dir(&current_dir);
+  if ((ret_code= ic_send_with_cr(conn, ic_copy_config_ini_str)) ||
+      (ret_code= ic_proto_send_file(conn,
+                                    "config.ini",
+                                    current_dir.str)) ||
+      (ret_code= ic_receive_config_file_ok(conn, TRUE)))
+    goto error;
+error:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
+  DEBUG_RETURN_INT(ret_code);
+}
+/**
+  Copy config.ini to all nodes in a cluster where it is needed
+*/
+static int
+cluster_copy_config_ini(IC_CLUSTER_CONFIG *clu_conf)
+{
+  guint32 i;
+  int ret_code;
+  DEBUG_ENTRY("cluster_copy_config_ini");
+
+  for (i= 0; i <= clu_conf->max_node_id; i++)
+  {
+    if (clu_conf->node_config[i] &&
+        (ret_code= node_copy_config_ini(
+          (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[i])))
+      break;
+  }
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/**
+  Copy config.ini to all nodes where it is needed
+*/
+static int
+copy_config_ini(void)
+{
+  guint32 i;
+  int ret_code;
+  DEBUG_ENTRY("copy_config_ini");
+
+  if ((ret_code= cluster_copy_config_ini(glob_grid_cluster)))
+    goto error;
+  for (i= 0; i < glob_num_clusters; i++)
+  {
+    if ((ret_code= cluster_copy_config_ini(glob_clusters[i])))
+      goto error;
+  }
+error:
+  DEBUG_RETURN_INT(ret_code);
+}
+
 static void
 ic_send_files_cmd(IC_PARSE_DATA *parse_data)
 {
@@ -320,6 +390,8 @@ ic_send_files_cmd(IC_PARSE_DATA *parse_data)
     ic_printf("No Cluster Servers prepared");
     goto error;
   }
+  if ((ret_code= copy_config_ini()))
+    goto error;
   for (i= 0; i < parse_data->next_cs_index; i++)
   {
     cs_data= &parse_data->cs_data[i];
@@ -448,8 +520,9 @@ start_cluster_manager(IC_CONNECTION *conn,
   if (!found)
   {
     /* Not ok, expect error message instead */
-    if (ic_receive_error_message(conn, err_buf))
+    if (!ic_receive_error_message(conn, err_buf))
       ic_printf("Error: %s", err_buf);
+    ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
     goto end;
   }
   if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
@@ -522,8 +595,9 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
   if (!found)
   {
     /* Not ok, expect error message instead */
-    if (ic_receive_error_message(conn, err_buf))
+    if (!ic_receive_error_message(conn, err_buf))
       ic_printf("Error: %s", err_buf);
+    ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
     goto end;
   }
   if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
@@ -886,6 +960,10 @@ init_global_data(void)
   IC_STRING config_dir;
   IC_CONFIG_ERROR err_obj;
   int ret_code= IC_ERROR_MEM_ALLOC;
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  IC_CLUSTER_CONFIG *cluster;
+  guint32 i;
   DEBUG_ENTRY("init_global_data");
 
   if (!(glob_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
@@ -914,8 +992,31 @@ init_global_data(void)
                          &err_obj)))
   {
     ret_code= err_obj.err_num;
+    ic_printf("Failed to open grid_common.ini");
+    ic_print_error(ret_code);
     goto error;
   }
+  clu_infos= glob_clu_infos;
+  i= 0;
+  while (*clu_infos)
+  {
+    clu_info= *clu_infos;
+    clu_infos++;
+    if (!(cluster= ic_load_config_server_from_files(&config_dir,
+                                                    (IC_CONF_VERSION_TYPE)0,
+                                                    glob_mc_ptr,
+                                                    glob_grid_cluster,
+                                                    clu_info,
+                                                    &err_obj)))
+    {
+      ret_code= err_obj.err_num;
+      ic_printf("Failed to open %s.ini", clu_info->cluster_name.str);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    glob_clusters[i++]= cluster;
+  }
+  glob_num_clusters= i;
 error:
   DEBUG_RETURN_INT(ret_code);
 }

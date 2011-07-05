@@ -16,6 +16,7 @@
 
 /* Messages for copy cluster server files protocol */
 const gchar *ic_copy_cluster_server_files_str= "copy cluster server files";
+const gchar *ic_copy_config_ini_str= "copy config.ini";
 const gchar *ic_cluster_server_node_id_str= "cluster server node id:";
 const gchar *ic_number_of_clusters_str= "number of clusters:";
 const gchar *ic_receive_config_ini_str= "receive config.ini";

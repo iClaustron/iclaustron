@@ -1256,13 +1256,15 @@ static int
 check_certified_program(gchar *program_name)
 {
   DEBUG_ENTRY("check_certified_program");
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Program: %s", program_name));
+
   if ((strcmp(program_name, ic_cluster_server_program_str) == 0) ||
       (strcmp(program_name, ic_cluster_manager_program_str) == 0) ||
       (strcmp(program_name, ic_file_server_program_str) == 0) ||
       (strcmp(program_name, ic_rep_server_program_str) == 0) ||
       (strcmp(program_name, ic_data_server_program_str) == 0))
-    DEBUG_RETURN_INT(1);
-  DEBUG_RETURN_INT(0);
+    DEBUG_RETURN_INT(0);
+  DEBUG_RETURN_INT(IC_ERROR_PROGRAM_NOT_SUPPORTED);
 }
 
 /**
@@ -1921,17 +1923,20 @@ handle_receive_file(IC_CONNECTION *conn,
   DEBUG_ENTRY("handle_receive_file");
 
   if ((ret_code= ic_set_config_dir(&file_str,
-                                   TRUE,
+                                   node_id ? TRUE : FALSE,
                                    node_id)))
     goto end;
   if ((ret_code= ic_add_dup_string(&file_str, file_name)))
     goto end;
 
   /* Record the file name to be able to clean up after an error */
-  if ((ret_code= file_name_array->dpa_ops.ic_insert_ptr(file_name_array,
-                                                        num_files,
-                                                        (void*)file_str.str)))
-    goto end;
+  if (file_name_array)
+  {
+    if ((ret_code= file_name_array->dpa_ops.ic_insert_ptr(file_name_array,
+                                                      num_files,
+                                                      (void*)file_str.str)))
+      goto end;
+  }
   if ((ret_code= ic_create_file(&file_ptr,
                                 file_str.str)))
   {
@@ -1940,7 +1945,8 @@ handle_receive_file(IC_CONNECTION *conn,
       want the file deleted since the error could have been that the file
       already existed.
     */
-    (*num_files)--;
+    if (file_name_array)
+      (*num_files)--;
     goto error;
   }
   for (i= 0; i < number_of_lines; i++)
@@ -1963,7 +1969,49 @@ error:
   goto end;
 }
 
-/*
+/**
+  This method receives the config.ini file and places it in the
+  ICLAUSTRON_DATA_DIR/config directory. It overwrites the
+  config.ini file if one already existed there.
+
+  @parameter conn                 The connection
+*/
+static int
+handle_copy_config_ini(IC_CONNECTION *conn)
+{
+  IC_STRING file_name;
+  int ret_code;
+  guint32 num_lines;
+  gchar file_name_buf[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("handle_copy_config_ini");
+
+  if ((ret_code= ic_rec_simple_str(conn, ic_receive_config_ini_str)) ||
+      (ret_code= ic_rec_number(conn,
+                               ic_number_of_lines_str,
+                               &num_lines)))
+    goto error;
+  /* Create the config.ini file name */
+  IC_INIT_STRING(&file_name, NULL, 0, FALSE);
+  ic_create_config_file_name(&file_name,
+                             file_name_buf,
+                             NULL,
+                             &ic_config_string,
+                             0);
+  if ((ret_code= handle_receive_file(conn,
+                                     NULL,
+                                     file_name.str,
+                                     NULL,
+                                     0,
+                                     num_lines)))
+    goto error;
+  if ((ret_code= ic_send_with_cr(conn, ic_receive_config_file_ok_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    goto error;
+error:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/**
   This method receives a number of files with their content from the client
   and installs those as configuration files in the proper directory where
   iClaustron expects to find the configuration files.
@@ -2005,6 +2053,7 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
       (ret_code= ic_rec_number(conn,
                                ic_number_of_lines_str,
                                &num_lines)))
+
     goto error_delete_files;
 
   /* Need to make sure the node directory is created */
@@ -2604,6 +2653,10 @@ run_command_handler(gpointer data)
                            ic_copy_cluster_server_files_str,
                            strlen(ic_copy_cluster_server_files_str)))
       ret_code= handle_copy_cluster_server_files(conn);
+    else if (!ic_check_buf(read_buf, read_size,
+                           ic_copy_config_ini_str,
+                           strlen(ic_copy_config_ini_str)))
+      ret_code= handle_copy_config_ini(conn);
     else if (!ic_check_buf(read_buf, read_size,
                            ic_get_cpu_info_str,
                            strlen(ic_get_cpu_info_str)))

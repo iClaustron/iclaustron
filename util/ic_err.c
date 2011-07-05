@@ -256,6 +256,12 @@ ic_init_error_messages()
     "The process is already in the process of being killed";
   ic_error_str[IC_ERROR_TOO_LARGE_ERROR_MESSAGE - IC_FIRST_ERROR]=
     "Error message received is too large";
+  ic_error_str[IC_ERROR_FAILED_TO_START_PROCESS - IC_FIRST_ERROR]=
+    "Failed to start process";
+  ic_error_str[IC_ERROR_PROGRAM_NOT_SUPPORTED - IC_FIRST_ERROR]=
+    "Program not supported";
+  ic_error_str[IC_ERROR_FILE_ALREADY_EXISTS - IC_FIRST_ERROR]=
+    "File already exists";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)
