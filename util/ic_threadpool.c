@@ -722,6 +722,19 @@ ic_get_threadpool()
   return tp_state;
 }
 
+void
+ic_sleep(guint32 seconds_to_sleep)
+{
+  guint32 i;
+  for (i= 0; i < seconds_to_sleep; i++)
+  {
+    ic_sleep_low(1);
+    if (ic_tp_get_stop_flag())
+      return;
+  }
+  return;
+}
+
 gboolean
 ic_tp_get_stop_flag()
 {

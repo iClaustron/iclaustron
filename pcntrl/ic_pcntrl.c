@@ -23,6 +23,7 @@
 #include <ic_connection.h>
 #include <ic_threadpool.h>
 #include <ic_hashtable.h>
+#include <ic_hashtable_itr.h>
 #include <ic_dyn_array.h>
 #include <ic_protocol_support.h>
 #include <ic_proto_str.h>
@@ -78,6 +79,7 @@
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_PCNTRL_PORT_STR;
 static guint32 glob_daemonize= 1;
+static gboolean event_occurred= FALSE;
 #ifdef WITH_UNIT_TEST
 static guint32 glob_unit_test= 0;
 #endif
@@ -1073,8 +1075,16 @@ static void
 remove_pc_entry(IC_PC_START *pc_start)
 {
   IC_PC_START *pc_start_check;
+  guint32 dummy;
+  gchar *pid_str;
+  gchar pid_buf[IC_NUMBER_SIZE];
   DEBUG_ENTRY("remove_pc_entry");
 
+  event_occurred= TRUE;
+  pid_str= ic_guint64_str(pc_start->pid, pid_buf, &dummy);
+  ic_printf("Program %s with pid %s has stopped",
+            pc_start->program_name.str,
+            pid_str);
   pc_start_check= ic_hashtable_remove(glob_pc_hash,
                                       (void*)pc_start);
   ic_require(pc_start_check == pc_start);
@@ -1099,6 +1109,7 @@ insert_pc_entry(IC_PC_START *pc_start)
   guint64 index;
   DEBUG_ENTRY("insert_pc_entry");
 
+  event_occurred= TRUE;
   if ((ret_code= glob_pc_array->dpa_ops.ic_insert_ptr(glob_pc_array,
                                                       &index,
                                                       (void*)pc_start)))
@@ -1159,12 +1170,13 @@ try_again:
       /* Someone is already trying to start, we won't continue or attempt */
       ret_code= IC_ERROR_PC_START_ALREADY_ONGOING;
     }
-    else if (pc_start->kill_ongoing)
+    else if (pc_start->kill_ongoing || pc_start->check_ongoing)
     {
       /*
         Someone is attempting to kill this process, we'll wait for a few
         seconds for this to complete in the hope that we'll be successful
-        in starting it after it has been killed.
+        in starting it after it has been killed. Could also be that the
+        check process is busy checking it.
       */
       ic_mutex_unlock(pc_hash_mutex);
       retry_count++;
@@ -1190,7 +1202,7 @@ try_again:
         ret_code= insert_pc_entry(pc_start);
         ic_mutex_unlock(pc_hash_mutex);
         /* Release memory associated with the deleted process */
-        pc_start_found->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
+        pc_start_found->mc_ptr->mc_ops.ic_mc_free(pc_start_found->mc_ptr);
         goto end;
       }
       prev_start_id= pc_start_found->start_id;
@@ -1281,6 +1293,9 @@ handle_start(IC_CONNECTION *conn)
   IC_PID_TYPE pid;
   IC_STRING working_dir;
   IC_PC_START *pc_start, *pc_start_check, *pc_start_hash;
+  gchar *pid_str;
+  guint32 dummy;
+  gchar pid_buf[IC_NUMBER_SIZE];
   DEBUG_ENTRY("handle_start");
 
   IC_INIT_STRING(&working_dir, NULL, 0, FALSE);
@@ -1343,6 +1358,10 @@ handle_start(IC_CONNECTION *conn)
   pc_start->pid= pid;
   pc_start->start_id= glob_start_id++;
   ic_mutex_unlock(pc_hash_mutex);
+  pid_str= ic_guint64_str(pc_start->pid, pid_buf, &dummy);
+  ic_printf("Successfully started program %s with pid %s",
+            pc_start->program_name.str,
+            pid_str);
 
   DEBUG_PRINT(PROGRAM_LEVEL, ("New process with pid %d started", (int)pid));
   ret_code= ic_send_ok_pid(conn, pc_start->pid);
@@ -1541,9 +1560,12 @@ try_again:
       need to wait for the starting process to complete before we
       stop the process.
     */
-    if (pc_start_found->pid == 0)
+    if (pc_start_found->pid == 0 || pc_start_found->check_ongoing)
     {
-      /* The process is still starting up, too early to stop it. */
+      /*
+        The process is still starting up or the check thread is busy
+        checking it already, too early to stop it.
+      */
       ic_mutex_unlock(pc_hash_mutex);
       if (++loop_count == 10)
       {
@@ -2365,6 +2387,7 @@ clean_process_hash(gboolean stop_processes)
       {
         pc_find.key= pc_start->key;
         ic_assert(pc_start->kill_ongoing == FALSE);
+        ic_assert(pc_start->check_ongoing == FALSE);
         ic_mutex_unlock(pc_hash_mutex);
         ret_code= delete_process(&pc_find, FALSE);
         if (ret_code)
@@ -2392,6 +2415,99 @@ clean_process_hash(gboolean stop_processes)
   }
   ic_mutex_unlock(pc_hash_mutex);
   DEBUG_RETURN_EMPTY;
+}
+
+/**
+  Method of thread checking started process every 30 seconds
+*/
+static gpointer
+run_check_thread(gpointer data)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state;
+  IC_HASHTABLE_ITR check_itr;
+  IC_PC_START *pc_start;
+  guint32 i;
+  int ret_code;
+  guint64 check_time= 0;
+  DEBUG_THREAD_ENTRY("run_check_thread");
+  tp_state= thread_state->ic_get_threadpool(thread_state);
+  tp_state->ts_ops.ic_thread_started(thread_state);
+  /* End of thread initialization */
+
+  while (!ic_tp_get_stop_flag())
+  {
+    ic_mutex_lock(pc_hash_mutex);
+    event_occurred= FALSE;
+    ic_hashtable_iterator(glob_pc_hash, &check_itr, TRUE);
+    while (ic_hashtable_iterator_advance(&check_itr))
+    {
+      pc_start= (IC_PC_START*)ic_hashtable_iterator_value(&check_itr);
+      if (pc_start->check_time == check_time)
+        continue; /* Already checked in this loop */
+      /* Ensures no one removes it until we're done with check */
+      pc_start->check_ongoing= TRUE;
+      pc_start->check_time= check_time;
+      ic_mutex_unlock(pc_hash_mutex);
+      /* Check that it is still alive */
+      if ((ret_code= ic_is_process_alive(pc_start->pid,
+                                         pc_start->program_name.str)))
+      {
+        /* Process was dead, remove it from hashtable */
+        ic_mutex_lock(pc_hash_mutex);
+        remove_pc_entry(pc_start);
+        ic_mutex_unlock(pc_hash_mutex);
+        /*
+          We have removed the entry which was used by iterator, we'll
+          continue search from same bucket, this will recheck some
+          entries possibly, to avoid this we keep track of check time.
+        */
+        ic_hashtable_iterator(glob_pc_hash, &check_itr, FALSE);
+        pc_start= NULL;
+      }
+      ic_mutex_lock(pc_hash_mutex);
+      if (pc_start)
+        pc_start->check_ongoing= FALSE;
+    }
+    ic_mutex_unlock(pc_hash_mutex);
+    for (i= 0; i < 3; i++)
+    {
+      if (event_occurred)
+      {
+        /* Check a bit more often when start/stop events occurred */
+        break;
+      }
+      ic_sleep(10); /* Will also check stop flag every second */
+    }
+    check_time+= 30;
+  }
+  DEBUG_THREAD_RETURN;
+}
+
+/**
+  This method starts the thread that constantly checks whether started
+  processes are still alive, if it discovers that a process has failed
+  it will remove it from the list of running processes. If the process
+  has the autorestart flag set to true it will also initiate a new
+  start of the process.
+
+  @parameter tp_state             Threadpool to use for check thread
+*/
+static int
+start_check_thread(IC_THREADPOOL_STATE *tp_state)
+{
+  guint32 thread_id;
+  int ret_code;
+  DEBUG_ENTRY("start_check_thread");
+
+  if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread(tp_state,
+                                                  &thread_id,
+                                                  run_check_thread,
+                                                  NULL,
+                                                  IC_MEDIUM_STACK_SIZE,
+                                                  FALSE)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
 }
 
 /**
@@ -2785,7 +2901,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
                                                       &thread_id,
                                                       run_command_handler,
                                                       fork_conn,
-                                                      IC_SMALL_STACK_SIZE,
+                                                      IC_MEDIUM_STACK_SIZE,
                                                       FALSE))
       {
         ic_printf("Failed to create thread after forking accept connection");
@@ -2908,6 +3024,8 @@ int main(int argc, char *argv[])
     such that the program receives a SIGKILL signal. This program cannot
     be started and stopped from a Cluster Manager for security reasons.
   */
+  if ((ret_code= start_check_thread(tp_state)))
+    goto error;
   ret_code= start_connection_loop(tp_state);
 error:
   ic_set_stop_flag();

@@ -335,17 +335,21 @@ ic_mc_rec_string(IC_CONNECTION *conn,
                  const gchar *prefix_str,
                  IC_STRING *str)
 {
-  int error;
+  int ret_code;
   guint32 read_size;
   gchar *read_buf;
+  DEBUG_ENTRY("ic_mc_rec_string");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for: %s string", prefix_str));
 
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
-  return mc_rec_string_impl(mc_ptr,
-                            prefix_str,
-                            read_buf,
-                            read_size,
-                            str);
+  if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    goto end;
+  ret_code= mc_rec_string_impl(mc_ptr,
+                               prefix_str,
+                               read_buf,
+                               read_size,
+                               str);
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -364,24 +368,28 @@ ic_mc_rec_opt_string(IC_CONNECTION *conn,
                      const gchar *prefix_str,
                      IC_STRING *str)
 {
-  int error;
+  int ret_code;
   guint32 read_size;
   gchar *read_buf;
+  DEBUG_ENTRY("ic_mc_rec_opt_string");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for: %s string", prefix_str));
 
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
+  if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    goto end;
   if (read_size == 0)
   {
     /* Found only last empty string, step back to be able to read this again */
     ic_step_back_rec_with_cr(conn, read_size);
     IC_INIT_STRING(str, NULL, 0, FALSE);
-    return 0;
+    goto end;
   }
-  return mc_rec_string_impl(mc_ptr,
-                            prefix_str,
-                            read_buf,
-                            read_size,
-                            str);
+  ret_code= mc_rec_string_impl(mc_ptr,
+                               prefix_str,
+                               read_buf,
+                               read_size,
+                               str);
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -403,6 +411,7 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
   int error;
   guint32 prefix_str_len;
   DEBUG_ENTRY("ic_rec_string");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for: %s string", prefix_str));
 
   prefix_str_len= strlen(prefix_str);
   if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
@@ -443,6 +452,7 @@ ic_rec_two_strings(IC_CONNECTION *conn,
   gchar buf[CONFIG_READ_BUF_SIZE];
   size_t second_str_len= strlen(second_str);
   DEBUG_ENTRY("ic_rec_two_strings");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for %s %s", first_str, second_str));
 
   if ((ret_code= ic_rec_string(conn, first_str, buf)))
     DEBUG_RETURN_INT(ret_code);
@@ -474,10 +484,11 @@ ic_rec_simple_str_impl(IC_CONNECTION *conn,
 {
   gchar *read_buf;
   guint32 read_size;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_rec_simple_str_impl");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for string %s", str));
 
-  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (ic_check_buf(read_buf, read_size, str,
                      strlen(str)))
@@ -497,7 +508,7 @@ ic_rec_simple_str_impl(IC_CONNECTION *conn,
     DEBUG_RETURN_INT(0);
   }
   *optional_and_found= FALSE;
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -512,9 +523,10 @@ ic_rec_simple_str(IC_CONNECTION *conn, const gchar *str)
 {
   gboolean optional= FALSE;
   int ret_code;
+  DEBUG_ENTRY("ic_rec_simple_str");
 
   ret_code= ic_rec_simple_str_impl(conn, str, &optional);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -532,10 +544,11 @@ ic_rec_simple_str_opt(IC_CONNECTION *conn,
                       gboolean *found)
 {
   int ret_code;
+  DEBUG_ENTRY("ic_rec_simple_str_opt");
 
   *found= TRUE;
   ret_code= ic_rec_simple_str_impl(conn, str, found);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /*
@@ -557,26 +570,28 @@ ic_rec_number_impl(IC_CONNECTION *conn,
 {
   gchar *read_buf;
   guint32 read_size;
-  int error;
+  int ret_code;
   guint64 local_id;
+  DEBUG_ENTRY("ic_rec_number_impl");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for :%s number", str));
 
-  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (!ic_check_buf_with_int(read_buf, read_size, str,
                                strlen(str),
                                &local_id))
     {
       if (local_id >= IC_MAX_UINT32)
-        return IC_PROTOCOL_ERROR;
+        DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
       *id= (guint32)local_id;
-      return 0;
+      goto end;
     }
     if (!optional)
-      return IC_PROTOCOL_ERROR;
+      DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
     ic_step_back_rec_with_cr(conn, read_size);
-    return 0;
   }
-  return error;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -592,13 +607,15 @@ ic_rec_boolean(IC_CONNECTION *conn,
                const gchar *prefix_str,
                gboolean *bool_value)
 {
-  int error;
+  int ret_code;
   guint32 read_size;
   gchar *read_buf;
   guint32 prefix_len= strlen(prefix_str);
+  DEBUG_ENTRY("ic_rec_boolean");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for: %s boolean", prefix_str));
 
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
-    return error;
+  if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+    goto end;
   if (read_size <= (prefix_len + 1))
     goto protocol_error;
   if (memcmp(read_buf, prefix_str, prefix_len) ||
@@ -614,9 +631,10 @@ ic_rec_boolean(IC_CONNECTION *conn,
     *bool_value= 0;
   else
     goto protocol_error;
-  return 0;
+end:
+  DEBUG_RETURN_INT(ret_code);
 protocol_error:
-  return IC_PROTOCOL_ERROR;
+  DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
 }
 
 /**
@@ -638,24 +656,23 @@ ic_rec_long_number(IC_CONNECTION *conn,
 {
   gchar *read_buf;
   guint32 read_size;
-  int error;
+  int ret_code;
   guint64 local_id;
+  DEBUG_ENTRY("ic_rec_long_number");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for: %s long number", prefix_str));
 
-  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (!ic_check_buf_with_int(read_buf,
                                read_size,
                                prefix_str,
                                strlen(prefix_str),
                                &local_id))
-    {
       *number= local_id;
-      return 0;
-    }
     else
-      return IC_PROTOCOL_ERROR;
+      ret_code= IC_PROTOCOL_ERROR;
   }
-  return error;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -674,9 +691,10 @@ int
 ic_rec_number(IC_CONNECTION *conn, const gchar *prefix_str, guint32 *number)
 {
   int ret_code;
+  DEBUG_ENTRY("ic_rec_number");
 
   ret_code= ic_rec_number_impl(conn, prefix_str, number, FALSE);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -699,9 +717,10 @@ int
 ic_rec_opt_number(IC_CONNECTION *conn, const gchar *str, guint32 *number)
 {
   int ret_code;
+  DEBUG_ENTRY("ic_rec_opt_number");
 
   ret_code= ic_rec_number_impl(conn, str, number, TRUE);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -723,26 +742,28 @@ ic_rec_int_number(IC_CONNECTION *conn,
 {
   gchar *read_buf;
   guint32 read_size;
-  int error;
+  int ret_code;
   gboolean sign_flag;
   guint64 local_number;
+  DEBUG_ENTRY("ic_rec_int_number");
+  DEBUG_PRINT(COMM_LEVEL, ("Search for: %s int number", str));
 
-  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (!ic_check_buf_with_signed_int(read_buf, read_size, str,
                                       strlen(str),
                                       &local_number, &sign_flag))
     {
       if (local_number >= IC_MAX_UINT32)
-        return IC_PROTOCOL_ERROR;
+        DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
       *number= (guint32)local_number;
       if (sign_flag)
         *number= -(*number);
-      return 0;
     }
-    return IC_PROTOCOL_ERROR;
+    else
+      ret_code= IC_PROTOCOL_ERROR;
   }
-  return error;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -754,9 +775,10 @@ int
 ic_rec_empty_line(IC_CONNECTION *conn)
 {
   int ret_code;
+  DEBUG_ENTRY("ic_rec_empty_line");
 
   ret_code= ic_rec_simple_str(conn, "");
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**

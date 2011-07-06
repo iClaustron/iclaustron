@@ -377,9 +377,8 @@ ic_send_ok_pid_started(IC_CONNECTION *conn, IC_PID_TYPE pid)
   int error;
   DEBUG_ENTRY("ic_send_ok_pid_started");
 
-  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
+  if ((error= ic_send_with_cr(conn, ic_process_already_started_str)) ||
       (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
-      (error= ic_send_with_cr(conn, ic_process_already_started_str)) ||
       (error= ic_send_empty_line(conn)))
     DEBUG_RETURN_INT(error);
   DEBUG_RETURN_INT(0);

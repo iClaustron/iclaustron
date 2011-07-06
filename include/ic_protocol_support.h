@@ -201,8 +201,10 @@ struct ic_pc_start
   IC_PID_TYPE pid;
   guint64 start_id;
   guint64 dyn_trans_index;
+  guint64 check_time;
   guint32 num_parameters;
   gboolean autorestart;
+  gboolean check_ongoing;
   gboolean kill_ongoing;
 };
 

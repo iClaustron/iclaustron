@@ -226,7 +226,7 @@ void ic_port_end()
       num_mem_hash_allocs != (guint64)0 ||
       num_mem_mc_allocs != (guint64)0)
   {
-    hash_itr= ic_hashtable_iterator(mem_entry_hash, &itr);
+    hash_itr= ic_hashtable_iterator(mem_entry_hash, &itr, TRUE);
     while (ic_hashtable_iterator_advance(hash_itr) != 0)
     {
       key= ic_hashtable_iterator_key(hash_itr);
@@ -419,7 +419,7 @@ ic_gethrtime()
 }
 
 void
-ic_sleep(guint32 seconds_to_sleep)
+ic_sleep_low(guint32 seconds_to_sleep)
 {
 #ifndef WINDOWS
   sleep(seconds_to_sleep);
@@ -696,12 +696,13 @@ int ic_start_process(gchar **argv,
                      gchar *working_dir,
                      IC_PID_TYPE *pid)
 {
-  GError *error;
+  GError *error= NULL;
   GPid loc_pid;
 #ifdef DEBUG_BUILD
   guint32 i= 1;
   DEBUG_ENTRY("ic_start_process");
   DEBUG_PRINT(PROGRAM_LEVEL, ("Starting process %s", argv[0]));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Working dir = %s", working_dir));
   while (argv[i])
   {
     DEBUG_PRINT(PROGRAM_LEVEL, ("Argument %d = %s", i, argv[i]));
@@ -720,6 +721,9 @@ int ic_start_process(gchar **argv,
                                 &error)) /* Error object */
   {
     /* Unsuccessful start */
+    DEBUG_PRINT(PROGRAM_LEVEL,
+      ("Spawn failed with message %s",
+      error->message));
     DEBUG_RETURN_INT(1);
   }
   *pid= (IC_PID_TYPE)loc_pid;
@@ -781,12 +785,8 @@ int run_process(gchar **argv,
     *exit_status= 1;
   else
     *exit_status= 2;
-#ifdef DEBUG
-  if (*exit_status)
-  {
-    ic_printf("Exit status %d from run_process", *exit_status);
-  }
-#endif
+  DEBUG_PRINT(PROGRAM_LEVEL,
+    ("Exit status %d from run_process", *exit_status));
 
 end:
   ic_close_file(file_handle);
@@ -1210,6 +1210,9 @@ sig_error_handler(int signum)
     case SIGILL:
     case SIGBUS:
     case SIGSYS:
+#ifdef DEBUG_BUILD
+      abort();
+#endif
       break;
     default:
       DEBUG_RETURN_EMPTY;

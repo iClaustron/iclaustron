@@ -27,7 +27,6 @@ struct ic_hashtable_itr
 {
     IC_HASHTABLE *h;
     IC_HASH_ENTRY *e;
-    IC_HASH_ENTRY *parent;
     unsigned int index;
 };
 
@@ -36,7 +35,9 @@ struct ic_hashtable_itr
  */
 
 IC_HASHTABLE_ITR*
-ic_hashtable_iterator(IC_HASHTABLE *h, IC_HASHTABLE_ITR *itr);
+ic_hashtable_iterator(IC_HASHTABLE *h,
+                      IC_HASHTABLE_ITR *itr,
+                      gboolean from_start);
 
 /*****************************************************************************/
 /* ic_hashtable_iterator_key
@@ -63,33 +64,6 @@ ic_hashtable_iterator_value(IC_HASHTABLE_ITR *i)
 
 int
 ic_hashtable_iterator_advance(IC_HASHTABLE_ITR *itr);
-
-/*****************************************************************************/
-/* remove - remove current element and advance the iterator to the next element
- *          NB: if you need the value to free it, read it before
- *          removing. ie: beware memory leaks!
- *          returns zero if advanced to end of table */
-
-int
-ic_hashtable_iterator_remove(IC_HASHTABLE_ITR *itr);
-
-/*****************************************************************************/
-/* search - overwrite the supplied iterator, to point to the entry
- *          matching the supplied key.
-            h points to the ic_hashtable to be searched.
- *          returns zero if not found. */
-int
-ic_hashtable_iterator_search(IC_HASHTABLE_ITR *itr,
-                             IC_HASHTABLE *h,
-                             void *k);
-
-#define DEFINE_HASHTABLE_ITERATOR_SEARCH(fnname, keytype) \
-int fnname (IC_HASHTABLE_ITR *i, IC_HASHTABLE *h, keytype *k) \
-{ \
-    return (ic_hashtable_iterator_search(i,h,k)); \
-}
-
-
 
 #endif /* __HASHTABLE_ITR_CWC22__*/
 

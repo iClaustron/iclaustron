@@ -194,6 +194,10 @@ ic_create_threadpool(guint32 pool_size, gboolean use_internal_mutex);
 IC_THREADPOOL_STATE*
 ic_get_threadpool();
 
+/* Sleep for a number of seconds, will check for stop flag every second */
+void
+ic_sleep(guint32 seconds_to_sleep);
+
 gboolean
 ic_tp_get_stop_flag();
 #endif

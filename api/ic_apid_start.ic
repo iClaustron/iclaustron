@@ -341,8 +341,12 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   GOptionGroup *basedir_group;
   GOptionContext *context;
   gboolean is_cluster_server= FALSE;
+  guint32 dummy;
+  gchar *pid_str;
+  gchar pid_buf[IC_NUMBER_SIZE];
 
-  ic_printf("Starting %s program", program_name);
+  pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
+  ic_printf("Starting %s program with pid %s", program_name, pid_str);
   if (strcmp(program_name, "ic_csd") == 0)
     is_cluster_server= TRUE;
   use_config_vars= use_config; /* TRUE for Unit test programs */

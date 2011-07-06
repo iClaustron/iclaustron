@@ -29,11 +29,13 @@
 
 IC_HASHTABLE_ITR*
 ic_hashtable_iterator(IC_HASHTABLE *h,
-                      IC_HASHTABLE_ITR *itr)
+                      IC_HASHTABLE_ITR *itr,
+                      gboolean from_start)
 {
   itr->h = h;
   itr->e = NULL;
-  itr->parent = NULL;
+  if (from_start)
+    itr->index= 0;
   return itr;
 }
 
@@ -53,7 +55,7 @@ ic_hashtable_iterator_advance(IC_HASHTABLE_ITR *itr)
   {
     /* First call to advance */
     tablelength = h->tablelength;
-    for (i = 0; i < tablelength; i++)
+    for (i = itr->index; i < tablelength; i++)
     {
       if (NULL != h->table[i])
       {
@@ -69,13 +71,12 @@ ic_hashtable_iterator_advance(IC_HASHTABLE_ITR *itr)
   next = itr->e->next;
   if (NULL != next)
   {
-    itr->parent = itr->e;
     itr->e = next;
     return -1;
   }
   tablelength = itr->h->tablelength;
-  itr->parent = NULL;
-  if (tablelength <= (j = ++(itr->index)))
+  j= ++itr->index;
+  if (j > tablelength)
   {
     itr->e = NULL;
     return 0;
@@ -95,76 +96,9 @@ ic_hashtable_iterator_advance(IC_HASHTABLE_ITR *itr)
   return -1;
 }
 
-/*****************************************************************************/
-/* remove - remove the entry at the current iterator position
- *          and advance the iterator, if there is a successive
- *          element.
- *          If you want the value, read it before you remove:
- *          beware memory leaks if you don't.
- *          Returns zero if end of iteration. */
-
-int
-ic_hashtable_iterator_remove(IC_HASHTABLE_ITR *itr)
-{
-    IC_HASH_ENTRY *remember_e, *remember_parent;
-    int ret;
-
-    /* Do the removal */
-    if (NULL == (itr->parent))
-    {
-        /* element is head of a chain */
-        itr->h->table[itr->index] = itr->e->next;
-    } else {
-        /* element is mid-chain */
-        itr->parent->next = itr->e->next;
-    }
-    /* itr->e is now outside the ic_hashtable */
-    remember_e = itr->e;
-    itr->h->entrycount--;
-    ic_free_hash(remember_e->k, FALSE);
-
-    /* Advance the iterator, correcting the parent */
-    remember_parent = itr->parent;
-    ret = ic_hashtable_iterator_advance(itr);
-    if (itr->parent == remember_e) { itr->parent = remember_parent; }
-    ic_free_hash(remember_e, FALSE);
-    return ret;
-}
-
-/*****************************************************************************/
-int /* returns zero if not found */
-ic_hashtable_iterator_search(IC_HASHTABLE_ITR *itr,
-                             IC_HASHTABLE *h,
-                             void *k)
-{
-    IC_HASH_ENTRY *e, *parent;
-    unsigned int hashvalue, index;
-
-    hashvalue = hash(h,k);
-    index = indexFor(h->tablelength,hashvalue);
-
-    e = h->table[index];
-    parent = NULL;
-    while (NULL != e)
-    {
-        /* Check hash value to short circuit heavier comparison */
-        if ((hashvalue == e->h) && (h->eqfn(k, e->k)))
-        {
-            itr->index = index;
-            itr->e = e;
-            itr->parent = parent;
-            itr->h = h;
-            return -1;
-        }
-        parent = e;
-        e = e->next;
-    }
-    return 0;
-}
-
 /*
  * Copyright (c) 2002, 2004, Christopher Clark
- * Copyright (c) 2007-2010 iClaustron AB
+ * Copyright (c) 2007-2011 iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without

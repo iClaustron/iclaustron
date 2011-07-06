@@ -549,6 +549,7 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
   guint32 pid;
   guint64 num_params;
   gboolean found;
+  gboolean process_already_started= FALSE;
   DEBUG_ENTRY("start_cluster_server");
 
   node_str= ic_guint64_str((guint64)cs_data->node_id, buf, &dummy);
@@ -594,18 +595,32 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
     goto end;
   if (!found)
   {
-    /* Not ok, expect error message instead */
-    if (!ic_receive_error_message(conn, err_buf))
-      ic_printf("Error: %s", err_buf);
-    ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
-    goto end;
+    if ((ret_code= ic_rec_simple_str_opt(conn,
+                                         ic_process_already_started_str,
+                                         &found)))
+      goto end;
+    if (!found)
+    {
+      /* Not ok, expect error message instead */
+      if (!ic_receive_error_message(conn, err_buf))
+        ic_printf("Error: %s", err_buf);
+      ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
+      goto end;
+    }
+    /* Process already started */
+    process_already_started= TRUE;
   }
   if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
       (ret_code= ic_rec_empty_line(conn)))
     goto end;
-  ic_printf("Successfully started Cluster Server id %u with pid %u",
-            cs_data->node_id,
-            pid);
+  if (process_already_started)
+    ic_printf("Cluster Server id %u already started with pid %u",
+              cs_data->node_id,
+              pid);
+  else
+    ic_printf("Successfully started Cluster Server id %u with pid %u",
+              cs_data->node_id,
+              pid);
 end:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -649,7 +664,6 @@ ic_start_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
     conn->conn_op.ic_free_connection(conn);
     conn= NULL;
   }
-  ic_printf("Found start cluster servers command");
 end:
   if (conn)
     conn->conn_op.ic_free_connection(conn);
@@ -674,7 +688,7 @@ ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
     ic_printf("No Cluster Managers prepared");
     goto error;
   }
-  for (i= 0; i < parse_data->next_cs_index; i++)
+  for (i= 0; i < parse_data->next_mgr_index; i++)
   {
     mgr_data= &parse_data->mgr_data[i];
     ic_require(glob_grid_cluster->node_types[mgr_data->node_id] ==
@@ -702,7 +716,6 @@ ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
     conn->conn_op.ic_free_connection(conn);
     conn= NULL;
   }
-  ic_printf("Found start cluster managers command");
 end:
   if (conn)
     conn->conn_op.ic_free_connection(conn);
