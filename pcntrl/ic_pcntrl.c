@@ -1,5 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron Ak
- * B
+/* Copyright (C) 2007-2011 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -60,15 +59,9 @@
 */
 
 /*
-  TODO: Need to write basic tests for the functions that can be used in this
+  TODO: Need to extend basic tests for the functions that can be used in this
         program.
-        1) Create a connection locally in basic test for client and server
-        2) Provide the server part to this function
-        3) Start writing to the interface
-        4) Use error inject to test errors in all sorts of places
-        5) Put the basic test program at the end of this file and build it
-           only when unit tests are to built
-        6) Call unit test program when built for unit tests
+        1) Use error inject to test errors in all sorts of places
 */
 
 #define REC_PROG_NAME 0
@@ -1292,7 +1285,8 @@ handle_start(IC_CONNECTION *conn)
   guint32 i;
   IC_PID_TYPE pid;
   IC_STRING working_dir;
-  IC_PC_START *pc_start, *pc_start_check, *pc_start_hash;
+  IC_PC_START *pc_start, *pc_start_check;
+  IC_PC_START *pc_start_hash= NULL;
   gchar *pid_str;
   guint32 dummy;
   gchar pid_buf[IC_NUMBER_SIZE];
@@ -1827,7 +1821,7 @@ handle_list(IC_CONNECTION *conn, gboolean list_full_flag)
   IC_PC_START *last_pc_start= NULL;
   IC_PC_START *pc_start, *loop_pc_start, *new_pc_start;
   guint64 current_index, max_index;
-  IC_MEMORY_CONTAINER *mc_ptr;
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
   void *void_pc_start;
   guint32 read_size;
   gchar *read_buf;

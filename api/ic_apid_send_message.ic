@@ -384,7 +384,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   IC_SOCK_BUF_PAGE *last_page_to_send;
   guint32 send_size= 0;
-  guint32 iovec_size;
+  guint32 iovec_size= 0;
   IC_IOVEC write_vector[IC_MAX_SEND_BUFFERS];
   gboolean return_imm= TRUE;
   int error;

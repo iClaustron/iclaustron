@@ -1700,6 +1700,11 @@ ic_get_hw_info(IC_HW_INFO_TYPE type,
     argv[8]= disk_handle_str;
     last_inx= 9;
   }
+  else
+  {
+    ic_require(FALSE);
+    last_inx= 0; /* To silence compiler */
+  }
   argv[last_inx]= NULL;
   ret_code= run_process(argv, &exit_status, log_file_name_str.str);
   if (ret_code)

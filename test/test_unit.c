@@ -1188,6 +1188,8 @@ run_test(guint32 test_type)
       ret_code= unit_test_sock_buf();
       break;
     default:
+      ret_code= 0;
+      ic_require(FALSE);
       break;
   }
   return ret_code;

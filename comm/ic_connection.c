@@ -433,13 +433,14 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   gboolean not_accepted= FALSE;
   int ret_sockfd, ok, error;
   IC_SOCKLEN_TYPE addr_len;
-  struct sockaddr_storage client_address;
+  IC_IP_ADDRESS client_address_storage;
+  struct sockaddr_storage *client_address= (struct sockaddr_storage*)&client_address_storage;
   const struct sockaddr *client_addr_ptr= 
-        (const struct sockaddr*)&client_address;
+        (const struct sockaddr*)&client_address_storage;
   struct sockaddr_in *ipv4_client_address=
-           (struct sockaddr_in*)&client_address;
+           (struct sockaddr_in*)&client_address_storage;
   struct sockaddr_in6 *ipv6_client_address=
-           (struct sockaddr_in6*)&client_address;
+           (struct sockaddr_in6*)&client_address_storage;
   struct sockaddr_in *ipv4_check_address;
   struct sockaddr_in6 *ipv6_check_address;
   fd_set select_set;
@@ -451,7 +452,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
     accept will return a new socket that can be used to read and
     write from.
   */
-  addr_len= sizeof(client_address);
+  addr_len= sizeof(client_address_storage);
   DEBUG_PRINT(COMM_LEVEL, ("Accepting connections on server %s",
                            conn->conn_stat.server_ip_addr));
   set_socket_nonblocking(conn->listen_sockfd, TRUE);
@@ -484,7 +485,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
     else
     {
       ret_sockfd= accept(conn->listen_sockfd,
-                         (struct sockaddr *)&client_address,
+                         (struct sockaddr *)&client_address_storage,
                          &addr_len);
       if (ret_sockfd == IC_INVALID_SOCKET)
       {
@@ -541,11 +542,11 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
        Check for connection from proper client is highly dependent on
        IP version used.
      */
-    if (client_address.ss_family != conn->client_addrinfo->ai_family)
+    if (client_address->ss_family != conn->client_addrinfo->ai_family)
       return IC_ERROR_DIFFERENT_IP_VERSIONS;
     if (addr_len != conn->client_addrinfo->ai_addrlen)
       return IC_ERROR_DIFFERENT_IP_VERSIONS;
-    if (client_address.ss_family == AF_INET)
+    if (client_address->ss_family == AF_INET)
     {
       ipv4_check_address= (struct sockaddr_in*)conn->client_addrinfo->ai_addr;
       if (ipv4_client_address->sin_addr.s_addr !=
@@ -555,7 +556,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
           ipv4_client_address->sin_port != ipv4_check_address->sin_port)
         not_accepted= TRUE;
     }
-    else if (client_address.ss_family == AF_INET6)
+    else if (client_address->ss_family == AF_INET6)
     {
       ipv6_check_address= (struct sockaddr_in6*)conn->client_addrinfo->ai_addr;
       if (conn->client_port_num != 0 &&
@@ -1839,13 +1840,13 @@ static guint32
 get_port_number(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  struct sockaddr_storage sa_storage;
+  IC_IP_ADDRESS sa_storage;
   struct sockaddr *sa_addr= (struct sockaddr*)&sa_storage;
   IC_SOCKLEN_TYPE sock_len;
   guint32 port_number;
   int fd= conn->is_client ? conn->rw_sockfd : conn->listen_sockfd;
 
-  sock_len= sizeof(sa_addr);
+  sock_len= sizeof(sa_storage);
   if (getsockname(fd, sa_addr, &sock_len) == (int)-1)
     return 0;
   if (sa_addr->sa_family == AF_INET)

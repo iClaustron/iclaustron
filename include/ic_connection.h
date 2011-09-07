@@ -39,6 +39,15 @@
 typedef int (*accept_timeout_func) (void*, int);
 typedef int (*authenticate_func) (void*);
 
+typedef union ic_ip_address IC_IP_ADDRESS;
+union ic_ip_address
+{
+  struct sockaddr sa;
+  struct sockaddr_in sa_in;
+  struct sockaddr_in6 sa_in6;
+  struct sockaddr_storage sa_stor;
+};
+
 struct ic_connect_stat;
 typedef struct ic_connect_stat IC_CONNECT_STAT;
 struct ic_connect_operations

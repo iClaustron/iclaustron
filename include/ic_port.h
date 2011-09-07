@@ -73,10 +73,10 @@ void ic_free_mc(void *ret_obj);
 #define ic_malloc_conn(a) ic_malloc_low(a)
 #define ic_calloc_mc(a) ic_calloc_low(a)
 #define ic_malloc(a) ic_malloc_low(a)
-#define ic_malloc_hash(a) ic_malloc_low(a)
+#define ic_malloc_hash(a, b) ic_malloc_low(a)
 #define ic_free(a) ic_free_low(a)
 #define ic_free_conn(a) ic_free_low(a)
-#define ic_free_hash(a) ic_free_low(a)
+#define ic_free_hash(a, b) ic_free_low(a)
 #define ic_free_mc(a) ic_free_low(a)
 #endif
 

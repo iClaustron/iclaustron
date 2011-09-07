@@ -56,7 +56,7 @@ main(int argc, char *argv[])
   int error, stop_error;
   gchar *err_str;
   gchar error_buffer[ERROR_MESSAGE_SIZE];
-  IC_RUN_CLUSTER_SERVER *run_obj;
+  IC_RUN_CLUSTER_SERVER *run_obj= NULL;
 
   if ((error= ic_start_program(argc, argv, entries, ic_apid_entries,
                                glob_process_name,
