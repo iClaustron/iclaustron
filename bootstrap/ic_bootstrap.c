@@ -442,6 +442,18 @@ ic_send_debug_level(IC_CONNECTION *conn)
                                             ic_parameter_str,
                                             (guint64)ic_get_debug())))
       return ret_code;
+    if (ic_get_debug_timestamp())
+    {
+      /* Also debug with timestamps if bootstrap is timestamped */
+      if ((ret_code= ic_send_with_cr_two_strings(conn,
+                                                 ic_parameter_str,
+                                                 ic_debug_timestamp_str)) ||
+          (ret_code= ic_send_with_cr_with_num(conn,
+                                        ic_parameter_str,
+                                        (guint64)ic_get_debug_timestamp())))
+        return ret_code;
+      
+    }
   }
 #else
   (void)conn;

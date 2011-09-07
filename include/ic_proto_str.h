@@ -67,6 +67,7 @@ extern const gchar *ic_data_dir_str;
 extern const gchar *ic_num_threads_str;
 #ifdef DEBUG_BUILD
 extern const gchar *ic_debug_level_str;
+extern const gchar *ic_debug_timestamp_str;
 #endif
 
 /* Messages for Copy Cluster Server files protocol */

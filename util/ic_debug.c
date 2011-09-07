@@ -31,11 +31,16 @@ static FILE *ic_fptr;
 /* Start time of the program */
 static IC_TIMER debug_start_time;
 
-
 guint32
 ic_get_debug()
 {
   return glob_debug;
+}
+
+guint32
+ic_get_debug_timestamp()
+{
+  return glob_debug_timestamp;
 }
 
 void ic_set_debug(guint32 val)

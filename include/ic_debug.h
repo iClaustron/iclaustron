@@ -41,6 +41,7 @@ typedef struct ic_thread_debug IC_THREAD_DEBUG;
 
 void ic_set_debug(guint32 val);
 guint32 ic_get_debug();
+guint32 ic_get_debug_timestamp();
 void ic_printf(const char *format,...);
 
 /* Various parts to debug. */

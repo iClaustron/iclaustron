@@ -2451,6 +2451,8 @@ run_check_thread(gpointer data)
         ic_mutex_lock(pc_hash_mutex);
         remove_pc_entry(pc_start);
         ic_mutex_unlock(pc_hash_mutex);
+        /* Release memory associated with the deleted process */
+        pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
         /*
           We have removed the entry which was used by iterator, we'll
           continue search from same bucket, this will recheck some

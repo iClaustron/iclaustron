@@ -107,4 +107,5 @@ const gchar *ic_data_dir_str= " --data_dir=";
 const gchar *ic_num_threads_str= " --num_threads=";
 #ifdef DEBUG_BUILD
 const gchar *ic_debug_level_str= "--debug_level";
+const gchar *ic_debug_timestamp_str= "--debug-timestamp";
 #endif
