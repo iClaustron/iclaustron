@@ -32,10 +32,10 @@
 static const gchar *glob_process_name= "ic_bootstrap";
 static gchar *glob_command_file= NULL;
 static gchar *glob_generate_command_file= NULL;
+static guint32 glob_interactive= 0;
 static guint32 glob_history_size= 100;
 static guint32 glob_connect_timer= 10;
 static gchar *ic_prompt= "iClaustron bootstrap> ";
-static IC_MEMORY_CONTAINER *glob_mc_ptr= NULL;
 static IC_CLUSTER_CONNECT_INFO **glob_clu_infos= NULL;
 static IC_CLUSTER_CONFIG *glob_grid_cluster= NULL;
 static IC_CLUSTER_CONFIG *glob_clusters[IC_MAX_CLUSTER_ID + 1];
@@ -43,6 +43,9 @@ static guint32 glob_num_clusters= 0;
 
 static GOptionEntry entries[]=
 {
+  { "interactive", 0, 0, G_OPTION_ARG_INT,
+    &glob_interactive,
+    "Run the program interactively", NULL},
   { "command-file", 0, 0, G_OPTION_ARG_STRING,
     &glob_command_file,
     "Use a command file and provide its name", NULL},
@@ -57,7 +60,7 @@ static GOptionEntry entries[]=
 };
 
 static int
-generate_command_file(gchar *parse_buf)
+generate_command_file(gchar *parse_buf, const gchar *command_file)
 {
   int ret_code;
   int len;
@@ -69,7 +72,7 @@ generate_command_file(gchar *parse_buf)
 
   /* Create file to store generated file */
   if ((ret_code= ic_create_file(&cmd_file_handle,
-                                (const gchar*)glob_generate_command_file)))
+                                command_file)))
     goto end;
 
   /* grid_cluster can now be used to generate the command file */
@@ -164,7 +167,7 @@ generate_command_file(gchar *parse_buf)
 late_end:
   (void)ic_close_file(cmd_file_handle);
   if (ret_code)
-    (void)ic_delete_file(glob_command_file);
+    (void)ic_delete_file(command_file);
 end:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -962,7 +965,8 @@ end:
 static gchar *start_text= "\
 - iClaustron Bootstrap program\n\
 \n\
-This program runs by default in command line editing mode.\n\
+This program runs in interactive mode when --interactive=1\n\
+is set as parameter.\n\
 To finish program in this mode, enter a single command ;\n\
 Commands are always separated by ;\n\
 The program can also run from a command file provided in the\n\
@@ -977,10 +981,12 @@ Based on this configuration the program will generate a bootstrap\n\
 command file and also execute it.\n\
 The generation of a command file is done when the option\n\
 --generate-command-file is given with file name of command file\n\
+It is also the default action and in this case the bootstrap file\n\
+generated is named bootstrap.cmd\n\
 ";
 
 static int
-init_global_data(void)
+init_global_data(IC_MEMORY_CONTAINER **mc_ptr)
 {
   IC_STRING config_dir;
   IC_CONFIG_ERROR err_obj;
@@ -991,7 +997,7 @@ init_global_data(void)
   guint32 i;
   DEBUG_ENTRY("init_global_data");
 
-  if (!(glob_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
+  if (!(*mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
                                            0, FALSE)))
     goto error;
 
@@ -1000,7 +1006,7 @@ init_global_data(void)
   /* Read the config.ini file to get information about cluster names */
   if (!(glob_clu_infos= ic_load_cluster_config_from_file(&config_dir,
                                                     (IC_CONF_VERSION_TYPE)0,
-                                                    glob_mc_ptr,
+                                                    *mc_ptr,
                                                     &err_obj)))
   {
     ret_code= err_obj.err_num;
@@ -1012,7 +1018,7 @@ init_global_data(void)
   if (!(glob_grid_cluster= ic_load_grid_common_config_server_from_file(
                          &config_dir,
                          (IC_CONF_VERSION_TYPE)0,
-                         glob_mc_ptr,
+                         *mc_ptr,
                          *glob_clu_infos,
                          &err_obj)))
   {
@@ -1029,7 +1035,7 @@ init_global_data(void)
     clu_infos++;
     if (!(cluster= ic_load_config_server_from_files(&config_dir,
                                                     (IC_CONF_VERSION_TYPE)0,
-                                                    glob_mc_ptr,
+                                                    *mc_ptr,
                                                     glob_grid_cluster,
                                                     clu_info,
                                                     &err_obj)))
@@ -1062,6 +1068,7 @@ int main(int argc, char *argv[])
 {
   int ret_code;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  IC_MEMORY_CONTAINER *glob_mc_ptr= NULL;
   IC_PARSE_DATA parse_data;
   gchar *parse_buf= NULL;
   gchar *read_buf;
@@ -1097,19 +1104,23 @@ int main(int argc, char *argv[])
   ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
   parse_data.lex_data.mc_ptr= mc_ptr;
 
-  if ((ret_code= init_global_data()))
-    goto end;
-
-  /* Start by loading the config files */
-  if (glob_generate_command_file)
+  if (glob_command_file && glob_generate_command_file)
   {
-    if (glob_command_file)
-    {
-      ret_code= IC_ERROR_TWO_COMMAND_FILES;
+    ret_code= IC_ERROR_TWO_COMMAND_FILES;
+    goto end;
+  }
+  if (!(glob_interactive && glob_command_file))
+  {
+    /* Start by loading the config files for default action */
+    if ((ret_code= init_global_data(&glob_mc_ptr)))
       goto end;
+    if (!glob_generate_command_file)
+    {
+      /* Use default generated command file */
+      glob_generate_command_file= "bootstrap.cmd";
     }
     glob_command_file= glob_generate_command_file;
-    if ((ret_code= generate_command_file(parse_buf)))
+    if ((ret_code= generate_command_file(parse_buf, glob_command_file)))
       goto end;
   }
 
@@ -1128,7 +1139,6 @@ int main(int argc, char *argv[])
     readline_inited= TRUE;
   }
   init_parse_data(&parse_data);
-
 
   while (!(ret_code= get_line(&file_ptr,
                               file_end,

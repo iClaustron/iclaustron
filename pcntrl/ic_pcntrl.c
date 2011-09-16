@@ -2466,17 +2466,18 @@ run_check_thread(gpointer data)
         pc_start->check_ongoing= FALSE;
     }
     ic_mutex_unlock(pc_hash_mutex);
-    for (i= 0; i < 3; i++)
+    for (i= 0; i < 6; i++)
     {
-      if (event_occurred)
+      if (event_occurred || ic_tp_get_stop_flag())
       {
         /* Check a bit more often when start/stop events occurred */
         break;
       }
-      ic_sleep(10); /* Will also check stop flag every second */
+      ic_sleep(5); /* Will also check stop flag every second */
     }
     check_time+= 30;
   }
+  tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 }
 
