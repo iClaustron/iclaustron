@@ -328,6 +328,7 @@ ic_debug_close()
   fflush(ic_fptr);
   fclose(ic_fptr);
   ic_mutex_destroy(debug_mutex);
+  debug_mutex= NULL;
   ic_free_low((void*)thread_id_array);
   ic_require(ic_num_threads_debugged == 0);
 }
@@ -346,7 +347,12 @@ ic_printf(const char *format,...)
   vsprintf_s(buf, sizeof(buf), format, args);
 #endif
   printf("%s\n", buf);
-  DEBUG_PRINT(PROGRAM_LEVEL, ("%s", buf));
+#ifdef DEBUG_BUILD
+  if (debug_mutex) /* Verify debug system is up and running */
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("%s", buf));
+  }
+#endif
   fflush(stdout);
   va_end(args);
 }

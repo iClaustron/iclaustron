@@ -31,6 +31,7 @@ static IC_PARSE_SYMBOLS parse_symbols[]=
 {
   { "CLUSTER",      CLUSTER_SYM },
   { "=",            EQUAL_SYM },
+  { "EXIT",         EXIT_SYM },
   { "FILES",        FILES_SYM },
   { "HOST",         HOST_SYM },
   { "MANAGER",      MANAGER_SYM },
@@ -39,6 +40,7 @@ static IC_PARSE_SYMBOLS parse_symbols[]=
   { "PCNTRL_HOST",  PCNTRL_HOST_SYM },
   { "PCNTRL_PORT",  PCNTRL_PORT_SYM },
   { "PREPARE",      PREPARE_SYM },
+  { "QUIT",         QUIT_SYM },
   { "SEND",         SEND_SYM },
   { "SERVER",       SERVER_SYM },
   { "SERVERS",      SERVERS_SYM },

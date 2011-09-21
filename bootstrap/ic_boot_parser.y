@@ -39,6 +39,7 @@ int ic_boot_lex(void *parse_data, void *scanner);
 
 %token CLUSTER_SYM
 %token EQUAL_SYM
+%token EXIT_SYM
 %token FILES_SYM
 %token HOST_SYM
 %token MANAGER_SYM
@@ -47,6 +48,7 @@ int ic_boot_lex(void *parse_data, void *scanner);
 %token PCNTRL_HOST_SYM
 %token PCNTRL_PORT_SYM
 %token PREPARE_SYM
+%token QUIT_SYM
 %token SEND_SYM
 %token SERVER_SYM
 %token SERVERS_SYM
@@ -76,6 +78,16 @@ any_command:
     | start_cluster_servers_command
     | verify_command
     | start_cluster_managers_command
+    | quit_command
+    | exit_command
+    ;
+
+quit_command:
+    QUIT_SYM { PARSE_DATA->command= IC_EXIT_CMD; }
+    ;
+
+exit_command:
+    EXIT_SYM { PARSE_DATA->command= IC_EXIT_CMD; }
     ;
 
 prepare_command:
@@ -95,7 +107,7 @@ server_cmd:
       PARSE_DATA->command= IC_PREPARE_CLUSTER_SERVER_CMD;
       cs_index= PARSE_DATA->next_cs_index;
       PARSE_DATA->next_cs_index++;
-      if (PARSE_DATA->next_cs_index < IC_MAX_CLUSTER_SERVERS)
+      if (PARSE_DATA->next_cs_index <= IC_MAX_CLUSTER_SERVERS)
       {
         cs_data= &PARSE_DATA->cs_data[cs_index];
         cs_data->hostname= $2->str;
@@ -115,7 +127,7 @@ mgr_cmd:
       PARSE_DATA->command= IC_PREPARE_CLUSTER_MANAGER_CMD;
       mgr_index= PARSE_DATA->next_mgr_index;
       PARSE_DATA->next_mgr_index++;
-      if (PARSE_DATA->next_mgr_index < IC_MAX_CLUSTER_MANAGERS)
+      if (PARSE_DATA->next_mgr_index <= IC_MAX_CLUSTER_MANAGERS)
       {
         mgr_data= &PARSE_DATA->mgr_data[mgr_index];
         mgr_data->hostname= $2->str;

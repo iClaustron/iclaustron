@@ -335,7 +335,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
                  gchar *start_text,
                  gboolean use_config)
 {
-  int ret_code= 1;
+  int ret_code= IC_ERROR_STARTUP;
   GError *error= NULL;
   GOptionGroup *debug_group;
   GOptionGroup *basedir_group;
@@ -345,13 +345,14 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   gchar *pid_str;
   gchar pid_buf[IC_NUMBER_SIZE];
 
+  ic_init_error_messages();
   pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
   ic_printf("Starting %s program with pid %s", program_name, pid_str);
   if (strcmp(program_name, "ic_csd") == 0)
     is_cluster_server= TRUE;
   use_config_vars= use_config; /* TRUE for Unit test programs */
   if (ic_start_socket_system())
-    goto error;
+    goto early_error;
   context= g_option_context_new(start_text);
   if (!context)
     goto mem_error;
@@ -375,7 +376,7 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
     goto parse_error;
   g_option_context_free(context);
   if ((ret_code= ic_init()))
-    goto error;
+    goto early_error;
   DEBUG_PRINT(PROGRAM_LEVEL, ("Returning to ic_start_program"));
   DEBUG_ENTRY("ic_start_program");
   ic_glob_byte_order= ic_byte_order();
@@ -393,10 +394,15 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
 
 parse_error:
   ic_printf("No such program option: %s", error->message);
-  goto error;
+  goto early_error;
+
 mem_error:
   ic_printf("Memory allocation error");
-  goto error;
+  goto early_error;
+
+early_error:
+  return ret_code;
+
 error:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -417,7 +423,6 @@ ic_init()
   DEBUG_ENTRY("ic_init");
 
   ic_port_init();
-  ic_init_error_messages();
   if (use_config_vars)
   {
     if ((ret_value= ic_init_config_parameters()))

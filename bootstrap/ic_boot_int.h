@@ -30,6 +30,7 @@ enum ic_parse_commands
   IC_START_CLUSTER_SERVERS_CMD = 3,
   IC_START_CLUSTER_MANAGERS_CMD = 4,
   IC_VERIFY_CLUSTER_SERVERS_CMD = 5,
+  IC_EXIT_CMD = 6,
   IC_NO_SUCH_CMD = 999
 };
 typedef enum ic_parse_commands IC_PARSE_COMMANDS;

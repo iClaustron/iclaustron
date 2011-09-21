@@ -19,7 +19,7 @@
 #include <errno.h>
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7100
+#define IC_LAST_ERROR 7101
 #define IC_MAX_ERRORS 200
 
 /*
@@ -147,4 +147,5 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_FAILED_TO_START_PROCESS 7098
 #define IC_ERROR_PROGRAM_NOT_SUPPORTED 7099
 #define IC_ERROR_FILE_ALREADY_EXISTS 7100
+#define IC_ERROR_STARTUP 7101
 #endif

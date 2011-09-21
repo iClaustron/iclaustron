@@ -172,33 +172,89 @@ end:
   DEBUG_RETURN_INT(ret_code);
 }
 
+static int
+check_cs_node_id(IC_PARSE_DATA *parse_data, guint32 node_id, int include_last)
+{
+  int i;
+  DEBUG_ENTRY("check_cs_node_id");
+
+  for (i= 0;
+       i < (int)(((int)parse_data->next_cs_index - 1) + include_last);
+       i++)
+  {
+    if (node_id == parse_data->cs_data[i].node_id)
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_printf("Multiple nodes with same node id");
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_INT(1);
+}
+
+static int
+check_mgr_node_id(IC_PARSE_DATA *parse_data, guint32 node_id, int include_last)
+{
+  int i;
+  DEBUG_ENTRY("check_mgr_node_id");
+
+  for (i= 0;
+       i < (int)(((int)parse_data->next_mgr_index - 1) + include_last);
+       i++)
+  {
+    if (node_id == parse_data->mgr_data[i].node_id)
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_printf("Multiple nodes with same node id");
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_INT(1);
+}
+
 static void
 ic_prepare_cluster_server_cmd(IC_PARSE_DATA *parse_data)
 {
+  guint32 node_id;
   DEBUG_ENTRY("ic_prepare_cluster_server_cmd");
-  if (parse_data->next_cs_index >= IC_MAX_CLUSTER_SERVERS)
+
+  if (parse_data->next_cs_index > IC_MAX_CLUSTER_SERVERS)
   {
     ic_printf("Defined too many Cluster Servers");
     parse_data->exit_flag= TRUE;
     DEBUG_RETURN_EMPTY;
   }
-  ic_printf("Prepared cluster server with node id %u",
-    parse_data->cs_data[parse_data->next_cs_index - 1].node_id);
+  node_id= parse_data->cs_data[parse_data->next_cs_index - 1].node_id;
+  if (check_cs_node_id(parse_data, node_id, 0) ||
+      check_mgr_node_id(parse_data, node_id, 1))
+  {
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared cluster server with node id %u", node_id);
   DEBUG_RETURN_EMPTY;
 }
 
 static void
 ic_prepare_cluster_manager_cmd(IC_PARSE_DATA *parse_data)
 {
+  guint32 node_id;
   DEBUG_ENTRY("ic_prepare_cluster_manager_cmd");
-  if (parse_data->next_mgr_index >= IC_MAX_CLUSTER_SERVERS)
+
+  if (parse_data->next_mgr_index > IC_MAX_CLUSTER_SERVERS)
   {
     ic_printf("Defined too many Cluster Managers");
     parse_data->exit_flag= TRUE;
     DEBUG_RETURN_EMPTY;
   }
-  ic_printf("Prepared cluster manager with node id %u",
-    parse_data->mgr_data[parse_data->next_mgr_index - 1].node_id);
+  node_id= parse_data->mgr_data[parse_data->next_mgr_index - 1].node_id;
+  if (check_cs_node_id(parse_data, node_id, 1) ||
+      check_mgr_node_id(parse_data, node_id, 0))
+  {
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared cluster manager with node id %u", node_id);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -781,6 +837,9 @@ boot_execute(IC_PARSE_DATA *parse_data)
     case IC_VERIFY_CLUSTER_SERVERS_CMD:
       ic_verify_cluster_servers_cmd(parse_data);
       break;
+    case IC_EXIT_CMD:
+      parse_data->exit_flag= TRUE;
+      break;
     default:
       ic_printf("No such command");
       parse_data->exit_flag= TRUE;
@@ -1109,7 +1168,7 @@ int main(int argc, char *argv[])
     ret_code= IC_ERROR_TWO_COMMAND_FILES;
     goto end;
   }
-  if (!(glob_interactive && glob_command_file))
+  if (!(glob_interactive || glob_command_file))
   {
     /* Start by loading the config files for default action */
     if ((ret_code= init_global_data(&glob_mc_ptr)))

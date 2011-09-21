@@ -51,7 +51,6 @@ void
 ic_init_error_messages()
 {
   guint32 i;
-  DEBUG_ENTRY("ic_init_error_messages");
 
   for (i= 0; i < IC_MAX_ERRORS; i++)
     ic_error_str[i]= NULL;
@@ -262,6 +261,8 @@ ic_init_error_messages()
     "Program not supported";
   ic_error_str[IC_ERROR_FILE_ALREADY_EXISTS - IC_FIRST_ERROR]=
     "File already exists";
+  ic_error_str[IC_ERROR_STARTUP - IC_FIRST_ERROR]=
+    "Startup error";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)
@@ -270,7 +271,7 @@ ic_init_error_messages()
       abort();
   }
 #endif
-  DEBUG_RETURN_EMPTY;
+  return;
 }
 
 void
