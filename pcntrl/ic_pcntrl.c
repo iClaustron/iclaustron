@@ -94,6 +94,112 @@ static gchar *my_cluster= "my_cluster";
 static gchar *my_csd_node= "my_csd_node";
 
 /**
+  Parameters used to start ic_pcntrld program
+*/
+static GOptionEntry entries[] = 
+{
+  { "server-name", 0, 0, G_OPTION_ARG_STRING,
+    &glob_server_name,
+    "Set server address of process controller", NULL},
+  { "server-port", 0, 0, G_OPTION_ARG_STRING,
+    &glob_server_port,
+    "Set server port, default = 11860", NULL},
+  { "iclaustron-version", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_version_path,
+    "Version string to find iClaustron binaries used by this program, default "
+    IC_VERSION_STR, NULL},
+  { "daemonize", 0, 0, G_OPTION_ARG_INT,
+     &glob_daemonize,
+    "Daemonize program", NULL},
+#ifdef WITH_UNIT_TEST
+  { "unit-test", 0, 0, G_OPTION_ARG_INT,
+     &glob_unit_test,
+    "Run unit test", NULL},
+#endif
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
+static gchar *start_text= "\
+- iClaustron Process Controller program\n\
+\n\
+This program is the agent that is needed to start and stop other programs,\n\
+to get access to low-level information about hardware and operating system.\n\
+\n\
+It is used by the bootstrap program to copy configuration files to all\n\
+nodes in the iClaustron Grid. It is also used by the bootstrap to perform\n\
+an initial start of the Cluster Servers and Cluster Managers.\n\
+\n\
+It is used by the configurator to get access to information about hardware\n\
+and operating system for the configurator to be able to assist the user in\n\
+making a proper configuration.\n\
+\n\
+Since it is the program that is used to install configuration files, some\n\
+of which contain login information, it is required that this program is\n\
+executed with proper privileges. All files it writes will only be readable\n\
+and writeable by the user that runs this program.\n\
+\n\
+Since it is the program that starts other programs, it requires sufficient\n\
+privileges such that these programs can execute their actions. One such\n\
+important requirement is the privilege to lock programs and threads to\n\
+to certain CPU processors.\n\
+\n\
+iClaustron Installation Process\n\
+-------------------------------\n\
+1)\n\
+A standard installation of iClaustron would start by creating an iclaustron\n\
+user on all machines/VMs to be used by iClaustron.\n\
+\n\
+2)\n\
+Next step would be to install the iClaustron software at\n\
+$ICLAUSTRON_USER_HOME/iclaustron_install/ICLAUSTRON_VERSION_NAME\n\
+in all machines/VMs.\n\
+\n\
+3)\n\
+Third step is to start this program (ic_pcntrld) in all machines/VMs.\n\
+It is a good idea to make sure this program is also restarted when the\n\
+OS starts up or if this program should fail.\n\
+\n\
+4)\n\
+The fourth step is to run the iClaustron configurator. This program\n\
+requires at least a list of hostname/port pairs for all machines/VMs\n\
+to be used (default port for the process controller is 11860).\n\
+In addition to this information it really only needs some policy\n\
+information about how much of the resources available it can use.\n\
+The simplest case is of course when all resources on all machines/VMs\n\
+are dedicated to iClaustron usage.\n\
+\n\
+5)\n\
+When the configurator has created all configuration files, the fifth step\n\
+is to run the bootstrap program to make sure the configuration files are\n\
+all installed in their proper place and that the Cluster Servers and\n\
+Cluster Managers are started.\n\
+\n\
+6)\n\
+After these 5 steps the iClaustron is ready to start the actual data\n\
+servers, file servers, replication and other servers configured in the\n\
+grid. This can be done by starting the iClaustron client (ic_cclient)\n\
+and execute the start program from there whereafter the iClaustron\n\
+programs will cooperate to start the grid.\n\
+\n\
+7)\n\
+After these 6 steps all installation steps are processed and one can start\n\
+using the iClaustron Grid for clustered file services or any other use it\n\
+is intended for.\n\
+\n\
+iClaustron Upgrade Process\n\
+--------------------------\n\
+An upgrade to a new version of the iClaustron software is easy. Simply\n\
+install the new iClaustron software at\n\
+$ICLAUSTRON_USER_HOME/NEW_ICLAUSTRON_VERSION_NAME\n\
+after which normal upgrade commands can be used to restart all iClaustron\n\
+programs in the grid.\n\
+\n\
+iClaustron Add Node Process\n\
+---------------------------\n\
+More on this later\n\
+";
+
+/**
   Start a new client socket connection
 
   @parameter conn         OUT: The new connection created
@@ -2913,32 +3019,6 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
 }
 
 /**
-  Parameters used to start ic_pcntrld program
-*/
-static GOptionEntry entries[] = 
-{
-  { "server_name", 0, 0, G_OPTION_ARG_STRING,
-    &glob_server_name,
-    "Set server address of process controller", NULL},
-  { "server_port", 0, 0, G_OPTION_ARG_STRING,
-    &glob_server_port,
-    "Set server port, default = 11860", NULL},
-  { "iclaustron_version", 0, 0, G_OPTION_ARG_STRING,
-    &ic_glob_version_path,
-    "Version string to find iClaustron binaries used by this program, default "
-    IC_VERSION_STR, NULL},
-  { "daemonize", 0, 0, G_OPTION_ARG_INT,
-     &glob_daemonize,
-    "Daemonize program", NULL},
-#ifdef WITH_UNIT_TEST
-  { "unit_test", 0, 0, G_OPTION_ARG_INT,
-     &glob_unit_test,
-    "Run unit test", NULL},
-#endif
-  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
-};
-
-/**
   Main function of ic_pcntrld program
 
   @parameter argc            Number of arguments in start of program
@@ -2952,8 +3032,7 @@ int main(int argc, char *argv[])
  
   IC_INIT_STRING(&log_file, NULL, 0, FALSE);
   if ((ret_code= ic_start_program(argc, argv, entries, NULL,
-                                  glob_process_name,
-           "- iClaustron Control Server", TRUE)))
+                                  glob_process_name, start_text, TRUE)))
     return ret_code;
   if (glob_daemonize)
   {

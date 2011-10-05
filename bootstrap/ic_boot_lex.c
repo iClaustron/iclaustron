@@ -270,13 +270,14 @@ ic_boot_call_parser(gchar *parse_string,
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
   IC_LEX_DATA *lex_data= (IC_LEX_DATA*)ext_parse_data;
   DEBUG_ENTRY("ic_boot_call_parser");
-  DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
 
   if (parse_string[str_len - 1] != CMD_SEPARATOR)
   {
     ic_boot_parse_error(ext_parse_data, "Missing ; at end of command");
     parse_data->exit_flag= TRUE;
   }
+  parse_string[str_len]= 0; /* Ensure NULL-terminated string for print-outs */
+  DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
   lex_data->parse_buf= parse_string;
   lex_data->parse_current_pos= 0;
   lex_data->parse_str_len= str_len;

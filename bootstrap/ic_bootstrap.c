@@ -20,7 +20,6 @@
 #include <ic_mc.h>
 #include <ic_string.h>
 #include <ic_connection.h>
-#include <ic_readline.h>
 #include <ic_lex_support.h>
 #include <ic_protocol_support.h>
 #include <ic_proto_str.h>
@@ -30,12 +29,8 @@
 #include "ic_boot_int.h"
 
 static const gchar *glob_process_name= "ic_bootstrap";
-static gchar *glob_command_file= NULL;
-static gchar *glob_generate_command_file= NULL;
-static guint32 glob_interactive= 0;
-static guint32 glob_history_size= 100;
+static gchar *glob_bootstrap_file= "bootstrap.cmd";
 static guint32 glob_connect_timer= 10;
-static gchar *ic_prompt= "iClaustron bootstrap> ";
 static IC_CLUSTER_CONNECT_INFO **glob_clu_infos= NULL;
 static IC_CLUSTER_CONFIG *glob_grid_cluster= NULL;
 static IC_CLUSTER_CONFIG *glob_clusters[IC_MAX_CLUSTER_ID + 1];
@@ -43,24 +38,16 @@ static guint32 glob_num_clusters= 0;
 
 static GOptionEntry entries[]=
 {
-  { "interactive", 0, 0, G_OPTION_ARG_INT,
-    &glob_interactive,
-    "Run the program interactively", NULL},
-  { "command-file", 0, 0, G_OPTION_ARG_STRING,
-    &glob_command_file,
-    "Use a command file and provide its name", NULL},
-  { "generate-command-file", 0, 0, G_OPTION_ARG_STRING,
-    &glob_generate_command_file,
+  { "bootstrap-file", 0, 0, G_OPTION_ARG_STRING,
+    &glob_bootstrap_file,
     "Generate a command file from config files, provide its name", NULL},
-  { "history_size", 0, 0, G_OPTION_ARG_INT, &glob_history_size,
-    "Set Size of Command Line History", NULL},
   { "connect-timer", 0, 0, G_OPTION_ARG_INT, &glob_connect_timer,
     "Set timeout in seconds to wait for connect", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL}
 };
 
 static int
-generate_command_file(gchar *parse_buf, const gchar *command_file)
+generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
 {
   int ret_code;
   int len;
@@ -68,7 +55,7 @@ generate_command_file(gchar *parse_buf, const gchar *command_file)
   IC_FILE_HANDLE cmd_file_handle;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
-  DEBUG_ENTRY("generate_command_file");
+  DEBUG_ENTRY("generate_bootstrap_file");
 
   /* Create file to store generated file */
   if ((ret_code= ic_create_file(&cmd_file_handle,
@@ -393,6 +380,7 @@ error:
     conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_INT(ret_code);
 }
+
 /**
   Copy config.ini to all nodes in a cluster where it is needed
 */
@@ -910,7 +898,6 @@ get_line(gchar **file_ptr,
          gchar **read_buf,
          gboolean *end_of_input)
 {
-  int ret_code;
   guint32 start_pos= *curr_pos;
   guint32 buf_length= *curr_length;
   IC_STRING ic_str;
@@ -922,46 +909,22 @@ get_line(gchar **file_ptr,
   {
     if (ic_unlikely(start_pos == 0))
     {
-      if (*file_ptr)
+      ic_assert(*file_ptr);
+      /* Get next line from buffer read from file */
+      get_line_from_file_content(file_ptr, file_end, &ic_str);
+      if (ic_str.len + buf_length > COMMAND_READ_BUF_SIZE)
+        return IC_ERROR_COMMAND_TOO_LONG;
+      /* "Intelligent" memcpy removing CARRIAGE RETURN's */
+      for (i= 0; i < ic_str.len; i++)
       {
-        /* Get next line from buffer read from file */
-        get_line_from_file_content(file_ptr, file_end, &ic_str);
-        if (ic_str.len + buf_length > COMMAND_READ_BUF_SIZE)
-          return IC_ERROR_COMMAND_TOO_LONG;
-        /* "Intelligent" memcpy removing CARRIAGE RETURN's */
-        for (i= 0; i < ic_str.len; i++)
+        if (ic_str.str[i] != CARRIAGE_RETURN)
         {
-          if (ic_str.str[i] != CARRIAGE_RETURN)
-          {
-            parse_buf[buf_length]= ic_str.str[i];
-            buf_length++;
-          }
-        }
-        if (*file_ptr == file_end)
-          end_of_file= TRUE;
-      }
-      else
-      {
-        /* Get next line by reading next command line */
-        if ((ret_code= ic_read_one_line(ic_prompt, &ic_str)))
-          return ret_code;
-        if (ic_str.len + buf_length > COMMAND_READ_BUF_SIZE)
-          return IC_ERROR_COMMAND_TOO_LONG;
-        memcpy(&parse_buf[buf_length], ic_str.str, ic_str.len);
-        buf_length+= ic_str.len;
-        if (parse_buf[buf_length - 1] != CMD_SEPARATOR)
-        {
-          /*
-            Always add a space at the end instead of the CARRIAGE RETURN
-            when the end of line isn't a ; ending the command. Otherwise
-            PREPARE<CR>CLUSTER will be interpreted as PREPARECLUSTER
-            instead of as PREPARE CLUSTER which is the correct.
-          */
-          parse_buf[buf_length]= SPACE_CHAR;
+          parse_buf[buf_length]= ic_str.str[i];
           buf_length++;
         }
-        ic_free(ic_str.str);
       }
+      if (*file_ptr == file_end)
+        end_of_file= TRUE;
       *curr_length= buf_length;
     }
     for (i= start_pos; i < buf_length; i++)
@@ -1024,24 +987,33 @@ end:
 static gchar *start_text= "\
 - iClaustron Bootstrap program\n\
 \n\
-This program runs in interactive mode when --interactive=1\n\
-is set as parameter.\n\
-To finish program in this mode, enter a single command ;\n\
-Commands are always separated by ;\n\
-The program can also run from a command file provided in the\n\
---command-file parameter.\n\
-Finally the program can also run from a directory where\n\
-iClaustron configuration files are provided. The main file will\n\
-always be called config.ini and the file grid_common.ini will\n\
+This program is run from a directory where iClaustron\n\
+configuration files are provided. The main file will always\n\
+be called config.ini and the file grid_common.ini will\n\
 will always contain the definition of the common Cluster Servers\n\
 and Cluster Managers in the Grid. The remaining files will be one\n\
 for each cluster with the name as given in config.ini.\n\
 Based on this configuration the program will generate a bootstrap\n\
 command file and also execute it.\n\
-The generation of a command file is done when the option\n\
---generate-command-file is given with file name of command file\n\
-It is also the default action and in this case the bootstrap file\n\
-generated is named bootstrap.cmd\n\
+\n\
+The default name of the bootstrap command file is bootstrap.cmd. A\n\
+different name can be used through setting the bootstrap-file\n\
+parameter. This file will remain after running the bootstrap program\n\
+but cannot be reused, it's merely kept as documentation of what the\n\
+bootstrap program actually executed.\n\
+\n\
+Based on the information in the configuration files the ic_bootstrap\n\
+program will copy all the configuration files to the Cluster Servers\n\
+defined in the configuration. It will also copy the config.ini to all\n\
+nodes of all Clusters.\n\
+\n\
+As a final step it will also start all Cluster Servers and then all\n\
+Cluster Managers.\n\
+\n\
+Both the copy phase and the start phase requires that all iClaustron\n\
+Process Controllers for the grid have been started. It is also required\n\
+that all those process controllers are accessible from the machine where\n\
+the bootstrap program is executed.\n\
 ";
 
 static int
@@ -1139,7 +1111,6 @@ int main(int argc, char *argv[])
   guint32 curr_length= 0;
   guint32 line_size;
   gboolean end_of_input;
-  gboolean readline_inited= FALSE;
 
   if ((ret_code= ic_start_program(argc, argv, entries, NULL,
                                   glob_process_name,
@@ -1163,42 +1134,22 @@ int main(int argc, char *argv[])
   ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
   parse_data.lex_data.mc_ptr= mc_ptr;
 
-  if (glob_command_file && glob_generate_command_file)
-  {
-    ret_code= IC_ERROR_TWO_COMMAND_FILES;
+  /*
+    Start by loading the config files into memory, based on this
+    data structures generate a bootstrap file and read this file
+    into memory.
+  */
+  if ((ret_code= init_global_data(&glob_mc_ptr)) ||
+      (ret_code= generate_bootstrap_file(parse_buf,
+                                         glob_bootstrap_file)) ||
+      (ret_code= ic_get_file_contents(glob_bootstrap_file,
+                                      &file_content,
+                                      &file_size)))
     goto end;
-  }
-  if (!(glob_interactive || glob_command_file))
-  {
-    /* Start by loading the config files for default action */
-    if ((ret_code= init_global_data(&glob_mc_ptr)))
-      goto end;
-    if (!glob_generate_command_file)
-    {
-      /* Use default generated command file */
-      glob_generate_command_file= "bootstrap.cmd";
-    }
-    glob_command_file= glob_generate_command_file;
-    if ((ret_code= generate_command_file(parse_buf, glob_command_file)))
-      goto end;
-  }
 
-  if (glob_command_file)
-  {
-    if ((ret_code= ic_get_file_contents(glob_command_file,
-                                        &file_content,
-                                        &file_size)))
-      goto end;
-    file_ptr= file_content;
-    file_end= file_content + file_size;
-  }
-  else
-  {
-    ic_init_readline(glob_history_size);
-    readline_inited= TRUE;
-  }
+  file_ptr= file_content;
+  file_end= file_content + file_size;
   init_parse_data(&parse_data);
-
   while (!(ret_code= get_line(&file_ptr,
                               file_end,
                               parse_buf,
@@ -1214,10 +1165,10 @@ int main(int argc, char *argv[])
     if (parse_data.exit_flag)
       goto end;
   }
+  ic_printf("Bootstrap successfully completed, %s contains commands executed",
+            glob_bootstrap_file);
 
 end:
-  if (readline_inited)
-    ic_close_readline();
   if (file_content)
     ic_free(file_content);
   if (glob_mc_ptr)

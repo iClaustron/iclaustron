@@ -242,8 +242,8 @@ ic_init_error_messages()
     "The Cluster Server was started with the wrong nodeid";
   ic_error_str[IC_ERROR_COMMAND_TOO_LONG - IC_FIRST_ERROR]=
     "Command was too long";
-  ic_error_str[IC_ERROR_TWO_COMMAND_FILES - IC_FIRST_ERROR]=
-    "Not allowed to set both generate-command-file and command-file";
+  ic_error_str[IC_ERROR_NOT_USED_1 - IC_FIRST_ERROR]=
+    "";
   ic_error_str[IC_ERROR_NO_FINAL_COMMAND - IC_FIRST_ERROR]=
     "Last command in command file must end with ;";
   ic_error_str[IC_ERROR_INCONSISTENT_CONTENT_IN_CONFIG_VERSION_FILE -

@@ -726,8 +726,6 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   gchar *str;
 
   IC_INIT_STRING(out_str, NULL, 0, FALSE);
-  if (in_str->len == 0)
-    return 0;
   if (mc_ptr)
   {
     if (!(str= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, in_str->len+1)))

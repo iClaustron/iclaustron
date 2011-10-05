@@ -26,47 +26,41 @@
 int
 ic_read_one_line(gchar *prompt, IC_STRING *out_str)
 {
-#ifdef HAVE_LIBREADLINE
   IC_STRING line_str;
   int ret_value;
-
+#ifdef HAVE_LIBREADLINE
   line_str.str= readline(prompt);
+#else
+  gchar line[COMMAND_READ_BUF_SIZE];
+
+  printf("%s", prompt);
+  line_str.str= fgets(line, sizeof(line), stdin);
+#endif
   if (!line_str.str)
     return IC_ERROR_MEM_ALLOC;
   line_str.len= COMMAND_READ_BUF_SIZE;
   ic_set_up_ic_string(&line_str);
   if (!line_str.is_null_terminated)
   {
-    /* We cannot use ic_free since it wasn't allocated with ic_malloc */
-    free(line_str.str);
-    return IC_ERROR_COMMAND_TOO_LONG;
+    ret_value= IC_ERROR_COMMAND_TOO_LONG;
+    goto error;
   }
+#ifdef HAVE_LIBREADLINE
   if (line_str.len)
     add_history(line_str.str);
-  ret_value= ic_strdup(out_str, &line_str);
-  free(line_str.str);
-  return ret_value;
-#else
-  IC_STRING line_str;
-  int ret_value;
-  gchar line[COMMAND_READ_BUF_SIZE];
-
-  printf("%s", prompt);
-  line_str.str= fgets(line, sizeof(line), stdin);
-  if (!line_str.str)
-    return IC_ERROR_MEM_ALLOC;
-  line_str.len= COMMAND_READ_BUF_SIZE;
-  ic_set_up_ic_string(&line_str);
-  if (!line_str.is_null_terminated)
-    return IC_ERROR_COMMAND_TOO_LONG;
-  if (line_str.str[line_str.len - 1] == CARRIAGE_RETURN)
+#endif
+  if (line_str.len && 
+      line_str.str[line_str.len - 1] == CARRIAGE_RETURN)
   {
     line_str.str[line_str.len - 1]= NULL_BYTE;
     line_str.len--;
   }
   ret_value= ic_strdup(out_str, &line_str);
-  return ret_value;
+error:
+#ifdef HAVE_LIBREADLINE
+  free(line_str.str); /* Allocated by readline => need to use free */
 #endif
+  return ret_value;
 }
 
 void
