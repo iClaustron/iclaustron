@@ -508,6 +508,22 @@ ic_send_debug_level(IC_CONNECTION *conn)
   return 0;
 }
 
+static guint64
+get_debug_params()
+{
+#ifdef DEBUG_BUILD
+  if (ic_get_debug())
+    if (ic_get_debug_timestamp())
+      return (guint64)4;
+    else
+      return (guint64)2;
+  else
+    return (guint64)0;
+#else
+  return (guint64)0;
+#endif
+}
+
 static int
 start_cluster_manager(IC_CONNECTION *conn,
                       IC_CLUSTER_MANAGER_DATA *mgr_data,
@@ -545,18 +561,15 @@ start_cluster_manager(IC_CONNECTION *conn,
                                              ic_auto_restart_str,
                                              ic_false_str)))
     goto end;
-#ifdef DEBUG_BUILD
-  num_params= ic_get_debug() ? (guint64)8 : (guint64)6;
-#else
-  num_params= 6;
-#endif
+
+  num_params= get_debug_params() + (guint64)6;
   if ((ret_code= ic_send_with_cr_with_num(conn,
                                           ic_num_parameters_str,
                                           num_params)) ||
       (ret_code= ic_send_debug_level(conn)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
-                                             ic_node_parameter_str)) ||
+                                             ic_node_id_str)) ||
       (ret_code= ic_send_with_cr_with_num(conn,
                                           ic_parameter_str,
                                           (guint64)mgr_data->node_id)) ||
@@ -633,18 +646,15 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
                                              ic_auto_restart_str,
                                              ic_false_str)))
     goto end;
-#ifdef DEBUG_BUILD
-  num_params= ic_get_debug() ? (guint64)4 : (guint64)2;
-#else
-  num_params= (guint64)2;
-#endif
+
+  num_params= get_debug_params() + (guint64)2;
   if ((ret_code= ic_send_with_cr_with_num(conn,
                                           ic_num_parameters_str,
                                           num_params)) ||
       (ret_code= ic_send_debug_level(conn)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
-                                             ic_node_parameter_str)) ||
+                                             ic_node_id_str)) ||
       (ret_code= ic_send_with_cr_with_num(conn,
                                           ic_parameter_str,
                                           (guint64)cs_data->node_id)) ||

@@ -30,11 +30,11 @@ static gchar *ic_prompt= "iClaustron client> ";
 
 static GOptionEntry entries[] = 
 {
-  { "server_name", 0, 0, G_OPTION_ARG_STRING, &glob_server_ip,
+  { "server-name", 0, 0, G_OPTION_ARG_STRING, &glob_server_ip,
     "Set Server Host address of Clustrer Manager", NULL},
-  { "server_port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
+  { "server-port", 0, 0, G_OPTION_ARG_STRING, &glob_server_port,
     "Set Server Port of Cluster Manager", NULL},
-  { "history_size", 0, 0, G_OPTION_ARG_INT, &glob_history_size,
+  { "history-size", 0, 0, G_OPTION_ARG_INT, &glob_history_size,
     "Set Size of Command Line History", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };

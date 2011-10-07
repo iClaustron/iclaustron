@@ -257,7 +257,7 @@ send_start_cluster_server(IC_CONNECTION *conn)
                                           (guint64)2)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
-                                             ic_node_parameter_str)) ||
+                                             ic_node_id_str)) ||
       (ret_code= ic_send_with_cr_with_num(conn,
                                           ic_parameter_str,
                                           (guint64)1)) ||
@@ -712,7 +712,7 @@ rec_list_node_full(IC_CONNECTION *conn)
 
   if ((ret_code= ic_rec_two_strings(conn,
                                     ic_parameter_str,
-                                    ic_node_parameter_str)) ||
+                                    ic_node_id_str)) ||
       (ret_code= ic_rec_number(conn, ic_parameter_str, &node_id)))
     DEBUG_RETURN_INT(ret_code);
   if (node_id != 1)
@@ -1468,6 +1468,10 @@ handle_start(IC_CONNECTION *conn)
   DEBUG_RETURN_INT(ret_code);
 
 late_error:
+  pid_str= ic_guint64_str(pc_start->pid, pid_buf, &dummy);
+  ic_printf("Failed to start program %s with pid %s",
+            pc_start->program_name.str,
+            pid_str);
   ic_mutex_lock(pc_hash_mutex);
   pc_start_check= ic_hashtable_remove(glob_pc_hash,
                                       (void*)pc_start);
@@ -2543,8 +2547,9 @@ run_check_thread(gpointer data)
     while (ic_hashtable_iterator_advance(&check_itr))
     {
       pc_start= (IC_PC_START*)ic_hashtable_iterator_value(&check_itr);
-      if (pc_start->check_time == check_time)
-        continue; /* Already checked in this loop */
+      if (pc_start->check_time == check_time /* Already checked */ ||
+          pc_start->pid == 0) /* Process not started yet */
+        continue;
       /* Ensures no one removes it until we're done with check */
       pc_start->check_ongoing= TRUE;
       pc_start->check_time= check_time;

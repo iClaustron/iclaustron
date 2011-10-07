@@ -34,25 +34,25 @@
 */
 GOptionEntry ic_apid_entries[] = 
 {
-  { "cs_connectstring", 0, 0, G_OPTION_ARG_STRING,
+  { "cs-connectstring", 0, 0, G_OPTION_ARG_STRING,
     &ic_glob_cs_connectstring,
     "Connect string to Cluster Servers", NULL},
-  { "cs_hostname", 0, 0, G_OPTION_ARG_STRING,
+  { "cs-hostname", 0, 0, G_OPTION_ARG_STRING,
      &ic_glob_cs_server_name,
     "Set Server Hostname of Cluster Server", NULL},
-  { "cs_port", 0, 0, G_OPTION_ARG_STRING,
+  { "cs-port", 0, 0, G_OPTION_ARG_STRING,
     &ic_glob_cs_server_port,
     "Set Server Port of Cluster Server", NULL},
-  { "cs_timeout", 0, 0, G_OPTION_ARG_INT,
+  { "cs-timeout", 0, 0, G_OPTION_ARG_INT,
     &ic_glob_cs_timeout,
     "Time to wait for Cluster Servers connecting, 0=no timeout", NULL},
-  { "node_id", 0, 0, G_OPTION_ARG_INT,
+  { "node-id", 0, 0, G_OPTION_ARG_INT,
     &ic_glob_node_id,
     "Node id of this server in all clusters", NULL},
-  { "num_threads", 0, 0, G_OPTION_ARG_INT,
+  { "num-threads", 0, 0, G_OPTION_ARG_INT,
     &ic_glob_num_threads,
     "Number of threads executing in process", NULL},
-  { "use_iclaustron_cluster_server", 0, 0, G_OPTION_ARG_INT,
+  { "use-iclaustron-cluster-server", 0, 0, G_OPTION_ARG_INT,
      &ic_glob_use_iclaustron_cluster_server,
     "Use of iClaustron Cluster Server (default) or NDB mgm server", NULL},
   { "daemonize", 0, 0, G_OPTION_ARG_INT,
@@ -248,7 +248,7 @@ static int ic_init();
 /* Base directory group */
 static GOptionEntry basedir_entries[] =
 {
-  { "iclaustron_version", 0, 0, G_OPTION_ARG_STRING,
+  { "iclaustron-version", 0, 0, G_OPTION_ARG_STRING,
     &ic_glob_version_path,
     "Version string to find iClaustron binaries used by this program, default "
     IC_VERSION_STR, NULL},
@@ -285,13 +285,13 @@ it is /var/lib/iclaustron_install/.\n\
 /* Debug group */
 static GOptionEntry debug_entries[] = 
 {
-  { "debug_level", 0, 0, G_OPTION_ARG_INT, &glob_debug,
+  { "debug-level", 0, 0, G_OPTION_ARG_INT, &glob_debug,
     "Set Debug Level", NULL},
-  { "debug_file", 0, 0, G_OPTION_ARG_STRING, &glob_debug_file,
+  { "debug-file", 0, 0, G_OPTION_ARG_STRING, &glob_debug_file,
     "Set Debug File", NULL},
-  { "debug_screen", 0, 0, G_OPTION_ARG_INT, &glob_debug_screen,
+  { "debug-screen", 0, 0, G_OPTION_ARG_INT, &glob_debug_screen,
     "Flag whether to print debug info to stdout", NULL},
-  { "debug_timestamp", 0, 0, G_OPTION_ARG_INT, &glob_debug_timestamp,
+  { "debug-timestamp", 0, 0, G_OPTION_ARG_INT, &glob_debug_timestamp,
     "Flag whether to print timestamps in debug info", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
@@ -336,6 +336,9 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
                  gboolean use_config)
 {
   int ret_code= IC_ERROR_STARTUP;
+#ifdef DEBUG_BUILD
+  int i;
+#endif
   GError *error= NULL;
   GOptionGroup *debug_group;
   GOptionGroup *basedir_group;
@@ -379,6 +382,13 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
     goto early_error;
   DEBUG_PRINT(PROGRAM_LEVEL, ("Returning to ic_start_program"));
   DEBUG_ENTRY("ic_start_program");
+#ifdef DEBUG_BUILD
+  DEBUG_PRINT(PROGRAM_LEVEL, ("argc = %d", argc));
+  for (i = 0; i < argc; i++)
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("argv[%d] = %s", i, argv[i]));
+  }
+#endif
   ic_glob_byte_order= ic_byte_order();
   if ((ret_code= ic_set_data_dir(&ic_glob_data_dir)) ||
       (ret_code= ic_set_config_dir(&ic_glob_config_dir,

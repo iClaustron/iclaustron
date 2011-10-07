@@ -692,23 +692,41 @@ ic_controlled_terminate()
 }
 #endif
 
+void strip_leading_blanks(gchar *argv_str)
+{
+  guint32 i= 0;
+  guint32 num_blanks= 0;
+
+  while (argv_str[i] == SPACE_CHAR)
+  {
+    argv_str[0]= argv_str[i + 1];
+    num_blanks++;
+    i++;
+  }
+  while (argv_str[i])
+  {
+    argv_str[i]= argv_str[i + num_blanks];
+    i++;
+  }
+}
+
 int ic_start_process(gchar **argv,
                      gchar *working_dir,
                      IC_PID_TYPE *pid)
 {
   GError *error= NULL;
   GPid loc_pid;
-#ifdef DEBUG_BUILD
   guint32 i= 1;
   DEBUG_ENTRY("ic_start_process");
   DEBUG_PRINT(PROGRAM_LEVEL, ("Starting process %s", argv[0]));
   DEBUG_PRINT(PROGRAM_LEVEL, ("Working dir = %s", working_dir));
+
   while (argv[i])
   {
+    strip_leading_blanks(argv[i]);
     DEBUG_PRINT(PROGRAM_LEVEL, ("Argument %d = %s", i, argv[i]));
     i++;
   }
-#endif
   if (!g_spawn_async_with_pipes(working_dir,
                                 argv,
                                 NULL, /* environment */

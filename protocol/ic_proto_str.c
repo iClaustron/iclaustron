@@ -84,7 +84,6 @@ const gchar *ic_master_index_size_str= "master index size:";
 const gchar *ic_csd_program_str= "ic_csd";
 const gchar *ic_clmgrd_program_str= "ic_clmgrd";
 const gchar *ic_ndb_program_str= "ndbmtd";
-const gchar *ic_node_parameter_str= "--node_id";
 
 const gchar *ic_def_grid_str= "iclaustron";
 const gchar *ic_data_server_program_str= "ndbmtd";
@@ -96,16 +95,16 @@ const gchar *ic_cluster_server_program_str= "ic_csd";
 const gchar *ic_restore_program_str= "ndb_restore";
 
 const gchar *ic_ndb_node_id_str= " --ndb-node-id=";
-const gchar *ic_ndb_connectstring_str= " --ndb-connectstring=";
-const gchar *ic_cs_connectstring_str= " --cs_connectstring=";
+const gchar *ic_ndb_connectstring_str= " --ndb-connectstring";
+const gchar *ic_cs_connectstring_str= " --cs-connectstring";
 const gchar *ic_initial_flag_str= " --initial";
-const gchar *ic_cluster_id_str= " --cluster_id=";
-const gchar *ic_node_id_str= " --node_id=";
-const gchar *ic_server_name_str= " --server_name=";
-const gchar *ic_server_port_str=" --server_port=";
-const gchar *ic_data_dir_str= " --data_dir=";
-const gchar *ic_num_threads_str= " --num_threads=";
+const gchar *ic_cluster_id_str= " --cluster-id";
+const gchar *ic_node_id_str= " --node-id";
+const gchar *ic_server_name_str= " --server-name";
+const gchar *ic_server_port_str=" --server-port";
+const gchar *ic_data_dir_str= " --data-dir";
+const gchar *ic_num_threads_str= " --num-threads";
 #ifdef DEBUG_BUILD
-const gchar *ic_debug_level_str= "--debug_level";
+const gchar *ic_debug_level_str= "--debug-level";
 const gchar *ic_debug_timestamp_str= "--debug-timestamp";
 #endif

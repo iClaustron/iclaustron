@@ -43,6 +43,19 @@ static gchar *no_such_cluster_string=
 static gchar *wrong_node_type= "Node id not of specified type";
 static gchar *no_such_node_str="There is no such node in this cluster";
 
+static GOptionEntry entries[]= 
+{
+  { "server-name", 0, 0, G_OPTION_ARG_STRING,
+     &glob_cluster_mgr_ip,
+    "Set Server Hostname of Cluster Manager", NULL},
+  { "server-port", 0, 0, G_OPTION_ARG_STRING,
+     &glob_cluster_mgr_port,
+    "Set Server Port of Cluster Manager", NULL},
+  { "only-find-hash", 0, 0, G_OPTION_ARG_INT, &glob_only_find_hash,
+    "Only run to see if we can find a proper hash function", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
 static int
 connect_pcntrl(IC_CONNECTION **conn, const gchar *node_config)
 {
@@ -1194,19 +1207,6 @@ set_up_server_connection(IC_CONNECTION **conn)
   *conn= loc_conn;
   DEBUG_RETURN_INT(0);
 }
-
-static GOptionEntry entries[]= 
-{
-  { "server_name", 0, 0, G_OPTION_ARG_STRING,
-     &glob_cluster_mgr_ip,
-    "Set Server Hostname of Cluster Manager", NULL},
-  { "server_port", 0, 0, G_OPTION_ARG_STRING,
-     &glob_cluster_mgr_port,
-    "Set Server Port of Cluster Manager", NULL},
-  { "only_find_hash", 0, 0, G_OPTION_ARG_INT, &glob_only_find_hash,
-    "Only run to see if we find a proper hash function", NULL},
-  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
-};
 
 int main(int argc,
          char *argv[])
