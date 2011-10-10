@@ -738,16 +738,10 @@ static int send_set_connection_parameter(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                          guint32 node2_id,
                                          guint32 dynamic_port);
 
-static int connect_any_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
-                                      IC_CONNECTION **conn_ptr,
-                                      guint32 *used_cluster_server_id,
-                                      guint32 cs_timeout,
-                                      gboolean is_client,
-                                      gchar **err_str);
-
 static int connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
                                   IC_CONNECTION **conn_ptr,
                                   guint32 cluster_server_id,
-                                  guint32 cs_timeout,
                                   gboolean is_client,
-                                  gchar **err_str);
+                                  gchar **err_str,
+                                  accept_timeout_func timeout_func,
+                                  void *timeout_obj);

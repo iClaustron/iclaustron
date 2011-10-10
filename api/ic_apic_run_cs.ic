@@ -2006,6 +2006,58 @@ early_end:
   goto end_thread;
 }
 
+typedef struct client_conn_timer_struct CLIENT_CONN_TIMER_STRUCT;
+struct client_conn_timer_struct
+{
+  IC_THREADPOOL_STATE *tp_state;
+  IC_THREAD_STATE *thread_state;
+  IC_RUN_CLUSTER_STATE *rc_state;
+  guint32 cs_index;
+};
+
+static int
+check_quorum_reached(IC_THREADPOOL_STATE *tp_state,
+                     IC_THREAD_STATE *thread_state,
+                     IC_RUN_CLUSTER_STATE *rc_state,
+                     guint32 cs_index)
+{
+  DEBUG_ENTRY("check_quorum_reached");
+
+  (void)cs_index;
+  if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+    goto error;
+  ic_mutex_lock(rc_state->protect_state);
+  if (rc_state->cs_starting)
+  {
+    /*
+      A quorum have already been reached without us, no use of continuing
+      to connect to the node. When the node starts up we will have a port
+      open to connect to.
+    */
+    ic_cond_broadcast(rc_state->connect_cond);
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Close thread for index %u, others already starting", cs_index));
+    ic_mutex_unlock(rc_state->protect_state);
+    goto error;
+  }
+  ic_mutex_unlock(rc_state->protect_state);
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(1);
+}
+
+static int
+client_conn_timeout_func(void *timeout_obj, int timer)
+{
+  CLIENT_CONN_TIMER_STRUCT *client_conn_timer_ptr=
+    (CLIENT_CONN_TIMER_STRUCT*)timeout_obj;
+  (void)timer;
+  return check_quorum_reached(client_conn_timer_ptr->tp_state,
+                              client_conn_timer_ptr->thread_state,
+                              client_conn_timer_ptr->rc_state,
+                              client_conn_timer_ptr->cs_index);
+}
+
 static int
 get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                   IC_THREADPOOL_STATE *tp_state,
@@ -2019,6 +2071,7 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   gboolean is_client;
   IC_INT_API_CONFIG_SERVER *apic;
   int error;
+  CLIENT_CONN_TIMER_STRUCT client_conn_timer_area;
   DEBUG_ENTRY("get_cs_connection");
 
   apic= run_obj->config.apic;
@@ -2026,6 +2079,11 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   this_info_cs= get_cluster_info(run_obj, cs_index);
   rc_state= &run_obj->state;
   is_client= (this_info_cs->node_id > my_info_cs->node_id);
+
+  client_conn_timer_area.tp_state= tp_state;
+  client_conn_timer_area.thread_state= thread_state;
+  client_conn_timer_area.rc_state= rc_state;
+  client_conn_timer_area.cs_index= cs_index;
 
   while (1)
   {
@@ -2043,9 +2101,10 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       if (!(error= connect_cluster_server(apic,
                                           conn,
                                           cs_index,
-                                          (guint32)3,
                                           TRUE,
-                                          &err_str)))
+                                          &err_str,
+                                          client_conn_timeout_func,
+                                          (void*)&client_conn_timer_area)))
       {
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Connect to Cluster Server index %u, client side", cs_index));
@@ -2058,8 +2117,7 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       }
       DEBUG_PRINT(CONFIG_LEVEL,
        ("Failed client side connect to Cluster Server, index %u", cs_index));
-      /* Another attempt to connect failed, continue trying, sleep first */
-      ic_sleep(1);
+      goto error;
     }
     else
     {
@@ -2087,21 +2145,8 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       }
       ic_mutex_unlock(rc_state->protect_state);
     }
-    ic_mutex_lock(rc_state->protect_state);
-    if (rc_state->cs_starting)
-    {
-      /*
-        A quorum have already been reached without us, no use of continuing
-        to connect to the node. When the node starts up we will have a port
-        open to connect to.
-      */
-      ic_cond_broadcast(rc_state->connect_cond);
-      DEBUG_PRINT(CONFIG_LEVEL,
-        ("Close thread for index %u, others already starting", cs_index));
-      ic_mutex_unlock(rc_state->protect_state);
+    if (check_quorum_reached(tp_state, thread_state, rc_state, cs_index))
       goto error;
-    }
-    ic_mutex_unlock(rc_state->protect_state);
   }
   DEBUG_RETURN_INT(0);
 error:

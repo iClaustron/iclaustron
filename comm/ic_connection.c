@@ -776,21 +776,36 @@ end:
 }
 
 static int
+check_user_timeout(IC_INT_CONNECTION *conn, int *timer)
+{
+  if (ic_tp_get_stop_flag())
+    return IC_ERROR_APPLICATION_STOPPED;
+  (*timer)+= 3;
+  if (conn->timeout_func &&
+      conn->timeout_func(conn->timeout_obj, *timer))
+  {
+    conn->error_code= IC_ERROR_CONNECT_TIMEOUT;
+    return conn->error_code;
+  }
+  return 0;
+}
+
+static int
 int_set_up_socket_connection(IC_INT_CONNECTION *conn)
 {
-  int error, sockfd;
+  int ret_code, sockfd;
   IC_SOCKLEN_TYPE len;
   struct addrinfo *loc_addrinfo;
   fd_set read_set, write_set;
   struct timeval time_out;
-  int timer= 0, ret_select;
+  int timer= 0;
   gboolean first= TRUE;
 
-  if ((error= translate_hostnames(conn)))
+  if ((ret_code= translate_hostnames(conn)))
   {
     DEBUG_PRINT(COMM_LEVEL,
-      ("Translating hostnames failed error = %d", error));
-    conn->error_code= error;
+      ("Translating hostnames failed error = %d", ret_code));
+    conn->error_code= ret_code;
     return conn->error_code;
   }
 
@@ -803,21 +818,12 @@ renew_connect:
   if (!first)
   {
     /*
-      We timed out, we will callback to the user and every 10
-      seconds we will renew the connect message if the user is
-      still waiting for a successful connect.
+      We had a connection failure, we will renew the connect message
+      if the user is still willing to wait for a successful connect.
     */
     ic_close_socket(sockfd);
-    if (ic_tp_get_stop_flag())
-      return IC_ERROR_APPLICATION_STOPPED;
-    timer+= 3;
-    if (conn->timeout_func &&
-        conn->timeout_func(conn->timeout_obj, timer))
-    {
-      conn->error_code= IC_ERROR_CONNECT_TIMEOUT;
-      return conn->error_code;
-    }
-    /* Time to send a new connect message */
+    if ((ret_code= check_user_timeout(conn, &timer)))
+      return ret_code;
   }
   first= FALSE;
   if ((sockfd= socket(conn->server_addrinfo->ai_family,
@@ -849,32 +855,48 @@ renew_connect:
       if (connect(sockfd, (struct sockaddr*)conn->server_addrinfo->ai_addr,
                   conn->server_addrinfo->ai_addrlen) == IC_SOCKET_ERROR)
       {
-        error= ic_get_last_socket_error();
+        ret_code= ic_get_last_socket_error();
 #ifndef WINDOWS
-        if (error == EINPROGRESS || error == EINTR)
+        if (ret_code == EINPROGRESS || ret_code == EINTR)
 #else
-        if (error == WSAEWOULDBLOCK)
+        if (ret_code == WSAEWOULDBLOCK)
 #endif
         {
-          /* We successfully sent a CONNECT request, still waiting for reply */
-          time_out.tv_sec= 3; /* Timeout is 3 seconds */
-          time_out.tv_usec= 0;
-          FD_ZERO(&read_set);
-          FD_SET(sockfd, &read_set);
-          write_set= read_set;
-          if ((ret_select= select(sockfd + 1, &read_set, &write_set,
-                                   NULL, &time_out)) == 0)
-            goto renew_connect;
+          do
+          {
+            /* We successfully sent a CONNECT request, still waiting for reply */
+            time_out.tv_sec= 3; /* Timeout is 3 seconds */
+            time_out.tv_usec= 0;
+            FD_ZERO(&read_set);
+            FD_SET(sockfd, &read_set);
+            write_set= read_set;
+            ret_code= select(sockfd + 1, &read_set, &write_set,
+                                   NULL, &time_out);
+            if (ret_code == 0)
+            {
+              /*
+                 We timed out, we will callback to the user every 3 seconds.
+                 We will wait until the user decides to wait no more.
+              */
+              if ((ret_code= check_user_timeout(conn, &timer)))
+              {
+                ic_close_socket(sockfd);
+                return ret_code;
+              }
+            }
+            else
+              break;
+          } while (1);
           if ((FD_ISSET(sockfd, &read_set)) || 
               (FD_ISSET(sockfd, &write_set)))
           {
-            len= sizeof(error);
+            len= sizeof(ret_code);
             if (getsockopt(sockfd,
                            SOL_SOCKET,
                            SO_ERROR,
-                           (IC_VOID_PTR_TYPE)&error,
+                           (IC_VOID_PTR_TYPE)&ret_code,
                            &len) < 0 ||
-                error != 0)
+                ret_code != 0)
                goto renew_connect;
              break;
           }
@@ -919,15 +941,15 @@ renew_connect:
   return 0;
 
 error:
-  error= ic_get_last_socket_error();
-  conn->err_str= ic_get_strerror(error,
+  ret_code= ic_get_last_socket_error();
+  conn->err_str= ic_get_strerror(ret_code,
                                  conn->err_buf,
                                  (guint32)128);
   DEBUG_PRINT(COMM_LEVEL, ("Error code: %d, message: %s",
-                            error, conn->err_str));
-  conn->error_code= error;
+                            ret_code, conn->err_str));
+  conn->error_code= ret_code;
   ic_close_socket(sockfd);
-  return error;
+  return ret_code;
 }
 
 static gpointer
