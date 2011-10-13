@@ -567,6 +567,9 @@ static const gchar *content_len_str= "Content-Length:";
 static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
 
+static const gchar *get_cs_nodeid_str= "get cluster server node id";
+static const gchar *get_cs_nodeid_reply_str= "get cluster server node id reply:";
+
 static const gchar *ic_start_cluster_server_str= "start cluster server";
 static const gchar *ic_start_cluster_server_reply_str=
   "start cluster server reply";

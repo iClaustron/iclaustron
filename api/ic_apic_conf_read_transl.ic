@@ -147,7 +147,7 @@ translate_config(IC_INT_API_CONFIG_SERVER *apic,
   gchar *bin_buf;
   guint32 bin_config_size, bin_config_size32, checksum, i;
   guint32 *bin_buf32, *key_value_ptr, key_value_len;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("translate_config");
 
   ic_assert((config_size & 3) == 0);
@@ -158,8 +158,10 @@ translate_config(IC_INT_API_CONFIG_SERVER *apic,
   */
   if (!(bin_buf= ic_calloc(bin_config_size)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
-  if ((error= ic_base64_decode((guint8*)bin_buf, &bin_config_size,
-                               (const guint8*)config_buf, config_size)))
+  if ((ret_code= ic_base64_decode((guint8*)bin_buf,
+                                  &bin_config_size,
+                                  (const guint8*)config_buf,
+                                  config_size)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("1:Protocol error in base64 decode"));
@@ -190,16 +192,18 @@ translate_config(IC_INT_API_CONFIG_SERVER *apic,
   }
   key_value_ptr= bin_buf32 + 2;
   key_value_len= bin_config_size32 - 3;
-  if ((error= analyse_key_value(key_value_ptr, key_value_len,
-                                apic, cluster_id)))
+  if ((ret_code= analyse_key_value(key_value_ptr,
+                                   key_value_len,
+                                   apic,
+                                   cluster_id)))
     goto error;
-  error= 0;
+  ret_code= 0;
   goto end;
 
 error:
 end:
   ic_free(bin_buf);
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -212,7 +216,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
   IC_CLUSTER_CONFIG *conf_obj;
   gboolean first= TRUE;
   gboolean first_data_server= TRUE;
-  int error;
+  int ret_code;
   guint32 pass, expected_sect_id;
   guint32 system_section= 0;
   guint32 first_comm_section= 0;
@@ -227,7 +231,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
   {
     if (pass == 1)
     {
-      if ((error= allocate_mem_phase2(apic, conf_obj)))
+      if ((ret_code= allocate_mem_phase2(apic, conf_obj)))
         goto error;
     }
     key_value= key_value_start;
@@ -292,7 +296,7 @@ analyse_key_value(guint32 *key_value, guint32 len,
           DEBUG_PRINT(CONFIG_LEVEL,
             ("first comm = %u, first data server = %u",
             first_comm_section, first_data_server_section));
-          if ((error= allocate_mem_phase1(conf_obj)))
+          if ((ret_code= allocate_mem_phase1(conf_obj)))
             goto error;
 
         }
@@ -301,16 +305,21 @@ analyse_key_value(guint32 *key_value, guint32 len,
           if (sect_id < system_section)
           {
             node_index= sect_id - 2;
-            if ((error= analyse_node_section_phase1(conf_obj, apic, node_index,
-                                                    value, hash_key)))
+            if ((ret_code= analyse_node_section_phase1(conf_obj,
+                                                       apic,
+                                                       node_index,
+                                                       value,
+                                                       hash_key)))
               goto error;
           }
           else if (sect_id >= first_data_server_section)
           {
             node_index= num_apis + (sect_id - first_data_server_section);
-            if ((error= analyse_node_section_phase1(conf_obj, apic,
-                                                    node_index,
-                                                    value, hash_key)))
+            if ((ret_code= analyse_node_section_phase1(conf_obj,
+                                                       apic,
+                                                       node_index,
+                                                       value,
+                                                       hash_key)))
               goto error;
           }
         }
@@ -318,8 +327,11 @@ analyse_key_value(guint32 *key_value, guint32 len,
       key_value+= 2;
       if (pass == 0)
       {
-        if ((error= step_key_value(apic, key_type, &key_value,
-                                   value, key_value_end)))
+        if ((ret_code= step_key_value(apic,
+                                      key_type,
+                                      &key_value,
+                                      value,
+                                      key_value_end)))
           goto error;
       }
       else /* Pass == 1 */
@@ -355,9 +367,13 @@ analyse_key_value(guint32 *key_value, guint32 len,
         {
           /* API node sections */
           node_sect_id= sect_id - 2;
-          if ((error= assign_node_section(conf_obj, apic,
-                                          key_type, &key_value,
-                                          value, hash_key, node_sect_id)))
+          if ((ret_code= assign_node_section(conf_obj,
+                                             apic,
+                                             key_type,
+                                             &key_value,
+                                             value,
+                                             hash_key,
+                                             node_sect_id)))
             goto error;
         }
         else if (sect_id == system_section)
@@ -373,9 +389,12 @@ analyse_key_value(guint32 *key_value, guint32 len,
              This is the system section where we currently define name,
              primary cluster server and system configuration number
           */
-          if ((error= assign_system_section(conf_obj, apic,
-                                            key_type, &key_value,
-                                            value, hash_key)))
+          if ((ret_code= assign_system_section(conf_obj,
+                                               apic,
+                                               key_type,
+                                               &key_value,
+                                               value,
+                                               hash_key)))
             goto error;
         }
         else if (sect_id == (system_section + 2))
@@ -393,9 +412,13 @@ analyse_key_value(guint32 *key_value, guint32 len,
         {
           /* Communication sections */
           guint32 comm_sect_id= sect_id - first_comm_section;
-          if ((error= assign_comm_section(conf_obj, apic,
-                                          key_type, &key_value,
-                                          value, hash_key, comm_sect_id)))
+          if ((ret_code= assign_comm_section(conf_obj,
+                                             apic,
+                                             key_type,
+                                             &key_value,
+                                             value,
+                                             hash_key,
+                                             comm_sect_id)))
             goto error;
         }
         else
@@ -403,15 +426,19 @@ analyse_key_value(guint32 *key_value, guint32 len,
           /* Data Server node sections */
           node_sect_id= num_apis + (sect_id - first_data_server_section);
           PROTOCOL_CHECK_GOTO(node_sect_id < conf_obj->num_nodes);
-          if ((error= assign_node_section(conf_obj, apic,
-                                          key_type, &key_value,
-                                          value, hash_key, node_sect_id)))
+          if ((ret_code= assign_node_section(conf_obj,
+                                             apic,
+                                             key_type,
+                                             &key_value,
+                                             value,
+                                             hash_key,
+                                             node_sect_id)))
             goto error;
         }
       }
     }
   }
-  if ((error= arrange_node_arrays(apic, conf_obj)))
+  if ((ret_code= arrange_node_arrays(apic, conf_obj)))
     goto error;
   DEBUG_RETURN_INT(0);
 error:
@@ -427,7 +454,7 @@ error:
     conf_obj->node_ids= NULL;
     conf_obj->node_config= NULL;
   }
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -912,35 +939,42 @@ assign_config_value(IC_CONFIG_ENTRY *conf_entry,
                     gchar **key_value,
                     guint32 hash_key)
 {
-  int error;
+  int ret_code;
   switch (key_type)
   {
     case IC_CL_INT32_TYPE:
     {
-      if ((error= assign_config_value_int(apic, conf_entry,
-                                          (guint64)value, conf_type,
-                                          key_type, struct_ptr)))
-        return error;
+      if ((ret_code= assign_config_value_int(apic,
+                                             conf_entry,
+                                             (guint64)value,
+                                             conf_type,
+                                             key_type,
+                                             struct_ptr)))
+        return ret_code;
       break;
     }
     case IC_CL_INT64_TYPE:
     {
       guint64 long_val= get_64bit_value(value, (guint32**)key_value);
-      if ((error= assign_config_value_int(apic, conf_entry, long_val,
-                                          conf_type,
-                                          key_type,
-                                          struct_ptr)))
-        return error;
+      if ((ret_code= assign_config_value_int(apic,
+                                             conf_entry,
+                                             long_val,
+                                             conf_type,
+                                             key_type,
+                                             struct_ptr)))
+        return ret_code;
       break;
     }
     case IC_CL_CHAR_TYPE:
     {
-      if ((error= assign_config_string(apic, conf_entry, conf_type,
-                                       apic->temp->next_string_memory,
-                                       value,
-                                       struct_ptr,
-                                       key_value)))
-        return error;
+      if ((ret_code= assign_config_string(apic,
+                                          conf_entry,
+                                          conf_type,
+                                          apic->temp->next_string_memory,
+                                          value,
+                                          struct_ptr,
+                                          key_value)))
+        return ret_code;
       update_string_data(apic, value, (guint32**)key_value);
       break;
     }

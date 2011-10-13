@@ -85,7 +85,7 @@
     - ic_send_with_cr
       Send a fixed string with a Carriage Return
 
-    - ic_send_with_cr_with_num
+    - ic_send_with_cr_with_number
       Send a fixed string with a 64-bit unsigned number
 
     - ic_send_with_cr_composed
@@ -169,9 +169,9 @@ int ic_step_back_rec_with_cr(IC_CONNECTION *conn,
 int ic_send_with_cr(IC_CONNECTION *conn,
                     const gchar *buf);
 int ic_send_empty_line(IC_CONNECTION *conn);
-int ic_send_with_cr_with_num(IC_CONNECTION *conn,
-                             const gchar *buf,
-                             guint64 number);
+int ic_send_with_cr_with_number(IC_CONNECTION *conn,
+                                const gchar *buf,
+                                guint64 number);
 int ic_send_with_cr_composed(IC_CONNECTION *conn,
                              const gchar **buf,
                              guint32 num_strings);
@@ -215,3 +215,7 @@ struct ic_pc_find
 };
 typedef struct ic_pc_find IC_PC_FIND;
 
+int ic_send_ok(IC_CONNECTION *conn);
+int ic_send_error_message(IC_CONNECTION *conn, gchar *error_message);
+int ic_rec_ok_or_error(IC_CONNECTION *conn, gchar *buf, gboolean *ok_found);
+int ic_rec_error_message(IC_CONNECTION *conn, gchar *buf);

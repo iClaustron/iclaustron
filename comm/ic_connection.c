@@ -74,6 +74,7 @@ static void destroy_timers(IC_INT_CONNECTION *conn);
 static void destroy_mutexes(IC_INT_CONNECTION *conn);
 
 static int close_socket_connection(IC_CONNECTION *conn);
+gchar *ic_zero_str= "0";
 
 /* Implements ic_check_for_data */
 static gboolean
@@ -333,7 +334,10 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
 }
 
 static gboolean
-ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
+ic_sock_ntop(const struct sockaddr *sa,
+             gchar *ip_addr,
+             int ip_addr_len,
+             gboolean include_port)
 {
   struct sockaddr_in *ipv4_addr= (struct sockaddr_in*)sa;
   struct sockaddr_in6 *ipv6_addr= (struct sockaddr_in6*)sa;
@@ -341,25 +345,31 @@ ic_sock_ntop(const struct sockaddr *sa, gchar *ip_addr, int ip_addr_len)
   IC_SOCKLEN_TYPE addr_len;
   gchar port_str[8];
 
-  if (sa->sa_family == AF_INET)
+  if (include_port)
   {
-     port= ntohs(ipv4_addr->sin_port);
-	 addr_len= sizeof(*ipv4_addr);
+    if (sa->sa_family == AF_INET)
+    {
+      port= ntohs(ipv4_addr->sin_port);
+      addr_len= sizeof(*ipv4_addr);
+    }
+    else if (sa->sa_family == AF_INET6)
+    {
+      port= ntohs(ipv6_addr->sin6_port);
+      addr_len= sizeof(*ipv6_addr);
+    }
+    else
+      return 0;
   }
-  else if (sa->sa_family == AF_INET6)
-  {
-     port= ntohs(ipv6_addr->sin6_port);
-	 addr_len= sizeof(*ipv6_addr);
-  }
-  else
-    return 0;
   if (getnameinfo(sa, addr_len,
                   ip_addr, ip_addr_len-8,
                   NULL, 0,
                   NI_NUMERICHOST))
     return 0;
-  snprintf(port_str, sizeof(port_str), ":%d", port);
-  strncat(ip_addr, port_str, ip_addr_len);
+  if (include_port)
+  {
+    snprintf(port_str, sizeof(port_str), ":%d", port);
+    strncat(ip_addr, port_str, ip_addr_len);
+  }
   return 1;
 }
 
@@ -573,7 +583,8 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   /* Record a human-readable address for the client part of the connection */
   ok= ic_sock_ntop(client_addr_ptr,
                    conn->conn_stat.client_ip_addr,
-                   sizeof(conn->conn_stat.client_ip_addr_str));
+                   sizeof(conn->conn_stat.client_ip_addr_str),
+                   FALSE);
   if (not_accepted || !ok)
   {
     /*
@@ -607,7 +618,6 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
 static int
 check_connection(IC_CONNECTION *ext_conn,
                  gchar *checked_client_name,
-                 gchar *checked_port_number,
                  gboolean *equal)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
@@ -625,16 +635,11 @@ check_connection(IC_CONNECTION *ext_conn,
     Get address information for Server part
   */
   ic_zero(&hints, sizeof(struct addrinfo));
-#ifdef AI_NUMERICSERV
-  hints.ai_flags= AI_NUMERICSERV;
-#else
-  hints.ai_flags= 0;
-#endif
-  hints.ai_flags|= AI_PASSIVE;
+  hints.ai_flags= AI_PASSIVE;
   hints.ai_family= PF_UNSPEC;
   hints.ai_socktype= SOCK_STREAM;
   hints.ai_protocol= IPPROTO_TCP;
-  if ((ret_code= getaddrinfo(checked_client_name, checked_port_number,
+  if ((ret_code= getaddrinfo(checked_client_name, NULL,
        &hints, &client_addrinfo)) != 0)
   {
     conn->err_str= gai_strerror(ret_code);
@@ -646,7 +651,8 @@ check_connection(IC_CONNECTION *ext_conn,
   {
     ok= ic_sock_ntop(loop_addrinfo->ai_addr,
                      checked_ip_str,
-                     sizeof(checked_ip_str));
+                     sizeof(checked_ip_str),
+                     FALSE);
     if (ok && (strcmp(checked_ip_str, client_ip_str) == 0))
     {
       *equal= TRUE;
@@ -710,7 +716,8 @@ translate_hostnames(IC_INT_CONNECTION *conn)
   /* Record a human-readable address for the server part of the connection */
   ic_sock_ntop(conn->server_addrinfo->ai_addr,
                conn->conn_stat.server_ip_addr,
-               sizeof(conn->conn_stat.server_ip_addr_str));
+               sizeof(conn->conn_stat.server_ip_addr_str),
+               TRUE);
 
   if (!conn->client_name)
   {
@@ -721,7 +728,7 @@ translate_hostnames(IC_INT_CONNECTION *conn)
     goto end;
   }
   if (!conn->client_port)
-    conn->client_port= "0"; /* Use "0" if user provided no port */
+    conn->client_port= ic_zero_str; /* Use "0" if user provided no port */
   if (ic_conv_str_to_int(conn->client_port, &client_port, NULL) ||
       client_port > 65535)
   {
@@ -769,7 +776,8 @@ translate_hostnames(IC_INT_CONNECTION *conn)
     /* Record a human-readable address for the client part of the connection */
     ic_sock_ntop(conn->client_addrinfo->ai_addr,
                  conn->conn_stat.client_ip_addr,
-                 sizeof(conn->conn_stat.client_ip_addr_str));
+                 sizeof(conn->conn_stat.client_ip_addr_str),
+                 FALSE);
   }
 end:
   DEBUG_RETURN_INT(ret_code);

@@ -209,7 +209,7 @@ get_node_id(IC_PARSE_DATA *parse_data)
   else
     node_id= (guint32)parse_data->node_id;
   if (!parse_data->apic->api_op.ic_get_node_object(parse_data->apic,
-                                                   (guint32)parse_data->cluster_id,
+                                             (guint32)parse_data->cluster_id,
                                                    node_id))
   {
     report_error(parse_data, no_such_node_str);
@@ -248,9 +248,9 @@ start_node(IC_PARSE_DATA *parse_data,
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_auto_restart_str,
                  autorestart_flag ? ic_true_str : ic_false_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_num_parameters_str,
-                                          num_params)))
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             num_params)))
     goto error;
   for (i= 0; i < num_params; i++)
   {
@@ -279,9 +279,9 @@ start_node(IC_PARSE_DATA *parse_data,
                                       program_name, version_name,
                                       grid_name, cluster_name,
                                       node_name)) ||
-        (ret_code= ic_send_with_cr_with_num(parse_data->conn,
-                                            ic_pid_str,
-                                            pid)) ||
+        (ret_code= ic_send_with_cr_with_number(parse_data->conn,
+                                               ic_pid_str,
+                                               pid)) ||
         (ret_code= ic_send_empty_line(parse_data->conn)))
       goto error;
   }
@@ -740,7 +740,7 @@ ic_list_cmd(IC_PARSE_DATA *parse_data)
 {
   IC_CLUSTER_CONFIG *clu_conf;
   IC_API_CONFIG_SERVER *apic= parse_data->apic;
-  int error;
+  int ret_code;
   gchar *output_ptr;
   gchar *cluster_name_ptr;
   guint64 cluster_id;
@@ -748,7 +748,7 @@ ic_list_cmd(IC_PARSE_DATA *parse_data)
   gchar output_buf[2048];
   DEBUG_ENTRY("ic_list_cmd");
 
-  if ((error= ic_send_with_cr(parse_data->conn,
+  if ((ret_code= ic_send_with_cr(parse_data->conn,
   "CLUSTER_NAME                    CLUSTER_ID")))
     goto error;
   for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
@@ -768,14 +768,14 @@ ic_list_cmd(IC_PARSE_DATA *parse_data)
     output_ptr+= space_len;
     output_ptr= ic_guint64_str(cluster_id, output_ptr, &cluster_id_size);
     output_ptr[cluster_id_size]= 0;
-    if ((error= ic_send_with_cr(parse_data->conn, output_buf)))
+    if ((ret_code= ic_send_with_cr(parse_data->conn, output_buf)))
       goto error;
   }
-  if ((error= ic_send_with_cr(parse_data->conn, ic_empty_string)))
+  if ((ret_code= ic_send_with_cr(parse_data->conn, ic_empty_string)))
     goto error;
   DEBUG_RETURN_EMPTY;
 error:
-  ic_print_error(error);
+  ic_print_error(ret_code);
   parse_data->exit_flag= TRUE;
   DEBUG_RETURN_EMPTY;
 }

@@ -317,12 +317,12 @@ send_files_to_node(IC_CONNECTION *conn,
     num_clusters++; /* Count number of clusters looking for end NULL */
 
   if ((ret_code= ic_send_with_cr(conn, ic_copy_cluster_server_files_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_cluster_server_node_id_str,
-                                          (guint64)node_id)) ||
-       (ret_code= ic_send_with_cr_with_num(conn,
-                                           ic_number_of_clusters_str,
-                                           (guint64)num_clusters)))
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_cluster_server_node_id_str,
+                                             (guint64)node_id)) ||
+       (ret_code= ic_send_with_cr_with_number(conn,
+                                              ic_number_of_clusters_str,
+                                              (guint64)num_clusters)))
     goto error;
 
   if ((ret_code= ic_proto_send_file(conn,
@@ -485,9 +485,9 @@ ic_send_debug_level(IC_CONNECTION *conn)
     if ((ret_code= ic_send_with_cr_two_strings(conn,
                                                ic_parameter_str,
                                                ic_debug_level_str)) ||
-        (ret_code= ic_send_with_cr_with_num(conn,
-                                            ic_parameter_str,
-                                            (guint64)ic_get_debug())))
+        (ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_parameter_str,
+                                               (guint64)ic_get_debug())))
       return ret_code;
     if (ic_get_debug_timestamp())
     {
@@ -495,8 +495,8 @@ ic_send_debug_level(IC_CONNECTION *conn)
       if ((ret_code= ic_send_with_cr_two_strings(conn,
                                                  ic_parameter_str,
                                                  ic_debug_timestamp_str)) ||
-          (ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_parameter_str,
+          (ret_code= ic_send_with_cr_with_number(conn,
+                                                 ic_parameter_str,
                                         (guint64)ic_get_debug_timestamp())))
         return ret_code;
       
@@ -563,16 +563,16 @@ start_cluster_manager(IC_CONNECTION *conn,
     goto end;
 
   num_params= get_debug_params() + (guint64)6;
-  if ((ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_num_parameters_str,
-                                          num_params)) ||
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             num_params)) ||
       (ret_code= ic_send_debug_level(conn)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
                                              ic_node_id_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_parameter_str,
-                                          (guint64)mgr_data->node_id)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)mgr_data->node_id)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
                                              ic_server_name_str)) ||
@@ -582,8 +582,8 @@ start_cluster_manager(IC_CONNECTION *conn,
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
                                              ic_server_port_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_parameter_str,
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
                                    mgr_conf->cluster_manager_port_number)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
@@ -648,16 +648,16 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
     goto end;
 
   num_params= get_debug_params() + (guint64)2;
-  if ((ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_num_parameters_str,
-                                          num_params)) ||
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             num_params)) ||
       (ret_code= ic_send_debug_level(conn)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
                                              ic_node_id_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_parameter_str,
-                                          (guint64)cs_data->node_id)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)cs_data->node_id)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))

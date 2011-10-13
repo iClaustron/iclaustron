@@ -45,31 +45,6 @@ ic_receive_error_message(IC_CONNECTION *conn, gchar *err_msg)
 }
 
 /**
-  Send a protocol line with the message:
-  error<CR>
-  <error message><CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-  @parameter error_message     IN:  The error message to send
-
-  @note
-    This message is sent as a negative response to messages to the
-    process controller.
-*/
-int
-ic_send_error_message(IC_CONNECTION *conn, const gchar *error_message)
-{
-  int error;
-  DEBUG_ENTRY("ic_send_error_message");
-
-  if ((error= ic_send_with_cr(conn, ic_error_str)) ||
-      (error= ic_send_with_cr(conn, error_message)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
   This function sends a file as part of the process controller protocol.
   It starts by sending the lines:
   receive config.ini
@@ -130,9 +105,9 @@ ic_proto_send_file(IC_CONNECTION *conn,
 
   /* Send number of lines */
   num_lines= ic_count_lines(file_content, file_size);
-  if ((ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_number_of_lines_str,
-                                          num_lines)))
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_number_of_lines_str,
+                                             num_lines)))
     goto error;
 
   /* Send file line by line */
@@ -201,12 +176,12 @@ error:
 int
 ic_send_list_stop(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_send_list_stop");
 
-  if ((error= ic_send_with_cr(conn, ic_list_stop_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_with_cr(conn, ic_list_stop_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -219,12 +194,12 @@ ic_send_list_stop(IC_CONNECTION *conn)
 int
 ic_send_list_next(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_send_list_next");
 
-  if ((error= ic_send_with_cr(conn, ic_list_next_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_with_cr(conn, ic_list_next_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -319,27 +294,6 @@ error:
 
 /**
   Send a protocol line with the message:
-  Ok<CR><CR>
-
-  @parameter conn              IN:  The connection from the client
-
-  @note
-    This message is sent as a positive response to the stop message
-*/
-int
-ic_send_ok(IC_CONNECTION *conn)
-{
-  int error;
-  DEBUG_ENTRY("ic_send_ok");
-
-  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
-  DEBUG_RETURN_INT(0);
-}
-
-/**
-  Send a protocol line with the message:
   Ok<CR>pid: <pid_number><CR><CR>
 
   @parameter conn              IN:  The connection from the client
@@ -351,13 +305,13 @@ ic_send_ok(IC_CONNECTION *conn)
 int
 ic_send_ok_pid(IC_CONNECTION *conn, IC_PID_TYPE pid)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_send_ok_pid");
 
-  if ((error= ic_send_with_cr(conn, ic_ok_str)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_with_cr(conn, ic_ok_str)) ||
+      (ret_code= ic_send_with_cr_with_number(conn, ic_pid_str, pid)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -374,13 +328,13 @@ ic_send_ok_pid(IC_CONNECTION *conn, IC_PID_TYPE pid)
 int
 ic_send_ok_pid_started(IC_CONNECTION *conn, IC_PID_TYPE pid)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_send_ok_pid_started");
 
-  if ((error= ic_send_with_cr(conn, ic_process_already_started_str)) ||
-      (error= ic_send_with_cr_with_num(conn, ic_pid_str, pid)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_with_cr(conn, ic_process_already_started_str)) ||
+      (ret_code= ic_send_with_cr_with_number(conn, ic_pid_str, pid)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -393,12 +347,12 @@ ic_send_ok_pid_started(IC_CONNECTION *conn, IC_PID_TYPE pid)
 int
 ic_send_mem_info_req(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_send_mem_info_req");
 
-  if ((error= ic_send_with_cr(conn, ic_get_mem_info_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_with_cr(conn, ic_get_mem_info_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -411,13 +365,13 @@ ic_send_mem_info_req(IC_CONNECTION *conn)
 int
 ic_send_disk_info_req(IC_CONNECTION *conn, gchar *dir_name)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_send_disk_info_req");
 
-  if ((error= ic_send_with_cr(conn, ic_get_disk_info_str)) ||
-      (error= ic_send_with_cr_two_strings(conn, ic_dir_str, dir_name)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_with_cr(conn, ic_get_disk_info_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn, ic_dir_str, dir_name)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -430,12 +384,12 @@ ic_send_disk_info_req(IC_CONNECTION *conn, gchar *dir_name)
 int
 ic_send_cpu_info_req(IC_CONNECTION *conn)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_send_cpu_info_req");
 
-  if ((error= ic_send_with_cr(conn, ic_get_cpu_info_str)) ||
-      (error= ic_send_empty_line(conn)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= ic_send_with_cr(conn, ic_get_cpu_info_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
 
@@ -471,4 +425,3 @@ ic_send_stop_node(IC_CONNECTION *conn,
     DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
 }
-

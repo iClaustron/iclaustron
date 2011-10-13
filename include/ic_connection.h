@@ -151,7 +151,6 @@ struct ic_connect_operations
   */
   int (*ic_check_connection)           (IC_CONNECTION *conn,
                                         gchar *checked_client_hostname,
-                                        gchar *checked_client_port,
                                         gboolean *equal);
 
   /*

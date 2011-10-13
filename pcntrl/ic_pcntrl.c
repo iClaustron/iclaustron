@@ -252,15 +252,15 @@ send_start_cluster_server(IC_CONNECTION *conn)
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_auto_restart_str,
                                              ic_false_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_num_parameters_str,
-                                          (guint64)2)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             (guint64)2)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
                                              ic_node_id_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_parameter_str,
-                                          (guint64)1)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)1)) ||
       (ret_code= ic_send_empty_line(conn)))
     DEBUG_RETURN_INT(ret_code);
   DEBUG_RETURN_INT(0);
@@ -777,12 +777,12 @@ static int test_copy_files(IC_CONNECTION *conn)
   ic_set_current_dir(&current_dir);
 
   if ((ret_code= ic_send_with_cr(conn, ic_copy_cluster_server_files_str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_cluster_server_node_id_str,
-                                          (guint64)1)) ||
-       (ret_code= ic_send_with_cr_with_num(conn,
-                                           ic_number_of_clusters_str,
-                                           (guint64)2)))
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_cluster_server_node_id_str,
+                                             (guint64)1)) ||
+       (ret_code= ic_send_with_cr_with_number(conn,
+                                              ic_number_of_clusters_str,
+                                              (guint64)2)))
     goto error;
   if ((ret_code= ic_proto_send_file(conn,
                                     "config.ini",
@@ -970,14 +970,14 @@ send_list_entry(IC_CONNECTION *conn,
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_node_str,
                                              pc_start->key.node_name.str)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_start_time_str,
-                                          pc_start->start_id)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_pid_str,
-                                          (guint64)pc_start->pid)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                       ic_num_parameters_str,
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_start_time_str,
+                                             pc_start->start_id)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_pid_str,
+                                             (guint64)pc_start->pid)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
                                        (guint64)pc_start->num_parameters)))
     DEBUG_RETURN_INT(ret_code);
   if (list_full_flag)
@@ -2303,35 +2303,35 @@ handle_get_cpu_info(IC_CONNECTION *conn)
     goto error;
   }
 
-  if ((ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_number_of_processors_str,
-                                        (guint64)num_processors)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_number_of_cpu_sockets_str,
-                                        (guint64)num_cpu_sockets)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_number_of_cpu_cores_str,
-                                        (guint64)num_cpu_cores)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_number_of_numa_nodes_str,
-                                        (guint64)num_numa_nodes)))
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_number_of_processors_str,
+                                             (guint64)num_processors)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_number_of_cpu_sockets_str,
+                                             (guint64)num_cpu_sockets)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_number_of_cpu_cores_str,
+                                             (guint64)num_cpu_cores)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_number_of_numa_nodes_str,
+                                             (guint64)num_numa_nodes)))
     goto error;
   for (i= 0; i < num_processors; i++)
   {
-    if ((ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_processor_str,
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_processor_str,
                                         (guint64)cpu_info[i].processor_id)))
       goto error;
-    if ((ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_core_str,
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_core_str,
                                         (guint64)cpu_info[i].core_id)))
       goto error;
-    if ((ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_cpu_node_str,
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_cpu_node_str,
                                         (guint64)cpu_info[i].numa_node_id)))
       goto error;
-    if ((ret_code= ic_send_with_cr_with_num(conn,
-                                        ic_socket_str,
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_socket_str,
                                         (guint64)cpu_info[i].cpu_id)))
       goto error;
   }
@@ -2375,22 +2375,22 @@ handle_get_mem_info(IC_CONNECTION *conn)
       goto error;
     goto error;
   }
-  if ((ret_code= ic_send_with_cr_with_num(conn,
+  if ((ret_code= ic_send_with_cr_with_number(conn,
                                           ic_number_of_mbyte_user_memory_str,
                                           (guint64)total_memory_size)) ||
-      (ret_code= ic_send_with_cr_with_num(conn,
-                                          ic_number_of_numa_nodes_str,
-                                          (guint64)num_numa_nodes)))
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_number_of_numa_nodes_str,
+                                             (guint64)num_numa_nodes)))
     goto error;
   for (i= 0; i < num_numa_nodes; i++)
   {
-    if ((ret_code= ic_send_with_cr_with_num(conn,
-                                            ic_mem_node_str,
-                                            (guint64)mem_info[i].numa_node_id)))
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_mem_node_str,
+                                         (guint64)mem_info[i].numa_node_id)))
       goto error;
-    if ((ret_code= ic_send_with_cr_with_num(conn,
-                                            ic_mb_user_memory_str,
-                                            (guint64)mem_info[i].memory_size)))
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_mb_user_memory_str,
+                                         (guint64)mem_info[i].memory_size)))
       goto error;
   }
   ret_code= ic_send_empty_line(conn);
@@ -2439,9 +2439,9 @@ handle_get_disk_info(IC_CONNECTION *conn)
   else
   {
     /* Report disk space found available in this directory */
-    if ((ret_code= ic_send_with_cr_with_num(conn,
-                                            ic_disk_space_str,
-                                            disk_space)))
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_disk_space_str,
+                                               disk_space)))
       goto error;
   }
   ret_code= ic_send_empty_line(conn);

@@ -43,7 +43,9 @@ ic_send_cluster_id(IC_CONNECTION *conn,
                    gboolean use_iclaustron)
 {
   if (use_iclaustron)
-    return ic_send_with_cr_with_num(conn, cluster_id_str, (guint64)cluster_id);
+    return ic_send_with_cr_with_number(conn,
+                                       cluster_id_str,
+                                       (guint64)cluster_id);
   return 0;
 }
 

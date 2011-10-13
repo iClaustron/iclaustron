@@ -230,7 +230,7 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   guint32 inx, size_to_read, size_read;
-  int res;
+  int ret_code;
   gchar *end_line;
   guint32 buffer_size= conn->read_buf_size;
   gchar *read_buf= conn->read_buf;
@@ -277,11 +277,11 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
       /* No data arrived in time limit, we report this as an error */
       return IC_ERROR_RECEIVE_TIMEOUT;
     }
-    if ((res= conn->conn_op.ic_read_connection((IC_CONNECTION*)conn,
-                                               read_buf + size_curr_buf,
-                                               size_to_read,
-                                               &size_read)))
-      return res;
+    if ((ret_code= conn->conn_op.ic_read_connection((IC_CONNECTION*)conn,
+                                                    read_buf + size_curr_buf,
+                                                    size_to_read,
+                                                    &size_read)))
+      return ret_code;
     size_curr_buf+= size_read;
   } while (1);
   return 0;
@@ -408,13 +408,13 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
 {
   gchar *read_buf;
   guint32 read_size, remaining_len;
-  int error;
+  int ret_code;
   guint32 prefix_str_len;
   DEBUG_ENTRY("ic_rec_string");
   DEBUG_PRINT(COMM_LEVEL, ("Search for: %s string", prefix_str));
 
   prefix_str_len= strlen(prefix_str);
-  if (!(error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (read_size < (prefix_str_len + 2) || 
         read_buf[prefix_str_len] != SPACE_CHAR ||
@@ -433,7 +433,7 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
     read_str[remaining_len]= 0;
     DEBUG_RETURN_INT(0);
   }
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -796,7 +796,7 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   guint32 send_size;
-  int res;
+  int ret_code;
 
   send_size= strlen(send_buf);
   ic_assert((send_size + 1) < conn->write_buf_size);
@@ -805,13 +805,13 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
   if ((conn->write_buf_pos + send_size + 1) > conn->write_buf_size)
   {
     /* Buffer is full, we need to send now */
-    res= ext_conn->conn_op.ic_write_connection(ext_conn,
+    ret_code= ext_conn->conn_op.ic_write_connection(ext_conn,
                                            (const void*)conn->write_buf,
                                            conn->write_buf_pos,
                                            1);
     conn->write_buf_pos= 0;
-    if (res)
-      return res;
+    if (ret_code)
+      return ret_code;
   }
   /* Copy into buffer, send at least empty line instead or when full */
   memcpy(conn->write_buf+conn->write_buf_pos, send_buf, send_size);
@@ -830,9 +830,9 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
   @parameter number             The input number
 */
 int
-ic_send_with_cr_with_num(IC_CONNECTION *conn,
-                         const gchar *in_buf,
-                         guint64 number)
+ic_send_with_cr_with_number(IC_CONNECTION *conn,
+                            const gchar *in_buf,
+                            guint64 number)
 {
   gchar out_buf[128], buf[64];
 
@@ -899,16 +899,117 @@ int
 ic_send_empty_line(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  int error;
+  int ret_code;
 
-  if ((error= ic_send_with_cr(ext_conn, "")))
-    return error;
+  if ((ret_code= ic_send_with_cr(ext_conn, "")))
+    return ret_code;
   ic_assert(conn->write_buf_pos);
   /* We need to flush buffer */
-  error= ext_conn->conn_op.ic_write_connection(ext_conn,
+  ret_code= ext_conn->conn_op.ic_write_connection(ext_conn,
                                            (const void*)conn->write_buf,
                                            conn->write_buf_pos,
                                            1);
   conn->write_buf_pos= 0;
-  return error;
+  return ret_code;
+}
+
+/**
+  Send a protocol line with the message:
+  Ok<CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+
+  @note
+    This message is sent as a positive response to the stop message
+*/
+int
+ic_send_ok(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("ic_send_ok");
+
+  if ((ret_code= ic_send_with_cr(conn, ic_ok_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Send a protocol line with the message:
+  error<CR>
+  <error message><CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+  @parameter error_message     IN:  The error message to send
+
+  @note
+    This message is sent as a negative response to messages to the
+    process controller.
+*/
+int
+ic_send_error_message(IC_CONNECTION *conn, const gchar *error_message)
+{
+  int ret_code;
+  DEBUG_ENTRY("ic_send_error_message");
+
+  if ((ret_code= ic_send_with_cr(conn, ic_error_str)) ||
+      (ret_code= ic_send_with_cr(conn, error_message)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Receive an error message
+  error<CR>
+  <error message><CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+  @parameter buf               IN/OUT: The buffer to receive error message
+
+  @note
+    The buffer size must be of at least size COMMAND_READ_BUF_SIZE
+*/
+int
+ic_rec_error_message(IC_CONNECTION *conn, gchar *buf)
+{
+  int ret_code;
+  guint32 buf_size;
+  DEBUG_ENTRY("ic_rec_error_message");
+
+  if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
+      (ret_code= ic_rec_with_cr(conn, &buf, &buf_size)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    DEBUG_RETURN_INT(ret_code);
+  DEBUG_RETURN_INT(0);
+}
+
+/**
+  Receive an ok message or an error message
+  ok<CR><CR>
+  or
+  error<CR>
+  <error message><CR><CR>
+
+  @parameter conn              IN:  The connection from the client
+  @parameter buf               IN/OUT: The buffer to receive error message
+  @parameter ok_found          OUT: Indicator if ok was found
+
+  @note
+    The buffer size must be of at least size COMMAND_READ_BUF_SIZE
+*/
+int
+ic_rec_ok_or_error(IC_CONNECTION *conn, gchar *buf, gboolean *ok_found)
+{
+  int ret_code;
+  DEBUG_ENTRY("ic_rec_ok_or_error");
+
+  buf[0]= 0;
+  ok_found= FALSE;
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, ok_found)))
+    goto end;
+  if (!ok_found)
+    ret_code= ic_rec_error_message(conn, buf);
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
