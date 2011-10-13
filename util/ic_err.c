@@ -263,6 +263,8 @@ ic_init_error_messages()
     "File already exists";
   ic_error_str[IC_ERROR_STARTUP - IC_FIRST_ERROR]=
     "Startup error";
+  ic_error_str[IC_ERROR_WRONG_IP_FAMILY - IC_FIRST_ERROR]=
+    "Wrong IP family";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

@@ -573,7 +573,7 @@ ic_rec_number_impl(IC_CONNECTION *conn,
   int ret_code;
   guint64 local_id;
   DEBUG_ENTRY("ic_rec_number_impl");
-  DEBUG_PRINT(COMM_LEVEL, ("Search for :%s number", str));
+  DEBUG_PRINT(COMM_LEVEL, ("Search for: %s number", str));
 
   if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {

@@ -333,7 +333,7 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
   return;
 }
 
-static gboolean
+static int
 ic_sock_ntop(const struct sockaddr *sa,
              gchar *ip_addr,
              int ip_addr_len,
@@ -343,34 +343,40 @@ ic_sock_ntop(const struct sockaddr *sa,
   struct sockaddr_in6 *ipv6_addr= (struct sockaddr_in6*)sa;
   guint32 port;
   IC_SOCKLEN_TYPE addr_len;
+  int ret_code;
   gchar port_str[8];
 
-  if (include_port)
+  if (sa->sa_family == AF_INET)
   {
-    if (sa->sa_family == AF_INET)
-    {
-      port= ntohs(ipv4_addr->sin_port);
-      addr_len= sizeof(*ipv4_addr);
-    }
-    else if (sa->sa_family == AF_INET6)
-    {
-      port= ntohs(ipv6_addr->sin6_port);
-      addr_len= sizeof(*ipv6_addr);
-    }
-    else
-      return 0;
+    port= ntohs(ipv4_addr->sin_port);
+    addr_len= sizeof(*ipv4_addr);
   }
-  if (getnameinfo(sa, addr_len,
-                  ip_addr, ip_addr_len-8,
-                  NULL, 0,
-                  NI_NUMERICHOST))
-    return 0;
+  else if (sa->sa_family == AF_INET6)
+  {
+    port= ntohs(ipv6_addr->sin6_port);
+    addr_len= sizeof(*ipv6_addr);
+  }
+  else
+    return IC_ERROR_WRONG_IP_FAMILY;
+
+  if ((ret_code= getnameinfo(sa,
+                             addr_len,
+                             ip_addr,
+                             ip_addr_len-8,
+                             NULL,
+                             0,
+                             NI_NUMERICHOST)))
+  {
+    if (ret_code == EAI_SYSTEM)
+      ret_code= ic_get_last_socket_error();
+    return ret_code;
+  }
   if (include_port)
   {
     snprintf(port_str, sizeof(port_str), ":%d", port);
     strncat(ip_addr, port_str, ip_addr_len);
   }
-  return 1;
+  return 0;
 }
 
 static int
@@ -435,13 +441,24 @@ perform_ssl_connect(IC_INT_CONNECTION *conn)
 #endif
 }
 
+static void
+handle_socket_error(IC_INT_CONNECTION *conn, int error_code)
+{
+  conn->error_code= error_code;
+  conn->err_str= ic_get_strerror(conn->error_code,
+                                 conn->err_buf,
+                                 (guint32)128);
+  DEBUG_PRINT(COMM_LEVEL, ("accept error: %d %s",
+                            conn->error_code, conn->err_str));
+}
+
 /* Implements ic_accept_connection */
 static int
 accept_socket_connection(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   gboolean not_accepted= FALSE;
-  int ret_sockfd, ok, error;
+  int ret_sockfd, ret_code;
   IC_SOCKLEN_TYPE addr_len;
   IC_IP_ADDRESS client_address_storage;
   struct sockaddr_storage *client_address= (struct sockaddr_storage*)&client_address_storage;
@@ -499,15 +516,15 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
                          &addr_len);
       if (ret_sockfd == IC_INVALID_SOCKET)
       {
-        error= ic_get_last_socket_error();
+        ret_code= ic_get_last_socket_error();
 #ifndef WINDOWS
-        if (error == EAGAIN ||
-            error == ECONNABORTED ||
-            error == EPROTO ||
-            error == EWOULDBLOCK ||
-            error == EINTR)
+        if (ret_code == EAGAIN ||
+            ret_code == ECONNABORTED ||
+            ret_code == EPROTO ||
+            ret_code == EWOULDBLOCK ||
+            ret_code == EINTR)
 #else
-        if (error == WSAEWOULDBLOCK)
+        if (ret_code == WSAEWOULDBLOCK)
 #endif
         {
           /*
@@ -536,12 +553,7 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
   }
   if (ret_sockfd == IC_INVALID_SOCKET)
   {
-    conn->error_code= ic_get_last_socket_error();
-    conn->err_str= ic_get_strerror(conn->error_code,
-                                   conn->err_buf,
-                                   (guint32)128);
-    DEBUG_PRINT(COMM_LEVEL, ("accept error: %d %s",
-                              conn->error_code, conn->err_str));
+    handle_socket_error(conn, ic_get_last_socket_error());
     return conn->error_code;
   }
   set_socket_options(conn, ret_sockfd);
@@ -581,11 +593,11 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
       not_accepted= TRUE;
   }
   /* Record a human-readable address for the client part of the connection */
-  ok= ic_sock_ntop(client_addr_ptr,
-                   conn->conn_stat.client_ip_addr,
-                   sizeof(conn->conn_stat.client_ip_addr_str),
-                   FALSE);
-  if (not_accepted || !ok)
+  ret_code= ic_sock_ntop(client_addr_ptr,
+                         conn->conn_stat.client_ip_addr,
+                         sizeof(conn->conn_stat.client_ip_addr_str),
+                         FALSE);
+  if (not_accepted || ret_code)
   {
     /*
       The caller only accepted connect's from certain IP address and
@@ -593,15 +605,17 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
       IP address and port.
       We'll disconnect by closing the socket and report an error.
     */
-    if (ok)
+    if (!ret_code)
     {
       DEBUG_PRINT(COMM_LEVEL,
                   ("Client connect from a disallowed address, ip=%s",
                    conn->conn_stat.client_ip_addr));
+      conn->error_code= IC_ACCEPT_ERROR;
     }
-    conn->error_code= IC_ACCEPT_ERROR;
+    else
+      handle_socket_error(conn, ret_code);
     ic_close_socket(ret_sockfd);
-    return IC_ACCEPT_ERROR;
+    return conn->error_code;
   }
   conn->rw_sockfd= ret_sockfd;
   if ((conn->error_code= perform_ssl_connect(conn)))
@@ -626,7 +640,7 @@ check_connection(IC_CONNECTION *ext_conn,
   struct addrinfo hints;
   struct addrinfo *client_addrinfo= NULL;
   struct addrinfo *loop_addrinfo;
-  int ok, ret_code;
+  int ret_code;
 
   *equal= FALSE;
   /*
@@ -649,11 +663,11 @@ check_connection(IC_CONNECTION *ext_conn,
   for (; loop_addrinfo;
        loop_addrinfo= loop_addrinfo->ai_next)
   {
-    ok= ic_sock_ntop(loop_addrinfo->ai_addr,
-                     checked_ip_str,
-                     sizeof(checked_ip_str),
-                     FALSE);
-    if (ok && (strcmp(checked_ip_str, client_ip_str) == 0))
+    ret_code= ic_sock_ntop(loop_addrinfo->ai_addr,
+                           checked_ip_str,
+                           sizeof(checked_ip_str),
+                           FALSE);
+    if (!ret_code && (strcmp(checked_ip_str, client_ip_str) == 0))
     {
       *equal= TRUE;
       goto end;
@@ -1688,6 +1702,15 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
   }
 
   init_connect_stat(fork_conn);
+
+  /* Copy human-readable server and client addresses */
+  memcpy(&fork_conn->conn_stat.server_ip_addr_str[0],
+         &orig_conn->conn_stat.server_ip_addr_str[0],
+         sizeof(orig_conn->conn_stat.server_ip_addr_str));
+  memcpy(&fork_conn->conn_stat.client_ip_addr_str[0],
+         &orig_conn->conn_stat.client_ip_addr_str[0],
+         sizeof(orig_conn->conn_stat.client_ip_addr_str));
+
   fork_conn->orig_conn= orig_conn;
   fork_conn->is_nonblocking= orig_conn->is_nonblocking;
   fork_conn->forked_connections= 0;
