@@ -46,4 +46,6 @@ int ic_send_start_info(IC_CONNECTION *conn,
                        const gchar *grid_name,
                        const gchar *cluster_name,
                        const gchar *node_name);
+/* Get connect string from a cluster configuration */
+gchar* ic_get_connectstring(IC_CLUSTER_CONFIG *grid_common);
 #endif

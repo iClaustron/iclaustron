@@ -33,6 +33,48 @@
 
   This is a support module for the Run Cluster Server module.
 */
+
+gchar*
+ic_get_connectstring(IC_CLUSTER_CONFIG *grid_common)
+{
+  guint32 node_id;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
+  gboolean first= TRUE;
+  IC_STRING conn_str;
+  guint32 dummy;
+  int ret_code;
+  gchar num_buf[IC_MAX_INT_STRING];
+  DEBUG_ENTRY("ic_get_connectstring");
+
+  IC_INIT_STRING(&conn_str, NULL, 0, FALSE);
+  for (node_id= 1; node_id <= grid_common->max_node_id; node_id++)
+  {
+    if (grid_common->node_types[node_id] == IC_CLUSTER_SERVER_NODE)
+    {
+      cs_conf= (IC_CLUSTER_SERVER_CONFIG*)grid_common->node_config[node_id];
+      /* Add hostname:port to connectstring, also ; before if not first */
+      if (!first &&
+          (ret_code= ic_add_dup_string(&conn_str, ic_semi_colon_str)))
+        goto error;
+      first= FALSE;
+      /* Add hostname to connect string */
+      /* Add : to connect string */
+      /* Add port number string to connect string */
+      ic_guint64_str((guint64)cs_conf->cluster_server_port_number,
+                     num_buf,
+                     &dummy);
+      if ((ret_code= ic_add_dup_string(&conn_str, cs_conf->hostname)) ||
+          (ret_code= ic_add_dup_string(&conn_str, ic_colon_str)) ||
+          (ret_code= ic_add_dup_string(&conn_str, num_buf)))
+        goto error;
+    }
+  }
+  DEBUG_RETURN_PTR(conn_str.str);
+
+error:
+  DEBUG_RETURN_PTR(NULL);
+}
+
 static void
 init_cluster_params(IC_CLUSTER_CONFIG_TEMP *temp)
 {

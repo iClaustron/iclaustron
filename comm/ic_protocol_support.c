@@ -1005,7 +1005,7 @@ ic_rec_ok_or_error(IC_CONNECTION *conn, gchar *buf, gboolean *ok_found)
   DEBUG_ENTRY("ic_rec_ok_or_error");
 
   buf[0]= 0;
-  ok_found= FALSE;
+  *ok_found= FALSE;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, ok_found)))
     goto end;
   if (!ok_found)

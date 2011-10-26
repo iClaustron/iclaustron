@@ -1389,7 +1389,7 @@ handle_start(IC_CONNECTION *conn)
   gchar **arg_vector;
   int ret_code;
   guint32 i;
-  IC_PID_TYPE pid;
+  IC_PID_TYPE pid= (IC_PID_TYPE)0;
   IC_STRING working_dir;
   IC_PC_START *pc_start, *pc_start_check;
   IC_PC_START *pc_start_hash= NULL;
@@ -1468,7 +1468,7 @@ handle_start(IC_CONNECTION *conn)
   DEBUG_RETURN_INT(ret_code);
 
 late_error:
-  pid_str= ic_guint64_str(pc_start->pid, pid_buf, &dummy);
+  pid_str= ic_guint64_str(pid, pid_buf, &dummy);
   ic_printf("Failed to start program %s with pid %s",
             pc_start->program_name.str,
             pid_str);

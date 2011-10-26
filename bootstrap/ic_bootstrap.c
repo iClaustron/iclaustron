@@ -382,20 +382,82 @@ error:
 }
 
 /**
+  A simple n^2-algorithm to check whether we already copied the file
+  to this node already. We assume that if there are several nodes using
+  the same process controller (same hostname + port), then we don't
+  need to copy config.ini several times to this process controller.
+
+  The time to send a file to a node is much higher than the time to scan
+  through a set of data structures given that it involves a connect
+  and disconnect followed by some interaction. So it pays off to check
+  for duplicated effort here.
+
+  @parameter cluster_id          IN: The current cluster_id sending to,
+                                 -1 means common grid nodes (CS, CM)
+  @parameter node_id             IN: The node_id to send to now
+  @parameter ds_conf             IN: The configuration of the node to send
+                                 to now
+
+  @retval TRUE if found that process controller already received file,
+  FALSE otherwise.
+*/
+static gboolean
+check_for_same_pcntrl_hostname(int cluster_id,
+                               guint32 node_id,
+                               IC_DATA_SERVER_CONFIG *ds_conf)
+{
+  int i;
+  guint32 j;
+  guint32 max_node_id;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_DATA_SERVER_CONFIG *check_ds_conf;
+  DEBUG_ENTRY("check_for_same_pcntrl_hostname");
+
+  for (i= (int)-1; i <= cluster_id; i++)
+  {
+    clu_conf= i < 0 ? glob_grid_cluster : glob_clusters[i];
+    if (!clu_conf)
+      continue;
+    max_node_id= (i == cluster_id) ? clu_conf->max_node_id : (node_id - 1);
+    for (j= 1; j <= max_node_id; j++)
+    {
+      check_ds_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[j];
+      if (!check_ds_conf)
+        continue;
+      if ((strcmp(check_ds_conf->pcntrl_hostname,
+                  ds_conf->pcntrl_hostname) == 0) &&
+          check_ds_conf->pcntrl_port == ds_conf->pcntrl_port)
+        DEBUG_RETURN_INT(TRUE);
+    }
+  }
+  DEBUG_RETURN_INT(FALSE);
+}
+
+/**
   Copy config.ini to all nodes in a cluster where it is needed
+
+  @parameter cluster_id        IN: Cluster id, -1 if common grid nodes (CS, CM)
 */
 static int
-cluster_copy_config_ini(IC_CLUSTER_CONFIG *clu_conf)
+cluster_copy_config_ini(int cluster_id)
 {
   guint32 i;
   int ret_code;
+  IC_DATA_SERVER_CONFIG *ds_conf;
+  IC_CLUSTER_CONFIG *clu_conf= cluster_id < 0 ? glob_grid_cluster :
+                                                glob_clusters[cluster_id];
   DEBUG_ENTRY("cluster_copy_config_ini");
 
+  if (!clu_conf)
+    DEBUG_RETURN_INT(0);
   for (i= 0; i <= clu_conf->max_node_id; i++)
   {
-    if (clu_conf->node_config[i] &&
-        (ret_code= node_copy_config_ini(
-          (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[i])))
+    if (!clu_conf->node_config[i])
+      continue;
+    ds_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[i];
+    if (check_for_same_pcntrl_hostname(cluster_id, i, ds_conf))
+      continue;
+    if ((ret_code= node_copy_config_ini(ds_conf)))
       break;
   }
   DEBUG_RETURN_INT(ret_code);
@@ -407,15 +469,15 @@ cluster_copy_config_ini(IC_CLUSTER_CONFIG *clu_conf)
 static int
 copy_config_ini(void)
 {
-  guint32 i;
+  int i;
   int ret_code;
   DEBUG_ENTRY("copy_config_ini");
 
-  if ((ret_code= cluster_copy_config_ini(glob_grid_cluster)))
+  if ((ret_code= cluster_copy_config_ini((int)-1)))
     goto error;
-  for (i= 0; i < glob_num_clusters; i++)
+  for (i= 0; i < (int)glob_num_clusters; i++)
   {
-    if ((ret_code= cluster_copy_config_ini(glob_clusters[i])))
+    if ((ret_code= cluster_copy_config_ini(i)))
       goto error;
   }
 error:
@@ -537,6 +599,7 @@ start_cluster_manager(IC_CONNECTION *conn,
   guint32 pid;
   gboolean found;
   guint64 num_params;
+  gchar *connect_string= NULL;
   DEBUG_ENTRY("start_cluster_manager");
 
   node_str= ic_guint64_str((guint64)mgr_data->node_id, buf, &dummy);
@@ -585,6 +648,12 @@ start_cluster_manager(IC_CONNECTION *conn,
       (ret_code= ic_send_with_cr_with_number(conn,
                                              ic_parameter_str,
                                    mgr_conf->cluster_manager_port_number)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_cs_connectstring_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             connect_string)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
@@ -749,12 +818,18 @@ ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
   IC_CONNECTION *conn= NULL;
   guint32 i;
   int ret_code;
+  gchar *connect_string= NULL;
   IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
   DEBUG_ENTRY("ic_start_cluster_managers_cmd");
 
   if (parse_data->next_mgr_index == 0)
   {
     ic_printf("No Cluster Managers prepared");
+    goto error;
+  }
+  if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
+  {
+    ic_print_error(IC_ERROR_MEM_ALLOC);
     goto error;
   }
   for (i= 0; i < parse_data->next_mgr_index; i++)
@@ -765,10 +840,10 @@ ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
     mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)
       glob_grid_cluster->node_config[mgr_data->node_id];
     if ((ret_code= start_client_connection(&conn,
-      mgr_data->pcntrl_hostname,
-      mgr_data->pcntrl_port)))
+                                           mgr_data->pcntrl_hostname,
+                                           mgr_data->pcntrl_port)))
     {
-      ic_printf("Failed to open connection to Cluster Manager id %u",
+      ic_printf("Failed to open connection to start Cluster Manager id %u",
         mgr_data->node_id);
       ic_printf("Most likely not started ic_pcntrld on host %s at port %u",
                 mgr_data->pcntrl_hostname,
@@ -788,6 +863,8 @@ ic_start_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
 end:
   if (conn)
     conn->conn_op.ic_free_connection(conn);
+  if (connect_string)
+    ic_free(connect_string);
   DEBUG_RETURN_EMPTY;
 error:
   parse_data->exit_flag= TRUE;

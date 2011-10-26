@@ -22,6 +22,8 @@
 #include <ctype.h>
 
 gchar *ic_empty_string= "";
+gchar *ic_semi_colon_str= ";";
+gchar *ic_colon_str= ":";
 gchar *ic_err_str= "Error:";
 
 IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
@@ -176,7 +178,7 @@ set_default_dir(const gchar *default_dir,
   {
     if (ic_add_dup_string(dir, "/var/lib/"))
 #else
-  if (strcmp(user_name, "root") == 0)
+  if f(strcmp(user_name, "root") == 0)
   {
     if (ic_add_dup_string(dir, "C:\\Program Files\\lib\\"))
 #endif

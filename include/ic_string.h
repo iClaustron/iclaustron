@@ -187,6 +187,8 @@ int ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len);
   A number of predefined strings used by iClaustron
 */
 extern gchar *ic_empty_string;
+extern gchar *ic_semi_colon_str;
+extern gchar *ic_colon_str;
 extern gchar *ic_err_str;
 
 /*
