@@ -626,6 +626,9 @@ start_cluster_manager(IC_CONNECTION *conn,
     goto end;
 
   num_params= get_debug_params() + (guint64)6;
+  ret_code= IC_ERROR_MEM_ALLOC;
+  if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
+    goto end;
   if ((ret_code= ic_send_with_cr_with_number(conn,
                                              ic_num_parameters_str,
                                              num_params)) ||
@@ -676,6 +679,8 @@ start_cluster_manager(IC_CONNECTION *conn,
             mgr_conf->client_conf.hostname,
             mgr_conf->cluster_manager_port_number);
 end:
+  if (connect_string)
+    ic_free(connect_string);
   DEBUG_RETURN_INT(ret_code);
 }
 
