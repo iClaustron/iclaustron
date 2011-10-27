@@ -45,7 +45,6 @@ static IC_PARSE_SYMBOLS parse_symbols[]=
   { "SERVER",       SERVER_SYM },
   { "SERVERS",      SERVERS_SYM },
   { "START",        START_SYM },
-  { "VERIFY",       VERIFY_SYM },
   { NULL,           0}
 };
 

@@ -138,13 +138,6 @@ generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
     goto late_end;
   len= g_snprintf(parse_buf,
                   COMMAND_READ_BUF_SIZE,
-                  "VERIFY CLUSTER SERVERS;\n");
-  if ((ret_code= ic_write_file(cmd_file_handle,
-                               parse_buf,
-                               len)))
-    goto late_end;
-  len= g_snprintf(parse_buf,
-                  COMMAND_READ_BUF_SIZE,
                   "START CLUSTER MANAGERS;\n");
   if ((ret_code= ic_write_file(cmd_file_handle,
                                parse_buf,
@@ -325,6 +318,11 @@ send_files_to_node(IC_CONNECTION *conn,
                                               (guint64)num_clusters)))
     goto error;
 
+  /*
+    We'll send the config.ini an extra time here simply because the protocol
+    for copy cluster server files means sending all files, including the
+    config.ini file.
+  */
   if ((ret_code= ic_proto_send_file(conn,
                                     "config.ini",
                                     current_dir.str)) ||
@@ -418,7 +416,7 @@ check_for_same_pcntrl_hostname(int cluster_id,
     clu_conf= i < 0 ? glob_grid_cluster : glob_clusters[i];
     if (!clu_conf)
       continue;
-    max_node_id= (i == cluster_id) ? clu_conf->max_node_id : (node_id - 1);
+    max_node_id= (i != cluster_id) ? clu_conf->max_node_id : (node_id - 1);
     for (j= 1; j <= max_node_id; j++)
     {
       check_ds_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[j];
@@ -427,7 +425,10 @@ check_for_same_pcntrl_hostname(int cluster_id,
       if ((strcmp(check_ds_conf->pcntrl_hostname,
                   ds_conf->pcntrl_hostname) == 0) &&
           check_ds_conf->pcntrl_port == ds_conf->pcntrl_port)
+      {
+        DEBUG_PRINT(CONFIG_LEVEL, ("found TRUE, i = %d, j = %u", i,j));
         DEBUG_RETURN_INT(TRUE);
+      }
     }
   }
   DEBUG_RETURN_INT(FALSE);
@@ -625,7 +626,7 @@ start_cluster_manager(IC_CONNECTION *conn,
                                              ic_false_str)))
     goto end;
 
-  num_params= get_debug_params() + (guint64)6;
+  num_params= get_debug_params() + (guint64)8;
   ret_code= IC_ERROR_MEM_ALLOC;
   if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
     goto end;
@@ -685,7 +686,9 @@ end:
 }
 
 static int
-start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
+start_cluster_server(IC_CONNECTION *conn,
+                     IC_CLUSTER_SERVER_DATA *cs_data,
+                     IC_CLUSTER_SERVER_CONFIG *cs_conf)
 {
   int ret_code;
   gchar buf[IC_NUMBER_SIZE + 4];
@@ -761,9 +764,12 @@ start_cluster_server(IC_CONNECTION *conn, IC_CLUSTER_SERVER_DATA *cs_data)
               cs_data->node_id,
               pid);
   else
-    ic_printf("Successfully started Cluster Server id %u with pid %u",
+    ic_printf("Successfully started Cluster Server id %u with pid %u"
+              ", on host = %s, listening to port number = %u",
               cs_data->node_id,
-              pid);
+              pid,
+              cs_conf->hostname,
+              cs_conf->cluster_server_port_number);
 end:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -772,6 +778,7 @@ static void
 ic_start_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
 {
   IC_CLUSTER_SERVER_DATA *cs_data;
+  IC_CLUSTER_SERVER_CONFIG *cs_conf;
   guint32 i;
   int ret_code;
   IC_CONNECTION *conn= NULL;
@@ -798,7 +805,9 @@ ic_start_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
       ic_print_error(ret_code);
       goto error;
     }
-    if ((ret_code= start_cluster_server(conn, cs_data)))
+    cs_conf= (IC_CLUSTER_SERVER_CONFIG*)
+      glob_grid_cluster->node_config[cs_data->node_id];
+    if ((ret_code= start_cluster_server(conn, cs_data, cs_conf)))
     {
       ic_printf("Failed to start Cluster Server id %u", cs_data->node_id);
       ic_print_error(ret_code);
@@ -877,23 +886,6 @@ error:
 }
 
 static void
-ic_verify_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
-{
-  DEBUG_ENTRY("ic_verify_cluster_servers_cmd");
-  if (parse_data->next_cs_index == 0)
-  {
-    ic_printf("No Cluster Servers prepared");
-    goto error;
-  }
-  ic_printf("Found verify cluster servers command");
-end:
-  DEBUG_RETURN_EMPTY;
-error:
-  parse_data->exit_flag= TRUE;
-  goto end;
-}
-
-static void
 boot_execute(IC_PARSE_DATA *parse_data)
 {
   DEBUG_ENTRY("boot_execute");
@@ -913,9 +905,6 @@ boot_execute(IC_PARSE_DATA *parse_data)
       break;
     case IC_START_CLUSTER_MANAGERS_CMD:
       ic_start_cluster_managers_cmd(parse_data);
-      break;
-    case IC_VERIFY_CLUSTER_SERVERS_CMD:
-      ic_verify_cluster_servers_cmd(parse_data);
       break;
     case IC_EXIT_CMD:
       parse_data->exit_flag= TRUE;

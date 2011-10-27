@@ -53,7 +53,6 @@ int ic_boot_lex(void *parse_data, void *scanner);
 %token SERVER_SYM
 %token SERVERS_SYM
 %token START_SYM
-%token VERIFY_SYM
 
 %token END_SYM
 %token IDENTIFIER_SYM
@@ -76,7 +75,6 @@ any_command:
     prepare_command
     | send_command
     | start_cluster_servers_command
-    | verify_command
     | start_cluster_managers_command
     | quit_command
     | exit_command
@@ -148,12 +146,6 @@ start_cluster_servers_command:
     START_SYM CLUSTER_SYM SERVERS_SYM
     {
       PARSE_DATA->command= IC_START_CLUSTER_SERVERS_CMD;
-    }
-
-verify_command:
-    VERIFY_SYM CLUSTER_SYM SERVERS_SYM
-    {
-      PARSE_DATA->command= IC_VERIFY_CLUSTER_SERVERS_CMD;
     }
 
 start_cluster_managers_command:
