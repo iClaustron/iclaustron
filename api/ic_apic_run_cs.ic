@@ -772,10 +772,12 @@ check_proper_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
         info_cs->wait_connect_server_thread= FALSE;
         info_cs->is_client_side= FALSE;
         ic_cond_broadcast(rc_state->connect_cond);
+        ic_mutex_unlock(rc_state->protect_state);
         DEBUG_RETURN_INT(0);
       }
     }
   }
+  ic_mutex_unlock(rc_state->protect_state);
   g_snprintf(buf,
              sizeof(buf),
              "Not waiting for Cluster Server connect from %s with node id %u",
@@ -863,6 +865,8 @@ connect_server_thread(gpointer data)
         No one is waiting for a connection so no need to start accepting
         connections yet.
       */
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("No one is waiting for connections, wait_server_connect_cond wait"));
       ic_cond_wait(rc_state->wait_server_connect_cond,
                    rc_state->protect_state);
       ic_mutex_unlock(rc_state->protect_state);
@@ -870,6 +874,8 @@ connect_server_thread(gpointer data)
     }
     ic_mutex_unlock(rc_state->protect_state);
 
+    DEBUG_PRINT(CONFIG_LEVEL,
+      ("Accept connections, we're still waiting for more connects"));
     if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       ic_print_error(ret_code);
@@ -914,6 +920,9 @@ connect_server_thread(gpointer data)
          cluster server node that have connected as part of the startup
          protocol.
       */
+      DEBUG_PRINT(CONFIG_LEVEL,
+        ("Successfully received a connect, wake up startup thread"
+         " for the node"));
       info_cs= get_cluster_info(run_obj, cs_index);
       ic_mutex_lock(rc_state->protect_state);
       info_cs->conn= fork_conn;
@@ -2120,6 +2129,9 @@ start_cs_func(gpointer data)
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
     goto early_end;
 
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("This thread handles startup connection to node id = %u",
+     this_info_cs->node_id));
   if (get_cs_connection(run_obj,
                         tp_state,
                         thread_state,
@@ -2307,6 +2319,8 @@ get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       */
       if (!this_info_cs->conn)
       {
+        DEBUG_PRINT(CONFIG_LEVEL,
+          ("Wait for connect_server_thread to signal us"));
         this_info_cs->wait_connect_server_thread= TRUE;
         ic_cond_signal(rc_state->wait_server_connect_cond);
         ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,

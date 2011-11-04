@@ -950,8 +950,8 @@ set_up_cluster_server_connection(IC_CONNECTION **conn,
   DEBUG_ENTRY("set_up_cluster_server_connection");
 
   if (!(loc_conn= ic_create_socket_object(is_client, FALSE, FALSE,
-                                       CONFIG_READ_BUF_SIZE,
-                                       NULL, NULL)))
+                                          CONFIG_READ_BUF_SIZE,
+                                          NULL, NULL)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   if (is_client)
     loc_conn->conn_op.ic_prepare_client_connection(loc_conn,

@@ -812,6 +812,18 @@ check_user_timeout(IC_INT_CONNECTION *conn, int *timer)
   return 0;
 }
 
+/**
+  Method to increment delay logarithmically up to 10 seconds
+*/
+static int
+logarithmic_delay(int *delay)
+{
+  int ret_delay = *delay;
+  *delay= (*delay) * 2;
+  *delay= IC_MAX(*delay, 10);
+  return ret_delay;
+}
+
 static int
 int_set_up_socket_connection(IC_INT_CONNECTION *conn)
 {
@@ -821,6 +833,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
   fd_set read_set, write_set;
   struct timeval time_out;
   int timer= 0;
+  int delay= 1;
   gboolean first= TRUE;
 
   if ((ret_code= translate_hostnames(conn)))
@@ -839,6 +852,7 @@ int_set_up_socket_connection(IC_INT_CONNECTION *conn)
 renew_connect:
   if (!first)
   {
+
     /*
       We had a connection failure, we will renew the connect message
       if the user is still willing to wait for a successful connect.
@@ -874,8 +888,10 @@ renew_connect:
         Connect the client to the server, will block until connected or
         timeout occurs.
       */
-      if (connect(sockfd, (struct sockaddr*)conn->server_addrinfo->ai_addr,
-                  conn->server_addrinfo->ai_addrlen) == IC_SOCKET_ERROR)
+      if ((connect(sockfd,
+                  (struct sockaddr*)conn->server_addrinfo->ai_addr,
+                  conn->server_addrinfo->ai_addrlen)) ==
+                  IC_SOCKET_ERROR)
       {
         ret_code= ic_get_last_socket_error();
 #ifndef WINDOWS
@@ -893,7 +909,8 @@ renew_connect:
             FD_SET(sockfd, &read_set);
             write_set= read_set;
             ret_code= select(sockfd + 1, &read_set, &write_set,
-                                   NULL, &time_out);
+                   
+                NULL, &time_out);
             if (ret_code == 0)
             {
               /*
@@ -907,7 +924,17 @@ renew_connect:
               }
             }
             else
+            {
+              if (ret_code < 0)
+              {
+                DEBUG_PRINT(COMM_LEVEL,
+                            ("select after connect, error = %d",
+                            ic_get_last_socket_error()));
+                ic_sleep(logarithmic_delay(&delay));
+                goto renew_connect;
+              }
               break;
+            }
           } while (1);
           if ((FD_ISSET(sockfd, &read_set)) || 
               (FD_ISSET(sockfd, &write_set)))
@@ -919,8 +946,22 @@ renew_connect:
                            (IC_VOID_PTR_TYPE)&ret_code,
                            &len) < 0 ||
                 ret_code != 0)
-               goto renew_connect;
-             break;
+            {
+              if (ret_code != 0)
+              {
+                DEBUG_PRINT(COMM_LEVEL,
+                            ("getsockopt after select/connect, error = %d",
+                            ret_code));
+              }
+              else
+              {
+                DEBUG_PRINT(COMM_LEVEL, ("getsockopt failed, error = %d",
+                                         ic_get_last_socket_error()));
+              }
+              ic_sleep(logarithmic_delay(&delay));
+              goto renew_connect;
+            }
+            break;
           }
           else
           {
