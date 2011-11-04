@@ -1010,6 +1010,8 @@ ic_rec_ok_or_error(IC_CONNECTION *conn, gchar *buf, gboolean *ok_found)
     goto end;
   if (!ok_found)
     ret_code= ic_rec_error_message(conn, buf);
+  else
+    ret_code= ic_rec_empty_line(conn);
 end:
   DEBUG_RETURN_INT(ret_code);
 }
