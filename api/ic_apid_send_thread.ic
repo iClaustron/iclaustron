@@ -1225,9 +1225,9 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
           */
           if (clu_conf->node_config[node_id])
           {
-            ic_assert(clu_conf->node_types[my_node_id] == IC_CLIENT_TYPE);
-            ic_assert(clu_conf->node_types[node_id] == IC_CLIENT_TYPE ||
-                      clu_conf->node_types[node_id] == IC_CLUSTER_SERVER_TYPE);
+            ic_assert(clu_conf->node_types[my_node_id] == IC_CLIENT_NODE);
+            ic_assert(clu_conf->node_types[node_id] == IC_CLIENT_NODE ||
+                      clu_conf->node_types[node_id] == IC_CLUSTER_SERVER_NODE);
           }
         }
         else

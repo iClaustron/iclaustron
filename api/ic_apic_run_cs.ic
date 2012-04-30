@@ -1135,12 +1135,11 @@ error:
 static int
 reread_disk_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
-  IC_INT_API_CONFIG_SERVER *old_apic, *new_apic;
+  IC_INT_API_CONFIG_SERVER *new_apic;
   IC_MEMORY_CONTAINER *old_mc_ptr, *new_mc_ptr;
   int ret_code;
   DEBUG_ENTRY("reread_disk_config");
 
-  old_apic= run_obj->config.apic;
   old_mc_ptr= run_obj->conf_mc_ptr;
 
   if (!(new_mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE,
@@ -1782,7 +1781,7 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   guint64 pid, version_num;
   int ret_code;
   guint32 found_index;
-  IC_INFO_CLUSTER_SERVER *info_cs, *my_info_cs;
+  IC_INFO_CLUSTER_SERVER *info_cs;
   DEBUG_ENTRY("rec_start_cluster_server_req");
 
   if ((ret_code= ic_rec_simple_str(conn, ic_start_cluster_server_str)) ||
@@ -1809,7 +1808,6 @@ rec_start_cluster_server_req(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   DEBUG_PRINT(CONFIG_LEVEL, ("Found index = %d", found_index));
   *cs_index= found_index;
   info_cs= get_cluster_info(run_obj, found_index);
-  my_info_cs= get_my_cluster_info(run_obj);
   ic_mutex_lock(run_obj->state.protect_state);
   info_cs->pid= (IC_PID_TYPE)pid;
   info_cs->state= (IC_CONF_STATE_TYPE)status;
@@ -2076,8 +2074,7 @@ static int get_cs_connection(IC_INT_RUN_CLUSTER_SERVER *run_obj,
 static int wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                        IC_THREADPOOL_STATE *tp_state,
                                        IC_THREAD_STATE *thread_state,
-                                       guint32 cs_index,
-                                       IC_CONNECTION *conn);
+                                       guint32 cs_index);
 static int wait_for_enough_started_nodes(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                          IC_THREADPOOL_STATE *tp_state,
                                          IC_THREAD_STATE *thread_state,
@@ -2111,7 +2108,6 @@ start_cs_func(gpointer data)
   guint32 cs_index;
   IC_RUN_CLUSTER_STATE *rc_state;
   IC_INFO_CLUSTER_SERVER *this_info_cs;
-  IC_INFO_CLUSTER_SERVER *my_info_cs;
   IC_CONNECTION *conn= NULL;
   int ret_code;
   DEBUG_THREAD_ENTRY("start_cs_func");
@@ -2123,7 +2119,6 @@ start_cs_func(gpointer data)
   cs_index= thread_data->cs_index;
   rc_state= &run_obj->state;
   this_info_cs= get_cluster_info(run_obj, cs_index);
-  my_info_cs= get_my_cluster_info(run_obj);
 
   tp_state->ts_ops.ic_thread_started(thread_state);
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
@@ -2142,8 +2137,7 @@ start_cs_func(gpointer data)
   if (wait_for_enough_connections(run_obj,
                                   tp_state,
                                   thread_state,
-                                  cs_index,
-                                  conn))
+                                  cs_index))
     goto end;
                                   
   /*
@@ -2349,8 +2343,7 @@ static int
 wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                             IC_THREADPOOL_STATE *tp_state,
                             IC_THREAD_STATE *thread_state,
-                            guint32 cs_index,
-                            IC_CONNECTION *conn)
+                            guint32 cs_index)
 {
   IC_INFO_CLUSTER_SERVER *this_info_cs, *my_info_cs;
   IC_RUN_CLUSTER_STATE *rc_state;
@@ -2365,9 +2358,8 @@ wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   rc_state= &run_obj->state;
 
   /* Inform the other cluster server of our intentions */
-  ic_mutex_lock(rc_state->protect_state);
-  conn= this_info_cs->conn;
   have_waited= FALSE;
+  ic_mutex_lock(rc_state->protect_state);
   do
   {
     set_have_waited= FALSE;
@@ -3109,7 +3101,6 @@ ic_create_run_cluster(IC_STRING *config_dir,
                       guint32 my_node_id)
 {
   IC_INT_RUN_CLUSTER_SERVER *run_obj= NULL;
-  IC_CONNECTION *conn;
   IC_MEMORY_CONTAINER *conf_mc_ptr;
   IC_THREADPOOL_STATE *tp_state= NULL;
   DEBUG_ENTRY("ic_create_run_cluster");
@@ -3176,7 +3167,6 @@ ic_create_run_cluster(IC_STRING *config_dir,
                            NULL))) /* No authentication object */
     goto error;
 
-  conn= run_obj->conn;
   run_obj->run_op.ic_start_cluster_server= start_cluster_server;
   run_obj->run_op.ic_fill_error_buffer= rcs_fill_error_buffer;
   run_obj->run_op.ic_run_cluster_server= run_cluster_server;

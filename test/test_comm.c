@@ -274,7 +274,7 @@ test_pcntrl()
 {
   gchar *read_buf;
   guint32 read_size;
-  int ret_code, error;
+  int ret_code;
   IC_CONNECTION *conn;
 
   if (!(conn= ic_create_socket_object(TRUE, TRUE, FALSE,
@@ -295,16 +295,17 @@ test_pcntrl()
                                             glob_tcp_rec_size,
                                             glob_tcp_snd_size);
   ret_code= conn->conn_op.ic_set_up_connection(conn, NULL, NULL);
-  if ((error= ic_send_with_cr(conn, "ls")) ||
-      (error= ic_send_with_cr(conn, "-la")) ||
-      (error= ic_send_with_cr(conn, "")))
+  if (ret_code ||
+      (ret_code= ic_send_with_cr(conn, "ls")) ||
+      (ret_code= ic_send_with_cr(conn, "-la")) ||
+      (ret_code= ic_send_with_cr(conn, "")))
   {
-    ic_print_error(error);
+    ic_print_error(ret_code);
     goto end;
   }
-  if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    ic_print_error(error);
+    ic_print_error(ret_code);
     goto end;
   }
 end:

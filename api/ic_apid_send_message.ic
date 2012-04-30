@@ -349,7 +349,7 @@ fill_in_message_id_in_ndb_message(IC_SEND_NODE_CONNECTION *send_node_conn,
                                   gboolean use_checksum)
 {
   guint32 word1, current_size, message_id, prev_checksum, message_size;
-  guint32 *word_ptr, *message_id_ptr, *checksum_ptr;
+  guint32 *word_ptr, *checksum_ptr;
   IC_SOCK_BUF_PAGE *current_page= first_page;
 
   while (current_page)
@@ -360,7 +360,6 @@ fill_in_message_id_in_ndb_message(IC_SEND_NODE_CONNECTION *send_node_conn,
     {
       word1= *word_ptr;
       message_size= get_message_size(word1);
-      message_id_ptr= word_ptr + IC_NDB_MESSAGE_HEADER_SIZE;
 
       message_id= send_node_conn->message_id++;
       if (use_checksum)

@@ -85,13 +85,13 @@ static guint64 glob_start_id= 1;
 static IC_DYNAMIC_PTR_ARRAY *glob_pc_array= NULL;
 static gboolean shutdown_processes_flag= FALSE;
 
-/* Unit test functions */
 #ifdef WITH_UNIT_TEST
 static gchar *version_str= IC_VERSION_STR;
 static gchar *not_my_grid= "not_my_grid";
 static gchar *my_grid= "my_grid";
 static gchar *my_cluster= "my_cluster";
 static gchar *my_csd_node= "my_csd_node";
+#endif
 
 /**
   Parameters used to start ic_pcntrld program
@@ -199,6 +199,8 @@ iClaustron Add Node Process\n\
 More on this later\n\
 ";
 
+/* Unit test functions */
+#ifdef WITH_UNIT_TEST
 /**
   Start a new client socket connection
 

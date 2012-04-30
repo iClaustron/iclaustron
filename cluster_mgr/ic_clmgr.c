@@ -527,7 +527,6 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
                     guint32 node_id)
 {
   gchar *node_config;
-  gboolean initial_flag;
   guint32 cluster_id= clu_conf->clu_info.cluster_id;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
@@ -538,7 +537,6 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
   {
     DEBUG_RETURN_INT(1);
   }
-  initial_flag= parse_data->initial_flag;
   if (parse_data->binary_type_flag)
   {
     if (parse_data->binary_type != clu_conf->node_types[node_id])

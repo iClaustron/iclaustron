@@ -921,7 +921,8 @@ init_config_parameters()
 /* Id 60-69 for configuration id 140-149 */
 #define DATA_SERVER_SIZE_OF_REDO_LOG_FILES 140
 #define DATA_SERVER_INITIAL_WATCHDOG_TIMER 141
-/* 142 - 146 not used */
+#define DATA_SERVER_RESOLVE_METHOD 142
+/* 143 - 146 not used */
 /* 147 Cluster Server parameter */
 #define CLUSTER_SERVER_EVENT_LOG 147
 #define DATA_SERVER_VOLATILE_MODE 148
@@ -942,6 +943,15 @@ init_config_parameters()
   conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
   "Initial value of watchdog timer before communication set-up";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_RESOLVE_METHOD, 62);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_resolve_method, IC_ONLINE_CHANGE);
+  conf_entry->default_string= (gchar*)"Default";
+  conf_entry->is_mandatory= FALSE;
+  conf_entry->data_type= IC_ENUM;
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Method of resolving arbitration when network possibly partitioned";
 
   /* This is a cluster server parameter */
 /*
@@ -1293,8 +1303,14 @@ init_config_parameters()
   "Initialise REDO log during initial start (sparse or full)";
 
 /* Id 110-119 for configuration id 190-199 */
-/* 191-197 not used */
+/* 192 not used */
 #define DATA_SERVER_FILE_THREAD_POOL 190
+#define DATA_SERVER_CLASSIC 191
+#define DATA_SERVER_DISK_FILE_PATH 193
+#define DATA_SERVER_DISK_DATA_FILE_PATH 194
+#define DATA_SERVER_DISK_UNDO_FILE_PATH 195
+#define DATA_SERVER_INITIAL_LOG_FILE_GROUP 196
+#define DATA_SERVER_INITIAL_TABLESPACE 197
 #define DATA_SERVER_MEMORY_POOL 198
 /* 199 used, not for normal builds though */
   IC_SET_CONFIG_MAP(DATA_SERVER_FILE_THREAD_POOL, 110);
@@ -1303,6 +1319,53 @@ init_config_parameters()
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
   "Number of threads used for Disk Data file threads";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_CLASSIC, 111);
+  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_classic, FALSE,
+                             IC_NOT_CHANGEABLE);
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Using Classic Multithreading, only used for backwards compatability";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DISK_FILE_PATH, 113);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_disk_file_path,
+                            IC_INITIAL_NODE_RESTART);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Path to file system of Disk Data";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DISK_DATA_FILE_PATH, 114);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_disk_data_file_path,
+                            IC_INITIAL_NODE_RESTART);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Path to data part in Disk Data file system";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_DISK_UNDO_FILE_PATH, 115);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_disk_undo_file_path,
+                            IC_INITIAL_NODE_RESTART);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Path to undo part in Disk Data file system";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_LOG_FILE_GROUP, 116);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_initial_log_file_group,
+                            IC_INITIAL_NODE_RESTART);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Initial log file group created";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_TABLESPACE, 117);
+  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_initial_tablespace,
+                            IC_INITIAL_NODE_RESTART);
+  conf_entry->default_string= (gchar*)ic_empty_string;
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Initial tablespace created";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_MEMORY_POOL, 118);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_memory_pool,
@@ -1672,6 +1735,7 @@ init_config_parameters()
 /* Id 210-219 for configuration id 500-799 */
 /* Id 500-604 and 606-799 not used */
 #define DATA_SERVER_LCP_POLL_TIME 605
+#define DATA_SERVER_REDO_LOG_PARTS 632
 
   IC_SET_CONFIG_MAP(DATA_SERVER_LCP_POLL_TIME, 210);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lcp_poll_time,
@@ -1680,6 +1744,14 @@ init_config_parameters()
   conf_entry->min_ndb_version_used= 0x60404;
   conf_entry->config_entry_description=
   "Busy poll for LCP mutex before going to lock queue";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_PARTS, 211);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_redo_log_parts,
+                       IC_UINT32, 4, IC_INITIAL_NODE_RESTART);
+  conf_entry->min_ndb_version_used= 0x70205;
+  IC_SET_CONFIG_MIN(conf_entry, 4);
+  conf_entry->config_entry_description=
+  "Number of REDO log parts, each part can be handled by separate LDM threads";
 
 /* Id 220-229 for configuration id 800-809 */
 /* This is the client configuration section*/

@@ -77,7 +77,6 @@ apid_op_define_field(IC_APID_OPERATION *ext_apid_op,
                      guint32 buffer_offset,
                      guint32 null_offset)
 {
-  IC_FIELD_DEF *field_def;
   IC_FIELD_IN_OP *field_in_op;
   IC_INT_APID_OPERATION *apid_op= (IC_INT_APID_OPERATION*)ext_apid_op;
   IC_INT_TABLE_DEF *table_def;
@@ -88,7 +87,6 @@ apid_op_define_field(IC_APID_OPERATION *ext_apid_op,
   if (field_id > table_def->num_fields ||
       num_fields_defined >= apid_op->num_fields)
     return IC_ERROR_TOO_MANY_FIELDS;
-  field_def= table_def->fields[field_id];
   field_in_op= apid_op->fields[num_fields_defined];
   num_fields_defined++;
   apid_op->num_fields_defined= num_fields_defined;

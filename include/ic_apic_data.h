@@ -213,6 +213,12 @@ struct ic_data_server_config
   gchar *filesystem_path;
   gchar *data_server_checkpoint_path;
   gchar *data_server_zero_redo_log;
+  gchar *data_server_resolve_method;
+  gchar *data_server_disk_file_path;
+  gchar *data_server_disk_data_file_path;
+  gchar *data_server_disk_undo_file_path;
+  gchar *data_server_initial_log_file_group;
+  gchar *data_server_initial_tablespace;
 
   guint64 size_of_ram_memory;
   guint64 size_of_hash_memory;
@@ -241,6 +247,7 @@ struct ic_data_server_config
   guint32 timer_resolve;
   guint32 timer_data_server_watchdog;
   guint32 number_of_redo_log_files;
+  guint32 number_of_redo_log_parts;
   guint32 timer_check_interval;
   guint32 timer_client_activity;
   guint32 timer_deadlock;
@@ -310,6 +317,7 @@ struct ic_data_server_config
   gchar data_server_backup_compression;
   gchar data_server_local_checkpoint_compression;
   gchar use_o_direct;
+  gchar data_server_classic;
 };
 typedef struct ic_data_server_config IC_DATA_SERVER_CONFIG;
 

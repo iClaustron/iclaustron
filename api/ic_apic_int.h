@@ -51,7 +51,9 @@ typedef enum ic_config_data_type
   IC_UINT64 = 4,
   IC_CHAR = 5,
   IC_BOOLEAN = 6,
-  IC_UINT16 = 7
+  IC_UINT16 = 7,
+  IC_ENUM = 8,
+  IC_BITMASK = 9
 } IC_CONFIG_DATA_TYPE;
 
 struct ic_config_entry

@@ -131,7 +131,6 @@ adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
   guint32 max_num_waits, max_num_waits_plus_one, timer_index1, timer_index2;
   guint32 num_stats;
   IC_TIMER start_time1, start_time2, elapsed_time1, elapsed_time2;
-  IC_TIMER tot_curr_wait_time, tot_wait_time_plus_one;
   DEBUG_ENTRY("adaptive_send_algorithm_statistics");
 
   max_num_waits= send_node_conn->max_num_waits;
@@ -143,8 +142,6 @@ adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
   elapsed_time1= current_time - start_time1;
   elapsed_time2= current_time - start_time2;
 
-  tot_curr_wait_time= send_node_conn->tot_curr_wait_time;
-  tot_wait_time_plus_one= send_node_conn->tot_wait_time_plus_one;
   send_node_conn->tot_curr_wait_time+= elapsed_time1;
   send_node_conn->tot_wait_time_plus_one+= elapsed_time2;
 

@@ -454,7 +454,7 @@ conf_grid_common_serv_init(void *ic_conf, guint32 pass)
   IC_CLUSTER_CONFIG *clu_conf_perm;
   IC_MEMORY_CONTAINER *temp_mc_ptr;
   IC_MEMORY_CONTAINER *perm_mc_ptr;
-  guint32 max_node_id, num_nodes;
+  guint32 max_node_id;
   guint32 size_structs= 0;
   DEBUG_ENTRY("conf_grid_common_serv_init");
   perm_mc_ptr= conf->perm_mc_ptr;
@@ -502,7 +502,6 @@ conf_grid_common_serv_init(void *ic_conf, guint32 pass)
                  sizeof(IC_CLUSTER_SERVER_CONFIG);
   size_structs+= clu_conf->conf->num_cluster_mgrs *
                    sizeof(IC_CLUSTER_MANAGER_CONFIG);
-  num_nodes= clu_conf->conf->num_nodes;
 
   if (!(clu_conf->struct_memory= (gchar*)
         perm_mc_ptr->mc_ops.ic_mc_calloc(perm_mc_ptr, size_structs)))
@@ -999,12 +998,12 @@ verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
     first_node_port_number1= ds1_conf->port_number;
     first_hostname= ds1_conf->hostname;
     ic_require(first_hostname);
-    if (first_node_type == IC_CLUSTER_SERVER_TYPE)
+    if (first_node_type == IC_CLUSTER_SERVER_NODE)
     {
       cs_conf= (IC_CLUSTER_SERVER_CONFIG*)ds1_conf;
       first_node_port_number2= cs_conf->cluster_server_port_number;
     }
-    else if (first_node_type == IC_CLUSTER_MANAGER_TYPE)
+    else if (first_node_type == IC_CLUSTER_MANAGER_NODE)
     {
       cm_conf= (IC_CLUSTER_MANAGER_CONFIG*)ds1_conf;
       first_node_port_number2= cm_conf->cluster_manager_port_number;
@@ -1040,12 +1039,12 @@ verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
                            &second_node_port_number1,  /* Sec port number */
                            &second_hostname,           /* Second hostname */
                            clu_conf);
-      if (second_node_type == IC_CLUSTER_SERVER_TYPE)
+      if (second_node_type == IC_CLUSTER_SERVER_NODE)
       {
         cs_conf= (IC_CLUSTER_SERVER_CONFIG*)ds2_conf;
         second_node_port_number2= cs_conf->cluster_server_port_number;
       }
-      else if (second_node_type == IC_CLUSTER_MANAGER_TYPE)
+      else if (second_node_type == IC_CLUSTER_MANAGER_NODE)
       {
         cm_conf= (IC_CLUSTER_MANAGER_CONFIG*)ds2_conf;
         second_node_port_number2= cm_conf->cluster_manager_port_number;
