@@ -283,6 +283,7 @@ struct ic_data_server_config
   guint32 log_level_warning;
   guint32 log_level_error;
   guint32 log_level_backup;
+  guint32 log_level_schema;
   guint32 inject_fault;
   guint32 data_server_scheduler_no_send_time;
   guint32 data_server_scheduler_no_sleep_time;

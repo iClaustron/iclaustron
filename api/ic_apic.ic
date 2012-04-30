@@ -646,7 +646,7 @@ static const gchar *ic_starting_str= "starting";
 #define IC_CL_INT64_TYPE 4
 
 #define MAX_MAP_CONFIG_ID 1024
-#define MAX_CONFIG_ID 256
+#define MAX_CONFIG_ID 288
 
 #define IC_TCP_TRANSPORTER_TYPE 1
 

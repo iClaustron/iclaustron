@@ -1378,6 +1378,7 @@ init_config_parameters()
 #define CLIENT_RESOLVE_RANK 200
 #define CLIENT_RESOLVE_TIMER 201
 #define RESERVED_SEND_BUFFER 202
+#define MORE_SEND_BUFFER_MEMORY 203 /* NEW */
 
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_RANK, 120);
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_rank,
@@ -1502,7 +1503,8 @@ init_config_parameters()
 /* Id 150-159 for configuration id 260-269 */
 #define DATA_SERVER_DEBUG_LOG_LEVEL 260
 #define DATA_SERVER_BACKUP_LOG_LEVEL 261
-/* Id 262-269 not used */
+#define DATA_SERVER_SCHEMA_LOG_LEVEL 262 /* NEW */
+/* Id 263-269 not used */
 
   IC_SET_CONFIG_MAP(DATA_SERVER_DEBUG_LOG_LEVEL, 150);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_debug,
@@ -1517,6 +1519,13 @@ init_config_parameters()
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
   conf_entry->config_entry_description=
   "Log level of backups at a node";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_SCHEMA_LOG_LEVEL, 152);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, log_level_schema,
+                       IC_UINT32, 8, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 15);
+  conf_entry->config_entry_description=
+  "Log level of schema operations at a node";
 
 /* Id 160-169 for configuration id 270-299 */
 /* Id 270-299 not used */
@@ -1632,7 +1641,8 @@ init_config_parameters()
 #define SOCKET_OVERLOAD 411
 /* Id 412-419 not used */
 #define SOCKET_CLIENT_PORT_NUMBER 420
-/* Id 421-453 not used */
+/* Id 421-451, 453 not used */
+#define SOCKET_SERVER 452 /* NEW */
 #define SOCKET_WRITE_BUFFER_SIZE 454
 #define SOCKET_READ_BUFFER_SIZE 455
 /* Id 456 not used */
@@ -1732,12 +1742,17 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Maximum time a message can wait before being sent in nanoseconds";
 
-/* Id 210-219 for configuration id 500-799 */
-/* Id 500-604 and 606-799 not used */
+/* Id 210-219 for configuration id 500-609 */
+/* Id 500-604 not used */
 #define DATA_SERVER_LCP_POLL_TIME 605
+#define DATA_SERVER_PARALLEL_BUILD_INDEX 606 /* NEW */
+#define DATA_SERVER_HEARTBEAT_ORDER 607 /* NEW */
+#define DATA_SERVER_TRACE_SCHEMA_OPERATIONS 608 /* NEW */
+#define DATA_SERVER_MAX_START_LIMIT 609 /* NEW */
+
 #define DATA_SERVER_REDO_LOG_PARTS 632
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_LCP_POLL_TIME, 210);
+  IC_SET_CONFIG_MAP(DATA_SERVER_LCP_POLL_TIME, 215);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lcp_poll_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 600);
@@ -1753,14 +1768,22 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Number of REDO log parts, each part can be handled by separate LDM threads";
 
-/* Id 220-229 for configuration id 800-809 */
+/* Id 220-229 for configuration id 610-619 */
+/* Id 230-239 for configuration id 620-629 */
+/* Id 240-249 for configuration id 630-639 */
+/* Id 640-799 not used */
+
+/* Id 250-259 for configuration id 800-809 */
 /* This is the client configuration section*/
 #define CLIENT_MAX_BATCH_BYTE_SIZE 800
 #define CLIENT_BATCH_BYTE_SIZE 801
 #define CLIENT_BATCH_SIZE 802
-/* Id 803-809 not used */
+#define CLIENT_AUTOMATIC_RECONNECT 803 /* NEW */
+#define CLIENT_THREAD_PRIORITY 804 /* NEW */
+#define CLIENT_DEFAULT_REDO_OPERATION_TYPE 805 /* NEW */
+/* Id 806-809 not used */
 
-  IC_SET_CONFIG_MAP(CLIENT_MAX_BATCH_BYTE_SIZE, 220);
+  IC_SET_CONFIG_MAP(CLIENT_MAX_BATCH_BYTE_SIZE, 250);
   IC_SET_CLIENT_CONFIG(conf_entry, client_max_batch_byte_size,
                        IC_UINT32, 256*1024, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 32*1024, 4*1024*1024);
@@ -1774,7 +1797,7 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Size in bytes of max of the sum of the batches in a scan operations";
 
-  IC_SET_CONFIG_MAP(CLIENT_BATCH_BYTE_SIZE, 221);
+  IC_SET_CONFIG_MAP(CLIENT_BATCH_BYTE_SIZE, 251);
   IC_SET_CLIENT_CONFIG(conf_entry, client_batch_byte_size,
                        IC_UINT32, 8192, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 128, 65536);
@@ -1785,7 +1808,7 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Size in bytes of batches in scan operations";
 
-  IC_SET_CONFIG_MAP(CLIENT_BATCH_SIZE, 222);
+  IC_SET_CONFIG_MAP(CLIENT_BATCH_SIZE, 252);
   IC_SET_CLIENT_CONFIG(conf_entry, client_batch_size,
                        IC_UINT32, 64, IC_ONLINE_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 992);
@@ -1796,12 +1819,12 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Size in number of records of batches in scan operations";
 
-/* Id 230-234 for configuration id 810-899 */
+/* Id 260-264 for configuration id 810-899 */
 /* Id 810-879, 882-899 not used */
 #define IC_NODE_PCNTRL_HOSTNAME 880
 #define IC_NODE_PCNTRL_PORT 881
 
-  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_HOSTNAME, 230);
+  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_HOSTNAME, 260);
   IC_SET_DATA_SERVER_STRING(conf_entry, pcntrl_hostname,
                             IC_CLUSTER_RESTART_CHANGE);
   conf_entry->is_only_iclaustron= TRUE;
@@ -1810,7 +1833,7 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Hostname of the Process Controller to start/stop node";
 
-  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_PORT, 231);
+  IC_SET_CONFIG_MAP(IC_NODE_PCNTRL_PORT, 261);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, pcntrl_port, IC_UINT32,
                             IC_DEF_PCNTRL_PORT, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
@@ -1819,7 +1842,7 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Port number of the Process Controller to start/stop node";
 
-/* Id 235-239 for configuration id 900-999 */
+/* Id 265-269 for configuration id 900-999 */
 /* Id 900-996 not used */
 #define IC_PORT_NUMBER 997
 /* Id 998 not used */
@@ -1827,7 +1850,7 @@ init_config_parameters()
 /* Node type is stored in separate array and is handled in a special manner */
 
   /* Port number is used both by clients and data servers */
-  IC_SET_CONFIG_MAP(IC_PORT_NUMBER, 235);
+  IC_SET_CONFIG_MAP(IC_PORT_NUMBER, 265);
   IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, port_number, IC_UINT32,
                             IC_DEF_PORT, IC_ROLLING_UPGRADE_CHANGE);
@@ -1836,7 +1859,7 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Port number";
 
-/* Id 240-255 for configuration id 1000-16383 */
+/* Id 270-284 for configuration id 1000-16383 */
 /* 1000-16381 not used */
 #define IC_PARENT_ID     16382
 /* 168383 not used */
