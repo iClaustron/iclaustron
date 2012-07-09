@@ -1847,17 +1847,46 @@ init_config_parameters()
 #define DATA_SERVER_TRACE_SCHEMA_OPERATIONS 608 /* NEW */
 #define DATA_SERVER_MAX_START_LIMIT 609 /* NEW */
 
-#define DATA_SERVER_REDO_LOG_PARTS 632
-
   IC_SET_CONFIG_MAP(DATA_SERVER_LCP_POLL_TIME, 215);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lcp_poll_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxLCPStartDelay);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 600);
   conf_entry->min_ndb_version_used= 0x60404;
   conf_entry->config_entry_description=
   "Busy poll for LCP mutex before going to lock queue";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_PARTS, 211);
+  IC_SET_CONFIG_MAP(DATA_SERVER_PARALLEL_BUILD_INDEX, 216);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_parallel_build_index,
+                            IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BuildIndexThreads);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 64);
+  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->config_entry_description=
+  "Number of parallel threads used to build indexes at node start";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_HEARTBEAT_ORDER, 217);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_heartbeat_order,
+                            IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, HeartbeatOrder);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
+  conf_entry->config_entry_description=
+  "Heartbeat order";
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_TRACE_SCHEMA_OPERATIONS, 218);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_trace_schema_ops,
+                            IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, DictTrace);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 100);
+  conf_entry->config_entry_description=
+  "Trace level for schema operations";
+
+/* Id 220-229 for configuration id 610-619 */
+/* Id 230-239 for configuration id 620-629 */
+/* Id 240-249 for configuration id 630-639 */
+#define DATA_SERVER_REDO_LOG_PARTS 632
+
+  IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_PARTS, 242);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_redo_log_parts,
                        IC_UINT32, 4, IC_INITIAL_NODE_RESTART);
   IC_SET_NDB_CONFIG_NAME(conf_entry, NoOfFragmentLogParts);
@@ -1866,9 +1895,6 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Number of REDO log parts, each part can be handled by separate LDM threads";
 
-/* Id 220-229 for configuration id 610-619 */
-/* Id 230-239 for configuration id 620-629 */
-/* Id 240-249 for configuration id 630-639 */
 /* Id 640-799 not used */
 
 /* Id 250-259 for configuration id 800-809 */
