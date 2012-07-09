@@ -453,6 +453,18 @@ build_config_name_hash()
       }
       DEBUG_ENABLE(MALLOC_LEVEL);
     }
+    if (conf_entry->ndb_entry_name.str != NULL)
+    {
+      DEBUG_DISABLE(MALLOC_LEVEL);
+      if (ic_hashtable_insert(glob_conf_hash,
+                              (void*)&conf_entry->ndb_entry_name,
+                              (void*)conf_entry))
+      {
+        DEBUG_ENABLE(MALLOC_LEVEL);
+        DEBUG_RETURN_INT(1);
+      }
+      DEBUG_ENABLE(MALLOC_LEVEL);
+    }
   }
   DEBUG_RETURN_INT(0);
 }
@@ -626,6 +638,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MAX_TRACE_FILES, 20);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, max_number_of_trace_files,
                        IC_UINT32, 25, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfSavedMessages);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 2048);
   conf_entry->config_entry_description=
   "The number of crashes that can be reported before we overwrite error log and trace files";
@@ -633,6 +646,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_REPLICAS, 21);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_replicas,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, NoOfReplicas);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
   conf_entry->is_mandatory= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
@@ -642,6 +656,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_TABLE_OBJECTS, 22);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_table_objects,
                        IC_UINT32, 256, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfTables);
   IC_SET_CONFIG_MIN(conf_entry, 32);
   conf_entry->config_entry_description=
   "Sets the maximum number of tables that can be stored in cluster";
@@ -649,6 +664,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_COLUMN_OBJECTS, 23);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_column_objects,
                        IC_UINT32, 2048, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfAttributes);
   IC_SET_CONFIG_MIN(conf_entry, 256);
   conf_entry->config_entry_description=
   "Sets the maximum number of columns that can be stored in cluster";
@@ -656,6 +672,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_KEY_OBJECTS, 24);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_key_objects,
                        IC_UINT32, 256, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfIndexes);
   IC_SET_CONFIG_MIN(conf_entry, 32);
   conf_entry->config_entry_description=
   "Sets the maximum number of keys that can be stored in cluster";
@@ -663,6 +680,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_INTERNAL_TRIGGER_OBJECTS, 25);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_internal_trigger_objects,
                        IC_UINT32, 1536, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfTriggers);
   IC_SET_CONFIG_MIN(conf_entry, 512);
   conf_entry->config_entry_description=
   "Each unique index will use 3 internal trigger objects, index/backup will use 1 per table";
@@ -670,6 +688,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CONNECTION_OBJECTS, 26);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_connection_objects,
                        IC_UINT32, 8192, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfConcurrentTransactions);
   IC_SET_CONFIG_MIN(conf_entry, 128);
   conf_entry->config_entry_description=
   "Each active transaction and active scan uses a connection object";
@@ -677,6 +696,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_OPERATION_OBJECTS, 27);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_operation_objects,
                        IC_UINT32, 32768, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfConcurrentOperations);
   IC_SET_CONFIG_MIN(conf_entry, 1024);
   conf_entry->config_entry_description=
   "Each record read/updated in a transaction uses an operation object during the transaction";
@@ -684,6 +704,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_SCAN_OBJECTS, 28);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_scan_objects,
                        IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfConcurrentScans);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 32, 512);
   conf_entry->config_entry_description=
   "Each active scan uses a scan object for the lifetime of the scan operation";
@@ -692,6 +713,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry,
                             number_of_internal_trigger_operation_objects,
                        IC_UINT32, 4000, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfFiredTriggers);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4000, 4000);
   conf_entry->config_entry_description=
   "Each internal trigger that is fired uses an operation object for a short time";
@@ -711,6 +733,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_KEY_OPERATION_OBJECTS, 30);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_key_operation_objects,
                        IC_UINT32, 4096, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfConcurrentIndexOperations);
   IC_SET_CONFIG_MIN(conf_entry, 128);
   conf_entry->config_entry_description=
   "Each read and update of an unique hash index in a transaction uses one of those objects";
@@ -718,6 +741,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CONNECTION_BUFFER, 31);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_connection_buffer,
                        IC_UINT32, 1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TransactionBufferMemory);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1024*1024, 1024*1024);
   conf_entry->config_entry_description=
   "Internal buffer used by connections for transactions and scans";
@@ -725,6 +749,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_RAM_MEMORY, 32);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_ram_memory,
                        IC_UINT64, 256*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, DataMemory);
   IC_SET_CONFIG_MIN(conf_entry, 16*1024*1024);
   conf_entry->config_entry_description=
   "Size of memory used to store RAM-based records";
@@ -732,6 +757,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_HASH_MEMORY, 33);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_hash_memory,
                        IC_UINT64, 64*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, IndexMemory);
   IC_SET_CONFIG_MIN(conf_entry, 8*1024*1024);
   conf_entry->config_entry_description=
   "Size of memory used to store primary hash index on all tables and unique hash indexes";
@@ -739,30 +765,35 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MEMORY_LOCKED, 34);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, use_unswappable_memory, FALSE,
                              IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, LockPagesInMainMemory);
   conf_entry->config_entry_description=
   "Setting this to 1 means that all memory is locked and will not be swapped out";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_WAIT_PARTIAL_START, 35);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_wait_partial_start,
                        IC_UINT32, 20000, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, StartPartialTimeout);
   conf_entry->config_entry_description=
   "Time in ms cluster will wait before starting with a partial set of nodes, 0 waits forever";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_WAIT_PARTITIONED_START, 36);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_wait_partitioned_start,
                        IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, StartPartitionedTimeout);
   conf_entry->config_entry_description=
   "Time in ms cluster will wait before starting a potentially partitioned cluster, 0 waits forever";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_WAIT_ERROR_START, 37);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_wait_error_start,
                        IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, StartFailureTimeout);
   conf_entry->config_entry_description=
   "Time in ms cluster will wait before forcing a stop after an error, 0 waits forever";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_HEARTBEAT_TIMER, 38);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_heartbeat_data_server_nodes,
                        IC_UINT32, 700, IC_ROLLING_UPGRADE_CHANGE_SPECIAL);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, HeartbeatIntervalDbDb);
   IC_SET_CONFIG_MIN(conf_entry, 10);
   conf_entry->config_entry_description=
   "Time in ms between sending heartbeat messages to data servers, 4 missed leads to node crash";
@@ -770,6 +801,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CLIENT_HEARTBEAT_TIMER, 39);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_heartbeat_client_nodes,
                        IC_UINT32, 1000, IC_ROLLING_UPGRADE_CHANGE_SPECIAL);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, HeartbeatIntervalDbApi);
   IC_SET_CONFIG_MIN(conf_entry, 10);
   conf_entry->config_entry_description=
   "Time in ms between sending heartbeat messages to client nodes, 4 missed leads to node crash";
@@ -788,6 +820,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_CHECKPOINT_TIMER, 40);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_local_checkpoint,
                        IC_UINT32, 24, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenLocalCheckpoints);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 6, 31);
   conf_entry->config_entry_description=
   "Specifies how often local checkpoints are executed, logarithmic scale on log size";
@@ -795,6 +828,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_GLOBAL_CHECKPOINT_TIMER, 41);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_global_checkpoint,
                        IC_UINT32, 1000, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenGlobalCheckpoints);
   IC_SET_CONFIG_MIN(conf_entry, 10);
   conf_entry->config_entry_description=
   "Time in ms between starting global checkpoints";
@@ -802,6 +836,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_RESOLVE_TIMER, 42);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_resolve,
                        IC_UINT32, 2000, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, ArbitrationTimeout);
   IC_SET_CONFIG_MIN(conf_entry, 10);
   conf_entry->config_entry_description=
   "Time in ms waiting for response from resolve";
@@ -809,6 +844,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_WATCHDOG_TIMER, 43);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_data_server_watchdog,
                        IC_UINT32, 6000, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenWatchDogCheck);
   IC_SET_CONFIG_MIN(conf_entry, 1000);
   conf_entry->config_entry_description=
   "Time in ms without activity in data server before watchdog is fired";
@@ -816,18 +852,21 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DAEMON_RESTART_AT_ERROR, 44);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_automatic_restart, FALSE,
                              IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, StopOnError);
   conf_entry->config_entry_description=
   "If set, data server restarts automatically after a failure";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_FILESYSTEM_PATH, 45);
   IC_SET_DATA_SERVER_STRING(conf_entry, filesystem_path,
                             IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, FileSystemPath);
   conf_entry->config_entry_description=
   "Path to filesystem of data server";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_FILES, 46);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_redo_log_files,
                        IC_UINT32, 4, IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, NoOfFragmentLogFiles);
   IC_SET_CONFIG_MIN(conf_entry, 4);
   conf_entry->config_entry_description=
   "Number of REDO log files, each file represents by default 512 MB log space";
@@ -841,6 +880,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECK_INTERVAL, 49);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_check_interval,
                        IC_UINT32, 500, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenInactiveTransactionAbortCheck);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 500, 500);
   conf_entry->config_entry_description=
   "Time in ms between checks after transaction timeouts";
@@ -859,6 +899,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CLIENT_ACTIVITY_TIMER, 50);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_client_activity,
                        IC_UINT32, 1024*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TransactionInactiveTimeout);
   IC_SET_CONFIG_MIN(conf_entry, 1000);
   conf_entry->config_entry_description=
   "Time in ms before transaction is aborted due to client inactivity";
@@ -866,6 +907,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DEADLOCK_TIMER, 51);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_deadlock,
                        IC_UINT32, 2000, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TransactionDeadlockDetectionTimeout);
   IC_SET_CONFIG_MIN(conf_entry, 1000);
   conf_entry->config_entry_description=
   "Time in ms before transaction is aborted due to internal wait (indication of deadlock)";
@@ -873,6 +915,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_OBJECTS, 52);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_checkpoint_objects,
                        IC_UINT32, 1, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, ParallelBackups);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 1);
   conf_entry->config_entry_description=
   "Number of possible parallel backups and local checkpoints";
@@ -880,6 +923,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_MEMORY, 53);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_memory,
                        IC_UINT32, 4*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BackupMemory);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 4*1024*1024);
   conf_entry->config_entry_description=
   "Size of memory buffers for local checkpoint and backup";
@@ -887,6 +931,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_DATA_MEMORY, 54);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_data_memory,
                        IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BackupDataBufferSize);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
   conf_entry->config_entry_description=
   "Size of data memory buffers for local checkpoint and backup";
@@ -894,6 +939,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_LOG_MEMORY, 55);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_log_memory,
                        IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BackupLogBufferSize);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
   conf_entry->config_entry_description=
   "Size of log memory buffers for local checkpoint and backup";
@@ -901,6 +947,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_WRITE_SIZE, 56);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_write_size,
                        IC_UINT32, 64*1024, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BackupWriteSize);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 64*1024);
   conf_entry->config_entry_description=
   "Size of default writes in local checkpoint and backups";
@@ -914,6 +961,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_MAX_WRITE_SIZE, 59);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_max_write_size,
                        IC_UINT32, 256*1024, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BackupMaxWriteSize);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 256*1024, 256*1024);
   conf_entry->config_entry_description=
   "Size of maximum writes in local checkpoint and backups";
@@ -931,6 +979,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_SIZE_OF_REDO_LOG_FILES, 60);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_redo_log_files,
                        IC_UINT32, 128 * 1024 * 1024, IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, FragmentLogFileSize);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 2000*1024*1024);
   conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
@@ -939,6 +988,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_WATCHDOG_TIMER, 61);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_initial_watchdog_timer,
                        IC_UINT32, 15000, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenWatchDogCheckInitial);
   IC_SET_CONFIG_MIN(conf_entry, 100);
   conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
@@ -946,6 +996,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_RESOLVE_METHOD, 62);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_resolve_method, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, Arbitration);
   conf_entry->default_string= (gchar*)"Default";
   conf_entry->is_mandatory= FALSE;
   conf_entry->data_type= IC_ENUM;
@@ -961,6 +1012,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_EVENT_LOG, 67);
   IC_SET_CLUSTER_SERVER_STRING(conf_entry, cluster_server_event_log,
                                ic_empty_string, IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, LogDestination);
   conf_entry->is_not_sent= TRUE;
   conf_entry->config_entry_description=
   "Type of cluster event log";
@@ -969,12 +1021,14 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_VOLATILE_MODE, 68);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_volatile_mode, FALSE,
                              IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, Diskless);
   conf_entry->config_entry_description=
   "In this mode all file writes are ignored and all starts becomes initial starts";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_ORDERED_KEY_OBJECTS, 69);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_ordered_key_objects,
                        IC_UINT32, 512, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfOrderedIndexes);
   IC_SET_CONFIG_MIN(conf_entry, 32);
   conf_entry->config_entry_description=
   "Sets the maximum number of ordered keys that can be stored in cluster";
@@ -992,32 +1046,53 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_UNIQUE_HASH_KEY_OBJECTS, 70);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_unique_hash_key_objects,
                        IC_UINT32, 128, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfUniqueHashIndexes);
   IC_SET_CONFIG_MIN(conf_entry, 32);
   conf_entry->config_entry_description=
   "Sets the maximum number of unique hash keys that can be stored in cluster";
 
+  /*
+    This parameter is number of local operations, this is normally
+    calculated using MaxNoOfConcurrentOperations, we have removed
+    the ability to set this specifically per node.
+  */
   IC_SET_CONFIG_MAP(151, 71);
   conf_entry->is_deprecated= TRUE;
 
+  /*
+    This parameter is number of local scans, this is normally
+    calculated using MaxNoOfConcurrentScans, we have removed
+    the ability to set this specifically per node.
+  */
   IC_SET_CONFIG_MAP(152, 72);
   conf_entry->is_deprecated= TRUE;
 
   IC_SET_CONFIG_MAP(DATA_SERVER_SCAN_BATCH_SIZE, 73);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_scan_batch,
                        IC_UINT32, 64, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BatchSizePerLocalScan);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64, 64);
   conf_entry->config_entry_description=
   "Number of records sent in a scan from the local data server node";
 
+  /*
+    This parameter is still possible to set in MySQL Cluster, it is
+    however completely ignored, so we have deprecated it completely.
+  */
   IC_SET_CONFIG_MAP(154, 74);
   conf_entry->is_deprecated= TRUE;
 
+  /*
+    This parameter is still possible to set in MySQL Cluster, it is
+    however completely ignored, so we have deprecated it completely.
+  */
   IC_SET_CONFIG_MAP(155, 75);
   conf_entry->is_deprecated= TRUE;
 
   IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_BUFFER_MEMORY, 76);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, redo_log_buffer_memory,
                        IC_UINT32, 32*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, RedoBuffer);
   IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
   conf_entry->config_entry_description=
   "Size of REDO log memory buffer";
@@ -1025,6 +1100,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_LONG_MESSAGE_MEMORY, 77);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, long_message_memory,
                        IC_UINT32, 4*1024*1024, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, LongMessageBuffer);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 4*1024*1024);
   conf_entry->config_entry_description=
   "Size of long memory buffers";
@@ -1032,6 +1108,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_PATH, 78);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_checkpoint_path,
                            IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BackupDataDir);
   conf_entry->config_entry_description=
   "Path to filesystem of checkpoints";
   conf_entry->is_mandatory= TRUE;
@@ -1039,6 +1116,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MAX_OPEN_FILES, 79);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_open_files,
                        IC_UINT32, 64, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfOpenFiles);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64, 64);
   conf_entry->config_entry_description=
   "Maximum number of open files in data server node";
@@ -1058,6 +1136,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_PAGE_CACHE_SIZE, 80);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, page_cache_size,
                        IC_UINT64, 128*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, DiskPageBufferMemory);
   IC_SET_CONFIG_MIN(conf_entry, 64*1024);
   conf_entry->config_entry_description=
   "Size of page cache for disk-based data";
@@ -1065,6 +1144,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_STRING_MEMORY, 81);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_string_memory,
                        IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, StringMemory);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
   conf_entry->config_entry_description=
   "Size of string memory";
@@ -1072,6 +1152,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_OPEN_FILES, 82);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_open_files,
                        IC_UINT32, 27, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, InitialNoOfOpenFiles);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 27, 27);
   conf_entry->config_entry_description=
   "Number of open file handles in data server from start";
@@ -1079,6 +1160,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_FILE_SYNCH_SIZE, 83);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_file_synch_size,
                        IC_UINT32, 4*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, DiskSyncSize);
   IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
   conf_entry->config_entry_description=
   "Size of file writes before a synch is always used";
@@ -1086,6 +1168,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DISK_WRITE_SPEED, 84);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_disk_write_speed,
                        IC_UINT32, 8*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, DiskCheckpointSpeed);
   IC_SET_CONFIG_MIN(conf_entry, 64*1024);
   conf_entry->config_entry_description=
   "Limit on how fast checkpoints are allowed to write to disk";
@@ -1093,6 +1176,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DISK_WRITE_SPEED_START, 85);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_disk_write_speed_start,
                        IC_UINT32, 256*1024*1024, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, DiskCheckpointSpeedInRestart);
   IC_SET_CONFIG_MIN(conf_entry, 1024*1024);
   conf_entry->config_entry_description=
   "Limit on how fast checkpoints are allowed to write to disk during start of the node";
@@ -1100,18 +1184,21 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_REPORT_MEMORY_FREQUENCY, 86)
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_report_memory_frequency,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MemReportFrequency);
   conf_entry->config_entry_description=
   "Frequency of memory reports, 0 means only at certain thresholds";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_BACKUP_STATUS_FREQUENCY, 87)
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_backup_status_frequency,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, BackupReportFrequency);
   conf_entry->config_entry_description=
   "Frequency of backup status, 0 means no status reporting except at end";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_USE_O_DIRECT, 88);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, use_o_direct, TRUE,
                              IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, ODirect);
   conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
   "Use O_DIRECT on file system of data servers";
@@ -1119,6 +1206,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MAX_ALLOCATE_SIZE, 89);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_allocate_size,
                        IC_UINT32, 32*1024*1024, IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxAllocate);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 1*1024*1024, 1000*1024*1024);
   conf_entry->min_ndb_version_used= 0x50119;
   conf_entry->config_entry_description=
@@ -1147,6 +1235,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_GROUP_COMMIT_TIMEOUT, 91);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_group_commit_timeout,
                             IC_UINT32, 4000, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenEpochs);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 32000);
   conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
@@ -1155,6 +1244,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_BACKUP_COMPRESSION, 92);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_backup_compression,
                              FALSE, IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, CompressedBackup);
   conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
   "Use zlib compression for NDB online backups";
@@ -1163,6 +1253,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry,
                              data_server_local_checkpoint_compression,
                              FALSE, IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, CompressedLCP);
   conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
   "Use zlib compression for NDB local checkpoints";
@@ -1170,6 +1261,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SEND_TIME, 94);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_scheduler_no_send_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, SchedulerExecutionTimer);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
   conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
@@ -1178,6 +1270,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_SCHEDULER_NO_SLEEP_TIME, 95);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_scheduler_no_sleep_time,
                        IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, SchedulerSpinTimer);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1000);
   conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
@@ -1186,6 +1279,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_RT_SCHEDULER_THREADS, 96);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_rt_scheduler_threads,
                              FALSE, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, RealtimeScheduler);
   conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
   "If set the data server is setting its thread in RT priority, requires root privileges";
@@ -1193,6 +1287,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_MAIN_THREAD, 97);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
                        IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, LockExecuteThreadToCPU);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
   conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
@@ -1201,6 +1296,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_LOCK_OTHER_THREADS, 98);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_lock_main_thread,
                        IC_UINT32, 65535, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, LockMaintThreadsToCPU);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 65535);
   conf_entry->min_ndb_version_used= 0x60304;
   conf_entry->config_entry_description=
@@ -1209,6 +1305,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGERS, 99);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_local_triggers,
                             IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfSubscriptions);
   conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
   "Max number of local triggers that can be defined";
@@ -1217,7 +1314,7 @@ init_config_parameters()
 #define DATA_SERVER_MAX_LOCAL_TRIGGER_USERS 180
 #define DATA_SERVER_MAX_LOCAL_TRIGGER_OPERATIONS 181
 #define DATA_SERVER_MAX_STORED_GROUP_COMMITS 182
-#define DATA_SERVER_LOCAL_TRIGGER_HANDOVER_TIMEOUT 183
+/* 183 SUMA_HANDOVER_TIMEOUT deprecated */
 #define DATA_SERVER_REPORT_STARTUP_FREQUENCY 184
 #define DATA_SERVER_NODE_GROUP 185
 #define DATA_SERVER_THREADS 186
@@ -1228,6 +1325,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MAX_LOCAL_TRIGGER_USERS, 100);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_local_trigger_users,
                             IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfSubscribers);
   conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
   "Max number of local trigger user nodes";
@@ -1236,6 +1334,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry,
                             data_server_max_local_trigger_operations,
                             IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfConcurrentSubOperations);
   conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
   "Max number of local trigger operations";
@@ -1243,21 +1342,18 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MAX_STORED_GROUP_COMMITS, 102);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_max_stored_group_commits,
                             IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxBufferedEpochs);
   conf_entry->min_ndb_version_used= 0x60316;
   conf_entry->config_entry_description=
   "Max number of group commits we will store information about";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_TRIGGER_HANDOVER_TIMEOUT, 103);
-  IC_SET_DATA_SERVER_CONFIG(conf_entry,
-                            data_server_local_trigger_handover_timeout,
-                            IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
-  conf_entry->min_ndb_version_used= 0x60316;
-  conf_entry->config_entry_description=
-  "Maximum time to wait when performing a handover during local trigger definitions";
+  IC_SET_CONFIG_MAP(183, 103);
+  conf_entry->is_deprecated= TRUE;
 
   IC_SET_CONFIG_MAP(DATA_SERVER_REPORT_STARTUP_FREQUENCY, 104);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_report_startup_frequency,
                             IC_UINT32, 0, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, StartupStatusReportFrequency);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
   "How often to issue status reports during startup of the ndb kernel";
@@ -1265,6 +1361,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_NODE_GROUP, 105);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_node_group,
                             IC_UINT32, 0, IC_NOT_CHANGEABLE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, Nodegroup);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_NODE_ID);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
@@ -1273,30 +1370,26 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_THREADS, 106);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_threads,
                             IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 2, 8);
-  conf_entry->min_ndb_version_used= 0x60401;
+  IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfExecutionThreads);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 2, 36);
+  conf_entry->min_ndb_version_used= 0x70205;
   conf_entry->config_entry_description=
   "Number of threads that can be used maximally for Data Server node";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_THREADS, 107);
-  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_threads,
-                            IC_UINT32, 4, IC_NODE_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
-  conf_entry->min_ndb_version_used= 0x60401;
-  conf_entry->config_entry_description=
-  "Number of threads used by local database part in Data Server";
-  
-  IC_SET_CONFIG_MAP(DATA_SERVER_LOCAL_DB_WORKERS, 108);
-  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_local_db_workers,
-                            IC_UINT32, 4, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 4);
-  conf_entry->min_ndb_version_used= 0x60401;
-  conf_entry->config_entry_description=
-  "Number of partitions used by local database part in Data Server";
+  /*
+    These are internal data node parameter to set number of LDM
+    threads/objects, we don't provide this option.
+  */
+  IC_SET_CONFIG_MAP(187, 107);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(188, 108);
+  conf_entry->is_deprecated= TRUE;
 
   IC_SET_CONFIG_MAP(DATA_SERVER_ZERO_REDO_LOG, 109);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_zero_redo_log,
                             IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, InitFragmentLogFiles);
   conf_entry->default_string= "sparse";
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
@@ -1306,30 +1399,29 @@ init_config_parameters()
 /* 192 not used */
 #define DATA_SERVER_FILE_THREAD_POOL 190
 #define DATA_SERVER_CLASSIC 191
+/* 192 not in use */
 #define DATA_SERVER_DISK_FILE_PATH 193
 #define DATA_SERVER_DISK_DATA_FILE_PATH 194
 #define DATA_SERVER_DISK_UNDO_FILE_PATH 195
 #define DATA_SERVER_INITIAL_LOG_FILE_GROUP 196
 #define DATA_SERVER_INITIAL_TABLESPACE 197
 #define DATA_SERVER_MEMORY_POOL 198
-/* 199 used, not for normal builds though */
+/* 199 only in special 5.1 build */
   IC_SET_CONFIG_MAP(DATA_SERVER_FILE_THREAD_POOL, 110);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_file_thread_pool,
                             IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, DiskIOThreadPool);
   conf_entry->min_ndb_version_used= 0x60401;
   conf_entry->config_entry_description=
   "Number of threads used for Disk Data file threads";
 
-  IC_SET_CONFIG_MAP(DATA_SERVER_CLASSIC, 111);
-  IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_classic, FALSE,
-                             IC_NOT_CHANGEABLE);
-  conf_entry->min_ndb_version_used= 0x70205;
-  conf_entry->config_entry_description=
-  "Using Classic Multithreading, only used for backwards compatability";
+  IC_SET_CONFIG_MAP(191, 111);
+  conf_entry->is_deprecated= TRUE;
 
   IC_SET_CONFIG_MAP(DATA_SERVER_DISK_FILE_PATH, 113);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_disk_file_path,
                             IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, FileSystemPathDD);
   conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->min_ndb_version_used= 0x70205;
   conf_entry->config_entry_description=
@@ -1338,6 +1430,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DISK_DATA_FILE_PATH, 114);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_disk_data_file_path,
                             IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, FileSystemPathDataFiles);
   conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->min_ndb_version_used= 0x70205;
   conf_entry->config_entry_description=
@@ -1346,6 +1439,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DISK_UNDO_FILE_PATH, 115);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_disk_undo_file_path,
                             IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, FileSystemPathUndoFiles);
   conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->min_ndb_version_used= 0x70205;
   conf_entry->config_entry_description=
@@ -1354,6 +1448,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_LOG_FILE_GROUP, 116);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_initial_log_file_group,
                             IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, InitialLogfileGroup);
   conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->min_ndb_version_used= 0x70205;
   conf_entry->config_entry_description=
@@ -1362,6 +1457,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_INITIAL_TABLESPACE, 117);
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_initial_tablespace,
                             IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, InitialTablespace);
   conf_entry->default_string= (gchar*)ic_empty_string;
   conf_entry->min_ndb_version_used= 0x70205;
   conf_entry->config_entry_description=
@@ -1370,6 +1466,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_MEMORY_POOL, 118);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_memory_pool,
                        IC_UINT64, 0, IC_ROLLING_UPGRADE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, SharedGlobalMemory);
   conf_entry->config_entry_description=
   "Size of memory pool for internal memory usage";
 
@@ -1763,6 +1860,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_REDO_LOG_PARTS, 211);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_redo_log_parts,
                        IC_UINT32, 4, IC_INITIAL_NODE_RESTART);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, NoOfFragmentLogParts);
   conf_entry->min_ndb_version_used= 0x70205;
   IC_SET_CONFIG_MIN(conf_entry, 4);
   conf_entry->config_entry_description=

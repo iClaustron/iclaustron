@@ -59,6 +59,7 @@ typedef enum ic_config_data_type
 struct ic_config_entry
 {
   IC_STRING config_entry_name;
+  IC_STRING ndb_entry_name;
   gchar *config_entry_description;
   guint32 max_value;
   guint32 min_value;
@@ -466,6 +467,11 @@ struct ic_int_run_cluster_server
     id_already_used_aborting(id);   \
   if (id > glob_max_config_id) glob_max_config_id= id; \
   conf_entry->config_id= name;
+
+#define IC_SET_NDB_CONFIG_NAME(conf_entry, name) \
+  (conf_entry)->ndb_entry_name.str= #name; \
+  (conf_entry)->ndb_entry_name.len= strlen(#name); \
+  (conf_entry)->ndb_entry_name.is_null_terminated= TRUE;
 
 #define IC_SET_SYSTEM_CONFIG(conf_entry, name, type, val, change) \
   (conf_entry)->config_entry_name.str= #name; \
