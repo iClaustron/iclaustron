@@ -33,7 +33,7 @@ typedef enum ic_communication_type IC_COMMUNICATION_TYPE;
 enum ic_config_entry_change
 {
   IC_ONLINE_CHANGE = 0,
-  IC_NODE_RESTART_CHANGE = 1,
+  IC_NODE_RESTART = 1,
   IC_ROLLING_UPGRADE_CHANGE = 2,
   IC_ROLLING_UPGRADE_CHANGE_SPECIAL = 3,
   IC_INITIAL_NODE_RESTART = 4,
@@ -61,8 +61,8 @@ struct ic_config_entry
   IC_STRING config_entry_name;
   IC_STRING ndb_entry_name;
   gchar *config_entry_description;
-  guint32 max_value;
-  guint32 min_value;
+  guint64 max_value;
+  guint64 min_value;
   union
   {
     guint64 default_value;
@@ -607,6 +607,28 @@ struct ic_int_run_cluster_server
   (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
   (conf_entry)->default_value= (val); \
   (conf_entry)->data_type= (type); \
+  (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_CLIENT_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_CLIENT_CONFIG_BOOLEAN(conf_entry, name, val, change) \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
+  (conf_entry)->default_value= (val); \
+  (conf_entry)->data_type= IC_BOOLEAN; \
+  (conf_entry)->is_boolean= TRUE; \
+  (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \
+  (conf_entry)->config_types= (1 << IC_CLIENT_TYPE); \
+  (conf_entry)->change_variant= (change);
+
+#define IC_SET_CLIENT_CONFIG_STRING(conf_entry, name, val, change) \
+  (conf_entry)->config_entry_name.str= #name; \
+  (conf_entry)->config_entry_name.len= strlen(#name); \
+  (conf_entry)->config_entry_name.is_null_terminated= TRUE; \
+  (conf_entry)->data_type= IC_CHARPTR; \
+  (conf_entry)->is_string_type= TRUE; \
+  (conf_entry)->default_string= (char*)(val); \
   (conf_entry)->offset= offsetof(IC_CLIENT_CONFIG, name); \
   (conf_entry)->config_types= (1 << IC_CLIENT_TYPE); \
   (conf_entry)->change_variant= (change);

@@ -201,8 +201,9 @@ typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
   gchar *pcntrl_hostname; \
   guint32 node_id;        \
   guint32 port_number;    \
-  guint32 network_buffer_size; \
-  guint32 pcntrl_port
+  guint32 pcntrl_port;    \
+  guint64 network_buffer_size; \
+  guint64 more_network_buffer_size;
   
 struct ic_data_server_config
 {
@@ -219,6 +220,7 @@ struct ic_data_server_config
   gchar *data_server_disk_undo_file_path;
   gchar *data_server_initial_log_file_group;
   gchar *data_server_initial_tablespace;
+  gchar *data_server_cpu_thread_configuration;
 
   guint64 size_of_ram_memory;
   guint64 size_of_hash_memory;
@@ -308,6 +310,27 @@ struct ic_data_server_config
   /* Reserving send buffer memory for data server traffic ignored for now */
   guint32 reserved_send_buffer;
   guint32 data_server_lcp_poll_time;
+  guint32 data_server_parallel_build_index;
+  guint32 data_server_heartbeat_order;
+  guint32 data_server_trace_schema_ops;
+  guint32 data_server_max_automatic_start_retries;
+  guint32 data_server_redo_overload_limit;
+  guint32 data_server_redo_overload_report_limit;
+  guint32 data_server_log_event_buffer_size;
+  guint32 data_server_numa_interleave_memory;
+  guint32 data_server_allocate_memory_time;
+  guint32 data_server_max_concurrent_scans_per_partition;
+  guint32 data_server_node_connect_check_timer;
+  guint32 data_server_start_timer_wait_nodes_without_nodegroup;
+  guint32 data_server_index_statistics_create_flag;
+  guint32 data_server_index_statistics_monitor_update_flag;
+  guint32 data_server_index_statistics_size_per_index;
+  guint32 data_server_index_statistics_scale_factor_large_indexes;
+  guint32 data_server_index_statistics_change_factor_to_update;
+  guint32 data_server_index_statistics_change_factor_large_index;
+  guint32 data_server_index_statistics_minimum_update_delay;
+  guint32 data_server_max_queries_per_transaction;
+  guint32 data_server_always_free_pct;
 
   gchar use_unswappable_memory;
   gchar data_server_automatic_restart;
@@ -316,6 +339,8 @@ struct ic_data_server_config
   gchar data_server_backup_compression;
   gchar data_server_local_checkpoint_compression;
   gchar use_o_direct;
+  gchar data_server_copy_data_algorithm;
+  gchar data_server_crash_flag_on_checksum_error;
 };
 typedef struct ic_data_server_config IC_DATA_SERVER_CONFIG;
 
@@ -335,6 +360,9 @@ struct ic_client_config
   guint32 client_batch_size;
 
   guint32 apid_num_threads;
+
+  gchar client_automatic_reconnect;
+  gchar client_default_redo_operation_type;
 };
 typedef struct ic_client_config IC_CLIENT_CONFIG;
 
