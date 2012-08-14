@@ -246,7 +246,10 @@ ic_print_config_parameters(guint32 mask)
       }
       ic_printf("Entry %u:", i);
       ic_printf("Name: %s", conf_entry->config_entry_name.str);
-      ic_printf("Ndb name: %s", conf_entry->ndb_entry_name.str);
+      if (conf_entry->ndb_entry_name.str)
+      {
+        ic_printf("Ndb name: %s", conf_entry->ndb_entry_name.str);
+      }
       ic_printf("Comment: %s", conf_entry->config_entry_description);
       ic_printf("ConfigId: %u", conf_entry->config_id);
       switch (conf_entry->data_type)
@@ -617,7 +620,10 @@ init_config_parameters()
   "The total size of the network buffers used in the node, "
   "if 0 it's calculated using send buffer size on each node connection";
 
-#define IC_NODE_NAME 14
+/* Id 16-19 for configuration id 10-99 */
+#define IC_NODE_NAME 16
+/* Id 17-19 not used */
+
   IC_SET_CONFIG_MAP(IC_NODE_NAME, 16);
   IC_SET_DATA_SERVER_STRING(conf_entry, node_name, IC_CLUSTER_RESTART_CHANGE);
   conf_entry->is_only_iclaustron= TRUE;
@@ -626,7 +632,6 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Node name";
 
-/* Id 10-99 not used */
 
 /* Id 20-29 for configuration id 100-109 */
 #define DATA_SERVER_MAX_TRACE_FILES 100
@@ -813,7 +818,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN(conf_entry, 10);
   conf_entry->config_entry_description=
   "Time in ms between sending heartbeat messages to data servers,"
-  " 4 missed leads to node crash";
+  " 4 missed heartbeats leads to node crash";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_CLIENT_HEARTBEAT_TIMER, 39);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_heartbeat_client_nodes,
@@ -822,7 +827,7 @@ init_config_parameters()
   IC_SET_CONFIG_MIN(conf_entry, 10);
   conf_entry->config_entry_description=
   "Time in ms between sending heartbeat messages to client nodes,"
-  " 4 missed leads to node crash";
+  " 4 missed heartbeats leads to node crash";
 
 /* Id 40-49 for configuration id 120-129 */
 #define DATA_SERVER_LOCAL_CHECKPOINT_TIMER 120
@@ -1249,6 +1254,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_GROUP_COMMIT_DELAY, 90);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_group_commit_delay,
                        IC_UINT32, 100, IC_ONLINE_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenEpochs);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 32000);
   conf_entry->config_entry_description=
   "How long is the delay between each group commit started by the cluster";
@@ -1256,7 +1262,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_GROUP_COMMIT_TIMEOUT, 91);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_group_commit_timeout,
                             IC_UINT32, 4000, IC_ONLINE_CHANGE);
-  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenEpochs);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenEpochsTimeout);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 32000);
   conf_entry->config_entry_description=
   "Maximum time group commit is allowed to take before node is shut down";
@@ -1402,7 +1408,6 @@ init_config_parameters()
   "Initialise REDO log during initial start (sparse or full)";
 
 /* Id 110-119 for configuration id 190-199 */
-/* 192 not used */
 #define DATA_SERVER_FILE_THREAD_POOL 190
 #define DATA_SERVER_CLASSIC 191
 /* 192 not in use */
@@ -1420,7 +1425,10 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Number of threads used for Disk Data file threads";
 
-  IC_SET_CONFIG_MAP(191, 111);
+  IC_SET_CONFIG_MAP(DATA_SERVER_CLASSIC, 111);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(192, 112);
   conf_entry->is_deprecated= TRUE;
 
   IC_SET_CONFIG_MAP(DATA_SERVER_DISK_FILE_PATH, 113);
@@ -1470,6 +1478,9 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Size of memory pool for internal memory usage";
 
+  IC_SET_CONFIG_MAP(199, 119);
+  conf_entry->is_deprecated= TRUE;
+
 /* Client/Cluster Server configuration items */
 /* Id 120-129 for configuration id 200-209 */
 #define CLIENT_RESOLVE_RANK 200
@@ -1480,6 +1491,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_RANK, 120);
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_rank,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, ArbitrationRank);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2);
   conf_entry->config_types= ALL_CLIENT_TYPES;
   conf_entry->config_entry_description=
@@ -1488,6 +1500,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(CLIENT_RESOLVE_TIMER, 121);
   IC_SET_CLIENT_CONFIG(conf_entry, client_resolve_timer,
                        IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, ArbitrationDelay);
   conf_entry->config_types= ALL_CLIENT_TYPES;
   conf_entry->config_entry_description=
   "Time in ms waiting for resolve before crashing";
@@ -1506,7 +1519,6 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Extra memory for send buffers allocated";
 
-/* Id 16-19 for configuration id 10-99 */
 /* Id 130-139 for configuration id 210-249 */
 /* Id 210-248 not used */
 #define APID_NUM_THREADS 249
@@ -1652,7 +1664,7 @@ init_config_parameters()
 /* This is the cluster server configuration section  */
 #define CLUSTER_SERVER_PORT_NUMBER 300
 #define CLUSTER_MANAGER_PORT_NUMBER 340
-/* Id 301-339 and 342-350 not used */
+/* Id 301-339 and 341-350 not used */
 
   IC_SET_CONFIG_MAP(CLUSTER_SERVER_PORT_NUMBER, 170);
   IC_SET_CLUSTER_SERVER_CONFIG(conf_entry,
@@ -1728,6 +1740,12 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Using checksum ensures that internal bugs doesn't corrupt data while"
   " data is placed in buffers";
+
+  IC_SET_CONFIG_MAP(404, 184);
+  conf_entry->is_deprecated= TRUE;
+
+  IC_SET_CONFIG_MAP(405, 185);
+  conf_entry->is_deprecated= TRUE;
 
   /* TODO: What to do with this one, it's deprecated and mandatory?? */
   IC_SET_CONFIG_MAP(SOCKET_SERVER_PORT_NUMBER, 186);
@@ -1826,10 +1844,13 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Size of read buffer in front of socket";
 
+  IC_SET_CONFIG_MAP(456, 196);
+  conf_entry->is_deprecated= TRUE;
+
   IC_SET_CONFIG_MAP(SOCKET_KERNEL_READ_BUFFER_SIZE, 197);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_read_buffer_size,
                        IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
-  IC_SET_NDB_CONFIG_NAME(conf_entry, TCT_RCV_BUF_SIZE);
+  IC_SET_NDB_CONFIG_NAME(conf_entry, TCP_RCV_BUF_SIZE);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024);
   conf_entry->config_entry_description=
   "Size of receive buffer for socket in OS kernel";
