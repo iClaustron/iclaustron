@@ -80,6 +80,7 @@ init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
   switch (conf_entry->data_type)
   {
     case IC_CHARPTR:
+    case IC_ENUM:
     {
       gchar **varchar_ptr= (gchar**)var_ptr;
       *varchar_ptr= conf_entry->default_string;
@@ -256,6 +257,9 @@ ic_print_config_parameters(guint32 mask)
       {
         case IC_CHARPTR:
           ic_printf("Data type is string");
+          break;
+        case IC_ENUM:
+          ic_printf("Data type is enum");
           break;
         case IC_UINT16:
           ic_printf("Data type is 16-bit unsigned integer");
@@ -2138,6 +2142,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_STRING(conf_entry, data_server_cpu_thread_configuration,
                             IC_NODE_RESTART);
   IC_SET_NDB_CONFIG_NAME(conf_entry, ThreadConfig);
+  conf_entry->default_string= ic_empty_string;
   conf_entry->config_entry_description=
   "String to define number of threads of various kinds and their "
   "binding to CPUs";

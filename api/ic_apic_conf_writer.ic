@@ -1102,7 +1102,8 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
         continue;
       /* We found a configuration item of this section type, handle it */
       data_ptr= default_struct_ptr + conf_entry->offset;
-      if (conf_entry->data_type != IC_CHARPTR)
+      if (conf_entry->data_type != IC_CHARPTR &&
+          conf_entry->data_type != IC_ENUM)
       {
         if ((error= check_if_all_same_value_int(clu_conf, section_type,
                                                 conf_entry->offset,
@@ -1145,13 +1146,15 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
           *(guint64*)data_ptr= value;
           break;
         case IC_CHARPTR:
+        case IC_ENUM:
           *(gchar**)data_ptr= val_str;
           break;
         default:
           ic_assert(FALSE);
           DEBUG_RETURN_INT(1);
       }
-      if (conf_entry->data_type != IC_CHARPTR)
+      if (conf_entry->data_type != IC_CHARPTR &&
+          conf_entry->data_type != IC_ENUM)
       {
         if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
                                               &conf_entry->config_entry_name,
@@ -1198,14 +1201,16 @@ write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
       /* We found a configuration item of this section type, handle it */
       data_type= conf_entry->data_type;
       offset= conf_entry->offset;
-      if (data_type != IC_CHARPTR)
+      if (data_type != IC_CHARPTR &&
+          data_type != IC_ENUM)
       {
         value= get_node_data(struct_ptr, offset, data_type);
         default_value= get_node_data(default_struct_ptr, offset, data_type);
       }
       entry_name= &conf_entry->config_entry_name;
       /* Check if non-mandatory config variable is different from default */
-      if (data_type != IC_CHARPTR)
+      if (data_type != IC_CHARPTR &&
+          data_type != IC_ENUM)
       {
         if (!conf_entry->is_mandatory && value == default_value)
           continue;
