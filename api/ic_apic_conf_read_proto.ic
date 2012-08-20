@@ -369,7 +369,8 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
   DEBUG_ENTRY("get_cluster_ids");
 
   num_clusters= count_clusters(clu_infos);
-  if (ic_send_with_cr(conn, get_cluster_list_str))
+  if (ic_send_with_cr(conn, get_cluster_list_str) ||
+      ic_send_empty_line(conn))
   {
     ret_code= conn->conn_op.ic_get_error_code(conn);
     goto error;
@@ -389,7 +390,9 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
       case RECEIVE_CLUSTER_NAME:
         cluster_name_req_len= strlen(cluster_name_string);
         if ((read_size < cluster_name_req_len) ||
-            (memcmp(read_buf, cluster_name_string, cluster_name_req_len) != 0))
+            (memcmp(read_buf,
+                    cluster_name_string,
+                    cluster_name_req_len) != 0))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in receive cluster name state"));
@@ -436,6 +439,8 @@ get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
         ic_assert(FALSE);
     }
   }
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
   ret_code= 1;
   if (num_clusters_found != num_clusters)
     goto error;

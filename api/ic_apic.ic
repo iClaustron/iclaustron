@@ -525,7 +525,7 @@ static const gchar *node_id_str= "node_id";
 /* Strings used in NDB MGMAPI Protocol, first group additions */
 static const gchar *get_cluster_list_str= "get cluster list";
 static const gchar *get_cluster_list_reply_str= "get cluster list reply";
-static const gchar *cluster_name_string= "clustername:";
+static const gchar *cluster_name_string= "clustername: ";
 static const gchar *cluster_id_str= "clusterid:";
 static const gchar *end_get_cluster_list_str= "end get cluster list";
 

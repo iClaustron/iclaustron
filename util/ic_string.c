@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 
 gchar *ic_empty_string= "";
 gchar *ic_semi_colon_str= ";";
+gchar *ic_space_str= " ";
 gchar *ic_colon_str= ":";
 gchar *ic_err_str= "Error:";
 
@@ -122,12 +123,10 @@ ic_create_config_file_name(IC_STRING *file_name,
 void
 ic_set_number_ending_string(gchar *buf, guint64 number)
 {
-  gchar *ignore_ptr;
-
   buf[0]= '.';
-  ignore_ptr= ic_guint64_str(number,
-                             &buf[1],
-                             NULL);
+  ic_guint64_str(number,
+                 &buf[1],
+                 NULL);
 }
 
 /**

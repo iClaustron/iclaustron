@@ -618,7 +618,6 @@ init_config_parameters()
                             0,
                             IC_NODE_RESTART);
   IC_SET_NDB_CONFIG_NAME(conf_entry, TotalSendBufferMemory);
-  IC_SET_CONFIG_MIN(conf_entry, 256 * 1024);
   conf_entry->config_types= ALL_NODE_TYPES;
   conf_entry->config_entry_description=
   "The total size of the network buffers used in the node, "

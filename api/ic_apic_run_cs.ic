@@ -3752,6 +3752,8 @@ handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   DEBUG_ENTRY("handle_get_cluster_list");
 
   inc_config_ref_count(run_obj);
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
   if ((ret_code= ic_send_with_cr(conn, get_cluster_list_reply_str)))
     goto error;
   for (i= 0; i <= run_obj->config.max_cluster_id; i++)
@@ -3769,7 +3771,8 @@ handle_get_cluster_list(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                                (guint64)i)))
       goto error;
   }
-  if ((ret_code= ic_send_with_cr(conn, end_get_cluster_list_str)))
+  if ((ret_code= ic_send_with_cr(conn, end_get_cluster_list_str)) ||
+      (ret_code= ic_send_empty_line(conn)))
     goto error;
   dec_config_ref_count(run_obj);
   DEBUG_RETURN_INT(0);

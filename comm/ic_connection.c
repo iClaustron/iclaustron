@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1018,10 +1018,9 @@ error:
 static gpointer
 run_set_up_socket_connection(gpointer data)
 {
-  int ret_code;
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)data;
 
-  ret_code= int_set_up_socket_connection(conn);
+  int_set_up_socket_connection(conn);
   lock_connect_mutex(conn);
   conn->conn_stat.is_connect_thread_active= FALSE;
   unlock_connect_mutex(conn);

@@ -1,4 +1,4 @@
-/* Copyright (C) 2011 iClaustron AB
+/* Copyright (C) 2011-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -212,6 +212,7 @@ void ic_get_mem_info(guint32 *num_numa_nodes,
                                         &file_size)))
       goto no_info;
     num_lines= ic_count_lines(file_content, file_size);
+    (void)num_lines; /* Currently not used */
     loop_file_content= file_content;
 
     if ((ret_code= ic_get_next_line(&loop_file_content,

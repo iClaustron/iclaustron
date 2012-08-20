@@ -1163,10 +1163,13 @@ write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
       }
       else
       {
-        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
-                                               &conf_entry->config_entry_name,
-                                               val_str)))
-          DEBUG_RETURN_INT(error);
+        if (strcmp(val_str, ic_empty_string) != 0)
+        {
+          if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+                                                 &conf_entry->config_entry_name,
+                                                 val_str)))
+            DEBUG_RETURN_INT(error);
+        }
       }
     }
   }
