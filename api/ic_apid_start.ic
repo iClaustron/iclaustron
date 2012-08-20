@@ -73,8 +73,7 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                       gchar **err_str,
                       gchar *error_buf,
                       IC_APID_GLOBAL **apid_global,
-                      IC_API_CONFIG_SERVER **apic,
-                      gboolean daemonize)
+                      IC_API_CONFIG_SERVER **apic)
 {
   IC_CONNECT_STRING conn_str;
   IC_API_CLUSTER_CONNECTION api_cluster_conn;
@@ -84,11 +83,6 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   if (!(*tp_state=
           ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
-  if (daemonize)
-  {
-    if ((ret_code= ic_daemonize("/dev/null")))
-      goto error;
-  }
   ic_set_die_handler(apid_kill_handler, apid_global);
   ic_set_sig_error_handler(NULL, NULL);
 
@@ -329,11 +323,14 @@ is number of microseconds since the program started.\n\
 static int use_config_vars;
 
 int
-ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
+ic_start_program(int argc,
+                 gchar *argv[],
+                 GOptionEntry entries[],
                  GOptionEntry add_entries[],
                  const gchar *program_name,
                  gchar *start_text,
-                 gboolean use_config)
+                 gboolean use_config,
+                 gboolean daemonize)
 {
   int ret_code= IC_ERROR_STARTUP;
 #ifdef DEBUG_BUILD
@@ -378,6 +375,13 @@ ic_start_program(int argc, gchar *argv[], GOptionEntry entries[],
   if (!g_option_context_parse(context, &argc, &argv, &error))
     goto parse_error;
   g_option_context_free(context);
+
+  if (daemonize && ic_glob_daemonize)
+  {
+    if ((ret_code= ic_daemonize("/dev/null")))
+      return ret_code;
+  }
+
   if ((ret_code= ic_init()))
     goto early_error;
   DEBUG_PRINT(PROGRAM_LEVEL, ("Returning to ic_start_program"));

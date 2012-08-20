@@ -3038,8 +3038,14 @@ int main(int argc, char *argv[])
   IC_STRING log_file;
  
   IC_INIT_STRING(&log_file, NULL, 0, FALSE);
-  if ((ret_code= ic_start_program(argc, argv, entries, NULL,
-                                  glob_process_name, start_text, TRUE)))
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  entries,
+                                  NULL,
+                                  glob_process_name,
+                                  start_text,
+                                  TRUE,
+                                  FALSE)))
     return ret_code;
   if (glob_daemonize)
   {

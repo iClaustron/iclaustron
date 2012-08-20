@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -48,16 +48,19 @@ int main(int argc, char *argv[])
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state= NULL;
 
-  if ((ret_code= ic_start_program(argc, argv, ic_apid_entries, NULL,
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  ic_apid_entries, NULL,
                                   glob_process_name,
-            "- iClaustron API Basic Test", TRUE)))
+                                  "- iClaustron API Basic Test",
+                                  TRUE,
+                                  FALSE)))
     goto end;
   if ((ret_code= ic_start_apid_program(&tp_state,
                                        &err_str,
                                        error_str,
                                        &apid_global,
-                                       &apic,
-                                       FALSE)))
+                                       &apic)))
     goto end;
   /*
     ic_run_apid_program will start glob_num_threads and in each thread it will

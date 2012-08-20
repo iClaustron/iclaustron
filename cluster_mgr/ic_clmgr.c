@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1217,9 +1217,14 @@ int main(int argc,
   gchar *err_str= error_str;
   IC_THREADPOOL_STATE *tp_state= NULL;
 
-  if ((ret_code= ic_start_program(argc, argv, entries,
-                                  ic_apid_entries, glob_process_name,
-           "- iClaustron Cluster Manager", TRUE)))
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  entries,
+                                  ic_apid_entries,
+                                  glob_process_name,
+                                  "- iClaustron Cluster Manager",
+                                  TRUE,
+                                  TRUE)))
     goto end;
   if (ic_mgr_find_hash_function())
   {
@@ -1235,8 +1240,7 @@ int main(int argc,
                                        &err_str,
                                        error_str,
                                        &apid_global,
-                                       &apic,
-                                       ic_glob_daemonize)))
+                                       &apic)))
     goto end;
   if ((ret_code= set_up_server_connection(&conn)))
     goto end;

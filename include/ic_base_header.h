@@ -253,6 +253,7 @@ int ic_start_program(int argc,
                      GOptionEntry add_entries[],
                      const gchar *program_name,
                      gchar *start_text,
-                     gboolean use_config);
+                     gboolean use_config,
+                     gboolean daemonize);
 void ic_end();
 #endif

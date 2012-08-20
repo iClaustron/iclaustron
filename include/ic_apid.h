@@ -1951,8 +1951,7 @@ int ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                           gchar **err_str,
                           gchar *error_buf,
                           IC_APID_GLOBAL **apid_global,
-                          IC_API_CONFIG_SERVER **apic,
-                          gboolean daemonize);
+                          IC_API_CONFIG_SERVER **apic);
 
 int ic_run_apid_program(IC_APID_GLOBAL *apid_global,
                         IC_THREADPOOL_STATE *tp_state,

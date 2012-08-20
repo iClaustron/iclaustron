@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -58,9 +58,14 @@ main(int argc, char *argv[])
   gchar error_buffer[ERROR_MESSAGE_SIZE];
   IC_RUN_CLUSTER_SERVER *run_obj= NULL;
 
-  if ((error= ic_start_program(argc, argv, entries, ic_apid_entries,
+  if ((error= ic_start_program(argc,
+                               argv,
+                               entries,
+                               ic_apid_entries,
                                glob_process_name,
-           "- iClaustron Cluster Server", TRUE)))
+                               "- iClaustron Cluster Server",
+                               TRUE,
+                               TRUE)))
     return error;
   if (ic_glob_node_id == 0)
   {

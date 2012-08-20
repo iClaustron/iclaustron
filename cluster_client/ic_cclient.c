@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -174,9 +174,14 @@ int main(int argc, char *argv[])
   int ret_code= 1;
   IC_CONNECTION *conn;
 
-  if ((ret_code= ic_start_program(argc, argv, entries, NULL,
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  entries,
+                                  NULL,
                                   glob_process_name,
-           "- iClaustron Command Client", TRUE)))
+                                  "- iClaustron Command Client",
+                                  TRUE,
+                                  FALSE)))
     return ret_code;
 
   ic_init_readline(glob_history_size);

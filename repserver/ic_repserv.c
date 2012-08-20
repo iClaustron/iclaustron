@@ -47,16 +47,20 @@ int main(int argc,
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state= NULL;
 
-  if ((ret_code= ic_start_program(argc, argv, ic_apid_entries, NULL,
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  ic_apid_entries,
+                                  NULL,
                                   glob_process_name,
-            "- iClaustron Replication Server", TRUE)))
+                                  "- iClaustron Replication Server",
+                                  TRUE,
+                                  TRUE)))
     goto end;
   if ((ret_code= ic_start_apid_program(&tp_state,
                                        &err_str,
                                        error_str,
                                        &apid_global,
-                                       &apic,
-                                       ic_glob_daemonize)))
+                                       &apic)))
     goto end;
   ret_code= ic_run_apid_program(apid_global,
                                 tp_state,

@@ -4349,6 +4349,7 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                     &param->node_type,
                                     &param->cluster_id)))
     goto end;
+  DEBUG_INDENT_LEVEL_CHECK(2);
   ic_mutex_lock(state_mutex);
   if (rcs_state->cs_started &&
       is_cs_master(rcs_state))
@@ -4755,7 +4756,9 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                            clu_conf->node_config[i],
                                            version_number);
       if (node_sect_len == 0)
-        return IC_ERROR_INCONSISTENT_DATA;
+      {
+        DEBUG_RETURN_INT(IC_ERROR_INCONSISTENT_DATA);
+      }
       len+= node_sect_len;
       DEBUG_PRINT(CONFIG_LEVEL, ("2: len=%u", len));
       if (clu_conf->node_types[i] != IC_DATA_SERVER_NODE)
@@ -4794,7 +4797,9 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                     (gchar*)&clu_conf->sys_conf,
                                     version_number);
   if (system_len == 0)
+  {
     DEBUG_RETURN_INT(IC_ERROR_INCONSISTENT_DATA);
+  }
   len+= system_len;
   DEBUG_PRINT(CONFIG_LEVEL, ("4: len=%u", len));
   /*
@@ -4812,10 +4817,15 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
      this method and its caller, so memory will be freed soon again
   */
   if (!num_comms)
+  {
     abort();
+  }
   if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
-    return IC_ERROR_MEM_ALLOC;
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
   *key_value_array= loc_key_value_array;
+
   /*
     Put in verification section
   */
@@ -4990,7 +5000,9 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   /* Perform final set of checks */
   *key_value_array_len= loc_key_value_array_len;
   if (len == loc_key_value_array_len)
+  {
     DEBUG_RETURN_INT(0);
+  }
 
   ret_code= IC_ERROR_INCONSISTENT_DATA;
 error:

@@ -1,4 +1,4 @@
-/* Copyright (C) 2010-2011 iClaustron AB
+/* Copyright (C) 2010-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -35,9 +35,14 @@ int main(int argc, char *argv[])
   gchar *err_str= NULL;
   IC_THREADPOOL_STATE *tp_state= NULL;
 
-  if ((ret_code= ic_start_program(argc, argv, ic_apid_entries, NULL,
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  ic_apid_entries,
+                                  NULL,
                                   glob_process_name,
-            "- iClaustron Configurator", TRUE)))
+                                  "- iClaustron Configurator",
+                                  TRUE,
+                                  FALSE)))
     goto end;
 end:
   ic_stop_apid_program(ret_code,

@@ -1200,9 +1200,13 @@ int main(int argc, char *argv[])
   int ret_code;
   guint32 i;
 
-  if ((ret_code= ic_start_program(argc, argv, entries, NULL,
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  entries, NULL,
                                   glob_process_name,
-           "- Unit test program", FALSE)))
+                                  "- Unit test program",
+                                  FALSE,
+                                  FALSE)))
     return ret_code;
   if (glob_test_type == 0)
   {

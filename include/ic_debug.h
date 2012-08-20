@@ -66,6 +66,7 @@ void ic_debug_return(gboolean ptr_val,
                      int return_int,
                      gchar *return_ptr);
 void ic_debug_thread_return();
+void ic_debug_indent_level_check(int level);
 void ic_debug_thread_init(const gchar *entry_point);
 int ic_debug_open();
 void ic_debug_close();
@@ -75,6 +76,9 @@ void ic_debug_enable(guint32 level);
 #define INT_DEBUG_RETURN_TYPE (int)0
 #define PTR_DEBUG_RETURN_TYPE (int)1
 #define VOID_DEBUG_RETURN_TYPE (int)2
+#define DEBUG_INDENT_LEVEL_CHECK(a) \
+  ic_debug_indent_level_check((a));
+
 #define DEBUG_RETURN_INT(a) \
 { \
   int __ret_val= (int)(a); \
@@ -113,6 +117,7 @@ void ic_debug_enable(guint32 level);
   if (ic_get_debug() & (level)) \
   { \
     ic_debug_print_char_buf((buf), NULL); \
+    ic_debug_print_char_buf(("\n"), NULL); \
   } \
 }
 #define DEBUG_PRINT(level, printf_args) \
@@ -135,6 +140,7 @@ void ic_debug_enable(guint32 level);
 #else
 #define DEBUG_THREAD_RETURN return NULL
 #define DEBUG_RETURN_EMPTY return
+#define DEBUG_INDENT_LEVEL_CHECK(a)
 #define DEBUG_RETURN_INT(a) return (a)
 #define DEBUG_RETURN_PTR(a) return (a)
 /* Define a variable only used in debug builds */

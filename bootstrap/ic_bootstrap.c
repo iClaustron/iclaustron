@@ -1193,9 +1193,14 @@ int main(int argc, char *argv[])
   guint32 line_size;
   gboolean end_of_input;
 
-  if ((ret_code= ic_start_program(argc, argv, entries, NULL,
+  if ((ret_code= ic_start_program(argc,
+                                  argv,
+                                  entries,
+                                  NULL,
                                   glob_process_name,
-                                  start_text, TRUE)))
+                                  start_text,
+                                  TRUE,
+                                  FALSE)))
     goto end;
 
   if ((ret_code= ic_boot_find_hash_function()))

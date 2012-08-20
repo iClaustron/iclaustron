@@ -103,7 +103,9 @@ ic_base64_encode(guint8 **dest,
   dst_len= 4*real_quads+no_crs;
   dst= (guint8*)ic_calloc(dst_len + 1);
   if (!dst)
-    return IC_ERROR_MEM_ALLOC;
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
   *dest= dst;
   *dest_len= dst_len;
   end_dst= dst + dst_len + 1;
@@ -155,5 +157,5 @@ ic_base64_encode(guint8 **dest,
   *dst= 0;
   dst++;
   ic_assert(dst == end_dst);
-  return 0;
+  DEBUG_RETURN_INT(0);
 }

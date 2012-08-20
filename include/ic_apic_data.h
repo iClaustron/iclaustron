@@ -361,8 +361,9 @@ struct ic_client_config
 
   guint32 apid_num_threads;
 
+  gchar *client_default_redo_operation_type;
+
   gchar client_automatic_reconnect;
-  gchar client_default_redo_operation_type;
 };
 typedef struct ic_client_config IC_CLIENT_CONFIG;
 
@@ -379,6 +380,7 @@ struct ic_cluster_server_config
   IC_CLIENT_COMMON_DECLARES;
   /* End of section in common with Client config */
   guint32 cluster_server_port_number;
+
   gchar *cluster_server_event_log;
 };
 typedef struct ic_cluster_server_config IC_CLUSTER_SERVER_CONFIG;
