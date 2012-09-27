@@ -40,9 +40,6 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
-/* Global variables */
-static const gchar *glob_process_name= "ic_csd";
-
 /* Option variables */
 
 static GOptionEntry entries[] = 
@@ -62,7 +59,7 @@ main(int argc, char *argv[])
                                argv,
                                entries,
                                ic_apid_entries,
-                               glob_process_name,
+                               "ic_csd",
                                "- iClaustron Cluster Server",
                                TRUE,
                                TRUE)))
@@ -73,7 +70,7 @@ main(int argc, char *argv[])
     goto error;
   }
   if (!(run_obj= ic_create_run_cluster(&ic_glob_config_dir,
-                                       glob_process_name,
+                                       ic_glob_process_name,
                                        ic_glob_node_id)))
   {
     error= IC_ERROR_MEM_ALLOC;

@@ -25,8 +25,6 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
-static const gchar *glob_process_name= "test_api_basic";
-
 static int
 run_api_thread(IC_APID_CONNECTION *apid_conn,
                IC_THREAD_STATE *thread_state)
@@ -36,6 +34,7 @@ run_api_thread(IC_APID_CONNECTION *apid_conn,
 
   (void)thread_state;
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
+  (void)apid_global;
   DEBUG_RETURN_INT(0);
 }
 
@@ -51,7 +50,7 @@ int main(int argc, char *argv[])
   if ((ret_code= ic_start_program(argc,
                                   argv,
                                   ic_apid_entries, NULL,
-                                  glob_process_name,
+                                  "test_api_basic",
                                   "- iClaustron API Basic Test",
                                   TRUE,
                                   FALSE)))

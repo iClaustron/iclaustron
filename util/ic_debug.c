@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -216,7 +216,7 @@ void ic_debug_indent_level_check(int level)
   IC_THREAD_DEBUG *thread_debug;
 
   thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
-  ic_require(thread_debug->indent_level == level);
+  ic_require((int)thread_debug->indent_level == level);
 }
 
 void ic_debug_thread_return()

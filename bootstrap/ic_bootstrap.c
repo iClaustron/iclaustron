@@ -28,7 +28,6 @@
 #include <ic_apid.h>
 #include "ic_boot_int.h"
 
-static const gchar *glob_process_name= "ic_bootstrap";
 static gchar *glob_bootstrap_file= "bootstrap.cmd";
 static guint32 glob_connect_timer= 10;
 static IC_CLUSTER_CONNECT_INFO **glob_clu_infos= NULL;
@@ -1197,7 +1196,7 @@ int main(int argc, char *argv[])
                                   argv,
                                   entries,
                                   NULL,
-                                  glob_process_name,
+                                  "ic_bootstrap",
                                   start_text,
                                   TRUE,
                                   FALSE)))

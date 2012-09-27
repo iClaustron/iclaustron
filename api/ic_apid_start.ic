@@ -327,7 +327,7 @@ ic_start_program(int argc,
                  gchar *argv[],
                  GOptionEntry entries[],
                  GOptionEntry add_entries[],
-                 const gchar *program_name,
+                 gchar *program_name,
                  gchar *start_text,
                  gboolean use_config,
                  gboolean daemonize)
@@ -404,6 +404,7 @@ ic_start_program(int argc,
     goto error;
   ic_set_port_binary_dir(ic_glob_binary_dir.str);
   ic_set_port_config_dir(ic_glob_config_dir.str);
+  ic_glob_process_name= program_name;
   DEBUG_RETURN_INT(0);
 
 parse_error:

@@ -214,7 +214,6 @@ struct ic_data_server_config
   gchar *filesystem_path;
   gchar *data_server_checkpoint_path;
   gchar *data_server_zero_redo_log;
-  gchar *data_server_resolve_method;
   gchar *data_server_disk_file_path;
   gchar *data_server_disk_data_file_path;
   gchar *data_server_disk_undo_file_path;
@@ -331,6 +330,7 @@ struct ic_data_server_config
   guint32 data_server_index_statistics_minimum_update_delay;
   guint32 data_server_max_queries_per_transaction;
   guint32 data_server_always_free_pct;
+  guint32 data_server_resolve_method;
 
   gchar use_unswappable_memory;
   gchar data_server_automatic_restart;
@@ -360,8 +360,7 @@ struct ic_client_config
   guint32 client_batch_size;
 
   guint32 apid_num_threads;
-
-  gchar *client_default_redo_operation_type;
+  guint32 client_default_redo_operation_type;
 
   gchar client_automatic_reconnect;
 };

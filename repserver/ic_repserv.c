@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -25,8 +25,6 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
-static const gchar *glob_process_name= "ic_repd";
-
 static int
 run_replication_server_thread(IC_APID_CONNECTION *apid_conn,
                               IC_THREAD_STATE *thread_state)
@@ -51,7 +49,7 @@ int main(int argc,
                                   argv,
                                   ic_apid_entries,
                                   NULL,
-                                  glob_process_name,
+                                  "ic_repd",
                                   "- iClaustron Replication Server",
                                   TRUE,
                                   TRUE)))

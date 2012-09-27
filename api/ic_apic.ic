@@ -560,12 +560,24 @@ static const gchar *public_key_str= "public key: a public key";
 static const gchar *endian_str= "endian:";
 static const gchar *little_endian_str= "little";
 static const gchar *big_endian_str= "big";
+static const gchar *name_str= "name:";
 static const gchar *log_event_str= "log_event: 0";
 static const gchar *result_ok_str= "result: Ok";
 static const gchar *result_str= "result:";
+static const gchar *error_code_str= "error_code:";
 static const gchar *content_len_str= "Content-Length:";
 static const gchar *octet_stream_str= "Content-Type: ndbconfig/octet-stream";
 static const gchar *content_encoding_str= "Content-Transfer-Encoding: base64";
+static const gchar *get_version_str= "get version";
+static const gchar *version_str= "version";
+static const gchar *id_str= "id:";
+static const gchar *major_str= "major:";
+static const gchar *minor_str= "minor:";
+static const gchar *build_str= "build:";
+static const gchar *string_str= "string:";
+static const gchar *mysql_major_str= "mysql_major:";
+static const gchar *mysql_minor_str= "mysql_minor:";
+static const gchar *mysql_build_str= "mysql_build:";
 
 static const gchar *get_cs_nodeid_str= "get cluster server node id";
 static const gchar *get_cs_nodeid_reply_str= "get cluster server node id reply:";
@@ -590,9 +602,10 @@ static const gchar *ic_starting_str= "starting";
 #define PASSWORD_REQ_STATE 5
 #define PUBLIC_KEY_REQ_STATE 6
 #define ENDIAN_REQ_STATE 7
-#define LOG_EVENT_REQ_STATE 8
-#define CLUSTER_ID_REQ_STATE 9
-#define EMPTY_LINE_REQ_STATE 10
+#define NAME_REQ_STATE 8
+#define LOG_EVENT_REQ_STATE 9
+#define CLUSTER_ID_REQ_STATE 10 
+#define EMPTY_LINE_REQ_STATE 11
 
 #define GET_CONFIG_REQ_STATE 0
 #define EMPTY_STATE 1

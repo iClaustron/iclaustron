@@ -31,6 +31,7 @@ IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_binary_dir= { NULL, 0, TRUE};
+gchar *ic_glob_process_name= NULL;
 
 /*
   MODULE:

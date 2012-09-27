@@ -47,11 +47,13 @@
   The final step is the actual protocol part to retrieve the configuration
   which are implemented by the protocol support methods:
     send_get_nodeid_req
+    send_get_version_req
     send_get_config_req
     send_get_mgmd_nodeid_req
     send_convert_transporter_req
     client_set_connection_parameter
     rec_get_nodeid_reply
+    rec_get_version_reply
     rec_get_config_reply
     rec_get_mgmd_nodeid_reply
     rec_convert_transporter_reply
@@ -66,6 +68,7 @@ static int get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
 static int send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
                                IC_CONNECTION *conn,
                                guint32 cluster_id);
+static int send_get_version_req(IC_CONNECTION *conn);
 static int send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
                                IC_CONNECTION *conn);
 static int send_get_mgmd_nodeid_req(IC_CONNECTION *conn);
@@ -82,10 +85,11 @@ static int rec_convert_transporter_reply(IC_INT_API_CONFIG_SERVER *apic,
                                          guint32 cs_nodeid);
 static int rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
                                 IC_CONNECTION *conn,
-                              guint32 cluster_id);
+                                guint32 cluster_id);
 static int client_set_connection_parameter(IC_INT_API_CONFIG_SERVER *apic,
                                            IC_CONNECTION *conn,
                                            guint32 cluster_id);
+static int rec_get_version_reply(IC_CONNECTION *conn);
 static int rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
                                 IC_CONNECTION *conn,
                                 guint32 cluster_id);
@@ -285,15 +289,17 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
       1) Send request to Cluster Server to get a nodeid and acquire this
          nodeid to ensure no one else uses the same nodeid in the cluster.
       2) Receive response to this message
-      3) Send request to get cluster configuration
-      4) Get cluster configuration
-      5) Send request to get nodeid of Cluster Server
-      6) Receive response to this message
-      7) Send request to set connection parameters
+      3) Send request to Cluster Server to get version information
+      4) Get version information
+      5) Send request to get cluster configuration
+      6) Get cluster configuration
+      7) Send request to get nodeid of Cluster Server
       8) Receive response to this message
-      9) Repeat step 7) and 8) for as long as needed
-      10) Send request to convert connection to NDB Protocol connection
-      11) Receive response to this message
+      9) Send request to set connection parameters
+      10) Receive response to this message
+      11) Repeat step 9) and 10) for as long as needed
+      12) Send request to convert connection to NDB Protocol connection
+      13) Receive response to this message
 
       After this protocol serie is completed, this node has a nodeid,
       the Cluster Server node id is known and we have an already
@@ -301,12 +307,14 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
       Data API towards this node, we can reuse the connection already
       established.
       
-      Step 7-11 is necessary to move to the startup of the Data API since
+      Step 9-13 is necessary to move to the startup of the Data API since
       it involves providing dynamic port assignments made to nodes during
       set-up of server part of the connections.
     */
     if ((ret_code= send_get_nodeid_req(apic, conn, cluster_id)) ||
         (ret_code= rec_get_nodeid_reply(apic, conn, cluster_id)) ||
+        (ret_code= send_get_version_req(conn)) ||
+        (ret_code= rec_get_version_reply(conn)) ||
         (ret_code= send_get_config_req(apic, conn)) ||
         (ret_code= rec_get_config_reply(apic, conn, cluster_id)) ||
         (ret_code= send_get_mgmd_nodeid_req(conn)) ||
@@ -455,17 +463,21 @@ send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
                     guint32 cluster_id)
 {
   gchar endian_buf[32];
+  gchar name_buf[128];
   guint64 node_type= 1;
   guint64 version_no;
   guint32 node_id= apic->temp->node_ids[cluster_id];
+  node_id= 0;
   DEBUG_ENTRY("send_get_nodeid_req");
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
-  g_snprintf(endian_buf, 32, "%s%s", endian_str, little_endian_str);
+  g_snprintf(endian_buf, 32, "%s %s", endian_str, little_endian_str);
 #else
-  g_snprintf(endian_buf, 32, "%s%s", endian_str, big_endian_str);
+  g_snprintf(endian_buf, 32, "%s %s", endian_str, big_endian_str);
 #endif
+  g_snprintf(name_buf, 128, "%s %s", name_str, ic_glob_process_name);
+ 
   if (ic_send_with_cr(conn, get_nodeid_str) ||
       ic_send_with_cr_with_number(conn, ic_version_str, version_no) ||
       ic_send_with_cr_with_number(conn, nodetype_str, node_type) ||
@@ -474,6 +486,7 @@ send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
       ic_send_with_cr(conn, password_str) ||
       ic_send_with_cr(conn, public_key_str) ||
       ic_send_with_cr(conn, endian_buf) ||
+      ic_send_with_cr(conn, name_buf) ||
       ic_send_with_cr(conn, log_event_str) ||
       (apic->use_ic_cs &&
       ic_send_with_cr_with_number(conn,
@@ -487,11 +500,25 @@ send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
 }
 
 static int
+send_get_version_req(IC_CONNECTION *conn)
+{
+  DEBUG_ENTRY("send_get_version_req");
+
+  if (ic_send_with_cr(conn, get_version_str) ||
+      ic_send_empty_line(conn))
+  {
+    DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
 send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
                     IC_CONNECTION *conn)
 {
   guint64 version_no;
   guint64 node_type= 1;
+  DEBUG_ENTRY("send_get_config_req");
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
   if (ic_send_with_cr(conn, get_config_str) ||
@@ -529,7 +556,8 @@ send_convert_transporter_req(IC_INT_API_CONFIG_SERVER *apic,
   g_snprintf(buf, 64, "%d %d", our_nodeid, IC_TCP_TRANSPORTER_TYPE);
   if (ic_send_with_cr(conn, convert_transporter_str) ||
       ic_send_empty_line(conn) ||
-      ic_send_with_cr(conn, buf))
+      ic_send_with_cr(conn, buf) ||
+      ic_send_empty_line(conn))
   {
     DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
   }
@@ -564,6 +592,38 @@ rec_get_mgmd_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
   }
   *cs_nodeid= loc_nodeid;
   DEBUG_RETURN_INT(0);
+}
+
+static int
+rec_get_version_reply(IC_CONNECTION *conn)
+{
+  int ret_code;
+  guint64 version_no;
+  guint32 major_number, minor_number, build_number;
+  guint32 mysql_major_number, mysql_minor_number, mysql_build_number;
+  gchar buffer[COMMAND_READ_BUF_SIZE];
+  DEBUG_ENTRY("rec_get_version_reply");
+
+  if ((ret_code= ic_rec_simple_str(conn, version_str)) ||
+      (ret_code= ic_rec_long_number(conn, id_str, &version_no)) ||
+      (ret_code= ic_rec_number(conn, major_str, &major_number)) ||
+      (ret_code= ic_rec_number(conn, minor_str, &minor_number)) ||
+      (ret_code= ic_rec_number(conn, build_str, &build_number)) ||
+      (ret_code= ic_rec_string(conn, string_str, (gchar*)buffer)) ||
+      (ret_code= ic_rec_number(conn,
+                               mysql_major_str,
+                               &mysql_major_number)) ||
+      (ret_code= ic_rec_number(conn,
+                               mysql_minor_str,
+                               &mysql_minor_number)) ||
+      (ret_code= ic_rec_number(conn,
+                               mysql_build_str,
+                               &mysql_build_number)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+  {
+    ;
+  }
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -604,7 +664,11 @@ rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
   guint32 read_size;
   int ret_code;
   guint64 node_number;
+  guint64 error_code= 0;
   guint32 state= GET_NODEID_REPLY_STATE;
+  IC_STRING error_string;
+  gchar *str;
+  gchar buffer[IC_MAX_ERROR_STRING_SIZE];
   DEBUG_ENTRY("rec_get_nodeid_reply");
 
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
@@ -644,13 +708,30 @@ rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
                                   &node_number) ||
             (node_number > IC_MAX_NODE_ID))
         {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in nodeid state"));
-          PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+          if (ic_check_buf_with_string(read_buf,
+                                       read_size,
+                                       result_str,
+                                       strlen(result_str),
+                                       &error_string))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Protocol error in nodeid state"));
+            PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+          }
+          /*
+            The configuration server reported an error, print it and
+            get the error code.
+          */
+          str= ic_get_ic_string(&error_string, (gchar*)&buffer);
+          ic_printf("%s : %s", get_nodeid_reply_str, str);
+          state= RESULT_ERROR_STATE;
         }
-        DEBUG_PRINT(CONFIG_LEVEL, ("Nodeid = %u", (guint32)node_number));
-        apic->temp->node_ids[cluster_id]= (guint32)node_number;
-        state= RESULT_OK_STATE;
+        else
+        {
+          DEBUG_PRINT(CONFIG_LEVEL, ("Nodeid = %u", (guint32)node_number));
+          apic->temp->node_ids[cluster_id]= (guint32)node_number;
+          state= RESULT_OK_STATE;
+        }
         break;
       case RESULT_OK_STATE:
         /*
@@ -679,12 +760,31 @@ rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
             ("Protocol error in wait empty state"));
           PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
         }
-        DEBUG_RETURN_INT(0);
+        goto end;
       case RESULT_ERROR_STATE:
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  error_code_str,
+                                  strlen(error_code_str),
+                                  &error_code))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in result error state"));
+          PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+        }
+        ic_printf("%s error_code: %d", get_nodeid_reply_str, (int)error_code);
+        state= WAIT_EMPTY_RETURN_STATE;
         break;
       default:
+        ic_require(FALSE);
         break;
     }
+  }
+end:
+  if (error_code != 0)
+  {
+    /* Report error code from config server if one arrived */
+    ret_code= (int)error_code;
   }
   DEBUG_RETURN_INT(ret_code);
 }

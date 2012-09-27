@@ -614,7 +614,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(IC_NETWORK_BUFFER_SIZE, 9);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, network_buffer_size,
-                            IC_UINT64,
+                            IC_UINT32,
                             0,
                             IC_NODE_RESTART);
   IC_SET_NDB_CONFIG_NAME(conf_entry, TotalSendBufferMemory);
@@ -1024,12 +1024,18 @@ init_config_parameters()
   conf_entry->config_entry_description=
   "Initial value of watchdog timer before communication set-up";
 
+  /*
+    TODO:
+    This parameter is an enum, this means that it's communicated as a
+    UINT32 variable, but is set in config files as a string with only
+    a set of specified values. We'll start by setting it as a UINT32
+    variable to start with and fix the config file part later.
+  */
   IC_SET_CONFIG_MAP(DATA_SERVER_RESOLVE_METHOD, 62);
-  IC_SET_DATA_SERVER_STRING(conf_entry, data_server_resolve_method, IC_ONLINE_CHANGE);
+  IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_resolve_method,
+                            IC_UINT32, 1, IC_ONLINE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, Arbitration);
-  conf_entry->default_string= (gchar*)"Default";
   conf_entry->is_mandatory= FALSE;
-  conf_entry->data_type= IC_ENUM;
   conf_entry->config_entry_description=
   "Method of resolving arbitration when network possibly partitioned";
 
@@ -1388,7 +1394,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_threads,
                             IC_UINT32, 8, IC_CLUSTER_RESTART_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, MaxNoOfExecutionThreads);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 2, 36);
+  IC_SET_CONFIG_MAX(conf_entry, 36);
   conf_entry->config_entry_description=
   "Number of threads that can be used maximally for Data Server node";
 
@@ -1750,11 +1756,17 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(405, 185);
   conf_entry->is_deprecated= TRUE;
 
-  /* TODO: What to do with this one, it's deprecated and mandatory?? */
+  /*
+    TODO:
+    What to do with this one, it's deprecated and mandatory??
+    Currently the value sent to the nodes should be a negative number
+    indicating that a dynamic port is to be used. Ensure that we
+    send a negative number and that we can't set this in the configuration
+    file.
+   */
   IC_SET_CONFIG_MAP(SOCKET_SERVER_PORT_NUMBER, 186);
   IC_SET_SOCKET_CONFIG(conf_entry, server_port_number,
-                       IC_UINT16, 0, IC_CLUSTER_RESTART_CHANGE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, IC_MIN_PORT, IC_MAX_PORT);
+                       IC_UINT32, 0, IC_CLUSTER_RESTART_CHANGE);
   conf_entry->is_mandatory= TRUE;
   conf_entry->is_derived_default= TRUE;
   conf_entry->mandatory_bit= mandatory_bits++;
@@ -1835,7 +1847,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, socket_write_buffer_size,
                        IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, SendBufferMemory);
-  IC_SET_CONFIG_MIN(conf_entry, 128*1024);
+  IC_SET_CONFIG_MIN(conf_entry, 64*1024);
   conf_entry->config_entry_description=
   "Size of write buffer in front of socket";
 
@@ -1843,7 +1855,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, socket_read_buffer_size,
                        IC_UINT32, 256*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, ReceiveBufferMemory);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 1024*1024);
+  IC_SET_CONFIG_MIN(conf_entry, 16 * 1024);
   conf_entry->config_entry_description=
   "Size of read buffer in front of socket";
 
@@ -2242,9 +2254,17 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(CLIENT_THREAD_PRIORITY, 254);
   conf_entry->is_deprecated= TRUE;
 
+  /*
+    TODO:
+    In NDB this parameter is an enum written as "abort" or "queue" in
+    config files, but communicated over wire as 0 or 1. We have turned
+    it into a UINT32 type here that can be 0 or 1 instead. Could fix this
+    some time later possibly.
+  */
   IC_SET_CONFIG_MAP(CLIENT_DEFAULT_REDO_OPERATION_TYPE, 255);
-  IC_SET_CLIENT_CONFIG_STRING(conf_entry, client_default_redo_operation_type,
-                              "queue", IC_ONLINE_CHANGE);
+  IC_SET_CLIENT_CONFIG(conf_entry, client_default_redo_operation_type,
+                       IC_UINT32, 1, IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 1);
   IC_SET_NDB_CONFIG_NAME(conf_entry, DefaultOperationRedoProblemAction);
   conf_entry->config_types= ALL_NODE_TYPES &
                             ((~(1 << IC_DATA_SERVER_TYPE)) &

@@ -24,7 +24,6 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
-static const gchar *glob_process_name= "test_comm";
 static gboolean glob_is_client= FALSE;
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_client_ip= "127.0.0.1";
@@ -322,7 +321,7 @@ int main(int argc, char *argv[])
                                   argv,
                                   entries,
                                   NULL,
-                                  glob_process_name,
+                                  "test_comm",
                                   "- Basic test program communication module",
                                   TRUE,
                                   FALSE)))

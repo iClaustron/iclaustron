@@ -4272,6 +4272,8 @@ handle_convert_transporter_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
  * is part of this piece of the protocol. These are:
  * rec_get_nodeid_req: 
  * send_get_nodeid_reply:
+ * rec_get_version_req:
+ * send_get_version_req:
  * rec_get_config_req:
  * send_get_config_reply:
  *
@@ -4304,6 +4306,8 @@ static int rec_get_nodeid_req(IC_CONNECTION *conn,
                               guint64 *node_type,
                               guint64 *cluster_id);
 static int send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id);
+static int rec_get_version_req(IC_CONNECTION *conn);
+static int send_get_version_reply(IC_CONNECTION *conn);
 static int rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
                               guint64 node_type);
 static int send_get_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
@@ -4379,6 +4383,8 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     param->client_nodeid= param->node_number;
   }
   if ((ret_code= send_get_nodeid_reply(conn, (guint32)param->client_nodeid)) ||
+      (ret_code= rec_get_version_req(conn)) ||
+      (ret_code= send_get_version_reply(conn)) ||
       (ret_code= rec_get_config_req(conn,
                                     param->version_number,
                                     param->node_type)) ||
@@ -4409,6 +4415,7 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
                    guint64 *node_type,
                    guint64 *cluster_id)
 {
+  IC_STRING process_name;
   gchar *read_buf;
   guint32 read_size;
   guint32 endian_req_len, little_endian_len, big_endian_len;
@@ -4520,6 +4527,20 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
             ("Failure in representation of what endian type"));
           PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
         }
+        state= NAME_REQ_STATE;
+        break;
+      case NAME_REQ_STATE:
+        if (ic_check_buf_with_string(read_buf,
+                                     read_size,
+                                     name_str,
+                                     strlen(name_str),
+                                     &process_name))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in name request state"));
+          PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
+        }
+        /* Currently we make no use of process name */
         state= LOG_EVENT_REQ_STATE;
         break;
       case LOG_EVENT_REQ_STATE:
@@ -4585,6 +4606,50 @@ send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id)
       ic_send_empty_line(conn))
     ret_code= conn->conn_op.ic_get_error_code(conn);
   DEBUG_RETURN_INT(ret_code);
+}
+
+/* Handle receive get version request protocol action */
+static int
+rec_get_version_req(IC_CONNECTION *conn)
+{
+  int ret_code;
+  DEBUG_ENTRY("rec_get_version_req");
+
+  if ((ret_code= ic_rec_simple_str(conn, get_version_str)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+  {
+    ;
+  }
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Handle send get version reply protocol action */
+static int
+send_get_version_reply(IC_CONNECTION *conn)
+{
+  guint64 major_number= NDB_VERSION >> 8;
+  guint64 minor_number= (NDB_VERSION >> 4) & 0xF;
+  guint64 build_number= NDB_VERSION & 0xF;
+  guint64 mysql_major_number= MYSQL_VERSION >> 8;
+  guint64 mysql_minor_number= (MYSQL_VERSION >> 4) & 0xF;
+  guint64 mysql_build_number= MYSQL_VERSION & 0xF;
+  guint64 version_no= NDB_VERSION;
+  DEBUG_ENTRY("send_get_version_reply");
+
+  if (ic_send_with_cr(conn, version_str) ||
+      ic_send_with_cr_with_number(conn, id_str, version_no) ||
+      ic_send_with_cr_with_number(conn, major_str, major_number) ||
+      ic_send_with_cr_with_number(conn, minor_str, minor_number) ||
+      ic_send_with_cr_with_number(conn, build_str, build_number) ||
+      ic_send_with_cr_two_strings(conn, string_str, MYSQL_VERSION_STRING) ||
+      ic_send_with_cr_with_number(conn, mysql_major_str, mysql_major_number) ||
+      ic_send_with_cr_with_number(conn, mysql_minor_str, mysql_minor_number) ||
+      ic_send_with_cr_with_number(conn, mysql_build_str, mysql_build_number) ||
+      ic_send_empty_line(conn))
+  {
+    DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
+  }
+  DEBUG_RETURN_INT(0);
 }
 
 /* Handle receive get configuration request protocol action */
@@ -5235,14 +5300,17 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
       break;
     case IC_DATA_SERVER_TYPE:
     case IC_CLUSTER_SERVER_TYPE:
-    /* config_type already contains the correct value */
-      value= config_type;
+    /*
+      config_type value is one higher than the value used in the
+      protocol.
+     */
+      value= ((guint32)config_type - 1);
       break;
     default:
       if (!is_iclaustron_version(version_number))
         value= IC_CLIENT_TYPE;
       else
-        value= config_type;
+        value= ((guint32)config_type - 1);
       break;
   }
   DEBUG_PRINT(CONFIG_LEVEL,

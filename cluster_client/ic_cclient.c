@@ -22,7 +22,6 @@
 #include <ic_connection.h>
 #include <ic_protocol_support.h>
 
-static const gchar *glob_process_name= "ic_cclient";
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
 static guint32 glob_history_size= 100;
@@ -178,7 +177,7 @@ int main(int argc, char *argv[])
                                   argv,
                                   entries,
                                   NULL,
-                                  glob_process_name,
+                                  "ic_cclient",
                                   "- iClaustron Command Client",
                                   TRUE,
                                   FALSE)))

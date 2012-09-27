@@ -25,8 +25,6 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
-static const gchar *glob_process_name= "ic_configurator";
-
 int main(int argc, char *argv[])
 {
   int ret_code;
@@ -39,7 +37,7 @@ int main(int argc, char *argv[])
                                   argv,
                                   ic_apid_entries,
                                   NULL,
-                                  glob_process_name,
+                                  "ic_configurator",
                                   "- iClaustron Configurator",
                                   TRUE,
                                   FALSE)))

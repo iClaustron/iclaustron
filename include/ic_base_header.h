@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -179,9 +179,9 @@ typedef struct ic_iovec IC_IOVEC;
 #define IC_VERSION 0x000001
 #define IC_VERSION_STR "iclaustron-0.0.1"
 #define IC_GRID_STR "grid"
-#define NDB_VERSION 0x070100
-#define MYSQL_VERSION 0x050135
-#define MYSQL_VERSION_STRING "mysql-5.1.35-ndb-7.1.0"
+#define NDB_VERSION 0x070205
+#define MYSQL_VERSION 0x050520
+#define MYSQL_VERSION_STRING "mysql-5.5.20-ndb-7.2.5"
 
 #define IC_VERSION_BIT_START 24
 #define IC_PROTOCOL_BIT 20
@@ -251,7 +251,7 @@ int ic_start_program(int argc,
                      gchar *argv[],
                      GOptionEntry entries[],
                      GOptionEntry add_entries[],
-                     const gchar *program_name,
+                     gchar *program_name,
                      gchar *start_text,
                      gboolean use_config,
                      gboolean daemonize);

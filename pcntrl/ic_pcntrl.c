@@ -78,7 +78,6 @@ static guint32 glob_unit_test= 0;
 #endif
 
 /* Global variables */
-static const gchar *glob_process_name= "ic_pcntrld";
 static IC_MUTEX *pc_hash_mutex= NULL;
 static IC_HASHTABLE *glob_pc_hash= NULL;
 static guint64 glob_start_id= 1;
@@ -3042,7 +3041,7 @@ int main(int argc, char *argv[])
                                   argv,
                                   entries,
                                   NULL,
-                                  glob_process_name,
+                                  "ic_pcntrld",
                                   start_text,
                                   TRUE,
                                   FALSE)))

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -24,8 +24,6 @@
 #include <ic_connection.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
-
-static const gchar *glob_process_name= "ic_fsd";
 
 /*
    We now have a local Data API connection and we are ready to issue
@@ -57,7 +55,7 @@ int main(int argc, char *argv[])
                                   argv,
                                   ic_apid_entries,
                                   NULL,
-                                  glob_process_name,
+                                  "ic_fsd",
                                   "- iClaustron File Server",
                                   TRUE,
                                   TRUE)))

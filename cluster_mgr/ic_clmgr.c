@@ -34,7 +34,6 @@ static gchar *glob_cluster_mgr_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
 static gboolean glob_only_find_hash= FALSE;
 
 /* Global variables */
-static const gchar *glob_process_name= "ic_clmgrd";
 static int PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
 
 static gchar *not_impl_string= "not implemented yet";
@@ -1221,7 +1220,7 @@ int main(int argc,
                                   argv,
                                   entries,
                                   ic_apid_entries,
-                                  glob_process_name,
+                                  "ic_clmgrd",
                                   "- iClaustron Cluster Manager",
                                   TRUE,
                                   TRUE)))

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@ IC_STRING ic_glob_config_dir;
 IC_STRING ic_glob_data_dir;
 IC_STRING ic_glob_base_dir;
 IC_STRING ic_glob_binary_dir;
+gchar *ic_glob_process_name;
 
 /*
   HEADER MODULE: iClaustron String handling

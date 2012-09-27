@@ -469,6 +469,8 @@ analyse_node_section_phase1(IC_CLUSTER_CONFIG *conf_obj,
   {
     DEBUG_PRINT(CONFIG_LEVEL,
                 ("Node type of index %u is %u", node_index, value));
+    /* Value communicated starts at 0, our internal type starts at 1 */
+    value++;
     switch (value)
     {
       case IC_DATA_SERVER_NODE:
@@ -735,7 +737,7 @@ assign_node_section(IC_CLUSTER_CONFIG *conf_obj,
     PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
   }
   if (conf_entry->is_deprecated || conf_entry->is_not_configurable)
-    return 0; /* Ignore */
+    DEBUG_RETURN_INT(0); /* Ignore */
   if (node_sect_id >= conf_obj->num_nodes)
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("node_sect_id out of range"));

@@ -86,6 +86,8 @@ ic_check_buf_with_many_int(gchar *read_buf,
       (memcmp(read_buf, str, str_len) == 0))
   {
     ptr= read_buf+str_len;
+    if (*ptr == SPACE_CHAR)
+      ptr++;
     end_ptr= read_buf + read_size;
     for (i= 0; i < num_elements; i++)
     {
@@ -125,14 +127,15 @@ ic_check_buf_with_signed_int(gchar *read_buf, guint32 read_size,
                              int *sign_flag)
 {
   *sign_flag= FALSE;
-  if ((read_size <= (guint32)str_len + 1) ||
-      (memcmp(read_buf, str, str_len) != 0) ||
-      read_buf[str_len] != SPACE_CHAR ||
-      (str_len++, FALSE) ||
-      ((str_len= (read_buf[str_len] == '-') ? str_len+1 : str_len), FALSE) ||
-      (ic_convert_str_to_int_fixed_size(read_buf+str_len,
-                                        read_size - str_len,
-                                        number)))
+  if ((read_size < (guint32)str_len + 1) ||
+      (memcmp(read_buf, str, str_len) != 0))
+    return TRUE;
+  if (read_buf[str_len] == SPACE_CHAR)
+    str_len++;
+  if (((str_len= (read_buf[str_len] == '-') ? str_len+1 : str_len), FALSE) ||
+       (ic_convert_str_to_int_fixed_size(read_buf+str_len,
+                                         read_size - str_len,
+                                         number)))
     return TRUE;
   if (read_buf[str_len] == '-')
     *sign_flag= TRUE;
@@ -156,11 +159,12 @@ ic_check_buf_with_int(gchar *read_buf,
                       int str_len,
                       guint64 *number)
 {
-  if ((read_size <= (guint32)str_len + 1) ||
-      (memcmp(read_buf, str, str_len) != 0) ||
-      read_buf[str_len] != SPACE_CHAR ||
-      (str_len++, FALSE) ||
-      (ic_convert_str_to_int_fixed_size(read_buf+str_len,
+  if ((read_size < (guint32)str_len + 1) ||
+      (memcmp(read_buf, str, str_len) != 0))
+    return TRUE;
+  if (read_buf[str_len] == SPACE_CHAR)
+    str_len++;
+  if ((ic_convert_str_to_int_fixed_size(read_buf+str_len,
                                         read_size - str_len,
                                         number)))
     return TRUE;
@@ -184,11 +188,11 @@ ic_check_buf_with_string(gchar *read_buf,
                          int str_len,
                          IC_STRING *string)
 {
-  if ((read_size <= (guint32)str_len + 1) ||
-      (memcmp(read_buf, str, str_len) != 0) ||
-      read_buf[str_len] != SPACE_CHAR ||
-      (str_len++, FALSE))
+  if ((read_size < (guint32)str_len + 1) ||
+      (memcmp(read_buf, str, str_len) != 0))
     return TRUE;
+  if (read_buf[str_len] == SPACE_CHAR)
+    str_len++;
   string->len= read_size - str_len;
   string->str= read_buf+str_len;
   string->is_null_terminated= FALSE;
@@ -307,13 +311,14 @@ static int mc_rec_string_impl(IC_MEMORY_CONTAINER *mc_ptr,
 
   prefix_len= strlen(prefix_str);
   ic_require(prefix_len);
-  if (read_size <= (prefix_len + 1))
+  if (read_size < (prefix_len + 1))
     return IC_PROTOCOL_ERROR;
-  if (memcmp(read_buf, prefix_str, prefix_len) ||
-      read_buf[prefix_len] != SPACE_CHAR)
+  if (memcmp(read_buf, prefix_str, prefix_len))
     return IC_PROTOCOL_ERROR;
-  read_buf+= (prefix_len + 1);
-  read_size-= (prefix_len + 1);
+  if (read_buf[prefix_len] == SPACE_CHAR)
+    prefix_len++;
+  read_buf+= prefix_len;
+  read_size-= prefix_len;
   if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
     return IC_ERROR_MEM_ALLOC;
   memcpy(str_ptr, read_buf, read_size);
@@ -416,24 +421,26 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
   prefix_str_len= strlen(prefix_str);
   if (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
-    if (read_size < (prefix_str_len + 2) || 
-        read_buf[prefix_str_len] != SPACE_CHAR ||
-        ic_check_buf(read_buf,
+    if (read_size < (prefix_str_len + 1))
+      goto error;
+    if (ic_check_buf(read_buf,
                      prefix_str_len,
                      prefix_str,
                      prefix_str_len))
-    {
-      /* Length must be prefix length + space char + at least 1 character */
-      DEBUG_PRINT(CONFIG_LEVEL,
-        ("Protocol error in waiting for %s", prefix_str));
-      DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
-    }
-    remaining_len= read_size - (prefix_str_len + 1);
-    memcpy(read_str, &read_buf[prefix_str_len + 1], remaining_len);
+      goto error;
+    if (read_buf[prefix_str_len] == SPACE_CHAR)
+      prefix_str_len++;
+    remaining_len= read_size - prefix_str_len;
+    memcpy(read_str, &read_buf[prefix_str_len], remaining_len);
     read_str[remaining_len]= 0;
     DEBUG_RETURN_INT(0);
   }
   DEBUG_RETURN_INT(ret_code);
+error:
+  /* Length must be prefix length + possible space char + at least 1 character */
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Protocol error in waiting for %s", prefix_str));
+  DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
 }
 
 /**
@@ -616,13 +623,14 @@ ic_rec_boolean(IC_CONNECTION *conn,
 
   if ((ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
     goto end;
-  if (read_size <= (prefix_len + 1))
+  if (read_size < (prefix_len + 1))
     goto protocol_error;
-  if (memcmp(read_buf, prefix_str, prefix_len) ||
-      read_buf[prefix_len] != SPACE_CHAR)
+  if (memcmp(read_buf, prefix_str, prefix_len))
     goto protocol_error;
-  read_size-= (prefix_len + 1);
-  read_buf+= (prefix_len + 1);
+  if (read_buf[prefix_len] == SPACE_CHAR)
+    prefix_len++;
+  read_size-= prefix_len;
+  read_buf+= prefix_len;
   if (read_size == strlen(ic_true_str) &&
       !memcmp(read_buf, ic_true_str, read_size))
     *bool_value= 1;
