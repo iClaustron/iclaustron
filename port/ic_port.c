@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -214,12 +214,6 @@ void ic_port_end()
   gchar ptr_str[32];
 
   ic_hashtable_destroy(mutex_hash, TRUE);
-  ic_mutex_destroy(mutex_hash_protect);
-
-  ic_mutex_destroy(mem_mutex);
-  ic_mutex_destroy(mem_conn_mutex);
-  ic_mutex_destroy(mem_hash_mutex);
-  ic_mutex_destroy(mem_mc_mutex);
 
   if (num_mem_allocs != (guint64)0 ||
       num_mem_conn_allocs != (guint64)0 ||
@@ -236,7 +230,6 @@ void ic_port_end()
   }
 
   ic_hashtable_destroy(mem_entry_hash, TRUE);
-  ic_mutex_destroy(mem_entry_hash_mutex);
 
   if (num_mem_allocs != (guint64)0 ||
       num_mem_conn_allocs != (guint64)0 ||
@@ -257,8 +250,15 @@ void ic_port_end()
   }
   else
     ic_printf("No memory leaks found");
+
+  ic_mutex_destroy(&mutex_hash_protect);
+  ic_mutex_destroy(&mem_mutex);
+  ic_mutex_destroy(&mem_conn_mutex);
+  ic_mutex_destroy(&mem_hash_mutex);
+  ic_mutex_destroy(&mem_mc_mutex);
+  ic_mutex_destroy(&mem_entry_hash_mutex);
 #endif
-  ic_mutex_destroy(exec_output_mutex);
+  ic_mutex_destroy(&exec_output_mutex);
 }
 
 /**
@@ -636,6 +636,11 @@ ic_free(void *ret_ptr)
 }
 #endif
 
+void ic_controlled_terminate()
+{
+  abort();
+}
+
 #ifndef WINDOWS
 IC_PID_TYPE
 ic_get_own_pid()
@@ -658,15 +663,6 @@ ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill)
     kill((pid_t)pid, SIGTERM);
   DEBUG_RETURN_EMPTY;
 }
-
-void ic_controlled_terminate()
-{
-  IC_PID_TYPE my_pid;
-
-  DEBUG_PRINT(PROGRAM_LEVEL, ("ic_controlled_terminate called"));
-  my_pid= ic_get_own_pid();
-  kill((pid_t)my_pid, SIGTERM);
-}
 #else /* WINDOWS */
 IC_PID_TYPE
 ic_get_own_pid()
@@ -684,11 +680,6 @@ ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill)
   DEBUG_PRINT(PROGRAM_LEVEL, ("Kill pid %u", (guint32)pid));
   /* Windows variant of kill */
   DEBUG_RETURN_EMPTY;
-}
-
-void
-ic_controlled_terminate()
-{
 }
 #endif
 
@@ -1423,14 +1414,14 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
   int ret_code;
   void *key;
 
-  DEBUG_DISABLE(MALLOC_LEVEL);
+  DEBUG_DISABLE(0);
   g_mutex_lock(mutex_hash_protect);
   key= ic_hashtable_search(mutex_hash, (void*)mutex);
   ret_code= ic_hashtable_insert(mutex_hash,
                                 (void*)mutex,
                                 (void*)mutex);
   g_mutex_unlock(mutex_hash_protect);
-  DEBUG_ENABLE(MALLOC_LEVEL);
+  DEBUG_ENABLE(0);
   if (key || ret_code)
     abort();
 }
@@ -1439,11 +1430,11 @@ static void debug_release_mutex(IC_MUTEX *mutex)
 {
   void *key;
 
-  DEBUG_DISABLE(MALLOC_LEVEL);
+  DEBUG_DISABLE(0);
   g_mutex_lock(mutex_hash_protect);
   key= ic_hashtable_remove(mutex_hash, (void*)mutex);
   g_mutex_unlock(mutex_hash_protect);
-  DEBUG_ENABLE(MALLOC_LEVEL);
+  DEBUG_ENABLE(0);
   if (!key)
     abort();
 }
@@ -1492,9 +1483,10 @@ IC_COND* ic_cond_create()
   return g_cond_new();
 }
 
-void ic_cond_destroy(IC_COND *cond)
+void ic_cond_destroy(IC_COND **cond)
 {
-  g_cond_free(cond);
+  g_cond_free(*cond);
+  *cond= NULL;
 }
 
 void ic_mutex_lock(IC_MUTEX *mutex)
@@ -1530,9 +1522,10 @@ IC_MUTEX* ic_mutex_create()
   return mutex;
 }
 
-void ic_mutex_destroy(IC_MUTEX *mutex)
+void ic_mutex_destroy(IC_MUTEX **mutex)
 {
-  g_mutex_free(mutex);
+  g_mutex_free(*mutex);
+  *mutex= NULL;
 }
 
 void ic_spin_lock(IC_SPINLOCK *spinlock)

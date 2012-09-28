@@ -3270,21 +3270,21 @@ static void
 free_run_cluster_protect(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   if (run_obj->state.protect_state)
-    ic_mutex_destroy(run_obj->state.protect_state);
+    ic_mutex_destroy(&run_obj->state.protect_state);
   if (run_obj->state.start_cond)
-    ic_cond_destroy(run_obj->state.start_cond);
+    ic_cond_destroy(&run_obj->state.start_cond);
   if (run_obj->state.connect_cond)
-    ic_cond_destroy(run_obj->state.connect_cond);
+    ic_cond_destroy(&run_obj->state.connect_cond);
   if (run_obj->state.update_cond)
-    ic_cond_destroy(run_obj->state.update_cond);
+    ic_cond_destroy(&run_obj->state.update_cond);
   if (run_obj->state.check_if_cs_started_cond)
-    ic_cond_destroy(run_obj->state.check_if_cs_started_cond);
+    ic_cond_destroy(&run_obj->state.check_if_cs_started_cond);
   if (run_obj->state.wait_server_connect_cond)
-    ic_cond_destroy(run_obj->state.wait_server_connect_cond);
+    ic_cond_destroy(&run_obj->state.wait_server_connect_cond);
   if (run_obj->config_mutex)
-    ic_mutex_destroy(run_obj->config_mutex);
+    ic_mutex_destroy(&run_obj->config_mutex);
   if (run_obj->config_cond)
-    ic_cond_destroy(run_obj->config_cond);
+    ic_cond_destroy(&run_obj->config_cond);
 }
 
 /*
@@ -4307,7 +4307,7 @@ static int rec_get_nodeid_req(IC_CONNECTION *conn,
                               guint64 *cluster_id);
 static int send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id);
 static int rec_get_version_req(IC_CONNECTION *conn);
-static int send_get_version_reply(IC_CONNECTION *conn);
+static int send_get_version_reply(IC_CONNECTION *conn, guint64 node_type);
 static int rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
                               guint64 node_type);
 static int send_get_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
@@ -4384,7 +4384,7 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   }
   if ((ret_code= send_get_nodeid_reply(conn, (guint32)param->client_nodeid)) ||
       (ret_code= rec_get_version_req(conn)) ||
-      (ret_code= send_get_version_reply(conn)) ||
+      (ret_code= send_get_version_reply(conn, param->node_type)) ||
       (ret_code= rec_get_config_req(conn,
                                     param->version_number,
                                     param->node_type)) ||
@@ -4625,7 +4625,8 @@ rec_get_version_req(IC_CONNECTION *conn)
 
 /* Handle send get version reply protocol action */
 static int
-send_get_version_reply(IC_CONNECTION *conn)
+send_get_version_reply(IC_CONNECTION *conn,
+                       guint64 node_type)
 {
   guint64 major_number= NDB_VERSION >> 8;
   guint64 minor_number= (NDB_VERSION >> 4) & 0xF;
@@ -4633,7 +4634,8 @@ send_get_version_reply(IC_CONNECTION *conn)
   guint64 mysql_major_number= MYSQL_VERSION >> 8;
   guint64 mysql_minor_number= (MYSQL_VERSION >> 4) & 0xF;
   guint64 mysql_build_number= MYSQL_VERSION & 0xF;
-  guint64 version_no= NDB_VERSION;
+  guint64 version_no=
+    get_iclaustron_protocol_version(node_type != IC_DATA_SERVER_NODE);
   DEBUG_ENTRY("send_get_version_reply");
 
   if (ic_send_with_cr(conn, version_str) ||

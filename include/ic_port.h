@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -161,14 +161,14 @@ void ic_cond_broadcast(IC_COND *cond);
 void ic_cond_wait(IC_COND *cond, IC_MUTEX *mutex);
 void ic_cond_timed_wait(IC_COND *cond, IC_MUTEX *mutex, guint32 micros);
 IC_COND* ic_cond_create();
-void ic_cond_destroy(IC_COND *cond);
+void ic_cond_destroy(IC_COND **cond);
 
 void ic_mutex_lock(IC_MUTEX *mutex);
 void ic_mutex_lock_low(IC_MUTEX *mutex);
 void ic_mutex_unlock(IC_MUTEX *mutex);
 void ic_mutex_unlock_low(IC_MUTEX *mutex);
 IC_MUTEX* ic_mutex_create();
-void ic_mutex_destroy(IC_MUTEX *mutex);
+void ic_mutex_destroy(IC_MUTEX **mutex);
 
 void ic_spin_lock(IC_SPINLOCK *spinlock);
 void ic_spin_unlock(IC_SPINLOCK *spinlock);

@@ -60,7 +60,7 @@ ic_debug_disable(guint32 level)
 {
   IC_THREAD_DEBUG *thread_debug;
 
-  if (glob_debug & level)
+  if (!(glob_debug & level))
   {
     thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
     if (thread_debug->disable_count == 0)
@@ -77,7 +77,7 @@ ic_debug_enable(guint32 level)
 {
   IC_THREAD_DEBUG *thread_debug;
 
-  if (glob_debug & level)
+  if (!(glob_debug & level))
   {
     thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
     thread_debug->disable_count--;
@@ -335,8 +335,7 @@ ic_debug_close()
   fflush(stdout);
   fflush(ic_fptr);
   fclose(ic_fptr);
-  ic_mutex_destroy(debug_mutex);
-  debug_mutex= NULL;
+  ic_mutex_destroy(&debug_mutex);
   ic_free_low((void*)thread_id_array);
   ic_require(ic_num_threads_debugged == 0);
 }

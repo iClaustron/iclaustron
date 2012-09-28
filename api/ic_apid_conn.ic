@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -239,9 +239,9 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
   {
     thread_id= apid_conn->thread_id;
     if (thread_conn->mutex)
-      ic_mutex_destroy(thread_conn->mutex);
+      ic_mutex_destroy(&thread_conn->mutex);
     if (thread_conn->cond)
-      ic_cond_destroy(thread_conn->cond);
+      ic_cond_destroy(&thread_conn->cond);
     ic_free(thread_conn);
   }
   ic_mutex_lock(apid_global->thread_id_mutex);

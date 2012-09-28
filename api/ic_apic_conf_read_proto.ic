@@ -89,7 +89,8 @@ static int rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
 static int client_set_connection_parameter(IC_INT_API_CONFIG_SERVER *apic,
                                            IC_CONNECTION *conn,
                                            guint32 cluster_id);
-static int rec_get_version_reply(IC_CONNECTION *conn);
+static int rec_get_version_reply(IC_CONNECTION *conn,
+                                 gboolean *is_iclaustron_conf_server);
 static int rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
                                 IC_CONNECTION *conn,
                                 guint32 cluster_id);
@@ -215,6 +216,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   IC_CLUSTER_CONFIG *clu_conf;
   IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
   guint32 used_cluster_server_id;
+  gboolean is_iclaustron_conf_server;
   DEBUG_ENTRY("get_cs_config");
 
   if (apic->use_ic_cs)
@@ -314,16 +316,22 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
     if ((ret_code= send_get_nodeid_req(apic, conn, cluster_id)) ||
         (ret_code= rec_get_nodeid_reply(apic, conn, cluster_id)) ||
         (ret_code= send_get_version_req(conn)) ||
-        (ret_code= rec_get_version_reply(conn)) ||
+        (ret_code= rec_get_version_reply(conn, &is_iclaustron_conf_server)) ||
         (ret_code= send_get_config_req(apic, conn)) ||
         (ret_code= rec_get_config_reply(apic, conn, cluster_id)) ||
         (ret_code= send_get_mgmd_nodeid_req(conn)) ||
         (ret_code= rec_get_mgmd_nodeid_reply(apic, conn,
-                                          cluster_id, &cs_nodeid)) ||
-        (ret_code= client_set_connection_parameter(apic, conn, cluster_id)) ||
-        (ret_code= send_convert_transporter_req(apic, conn, cluster_id)) ||
-        (ret_code= rec_convert_transporter_reply(apic, conn, cluster_id)))
+                                          cluster_id, &cs_nodeid)))
       goto error;
+    if (is_iclaustron_conf_server)
+    {
+      if ((ret_code= client_set_connection_parameter(apic,
+                                                     conn,
+                                                     cluster_id)) ||
+          (ret_code= send_convert_transporter_req(apic, conn, cluster_id)) ||
+          (ret_code= rec_convert_transporter_reply(apic, conn, cluster_id)))
+        goto error;
+    }
     clu_conf->cs_conn= conn;
     clu_conf->cs_nodeid= cs_nodeid;
     conn= NULL;
@@ -595,10 +603,11 @@ rec_get_mgmd_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
 }
 
 static int
-rec_get_version_reply(IC_CONNECTION *conn)
+rec_get_version_reply(IC_CONNECTION *conn,
+                      gboolean *is_iclaustron_conf_server)
 {
   int ret_code;
-  guint64 version_no;
+  guint64 version_no= 0;
   guint32 major_number, minor_number, build_number;
   guint32 mysql_major_number, mysql_minor_number, mysql_build_number;
   gchar buffer[COMMAND_READ_BUF_SIZE];
@@ -623,6 +632,7 @@ rec_get_version_reply(IC_CONNECTION *conn)
   {
     ;
   }
+  *is_iclaustron_conf_server= is_iclaustron_version(version_no);
   DEBUG_RETURN_INT(ret_code);
 }
 

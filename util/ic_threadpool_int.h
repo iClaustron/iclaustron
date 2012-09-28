@@ -74,6 +74,8 @@ struct ic_int_thread_state
   /* The mutex and condition is mainly used for startup synchronisation.  */
   IC_MUTEX *mutex;
   IC_COND *cond;
+  gboolean use_external_mutex;
+  gboolean use_external_cond;
 };
 
 struct ic_int_threadpool_state

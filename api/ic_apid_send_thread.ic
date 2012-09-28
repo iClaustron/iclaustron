@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -467,9 +467,11 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   guint32 buf_len;
   IC_API_CONFIG_SERVER *apic;
   IC_THREADPOOL_STATE *tp_state= send_node_conn->apid_global->send_thread_pool;
+  DEBUG_ENTRY("connect_by_send_thread");
 
   if (is_server_part)
   {
+    DEBUG_PRINT(THREAD_LEVEL, ("server_part"));
     /*
       The actual connection set-up is done by the listen server
       thread. So all we need to do is to communicate with this
@@ -509,6 +511,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   else /* Client connection */
   {
+    DEBUG_PRINT(THREAD_LEVEL, ("client_part"));
     conn= send_node_conn->conn;
     link_config= send_node_conn->link_config;
     if (!send_node_conn->other_port_number)
@@ -559,9 +562,10 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
     if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                                       check_thread_state,
                                                       (void*)thread_state)))
-      return ret_code;
+      goto end;
   }
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static void
@@ -569,6 +573,7 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread,
                            IC_INT_APID_GLOBAL *apid_global)
 {
   IC_CONNECTION *conn;
+  DEBUG_ENTRY("close_listen_server_thread");
 
   if (listen_server_thread)
   {
@@ -576,9 +581,9 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread,
     if ((conn= listen_server_thread->conn))
       conn->conn_op.ic_free_connection(conn);
     if (listen_server_thread->mutex)
-      ic_mutex_destroy(listen_server_thread->mutex);
+      ic_mutex_destroy(&listen_server_thread->mutex);
     if (listen_server_thread->cond)
-      ic_cond_destroy(listen_server_thread->cond);
+      ic_cond_destroy(&listen_server_thread->cond);
     if (listen_server_thread->first_send_node_conn)
       g_list_free(listen_server_thread->first_send_node_conn);
     listen_server_thread->conn= NULL;
@@ -587,6 +592,7 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread,
     listen_server_thread->first_send_node_conn= NULL;
     listen_server_thread->thread_id= IC_MAX_UINT32;
   }
+  DEBUG_RETURN_EMPTY;
 }
 
 /*
@@ -710,6 +716,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
   gboolean found= FALSE;
   IC_CONNECTION *send_conn;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
+  DEBUG_ENTRY("prepare_set_up_send_connection");
 
   if (is_server_part)
   {
@@ -721,6 +728,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
       When we come here to start things up we're still in single-threaded
       mode, so we don't need to protect things through mutexes.
     */
+    DEBUG_PRINT(COMM_LEVEL, ("server_part"));
     send_conn= send_node_conn->conn;
     for (i= 0; i < apid_global->num_listen_server_threads; i++)
     {
@@ -829,6 +837,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   else
   {
+    DEBUG_PRINT(COMM_LEVEL, ("client_part"));
     send_node_conn->conn= ic_create_socket_object(
                 TRUE,   /* is client */
                 FALSE,  /* Mutex supplied by API code instead */
@@ -839,7 +848,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
     if (send_node_conn->conn == NULL)
       send_node_conn->stop_ordered= TRUE;
   }
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static gpointer

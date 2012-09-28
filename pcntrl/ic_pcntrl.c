@@ -3123,7 +3123,7 @@ error:
   if (glob_pc_hash)
     ic_hashtable_destroy(glob_pc_hash, FALSE);
   if (pc_hash_mutex)
-    ic_mutex_destroy(pc_hash_mutex);
+    ic_mutex_destroy(&pc_hash_mutex);
   if (log_file.str)
     ic_free(log_file.str);
   if (glob_pc_array)

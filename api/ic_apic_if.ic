@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -202,7 +202,7 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
   if (apic)
   {
     if (apic->config_mutex)
-      ic_mutex_destroy(apic->config_mutex);
+      ic_mutex_destroy(&apic->config_mutex);
     if (apic->conf_objects)
     {
       for (i= 0; i <= apic->max_cluster_id; i++)
@@ -210,6 +210,11 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
         IC_CLUSTER_CONFIG *conf_obj= apic->conf_objects[i];
         if (!conf_obj)
           continue;
+        if (conf_obj->cs_conn)
+        {
+          conf_obj->cs_conn->conn_op.ic_free_connection(conf_obj->cs_conn);
+          conf_obj->cs_conn= NULL;
+        }
         ic_assert(!conf_obj->node_ids);
         if (conf_obj->comm_hash)
           ic_hashtable_destroy(conf_obj->comm_hash, FALSE);

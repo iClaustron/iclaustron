@@ -451,27 +451,27 @@ build_config_name_hash()
     conf_entry= &glob_conf_entry[i];
     if (conf_entry->config_entry_name.str != NULL)
     {
-      DEBUG_DISABLE(MALLOC_LEVEL);
+      DEBUG_DISABLE(BUILD_CONFIG_HASH_LEVEL);
       if (ic_hashtable_insert(glob_conf_hash,
                               (void*)&conf_entry->config_entry_name,
                               (void*)conf_entry))
       {
-        DEBUG_ENABLE(MALLOC_LEVEL);
+        DEBUG_ENABLE(BUILD_CONFIG_HASH_LEVEL);
         DEBUG_RETURN_INT(1);
       }
-      DEBUG_ENABLE(MALLOC_LEVEL);
+      DEBUG_ENABLE(BUILD_CONFIG_HASH_LEVEL);
     }
     if (conf_entry->ndb_entry_name.str != NULL)
     {
-      DEBUG_DISABLE(MALLOC_LEVEL);
+      DEBUG_DISABLE(BUILD_CONFIG_HASH_LEVEL);
       if (ic_hashtable_insert(glob_conf_hash,
                               (void*)&conf_entry->ndb_entry_name,
                               (void*)conf_entry))
       {
-        DEBUG_ENABLE(MALLOC_LEVEL);
+        DEBUG_ENABLE(BUILD_CONFIG_HASH_LEVEL);
         DEBUG_RETURN_INT(1);
       }
-      DEBUG_ENABLE(MALLOC_LEVEL);
+      DEBUG_ENABLE(BUILD_CONFIG_HASH_LEVEL);
     }
   }
   DEBUG_RETURN_INT(0);

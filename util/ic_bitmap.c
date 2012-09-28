@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 #include <ic_port.h>
 #include <ic_mc.h>
 #include <ic_bitmap.h>
+#include <ic_debug.h>
 
 /*
   Bitmap routines
@@ -58,10 +59,12 @@ ic_create_bitmap(IC_BITMAP *bitmap, guint32 num_bits)
 void
 ic_free_bitmap(IC_BITMAP *bitmap)
 {
+  DEBUG_ENTRY("ic_free_bitmap");
   if (bitmap->alloced_bitmap_area)
     ic_free(bitmap->bitmap_area);
   if (bitmap->alloced_bitmap)
     ic_free(bitmap);
+  DEBUG_RETURN_EMPTY;
 }
 
 IC_BITMAP*

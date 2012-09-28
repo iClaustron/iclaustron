@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -222,11 +222,13 @@ free_sock_buf(IC_SOCK_BUF *buf)
 {
   guint32 i;
   guint32 alloc_segments= buf->alloc_segments;
+  DEBUG_ENTRY("free_sock_buf");
 
-  ic_mutex_destroy(buf->ic_buf_mutex);
+  ic_mutex_destroy(&buf->ic_buf_mutex);
   for (i= 0; i < alloc_segments; i++)
     ic_free(buf->alloc_segments_ref[i]);
   ic_free(buf);
+  DEBUG_RETURN_EMPTY;
 }
 
 /*
@@ -341,7 +343,7 @@ ic_create_sock_buf(guint32 page_size,
 
 error:
   if (buf->ic_buf_mutex)
-    ic_mutex_destroy(buf->ic_buf_mutex);
+    ic_mutex_destroy(&buf->ic_buf_mutex);
   ic_free(buf);
   return NULL;
 }

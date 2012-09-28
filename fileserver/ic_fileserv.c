@@ -39,6 +39,7 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
 
   (void)thread_state;
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
+  (void)apid_global;
   DEBUG_RETURN_INT(0);
 }
 

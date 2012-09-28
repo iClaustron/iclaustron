@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -179,7 +179,7 @@ mc_free(IC_MEMORY_CONTAINER *ext_mc_ptr)
   for (i= 0; i <= mc_ptr->current_buf_inx; i++)
     ic_free_mc(mc_ptr->buf_array[i]);
   if (mc_ptr->use_mutex)
-    ic_mutex_destroy(mc_ptr->mutex);
+    ic_mutex_destroy(&mc_ptr->mutex);
   ic_free_mc(mc_ptr->buf_array);
   ic_free_mc(mc_ptr);
 }

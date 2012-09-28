@@ -1596,14 +1596,11 @@ static void
 destroy_mutexes(IC_INT_CONNECTION *conn)
 {
   if (conn->read_mutex)
-    ic_mutex_destroy(conn->read_mutex);
+    ic_mutex_destroy(&conn->read_mutex);
   if (conn->write_mutex)
-    ic_mutex_destroy(conn->write_mutex);
+    ic_mutex_destroy(&conn->write_mutex);
   if (conn->connect_mutex)
-    ic_mutex_destroy(conn->connect_mutex);
-  conn->read_mutex= NULL;
-  conn->write_mutex= NULL;
-  conn->connect_mutex= NULL;
+    ic_mutex_destroy(&conn->connect_mutex);
 }
 
 static gboolean

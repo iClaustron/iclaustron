@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -662,9 +662,9 @@ free_rec_thread(IC_NDB_RECEIVE_STATE *rec_state)
   if (rec_state->poll_set)
     rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
   if (rec_state->mutex)
-    ic_mutex_destroy(rec_state->mutex);
+    ic_mutex_destroy(&rec_state->mutex);
   if (rec_state->cond)
-    ic_cond_destroy(rec_state->cond);
+    ic_cond_destroy(&rec_state->cond);
   ic_free((void*)rec_state);
 }
 

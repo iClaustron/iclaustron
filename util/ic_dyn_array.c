@@ -799,12 +799,14 @@ remove_ptr(IC_DYNAMIC_PTR_ARRAY *ext_dyn_ptr,
 static void
 free_dynamic_ptr_array(IC_DYNAMIC_PTR_ARRAY *ext_dyn_ptr)
 {
+  DEBUG_ENTRY("free_dynamic_ptr_array");
   IC_DYNAMIC_PTR_ARRAY_INT *dyn_ptr=
     (IC_DYNAMIC_PTR_ARRAY_INT*)ext_dyn_ptr;
   IC_DYNAMIC_ARRAY_INT *dyn_array= dyn_ptr->dyn_array;
 
   free_ordered_dynamic_array((IC_DYNAMIC_ARRAY*)dyn_array);
   ic_free((void*)dyn_ptr);
+  DEBUG_RETURN_EMPTY;
 }
 
 guint64

@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -172,9 +172,10 @@ run_heartbeat_thread(gpointer data)
       ic_cond_timed_wait(apid_global->heartbeat_cond,
                          apid_global->heartbeat_mutex,
                          IC_MICROSEC_PER_SECOND * IC_STOP_CHECK_TIMER);
+      apid_global->heartbeat_thread_waiting= FALSE;
       ic_mutex_unlock(apid_global->heartbeat_mutex);
       DEBUG_PRINT(CONFIG_LEVEL,
-      ("First node connected, heartbeat needs to be sent"));
+      ("First node possibly connected, heartbeat needs to be sent"));
       DEBUG_ENABLE(HEARTBEAT_LEVEL);
       send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                           hb_page);

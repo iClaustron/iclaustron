@@ -1,4 +1,4 @@
-/* Copyight (C) 2007-2011 iClaustron AB
+/* Copyight (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -110,8 +110,8 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   ic_printf("Successfully retrieved configuration from iClaustron Cluster Server");
   if (!(*apid_global= ic_create_apid_global(*apic,
                                             FALSE,
-                                             &ret_code,
-                                             err_str)))
+                                            &ret_code,
+                                            err_str)))
     goto error;
   *err_str= NULL;
   DEBUG_RETURN_INT(0);
@@ -127,6 +127,7 @@ ic_stop_apid_program(int ret_code,
                      IC_API_CONFIG_SERVER *apic,
                      IC_THREADPOOL_STATE *tp_state)
 {
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Enter: ic_stop_apid_program"));
   if (err_str)
     ic_printf("%s", err_str);
   if (!err_str && ret_code)
@@ -181,15 +182,17 @@ run_server_thread(gpointer data)
   if (ret_code)
     ic_print_error(ret_code);
 error:
+  if (apid_conn)
+    apid_conn->apid_conn_ops->ic_free_apid_connection(apid_conn);
   apid_global->apid_global_ops->ic_remove_user_thread(apid_global);
   tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 }
 
 static int
-start_server_threads(IC_APID_GLOBAL *apid_global,
-                     IC_THREADPOOL_STATE *tp_state,
-                     guint32 *thread_id)
+start_server_thread(IC_APID_GLOBAL *apid_global,
+                    IC_THREADPOOL_STATE *tp_state,
+                    guint32 *thread_id)
 {
   return tp_state->tp_ops.ic_threadpool_start_thread(
                             tp_state,
@@ -215,9 +218,9 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
   apid_global->apid_global_ops->ic_set_thread_func(apid_global, apid_func);
   for (i= 0; i < ic_glob_num_threads; i++)
   {
-    if ((error= start_server_threads(apid_global,
-                                     tp_state,
-                                     &thread_id)))
+    if ((error= start_server_thread(apid_global,
+                                    tp_state,
+                                    &thread_id)))
     {
       apid_global->apid_global_ops->ic_set_stop_flag(apid_global);
       break;

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -134,7 +134,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CLUSTER_COMM *cluster_comm;
-  guint32 i, j;
+  guint32 i, j, num_bits;
   DEBUG_ENTRY("ic_init_apid");
 
   initialize_message_func_array();
@@ -159,8 +159,9 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
         ic_calloc((IC_MAX_THREAD_CONNECTIONS + 1) *
         sizeof(IC_THREAD_CONNECTION*))))
     goto error;
+  num_bits= apic->api_op.ic_get_max_cluster_id(apic) + 1;
   if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL,
-                                                      IC_MAX_CLUSTER_ID)))
+                                                      num_bits)))
     goto error;
   if (!(apid_global->mutex= ic_mutex_create()))
     goto error;
@@ -209,17 +210,22 @@ error:
 static void
 free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
+  DEBUG_ENTRY("free_send_node_conn");
   if (send_node_conn == NULL)
-    return;
-  if (send_node_conn->mutex)
-    ic_mutex_destroy(send_node_conn->mutex);
+    goto end;
+  if (send_node_conn->conn)
+    send_node_conn->conn->conn_op.ic_free_connection(send_node_conn->conn);
   if (send_node_conn->cond)
-    ic_cond_destroy(send_node_conn->cond);
+    ic_cond_destroy(&send_node_conn->cond);
+  if (send_node_conn->mutex)
+    ic_mutex_destroy(&send_node_conn->mutex);
   if (send_node_conn->string_memory)
     ic_free(send_node_conn->string_memory);
   if (send_node_conn->dynamic_port_number_to_release)
     ic_free(send_node_conn->dynamic_port_number_to_release);
   ic_free(send_node_conn);
+end:
+  DEBUG_RETURN_EMPTY;
 }
 
 /*
@@ -252,16 +258,16 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
   if (ndb_message_pool)
     ndb_message_pool->sock_buf_ops.ic_free_sock_buf(ndb_message_pool);
   if (apid_global->heartbeat_mutex)
-    ic_mutex_destroy(apid_global->heartbeat_mutex);
+    ic_mutex_destroy(&apid_global->heartbeat_mutex);
   if (apid_global->heartbeat_cond)
-    ic_cond_destroy(apid_global->heartbeat_cond);
+    ic_cond_destroy(&apid_global->heartbeat_cond);
   if (apid_global->heartbeat_conn)
     apid_global->heartbeat_conn->apid_conn_ops->ic_free_apid_connection(
                                       apid_global->heartbeat_conn);
   if (apid_global->mutex)
-    ic_mutex_destroy(apid_global->mutex);
+    ic_mutex_destroy(&apid_global->mutex);
   if (apid_global->cond)
-    ic_cond_destroy(apid_global->cond);
+    ic_cond_destroy(&apid_global->cond);
   for (i= 0; i < apid_global->num_listen_server_threads; i++)
     close_listen_server_thread(apid_global->listen_server_thread[i],
                                apid_global);
@@ -275,8 +281,9 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
         if (cluster_comm == NULL)
           continue;
         /* Listen threads are released as part of stopping send threads */
-        for (j= 0; j <= IC_MAX_NODE_ID; j++)
+        for (j= 1; j <= IC_MAX_NODE_ID; j++)
           free_send_node_conn(cluster_comm->send_node_conn_array[j]);
+        ic_free(cluster_comm->send_node_conn_array);
         ic_free(cluster_comm);
       }
       ic_free(grid_comm->cluster_comm_array);
@@ -288,16 +295,16 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
         if (!grid_comm->thread_conn_array[j])
           continue;
         if (grid_comm->thread_conn_array[j]->mutex)
-          ic_mutex_destroy(grid_comm->thread_conn_array[j]->mutex);
+          ic_mutex_destroy(&grid_comm->thread_conn_array[j]->mutex);
         if (grid_comm->thread_conn_array[j]->cond)
-          ic_cond_destroy(grid_comm->thread_conn_array[j]->cond);
+          ic_cond_destroy(&grid_comm->thread_conn_array[j]->cond);
       }
       ic_free(grid_comm->thread_conn_array);
     }
     ic_free(grid_comm);
   }
   if (apid_global->thread_id_mutex)
-    ic_mutex_destroy(apid_global->thread_id_mutex);
+    ic_mutex_destroy(&apid_global->thread_id_mutex);
   ic_free(apid_global);
   DEBUG_RETURN_EMPTY;
 }
@@ -379,7 +386,8 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
                 In this we need to wait for send thread to stop before
                 we continue.
               */
-              send_tp_state->tp_ops.ic_threadpool_stop_thread(send_tp_state,
+              send_tp_state->tp_ops.ic_threadpool_stop_thread_wait(
+                                                              send_tp_state,
                                                               thread_id);
             }
             else if (signal_flag)
@@ -424,6 +432,17 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
       rec_tp_state->tp_ops.ic_threadpool_stop_thread_wait(rec_tp_state,
                                               rec_state->thread_id);
     }
+    /*
+       Ensure we speed up end process by waking heartbeat thread if
+       it sleeps and ensure it also has stopped.
+    */
+    rec_tp_state->tp_ops.ic_threadpool_set_stop_flag(rec_tp_state);
+    ic_mutex_lock(apid_global->heartbeat_mutex);
+    if (apid_global->heartbeat_thread_waiting)
+      ic_cond_signal(apid_global->heartbeat_cond);
+    ic_mutex_unlock(apid_global->heartbeat_mutex);
+    rec_tp_state->tp_ops.ic_threadpool_stop_thread_wait(rec_tp_state,
+                                    apid_global->heartbeat_thread_id);
   }
   DEBUG_RETURN_EMPTY;
 }
@@ -436,11 +455,13 @@ static void
 apid_global_cond_wait(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_cond_wait");
 
   ic_mutex_lock(apid_global->mutex);
   if (apid_global->num_user_threads_started > 0)
     ic_cond_wait(apid_global->cond, apid_global->mutex);
   ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 static gboolean
@@ -461,10 +482,13 @@ static void
 apid_global_set_stop(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_set_stop");
 
   ic_mutex_lock(apid_global->mutex);
   apid_global->stop_flag= TRUE;
+  ic_cond_signal(apid_global->cond);
   ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 static guint32
@@ -472,31 +496,37 @@ apid_global_get_num_user_threads(IC_APID_GLOBAL *ext_apid_global)
 {
   guint32 num_user_threads;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_get_num_user_threads");
 
   ic_mutex_lock(apid_global->mutex);
   num_user_threads= apid_global->num_user_threads_started;
   ic_mutex_unlock(apid_global->mutex);
-  return num_user_threads;
+  DEBUG_RETURN_INT(num_user_threads);
 }
 
 void
 apid_global_add_user_thread(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_add_user_thread");
 
   ic_mutex_lock(apid_global->mutex);
   apid_global->num_user_threads_started++;
   ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 void
 apid_global_remove_user_thread(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_remove_user_thread");
+
   ic_mutex_lock(apid_global->mutex);
   apid_global->num_user_threads_started--;
   ic_cond_signal(apid_global->cond);
   ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 void
@@ -572,11 +602,12 @@ static void
 apid_global_free(IC_APID_GLOBAL *ext_apid_global)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_free");
 
   apid_global->stop_flag= TRUE;
   start_connect_phase(apid_global, TRUE, FALSE);
   ic_end_apid(apid_global);
-  return;
+  DEBUG_RETURN_EMPTY;
 }
 
 static IC_APID_GLOBAL_OPS glob_apid_global_ops=
