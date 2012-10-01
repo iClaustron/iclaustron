@@ -603,9 +603,9 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread,
   Server:
     Send "ok"<CR>
   Client:
-    Send "2 3"<CR> (2 is client node id and 3 is server node id)
+    Send "2 3"<CR> (2 is client node id and 1 is TCP transporter type)
   Server:
-    Send "1 1"<CR> (1 is transporter type for client/server)
+    Send "2 1"<CR> (2 is server node id and 1 is transporter type for client/server)
   Connection is ready to send and receive NDB Protocol messages
 */
 static int
@@ -615,21 +615,30 @@ authenticate_client_connection(IC_CONNECTION *conn,
 {
   gchar *read_buf;
   guint32 read_size;
-  gchar send_buf[64];
+  gchar client_buf[64];
+  gchar server_buf[64];
   int error;
+  DEBUG_ENTRY("authenticate_client_connection");
 
-  g_snprintf(send_buf, (int)64, "%u %u", my_nodeid, server_nodeid);
+  g_snprintf(client_buf, (int)64, "%u 1", my_nodeid);
+  g_snprintf(server_buf, (int)64, "%u 1", server_nodeid);
   if ((error= ic_send_with_cr(conn, "ndbd")) ||
       (error= ic_send_with_cr(conn, "ndbd passwd")) ||
+      (error= conn->conn_op.ic_flush_connection(conn)) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, "ok")) ||
-      (error= ic_send_with_cr(conn, send_buf)) ||
+      (error= ic_send_with_cr(conn, client_buf)) ||
+      (error= conn->conn_op.ic_flush_connection(conn)) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
-      (!strcmp(read_buf, "1 1")))
-    return error;
-  return 0;
+      (!strcmp(read_buf, server_buf)))
+  {
+    if (!error)
+      error= IC_PROTOCOL_ERROR;
+    DEBUG_RETURN_INT(error);
+  }
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -642,6 +651,7 @@ authenticate_server_connection(IC_CONNECTION *conn,
   int error;
   guint32 len;
   guint64 my_id, client_id;
+  DEBUG_ENTRY("authenticate_server_connection");
 
   /* Retrieve client node id and verify that server is my node id */
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
@@ -651,6 +661,7 @@ authenticate_server_connection(IC_CONNECTION *conn,
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, "ndbd passwd")) ||
       (error= ic_send_with_cr(conn, "ok")) ||
+      (error= conn->conn_op.ic_flush_connection(conn)) ||
       (error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
@@ -660,6 +671,7 @@ authenticate_server_connection(IC_CONNECTION *conn,
       ((guint64)my_nodeid != my_id) ||
       (client_id >= IC_MAX_NODE_ID) ||
       (error= ic_send_with_cr(conn, "1 1")) ||
+      (error= conn->conn_op.ic_flush_connection(conn)) ||
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (ic_conv_str_to_int(read_buf, &client_id, &len)) ||
       (read_buf[len] != ' ') ||
@@ -667,9 +679,13 @@ authenticate_server_connection(IC_CONNECTION *conn,
       (ic_conv_str_to_int(&read_buf[len], &my_id, &len)) ||
       ((guint64)my_nodeid != my_id) ||
       (client_id >= IC_MAX_NODE_ID))
-    return error;
+  {
+    if (!error)
+      error= IC_PROTOCOL_ERROR;
+    DEBUG_RETURN_INT(error);
+  }
   *client_nodeid= (guint32)client_id;
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 /*
@@ -962,9 +978,10 @@ run_send_thread(void *data)
       We have successfully connected to another node in this send thread.
       It is now time to move the receive part to the proper receive
       thread. First initialise the message id since we have a new
-      connection now.
+      connection now. Also set node state to indicate node is up.
     */
     send_node_conn->message_id= 1;
+    send_node_conn->node_up= TRUE;
     move_node_to_receive_thread(send_node_conn);
     /*
       Move node also to heartbeat thread to ensure keep sending heartbeat
@@ -1073,7 +1090,7 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   second_hostname_len= strlen(link_config->second_hostname) + 1;
   tot_string_len= first_hostname_len;
   tot_string_len+= second_hostname_len;
-  if (link_config->server_port_number)
+  if (((int)link_config->server_port_number) > 0)
   {
     server_port_str= ic_guint64_str((guint64)link_config->server_port_number,
                                     server_port, &server_port_len);

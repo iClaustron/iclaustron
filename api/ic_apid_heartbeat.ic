@@ -64,15 +64,18 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                         tp_state,
                         &apid_global->heartbeat_thread_id,
                         IC_MAX_THREAD_WAIT_TIME)) ||
-      ((error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+      (error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                         tp_state,
                         apid_global->heartbeat_thread_id,
                         run_heartbeat_thread,
                         (void*)apid_global,
                         IC_MEDIUM_STACK_SIZE,
-                        FALSE))))
+                        TRUE)))
     goto error;
+  tp_state->tp_ops.ic_threadpool_run_thread(tp_state,
+                                      apid_global->heartbeat_thread_id);
   DEBUG_RETURN_INT(0);
+
 mem_error:
   error= IC_ERROR_MEM_ALLOC;
 error:
@@ -152,6 +155,7 @@ run_heartbeat_thread(gpointer data)
   send_buf_pool= apid_global->send_buf_pool;
   apid_conn= apid_global->heartbeat_conn;
   tp_state->ts_ops.ic_thread_started(thread_state);
+  tp_state->ts_ops.ic_thread_startup_done(thread_state);
 
   while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {

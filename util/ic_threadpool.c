@@ -264,7 +264,7 @@ thread_set_cond(IC_THREAD_STATE *ext_thread_state, IC_COND *cond)
 
 /* Get a thread object by id */
 static int
-get_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
+get_free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
               guint32 *thread_id)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
@@ -300,8 +300,8 @@ get_thread_id_wait(IC_THREADPOOL_STATE *ext_tp_state,
   guint32 loop_count= 0;
   int ret_code;
 
-  while ((ret_code= get_thread_id(ext_tp_state,
-                                  &loc_thread_id)) &&
+  while ((ret_code= get_free_thread_id(ext_tp_state,
+                                       &loc_thread_id)) &&
          loop_count < time_out_seconds)
   {
     ic_sleep(1); /* Sleep one second waiting for a thread to finish */
@@ -443,7 +443,7 @@ start_thread(IC_THREADPOOL_STATE *ext_tp_state,
   int ret_code;
   DEBUG_ENTRY("start_thread");
 
-  if ((ret_code= get_thread_id(ext_tp_state, &loc_thread_id)) ||
+  if ((ret_code= get_free_thread_id(ext_tp_state, &loc_thread_id)) ||
       (ret_code= start_thread_with_thread_id(ext_tp_state,
                                              loc_thread_id,
                                              thread_func,
@@ -560,6 +560,7 @@ thread_started(IC_THREAD_STATE *ext_thread_state)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
   DEBUG_ENTRY("thread_started");
+  DEBUG_PRINT(THREAD_LEVEL, ("thread_id: %d", thread_state->thread_id));
 
   /* By locking the mutex we ensure that start synch is done */
   ic_mutex_lock(thread_state->mutex);
@@ -622,6 +623,14 @@ get_object(IC_THREAD_STATE *ext_thread_state)
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
   return thread_state->object;
+}
+
+static guint32
+get_thread_id(IC_THREAD_STATE *ext_thread_state)
+{
+  IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
+
+  return thread_state->thread_id;
 }
 
 static gboolean
@@ -707,7 +716,7 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id=
     start_thread_with_thread_id;
   tp_state->tp_ops.ic_threadpool_start_thread= start_thread;
-  tp_state->tp_ops.ic_threadpool_get_thread_id= get_thread_id;
+  tp_state->tp_ops.ic_threadpool_get_thread_id= get_free_thread_id;
   tp_state->tp_ops.ic_threadpool_get_thread_id_wait= get_thread_id_wait;
   tp_state->tp_ops.ic_threadpool_get_thread_state= get_thread_state;
   tp_state->tp_ops.ic_threadpool_join= join_thread;
@@ -724,6 +733,7 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->ts_ops.ic_thread_startup_done= thread_startup_done;
   tp_state->ts_ops.ic_thread_started= thread_started;
   tp_state->ts_ops.ic_thread_get_object= get_object;
+  tp_state->ts_ops.ic_thread_get_id= get_thread_id;
   tp_state->ts_ops.ic_thread_get_stop_flag= ts_get_stop_flag;
   tp_state->ts_ops.ic_thread_wait= thread_wait;
   tp_state->ts_ops.ic_thread_lock_and_wait= thread_lock_and_wait;

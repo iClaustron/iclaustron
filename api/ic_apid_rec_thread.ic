@@ -112,6 +112,9 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 
   while (send_node_conn)
   {
+    DEBUG_PRINT(COMM_LEVEL,
+      ("Adding node id = %u in cluster %u to receive thread",
+       send_node_conn->other_node_id, send_node_conn->cluster_id));
     ic_mutex_lock(send_node_conn->mutex);
     /* move to next node to add */
     next_send_node_conn= send_node_conn->next_add_node;
@@ -149,6 +152,9 @@ rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 
   while (send_node_conn)
   {
+    DEBUG_PRINT(COMM_LEVEL,
+      ("Removing node id = %u in cluster %u to receive thread",
+       send_node_conn->other_node_id, send_node_conn->cluster_id));
     ic_mutex_lock(send_node_conn->mutex);
     send_node_conn= send_node_conn->next_rem_node;
     send_node_conn->next_rem_node= NULL;
@@ -195,8 +201,10 @@ check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state)
 {
   IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_send_node;
 
+  DEBUG_DISABLE(ADAPTIVE_SEND_LEVEL);
   while (send_node_conn)
     send_node_conn= adaptive_send_handling(send_node_conn);
+  DEBUG_ENABLE(ADAPTIVE_SEND_LEVEL);
 }
 
 static IC_RECEIVE_NODE_CONNECTION*
@@ -488,7 +496,8 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
         We check to see if we read an entire page in which case we
         might have more data to read.
       */
-      DEBUG_PRINT(COMM_LEVEL, ("Read %u bytes from NDB Protocol on socket %d",
+      DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+                  ("Read %u bytes from NDB Protocol on socket %d",
                   real_read_size, conn->conn_op.ic_get_fd(conn)));
       read_size= start_size + real_read_size;
       read_more= (read_size == page_size);
@@ -714,7 +723,10 @@ run_receive_thread(void *data)
     /* Check for which nodes to receive from */
     /* Loop over each node to receive from */
     if (rec_state->first_send_node)
+    {
+      /* This is where we poll for data on all connected nodes. */
       rec_node= get_first_rec_node(rec_state);
+    }
     else
     {
       /*
@@ -722,7 +734,7 @@ run_receive_thread(void *data)
         check again
       */
       rec_node= NULL;
-      ic_microsleep(100000);
+      ic_microsleep(10000);
     }
     while (rec_node)
     {
@@ -758,23 +770,26 @@ run_receive_thread(void *data)
   }
 
 end:
-  while (rec_state->free_rec_pages)
+  DEBUG_PRINT(THREAD_LEVEL,
+    ("receive thread id: %d is stopping now",
+     rec_tp->ts_ops.ic_thread_get_id(thread_state)));
+
+  if (rec_state->free_rec_pages)
   {
-    buf_page= rec_state->free_rec_pages;
-    rec_state->free_rec_pages= rec_state->free_rec_pages->next_sock_buf_page;
     rec_state->rec_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
       rec_state->rec_buf_pool,
-      buf_page);
+      rec_state->free_rec_pages);
+    rec_state->free_rec_pages= NULL;
   }
-  while (rec_state->free_ndb_messages)
+
+  if (rec_state->free_ndb_messages)
   {
-    ndb_message= rec_state->free_ndb_messages;
-    rec_state->free_ndb_messages=
-      rec_state->free_ndb_messages->next_sock_buf_page;
     rec_state->message_pool->sock_buf_ops.ic_return_sock_buf_page(
       rec_state->message_pool,
-      ndb_message);
+      rec_state->free_ndb_messages);
+    rec_state->free_ndb_messages= NULL;
   }
+
   if (list_modules_received)
     ic_free(list_modules_received);
   if (temp_thd_conn)

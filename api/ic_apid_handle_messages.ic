@@ -868,6 +868,10 @@ prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                                              thread_id);
   main_message_start[1]= NDB_VERSION;
   main_message_start[2]= MYSQL_VERSION;
+  DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+    ("API_REGREQ: word1: %u, word2: %u, word3: %u, module: %u, thread_id: %u",
+     main_message_start[0], main_message_start[1], main_message_start[2],
+     IC_NDB_QMGR_MODULE, send_node_conn->thread_id));
   message_size= fill_ndb_message_header(send_node_conn,
                                  3, /* API_REGREQ */
                                  IC_NDB_NORMAL_PRIO,

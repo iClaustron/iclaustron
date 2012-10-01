@@ -433,12 +433,12 @@ struct ic_socket_link_config
   guint32 socket_maxseg_size;
   guint32 socket_max_wait_in_nanos;
   guint32 socket_overload;
+  guint32 server_port_number;
   /* Ignore socket_overload for now */
 
   guint16 first_node_id;
   guint16 second_node_id;
   guint16 client_port_number;
-  guint16 server_port_number;
   guint16 server_node_id;
   guint16 socket_group;
   /* Ignore Connection Group for now */

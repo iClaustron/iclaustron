@@ -441,12 +441,16 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                                write_vector, &iovec_size);
     if (!force_send)
     {
+      DEBUG_DISABLE(ADAPTIVE_SEND_LEVEL);
       adaptive_send_algorithm_decision(send_node_conn,
                                        &return_imm,
                                        current_time);
+      DEBUG_ENABLE(ADAPTIVE_SEND_LEVEL);
     }
   }
+  DEBUG_DISABLE(ADAPTIVE_SEND_LEVEL);
   adaptive_send_algorithm_statistics(send_node_conn, current_time);
+  DEBUG_ENABLE(ADAPTIVE_SEND_LEVEL);
   /* End critical section for sending */
   ic_mutex_unlock(send_node_conn->mutex);
   if (return_imm)
@@ -520,8 +524,8 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
   DEBUG_ENTRY("real_send_handling");
 
-  DEBUG_PRINT(COMM_LEVEL, ("Writing NDB message on fd = %d",
-    conn->conn_op.ic_get_fd(conn)));
+  DEBUG_PRINT(COMM_LEVEL, ("Writing NDB message on fd = %d, size = %u",
+    conn->conn_op.ic_get_fd(conn), send_size));
   error= conn->conn_op.ic_writev_connection(conn,
                                             write_vector,
                                             iovec_size,

@@ -906,19 +906,11 @@ ic_send_with_cr_two_strings(IC_CONNECTION *conn,
 int
 ic_send_empty_line(IC_CONNECTION *ext_conn)
 {
-  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
   int ret_code;
 
   if ((ret_code= ic_send_with_cr(ext_conn, "")))
     return ret_code;
-  ic_assert(conn->write_buf_pos);
-  /* We need to flush buffer */
-  ret_code= ext_conn->conn_op.ic_write_connection(ext_conn,
-                                           (const void*)conn->write_buf,
-                                           conn->write_buf_pos,
-                                           1);
-  conn->write_buf_pos= 0;
-  return ret_code;
+  return ext_conn->conn_op.ic_flush_connection(ext_conn);
 }
 
 /**

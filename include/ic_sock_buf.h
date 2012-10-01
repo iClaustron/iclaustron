@@ -54,6 +54,7 @@ struct ic_sock_buf_operations
        IC_SOCK_BUF_PAGE **free_pages,
        guint32 num_pages_to_preallocate,
        guint32 milliseconds_to_wait);
+
   /*
     This routine is used return socket buffer pages to the global free list.
     It will treat the pointer to the first socket buffer page as the first
@@ -62,6 +63,7 @@ struct ic_sock_buf_operations
   */
   void (*ic_return_sock_buf_page) (IC_SOCK_BUF *buf,
                                    IC_SOCK_BUF_PAGE *page);
+
   /*
     If the socket buffer page global free list turns out to be too small,
     it is possible to increase the size by allocating more socket buffer

@@ -707,14 +707,16 @@ ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
   apid_global->apid_global_ops= &glob_apid_global_ops;
   apid_global->apid_metadata_ops= &glob_metadata_bind_ops;
   apid_global->use_external_connect= use_external_connect;
-  if ((error= ic_apid_global_connect(apid_global)))
+
+  if ((error= start_heartbeat_thread(apid_global,
+                                     apid_global->rec_thread_pool)))
   {
     ic_end_apid(apid_global);
     *ret_code= error;
     goto error;
   }
-  if ((error= start_heartbeat_thread(apid_global,
-                                     apid_global->rec_thread_pool)))
+
+  if ((error= ic_apid_global_connect(apid_global)))
   {
     ic_end_apid(apid_global);
     *ret_code= error;

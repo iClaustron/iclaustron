@@ -1198,6 +1198,22 @@ write_socket_connection(IC_CONNECTION *ext_conn,
   return 0;
 }
 
+static int
+flush_connection(IC_CONNECTION *ext_conn)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  int ret_code;
+
+  ic_assert(conn->write_buf_pos);
+  /* We need to flush buffer */
+  ret_code= ext_conn->conn_op.ic_write_connection(ext_conn,
+                                           (const void*)conn->write_buf,
+                                           conn->write_buf_pos,
+                                           1);
+  conn->write_buf_pos= 0;
+  return ret_code;
+}
+
 #ifdef WINDOWS
 #define send_msg(a,b,c,d,e) 1
 #else
@@ -1774,7 +1790,7 @@ fork_accept_connection(IC_CONNECTION *ext_orig_conn,
   orig_conn->forked_connections++;
 
   fork_conn->conn_op.ic_write_connection= write_socket_connection;
-  fork_conn->conn_op.ic_flush_connection= no_op_socket_method;
+  fork_conn->conn_op.ic_flush_connection= flush_connection;
   set_up_rw_methods_mutex(fork_conn, fork_conn->is_mutex_used);
 
   if (create_mutexes(fork_conn))
@@ -2047,7 +2063,7 @@ int_create_socket_object(gboolean is_client,
   set_up_rw_methods_mutex(conn, is_mutex_used);
   conn->conn_op.ic_write_connection= write_socket_connection;
   conn->conn_op.ic_writev_connection= writev_socket_connection;
-  conn->conn_op.ic_flush_connection= no_op_socket_method;
+  conn->conn_op.ic_flush_connection= flush_connection;
   conn->conn_op.ic_get_port_number= get_port_number;
 
   init_connect_stat(conn);

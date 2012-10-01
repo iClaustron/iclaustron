@@ -69,6 +69,7 @@ struct ic_thread_state_ops
                               IC_COND *cond);
 
   void* (*ic_thread_get_object) (IC_THREAD_STATE *thread_state);
+  guint32 (*ic_thread_get_id) (IC_THREAD_STATE *thread_state);
   gboolean (*ic_thread_get_stop_flag) (IC_THREAD_STATE *thread_state);
 };
 typedef struct ic_thread_state_ops IC_THREAD_STATE_OPS;
