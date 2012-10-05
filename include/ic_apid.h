@@ -157,30 +157,34 @@ typedef int (*IC_APID_CALLBACK_FUNC) (IC_APID_CONNECTION*, void* user_data);
     and table scans and index scans are currently supported. It is also
     possible to define conditional assignments on update queries.
 
-  There are two variants of how to define Data API operation objects.
-  The first variant is to define a predefined API operation object that
-  contains all fields in the table. In this case one uses a bitmap to
-  define which fields to actually use in executing a certain query.
-
-  The other variant is to define a subset of the fields of a table. In
-  this case one must use all fields all the time, no bitmap will be
-  used in this case.
-
-  The first variant is a good variant to use in an environment with
-  generic queries being executed, thus an operation object can be
-  easily reused by use of the bitmap. The other variant is more
-  efficient in applications with predefined queries that are reused
-  again and again such as the iClaustron File Server.
-
   The set-up of an API operation objects is a mapping from fields to
   a buffer and a null buffer. This mapping is used for both reads
-  and writes. For reads the result will be read into the buffer using
-  the buffer pointers and offset. For writes the updates will be done
-  by reading the data from the buffer. The mapping of primary and
-  unique key fields are also predefined. Thus field mappings for read,
-  write and key operations are predefined at definition of the operation
-  object and only needs to be changed at definition of the operation
-  object.
+  and writes.
+
+  The actual buffer is an array of 64-bit values. These are treated as
+  follows. Data of integer type always uses only one 64-bit value and
+  the value is stored in this area for writes and written into this area
+  for reads and read from this area for key fields.
+
+  For other fixed size fields also only one 64-bit value is used. This
+  value will be a pointer to a fixed size array of size as defined by
+  the type of field. For reads a value of 0 means that the API should
+  allocate the buffer, a non-zero value means that the user of the API
+  have allocated a buffer and the non-zero value is the pointer to this
+  area.
+
+  Variable sized fields always use 2 64-bit values. The first value is
+  the length of the field and the second value is the pointer to the
+  actual data. For reads if the second value is 0 it means that the
+  API should allocate the buffer and in this case the first value is
+  ignored. If the second value is non-zero it contains a reference to
+  a buffer where the read value should be placed. In this case the
+  first value is the size of the buffer (in bytes). For writes the
+  first value is always the size in bytes of the buffer and the second
+  value is a pointer to the actual value to store in the field. 
+
+  The user should also supply a NULL buffer in any NULL fields are
+  involved in the query.
 
   There are many other parts of the operation object that requires
   definition for each query. However none of these are absolutely
@@ -353,7 +357,7 @@ struct ic_metadata_transaction_ops
     performs creation of a table, adding an index, altering a table, drop of
     a table and so forth.
 
-    There are certain rutable_defles to what things can be combined into metadata
+    There are certain rules to what things can be combined into metadata
     transactions. For each operation one needs to create an IC_ALTER_TABLE
     object by ic_create_metadata_op which also connects this operation to
     a metadata transaction.
@@ -473,7 +477,7 @@ struct ic_alter_table_ops
 
     To create a table one needs to add at least one field, one also needs to
     add one primary key. It is also optional to define partitioning. No other
-    things are needed or allowed to create a table.
+    things are needed to create a table.
 
     The tablespace name is required if the table uses disk data and no
     partitioning have been defined where each partition is mapped to a
@@ -634,13 +638,11 @@ struct ic_apid_operation_ops
     to be involved in the buffer. There are also operations in this case to
     map the fields to offsets in the buffer.
 
-    All fields which are larger than 256 bytes are allocated by the API and
-    they are freed at the ic_reset_apid_op call or when ic_free_apid_op is
+    All read fields which are larger than 256 bytes are allocated by the API
+    and they are freed at the ic_reset_apid_op call or when ic_free_apid_op is
     called. There is also a specific call to transfer the "ownership" of a
     buffer to the API user for a specific field. In this case the API user
     will have the responsibility to free this memory later on.
-
-    After the application have allocated a buffer on their own or
 
     Handling of normal-sized fields
     -------------------------------
@@ -664,13 +666,11 @@ struct ic_apid_operation_ops
     In the case that the API user created the buffer using the API, the
     buffer offset and null offset are ignored in this call. The API already
     knows about the offsets of the field in the buffer and the API user can
-    get this data from the IC_TABLE_DEF object. In the special case when
-    buffer is allocated by API and we're using all fields in the table we
-    don't need this call and it will be rejected.
+    get this data from the IC_TABLE_DEF object.
   */
   int (*ic_define_field) (IC_APID_OPERATION *apid_op,
                           guint32 field_id,
-                          guint32 buffer_offset, /* in bytes */
+                          guint32 buffer_value_index,
                           guint32 null_offset); /* in bits */
 
   /*
@@ -1797,10 +1797,8 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
                          IC_TABLE_DEF *table_def,
                          /* == 0 means all fields */
                          guint32 num_fields,
-                         /* == TRUE means API allocated buffer */
-                         gboolean is_buffer_allocated_by_api,
-                         gchar *data_buffer,
-                         guint32 buffer_size, /* in bytes */
+                         guint64 *buffer_values,
+                         guint32 buffer_size, /* in 64-bit values */
                          guint8 *null_buffer,
                          guint32 null_buffer_size, /* in bytes */
                          int *error);
@@ -1809,6 +1807,12 @@ IC_METADATA_TRANSACTION*
 ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
                                IC_APID_CONNECTION *apid_conn,
                                guint32 cluster_id);
+
+IC_ALTER_TABLE*
+ic_create_alter_table(IC_METADATA_TRANSACTION *md_trans);
+
+IC_ALTER_TABLESPACE*
+ic_create_alter_tablespace(IC_METADATA_TRANSACTION *md_trans);
 
 /*
   EXTERNALLY VISIBLE DATA STRUCTURES
@@ -1908,7 +1912,7 @@ struct ic_transaction_hint
      iClaustron Data API and starts connection attempts to all the
      nodes in all clusters in the iClaustron Grid. It also initialises
      the thread pool object used by the iClaustron API program.
-  3) Call in_run_apid_program
+  3) Call ic_run_apid_program
      This call starts all user threads as specified by the user command line
      option "num_threads". The threads will run until stopped by some event
      decided by the API program. When the threads decide to stop the program
@@ -1918,7 +1922,7 @@ struct ic_transaction_hint
      Data API.
 
   So the API user can focus his efforts on how to program the API user
-  threads. These threads each receive a IC_APID_CONNECTION object at start
+  threads. These threads each receive an IC_APID_CONNECTION object at start
   of the function. They also receive a thread_state variable that can be
   used for some amount of communication between the threads. When the user
   returns from the API user function the API will automatically ensure that

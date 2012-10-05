@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2010 iClaustron AB
+# Copyright (C) 2008-2012 iClaustron AB
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; version 2 of the License.
@@ -503,11 +503,16 @@ target_link_libraries(ic_configurator ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_configurator DESTINATION bin)
 
-#Build File Server binary
+#Build File Server binaries
 add_executable(ic_fsd fileserver/ic_fileserv.c)
 target_link_libraries(ic_fsd ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_fsd DESTINATION bin)
+
+add_executable(ic_fs_bootstrap fileserver/ic_fileserv_bootstrap.c)
+target_link_libraries(ic_fs_bootstrap ic_port ic_util ic_comm
+                      ic_proto ic_api ${ICLAUSTRON_LIBS})
+install(TARGETS ic_fs_bootstrap DESTINATION bin)
 
 #Build Replication Server binary
 add_executable(ic_repd repserver/ic_repserv.c)

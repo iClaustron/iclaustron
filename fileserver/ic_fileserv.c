@@ -25,6 +25,12 @@
 #include <ic_apic.h>
 #include <ic_apid.h>
 
+static const gchar *std_ptr= "std";
+static const gchar *file_server_ptr= "file_server";
+static const gchar *file_table_ptr= "file_table";
+static const gchar *file_key_ptr= "file_key";
+static const gchar *file_data_ptr= "file_data";
+
 /*
    We now have a local Data API connection and we are ready to issue
    file system transactions to keep our local cache consistent with the
@@ -35,12 +41,103 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
                        IC_THREAD_STATE *thread_state)
 {
   IC_APID_GLOBAL *apid_global;
+  IC_APID_ERROR *apid_error;
+  IC_APID_OPERATION *apid_op;
+  IC_METADATA_TRANSACTION *md_trans;
+  IC_TRANSACTION *trans_obj;
+  IC_TABLE_DEF *table_def;
+  guint32 file_key_id, file_data_id;
+  guint64 buffer_values[3];
+  guint8 null_bits;
+  guint64 file_key= 13;
+  int error;
+  int ret_code;
+  gchar *data_str= "Some random string with data in it";
   DEBUG_ENTRY("run_file_server_thread");
 
   (void)thread_state;
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
-  (void)apid_global;
-  ic_sleep(3);
+
+  /*
+     We need access to a metadata transaction object in order to
+     acquire a table definition.
+  */
+  if (!(md_trans= ic_create_metadata_transaction(apid_global,
+                                                 apid_conn,
+                                                 0)))
+    goto error;
+
+  /**
+    Get access to the table definition of vital tables in the file
+    server.
+  */
+  if ((apid_error= apid_global->apid_metadata_ops->ic_table_bind(
+         apid_global,
+         apid_conn,
+         md_trans,
+         &table_def,
+         std_ptr,
+         file_server_ptr,
+         file_table_ptr)))
+    goto apid_error;
+
+  /* Get id of the file_key and the file_data field. */
+  if ((ret_code= table_def->table_def_ops->ic_get_field_id(
+         table_def,
+         file_key_ptr,
+         &file_key_id)) ||
+      (ret_code= table_def->table_def_ops->ic_get_field_id(
+         table_def,
+         file_data_ptr,
+         &file_data_id)))
+    goto error;
+
+  /**
+    We need an operation object in order to be able to read and
+    write the file server tables.
+  */
+  buffer_values[0]= file_key;
+  buffer_values[1]= strlen(data_str) + 1; /* Include null byte */
+  buffer_values[2]= (guint64)data_str;
+  if (!(apid_op= ic_create_apid_operation(apid_global,
+                                          table_def,
+                                          2,
+                                          (guint64*)buffer_values,
+                                          3,
+                                          &null_bits,
+                                          1,
+                                          &error)))
+    goto apid_op_error;
+
+  if ((ret_code= apid_op->apid_op_ops->ic_define_field(
+         apid_op, file_key_id, 0, 0)) ||
+       (ret_code= apid_op->apid_op_ops->ic_define_field(
+         apid_op, file_data_id, 1, 0)))
+    goto error;
+
+  /* We need a transaction object to access NDB */
+  if ((apid_error= apid_conn->apid_conn_ops->ic_start_transaction(
+         apid_conn,
+         &trans_obj,
+         NULL,
+         0,
+         FALSE)))
+    goto apid_error;
+
+  /* Perform the insert operation */
+  if ((ret_code= apid_conn->apid_conn_ops->ic_write_key(
+         apid_conn,
+         apid_op,
+         trans_obj,
+         IC_KEY_INSERT,
+         NULL,
+         NULL)))
+    goto error;
+  DEBUG_RETURN_INT(0);
+error:
+apid_error:
+apid_op_error:
+  /* Handle errors reported through IC_APID_ERROR */
   DEBUG_RETURN_INT(0);
 }
 

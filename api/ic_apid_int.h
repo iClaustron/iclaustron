@@ -390,11 +390,11 @@ struct ic_int_apid_operation
     different reads on the same table. We will only read those fields that
     have their bit set in the bit_array.
   */
-  gchar *buffer_ptr;
+  guint64 *buffer_values;
   guint8 *null_ptr;
 
   /* Internal part */
-  guint32 buffer_size;
+  guint32 num_buffer_values;
   guint32 max_null_bits;
 
   /* Number of fields in this operation object */
@@ -403,7 +403,6 @@ struct ic_int_apid_operation
   guint32 num_fields_defined;
   /* Number of key fields in table/index, 0 if not all keys are defined */
   guint32 num_key_fields;
-  gboolean is_buffer_allocated_by_api;
   /*
     When setting up the APID operation object we will check whether all fields
     have been defined in the case that the operation is using a table object
