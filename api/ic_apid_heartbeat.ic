@@ -233,6 +233,12 @@ run_heartbeat_thread(gpointer data)
 end_thread:
   send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
                                                       free_pages);
+  /* Free heartbeat resources */
+  apid_conn->apid_conn_ops->ic_free_apid_connection(apid_conn);
+  apid_global->heartbeat_conn= NULL;
+  ic_mutex_destroy(&apid_global->heartbeat_mutex);
+  ic_cond_destroy(&apid_global->heartbeat_cond);
+
   tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 error:

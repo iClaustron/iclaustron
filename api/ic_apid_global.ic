@@ -257,13 +257,6 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
     send_buf_pool->sock_buf_ops.ic_free_sock_buf(send_buf_pool);
   if (ndb_message_pool)
     ndb_message_pool->sock_buf_ops.ic_free_sock_buf(ndb_message_pool);
-  if (apid_global->heartbeat_mutex)
-    ic_mutex_destroy(&apid_global->heartbeat_mutex);
-  if (apid_global->heartbeat_cond)
-    ic_cond_destroy(&apid_global->heartbeat_cond);
-  if (apid_global->heartbeat_conn)
-    apid_global->heartbeat_conn->apid_conn_ops->ic_free_apid_connection(
-                                      apid_global->heartbeat_conn);
   if (apid_global->mutex)
     ic_mutex_destroy(&apid_global->mutex);
   if (apid_global->cond)

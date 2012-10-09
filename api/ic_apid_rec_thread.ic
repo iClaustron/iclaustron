@@ -684,7 +684,6 @@ run_receive_thread(void *data)
   IC_THREADPOOL_STATE *rec_tp;
   IC_NDB_RECEIVE_STATE *rec_state;
   int ret_code;
-  IC_SOCK_BUF_PAGE *buf_page, *ndb_message;
   IC_INT_APID_GLOBAL *apid_global;
   IC_THREAD_CONNECTION **thd_conn;
   IC_TEMP_THREAD_CONNECTION *temp_thd_conn= NULL;
