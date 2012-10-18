@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 #define IC_APID_INT_H
 
 typedef struct ic_field_def IC_FIELD_DEF;
-typedef struct ic_field_in_op IC_FIELD_IN_OP;
+typedef struct ic_field_in_query IC_FIELD_IN_QUERY;
 
 typedef struct ic_define_field IC_DEFINE_FIELD;
 typedef struct ic_define_index IC_DEFINE_INDEX;
@@ -39,7 +39,7 @@ typedef enum ic_metadata_transaction_state IC_METADATA_TRANSACTION_STATE;
 typedef struct ic_int_metadata_transaction IC_INT_METADATA_TRANSACTION;
 
 typedef struct ic_int_transaction IC_INT_TRANSACTION;
-typedef struct ic_int_apid_operation IC_INT_APID_OPERATION;
+typedef struct ic_int_apid_query IC_INT_APID_QUERY;
 typedef struct ic_int_apid_error IC_INT_APID_ERROR;
 typedef struct ic_int_apid_connection IC_INT_APID_CONNECTION;
 typedef struct ic_int_apid_global IC_INT_APID_GLOBAL;
@@ -47,7 +47,7 @@ typedef struct ic_int_table_def IC_INT_TABLE_DEF;
 typedef struct ic_int_range_condition IC_INT_RANGE_CONDITION;
 typedef struct ic_int_where_condition IC_INT_WHERE_CONDITION;
 
-typedef enum ic_apid_operation_list_type IC_APID_OPERATION_LIST_TYPE;
+typedef enum ic_apid_query_list_type IC_APID_QUERY_LIST_TYPE;
 
 typedef struct ic_send_cluster_node IC_SEND_CLUSTER_NODE;
 
@@ -71,11 +71,11 @@ struct ic_int_transaction
   IC_SAVEPOINT_ID savepoint_stable;
   IC_SAVEPOINT_ID savepoint_requested;
   /* Internal part */
-  IC_INT_APID_OPERATION *first_trans_op;
-  IC_INT_APID_OPERATION *last_trans_op;
+  IC_INT_APID_QUERY *first_trans_query;
+  IC_INT_APID_QUERY *last_trans_query;
 };
 
-enum ic_apid_operation_list_type
+enum ic_apid_query_list_type
 {
   NO_LIST = 0,
   IN_DEFINED_LIST = 1,
@@ -85,18 +85,18 @@ enum ic_apid_operation_list_type
 };
 
 /*
-  Read key operations have a definition of fields read, a definition of the
-  key fields and finally a definition of the type of read operation.
+  Read key queries have a definition of fields read, a definition of the
+  key fields and finally a definition of the type of read query.
 
-  Write key operations have a definition of fields written, a definition of
-  the key fields and finally a definition of the write operation type.
+  Write key queries have a definition of fields written, a definition of
+  the key fields and finally a definition of the write query type.
 
-  Scan operations also have a definition of fields read, it has a range
+  Scan queries also have a definition of fields read, it has a range
   condition in the cases when there is a scan of an index (will be NULL
-  for scan table operation). There is also a generic where condition.
+  for scan table query). There is also a generic where condition.
 */
 
-struct ic_field_in_op
+struct ic_field_in_query
 {
   /*
     The fields in this struct defines a field and is used both to read and
@@ -128,7 +128,7 @@ struct ic_field_in_op
     != 0 if we're writing zero's from start_pos to end_pos,
     Thus no need to send data since we're setting everything
     to zero's. This can be set dynamically and is ignored for
-    read operations.
+    read queries.
   */
   guint32 allocate_field_size;
   /*
@@ -339,25 +339,25 @@ struct ic_int_metadata_transaction
   IC_INT_ALTER_TABLESPACE *last_alter_ts;
 };
 
-struct ic_int_apid_operation
+struct ic_int_apid_query
 {
   /* Public part */
-  IC_APID_OPERATION_OPS *apid_op_ops;
+  IC_APID_QUERY_OPS *apid_query_ops;
   gboolean any_error;
   /* Hidden part */
   union
   {
     /*
-      read_key_op used by read key operations
-      write_key_op used by write key operations
-      scan_op used by scan operations.
+      read_key_query used by read key queries
+      write_key_query used by write key queries
+      scan_query used by scan queries.
     */
-    IC_READ_KEY_OP read_key_op;
-    IC_WRITE_KEY_OP write_key_op;
-    IC_SCAN_OP scan_op;
+    IC_READ_KEY_QUERY_TYPE read_key_query_type;
+    IC_WRITE_KEY_QUERY_TYPE write_key_query_type;
+    IC_SCAN_QUERY_TYPE scan_query_type;
   };
   guint32 num_cond_assignment_ids;
-  IC_APID_OPERATION_TYPE op_type;
+  IC_APID_QUERY_TYPE query_type;
 
   IC_APID_CONNECTION *apid_conn;
   IC_TRANSACTION *trans_obj;
@@ -370,9 +370,9 @@ struct ic_int_apid_operation
   IC_APID_ERROR *error;
   void *user_reference;
 
-  /* fields used by scans, read key operations and write key operations */
-  IC_FIELD_IN_OP **fields;
-  IC_FIELD_IN_OP **key_fields;
+  /* fields used by scans, read key queries and write key queries */
+  IC_FIELD_IN_QUERY **fields;
+  IC_FIELD_IN_QUERY **key_fields;
 
   /*
     For writes the user needs to supply a buffer, data is referenced
@@ -382,7 +382,7 @@ struct ic_int_apid_operation
     for reading its data.
 
     User supplied buffer to use for data to write and read results.
-    The buffer is stable until the operation is released or the
+    The buffer is stable until the query is released or the
     transaction is released, for scans until we fetch the next
     row.
 
@@ -397,41 +397,41 @@ struct ic_int_apid_operation
   guint32 num_buffer_values;
   guint32 max_null_bits;
 
-  /* Number of fields in this operation object */
+  /* Number of fields in this query object */
   guint32 num_fields;
   /* Number of fields defined */
   guint32 num_fields_defined;
   /* Number of key fields in table/index, 0 if not all keys are defined */
   guint32 num_key_fields;
   /*
-    When setting up the APID operation object we will check whether all fields
-    have been defined in the case that the operation is using a table object
-    (in which case the key is the primary key) and in the case the operation
+    When setting up the APID query object we will check whether all fields
+    have been defined in the case that the query is using a table object
+    (in which case the key is the primary key) and in the case the query
     is using the unique key (in which case the the key is the unique key).
-    For non-unique indexes this flag is always FALSE since the operation
-    cannot be used for Key Read/Write operations.
+    For non-unique indexes this flag is always FALSE since the query
+    cannot be used for Key Read/Write querys.
   */
   gboolean is_all_key_fields_defined;
 
-  IC_APID_OPERATION_LIST_TYPE list_type;
+  IC_APID_QUERY_LIST_TYPE list_type;
 
-  IC_INT_APID_OPERATION *next_trans_op;
-  IC_INT_APID_OPERATION *prev_trans_op;
+  IC_INT_APID_QUERY *next_trans_query;
+  IC_INT_APID_QUERY *prev_trans_query;
 
-  IC_INT_APID_OPERATION *next_conn_op;
-  IC_INT_APID_OPERATION *prev_conn_op;
+  IC_INT_APID_QUERY *next_conn_query;
+  IC_INT_APID_QUERY *prev_conn_query;
 
-  IC_INT_APID_OPERATION *next_defined_operation;
-  IC_INT_APID_OPERATION *prev_defined_operation;
+  IC_INT_APID_QUERY *next_defined_query;
+  IC_INT_APID_QUERY *prev_defined_query;
 
-  IC_INT_APID_OPERATION *next_executing_list;
-  IC_INT_APID_OPERATION *prev_executing_list;
+  IC_INT_APID_QUERY *next_executing_list;
+  IC_INT_APID_QUERY *prev_executing_list;
 
-  IC_INT_APID_OPERATION *next_completed_operation;
-  IC_INT_APID_OPERATION *prev_completed_operation;
+  IC_INT_APID_QUERY *next_completed_query;
+  IC_INT_APID_QUERY *prev_completed_query;
 
-  IC_INT_APID_OPERATION *next_executed_operation;
-  IC_INT_APID_OPERATION *prev_executed_operation;
+  IC_INT_APID_QUERY *next_executed_query;
+  IC_INT_APID_QUERY *prev_executed_query;
 
   IC_INT_APID_GLOBAL *apid_global;
 };
@@ -462,35 +462,35 @@ struct ic_int_apid_connection
   guint32 thread_id;
   gboolean return_to_api;
   /*
-    The operations pass through a set of lists from start to end.
+    The queries pass through a set of lists from start to end.
 
     It starts in the defined list. This list is a normal single linked list.
 
-    When the user sends the operation to the cluster they enter the
+    When the user sends the query to the cluster they enter the
     executing list. This list is a doubly linked list since they can leave
     this list in any order.
 
-    When all messages of the operation have been received the operation enter
+    When all messages of the query have been received the query enter
     the executed list. This is again a single linked list.
 
-    When the user asks for the next executed operation the operation enters
-    the last list which is the completed operations. This is also a singly
+    When the user asks for the next executed query the query enters
+    the last list which is the completed queries. This is also a singly
     linked list.
   */
-  IC_INT_APID_OPERATION *first_conn_op;
-  IC_INT_APID_OPERATION *last_conn_op;
+  IC_INT_APID_QUERY *first_conn_query;
+  IC_INT_APID_QUERY *last_conn_query;
 
-  IC_INT_APID_OPERATION *first_defined_operation;
-  IC_INT_APID_OPERATION *last_defined_operation;
+  IC_INT_APID_QUERY *first_defined_query;
+  IC_INT_APID_QUERY *last_defined_query;
 
-  IC_INT_APID_OPERATION *first_executing_list;
-  IC_INT_APID_OPERATION *last_executing_list;
+  IC_INT_APID_QUERY *first_executing_list;
+  IC_INT_APID_QUERY *last_executing_list;
 
-  IC_INT_APID_OPERATION *first_completed_operation;
-  IC_INT_APID_OPERATION *last_completed_operation;
+  IC_INT_APID_QUERY *first_completed_query;
+  IC_INT_APID_QUERY *last_completed_query;
 
-  IC_INT_APID_OPERATION *first_executed_operation;
-  IC_INT_APID_OPERATION *last_executed_operation;
+  IC_INT_APID_QUERY *first_executed_query;
+  IC_INT_APID_QUERY *last_executed_query;
 
   IC_SEND_CLUSTER_NODE *first_send_cluster_node;
   IC_SEND_CLUSTER_NODE *last_send_cluster_node;

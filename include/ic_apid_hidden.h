@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -16,21 +16,21 @@
 #ifndef IC_APID_HIDDEN_H
 #define IC_APID_HIDDEN_H
 typedef struct ic_hidden_transaction IC_HIDDEN_TRANSACTION;
-typedef struct ic_hidden_apid_operation IC_HIDDEN_APID_OPERATION;
+typedef struct ic_hidden_apid_query IC_HIDDEN_APID_QUERY;
 
 typedef struct ic_field_bind IC_FIELD_BIND;
 typedef struct ic_key_field_bind IC_KEY_FIELD_BIND;
-typedef enum ic_apid_operation_type IC_APID_OPERATION_TYPE;
+typedef enum ic_apid_query_type IC_APID_QUERY_TYPE;
 
 /*
-  The basic operation types we support are scan, read using key
+  The basic query types we support are scan, read using key
   and the write using a key.
 */
-enum ic_apid_operation_type
+enum ic_apid_query_type
 {
-  IC_SCAN_OPERATION= 0,
-  IC_KEY_READ_OPERATION= 1,
-  IC_KEY_WRITE_OPERATION= 2,
+  IC_SCAN_QUERY= 0,
+  IC_KEY_READ_QUERY= 1,
+  IC_KEY_WRITE_QUERY= 2,
   IC_COMMIT_TRANSACTION= 3,
   IC_ROLLBACK_TRANSACTION= 4,
   IC_CREATE_SAVEPOINT= 5,
@@ -56,20 +56,20 @@ struct ic_hidden_transaction
   IC_SAVEPOINT_ID savepoint_requested;
 };
 
-struct ic_hidden_apid_operation
+struct ic_hidden_apid_query
 {
   /* Public part */
-  IC_APID_OPERATION_OPS *apid_op_ops;
+  IC_APID_QUERY_OPS *apid_query_ops;
   gboolean any_error;
   /* Hidden part */
   union
   {
-    IC_READ_KEY_OP read_key_op;
-    IC_WRITE_KEY_OP write_key_op;
-    IC_SCAN_OP scan_op;
+    IC_READ_KEY_QUERY_TYPE read_key_query_type;
+    IC_WRITE_KEY_QUERY_TYPE write_key_query_type;
+    IC_SCAN_QUERY_TYPE scan_query_type;
   };
   guint32 num_cond_assignment_ids;
-  IC_APID_OPERATION_TYPE op_type;
+  IC_APID_QUERY_TYPE query_type;
 
   IC_APID_CONNECTION *apid_conn;
   IC_TRANSACTION *trans_obj;

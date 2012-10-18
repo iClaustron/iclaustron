@@ -24,16 +24,16 @@
 
 static int
 apid_conn_write_key(IC_APID_CONNECTION *apid_conn,
-                    IC_APID_OPERATION *apid_op,
+                    IC_APID_QUERY *apid_query,
                     IC_TRANSACTION *trans_obj,
-                    IC_WRITE_KEY_OP write_key_op,
+                    IC_WRITE_KEY_QUERY_TYPE write_key_query_type,
                     IC_APID_CALLBACK_FUNC callback_func,
                     void *user_reference)
 {
   (void)apid_conn;
-  (void)apid_op;
+  (void)apid_query;
   (void)trans_obj;
-  (void)write_key_op;
+  (void)write_key_query_type;
   (void)callback_func;
   (void)user_reference;
   return 0;
@@ -41,16 +41,16 @@ apid_conn_write_key(IC_APID_CONNECTION *apid_conn,
 
 static int
 apid_conn_read_key(IC_APID_CONNECTION *apid_conn,
-                   IC_APID_OPERATION *apid_op,
+                   IC_APID_QUERY *apid_query,
                    IC_TRANSACTION *trans_obj,
-                   IC_READ_KEY_OP read_key_op,
+                   IC_READ_KEY_QUERY_TYPE read_key_query_type,
                    IC_APID_CALLBACK_FUNC callback_func,
                    void *user_reference)
 {
   (void)apid_conn;
-  (void)apid_op;
+  (void)apid_query;
   (void)trans_obj;
-  (void)read_key_op;
+  (void)read_key_query_type;
   (void)callback_func;
   (void)user_reference;
   return 0;
@@ -58,16 +58,16 @@ apid_conn_read_key(IC_APID_CONNECTION *apid_conn,
 
 static int
 apid_conn_scan(IC_APID_CONNECTION *apid_conn,
-               IC_APID_OPERATION *apid_op,
+               IC_APID_QUERY *apid_query,
                IC_TRANSACTION *trans_obj,
-               IC_SCAN_OP scan_op,
+               IC_SCAN_QUERY_TYPE scan_query_type,
                IC_APID_CALLBACK_FUNC callback_func,
                void *user_reference)
 {
   (void)apid_conn;
-  (void)apid_op;
+  (void)apid_query;
   (void)trans_obj;
-  (void)scan_op;
+  (void)scan_query_type;
   (void)callback_func;
   (void)user_reference;
   return 0;
@@ -176,21 +176,21 @@ apid_conn_flush(IC_APID_CONNECTION *apid_conn,
 /*
   This method is only called after a successful call to flush or poll
 */
-IC_APID_OPERATION*
-apid_conn_get_next_executed_operation(IC_APID_CONNECTION *ext_apid_conn)
+IC_APID_QUERY*
+apid_conn_get_next_executed_query(IC_APID_CONNECTION *ext_apid_conn)
 {
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
-  IC_INT_APID_OPERATION *ret_op= apid_conn->first_executed_operation;
-  IC_INT_APID_OPERATION *first_completed_op= apid_conn->first_completed_operation;
+  IC_INT_APID_QUERY *ret_query= apid_conn->first_executed_query;
+  IC_INT_APID_QUERY *first_completed_query= apid_conn->first_completed_query;
 
-  if (ret_op == NULL)
+  if (ret_query == NULL)
     return NULL;
-  ic_assert(ret_op->list_type == IN_EXECUTED_LIST);
-  apid_conn->first_executed_operation= ret_op->next_conn_op;
-  apid_conn->first_completed_operation= ret_op;
-  ret_op->next_conn_op= first_completed_op;
-  ret_op->list_type= IN_COMPLETED_LIST;
-  return (IC_APID_OPERATION*)ret_op;
+  ic_assert(ret_query->list_type == IN_EXECUTED_LIST);
+  apid_conn->first_executed_query= ret_query->next_conn_query;
+  apid_conn->first_completed_query= ret_query;
+  ret_query->next_conn_query= first_completed_query;
+  ret_query->list_type= IN_COMPLETED_LIST;
+  return (IC_APID_QUERY*)ret_query;
 }
 
 IC_APID_GLOBAL*
@@ -267,7 +267,7 @@ static IC_APID_CONNECTION_OPS glob_apid_conn_ops=
   /* .ic_poll                   = */ ic_poll_messages,
   /* .ic_send                   = */ ic_send_messages,
   /* .ic_flush                  = */ apid_conn_flush,
-  /* .ic_get_next_executed_operation = */ apid_conn_get_next_executed_operation,
+  /* .ic_get_next_executed_query = */ apid_conn_get_next_executed_query,
   /* .ic_get_apid_global        = */ apid_conn_get_apid_global,
   /* .ic_get_api_config_server  = */ apid_conn_get_api_config_server,
   /* .ic_free_apid_connection   = */ apid_conn_free_apid_connection

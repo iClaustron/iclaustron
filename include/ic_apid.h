@@ -81,8 +81,8 @@ typedef guint32 IC_SAVEPOINT_ID;
 typedef struct ic_transaction_hint IC_TRANSACTION_HINT;
 typedef struct ic_transaction_hint_ops IC_TRANSACTION_HINT_OPS;
 
-typedef struct ic_apid_operation IC_APID_OPERATION;
-typedef struct ic_apid_operation_ops IC_APID_OPERATION_OPS;
+typedef struct ic_apid_query IC_APID_QUERY;
+typedef struct ic_apid_query_ops IC_APID_QUERY_OPS;
 
 typedef struct ic_range_condition IC_RANGE_CONDITION;
 typedef struct ic_range_condition_ops IC_RANGE_CONDITION_OPS;
@@ -104,10 +104,10 @@ typedef struct ic_apid_error_ops IC_APID_ERROR_OPS;
 typedef enum ic_error_severity_level IC_ERROR_SEVERITY_LEVEL;
 typedef enum ic_error_category IC_ERROR_CATEGORY;
 
-/* Parameter when starting Key read, Key write and Scan operations */
-typedef enum ic_read_key_op IC_READ_KEY_OP;
-typedef enum ic_write_key_op IC_WRITE_KEY_OP;
-typedef enum ic_scan_op IC_SCAN_OP;
+/* Parameter when starting Key read, Key write and Scan queries */
+typedef enum ic_read_key_query_type IC_READ_KEY_QUERY_TYPE;
+typedef enum ic_write_key_query_type IC_WRITE_KEY_QUERY_TYPE;
+typedef enum ic_scan_query_type IC_SCAN_QUERY_TYPE;
 
 /* State returned when asking transaction for its commit state */
 typedef enum ic_commit_state IC_COMMIT_STATE;
@@ -147,17 +147,17 @@ typedef int (*IC_APID_CALLBACK_FUNC) (IC_APID_CONNECTION*, void* user_data);
     use the API is to define one connection object per API. Thus it is
     not allowed to use the same object in many threads simultaneously
     unless protected by mutexes. Queries are defined on the connection
-    object using an operation object, a transaction object and a table
+    object using a query object, a transaction object and a table
     object.
 
-  4) Operation object
-    An operation object represents the actual query and contains the fields
+  4) Query object
+    A query object represents the actual query and contains the fields
     to read/write, the key to use, ranges for index scans and a possible
     condition of the query. Only primary key access, unique key access
     and table scans and index scans are currently supported. It is also
     possible to define conditional assignments on update queries.
 
-  The set-up of an API operation objects is a mapping from fields to
+  The set-up of an API query object is a mapping from fields to
   a buffer and a null buffer. This mapping is used for both reads
   and writes.
 
@@ -186,31 +186,31 @@ typedef int (*IC_APID_CALLBACK_FUNC) (IC_APID_CONNECTION*, void* user_data);
   The user should also supply a NULL buffer in any NULL fields are
   involved in the query.
 
-  There are many other parts of the operation object that requires
+  There are many other parts of the query object that requires
   definition for each query. However none of these are absolutely
   required to define any query in the API.
 
   The dynamic parts are:
-  1) Definition of ranges for scan operations
-  2) Definition of WHERE clause for any operation type
+  1) Definition of ranges for scan queries
+  2) Definition of WHERE clause for any query type
      A WHERE clause is defined by a number of individual conditions,
      then it is possible to bind together conditions using
      AND, OR and XOR.
 
-   Before an operation can be used in a query it also has to be mapped
+   Before a query can be used to query NDB it also has to be mapped
    towards the following objects.
    1) Transaction object
    2) Data API Connection object
 
-   Finally an operation type has to be defined for the operation object
+   Finally an query type has to be defined for the query object
    before the query is ready to be executed.
 
    The user has full control over when a query is actually sent to the
-   NDB kernel. A query needs to be defined first by using an API operation
+   NDB kernel. A query needs to be defined first by using an API query
    object. Such prepare calls are ic_read_key_access, ic_write_key_access
    and ic_scan_access. In these calls the mapping of objects is performed
-   and the operation type is provided. The dynamic fields, ranges and
-   conditions have to be defined on the API operation object before this
+   and the query type is provided. The dynamic fields, ranges and
+   conditions have to be defined on the API query object before this
    call is made. However for simple queries no such preparatory calls are
    needed.
 
@@ -260,14 +260,14 @@ struct ic_table_def_ops
                             guint32 field_id,
                             guint32 *field_len);
   /*
-    The data buffer used by APID operations can either be defined by the
+    The data buffer used by APID queries can either be defined by the
     user, or it's defined by the API. In the case of a buffer defined by
     the API, these two calls are used to get the buffer and the offsets
     of the fields in this buffer.
 
     The call to ic_get_buf will allocate a data buffer and null buffer
     and will report back the sizes of these. The buffer pointers and sizes
-    can be immediately reused in creating an APID operation.
+    can be immediately reused in creating an APID query.
 
     The call to ic_get_buf_offset is used to get the actual whereabouts of the
     fields in the buffer. Here fields will always be aligned on a boundary
@@ -628,58 +628,73 @@ struct ic_alter_tablespace_ops
                                       IC_TABLESPACE_ACCESS_MODE access_mode);
 };
 
-struct ic_apid_operation_ops
+struct ic_apid_query_ops
 {
   /*
-    The definition of an APID operation object is expected to be performed
-    once and be reused many times. It's expected that the user have allocated
-    a buffer, if the user don't want to handle this on his own, the table
-    object have an operation to define a buffer using a bitmap of the fields
-    to be involved in the buffer. There are also operations in this case to
-    map the fields to offsets in the buffer.
+    The definition of an APID query object is expected to be performed
+    once and be reused many times. There are functions to map the fields
+    to offsets in the buffer.
 
-    All read fields which are larger than 256 bytes are allocated by the API
-    and they are freed at the ic_reset_apid_op call or when ic_free_apid_op is
-    called. There is also a specific call to transfer the "ownership" of a
-    buffer to the API user for a specific field. In this case the API user
-    will have the responsibility to free this memory later on.
+    The row format used in the API is simple. All fields of fixed size equal
+    to or smaller to 64 bits are stored inlined in a 64-bit value array.
 
-    Handling of normal-sized fields
-    -------------------------------
-    Define a field to be used in this operation. One must define the buffer
-    offset (which is a byte offset) and a null offset (which is a bit offset).
-    When creating the operation object one supplied a buffer reference and
-    a table object. The table object could either be for a table or for
+    Each field has either one or two 64-bit values used. All fixed size fields
+    use only one 64-bit value. For 64 bit and smaller fields the 64-bits
+    contains the actual value. For fixed size fields larger than 64 bits the
+    64-bit value contains a pointer to the value or a buffer where to place
+    the read value. Variable sized fields always use two 64-bit values. The
+    first contains the length, the second a pointer to the actual value.
+
+    For reads the pointer equal to 0 means that the API should allocate a
+    buffer where to place the result. The length of the result is written
+    into the first 64-bit value. For a read the pointer not equal to 0 means
+    that it is pointing to a buffer and this buffer must be at least of
+    size of the field for fixed size fields and for variable sized fields
+    the length parameter contains the size of the buffer as input. When
+    read, the length parameter is changed to be the actual length of the
+    field in bytes. The size of the buffer for variable sized fields must
+    be at least as large as the maximum size of the field.
+   
+    For writes the pointer value is pointing to a buffer that contains the
+    value to write into the field. For fixed size the buffer size is equal
+    to the field size and for variable sized field the length is stored in
+    the lenght part. These values and the buffer is only read and not
+    changed as part of the write query. 
+
+    There is a specific call to transfer the "ownership" of a buffer to the
+    API user for a specific field. In this case the API user will have the
+    responsibility to free this memory later on. This is possible to use in
+    the case when the API allocated the buffer.
+
+    Definition of fields in an APID query
+    -------------------------------------
+    Define a field to be used in this query. One must define the index
+    in the 64-bit value array and a null offset (which is a bit offset).
+
+    When creating the query object one supplied a buffer value reference
+    and a table object. The table object could either be for a table or for
     an index. This means that the API can find out whether the field is part
     of the primary key (or unique key if unique index) and also the type
-    and size of the field. When using the operation object for key access
+    and size of the field. When using the query object for key access
     it's necessary to have defined all key fields. If this hasn't been done
-    the key operations will fail on the operation object. Similarly the API
-    will also verify that the buffer offsets used by the application isn't
+    the key queries will fail on the query object. Similarly the API
+    will also verify that the buffer indexes used by the application isn't
     overlapping for different fields.
 
     The null offset is ignored for fields that are NOT NULL.
-
-    The buffer offset is the offset of the pointer to the field data in
-    the case of fields of size larger than 255 bytes.
-
-    In the case that the API user created the buffer using the API, the
-    buffer offset and null offset are ignored in this call. The API already
-    knows about the offsets of the field in the buffer and the API user can
-    get this data from the IC_TABLE_DEF object.
   */
-  int (*ic_define_field) (IC_APID_OPERATION *apid_op,
+  int (*ic_define_field) (IC_APID_QUERY *apid_query,
                           guint32 field_id,
-                          guint32 buffer_value_index,
+                          guint32 buffer_index,
                           guint32 null_offset); /* in bits */
 
   /*
-    Handling of large fields (over 256 bytes)
-    -----------------------------------------
-    In order to read or write large fields we have to map a buffer for the
+    Handling of reads/writes of parts of fields
+    -------------------------------------------
+    In order to read or write parts of a field we have to map a buffer for the
     field. This call is required for each query for each field larger than
-    256 bytes. It is never necessary for fields smaller since they will
-    always be updated fully and also will be entirely stored in the buffer.
+    64 kbytes. It is never necessary for fields smaller since they can
+    always be updated fully and also can be entirely stored in the buffer.
 
     In the case of read the pointer to the buffer can be NULL. In this the
     API will allocate a buffer of appropriate size. The user can assume
@@ -700,14 +715,14 @@ struct ic_apid_operation_ops
     size of the field and the entire field in the NDB kernel will be
     overwritten.
   */
-  int (*ic_define_pos) (IC_APID_OPERATION *apid_op,
+  int (*ic_define_pos) (IC_APID_QUERY *apid_query,
                         guint32 field_id,
                         gchar *field_data,
                         gboolean use_full_field,
-                        guint32 start_pos, /* in bytes */
-                        guint32 end_pos);  /* in bytes */
+                        guint64 start_pos, /* in bytes */
+                        guint64 end_pos);  /* in bytes */
 
-  int (*ic_transfer_ownership) (IC_APID_OPERATION *apid_op,
+  int (*ic_transfer_ownership) (IC_APID_QUERY *apid_query,
                                 guint32 field_id);
 
   /*
@@ -720,32 +735,32 @@ struct ic_apid_operation_ops
     bitmap where the Nth bit set to 0 means that partition N is to be part
     of the query.
   */
-  int (*ic_set_partition_ids) (IC_APID_OPERATION *apid_op,
+  int (*ic_set_partition_ids) (IC_APID_QUERY *apid_query,
                                IC_BITMAP *used_partitions);
-  int (*ic_set_partition_id) (IC_APID_OPERATION *apid_op,
+  int (*ic_set_partition_id) (IC_APID_QUERY *apid_query,
                               guint32 partition_id);
 
   /*
     Handling of RANGE CONDITION objects
     -----------------------------------
     Operations can optionally define a range. This is only true for scan
-    queries. Primary key and unique key operations cannot use a range since
+    queries. Primary key and unique key queries cannot use a range since
     they will always fetch one row and only one row. There is also a function
-    to ask the operation to retain the range also after completing the
+    to ask the query to retain the range also after completing the
     execution of a query to ensure that the range can be reused for the
-    next query this operation object is used for. This function needs to be
+    next query this query object is used for. This function needs to be
     called every time a range is used as part of a query. So no specific call
     is needed to release a range, simply avoid calling ic_keep_range and the
     range will be released on the next completion of a query for this object.
   */
   IC_RANGE_CONDITION* (*ic_create_range_condition)
-                             (IC_APID_OPERATION *apid_op);
-  void (*ic_keep_range) (IC_APID_OPERATION *apid_op);
+                         (IC_APID_QUERY *apid_query);
+  void (*ic_keep_range) (IC_APID_QUERY *apid_query);
 
   /*
     Handling of WHERE CONDITION objects
     -----------------------------------
-    All operations can optionally define a WHERE condition which is executed
+    All queries can optionally define a WHERE condition which is executed
     before the actual read or write is performed. One can create a WHERE
     condition from this object and it is also possible to reuse the WHERE
     condition object from the APID_GLOBAL object. There can only be one WHERE
@@ -756,16 +771,16 @@ struct ic_apid_operation_ops
     if needed for many queries in a row.
   */
   IC_WHERE_CONDITION* (*ic_create_where_condition)
-                             (IC_APID_OPERATION *apid_op);
-  int (*ic_map_where_condition) (IC_APID_OPERATION *apid_op,
+                             (IC_APID_QUERY *apid_query);
+  int (*ic_map_where_condition) (IC_APID_QUERY *apid_query,
                                  IC_APID_GLOBAL *apid_global,
                                  guint32 where_cond_id);
-  void (*ic_keep_where) (IC_APID_OPERATION *apid_op);
+  void (*ic_keep_where) (IC_APID_QUERY *apid_query);
 
   /*
     Handling of CONDITIONAL ASSIGNMENT objects
     ------------------------------------------
-    Update operations can also have conditional assignments. There can be
+    Update queries can also have conditional assignments. There can be
     multiple such conditional assignment objects. Each conditional
     assignments sets the value of one field and thus one conditional
     assignment is needed for each field needing a conditional assignment.
@@ -796,16 +811,16 @@ struct ic_apid_operation_ops
     a row.
   */
   IC_CONDITIONAL_ASSIGNMENT** (*ic_create_conditional_assignments)
-                               (IC_APID_OPERATION *apid_op,
+                               (IC_APID_QUERY *apid_query,
                                 guint32 num_cond_assigns);
   IC_CONDITIONAL_ASSIGNMENT* (*ic_create_conditional_assignment)
-                               (IC_APID_OPERATION *apid_op,
+                               (IC_APID_QUERY *apid_query,
                                 guint32 cond_assign_id);
-  int (*ic_map_conditional_assignment) (IC_APID_OPERATION *apid_op,
+  int (*ic_map_conditional_assignment) (IC_APID_QUERY *apid_query,
                                         IC_APID_GLOBAL *apid_global,
                                         guint32 loc_cond_assign_id,
                                         guint32 glob_cond_assign_id);
-  void (*ic_keep_conditional_assignment) (IC_APID_OPERATION *apid_op);
+  void (*ic_keep_conditional_assignment) (IC_APID_QUERY *apid_query);
 
   /*
     Handling of Errors
@@ -813,38 +828,38 @@ struct ic_apid_operation_ops
     In the case of an error on a query, an error object is available to
     the application. However to avoid having to fetch this object after
     completing each query it is possible to quickly check the variable
-    named any_error on the IC_APID_OPERATION object. If this is set to
+    named any_error on the IC_APID_QUERY object. If this is set to
     FALSE then the query went through without any warnings or errors.
 
     If the variable is set one can get an error object and query this object
     for more information on the nature of the error.
   */
-  IC_APID_ERROR* (*ic_get_error_object) (IC_APID_OPERATION *apid_op);
+  IC_APID_ERROR* (*ic_get_error_object) (IC_APID_QUERY *apid_query);
 
   /*
     Handling of Query Completion
     ----------------------------
     There are three ways to handle Query Completion.
-    1) Don't do anything, operation object will be reset at close of the
+    1) Don't do anything, query object will be reset at close of the
        transaction.
-    2) Call is_reset_apid_op after completing the query and before transaction
-       is committed or aborted. Operation object can be immediately reused for
-       the next query in the same or other transaction.
-    3) Free operation object after completing query. This will release all
-       memory allocated by the operation object and all objects owned created
+    2) Call is_reset_apid_query after completing the query and before
+       transaction is committed or aborted. Operation object can be
+       immediately reused for the next query in the same or other transaction.
+    3) Free query object after completing query. This will release all
+       memory allocated by the query object and all objects owned created
        through this object including RANGE conditions, WHERE condition and
        CONDITIONAL ASSIGNMENT objects.
 
-    A reset operation will also release memory in some cases where WHERE
+    A reset query will also release memory in some cases where WHERE
     conditions and CONDITIONAL ASSIGNMENT objects have been allocated to
-    the operation object and not been specified to be kept.
+    the query object and not been specified to be kept.
 
     To call reset before close of the transaction has the obvious advantage
-    of releasing an operation object early on that can be immediately
+    of releasing an query object early on that can be immediately
     reused for other queries.
   */
-  int (*ic_reset_apid_op) (IC_APID_OPERATION *apid_op);
-  void (*ic_free_apid_op) (IC_APID_OPERATION *apid_op);
+  int (*ic_reset_apid_query) (IC_APID_QUERY *apid_query);
+  void (*ic_free_apid_query) (IC_APID_QUERY *apid_query);
 };
 
 struct ic_range_condition_ops
@@ -925,8 +940,8 @@ struct ic_range_condition_ops
     part to be defined and the field is always the last part of the range
     definition.
     
-    Ranges are defined as part of the definition of the APID operation object
-    and the range will be removed from the APID operation object immediately
+    Ranges are defined as part of the definition of the APID query object
+    and the range will be removed from the APID query object immediately
     after completing the query. Thus ranges have to be defined for each
     individual query it's used in. It is possible to avoid this pattern by
     specifically calling ic_keep_ranges. The default is to use only one range
@@ -1102,9 +1117,9 @@ struct ic_where_condition_ops
   If the user wants to store a condition globally accessible to all
   connections in the API it should be created using the
   ic_create_where_condition method on the IC_APID_GLOBAL object. In this
-  case it is sufficient to map the where condition to a IC_APID_OPERATION
+  case it is sufficient to map the where condition to a IC_APID_QUERY
   object, otherwise one needs to call the ic_create_where_condition method
-  on the IC_APID_OPERATION object.
+  on the IC_APID_QUERY object.
 
   Sometime in the future it might also be possible to store where conditions
   in the Data nodes in the clusters. To support this we have a method on the
@@ -1222,10 +1237,11 @@ struct ic_conditional_assignment_ops
     address can be prepared by loading constants into memory and also by
     performing operations on constants and field values.
 
-    We can also make the entire aic_define_partitioningssignment conditional, to do this, we reuse
+    We can also make the entire aic_define_partitioning assignment
+    conditional, to do this, we reuse
     the IC_WHERE_CONDITION class. Thus a generic WHERE condition can be
     executed before we perform the assignment. If no WHERE condition is used
-    the assignment is unconditional. For an API operation it is possible to
+    the assignment is unconditional. For an API query it is possible to
     define any number of assignments (withing reasonable limits set by how
     large the interpreted program is allowed to be). Each of those assignments
     will see the results of the previous assignments. Thus if we have two
@@ -1286,7 +1302,7 @@ struct ic_conditional_assignment_ops
       ic_write_field_into_memory("a", res2_address);
 
     Conditional assignments can either be defined dynamically per API
-    operation it's needed in. It could also be defined globally on the
+    query it's needed in. It could also be defined globally on the
     IC_APID_GLOBAL object from where it can be reused by any query using
     the IC_APID_GLOBAL instance.
   */
@@ -1343,72 +1359,72 @@ struct ic_apid_connection_ops
 {
   /*
     The table operation part of the iClaustron Data API have 4 parts.
-    1) Normal key and scan operations
+    1) Normal key and scan queries
     2) Transaction start, join, commit and rollback
     3) Send and poll connections to NDB
-    4) Iterate through received operations from NDB
+    4) Iterate through received queries from NDB
   */
   /*
-    Insert, Update, Delete and Write operation
-    This method is used to send a primary key or unique key operation
-    towards NDB. It will not actually send the operation, it will only
-    define the operation for later sending and execution. Before calling
-    this function the IC_APID_OPERATION needs to be properly set-up for
+    Insert, Update, Delete and Write queries
+    This method is used to send a primary key or unique key query
+    towards NDB. It will not actually send the query, it will only
+    define the query for later sending and execution. Before calling
+    this function the IC_APID_QUERY needs to be properly set-up for
     the query, this object defines what query to execute. The 
     IC_APID_CONNECTION provides a communication channel to this thread
     in the API, the IC_TRANSACTION puts the query in a transaction
-    context. The IC_WRITE_KEY_OP specifies the type of operation we are
+    context. The IC_WRITE_KEY_OP specifies the type of query we are
     performing.
 
     The normal use of the API is to provide a callback function together
     with a user object that will be called when the query has completed
     (when this callback is called it carries the outcome of the query,
     whether it was successful and any read data will be available in the
-    buffer set-up by the IC_APID_OPERATION object.
+    buffer set-up by the IC_APID_QUERY object.
 
     It is also possible to avoid the use of a callback function, in this
     case the callback function is sent as NULL and the user data is ignored,
     in this case the API will execute a default callback function. In this
-    case one has to use the IC_APID_OPERATION to get the result of the query
+    case one has to use the IC_APID_QUERY to get the result of the query
     execution after returning from either the ic_poll or ic_flush call.
    */
   int (*ic_write_key)
                 /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
-                /* Our operation object */
-                IC_APID_OPERATION *apid_op,
+                /* Our query object */
+                IC_APID_QUERY *apid_query,
                 /* Transaction object, can span multiple threads */
                 IC_TRANSACTION *transaction_obj,
-                /* Type of write operation */
-                IC_WRITE_KEY_OP write_key_op,
+                /* Type of write query */
+                IC_WRITE_KEY_QUERY_TYPE write_key_query_type,
                 /* Callback function */
                 IC_APID_CALLBACK_FUNC callback_func,
                 /* Any reference the user wants to pass to completion phase */
                 void *user_reference);
 
   /*
-    Read key operation
-    This method is used to perform primary key or unique key operations
-    toward NDB. Will not send the operation, only define it.
+    Read key query
+    This method is used to perform primary key or unique key queries
+    toward NDB. Will not send the query, only define it.
 
     It works in exactly the same manner as ic_write_key_access except that it
-    defines a read operation instead.
+    defines a read query instead.
   */
   int (*ic_read_key)
                 /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
-                /* Our operation object */
-                IC_APID_OPERATION *apid_op,
+                /* Our query object */
+                IC_APID_QUERY *apid_query,
                 /* Transaction object, can span multiple threads */
                 IC_TRANSACTION *transaction_obj,
-                /* Type of read operation */
-                IC_READ_KEY_OP read_key_op,
+                /* Type of read query */
+                IC_READ_KEY_QUERY_TYPE read_key_query_type,
                 /* Callback function */
                 IC_APID_CALLBACK_FUNC callback_func,
                 /* Any reference the user wants to pass to completion phase */
                 void *user_reference);
   /*
-    Scan table operation
+    Scan table query
     This method is used to scan a table, one can either scan a non-unique
     index or perform a full table scan. It is possible to limit the scan
     to a subset of the partitions used in the table.
@@ -1416,12 +1432,12 @@ struct ic_apid_connection_ops
   int (*ic_scan)
                 /* Our thread representation */
                (IC_APID_CONNECTION *apid_conn,
-                /* Our operation object */
-                IC_APID_OPERATION *apid_op,
+                /* Our query object */
+                IC_APID_QUERY *apid_query,
                 /* Transaction object, can span multiple threads */
                 IC_TRANSACTION *transaction_obj,
-                /* Type of scan operation */
-                IC_SCAN_OP scan_op,
+                /* Type of scan query */
+                IC_SCAN_QUERY_TYPE scan_query_type,
                 /* Callback function */
                 IC_APID_CALLBACK_FUNC callback_func,
                 /* Any reference the user wants to pass to completion phase */
@@ -1453,16 +1469,16 @@ struct ic_apid_connection_ops
 
     Start transaction is performed immediately, the transaction object can
     be used immediately. The actual transaction start happens in the NDB
-    kernel, this will however happen as part of the first operation of the
+    kernel, this will however happen as part of the first query of the
     transaction.
 
     Transactions can only occur within one cluster. It's also necessary to
-    only use metadata objects belonging to this cluster in all operations of
+    only use metadata objects belonging to this cluster in all queries of
     the transaction.
 
     It is possible to process many transactions on the same or different
-    clusters in parallel, thus one ic_send operation can send transaction
-    operations to many clusters.
+    clusters in parallel, thus one ic_send query can send transaction
+    queries to many clusters.
   */
   IC_APID_ERROR*
       (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
@@ -1487,7 +1503,7 @@ struct ic_apid_connection_ops
     Commit the transaction
     This merely indicates a wish to commit the transaction. The actual
     commit is performed by NDB and thus the outcome of the commit is
-    not known until we have sent and polled in all operations of the
+    not known until we have sent and polled in all queries of the
     transaction.
   */
   IC_APID_ERROR*
@@ -1527,8 +1543,8 @@ struct ic_apid_connection_ops
   /*
     Rollback to savepoint.
     This is an indication to NDB what to do. Rollback to a savepoint
-    will remove all operations already defined and not sent. No
-    more operations will be accepted on the transaction until the
+    will remove all queries already defined and not sent. No
+    more queries will be accepted on the transaction until the
     rollback to savepoint is completed in NDB.
   */
   IC_APID_ERROR*
@@ -1541,26 +1557,26 @@ struct ic_apid_connection_ops
                                 void *user_reference);
 
   /*
-    Check for new operations received. If wait_time > 0 we will wait for
-    the number of milliseconds given for new operations.
-    If ic_poll returns 0 it means we have received operations that have
-    completed their operations and need action from user.
+    Check for new queries received. If wait_time > 0 we will wait for
+    the number of milliseconds given for new queries.
+    If ic_poll returns 0 it means we have received queries that have
+    completed their queries and need action from user.
     There are three potential outcomes of this call.
     1) We call it and nothing has arrived for the time that we have
        specified. The method will return IC_ERROR_TIMEOUT in this
        case.
     2) We call it and something arrived but dependent actions had been
-       defined for the received operations, so no action is required.
-       In this case we return, and when we call ic_get_next_operation
-       there will be no operation to handle.
+       defined for the received queries, so no action is required.
+       In this case we return, and when we call ic_get_next_query
+       there will be no query to handle.
     3) We call and it something arrived that require our attention.
-       We return 0 and there will be operations returned from the
-       ic_get_next_operation iterator.
+       We return 0 and there will be queries returned from the
+       ic_get_next_query iterator.
   */
   IC_APID_ERROR* (*ic_poll) (IC_APID_CONNECTION *apid_conn, glong wait_time);
 
   /*
-    Send all operations that we have prepared in this connection.
+    Send all queries that we have prepared in this connection.
     If force_send is FALSE, we will use an adaptive algorithm which keeps
     track of the mean value and standard deviation on how long time there is
     between sends to a specific node in the cluster. If the expected time to
@@ -1574,7 +1590,7 @@ struct ic_apid_connection_ops
                              gboolean force_send);
 
   /*
-    Send operations and wait for operations to be received. This is
+    Send queries and wait for queries to be received. This is
     equivalent to send + poll. The return code is either an error
     found already at the send phase and if the send is successful
     it will report in the same manner as poll.
@@ -1585,11 +1601,11 @@ struct ic_apid_connection_ops
 
   /*
     After returning 0 from flush or poll we use this iterator to get
-    all operations that have completed. It will return one IC_APID_OPERATION
-    object at a time until it returns NULL after which no more operations
+    all queries that have completed. It will return one IC_APID_QUERY
+    object at a time until it returns NULL after which no more queries
     exists to report from the poll/flush call.
   */
-  IC_APID_OPERATION* (*ic_get_next_executed_operation)
+  IC_APID_QUERY* (*ic_get_next_executed_query)
                               (IC_APID_CONNECTION *apid_conn);
   /* Get global data object for Data API */
   IC_APID_GLOBAL* (*ic_get_apid_global) (IC_APID_CONNECTION *apid_conn);
@@ -1603,21 +1619,21 @@ struct ic_apid_connection_ops
 struct ic_transaction_ops
 {
   /*
-    This method iterates over all ongoing operations that still haven't
+    This method iterates over all ongoing queries that still haven't
     been executed in the cluster. They have though been sent, so this
     means that they are awaiting a response from the cluster.
     It is both a get first and get next iterator. Get first semantics one
-    gets by calling with apid_op = NULL and get next by sending in the
-    apid_op from the previous call into apid_op.
+    gets by calling with apid_query = NULL and get next by sending in the
+    apid_query from the previous call into apid_query.
 
-    It will only list the operations connected to this operation. There
+    It will only list the queries connected to this query. There
     might be more than one connection used in a transaction.
 
     All parameters are IN-parameters
   */
-  IC_APID_OPERATION* (*ic_get_ongoing_op) (IC_TRANSACTION *trans_obj,
+  IC_APID_QUERY* (*ic_get_ongoing_query) (IC_TRANSACTION *trans_obj,
                                            IC_APID_CONNECTION *apid_conn,
-                                           IC_APID_OPERATION *apid_op);
+                                           IC_APID_QUERY *apid_query);
 };
 
 struct ic_transaction_hint_ops
@@ -1746,7 +1762,7 @@ struct ic_apid_global_ops
   --------------
 
   These are methods to create the global object, the connection object to be
-  used in a specific thread and the operation object used to handle a certain
+  used in a specific thread and the query object used to handle a certain
   low-level query. All other data structures are allocated as part of the
   interfaces to these objects.
 
@@ -1772,12 +1788,12 @@ struct ic_apid_global_ops
   iClaustron Data API will always have one such object per thread as is
   intended.
 
-  ic_create_apid_operation
+  ic_create_apid_query
   ------------------------
-  Method to create APID operation object, it is connected to the global
-  APID object but it's ok to use an operation on any APID connection.
+  Method to create APID query object, it is connected to the global
+  APID object but it's ok to use an query on any APID connection.
   An APID object needs to be connected to a table object and a buffer
-  is also connected to the APID operation object.
+  is also connected to the APID query object.
 
   Creation of these objects and deciding whether to use a global pool or
   a local pool per thread is a decision by the user, or even to create
@@ -1792,16 +1808,15 @@ IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
                           IC_BITMAP *cluster_id_bitmap);
 
-IC_APID_OPERATION*
-ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
-                         IC_TABLE_DEF *table_def,
-                         /* == 0 means all fields */
-                         guint32 num_fields,
-                         guint64 *buffer_values,
-                         guint32 buffer_size, /* in 64-bit values */
-                         guint8 *null_buffer,
-                         guint32 null_buffer_size, /* in bytes */
-                         int *error);
+IC_APID_QUERY*
+ic_create_apid_query(IC_APID_GLOBAL *apid_global,
+                     IC_TABLE_DEF *table_def,
+                     guint32 num_fields,
+                     guint64 *buffer_values,
+                     guint32 num_buffer_values, /* in 64-bit values */
+                     guint8 *null_buffer,
+                     guint32 null_buffer_size, /* in bytes */
+                     int *error);
 
 IC_METADATA_TRANSACTION*
 ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
@@ -1861,9 +1876,9 @@ struct ic_where_condition
   IC_WHERE_CONDITION_OPS *cond_ops;
 };
 
-struct ic_apid_operation
+struct ic_apid_query
 {
-  IC_APID_OPERATION_OPS *apid_op_ops;
+  IC_APID_QUERY_OPS *apid_query_ops;
   gboolean any_error;
 };
 

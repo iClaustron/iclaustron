@@ -19,10 +19,10 @@
   This module implements the transaction object interface.
 */
 
-static IC_APID_OPERATION*
+static IC_APID_QUERY*
 trans_get_ongoing_op(IC_TRANSACTION *trans,
                      IC_APID_CONNECTION *apid_conn,
-                     IC_APID_OPERATION *apid_op)
+                     IC_APID_QUERY *apid_op)
 {
   (void)trans;
   (void)apid_conn;

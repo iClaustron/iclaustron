@@ -42,7 +42,7 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
 {
   IC_APID_GLOBAL *apid_global;
   IC_APID_ERROR *apid_error;
-  IC_APID_OPERATION *apid_op;
+  IC_APID_QUERY *apid_query;
   IC_METADATA_TRANSACTION *md_trans;
   IC_TRANSACTION *trans_obj;
   IC_TABLE_DEF *table_def;
@@ -93,26 +93,42 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
     goto error;
 
   /**
-    We need an operation object in order to be able to read and
-    write the file server tables.
+    We need an query object in order to be able to read and
+    write the file server tables. In this object we define the
+    mapping to where the fields are written and read as part of
+    the actual read and write queries.
   */
-  buffer_values[0]= file_key;
-  buffer_values[1]= strlen(data_str) + 1; /* Include null byte */
-  buffer_values[2]= (guint64)data_str;
-  if (!(apid_op= ic_create_apid_operation(apid_global,
-                                          table_def,
-                                          2,
-                                          (guint64*)buffer_values,
-                                          3,
-                                          &null_bits,
-                                          1,
-                                          &error)))
-    goto apid_op_error;
+  if (!(apid_query= ic_create_apid_query(apid_global,
+                                         table_def,
+                                         2,
+                                         (guint64*)buffer_values,
+                                         3,
+                                         &null_bits,
+                                         1,
+                                         &error)))
+    goto apid_query_error;
 
-  if ((ret_code= apid_op->apid_op_ops->ic_define_field(
-         apid_op, file_key_id, 0, 0)) ||
-       (ret_code= apid_op->apid_op_ops->ic_define_field(
-         apid_op, file_data_id, 1, 0)))
+  /**
+    Define mapping, the file_key field is using the first 64-bit value
+    and since it is a 64-bit integer field, the value is stored inside
+    64-bit value. The field is not nullable, so the position of the
+    NULL bit is ignored.
+
+    The second field, the file_data field is a nullable field, so in
+    this case the null bit position is valid. Position 1 is the first
+    64-bit value used to describe this field. Since it is a variable
+    sized field the first 64-bit value is the length in bytes and the
+    second 64-bit value is a pointer to where the data is read from
+    (for writes) or written (for reads). If it is a read and the pointer
+    is 0, then the API will allocate a buffer and store it there and
+    write the pointer into this position. If a buffer is used at read,
+    then the length attribute specifies the allocated length of this
+    buffer.
+   */
+  if ((ret_code= apid_query->apid_query_ops->ic_define_field(
+         apid_query, file_key_id, 0, 0)) ||
+      (ret_code= apid_query->apid_query_ops->ic_define_field(
+         apid_query, file_data_id, 1, 0)))
     goto error;
 
   /* We need a transaction object to access NDB */
@@ -124,10 +140,17 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
          FALSE)))
     goto apid_error;
 
-  /* Perform the insert operation */
+  /**
+    Perform the insert query, as part of the insert query we will
+    read the values from the buffer. Start by preparing the buffer values
+    containing the data to insert.
+  */
+  buffer_values[0]= file_key;
+  buffer_values[1]= strlen(data_str) + 1; /* Include null byte in length */
+  buffer_values[2]= (guint64)data_str;
   if ((ret_code= apid_conn->apid_conn_ops->ic_write_key(
          apid_conn,
-         apid_op,
+         apid_query,
          trans_obj,
          IC_KEY_INSERT,
          NULL,
@@ -136,7 +159,7 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
   DEBUG_RETURN_INT(0);
 error:
 apid_error:
-apid_op_error:
+apid_query_error:
   /* Handle errors reported through IC_APID_ERROR */
   DEBUG_RETURN_INT(0);
 }

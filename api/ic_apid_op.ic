@@ -14,15 +14,15 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 /*
-  MODULE: Define API operation object module
-  ------------------------------------------
-  This module contains methods to define an Data API operation object.
+  MODULE: Define API query object module
+  --------------------------------------
+  This module contains methods to define an Data API query object.
 */
 static int
-compare_field_in_op(const void *a, const void *b)
+compare_field_in_query(const void *a, const void *b)
 {
-  guint32 left_field_id= ((IC_FIELD_IN_OP*)a)->field_id;
-  guint32 right_field_id= ((IC_FIELD_IN_OP*)b)->field_id;
+  guint32 left_field_id= ((IC_FIELD_IN_QUERY*)a)->field_id;
+  guint32 right_field_id= ((IC_FIELD_IN_QUERY*)b)->field_id;
   if (left_field_id > right_field_id)
     return +1;
   else if (left_field_id < right_field_id)
@@ -31,22 +31,22 @@ compare_field_in_op(const void *a, const void *b)
 }
 
 static int
-organize_field_in_op_array(IC_INT_APID_OPERATION *apid_op,
-                           IC_INT_TABLE_DEF *table_def)
+organize_field_in_query_array(IC_INT_APID_QUERY *apid_query,
+                              IC_INT_TABLE_DEF *table_def)
 {
-  guint32 num_fields= apid_op->num_fields;
+  guint32 num_fields= apid_query->num_fields;
   guint32 field_id_compare= IC_MAX_UINT32;
   guint32 num_key_fields= table_def->num_key_fields;
   guint32 i, j, field_id, key_field_id;
   guint32 key_fields= 0;
 
-  qsort(apid_op->fields,
+  qsort(apid_query->fields,
         num_fields,
-        sizeof(IC_FIELD_IN_OP*),
-        compare_field_in_op);
+        sizeof(IC_FIELD_IN_QUERY*),
+        compare_field_in_query);
   for (i= 0; i < num_fields; i++)
   {
-    field_id= apid_op->fields[i]->field_id;
+    field_id= apid_query->fields[i]->field_id;
     if (field_id_compare == field_id)
       return IC_ERROR_DUPLICATE_FIELD_IDS;
     field_id_compare= field_id;
@@ -59,58 +59,58 @@ organize_field_in_op_array(IC_INT_APID_OPERATION *apid_op,
           key_field_id= j;
       }
       ic_require(key_field_id < num_key_fields);
-      apid_op->key_fields[key_field_id]= apid_op->fields[i];
+      apid_query->key_fields[key_field_id]= apid_query->fields[i];
       key_fields++;
     }
   }
   if (key_fields == num_key_fields)
   {
-    apid_op->is_all_key_fields_defined= TRUE;
-    apid_op->num_key_fields= num_key_fields;
+    apid_query->is_all_key_fields_defined= TRUE;
+    apid_query->num_key_fields= num_key_fields;
   }
   return 0;
 }
 
 static int
-apid_op_define_field(IC_APID_OPERATION *ext_apid_op,
+apid_query_define_field(IC_APID_QUERY *ext_apid_query,
                      guint32 field_id,
                      guint32 buffer_value_index,
                      guint32 null_offset)
 {
-  IC_FIELD_IN_OP *field_in_op;
-  IC_INT_APID_OPERATION *apid_op= (IC_INT_APID_OPERATION*)ext_apid_op;
+  IC_FIELD_IN_QUERY *field_in_query;
+  IC_INT_APID_QUERY *apid_query= (IC_INT_APID_QUERY*)ext_apid_query;
   IC_INT_TABLE_DEF *table_def;
-  guint32 num_fields_defined= apid_op->num_fields_defined;
+  guint32 num_fields_defined= apid_query->num_fields_defined;
   int ret_code;
 
-  table_def= (IC_INT_TABLE_DEF*)apid_op->table_def;
+  table_def= (IC_INT_TABLE_DEF*)apid_query->table_def;
   if (field_id > table_def->num_fields ||
-      num_fields_defined >= apid_op->num_fields)
+      num_fields_defined >= apid_query->num_fields)
     return IC_ERROR_TOO_MANY_FIELDS;
-  field_in_op= apid_op->fields[num_fields_defined];
+  field_in_query= apid_query->fields[num_fields_defined];
   num_fields_defined++;
-  apid_op->num_fields_defined= num_fields_defined;
-  field_in_op->data_offset=  buffer_value_index;
-  field_in_op->null_offset= null_offset;
-  field_in_op->field_id= field_id;
-  if (num_fields_defined == apid_op->num_fields)
+  apid_query->num_fields_defined= num_fields_defined;
+  field_in_query->data_offset=  buffer_value_index;
+  field_in_query->null_offset= null_offset;
+  field_in_query->field_id= field_id;
+  if (num_fields_defined == apid_query->num_fields)
   {
     /* Last field defined, organise fields data */
-    if ((ret_code= organize_field_in_op_array(apid_op, table_def)))
+    if ((ret_code= organize_field_in_query_array(apid_query, table_def)))
       return ret_code;
   }
   return 0;
 }
 
 static int
-apid_op_define_pos(IC_APID_OPERATION *apid_op,
+apid_query_define_pos(IC_APID_QUERY *apid_query,
                    guint32 field_id,
                    gchar *field_data,
                    gboolean use_full_field,
                    guint32 start_pos,
                    guint32 end_pos)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)field_id;
   (void)field_data;
   (void)use_full_field;
@@ -120,94 +120,94 @@ apid_op_define_pos(IC_APID_OPERATION *apid_op,
 }
 
 static int
-apid_op_transfer_ownership(IC_APID_OPERATION *apid_op,
+apid_query_transfer_ownership(IC_APID_QUERY *apid_query,
                            guint32 field_id)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)field_id;
   return 0;
 }
 
 static int
-apid_op_set_partition_ids(IC_APID_OPERATION *apid_op,
+apid_query_set_partition_ids(IC_APID_QUERY *apid_query,
                           IC_BITMAP *used_partitions)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)used_partitions;
   return 0;
 }
 
 static int
-apid_op_set_partition_id(IC_APID_OPERATION *apid_op,
+apid_query_set_partition_id(IC_APID_QUERY *apid_query,
                          guint32 partition_id)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)partition_id;
   return 0;
 }
 
 static IC_RANGE_CONDITION*
-apid_op_create_range_condition(IC_APID_OPERATION *apid_op)
+apid_query_create_range_condition(IC_APID_QUERY *apid_query)
 {
-  (void)apid_op;
+  (void)apid_query;
   return 0;
 }
 
 static void
-apid_op_keep_range(IC_APID_OPERATION *apid_op)
+apid_query_keep_range(IC_APID_QUERY *apid_query)
 {
-  (void)apid_op;
+  (void)apid_query;
 }
 
 static IC_WHERE_CONDITION*
-apid_op_create_where_condition(IC_APID_OPERATION *apid_op)
+apid_query_create_where_condition(IC_APID_QUERY *apid_query)
 {
-  (void)apid_op;
+  (void)apid_query;
   return NULL;
 }
 
 static int
-apid_op_map_where_condition(IC_APID_OPERATION *apid_op,
+apid_query_map_where_condition(IC_APID_QUERY *apid_query,
                             IC_APID_GLOBAL *apid_global,
                             guint32 where_cond_id)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)apid_global;
   (void)where_cond_id;
   return 0;
 }
 
 static void
-apid_op_keep_where(IC_APID_OPERATION *apid_op)
+apid_query_keep_where(IC_APID_QUERY *apid_query)
 {
-  (void)apid_op;
+  (void)apid_query;
 }
 
 static IC_CONDITIONAL_ASSIGNMENT**
-apid_op_create_conditional_assignments(IC_APID_OPERATION *apid_op,
-                                       guint32 num_cond_assigns)
+apid_query_create_conditional_assignments(IC_APID_QUERY *apid_query,
+                                          guint32 num_cond_assigns)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)num_cond_assigns;
   return NULL;
 }
 
 static IC_CONDITIONAL_ASSIGNMENT*
-apid_op_create_conditional_assignment(IC_APID_OPERATION *apid_op,
-                                      guint32 cond_assign_id)
+apid_query_create_conditional_assignment(IC_APID_QUERY *apid_query,
+                                         guint32 cond_assign_id)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)cond_assign_id;
   return NULL;
 }
 
 static int
-apid_op_map_conditional_assignment(IC_APID_OPERATION *apid_op,
+apid_query_map_conditional_assignment(IC_APID_QUERY *apid_query,
                                    IC_APID_GLOBAL *apid_global,
                                    guint32 loc_cond_assign_id,
                                    guint32 glob_cond_assign_id)
 {
-  (void)apid_op;
+  (void)apid_query;
   (void)apid_global;
   (void)loc_cond_assign_id;
   (void)glob_cond_assign_id;
@@ -215,83 +215,83 @@ apid_op_map_conditional_assignment(IC_APID_OPERATION *apid_op,
 }
 
 static void
-apid_op_keep_conditional_assignment(IC_APID_OPERATION *apid_op)
+apid_query_keep_conditional_assignment(IC_APID_QUERY *apid_query)
 {
-  (void)apid_op;
+  (void)apid_query;
 }
 
 static IC_APID_ERROR*
-apid_op_get_error_object(IC_APID_OPERATION *apid_op)
+apid_query_get_error_object(IC_APID_QUERY *apid_query)
 {
-  (void)apid_op;
+  (void)apid_query;
   return NULL;
 }
 
 static int
-apid_op_reset(IC_APID_OPERATION *apid_op)
+apid_query_reset(IC_APID_QUERY *apid_query)
 {
-  (void)apid_op;
+  (void)apid_query;
   return 0;
 }
 
 static void
-apid_op_free(IC_APID_OPERATION *apid_op)
+apid_query_free(IC_APID_QUERY *apid_query)
 {
-  if (apid_op)
-    ic_free(apid_op);
+  if (apid_query)
+    ic_free(apid_query);
 }
 
-static IC_APID_OPERATION_OPS glob_apid_ops =
+static IC_APID_QUERY_OPS glob_apid_query_ops =
 {
-  /* .ic_define_field            = */ apid_op_define_field,
-  /* .ic_define_pos              = */ apid_op_define_pos,
-  /* .ic_transfer_ownership      = */ apid_op_transfer_ownership,
-  /* .ic_set_partition_ids       = */ apid_op_set_partition_ids,
-  /* .ic_set_partition_id        = */ apid_op_set_partition_id,
-  /* .ic_create_range_condition  = */ apid_op_create_range_condition,
-  /* .ic_keep_range              = */ apid_op_keep_range,
-  /* .ic_create_where_condition  = */ apid_op_create_where_condition,
-  /* .ic_map_where_condition     = */ apid_op_map_where_condition,
-  /* .ic_keep_where              = */ apid_op_keep_where,
-  /* .ic_create_conditional_assignments = */ apid_op_create_conditional_assignments,
-  /* .ic_create_conditional_assignment = */ apid_op_create_conditional_assignment,
-  /* .ic_map_conditional_assignment = */ apid_op_map_conditional_assignment,
-  /* .ic_keep_conditional_assignment = */ apid_op_keep_conditional_assignment,
-  /* .ic_get_error_object        = */ apid_op_get_error_object,
-  /* .ic_reset_apid_op           = */ apid_op_reset,
-  /* .ic_free_apid_op            = */ apid_op_free
+  /* .ic_define_field            = */ apid_query_define_field,
+  /* .ic_define_pos              = */ apid_query_define_pos,
+  /* .ic_transfer_ownership      = */ apid_query_transfer_ownership,
+  /* .ic_set_partition_ids       = */ apid_query_set_partition_ids,
+  /* .ic_set_partition_id        = */ apid_query_set_partition_id,
+  /* .ic_create_range_condition  = */ apid_query_create_range_condition,
+  /* .ic_keep_range              = */ apid_query_keep_range,
+  /* .ic_create_where_condition  = */ apid_query_create_where_condition,
+  /* .ic_map_where_condition     = */ apid_query_map_where_condition,
+  /* .ic_keep_where              = */ apid_query_keep_where,
+  /* .ic_create_conditional_assignments = */ apid_query_create_conditional_assignments,
+  /* .ic_create_conditional_assignment = */ apid_query_create_conditional_assignment,
+  /* .ic_map_conditional_assignment = */ apid_query_map_conditional_assignment,
+  /* .ic_keep_conditional_assignment = */ apid_query_keep_conditional_assignment,
+  /* .ic_get_error_object        = */ apid_query_get_error_object,
+  /* .ic_reset_apid_query           = */ apid_query_reset,
+  /* .ic_free_apid_query            = */ apid_query_free
 };
 
 static void
-set_up_fields_in_apid_op(IC_INT_APID_OPERATION *apid_op,
+set_up_fields_in_apid_query(IC_INT_APID_QUERY *apid_query,
                          IC_INT_TABLE_DEF *table_def)
 {
   guint32 i;
   int ret_code;
   for (i= 0; i < table_def->num_fields; i++)
   {
-    ret_code= apid_op_define_field((IC_APID_OPERATION*)apid_op, i, 0, 0);
+    ret_code= apid_query_define_field((IC_APID_QUERY*)apid_query, i, 0, 0);
     ic_require(!ret_code);
   }
 }
 
-IC_APID_OPERATION*
-ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
-                         IC_TABLE_DEF *ext_table_def,
-                         guint32 num_fields,
-                         guint64 *buffer_values,
-                         guint32 num_buffer_values,
-                         guint8 *null_buffer,
-                         guint32 null_buffer_size,
-                         int *error)
+IC_APID_QUERY*
+ic_create_apid_query(IC_APID_GLOBAL *apid_global,
+                     IC_TABLE_DEF *ext_table_def,
+                     guint32 num_fields,
+                     guint64 *buffer_values,
+                     guint32 num_buffer_values,
+                     guint8 *null_buffer,
+                     guint32 null_buffer_size,
+                     int *error)
 {
-  IC_INT_APID_OPERATION *apid_op;
+  IC_INT_APID_QUERY *apid_query;
   IC_INT_TABLE_DEF *table_def= (IC_INT_TABLE_DEF*)ext_table_def;
   gchar *loc_alloc;
   guint32 tot_size;
   guint32 i;
   guint32 num_key_fields= 0;
-  DEBUG_ENTRY("ic_create_apid_operation");
+  DEBUG_ENTRY("ic_create_apid_query");
 
   if (!error)
     goto error;
@@ -319,28 +319,28 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
   if (!num_fields) /* Use all fields if num_fields == 0 */
     num_fields= table_def->num_fields;
   tot_size=
-    sizeof(IC_INT_APID_OPERATION) +
-    sizeof(IC_FIELD_IN_OP*) * num_key_fields +
+    sizeof(IC_INT_APID_QUERY) +
+    sizeof(IC_FIELD_IN_QUERY*) * num_key_fields +
     num_fields * (
-      sizeof(IC_FIELD_IN_OP*) + sizeof(IC_FIELD_IN_OP));
+      sizeof(IC_FIELD_IN_QUERY*) + sizeof(IC_FIELD_IN_QUERY));
   if ((loc_alloc= ic_calloc(tot_size)))
   {
     *error= IC_ERROR_MEM_ALLOC;
     goto error;
   }
-  apid_op= (IC_INT_APID_OPERATION*)loc_alloc;
-  apid_op->fields= (IC_FIELD_IN_OP**)
-    (loc_alloc + sizeof(IC_INT_APID_OPERATION));
-  loc_alloc+= (num_fields * sizeof(IC_FIELD_IN_OP*));
+  apid_query= (IC_INT_APID_QUERY*)loc_alloc;
+  apid_query->fields= (IC_FIELD_IN_QUERY**)
+    (loc_alloc + sizeof(IC_INT_APID_QUERY));
+  loc_alloc+= (num_fields * sizeof(IC_FIELD_IN_QUERY*));
   if (num_key_fields)
   {
-    apid_op->key_fields= (IC_FIELD_IN_OP**)loc_alloc;
-    loc_alloc+= (num_key_fields * sizeof(IC_FIELD_IN_OP*));
+    apid_query->key_fields= (IC_FIELD_IN_QUERY**)loc_alloc;
+    loc_alloc+= (num_key_fields * sizeof(IC_FIELD_IN_QUERY*));
   }
   for (i= 0; i < num_fields; i++)
   {
-    apid_op->fields[i]= (IC_FIELD_IN_OP*)loc_alloc;
-    loc_alloc+= sizeof(IC_FIELD_IN_OP);
+    apid_query->fields[i]= (IC_FIELD_IN_QUERY*)loc_alloc;
+    loc_alloc+= sizeof(IC_FIELD_IN_QUERY);
   }
 
   /*
@@ -349,29 +349,29 @@ ic_create_apid_operation(IC_APID_GLOBAL *apid_global,
     where_cond set per query if used in query
     range_cond set per query if used in query
     op_type set per query
-    read_key_op, write_key_op, scan_op union set per query
+    read_key_query, write_key_query, scan_query union set per query
     user_reference set per query
-    next_trans_op, prev_trans_op used to keep doubly linked list
-    of operation records in transaction.
-    next_conn_op, prev_conn_op used to keep doubly linked list of
-    operation records on connection object.
+    next_trans_query, prev_trans_query used to keep doubly linked list
+    of query records in transaction.
+    next_conn_query, prev_conn_query used to keep doubly linked list of
+    query records on connection object.
   */
-  apid_op->apid_op_ops= &glob_apid_ops;
-  apid_op->table_def= (IC_TABLE_DEF*)table_def;
-  apid_op->buffer_values= buffer_values;
-  apid_op->null_ptr= null_buffer;
-  apid_op->num_buffer_values= num_buffer_values;
-  apid_op->max_null_bits= null_buffer_size * 8;
-  apid_op->apid_global= (IC_INT_APID_GLOBAL*)apid_global;
-  apid_op->num_fields= num_fields;
-  apid_op->num_key_fields= num_key_fields;
+  apid_query->apid_query_ops= &glob_apid_query_ops;
+  apid_query->table_def= (IC_TABLE_DEF*)table_def;
+  apid_query->buffer_values= buffer_values;
+  apid_query->null_ptr= null_buffer;
+  apid_query->num_buffer_values= num_buffer_values;
+  apid_query->max_null_bits= null_buffer_size * 8;
+  apid_query->apid_global= (IC_INT_APID_GLOBAL*)apid_global;
+  apid_query->num_fields= num_fields;
+  apid_query->num_key_fields= num_key_fields;
 
   if (table_def->num_fields == num_fields)
   {
-    set_up_fields_in_apid_op(apid_op, table_def);
+    set_up_fields_in_apid_query(apid_query, table_def);
   }
   *error= 0;
-  DEBUG_RETURN_PTR((IC_APID_OPERATION*)apid_op);
+  DEBUG_RETURN_PTR((IC_APID_QUERY*)apid_query);
 
 error:
   DEBUG_RETURN_PTR(NULL);

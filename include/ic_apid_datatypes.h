@@ -27,10 +27,10 @@ enum ic_commit_state
 };
 
 /*
-  Read key operation have different locking semantics. There is a variant
+  Read key queries have different locking semantics. There is a variant
   which locks the key before reading it but also immediately releases
 */
-enum ic_read_key_op
+enum ic_read_key_query_type
 {
   IC_SIMPLE_KEY_READ= 0,
   IC_KEY_READ= 1,
@@ -38,7 +38,7 @@ enum ic_read_key_op
   IC_COMMITTED_KEY_READ= 3
 };
 
-enum ic_write_key_op
+enum ic_write_key_query_type
 {
   IC_KEY_UPDATE= 0,
   IC_KEY_WRITE= 1,
@@ -46,7 +46,7 @@ enum ic_write_key_op
   IC_KEY_DELETE= 3
 };
 
-enum ic_scan_op
+enum ic_scan_query_type
 {
   IC_SCAN_READ_COMMITTED= 0,
   IC_SCAN_READ_EXCLUSIVE= 1,
