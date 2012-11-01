@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -971,8 +971,7 @@ static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
 };
 
 IC_METADATA_TRANSACTION*
-ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
-                               IC_APID_CONNECTION *ext_apid_conn,
+ic_create_metadata_transaction(IC_APID_CONNECTION *ext_apid_conn,
                                guint32 cluster_id)
 {
   IC_INT_METADATA_TRANSACTION *md_trans;
@@ -992,7 +991,6 @@ ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
   }
   md_trans->md_trans_ops= &glob_metadata_transaction_ops;
   md_trans->cluster_id= cluster_id;
-  md_trans->apid_global= (IC_INT_APID_GLOBAL*)apid_global;
   md_trans->apid_conn= (IC_INT_APID_CONNECTION*)apid_conn;
   md_trans->mc_ptr= mc_ptr;
   apid_conn->md_trans= md_trans;

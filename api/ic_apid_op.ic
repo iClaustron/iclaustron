@@ -73,9 +73,9 @@ organize_field_in_query_array(IC_INT_APID_QUERY *apid_query,
 
 static int
 apid_query_define_field(IC_APID_QUERY *ext_apid_query,
-                     guint32 field_id,
-                     guint32 buffer_value_index,
-                     guint32 null_offset)
+                        guint32 field_id,
+                        guint32 buffer_value_index,
+                        guint32 null_offset)
 {
   IC_FIELD_IN_QUERY *field_in_query;
   IC_INT_APID_QUERY *apid_query= (IC_INT_APID_QUERY*)ext_apid_query;
@@ -104,11 +104,11 @@ apid_query_define_field(IC_APID_QUERY *ext_apid_query,
 
 static int
 apid_query_define_pos(IC_APID_QUERY *apid_query,
-                   guint32 field_id,
-                   gchar *field_data,
-                   gboolean use_full_field,
-                   guint32 start_pos,
-                   guint32 end_pos)
+                      guint32 field_id,
+                      gchar *field_data,
+                      gboolean use_full_field,
+                      guint64 start_pos,
+                      guint64 end_pos)
 {
   (void)apid_query;
   (void)field_id;

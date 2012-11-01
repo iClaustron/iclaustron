@@ -327,26 +327,20 @@ struct ic_metadata_bind_ops
     Table names, index names, database names and schema names are normal
     NULL-terminated strings.
   */
-  IC_APID_ERROR*
-      (*ic_table_bind) (IC_APID_GLOBAL *apid_global,
-                        IC_APID_CONNECTION *apid_conn,
+  int (*ic_table_bind) (IC_APID_CONNECTION *apid_conn,
                         IC_METADATA_TRANSACTION *metadata_trans_obj,
                         IC_TABLE_DEF **table_def,
                         const gchar *schema_name,
                         const gchar *db_name,
                         const gchar *table_name);
-  IC_APID_ERROR*
-      (*ic_index_bind) (IC_APID_GLOBAL *apid_global,
-                        IC_APID_CONNECTION *apid_conn,
+  int (*ic_index_bind) (IC_APID_CONNECTION *apid_conn,
                         IC_METADATA_TRANSACTION *metadata_trans_obj,
                         IC_TABLE_DEF **table_def,
                         const gchar *schema_name,
                         const gchar *db_name,
                         const gchar *index_name,
                         const gchar *table_name);
-   IC_APID_ERROR*
-       (*ic_table_unbind) (IC_APID_GLOBAL *apid_global,
-                           IC_APID_CONNECTION *apid_conn,
+   int (*ic_table_unbind) (IC_APID_CONNECTION *apid_conn,
                            IC_TABLE_DEF *table_def);
 };
 
@@ -1450,8 +1444,7 @@ struct ic_apid_connection_ops
     A metadata transaction is only performed on one cluster in the iClaustron
     grid.
   */
-  IC_APID_ERROR*
-      (*ic_start_metadata_transaction)
+  int (*ic_start_metadata_transaction)
                               (IC_APID_CONNECTION *apid_conn,
                                IC_METADATA_TRANSACTION *md_trans_obj,
                                guint32 cluster_id);
@@ -1480,8 +1473,7 @@ struct ic_apid_connection_ops
     clusters in parallel, thus one ic_send query can send transaction
     queries to many clusters.
   */
-  IC_APID_ERROR*
-      (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
+  int (*ic_start_transaction) (IC_APID_CONNECTION *apid_conn,
                                IC_TRANSACTION **transaction_obj,
                                IC_TRANSACTION_HINT *transaction_hint,
                                guint32 cluster_id,
@@ -1494,8 +1486,7 @@ struct ic_apid_connection_ops
     reference to the transaction object that the start_transaction call
     returned in this thread.
   */
-  IC_APID_ERROR*
-      (*ic_join_transaction) (IC_APID_CONNECTION *apid_conn,
+  int (*ic_join_transaction) (IC_APID_CONNECTION *apid_conn,
                               IC_TRANSACTION *transaction_obj,
                               void *user_reference);
 
@@ -1506,8 +1497,7 @@ struct ic_apid_connection_ops
     not known until we have sent and polled in all queries of the
     transaction.
   */
-  IC_APID_ERROR*
-      (*ic_commit_transaction) (IC_APID_CONNECTION *apid_conn,
+  int (*ic_commit_transaction) (IC_APID_CONNECTION *apid_conn,
                                 IC_TRANSACTION *transaction_obj,
                                 /* Callback function */
                                 IC_APID_CALLBACK_FUNC callback_func,
@@ -1520,8 +1510,7 @@ struct ic_apid_connection_ops
     since the transaction is only committed if specifically committed and
     the commit was successful.
   */
-  IC_APID_ERROR*
-      (*ic_rollback_transaction) (IC_APID_CONNECTION *apid_conn,
+  int (*ic_rollback_transaction) (IC_APID_CONNECTION *apid_conn,
                                   IC_TRANSACTION *transaction_obj,
                                   /* Callback function */
                                   IC_APID_CALLBACK_FUNC callback_func,
@@ -1535,8 +1524,7 @@ struct ic_apid_connection_ops
     transaction is aborted it is successful. There is no specific
     error reporting from this call.
   */
-  IC_APID_ERROR*
-      (*ic_create_savepoint) (IC_APID_CONNECTION *apid_conn,
+  int (*ic_create_savepoint) (IC_APID_CONNECTION *apid_conn,
                               IC_TRANSACTION *transaction_obj,
                               IC_SAVEPOINT_ID *savepoint_id);
 
@@ -1547,8 +1535,7 @@ struct ic_apid_connection_ops
     more queries will be accepted on the transaction until the
     rollback to savepoint is completed in NDB.
   */
-  IC_APID_ERROR*
-      (*ic_rollback_savepoint) (IC_APID_CONNECTION *apid_conn,
+  int (*ic_rollback_savepoint) (IC_APID_CONNECTION *apid_conn,
                                 IC_TRANSACTION *transaction_obj,
                                 IC_SAVEPOINT_ID savepoint_id,
                                 /* Callback function */
@@ -1573,7 +1560,7 @@ struct ic_apid_connection_ops
        We return 0 and there will be queries returned from the
        ic_get_next_query iterator.
   */
-  IC_APID_ERROR* (*ic_poll) (IC_APID_CONNECTION *apid_conn, glong wait_time);
+  int (*ic_poll) (IC_APID_CONNECTION *apid_conn, glong wait_time);
 
   /*
     Send all queries that we have prepared in this connection.
@@ -1586,8 +1573,8 @@ struct ic_apid_connection_ops
     will arrive before the specified time since the first message arrived
     have expired.
   */
-  IC_APID_ERROR* (*ic_send) (IC_APID_CONNECTION *apid_conn,
-                             gboolean force_send);
+  int (*ic_send) (IC_APID_CONNECTION *apid_conn,
+                  gboolean force_send);
 
   /*
     Send queries and wait for queries to be received. This is
@@ -1595,9 +1582,9 @@ struct ic_apid_connection_ops
     found already at the send phase and if the send is successful
     it will report in the same manner as poll.
   */
-  IC_APID_ERROR* (*ic_flush) (IC_APID_CONNECTION *apid_conn,
-                              glong wait_time,
-                              gboolean force_send);
+  int (*ic_flush) (IC_APID_CONNECTION *apid_conn,
+                   glong wait_time,
+                   gboolean force_send);
 
   /*
     After returning 0 from flush or poll we use this iterator to get
@@ -1819,8 +1806,7 @@ ic_create_apid_query(IC_APID_GLOBAL *apid_global,
                      int *error);
 
 IC_METADATA_TRANSACTION*
-ic_create_metadata_transaction(IC_APID_GLOBAL *apid_global,
-                               IC_APID_CONNECTION *apid_conn,
+ic_create_metadata_transaction(IC_APID_CONNECTION *apid_conn,
                                guint32 cluster_id);
 
 IC_ALTER_TABLE*

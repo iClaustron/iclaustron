@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -248,13 +248,14 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
   user thread upon a call to the iClaustron Data API which requires a
   message to be received from another node.
 */
-IC_APID_ERROR*
+int
 ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
 {
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   IC_SOCK_BUF *sock_buf_container;
   IC_SOCK_BUF_PAGE *ndb_message_page, *first_ndb_message_page;
   IC_NDB_MESSAGE ndb_message;
+  IC_INT_APID_ERROR *apid_error= &apid_conn->apid_error;
 
   /*
     We start by getting the messages waiting for us in the send queue, this
@@ -275,7 +276,8 @@ ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
                         &ndb_message,
                         &apid_conn->apid_error))
     {
-      return (IC_APID_ERROR*)&apid_conn->apid_error;
+      return apid_error->apid_error_ops->ic_get_apid_error_code(
+                    (IC_APID_ERROR*)apid_error);
     }
     ndb_message_page= ndb_message_page->next_sock_buf_page;
   }
@@ -286,5 +288,5 @@ ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
     sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
       sock_buf_container, first_ndb_message_page);
   }
-  return NULL;
+  return 0;
 }

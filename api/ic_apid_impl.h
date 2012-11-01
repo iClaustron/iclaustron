@@ -23,10 +23,8 @@ typedef struct ic_temp_thread_connection IC_TEMP_THREAD_CONNECTION;
 typedef struct ic_receive_node_connection IC_RECEIVE_NODE_CONNECTION;
 typedef struct ic_message_error_object IC_MESSAGE_ERROR_OBJECT;
 
-IC_APID_ERROR* ic_poll_messages(IC_APID_CONNECTION *apid_conn,
-                                glong wait_time);
-IC_APID_ERROR* ic_send_messages(IC_APID_CONNECTION *apid_conn,
-                                gboolean force_send);
+int ic_poll_messages(IC_APID_CONNECTION *apid_conn, glong wait_time);
+int ic_send_messages(IC_APID_CONNECTION *apid_conn, gboolean force_send);
 
 struct ic_message_error_object
 {

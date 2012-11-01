@@ -322,8 +322,6 @@ struct ic_int_metadata_transaction
   /* Transaction state */
   IC_METADATA_TRANSACTION_STATE state;
 
-  /* Global Data API object */
-  IC_INT_APID_GLOBAL *apid_global;
   /* Data API connection object */
   IC_INT_APID_CONNECTION *apid_conn;
 

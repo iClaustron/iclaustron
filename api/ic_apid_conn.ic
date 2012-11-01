@@ -73,7 +73,7 @@ apid_conn_scan(IC_APID_CONNECTION *apid_conn,
   return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_start_metadata_transaction(IC_APID_CONNECTION *apid_conn,
                                      IC_METADATA_TRANSACTION *md_trans_obj,
                                      guint32 cluster_id)
@@ -81,10 +81,10 @@ apid_conn_start_metadata_transaction(IC_APID_CONNECTION *apid_conn,
   (void)apid_conn;
   (void)md_trans_obj;
   (void)cluster_id;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_start_transaction(IC_APID_CONNECTION *apid_conn,
                             IC_TRANSACTION **trans_obj,
                             IC_TRANSACTION_HINT *transaction_hint,
@@ -96,10 +96,10 @@ apid_conn_start_transaction(IC_APID_CONNECTION *apid_conn,
   (void)transaction_hint;
   (void)cluster_id;
   (void)joinable;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_join_transaction(IC_APID_CONNECTION *apid_conn,
                            IC_TRANSACTION *trans_obj,
                            void *user_reference)
@@ -107,10 +107,10 @@ apid_conn_join_transaction(IC_APID_CONNECTION *apid_conn,
   (void)apid_conn;
   (void)trans_obj;
   (void)user_reference;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_commit_transaction(IC_APID_CONNECTION *apid_conn,
                              IC_TRANSACTION *trans_obj,
                              IC_APID_CALLBACK_FUNC callback_func,
@@ -120,10 +120,10 @@ apid_conn_commit_transaction(IC_APID_CONNECTION *apid_conn,
   (void)trans_obj;
   (void)callback_func;
   (void)user_reference;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_rollback_transaction(IC_APID_CONNECTION *apid_conn,
                                IC_TRANSACTION *trans_obj,
                                IC_APID_CALLBACK_FUNC callback_func,
@@ -133,10 +133,10 @@ apid_conn_rollback_transaction(IC_APID_CONNECTION *apid_conn,
   (void)trans_obj;
   (void)callback_func;
   (void)user_reference;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_create_savepoint(IC_APID_CONNECTION *apid_conn,
                            IC_TRANSACTION *trans_obj,
                            IC_SAVEPOINT_ID *savepoint_id)
@@ -144,10 +144,10 @@ apid_conn_create_savepoint(IC_APID_CONNECTION *apid_conn,
   (void)apid_conn;
   (void)trans_obj;
   (void)savepoint_id;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_rollback_savepoint(IC_APID_CONNECTION *apid_conn,
                              IC_TRANSACTION *trans_obj,
                              IC_SAVEPOINT_ID savepoint_id,
@@ -159,17 +159,17 @@ apid_conn_rollback_savepoint(IC_APID_CONNECTION *apid_conn,
   (void)savepoint_id;
   (void)callback_func;
   (void)user_reference;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
+static int
 apid_conn_flush(IC_APID_CONNECTION *apid_conn,
                 glong wait_time,
                 gboolean force_send)
 {
-  IC_APID_ERROR* apid_error;
-  if (!(apid_error= ic_send_messages(apid_conn, force_send)))
-    return apid_error;
+  int ret_code;
+  if ((ret_code= ic_send_messages(apid_conn, force_send)))
+    return ret_code;
   return ic_poll_messages(apid_conn, wait_time);
 }
 

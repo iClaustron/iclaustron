@@ -87,7 +87,7 @@ ic_fill_error_object(int error, IC_INT_APID_ERROR *apid_error)
   apid_error->error_code= error;
 }
 
-IC_APID_ERROR*
+int
 ic_send_messages(IC_APID_CONNECTION *ext_apid_conn, gboolean force_send)
 {
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
@@ -95,27 +95,27 @@ ic_send_messages(IC_APID_CONNECTION *ext_apid_conn, gboolean force_send)
   IC_SEND_CLUSTER_NODE *send_cluster_node;
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_INT_APID_ERROR *apid_error= &apid_conn->apid_error;
-  int error;
+  int ret_code;
   
   send_cluster_node= IC_GET_FIRST_DLL(apid_conn, send_cluster_node);
   
   while (send_cluster_node)
   {
-    if ((error= map_id_to_send_node_connection(apid_global,
-                                               send_cluster_node->cluster_id,
-                                               send_cluster_node->node_id,
-                                               &send_node_conn)))
+    if ((ret_code= map_id_to_send_node_connection(apid_global,
+                                                  send_cluster_node->cluster_id,
+                                                  send_cluster_node->node_id,
+                                                  &send_node_conn)))
       goto error;
-    if ((error= ndb_send(send_node_conn,
-                         send_cluster_node->first_sock_buf_page,
-                         force_send)))
+    if ((ret_code= ndb_send(send_node_conn,
+                            send_cluster_node->first_sock_buf_page,
+                            force_send)))
       goto error;
     send_cluster_node= IC_GET_NEXT_DLL(send_cluster_node, send_cluster_node);
   }
-  return NULL;
+  return 0;
 error:
-  ic_fill_error_object(error, apid_error);
-  return (IC_APID_ERROR*)apid_error;
+  ic_fill_error_object(ret_code, apid_error);
+  return ret_code;
 }
 
 /*

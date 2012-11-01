@@ -46,8 +46,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
 
   (void)thread_state;
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
-  if ((md_trans= ic_create_metadata_transaction(apid_global,
-                                                apid_conn,
+  if ((md_trans= ic_create_metadata_transaction(apid_conn,
                                                 0)) ||
       ((ret_code= md_trans->md_trans_ops->ic_create_metadata_op(
          md_trans,

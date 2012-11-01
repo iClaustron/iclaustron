@@ -618,28 +618,25 @@ static IC_APID_GLOBAL_OPS glob_apid_global_ops=
   /* .ic_free_apid_global        = */ apid_global_free
 };
 
-static IC_APID_ERROR*
-md_bind_table_bind(IC_APID_GLOBAL *apid_global,
-                   IC_APID_CONNECTION *apid_conn,
+static int
+md_bind_table_bind(IC_APID_CONNECTION *apid_conn,
                    IC_METADATA_TRANSACTION *md_trans_obj,
                    IC_TABLE_DEF **table_def,
                    const gchar *schema_name,
                    const gchar *db_name,
                    const gchar *table_name)
 {
-  (void)apid_global;
   (void)apid_conn;
   (void)md_trans_obj;
   (void)table_def;
   (void)schema_name;
   (void)db_name;
   (void)table_name;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
-md_bind_index_bind(IC_APID_GLOBAL *apid_global,
-                   IC_APID_CONNECTION *apid_conn,
+static int
+md_bind_index_bind(IC_APID_CONNECTION *apid_conn,
                    IC_METADATA_TRANSACTION *md_trans_obj,
                    IC_TABLE_DEF **table_def,
                    const gchar *schema_name,
@@ -647,7 +644,6 @@ md_bind_index_bind(IC_APID_GLOBAL *apid_global,
                    const gchar *table_name,
                    const gchar *index_name)
 {
-  (void)apid_global;
   (void)apid_conn;
   (void)md_trans_obj;
   (void)table_def;
@@ -655,18 +651,16 @@ md_bind_index_bind(IC_APID_GLOBAL *apid_global,
   (void)db_name;
   (void)table_name;
   (void)index_name;
-  return NULL;
+  return 0;
 }
 
-static IC_APID_ERROR*
-md_bind_table_unbind(IC_APID_GLOBAL *apid_global,
-                     IC_APID_CONNECTION *apid_conn,
+static int
+md_bind_table_unbind(IC_APID_CONNECTION *apid_conn,
                      IC_TABLE_DEF *table_def)
 {
-  (void)apid_global;
   (void)apid_conn;
   (void)table_def;
-  return NULL;
+  return 0;
 }
 
 static IC_METADATA_BIND_OPS glob_metadata_bind_ops=
