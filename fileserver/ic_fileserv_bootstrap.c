@@ -37,26 +37,39 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
   IC_APID_GLOBAL *apid_global;
   IC_METADATA_TRANSACTION *md_trans= NULL;
   IC_ALTER_TABLE *md_alter_table= NULL;
-  const gchar *pk_names[2];
+  const gchar *pk_names[1];
   const gchar *file_key_str= "file_key";
   DEBUG_ENTRY("run_bootstrap_thread");
 
   pk_names[0]= file_key_str;
-  pk_names[1]= NULL;
 
   (void)thread_state;
+
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
+  /*
+    Creating the file_table has the following steps:
+    1) Create metadata transaction
+    2) Create metadata operation
+    3) Create table
+    4) Add two fields (file_key and file_data)
+    5) Add primary key index on file_key
+    6) Commit metadata transaction (this is where the data node is
+       contacted.
+  */
   if ((md_trans= ic_create_metadata_transaction(apid_conn,
                                                 0)) ||
+
       ((ret_code= md_trans->md_trans_ops->ic_create_metadata_op(
          md_trans,
          &md_alter_table))) ||
+
       ((ret_code= md_alter_table->alter_table_ops->ic_create_table(
          md_alter_table,
          "std",
          "file_server",
          "file_table",
          NULL))) || /* Tablespace name not provided yet */
+
       ((ret_code= md_alter_table->alter_table_ops->ic_add_field(
          md_alter_table,
          file_key_str,
@@ -64,6 +77,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
          0 /* Field size given by type */,
          FALSE /* Not nullable */,
          FALSE /* Not stored on disk */))) ||
+
       ((ret_code= md_alter_table->alter_table_ops->ic_add_field(
          md_alter_table,
          "file_data",
@@ -71,6 +85,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
          8192 /* Maximum size of each part of the file */,
          TRUE /* Nullable */,
          FALSE /* Not stored on disk for now */))) ||
+
       ((ret_code= md_alter_table->alter_table_ops->ic_add_index(
          md_alter_table,
          "file_table_pkey",
@@ -78,6 +93,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
          1,
          IC_PRIMARY_KEY,
          FALSE /* No null values allowed in index */))) ||
+
       ((ret_code= md_trans->md_trans_ops->ic_md_commit(md_trans)))) 
     goto error;
   md_trans->md_trans_ops->ic_free_md_trans(md_trans);

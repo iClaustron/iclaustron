@@ -165,53 +165,65 @@ static IC_INDEX_DEF_OPS glob_index_def_ops=
 static IC_DEFINE_FIELD*
 find_field_in_add_field(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
 {
-  IC_DEFINE_FIELD *def_type= IC_GET_FIRST_SLL(alter_table, add_field);
+  IC_DEFINE_FIELD *def_type;
+  DEBUG_ENTRY("find_field_in_add_field");
+
+  def_type= IC_GET_FIRST_SLL(alter_table, add_field);
   while (def_type)
   {
     if (strcmp(def_type->name, name) == 0)
-      return def_type;
+      DEBUG_RETURN_PTR(def_type);
     def_type= IC_GET_NEXT_SLL(def_type, add_field);
   }
-  return NULL;
+  DEBUG_RETURN_PTR(NULL);
 }
 
 static IC_DEFINE_FIELD*
 find_field_in_drop_field(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
 {
-  IC_DEFINE_FIELD *def_type= IC_GET_FIRST_SLL(alter_table, drop_field);
+  IC_DEFINE_FIELD *def_type;
+  DEBUG_ENTRY("find_field_in_drop_field");
+
+  def_type= IC_GET_FIRST_SLL(alter_table, drop_field);
   while (def_type)
   {
     if (strcmp(def_type->name, name) == 0)
-      return def_type;
+      DEBUG_RETURN_PTR(def_type);
     def_type= IC_GET_NEXT_SLL(def_type, drop_field);
   }
-  return NULL;
+  DEBUG_RETURN_PTR(NULL);
 }
 
 static IC_DEFINE_INDEX*
 find_index_in_add_index(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
 {
-  IC_DEFINE_INDEX *def_type= IC_GET_FIRST_SLL(alter_table, add_index);
+  IC_DEFINE_INDEX *def_type;
+  DEBUG_ENTRY("find_index_in_add_index");
+
+  def_type= IC_GET_FIRST_SLL(alter_table, add_index);
   while (def_type)
   {
     if (strcmp(def_type->name, name) == 0)
-      return def_type;
+      DEBUG_RETURN_PTR(def_type);
     def_type= IC_GET_NEXT_SLL(def_type, add_index);
   }
-  return NULL;
+  DEBUG_RETURN_PTR(NULL);
 }
 
 static IC_DEFINE_INDEX*
 find_index_in_drop_index(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
 {
-  IC_DEFINE_INDEX *def_type= IC_GET_FIRST_SLL(alter_table, drop_index);
+  IC_DEFINE_INDEX *def_type;
+  DEBUG_ENTRY("find_index_in_drop_index");
+
+  def_type= IC_GET_FIRST_SLL(alter_table, drop_index);
   while (def_type)
   {
     if (strcmp(def_type->name, name) == 0)
-      return def_type;
+      DEBUG_RETURN_PTR(def_type);
     def_type= IC_GET_NEXT_SLL(def_type, drop_index);
   }
-  return NULL;
+  DEBUG_RETURN_PTR(NULL);
 }
 
 /* Check if field type can have a character set defined */
@@ -268,15 +280,16 @@ allocate_def_field(IC_INT_ALTER_TABLE *alter_table, const gchar *field_name)
   guint32 field_name_len;
   IC_DEFINE_FIELD *def_field;
   int size;
+  DEBUG_ENTRY("allocate_def_field");
 
   field_name_len= strlen(field_name);
   size= sizeof(IC_DEFINE_FIELD) + field_name_len + 1;
   if ((def_field= (IC_DEFINE_FIELD*)
       alter_table->mc_ptr->mc_ops.ic_mc_calloc(alter_table->mc_ptr, size)))
-    return NULL;
+    DEBUG_RETURN_PTR(NULL);
   def_field->name= (gchar*)def_field + sizeof(IC_DEFINE_FIELD);
   memcpy(def_field->name, field_name, field_name_len);
-  return def_field;
+  DEBUG_RETURN_PTR(def_field);
 }
 
 /* Allocate an IC_DEFINE_INDEX, place for name and array of fields */
@@ -289,48 +302,75 @@ allocate_def_index(IC_INT_ALTER_TABLE *alter_table,
   IC_DEFINE_INDEX *def_index;
   int size;
   gchar *ptr;
+  DEBUG_ENTRY("allocate_def_index");
 
   index_name_len= strlen(index_name);
   size= sizeof(IC_DEFINE_INDEX) + index_name_len + 1;
   size+= num_fields * sizeof(IC_DEFINE_FIELD*);
   if ((def_index= (IC_DEFINE_INDEX*)
       alter_table->mc_ptr->mc_ops.ic_mc_calloc(alter_table->mc_ptr, size)))
-    return NULL;
+    DEBUG_RETURN_PTR(NULL);
   ptr= (gchar*)def_index;
   ptr+= sizeof(IC_DEFINE_INDEX);
   def_index->def_fields= (IC_DEFINE_FIELD**)ptr;
   ptr+= num_fields * sizeof(IC_DEFINE_FIELD*);
   def_index->name= ptr;
   memcpy(def_index->name, index_name, index_name_len);
-  return def_index;
+  DEBUG_RETURN_PTR(def_index);
 }
 
-static gchar*
+static int
 set_table_name(IC_INT_ALTER_TABLE *alter_table,
+               gchar **full_table_name,
                const gchar *schema_name,
                const gchar *db_name,
                const gchar *table_name)
 {
   IC_STRING dest_str, in_str;
   IC_MEMORY_CONTAINER *mc_ptr= alter_table->mc_ptr;
+  int ret_code= 0;
+  DEBUG_ENTRY("set_table_name");
 
   IC_INIT_STRING(&dest_str, NULL, 0, TRUE);
   if (schema_name)
   {
     IC_INIT_STRING(&in_str, (gchar*)schema_name, strlen(schema_name), TRUE);
     if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
-      return NULL;
+      goto mem_error;
+  }
+  else
+  {
+    ret_code= IC_ERROR_MISSING_SCHEMA_NAME;
+    goto end;
   }
   if (db_name)
   {
     IC_INIT_STRING(&in_str, (gchar*)db_name, strlen(db_name), TRUE);
     if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
-      return NULL;
+      goto mem_error;
   }
-  IC_INIT_STRING(&in_str, (gchar*)table_name, strlen(table_name), TRUE);
-  if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
-    return NULL;
-  return dest_str.str;
+  else
+  {
+    ret_code= IC_ERROR_MISSING_DATABASE_NAME;
+    goto end;
+  }
+  if (table_name)
+  {
+    IC_INIT_STRING(&in_str, (gchar*)table_name, strlen(table_name), TRUE);
+    if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
+      goto mem_error;
+  }
+  else
+  {
+    ret_code= IC_ERROR_MISSING_TABLE_NAME;
+    goto end;
+  }
+  *full_table_name= dest_str.str;
+end:
+  DEBUG_RETURN_INT(ret_code);
+mem_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
+  goto end;
 }
 
 /*
@@ -347,33 +387,56 @@ at_add_field(IC_ALTER_TABLE *ext_alter_table,
 {
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   IC_DEFINE_FIELD *def_field;
-  int ret_code;
+  int ret_code= 0;
+  DEBUG_ENTRY("at_add_field");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_ALREADY_DEFINED;
-    goto error;
+    goto end;
   }
   if (!(def_field= allocate_def_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
-    goto error;
+    goto end;
   }
 
   def_field->type= field_type;
+  switch (field_type)
+  {
+    /* Set field size according to data type for integer types */
+    case IC_API_INT8_TYPE:
+      field_size= 1;
+      break;
+    case IC_API_INT16_TYPE:
+      field_size= 2;
+      break;
+    case IC_API_INT24_TYPE:
+      field_size= 3;
+      break;
+    case IC_API_INT32_TYPE:
+      field_size= 4;
+      break;
+    case IC_API_INT64_TYPE:
+      field_size= 8;
+      break;
+    default:
+      break;
+  }
   def_field->size= field_size;
   def_field->is_nullable= is_nullable;
   def_field->is_disk_stored= is_disk_stored;
   if (is_disk_stored)
     alter_table->is_disk_stored= TRUE;
-
   IC_INSERT_SLL(alter_table, def_field, add_field);
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_set_charset method. Set character set id on field.  */
@@ -385,24 +448,27 @@ at_set_charset(IC_ALTER_TABLE *ext_alter_table,
   int ret_code= 0;
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_set_charset");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
-    goto error;
+    goto end;
   }
   if (!is_charset_field(def_field->type))
   {
     ret_code= IC_ERROR_NOT_A_CHARSET_FIELD;
-    goto error;
+    goto end;
   }
   def_field->charset_id= cs_id;
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements the ic_set_signed method. Sets signedness of a field */
@@ -414,24 +480,27 @@ at_set_signed(IC_ALTER_TABLE *ext_alter_table,
   int ret_code= 0;
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_set_signed");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
-    goto error;
+    goto end;
   }
   if (!is_signable_field(def_field->type))
   {
     ret_code= IC_ERROR_NOT_A_SIGNABLE_FIELD;
-    goto error;
+    goto end;
   }
   def_field->is_signed= is_signed;
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_set_decimal_field method. Sets scale and precision */
@@ -441,28 +510,31 @@ at_set_decimal_field(IC_ALTER_TABLE *ext_alter_table,
                      guint32 scale,
                      guint32 precision)
 {
-  int ret_code;
+  int ret_code= 0;
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_set_decimal_field");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
   if ((def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
-    goto error;
+    goto end;
   }
   if (!is_decimal_field(def_field->type))
   {
     ret_code= IC_ERROR_NOT_A_DECIMAL_FIELD;
-    goto error;
+    goto end;
   }
   def_field->scale= scale;
   def_field->precision= precision;
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_drop_field method */
@@ -470,34 +542,40 @@ static int
 at_drop_field(IC_ALTER_TABLE *ext_alter_table,
               const gchar *field_name)
 {
-  int ret_code;
+  int ret_code= 0;
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_drop_field");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
   if (alter_table->alter_op_type == IC_CREATE_TABLE_OP)
+  {
     return IC_ERROR_ILLEGAL_MD_OPERATION_CREATE;
+    goto end;
+  }
   if (!(def_field= find_field_in_add_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_NOT_DEFINED;
-    goto error;
+    goto end;
   }
   if ((def_field= find_field_in_drop_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_FIELD_ALREADY_DEFINED;
-    goto error;
+    goto end;
   }
   if (!(def_field= allocate_def_field(alter_table, field_name)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
-    goto error;
+    goto end;
   }
   IC_INSERT_SLL(alter_table, def_field, drop_field);
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_add_index method. */
@@ -510,32 +588,33 @@ at_add_index(IC_ALTER_TABLE *ext_alter_table,
              gboolean is_null_values_in_index_allowed)
 {
   guint32 i;
-  int ret_code;
+  int ret_code= 0;
   IC_DEFINE_INDEX *def_index;
   IC_DEFINE_FIELD *def_field;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_add_index");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    DEBUG_RETURN_INT(IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME);
   if ((def_index= find_index_in_add_index(alter_table, index_name)))
   {
     ret_code= IC_ERROR_INDEX_ALREADY_DEFINED;
-    goto error;
+    goto end;
   }
   if (!(def_index= allocate_def_index(alter_table,
                                       num_fields,
                                       index_name)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
-    goto error;
+    goto end;
   }
   for (i= 0; i < num_fields; i++)
   {
     if (!(def_field= find_field_in_add_field(alter_table, field_names[i])))
     {
       ret_code= IC_ERROR_FIELD_NOT_DEFINED;
-      goto error;
+      goto end;
     }
     def_index->def_fields[i]= def_field;
   }
@@ -543,9 +622,8 @@ at_add_index(IC_ALTER_TABLE *ext_alter_table,
   def_index->type= index_type;
   def_index->is_null_values_in_index_allowed= is_null_values_in_index_allowed;
   IC_INSERT_SLL(alter_table, def_index, add_index);
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_drop_index method. */
@@ -555,34 +633,40 @@ at_drop_index(IC_ALTER_TABLE *ext_alter_table,
 {
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   IC_DEFINE_INDEX *def_index;
-  int ret_code;
+  int ret_code= 0;
+  DEBUG_ENTRY("at_drop_index");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
   if (alter_table->alter_op_type == IC_CREATE_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_CREATE;
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_CREATE;
+    goto end;
+  }
   if (!(def_index= find_index_in_add_index(alter_table, index_name)))
   {
     ret_code= IC_ERROR_INDEX_NOT_DEFINED;
-    goto error;
+    goto end;
   }
   if ((def_index= find_index_in_drop_index(alter_table, index_name)))
   {
     ret_code= IC_ERROR_INDEX_ALREADY_DEFINED;
-    goto error;
+    goto end;
   }
   if (!(def_index= allocate_def_index(alter_table,
                                      (guint32)0,
                                      index_name)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
-    goto error;
+    goto end;
   }
   IC_INSERT_SLL(alter_table, def_index, drop_index);
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_define_partitioning method */
@@ -597,6 +681,8 @@ at_define_partitioning(IC_ALTER_TABLE *ext_alter_table,
                        guint32 num_partitions)
 {
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_define_partitioning");
+
   (void)partition_type;
   (void)field_names;
   (void)num_fields;
@@ -606,8 +692,8 @@ at_define_partitioning(IC_ALTER_TABLE *ext_alter_table,
   (void)num_partitions;
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-    return IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
-  return 0;
+    DEBUG_RETURN_INT(IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME);
+  DEBUG_RETURN_INT(0);
 }
 
 /* Implements ic_create_table method */
@@ -618,21 +704,22 @@ at_create_table(IC_ALTER_TABLE *ext_alter_table,
                 const gchar *table_name,
                 const gchar *tablespace_name)
 {
-  int ret_code= IC_ERROR_MEM_ALLOC;
+  int ret_code;
   gchar *full_table_name;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_create_table");
 
   (void)tablespace_name;
-  if (!(full_table_name= set_table_name(alter_table,
-                                        schema_name,
-                                        db_name,
-                                        table_name)))
-    goto error;
+  if ((ret_code= set_table_name(alter_table,
+                                &full_table_name,
+                                schema_name,
+                                db_name,
+                                table_name)))
+    goto end;
   alter_table->table_name= full_table_name;
   alter_table->alter_op_type= IC_CREATE_TABLE_OP;
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_drop_table method */
@@ -642,20 +729,21 @@ at_drop_table(IC_ALTER_TABLE *ext_alter_table,
               const gchar *db_name,
               const gchar *table_name)
 {
-  int ret_code= IC_ERROR_MEM_ALLOC;
+  int ret_code;
   gchar *full_table_name;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_drop_table");
 
-  if (!(full_table_name= set_table_name(alter_table,
-                                        schema_name,
-                                        db_name,
-                                        table_name)))
-    goto error;
+  if ((ret_code= set_table_name(alter_table,
+                                &full_table_name,
+                                schema_name,
+                                db_name,
+                                table_name)))
+    goto end;
   alter_table->table_name= full_table_name;
   alter_table->alter_op_type= IC_DROP_TABLE_OP;
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_alter_table method */
@@ -665,20 +753,21 @@ at_alter_table(IC_ALTER_TABLE *ext_alter_table,
                const gchar *db_name,
                const gchar *table_name)
 {
-  int ret_code= IC_ERROR_MEM_ALLOC;
+  int ret_code;
   gchar *full_table_name;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_alter_table");
 
-  if (!(full_table_name= set_table_name(alter_table,
-                                        schema_name,
-                                        db_name,
-                                        table_name)))
-    goto error;
+  if ((ret_code= set_table_name(alter_table,
+                                &full_table_name,
+                                schema_name,
+                                db_name,
+                                table_name)))
+    goto end;
   alter_table->table_name= full_table_name;
   alter_table->alter_op_type= IC_ALTER_TABLE_OP;
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Implements ic_rename_table */
@@ -692,25 +781,29 @@ at_rename_table(IC_ALTER_TABLE *ext_alter_table,
                 const gchar *new_table_name)
 {
   int ret_code= IC_ERROR_MEM_ALLOC;
-  gchar *full_table_name;
+  gchar *full_old_table_name;
+  gchar *full_new_table_name;
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_rename_table");
 
-  if (!(full_table_name= set_table_name(alter_table,
-                                        old_schema_name,
-                                        old_db_name,
-                                        old_table_name)))
-    goto error;
-  alter_table->old_table_name= full_table_name;
-  if (!(full_table_name= set_table_name(alter_table,
-                                        new_schema_name,
-                                        new_db_name,
-                                        new_table_name)))
-    goto error;
-  alter_table->table_name= full_table_name;
+  if ((ret_code= set_table_name(alter_table,
+                                &full_old_table_name,
+                                old_schema_name,
+                                old_db_name,
+                                old_table_name)))
+    goto end;
+  if ((ret_code= set_table_name(alter_table,
+                                &full_new_table_name,
+                                new_schema_name,
+                                new_db_name,
+                                new_table_name)))
+    goto end;
+
+  alter_table->old_table_name= full_old_table_name;
+  alter_table->table_name= full_new_table_name;
   alter_table->alter_op_type= IC_RENAME_TABLE_OP;
-  return 0;
-error:
-  return ret_code;
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static IC_ALTER_TABLE_OPS glob_alter_table_ops=
@@ -831,18 +924,19 @@ mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
   IC_INT_METADATA_TRANSACTION *md_trans=
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
   IC_INT_ALTER_TABLE *alter_table;
+  DEBUG_ENTRY("mdt_create_metadata_op");
 
   if (md_trans->first_alter_ts || md_trans->first_alter_table)
-    return IC_ERROR_MULTIPLE_METADATA_OPS;
+    DEBUG_RETURN_INT(IC_ERROR_MULTIPLE_METADATA_OPS);
   if ((alter_table= (IC_INT_ALTER_TABLE*)
       md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
                                             sizeof(IC_INT_ALTER_TABLE))))
-    return IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   alter_table->mc_ptr= md_trans->mc_ptr;
   alter_table->md_trans= md_trans;
   alter_table->alter_table_ops= &glob_alter_table_ops;
   *ext_alter_table= (IC_ALTER_TABLE*)alter_table;
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -977,23 +1071,25 @@ ic_create_metadata_transaction(IC_APID_CONNECTION *ext_apid_conn,
   IC_INT_METADATA_TRANSACTION *md_trans;
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   IC_MEMORY_CONTAINER *mc_ptr;
+  DEBUG_ENTRY("ic_create_metadata_transaction");
 
   if (apid_conn->md_trans)
-    return NULL;
+    goto error;
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, TRUE)))
-    return NULL;
+    goto error;
   if (!(md_trans= (IC_INT_METADATA_TRANSACTION*)
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                                   sizeof(IC_INT_METADATA_TRANSACTION))))
   {
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
-    return NULL;
+    goto error;
   }
   md_trans->md_trans_ops= &glob_metadata_transaction_ops;
   md_trans->cluster_id= cluster_id;
   md_trans->apid_conn= (IC_INT_APID_CONNECTION*)apid_conn;
   md_trans->mc_ptr= mc_ptr;
   apid_conn->md_trans= md_trans;
-
-  return (IC_METADATA_TRANSACTION*)md_trans;
+  DEBUG_RETURN_PTR((IC_METADATA_TRANSACTION*)md_trans);
+error:
+  DEBUG_RETURN_PTR(NULL);
 }

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #include <errno.h>
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7102
+#define IC_LAST_ERROR 7105
 #define IC_MAX_ERRORS 200
 
 /*
@@ -149,4 +149,7 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_FILE_ALREADY_EXISTS 7100
 #define IC_ERROR_STARTUP 7101
 #define IC_ERROR_WRONG_IP_FAMILY 7102
+#define IC_ERROR_MISSING_SCHEMA_NAME 7103
+#define IC_ERROR_MISSING_DATABASE_NAME 7104
+#define IC_ERROR_MISSING_TABLE_NAME 7105
 #endif

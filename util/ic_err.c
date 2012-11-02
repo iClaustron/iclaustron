@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -265,6 +265,12 @@ ic_init_error_messages()
     "Startup error";
   ic_error_str[IC_ERROR_WRONG_IP_FAMILY - IC_FIRST_ERROR]=
     "Wrong IP family";
+  ic_error_str[IC_ERROR_MISSING_SCHEMA_NAME - IC_FIRST_ERROR]=
+    "Missing schema name in metadata operation";
+  ic_error_str[IC_ERROR_MISSING_DATABASE_NAME - IC_FIRST_ERROR]=
+    "Missing database name in metadata operation";
+  ic_error_str[IC_ERROR_MISSING_TABLE_NAME - IC_FIRST_ERROR]=
+    "Missing table name in metadata operation";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)
