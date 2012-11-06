@@ -281,7 +281,7 @@ struct ic_int_alter_table
   IC_ALTER_OPERATION_TYPE alter_op_type;
 
   /* Next pointer in linked list of table operations in transaction */
-  IC_ALTER_TABLE *next_alter_table;
+  IC_INT_ALTER_TABLE *next_alter_table;
 };
 
 struct ic_int_alter_tablespace
@@ -291,18 +291,19 @@ struct ic_int_alter_tablespace
   /* Transaction operation is part of */
   IC_INT_METADATA_TRANSACTION *md_trans;
   /* Next pointer in linked list of table operations in transaction */
-  IC_ALTER_TABLESPACE *next_alter_ts;
+  IC_INT_ALTER_TABLESPACE *next_alter_ts;
 };
 
 enum ic_metadata_transaction_state
 {
-  IC_WAIT_MD_START_TRANS= 0,
-  IC_WAIT_MD_END_TRANS= 1,
-  IC_WAIT_NDB_CREATE_TABLE= 2,
+  IC_WAIT_SCHEMA_TRANS_BEGIN_CONF= 0,
+  IC_WAIT_SCHEMA_TRANS_END_CONF= 1,
+  IC_WAIT_CREATE_TABLE_REQ= 2,
   IC_WAIT_NDB_ALTER_TABLE= 3,
   IC_WAIT_NDB_DROP_TABLE= 4,
   IC_WAIT_NDB_CREATE_INDEX= 5,
-  IC_WAIT_NDB_DROP_INDEX= 6
+  IC_WAIT_NDB_DROP_INDEX= 6,
+  IC_WAIT_CREATE_HASH_MAP_REQ= 7
 };
 
 struct ic_int_metadata_transaction
@@ -316,6 +317,8 @@ struct ic_int_metadata_transaction
   guint32 cluster_id;
   /* Node id of master node, used for all metadata transactions */
   guint32 node_id;
+  /* Error object used to report back what went wrong */
+  IC_INT_APID_ERROR error_object;
 
   /* NDB Transaction reference */
   guint32 ndb_trans_ref;

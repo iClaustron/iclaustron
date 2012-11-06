@@ -1006,7 +1006,7 @@ execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
 */
 
 static int
-sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
+send_CREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
                      IC_INT_ALTER_TABLE *alter_table)
 {
   (void)md_trans;
@@ -1055,7 +1055,9 @@ send_SCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
   IC_SCHEMA_TRANS_BEGIN_REQ begin_req;
   guint32 our_reference;
+  int ret_code;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  DEBUG_ENTRY("send_SCHEMA_TRANS_BEGIN_REQ");
 
   /* Get our NDB reference */
   our_reference= ic_get_ic_reference(ic_glob_node_id, apid_conn->thread_id);
@@ -1065,15 +1067,16 @@ send_SCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   begin_req.my_transaction_id= 0; /* Always use transid 0 as our reference */
   begin_req.flags= 0;
 
-  md_trans->state= IC_WAIT_MD_START_TRANS;
+  md_trans->state= IC_WAIT_SCHEMA_TRANS_BEGIN_CONF;
 
-  return send_small_message(apid_conn,
-                            SCHEMA_TRANS_BEGIN_REQ_GSN,
-                            &begin_req,
-                            SCHEMA_TRANS_BEGIN_REQ_LEN,
-                            md_trans->cluster_id,
-                            md_trans->node_id,
-                            IC_NDB_DICT_MODULE);
+  ret_code= send_small_message(apid_conn,
+                               SCHEMA_TRANS_BEGIN_REQ_GSN,
+                               &begin_req,
+                               SCHEMA_TRANS_BEGIN_REQ_LEN,
+                               md_trans->cluster_id,
+                               md_trans->node_id,
+                               IC_NDB_DICT_MODULE);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -1090,18 +1093,20 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   guint32 ndb_trans_ref= main_message_data[2];
   IC_INT_ALTER_TABLE *alter_table;
   IC_INT_ALTER_TABLESPACE *alter_ts;
+  DEBUG_ENTRY("execSCHEMA_TRANS_BEGIN_CONF_v0");
 
   (void)error_object;
   ic_require(main_message_size == 3);
   ic_require(our_trans_id == 0);
   md_trans->ndb_trans_ref= ndb_trans_ref;
-  ic_require(md_trans->state == IC_WAIT_MD_START_TRANS);
+  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
+
   if ((alter_table= md_trans->current_alter_table))
   {
     switch (alter_table->alter_op_type)
     {
       case IC_CREATE_TABLE_OP:
-        ret_code= sendCREATE_TABLE_REQ(md_trans, alter_table);
+        ret_code= send_CREATE_TABLE_REQ(md_trans, alter_table);
         break;
       case IC_ALTER_TABLE_OP:
         ic_require(FALSE);
@@ -1122,7 +1127,7 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   }
   else
     ic_require(FALSE);
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -1169,17 +1174,19 @@ send_create_table(IC_INT_ALTER_TABLE *alter_table)
   int ret_code;
   IC_INT_METADATA_TRANSACTION *md_trans= alter_table->md_trans;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  DEBUG_ENTRY("send_create_table");
 
   md_trans->current_alter_table= alter_table;
   if ((ret_code= send_SCHEMA_TRANS_BEGIN_REQ(md_trans)))
-    return ret_code;
+    DEBUG_RETURN_INT(ret_code);
   /* Poll waiting for messages until we're done */
   do
   {
     ic_poll_messages((IC_APID_CONNECTION*)apid_conn,
                      3 * IC_MICROSEC_PER_SECOND);
   } while (apid_conn->return_to_api);
-  return 0;
+  DEBUG_RETURN_INT(md_trans->error_object.apid_error_ops->
+           ic_get_apid_error_code((IC_APID_ERROR*)&md_trans->error_object));
 }
 
 static int

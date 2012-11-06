@@ -943,9 +943,9 @@ mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   alter_table->mc_ptr= md_trans->mc_ptr;
   alter_table->md_trans= md_trans;
-  IC_INSERT_SLL(md_trans, alter_table, alter_table);
   alter_table->alter_table_ops= &glob_alter_table_ops;
   *ext_alter_table= (IC_ALTER_TABLE*)alter_table;
+  IC_INSERT_SLL(md_trans, alter_table, alter_table);
   DEBUG_RETURN_INT(0);
 }
 
@@ -965,8 +965,8 @@ mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
     return IC_ERROR_MEM_ALLOC;
   alter_ts->mc_ptr= md_trans->mc_ptr;
   alter_ts->md_trans= md_trans;
-  IC_INSERT_SLL(md_trans, alter_ts, alter_ts);
   *ext_alter_ts= (IC_ALTER_TABLESPACE*)alter_ts;
+  IC_INSERT_SLL(md_trans, alter_ts, alter_ts);
   return 0;
 }
 
@@ -1100,6 +1100,11 @@ ic_create_metadata_transaction(IC_APID_CONNECTION *ext_apid_conn,
   md_trans->cluster_id= cluster_id;
   md_trans->apid_conn= (IC_INT_APID_CONNECTION*)apid_conn;
   md_trans->mc_ptr= mc_ptr;
+
+  md_trans->error_object.apid_error_ops= &glob_apid_error_ops;
+  md_trans->error_object.apid_error_ops->ic_init_apid_error(
+        (IC_APID_ERROR*)&md_trans->error_object);
+
   apid_conn->md_trans= md_trans;
   DEBUG_RETURN_PTR((IC_METADATA_TRANSACTION*)md_trans);
 error:
