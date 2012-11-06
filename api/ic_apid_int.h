@@ -290,7 +290,8 @@ struct ic_int_alter_tablespace
   IC_MEMORY_CONTAINER *mc_ptr;
   /* Transaction operation is part of */
   IC_INT_METADATA_TRANSACTION *md_trans;
-
+  /* Next pointer in linked list of table operations in transaction */
+  IC_ALTER_TABLESPACE *next_alter_ts;
 };
 
 enum ic_metadata_transaction_state

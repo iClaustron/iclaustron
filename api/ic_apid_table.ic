@@ -823,7 +823,7 @@ static IC_ALTER_TABLE_OPS glob_alter_table_ops=
 };
 
 static guint32
-get_ndb_field_size(IC_DEFINE_FIELD *def_field)
+get_ndb_field_size(IC_DEFINE_FIELD *def_field, gboolean fixed_size)
 {
   switch (def_field->type)
   {
@@ -837,7 +837,16 @@ get_ndb_field_size(IC_DEFINE_FIELD *def_field)
     case IC_API_FIXED_SIZE_CHAR:
       return ic_align(def_field->size, 4);
     case IC_API_VARIABLE_SIZE_CHAR:
-      return ic_align(def_field->size + 2, 4);
+    {
+      if (fixed_size)
+      {
+        return 4;
+      }
+      else
+      {
+        return ic_align(def_field->size + 2, 4);
+      }
+    }
     default:
       /* Not implemented yet */
       ic_require(FALSE);
@@ -875,10 +884,10 @@ check_record_size(IC_INT_ALTER_TABLE *alter_table)
   def_field= IC_GET_FIRST_SLL(alter_table, add_field);
   while (def_field)
   {
-    record_size+= get_ndb_field_size(def_field);
+    record_size+= get_ndb_field_size(def_field, TRUE);
     def_field= IC_GET_NEXT_SLL(def_field, add_field);
   }
-  if (record_size > 8052)
+  if (record_size > IC_MAX_RECORD_SIZE)
     return 1;
   return 0;
 }
@@ -934,6 +943,7 @@ mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   alter_table->mc_ptr= md_trans->mc_ptr;
   alter_table->md_trans= md_trans;
+  IC_INSERT_SLL(md_trans, alter_table, alter_table);
   alter_table->alter_table_ops= &glob_alter_table_ops;
   *ext_alter_table= (IC_ALTER_TABLE*)alter_table;
   DEBUG_RETURN_INT(0);
@@ -955,6 +965,7 @@ mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
     return IC_ERROR_MEM_ALLOC;
   alter_ts->mc_ptr= md_trans->mc_ptr;
   alter_ts->md_trans= md_trans;
+  IC_INSERT_SLL(md_trans, alter_ts, alter_ts);
   *ext_alter_ts= (IC_ALTER_TABLESPACE*)alter_ts;
   return 0;
 }
@@ -1025,6 +1036,7 @@ mdt_md_commit(IC_METADATA_TRANSACTION *ext_md_trans)
   int ret_code;
   IC_INT_METADATA_TRANSACTION *md_trans=
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  DEBUG_ENTRY("mdt_md_commit");
 
   if (md_trans->first_alter_ts)
   {
@@ -1040,7 +1052,7 @@ mdt_md_commit(IC_METADATA_TRANSACTION *ext_md_trans)
   }
   else
     ret_code= IC_ERROR_MD_COMMIT_NO_OPERATION;
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int

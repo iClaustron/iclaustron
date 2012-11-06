@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -108,10 +108,18 @@ struct ic_sock_buf
   Defining a page size of 0 is a special case. This means that we
   won't allocate any special buffer area. We will instead use the
   buf_area inside the IC_SOCK_BUF_PAGE object as the buffer area.
+
   We will in this case support storing up to 128 bytes in the
-  buffer. This will be done by allocating an IC_SOCK_BUF_PAGE and
-  temporarily convert it to a buffer object. When returning it to
-  the pool we will convert it back to a IC_SOCK_BUF_PAGE object.
+  buffer. This will be done by in either of two ways:
+  1) For small buffer sizes we will simply use the extra storage area
+     that is part of all IC_SOCK_BUF_PAGE_OBJECTS.
+  2) If larger, but still smaller than 128 bytes, then we will allocate
+     an extra IC_SOCK_BUF_PAGE object and temporarily convert it to a
+     buffer object.
+  When returning such an object to the pool we will look at the size to
+  see whether the object is using an extra IC_SOCK_BUF_PAGE object before
+  returning the object to the pool.
+
   Thus normally we will allocate one object from the pool but for
   this special case we will allocate two objects instead.
   We add a parameter to the get_sock_buf call where we specify

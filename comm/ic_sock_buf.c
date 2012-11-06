@@ -175,45 +175,60 @@ static void
 return_sock_buf_page(IC_SOCK_BUF *buf,
                      IC_SOCK_BUF_PAGE *in_page)
 {
-  IC_SOCK_BUF_PAGE *prev_first_page;
+  IC_SOCK_BUF_PAGE *prev_page;
   IC_SOCK_BUF_PAGE *next_page;
   guint32 page_size, this_page_size;
   register IC_SOCK_BUF_PAGE *page= in_page;
 
   ic_require(page);
   page_size= buf->page_size;
-  ic_mutex_lock(buf->ic_buf_mutex);
+  prev_page= NULL;
+  /**
+    We start by creating a linked list of pages, then we insert the
+    linked list all in one go into the global list.
+  */
   do
   {
-    /* Return page to linked list at first page */
-    prev_first_page= buf->first_page;
-    buf->first_page= page;
-
     next_page= page->next_sock_buf_page;
     this_page_size= page->size;
 
-    page->next_sock_buf_page= prev_first_page;
+    page->next_sock_buf_page= prev_page;
     page->ref_count= 0;
+    prev_page= page;
+
     if (page_size == 0)
     {
+      /**
+        We use IC_SOCK_BUF_PAGE objects also as the storage area. If
+        this_page_size is 0 we used the storage area in the
+        IC_SOCK_BUF_PAGE object itself, if it is set to
+        IC_STD_CACHE_LINE_SIZE then we have allocated another
+        IC_SOCK_BUF_PAGE object for the buffer.
+      */
       if (this_page_size != 0)
       {
         /*
+          The buffer is actually an IC_SOCK_BUF_PAGE object.
           The page contains a buffer which in reality is a IC_SOCK_BUF_PAGE
           object. We need to convert it back to a IC_SOCK_BUF_PAGE object
           and link it into free list. Put next object as next pointer in
           this object and return this object next.
         */
+        ic_require(this_page_size == IC_STD_CACHE_LINE_SIZE);
         page= (IC_SOCK_BUF_PAGE*)page->sock_buf;
         page->next_sock_buf_page= next_page;
         page->sock_buf_container= buf;
         page->size= 0;
+        page->ref_count= 0;
         next_page= page;
       }
       page->sock_buf= NULL;
     }
     page= next_page;
   } while (page != NULL);
+  ic_mutex_lock(buf->ic_buf_mutex);
+  prev_page->next_sock_buf_page= buf->first_page;
+  buf->first_page= in_page;
   ic_mutex_unlock(buf->ic_buf_mutex);
 }
 

@@ -100,19 +100,19 @@ struct ic_ndb_message
   guint32 message_number;
   guint32 trace_num;
   /*
-     There can be up to 3 segments in a  message in addition to the always
-     existing short data part which can have a maximum 25 words.
-     There is a variable to keep track of number of segments, number of words
-     in the short data part. In order to handle really large messages we
-     use fragmentation bits to keep track of the message train that should
-     be treated as one message.
-     Messages also have priorities, currently there are only 2 really used,
-     Priority A and Priority B.
+    There can be up to 3 segments in a  message in addition to the always
+    existing short data part which can have a maximum 25 words.
+    There is a variable to keep track of number of segments, number of words
+    in the short data part. In order to handle really large messages we
+    use fragmentation bits to keep track of the message train that should
+    be treated as one message.
+    Messages also have priorities, currently there are only 2 really used,
+    Priority A and Priority B.
 
-     The offset to the short data is
-     message_header[header_size]
-     The offset to the segment sizes are
-     message_header[header_size + short_data_size]
+    The offset to the short data is
+    message_header[header_size]
+    The offset to the segment sizes are
+    message_header[header_size + short_data_size]
   */
   guint32 num_segments;
   guint32 message_priority;
@@ -121,8 +121,7 @@ struct ic_ndb_message
   /*
     The message id is the actual number indicating which message this is.
     A message number could indicate for example that this is a TCKEYCONF,
-    TRANSID_AI and other messages NDB sends. We also keep track of the
-    total message size mostly for debug purposes.
+    TRANSID_AI and other messages NDB sends.
   */
   guint32 message_id;
 

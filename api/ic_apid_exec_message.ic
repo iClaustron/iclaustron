@@ -19,11 +19,11 @@
   This module contains the code executed in the user thread to execute
   messages posted to this thread by the receiver thread. The actual
   logic to handle the individual messages received is found in the
-  various MEssage Logic Modules.
+  various Message Logic Modules.
 */
 
 /*
-  poll_messages is called from outside of this module as a result of some
+  ic_poll_messages is called from outside of this module as a result of some
   user action, the user have decided to check for arrival of new messages
   that he is expecting to arrive. The remainder of the functions are used
   to support this function.
@@ -36,12 +36,9 @@
   The get_exec_message_func function gets a function pointer to the message
   execution function in a Message Logic Module based on message id and
   version of the NDB Protocol.
-  set_sock_buf_page_empty is a simple support function to ensure we don't
-  duplicate code.
 */
 static IC_EXEC_MESSAGE_FUNC* get_exec_message_func(guint32 message_id,
                                                    guint32 version_num);
-static void set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn);
 static IC_SOCK_BUF_PAGE*
 get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn, glong wait_time);
 static int execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
@@ -59,13 +56,16 @@ get_exec_message_func(guint32 message_id,
   return &ic_exec_message_func_array[0][message_id];
 }
 
-static void
-set_sock_buf_page_empty(IC_THREAD_CONNECTION *thd_conn)
-{
-  thd_conn->first_received_message= NULL;
-  thd_conn->last_received_message= NULL;
-}
+/**
+  This function is used to retrieve messages prepared by the receive
+  thread. The receive thread will put together a list of messages
+  with the basic information about the message.
 
+  This function is called by user threads. They will receive signals
+  directed towards them based on the block reference of the
+  IC_APID_CONNECTION object they are using. Each such object has its
+  own thread id which is the block id in the NDB protocol.
+*/
 static IC_SOCK_BUF_PAGE*
 get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
                     glong wait_time_in_micros)
@@ -77,16 +77,21 @@ get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
 
   ic_mutex_lock(thd_conn->mutex);
   sock_buf_page= thd_conn->first_received_message;
-  if (sock_buf_page)
-    set_sock_buf_page_empty(thd_conn);
-  else if (wait_time_in_micros)
+  if (!sock_buf_page && wait_time_in_micros)
   {
     thd_conn->thread_wait_cond= TRUE;
     ic_cond_timed_wait(thd_conn->cond, thd_conn->mutex,
                        wait_time_in_micros);
     sock_buf_page= thd_conn->first_received_message;
-    if (sock_buf_page)
-      set_sock_buf_page_empty(thd_conn);
+  }
+  if (sock_buf_page)
+  {
+    /**
+      Remove messages from our receive queue to indicate they've
+      been taken care of.
+    */
+    thd_conn->first_received_message= NULL;
+    thd_conn->last_received_message= NULL;
   }
   ic_mutex_unlock(thd_conn->mutex);
   DEBUG_RETURN_PTR(sock_buf_page);
@@ -206,22 +211,40 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
                           ndb_message_opaque,
                           ndb_message))
   {
+    /**
+      Successfully created a message object, now get the function
+      pointer that executes this message. Support is prepared to
+      handle multiple versions in parallel for each signal.
+    */
     exec_message_func= get_exec_message_func(ndb_message->message_id,
                                              ndb_message_opaque->version_num);
     if (exec_message_func)
     {
-       if (exec_message_func->ic_exec_message_func
-             (ndb_message, &error_object))
-       {
-         error_report_object->error_msg= error_object.error_msg;
-         error_report_object->error_code= error_object.error_code;
-         error_report_object->error_category= error_object.error_category;
-         error_report_object->error_severity= error_object.error_severity;
-         return 1;
-       }
+      /**
+        Found a function to execute, now call the actual function defined
+        for this message id and version.
+      */
+      if (exec_message_func->ic_exec_message_func
+            (ndb_message, &error_object))
+      {
+        /* Handle error from signal executor */
+        error_report_object->error_msg= error_object.error_msg;
+        error_report_object->error_code= error_object.error_code;
+        error_report_object->error_category= error_object.error_category;
+        error_report_object->error_severity= error_object.error_severity;
+        return 1;
+      }
     }
     if (ndb_message_page->ref_count > 0)
     {
+      /**
+        Signals arrive in batches, the receiver thread packs a number
+        of signals into one page. There could however be different
+        threads receiving the messages from one page, so we use a reference
+        count to keep track of when all signals on a page is executed such
+        that we're ready to release the page back to the free list used by
+        the receiver threads.
+      */
       message_page= (IC_SOCK_BUF_PAGE*)ndb_message_page->sock_buf;
       ref_count_ptr= (gint*)&ndb_message_page->ref_count;
       ref_count_zero= g_atomic_int_dec_and_test(ref_count_ptr);
@@ -230,6 +253,9 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
         /*
           This was the last message we executed on this page so we're now
           ready to release the page where these messages were stored.
+          Given that we used atomic instructions to perform this, we are
+          certain that only one thread will get ref count set to zero and
+          thus only one thread will return the page to the page container.
         */
         sock_buf_container= message_page->sock_buf_container;
         sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
@@ -252,15 +278,16 @@ int
 ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
 {
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
-  IC_SOCK_BUF *sock_buf_container;
   IC_SOCK_BUF_PAGE *ndb_message_page, *first_ndb_message_page;
+  IC_SOCK_BUF *sock_buf_container;
   IC_NDB_MESSAGE ndb_message;
   IC_INT_APID_ERROR *apid_error= &apid_conn->apid_error;
 
   /*
-    We start by getting the messages waiting for us in the send queue, this
-    is the first step in putting together the new scheduler for message
+    We start by getting the messages waiting for us in the receive queue,
+    this is the first step in putting together the new scheduler for message
     handling in the iClaustron API.
+
     If no messages are waiting we can wait for a small amount of time
     before returning, if no messages arrive in this timeframe we'll
     return anyways. As soon as messages arrive we'll wake up and
@@ -286,7 +313,8 @@ ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
     /* Return all NDB messages executed to the free pool */
     sock_buf_container= first_ndb_message_page->sock_buf_container;
     sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
-      sock_buf_container, first_ndb_message_page);
+      sock_buf_container,
+      first_ndb_message_page);
   }
   return 0;
 }

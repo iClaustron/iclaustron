@@ -584,7 +584,7 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
             At least one message was received and we need to post
             these NDB Signals and thus we need to transfer the
             incomplete message before posting the messages. When
-            the messages have been posted another thread can get
+            the messages have been posted to another thread can get
             access to the socket buffer page and even release
             it before we have transferred the incomplete message
             if we post before we transfer the incomplete message.

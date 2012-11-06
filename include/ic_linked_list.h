@@ -47,15 +47,15 @@
 #define IC_INSERT_DLL(parent_object, object, name) \
   if ((parent_object)->first_##name) \
   { \
-    (parent_object)->first_##name = (object); \
-    (parent_object)->last_##name = (object); \
-    (object)->prev_##name = NULL; \
-  } \
-  else \
-  { \
     (parent_object)->last_##name->next_##name = (object); \
     (object)->prev_##name = (parent_object)->last_##name; \
     (parent_object)->last_##name = (object); \
+  } \
+  else \
+  { \
+    (parent_object)->first_##name = (object); \
+    (parent_object)->last_##name = (object); \
+    (object)->prev_##name = NULL; \
   } \
   (object)->next_##name = NULL;
 
