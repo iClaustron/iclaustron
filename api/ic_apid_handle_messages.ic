@@ -1006,8 +1006,8 @@ execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
 */
 
 static int
-send_NDB_CREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
-                          IC_INT_ALTER_TABLE *alter_table)
+sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
+                     IC_INT_ALTER_TABLE *alter_table)
 {
   (void)md_trans;
   (void)alter_table;
@@ -1027,7 +1027,7 @@ send_NDB_CREATE_INDEX_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
 
 #define NDB_MD_TRANS_END_REQ_LEN 3
 static int
-send_NDB_MD_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
+send_SCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
   guint32 our_reference;
   guint32 message_data[NDB_MD_TRANS_END_REQ_LEN];
@@ -1050,33 +1050,34 @@ send_NDB_MD_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
                             IC_NDB_DICT_MODULE);
 }
 
-#define NDB_MD_TRANS_START_REQ_LEN 3
 static int
-send_NDB_MD_TRANS_START_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
+send_SCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
+  IC_SCHEMA_TRANS_BEGIN_REQ begin_req;
   guint32 our_reference;
-  guint32 message_data[NDB_MD_TRANS_START_REQ_LEN];
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
 
   /* Get our NDB reference */
-  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
+  our_reference= ic_get_ic_reference(ic_glob_node_id, apid_conn->thread_id);
 
   /* Set up message data for NDB_MD_TRANS_START_REQ */
-  message_data[0]= our_reference;
-  message_data[1]= 0; /* Always use trans id 0 */
-  message_data[2]= 0;
+  begin_req.my_reference= our_reference;
+  begin_req.my_transaction_id= 0; /* Always use transid 0 as our reference */
+  begin_req.flags= 0;
+
+  md_trans->state= IC_WAIT_MD_START_TRANS;
 
   return send_small_message(apid_conn,
-                            731, /* NDB_MD_TRANS_START_REQ */
-                            &message_data[0],
-                            NDB_MD_TRANS_START_REQ_LEN,
+                            SCHEMA_TRANS_BEGIN_REQ_GSN,
+                            &begin_req,
+                            SCHEMA_TRANS_BEGIN_REQ_LEN,
                             md_trans->cluster_id,
                             md_trans->node_id,
                             IC_NDB_DICT_MODULE);
 }
 
 static int
-execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
                                IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   int ret_code= 0;
@@ -1100,7 +1101,7 @@ execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     switch (alter_table->alter_op_type)
     {
       case IC_CREATE_TABLE_OP:
-        ret_code= send_NDB_CREATE_TABLE_REQ(md_trans, alter_table);
+        ret_code= sendCREATE_TABLE_REQ(md_trans, alter_table);
         break;
       case IC_ALTER_TABLE_OP:
         ic_require(FALSE);
@@ -1125,25 +1126,27 @@ execNDB_START_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execNDB_START_MD_TRANS_REF_v0(IC_NDB_MESSAGE *ndb_message,
+execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message,
                               IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
+  ic_require(FALSE);
   return 0;
 }
 
 static int
-execNDB_END_MD_TRANS_REF_v0(IC_NDB_MESSAGE *ndb_message,
+execSCHEMA_TRANS_END_REF_v0(IC_NDB_MESSAGE *ndb_message,
                             IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
+  ic_require(FALSE);
   return 0;
 }
 
 static int
-execNDB_END_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+execSCHEMA_TRANS_END_CONF_v0(IC_NDB_MESSAGE *ndb_message,
                              IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
@@ -1152,7 +1155,7 @@ execNDB_END_MD_TRANS_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execNDB_END_MD_TRANS_REP_v0(IC_NDB_MESSAGE *ndb_message,
+execSCHEMA_TRANS_END_REP_v0(IC_NDB_MESSAGE *ndb_message,
                             IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
@@ -1168,7 +1171,7 @@ send_create_table(IC_INT_ALTER_TABLE *alter_table)
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
 
   md_trans->current_alter_table= alter_table;
-  if ((ret_code= send_NDB_MD_TRANS_START_REQ(md_trans)))
+  if ((ret_code= send_SCHEMA_TRANS_BEGIN_REQ(md_trans)))
     return ret_code;
   /* Poll waiting for messages until we're done */
   do
@@ -1620,16 +1623,16 @@ initialize_message_func_array()
     execNDB_DROP_TS_FILE_CONF_v0;
 
   /* Start metadata transaction messages */
-  ic_exec_message_func_array[0][732].ic_exec_message_func=
-    execNDB_START_MD_TRANS_CONF_v0;
-  ic_exec_message_func_array[0][733].ic_exec_message_func=
-    execNDB_START_MD_TRANS_REF_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_BEGIN_CONF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_BEGIN_CONF_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_BEGIN_REF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_BEGIN_REF_v0;
 
   /* Commit metadata transaction messages */
-  ic_exec_message_func_array[0][735].ic_exec_message_func=
-    execNDB_END_MD_TRANS_CONF_v0;
-  ic_exec_message_func_array[0][736].ic_exec_message_func=
-    execNDB_END_MD_TRANS_REF_v0;
-  ic_exec_message_func_array[0][768].ic_exec_message_func=
-    execNDB_END_MD_TRANS_REP_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_END_CONF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_END_CONF_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_END_REF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_END_REF_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_END_REP_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_END_REP_v0;
 }
