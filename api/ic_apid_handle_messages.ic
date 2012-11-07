@@ -1374,7 +1374,16 @@ execDROP_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execLIST_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+execLIST_TABLES_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execGET_TABINFO_REF_v0(IC_NDB_MESSAGE *ndb_message,
                        IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
@@ -1383,17 +1392,8 @@ execLIST_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execGET_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                     IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execGET_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                      IC_MESSAGE_ERROR_OBJECT *error_object)
+execGET_TABINFO_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
@@ -1529,14 +1529,14 @@ initialize_message_func_array()
     execDROP_TABLE_CONF_v0;
 
   /* Get table messages */
-  ic_exec_message_func_array[0][23].ic_exec_message_func=
-    execGET_TABLE_REF_v0;
-  ic_exec_message_func_array[0][190].ic_exec_message_func=
-    execGET_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][GET_TABINFO_CONF_GSN].
+       ic_exec_message_func= execGET_TABINFO_CONF_v0;
+  ic_exec_message_func_array[0][GET_TABINFO_REF_GSN].
+       ic_exec_message_func= execGET_TABINFO_REF_v0;
 
   /* List table messages */
-  ic_exec_message_func_array[0][194].ic_exec_message_func=
-    execLIST_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][LIST_TABLES_CONF_GSN].
+       ic_exec_message_func= execLIST_TABLES_CONF_v0;
 
   /* Create partition map response messages */
   ic_exec_message_func_array[0][CREATE_HASH_MAP_REQ_GSN].

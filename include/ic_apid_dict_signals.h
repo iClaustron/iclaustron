@@ -183,9 +183,9 @@ struct ic_create_table_ref
 static const int CREATE_TABLE_REF_LEN= 
   sizeof(IC_CREATE_TABLE_REF)/sizeof(guint32);
 
-static const int GET_TABINFOREQ_GSN= 24;
-static const int GET_TABINFOCONF_GSN= 190;
-static const int GET_TABINFOREF_GSN= 23;
+static const int GET_TABINFO_REQ_GSN= 24;
+static const int GET_TABINFO_CONF_GSN= 190;
+static const int GET_TABINFO_REF_GSN= 23;
 
 typedef struct ic_get_tabinfo_req IC_GET_TABINFO_REQ;
 struct ic_get_tabinfo_req
@@ -250,3 +250,32 @@ struct ic_get_tabinfo_ref
 };
 static const int GET_TABINFO_REF_LEN=
   sizeof(IC_GET_TABINFO_REF)/sizeof(guint32);
+
+static const int LIST_TABLES_REQ_GSN= 193;
+static const int LIST_TABLES_CONF_GSN= 194;
+
+typedef struct ic_list_tables_req IC_LIST_TABLES_REQ;
+struct ic_list_tables_req
+{
+  guint32 my_data;
+  guint32 my_reference;
+  guint32 flags;
+  guint32 table_id;
+  guint32 table_type;
+};
+static const int LIST_TABLES_REQ_LEN=
+  sizeof(IC_LIST_TABLES_REQ)/sizeof(guint32);
+
+typedef struct ic_list_tables_conf IC_LIST_TABLES_CONF;
+struct ic_list_tables_conf
+{
+  guint32 my_data;
+  guint32 num_tables;
+};
+static const int LIST_TABLES_CONF_LEN=
+  sizeof(IC_LIST_TABLES_CONF)/sizeof(guint32);
+
+/**
+  The LIST_TABLES_CONF has two segments, the first contains table data
+  and the second segment contains a list of table names.
+*/
