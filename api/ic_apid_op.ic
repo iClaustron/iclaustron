@@ -153,7 +153,8 @@ apid_query_create_range_condition(IC_APID_QUERY *ext_apid_query)
   IC_INT_RANGE_CONDITION *range_cond;
   IC_RANGE_CONDITION *ext_range_cond;
 
-  if ((range_cond= ic_calloc(sizeof(IC_INT_RANGE_CONDITION))))
+  if ((range_cond= (IC_INT_RANGE_CONDITION*)
+         ic_calloc(sizeof(IC_INT_RANGE_CONDITION))))
     goto mem_error;
   ext_range_cond= (IC_RANGE_CONDITION*)range_cond;
   apid_query->range_cond= ext_range_cond;
@@ -176,7 +177,8 @@ apid_query_create_where_condition(IC_APID_QUERY *ext_apid_query)
   IC_INT_WHERE_CONDITION *where_cond;
   IC_WHERE_CONDITION *ext_where_cond;
 
-  if ((where_cond= ic_calloc(sizeof(IC_INT_WHERE_CONDITION))))
+  if ((where_cond= (IC_INT_WHERE_CONDITION*)
+         ic_calloc(sizeof(IC_INT_WHERE_CONDITION))))
     goto mem_error;
   ext_where_cond= (IC_WHERE_CONDITION*)where_cond;
   apid_query->where_cond= ext_where_cond;

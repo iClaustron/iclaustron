@@ -1539,10 +1539,10 @@ initialize_message_func_array()
     execLIST_TABLE_CONF_v0;
 
   /* Create partition map response messages */
-  ic_exec_message_func_array[0][299].ic_exec_message_func=
-    execCREATE_HASH_MAP_CONF_v0;
-  ic_exec_message_func_array[0][298].ic_exec_message_func=
-    execCREATE_HASH_MAP_REF_v0;
+  ic_exec_message_func_array[0][CREATE_HASH_MAP_REQ_GSN].
+       ic_exec_message_func= execCREATE_HASH_MAP_CONF_v0;
+  ic_exec_message_func_array[0][CREATE_HASH_MAP_REF_GSN].
+       ic_exec_message_func= execCREATE_HASH_MAP_REF_v0;
  
   /* Create index response messages */
   ic_exec_message_func_array[0][511].ic_exec_message_func=
