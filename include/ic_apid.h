@@ -374,6 +374,9 @@ struct ic_metadata_transaction_ops
   */
   int (*ic_md_commit) (IC_METADATA_TRANSACTION *md_trans);
 
+  IC_APID_ERROR* (*ic_md_get_error_object)
+                   (IC_METADATA_TRANSACTION *md_trans);
+
   int (*ic_free_md_trans) (IC_METADATA_TRANSACTION *md_trans);
 };
 

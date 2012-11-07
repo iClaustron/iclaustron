@@ -983,8 +983,8 @@ execNDB_CONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
   Word 5: The module reference of the connection as NDB views it
 */
 static int
-execNDB_DISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
-                          IC_MESSAGE_ERROR_OBJECT *error_object)
+execDISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
+                      IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
@@ -992,8 +992,8 @@ execNDB_DISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
-                         IC_MESSAGE_ERROR_OBJECT *error_object)
+execDISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
+                     IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
@@ -1001,63 +1001,56 @@ execNDB_DISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 /*
-  Metadata messages
-  -----------------
+  Metadata transaction execution
+  ------------------------------
 */
 
 static int
-send_CREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
-                     IC_INT_ALTER_TABLE *alter_table)
-{
-  (void)md_trans;
-  (void)alter_table;
-  return 0;
-}
+sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans);
 
 static int
-send_NDB_CREATE_INDEX_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
-                          IC_INT_ALTER_TABLE *alter_table,
-                          guint32 index_id)
-{
-  (void)md_trans;
-  (void)alter_table;
-  (void)index_id;
-  return 0;
-}
+sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
+                      IC_INT_ALTER_TABLE *alter_table);
 
-#define NDB_MD_TRANS_END_REQ_LEN 3
+/**
+  This method is called for all types of metadata transactions. It is
+  a blocking call and is completed when the transaction is completed
+  or after an extensive timeout indicates that the data node for some
+  reason got stuck with the request.
+*/
 static int
-send_SCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
+execute_meta_data_transaction(IC_INT_METADATA_TRANSACTION *md_trans)
 {
-  guint32 our_reference;
-  guint32 message_data[NDB_MD_TRANS_END_REQ_LEN];
+  int ret_code;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  DEBUG_ENTRY("execute_meta_data_transaction");
 
-  /* Get our NDB reference */
-  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
-
-  /* Set up message data for NDB_MD_TRANS_END_REQ */
-  message_data[0]= our_reference;
-  message_data[1]= 0; /* Always use trans id 0 */
-  message_data[2]= 0;
-
-  return send_small_message(apid_conn,
-                            123, /* NDB_MD_TRANS_END_REQ */
-                            &message_data[0],
-                            NDB_MD_TRANS_END_REQ_LEN,
-                            md_trans->cluster_id,
-                            md_trans->node_id,
-                            IC_NDB_DICT_MODULE);
+  /**
+    All metadata transactions start by sending SCHEMA_TRANS_BEGIN to
+    start a new metadata transaction, the metadata transaction object
+    contains all information about what more things that should be
+    part of this metadata transaction and how to proceed from there.
+  */
+  if ((ret_code= sendSCHEMA_TRANS_BEGIN_REQ(md_trans)))
+    DEBUG_RETURN_INT(ret_code);
+  /* Poll waiting for messages until we're done */
+  do
+  {
+    ic_poll_messages((IC_APID_CONNECTION*)apid_conn,
+                     3 * IC_MICROSEC_PER_SECOND);
+  } while (apid_conn->return_to_api);
+  DEBUG_RETURN_INT(md_trans->error_object.apid_error_ops->
+           ic_get_apid_error_code((IC_APID_ERROR*)&md_trans->error_object));
 }
 
 static int
-send_SCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
+sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
   IC_SCHEMA_TRANS_BEGIN_REQ begin_req;
   guint32 our_reference;
   int ret_code;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
-  DEBUG_ENTRY("send_SCHEMA_TRANS_BEGIN_REQ");
+  DEBUG_ENTRY("sendSCHEMA_TRANS_BEGIN_REQ");
 
   /* Get our NDB reference */
   our_reference= ic_get_ic_reference(ic_glob_node_id, apid_conn->thread_id);
@@ -1106,7 +1099,7 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     switch (alter_table->alter_op_type)
     {
       case IC_CREATE_TABLE_OP:
-        ret_code= send_CREATE_TABLE_REQ(md_trans, alter_table);
+        ret_code= sendCREATE_TABLE_REQ(md_trans, alter_table);
         break;
       case IC_ALTER_TABLE_OP:
         ic_require(FALSE);
@@ -1130,6 +1123,301 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   DEBUG_RETURN_INT(ret_code);
 }
 
+#define NDB_MD_TRANS_END_REQ_LEN 3
+static int
+sendSCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
+{
+  guint32 our_reference;
+  guint32 message_data[NDB_MD_TRANS_END_REQ_LEN];
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+
+  /* Get our NDB reference */
+  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
+
+  /* Set up message data for NDB_MD_TRANS_END_REQ */
+  message_data[0]= our_reference;
+  message_data[1]= 0; /* Always use trans id 0 */
+  message_data[2]= 0;
+
+  return send_small_message(apid_conn,
+                            123, /* NDB_MD_TRANS_END_REQ */
+                            &message_data[0],
+                            NDB_MD_TRANS_END_REQ_LEN,
+                            md_trans->cluster_id,
+                            md_trans->node_id,
+                            IC_NDB_DICT_MODULE);
+}
+
+static int
+execSCHEMA_TRANS_END_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
+                     IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)md_trans;
+  (void)alter_table;
+  return 0;
+}
+
+static int
+execCREATE_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                         IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execALTER_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execALTER_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execALTER_TABLE_REP_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execALTER_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execALTER_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_HASH_MAP_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_HASH_MAP_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                             IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                              IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                            IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                          IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execCREATE_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                           IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execDROP_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                         IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execLIST_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                       IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execGET_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                     IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execGET_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                      IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execGET_TABLE_ID_REF_v0(IC_NDB_MESSAGE *ndb_message,
+                        IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
+static int
+execGET_TABLE_ID_CONF_v0(IC_NDB_MESSAGE *ndb_message,
+                         IC_MESSAGE_ERROR_OBJECT *error_object)
+{
+  (void)ndb_message;
+  (void)error_object;
+  return 0;
+}
+
 static int
 execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message,
                               IC_MESSAGE_ERROR_OBJECT *error_object)
@@ -1151,311 +1439,8 @@ execSCHEMA_TRANS_END_REF_v0(IC_NDB_MESSAGE *ndb_message,
 }
 
 static int
-execSCHEMA_TRANS_END_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                             IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
 execSCHEMA_TRANS_END_REP_v0(IC_NDB_MESSAGE *ndb_message,
                             IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-send_create_table(IC_INT_ALTER_TABLE *alter_table)
-{
-  int ret_code;
-  IC_INT_METADATA_TRANSACTION *md_trans= alter_table->md_trans;
-  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
-  DEBUG_ENTRY("send_create_table");
-
-  md_trans->current_alter_table= alter_table;
-  if ((ret_code= send_SCHEMA_TRANS_BEGIN_REQ(md_trans)))
-    DEBUG_RETURN_INT(ret_code);
-  /* Poll waiting for messages until we're done */
-  do
-  {
-    ic_poll_messages((IC_APID_CONNECTION*)apid_conn,
-                     3 * IC_MICROSEC_PER_SECOND);
-  } while (apid_conn->return_to_api);
-  DEBUG_RETURN_INT(md_trans->error_object.apid_error_ops->
-           ic_get_apid_error_code((IC_APID_ERROR*)&md_trans->error_object));
-}
-
-static int
-execNDB_CREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                            IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                             IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-send_drop_table(IC_INT_ALTER_TABLE *alter_table)
-{
-  (void)alter_table;
-  return 0;
-}
-
-static int
-execNDB_DROP_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                          IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_DROP_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                           IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-send_rename_table(IC_INT_ALTER_TABLE *alter_table)
-{
-  (void)alter_table;
-  return 0;
-}
-
-static int
-send_alter_table(IC_INT_ALTER_TABLE *alter_table)
-{
-  (void)alter_table;
-  return 0;
-}
-
-static int
-execNDB_ALTER_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                           IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_ALTER_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                            IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_ALTER_TABLE_REP_v0(IC_NDB_MESSAGE *ndb_message,
-                           IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                            IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                             IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_ALTER_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                           IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_ALTER_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                             IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_DROP_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                          IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_DROP_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                           IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_PARTITION_MAP_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                                    IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_PARTITION_MAP_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                                     IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                                 IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                                  IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_DROP_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                               IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_DROP_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                                  IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                              IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_CREATE_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                                  IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_DROP_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                               IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_DROP_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                                  IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_LIST_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                           IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_GET_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                         IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_GET_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                          IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_GET_TABLE_ID_REF_v0(IC_NDB_MESSAGE *ndb_message,
-                            IC_MESSAGE_ERROR_OBJECT *error_object)
-{
-  (void)ndb_message;
-  (void)error_object;
-  return 0;
-}
-
-static int
-execNDB_GET_TABLE_ID_CONF_v0(IC_NDB_MESSAGE *ndb_message,
-                             IC_MESSAGE_ERROR_OBJECT *error_object)
 {
   (void)ndb_message;
   (void)error_object;
@@ -1533,43 +1518,43 @@ initialize_message_func_array()
 
   /* Disconnect from a transaction record in NDB */
   ic_exec_message_func_array[0][34].ic_exec_message_func=
-    execNDB_DISCONNECTCONF_v0;
+    execDISCONNECTCONF_v0;
   ic_exec_message_func_array[0][35].ic_exec_message_func=
-    execNDB_DISCONNECTREF_v0;
+    execDISCONNECTREF_v0;
 
   /* Drop table messages */
   ic_exec_message_func_array[0][102].ic_exec_message_func=
-    execNDB_DROP_TABLE_REF_v0;
+    execDROP_TABLE_REF_v0;
   ic_exec_message_func_array[0][112].ic_exec_message_func=
-    execNDB_DROP_TABLE_CONF_v0;
+    execDROP_TABLE_CONF_v0;
 
   /* Get table messages */
   ic_exec_message_func_array[0][23].ic_exec_message_func=
-    execNDB_GET_TABLE_REF_v0;
+    execGET_TABLE_REF_v0;
   ic_exec_message_func_array[0][190].ic_exec_message_func=
-    execNDB_GET_TABLE_CONF_v0;
+    execGET_TABLE_CONF_v0;
 
   /* List table messages */
   ic_exec_message_func_array[0][194].ic_exec_message_func=
-    execNDB_LIST_TABLE_CONF_v0;
+    execLIST_TABLE_CONF_v0;
 
   /* Create partition map response messages */
-  ic_exec_message_func_array[0][298].ic_exec_message_func=
-    execNDB_CREATE_PARTITION_MAP_REF_v0;
   ic_exec_message_func_array[0][299].ic_exec_message_func=
-    execNDB_CREATE_PARTITION_MAP_CONF_v0;
+    execCREATE_HASH_MAP_CONF_v0;
+  ic_exec_message_func_array[0][298].ic_exec_message_func=
+    execCREATE_HASH_MAP_REF_v0;
  
   /* Create index response messages */
   ic_exec_message_func_array[0][511].ic_exec_message_func=
-    execNDB_CREATE_INDEX_CONF_v0;
+    execCREATE_INDEX_CONF_v0;
   ic_exec_message_func_array[0][512].ic_exec_message_func=
-    execNDB_CREATE_INDEX_REF_v0;
+    execCREATE_INDEX_REF_v0;
  
   /* Drop index response messages */
   ic_exec_message_func_array[0][517].ic_exec_message_func=
-    execNDB_DROP_INDEX_CONF_v0;
+    execDROP_INDEX_CONF_v0;
   ic_exec_message_func_array[0][518].ic_exec_message_func=
-    execNDB_DROP_INDEX_REF_v0;
+    execDROP_INDEX_REF_v0;
 
   /* Unique key read/update/delete/write response messages */
   ic_exec_message_func_array[0][520].ic_exec_message_func=
@@ -1578,56 +1563,56 @@ initialize_message_func_array()
     execNDB_UNIQ_KEYREF_v0;
 
   /* Create table messages */
-  ic_exec_message_func_array[0][598].ic_exec_message_func=
-    execNDB_CREATE_TABLE_REF_v0;
-  ic_exec_message_func_array[0][599].ic_exec_message_func=
-    execNDB_CREATE_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][CREATE_TABLE_CONF_GSN].
+       ic_exec_message_func= execCREATE_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][CREATE_TABLE_REF_GSN].
+       ic_exec_message_func= execCREATE_TABLE_REF_v0;
 
   /* Alter table messages */
   ic_exec_message_func_array[0][601].ic_exec_message_func=
-    execNDB_ALTER_TABLE_REF_v0;
+    execALTER_TABLE_REF_v0;
   ic_exec_message_func_array[0][602].ic_exec_message_func=
-    execNDB_ALTER_TABLE_CONF_v0;
+    execALTER_TABLE_CONF_v0;
   ic_exec_message_func_array[0][606].ic_exec_message_func=
-    execNDB_ALTER_TABLE_REP_v0;
+    execALTER_TABLE_REP_v0;
 
   /* Alter table messages */
   ic_exec_message_func_array[0][604].ic_exec_message_func=
-    execNDB_ALTER_INDEX_REF_v0;
+    execALTER_INDEX_REF_v0;
   ic_exec_message_func_array[0][605].ic_exec_message_func=
-    execNDB_ALTER_INDEX_CONF_v0;
+    execALTER_INDEX_CONF_v0;
 
   /* 606 = NDB_ALTER_TABLE_REP, see above */
 
   /* Get table id messages */
-  ic_exec_message_func_array[0][684].ic_exec_message_func=
-    execNDB_GET_TABLE_ID_REF_v0;
   ic_exec_message_func_array[0][685].ic_exec_message_func=
-    execNDB_GET_TABLE_ID_CONF_v0;
+    execGET_TABLE_ID_CONF_v0;
+  ic_exec_message_func_array[0][684].ic_exec_message_func=
+    execGET_TABLE_ID_REF_v0;
 
   /* Create tablespace/log file group messages */
   ic_exec_message_func_array[0][714].ic_exec_message_func=
-    execNDB_CREATE_TABLESPACE_REF_v0;
+    execCREATE_TABLESPACE_REF_v0;
   ic_exec_message_func_array[0][715].ic_exec_message_func=
-    execNDB_CREATE_TABLESPACE_CONF_v0;
+    execCREATE_TABLESPACE_CONF_v0;
 
   /* Create tablespace/log file group files */
   ic_exec_message_func_array[0][717].ic_exec_message_func=
-    execNDB_CREATE_TS_FILE_REF_v0;
+    execCREATE_TS_FILE_REF_v0;
   ic_exec_message_func_array[0][718].ic_exec_message_func=
-    execNDB_CREATE_TS_FILE_CONF_v0;
+    execCREATE_TS_FILE_CONF_v0;
 
   /* Drop tablespace/log file group messages */
   ic_exec_message_func_array[0][720].ic_exec_message_func=
-    execNDB_DROP_TABLESPACE_REF_v0;
+    execDROP_TABLESPACE_REF_v0;
   ic_exec_message_func_array[0][721].ic_exec_message_func=
-    execNDB_DROP_TABLESPACE_CONF_v0;
+    execDROP_TABLESPACE_CONF_v0;
 
   /* Drop tablespace/log file group files */
-  ic_exec_message_func_array[0][723].ic_exec_message_func=
-    execNDB_DROP_TS_FILE_REF_v0;
   ic_exec_message_func_array[0][724].ic_exec_message_func=
-    execNDB_DROP_TS_FILE_CONF_v0;
+    execDROP_TS_FILE_CONF_v0;
+  ic_exec_message_func_array[0][723].ic_exec_message_func=
+    execDROP_TS_FILE_REF_v0;
 
   /* Start metadata transaction messages */
   ic_exec_message_func_array[0][SCHEMA_TRANS_BEGIN_CONF_GSN].

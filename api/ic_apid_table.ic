@@ -956,35 +956,41 @@ mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
   IC_INT_METADATA_TRANSACTION *md_trans=
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
   IC_INT_ALTER_TABLESPACE *alter_ts;
+  DEBUG_ENTRY("mdt_create_tablespace_op");
 
   if (md_trans->first_alter_ts || md_trans->first_alter_table)
     return IC_ERROR_MULTIPLE_METADATA_OPS;
   if ((alter_ts= (IC_INT_ALTER_TABLESPACE*)
       md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
                                             sizeof(IC_INT_ALTER_TABLESPACE))))
-    return IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   alter_ts->mc_ptr= md_trans->mc_ptr;
   alter_ts->md_trans= md_trans;
   *ext_alter_ts= (IC_ALTER_TABLESPACE*)alter_ts;
   IC_INSERT_SLL(md_trans, alter_ts, alter_ts);
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int
 md_commit_alter_tablespace(IC_INT_METADATA_TRANSACTION *md_trans,
                            IC_INT_ALTER_TABLESPACE *alter_ts)
 {
-  (void)md_trans;
-  (void)alter_ts;
-  return 1; /* Not implemented yet */
+  int ret_code;
+  DEBUG_ENTRY("md_commit_alter_tablespace");
+
+  md_trans->current_alter_ts= alter_ts;
+  ret_code= execute_meta_data_transaction(md_trans);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
 md_commit_alter_table(IC_INT_METADATA_TRANSACTION *md_trans,
                       IC_INT_ALTER_TABLE *alter_table)
 {
-  int ret_code;
-  (void)md_trans;
+  int ret_code= 0;
+  DEBUG_ENTRY("md_commit_alter_table");
+
+  md_trans->current_alter_table= alter_table;
   switch (alter_table->alter_op_type)
   {
     /*
@@ -994,40 +1000,34 @@ md_commit_alter_table(IC_INT_METADATA_TRANSACTION *md_trans,
     case IC_CREATE_TABLE_OP:
     {
       if ((ret_code= verify_create_table(alter_table)))
-        return ret_code;
-      if ((ret_code= send_create_table(alter_table)))
-        return ret_code;
+        goto end;
       break;
     }
     case IC_ALTER_TABLE_OP:
     {
       if ((ret_code= verify_alter_table(alter_table)))
-        return ret_code;
-      if ((ret_code= send_alter_table(alter_table)))
-        return ret_code;
+        goto end;
       break;
     }
     case IC_DROP_TABLE_OP:
     {
       if ((ret_code= verify_drop_table(alter_table)))
-        return ret_code;
-      if ((ret_code= send_drop_table(alter_table)))
-        return ret_code;
+        goto end;
       break;
     }
     case IC_RENAME_TABLE_OP:
     {
       if ((ret_code= verify_rename_table(alter_table)))
-        return ret_code;
-      if ((ret_code= send_rename_table(alter_table)))
-        return ret_code;
+        goto end;
       break;
     }
     default:
       ic_require(FALSE);
       break;
   }
-  return 0;
+  ret_code= execute_meta_data_transaction(md_trans);
+end:
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -1055,17 +1055,27 @@ mdt_md_commit(IC_METADATA_TRANSACTION *ext_md_trans)
   DEBUG_RETURN_INT(ret_code);
 }
 
+static IC_APID_ERROR*
+mdt_get_error_object(IC_METADATA_TRANSACTION *ext_md_trans)
+{
+  IC_INT_METADATA_TRANSACTION *md_trans=
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  DEBUG_ENTRY("mdt_get_error_object");
+  DEBUG_RETURN_PTR((IC_APID_ERROR*)&md_trans->error_object);
+}
+
 static int
 mdt_free_md_trans(IC_METADATA_TRANSACTION *ext_md_trans)
 {
   IC_INT_METADATA_TRANSACTION *md_trans=
     (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  DEBUG_ENTRY("mdt_free_md_trans");
 
   if (apid_conn)
     apid_conn->md_trans= NULL;
   md_trans->mc_ptr->mc_ops.ic_mc_free(md_trans->mc_ptr);
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
@@ -1073,6 +1083,7 @@ static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
   /* .ic_create_metadata_op     = */ mdt_create_metadata_op,
   /* .ic_create_tablespace_op   = */ mdt_create_tablespace_op,
   /* .ic_md_commit              = */ mdt_md_commit,
+  /* .ic_md_get_error_object    = */ mdt_get_error_object,
   /* .ic_free_md_trans          = */ mdt_free_md_trans
 };
 

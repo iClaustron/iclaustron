@@ -35,7 +35,8 @@ struct ic_schema_trans_begin_req
   guint32 my_transaction_id;
   guint32 flags;
 };
-static const int SCHEMA_TRANS_BEGIN_REQ_LEN= 3;
+static const int SCHEMA_TRANS_BEGIN_REQ_LEN=
+  sizeof(IC_SCHEMA_TRANS_BEGIN_REQ)/4;
 
 typedef struct ic_schema_trans_begin_conf IC_SCHEMA_TRANS_BEGIN_CONF;
 struct ic_schema_trans_begin_conf
@@ -61,6 +62,22 @@ static const int SCHEMA_TRANS_BEGIN_REF_LEN= 6;
 static const int CREATE_HASH_MAP_REQ_GSN = 297;
 static const int CREATE_HASH_MAP_CONF_GSN = 299;
 static const int CREATE_HASHMAP_REF_GSN = 298;
+
+typedef struct ic_create_hash_map_req IC_CREATE_HASH_MAP_REQ;
+struct ic_create_hash_map_req
+{
+  guint32 my_reference;
+  guint32 my_data;
+  guint32 ndb_transaction_id;
+  guint32 my_transaction_id;
+  guint32 flags;
+  guint32 num_buckets;
+  guint32 num_partitions;
+};
+static const int CREATE_HASH_MAP_REQ_LEN= 7;
+static const int CREATE_HASH_MAP_IF_NOT_EXISTS= 1;
+static const int CREATE_HASH_MAP_DEFAULT= 2;
+static const int CREATE_HASH_MAP_REORG= 4;
 
 static const int CREATE_TABLE_REQ_GSN = 587;
 static const int CREATE_TABLE_CONF_GSN = 589;
