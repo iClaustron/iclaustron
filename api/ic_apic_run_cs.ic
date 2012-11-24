@@ -4963,7 +4963,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   {
     if (clu_conf->node_config[i] &&
         clu_conf->node_types[i] != IC_DATA_SERVER_NODE &&
-        (ret_code= fill_key_value_section(clu_conf->node_types[i],
+        (ret_code= fill_key_value_section(
+                         (IC_CONFIG_TYPES)clu_conf->node_types[i],
                                           clu_conf->node_config[i],
                                           section_id++,
                                           loc_key_value_array,
@@ -5048,7 +5049,8 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
   {
     if (clu_conf->node_config[i] &&
         clu_conf->node_types[i] == IC_DATA_SERVER_NODE &&
-        (ret_code= fill_key_value_section(clu_conf->node_types[i],
+        (ret_code= fill_key_value_section(
+                         (IC_CONFIG_TYPES)clu_conf->node_types[i],
                                           clu_conf->node_config[i],
                                           section_id++,
                                           loc_key_value_array,

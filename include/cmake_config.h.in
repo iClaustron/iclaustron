@@ -40,6 +40,7 @@
 #cmakedefine HAVE_POLL_H
 #cmakedefine HAVE_SYS_POLL_H
 #cmakedefine HAVE_SYS_TYPES_H
+#cmakedefine HAVE_SYS_TIME_H
 #cmakedefine HAVE_SYS_TIMES_H
 #cmakedefine HAVE_SYS_SOCKET_H
 #cmakedefine HAVE_SYS_SELECT_H

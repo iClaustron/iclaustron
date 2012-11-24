@@ -1042,13 +1042,10 @@ set_up_socket_connection(IC_CONNECTION *ext_conn,
   if (!conn->is_connect_thread_used)
     return int_set_up_socket_connection(conn);
 
-  if (!(thread= g_thread_create_full(run_set_up_socket_connection,
-                               (gpointer)conn,
-                               IC_SMALL_STACK_SIZE,  /* Stack size */
-                               TRUE,                 /* Joinable */
-                               TRUE,                 /* Bound */
-                               G_THREAD_PRIORITY_NORMAL,
-                               &error)))
+  if (!(thread= g_thread_try_new(NULL,
+                                run_set_up_socket_connection,
+                                (gpointer)conn,
+                                &error)))
   {
     conn->error_code= 1;
     return 1; /* Should write proper error handling code here */

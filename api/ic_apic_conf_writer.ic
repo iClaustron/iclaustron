@@ -805,7 +805,8 @@ write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
       continue;
     node_type= clu_conf->node_types[i];
 
-    if (!should_write_this_section(is_grid_common_config, node_type))
+    if (!should_write_this_section(is_grid_common_config,
+                                   (IC_CONFIG_TYPES)node_type))
       continue;
 
     switch (node_type)

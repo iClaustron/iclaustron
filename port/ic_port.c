@@ -188,9 +188,9 @@ ic_port_init()
   ic_require(mem_hash_mutex= ic_mutex_create());
   ic_require(mem_mc_mutex= ic_mutex_create());
 
-  ic_require(mem_entry_hash_mutex= g_mutex_new());
+  ic_require(mem_entry_hash_mutex= ic_mutex_create());
 
-  ic_require(mutex_hash_protect= g_mutex_new());
+  ic_require(mutex_hash_protect= ic_mutex_create());
 
   ic_require(mem_entry_hash= ic_create_hashtable(4096,
                                                  ic_hash_ptr,
@@ -1465,14 +1465,12 @@ void ic_cond_timed_wait(IC_COND *cond,
                         IC_MUTEX *mutex,
                         guint32 micros)
 {
-  GTimeVal stop_timer;
-
-  g_get_current_time(&stop_timer);
-  g_time_val_add(&stop_timer, micros);
+  gint64 stop_timer= g_get_monotonic_time();
+  stop_timer+= (gint64)micros;
 #ifdef DEBUG_BUILD
   debug_release_mutex(mutex);
 #endif
-  g_cond_timed_wait(cond, mutex, &stop_timer);
+  g_cond_wait_until(cond, mutex, stop_timer);
 #ifdef DEBUG_BUILD
   debug_lock_mutex(mutex);
 #endif
@@ -1480,12 +1478,20 @@ void ic_cond_timed_wait(IC_COND *cond,
 
 IC_COND* ic_cond_create()
 {
-  return g_cond_new();
+  IC_COND *cond;
+  cond= (IC_COND*)malloc(sizeof(IC_COND));
+  if (cond)
+    g_cond_init(cond);
+  return cond;
 }
 
 void ic_cond_destroy(IC_COND **cond)
 {
-  g_cond_free(*cond);
+  if (*cond)
+  {
+    g_cond_clear(*cond);
+    free(*cond);
+  }
   *cond= NULL;
 }
 
@@ -1518,13 +1524,18 @@ void ic_mutex_unlock_low(IC_MUTEX *mutex)
 IC_MUTEX* ic_mutex_create()
 {
   IC_MUTEX *mutex;
-  mutex= g_mutex_new();
+  mutex= (IC_MUTEX*)malloc(sizeof(IC_MUTEX));
+  g_mutex_init(mutex);
   return mutex;
 }
 
 void ic_mutex_destroy(IC_MUTEX **mutex)
 {
-  g_mutex_free(*mutex);
+  if (*mutex)
+  {
+    g_mutex_clear(*mutex);
+    free(*mutex);
+  }
   *mutex= NULL;
 }
 
@@ -1540,12 +1551,13 @@ void ic_spin_unlock(IC_SPINLOCK *spinlock)
 
 IC_SPINLOCK* ic_spin_create()
 {
-  return g_mutex_new();
+  return (IC_SPINLOCK*)ic_mutex_create();
 }
 
 void ic_spin_destroy(IC_SPINLOCK *spinlock)
 {
-  g_mutex_free(spinlock);
+  IC_MUTEX *mutex_to_destroy= (IC_MUTEX*)spinlock;
+  ic_mutex_destroy(&mutex_to_destroy);
 }
 
 /**

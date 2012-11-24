@@ -430,13 +430,6 @@ ic_init()
 {
   int ret_value;
 
-  /*
-    We need to initialise thread system before initialising and using
-    the debug system, the portability system start can be debugged.
-  */
-  if (!g_thread_supported())
-    g_thread_init(NULL);
-
   DEBUG_OPEN(ic_glob_node_id);
   DEBUG_ENTRY("ic_init");
 

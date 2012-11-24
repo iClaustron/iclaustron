@@ -24,7 +24,7 @@ guint32 ic_num_threads_debugged= 0;
 
 #ifdef DEBUG_BUILD
 static IC_MUTEX *debug_mutex= NULL;
-static GPrivate *debug_priv= NULL;
+static GPrivate debug_priv;
 static guint8 *thread_id_array= NULL;
 /* File pointer to the debug output file */
 static FILE *ic_fptr;
@@ -62,7 +62,7 @@ ic_debug_disable(guint32 level)
 
   if (!(glob_debug & level))
   {
-    thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+    thread_debug= (IC_THREAD_DEBUG*)g_private_get(&debug_priv);
     if (thread_debug->disable_count == 0)
     {
       thread_debug->save_enabled= thread_debug->enabled;
@@ -79,7 +79,7 @@ ic_debug_enable(guint32 level)
 
   if (!(glob_debug & level))
   {
-    thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+    thread_debug= (IC_THREAD_DEBUG*)g_private_get(&debug_priv);
     thread_debug->disable_count--;
     if (thread_debug->disable_count == 0)
     {
@@ -99,7 +99,7 @@ ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
   gchar indent_buf[2 * IC_DEBUG_MAX_INDENT_LEVEL + 1];
 
   if (!thread_debug)
-    thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+    thread_debug= (IC_THREAD_DEBUG*)g_private_get(&debug_priv);
 
   if (!thread_debug->enabled)
     return;
@@ -154,7 +154,7 @@ ic_debug_entry(const char *entry_point)
     Update the indent_level to keep track of where we are in the stack,
     this is to make sure we get pretty printing of debug output.
   */
-  ic_require(thread_debug= g_private_get(debug_priv));
+  ic_require(thread_debug= g_private_get(&debug_priv));
   thread_debug->entry_point[thread_debug->indent_level]= entry_point;
   thread_debug->indent_level++;
   ic_require(thread_debug->indent_level < IC_DEBUG_MAX_INDENT_LEVEL);
@@ -177,7 +177,7 @@ void ic_debug_return(int ret_type,
   gchar buf[256], ptr_buf[64];
 
   /* Update indent_level, we're returning from debugged function */
-  ic_require(thread_debug= g_private_get(debug_priv));
+  ic_require(thread_debug= g_private_get(&debug_priv));
   ic_require(thread_debug->indent_level > 0);
   entry_point= thread_debug->entry_point[thread_debug->indent_level-1];
 
@@ -215,7 +215,7 @@ void ic_debug_indent_level_check(int level)
 {
   IC_THREAD_DEBUG *thread_debug;
 
-  thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+  thread_debug= (IC_THREAD_DEBUG*)g_private_get(&debug_priv);
   ic_require((int)thread_debug->indent_level == level);
 }
 
@@ -229,7 +229,7 @@ void ic_debug_thread_return()
   ic_debug_return(VOID_DEBUG_RETURN_TYPE,
                   (int)0,
                   NULL);
-  thread_debug= (IC_THREAD_DEBUG*)g_private_get(debug_priv);
+  thread_debug= (IC_THREAD_DEBUG*)g_private_get(&debug_priv);
   if (ic_get_debug() & THREAD_LEVEL)
   {
     len= g_snprintf(buf, 64, "Exit from thread id=%u", thread_debug->thread_id);
@@ -266,7 +266,7 @@ void ic_debug_thread_init(const gchar *entry_point)
   ic_mutex_unlock_low(debug_mutex);
   thread_debug->thread_id= thread_id;
   thread_debug->enabled= TRUE;
-  g_private_set(debug_priv, (gpointer)thread_debug);
+  g_private_set(&debug_priv, (gpointer)thread_debug);
   if (entry_point)
     ic_debug_entry(entry_point);
 }
@@ -304,7 +304,6 @@ int ic_debug_open(guint32 node_id)
   guint32 pid= (guint32)my_pid;
 
   ic_require(debug_mutex= ic_mutex_create());
-  ic_require(debug_priv= g_private_new(NULL));
   ic_require(thread_id_array= (guint8*)ic_calloc_low(IC_MAX_THREADS));
   g_snprintf(file_buf, 32, "debug_n%u_p%u.log", node_id, pid);
 

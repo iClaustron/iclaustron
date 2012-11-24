@@ -846,7 +846,7 @@ conf_serv_add_key(void *ic_conf,
       }
       clu_conf->conf->node_config[value]= (gchar*)clu_conf->current_node_config;
       clu_conf->conf->node_types[value]= 
-        clu_conf->current_node_config_type;
+        (IC_NODE_TYPES)clu_conf->current_node_config_type;
     }
   }
   if (conf_entry->is_min_value_defined && conf_entry->min_value > value)

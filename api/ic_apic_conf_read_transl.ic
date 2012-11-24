@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -665,7 +665,7 @@ allocate_mem_phase2(IC_INT_API_CONFIG_SERVER *apic, IC_CLUSTER_CONFIG *conf_obj)
         break;
     }
     init_config_object(conf_obj_ptr, size_struct,
-                       conf_obj->node_types[i]);
+                       (IC_CONFIG_TYPES)conf_obj->node_types[i]);
     conf_obj_ptr+= size_struct;
   }
   for (i= 0; i < conf_obj->num_comms; i++)

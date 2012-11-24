@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -247,9 +247,9 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
   while (iter_len < *len)
   {
     gchar c= *val_str;
-    if (!(g_ascii_isalpha(c) || c == '/' || c == '\\' ||
-        g_ascii_isdigit(c) || '.' ||
-        c == '_' || g_ascii_isspace(c)))
+    if ((!(g_ascii_isalpha(c)) || (c == '/') || (c == '\\') ||
+        g_ascii_isdigit(c) || (c == '.') ||
+        (c == '_') || g_ascii_isspace(c)))
       return NULL;
     val_str++;
     iter_len++;

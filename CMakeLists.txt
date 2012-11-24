@@ -193,6 +193,7 @@ check_include_files(sys/poll.h HAVE_SYS_POLL_H)
 check_include_files(sys/select.h HAVE_SYS_SELECT_H)
 check_include_files(sys/socket.h HAVE_SYS_SOCKET_H)
 check_include_files(sys/times.h HAVE_SYS_TIMES_H)
+check_include_files(sys/time.h HAVE_SYS_TIME_H)
 check_include_files(sys/types.h HAVE_SYS_TYPES_H)
 check_include_files(sys/wait.h HAVE_SYS_WAIT_H)
 check_include_files(fcntl.h HAVE_FCNTL_H)
@@ -372,18 +373,18 @@ add_library(ic_comm STATIC
             comm/ic_connection.c
             comm/ic_sock_buf.c
             comm/ic_poll_set.c
+            comm/ic_protocol_support.c
+            include/ic_protocol_support.h
             comm/ic_poll_set_int.h)
 target_link_libraries(ic_comm ic_port ic_util)
 
 #Build library for protocol support utilities
 add_library(ic_proto STATIC
-            protocol/ic_protocol_support.c
             protocol/ic_base64.c
             protocol/ic_pcntrl_proto.c
             protocol/ic_proto_str.c
             include/ic_proto_str.h
             include/ic_pcntrl_proto.h
-            include/ic_protocol_support.h
             include/ic_base64.h)
 target_link_libraries(ic_proto ic_port ic_util ic_comm)
 

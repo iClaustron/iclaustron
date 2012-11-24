@@ -21,7 +21,7 @@
 #include "ic_threadpool_int.h"
 
 /* Key to thread local storage for thread pool */
-static GPrivate *thread_priv= NULL;
+static GPrivate thread_priv;
 
 static void check_threads(IC_THREADPOOL_STATE *ext_tp_state);
 static gboolean thread_startup_done(IC_THREAD_STATE *ext_thread_state);
@@ -388,6 +388,7 @@ start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   int ret_code= 0;
   gboolean stop_flag;
 
+  (void)stack_size;
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
   ic_require(thread_state->mutex && thread_state->cond);
@@ -395,13 +396,10 @@ start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   ic_assert(!thread_state->free);
   thread_state->object= thread_obj;
   thread_state->synch_startup= synch_startup;
-  thread= g_thread_create_full(thread_func,
-                               (gpointer)thread_state,
-                               stack_size,
-                               TRUE,     /* Joinable */
-                               TRUE,     /* Bound    */
-                               G_THREAD_PRIORITY_NORMAL,
-                               &error);
+  thread= g_thread_try_new(NULL, /* name */
+                           thread_func,
+                           (gpointer)thread_state,
+                           &error);
   if (thread)
   {
     thread_state->thread= thread;
@@ -566,7 +564,7 @@ thread_started(IC_THREAD_STATE *ext_thread_state)
   ic_mutex_lock(thread_state->mutex);
   thread_state->started= TRUE;
   ic_mutex_unlock(thread_state->mutex);
-  g_private_set(thread_priv, (void*)thread_state->tp_state);
+  g_private_set(&thread_priv, (void*)thread_state->tp_state);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -661,11 +659,6 @@ ic_create_threadpool(guint32 pool_size,
   IC_INT_THREADPOOL_STATE *tp_state;
   DEBUG_ENTRY("ic_create_threadpool");
 
-  if (!thread_priv)
-  {
-    /* Create thread local storage environment for thread pool */
-    ic_require(thread_priv= g_private_new(NULL));
-  }
   if (!(tp_state= (IC_INT_THREADPOOL_STATE*)
         ic_calloc(sizeof(IC_INT_THREADPOOL_STATE))))
     DEBUG_RETURN_PTR(NULL);
@@ -758,7 +751,7 @@ IC_THREADPOOL_STATE*
 ic_get_threadpool()
 {
   IC_THREADPOOL_STATE *tp_state;
-  tp_state= (IC_THREADPOOL_STATE*)g_private_get(thread_priv);
+  tp_state= (IC_THREADPOOL_STATE*)g_private_get(&thread_priv);
   return tp_state;
 }
 
