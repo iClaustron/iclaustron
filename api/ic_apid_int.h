@@ -212,8 +212,11 @@ struct ic_define_field
   guint32 scale;
   guint32 precision;
   gboolean is_nullable;
-  gboolean is_disk_stored;
+  gboolean is_field_disk_stored;
+  gboolean is_part_of_pkey;
   gboolean is_signed;
+  gchar *default_value;
+  guint32 default_value_len;
 };
 
 struct ic_define_index
@@ -253,10 +256,10 @@ struct ic_int_alter_table
   IC_DEFINE_FIELD *last_drop_field;
 
   IC_DEFINE_INDEX *first_add_index;
-  IC_DEFINE_INDEX *last_drop_index;
-
   IC_DEFINE_INDEX *last_add_index;
+
   IC_DEFINE_INDEX *first_drop_index;
+  IC_DEFINE_INDEX *last_drop_index;
 
   /*
     Table name consisting of a concatenation of schema, database and
@@ -270,13 +273,27 @@ struct ic_int_alter_table
 
   /* Number of fields defined in table */
   guint32 num_fields;
+
   /*
     Tablespace id, needed only if at least one field have is_disk_stored
     is true.
   */
   guint32 tablespace_id;
-  gboolean is_disk_stored;
+  guint32 tablespace_version;
+  gboolean is_table_disk_stored;
 
+  /*
+    A non-logged table will survive a crash but will be empty after a
+    cluster crash. A temporary table won't exist after a cluster crash.
+    A table with checksum has a checksum on each row which is computed
+    at writes and checked on reads. 
+  */
+  gboolean is_table_logged;
+  gboolean is_table_temporary;
+  gboolean is_table_checksummed;
+
+  guint32 hash_map_id;
+  guint32 hash_map_version;
   /* Type of operation create/alter/drop/rename table */
   IC_ALTER_OPERATION_TYPE alter_op_type;
 

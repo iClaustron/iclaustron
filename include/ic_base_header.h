@@ -112,6 +112,11 @@ struct ic_iovec
 
 typedef struct ic_iovec IC_IOVEC;
 
+/* Popular constants in NDB */
+static const guint32 IC_RNIL= 0xFFFFFF00;
+static const guint32 IC_ZNIL=  0xFFFF;
+static const guint32 IC_MINUS_ONE= 0xFFFFFFFF;
+
 #define IC_MAX_SEND_TIMERS 16
 #define IC_MAX_SENDS_TRACKED 8
 #define IC_MAX_SEND_SIZE 65535

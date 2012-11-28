@@ -168,12 +168,10 @@ find_field_in_add_field(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
   IC_DEFINE_FIELD *def_type;
   DEBUG_ENTRY("find_field_in_add_field");
 
-  def_type= IC_GET_FIRST_SLL(alter_table, add_field);
-  while (def_type)
+  FOR_EACH_SLL(def_type, alter_table, add_field)
   {
     if (strcmp(def_type->name, name) == 0)
       DEBUG_RETURN_PTR(def_type);
-    def_type= IC_GET_NEXT_SLL(def_type, add_field);
   }
   DEBUG_RETURN_PTR(NULL);
 }
@@ -184,12 +182,10 @@ find_field_in_drop_field(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
   IC_DEFINE_FIELD *def_type;
   DEBUG_ENTRY("find_field_in_drop_field");
 
-  def_type= IC_GET_FIRST_SLL(alter_table, drop_field);
-  while (def_type)
+  FOR_EACH_SLL(def_type, alter_table, drop_field)
   {
     if (strcmp(def_type->name, name) == 0)
       DEBUG_RETURN_PTR(def_type);
-    def_type= IC_GET_NEXT_SLL(def_type, drop_field);
   }
   DEBUG_RETURN_PTR(NULL);
 }
@@ -200,12 +196,10 @@ find_index_in_add_index(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
   IC_DEFINE_INDEX *def_type;
   DEBUG_ENTRY("find_index_in_add_index");
 
-  def_type= IC_GET_FIRST_SLL(alter_table, add_index);
-  while (def_type)
+  FOR_EACH_SLL(def_type, alter_table, add_index)
   {
     if (strcmp(def_type->name, name) == 0)
       DEBUG_RETURN_PTR(def_type);
-    def_type= IC_GET_NEXT_SLL(def_type, add_index);
   }
   DEBUG_RETURN_PTR(NULL);
 }
@@ -216,12 +210,10 @@ find_index_in_drop_index(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
   IC_DEFINE_INDEX *def_type;
   DEBUG_ENTRY("find_index_in_drop_index");
 
-  def_type= IC_GET_FIRST_SLL(alter_table, drop_index);
-  while (def_type)
+  FOR_EACH_SLL(def_type, alter_table, drop_index)
   {
     if (strcmp(def_type->name, name) == 0)
       DEBUG_RETURN_PTR(def_type);
-    def_type= IC_GET_NEXT_SLL(def_type, drop_index);
   }
   DEBUG_RETURN_PTR(NULL);
 }
@@ -383,7 +375,7 @@ at_add_field(IC_ALTER_TABLE *ext_alter_table,
              IC_FIELD_TYPE field_type,
              guint32 field_size,
              gboolean is_nullable,
-             gboolean is_disk_stored)
+             gboolean is_field_disk_stored)
 {
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   IC_DEFINE_FIELD *def_field;
@@ -431,9 +423,9 @@ at_add_field(IC_ALTER_TABLE *ext_alter_table,
   }
   def_field->size= field_size;
   def_field->is_nullable= is_nullable;
-  def_field->is_disk_stored= is_disk_stored;
-  if (is_disk_stored)
-    alter_table->is_disk_stored= TRUE;
+  def_field->is_field_disk_stored= is_field_disk_stored;
+  if (is_field_disk_stored)
+    alter_table->is_table_disk_stored= TRUE;
   IC_INSERT_SLL(alter_table, def_field, add_field);
 end:
   DEBUG_RETURN_INT(ret_code);
@@ -615,6 +607,10 @@ at_add_index(IC_ALTER_TABLE *ext_alter_table,
     {
       ret_code= IC_ERROR_FIELD_NOT_DEFINED;
       goto end;
+    }
+    if (index_type == IC_PRIMARY_KEY)
+    {
+      def_field->is_part_of_pkey= TRUE;
     }
     def_index->def_fields[i]= def_field;
   }

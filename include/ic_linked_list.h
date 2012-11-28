@@ -44,6 +44,11 @@
 #define IC_GET_NEXT_SLL(object, name) \
   ((object)->next_##name)
 
+#define FOR_EACH_SLL(variable, object, field) \
+  for ((variable)= IC_GET_FIRST_SLL(object, field); \
+       (variable); \
+       (variable)= IC_GET_NEXT_SLL((variable), field))
+
 #define IC_INSERT_DLL(parent_object, object, name) \
   if ((parent_object)->first_##name) \
   { \
@@ -98,3 +103,9 @@
 
 #define IC_GET_PREV_DLL(object, name) \
   ((object)->prev_##name)
+
+#define FOR_EACH_DLL(variable, object, field) \
+  for ((variable)= IC_GET_FIRST_DLL(object, field); \
+       (variable); \
+       (variable)= IC_GET_NEXT_DLL(variable), field))
+
