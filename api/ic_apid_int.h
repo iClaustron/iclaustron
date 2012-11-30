@@ -208,6 +208,7 @@ struct ic_define_field
   gchar *name;
   IC_FIELD_TYPE type;
   guint32 size;
+  guint32 array_size;
   guint32 charset_id;
   guint32 scale;
   guint32 precision;
@@ -339,6 +340,9 @@ struct ic_int_metadata_transaction
 
   /* NDB Transaction reference */
   guint32 ndb_trans_ref;
+
+  /* My transaction reference */
+  guint32 my_trans_ref;
 
   /* Transaction state */
   IC_METADATA_TRANSACTION_STATE state;

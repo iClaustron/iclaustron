@@ -74,7 +74,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
          md_alter_table,
          file_key_str,
          IC_API_INT64_TYPE,
-         0 /* Field size given by type */,
+         1 /* A single field, not an array */,
          FALSE /* Not nullable */,
          FALSE /* Not stored on disk */))) ||
 

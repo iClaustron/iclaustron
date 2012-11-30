@@ -64,13 +64,11 @@ static guint32 get_ndb_message_header_size(
 
 /* Internal function to prepare NDB message for sending */
 static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                       guint32 message_number,
+                                       guint32 message_id,
                                        guint32 message_priority,
                                        guint32 sender_module_id,
-                                       guint32 receiver_mdoule_id,
+                                       guint32 receiver_module_id,
                                        void *start_message,
-                                       guint32 main_message_size,
-                                       void *main_message,
                                        guint32 num_segments,
-                                       guint32 *segment_ptrs[3],
-                                       guint32 segment_lens[3]);
+                                       void **segment_ptrs,
+                                       guint32 *segment_lens);

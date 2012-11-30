@@ -855,34 +855,32 @@ prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                        IC_SOCK_BUF_PAGE *hb_page,
                        guint32 thread_id)
 {
-  guint32 *message_start= (guint32*)hb_page->sock_buf;
-  guint32 *main_message_start;
-  guint32 header_size;
   guint32 message_size;
-
-  header_size= get_ndb_message_header_size(send_node_conn);
-  main_message_start= message_start + header_size;
+  guint32 len;
+  IC_API_REGREQ hb_req;
+  void *message_ptr;
 
   /* Fill in message data */
-  main_message_start[0]= ic_get_ic_reference(send_node_conn->my_node_id,
+  hb_req.my_reference= ic_get_ic_reference(send_node_conn->my_node_id,
                                              thread_id);
-  main_message_start[1]= NDB_VERSION;
-  main_message_start[2]= MYSQL_VERSION;
+  hb_req.my_ndb_version= NDB_VERSION;
+  hb_req.my_mysql_version= MYSQL_VERSION;
   DEBUG_PRINT(NDB_MESSAGE_LEVEL,
     ("API_REGREQ: word1: %u, word2: %u, word3: %u, module: %u, thread_id: %u",
-     main_message_start[0], main_message_start[1], main_message_start[2],
+     hb_req.my_reference, hb_req.my_ndb_version, hb_req.my_mysql_version,
      IC_NDB_QMGR_MODULE, send_node_conn->thread_id));
+
+  message_ptr= &hb_req;
+  len= API_REGREQ_LEN;
   message_size= fill_ndb_message_header(send_node_conn,
-                                 3, /* API_REGREQ */
+                                 API_REGREQ_GSN,
                                  IC_NDB_NORMAL_PRIO,
                                  send_node_conn->thread_id,
                                  IC_NDB_QMGR_MODULE,
-                                 message_start,
-                                 3, /* Size of API_REGREQ */
-                                 main_message_start,
-                                 0, /* No segments */
-                                 NULL,
-                                 NULL);
+                                 hb_page->sock_buf,
+                                 1, /* No extra segments */
+                                 message_ptr,
+                                 &len);
   hb_page->size= message_size * sizeof(guint32);
 }
 
@@ -1049,6 +1047,8 @@ sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   IC_SCHEMA_TRANS_BEGIN_REQ begin_req;
   guint32 our_reference;
   int ret_code;
+  guint32 len= SCHEMA_TRANS_BEGIN_REQ_LEN;
+  void *message_ptr;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
   DEBUG_ENTRY("sendSCHEMA_TRANS_BEGIN_REQ");
 
@@ -1059,16 +1059,18 @@ sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   begin_req.my_reference= our_reference;
   begin_req.my_transaction_id= 0; /* Always use transid 0 as our reference */
   begin_req.flags= 0;
+  message_ptr= &begin_req;
 
   md_trans->state= IC_WAIT_SCHEMA_TRANS_BEGIN_CONF;
 
-  ret_code= send_small_message(apid_conn,
-                               SCHEMA_TRANS_BEGIN_REQ_GSN,
-                               &begin_req,
-                               SCHEMA_TRANS_BEGIN_REQ_LEN,
-                               md_trans->cluster_id,
-                               md_trans->node_id,
-                               IC_NDB_DICT_MODULE);
+  ret_code= send_message(apid_conn,
+                         SCHEMA_TRANS_BEGIN_REQ_GSN,
+                         1, /* No extra segments */
+                         &message_ptr,
+                         &len,
+                         md_trans->cluster_id,
+                         md_trans->node_id,
+                         IC_NDB_DICT_MODULE);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1078,7 +1080,8 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
 {
   int ret_code= 0;
   IC_INT_APID_CONNECTION *apid_conn= ndb_message->apid_conn;
-  IC_SCHEMA_TRANS_BEGIN_CONF *conf= ndb_message->segment_ptr[0];
+  IC_SCHEMA_TRANS_BEGIN_CONF *conf=
+    (IC_SCHEMA_TRANS_BEGIN_CONF*)ndb_message->segment_ptr[0];
   guint32 main_message_size= ndb_message->segment_size[0];
   IC_INT_METADATA_TRANSACTION *md_trans= apid_conn->md_trans;
   /* Word 0 is NDB sender reference, currently no use of this info */
@@ -1123,29 +1126,34 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   DEBUG_RETURN_INT(ret_code);
 }
 
-#define NDB_MD_TRANS_END_REQ_LEN 3
 static int
 sendSCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
   guint32 our_reference;
-  guint32 message_data[NDB_MD_TRANS_END_REQ_LEN];
+  guint32 len= SCHEMA_TRANS_END_REQ_LEN;
+  IC_SCHEMA_TRANS_END_REQ end_req;
+  void *message_ptr;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
 
   /* Get our NDB reference */
   our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
 
   /* Set up message data for NDB_MD_TRANS_END_REQ */
-  message_data[0]= our_reference;
-  message_data[1]= 0; /* Always use trans id 0 */
-  message_data[2]= 0;
+  end_req.my_reference= our_reference;
+  end_req.my_transaction_id= md_trans->my_trans_ref;
+  end_req.request_info= 0;
+  end_req.ndb_transaction_id= md_trans->ndb_trans_ref;
+  end_req.flags= 0;
+  message_ptr= &end_req;
 
-  return send_small_message(apid_conn,
-                            123, /* NDB_MD_TRANS_END_REQ */
-                            &message_data[0],
-                            NDB_MD_TRANS_END_REQ_LEN,
-                            md_trans->cluster_id,
-                            md_trans->node_id,
-                            IC_NDB_DICT_MODULE);
+  return send_message(apid_conn,
+                      SCHEMA_TRANS_END_REQ_GSN,
+                      1, /* No extra segments */
+                      &message_ptr,
+                      &len,
+                      md_trans->cluster_id,
+                      md_trans->node_id,
+                      IC_NDB_DICT_MODULE);
 }
 
 static int
@@ -1189,8 +1197,8 @@ fill_binary_property(IC_DYNAMIC_ARRAY *dyn_array,
   val[1]= htonl(binary_value_len);
 
   if ((ret_code= dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                             (const gchar*)&val[0],
-                                                  (guint64)2 * IC_SIZE_UINT32)))
+                                           (const gchar*)&val[0],
+                                                (guint64)2 * IC_SIZE_UINT32)))
     return ret_code;
 
   if (binary_value_len == 0)
@@ -1203,8 +1211,8 @@ fill_binary_property(IC_DYNAMIC_ARRAY *dyn_array,
 
   memcpy(binary_val_ptr, binary_value, binary_value_len);
   ret_code= dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                        (const gchar*)binary_val_ptr,
-                                             (guint64)IC_SIZE_UINT32 * words_len);
+                                  (const gchar*)binary_val_ptr,
+                                       (guint64)IC_SIZE_UINT32 * words_len);
   ic_free(binary_val_ptr);
   return ret_code;
 }
@@ -1227,8 +1235,8 @@ fill_string_property(IC_DYNAMIC_ARRAY *dyn_array,
   val[1]= htonl(str_len);
 
   if ((ret_code= dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                             (const gchar*)&val[0],
-                                                  (guint64)2 * IC_SIZE_UINT32)))
+                                        (const gchar*)&val[0],
+                                             (guint64)2 * IC_SIZE_UINT32)))
     return ret_code;
 
   if (str_len == 0)
@@ -1241,8 +1249,8 @@ fill_string_property(IC_DYNAMIC_ARRAY *dyn_array,
 
   memcpy(str_ptr, string, str_len);
   ret_code= dyn_array->da_ops.ic_insert_dynamic_array(dyn_array,
-                                        (const gchar*)str_ptr,
-                                             (guint64)IC_SIZE_UINT32 * str_words_len);
+                               (const gchar*)str_ptr,
+                                    (guint64)IC_SIZE_UINT32 * str_words_len);
   ic_free(str_ptr);
   return ret_code;
 }
@@ -1277,20 +1285,43 @@ get_num_added_pkey_cols(IC_INT_ALTER_TABLE *alter_table)
 static guint32
 get_col_size(IC_DEFINE_FIELD *field)
 {
-  return 0;
+  guint32 col_size= 3; /* 1 byte size is default */
+  switch (field->size)
+  {
+    case 1:
+       col_size= 3;
+       break;
+    case 2:
+       col_size= 4;
+       break;
+    case 3:
+    case 4:
+       col_size= 5;
+       break;
+    case 8:
+       col_size= 6;
+       break;
+    case 16:
+       col_size= 7;
+       break;
+    default:
+       ic_require(FALSE);
+       break;
+  }
+  return col_size;
 }
 
 static guint32
 get_col_array_size(IC_DEFINE_FIELD *field)
 {
-  return 0;
+  return field->array_size;
 }
 
 static IC_DYNAMIC_ARRAY*
 fill_create_table_info_properties(IC_INT_ALTER_TABLE *alter_table)
 {
   guint32 num_cols, num_null_cols, num_pkey_cols;
-  guint32 col_size, col_array_size;
+  guint32 col_size;
   int ret_code;
   IC_DYNAMIC_ARRAY *dyn_array;
   IC_DEFINE_FIELD *next_field;
@@ -1477,7 +1508,6 @@ fill_create_table_info_properties(IC_INT_ALTER_TABLE *alter_table)
   do
   {
     col_size= get_col_size(next_field);
-    col_array_size= get_col_array_size(next_field);
 
     if ((ret_code= fill_string_property(dyn_array,
                                         IC_COLUMN_NAME_KEY,
@@ -1493,7 +1523,7 @@ fill_create_table_info_properties(IC_INT_ALTER_TABLE *alter_table)
                                         col_size)) ||
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_ARRAY_SIZE_KEY,
-                                        col_array_size)) ||
+                                        next_field->array_size)) ||
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_PKEY_FLAG_KEY,
                                (guint32)next_field->is_part_of_pkey)) ||

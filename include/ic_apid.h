@@ -394,7 +394,7 @@ struct ic_alter_table_ops
   int (*ic_add_field) (IC_ALTER_TABLE *alter_table,
                        const gchar *field_name,
                        IC_FIELD_TYPE field_type,
-                       guint32 field_size,
+                       guint32 array_size,
                        gboolean is_nullable,
                        gboolean is_disk_stored);
 

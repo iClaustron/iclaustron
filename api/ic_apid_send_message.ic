@@ -142,16 +142,14 @@ static guint32 get_ndb_message_header_size(
                     IC_SEND_NODE_CONNECTION *send_node_conn);
 
 static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                       guint32 message_number,
+                                       guint32 message_id,
                                        guint32 message_priority,
                                        guint32 sender_module_id,
-                                       guint32 receiver_mdoule_id,
+                                       guint32 receiver_module_id,
                                        void *start_message,
-                                       guint32 main_message_size,
-                                       void *main_message,
                                        guint32 num_segments,
-                                       guint32 *segment_ptrs[3],
-                                       guint32 segment_lens[3]);
+                                       void **segment_ptrs,
+                                       guint32 *segment_lens);
 
 static void fill_in_message_id_in_ndb_message(
                           IC_SEND_NODE_CONNECTION *send_node_conn,
@@ -199,77 +197,118 @@ get_message_size(guint32 word1)
 
 static guint32
 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
-                        guint32 message_number,
+                        guint32 message_id,
                         guint32 message_priority,
                         guint32 sender_module_id,
                         guint32 receiver_module_id,
                         void *start_message,
-                        guint32 main_message_size,
-                        void *main_message,
                         guint32 num_segments,
-                        guint32 *segment_ptrs[3],
-                        guint32 segment_lens[3])
+                        void **segment_ptrs,
+                        guint32 *segment_lens)
 {
   guint32 header_length= IC_NDB_MESSAGE_HEADER_SIZE;
   register guint32 word;
   register guint32 loc_variable;
   guint32 tot_message_size;
-  gboolean use_message_id= send_node_conn->link_config->use_message_id;
+  gboolean use_message_sequence_id=
+    send_node_conn->link_config->use_message_id;
   gboolean use_checksum= send_node_conn->link_config->use_checksum;
   guint32 *message_ptr;
   guint32 *start_message32= start_message;
   guint32 i;
-  /*
+
+  ic_assert(num_segments <= 4);
+  ic_assert(num_segments > 0);
+
+  /**
     First calculate length of message header:
       It is 3 words (32-bit words) plus an optional word
       that contains a message number which is unique for the sender
       node. There is also an optional checksum word at the end of
       the message.
     Second copy the main message part and the segment parts into the
-    right place in the message if not already done.
+    right place in the message.
+  
+  ------------------------------------------
+  |       Header word 0                    |
+  ------------------------------------------
+  |       Header word 1                    |
+  ------------------------------------------
+  |       Header word 2                    |
+  ------------------------------------------
+  |       Optional message sequence number |
+  ------------------------------------------
+  |       Mandatory main message data      |
+  ------------------------------------------
+  |       Optional array of segment lengths|
+  ------------------------------------------
+  |       Optional segment 0               |
+  ------------------------------------------
+  |       Optional segment 1               |
+  ------------------------------------------
+  |       Optional segment 2               |
+  ------------------------------------------
+  |       Optional checksum                |
+  ------------------------------------------
+
+  The mandatory main message data plus the array of message lengths
+  cannot be longer than 25.
+
+  The maximum number of segments is 3 and no one is mandatory.
+
+  Message sequence number and checksum is configured per connection,
+  so for a connection it's either always on or always off.
+
+  Header word 1
+  -------------
+  Bit 0, 7, 24, 31 are set if big endian on sender side
+  Bit 1,25   Fragmented messages indicator (Always 0 for now, TODO)
+  Bit 2      Message id used flag
+  Bit 3      ???
+  Bit 4      Checksum used flag
+  Bit 5-6    Message priority
+  Bit 8-23   Total message size
+  Bit 26-30  Main message size (max 25)
+
+  Header word 2
+  -------------
+  Bit 0-19   Message number (e.g. API_HBREQ)
+  Bit 20-25  Trace number
+  Bit 26-27  Number of segements used
+  Bit 28-31  Not used (?)
+
+  Header word 3
+  -------------
+  Bit 0-15   Sender module id
+  Bit 16-31  Receiver module id
   */
-  header_length+= use_message_id;
-  tot_message_size= header_length + main_message_size;
-  if (main_message != (start_message + header_length))
+
+  header_length+= use_message_sequence_id;
+  tot_message_size= header_length + segment_lens[0];
+  memcpy(start_message + header_length,
+         segment_ptrs[0],
+         segment_lens[0] * sizeof(guint32));
+
+  message_ptr= (guint32*)(start_message32 +
+                          header_length +
+                          segment_lens[0]);
+
+  for (i= 1; i < num_segments; i++)
   {
-    memmove(start_message + header_length,
-            main_message,
-            main_message_size * sizeof(guint32));
+    tot_message_size+= (segment_lens[i] + 1);
+    *message_ptr= segment_lens[i];
+    message_ptr++;
   }
-  if (num_segments > 0)
+
+  for (i= 1; i < num_segments; i++)
   {
-    message_ptr= (guint32*)(start_message32 +
-                            header_length +
-                            main_message_size);
-    for (i= 0; i < num_segments; i++)
-    {
-      tot_message_size+= (segment_lens[i] + 1);
-      *message_ptr= segment_lens[i];
-      message_ptr++;
-    }
-    for (i= 0; i < num_segments; i++)
-    {
-      if (segment_ptrs[i] != message_ptr)
-      {
-        memmove(message_ptr,
-                segment_ptrs[i],
-                segment_lens[i] * sizeof(guint32));
-      }
-      message_ptr+= segment_lens[i];
-    }
+    memcpy(message_ptr,
+           segment_ptrs[i],
+           segment_lens[i] * sizeof(guint32));
+    message_ptr+= segment_lens[i];
   }
   tot_message_size+= use_checksum;
-  /*
-    Calculate first header word
-    Bit 0, 7, 24, 31 are set if big endian on sender side
-    Bit 1,25   Fragmented messages indicator (Always 0 for now, TODO)
-    Bit 2      Message id used flag
-    Bit 3      ???
-    Bit 4      Checksum used flag
-    Bit 5-6    Message priority
-    Bit 8-23   Total message size
-    Bit 26-30  Main message size (max 25)
-  */
+  /* Calculate first header word */
   word= 0;
 
   /* Set byte order indicator */
@@ -277,7 +316,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
     word= 0x81000081; /* Set bit 0,7,24,31 independent of byte order */
 
   /* Set message id used flag */
-  loc_variable= use_message_id << 2;
+  loc_variable= use_message_sequence_id << 2;
   word|= loc_variable;
 
   /* Set checksum used flag */
@@ -293,23 +332,17 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   loc_variable= tot_message_size << 8;
   word|= loc_variable;
 
-  /* Set main message size */
-  loc_variable= main_message_size + num_segments;
+  /* Set main message size, make sure it's not > 25 */
+  loc_variable= segment_lens[0] + (num_segments - 1);
   ic_require(loc_variable <= IC_NDB_MAX_MAIN_MESSAGE_SIZE);
   loc_variable<<= 26;
   word|= loc_variable;
 
   start_message32[0]= word;
-  /*
-    Calculate second header word
-    Bit 0-19   Message number (e.g. API_HBREQ)
-    Bit 20-25  Trace number
-    Bit 26-27  Number of segements used
-    Bit 28-31  Not used (?)
-  */
+  /* Calculate second header word */
 
   /* Set message number */
-  word= message_number;
+  word= message_id;
 
   /* Set trace number (0 always for now) */
 
@@ -318,11 +351,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   word|= loc_variable;
 
   start_message32[1]= word;
-  /*
-    Calculate third header word
-    Bit 0-15   Sender module id
-    Bit 16-31  Receiver module id
-  */
+  /* Calculate third header word */
 
   /* Set sender module id */
   ic_require(sender_module_id <= IC_MAX_MODULE_ID);
@@ -334,14 +363,17 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   word|= loc_variable;
 
   start_message32[2]= word;
-  if (use_message_id)
+  if (use_message_sequence_id)
+  {
+    /* Set proper message sequence_id here at some point in time */
     start_message32[3]= 0;
+  }
   if (use_checksum)
   {
     word= 0;
     for (i= 0; i < tot_message_size - 1; i++)
       word ^= start_message32[i];
-    start_message32[tot_message_size]= word;
+    start_message32[tot_message_size - 1]= word;
   }
   return tot_message_size;
 }
@@ -615,25 +647,38 @@ map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
 }
 
 static int
-send_small_message(IC_INT_APID_CONNECTION *apid_conn,
-                   /* Message data */
-                   guint32 message_id,
-                   void *message_data,
-                   guint32 message_size,
-                   /* Destination data */
-                   guint32 receiver_cluster_id,
-                   guint32 receiver_node_id,
-                   guint32 receiver_module_id)
+send_message(IC_INT_APID_CONNECTION *apid_conn,
+             /* Message id */
+             guint32 message_id,
+             /* Message data */
+             guint32 num_segments,
+             void **segment_ptrs,
+             guint32 *segment_size,
+             /* Destination data */
+             guint32 receiver_cluster_id,
+             guint32 receiver_node_id,
+             guint32 receiver_module_id)
 {
-  void *message_start;
-  void *main_message_start;
-  guint32 header_size;
   IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
   IC_SOCK_BUF_PAGE *send_page;
   IC_SEND_NODE_CONNECTION *send_node_conn;
+  guint32 message_size;
   int ret_code= IC_ERROR_MEM_ALLOC;
 
+  /**
+     Messages are sent through the following four-step approach
+     1) Allocate a send page, this is a 32K buffer that houses one message
+        and is linked into other such pages when sent.
+     2) Get a send node connection object provided the receivers cluster
+        id and the receivers node id.
+     3) Fill the send page with the content according to the NDB protocol.
+        This means filling in the message header, but also copying the
+        data into the send page.
+     4) Finally send the object, when the message is actually sent is
+        handled by other modules, here we simply deliver a send page to
+        another module and then we're done with our task.
+  */
   if (!(send_page= send_buf_pool->sock_buf_ops.ic_get_sock_buf_page_wait(
                  send_buf_pool,
                  (guint32)0,
@@ -646,12 +691,6 @@ send_small_message(IC_INT_APID_CONNECTION *apid_conn,
                                                 receiver_node_id,
                                                 &send_node_conn)))
     goto error;
-  message_start= send_page->sock_buf;
-  header_size= get_ndb_message_header_size(send_node_conn);
-  main_message_start= message_start + header_size;
-  memcpy(main_message_start,
-         message_data,
-         sizeof(guint32) * message_size);
 
   /* Fill in message data */
   message_size= fill_ndb_message_header(send_node_conn,
@@ -659,12 +698,10 @@ send_small_message(IC_INT_APID_CONNECTION *apid_conn,
                                         IC_NDB_NORMAL_PRIO,
                                         send_node_conn->thread_id,
                                         receiver_module_id,
-                                        message_start,
-                                        message_size,
-                                        main_message_start,
-                                        0, /* No segments */
-                                        NULL,
-                                        NULL);
+                                        send_page->sock_buf,
+                                        num_segments,
+                                        segment_ptrs,
+                                        segment_size);
   send_page->size= message_size * sizeof(guint32);
 
   /* Send message data */

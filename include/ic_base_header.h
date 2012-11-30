@@ -163,8 +163,8 @@ static const guint32 IC_MINUS_ONE= 0xFFFFFFFF;
 #define IC_PREALLOC_NUM_MESSAGES (guint32)8
 #define IC_WAIT_SEND_BUF_POOL (guint32)3000
 
-#define IC_NDB_NORMAL_PRIO 0
-#define IC_NDB_HIGH_PRIO 1
+static const guint32 IC_NDB_NORMAL_PRIO= 0;
+static const guint32 IC_NDB_HIGH_PRIO= 1;
 
 #define IC_NDB_QMGR_MODULE 252
 #define IC_NDB_TC_MODULE 245

@@ -39,6 +39,7 @@
 #include "ic_apid_int.h"
 #include "ic_apid_impl.h"
 #include "ic_apid_static.h"
+#include "ic_apid_general_signals.h"
 #include "ic_apid_dict_signals.h"
 #include "ic_apid_key_signals.h"
 #include "ic_apid_scan_signals.h"

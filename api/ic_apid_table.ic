@@ -373,13 +373,14 @@ static int
 at_add_field(IC_ALTER_TABLE *ext_alter_table,
              const gchar *field_name,
              IC_FIELD_TYPE field_type,
-             guint32 field_size,
+             guint32 array_size,
              gboolean is_nullable,
              gboolean is_field_disk_stored)
 {
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   IC_DEFINE_FIELD *def_field;
   int ret_code= 0;
+  guint32 field_size;
   DEBUG_ENTRY("at_add_field");
 
   if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
@@ -419,9 +420,11 @@ at_add_field(IC_ALTER_TABLE *ext_alter_table,
       field_size= 8;
       break;
     default:
+      field_size= 1;
       break;
   }
   def_field->size= field_size;
+  def_field->array_size= array_size;
   def_field->is_nullable= is_nullable;
   def_field->is_field_disk_stored= is_field_disk_stored;
   if (is_field_disk_stored)
