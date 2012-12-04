@@ -149,7 +149,8 @@ static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        void *start_message,
                                        guint32 num_segments,
                                        void **segment_ptrs,
-                                       guint32 *segment_lens);
+                                       guint32 *segment_lens,
+                                       guint32 fragmented_flag);
 
 static void fill_in_message_id_in_ndb_message(
                           IC_SEND_NODE_CONNECTION *send_node_conn,
@@ -204,7 +205,8 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                         void *start_message,
                         guint32 num_segments,
                         void **segment_ptrs,
-                        guint32 *segment_lens)
+                        guint32 *segment_lens,
+                        guint32 fragment_flag)
 {
   guint32 header_length= IC_NDB_MESSAGE_HEADER_SIZE;
   register guint32 word;
@@ -262,7 +264,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   Header word 1
   -------------
   Bit 0, 7, 24, 31 are set if big endian on sender side
-  Bit 1,25   Fragmented messages indicator (Always 0 for now, TODO)
+  Bit 1,25   Fragmented messages indicator
   Bit 2      Message id used flag
   Bit 3      ???
   Bit 4      Checksum used flag
@@ -281,6 +283,15 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   -------------
   Bit 0-15   Sender module id
   Bit 16-31  Receiver module id
+
+  Fragmented messages are multiple messages that should be delivered
+  as one message to the receiver of the message. In this case bit
+  1 and 25 represent a number between 0 and 3.
+  0 means there is no fragmentation, or in terms of fragments, this fragment
+  is the first and the last fragment.
+  1 means it is the first fragment in a train of fragments.
+  2 means it is not the first fragment, but also isn't the last fragment.
+  3 means it isn't the first, but it is the last fragment.
   */
 
   header_length+= use_message_sequence_id;
@@ -314,6 +325,12 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   /* Set byte order indicator */
   if (ic_glob_byte_order)
     word= 0x81000081; /* Set bit 0,7,24,31 independent of byte order */
+
+  /* Set fragmented flags */
+  loc_variable= fragment_flag & 1;
+  word|= (loc_variable << 1);
+  loc_variable= fragment_flag & 3;
+  word|= (loc_variable << (25 - 1));
 
   /* Set message id used flag */
   loc_variable= use_message_sequence_id << 2;
@@ -646,6 +663,23 @@ map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
   return 0;
 }
 
+static void
+init_segment_ptrs(void **segment_ptrs,
+                  guint32 *segment_size,
+                  void *first_segment_ptr,
+                  guint32 first_segment_size)
+{
+  segment_ptrs[0]= first_segment_ptr;
+  segment_ptrs[1]= NULL;
+  segment_ptrs[2]= NULL;
+  segment_ptrs[3]= NULL;
+  segment_size[0]= first_segment_size;
+  segment_size[1]= 0;
+  segment_size[2]= 0;
+  segment_size[3]= 0;
+}
+
+#define IC_MAX_SEGMENT_SIZE_PER_FRAGMENT 240
 static int
 send_message(IC_INT_APID_CONNECTION *apid_conn,
              /* Message id */
@@ -657,7 +691,8 @@ send_message(IC_INT_APID_CONNECTION *apid_conn,
              /* Destination data */
              guint32 receiver_cluster_id,
              guint32 receiver_node_id,
-             guint32 receiver_module_id)
+             guint32 receiver_module_id,
+             guint32 fragment_flag)
 {
   IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
@@ -701,7 +736,8 @@ send_message(IC_INT_APID_CONNECTION *apid_conn,
                                         send_page->sock_buf,
                                         num_segments,
                                         segment_ptrs,
-                                        segment_size);
+                                        segment_size,
+                                        fragment_flag);
   send_page->size= message_size * sizeof(guint32);
 
   /* Send message data */
@@ -710,6 +746,87 @@ send_message(IC_INT_APID_CONNECTION *apid_conn,
                           TRUE)))
     goto error;
   return 0;
+error:
+  return ret_code;
+}
+
+static const guint32 ONLY_FRAGMENT= 0;
+static const guint32 FIRST_FRAGMENT= 1;
+static const guint32 IN_THE_MIDDLE_FRAGMENT= 2;
+static const guint32 LAST_FRAGMENT= 3;
+
+static int
+send_fragmented_message(IC_INT_APID_CONNECTION *apid_conn,
+                        guint32 message_id,
+                        guint32 num_segments,
+                        void **segment_ptrs,
+                        guint32 *segment_size,
+                        guint32 receiver_cluster_id,
+                        guint32 receiver_node_id,
+                        guint32 receiver_module_id)
+{
+  int ret_code;
+  gchar *new_ptr;
+  guint32 current_seg_size;
+  gboolean first= TRUE;
+  guint32 current_segment= 1;
+  void *loc_segment_ptrs[4];
+  guint32 loc_segment_size[4];
+
+  ic_require(num_segments > 1);
+
+next_message:
+  init_segment_ptrs((void**)&loc_segment_ptrs[0],
+                    (guint32*)&loc_segment_size[0],
+                    segment_ptrs[0],
+                    segment_size[0]);
+
+  for (;;)
+  {
+    current_seg_size= segment_size[current_segment];
+    if (current_seg_size < IC_MAX_SEGMENT_SIZE_PER_FRAGMENT)
+    {
+      loc_segment_ptrs[current_segment]= segment_ptrs[current_segment];
+      loc_segment_size[current_segment]= segment_size[current_segment];
+      current_segment++;
+      if (current_segment == num_segments)
+      {
+        if ((ret_code= send_message(apid_conn,
+                                    message_id,
+                                    num_segments,
+                                    (void**)&loc_segment_ptrs[0],
+                                    (guint32*)&loc_segment_size[0],
+                                    receiver_cluster_id,
+                                    receiver_node_id,
+                                    receiver_module_id,
+                                    first ? ONLY_FRAGMENT : LAST_FRAGMENT)))
+          goto error;
+        return 0;
+      }
+    }
+    else
+    {
+      loc_segment_ptrs[current_segment]= segment_ptrs[current_segment];
+      loc_segment_size[current_segment]= IC_MAX_SEGMENT_SIZE_PER_FRAGMENT;
+      segment_size[current_segment]-= IC_MAX_SEGMENT_SIZE_PER_FRAGMENT;
+      new_ptr= ((gchar*)segment_ptrs[current_segment]) +
+               IC_MAX_SEGMENT_SIZE_PER_FRAGMENT;
+      segment_ptrs[current_segment]= new_ptr;
+      if ((ret_code= send_message(apid_conn,
+                                  message_id,
+                                  num_segments,
+                                  (void**)&loc_segment_ptrs[0],
+                                  (guint32*)&loc_segment_size[0],
+                                  receiver_cluster_id,
+                                  receiver_node_id,
+                                  receiver_module_id,
+                                  first ? FIRST_FRAGMENT :
+                                          IN_THE_MIDDLE_FRAGMENT)))
+        goto error;
+      first= FALSE;
+      goto next_message;
+    }
+  }
 error:
   return ret_code;
 }

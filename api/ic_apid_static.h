@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2011 iClaustron AB
+/* Copyright (C) 2009-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -71,4 +71,5 @@ static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        void *start_message,
                                        guint32 num_segments,
                                        void **segment_ptrs,
-                                       guint32 *segment_lens);
+                                       guint32 *segment_lens,
+                                       guint32 fragment_flag);

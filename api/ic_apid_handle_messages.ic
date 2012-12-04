@@ -880,7 +880,8 @@ prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  hb_page->sock_buf,
                                  1, /* No extra segments */
                                  message_ptr,
-                                 &len);
+                                 &len,
+                                 0);
   hb_page->size= message_size * sizeof(guint32);
 }
 
@@ -1070,7 +1071,8 @@ sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
                          &len,
                          md_trans->cluster_id,
                          md_trans->node_id,
-                         IC_NDB_DICT_MODULE);
+                         IC_NDB_DICT_MODULE,
+                         0);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1153,7 +1155,8 @@ sendSCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
                       &len,
                       md_trans->cluster_id,
                       md_trans->node_id,
-                      IC_NDB_DICT_MODULE);
+                      IC_NDB_DICT_MODULE,
+                      0);
 }
 
 static int
