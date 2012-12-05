@@ -58,10 +58,6 @@ static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,
                     gboolean force_send);
 
-/* Internal function to get NDB message header size */
-static guint32 get_ndb_message_header_size(
-                    IC_SEND_NODE_CONNECTION *send_node_conn);
-
 /* Internal function to prepare NDB message for sending */
 static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        guint32 message_id,

@@ -138,9 +138,6 @@ static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,
                     gboolean force_send);
 
-static guint32 get_ndb_message_header_size(
-                    IC_SEND_NODE_CONNECTION *send_node_conn);
-
 static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        guint32 message_id,
                                        guint32 message_priority,
@@ -180,15 +177,6 @@ static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
                                  guint32 cluster_id,
                                  guint32 node_id,
                                  IC_SEND_NODE_CONNECTION **send_node_conn);
-
-static guint32 get_message_size(guint32 word1);
-/* Send message functions */
-static guint32
-get_ndb_message_header_size(IC_SEND_NODE_CONNECTION *send_node_conn)
-{
-  guint32 header_length= IC_NDB_MESSAGE_HEADER_SIZE;
-  return header_length + send_node_conn->link_config->use_message_id;
-}
 
 static guint32
 get_message_size(guint32 word1)

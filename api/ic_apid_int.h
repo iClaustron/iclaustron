@@ -362,6 +362,19 @@ struct ic_int_metadata_transaction
   IC_INT_ALTER_TABLESPACE *last_alter_ts;
 };
 
+typedef enum ic_reference_type IC_REFERENCE_TYPE;
+enum ic_reference_type
+{
+  IC_MD_TRANS= 0
+};
+
+typedef struct ic_reference_container IC_REFERENCE_CONTAINER;
+struct ic_reference_container
+{
+  void *reference;
+  IC_REFERENCE_TYPE ref_type;
+};
+
 struct ic_int_apid_query
 {
   /* Public part */
@@ -541,6 +554,14 @@ struct ic_int_apid_global
   IC_SOCK_BUF *ndb_message_pool;
   IC_GRID_COMM *grid_comm;
   IC_API_CONFIG_SERVER *apic;
+  /**
+    dynamic_map_array is used when receiving a message from NDB kernel
+    to map to our own internal object. This uses a dynamic pointer
+    array that maps to a IC_REFERENCE_CONTAINER object which contains
+    the pointer to the actual object plus a type identifier to ensure
+    we don't get spurious messages that maps to wrong type of object.
+  */
+  IC_DYNAMIC_PTR_ARRAY *dynamic_map_array;
   /*
     Heartbeat thread related variables, the heartbeat thread handles
     heartbeat sending for all active nodes, the active nodes are
