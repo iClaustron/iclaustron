@@ -151,7 +151,7 @@ static const int CREATE_TABLE_REQ_LEN=
 /**
   CREATE_TABLE_REQ also contains one segment containing
   the information about the table to be created. The signal could
-  also be a fragmented containing more table information than
+  also be fragmented, containing more table information than
   what fits in one signal.
 */
 

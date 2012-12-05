@@ -1592,9 +1592,63 @@ static int
 sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
                      IC_INT_ALTER_TABLE *alter_table)
 {
-  (void)md_trans;
-  (void)alter_table;
+  int ret_code;
+  guint32 desc_size;
+  guint32 our_reference;
+  IC_CREATE_TABLE_REQ begin_req;
+  gchar *buf= NULL;
+  IC_DYNAMIC_ARRAY *dyn_array;
+  guint32 size_array[2];
+  void *segment_array[2];
+
+  if (!(dyn_array= fill_create_table_info_properties(alter_table)))
+    goto mem_error;
+
+  desc_size= dyn_array->da_ops.ic_get_current_size(dyn_array);
+  if (!(buf= ic_malloc(desc_size)))
+    goto mem_error;
+
+  /* Get our NDB reference */
+  our_reference= ic_get_ic_reference(md_trans->node_id,
+                                     md_trans->apid_conn->thread_id);
+
+  begin_req.my_reference= our_reference;
+  begin_req.my_data= 0;
+  begin_req.flags= 0;
+  begin_req.my_transaction_id= md_trans->my_trans_ref;
+  begin_req.ndb_transaction_id= md_trans->ndb_trans_ref;
+
+  size_array[0]= CREATE_TABLE_REQ_LEN;
+  segment_array[0]= &begin_req;
+  size_array[1]= desc_size/IC_SIZE_UINT32;
+  segment_array[1]= buf;
+
+  if ((ret_code= dyn_array->da_ops.ic_read_dynamic_array(dyn_array,
+                                                         (guint64)0,
+                                                         (guint64)desc_size,
+                                                         buf)))
+    goto error;
+  if ((ret_code= send_fragmented_message(md_trans->apid_conn,
+                                         CREATE_TABLE_REQ_GSN,
+                                         2,
+                                         &segment_array[0],
+                                         &size_array[0],
+                                         md_trans->cluster_id,
+                                         md_trans->node_id,
+                                         IC_NDB_DICT_MODULE)))
+    goto error;
+  ic_free(buf);
+  dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
   return 0;
+
+mem_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
+error:
+  if (buf)
+    ic_free(buf);
+  if (dyn_array)
+    dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
+  return ret_code;
 }
 
 static int

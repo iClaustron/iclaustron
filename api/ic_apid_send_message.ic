@@ -329,7 +329,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   /* Set fragmented flags */
   loc_variable= fragment_flag & 1;
   word|= (loc_variable << 1);
-  loc_variable= fragment_flag & 3;
+  loc_variable= fragment_flag & 2;
   word|= (loc_variable << (25 - 1));
 
   /* Set message id used flag */
