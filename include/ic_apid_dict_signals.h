@@ -56,6 +56,15 @@ struct ic_schema_trans_begin_ref
 static const int SCHEMA_TRANS_BEGIN_REF_LEN= 
   sizeof(IC_SCHEMA_TRANS_BEGIN_REF)/sizeof(guint32);
 
+static const int SCHEMA_TRANS_MASTER_BUSY= 701;
+static const int SCHEMA_TRANS_MASTER_NR_BUSY= 711;
+static const int SCHEMA_TRANS_WRONG_MASTER= 702;
+static const int SCHEMA_TRANS_INCOMPATIBLE_VERSIONS= 763;
+static const int SCHEMA_TRANS_NODE_FAILURE= 786;
+static const int SCHEMA_TRANS_OUT_OF_MEMORY= 796;
+static const int SCHEMA_TRANS_TOO_MANY_TRANS= 780;
+
+
 /* Commit/Abort schema transaction messages */
 static const int SCHEMA_TRANS_END_REQ_GSN = 734;
 static const int SCHEMA_TRANS_END_CONF_GSN = 735;

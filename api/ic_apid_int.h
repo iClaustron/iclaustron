@@ -197,6 +197,9 @@ struct ic_int_apid_error
   IC_APID_ERROR_OPS *apid_error_ops;
   gchar *error_msg;
   int error_code;
+  guint32 error_line;
+  guint32 error_node_id;
+  guint32 master_node_id;
   IC_ERROR_CATEGORY error_category;
   IC_ERROR_SEVERITY_LEVEL error_severity;
 };

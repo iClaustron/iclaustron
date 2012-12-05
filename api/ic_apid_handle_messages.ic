@@ -985,6 +985,41 @@ print_ndb_message_error(IC_NDB_MESSAGE *ndb_message)
   return;
 }
 
+static void
+md_trans_set_internal_error(IC_INT_METADATA_TRANSACTION *md_trans,
+                            int ret_code)
+{
+  md_trans->return_to_api= TRUE;
+  md_trans->error_object.error_code= ret_code;
+  md_trans->error_object.error_category= IC_CATEGORY_INTERNAL_ERROR;
+  md_trans->error_object.error_severity= IC_SEVERITY_STOP_ERROR;
+}
+
+static void
+md_trans_set_external_error(IC_INT_METADATA_TRANSACTION *md_trans,
+                            int error_code)
+{
+  md_trans->error_object.error_code= error_code;
+  md_trans->error_object.error_category= IC_CATEGORY_INTERNAL_ERROR;
+  switch (error_code)
+  {
+    case SCHEMA_TRANS_MASTER_BUSY:
+    case SCHEMA_TRANS_MASTER_NR_BUSY:
+    case SCHEMA_TRANS_WRONG_MASTER:
+    case SCHEMA_TRANS_NODE_FAILURE:
+    case SCHEMA_TRANS_OUT_OF_MEMORY:
+    case SCHEMA_TRANS_TOO_MANY_TRANS:
+      md_trans->error_object.error_severity= IC_SEVERITY_TEMPORARY_ERROR;
+      return;
+    case SCHEMA_TRANS_INCOMPATIBLE_VERSIONS:
+      md_trans->error_object.error_severity= IC_SEVERITY_ERROR;
+      return;
+    default:
+      md_trans->error_object.error_severity= IC_SEVERITY_ERROR;
+      return;
+  }
+}
+
 static IC_INT_METADATA_TRANSACTION*
 get_metadata_transaction_from_message(IC_NDB_MESSAGE *ndb_message,
                                       guint32 index)
@@ -1091,13 +1126,50 @@ sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
                          md_trans->node_id,
                          IC_NDB_DICT_MODULE,
                          0);
+  md_trans_set_internal_error(md_trans, ret_code);
   DEBUG_RETURN_INT(ret_code);
+}
+
+static void
+execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  guint32 our_trans_id= 0;
+  IC_SCHEMA_TRANS_BEGIN_REF *ref=
+    (IC_SCHEMA_TRANS_BEGIN_REF*)ndb_message->segment_ptr[0];
+  IC_INT_METADATA_TRANSACTION *md_trans;
+
+  if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
+                                                        our_trans_id)))
+  {
+    print_ndb_message_error(ndb_message);
+    return; /* Ignore faulty messages */
+  }
+  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
+
+  if (ref->error_code == SCHEMA_TRANS_WRONG_MASTER)
+  {
+    md_trans->node_id= ref->master_node_id;
+    sendSCHEMA_TRANS_BEGIN_REQ(md_trans);
+    return;
+  }
+  else if (ref->error_code == SCHEMA_TRANS_MASTER_BUSY ||
+           ref->error_code == SCHEMA_TRANS_MASTER_NR_BUSY)
+  {
+    ic_sleep(1);
+    sendSCHEMA_TRANS_BEGIN_REQ(md_trans);
+    return;
+  }
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans->error_object.error_line= ref->error_line;
+  md_trans->error_object.error_node_id= ref->error_node_id;
+  md_trans->error_object.master_node_id= ref->master_node_id;
+  md_trans->return_to_api= TRUE;
+  return;
 }
 
 static void
 execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  int ret_code= 0;
   IC_SCHEMA_TRANS_BEGIN_CONF *conf=
     (IC_SCHEMA_TRANS_BEGIN_CONF*)ndb_message->segment_ptr[0];
   guint32 main_message_size= ndb_message->segment_size[0];
@@ -1145,10 +1217,6 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message)
   }
   else
     ic_require(FALSE);
-  if (ret_code)
-  {
-    ; /* Handle error */
-  }
   DEBUG_RETURN_EMPTY;
 }
 
@@ -1190,7 +1258,7 @@ sendCREATE_HASH_MAP_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
                               IC_NDB_DICT_MODULE,
                               0)))
   {
-    ; /* Handle error */
+    md_trans_set_internal_error(md_trans, ret_code);
   }
   return;
 }
@@ -1283,8 +1351,8 @@ error:
     ic_free(buf);
   if (dyn_array)
     dyn_array->da_ops.ic_free_dynamic_array(dyn_array);
-  /* Handle error */
-  md_trans->return_to_api= TRUE;
+
+  md_trans_set_internal_error(md_trans, ret_code);
   return;
 }
 
@@ -1345,7 +1413,7 @@ sendSCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
                               IC_NDB_DICT_MODULE,
                               0)))
   {
-    ; /* Handle error */
+    md_trans_set_internal_error(md_trans, ret_code);
   }
   return;
 }
@@ -1368,24 +1436,6 @@ execSCHEMA_TRANS_END_CONF_v0(IC_NDB_MESSAGE *ndb_message)
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_END_CONF);
 
   md_trans->return_to_api= TRUE;
-  return;
-}
-
-static void
-execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message)
-{
-  guint32 our_trans_id= 0;
-  IC_INT_METADATA_TRANSACTION *md_trans;
-
-  if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
-                                                        our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
-    return; /* Ignore faulty messages */
-  }
-  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
-  md_trans->return_to_api= TRUE;
-  ic_require(FALSE);
   return;
 }
 
