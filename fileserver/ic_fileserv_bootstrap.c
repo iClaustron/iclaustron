@@ -99,6 +99,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
   md_trans->md_trans_ops->ic_free_md_trans(md_trans);
   ic_printf("Successfully created table: file_table");
   DEBUG_RETURN_INT(0);
+
 error:
   if (md_trans)
     md_trans->md_trans_ops->ic_free_md_trans(md_trans);

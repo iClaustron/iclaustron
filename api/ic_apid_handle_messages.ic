@@ -1214,6 +1214,8 @@ sendCREATE_HASH_MAP_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   map_req.num_buckets= 0;
   map_req.num_partitions= 0;
 
+  md_trans->state= IC_WAIT_CREATE_HASH_MAP_CONF;
+
   /* Send the message */
   message_ptr= &map_req;
   len= CREATE_HASH_MAP_REQ_LEN;
@@ -1246,6 +1248,8 @@ execCREATE_HASH_MAP_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     print_ndb_message_error(ndb_message);
     return 0; /* Ignore faulty messages */
   }
+  ic_require(md_trans->state == IC_WAIT_CREATE_HASH_MAP_CONF);
+
   /* Set intereresting references to the hash map object */
   alter_table= md_trans->current_alter_table;
   alter_table->hash_map_id= conf->ndb_object_id;
@@ -1282,6 +1286,8 @@ sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
   begin_req.flags= 0;
   begin_req.my_transaction_id= md_trans->my_trans_ref;
   begin_req.ndb_transaction_id= md_trans->ndb_trans_ref;
+
+  md_trans->state= IC_WAIT_CREATE_TABLE_CONF;
 
   size_array[0]= CREATE_TABLE_REQ_LEN;
   segment_array[0]= &begin_req;
@@ -1333,7 +1339,8 @@ execCREATE_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     print_ndb_message_error(ndb_message);
     return 0; /* Ignore faulty messages */
   }
-  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
+  ic_require(md_trans->state == IC_WAIT_CREATE_TABLE_CONF);
+
   alter_table= md_trans->current_alter_table;
   alter_table->table_id= conf->table_id;
   alter_table->table_version= conf->table_version;
@@ -1359,6 +1366,8 @@ sendSCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   end_req.ndb_transaction_id= md_trans->ndb_trans_ref;
   end_req.flags= 0;
   message_ptr= &end_req;
+
+  md_trans->state= IC_WAIT_SCHEMA_TRANS_END_CONF;
 
   return send_message(apid_conn,
                       SCHEMA_TRANS_END_REQ_GSN,
@@ -1388,6 +1397,9 @@ execSCHEMA_TRANS_END_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     print_ndb_message_error(ndb_message);
     return 0; /* Ignore faulty messages */
   }
+  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_END_CONF);
+
+  md_trans->apid_conn->return_to_api= TRUE;
   return 0;
 }
 
@@ -1404,6 +1416,8 @@ execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message,
     print_ndb_message_error(ndb_message);
     return 0; /* Ignore faulty messages */
   }
+  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
+  md_trans->apid_conn->return_to_api= TRUE;
   ic_require(FALSE);
   return 0;
 }
@@ -1421,6 +1435,8 @@ execCREATE_HASH_MAP_REF_v0(IC_NDB_MESSAGE *ndb_message,
     print_ndb_message_error(ndb_message);
     return 0; /* Ignore faulty messages */
   }
+  ic_require(md_trans->state == IC_WAIT_CREATE_HASH_MAP_CONF);
+  md_trans->apid_conn->return_to_api= TRUE;
   return 0;
 }
 
@@ -1437,7 +1453,8 @@ execCREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message,
     print_ndb_message_error(ndb_message);
     return 0; /* Ignore faulty messages */
   }
-  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
+  ic_require(md_trans->state == IC_WAIT_CREATE_TABLE_CONF);
+  md_trans->apid_conn->return_to_api= TRUE;
   return 0;
 }
 
@@ -1454,6 +1471,8 @@ execSCHEMA_TRANS_END_REF_v0(IC_NDB_MESSAGE *ndb_message,
     print_ndb_message_error(ndb_message);
     return 0; /* Ignore faulty messages */
   }
+  ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_END_CONF);
+  md_trans->apid_conn->return_to_api= TRUE;
   ic_require(FALSE);
   return 0;
 }
