@@ -41,9 +41,8 @@ static IC_EXEC_MESSAGE_FUNC* get_exec_message_func(guint32 message_id,
                                                    guint32 version_num);
 static IC_SOCK_BUF_PAGE*
 get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn, glong wait_time);
-static int execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
-                           IC_NDB_MESSAGE *ndb_message,
-                           IC_INT_APID_ERROR *apid_error);
+static void execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
+                            IC_NDB_MESSAGE *ndb_message);
 static int create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                               IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
                               IC_NDB_MESSAGE *ndb_message);
@@ -192,16 +191,14 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   return 0;
 }
 
-static int
+static void
 execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
-                IC_NDB_MESSAGE *ndb_message,
-                IC_INT_APID_ERROR *error_report_object)
+                IC_NDB_MESSAGE *ndb_message)
 {
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
   IC_EXEC_MESSAGE_FUNC *exec_message_func;
   IC_SOCK_BUF_PAGE *message_page;
   IC_SOCK_BUF *sock_buf_container;
-  IC_MESSAGE_ERROR_OBJECT error_object;
   gint *ref_count_ptr;
   gboolean ref_count_zero;
 
@@ -224,16 +221,7 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
         Found a function to execute, now call the actual function defined
         for this message id and version.
       */
-      if (exec_message_func->ic_exec_message_func
-            (ndb_message, &error_object))
-      {
-        /* Handle error from signal executor */
-        error_report_object->error_msg= error_object.error_msg;
-        error_report_object->error_code= error_object.error_code;
-        error_report_object->error_category= error_object.error_category;
-        error_report_object->error_severity= error_object.error_severity;
-        return 1;
-      }
+      exec_message_func->ic_exec_message_func(ndb_message);
     }
     if (ndb_message_page->ref_count > 0)
     {
@@ -262,10 +250,8 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
           sock_buf_container, message_page);
       }
     }
-    return 0;
   }
-  /* Fill in error_report_object */
-  return 1;
+  return;
 }
 
 /*
@@ -281,7 +267,6 @@ ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
   IC_SOCK_BUF_PAGE *ndb_message_page, *first_ndb_message_page;
   IC_SOCK_BUF *sock_buf_container;
   IC_NDB_MESSAGE ndb_message;
-  IC_INT_APID_ERROR *apid_error= &apid_conn->apid_error;
 
   /*
     We start by getting the messages waiting for us in the receive queue,
@@ -299,14 +284,9 @@ ic_poll_messages(IC_APID_CONNECTION *ext_apid_conn, glong wait_time)
   while (ndb_message_page)
   {
     /* Execute one message received */
-    if (execute_message(ndb_message_page,
-                        &ndb_message,
-                        &apid_conn->apid_error))
-    {
-      return apid_error->apid_error_ops->ic_get_apid_error_code(
-                    (IC_APID_ERROR*)apid_error);
-    }
-    ndb_message_page= ndb_message_page->next_sock_buf_page;
+   execute_message(ndb_message_page,
+                   &ndb_message);
+   ndb_message_page= ndb_message_page->next_sock_buf_page;
   }
   if (first_ndb_message_page)
   {

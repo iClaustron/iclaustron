@@ -344,6 +344,9 @@ struct ic_int_metadata_transaction
   /* Error object used to report back what went wrong */
   IC_INT_APID_ERROR error_object;
 
+  /* Boolean to discover when NDB schema transaction completed */
+  gboolean return_to_api;
+
   /* NDB Transaction reference */
   guint32 ndb_trans_ref;
 
@@ -502,7 +505,6 @@ struct ic_int_apid_connection
   IC_SOCK_BUF_PAGE *free_pages;
   IC_INT_METADATA_TRANSACTION *md_trans;
   guint32 thread_id;
-  gboolean return_to_api;
   /*
     The queries pass through a set of lists from start to end.
 
