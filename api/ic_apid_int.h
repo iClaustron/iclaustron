@@ -293,8 +293,14 @@ struct ic_int_alter_table
   gboolean is_table_temporary;
   gboolean is_table_checksummed;
 
+  /* Hash map reference */
   guint32 hash_map_id;
   guint32 hash_map_version;
+
+  /* Table reference */
+  guint32 table_id;
+  guint32 table_version;
+
   /* Type of operation create/alter/drop/rename table */
   IC_ALTER_OPERATION_TYPE alter_op_type;
 
