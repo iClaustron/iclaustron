@@ -1008,6 +1008,9 @@ static int
 sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans);
 
 static int
+sendCREATE_HASH_MAP_REQ(IC_INT_METADATA_TRANSACTION *md_trans);
+
+static int
 sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
                      IC_INT_ALTER_TABLE *alter_table);
 
@@ -1137,10 +1140,10 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   guint32 main_message_size= ndb_message->segment_size[0];
   IC_INT_METADATA_TRANSACTION *md_trans;
   /* Word 0 is NDB sender reference, currently no use of this info */
-  guint32 our_trans_id= conf->my_transaction_id;
-  guint32 ndb_trans_ref= conf->ndb_transaction_id;
   IC_INT_ALTER_TABLE *alter_table;
   IC_INT_ALTER_TABLESPACE *alter_ts;
+  guint32 our_trans_id= conf->my_transaction_id;
+  guint32 ndb_trans_ref= conf->ndb_transaction_id;
   DEBUG_ENTRY("execSCHEMA_TRANS_BEGIN_CONF_v0");
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
@@ -1150,7 +1153,7 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     return 0; /* Ignore faulty messages */
   }
   (void)error_object;
-  ic_require(main_message_size == 3);
+  ic_require(main_message_size == SCHEMA_TRANS_BEGIN_CONF_LEN);
   md_trans->ndb_trans_ref= ndb_trans_ref;
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
 
@@ -1159,7 +1162,7 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
     switch (alter_table->alter_op_type)
     {
       case IC_CREATE_TABLE_OP:
-        ret_code= sendCREATE_TABLE_REQ(md_trans, alter_table);
+        ret_code= sendCREATE_HASH_MAP_REQ(md_trans);
         break;
       case IC_ALTER_TABLE_OP:
         ic_require(FALSE);
@@ -1181,6 +1184,42 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message,
   else
     ic_require(FALSE);
   DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+sendCREATE_HASH_MAP_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
+{
+  guint32 our_reference;
+  guint32 len;
+  void *message_ptr;
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  IC_CREATE_HASH_MAP_REQ map_req;
+
+  /* Get our NDB reference */
+  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
+
+  /* Define the message data */
+  map_req.my_reference= our_reference;
+  map_req.my_data= 0; /* Not used */
+  map_req.ndb_transaction_id= md_trans->ndb_trans_ref;
+  map_req.my_transaction_id= md_trans->my_trans_ref;
+  map_req.flags= CREATE_HASH_MAP_IF_NOT_EXISTS |
+                 CREATE_HASH_MAP_DEFAULT;
+  map_req.num_buckets= 0;
+  map_req.num_partitions= 0;
+
+  /* Send the message */
+  message_ptr= &map_req;
+  len= CREATE_HASH_MAP_REQ_LEN;
+  return send_message(apid_conn,
+                      CREATE_HASH_MAP_REQ_GSN,
+                      1, /* No extra segments */
+                      &message_ptr,
+                      &len,
+                      md_trans->cluster_id,
+                      md_trans->node_id,
+                      IC_NDB_DICT_MODULE,
+                      0);
 }
 
 static int
