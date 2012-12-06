@@ -962,7 +962,7 @@ execDISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message)
   ------------------------------
 */
 
-static int
+static void
 sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans);
 
 static void
@@ -979,9 +979,63 @@ static void
 sendSCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans);
 
 static void
+print_data(guint32 *print_array, guint32 *current)
+{
+  guint32 i;
+
+  if (*current == 0)
+    return;
+  for (i= *current; i < 8; i++)
+  {
+    print_array[i]= 0xFFFFFFFE;
+  }
+  *current= 0;
+  ic_printf("%.8x  %.8x  %.8x  %.8x  %.8x %.8x %.8x %.8x",
+            print_array[0], print_array[1],
+            print_array[2], print_array[3],
+            print_array[4], print_array[5],
+            print_array[6], print_array[7]);
+}
+
+static void
 print_ndb_message_error(IC_NDB_MESSAGE *ndb_message)
 {
-  (void)ndb_message;
+  guint32 i, j;
+  guint32 current;
+  guint32 print_array[8];
+
+  ic_printf("Message to non-existing receiver, message id = %u"
+            ", prio: %u",
+            ndb_message->message_id,
+            ndb_message->message_priority);
+
+  ic_printf("Sender module: %u, Sender node: %u, message number: %u"
+            "num segments: %u, recv module: %u, recv node: %u",
+            ndb_message->sender_module_id,
+            ndb_message->sender_node_id,
+            ndb_message->message_number,
+            ndb_message->num_segments,
+            ndb_message->receiver_module_id,
+            ndb_message->receiver_node_id);
+
+  for (i= 0; i < ndb_message->num_segments; i++)
+  {
+    if (i == 0)
+    {
+      ic_printf("Message data:");
+    }
+    else
+    {
+      ic_printf("Data segment %u", (i-1));
+    }
+    for (j= 0; j < ndb_message->segment_size[i]; j++)
+    {
+      print_array[current++]= ndb_message->segment_ptr[i][j];
+      if (current == 8)
+        print_data(print_array, &current);
+    }
+    print_data(print_array, &current);
+  }
   return;
 }
 
@@ -1108,14 +1162,13 @@ execute_meta_data_transaction(IC_INT_METADATA_TRANSACTION *md_trans)
     contains all information about what more things that should be
     part of this metadata transaction and how to proceed from there.
   */
-  if ((ret_code= sendSCHEMA_TRANS_BEGIN_REQ(md_trans)))
-    goto error;
+  sendSCHEMA_TRANS_BEGIN_REQ(md_trans);
   /* Poll waiting for messages until we're done */
-  do
+  while (md_trans->return_to_api)
   {
     ic_poll_messages((IC_APID_CONNECTION*)apid_conn,
                      3 * IC_MICROSEC_PER_SECOND);
-  } while (md_trans->return_to_api);
+  }
   ic_require((map_array->dpa_ops.ic_remove_ptr(map_array,
                                                index,
                                                &container)) == 0);
@@ -1125,7 +1178,7 @@ error:
   DEBUG_RETURN_INT(ret_code);
 }
 
-static int
+static void
 sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
 {
   IC_SCHEMA_TRANS_BEGIN_REQ begin_req;
@@ -1156,8 +1209,11 @@ sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
                          md_trans->node_id,
                          IC_NDB_DICT_MODULE,
                          0);
-  md_trans_set_internal_error(md_trans, ret_code);
-  DEBUG_RETURN_INT(ret_code);
+  if (ret_code)
+  {
+    md_trans_set_internal_error(md_trans, ret_code);
+  }
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
