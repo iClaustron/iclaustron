@@ -1039,6 +1039,50 @@ print_ndb_message_error(IC_NDB_MESSAGE *ndb_message)
   return;
 }
 
+/**
+  Error handling methods
+  ----------------------
+
+  There are three types of errors that we can experience in the
+  metadata transaction handling.
+
+  The first type is the errors found in the NDB kernel, they are
+  found through some kind of message with an error code and we
+  can handle this error in an appropriate manner. We categorize
+  these errors as external errors and give them appropriate error
+  level based on whether they are NDB errors or the user have made
+  some error.
+
+  The second type of errors is due to memory allocation failure, out
+  of send buffers and internal errors in the iClaustron API code. All
+  of these errors make it impossible to continue with the meta data
+  transaction, it's also not possible to inform the NDB kernel about
+  this error, so we have to rely on that the API user will take proper
+  action when the error is an internal error. Otherwise we have to rely
+  on the NDB kernel to discover eventually that the transaction was
+  aborted.
+
+  The third type of errors is when we fail to send a message, this could
+  happen for a number of reasons such as: TCP/IP connection broken to
+  node, out of send buffers, error in node id or cluster id or we have
+  somehow discovered that the node to communicate is down. In all of those
+  cases it is impossible to communicate with the node anymore and we
+  will treat the error as an internal error. The NDB node is either already
+  dead or will discover eventually that we consider it dead. So it will
+  be able to recover from the lost transaction participant.
+*/
+
+static void
+md_trans_set_ndb_error(IC_INT_METADATA_TRANSACTION *md_trans,
+                       guint32 error_line,
+                       guint32 error_node_id,
+                       guint32 master_node_id)
+{
+  md_trans->error_object.error_line= error_line;
+  md_trans->error_object.error_node_id= error_node_id;
+  md_trans->error_object.master_node_id= master_node_id;
+}
+
 static void
 md_trans_set_internal_error(IC_INT_METADATA_TRANSACTION *md_trans,
                             int ret_code)
@@ -1054,7 +1098,8 @@ md_trans_set_external_error(IC_INT_METADATA_TRANSACTION *md_trans,
                             int error_code)
 {
   md_trans->error_object.error_code= error_code;
-  md_trans->error_object.error_category= IC_CATEGORY_INTERNAL_ERROR;
+  md_trans->error_object.error_category= IC_CATEGORY_EXTERNAL_ERROR;
+
   switch (error_code)
   {
     case SCHEMA_TRANS_MASTER_BUSY:
@@ -1257,6 +1302,7 @@ execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message)
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
+
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
 
   if (ref->error_code == SCHEMA_TRANS_WRONG_MASTER)
@@ -1280,9 +1326,10 @@ execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message)
     return;
   }
   md_trans_set_external_error(md_trans, ref->error_code);
-  md_trans->error_object.error_line= ref->error_line;
-  md_trans->error_object.error_node_id= ref->error_node_id;
-  md_trans->error_object.master_node_id= ref->master_node_id;
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   md_trans->return_to_api= TRUE;
   return;
 }
@@ -1303,7 +1350,7 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-    return; /* Ignore faulty messages */
+    goto end; /* Ignore faulty messages */
   ic_require(main_message_size == SCHEMA_TRANS_BEGIN_CONF_LEN);
   md_trans->ndb_trans_ref= ndb_trans_ref;
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
@@ -1334,6 +1381,7 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message)
   }
   else
     ic_require(FALSE);
+end:
   DEBUG_RETURN_EMPTY;
 }
 
@@ -1559,7 +1607,11 @@ execCREATE_HASH_MAP_REF_v0(IC_NDB_MESSAGE *ndb_message)
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
   ic_require(md_trans->state == IC_WAIT_CREATE_HASH_MAP_CONF);
-  md_trans->return_to_api= TRUE;
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   return;
 }
 
@@ -1575,7 +1627,11 @@ execCREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message)
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
   ic_require(md_trans->state == IC_WAIT_CREATE_TABLE_CONF);
-  md_trans->return_to_api= TRUE;
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   return;
 }
 
@@ -1591,8 +1647,11 @@ execSCHEMA_TRANS_END_REF_v0(IC_NDB_MESSAGE *ndb_message)
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_END_CONF);
-  md_trans->return_to_api= TRUE;
-  ic_require(FALSE);
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   return;
 }
 
@@ -1607,6 +1666,12 @@ execDROP_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message)
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
+
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   return;
 }
 
@@ -1635,6 +1700,12 @@ execALTER_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message)
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
+
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   return;
 }
 
@@ -1698,6 +1769,12 @@ execALTER_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message)
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
+
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   return;
 }
 
@@ -1726,6 +1803,12 @@ execDROP_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message)
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
+
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans_set_ndb_error(md_trans,
+                         ref->error_line,
+                         ref->error_node_id,
+                         ref->master_node_id);
   return;
 }
 
@@ -1854,12 +1937,16 @@ execLIST_TABLES_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 static void
 execGET_TABINFO_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_GET_TABINFO_REF *ref=
+    (IC_GET_TABINFO_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
     return; /* Ignore faulty messages */
+  md_trans_set_external_error(md_trans, ref->error_code);
+  md_trans->error_object.error_line= ref->error_line;
   return;
 }
 

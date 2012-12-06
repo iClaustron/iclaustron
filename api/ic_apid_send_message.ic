@@ -633,20 +633,20 @@ map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
   IC_CLUSTER_COMM *cluster_comm;
   IC_API_CONFIG_SERVER *apic;
   IC_GRID_COMM *grid_comm;
-  int error;
+  int ret_code;
 
   apic= apid_global->apic;
   grid_comm= apid_global->grid_comm;
-  error= IC_ERROR_NO_SUCH_CLUSTER;
+  ret_code= IC_ERROR_NO_SUCH_CLUSTER;
   if (cluster_id > apic->max_cluster_id)
-    return error;
+    return ret_code;
   cluster_comm= grid_comm->cluster_comm_array[cluster_id];
   if (!cluster_comm)
-    return error;
-  error= IC_ERROR_NO_SUCH_NODE;
+    return ret_code;
+  ret_code= IC_ERROR_NO_SUCH_NODE;
   loc_send_node_conn= cluster_comm->send_node_conn_array[node_id];
   if (!loc_send_node_conn)
-    return error;
+    return ret_code;
   *send_node_conn= loc_send_node_conn;
   return 0;
 }
@@ -708,7 +708,8 @@ send_message(IC_INT_APID_CONNECTION *apid_conn,
                  &apid_conn->free_pages,
                  IC_PREALLOC_NUM_MESSAGES,
                  IC_WAIT_SEND_BUF_POOL)))
-      goto error;
+    goto error;
+
   if ((ret_code= map_id_to_send_node_connection(apid_global,
                                                 receiver_cluster_id,
                                                 receiver_node_id,

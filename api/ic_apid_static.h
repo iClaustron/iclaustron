@@ -32,9 +32,9 @@ guint32 ic_glob_byte_order= 0;
 
 /* Some declarations needed to reach functions inside Modules */
 static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
-                                 guint32 cluster_id,
-                                 guint32 node_id,
-                                 IC_SEND_NODE_CONNECTION **send_node_conn);
+                                guint32 cluster_id,
+                                guint32 node_id,
+                                IC_SEND_NODE_CONNECTION **send_node_conn);
 
 /* Initialise function pointers in Message Logic Modules */
 static void initialize_message_func_array();
