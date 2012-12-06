@@ -56,6 +56,8 @@ struct ic_schema_trans_begin_ref
 static const int SCHEMA_TRANS_BEGIN_REF_LEN= 
   sizeof(IC_SCHEMA_TRANS_BEGIN_REF)/sizeof(guint32);
 
+static const int SCHEMA_TRANS_INVALID_TABLE_VERSION= 241;
+static const int SCHEMA_TRANS_DROP_IN_PROGRESS= 283;
 static const int SCHEMA_TRANS_SINGLE_USER= 299;
 static const int SCHEMA_TRANS_MASTER_BUSY= 701;
 static const int SCHEMA_TRANS_WRONG_MASTER= 702;
@@ -65,6 +67,7 @@ static const int SCHEMA_TRANS_TABLE_NAME_TOO_LONG= 705;
 static const int SCHEMA_TRANS_INCONSISTENCY= 706;
 static const int SCHEMA_TRANS_OUT_OF_TABLE_RECORDS= 707;
 static const int SCHEMA_TRANS_OUT_OF_COLUMN_RECORDS= 708;
+static const int SCHEMA_TRANS_NO_SUCH_TABLE= 709;
 static const int SCHEMA_TRANS_MASTER_NR_BUSY= 711;
 static const int SCHEMA_TRANS_COLUMN_NAME_TWICE= 720;
 static const int SCHEMA_TRANS_TABLE_ALREADY_EXIST= 721;
@@ -73,18 +76,24 @@ static const int SCHEMA_TRANS_ARRAY_SIZE_TOO_BIG= 737;
 static const int SCHEMA_TRANS_RECORD_SIZE_TOO_BIG= 738;
 static const int SCHEMA_TRANS_INVALID_PRIMARY_KEY_SIZE= 739;
 static const int SCHEMA_TRANS_NULLABLE_PRIMARY_KEY= 740;
+static const int SCHEMA_TRANS_CHANGE_NOT_SUPPORTED= 741;
 static const int SCHEMA_TRANS_INVALID_CHARSET= 743;
 static const int SCHEMA_TRANS_INVALID_TABLESPACE= 755;
+static const int SCHEMA_TRANS_INDEX_COLUMN_ON_DISK= 756;
 static const int SCHEMA_TRANS_NO_VARSIZE_BITFIELD_ALLOWED= 757;
 static const int SCHEMA_TRANS_NO_TABLESPACE= 758;
 static const int SCHEMA_TRANS_INVALID_TABLESPACE_VERSION= 759;
+static const int SCHEMA_TRANS_BACKUP_IN_PROGRESS= 762;
 static const int SCHEMA_TRANS_INCOMPATIBLE_VERSIONS= 763;
 static const int SCHEMA_TRANS_OUT_OF_BUFFER= 773;
+static const int SCHEMA_TRANS_TABLE_IS_TEMPORARY_INDEX_ERROR= 776;
+static const int SCHEMA_TRANS_TABLE_ISNT_TEMPORARY_INDEX_ERROR= 777;
 static const int SCHEMA_TRANS_NO_LOGGING_TEMPORARY_TABLE= 778;
 static const int SCHEMA_TRANS_TOO_MANY_TRANS= 780;
 static const int SCHEMA_TRANS_INVALID_NDB_TRANSID= 781;
 static const int SCHEMA_TRANS_INVALID_MY_TRANSID= 782;
 static const int SCHEMA_TRANS_INVALID_STATE= 784;
+static const int SCHEMA_TRANS_ACTIVE_SCHEMA_TRANSACTION= 785;
 static const int SCHEMA_TRANS_NODE_FAILURE= 786;
 static const int SCHEMA_TRANS_ABORTED= 787;
 static const int SCHEMA_TRANS_INVALID_HASH_MAP= 790;
@@ -92,7 +101,25 @@ static const int SCHEMA_TRANS_TABLE_DEF_TOO_BIG= 793;
 static const int SCHEMA_TRANS_REQUIRES_UPGRADE= 794;
 static const int SCHEMA_TRANS_OUT_OF_MEMORY= 796;
 static const int SCHEMA_TRANS_TOO_MANY_FRAGMENTS= 1224;
-
+static const int SCHEMA_TRANS_NO_DROP_TABLE_RESOURCES= 1229;
+static const int SCHEMA_TRANS_TRIGGER_NOT_FOUND= 4238;
+static const int SCHEMA_TRANS_TRIGGER_ALREADY_THERE= 4239;
+static const int SCHEMA_TRANS_INDEX_NAME_TOO_LONG= 4241;
+static const int SCHEMA_TRANS_TOO_MANY_INDEXES= 4242;
+static const int SCHEMA_TRANS_INDEX_NOT_FOUND= 4243;
+static const int SCHEMA_TRANS_INDEX_EXISTS= 4244;
+static const int SCHEMA_TRANS_COLUMN_NULLABLE= 4246;
+static const int SCHEMA_TRANS_BAD_REQUEST= 4247;
+static const int SCHEMA_TRANS_INVALID_INDEX_NAME= 4248;
+static const int SCHEMA_TRANS_INVALID_PRIMARY_TABLE= 4249;
+static const int SCHEMA_TRANS_INVALID_INDEX_TYPE= 4250;
+static const int SCHEMA_TRANS_INDEX_NOT_UNIQUE= 4251;
+static const int SCHEMA_TRANS_INDEX_ALLOCATION_ERROR= 4252;
+static const int SCHEMA_TRANS_CREATE_INDEX_TABLE_FAILURE= 4253;
+static const int SCHEMA_TRANS_NOT_AN_INDEX= 4254;
+static const int SCHEMA_TRANS_DUPLICATE_COLUMN_IN_INDEX= 4258;
+static const int SCHEMA_TRANS_BAD_STATE= 4347;
+static const int SCHEMA_TRANS_INDEX_INCONSISTENCY= 4348;
 
 /* Commit/Abort schema transaction messages */
 static const int SCHEMA_TRANS_END_REQ_GSN = 734;
@@ -170,6 +197,22 @@ struct ic_create_hash_map_conf
 static const int CREATE_HASH_MAP_CONF_LEN= 
   sizeof(IC_CREATE_HASH_MAP_CONF)/sizeof(guint32);
 
+typedef struct ic_create_hash_map_ref IC_CREATE_HASH_MAP_REF;
+struct ic_create_hash_map_ref
+{
+  guint32 ndb_reference;
+  guint32 ndb_data;
+  guint32 my_transaction_id;
+  guint32 master_node_id;
+  guint32 error_node_id;
+  guint32 error_code;
+  guint32 error_line;
+  guint32 error_key;
+  guint32 error_status;
+};
+static const int CREATE_HASH_MAP_REF_LEN= 
+  sizeof(IC_CREATE_HASH_MAP_REF)/sizeof(guint32);
+
 static const int CREATE_TABLE_REQ_GSN = 587;
 static const int CREATE_TABLE_CONF_GSN = 589;
 static const int CREATE_TABLE_REF_GSN = 588;
@@ -197,7 +240,7 @@ typedef struct ic_create_table_conf IC_CREATE_TABLE_CONF;
 struct ic_create_table_conf
 {
   guint32 ndb_reference;
-  guint32 ndb_data;
+  guint32 my_data;
   guint32 my_transaction_id;
   guint32 table_id;
   guint32 table_version;
@@ -220,6 +263,283 @@ struct ic_create_table_ref
 };
 static const int CREATE_TABLE_REF_LEN= 
   sizeof(IC_CREATE_TABLE_REF)/sizeof(guint32);
+
+static const int ALTER_TABLE_REQ_GSN = 600;
+static const int ALTER_TABLE_CONF_GSN = 602;
+static const int ALTER_TABLE_REF_GSN = 601;
+static const int ALTER_TABLE_REP_GSN = 606;
+
+typedef struct ic_alter_table_req IC_ALTER_TABLE_REQ;
+struct ic_alter_table_req
+{
+  guint32 my_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 ndb_transaction_id;
+  guint32 flags;
+  guint32 table_id;
+  guint32 table_version;
+  guint32 change_mask;
+};
+static const int ALTER_TABLE_REQ_LEN= 
+  sizeof(IC_ALTER_TABLE_REQ)/sizeof(guint32);
+
+static const int ALTER_TABLE_NAME_CHANGE= 1;
+static const int ALTER_TABLE_FRM_CHANGE= 2;
+static const int ALTER_TABLE_FRAGMENT_CHANGE= 4;
+static const int ALTER_TABLE_RANGE_CHANGE= 8;
+static const int ALTER_TABLE_TS_NAME_CHANGE= 16;
+static const int ALTER_TABLE_TABLESPACE_CHANGE= 32;
+static const int ALTER_TABLE_ADD_COLUMN= 64;
+static const int ALTER_TABLE_ADD_FRAGMENT= 128;
+static const int ALTER_TABLE_REORG_FRAGMENT= 256;
+static const int ALTER_TABLE_REORG_COMMIT= 512;
+static const int ALTER_TABLE_REORG_SUMA_ENABLE= 1024;
+static const int ALTER_TABLE_REORG_SUMA_FILTER= 2048;
+
+/**
+  ALTER_TABLE_REQ also contains one segment containing
+  the information about the table to be altered. The signal could
+  also be fragmented, containing more table information than
+  what fits in one signal.
+*/
+
+typedef struct ic_alter_table_conf IC_ALTER_TABLE_CONF;
+struct ic_alter_table_conf
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 table_id;
+  guint32 table_version;
+  guint32 new_table_version;
+};
+static const int ALTER_TABLE_CONF_LEN= 
+  sizeof(IC_ALTER_TABLE_CONF)/sizeof(guint32);
+
+typedef struct ic_alter_table_ref IC_ALTER_TABLE_REF;
+struct ic_alter_table_ref
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 error_code;
+  guint32 error_line;
+  guint32 error_node_id;
+  guint32 master_node_id;
+  guint32 error_status;
+  guint32 error_key;
+};
+static const int ALTER_TABLE_REF_LEN= 
+  sizeof(IC_ALTER_TABLE_REF)/sizeof(guint32);
+
+/* ALTER_TABLE_REP also contains one segment with the table name */
+typedef struct ic_alter_table_rep IC_ALTER_TABLE_REP;
+struct ic_alter_table_rep
+{
+  guint32 table_id;
+  guint32 table_version;
+  guint32 change_type;
+};
+static const int ALTER_TABLE_REP_LEN= 
+  sizeof(IC_ALTER_TABLE_REP)/sizeof(guint32);
+
+static const int ALTER_TABLE_REP_ALTERED= 1;
+static const int ALTER_TABLE_REP_DROPPED= 2;
+
+static const int CREATE_INDEX_REQ_GSN = 510;
+static const int CREATE_INDEX_CONF_GSN = 511;
+static const int CREATE_INDEX_REF_GSN = 512;
+
+typedef struct ic_create_index_req IC_CREATE_INDEX_REQ;
+struct ic_create_index_req
+{
+  guint32 my_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 ndb_transaction_id;
+  guint32 flags;
+  guint32 table_id;
+  guint32 table_version;
+  guint32 index_type;
+  guint32 online_flag;
+};
+static const int CREATE_INDEX_REQ_LEN= 
+  sizeof(IC_CREATE_INDEX_REQ)/sizeof(guint32);
+
+static const int CREATE_INDEX_BUILD_OFFLINE= 256;
+
+/**
+  CREATE_INDEX_REQ also contains two sections, the first contains a list
+  of the columns that are part of the index, the second contains the name
+  of the new index.
+*/
+
+typedef struct ic_create_index_conf IC_CREATE_INDEX_CONF;
+struct ic_create_index_conf
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 index_id;
+  guint32 index_version;
+};
+static const int CREATE_INDEX_CONF_LEN= 
+  sizeof(IC_CREATE_INDEX_CONF)/sizeof(guint32);
+
+typedef struct ic_create_index_ref IC_CREATE_INDEX_REF;
+struct ic_create_index_ref
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 error_code;
+  guint32 error_line;
+  guint32 error_node_id;
+  guint32 master_node_id;
+};
+static const int CREATE_INDEX_REF_LEN= 
+  sizeof(IC_CREATE_INDEX_REF)/sizeof(guint32);
+
+static const int DROP_TABLE_REQ_GSN = 82;
+static const int DROP_TABLE_CONF_GSN = 112;
+static const int DROP_TABLE_REF_GSN = 102;
+
+typedef struct ic_drop_table_req IC_DROP_TABLE_REQ;
+struct ic_drop_table_req
+{
+  guint32 my_reference;
+  guint32 my_data;
+  guint32 flags;
+  guint32 my_transaction_id;
+  guint32 ndb_transaction_id;
+  guint32 table_id;
+  guint32 table_version;
+};
+static const int DROP_TABLE_REQ_LEN= 
+  sizeof(IC_DROP_TABLE_REQ)/sizeof(guint32);
+
+typedef struct ic_drop_table_conf IC_DROP_TABLE_CONF;
+struct ic_drop_table_conf
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 table_id;
+  guint32 table_version;
+};
+static const int DROP_TABLE_CONF_LEN= 
+  sizeof(IC_DROP_TABLE_CONF)/sizeof(guint32);
+
+typedef struct ic_drop_table_ref IC_DROP_TABLE_REF;
+struct ic_drop_table_ref
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 table_id;
+  guint32 table_version;
+  guint32 error_code;
+  guint32 error_line;
+  guint32 error_node_id;
+  guint32 master_node_id;
+};
+static const int DROP_TABLE_REF_LEN= 
+  sizeof(IC_DROP_TABLE_REF)/sizeof(guint32);
+
+static const int ALTER_INDEX_REQ_GSN = 603;
+static const int ALTER_INDEX_CONF_GSN = 605;
+static const int ALTER_INDEX_REF_GSN = 604;
+
+typedef struct ic_alter_index_req IC_ALTER_INDEX_REQ;
+struct ic_alter_index_req
+{
+  guint32 my_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 ndb_transaction_id;
+  guint32 flags;
+  guint32 index_id;
+  guint32 index_version;
+};
+static const int ALTER_INDEX_REQ_LEN= 
+  sizeof(IC_ALTER_INDEX_REQ)/sizeof(guint32);
+
+static const int ALTER_INDEX_BUILD_OFFLINE= 256;
+
+typedef struct ic_alter_index_conf IC_ALTER_INDEX_CONF;
+struct ic_alter_index_conf
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 index_id;
+  guint32 index_version;
+};
+static const int ALTER_INDEX_CONF_LEN= 
+  sizeof(IC_ALTER_INDEX_CONF)/sizeof(guint32);
+
+typedef struct ic_alter_index_ref IC_ALTER_INDEX_REF;
+struct ic_alter_index_ref
+{
+  guint32 ndb_reference;
+  guint32 ndb_data;
+  guint32 my_transaction_id;
+  guint32 index_id;
+  guint32 index_version;
+  guint32 error_code;
+  guint32 error_line;
+  guint32 error_node_id;
+  guint32 master_node_id;
+};
+static const int ALTER_INDEX_REF_LEN= 
+  sizeof(IC_ALTER_INDEX_REF)/sizeof(guint32);
+
+static const int DROP_INDEX_REQ_GSN = 516;
+static const int DROP_INDEX_CONF_GSN = 517;
+static const int DROP_INDEX_REF_GSN = 518;
+
+typedef struct ic_drop_index_req IC_DROP_INDEX_REQ;
+struct ic_drop_index_req
+{
+  guint32 my_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 ndb_transaction_id;
+  guint32 flags;
+  guint32 index_id;
+  guint32 index_version;
+};
+static const int DROP_INDEX_REQ_LEN= 
+  sizeof(IC_DROP_INDEX_REQ)/sizeof(guint32);
+
+typedef struct ic_drop_index_conf IC_DROP_INDEX_CONF;
+struct ic_drop_index_conf
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 index_id;
+  guint32 index_version;
+};
+static const int DROP_INDEX_CONF_LEN= 
+  sizeof(IC_DROP_INDEX_CONF)/sizeof(guint32);
+
+typedef struct ic_drop_index_ref IC_DROP_INDEX_REF;
+struct ic_drop_index_ref
+{
+  guint32 ndb_reference;
+  guint32 my_data;
+  guint32 my_transaction_id;
+  guint32 index_id;
+  guint32 index_version;
+  guint32 error_code;
+  guint32 error_line;
+  guint32 error_node_id;
+  guint32 master_node_id;
+};
+static const int DROP_INDEX_REF_LEN= 
+  sizeof(IC_DROP_INDEX_REF)/sizeof(guint32);
 
 static const int GET_TABINFO_REQ_GSN= 24;
 static const int GET_TABINFO_CONF_GSN= 190;

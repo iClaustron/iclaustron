@@ -1064,6 +1064,10 @@ md_trans_set_external_error(IC_INT_METADATA_TRANSACTION *md_trans,
     case SCHEMA_TRANS_OUT_OF_MEMORY:
     case SCHEMA_TRANS_TOO_MANY_TRANS:
     case SCHEMA_TRANS_ABORTED:
+    case SCHEMA_TRANS_BACKUP_IN_PROGRESS:
+    case SCHEMA_TRANS_DROP_IN_PROGRESS:
+    case SCHEMA_TRANS_NO_DROP_TABLE_RESOURCES:
+    case SCHEMA_TRANS_ACTIVE_SCHEMA_TRANSACTION:
       md_trans->error_object.error_severity= IC_SEVERITY_TEMPORARY_ERROR;
       return;
     case SCHEMA_TRANS_INCOMPATIBLE_VERSIONS:
@@ -1074,6 +1078,14 @@ md_trans_set_external_error(IC_INT_METADATA_TRANSACTION *md_trans,
     case SCHEMA_TRANS_TABLE_DEF_TOO_BIG:
     case SCHEMA_TRANS_REQUIRES_UPGRADE:
     case SCHEMA_TRANS_OUT_OF_BUFFER:
+    case SCHEMA_TRANS_TRIGGER_NOT_FOUND:
+    case SCHEMA_TRANS_TRIGGER_ALREADY_THERE:
+    case SCHEMA_TRANS_BAD_REQUEST:
+    case SCHEMA_TRANS_INDEX_ALLOCATION_ERROR:
+    case SCHEMA_TRANS_CREATE_INDEX_TABLE_FAILURE:
+    case SCHEMA_TRANS_INVALID_TABLE_VERSION:
+    case SCHEMA_TRANS_BAD_STATE:
+    case SCHEMA_TRANS_INDEX_INCONSISTENCY:
       md_trans->error_object.error_severity= IC_SEVERITY_ERROR;
       return;
     case SCHEMA_TRANS_OUT_OF_TABLE_RECORDS:
@@ -1095,6 +1107,22 @@ md_trans_set_external_error(IC_INT_METADATA_TRANSACTION *md_trans,
     case SCHEMA_TRANS_INVALID_HASH_MAP:
     case SCHEMA_TRANS_TOO_MANY_FRAGMENTS:
     case SCHEMA_TRANS_NO_TABLESPACE:
+    case SCHEMA_TRANS_NO_SUCH_TABLE:
+    case SCHEMA_TRANS_CHANGE_NOT_SUPPORTED:
+    case SCHEMA_TRANS_INDEX_COLUMN_ON_DISK:
+    case SCHEMA_TRANS_TABLE_IS_TEMPORARY_INDEX_ERROR:
+    case SCHEMA_TRANS_TABLE_ISNT_TEMPORARY_INDEX_ERROR:
+    case SCHEMA_TRANS_INDEX_NAME_TOO_LONG:
+    case SCHEMA_TRANS_TOO_MANY_INDEXES:
+    case SCHEMA_TRANS_INDEX_EXISTS:
+    case SCHEMA_TRANS_COLUMN_NULLABLE:
+    case SCHEMA_TRANS_INVALID_INDEX_NAME:
+    case SCHEMA_TRANS_INVALID_PRIMARY_TABLE:
+    case SCHEMA_TRANS_INVALID_INDEX_TYPE:
+    case SCHEMA_TRANS_INDEX_NOT_UNIQUE:
+    case SCHEMA_TRANS_DUPLICATE_COLUMN_IN_INDEX:
+    case SCHEMA_TRANS_INDEX_NOT_FOUND:
+    case SCHEMA_TRANS_NOT_AN_INDEX:
       md_trans->error_object.error_severity= IC_SEVERITY_ERROR;
       md_trans->error_object.error_category= IC_CATEGORY_USER_ERROR;
       return;
@@ -1118,12 +1146,14 @@ get_metadata_transaction_from_message(IC_NDB_MESSAGE *ndb_message,
   if ((ret_code= map_array->dpa_ops.ic_get_ptr(map_array,
                                                (guint64)index,
                                                &object)))
-    return NULL;
+    goto error;
 
   container= (IC_REFERENCE_CONTAINER*)object;
   md_trans= (IC_INT_METADATA_TRANSACTION*)container->reference;
   if (container->ref_type == IC_MD_TRANS)
     return md_trans;
+error:
+  print_ndb_message_error(ndb_message);
   return NULL;
   
 }
@@ -1226,10 +1256,7 @@ execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
 
   if (ref->error_code == SCHEMA_TRANS_WRONG_MASTER)
@@ -1241,6 +1268,13 @@ execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message)
   else if (ref->error_code == SCHEMA_TRANS_MASTER_BUSY ||
            ref->error_code == SCHEMA_TRANS_MASTER_NR_BUSY)
   {
+    /**
+      Sleeping as part of message execution is not a good idea, but
+      in this case we know that the only activity handled by this
+      thread currently is to start a metadata transaction. Not sleeping
+      would put an unnecessary pressure on the master node and this
+      node.
+    */
     ic_sleep(1);
     sendSCHEMA_TRANS_BEGIN_REQ(md_trans);
     return;
@@ -1269,10 +1303,7 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(main_message_size == SCHEMA_TRANS_BEGIN_CONF_LEN);
   md_trans->ndb_trans_ref= ndb_trans_ref;
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
@@ -1361,10 +1392,7 @@ execCREATE_HASH_MAP_CONF_v0(IC_NDB_MESSAGE *ndb_message)
   our_trans_id= conf->my_transaction_id;
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(md_trans->state == IC_WAIT_CREATE_HASH_MAP_CONF);
 
   /* Set intereresting references to the hash map object */
@@ -1453,10 +1481,7 @@ execCREATE_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(md_trans->state == IC_WAIT_CREATE_TABLE_CONF);
 
   alter_table= md_trans->current_alter_table;
@@ -1515,10 +1540,7 @@ execSCHEMA_TRANS_END_CONF_v0(IC_NDB_MESSAGE *ndb_message)
   ic_require(ndb_message->segment_size[0] == SCHEMA_TRANS_END_CONF_LEN);
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_END_CONF);
 
   md_trans->return_to_api= TRUE;
@@ -1528,15 +1550,14 @@ execSCHEMA_TRANS_END_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 static void
 execCREATE_HASH_MAP_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_CREATE_HASH_MAP_REF *ref=
+    (IC_CREATE_HASH_MAP_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(md_trans->state == IC_WAIT_CREATE_HASH_MAP_CONF);
   md_trans->return_to_api= TRUE;
   return;
@@ -1545,15 +1566,14 @@ execCREATE_HASH_MAP_REF_v0(IC_NDB_MESSAGE *ndb_message)
 static void
 execCREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_CREATE_TABLE_REF *ref=
+    (IC_CREATE_TABLE_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(md_trans->state == IC_WAIT_CREATE_TABLE_CONF);
   md_trans->return_to_api= TRUE;
   return;
@@ -1562,15 +1582,14 @@ execCREATE_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 static void
 execSCHEMA_TRANS_END_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_SCHEMA_TRANS_END_REF *ref=
+    (IC_SCHEMA_TRANS_END_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_END_CONF);
   md_trans->return_to_api= TRUE;
   ic_require(FALSE);
@@ -1580,165 +1599,147 @@ execSCHEMA_TRANS_END_REF_v0(IC_NDB_MESSAGE *ndb_message)
 static void
 execDROP_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_DROP_TABLE_REF *ref=
+    (IC_DROP_TABLE_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execDROP_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_DROP_TABLE_CONF *conf=
+    (IC_DROP_TABLE_CONF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= conf->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execALTER_TABLE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_ALTER_TABLE_REF *ref=
+    (IC_ALTER_TABLE_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execALTER_TABLE_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_ALTER_TABLE_CONF *conf=
+    (IC_ALTER_TABLE_CONF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= conf->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execALTER_TABLE_REP_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
-  IC_INT_METADATA_TRANSACTION *md_trans;
-
-  if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
-                                                        our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
-    return; /* Ignore faulty messages */
-  }
+  (void)ndb_message;
   return;
 }
 
 static void
 execCREATE_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_CREATE_INDEX_REF *ref=
+    (IC_CREATE_INDEX_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execCREATE_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_CREATE_INDEX_CONF *conf=
+    (IC_CREATE_INDEX_CONF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= conf->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execALTER_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_ALTER_INDEX_REF *ref=
+    (IC_ALTER_INDEX_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execALTER_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_ALTER_INDEX_CONF *conf=
+    (IC_ALTER_INDEX_CONF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= conf->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execDROP_INDEX_REF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_DROP_INDEX_REF *ref=
+    (IC_DROP_INDEX_REF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= ref->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
 static void
 execDROP_INDEX_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 our_trans_id= 0;
+  IC_DROP_INDEX_CONF *conf=
+    (IC_DROP_INDEX_CONF*)ndb_message->segment_ptr[0];
+  guint32 our_trans_id= conf->my_transaction_id;
   IC_INT_METADATA_TRANSACTION *md_trans;
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1750,10 +1751,7 @@ execCREATE_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1765,10 +1763,7 @@ execCREATE_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1780,10 +1775,7 @@ execDROP_TABLESPACE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1795,10 +1787,7 @@ execDROP_TABLESPACE_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1810,10 +1799,7 @@ execCREATE_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1825,10 +1811,7 @@ execCREATE_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1840,10 +1823,7 @@ execDROP_TS_FILE_REF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1855,10 +1835,7 @@ execDROP_TS_FILE_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1870,10 +1847,7 @@ execLIST_TABLES_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1885,10 +1859,7 @@ execGET_TABINFO_REF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1900,10 +1871,7 @@ execGET_TABINFO_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1915,10 +1883,7 @@ execGET_TABLE_ID_REF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1930,10 +1895,7 @@ execGET_TABLE_ID_CONF_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
@@ -1945,10 +1907,7 @@ execSCHEMA_TRANS_END_REP_v0(IC_NDB_MESSAGE *ndb_message)
 
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
-  {
-    print_ndb_message_error(ndb_message);
     return; /* Ignore faulty messages */
-  }
   return;
 }
 
