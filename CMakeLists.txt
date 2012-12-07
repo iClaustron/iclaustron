@@ -399,6 +399,8 @@ add_library(ic_api STATIC
             api/ic_apid_send_message.ic
             api/ic_apid_send_thread.ic
             api/ic_apid_handle_messages.ic
+            api/ic_apid_handle_dict_messages.ic
+            api/ic_apid_handle_message_array.ic
             api/ic_apid_exec_message.ic
             api/ic_apid_rec_thread.ic
             api/ic_apid_start.ic

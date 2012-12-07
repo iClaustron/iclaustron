@@ -30,9 +30,11 @@ EXTRA_DIST =              ic_apic_int.h ic_apid_int.h \
                           ic_apid_impl.h ic_apid_static.h \
                           ic_apid_global.ic ic_apid_common.ic \
                           ic_apid_heartbeat.ic ic_apid_adaptive_send.ic \
+                          ic_apid_rec_thread.ic ic_apid_start.ic \
                           ic_apid_send_message.ic ic_apid_send_thread.ic \
                           ic_apid_handle_messages.ic ic_apid_exec_messages.ic \
-                          ic_apid_rec_thread.ic ic_apid_start.ic \
+                          ic_apid_handle_dict_messages.ic \
+                          ic_apid_handle_message_array.ic \
                           ic_apid_range.ic ic_apid_where.ic \
                           ic_apid_cond_assign.ic ic_apid_op.ic \
                           ic_apid_error.ic ic_apid_conn.ic \
