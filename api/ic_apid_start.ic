@@ -229,7 +229,9 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
   }
   while (1)
   {
-    if (apid_global->apid_global_ops->ic_get_num_user_threads(apid_global) == 0)
+    if (apid_global->apid_global_ops->ic_get_num_user_threads(apid_global)
+        == 0 ||
+        ic_get_stop_flag())
     {
       break;
     }

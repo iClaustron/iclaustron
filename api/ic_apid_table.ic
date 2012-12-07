@@ -276,7 +276,7 @@ allocate_def_field(IC_INT_ALTER_TABLE *alter_table, const gchar *field_name)
 
   field_name_len= strlen(field_name);
   size= sizeof(IC_DEFINE_FIELD) + field_name_len + 1;
-  if ((def_field= (IC_DEFINE_FIELD*)
+  if (!(def_field= (IC_DEFINE_FIELD*)
       alter_table->mc_ptr->mc_ops.ic_mc_calloc(alter_table->mc_ptr, size)))
     DEBUG_RETURN_PTR(NULL);
   def_field->name= (gchar*)def_field + sizeof(IC_DEFINE_FIELD);
@@ -299,7 +299,7 @@ allocate_def_index(IC_INT_ALTER_TABLE *alter_table,
   index_name_len= strlen(index_name);
   size= sizeof(IC_DEFINE_INDEX) + index_name_len + 1;
   size+= num_fields * sizeof(IC_DEFINE_FIELD*);
-  if ((def_index= (IC_DEFINE_INDEX*)
+  if (!(def_index= (IC_DEFINE_INDEX*)
       alter_table->mc_ptr->mc_ops.ic_mc_calloc(alter_table->mc_ptr, size)))
     DEBUG_RETURN_PTR(NULL);
   ptr= (gchar*)def_index;
@@ -383,7 +383,7 @@ at_add_field(IC_ALTER_TABLE *ext_alter_table,
   guint32 field_size;
   DEBUG_ENTRY("at_add_field");
 
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
   {
     ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
@@ -589,7 +589,7 @@ at_add_index(IC_ALTER_TABLE *ext_alter_table,
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   DEBUG_ENTRY("at_add_index");
 
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
     DEBUG_RETURN_INT(IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME);
   if ((def_index= find_index_in_add_index(alter_table, index_name)))
@@ -936,7 +936,7 @@ mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
 
   if (md_trans->first_alter_ts || md_trans->first_alter_table)
     DEBUG_RETURN_INT(IC_ERROR_MULTIPLE_METADATA_OPS);
-  if ((alter_table= (IC_INT_ALTER_TABLE*)
+  if (!(alter_table= (IC_INT_ALTER_TABLE*)
       md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
                                             sizeof(IC_INT_ALTER_TABLE))))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
@@ -959,7 +959,7 @@ mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
 
   if (md_trans->first_alter_ts || md_trans->first_alter_table)
     return IC_ERROR_MULTIPLE_METADATA_OPS;
-  if ((alter_ts= (IC_INT_ALTER_TABLESPACE*)
+  if (!(alter_ts= (IC_INT_ALTER_TABLESPACE*)
       md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
                                             sizeof(IC_INT_ALTER_TABLESPACE))))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);

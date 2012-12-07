@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2011 iClaustron AB
+/* Copyright (C) 2007-2012 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -131,6 +131,7 @@ ic_create_hashtable(unsigned int minsize,
     struct ic_hashtable *h;
     unsigned int pindex, size = primes[0];
 
+    (void)initial;
     /* Check requested ic_hashtable isn't too large */
     if (minsize > (1u << 30)) return NULL;
     /* Enforce size as prime */
@@ -338,6 +339,7 @@ ic_hashtable_destroy(IC_HASHTABLE *h, gboolean initial)
   IC_HASH_ENTRY *e, *f;
   IC_HASH_ENTRY **table = h->table;
 
+  (void)initial;
   for (i = 0; i < h->tablelength; i++)
   {
     e = table[i];
@@ -354,7 +356,7 @@ ic_hashtable_destroy(IC_HASHTABLE *h, gboolean initial)
 
 /*
  * Copyright (c) 2002, Christopher Clark
- * Copyright (c) 2007-2010 iClaustron AB
+ * Copyright (c) 2007-2012 iClaustron AB
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without

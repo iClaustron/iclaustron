@@ -22,11 +22,12 @@ include_HEADERS = ic_apic.h \
                   ic_apid_hidden.h \
                   ic_apid_inline.h \
                   ic_base_header.h \
+                  ic_bitmap.h \
                   ic_connection.h \
                   ic_debug.h \
                   ic_dyn_array.h \
-                  ic_bitmap.h \
                   ic_err.h \
+                  ic_hashtable.h \
                   ic_hw_info.h \
                   ic_linked_list.h \
                   ic_mc.h \
@@ -36,8 +37,7 @@ include_HEADERS = ic_apic.h \
                   ic_protocol_support.h \
 		  ic_ssl.h \
 		  ic_string.h \
-		  ic_threadpool.h \
-                  ic_hashtable.h
+		  ic_threadpool.h
 
 noinst_HEADERS    = ic_base64.h \
                     ic_proto_str.h \

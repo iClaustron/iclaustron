@@ -565,19 +565,19 @@ install (FILES
          include/ic_apid_hidden.h
          include/ic_apid_inline.h
          include/ic_base_header.h
+         include/ic_bitmap.h
          include/ic_connection.h
-         include/ic_common.h
-         include/ic_common_header.h
          include/ic_debug.h
          include/ic_dyn_array.h
          include/ic_err.h
          include/ic_hashtable.h
          include/ic_hw_info.h
+         include/ic_linked_list.h
          include/ic_mc.h
          include/ic_parse_connectstring.h
          include/ic_poll_set.h
-         include/ic_bitmap.h
          include/ic_port.h
+         include/ic_protocol_support.h
          include/ic_ssl.h
          include/ic_string.h
          include/ic_threadpool.h

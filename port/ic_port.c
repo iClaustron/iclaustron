@@ -1209,8 +1209,8 @@ static void *glob_sig_error_param;
 static void
 sig_error_handler(int signum)
 {
-  DEBUG_ENTRY("sig_error_handler");
-  DEBUG_PRINT(COMM_LEVEL, ("signum = %d", signum));
+  DEBUG_PRINT(COMM_LEVEL,
+    ("sig_error_handler: signum = %d", signum));
 
   switch (signum)
   {
@@ -1219,17 +1219,15 @@ sig_error_handler(int signum)
     case SIGILL:
     case SIGBUS:
     case SIGSYS:
-#ifdef DEBUG_BUILD
-      abort();
-#endif
+      exit(1);
       break;
     default:
-      DEBUG_RETURN_EMPTY;
+      return;
   }
   ic_set_stop_flag();
   if (glob_sig_error_handler)
     glob_sig_error_handler(glob_sig_error_param);
-  DEBUG_RETURN_EMPTY;
+  return;
 }
 
 void
@@ -1250,8 +1248,8 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
 static void
 kill_handler(int signum)
 {
-  DEBUG_ENTRY("kill_handler");
-
+  DEBUG_PRINT(COMM_LEVEL,
+    ("kill_handler: signum = %d", signum));
   switch (signum)
   {
     case SIGTERM:
@@ -1267,12 +1265,13 @@ kill_handler(int signum)
 #endif
       break;
     default:
-      DEBUG_RETURN_EMPTY;
+      exit(1);
+      return;
   }
   ic_set_stop_flag();
   if (glob_die_handler)
     glob_die_handler(glob_die_param);
-  DEBUG_RETURN_EMPTY;
+  return;
 }
 
 void

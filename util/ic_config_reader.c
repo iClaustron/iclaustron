@@ -189,7 +189,10 @@ conv_group_id(gchar *group_id, guint32 len)
       *group_id= c;
     }
     else if (c != ' ')
+    {
+      ic_printf("Only space allowed as separator between groups");
       return NULL;
+    }
     group_id++;
     iter_len++;
   }
@@ -214,6 +217,7 @@ gchar *conv_key_id(gchar *key_id, guint32 *len)
     iter_len++;
     key_id++;
   }
+  ic_printf("Malformed key value, only _ and alphabetic characters allowed");
   return NULL;
 }
 
@@ -234,12 +238,26 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
 {
   gboolean found= FALSE;
   guint32 iter_len= 0;
+  gchar error_buf[2];
   gchar *save_val_str;
   gchar *first_val_str= val_str;
 
   val_str= rm_space(val_str, &iter_len, *len);
   if (*len == iter_len || (val_str[0] != '=' && val_str[0] != ':'))
+  {
+    if (*len != iter_len)
+    {
+      ic_printf("Only : and = allowed as assign operator");
+      error_buf[0]= val_str[0];
+      error_buf[1]= 0;
+      ic_printf("Character with hex-value 0x%x not allowed", (int)val_str[0]);
+    }
+    else
+    {
+      ic_printf("Only key given, no value or assignment operator even");
+    }
     return NULL;
+  }
   val_str++;
   iter_len++;
   val_str= rm_space(val_str, &iter_len, *len);
@@ -247,16 +265,23 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
   while (iter_len < *len)
   {
     gchar c= *val_str;
-    if ((!(g_ascii_isalpha(c)) || (c == '/') || (c == '\\') ||
+    if (!((g_ascii_isalpha(c)) || (c == '/') || (c == '\\') ||
         g_ascii_isdigit(c) || (c == '.') ||
         (c == '_') || g_ascii_isspace(c)))
+    {
+      ic_printf("Only alphabetic, digits, _, .,\\ and / in key values");
+      ic_printf("Character with hex-value 0x%x not allowed", (int)c);
       return NULL;
+    }
     val_str++;
     iter_len++;
     found= TRUE;
   }
   if (!found)
+  {
+    ic_printf("Missing key value");
     return NULL;
+  }
   *len= (guint32)(((first_val_str + *len) - save_val_str) - 1);
   return save_val_str;
 }
@@ -336,9 +361,11 @@ guint32 read_config_line(IC_CONFIG_OPERATIONS *conf_ops,
     rm_space(iter_data, &space_len, line_len);
     id_len-= space_len;
     if (!(key_id= conv_key_id(&iter_data[space_len], &id_len)) ||
-        ((val_len= line_len - (id_len + space_len)), FALSE) ||
+        /* Remove key, spaces + end NULL/CR/LF */
+        ((val_len= line_len - (id_len + space_len + 1)), FALSE) ||
         (!(val_str= conv_key_value(&iter_data[id_len+space_len], &val_len))))
     {
+      ic_printf("Found config error on line %u", line_number);
       DEBUG_RETURN_INT(IC_ERROR_CONFIG_IMPROPER_KEY_VALUE);
     }
     /*

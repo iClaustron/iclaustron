@@ -849,7 +849,7 @@ prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  IC_NDB_QMGR_MODULE,
                                  hb_page->sock_buf,
                                  1, /* No extra segments */
-                                 message_ptr,
+                                 &message_ptr,
                                  &len,
                                  0);
   hb_page->size= message_size * sizeof(guint32);

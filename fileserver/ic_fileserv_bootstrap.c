@@ -33,7 +33,7 @@ static int
 run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
                      IC_THREAD_STATE *thread_state)
 {
-  int ret_code;
+  int ret_code= IC_ERROR_MEM_ALLOC;
   IC_APID_GLOBAL *apid_global;
   IC_METADATA_TRANSACTION *md_trans= NULL;
   IC_ALTER_TABLE *md_alter_table= NULL;
@@ -56,8 +56,8 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
     6) Commit metadata transaction (this is where the data node is
        contacted.
   */
-  if ((md_trans= ic_create_metadata_transaction(apid_conn,
-                                                0)) ||
+  if ((!(md_trans= ic_create_metadata_transaction(apid_conn,
+                                                0))) ||
 
       ((ret_code= md_trans->md_trans_ops->ic_create_metadata_op(
          md_trans,
@@ -103,7 +103,8 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
 error:
   if (md_trans)
     md_trans->md_trans_ops->ic_free_md_trans(md_trans);
-  ic_printf("Failed to create table: file_table");
+  ic_printf("Failed to create table: file_table, ret_code = %u",
+            ret_code);
   DEBUG_RETURN_INT(0);
 }
 

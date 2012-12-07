@@ -484,7 +484,9 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
       stop the send thread due to stopping the API instance.
     */
     ic_mutex_lock(send_node_conn->mutex);
-    while (!send_node_conn->connection_up || send_node_conn->stop_ordered)
+    while (!send_node_conn->connection_up ||
+           send_node_conn->stop_ordered ||
+           ic_get_stop_flag())
     {
       if (send_node_conn->stop_ordered)
         stop_ordered= TRUE;

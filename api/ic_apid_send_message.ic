@@ -352,7 +352,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   /* Set trace number (0 always for now) */
 
   /* Set number of segments used */
-  loc_variable= num_segments << 26;
+  loc_variable= (num_segments -1) << 26;
   word|= loc_variable;
 
   start_message32[1]= word;

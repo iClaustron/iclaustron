@@ -16,12 +16,12 @@
 #define IC_INSERT_SLL(parent_object, object, name) \
   if ((parent_object)->first_##name) \
   { \
-    (parent_object)->first_##name = (object); \
-    (parent_object)->last_##name = (object); \
+    (parent_object)->last_##name->next_##name = (object); \
   } \
   else \
   { \
-    (parent_object)->last_##name->next_##name = (object); \
+    (parent_object)->first_##name = (object); \
+    (parent_object)->last_##name = (object); \
   } \
   object->next_##name = NULL;
 
