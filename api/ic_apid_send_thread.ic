@@ -428,6 +428,9 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   send_node_conn->next_add_node= rec_state->first_add_node;
   rec_state->first_add_node= send_node_conn;
   ic_mutex_unlock(rec_state->mutex);
+  ic_mutex_lock(apid_global->mutex);
+  ic_cond_broadcast(apid_global->cond);
+  ic_mutex_unlock(apid_global->mutex);
 }
 
 static int

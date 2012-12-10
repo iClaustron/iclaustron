@@ -1743,6 +1743,11 @@ struct ic_apid_global_ops
                                      guint32 cluster_id,
                                      glong wait_time); /* in milliseconds */
 
+  /* Get master node id for the cluster */
+  int (*ic_get_master_node_id) (IC_APID_GLOBAL *apid_global,
+                                guint32 cluster_id,
+                                guint32 *node_id);
+
   /* Free the IC_APID_GLOBAL object */
   void (*ic_free_apid_global) (IC_APID_GLOBAL *apid_global);
 };

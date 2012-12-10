@@ -59,6 +59,7 @@ void ic_printf(const char *format,...);
 #define BUILD_CONFIG_HASH_LEVEL 2048
 #define NDB_MESSAGE_LEVEL 4096
 #define ADAPTIVE_SEND_LEVEL 8192
+#define CHECK_POLL_SET_LEVEL 16384
 
 #ifdef DEBUG_BUILD
 void ic_debug_print_char_buf(gchar *buf, IC_THREAD_DEBUG *thread_debug);

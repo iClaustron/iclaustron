@@ -271,6 +271,11 @@ ic_init_error_messages()
     "Missing database name in metadata operation";
   ic_error_str[IC_ERROR_MISSING_TABLE_NAME - IC_FIRST_ERROR]=
     "Missing table name in metadata operation";
+  ic_error_str[IC_ERROR_TIMEOUT_WAITING_FOR_NODES - IC_FIRST_ERROR]=
+    "Timeout waiting for API to succeed in setting up node connections"
+    " to cluster";
+  ic_error_str[IC_ERROR_FOUND_NO_CONNECTED_NODES - IC_FIRST_ERROR]=
+    "Found no master node since API had no connected nodes for the cluster";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

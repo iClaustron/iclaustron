@@ -284,7 +284,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
 
   header_length+= use_message_sequence_id;
   tot_message_size= header_length + segment_lens[0];
-  memcpy(start_message + header_length,
+  memcpy(&start_message32[header_length],
          segment_ptrs[0],
          segment_lens[0] * sizeof(guint32));
 
@@ -508,11 +508,15 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  DEBUG_ENTRY("node_failure_handling");
+
   send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
     send_buf_pool, send_node_conn->first_sbp);
+  DEBUG_PRINT(COMM_LEVEL, ("Node failed = %u",
+              send_node_conn->other_node_id));
   rem_node_from_heartbeat_thread(send_node_conn->apid_global,
                                  send_node_conn);
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static void

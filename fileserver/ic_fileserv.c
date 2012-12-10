@@ -216,6 +216,14 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
   (void)thread_state;
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
 
+  if ((ret_code= apid_global->apid_global_ops->ic_wait_first_node_connect(
+       apid_global,
+       (guint32)0, /* Cluster id */
+       (glong)30000)))
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
+
   if ((ret_code= get_file_table_meta_data(apid_global,
                                           apid_conn,
                                           &md_trans,

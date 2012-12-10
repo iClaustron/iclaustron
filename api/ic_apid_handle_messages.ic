@@ -832,11 +832,12 @@ prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
 
   /* Fill in message data */
   hb_req.my_reference= ic_get_ic_reference(send_node_conn->my_node_id,
-                                             thread_id);
+                                            thread_id);
   hb_req.my_ndb_version= NDB_VERSION;
   hb_req.my_mysql_version= MYSQL_VERSION;
   DEBUG_PRINT(NDB_MESSAGE_LEVEL,
-    ("API_REGREQ: word1: %u, word2: %u, word3: %u, module: %u, thread_id: %u",
+    ("API_REGREQ: word1: 0x%x, word2: 0x%x, word3: 0x%x, module: %u,"
+     " thread_id: %u",
      hb_req.my_reference, hb_req.my_ndb_version, hb_req.my_mysql_version,
      IC_NDB_QMGR_MODULE, send_node_conn->thread_id));
 

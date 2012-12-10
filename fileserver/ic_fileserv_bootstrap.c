@@ -33,7 +33,7 @@ static int
 run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
                      IC_THREAD_STATE *thread_state)
 {
-  int ret_code= IC_ERROR_MEM_ALLOC;
+  int ret_code;
   IC_APID_GLOBAL *apid_global;
   IC_METADATA_TRANSACTION *md_trans= NULL;
   IC_ALTER_TABLE *md_alter_table= NULL;
@@ -46,6 +46,15 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
   (void)thread_state;
 
   apid_global= apid_conn->apid_conn_ops->ic_get_apid_global(apid_conn);
+
+  if ((ret_code= apid_global->apid_global_ops->ic_wait_first_node_connect(
+       apid_global,
+       (guint32)0, /* Cluster id */
+       (glong)30000)))
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
+  ret_code= IC_ERROR_MEM_ALLOC;
   /*
     Creating the file_table has the following steps:
     1) Create metadata transaction

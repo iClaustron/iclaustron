@@ -213,11 +213,12 @@ get_first_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
   IC_POLL_SET *poll_set= rec_state->poll_set;
   const IC_POLL_CONNECTION *poll_conn;
   int ret_code;
+  DEBUG_ENTRY("get_first_rec_node");
 
   if ((ret_code= poll_set->poll_ops.ic_check_poll_set(poll_set, (int)10)) ||
       (!(poll_conn= poll_set->poll_ops.ic_get_next_connection(poll_set))))
-    return NULL;
-  return poll_conn->user_obj;
+    DEBUG_RETURN_PTR(NULL);
+  DEBUG_RETURN_PTR(poll_conn->user_obj);
 }
 
 static IC_RECEIVE_NODE_CONNECTION*
@@ -225,10 +226,11 @@ get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
 {
   IC_POLL_SET *poll_set= rec_state->poll_set;
   const IC_POLL_CONNECTION *poll_conn;
+  DEBUG_ENTRY("get_next_rec_node");
 
   if (!(poll_conn= poll_set->poll_ops.ic_get_next_connection(poll_set)))
-    return NULL;
-  return poll_conn->user_obj;
+    DEBUG_RETURN_PTR(NULL);
+  DEBUG_RETURN_PTR(poll_conn->user_obj);
 }
 
 static void
@@ -668,6 +670,7 @@ mem_pool_error:
 static void
 free_rec_thread(IC_NDB_RECEIVE_STATE *rec_state)
 {
+  DEBUG_ENTRY("free_rec_thread");
   if (rec_state->poll_set)
     rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
   if (rec_state->mutex)
@@ -675,6 +678,7 @@ free_rec_thread(IC_NDB_RECEIVE_STATE *rec_state)
   if (rec_state->cond)
     ic_cond_destroy(&rec_state->cond);
   ic_free((void*)rec_state);
+  DEBUG_RETURN_EMPTY;
 }
 
 static gpointer
@@ -691,6 +695,7 @@ run_receive_thread(void *data)
   guint32 *list_page_modules_received;
   guint32 list_modules_received_index= 0;
   guint32 i;
+  gboolean loop_once;
   IC_RECEIVE_NODE_CONNECTION *rec_node;
   DEBUG_THREAD_ENTRY("run_receive_thread");
   rec_tp= thread_state->ic_get_threadpool(thread_state);
@@ -719,12 +724,15 @@ run_receive_thread(void *data)
 
   while (!rec_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
+    loop_once= FALSE;
     /* Check for which nodes to receive from */
     /* Loop over each node to receive from */
     if (rec_state->first_send_node)
     {
       /* This is where we poll for data on all connected nodes. */
+      DEBUG_DISABLE(CHECK_POLL_SET_LEVEL);
       rec_node= get_first_rec_node(rec_state);
+      DEBUG_ENABLE(CHECK_POLL_SET_LEVEL);
     }
     else
     {
@@ -737,6 +745,7 @@ run_receive_thread(void *data)
     }
     while (rec_node)
     {
+      loop_once= TRUE;
       if ((ret_code= ndb_receive_node(rec_state,
                                       rec_node,
                                       thd_conn,
@@ -762,10 +771,13 @@ run_receive_thread(void *data)
                           list_modules_received,
                           &list_modules_received_index);
       }
+      DEBUG_DISABLE(CHECK_POLL_SET_LEVEL);
       rec_node= get_next_rec_node(rec_state);
+      DEBUG_ENABLE(CHECK_POLL_SET_LEVEL);
     }
     check_for_reorg_receive_threads(rec_state);
-    check_send_buffers(rec_state);
+    if (loop_once)
+      check_send_buffers(rec_state);
   }
 
 end:

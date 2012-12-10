@@ -288,7 +288,9 @@ execute_meta_data_transaction(IC_INT_METADATA_TRANSACTION *md_trans)
 {
   int ret_code;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
-  IC_DYNAMIC_PTR_ARRAY *map_array= apid_conn->apid_global->dynamic_map_array;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
+  IC_APID_GLOBAL *ext_apid_global= (IC_APID_GLOBAL*)apid_global;
+  IC_DYNAMIC_PTR_ARRAY *map_array= apid_global->dynamic_map_array;
   IC_REFERENCE_CONTAINER container;
   guint64 index;
   DEBUG_ENTRY("execute_meta_data_transaction");
@@ -305,6 +307,12 @@ execute_meta_data_transaction(IC_INT_METADATA_TRANSACTION *md_trans)
     goto error;
   md_trans->my_trans_ref= (guint32)index;
 
+  if ((ret_code= ext_apid_global->apid_global_ops->ic_get_master_node_id(
+      ext_apid_global,
+      md_trans->cluster_id,
+      &md_trans->node_id)))
+    goto error;
+
   /**
     All metadata transactions start by sending SCHEMA_TRANS_BEGIN to
     start a new metadata transaction, the metadata transaction object
@@ -313,7 +321,7 @@ execute_meta_data_transaction(IC_INT_METADATA_TRANSACTION *md_trans)
   */
   sendSCHEMA_TRANS_BEGIN_REQ(md_trans);
   /* Poll waiting for messages until we're done */
-  while (md_trans->return_to_api)
+  while (!md_trans->return_to_api)
   {
     ic_poll_messages((IC_APID_CONNECTION*)apid_conn,
                      3 * IC_MICROSEC_PER_SECOND);
