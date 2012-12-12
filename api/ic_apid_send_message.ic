@@ -691,6 +691,7 @@ send_message(IC_INT_APID_CONNECTION *apid_conn,
   IC_SOCK_BUF_PAGE *send_page;
   IC_SEND_NODE_CONNECTION *send_node_conn;
   guint32 message_size;
+  guint32 i, *mess_ptr;
   int ret_code= IC_ERROR_MEM_ALLOC;
 
   /**
@@ -731,6 +732,12 @@ send_message(IC_INT_APID_CONNECTION *apid_conn,
                                         segment_ptrs,
                                         segment_size,
                                         fragment_flag);
+  mess_ptr= (guint32*)send_page->sock_buf;
+  ic_printf("Message_id = %u", message_id);
+  for (i= 0; i < message_size; i++)
+  {
+    ic_printf("W%u = 0x%x", i, mess_ptr[i]);
+  }
   send_page->size= message_size * sizeof(guint32);
 
   /* Send message data */

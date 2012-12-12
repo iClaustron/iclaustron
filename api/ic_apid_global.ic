@@ -317,12 +317,22 @@ static int
 ic_apid_global_connect(IC_INT_APID_GLOBAL *apid_global)
 {
   int error= 0;
+  IC_BITMAP *cluster_bitmap= apid_global->cluster_bitmap;
+  guint32 num_cluster_map_bits= ic_bitmap_get_num_bits(cluster_bitmap);
+  guint32 cluster_id;
   DEBUG_ENTRY("ic_apid_global_connect");
 
   if ((error= start_send_threads(apid_global)))
     goto error;
-  if ((error= start_receive_thread(apid_global)))
-    goto error;
+  for (cluster_id= 0; cluster_id < num_cluster_map_bits; cluster_id++)
+  {
+    if (ic_is_bitmap_set(cluster_bitmap, cluster_id))
+    {
+      if ((error= start_receive_thread(apid_global, cluster_id)))
+        goto error;
+    }
+  }
+
   /*
     We are now ready to signal to all send threads that they can start up the
     connect process to the other nodes in the cluster.
@@ -617,23 +627,37 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
   IC_NDB_RECEIVE_STATE *rec_state;
   IC_SEND_NODE_CONNECTION *send_node_conn;
   gboolean found;
+  guint32 i;
   IC_TIMER start_timer, current_timer, elapsed_timer;
   DEBUG_ENTRY("apid_global_wait_first_node_connect");
 
   start_timer= ic_gethrtime(); 
   ic_mutex_lock(apid_global->mutex);
-  rec_state= apid_global->receive_threads[0];
   do
   {
-    send_node_conn= rec_state->first_add_node;
-    found= FALSE;
-    while (send_node_conn)
+    for (i = 0; i < IC_MAX_RECEIVE_THREADS; i++)
     {
-      if (send_node_conn->cluster_id == cluster_id)
+      rec_state= apid_global->receive_threads[i];
+      if (!rec_state || rec_state->cluster_id != cluster_id)
+        continue;
+      ic_mutex_lock(rec_state->mutex);
+      send_node_conn= rec_state->first_send_node;
+      found= FALSE;
+      while (send_node_conn)
       {
-        found= TRUE;
-        break;
+        ic_mutex_lock(send_node_conn->mutex);
+        if (send_node_conn->cluster_id == cluster_id &&
+            send_node_conn->traffic_ready)
+        {
+          found= TRUE;
+          ic_mutex_unlock(send_node_conn->mutex);
+          break;
+        }
+        ic_mutex_unlock(send_node_conn->mutex);
       }
+      ic_mutex_unlock(rec_state->mutex);
+      if (found)
+        break;
     }
     if (found)
     {

@@ -1,0 +1,21 @@
+Mutexes in iClaustron API code:
+-------------------------------
+In this document we try to cover what variables are protected by the
+various mutexes. We give each mutex an ordering level. One should
+never lock a mutex of a higher ordering level than any of the mutexes
+already held.
+
+IC_INT_APID_GLOBAL::mutex:
+Protected variables:
+Mutex ordering level: 2
+
+IC_NDB_RECEIVE_STATE::mutex
+Protected variables
+
+Mutex ordering level: 4
+
+IC_SEND_NODE_CONNECTION::mutex
+Protected variables
+
+Mutex ordering level: 6
+

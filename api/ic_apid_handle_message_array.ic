@@ -24,10 +24,10 @@ initialize_message_func_array()
     ic_exec_message_func_array[1][i].ic_exec_message_func= NULL;
   }
   /* Heartbeat messages */
-  ic_exec_message_func_array[0][1].ic_exec_message_func=
-    execAPI_HBCONF_v0;
-  ic_exec_message_func_array[0][2].ic_exec_message_func=
-    execAPI_HBREF_v0;
+  ic_exec_message_func_array[0][API_REGCONF_GSN].ic_exec_message_func=
+    execAPI_REGCONF_v0;
+  ic_exec_message_func_array[0][API_REGREF_GSN].ic_exec_message_func=
+    execAPI_REGREF_v0;
 
   /* Container for record data from NDB Kernel */
   ic_exec_message_func_array[0][5].ic_exec_message_func=
@@ -89,9 +89,9 @@ initialize_message_func_array()
     execDISCONNECTREF_v0;
 
   /* Drop table messages */
-  ic_exec_message_func_array[0][102].ic_exec_message_func=
+  ic_exec_message_func_array[0][DROP_TABLE_REF_GSN].ic_exec_message_func=
     execDROP_TABLE_REF_v0;
-  ic_exec_message_func_array[0][112].ic_exec_message_func=
+  ic_exec_message_func_array[0][DROP_TABLE_CONF_GSN].ic_exec_message_func=
     execDROP_TABLE_CONF_v0;
 
   /* Get table messages */
@@ -111,15 +111,15 @@ initialize_message_func_array()
        ic_exec_message_func= execCREATE_HASH_MAP_REF_v0;
  
   /* Create index response messages */
-  ic_exec_message_func_array[0][511].ic_exec_message_func=
+  ic_exec_message_func_array[0][CREATE_INDEX_CONF_GSN].ic_exec_message_func=
     execCREATE_INDEX_CONF_v0;
-  ic_exec_message_func_array[0][512].ic_exec_message_func=
+  ic_exec_message_func_array[0][CREATE_INDEX_REF_GSN].ic_exec_message_func=
     execCREATE_INDEX_REF_v0;
  
   /* Drop index response messages */
-  ic_exec_message_func_array[0][517].ic_exec_message_func=
+  ic_exec_message_func_array[0][DROP_INDEX_CONF_GSN].ic_exec_message_func=
     execDROP_INDEX_CONF_v0;
-  ic_exec_message_func_array[0][518].ic_exec_message_func=
+  ic_exec_message_func_array[0][DROP_INDEX_REF_GSN].ic_exec_message_func=
     execDROP_INDEX_REF_v0;
 
   /* Unique key read/update/delete/write response messages */
@@ -135,32 +135,32 @@ initialize_message_func_array()
        ic_exec_message_func= execCREATE_TABLE_REF_v0;
 
   /* Alter table messages */
-  ic_exec_message_func_array[0][601].ic_exec_message_func=
+  ic_exec_message_func_array[0][ALTER_TABLE_REF_GSN].ic_exec_message_func=
     execALTER_TABLE_REF_v0;
-  ic_exec_message_func_array[0][602].ic_exec_message_func=
+  ic_exec_message_func_array[0][ALTER_TABLE_CONF_GSN].ic_exec_message_func=
     execALTER_TABLE_CONF_v0;
-  ic_exec_message_func_array[0][606].ic_exec_message_func=
+  ic_exec_message_func_array[0][ALTER_TABLE_REP_GSN].ic_exec_message_func=
     execALTER_TABLE_REP_v0;
 
   /* Alter table messages */
-  ic_exec_message_func_array[0][604].ic_exec_message_func=
+  ic_exec_message_func_array[0][ALTER_INDEX_REF_GSN].ic_exec_message_func=
     execALTER_INDEX_REF_v0;
-  ic_exec_message_func_array[0][605].ic_exec_message_func=
+  ic_exec_message_func_array[0][ALTER_INDEX_CONF_GSN].ic_exec_message_func=
     execALTER_INDEX_CONF_v0;
 
   /* 606 = NDB_ALTER_TABLE_REP, see above */
 
   /* Get table id messages */
-  ic_exec_message_func_array[0][685].ic_exec_message_func=
-    execGET_TABLE_ID_CONF_v0;
   ic_exec_message_func_array[0][684].ic_exec_message_func=
     execGET_TABLE_ID_REF_v0;
+  ic_exec_message_func_array[0][685].ic_exec_message_func=
+    execGET_TABLE_ID_CONF_v0;
 
   /* Create tablespace/log file group messages */
-  ic_exec_message_func_array[0][714].ic_exec_message_func=
-    execCREATE_TABLESPACE_REF_v0;
-  ic_exec_message_func_array[0][715].ic_exec_message_func=
-    execCREATE_TABLESPACE_CONF_v0;
+  ic_exec_message_func_array[0][714].
+    ic_exec_message_func= execCREATE_TABLESPACE_REF_v0;
+  ic_exec_message_func_array[0][715].
+    ic_exec_message_func= execCREATE_TABLESPACE_CONF_v0;
 
   /* Create tablespace/log file group files */
   ic_exec_message_func_array[0][717].ic_exec_message_func=

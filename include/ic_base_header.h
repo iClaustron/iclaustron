@@ -117,6 +117,8 @@ static const guint32 IC_RNIL= 0xFFFFFF00;
 static const guint32 IC_ZNIL=  0xFFFF;
 static const guint32 IC_MINUS_ONE= 0xFFFFFFFF;
 
+#define IC_SIZE_UINT32 4
+
 #define IC_MAX_SEND_TIMERS 16
 #define IC_MAX_SENDS_TRACKED 8
 #define IC_MAX_SEND_SIZE 65535
@@ -194,6 +196,7 @@ static const guint32 IC_NDB_HIGH_PRIO= 1;
 #define IC_MAX_UINT32 0xFFFFFFFF
 #define IC_MAX_CLUSTER_ID 255
 #define IC_MAX_NODE_ID 255
+#define IC_MAX_NDB_DATA_NODES 48
 #define IC_MAX_THREAD_CONNECTIONS 256
 #define IC_MAX_CLUSTER_SERVERS 4
 #define IC_MAX_CLUSTER_MANAGERS 4

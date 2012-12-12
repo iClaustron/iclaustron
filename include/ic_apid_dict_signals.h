@@ -638,7 +638,6 @@ static const int LIST_TABLES_CONF_LEN=
   and the second segment contains a list of table names.
 */
 
-static const guint32 IC_SIZE_UINT32= 4;
 static const guint32 IC_UINT32_VALUE_TYPE= 0;
 static const guint32 IC_STRING_VALUE_TYPE= 1;
 static const guint32 IC_BINARY_VALUE_TYPE= 2;

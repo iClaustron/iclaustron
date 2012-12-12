@@ -22,7 +22,8 @@
 */
 
 /* This functions starts a receive thread */
-static int start_receive_thread(IC_INT_APID_GLOBAL *apid_global);
+static int start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
+                                guint32 cluster_id);
 /* This is the main function of the receive thread */
 static gpointer run_receive_thread(void *data);
 
@@ -811,7 +812,8 @@ end:
 }
 
 static int
-start_receive_thread(IC_INT_APID_GLOBAL *apid_global)
+start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
+                     guint32 cluster_id)
 {
   IC_THREADPOOL_STATE *tp_state= apid_global->rec_thread_pool;
   IC_NDB_RECEIVE_STATE *rec_state;
@@ -826,6 +828,7 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global)
   if (!(rec_state->cond= ic_cond_create()))
     goto error;
   rec_state->apid_global= apid_global;
+  rec_state->cluster_id= cluster_id;
   rec_state->rec_buf_pool= apid_global->send_buf_pool;
   rec_state->message_pool= apid_global->ndb_message_pool;
   if ((!(rec_state->poll_set= ic_create_poll_set())) ||

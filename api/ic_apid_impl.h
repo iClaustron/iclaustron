@@ -63,6 +63,8 @@ struct ic_ndb_receive_state
   */
   /* Thread id in receive thread pool of receiver thread */
   guint32 thread_id;
+  /* Cluster id handled by this receiver thread */
+  guint32 cluster_id;
 
   IC_MUTEX *mutex;
   IC_COND *cond;
@@ -134,6 +136,7 @@ struct ic_ndb_message
   guint32 receiver_module_id;
   guint32 sender_node_id;
   guint32 receiver_node_id;
+  guint32 cluster_id;
 };
 
 struct ic_thread_connection
@@ -245,6 +248,13 @@ struct ic_send_node_connection
   gboolean node_up;
   /* Indicates if the connection is up. */
   gboolean connection_up;
+  /* Indicates if the node is ready for traffic */
+  gboolean traffic_ready;
+  /*
+    Indicates if the node is going through shutdown and we need to
+    stop starting new activities
+  */
+  gboolean stopping;
 
   /* Debug variable set when waking up send thread */
   gboolean send_thread_is_sending;
@@ -288,8 +298,10 @@ struct ic_send_node_connection
   /*
      Next pointers for lists on IC_NDB_RECEIVE_STATE for add/remove
      this connection to the receive thread
-     Both those variables are protected by both the receive thread
-     mutex and the send node connection mutex.
+     All those variables are protected by both the receive thread
+     mutex and the send node connection mutex. So both mutexes are
+     required to change the value, holding the IC_NDB_RECEIVE_STATE
+     mutex is required to scan through the send node connections.
   */
   IC_SEND_NODE_CONNECTION *next_add_node;
   IC_SEND_NODE_CONNECTION *next_rem_node;

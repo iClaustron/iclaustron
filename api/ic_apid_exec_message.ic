@@ -102,7 +102,7 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
                    IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque,
                    IC_NDB_MESSAGE *ndb_message)
 {
-  guint32 word1, word2, word3, receiver_node_id, sender_node_id;
+  guint32 word1, word2, word3, receiver_node_id, sender_node_id, cluster_id;
   guint32 num_segments, fragmentation_bits, i, segment_size;
   guint32 *segment_size_ptr, message_size;
   guint32 *message_ptr= (guint32*)message_page->sock_buf;
@@ -140,8 +140,11 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
 
   receiver_node_id= ndb_message_opaque->receiver_node_id;
   sender_node_id= ndb_message_opaque->sender_node_id;
+  cluster_id= ndb_message_opaque->cluster_id;
+  ndb_message->cluster_id= cluster_id;
   ndb_message->receiver_node_id= receiver_node_id;
   ndb_message->sender_node_id= sender_node_id;
+
   /* Get senders module id from Bit 0-15 in word 3 */
   ndb_message->sender_module_id= word3 & 0xFFFF;
   /* Get receivers module id from Bit 16-31 in word 3 */

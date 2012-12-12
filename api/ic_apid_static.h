@@ -39,7 +39,8 @@ static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
 /* Initialise function pointers in Message Logic Modules */
 static void initialize_message_func_array();
 /* Start one receive thread */
-static int start_receive_thread(IC_INT_APID_GLOBAL *apid_global);
+static int start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
+                                guint32 cluster_id);
 /* Start send threads */
 static int start_send_threads(IC_INT_APID_GLOBAL *apid_global);
 /* Close listen server threads at close down of Data API */
