@@ -135,6 +135,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CLUSTER_COMM *cluster_comm;
   guint32 i, j, num_bits;
+  guint32 max_cluster_id;
   DEBUG_ENTRY("ic_init_apid");
 
   initialize_message_func_array();
@@ -159,10 +160,21 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
         ic_calloc((IC_MAX_THREAD_CONNECTIONS + 1) *
         sizeof(IC_THREAD_CONNECTION*))))
     goto error;
-  num_bits= apic->api_op.ic_get_max_cluster_id(apic) + 1;
+  max_cluster_id= apic->api_op.ic_get_max_cluster_id(apic);
+  num_bits= max_cluster_id + 1;
   if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL,
                                                       num_bits)))
     goto error;
+
+  /* Set bits for all clusters in the configuration */
+  for (i= 0; i <= max_cluster_id; i++)
+  {
+    if (apic->api_op.ic_get_cluster_config(apic, i))
+    {
+      ic_bitmap_set_bit(apid_global->cluster_bitmap, i);
+    }
+  }
+
   if (!(apid_global->mutex= ic_mutex_create()))
     goto error;
   if (!(apid_global->cond= ic_cond_create()))

@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2012 iClaustron AB
+/* Copyright (C) 2009-2013 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -110,7 +110,6 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   IC_SEND_NODE_CONNECTION *prev_node= NULL, *next_node;
   DEBUG_ENTRY("rem_node_from_heartbeat_thread");
 
-  ic_mutex_lock(apid_global->heartbeat_mutex);
   next_node= apid_global->first_heartbeat_node;
   while (next_node != send_node_conn && next_node)
   {
@@ -126,13 +125,6 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     apid_global->curr_heartbeat_node= send_node_conn->next_heartbeat_node;
   ic_mutex_unlock(apid_global->heartbeat_mutex);
   DEBUG_RETURN_EMPTY;
-}
-
-static int
-real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
-                    IC_SOCK_BUF_PAGE *hb_page)
-{
-  return ndb_send(send_node_conn, hb_page, TRUE);
 }
 
 static gpointer
@@ -223,12 +215,8 @@ run_heartbeat_thread(gpointer data)
     prepare_send_heartbeat(last_send_node_conn, hb_page,
          ((IC_INT_APID_CONNECTION*)apid_global->heartbeat_conn)->thread_id);
     ic_mutex_unlock(apid_global->heartbeat_mutex);
-    if ((error= real_send_heartbeat(last_send_node_conn, hb_page)))
-    {
-      ic_mutex_lock(last_send_node_conn->mutex);
-      node_failure_handling(last_send_node_conn);
-      ic_mutex_unlock(last_send_node_conn->mutex);
-    }
+    /* Failure handling of ndb_send is handled already when returning */
+    ndb_send(last_send_node_conn, hb_page, TRUE);
   }
 end_thread:
   send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,

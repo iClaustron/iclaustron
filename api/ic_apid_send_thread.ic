@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2012 iClaustron AB
+/* Copyright (C) 2009-2013 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -356,8 +356,8 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   guint32 send_size;
   guint32 iovec_size;
-  int error;
   IC_IOVEC write_vector[IC_MAX_SEND_BUFFERS];
+  DEBUG_ENTRY("active_send_thread");
 
   send_tp->ts_ops.ic_thread_lock(thread_state);
   send_node_conn->send_thread_is_sending= FALSE;
@@ -379,21 +379,41 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
     prepare_real_send_handling(send_node_conn, &send_size,
                                write_vector, &iovec_size);
     send_tp->ts_ops.ic_thread_unlock(thread_state);
-    error= real_send_handling(send_node_conn, write_vector,
-                              iovec_size, send_size);
+    /* Error handling done in real_send_handling */
+    real_send_handling(send_node_conn, write_vector,
+                       iovec_size, send_size);
     send_tp->ts_ops.ic_thread_lock(thread_state);
-    if (error)
-      send_node_conn->node_up= FALSE;
   }
   if (!send_node_conn->node_up)
+  {
+    send_tp->ts_ops.ic_thread_unlock(thread_state);
     node_failure_handling(send_node_conn);
+    send_tp->ts_ops.ic_thread_lock(thread_state);
+  }
   send_node_conn->send_active= FALSE;
   send_node_conn->send_thread_active= FALSE;
   send_node_conn->send_thread_is_sending= FALSE;
   send_tp->ts_ops.ic_thread_unlock(thread_state);
-  return;
+  DEBUG_RETURN_EMPTY;
 }
 
+static IC_NDB_RECEIVE_STATE*
+get_first_receive_thread(IC_INT_APID_GLOBAL *apid_global,
+                         guint32 cluster_id)
+{
+  guint32 i;
+  IC_NDB_RECEIVE_STATE *rec_state;
+
+  for (i= 0; i < IC_MAX_RECEIVE_THREADS; i++)
+  {
+    if ((rec_state= apid_global->receive_threads[i]) &&
+         rec_state->cluster_id == cluster_id)
+      break;
+    rec_state= NULL;
+  }
+  ic_require(rec_state);
+  return rec_state;
+}
 /*
   Function to move a node connection into a receive thread when the
   node has connected to ensure that both the send and receive parts
@@ -403,9 +423,11 @@ static void
 move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
-  IC_NDB_RECEIVE_STATE *rec_state= apid_global->receive_threads[0];
+  IC_NDB_RECEIVE_STATE *rec_state;
   IC_RECEIVE_NODE_CONNECTION *rec_node= &send_node_conn->rec_node;
 
+  rec_state= get_first_receive_thread(apid_global,
+                                      send_node_conn->cluster_id);
   /*
     At this point in time the send node connection object is only handled
     by the send thread. As soon as we have delivered the object to the
@@ -424,12 +446,10 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   rec_node->buf_page= NULL;
 
   ic_mutex_lock(rec_state->mutex);
+  send_node_conn->rec_state= rec_state;
   send_node_conn->next_add_node= rec_state->first_add_node;
   rec_state->first_add_node= send_node_conn;
   ic_mutex_unlock(rec_state->mutex);
-  ic_mutex_lock(apid_global->mutex);
-  ic_cond_broadcast(apid_global->cond);
-  ic_mutex_unlock(apid_global->mutex);
 }
 
 static int
@@ -1057,9 +1077,9 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
                               tp_state,
                               send_node_conn->thread_id);
   tp_state->ts_ops.ic_thread_set_mutex(thread_state,
-                      send_node_conn->mutex);
+                                       send_node_conn->mutex);
   tp_state->ts_ops.ic_thread_set_cond(thread_state,
-                      send_node_conn->cond);
+                                      send_node_conn->cond);
   ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                               tp_state,
                               send_node_conn->thread_id,

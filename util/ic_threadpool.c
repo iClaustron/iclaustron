@@ -194,8 +194,10 @@ thread_wait(IC_THREAD_STATE *ext_thread_state)
   DEBUG_ENTRY("thread_wait");
 
   thread_state->wait_wakeup= TRUE;
-  ic_cond_wait(thread_state->cond, thread_state->mutex);
-  thread_state->wait_wakeup= FALSE;
+  do
+  {
+    ic_cond_wait(thread_state->cond, thread_state->mutex);
+  } while (thread_state->wait_wakeup && !thread_state->stop_flag);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -205,7 +207,11 @@ thread_wake(IC_THREAD_STATE *ext_thread_state)
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
   DEBUG_ENTRY("thread_wake");
 
+  ic_mutex_lock(thread_state->mutex);
+  ic_assert(thread_state->wait_wakeup);
   ic_cond_signal(thread_state->cond);
+  thread_state->wait_wakeup= FALSE;
+  ic_mutex_unlock(thread_state->mutex);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -216,9 +222,7 @@ thread_lock_and_wait(IC_THREAD_STATE *ext_thread_state)
   DEBUG_ENTRY("thread_lock_and_wait");
 
   ic_mutex_lock(thread_state->mutex);
-  thread_state->wait_wakeup= TRUE;
-  ic_cond_wait(thread_state->cond, thread_state->mutex);
-  thread_state->wait_wakeup= FALSE;
+  thread_wait(ext_thread_state);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -339,6 +343,8 @@ free_thread(IC_INT_THREADPOOL_STATE *tp_state,
   /* Set all state variables to free and not occupied */
   ic_mutex_lock(thread_state->mutex);
   thread_state->started= FALSE;
+  thread_state->startup_done= FALSE;
+  thread_state->startup_ready_to_proceed= FALSE;
   ic_assert(!thread_state->synch_startup);
   thread_state->synch_startup= FALSE;
   thread_state->stop_flag= FALSE;
@@ -405,10 +411,13 @@ start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
     thread_state->thread= thread;
     if (synch_startup)
     {
-      /* Wait until thread startup handling is completed */
-      ic_cond_wait(thread_state->cond, thread_state->mutex);
-      if ((stop_flag= thread_state->stop_flag))
-        ic_cond_signal(thread_state->cond);
+      /* Wait until thread start is completed */
+      do
+      {
+        ic_cond_wait(thread_state->cond, thread_state->mutex);
+      } while (!(thread_state->stop_flag || thread_state->started));
+      stop_flag= thread_state->stop_flag;
+      ic_cond_signal(thread_state->cond);
       ic_mutex_unlock(thread_state->mutex);
       if (stop_flag)
       {
@@ -479,8 +488,13 @@ run_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
   thread_state= tp_state->thread_state[thread_id];
   ic_mutex_lock(thread_state->mutex);
   /* Start thread waiting for command to start run phase */
+  while (!(thread_state->startup_done || thread_state->stop_flag))
+  {
+    ic_cond_wait(thread_state->cond, thread_state->mutex);
+  }
+  /* Thread has now completed startup, we're ready to tell it to start again */
   ic_cond_signal(thread_state->cond);
-  thread_state->synch_startup= FALSE; /* No longer used after this */
+  thread_state->startup_ready_to_proceed= TRUE;
   ic_mutex_unlock(thread_state->mutex);
   DEBUG_RETURN_EMPTY;
 }
@@ -560,11 +574,12 @@ thread_started(IC_THREAD_STATE *ext_thread_state)
   DEBUG_ENTRY("thread_started");
   DEBUG_PRINT(THREAD_LEVEL, ("thread_id: %d", thread_state->thread_id));
 
+  g_private_set(&thread_priv, (void*)thread_state->tp_state);
   /* By locking the mutex we ensure that start synch is done */
   ic_mutex_lock(thread_state->mutex);
   thread_state->started= TRUE;
+  ic_cond_signal(thread_state->cond);
   ic_mutex_unlock(thread_state->mutex);
-  g_private_set(&thread_priv, (void*)thread_state->tp_state);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -597,12 +612,19 @@ thread_startup_done(IC_THREAD_STATE *ext_thread_state)
   DEBUG_ENTRY("thread_startup_done");
 
   ic_mutex_lock(thread_state->mutex);
-  ic_assert(thread_state->synch_startup);
-  ic_cond_signal(thread_state->cond);
-  if (thread_state->stop_flag)
-    goto stop_end;
-  /* Wait for management thread to signal us to continue */
-  ic_cond_wait(thread_state->cond, thread_state->mutex);
+  do
+  {
+    ic_assert(thread_state->synch_startup);
+    thread_state->startup_done= TRUE;
+    ic_cond_signal(thread_state->cond);
+    if (thread_state->stop_flag)
+      goto stop_end;
+    /* Wait for management thread to signal us to continue */
+    if (thread_state->startup_ready_to_proceed)
+      break;
+    ic_cond_wait(thread_state->cond, thread_state->mutex);
+  } while (1);
+  thread_state->synch_startup= FALSE;
   /* Check whether we're requested to stop or not */
   if (thread_state->stop_flag)
     goto stop_end;

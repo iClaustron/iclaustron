@@ -47,8 +47,12 @@ struct ic_int_thread_state
 
   /* Flag used to check for stop of thread from thread pool */
   guint32 stop_flag;
-  /* Debug variable, shows whether thread has started */
+  /* Variable that shows whether thread has started */
   guint32 started;
+  /* Shows whether startup part of thread is done */
+  guint32 startup_done;
+  /* Starter of thread now says go to proceed with running thread */
+  guint32 startup_ready_to_proceed;
   /* Synchronisation of startup was requested */
   guint32 synch_startup;
   /* Thread is waiting for wake up signal */

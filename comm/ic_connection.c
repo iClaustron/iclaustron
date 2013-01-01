@@ -255,9 +255,9 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
   int no_sigpipe= 1;
   /*
     Mac OS X don't support MSG_NOSIGNAL but instead have a socket option
-    SO_NO_SIGPIPE that gives the same functionality.
+    SO_NOSIGPIPE that gives the same functionality.
   */
-  setsockopt(sockfd, IPPROTO_TCP, SO_NOSIGPIPE,
+  setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE,
              (const void *)&no_sigpipe, sizeof(int));
 #endif
   /*
@@ -1274,7 +1274,7 @@ send_msg(IC_INT_CONNECTION *conn,
         } while (1);
       }
     }
-    if (!(error= handle_return_write(conn, ret_code, &send_state) == 0))
+    if (((error= handle_return_write(conn, ret_code, &send_state)) == 0))
       return 0;
     if (error != EINTR || conn->error_code != 0)
       return error;

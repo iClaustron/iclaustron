@@ -194,6 +194,8 @@ struct ic_send_node_connection
 {
   /* A pointer to the global struct */
   IC_INT_APID_GLOBAL *apid_global;
+  /* Receive thread object if connected to one at the moment */
+  IC_NDB_RECEIVE_STATE *rec_state;
   /* Receive node object */
   IC_RECEIVE_NODE_CONNECTION rec_node;
   /* My hostname of the connection used by this thread */
@@ -325,6 +327,10 @@ struct ic_grid_comm
   IC_CLUSTER_COMM **cluster_comm_array;
   IC_THREAD_CONNECTION **thread_conn_array;
 };
+
+static IC_NDB_RECEIVE_STATE*
+get_first_receive_thread(IC_INT_APID_GLOBAL *apid_global,
+                         guint32 cluster_id);
 
 /* Definitions used to handle NDB Protocol handling data structures. */
 

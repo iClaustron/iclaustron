@@ -107,10 +107,12 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 {
   IC_POLL_SET *poll_set= rec_state->poll_set;
   IC_CONNECTION *conn;
-  IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_add_node;
-  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  IC_SEND_NODE_CONNECTION *send_node_conn, *next_send_node_conn;
   int conn_fd, error;
 
+restart:
+  ic_mutex_lock(rec_state->mutex);
+  send_node_conn= rec_state->first_add_node;
   while (send_node_conn)
   {
     DEBUG_PRINT(COMM_LEVEL,
@@ -120,7 +122,10 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
     /* move to next node to add */
     next_send_node_conn= send_node_conn->next_add_node;
     send_node_conn->next_add_node= NULL;
-    if (send_node_conn->node_up && !send_node_conn->stop_ordered)
+    rec_state->first_add_node= next_send_node_conn;
+    if (send_node_conn->node_up &&
+        !send_node_conn->stop_ordered &&
+        !send_node_conn->next_rem_node)
     {
       conn= send_node_conn->conn;
       conn_fd= conn->conn_op.ic_get_fd(conn);
@@ -128,8 +133,10 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
                                              conn_fd,
                                              &send_node_conn->rec_node)))
       {
-        send_node_conn->node_up= FALSE;
+        ic_mutex_unlock(rec_state->mutex);
+        ic_mutex_unlock(send_node_conn->mutex);
         node_failure_handling(send_node_conn);
+        goto restart;
       }
       else
       {
@@ -141,6 +148,7 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
     ic_mutex_unlock(send_node_conn->mutex);
     send_node_conn= next_send_node_conn;
   }
+  ic_mutex_unlock(rec_state->mutex);
 }
 
 static void
@@ -148,17 +156,22 @@ rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 {
   IC_POLL_SET *poll_set= rec_state->poll_set;
   IC_CONNECTION *conn;
-  IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_rem_node;
+  IC_SEND_NODE_CONNECTION *send_node_conn, *next_send_node_conn;
   int conn_fd, error;
 
+restart:
+  ic_mutex_lock(rec_state->mutex);
+  send_node_conn= rec_state->first_rem_node;
   while (send_node_conn)
   {
     DEBUG_PRINT(COMM_LEVEL,
       ("Removing node id = %u in cluster %u to receive thread",
        send_node_conn->other_node_id, send_node_conn->cluster_id));
     ic_mutex_lock(send_node_conn->mutex);
-    send_node_conn= send_node_conn->next_rem_node;
+    next_send_node_conn= send_node_conn->next_rem_node;
     send_node_conn->next_rem_node= NULL;
+    send_node_conn->rec_state= NULL; /* Disconnect node from receive thread */
+    rec_state->first_rem_node= next_send_node_conn;
     if (send_node_conn->node_up && !send_node_conn->stop_ordered)
     {
       conn= send_node_conn->conn;
@@ -166,18 +179,21 @@ rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
       if ((error= poll_set->poll_ops.ic_poll_set_remove_connection(poll_set,
                                                     conn_fd)))
       {
-        send_node_conn->node_up= FALSE;
+        ic_mutex_unlock(rec_state->mutex);
+        ic_mutex_unlock(send_node_conn->mutex);
         node_failure_handling(send_node_conn);
+        goto restart;
       }
     }
     ic_mutex_unlock(send_node_conn->mutex);
+    send_node_conn= next_send_node_conn;
   }
+  ic_mutex_unlock(rec_state->mutex);
 }
 
 static void
 check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
 {
-  ic_mutex_lock(rec_state->mutex);
   /*
     We need to check for:
     1) Someone ordering this node to stop, as part of this the
@@ -189,12 +205,12 @@ check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
     3) We also update all the statistics in this slot such that
     the thread deciding on reorganization of socket connections
     has statistics to use here.
+
+    Remove nodes last since a we want a failed node to be removed even if
+    it is on the add list.
   */
   add_node_receive_thread(rec_state);
   rem_node_receive_thread(rec_state);
-  rec_state->first_add_node= NULL;
-  rec_state->first_rem_node= NULL;
-  ic_mutex_unlock(rec_state->mutex);
 }
 
 static void

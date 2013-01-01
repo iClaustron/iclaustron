@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2012 iClaustron AB
+/* Copyright (C) 2009-2013 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -508,14 +508,48 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
+  IC_NDB_RECEIVE_STATE *rec_state;
   DEBUG_ENTRY("node_failure_handling");
 
-  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
-    send_buf_pool, send_node_conn->first_sbp);
+  /*
+    Ensure we have locked all receiver threads, the heartbeat
+    thread and also the send node connection to ensure that
+    no one else will interact with our changes.
+    Since the node can move between receive threads, we lock
+    all receiver threads for this cluster.
+  */
+  ic_mutex_lock(apid_global->heartbeat_mutex);
+  rec_state= get_first_receive_thread(apid_global,
+                                      send_node_conn->cluster_id);
+  ic_mutex_lock(rec_state->mutex);
+  ic_mutex_lock(send_node_conn->mutex);
+
+  ic_require(rec_state == send_node_conn->rec_state ||
+             send_node_conn->rec_state == NULL);
+
+  send_node_conn->node_up= FALSE;
+  send_node_conn->connection_up= FALSE;
+  send_node_conn->traffic_ready= FALSE;
+  send_node_conn->stopping= FALSE;
+  /* Ensure receive thread removes it from its list of active nodes */
+  if (!send_node_conn->next_rem_node &&
+      send_node_conn->rec_state)
+  {
+    send_node_conn->next_rem_node= rec_state->first_rem_node;
+    rec_state->first_rem_node= send_node_conn;
+  }
+  if (send_node_conn->first_sbp)
+  {
+    send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+      send_buf_pool, send_node_conn->first_sbp);
+  }
   DEBUG_PRINT(COMM_LEVEL, ("Node failed = %u",
               send_node_conn->other_node_id));
-  rem_node_from_heartbeat_thread(send_node_conn->apid_global,
-                                 send_node_conn);
+  rem_node_from_heartbeat_thread(apid_global, send_node_conn);
+
+  ic_mutex_unlock(apid_global->heartbeat_mutex);
+  ic_mutex_unlock(rec_state->mutex);
+  ic_mutex_unlock(send_node_conn->mutex);
   DEBUG_RETURN_INT(0);
 }
 
@@ -587,9 +621,7 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
       handling since either the connection was broken or it was slow to
       the point of being similar to broken.
     */
-    ic_mutex_lock(send_node_conn->mutex);
     node_failure_handling(send_node_conn);
-    ic_mutex_unlock(send_node_conn->mutex);
     DEBUG_RETURN_INT(error);
   }
   DEBUG_RETURN_INT(0);

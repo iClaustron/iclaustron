@@ -1412,13 +1412,16 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
 {
   int ret_code;
   void *key;
+  guint64 search_key= (guint64)mutex;
+  guint64 self= (guint64)pthread_self();
 
+  search_key |= (self << 32);
   DEBUG_DISABLE(0);
   g_mutex_lock(mutex_hash_protect);
-  key= ic_hashtable_search(mutex_hash, (void*)mutex);
+  key= ic_hashtable_search(mutex_hash, (void*)search_key);
   ret_code= ic_hashtable_insert(mutex_hash,
-                                (void*)mutex,
-                                (void*)mutex);
+                                (void*)search_key,
+                                (void*)search_key);
   g_mutex_unlock(mutex_hash_protect);
   DEBUG_ENABLE(0);
   if (key || ret_code)
@@ -1428,10 +1431,13 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
 static void debug_release_mutex(IC_MUTEX *mutex)
 {
   void *key;
+  guint64 search_key= (guint64)mutex;
+  guint64 self= (guint64)pthread_self();
 
+  search_key |= (self << 32);
   DEBUG_DISABLE(0);
   g_mutex_lock(mutex_hash_protect);
-  key= ic_hashtable_remove(mutex_hash, (void*)mutex);
+  key= ic_hashtable_remove(mutex_hash, (void*)search_key);
   g_mutex_unlock(mutex_hash_protect);
   DEBUG_ENABLE(0);
   if (!key)

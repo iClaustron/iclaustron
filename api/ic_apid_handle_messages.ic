@@ -758,23 +758,23 @@ execNDB_SCANREF_v0(IC_NDB_MESSAGE *ndb_message)
 /*
   API Heartbeat protocol
 
-  API_HBREQ
+  API_REGREQ
   ---------
   Sent from API -> Data Node
   Word 1: Our module reference
   Word 2: Our NDB version number
   Word 3: Our MySQL version number
 
-  API_HBREF
-  ---------
+  API_REGREF
+  ----------
   Sent from Data Node -> API node
   Word 1: Senders reference
   Word 2: NDB node version
   Word 3: error code (1 = Wrong Type and 2 = Unsupported version)
   Word 4: MySQL base version
 
-  API_HBCONF
-  ----------
+  API_REGCONF
+  -----------
   Sent from Data Node -> API node
   Word 1: Senders reference
   Word 2: NDB node version
@@ -868,7 +868,6 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
   IC_SEND_NODE_CONNECTION *send_node_conn, *save_send_node_conn;
   IC_NDB_RECEIVE_STATE *rec_state;
   gboolean flag_api= FALSE;
-  guint32 node_up_state, node_index, node_bit;
   guint32 i;
   DEBUG_ENTRY("execAPI_REGCONF_v0");
 
@@ -892,29 +891,17 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
         ic_mutex_lock(send_node_conn->mutex);
         this_node_id= send_node_conn->other_node_id;
         if (this_node_id == sender_node_id &&
+            conf->node_state.ndb_start_state == IC_NDB_STARTED &&
             !send_node_conn->traffic_ready &&
             send_node_conn->node_up)
         {
           /**
             We have an active connection which is waiting for the first
-            registration message to arrive successfully.
+            registration message to arrive successfully. Also required is
+            that the node has started.
           */
           send_node_conn->traffic_ready= TRUE;
           flag_api= TRUE;
-        }
-        node_index= this_node_id / 32;
-        node_bit= this_node_id % 32;
-        node_up_state= conf->node_state.connected_node_bitmap[node_index];
-        node_up_state= (node_up_state >> node_bit) & 1;
-        if ((int)node_up_state != send_node_conn->node_up &&
-            send_node_conn->node_up)
-        {
-          /**
-            State change from node up to node down. If we haven't declared
-            the node as up and the node comes up we will ignore this since
-            we don't have a transporter ready for it anyways.
-            Handle node failure
-          */
         }
         save_send_node_conn= send_node_conn;
         send_node_conn= send_node_conn->next_send_node;
