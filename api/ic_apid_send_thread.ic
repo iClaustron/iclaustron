@@ -363,7 +363,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   send_node_conn->send_thread_is_sending= FALSE;
   send_node_conn->send_thread_active= TRUE;
 
-  while (send_node_conn->stop_ordered || !send_node_conn->node_up)
+  while (!send_node_conn->stop_ordered && send_node_conn->node_up)
   {
     if (!send_node_conn->first_sbp)
     {

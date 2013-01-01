@@ -1,4 +1,4 @@
-Copyright (C) 2010-2011 iClaustron AB. All Rights Reserved.
+Copyright (C) 2010-2013 iClaustron AB. All Rights Reserved.
 
 iClaustron is a set of programs which can be used to run a grid of clusters
 providing a large Clustered file system to the end users of the iClaustron

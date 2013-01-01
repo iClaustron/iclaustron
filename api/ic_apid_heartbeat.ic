@@ -123,7 +123,6 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     apid_global->first_heartbeat_node= next_node->next_heartbeat_node;
   if (send_node_conn == apid_global->curr_heartbeat_node)
     apid_global->curr_heartbeat_node= send_node_conn->next_heartbeat_node;
-  ic_mutex_unlock(apid_global->heartbeat_mutex);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -163,6 +162,8 @@ run_heartbeat_thread(gpointer data)
     {
       last_send_node_conn= NULL;
       apid_global->heartbeat_thread_waiting= TRUE;
+      send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                          hb_page);
       DEBUG_DISABLE(HEARTBEAT_LEVEL);
       DEBUG_PRINT(CONFIG_LEVEL, ("Need to wait for nodes to connect"));
       ic_cond_timed_wait(apid_global->heartbeat_cond,
@@ -173,8 +174,6 @@ run_heartbeat_thread(gpointer data)
       DEBUG_PRINT(CONFIG_LEVEL,
       ("First node possibly connected, heartbeat needs to be sent"));
       DEBUG_ENABLE(HEARTBEAT_LEVEL);
-      send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
-                                                          hb_page);
       continue;
     }
     if (!apid_global->curr_heartbeat_node)

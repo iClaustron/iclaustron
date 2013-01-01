@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2012 iClaustron AB
+/* Copyright (C) 2007-2013 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1168,6 +1168,7 @@ write_socket_connection(IC_CONNECTION *ext_conn,
   send_state.write_size= 0;
   send_state.loop_count= 0;
   send_state.secs_to_try= secs_to_try;
+  send_state.buf_size= size;
 
   do
   {
@@ -1186,7 +1187,7 @@ write_socket_connection(IC_CONNECTION *ext_conn,
                      IC_MSG_NOSIGNAL);
     if (ret_code != IC_SOCKET_ERROR)
       send_state.write_size+= ret_code;
-    if (!(error= handle_return_write(conn, ret_code, &send_state) == 0))
+    if (!(error= handle_return_write(conn, ret_code, &send_state)))
       return 0;
     if (error != EINTR || conn->error_code != 0)
       return error;
@@ -1235,6 +1236,7 @@ send_msg(IC_INT_CONNECTION *conn,
   send_state.write_size= 0;
   send_state.loop_count= 0;
   send_state.secs_to_try= secs_to_try;
+  send_state.buf_size= tot_size;
 
   ic_zero(&msg_hdr, sizeof(struct msghdr));
   for (i= 0; i < iovec_size; i++)
@@ -1274,7 +1276,7 @@ send_msg(IC_INT_CONNECTION *conn,
         } while (1);
       }
     }
-    if (((error= handle_return_write(conn, ret_code, &send_state)) == 0))
+    if (!(error= handle_return_write(conn, ret_code, &send_state)))
       return 0;
     if (error != EINTR || conn->error_code != 0)
       return error;

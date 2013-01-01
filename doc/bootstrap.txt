@@ -1,4 +1,4 @@
-Copyright (C) 2010-2011 iClaustron AB. All rights reserved.
+Copyright (C) 2010-2013 iClaustron AB. All rights reserved.
 
 The main part of the iClaustron program which requires bootstrap is the
 start of the Cluster Servers and the Cluster Managers.
