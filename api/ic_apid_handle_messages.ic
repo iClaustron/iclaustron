@@ -864,55 +864,27 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
   IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
   guint32 cluster_id= ndb_message->cluster_id;
   guint32 sender_node_id= ndb_message->sender_node_id;
-  guint32 this_node_id;
-  IC_SEND_NODE_CONNECTION *send_node_conn, *save_send_node_conn;
-  IC_NDB_RECEIVE_STATE *rec_state;
-  gboolean flag_api= FALSE;
-  guint32 i;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
   DEBUG_ENTRY("execAPI_REGCONF_v0");
 
   ic_require(ndb_message->segment_size[0] == API_REGCONF_LEN);
   ic_require(ndb_message->num_segments == 1);
 
-  /**
-    More work needed to analyse the data in this message + decide how
-    to efficiently process the data since we can easily get thousands
-    of heartbeat messages per second in large clusters.
-  */
-  for (i= 0; i < IC_MAX_RECEIVE_THREADS; i++)
+  if (conf->node_state.ndb_start_state == (guint32)IC_NDB_STARTED &&
+      apid_global->wait_first_node_connect)
   {
-    if ((rec_state= apid_global->receive_threads[i]) &&
-        rec_state->cluster_id == cluster_id)
+    send_node_conn= get_send_node_conn(apid_global,
+                                       cluster_id,
+                                       sender_node_id);
+    if (send_node_conn)
     {
-      ic_mutex_lock(rec_state->mutex);
-      send_node_conn= rec_state->first_send_node;
-      while (send_node_conn)
-      {
-        ic_mutex_lock(send_node_conn->mutex);
-        this_node_id= send_node_conn->other_node_id;
-        if (this_node_id == sender_node_id &&
-            conf->node_state.ndb_start_state == IC_NDB_STARTED &&
-            !send_node_conn->traffic_ready &&
-            send_node_conn->node_up)
-        {
-          /**
-            We have an active connection which is waiting for the first
-            registration message to arrive successfully. Also required is
-            that the node has started.
-          */
-          send_node_conn->traffic_ready= TRUE;
-          flag_api= TRUE;
-        }
-        save_send_node_conn= send_node_conn;
-        send_node_conn= send_node_conn->next_send_node;
-        ic_mutex_unlock(save_send_node_conn->mutex);
-      }
-      ic_mutex_unlock(rec_state->mutex);
+      ic_mutex_lock(send_node_conn->mutex);
+      send_node_conn->traffic_ready= TRUE;
+      ic_mutex_unlock(send_node_conn->mutex);
     }
-  }
-  if (flag_api)
-  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Wake up waiters for first node connect"));
     ic_mutex_lock(apid_global->mutex);
+    apid_global->wait_first_node_connect= FALSE;
     ic_cond_broadcast(apid_global->cond);
     ic_mutex_unlock(apid_global->mutex);
   }

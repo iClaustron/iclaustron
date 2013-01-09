@@ -77,6 +77,7 @@ struct ic_ndb_receive_state
 
 struct ic_ndb_message_opaque_area
 {
+  IC_SEND_NODE_CONNECTION *send_node_conn;
   guint32 sender_node_id;
   guint32 receiver_node_id;
   guint32 cluster_id;
@@ -188,6 +189,8 @@ struct ic_receive_node_connection
   guint32 other_node_id;
   /* Node id of myself on the socket connection */
   guint32 my_node_id;
+  /* Send node connection for the node */
+  IC_SEND_NODE_CONNECTION *send_node_conn;
 };
 
 struct ic_send_node_connection
@@ -331,6 +334,11 @@ struct ic_grid_comm
 static IC_NDB_RECEIVE_STATE*
 get_first_receive_thread(IC_INT_APID_GLOBAL *apid_global,
                          guint32 cluster_id);
+
+static IC_SEND_NODE_CONNECTION*
+get_send_node_conn(IC_INT_APID_GLOBAL *apid_global,
+                   guint32 cluster_id,
+                   guint32 node_id);
 
 /* Definitions used to handle NDB Protocol handling data structures. */
 

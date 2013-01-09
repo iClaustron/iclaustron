@@ -123,6 +123,8 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   word2= message_ptr[1];
   word3= message_ptr[2];
 
+  ic_printf("Word1: 0x%x, Word2: 0x%x, Word3: 0x%x", word1,word2,word3);
+
   /* Get message priority from Bit 5-6 in word 1 */
   ndb_message->message_priority= (word1 >> 5) & 3;
   /* Get fragmentation bits from bit 1 and bit 25 in word 1 */
@@ -218,13 +220,18 @@ execute_message(IC_SOCK_BUF_PAGE *ndb_message_page,
     */
     exec_message_func= get_exec_message_func(ndb_message->message_id,
                                              ndb_message_opaque->version_num);
-    if (exec_message_func)
+    if (exec_message_func->ic_exec_message_func != NULL)
     {
       /**
         Found a function to execute, now call the actual function defined
         for this message id and version.
       */
       exec_message_func->ic_exec_message_func(ndb_message);
+    }
+    else
+    {
+      ic_printf("Received missing signal %u", ndb_message->message_id);
+      ic_require(FALSE);
     }
     if (ndb_message_page->ref_count > 0)
     {

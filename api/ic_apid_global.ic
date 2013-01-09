@@ -136,6 +136,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   IC_CLUSTER_COMM *cluster_comm;
   guint32 i, j, num_bits;
   guint32 max_cluster_id;
+  guint32 my_node_id= 0;
   DEBUG_ENTRY("ic_init_apid");
 
   initialize_message_func_array();
@@ -166,14 +167,29 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
                                                       num_bits)))
     goto error;
 
-  /* Set bits for all clusters in the configuration */
+  /*
+    Set bits for all clusters in the configuration.
+    Set my node id in this API node. There could be several API
+    nodes in one process, each API node is represented by one
+    apid_global and apic object.
+  */
   for (i= 0; i <= max_cluster_id; i++)
   {
-    if (apic->api_op.ic_get_cluster_config(apic, i))
+    if ((clu_conf= apic->api_op.ic_get_cluster_config(apic, i)))
     {
+      if (my_node_id)
+      {
+        ic_require(my_node_id == clu_conf->my_node_id);
+      }
+      else
+      {
+        my_node_id= clu_conf->my_node_id;
+      }
       ic_bitmap_set_bit(apid_global->cluster_bitmap, i);
     }
   }
+  ic_require(my_node_id);
+  apid_global->my_node_id= my_node_id;
 
   if (!(apid_global->mutex= ic_mutex_create()))
     goto error;
@@ -613,18 +629,32 @@ apid_global_get_master_node_id(IC_APID_GLOBAL *ext_apid_global,
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
   IC_NDB_RECEIVE_STATE *rec_state;
+  guint32 i;
   DEBUG_ENTRY("apid_global_get_master_node_id");
+
   ic_mutex_lock(apid_global->mutex);
-  rec_state= apid_global->receive_threads[0];
-  send_node_conn= rec_state->first_add_node;
-  while (send_node_conn)
+  for (i= 0; i < IC_MAX_RECEIVE_THREADS; i++)
   {
-    if (send_node_conn->cluster_id == cluster_id)
+    rec_state= apid_global->receive_threads[i];
+    if (!rec_state)
+      continue;
+    ic_mutex_lock(rec_state->mutex);
+    send_node_conn= rec_state->first_send_node;
+    while (send_node_conn)
     {
-      *master_node_id= send_node_conn->other_node_id;
-      ic_mutex_unlock(apid_global->mutex);
-      DEBUG_RETURN_INT(0);
+      ic_mutex_lock(send_node_conn->mutex);
+      if (send_node_conn->cluster_id == cluster_id)
+      {
+        *master_node_id= send_node_conn->other_node_id;
+        ic_mutex_unlock(send_node_conn->mutex);
+        ic_mutex_unlock(rec_state->mutex);
+        ic_mutex_unlock(apid_global->mutex);
+        DEBUG_RETURN_INT(0);
+      }
+      ic_mutex_unlock(send_node_conn->mutex);
+      send_node_conn= send_node_conn->next_send_node;
     }
+    ic_mutex_unlock(rec_state->mutex);
   }
   ic_mutex_unlock(apid_global->mutex);
   DEBUG_RETURN_INT(IC_ERROR_FOUND_NO_CONNECTED_NODES);
@@ -666,6 +696,7 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
           break;
         }
         ic_mutex_unlock(send_node_conn->mutex);
+        send_node_conn= send_node_conn->next_send_node;
       }
       ic_mutex_unlock(rec_state->mutex);
       if (found)
@@ -683,6 +714,8 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
       ic_mutex_unlock(apid_global->mutex);
       DEBUG_RETURN_INT(IC_ERROR_TIMEOUT_WAITING_FOR_NODES);
     }
+    apid_global->wait_first_node_connect= TRUE;
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Wait for first node connect"));
     ic_cond_timed_wait(apid_global->cond,
                        apid_global->mutex,
                        IC_MICROSEC_PER_SECOND);

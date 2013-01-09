@@ -105,7 +105,7 @@ initialize_message_func_array()
        ic_exec_message_func= execLIST_TABLES_CONF_v0;
 
   /* Create partition map response messages */
-  ic_exec_message_func_array[0][CREATE_HASH_MAP_REQ_GSN].
+  ic_exec_message_func_array[0][CREATE_HASH_MAP_CONF_GSN].
        ic_exec_message_func= execCREATE_HASH_MAP_CONF_v0;
   ic_exec_message_func_array[0][CREATE_HASH_MAP_REF_GSN].
        ic_exec_message_func= execCREATE_HASH_MAP_REF_v0;

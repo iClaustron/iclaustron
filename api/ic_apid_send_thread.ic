@@ -136,9 +136,35 @@ static int set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  IC_SOCKET_LINK_CONFIG *link_config,
                                  guint32 my_node_id);
 
+static IC_SEND_NODE_CONNECTION*
+get_send_node_conn(IC_INT_APID_GLOBAL *apid_global,
+                   guint32 cluster_id,
+                   guint32 node_id)
+{
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  IC_GRID_COMM *grid_comm= apid_global->grid_comm;
+  guint32 max_cluster_id= apic->max_cluster_id;
+  guint32 max_node_id;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_CLUSTER_COMM *cluster_comm;
+
+  if (cluster_id > max_cluster_id)
+    return NULL;
+  cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+  if (!cluster_comm)
+    return NULL;
+  clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
+  if (!clu_conf)
+    return NULL;
+  max_node_id= clu_conf->max_node_id;
+  if (node_id > max_node_id)
+    return NULL;
+  return cluster_comm->send_node_conn_array[node_id];
+}
+
 /*
   We also place the methods called from other threads that assist the
-  send threads in performing the send functionality
+  send threads in performing the send functionality here.
 */
 
 /* Send thread functions */

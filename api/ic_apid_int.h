@@ -606,6 +606,12 @@ struct ic_int_apid_global
   IC_MUTEX *thread_id_mutex;
   guint32 num_receive_threads;
   guint32 num_listen_server_threads;
+  guint32 my_node_id;
+  /*
+    Variable that indicates if we are waiting for first node to connect
+    from any user thread.
+  */
+  gboolean wait_first_node_connect;
   IC_RUN_APID_THREAD_FUNC apid_func;
   IC_NDB_RECEIVE_STATE *receive_threads[IC_MAX_RECEIVE_THREADS];
   IC_LISTEN_SERVER_THREAD *listen_server_thread[IC_MAX_SERVER_PORTS_LISTEN];

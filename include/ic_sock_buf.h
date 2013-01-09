@@ -90,8 +90,8 @@ struct ic_sock_buf_page
   guint32 size;
   /* This is an atomic counter used to keep track of reference count */
   gint ref_count;
-  guint32 opaque_area[4];
-  guint32 buf_area[18];
+  guint32 opaque_area[8];
+  guint32 buf_area[16];
 };
 
 struct ic_sock_buf

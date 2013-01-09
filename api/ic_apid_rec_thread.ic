@@ -367,12 +367,16 @@ prepare_opaque_area(IC_SOCK_BUF_PAGE *ndb_message_page,
 {
   IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
 
+  ic_assert(sizeof(IC_NDB_MESSAGE_OPAQUE_AREA) <=
+            sizeof(ndb_message_page->opaque_area));
+
   ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
     &ndb_message_page->opaque_area[0];
   ndb_message_opaque->sender_node_id= rec_node->other_node_id;
   ndb_message_opaque->receiver_node_id= rec_node->my_node_id;
   ndb_message_opaque->cluster_id= rec_node->cluster_id;
   ndb_message_opaque->version_num= 0; /* Define value although unused */
+  ndb_message_opaque->send_node_conn= rec_node->send_node_conn;
   ndb_message_page->ref_count= 0;
 }
 

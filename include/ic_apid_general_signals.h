@@ -44,22 +44,22 @@ struct ic_ndb_node_state
   guint32 ndb_dynamic_id; /* Valid during IC_NDB_STARTING */
   union
   {
-    struct ndb_starting
+    struct
     {
       guint32 start_phase;
       /* Type IC_NDB_START_TYPE, only used during IC_NDB_STARTING */
       guint32 ndb_start_type;
-    };
-    struct ndb_stopping
+    } ndb_starting;
+    struct
     {
       guint32 shutdown_flag;
       guint32 time_out;
       guint32 alarm_time;
-    };
+    } ndb_stopping;
   };
   guint32 single_user_mode_flag;
   guint32 single_user_node;
-  guint32 connected_node_bitmap[IC_MAX_NDB_DATA_NODES/IC_SIZE_UINT32];
+  guint32 connected_node_bitmap[(IC_MAX_NODE_ID + 1)/32];
 };
 
 static const int API_REGREQ_GSN= 3;

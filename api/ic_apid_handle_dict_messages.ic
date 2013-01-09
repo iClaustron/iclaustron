@@ -78,11 +78,14 @@ print_ndb_message_error(IC_NDB_MESSAGE *ndb_message)
   {
     if (i == 0)
     {
-      ic_printf("Message data:");
+      ic_printf("Message data: len = %u",
+                ndb_message->segment_size[i]);
     }
     else
     {
-      ic_printf("Data segment %u", (i-1));
+      ic_printf("Data segment %u, len = %u",
+               (i-1),
+               ndb_message->segment_size[i]);
     }
     for (j= 0; j < ndb_message->segment_size[i]; j++)
     {
@@ -344,10 +347,12 @@ sendSCHEMA_TRANS_BEGIN_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   guint32 len= SCHEMA_TRANS_BEGIN_REQ_LEN;
   void *message_ptr;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
   DEBUG_ENTRY("sendSCHEMA_TRANS_BEGIN_REQ");
 
   /* Get our NDB reference */
-  our_reference= ic_get_ic_reference(ic_glob_node_id, apid_conn->thread_id);
+  our_reference= ic_get_ic_reference(apid_global->my_node_id,
+                                     apid_conn->thread_id);
 
   /* Set up message data for NDB_MD_TRANS_START_REQ */
   begin_req.my_reference= our_reference;
@@ -433,12 +438,14 @@ execSCHEMA_TRANS_BEGIN_CONF_v0(IC_NDB_MESSAGE *ndb_message)
   guint32 ndb_trans_ref= conf->ndb_transaction_id;
   DEBUG_ENTRY("execSCHEMA_TRANS_BEGIN_CONF_v0");
 
+  ic_require(main_message_size == SCHEMA_TRANS_BEGIN_CONF_LEN);
+
   if (!(md_trans= get_metadata_transaction_from_message(ndb_message,
                                                         our_trans_id)))
     goto end; /* Ignore faulty messages */
-  ic_require(main_message_size == SCHEMA_TRANS_BEGIN_CONF_LEN);
-  md_trans->ndb_trans_ref= ndb_trans_ref;
+
   ic_require(md_trans->state == IC_WAIT_SCHEMA_TRANS_BEGIN_CONF);
+  md_trans->ndb_trans_ref= ndb_trans_ref;
 
   if ((alter_table= md_trans->current_alter_table))
   {
@@ -478,11 +485,13 @@ sendCREATE_HASH_MAP_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   int ret_code;
   void *message_ptr;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
   IC_CREATE_HASH_MAP_REQ map_req;
   DEBUG_ENTRY("sendCREATE_HASH_MAP_REQ");
 
   /* Get our NDB reference */
-  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
+  our_reference= ic_get_ic_reference(apid_global->my_node_id,
+                                     apid_conn->thread_id);
 
   /* Define the message data */
   map_req.my_reference= our_reference;
@@ -551,6 +560,8 @@ sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
   IC_DYNAMIC_ARRAY *dyn_array;
   guint32 size_array[2];
   void *segment_array[2];
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
   DEBUG_ENTRY("sendCREATE_TABLE_REQ");
 
   if (!(dyn_array= fill_create_table_info_properties(alter_table)))
@@ -561,8 +572,8 @@ sendCREATE_TABLE_REQ(IC_INT_METADATA_TRANSACTION *md_trans,
     goto mem_error;
 
   /* Get our NDB reference */
-  our_reference= ic_get_ic_reference(md_trans->node_id,
-                                     md_trans->apid_conn->thread_id);
+  our_reference= ic_get_ic_reference(apid_global->my_node_id,
+                                     apid_conn->thread_id);
 
   begin_req.my_reference= our_reference;
   begin_req.my_data= 0;
@@ -639,10 +650,12 @@ sendSCHEMA_TRANS_END_REQ(IC_INT_METADATA_TRANSACTION *md_trans)
   IC_SCHEMA_TRANS_END_REQ end_req;
   void *message_ptr;
   IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
   DEBUG_ENTRY("sendSCHEMA_TRANS_END_REQ");
 
   /* Get our NDB reference */
-  our_reference= ic_get_ic_reference(md_trans->node_id, apid_conn->thread_id);
+  our_reference= ic_get_ic_reference(apid_global->my_node_id,
+                                     apid_conn->thread_id);
 
   /* Set up message data for NDB_MD_TRANS_END_REQ */
   end_req.my_reference= our_reference;
