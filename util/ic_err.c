@@ -276,6 +276,8 @@ ic_init_error_messages()
     " to cluster";
   ic_error_str[IC_ERROR_FOUND_NO_CONNECTED_NODES - IC_FIRST_ERROR]=
     "Found no master node since API had no connected nodes for the cluster";
+  ic_error_str[IC_ERROR_NO_SUCH_DATA_TYPE - IC_FIRST_ERROR]=
+    "No such data type exists";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

@@ -224,7 +224,9 @@ is_charset_field(IC_FIELD_TYPE field_type)
 {
   switch (field_type)
   {
-    case IC_API_VARIABLE_SIZE_CHAR:
+    case IC_API_LONG_VARCHAR:
+    case IC_API_VARCHAR:
+    case IC_API_CHAR:
       return TRUE;
     default:
       return FALSE;
@@ -237,28 +239,8 @@ is_decimal_field(IC_FIELD_TYPE field_type)
 {
   switch (field_type)
   {
-    case IC_API_DECIMAL_TYPE:
-      return TRUE;
-    default:
-      return FALSE;
-  }
-}
-
-/*
-  Check if field type can have be signed or unsigned. Default is
-  signed.
-*/
-static inline gboolean
-is_signable_field(IC_FIELD_TYPE field_type)
-{
-  switch (field_type)
-  {
-    case IC_API_INT64_TYPE:
-    case IC_API_INT32_TYPE:
-    case IC_API_INT24_TYPE:
-    case IC_API_INT16_TYPE:
-    case IC_API_INT8_TYPE:
-    case IC_API_DECIMAL_TYPE:
+    case IC_API_DECIMAL:
+    case IC_API_DECIMAL_UNSIGNED:
       return TRUE;
     default:
       return FALSE;
@@ -312,6 +294,18 @@ allocate_def_index(IC_INT_ALTER_TABLE *alter_table,
 }
 
 static int
+add_slash(IC_STRING *dest_str, IC_MEMORY_CONTAINER *mc_ptr)
+{
+  IC_STRING in_str;
+  gchar *slash_str= "/";
+
+  IC_INIT_STRING(&in_str, slash_str, strlen(slash_str), TRUE);
+  if (ic_mc_add_ic_string(mc_ptr, dest_str, &in_str))
+    return TRUE;
+  return FALSE;
+}
+
+static int
 set_table_name(IC_INT_ALTER_TABLE *alter_table,
                gchar **full_table_name,
                const gchar *schema_name,
@@ -329,6 +323,8 @@ set_table_name(IC_INT_ALTER_TABLE *alter_table,
     IC_INIT_STRING(&in_str, (gchar*)schema_name, strlen(schema_name), TRUE);
     if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
       goto mem_error;
+    if (add_slash(&dest_str, mc_ptr))
+      goto mem_error;
   }
   else
   {
@@ -339,6 +335,8 @@ set_table_name(IC_INT_ALTER_TABLE *alter_table,
   {
     IC_INIT_STRING(&in_str, (gchar*)db_name, strlen(db_name), TRUE);
     if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
+      goto mem_error;
+    if (add_slash(&dest_str, mc_ptr))
       goto mem_error;
   }
   else
@@ -404,29 +402,72 @@ at_add_field(IC_ALTER_TABLE *ext_alter_table,
   switch (field_type)
   {
     /* Set field size according to data type for integer types */
-    case IC_API_INT8_TYPE:
+    case IC_API_TINY_INT:
+    case IC_API_TINY_UNSIGNED:
       field_size= 1;
       break;
-    case IC_API_INT16_TYPE:
+    case IC_API_SMALL_INT:
+    case IC_API_SMALL_UNSIGNED:
       field_size= 2;
       break;
-    case IC_API_INT24_TYPE:
-      field_size= 3;
+    case IC_API_MEDIUM_INT:
+    case IC_API_MEDIUM_UNSIGNED:
+      field_size= 1;
+      array_size*= 3;
       break;
-    case IC_API_INT32_TYPE:
+    case IC_API_INT:
+    case IC_API_UNSIGNED:
       field_size= 4;
       break;
-    case IC_API_INT64_TYPE:
+    case IC_API_BIG_INT:
+    case IC_API_BIG_UNSIGNED:
       field_size= 8;
       break;
-    default:
+    case IC_API_FLOAT:
+      field_size= 4;
+      break;
+    case IC_API_DOUBLE:
+      field_size= 8;
+      break;
+    case IC_API_BIT:
+      field_size= 0;
+      break;
+    case IC_API_CHAR:
+    case IC_API_VARCHAR:
+    case IC_API_BINARY:
+    case IC_API_VARBINARY:
+    case IC_API_BLOB:
+    case IC_API_TEXT:
       field_size= 1;
       break;
+    case IC_API_DATE:
+      field_size= 1;
+      array_size*= 3;
+      break;
+    case IC_API_DATETIME:
+      field_size= 1;
+      array_size*= 8;
+      break;
+    case IC_API_TIME:
+      field_size= 1;
+      array_size*= 3;
+      break;
+    case IC_API_YEAR:
+      field_size= 1;
+      break;
+    case IC_API_DECIMAL:
+    case IC_API_DECIMAL_UNSIGNED:
+      field_size= 1;
+      break;
+    default:
+      ret_code= IC_ERROR_NO_SUCH_DATA_TYPE;
+      goto end;
   }
   def_field->size= field_size;
   def_field->array_size= array_size;
   def_field->is_nullable= is_nullable;
   def_field->is_field_disk_stored= is_field_disk_stored;
+  alter_table->num_fields++;
   if (is_field_disk_stored)
     alter_table->is_table_disk_stored= TRUE;
   IC_INSERT_SLL(alter_table, def_field, add_field);
@@ -462,38 +503,6 @@ at_set_charset(IC_ALTER_TABLE *ext_alter_table,
     goto end;
   }
   def_field->charset_id= cs_id;
-end:
-  DEBUG_RETURN_INT(ret_code);
-}
-
-/* Implements the ic_set_signed method. Sets signedness of a field */
-static int
-at_set_signed(IC_ALTER_TABLE *ext_alter_table,
-              const gchar *field_name,
-              gboolean is_signed)
-{
-  int ret_code= 0;
-  IC_DEFINE_FIELD *def_field;
-  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
-  DEBUG_ENTRY("at_set_signed");
-
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
-      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
-  {
-    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
-    goto end;
-  }
-  if ((def_field= find_field_in_add_field(alter_table, field_name)))
-  {
-    ret_code= IC_ERROR_FIELD_NOT_DEFINED;
-    goto end;
-  }
-  if (!is_signable_field(def_field->type))
-  {
-    ret_code= IC_ERROR_NOT_A_SIGNABLE_FIELD;
-    goto end;
-  }
-  def_field->is_signed= is_signed;
 end:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -810,7 +819,6 @@ static IC_ALTER_TABLE_OPS glob_alter_table_ops=
   /* .ic_add_field              = */ at_add_field,
   /* .ic_set_charset            = */ at_set_charset,
   /* .ic_set_decimal_field      = */ at_set_decimal_field,
-  /* .ic_set_signed             = */ at_set_signed,
   /* .ic_drop_field             = */ at_drop_field,
   /* .ic_add_index              = */ at_add_index,
   /* .ic_drop_index             = */ at_drop_index,
@@ -824,33 +832,19 @@ static IC_ALTER_TABLE_OPS glob_alter_table_ops=
 static guint32
 get_ndb_field_size(IC_DEFINE_FIELD *def_field, gboolean fixed_size)
 {
+  guint32 size= def_field->size * def_field->array_size;
   switch (def_field->type)
   {
-    case IC_API_INT32_TYPE:
-    case IC_API_INT24_TYPE:
-    case IC_API_INT16_TYPE:
-    case IC_API_INT8_TYPE:
-      return 4;
-    case IC_API_INT64_TYPE:
-      return 8;
-    case IC_API_FIXED_SIZE_CHAR:
-      return ic_align(def_field->size, 4);
-    case IC_API_VARIABLE_SIZE_CHAR:
-    {
-      if (fixed_size)
-      {
-        return 4;
-      }
-      else
-      {
-        return ic_align(def_field->size + 2, 4);
-      }
-    }
-    default:
-      /* Not implemented yet */
-      ic_require(FALSE);
-      return 0;
+    case IC_API_VARCHAR:
+    case IC_API_VARBINARY:
+      size++;
+      break;
+    case IC_API_LONG_VARCHAR:
+    case IC_API_LONG_VARBINARY:
+      size+= 2;
+      break;
   }
+  return ic_align(size, 4);
 }
 
 static int
@@ -942,6 +936,9 @@ mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   alter_table->mc_ptr= md_trans->mc_ptr;
   alter_table->md_trans= md_trans;
+  alter_table->is_table_logged= TRUE;
+  alter_table->tablespace_id= IC_RNIL;
+  alter_table->tablespace_version= IC_MINUS_ONE;
   alter_table->alter_table_ops= &glob_alter_table_ops;
   *ext_alter_table= (IC_ALTER_TABLE*)alter_table;
   IC_INSERT_SLL(md_trans, alter_table, alter_table);

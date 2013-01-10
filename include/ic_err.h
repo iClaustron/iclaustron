@@ -19,7 +19,7 @@
 #include <errno.h>
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7107
+#define IC_LAST_ERROR 7108
 #define IC_MAX_ERRORS 200
 
 /*
@@ -154,4 +154,5 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_MISSING_TABLE_NAME 7105
 #define IC_ERROR_TIMEOUT_WAITING_FOR_NODES 7106
 #define IC_ERROR_FOUND_NO_CONNECTED_NODES 7107
+#define IC_ERROR_NO_SUCH_DATA_TYPE 7108
 #endif

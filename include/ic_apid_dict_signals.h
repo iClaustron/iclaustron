@@ -805,7 +805,7 @@ static const guint32 IC_COLUMN_DISTRIBUTION_KEY_FLAG_KEY= 1010;
 static const guint32 IC_COLUMN_DISTRIBUTION_KEY_FLAG_DEFAULT= 0;
 
 static const guint32 IC_COLUMN_EXT_TYPE_KEY= 1013;
-static const guint32 IC_COLUMN_EXT_TYPE_DEFAULT= 8;
+static const guint32 IC_COLUMN_EXT_TYPE_DEFAULT= 0;
 
 /* The rest of these types defaults to 0 */
 static const guint32 IC_COLUMN_EXT_PRECISION_KEY= 1014;

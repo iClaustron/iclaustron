@@ -128,8 +128,8 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   /* Get message priority from Bit 5-6 in word 1 */
   ndb_message->message_priority= (word1 >> 5) & 3;
   /* Get fragmentation bits from bit 1 and bit 25 in word 1 */
-  fragmentation_bits= (word1 >> 1) & 1;
-  fragmentation_bits+= ((word1 >> 25) & 1) << 1;
+  fragmentation_bits= ((word1 >> 1) & 1) << 1;
+  fragmentation_bits+= ((word1 >> 25) & 1);
   ndb_message->fragmentation_bits= fragmentation_bits;
   /* Get short data size from Bit 26-30 (Max 25 words) in word 1 */
   ndb_message->segment_size[0]= (word1 >> 26) & 0x1F;
@@ -152,11 +152,12 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   /* Get receivers module id from Bit 16-31 in word 3 */
   ndb_message->receiver_module_id= word3 >> 16;
 
+  start_segment_word= 3;
   ndb_message->message_number= 0;
   ndb_message->segment_ptr[1]= NULL;
   ndb_message->segment_ptr[2]= NULL;
   ndb_message->segment_ptr[3]= NULL;
-  ndb_message->segment_ptr[0]= &message_ptr[3];
+  ndb_message->segment_ptr[0]= &message_ptr[start_segment_word];
 
   /* Get message id flag from Bit 2 in word 1 */
   message_number_used= word1 & 4;
@@ -164,15 +165,18 @@ create_ndb_message(IC_SOCK_BUF_PAGE *message_page,
   chksum_used= word1 & 0x10;
   /* Get number of segments from Bit 26-27 in word 2 */
   num_segments= (word2 >> 26) & 3;
-  /* Is this + 1 really correct, TODO */
+  /**
+    We represent also the main segment as a segment internally, so
+    we add 1 here for it to make sense internally in the iClaustron
+    code.
+  */
   ndb_message->num_segments= num_segments + 1;
   
-  start_segment_word= 3;
   if (message_number_used)
   {
-    ndb_message->segment_ptr[0]= &message_ptr[4];
-    ndb_message->message_number= message_ptr[3];
-    start_segment_word= 4;
+    ndb_message->message_number= message_ptr[start_segment_word];
+    start_segment_word++;
+    ndb_message->segment_ptr[0]= &message_ptr[start_segment_word];
   }
   start_segment_word+= ndb_message->segment_size[0];
   segment_size_ptr= &message_ptr[start_segment_word];

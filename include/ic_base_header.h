@@ -203,7 +203,7 @@ static const guint32 IC_NDB_HIGH_PRIO= 1;
 #define IC_MAX_FILE_NAME_SIZE 255
 #define IC_MAX_INT_STRING 32
 #define IC_MAX_APID_NUM_THREADS 256
-#define IC_MAX_RECORD_SIZE 8052
+#define IC_MAX_RECORD_SIZE 14000
 
 /* Define a number of constants used in various places */
 #define SPACE_CHAR (gchar)32

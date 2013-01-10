@@ -169,6 +169,7 @@ md_trans_set_external_error(IC_INT_METADATA_TRANSACTION *md_trans,
   DEBUG_ENTRY("md_trans_set_external_error");
   DEBUG_PRINT(NDB_MESSAGE_LEVEL,
     ("error_code = %d", error_code));
+  md_trans->return_to_api= TRUE;
   md_trans->error_object.error_code= error_code;
   md_trans->error_object.error_category= IC_CATEGORY_EXTERNAL_ERROR;
 
@@ -1206,9 +1207,6 @@ fill_binary_property(IC_DYNAMIC_ARRAY *dyn_array,
   gchar *binary_val_ptr;
   int ret_code;
 
-  if (binary_value_len == 0) /* Default value */
-    return 0;
-
   val[0]= htonl((IC_BINARY_VALUE_TYPE << 16) + key);
   val[1]= htonl(binary_value_len);
 
@@ -1528,9 +1526,19 @@ fill_create_table_info_properties(IC_INT_ALTER_TABLE *alter_table)
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_TYPE_KEY,
                                         IC_MINUS_ONE)) ||
+        /*
+           Field size is more or less ignored, it's prescribed by the
+           external type which is used to set the real field size.
+           We do however send the correct field size anyways.
+        */
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_SIZE_KEY,
                                         col_size)) ||
+        /*
+          Array size is set by a combination of external type and external
+          length. It's mostly ignored but we still set it to a correct
+          value.
+        */
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_ARRAY_SIZE_KEY,
                                         next_field->array_size)) ||
@@ -1551,7 +1559,11 @@ fill_create_table_info_properties(IC_INT_ALTER_TABLE *alter_table)
                                    IC_COLUMN_DISTRIBUTION_KEY_FLAG_DEFAULT)) ||
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_EXT_TYPE_KEY,
-                                        IC_COLUMN_EXT_TYPE_DEFAULT)) ||
+                                        (guint32)next_field->type)) ||
+        /*
+           Upper 16 bits of external precision contains number of
+           character set used for this field.
+        */
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_EXT_PRECISION_KEY,
                                         0)) ||
@@ -1560,7 +1572,7 @@ fill_create_table_info_properties(IC_INT_ALTER_TABLE *alter_table)
                                         0)) ||
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_EXT_LEN_KEY,
-                                        0)) ||
+                                        next_field->array_size)) ||
         (ret_code= fill_uint32_property(dyn_array,
                                         IC_COLUMN_AUTO_INCREMENT_FLAG_KEY,
                                   IC_COLUMN_AUTO_INCREMENT_FLAG_DEFAULT)) ||

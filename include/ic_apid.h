@@ -407,10 +407,6 @@ struct ic_alter_table_ops
                                guint32 scale,
                                guint32 precision);
 
-  int (*ic_set_signed) (IC_ALTER_TABLE *alter_table,
-                        const gchar *field_name,
-                        gboolean is_signed);
-
   /* One or more fields can be dropped in an alter table operation */
   int (*ic_drop_field) (IC_ALTER_TABLE *alter_table,
                         const gchar *field_name);

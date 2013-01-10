@@ -218,7 +218,6 @@ struct ic_define_field
   gboolean is_nullable;
   gboolean is_field_disk_stored;
   gboolean is_part_of_pkey;
-  gboolean is_signed;
   gchar *default_value;
   guint32 default_value_len;
 };
@@ -606,7 +605,14 @@ struct ic_int_apid_global
   IC_MUTEX *thread_id_mutex;
   guint32 num_receive_threads;
   guint32 num_listen_server_threads;
+  /* The API node id I am using for this global connection */
   guint32 my_node_id;
+  /*
+    An atomic message id incremented each time a message is sent, only if
+    configuration is using message ids.
+    Protected by the mutex
+  */
+  guint32 message_id;
   /*
     Variable that indicates if we are waiting for first node to connect
     from any user thread.

@@ -203,9 +203,10 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   gboolean use_message_sequence_id=
     send_node_conn->link_config->use_message_id;
   gboolean use_checksum= send_node_conn->link_config->use_checksum;
-  guint32 *message_ptr;
+  guint32 *message_ptr, *message_len_ptr;
   guint32 *start_message32= start_message;
   guint32 i;
+  IC_INT_APID_GLOBAL *apid_global;
 
   ic_assert(num_segments <= 4);
   ic_assert(num_segments > 0);
@@ -288,23 +289,22 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
          segment_ptrs[0],
          segment_lens[0] * sizeof(guint32));
 
-  message_ptr= (guint32*)(start_message32 +
-                          header_length +
-                          segment_lens[0]);
+  message_len_ptr= (guint32*)(start_message32 +
+                              header_length +
+                              segment_lens[0]);
+  message_ptr= message_len_ptr + (num_segments - 1);
 
   for (i= 1; i < num_segments; i++)
   {
     tot_message_size+= (segment_lens[i] + 1);
-    *message_ptr= segment_lens[i];
-    message_ptr++;
-  }
 
-  for (i= 1; i < num_segments; i++)
-  {
     memcpy(message_ptr,
            segment_ptrs[i],
            segment_lens[i] * sizeof(guint32));
     message_ptr+= segment_lens[i];
+
+    *message_len_ptr= segment_lens[i];
+    message_len_ptr++;
   }
   tot_message_size+= use_checksum;
   /* Calculate first header word */
@@ -314,11 +314,11 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   if (ic_glob_byte_order)
     word= 0x81000081; /* Set bit 0,7,24,31 independent of byte order */
 
-  /* Set fragmented flags */
-  loc_variable= fragment_flag & 1;
-  word|= (loc_variable << 1);
+  /* Set fragmented flags, higher order bit is 1, lower 25 */
   loc_variable= fragment_flag & 2;
-  word|= (loc_variable << (25 - 1));
+  word|= (loc_variable << (1 - 1));
+  loc_variable= fragment_flag & 1;
+  word|= (loc_variable << 25);
 
   /* Set message id used flag */
   loc_variable= use_message_sequence_id << 2;
@@ -338,7 +338,7 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   word|= loc_variable;
 
   /* Set main message size, make sure it's not > 25 */
-  loc_variable= segment_lens[0] + (num_segments - 1);
+  loc_variable= segment_lens[0];
   ic_require(loc_variable <= IC_NDB_MAX_MAIN_MESSAGE_SIZE);
   loc_variable<<= 26;
   word|= loc_variable;
@@ -371,7 +371,10 @@ fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
   if (use_message_sequence_id)
   {
     /* Set proper message sequence_id here at some point in time */
-    start_message32[3]= 0;
+    apid_global= send_node_conn->apid_global;
+    ic_mutex_lock(apid_global->mutex);
+    start_message32[3]= apid_global->message_id++;
+    ic_mutex_unlock(apid_global->mutex);
   }
   if (use_checksum)
   {

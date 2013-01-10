@@ -82,7 +82,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
       ((ret_code= md_alter_table->alter_table_ops->ic_add_field(
          md_alter_table,
          file_key_str,
-         IC_API_INT64_TYPE,
+         IC_API_BIG_UNSIGNED,
          1 /* A single field, not an array */,
          FALSE /* Not nullable */,
          FALSE /* Not stored on disk */))) ||
@@ -90,7 +90,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
       ((ret_code= md_alter_table->alter_table_ops->ic_add_field(
          md_alter_table,
          "file_data",
-         IC_API_VARIABLE_SIZE_CHAR,
+         IC_API_BINARY,
          8192 /* Maximum size of each part of the file */,
          TRUE /* Nullable */,
          FALSE /* Not stored on disk for now */))) ||
