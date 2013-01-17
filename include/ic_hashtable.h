@@ -75,13 +75,21 @@
  *
  */
 
+/* Hash/Key function for strings */
 unsigned int ic_hash_str(void *ptr);
-unsigned int ic_hash_ptr(void *ptr);
-unsigned int ic_hash_uint64(void *key);
-
 int ic_keys_equal_str(void *ptr1, void *ptr2);
+
+/* Hash/Key function for pointers */
+unsigned int ic_hash_ptr(void *ptr);
 int ic_keys_equal_ptr(void *ptr1, void *ptr2);
+
+/* Hash/Key function for 64 bit integers */
+unsigned int ic_hash_uint64(void *key);
 int ic_keys_equal_uint64(void *key1, void *key2);
+
+/* Hash/Key function for 32 bit integers */
+unsigned int ic_hash_uint32(void *key);
+int ic_keys_equal_uint32(void *key1, void *key2);
 
 /*****************************************************************************
  * ic_create_hashtable

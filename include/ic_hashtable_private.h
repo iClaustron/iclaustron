@@ -23,17 +23,18 @@
 /*****************************************************************************/
 struct ic_hash_entry
 {
-    void *k, *v;
-    unsigned int h;
+    void *k;
+    void *v;
     IC_HASH_ENTRY *next;
+    unsigned int h;
 };
 
 struct ic_hashtable {
     unsigned int tablelength;
-    IC_HASH_ENTRY **table;
     unsigned int entrycount;
     unsigned int loadlimit;
     unsigned int primeindex;
+    IC_HASH_ENTRY **table;
     unsigned int (*hashfn) (void *k);
     int (*eqfn) (void *k1, void *k2);
 };

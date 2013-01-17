@@ -43,6 +43,7 @@ typedef struct ic_int_apid_query IC_INT_APID_QUERY;
 typedef struct ic_int_apid_error IC_INT_APID_ERROR;
 typedef struct ic_int_apid_connection IC_INT_APID_CONNECTION;
 typedef struct ic_int_apid_global IC_INT_APID_GLOBAL;
+typedef struct ic_apid_cluster_data IC_APID_CLUSTER_DATA;
 typedef struct ic_int_table_def IC_INT_TABLE_DEF;
 typedef struct ic_int_range_condition IC_INT_RANGE_CONDITION;
 typedef struct ic_int_where_condition IC_INT_WHERE_CONDITION;
@@ -506,6 +507,26 @@ struct ic_int_apid_connection
   IC_THREAD_CONNECTION *thread_conn;
   IC_SOCK_BUF_PAGE *free_pages;
   IC_INT_METADATA_TRANSACTION *md_trans;
+
+  /**
+    Each connection has its own hash table containing cached meta
+    data of tables. There is a limit to the amount of caching done
+    locally in each connection object. The actual metadata is
+    in reality global since it's read only data. But the global
+    part won't be removed until all local copies have been removed.
+    We keep a reference count on the global object. Only the
+    local part can handle the removal of a reference count.
+  */
+  IC_HASHTABLE *md_hash;
+
+  /**
+    Each connection also has a hash table containing cached TC
+    connections to the NDB data nodes. We have maximum of one
+    entry per node although each such entry can have a list of
+    TC connections.
+  */
+  IC_HASHTABLE *tc_conn;
+
   guint32 thread_id;
   /*
     The queries pass through a set of lists from start to end.
@@ -544,6 +565,38 @@ struct ic_int_apid_connection
   IC_INT_APID_ERROR apid_error;
 };
 
+struct ic_apid_cluster_data
+{
+  /**
+    All data in this data structure is shared amongst the APID connections.
+    So all accesses must be protected through the mutex and in some cases
+    we use the condition variable to wait for another thread to complete
+    some action on the data structures.
+  */
+  IC_MUTEX *mutex;
+  IC_COND *cond;
+
+  /**
+    We keep a global hash table of meta data on tables. We keep this
+    global information per cluster. Each object can be used by several
+    APID connections and is not released until the reference count goes
+    down to zero.
+  */
+  IC_HASHTABLE *cluster_md_hash;
+
+  /**
+    We keep a global hash table of all connections to TC's in the data
+    nodes. We only keep connections in this hash table that aren't used
+    locally in APID connections. When a local connection takes over the
+    connection it's removed from the global hash table.
+
+    We try to maintain a set of connections to each node at all times
+    through a background thread.
+  */
+  IC_HASHTABLE *cluster_tc_conn;
+
+};
+
 #define IC_MAX_SERVER_PORTS_LISTEN 256
 #define IC_MAX_RECEIVE_THREADS 64
 
@@ -557,6 +610,14 @@ struct ic_int_apid_global
   /* Internal part */
   IC_MUTEX *mutex;
   IC_COND *cond;
+  /**
+    Each cluster has a set of cached data in the API which requires shared
+    access. We keep this data in a data structure per cluster. This variable
+    provides access to these data structures by an array accessed with the
+    cluster id as key.
+  */
+  IC_APID_CLUSTER_DATA **cluster_data_array;
+
   guint32 num_user_threads_started;
   gboolean stop_flag;
   gboolean use_external_connect;

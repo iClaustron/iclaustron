@@ -29,6 +29,7 @@
 #include <ic_parse_connectstring.h>
 #include <ic_bitmap.h>
 #include <ic_dyn_array.h>
+#include <ic_hashtable.h>
 #include <ic_connection.h>
 #include <ic_protocol_support.h>
 #include <ic_sock_buf.h>

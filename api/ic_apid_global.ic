@@ -134,37 +134,50 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CLUSTER_COMM *cluster_comm;
+  IC_APID_CLUSTER_DATA *cluster_data;
   guint32 i, j, num_bits;
   guint32 max_cluster_id;
   guint32 my_node_id= 0;
   DEBUG_ENTRY("ic_init_apid");
 
   initialize_message_func_array();
+
   if (!(apid_global= (IC_INT_APID_GLOBAL*)
        ic_calloc(sizeof(IC_INT_APID_GLOBAL))))
     DEBUG_RETURN_PTR(NULL);
+
+  apid_global->apic= apic;
+  apid_global->num_receive_threads= 0;
+
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
                         IC_MAX_RECEIVE_THREADS + 1, FALSE)))
     goto error;
+
   if (!(apid_global->send_thread_pool= ic_create_threadpool(
                         IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
     goto error;
-  apid_global->apic= apic;
-  apid_global->num_receive_threads= 0;
+
   if (!(apid_global->grid_comm=
        (IC_GRID_COMM*)ic_calloc(sizeof(IC_GRID_COMM))))
     goto error;
+
   if (!(apid_global->grid_comm->cluster_comm_array= (IC_CLUSTER_COMM**)
         ic_calloc((IC_MAX_CLUSTER_ID + 1) * sizeof(IC_SEND_NODE_CONNECTION*))))
     goto error;
+
   if (!(apid_global->grid_comm->thread_conn_array= (IC_THREAD_CONNECTION**)
         ic_calloc((IC_MAX_THREAD_CONNECTIONS + 1) *
         sizeof(IC_THREAD_CONNECTION*))))
     goto error;
+
   max_cluster_id= apic->api_op.ic_get_max_cluster_id(apic);
   num_bits= max_cluster_id + 1;
   if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL,
                                                       num_bits)))
+    goto error;
+
+  if (!(apid_global->cluster_data_array= (IC_APID_CLUSTER_DATA**)
+        ic_calloc(sizeof(IC_APID_CLUSTER_DATA*) * num_bits)))
     goto error;
 
   /*
@@ -212,9 +225,31 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
                      ic_calloc(sizeof(IC_CLUSTER_COMM))))
         goto error;
       apid_global->grid_comm->cluster_comm_array[i]= cluster_comm;
+
       if (!(cluster_comm->send_node_conn_array= (IC_SEND_NODE_CONNECTION**)
             ic_calloc((IC_MAX_NODE_ID + 1)*sizeof(IC_SEND_NODE_CONNECTION*))))
         goto error;
+
+      if (!(cluster_data= (IC_APID_CLUSTER_DATA*)
+            ic_calloc(sizeof(IC_APID_CLUSTER_DATA))))
+        goto error;
+      apid_global->cluster_data_array[i]= cluster_data;
+      if (!(cluster_data->mutex= ic_mutex_create()))
+        goto error;
+      if (!(cluster_data->cond= ic_cond_create()))
+        goto error;
+      if (!(cluster_data->cluster_md_hash=
+            ic_create_hashtable(5,
+                                ic_hash_str,
+                                ic_keys_equal_str,
+                                FALSE)))
+      if (!(cluster_data->cluster_tc_conn=
+            ic_create_hashtable(5,
+                                ic_hash_uint32,
+                                ic_keys_equal_uint32,
+                                FALSE)))
+        goto error;
+
       for (j= 1; j <= clu_conf->max_node_id; j++)
       {
         if (clu_conf->node_config[j])
@@ -266,15 +301,27 @@ end:
 static void
 ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
 {
-  IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
-  IC_SOCK_BUF *ndb_message_pool= apid_global->ndb_message_pool;
-  IC_GRID_COMM *grid_comm= apid_global->grid_comm;
+  IC_SOCK_BUF *send_buf_pool;
+  IC_SOCK_BUF *ndb_message_pool;
+  IC_GRID_COMM *grid_comm;
+  IC_APID_CLUSTER_DATA **cluster_data_array, *cluster_data;
   IC_CLUSTER_COMM *cluster_comm;
+  IC_API_CONFIG_SERVER *apic;
   guint32 i, j;
+  guint32 max_cluster_id;
   DEBUG_ENTRY("ic_end_apid");
 
   if (!apid_global)
     DEBUG_RETURN_EMPTY;
+
+  apic= apid_global->apic;
+  max_cluster_id= apic->api_op.ic_get_max_cluster_id(apic);
+
+  send_buf_pool= apid_global->send_buf_pool;
+  ndb_message_pool= apid_global->ndb_message_pool;
+  grid_comm= apid_global->grid_comm;
+  cluster_data_array= apid_global->cluster_data_array;
+
   if (apid_global->rec_thread_pool)
     apid_global->rec_thread_pool->tp_ops.ic_threadpool_stop(
                   apid_global->rec_thread_pool);
@@ -328,6 +375,26 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
       ic_free(grid_comm->thread_conn_array);
     }
     ic_free(grid_comm);
+  }
+  if (cluster_data_array)
+  {
+    for (i= 0; i <= max_cluster_id; i++)
+    {
+      cluster_data= cluster_data_array[i];
+      if (cluster_data)
+      {
+        if (cluster_data->mutex)
+          ic_mutex_destroy(&cluster_data->mutex);
+        if (cluster_data->cond)
+          ic_cond_destroy(&cluster_data->cond);
+        if (cluster_data->cluster_md_hash)
+          ic_hashtable_destroy(cluster_data->cluster_md_hash, FALSE);
+        if (cluster_data->cluster_tc_conn)
+          ic_hashtable_destroy(cluster_data->cluster_tc_conn, FALSE);
+        ic_free(cluster_data);
+      }
+    }
+    ic_free(cluster_data_array);
   }
   if (apid_global->thread_id_mutex)
     ic_mutex_destroy(&apid_global->thread_id_mutex);

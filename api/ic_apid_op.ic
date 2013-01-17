@@ -44,6 +44,7 @@ organize_field_in_query_array(IC_INT_APID_QUERY *apid_query,
         num_fields,
         sizeof(IC_FIELD_IN_QUERY*),
         compare_field_in_query);
+
   for (i= 0; i < num_fields; i++)
   {
     field_id= apid_query->fields[i]->field_id;
@@ -275,10 +276,13 @@ static IC_APID_QUERY_OPS glob_apid_query_ops =
   /* .ic_create_where_condition  = */ apid_query_create_where_condition,
   /* .ic_map_where_condition     = */ apid_query_map_where_condition,
   /* .ic_keep_where              = */ apid_query_keep_where,
-  /* .ic_create_conditional_assignments = */ apid_query_create_conditional_assignments,
-  /* .ic_create_conditional_assignment = */ apid_query_create_conditional_assignment,
+  /* .ic_create_conditional_assignments = */
+                          apid_query_create_conditional_assignments,
+  /* .ic_create_conditional_assignment = */
+                          apid_query_create_conditional_assignment,
   /* .ic_map_conditional_assignment = */ apid_query_map_conditional_assignment,
-  /* .ic_keep_conditional_assignment = */ apid_query_keep_conditional_assignment,
+  /* .ic_keep_conditional_assignment = */
+                          apid_query_keep_conditional_assignment,
   /* .ic_get_error_object        = */ apid_query_get_error_object,
   /* .ic_reset_apid_query           = */ apid_query_reset,
   /* .ic_free_apid_query            = */ apid_query_free

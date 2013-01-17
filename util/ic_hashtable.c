@@ -27,9 +27,12 @@
 Credit for primes table: Aaron Krowne
  http://br.endernet.org/~akrowne/
  http://planetmath.org/encyclopedia/GoodHashTablePrimes.html
+
+  Added a few extra primes to minimize size of hash tables
+  when we want really small hash tables (5, 11, 23, 51).
 */
 static const unsigned int primes[] = {
-53, 97, 193, 389,
+5, 11, 23, 51, 97, 193, 389,
 769, 1543, 3079, 6151,
 12289, 24593, 49157, 98317,
 196613, 393241, 786433, 1572869,
@@ -91,6 +94,18 @@ ic_hash_uint64(void *key)
   return hash_value;
 }
 
+unsigned int
+ic_hash_uint32(void *key)
+{
+  gchar *val_str= (gchar*)key;
+  unsigned int hash_value= 23;
+  guint32 i;
+
+  for (i= 0; i < 4; i++)
+    hash_value= ((147*hash_value) + val_str[i]);
+  return hash_value;
+}
+
 int
 ic_keys_equal_str(void *ptr1, void *ptr2)
 {
@@ -121,6 +136,17 @@ ic_keys_equal_uint64(void *key1, void* key2)
   return (val1 == val2) ? 1 : 0;
 }
 
+int
+ic_keys_equal_uint32(void *key1, void* key2)
+{
+  guint32 *val_ptr1= (guint32*)key1;
+  guint32 *val_ptr2= (guint32*)key2;
+  guint32 val1= *val_ptr1;
+  guint32 val2= *val_ptr2;
+
+  return (val1 == val2) ? 1 : 0;
+}
+
 /*****************************************************************************/
 IC_HASHTABLE*
 ic_create_hashtable(unsigned int minsize,
@@ -128,48 +154,55 @@ ic_create_hashtable(unsigned int minsize,
                     int (*eqf) (void*,void*),
                     gboolean initial)
 {
-    struct ic_hashtable *h;
-    unsigned int pindex, size = primes[0];
+  struct ic_hashtable *h;
+  unsigned int pindex, size = primes[0];
 
-    (void)initial;
-    /* Check requested ic_hashtable isn't too large */
-    if (minsize > (1u << 30)) return NULL;
-    /* Enforce size as prime */
-    for (pindex=0; pindex < prime_table_length; pindex++) {
-        if (primes[pindex] > minsize) { size = primes[pindex]; break; }
-    }
-    h = (IC_HASHTABLE*)ic_malloc_hash(sizeof(IC_HASHTABLE), !initial);
-    if (NULL == h) return NULL; /*oom*/
-    h->table = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * size,
-                                               FALSE);
-    if (NULL == h->table)
+  (void)initial;
+  /* Check requested ic_hashtable isn't too large */
+  if (minsize > (1u << 30))
+    return NULL;
+  /* Enforce size as prime */
+  for (pindex= 0; pindex < prime_table_length; pindex++)
+  {
+    if (primes[pindex] > minsize)
     {
-      ic_free_hash(h, !initial); /*oom*/
-      return NULL;
+      size = primes[pindex];
+      break;
     }
-    ic_zero(h->table, size * sizeof(IC_HASH_ENTRY*));
-    h->tablelength  = size;
-    h->primeindex   = pindex;
-    h->entrycount   = 0;
-    h->hashfn       = hashf;
-    h->eqfn         = eqf;
-    h->loadlimit    = (unsigned int) ceil(size * max_load_factor);
-    return h;
+  }
+  h = (IC_HASHTABLE*)ic_malloc_hash(sizeof(IC_HASHTABLE), !initial);
+  if (NULL == h)
+    return NULL; /*oom*/
+  h->table = (IC_HASH_ENTRY**)ic_malloc_hash(sizeof(IC_HASH_ENTRY*) * size,
+                                             FALSE);
+  if (NULL == h->table)
+  {
+    ic_free_hash(h, !initial); /*oom*/
+    return NULL;
+  }
+  ic_zero(h->table, size * sizeof(IC_HASH_ENTRY*));
+  h->tablelength  = size;
+  h->primeindex   = pindex;
+  h->entrycount   = 0;
+  h->hashfn       = hashf;
+  h->eqfn         = eqf;
+  h->loadlimit    = (unsigned int) ceil(size * max_load_factor);
+  return h;
 }
 
 /*****************************************************************************/
 unsigned int
 hash(IC_HASHTABLE *h, void *k)
 {
-    /* Aim to protect against poor hash functions by adding logic here
-     * - logic taken from java 1.4 ic_hashtable source */
-    unsigned int i = h->hashfn(k);
+  /* Aim to protect against poor hash functions by adding logic here
+   * - logic taken from java 1.4 ic_hashtable source */
+  unsigned int i = h->hashfn(k);
 
-    i += ~(i << 9);
-    i ^=  ((i >> 14) | (i << 18)); /* >>> */
-    i +=  (i << 4);
-    i ^=  ((i >> 10) | (i << 22)); /* >>> */
-    return i;
+  i += ~(i << 9);
+  i ^=  ((i >> 14) | (i << 18)); /* >>> */
+  i +=  (i << 4);
+  i ^=  ((i >> 10) | (i << 22)); /* >>> */
+  return i;
 }
 
 /*****************************************************************************/
@@ -267,7 +300,11 @@ ic_hashtable_insert(IC_HASHTABLE *h, void *k, void *v)
     ic_hashtable_expand(h);
   }
   e = (IC_HASH_ENTRY*)ic_malloc_hash(sizeof(IC_HASH_ENTRY), FALSE);
-  if (NULL == e) { --(h->entrycount); return IC_ERROR_MEM_ALLOC; } /*oom*/
+  if (NULL == e)
+  {
+    --(h->entrycount);
+    return IC_ERROR_MEM_ALLOC;
+  } /*oom*/
   e->h = hash(h,k);
   index = indexFor(h->tablelength,e->h);
   e->k = k;

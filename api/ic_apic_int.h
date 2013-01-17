@@ -177,6 +177,7 @@ struct ic_temp_api_config_server
   gchar *config_memory_to_return;
 };
 typedef struct ic_temp_api_config_server IC_TEMP_API_CONFIG_SERVER;
+
 /*
   The struct ic_api_config_server represents the configuration of
   all clusters that this node participates in and the node id it

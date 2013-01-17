@@ -843,6 +843,8 @@ get_ndb_field_size(IC_DEFINE_FIELD *def_field, gboolean fixed_size)
     case IC_API_LONG_VARBINARY:
       size+= 2;
       break;
+    default:
+      break;
   }
   return ic_align(size, 4);
 }
