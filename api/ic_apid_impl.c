@@ -56,8 +56,6 @@
 #include "ic_apid_send_message.ic"
 #include "ic_apid_send_thread.ic"
 #include "ic_apid_handle_messages.ic"
-#include "ic_apid_handle_dict_messages.ic"
-#include "ic_apid_handle_message_array.ic"
 #include "ic_apid_exec_message.ic"
 #include "ic_apid_rec_thread.ic"
 #include "ic_apid_start.ic"
@@ -71,3 +69,6 @@
 #include "ic_apid_trans.ic"
 #include "ic_apid_table.ic"
 #include "ic_apid_tablespace.ic"
+/* Data API internals */
+#include "ic_apid_handle_dict_messages.ic"
+#include "ic_apid_handle_message_array.ic"

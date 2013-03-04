@@ -221,6 +221,10 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
   grid_comm= apid_global->grid_comm;
   if (apid_conn)
   {
+    if (apid_conn->md_hash)
+      ic_hashtable_destroy(apid_conn->md_hash, FALSE);
+    if (apid_conn->tc_conn)
+      ic_hashtable_destroy(apid_conn->tc_conn, FALSE);
     if (apid_conn->cluster_id_bitmap)
       ic_free_bitmap(apid_conn->cluster_id_bitmap);
     if (apid_conn->trans_bindings)
@@ -345,6 +349,17 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   grid_comm->thread_conn_array[thread_id]= thread_conn;
   ic_mutex_unlock(apid_global->thread_id_mutex);
   apid_conn->thread_id= thread_id;
+  /* Create hash tables for metadata object and NDB connections */
+  if (!(apid_conn->md_hash= ic_create_hashtable(5,
+                                                ic_hash_str,
+                                                ic_keys_equal_str,
+                                                FALSE)))
+    goto error;
+  if (!(apid_conn->tc_conn= ic_create_hashtable(5,
+                                                ic_hash_uint32,
+                                                ic_keys_equal_uint32,
+                                                FALSE)))
+    goto error;
   /* Now initialise the method pointers for the Data API interface */
   apid_conn->apid_conn_ops= &glob_apid_conn_ops;
   /* Now initialise error object */

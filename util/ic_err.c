@@ -59,7 +59,7 @@ ic_init_error_messages()
   ic_error_str[IC_ERROR_CONFIG_BRACKET - IC_FIRST_ERROR]=
     "Missing ] after initial [";
   ic_error_str[IC_ERROR_CONFIG_INCORRECT_GROUP_ID - IC_FIRST_ERROR]=
-    "Found incorrect group id";
+    "Found incorect group id";
   ic_error_str[IC_ERROR_CONFIG_IMPROPER_KEY_VALUE - IC_FIRST_ERROR]=
     "Improper key-value pair";
   ic_error_str[IC_ERROR_CONFIG_NO_SUCH_SECTION - IC_FIRST_ERROR]=
@@ -278,6 +278,10 @@ ic_init_error_messages()
     "Found no master node since API had no connected nodes for the cluster";
   ic_error_str[IC_ERROR_NO_SUCH_DATA_TYPE - IC_FIRST_ERROR]=
     "No such data type exists";
+  ic_error_str[IC_ERROR_MISSING_COLUMN_NAME - IC_FIRST_ERROR]=
+    "Missing column name in metadata operation";
+  ic_error_str[IC_ERROR_TOO_LONG_TABLE_NAME - IC_FIRST_ERROR]=
+    "Table name too long";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

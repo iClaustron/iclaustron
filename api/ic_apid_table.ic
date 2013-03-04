@@ -833,6 +833,8 @@ static guint32
 get_ndb_field_size(IC_DEFINE_FIELD *def_field, gboolean fixed_size)
 {
   guint32 size= def_field->size * def_field->array_size;
+
+  (void)fixed_size;
   switch (def_field->type)
   {
     case IC_API_VARCHAR:

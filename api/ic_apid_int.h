@@ -155,8 +155,10 @@ struct ic_field_in_query
 
 struct ic_field_def
 {
+  gchar *field_name;
   guint32 field_id;
   guint32 field_size;
+  guint32 field_array_size;
   gboolean is_nullable;
   gboolean has_default_value;
   gchar *default_value;
@@ -170,15 +172,23 @@ struct ic_int_table_def
   IC_TABLE_DEF_OPS *table_def_ops;
   /* Hidden part */
   /* Internal part */
+  gchar *table_name;
   guint32 table_id;
+  guint32 table_version;
+  guint32 hash_map_id;
+  guint32 hash_map_version;
+  guint32 tablespace_id;
+  guint32 tablespace_version;
   guint32 index_id;
   guint32 num_fields;
   guint32 num_key_fields;
+  guint32 num_null_fields;
   gboolean is_index;
   gboolean is_unique_index;
   IC_BITMAP *key_fields;
   guint32 *key_field_id_order;
   IC_FIELD_DEF **fields;
+  IC_MEMORY_CONTAINER *mc_ptr;
 };
 
 struct ic_int_range_condition

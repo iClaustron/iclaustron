@@ -340,6 +340,9 @@ get_send_node_conn(IC_INT_APID_GLOBAL *apid_global,
                    guint32 cluster_id,
                    guint32 node_id);
 
+static int
+execute_meta_data_transaction(IC_INT_METADATA_TRANSACTION *md_trans);
+
 /* Definitions used to handle NDB Protocol handling data structures. */
 
 #define IC_MEM_BUF_SIZE 32768

@@ -1325,6 +1325,436 @@ get_col_size(IC_DEFINE_FIELD *field)
   return col_size;
 }
 
+static int
+get_create_table_info_properties(guint32 *property_array,
+                                 guint32 length,
+                                 IC_INT_TABLE_DEF **table_def)
+{
+  guint32 index= 0;
+  guint32 current_num_column= 0;
+  guint32 current_num_null_column= 0;
+  guint32 current_num_pkey_column= 0;
+  guint32 key;
+  guint32 value, val1, type;
+  gchar *name_ptr;
+  gchar *property_ptr;
+  gboolean column_mode= FALSE;
+  int ret_code= IC_ERROR_MEM_ALLOC;
+  IC_INT_TABLE_DEF *loc_table_def;
+  IC_FIELD_DEF *current_field_def;
+  IC_MEMORY_CONTAINER *mc_ptr;
+
+  if (!(mc_ptr= ic_create_memory_container(256, 0, FALSE)))
+  {
+    return ret_code;
+  }
+  if ((loc_table_def= (IC_INT_TABLE_DEF*)
+                       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                                                   sizeof(IC_INT_TABLE_DEF))))
+    goto error;
+
+  /* Initialise table object */
+  loc_table_def->table_def_ops= &glob_table_def_ops;
+  
+  while ((index + 1) < length)
+  {
+    val1= ntohl(property_array[index]);
+    value= ntohl(property_array[index + 1]);
+    index+= 2;
+
+    type= val1 >> 16;
+    key= val1 & 0xFFFF;
+
+    if (type == IC_STRING_VALUE_TYPE &&
+        type == IC_BINARY_VALUE_TYPE)
+    {
+      property_ptr= (gchar*)&property_array[index];
+      index+= ((value + 3)/4);
+      if (index >= length)
+        goto protocol_error;
+    }
+    if (!column_mode)
+    {
+      if (type == IC_UINT32_VALUE_TYPE)
+      {
+        switch (key)
+        {
+          case IC_TABLE_ID_KEY:
+          {
+            loc_table_def->table_id= value;
+            break;
+          }
+          case IC_TABLE_VERSION_KEY:
+          {
+            loc_table_def->table_version= value;
+            break;
+          }
+          case IC_TABLE_LOGGED_KEY:
+          {
+            /* Ignore this property */
+            break;
+          }
+          case IC_NUM_PKEY_COL_KEY:
+          {
+            loc_table_def->num_key_fields= value;
+            if (!(loc_table_def->key_fields=
+                ic_mc_create_bitmap(mc_ptr, loc_table_def->num_key_fields)))
+              goto error;
+            break;
+          }
+          case IC_NUM_COL_KEY:
+          {
+            loc_table_def->num_fields= value;
+            if (!(loc_table_def->fields= (IC_FIELD_DEF**)
+                  mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                  loc_table_def->num_fields * sizeof(IC_FIELD_DEF*))))
+              goto error;
+            if (!(loc_table_def->key_field_id_order= (guint32*)
+                mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                                            loc_table_def->num_fields *
+                                            sizeof(guint32))))
+              goto error;
+            break;
+          }
+          case IC_NUM_NULL_COL_KEY:
+          {
+            loc_table_def->num_null_fields= value;
+            break;
+          }
+          case IC_NUM_VARIABLE_COL_KEY:
+          case IC_TABLE_K_VALUE_KEY:
+          case IC_MIN_LOAD_FACTOR_KEY:
+          case IC_MAX_LOAD_FACTOR_KEY:
+          case IC_PKEY_LEN_KEY:
+          {
+            /* Ignore these properties */
+            break;
+          }
+          case IC_FRAGMENT_TYPE_KEY:
+          {
+            break;
+          }
+          case IC_TABLE_TYPE_KEY:
+          {
+            break;
+          }
+          case IC_PRIMARY_TABLE_ID_KEY:
+          case IC_INDEX_STATE_KEY:
+          case IC_INSERT_TRIGGER_ID_KEY:
+          case IC_UPDATE_TRIGGER_ID_KEY:
+          case IC_DELETE_TRIGGER_ID_KEY:
+          case IC_CUSTOM_TRIGGER_ID_KEY:
+          case IC_FRM_LEN_KEY:
+          {
+            /* Ignore these properties */
+            break;
+          }
+          case IC_TABLE_TEMPORARY_KEY:
+          {
+            break;
+          }
+          case IC_FORCE_VAR_PART_KEY:
+          {
+            /* Ignore this property */
+            break;
+          }
+          case IC_FRAGMENT_COUNT_KEY:
+          {
+            break;
+          }
+          case IC_FRAGMENT_DATA_LEN_KEY:
+          {
+            break;
+          }
+          case IC_TABLESPACE_ID_KEY:
+          {
+            loc_table_def->tablespace_id= value;
+            break;
+          }
+          case IC_TABLESPACE_VERSION_KEY:
+          {
+            loc_table_def->tablespace_version= value;
+            break;
+          }
+          case IC_TABLESPACE_DATA_LEN_KEY:
+          case IC_RANGE_LIST_DATA_LEN_KEY:
+          case IC_REPLICA_LIST_DATA_LEN_KEY:
+          case IC_MAX_ROWS_LOW_KEY:
+          case IC_MAX_ROWS_HIGH_KEY:
+          case IC_DEFAULT_NUM_PARTITIONS_FLAG_KEY:
+          case IC_LINEAR_HASH_FLAG_KEY:
+          case IC_MIN_ROWS_LOW_KEY:
+          case IC_MIN_ROWS_HIGH_KEY:
+          case IC_ROW_GCI_FLAG_KEY:
+          case IC_ROW_CHECKSUM_FLAG_KEY:
+          case IC_SINGLE_USER_MODE_KEY:
+          {
+            /* Ignore this property */
+            break;
+          }
+          case IC_HASH_MAP_ID_KEY:
+          {
+            loc_table_def->hash_map_id= value;
+            break;
+          }
+          case IC_HASH_MAP_VERSION_KEY:
+          {
+            loc_table_def->hash_map_id= value;
+            break;
+          }
+          case IC_TABLE_STORAGE_TYPE_KEY:
+          case IC_EXTRA_ROW_GCI_BITS_KEY:
+          case IC_EXTRA_ROW_AUTHOR_BITS_KEY:
+          {
+            /* Ignore this property */
+            break;
+          }
+          default:
+          {
+            /* Incorrect type, protocol error */
+            goto protocol_error;
+          }
+        }
+      }
+      else if (type == IC_STRING_VALUE_TYPE)
+      {
+        switch (key)
+        {
+          case IC_TABLE_NAME_KEY:
+          {
+            if (value == 0)
+            {
+              ret_code= IC_ERROR_MISSING_TABLE_NAME;
+              goto error;
+            }
+            if (!(name_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, value + 1)))
+              goto error;
+            memcpy(name_ptr, property_ptr, value);
+            name_ptr[value]= 0;
+            loc_table_def->table_name= name_ptr;
+            break;
+          }
+          case IC_PRIMARY_TABLE_KEY:
+          {
+            break;
+          }
+          default:
+          {
+            /* Incorrect type, protocol error */
+            goto protocol_error;
+          }
+        }
+      }
+      else if (type == IC_BINARY_VALUE_TYPE)
+      {
+        switch (key)
+        {
+          case IC_FRM_DATA_KEY:
+          case IC_TABLESPACE_DATA_KEY:
+          {
+            /* Ignore this binary/string property */
+            break;
+          }
+          case IC_FRAGMENT_DATA_KEY:
+          {
+            break;
+          }
+          case IC_RANGE_LIST_DATA_KEY:
+          {
+            break;
+          }
+          case IC_REPLICA_LIST_DATA_KEY:
+          {
+            break;
+          }
+          default:
+          {
+            /* Incorrect type, protocol error */
+            goto protocol_error;
+          }
+        }
+      }
+      else
+      {
+        /* Incorrect type, protocol error */
+        goto protocol_error;
+      }
+    }
+    else /* Column mode */
+    {
+      if (type == IC_UINT32_VALUE_TYPE)
+      {
+        switch (key)
+        {
+          case IC_COLUMN_ID_KEY:
+          {
+            current_field_def->field_id= value;
+            break;
+          }
+          case IC_COLUMN_TYPE_KEY:
+          {
+            current_field_def->field_type= (IC_FIELD_TYPE)value;
+            break;
+          }
+          case IC_COLUMN_SIZE_KEY:
+          {
+            current_field_def->field_size= value;
+            break;
+          }
+          case IC_COLUMN_ARRAY_SIZE_KEY:
+          {
+            current_field_def->field_array_size= value;
+            break;
+          }
+          case IC_COLUMN_PKEY_FLAG_KEY:
+          {
+            if (value)
+              current_num_pkey_column++;
+            break;
+          }
+          case IC_COLUMN_STORAGE_TYPE_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_NULL_FLAG_KEY:
+          {
+            if (value)
+              current_num_null_column++;
+            current_field_def->is_nullable= TRUE;
+            break;
+          }
+          case IC_COLUMN_DYNAMIC_FLAG_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_DISTRIBUTION_KEY_FLAG_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_EXT_TYPE_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_EXT_PRECISION_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_EXT_SCALE_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_EXT_LEN_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_AUTO_INCREMENT_FLAG_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_ARRAY_TYPE_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_DEFAULT_VALUE_LEN_KEY:
+          {
+            break;
+          }
+          case IC_COLUMN_END_KEY:
+          {
+            break;
+          }
+          default:
+          {
+            /* Incorrect type, protocol error */
+            goto protocol_error;
+          }
+        }
+      }
+      else if (type == IC_STRING_VALUE_TYPE)
+      {
+        switch (key)
+        {
+          case IC_COLUMN_NAME_KEY:
+          {
+            if (value == 0)
+            {
+              ret_code= IC_ERROR_MISSING_COLUMN_NAME;
+              goto error;
+            }
+            if (!(name_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, value + 1)))
+              goto error;
+            memcpy(name_ptr, property_ptr, value);
+            name_ptr[value]= 0;
+            if (!(loc_table_def->fields[current_num_column]= (IC_FIELD_DEF*)
+                mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_FIELD_DEF))))
+              goto error;
+            current_field_def= loc_table_def->fields[current_num_column];
+            current_field_def->field_name= name_ptr;
+            current_num_column++;
+            break;
+          }
+          default:
+          {
+            /* Incorrect type, protocol error */
+            goto protocol_error;
+          }
+        }
+      }
+      else if (type == IC_BINARY_VALUE_TYPE)
+      {
+        switch (key)
+        {
+          current_field_def->default_value_len= value;
+          case IC_COLUMN_DEFAULT_VALUE_KEY:
+          {
+            if (value == 0)
+            {
+              current_field_def->default_value= NULL;
+            }
+            else
+            {
+              if (!(current_field_def->default_value= (gchar*)
+                    mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, value + 1)))
+                goto error;
+              
+              current_field_def->default_value_len= value;
+              memcpy(current_field_def->default_value,
+                     property_ptr,
+                     value);
+              current_field_def->default_value[value]= 0;
+            }
+            break;
+          }
+          default:
+          {
+            /* Incorrect type, protocol error */
+            goto protocol_error;
+          }
+        }
+      }
+      else
+      {
+        /* Incorrect type, protocol error */
+        goto protocol_error;
+      }
+    }
+  }
+  if (!(current_num_column &&
+        current_num_column == loc_table_def->num_fields &&
+        current_num_pkey_column == loc_table_def->num_key_fields &&
+        current_num_null_column == loc_table_def->num_null_fields))
+    goto protocol_error;
+  *table_def= loc_table_def;
+  return 0;
+error:
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return ret_code;
+
+protocol_error:
+  ret_code= IC_PROTOCOL_ERROR;
+  goto error;
+}
+
 static IC_DYNAMIC_ARRAY*
 fill_create_table_info_properties(IC_INT_ALTER_TABLE *alter_table)
 {
