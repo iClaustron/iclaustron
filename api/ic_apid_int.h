@@ -166,6 +166,13 @@ struct ic_field_def
   IC_FIELD_TYPE field_type;
 };
 
+enum ic_md_table_create_state
+{
+  IN_CREATION= 0,
+  CREATED= 1
+};
+typedef enum ic_md_table_create_state IC_MD_TABLE_CREATE_STATE;
+
 struct ic_int_table_def
 {
   /* Public part */
@@ -183,6 +190,12 @@ struct ic_int_table_def
   guint32 num_fields;
   guint32 num_key_fields;
   guint32 num_null_fields;
+
+  int ret_code;
+  guint32 ref_count;
+  IC_MD_TABLE_CREATE_STATE create_state;
+  volatile gboolean valid;
+
   gboolean is_index;
   gboolean is_unique_index;
   IC_BITMAP *key_fields;
@@ -526,8 +539,12 @@ struct ic_int_apid_connection
     part won't be removed until all local copies have been removed.
     We keep a reference count on the global object. Only the
     local part can handle the removal of a reference count.
+
+    The signal part is used to signal when the metadata object
+    is created.
   */
   IC_HASHTABLE *md_hash;
+  IC_COND *signal;
 
   /**
     Each connection also has a hash table containing cached TC
@@ -620,6 +637,12 @@ struct ic_int_apid_global
   /* Internal part */
   IC_MUTEX *mutex;
   IC_COND *cond;
+  /**
+    A global hash table containing all active metadata objects in the global
+    context of this node.
+  */
+  IC_HASHTABLE *md_hash;
+
   /**
     Each cluster has a set of cached data in the API which requires shared
     access. We keep this data in a data structure per cluster. This variable

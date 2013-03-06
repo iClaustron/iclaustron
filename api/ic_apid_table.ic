@@ -13,6 +13,316 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+/**
+  Table bind is implemented in a number of levels. We keep a hash
+  table of table definitions in each IC_APID_CONNECTION object.
+  These table definitions are actually shared with all other
+  IC_APID_CONNECTION objects. Each object has a reference count to
+  ensure it isn't released before each IC_APID_CONNECTION has removed
+  their reference to the object. Before using an object one always
+  checks that the object is still valid, whenever a user of the
+  object discovers that it is no longer valid, it marks the object
+  as invalid.
+
+  When a new table object needs to be allocated only one IC_APID_CONNECTION
+  object will perform the actual creation of the object and all others
+  will hang on a conditional wait until the creation is completed.
+
+  When we don't find an object in the local hash table we proceed as follows:
+  1) Acquire a mutex on the global context
+  2) Check if we can find the object in the global hash table
+     If we can't find such an object proceed to description below
+  3) Check if found object is in creation state
+     If it is place us in the wait queue for it to be created and wait
+     using a conditional wait until this object is created.
+     If the object is an object that is properly created then we add one
+     to the reference count and release the mutex and proceeed to place
+     the object in our local hash table. The same also happens after our
+     conditional wait if the creation was successful.
+
+  Whenever we need to insert a new object into the global area we proceed
+  as follows:
+  1) Acquire a mutex on the global context
+  2) Create a fake table definition and place this into the global hash
+     table. The only relevant information in this table definition is its
+     state as under construction and it will also contains links to any
+     other IC_APID_CONNECTION waiting for the real metadata object to be
+     created. A small variation on this theme is when we need to replace the
+     old metadata object with a new one. In this case the old object is the
+     fake object in a sense.
+
+  Analysis of performance of table_bind:
+
+  In the normal case there will only be a hash lookup in a local hash table
+  before we have found the metadata object. There is a cost attached to
+  creating new objects, but this cost is only taken once per object in the
+  process. The same object is reused then by all global objects.
+
+  The same happens when a metadata object is changed, in this case someone
+  will discover that the object is no longer valid and will place a marker
+  on the object to indicate object is no longer valid. This marker isn't
+  protected by mutex since using an old object will be discovered by the
+  NDB kernel.
+
+  Whenever an object is deemed invalid it is taken out of the global hash
+  table and placed in a special list of old metadata objects. This list
+  is used to ensure that we will always fully clean up in all cases even
+  when the application doesn't perform a nice cleanup.
+*/
+
+static gchar*
+create_search_name(gchar *buf,
+                   guint32 buf_size,
+                   guint32 num_names,
+                   const gchar **name)
+{
+  guint32 name_len[8];
+  guint32 i;
+  gchar *buf_ptr= buf;
+  guint32 total_len= 0;
+
+  for (i= 0; i < num_names; i++)
+  {
+    name_len[i]= strlen(name[i]);
+    total_len+= name_len[i];
+  }
+
+  if (total_len >= buf_size)
+    return NULL;
+
+  for (i= 0; i < num_names; i++)
+  {
+    memcpy(buf_ptr, name[i], name_len[i]);
+    buf_ptr+= name_len[i];
+  }
+  buf[total_len]= 0; /* Create null-terminated string */
+  return buf;
+}
+
+static IC_INT_TABLE_DEF*
+create_fake_table_def(IC_INT_APID_GLOBAL *apid_global,
+                      const gchar *name_ptr);
+
+static void
+insert_in_create_wait_list(IC_INT_APID_GLOBAL *apid_global,
+                           IC_INT_APID_CONNECTION *apid_conn,
+                           IC_INT_TABLE_DEF *table_def)
+{
+  (void)apid_global;
+  (void)apid_conn;
+  (void)table_def;
+}
+
+static int
+md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
+                   IC_METADATA_TRANSACTION *md_trans_obj,
+                   IC_TABLE_DEF **table_def,
+                   const gchar *schema_name,
+                   const gchar *db_name,
+                   const gchar *table_name)
+{
+  int ret_code;
+  gchar *name_ptr;
+  const gchar *name_array[3];
+  IC_INT_TABLE_DEF *loc_table_def;
+  IC_INT_APID_GLOBAL *apid_global;
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  gchar buf[IC_MAX_TABLE_NAME_SIZE];
+  DEBUG_ENTRY("md_bind_table_bind");
+
+  (void)md_trans_obj;
+
+  /* Create a search string using the metadata object name */
+  name_array[0]= schema_name;
+  name_array[1]= db_name;
+  name_array[2]= table_name;
+  if (!(name_ptr= create_search_name(buf,
+                                     (guint32)IC_MAX_TABLE_NAME_SIZE,
+                                     (guint32)3,
+                                     &name_array[0])))
+  {
+    DEBUG_RETURN_INT(IC_ERROR_TOO_LONG_TABLE_NAME);
+  }
+  if (!(loc_table_def= ic_hashtable_search(apid_conn->md_hash,
+                                           (void*)name_ptr)))
+  {
+    /**
+      We found a local table definition, we can simply use this, it's ready
+      to go.
+    */
+    if (loc_table_def->valid)
+      goto end;
+
+    /**
+      Someone has invalidated the table definition, we will remove our
+      instance of this table definition and then proceed as if we had
+      no local instance.
+    */
+    ic_hashtable_remove(apid_conn->md_hash, (void*)name_ptr);
+    apid_global= apid_conn->apid_global;
+    ic_mutex_lock(apid_global->mutex);
+    loc_table_def->ref_count--;
+    if (loc_table_def->ref_count == 0)
+    {
+      /**
+        We are the last to remove our reference to this object, we will
+        deallocate the object.
+      */
+      loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
+    }
+    ic_mutex_unlock(apid_global->mutex);
+    /**
+      We will proceed now as if we didn't have any local reference to
+      begin with.
+    */
+  }
+
+  /**
+    We found no table definition locally, let's first see if we have one
+    stored globally.
+  */
+  apid_global= apid_conn->apid_global;
+  ic_mutex_lock(apid_global->mutex);
+  if ((loc_table_def= ic_hashtable_search(apid_global->md_hash,
+                                          (void*)name_ptr)))
+  {
+    /**
+      We found a global definition, place the global definition in the
+      local hash table and proceed, first we need to increment the
+      reference count to ensure that no one removes the object.
+    */
+    if (loc_table_def->create_state == IN_CREATION)
+    {
+      /**
+        We found an object which is currently being created. We will
+        place ourselves in the queue on this object to be woken up
+        when the object is created or failed to be created.
+      */
+      if (loc_table_def->ret_code)
+      {
+        /**
+          The creation have already failed, report error code and
+          be done with it.
+        */
+        ret_code= loc_table_def->ret_code;
+        goto error;
+      }
+      loc_table_def->ref_count++;
+      insert_in_create_wait_list(apid_global,
+                                 apid_conn,
+                                 loc_table_def);
+      ic_cond_wait(apid_conn->signal,
+                   apid_global->mutex);
+      /**
+         The creation is either successfully completed or failed. We will
+         continue and report to the application level.
+      */
+      loc_table_def->ref_count--;
+      if (loc_table_def->ret_code)
+      {
+        /* Creation failed */
+        ret_code= loc_table_def->ret_code;
+        if (loc_table_def->ref_count == 0)
+        {
+          /**
+            We were last to get failure report, we need to remove the object.
+          */
+          loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
+        }
+        goto error;
+      }
+    }
+    if (!(ret_code= ic_hashtable_insert(apid_conn->md_hash,
+                                        (void*)name_ptr,
+                                        (void*)loc_table_def)))
+    {
+      /*
+        We failed to insert it locally, we will report this as an
+        error to the application level.
+      */
+      if (loc_table_def->ref_count == 0)
+      {
+        /**
+          Last reference to the object, need to remove it from global hash
+          hash table and remove it altogether.
+        */
+        ic_hashtable_remove(apid_global->md_hash,
+                            (void*)name_ptr);
+        loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
+
+      }
+      goto error;
+    }
+    /**
+      Increment reference count before releasing lock to ensure the
+      object stays around until we've seen it being removed.
+    */
+    loc_table_def->ref_count++;
+    ic_mutex_unlock(apid_global->mutex);
+    /**
+      We found an object globally and successfully inserted it
+      locally, we will now return to the application level and
+      provide them with the requested object.
+    */
+    goto end;
+  }
+  else
+  {
+    /**
+      We also found no object globally, we will now proceed by first
+      creating a fake object that contains the state of being in
+      creation mode.
+
+      Other old objects could exist as well, but in this case they are
+      immediately removed from the global hash table, only valid objects
+      and objects still under creation are stored in this global hash table.
+    */
+    loc_table_def= create_fake_table_def(apid_global, name_ptr);
+  }
+end:
+  *table_def= (IC_TABLE_DEF*)loc_table_def;
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_INT(loc_table_def->ret_code);
+}
+
+static int
+md_bind_index_bind(IC_APID_CONNECTION *apid_conn,
+                   IC_METADATA_TRANSACTION *md_trans_obj,
+                   IC_TABLE_DEF **table_def,
+                   const gchar *schema_name,
+                   const gchar *db_name,
+                   const gchar *table_name,
+                   const gchar *index_name)
+{
+  (void)apid_conn;
+  (void)md_trans_obj;
+  (void)table_def;
+  (void)schema_name;
+  (void)db_name;
+  (void)table_name;
+  (void)index_name;
+  return 0;
+}
+
+static int
+md_bind_table_unbind(IC_APID_CONNECTION *apid_conn,
+                     IC_TABLE_DEF *table_def)
+{
+  (void)apid_conn;
+  (void)table_def;
+  return 0;
+}
+
+static IC_METADATA_BIND_OPS glob_metadata_bind_ops=
+{
+  /* .ic_table_bind              = */ md_bind_table_bind,
+  /* .ic_index_bind              = */ md_bind_index_bind,
+  /* .ic_table_unbind            = */ md_bind_table_unbind
+};
+
 /*
   MODULE: Table definition interface
   ----------------------------------
@@ -1120,4 +1430,35 @@ ic_create_metadata_transaction(IC_APID_CONNECTION *ext_apid_conn,
   DEBUG_RETURN_PTR((IC_METADATA_TRANSACTION*)md_trans);
 error:
   DEBUG_RETURN_PTR(NULL);
+}
+
+static IC_INT_TABLE_DEF*
+create_fake_table_def(IC_INT_APID_GLOBAL *apid_global,
+                      const gchar *name_ptr)
+{
+  int ret_code;
+  IC_INT_TABLE_DEF *loc_table_def;
+  IC_MEMORY_CONTAINER *mc_ptr;
+
+  if (!(mc_ptr= ic_create_memory_container(256, 0, FALSE)))
+  {
+    return NULL;
+  }
+  if ((loc_table_def= (IC_INT_TABLE_DEF*)
+                       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                                                   sizeof(IC_INT_TABLE_DEF))))
+    goto error;
+
+  /* Initialise table object */
+  loc_table_def->table_def_ops= &glob_table_def_ops;
+  loc_table_def->create_state= IN_CREATION;
+  if ((ret_code= ic_hashtable_insert(apid_global->md_hash,
+                                     (void*)name_ptr,
+                                     (void*)loc_table_def)))
+    goto error;
+  return loc_table_def;
+
+error:
+  loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
+  return NULL; 
 }

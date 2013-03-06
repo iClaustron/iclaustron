@@ -63,12 +63,12 @@
 #include "ic_apid_range.ic"
 #include "ic_apid_where.ic"
 #include "ic_apid_cond_assign.ic"
-#include "ic_apid_global.ic"
 #include "ic_apid_op.ic"
 #include "ic_apid_conn.ic"
 #include "ic_apid_trans.ic"
 #include "ic_apid_table.ic"
 #include "ic_apid_tablespace.ic"
+#include "ic_apid_global.ic"
 /* Data API internals */
 #include "ic_apid_handle_dict_messages.ic"
 #include "ic_apid_handle_message_array.ic"

@@ -1344,18 +1344,6 @@ get_create_table_info_properties(guint32 *property_array,
   IC_FIELD_DEF *current_field_def;
   IC_MEMORY_CONTAINER *mc_ptr;
 
-  if (!(mc_ptr= ic_create_memory_container(256, 0, FALSE)))
-  {
-    return ret_code;
-  }
-  if ((loc_table_def= (IC_INT_TABLE_DEF*)
-                       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
-                                                   sizeof(IC_INT_TABLE_DEF))))
-    goto error;
-
-  /* Initialise table object */
-  loc_table_def->table_def_ops= &glob_table_def_ops;
-  
   while ((index + 1) < length)
   {
     val1= ntohl(property_array[index]);
