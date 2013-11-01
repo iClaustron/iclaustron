@@ -148,7 +148,7 @@ run_server_thread(gpointer data)
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_THREADPOOL_STATE *tp_state;
   IC_APID_GLOBAL *apid_global;
-  IC_APID_CONNECTION *apid_conn;
+  IC_APID_CONNECTION *apid_conn= NULL;
   gboolean stop_flag;
   int ret_code;
   IC_RUN_APID_THREAD_FUNC apid_func;

@@ -66,7 +66,8 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
        contacted.
   */
   if ((!(md_trans= ic_create_metadata_transaction(apid_conn,
-                                                0))) ||
+                                                  0,
+                                                  &ret_code))) ||
 
       ((ret_code= md_trans->md_trans_ops->ic_create_metadata_op(
          md_trans,

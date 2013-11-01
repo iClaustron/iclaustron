@@ -48,9 +48,9 @@ get_file_table_meta_data(IC_APID_GLOBAL *apid_global,
   if ((*md_trans) == NULL)
   {
     if (!((*md_trans)= ic_create_metadata_transaction(apid_conn,
-                                                      0)))
+                                                      0,
+                                                      &ret_code)))
     {
-      ret_code= IC_ERROR_MEM_ALLOC;
       goto error;
     }
   }

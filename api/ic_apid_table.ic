@@ -100,17 +100,72 @@ create_search_name(gchar *buf,
 }
 
 static IC_INT_TABLE_DEF*
-create_fake_table_def(IC_INT_APID_GLOBAL *apid_global,
-                      const gchar *name_ptr);
+create_fake_table_def(IC_APID_CLUSTER_DATA *clu_data,
+                      const IC_STRING *name_str);
 
+/**
+  The updates made here are protected by keeping the mutex on the
+  IC_APID_CLUSTER_DATA.
+*/
 static void
-insert_in_create_wait_list(IC_INT_APID_GLOBAL *apid_global,
-                           IC_INT_APID_CONNECTION *apid_conn,
+insert_in_create_wait_list(IC_INT_APID_CONNECTION *apid_conn,
                            IC_INT_TABLE_DEF *table_def)
 {
-  (void)apid_global;
-  (void)apid_conn;
-  (void)table_def;
+  if (table_def->first_wait_get_table)
+  {
+    table_def->last_wait_get_table->next_wait_get_table= apid_conn;
+    table_def->last_wait_get_table= apid_conn;
+  }
+  else
+  {
+    table_def->first_wait_get_table= apid_conn;
+    table_def->last_wait_get_table= apid_conn;
+  }
+}
+
+static void
+wake_up_get_table_waiters(IC_INT_TABLE_DEF *table_def)
+{
+  IC_INT_APID_CONNECTION *apid_conn;
+
+  apid_conn= table_def->first_wait_get_table;
+  while (apid_conn)
+  {
+    ic_cond_signal(apid_conn->signal);
+    apid_conn= apid_conn->next_wait_get_table;
+  }
+  table_def->first_wait_get_table= NULL;
+  table_def->last_wait_get_table= NULL;
+}
+
+static IC_APID_CLUSTER_DATA*
+get_cluster_data(IC_INT_APID_CONNECTION *apid_conn,
+                 guint32 cluster_id)
+{
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
+  IC_APID_CLUSTER_DATA *clu_data;
+
+  ic_require(cluster_id <= apid_global->max_cluster_id);
+  clu_data= apid_global->cluster_data_array[cluster_id];
+  ic_require(clu_data != NULL);
+  return clu_data;
+}
+
+static void
+dec_table_ref_count(IC_INT_TABLE_DEF *loc_table_def,
+                    IC_APID_CLUSTER_DATA *clu_data)
+{
+  ic_mutex_lock(clu_data->mutex);
+  loc_table_def->ref_count--;
+  if (loc_table_def->ref_count == 0)
+  {
+    /**
+      We are the last to remove our reference to this object, we will
+      deallocate the object.
+    */
+    loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
+  }
+  ic_mutex_unlock(clu_data->mutex);
 }
 
 static int
@@ -122,12 +177,13 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
                    const gchar *table_name)
 {
   int ret_code;
-  gchar *name_ptr;
   const gchar *name_array[3];
   IC_INT_TABLE_DEF *loc_table_def;
-  IC_INT_APID_GLOBAL *apid_global;
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   gchar buf[IC_MAX_TABLE_NAME_SIZE];
+  gchar *name_ptr;
+  IC_STRING name_str;
+  IC_APID_CLUSTER_DATA *clu_data;
   DEBUG_ENTRY("md_bind_table_bind");
 
   (void)md_trans_obj;
@@ -143,8 +199,9 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
   {
     DEBUG_RETURN_INT(IC_ERROR_TOO_LONG_TABLE_NAME);
   }
-  if (!(loc_table_def= ic_hashtable_search(apid_conn->md_hash,
-                                           (void*)name_ptr)))
+  IC_INIT_STRING(&name_str, name_ptr, strlen(name_ptr), TRUE);
+  if ((loc_table_def= ic_hashtable_search(apid_conn->md_hash,
+                                          (void*)&name_str)))
   {
     /**
       We found a local table definition, we can simply use this, it's ready
@@ -158,19 +215,9 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
       instance of this table definition and then proceed as if we had
       no local instance.
     */
-    ic_hashtable_remove(apid_conn->md_hash, (void*)name_ptr);
-    apid_global= apid_conn->apid_global;
-    ic_mutex_lock(apid_global->mutex);
-    loc_table_def->ref_count--;
-    if (loc_table_def->ref_count == 0)
-    {
-      /**
-        We are the last to remove our reference to this object, we will
-        deallocate the object.
-      */
-      loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
-    }
-    ic_mutex_unlock(apid_global->mutex);
+    clu_data= get_cluster_data(apid_conn, loc_table_def->cluster_id);
+    ic_hashtable_remove(apid_conn->md_hash, (void*)&name_str);
+    dec_table_ref_count(loc_table_def, clu_data);
     /**
       We will proceed now as if we didn't have any local reference to
       begin with.
@@ -181,17 +228,18 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
     We found no table definition locally, let's first see if we have one
     stored globally.
   */
-  apid_global= apid_conn->apid_global;
-  ic_mutex_lock(apid_global->mutex);
-  if ((loc_table_def= ic_hashtable_search(apid_global->md_hash,
-                                          (void*)name_ptr)))
+  clu_data= get_cluster_data(apid_conn, loc_table_def->cluster_id);
+  ic_mutex_lock(clu_data->mutex);
+  if ((loc_table_def= ic_hashtable_search(clu_data->cluster_md_hash,
+                                          (void*)&name_str)))
   {
     /**
       We found a global definition, place the global definition in the
       local hash table and proceed, first we need to increment the
       reference count to ensure that no one removes the object.
     */
-    if (loc_table_def->create_state == IN_CREATION)
+    loc_table_def->ref_count++;
+    if (loc_table_def->create_state == MD_TABLE_IN_CREATION)
     {
       /**
         We found an object which is currently being created. We will
@@ -207,58 +255,31 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
         ret_code= loc_table_def->ret_code;
         goto error;
       }
-      loc_table_def->ref_count++;
-      insert_in_create_wait_list(apid_global,
-                                 apid_conn,
-                                 loc_table_def);
-      ic_cond_wait(apid_conn->signal,
-                   apid_global->mutex);
+      insert_in_create_wait_list(apid_conn, loc_table_def);
+      ic_cond_wait(apid_conn->signal, clu_data->mutex);
       /**
          The creation is either successfully completed or failed. We will
          continue and report to the application level.
       */
-      loc_table_def->ref_count--;
       if (loc_table_def->ret_code)
       {
         /* Creation failed */
         ret_code= loc_table_def->ret_code;
-        if (loc_table_def->ref_count == 0)
-        {
-          /**
-            We were last to get failure report, we need to remove the object.
-          */
-          loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
-        }
         goto error;
       }
     }
+    ic_require(loc_table_def->create_state == MD_TABLE_CREATED);
     if (!(ret_code= ic_hashtable_insert(apid_conn->md_hash,
-                                        (void*)name_ptr,
+                                        (void*)&name_str,
                                         (void*)loc_table_def)))
     {
       /*
         We failed to insert it locally, we will report this as an
         error to the application level.
       */
-      if (loc_table_def->ref_count == 0)
-      {
-        /**
-          Last reference to the object, need to remove it from global hash
-          hash table and remove it altogether.
-        */
-        ic_hashtable_remove(apid_global->md_hash,
-                            (void*)name_ptr);
-        loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
-
-      }
       goto error;
     }
-    /**
-      Increment reference count before releasing lock to ensure the
-      object stays around until we've seen it being removed.
-    */
-    loc_table_def->ref_count++;
-    ic_mutex_unlock(apid_global->mutex);
+    ic_mutex_unlock(clu_data->mutex);
     /**
       We found an object globally and successfully inserted it
       locally, we will now return to the application level and
@@ -274,17 +295,19 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
       creation mode.
 
       Other old objects could exist as well, but in this case they are
-      immediately removed from the global hash table, only valid objects
-      and objects still under creation are stored in this global hash table.
+      immediately removed from the cluster hash table, only valid objects
+      and objects still under creation are stored in this cluster hash table.
     */
-    loc_table_def= create_fake_table_def(apid_global, name_ptr);
+    loc_table_def= create_fake_table_def(clu_data, &name_str);
+    ic_mutex_unlock(clu_data->mutex);
   }
 end:
   *table_def= (IC_TABLE_DEF*)loc_table_def;
   DEBUG_RETURN_INT(0);
 
 error:
-  ic_mutex_unlock(apid_global->mutex);
+  ic_mutex_unlock(clu_data->mutex);
+  dec_table_ref_count(loc_table_def, clu_data);
   DEBUG_RETURN_INT(loc_table_def->ret_code);
 }
 
@@ -1399,21 +1422,35 @@ static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
 
 IC_METADATA_TRANSACTION*
 ic_create_metadata_transaction(IC_APID_CONNECTION *ext_apid_conn,
-                               guint32 cluster_id)
+                               guint32 cluster_id,
+                               int *error)
 {
   IC_INT_METADATA_TRANSACTION *md_trans;
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   IC_MEMORY_CONTAINER *mc_ptr;
   DEBUG_ENTRY("ic_create_metadata_transaction");
 
+  *error= 0;
   if (apid_conn->md_trans)
+  {
+    *error= IC_ERROR_ALREADY_CREATED_METADATA_OBJECT;
     goto error;
+  }
+  if (!apid_conn->apid_global->cluster_data_array[cluster_id])
+  {
+    *error= IC_ERROR_NO_SUCH_CLUSTER;
+    goto error;
+  }
   if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, TRUE)))
+  {
+    *error= IC_ERROR_MEM_ALLOC;
     goto error;
+  }
   if (!(md_trans= (IC_INT_METADATA_TRANSACTION*)
       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
                                   sizeof(IC_INT_METADATA_TRANSACTION))))
   {
+    *error= IC_ERROR_MEM_ALLOC;
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
     goto error;
   }
@@ -1433,8 +1470,8 @@ error:
 }
 
 static IC_INT_TABLE_DEF*
-create_fake_table_def(IC_INT_APID_GLOBAL *apid_global,
-                      const gchar *name_ptr)
+create_fake_table_def(IC_APID_CLUSTER_DATA *clu_data,
+                      const IC_STRING *name_str)
 {
   int ret_code;
   IC_INT_TABLE_DEF *loc_table_def;
@@ -1451,11 +1488,18 @@ create_fake_table_def(IC_INT_APID_GLOBAL *apid_global,
 
   /* Initialise table object */
   loc_table_def->table_def_ops= &glob_table_def_ops;
-  loc_table_def->create_state= IN_CREATION;
-  if ((ret_code= ic_hashtable_insert(apid_global->md_hash,
-                                     (void*)name_ptr,
+  loc_table_def->create_state= MD_TABLE_IN_CREATION;
+  loc_table_def->cluster_id= clu_data->cluster_id;
+  if ((ret_code= ic_hashtable_insert(clu_data->cluster_md_hash,
+                                     (void*)name_str,
                                      (void*)loc_table_def)))
     goto error;
+  loc_table_def->ref_count++;
+  ic_mutex_unlock(clu_data->mutex);
+  /* TODO: Insert code to actually get table definition from NDB. */
+  ic_mutex_lock(clu_data->mutex);
+  loc_table_def->create_state= MD_TABLE_CREATED;
+  wake_up_get_table_waiters(loc_table_def);
   return loc_table_def;
 
 error:

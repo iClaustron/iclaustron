@@ -19,7 +19,7 @@
 #include <errno.h>
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7110
+#define IC_LAST_ERROR 7111
 #define IC_MAX_ERRORS 200
 
 /*
@@ -157,4 +157,5 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_NO_SUCH_DATA_TYPE 7108
 #define IC_ERROR_MISSING_COLUMN_NAME 7109
 #define IC_ERROR_TOO_LONG_TABLE_NAME 7110
+#define IC_ERROR_ALREADY_CREATED_METADATA_OBJECT 7111
 #endif

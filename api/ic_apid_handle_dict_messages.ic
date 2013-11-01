@@ -1328,7 +1328,8 @@ get_col_size(IC_DEFINE_FIELD *field)
 static int
 get_create_table_info_properties(guint32 *property_array,
                                  guint32 length,
-                                 IC_INT_TABLE_DEF **table_def)
+                                 IC_INT_TABLE_DEF **table_def,
+                                 IC_MEMORY_CONTAINER **ext_mc_ptr)
 {
   guint32 index= 0;
   guint32 current_num_column= 0;
@@ -1343,6 +1344,17 @@ get_create_table_info_properties(guint32 *property_array,
   IC_INT_TABLE_DEF *loc_table_def;
   IC_FIELD_DEF *current_field_def;
   IC_MEMORY_CONTAINER *mc_ptr;
+
+  if (!(mc_ptr= ic_create_memory_container(0, 0, FALSE)))
+  {
+    return IC_ERROR_MEM_ALLOC;
+  }
+  if (!(loc_table_def= (IC_INT_TABLE_DEF*)
+                       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                         sizeof(IC_INT_TABLE_DEF))))
+  {
+    goto mem_error;
+  }
 
   while ((index + 1) < length)
   {
@@ -1387,7 +1399,7 @@ get_create_table_info_properties(guint32 *property_array,
             loc_table_def->num_key_fields= value;
             if (!(loc_table_def->key_fields=
                 ic_mc_create_bitmap(mc_ptr, loc_table_def->num_key_fields)))
-              goto error;
+              goto mem_error;
             break;
           }
           case IC_NUM_COL_KEY:
@@ -1516,7 +1528,7 @@ get_create_table_info_properties(guint32 *property_array,
               goto error;
             }
             if (!(name_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, value + 1)))
-              goto error;
+              goto mem_error;
             memcpy(name_ptr, property_ptr, value);
             name_ptr[value]= 0;
             loc_table_def->table_name= name_ptr;
@@ -1670,12 +1682,12 @@ get_create_table_info_properties(guint32 *property_array,
               goto error;
             }
             if (!(name_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, value + 1)))
-              goto error;
+              goto mem_error;
             memcpy(name_ptr, property_ptr, value);
             name_ptr[value]= 0;
             if (!(loc_table_def->fields[current_num_column]= (IC_FIELD_DEF*)
                 mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_FIELD_DEF))))
-              goto error;
+              goto mem_error;
             current_field_def= loc_table_def->fields[current_num_column];
             current_field_def->field_name= name_ptr;
             current_num_column++;
@@ -1703,7 +1715,7 @@ get_create_table_info_properties(guint32 *property_array,
             {
               if (!(current_field_def->default_value= (gchar*)
                     mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, value + 1)))
-                goto error;
+                goto mem_error;
               
               current_field_def->default_value_len= value;
               memcpy(current_field_def->default_value,
@@ -1733,6 +1745,7 @@ get_create_table_info_properties(guint32 *property_array,
         current_num_null_column == loc_table_def->num_null_fields))
     goto protocol_error;
   *table_def= loc_table_def;
+  *ext_mc_ptr= mc_ptr;
   return 0;
 error:
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
@@ -1740,6 +1753,10 @@ error:
 
 protocol_error:
   ret_code= IC_PROTOCOL_ERROR;
+  goto error;
+
+mem_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
   goto error;
 }
 

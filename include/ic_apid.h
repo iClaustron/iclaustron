@@ -1811,7 +1811,8 @@ ic_create_apid_query(IC_APID_GLOBAL *apid_global,
 
 IC_METADATA_TRANSACTION*
 ic_create_metadata_transaction(IC_APID_CONNECTION *apid_conn,
-                               guint32 cluster_id);
+                               guint32 cluster_id,
+                               int *error);
 
 IC_ALTER_TABLE*
 ic_create_alter_table(IC_METADATA_TRANSACTION *md_trans);

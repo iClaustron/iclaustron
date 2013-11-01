@@ -282,6 +282,8 @@ ic_init_error_messages()
     "Missing column name in metadata operation";
   ic_error_str[IC_ERROR_TOO_LONG_TABLE_NAME - IC_FIRST_ERROR]=
     "Table name too long";
+  ic_error_str[IC_ERROR_ALREADY_CREATED_METADATA_OBJECT - IC_FIRST_ERROR]=
+    "Metadata object already created on API Data Connection";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

@@ -180,6 +180,8 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
         ic_calloc(sizeof(IC_APID_CLUSTER_DATA*) * num_bits)))
     goto error;
 
+  apid_global->max_cluster_id= max_cluster_id;
+
   /*
     Set bits for all clusters in the configuration.
     Set my node id in this API node. There could be several API
@@ -234,6 +236,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
             ic_calloc(sizeof(IC_APID_CLUSTER_DATA))))
         goto error;
       apid_global->cluster_data_array[i]= cluster_data;
+      cluster_data->cluster_id= i;
       if (!(cluster_data->mutex= ic_mutex_create()))
         goto error;
       if (!(cluster_data->cond= ic_cond_create()))
@@ -819,7 +822,7 @@ static IC_APID_GLOBAL_OPS glob_apid_global_ops=
   /* .ic_get_thread_func         = */ apid_global_get_thread_func,
   /* .ic_external_connect        = */ apid_global_external_connect,
   /* .ic_wait_first_node_connect = */ apid_global_wait_first_node_connect,
-  /* .ic_get_master_node_id = */ apid_global_get_master_node_id,
+  /* .ic_get_master_node_id      = */ apid_global_get_master_node_id,
   /* .ic_free_apid_global        = */ apid_global_free
 };
 

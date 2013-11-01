@@ -31,6 +31,8 @@ static FILE *ic_fptr;
 /* Start time of the program */
 static IC_TIMER debug_start_time;
 
+void ic_printf_low(const char *format,...);
+
 guint32
 ic_get_debug()
 {
@@ -127,7 +129,7 @@ ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
               thread_debug->thread_id,
               indent_buf,
               in_buf);
-    ic_printf("%s", print_buf);
+    ic_printf_low("%s", print_buf);
     fflush(stdout);
   }
   g_snprintf(print_buf,
@@ -362,3 +364,21 @@ ic_printf(const char *format,...)
   fflush(stdout);
   va_end(args);
 }
+
+void
+ic_printf_low(const char *format,...)
+{
+  va_list args;
+  char buf[2049];
+
+  va_start(args, format);
+#ifndef WINDOWS
+  vsprintf(buf, format, args);
+#else
+  vsprintf_s(buf, sizeof(buf), format, args);
+#endif
+  printf("%s\n", buf);
+  fflush(stdout);
+  va_end(args);
+}
+

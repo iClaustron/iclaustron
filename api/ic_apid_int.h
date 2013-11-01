@@ -168,8 +168,8 @@ struct ic_field_def
 
 enum ic_md_table_create_state
 {
-  IN_CREATION= 0,
-  CREATED= 1
+  MD_TABLE_IN_CREATION= 0,
+  MD_TABLE_CREATED= 1
 };
 typedef enum ic_md_table_create_state IC_MD_TABLE_CREATE_STATE;
 
@@ -190,6 +190,7 @@ struct ic_int_table_def
   guint32 num_fields;
   guint32 num_key_fields;
   guint32 num_null_fields;
+  guint32 cluster_id;
 
   int ret_code;
   guint32 ref_count;
@@ -202,6 +203,9 @@ struct ic_int_table_def
   guint32 *key_field_id_order;
   IC_FIELD_DEF **fields;
   IC_MEMORY_CONTAINER *mc_ptr;
+
+  IC_INT_APID_CONNECTION *first_wait_get_table;
+  IC_INT_APID_CONNECTION *last_wait_get_table;
 };
 
 struct ic_int_range_condition
@@ -589,6 +593,8 @@ struct ic_int_apid_connection
   IC_SEND_CLUSTER_NODE *first_send_cluster_node;
   IC_SEND_CLUSTER_NODE *last_send_cluster_node;
 
+  IC_INT_APID_CONNECTION *next_wait_get_table;
+
   IC_INT_APID_ERROR apid_error;
 };
 
@@ -621,6 +627,10 @@ struct ic_apid_cluster_data
     through a background thread.
   */
   IC_HASHTABLE *cluster_tc_conn;
+  /**
+   * Cluster id of this cluster
+   */
+  guint32 cluster_id;
 
 };
 
@@ -637,11 +647,6 @@ struct ic_int_apid_global
   /* Internal part */
   IC_MUTEX *mutex;
   IC_COND *cond;
-  /**
-    A global hash table containing all active metadata objects in the global
-    context of this node.
-  */
-  IC_HASHTABLE *md_hash;
 
   /**
     Each cluster has a set of cached data in the API which requires shared
@@ -650,6 +655,7 @@ struct ic_int_apid_global
     cluster id as key.
   */
   IC_APID_CLUSTER_DATA **cluster_data_array;
+  guint32 max_cluster_id;
 
   guint32 num_user_threads_started;
   gboolean stop_flag;
