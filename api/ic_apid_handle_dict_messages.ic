@@ -411,7 +411,7 @@ execSCHEMA_TRANS_BEGIN_REF_v0(IC_NDB_MESSAGE *ndb_message)
       would put an unnecessary pressure on the master node and this
       node.
     */
-    ic_sleep(1);
+    ic_microsleep(1000);
     sendSCHEMA_TRANS_BEGIN_REQ(md_trans);
     goto end;
   }

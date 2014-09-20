@@ -92,10 +92,10 @@ ic_bitmap_set_bit(IC_BITMAP *bitmap, guint32 bit_number)
 }
 
 gboolean
-ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number)
+ic_bitmap_get_bit(IC_BITMAP *bitmap, guint32 bit_number)
 {
   ic_assert(bit_number < bitmap->num_bits);
-  return macro_ic_is_bitmap_set(bitmap, bit_number);
+  return macro_ic_bitmap_get_bit(bitmap, bit_number);
 }
 #endif
 /*

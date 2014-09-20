@@ -94,7 +94,7 @@ static gchar*
 add_param_num(IC_PARSE_DATA *parse_data, const gchar *param_str,
               guint32 number)
 {
-IC_STRING dest_str;
+  IC_STRING dest_str;
   IC_STRING number_str;
   guint32 len;
   gchar *number_ptr;

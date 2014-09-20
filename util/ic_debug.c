@@ -381,4 +381,3 @@ ic_printf_low(const char *format,...)
   fflush(stdout);
   va_end(args);
 }
-

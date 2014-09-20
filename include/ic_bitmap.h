@@ -47,7 +47,7 @@ void ic_free_bitmap(IC_BITMAP* bitmap);
 #define macro_ic_bitmap_set_bit(bitmap, bit_number) \
   (ic_set_bit(((bitmap)->bitmap_area[(IC_BITMAP_BYTE((bit_number)))]), \
                (IC_BITMAP_BIT((bit_number)))))
-#define macro_ic_is_bitmap_set(bitmap, bit_number) \
+#define macro_ic_bitmap_get_bit(bitmap, bit_number) \
   (ic_is_bit_set(((bitmap)->bitmap_area[IC_BITMAP_BYTE((bit_number))]), \
                  (IC_BITMAP_BIT((bit_number)))))
 #define ic_bitmap_get_num_bits(bitmap) (bitmap->num_bits)
@@ -59,12 +59,12 @@ void ic_free_bitmap(IC_BITMAP* bitmap);
          IC_BITMAP_SIZE((src_bitmap)->num_bits)); \
 }
 #ifndef DEBUG_BUILD
-#define ic_is_bitmap_set(bitmap, bit_number) \
-  macro_ic_is_bitmap_set(bitmap, bit_number)
+#define ic_bitmap_get_bit(bitmap, bit_number) \
+  macro_ic_bitmap_get_bit(bitmap, bit_number)
 #define ic_bitmap_set_bit(bitmap, bit_number) \
   macro_ic_bitmap_set_bit(bitmap, bit_number)
 #else
 void ic_bitmap_set_bit(IC_BITMAP *bitmap, guint32 bit_number);
-gboolean ic_is_bitmap_set(IC_BITMAP *bitmap, guint32 bit_number);
+gboolean ic_bitmap_get_bit(IC_BITMAP *bitmap, guint32 bit_number);
 #endif
 #endif

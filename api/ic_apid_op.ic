@@ -51,7 +51,7 @@ organize_field_in_query_array(IC_INT_APID_QUERY *apid_query,
     if (field_id_compare == field_id)
       return IC_ERROR_DUPLICATE_FIELD_IDS;
     field_id_compare= field_id;
-    if (ic_is_bitmap_set(table_def->key_fields,field_id))
+    if (ic_bitmap_get_bit(table_def->key_fields,field_id))
     {
       key_field_id= IC_MAX_UINT32;
       for (j= 0; j < num_key_fields; j++)

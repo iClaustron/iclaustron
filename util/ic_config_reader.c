@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -238,14 +238,15 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
 {
   gboolean found= FALSE;
   guint32 iter_len= 0;
+  guint32 input_len = *len;
   gchar error_buf[2];
   gchar *save_val_str;
   gchar *first_val_str= val_str;
 
-  val_str= rm_space(val_str, &iter_len, *len);
-  if (*len == iter_len || (val_str[0] != '=' && val_str[0] != ':'))
+  val_str= rm_space(val_str, &iter_len, input_len);
+  if (input_len == iter_len || (val_str[0] != '=' && val_str[0] != ':'))
   {
-    if (*len != iter_len)
+    if (input_len != iter_len)
     {
       ic_printf("Only : and = allowed as assign operator");
       error_buf[0]= val_str[0];
@@ -258,13 +259,17 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
     }
     return NULL;
   }
+  /**
+   * Step one step forward to pass assignment operator (: or =)
+   * Then step away from spaces after assignment operator.
+   */
   val_str++;
   iter_len++;
-  val_str= rm_space(val_str, &iter_len, *len);
+  val_str= rm_space(val_str, &iter_len, input_len);
   save_val_str= val_str;
-  while (iter_len < *len)
+  while (iter_len < input_len)
   {
-    gchar c= *val_str;
+    gchar c= (*val_str);
     if (!((g_ascii_isalpha(c)) || (c == '/') || (c == '\\') ||
         g_ascii_isdigit(c) || (c == '.') ||
         (c == '_') || g_ascii_isspace(c)))
@@ -282,7 +287,7 @@ gchar *conv_key_value(gchar *val_str, guint32 *len)
     ic_printf("Missing key value");
     return NULL;
   }
-  *len= (guint32)(((first_val_str + *len) - save_val_str) - 1);
+  *len= (guint32)((first_val_str + input_len) - save_val_str);
   return save_val_str;
 }
 

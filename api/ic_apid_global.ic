@@ -115,6 +115,16 @@
   global part of the data part. This part contains all the threads required
   to handle the Data API except the user threads which are created by the
   user application.
+
+  There is one global data object per API node, this object can be connected
+  to many clusters simultaneously. All of those connections wil share the
+  same node id in all clusters.
+
+  It is possible to have several global data object per process, if so these
+  will represent completely independent connections the clusters. Thus they
+  will have no shared state with the other global objects. The only common
+  thing we implement for these objects is a function to round robin usage to
+  the global objects.
 */
 /*
   This method is used to initialise all the data structures and allocate
@@ -424,7 +434,7 @@ ic_apid_global_connect(IC_INT_APID_GLOBAL *apid_global)
     goto error;
   for (cluster_id= 0; cluster_id < num_cluster_map_bits; cluster_id++)
   {
-    if (ic_is_bitmap_set(cluster_bitmap, cluster_id))
+    if (ic_bitmap_get_bit(cluster_bitmap, cluster_id))
     {
       if ((error= start_receive_thread(apid_global, cluster_id)))
         goto error;
@@ -640,7 +650,7 @@ apid_global_remove_user_thread(IC_APID_GLOBAL *ext_apid_global)
 
 void
 apid_global_set_thread_func(IC_APID_GLOBAL *ext_apid_global,
-                IC_RUN_APID_THREAD_FUNC apid_func)
+                            IC_RUN_APID_THREAD_FUNC apid_func)
 {
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
 

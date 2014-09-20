@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009-2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -29,21 +29,21 @@
   will hang on a conditional wait until the creation is completed.
 
   When we don't find an object in the local hash table we proceed as follows:
-  1) Acquire a mutex on the global context
-  2) Check if we can find the object in the global hash table
+  1) Acquire a mutex on the cluster context
+  2) Check if we can find the object in the cluster hash table
      If we can't find such an object proceed to description below
   3) Check if found object is in creation state
-     If it is place us in the wait queue for it to be created and wait
+     If it is, place us in the wait queue for it to be created and wait
      using a conditional wait until this object is created.
      If the object is an object that is properly created then we add one
      to the reference count and release the mutex and proceeed to place
      the object in our local hash table. The same also happens after our
      conditional wait if the creation was successful.
 
-  Whenever we need to insert a new object into the global area we proceed
+  Whenever we need to insert a new object into the cluster area we proceed
   as follows:
-  1) Acquire a mutex on the global context
-  2) Create a fake table definition and place this into the global hash
+  1) Acquire a mutex on the cluster context
+  2) Create a fake table definition and place this into the cluster hash
      table. The only relevant information in this table definition is its
      state as under construction and it will also contains links to any
      other IC_APID_CONNECTION waiting for the real metadata object to be
@@ -56,7 +56,7 @@
   In the normal case there will only be a hash lookup in a local hash table
   before we have found the metadata object. There is a cost attached to
   creating new objects, but this cost is only taken once per object in the
-  process. The same object is reused then by all global objects.
+  process. The same object is reused then by all cluster objects.
 
   The same happens when a metadata object is changed, in this case someone
   will discover that the object is no longer valid and will place a marker
@@ -64,7 +64,7 @@
   protected by mutex since using an old object will be discovered by the
   NDB kernel.
 
-  Whenever an object is deemed invalid it is taken out of the global hash
+  Whenever an object is deemed invalid it is taken out of the cluster hash
   table and placed in a special list of old metadata objects. This list
   is used to ensure that we will always fully clean up in all cases even
   when the application doesn't perform a nice cleanup.
@@ -81,6 +81,8 @@ create_search_name(gchar *buf,
   gchar *buf_ptr= buf;
   guint32 total_len= 0;
 
+  if (num_names > 8)
+    return NULL;
   for (i= 0; i < num_names; i++)
   {
     name_len[i]= strlen(name[i]);
@@ -170,7 +172,7 @@ dec_table_ref_count(IC_INT_TABLE_DEF *loc_table_def,
 
 static int
 md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
-                   IC_METADATA_TRANSACTION *md_trans_obj,
+                   IC_METADATA_TRANSACTION *ext_md_trans,
                    IC_TABLE_DEF **table_def,
                    const gchar *schema_name,
                    const gchar *db_name,
@@ -184,9 +186,12 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
   gchar *name_ptr;
   IC_STRING name_str;
   IC_APID_CLUSTER_DATA *clu_data;
+  IC_INT_METADATA_TRANSACTION *md_trans =
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  guint32 cluster_id = md_trans->cluster_id;
   DEBUG_ENTRY("md_bind_table_bind");
 
-  (void)md_trans_obj;
+  /* Verify that we can use this cluster id in this connection */
 
   /* Create a search string using the metadata object name */
   name_array[0]= schema_name;
@@ -199,8 +204,9 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
   {
     DEBUG_RETURN_INT(IC_ERROR_TOO_LONG_TABLE_NAME);
   }
+  IC_HASHTABLE *md_hash = apid_conn->md_hash[cluster_id];
   IC_INIT_STRING(&name_str, name_ptr, strlen(name_ptr), TRUE);
-  if ((loc_table_def= ic_hashtable_search(apid_conn->md_hash,
+  if ((loc_table_def= ic_hashtable_search(md_hash,
                                           (void*)&name_str)))
   {
     /**
@@ -215,8 +221,8 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
       instance of this table definition and then proceed as if we had
       no local instance.
     */
-    clu_data= get_cluster_data(apid_conn, loc_table_def->cluster_id);
-    ic_hashtable_remove(apid_conn->md_hash, (void*)&name_str);
+    clu_data= get_cluster_data(apid_conn, cluster_id);
+    ic_hashtable_remove(md_hash, (void*)&name_str);
     dec_table_ref_count(loc_table_def, clu_data);
     /**
       We will proceed now as if we didn't have any local reference to
@@ -228,7 +234,7 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
     We found no table definition locally, let's first see if we have one
     stored globally.
   */
-  clu_data= get_cluster_data(apid_conn, loc_table_def->cluster_id);
+  clu_data= get_cluster_data(apid_conn, cluster_id);
   ic_mutex_lock(clu_data->mutex);
   if ((loc_table_def= ic_hashtable_search(clu_data->cluster_md_hash,
                                           (void*)&name_str)))
@@ -269,7 +275,7 @@ md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
       }
     }
     ic_require(loc_table_def->create_state == MD_TABLE_CREATED);
-    if (!(ret_code= ic_hashtable_insert(apid_conn->md_hash,
+    if (!(ret_code= ic_hashtable_insert(md_hash,
                                         (void*)&name_str,
                                         (void*)loc_table_def)))
     {
@@ -353,12 +359,39 @@ static IC_METADATA_BIND_OPS glob_metadata_bind_ops=
   metadata about a table, its indexes and its fields.
 */
 
+static IC_FIELD_DEF*
+get_field_def_from_hash(IC_TABLE_DEF *ext_table_def,
+                        const gchar *field_name)
+{
+  IC_INT_TABLE_DEF *table_def = (IC_INT_TABLE_DEF*)ext_table_def;
+  return (IC_FIELD_DEF*)ic_hashtable_search(table_def->field_hash,
+                                            (void*)field_name);
+}
+
+static IC_FIELD_DEF*
+get_field_def_from_index(IC_TABLE_DEF *ext_table_def,
+                         const guint32 field_id)
+{
+  IC_INT_TABLE_DEF *table_def = (IC_INT_TABLE_DEF*)ext_table_def;
+  IC_FIELD_DEF *field;
+
+  if (field_id < table_def->num_fields)
+  {
+    return NULL;
+  }
+  if (!(field= table_def->fields[field_id]))
+  {
+    return NULL;
+  }
+  return field;
+}
+
 static int
-table_def_get_table_id(IC_TABLE_DEF *table_def,
+table_def_get_table_id(IC_TABLE_DEF *ext_table_def,
                        guint32 *table_id)
 {
-  (void)table_def;
-  (void)table_id;
+  IC_INT_TABLE_DEF *table_def = (IC_INT_TABLE_DEF*)ext_table_def;
+  *table_id= table_def->table_id;
   return 0;
 }
 
@@ -367,9 +400,13 @@ table_def_get_field_id(IC_TABLE_DEF *table_def,
                        const gchar *field_name,
                        guint32 *field_id)
 {
-  (void)table_def;
-  (void)field_name;
-  (void)field_id;
+  IC_FIELD_DEF *field;
+
+  if (!(field= get_field_def_from_hash(table_def, field_name)))
+  {
+    return IC_ERROR_FIELD_NOT_DEFINED;
+  }
+  *field_id= field->field_id;
   return 0;
 }
 
@@ -378,9 +415,13 @@ table_def_get_field_name(IC_TABLE_DEF *table_def,
                          guint32 field_id,
                          gchar **field_name)
 {
-  (void)table_def;
-  (void)field_id;
-  (void)field_name;
+  IC_FIELD_DEF *field;
+
+  if (!(field= get_field_def_from_index(table_def, field_id)))
+  {
+    return IC_ERROR_FIELD_NOT_DEFINED;
+  }
+  *field_name= field->field_name;
   return 0;
 }
 
@@ -389,9 +430,13 @@ table_def_get_field_type(IC_TABLE_DEF *table_def,
                          guint32 field_id,
                          IC_FIELD_TYPE *field_data_type)
 {
-  (void)table_def;
-  (void)field_id;
-  (void)field_data_type;
+  IC_FIELD_DEF *field;
+
+  if (!(field= get_field_def_from_index(table_def, field_id)))
+  {
+    return IC_ERROR_FIELD_NOT_DEFINED;
+  }
+  *field_data_type= field->field_type;
   return 0;
 }
 

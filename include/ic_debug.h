@@ -43,6 +43,7 @@ void ic_set_debug(guint32 val);
 guint32 ic_get_debug();
 guint32 ic_get_debug_timestamp();
 void ic_printf(const char *format,...);
+void ic_printf_low(const char *format,...);
 
 /* Various parts to debug. */
 #define COMM_LEVEL 1

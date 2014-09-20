@@ -222,9 +222,30 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
   if (apid_conn)
   {
     if (apid_conn->md_hash)
-      ic_hashtable_destroy(apid_conn->md_hash, FALSE);
+    {
+      /**
+       * TODO:
+       * We also need to remove the reference count from the global object
+       * for each of those table entries.
+       */
+      for (guint32 i= 0; i < apid_conn->num_clusters; i++)
+      {
+        if (apid_conn->md_hash[i])
+        {
+          ic_hashtable_destroy(apid_conn->md_hash[i], FALSE);
+        }
+      }
+    }
     if (apid_conn->tc_conn)
-      ic_hashtable_destroy(apid_conn->tc_conn, FALSE);
+    {
+      for (guint32 i= 0; i < apid_conn->num_clusters; i++)
+      {
+        if (apid_conn->tc_conn[i])
+        {
+          ic_hashtable_destroy(apid_conn->tc_conn[i], FALSE);
+        }
+      }
+    }
     if (apid_conn->cluster_id_bitmap)
       ic_free_bitmap(apid_conn->cluster_id_bitmap);
     if (apid_conn->trans_bindings)
@@ -298,6 +319,13 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   apid_conn->thread_id= thread_id;
   apid_conn->apic= apic;
   num_bits= apic->api_op.ic_get_max_cluster_id(apic) + 1;
+  apid_conn->num_clusters= num_bits;
+  if (!(apid_conn->md_hash= (IC_HASHTABLE**)ic_calloc(
+        num_bits * sizeof(IC_HASHTABLE*))))
+    goto error;
+  if (!(apid_conn->tc_conn= (IC_HASHTABLE**)ic_calloc(
+        num_bits * sizeof(IC_HASHTABLE*))))
+    goto error;
   if (!(apid_conn->cluster_id_bitmap= ic_create_bitmap(NULL, num_bits)))
     goto error;
   if (cluster_id_bitmap)
@@ -308,8 +336,10 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   {
     for (i= 0; i < num_bits; i++)
     {
-    if (apic->api_op.ic_get_cluster_config(apic, i))
-      ic_bitmap_set_bit(apid_conn->cluster_id_bitmap, i);
+      if (apic->api_op.ic_get_cluster_config(apic, i))
+      {
+        ic_bitmap_set_bit(apid_conn->cluster_id_bitmap, i);
+      }
     }
   }
 
@@ -350,16 +380,23 @@ ic_create_apid_connection(IC_APID_GLOBAL *ext_apid_global,
   ic_mutex_unlock(apid_global->thread_id_mutex);
   apid_conn->thread_id= thread_id;
   /* Create hash tables for metadata object and NDB connections */
-  if (!(apid_conn->md_hash= ic_create_hashtable(5,
-                                                ic_hash_str,
-                                                ic_keys_equal_str,
-                                                FALSE)))
-    goto error;
-  if (!(apid_conn->tc_conn= ic_create_hashtable(5,
-                                                ic_hash_uint32,
-                                                ic_keys_equal_uint32,
-                                                FALSE)))
-    goto error;
+  for (guint32 i= 0; i < num_bits; i++)
+  {
+    /* Create separate hash tables for each of the clusters we can use */
+    if (ic_bitmap_get_bit(apid_conn->cluster_id_bitmap, i))
+    {
+      if (!(apid_conn->md_hash[i]= ic_create_hashtable(5,
+                                                       ic_hash_str,
+                                                       ic_keys_equal_str,
+                                                       FALSE)))
+        goto error;
+      if (!(apid_conn->tc_conn[i]= ic_create_hashtable(5,
+                                                       ic_hash_uint32,
+                                                       ic_keys_equal_uint32,
+                                                       FALSE)))
+        goto error;
+    }
+  }
   /* Now initialise the method pointers for the Data API interface */
   apid_conn->apid_conn_ops= &glob_apid_conn_ops;
   /* Now initialise error object */

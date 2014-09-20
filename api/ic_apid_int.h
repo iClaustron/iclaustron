@@ -202,6 +202,7 @@ struct ic_int_table_def
   IC_BITMAP *key_fields;
   guint32 *key_field_id_order;
   IC_FIELD_DEF **fields;
+  IC_HASHTABLE *field_hash;
   IC_MEMORY_CONTAINER *mc_ptr;
 
   IC_INT_APID_CONNECTION *first_wait_get_table;
@@ -546,8 +547,13 @@ struct ic_int_apid_connection
 
     The signal part is used to signal when the metadata object
     is created.
+
+    Actually we have to store one hash table per cluster also in the
+    local object since table names can be the same in different
+    clusters. We could have had a global hash table with cluster id
+    part of the key, but we opted for this variant instead.
   */
-  IC_HASHTABLE *md_hash;
+  IC_HASHTABLE **md_hash;
   IC_COND *signal;
 
   /**
@@ -555,9 +561,12 @@ struct ic_int_apid_connection
     connections to the NDB data nodes. We have maximum of one
     entry per node although each such entry can have a list of
     TC connections.
-  */
-  IC_HASHTABLE *tc_conn;
 
+    Also here one per cluster we can use.
+  */
+  IC_HASHTABLE **tc_conn;
+
+  guint32 num_clusters;
   guint32 thread_id;
   /*
     The queries pass through a set of lists from start to end.

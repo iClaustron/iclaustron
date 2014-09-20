@@ -37,7 +37,8 @@ get_file_table_meta_data(IC_APID_GLOBAL *apid_global,
                          IC_METADATA_TRANSACTION **md_trans,
                          IC_TABLE_DEF **table_def,
                          guint32 *file_key_id,
-                         guint32 *file_data_id)
+                         guint32 *file_data_id,
+                         guint32 cluster_id)
 {
   int ret_code;
   DEBUG_ENTRY("get_file_table_meta_data");
@@ -48,7 +49,7 @@ get_file_table_meta_data(IC_APID_GLOBAL *apid_global,
   if ((*md_trans) == NULL)
   {
     if (!((*md_trans)= ic_create_metadata_transaction(apid_conn,
-                                                      0,
+                                                      cluster_id,
                                                       &ret_code)))
     {
       goto error;
@@ -147,7 +148,8 @@ error:
 
 static int
 get_transaction_object(IC_APID_CONNECTION *apid_conn,
-                       IC_TRANSACTION **trans_obj)
+                       IC_TRANSACTION **trans_obj,
+                       guint32 cluster_id)
 {
   int ret_code;
   DEBUG_ENTRY("get_transaction_object");
@@ -157,7 +159,7 @@ get_transaction_object(IC_APID_CONNECTION *apid_conn,
          apid_conn,
          trans_obj,
          NULL,
-         0,
+         cluster_id,
          FALSE)))
   {
     ;
@@ -210,6 +212,7 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
 
   guint64 file_key= 13;
   int ret_code;
+  guint32 cluster_id= 0;
   gchar *data_str= "Some random string with data in it";
   DEBUG_ENTRY("run_file_server_thread");
 
@@ -218,7 +221,7 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
 
   if ((ret_code= apid_global->apid_global_ops->ic_wait_first_node_connect(
        apid_global,
-       (guint32)0, /* Cluster id */
+       cluster_id,
        (glong)30000)))
   {
     DEBUG_RETURN_INT(ret_code);
@@ -229,7 +232,8 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
                                           &md_trans,
                                           &table_def,
                                           &file_key_id,
-                                          &file_data_id)))
+                                          &file_data_id,
+                                          cluster_id)))
     goto error;
 
   if ((ret_code= get_file_table_query_object(apid_global,
@@ -242,7 +246,8 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
     goto error;
 
   if ((ret_code= get_transaction_object(apid_conn,
-                                        &trans_obj)))
+                                        &trans_obj,
+                                        cluster_id)))
     goto error;
 
   /**

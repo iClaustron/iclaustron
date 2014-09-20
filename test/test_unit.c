@@ -413,11 +413,11 @@ unit_test_bitmap()
       if (bit_set != 0)
       {
         ic_bitmap_set_bit(bitmap_ptr, j);
-        if (!ic_is_bitmap_set(bitmap_ptr, j))
+        if (!ic_bitmap_get_bit(bitmap_ptr, j))
           goto error;
       }
       else
-        if (ic_is_bitmap_set(bitmap_ptr, j))
+        if (ic_bitmap_get_bit(bitmap_ptr, j))
           goto error;
     }
     ic_free_bitmap(bitmap_ptr);
