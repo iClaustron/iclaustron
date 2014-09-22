@@ -544,8 +544,7 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   if (orig_len > 0)
     memcpy(new_str, dest_str->str, orig_len);
   memcpy(new_str + orig_len, add_str, add_len);
-  if (dest_str->is_null_terminated)
-    new_str[new_len]= 0;
+  new_str[new_len]= 0; /* We will add a NULL termination just in case */
   if (dest_str->str)
     ic_free(dest_str->str);
   dest_str->str= new_str;
@@ -578,8 +577,7 @@ ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
     return IC_ERROR_MEM_ALLOC;
   memcpy(new_str, dest_str->str, dest_str->len);
   memcpy(&new_str[dest_str->len], in_str->str, in_str->len);
-  if (dest_str->is_null_terminated)
-    new_str[new_len]= 0;
+  new_str[new_len]= 0; /* NULL terminate anyways just in case */
   dest_str->str= new_str;
   dest_str->len= new_len;
   return 0;
@@ -741,8 +739,7 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   IC_COPY_STRING(out_str, in_str);
   out_str->str= str;
   memcpy(out_str->str, in_str->str, in_str->len);
-  if (out_str->is_null_terminated)
-    out_str->str[out_str->len]= NULL_BYTE;
+  out_str->str[out_str->len]= NULL_BYTE; /* NULL terminate just in case */
   return 0;
 }
 

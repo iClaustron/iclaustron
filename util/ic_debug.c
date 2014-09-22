@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -130,7 +130,7 @@ ic_debug_print_char_buf(gchar *in_buf, IC_THREAD_DEBUG *thread_debug)
               indent_buf,
               in_buf);
     ic_printf_low("%s", print_buf);
-    fflush(stdout);
+    ic_flush_stdout();
   }
   g_snprintf(print_buf,
              sizeof(print_buf),
@@ -234,7 +234,10 @@ void ic_debug_thread_return()
   thread_debug= (IC_THREAD_DEBUG*)g_private_get(&debug_priv);
   if (ic_get_debug() & THREAD_LEVEL)
   {
-    len= g_snprintf(buf, 64, "Exit from thread id=%u", thread_debug->thread_id);
+    len= g_snprintf(buf,
+                    64,
+                    "Exit from thread id=%u",
+                    thread_debug->thread_id);
     ic_require(len < 64);
     ic_debug_print_char_buf(buf, thread_debug);
   }
@@ -270,7 +273,9 @@ void ic_debug_thread_init(const gchar *entry_point)
   thread_debug->enabled= TRUE;
   g_private_set(&debug_priv, (gpointer)thread_debug);
   if (entry_point)
+  {
     ic_debug_entry(entry_point);
+  }
 }
 
 void
@@ -319,7 +324,7 @@ int ic_debug_open(guint32 node_id)
   if (ic_fptr == NULL)
   {
     ic_printf("Failed to open %s", file_buf);
-    fflush(stdout);
+    ic_flush_stdout();
     return 1;
   }
   /* Set debug starting time */
@@ -333,7 +338,7 @@ void
 ic_debug_close()
 {
   ic_debug_thread_return();
-  fflush(stdout);
+  ic_flush_stdout();
   fflush(ic_fptr);
   fclose(ic_fptr);
   ic_mutex_destroy(&debug_mutex);
@@ -341,6 +346,43 @@ ic_debug_close()
   ic_require(ic_num_threads_debugged == 0);
 }
 #endif
+
+static FILE *stdout_fd= NULL;
+static int stdout_defined= 0;
+
+void ic_set_stdout_null(void)
+{
+  stdout_fd= NULL;
+  stdout_defined= -1;
+}
+
+int
+ic_set_stdout(gchar *log_file)
+{
+  FILE *file_des;
+  ic_delete_file(log_file);
+  file_des= fopen(log_file, "w");
+  if (file_des == NULL)
+  {
+    return IC_ERROR_FAILED_OPEN_STDOUT;
+  }
+  stdout_fd= file_des;
+  stdout_defined= 1;
+  return 0;
+}
+
+void
+ic_flush_stdout(void)
+{
+  if (stdout_defined == 0)
+  {
+    fflush(stdout);
+  }
+  else if (stdout_defined > 0)
+  {
+    fflush(stdout_fd);
+  }
+}
 
 void
 ic_printf(const char *format,...)
@@ -354,14 +396,21 @@ ic_printf(const char *format,...)
 #else
   vsprintf_s(buf, sizeof(buf), format, args);
 #endif
-  printf("%s\n", buf);
+  if (stdout_defined == 0)
+  {
+    printf("%s\n", buf);
+  }
+  else if (stdout_defined > 0)
+  {
+    fprintf(stdout_fd, "%s\n", buf);
+  }
 #ifdef DEBUG_BUILD
   if (debug_mutex) /* Verify debug system is up and running */
   {
     DEBUG_PRINT(PROGRAM_LEVEL, ("%s", buf));
   }
 #endif
-  fflush(stdout);
+  ic_flush_stdout();
   va_end(args);
 }
 
@@ -377,7 +426,14 @@ ic_printf_low(const char *format,...)
 #else
   vsprintf_s(buf, sizeof(buf), format, args);
 #endif
-  printf("%s\n", buf);
-  fflush(stdout);
+  if (stdout_defined == 0)
+  {
+    printf("%s\n", buf);
+  }
+  else if (stdout_defined > 0)
+  {
+    fprintf(stdout_fd, "%s\n", buf);
+  }
+  ic_flush_stdout();
   va_end(args);
 }

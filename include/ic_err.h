@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #include <errno.h>
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7111
+#define IC_LAST_ERROR 7113
 #define IC_MAX_ERRORS 200
 
 /*
@@ -158,4 +158,6 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_MISSING_COLUMN_NAME 7109
 #define IC_ERROR_TOO_LONG_TABLE_NAME 7110
 #define IC_ERROR_ALREADY_CREATED_METADATA_OBJECT 7111
+#define IC_ERROR_FAILED_TO_CHANGE_DIR 7112
+#define IC_ERROR_FAILED_OPEN_STDOUT 7113
 #endif

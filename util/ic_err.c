@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -26,9 +26,9 @@
   given the error number.
 
   To add a new error number do the following:
-  1) Change IC_LAST_ERROR
-  2) Add a new entry in ic_init_error_messages
-  3) Add the new error code in ic_err.h
+  1) Change IC_LAST_ERROR in ic_err.h
+  2) Add the new error code in ic_err.h
+  3) Add a new entry in ic_init_error_messages
 */
 
 static gchar* ic_error_str[IC_MAX_ERRORS];
@@ -45,6 +45,87 @@ int ic_translate_error_string(gchar *error_str)
       return (i + IC_FIRST_ERROR);
   }
   return IC_ERROR_NO_SUCH_ERROR;
+}
+
+void
+ic_print_error(int error_number)
+{
+  gchar buf[IC_MAX_ERROR_STRING_SIZE];
+
+  if (error_number < IC_FIRST_ERROR ||
+      error_number > IC_LAST_ERROR ||
+      !ic_error_str[error_number - IC_FIRST_ERROR])
+  {
+    ic_printf("OS Error number = %d", error_number);
+    if (ic_get_strerror(error_number, buf, sizeof(buf)))
+      ic_printf("OS Error: %s", buf);
+  }
+  else
+    ic_printf("%s", ic_error_str[error_number - IC_FIRST_ERROR]);
+  perror("Last reported OS Error:");
+}
+
+gchar *ic_get_error_message(int error_number)
+{
+  if (error_number < IC_FIRST_ERROR ||
+      error_number > IC_LAST_ERROR ||
+      !ic_error_str[error_number - IC_FIRST_ERROR])
+    return no_such_error_str;
+  else
+    return ic_error_str[error_number - IC_FIRST_ERROR];
+}
+
+gchar*
+ic_common_fill_error_buffer(const gchar *extra_error_message,
+                            guint32 error_line,
+                            int error_code,
+                            gchar *error_buffer)
+{
+  guint32 err_msg_len, err_str_len, err_buf_index;
+  guint32 line_err_str_len, line_buf_len;
+  gchar *line_err_msg= NULL;
+  gchar *protocol_err_msg= "Protocol error on line: ";
+  gchar *line_number_msg= "Error on line: ";
+  gchar *err_msg, *line_buf_ptr;
+  gchar line_buf[128];
+
+  if (!error_buffer)
+    return NULL;
+  if (error_code == IC_PROTOCOL_ERROR)
+    line_err_msg= protocol_err_msg;
+  else if (error_code != 0 && error_line != 0)
+    line_err_msg= line_number_msg;
+  err_msg= ic_get_error_message(error_code);
+  err_msg_len= strlen(err_msg);
+  memcpy(error_buffer, err_msg, err_msg_len);
+  error_buffer[err_msg_len]= CARRIAGE_RETURN;
+  err_buf_index= err_msg_len;
+  if (extra_error_message)
+  {
+    err_str_len= strlen(extra_error_message);
+    memcpy(&error_buffer[err_buf_index + 1], extra_error_message,
+           err_str_len);
+    err_buf_index= err_buf_index + 1 + err_str_len;
+    error_buffer[err_buf_index]= CARRIAGE_RETURN;
+  }
+  if (line_err_msg)
+  {
+    line_err_str_len= strlen(line_err_msg);
+    memcpy(&error_buffer[err_buf_index + 1], line_err_msg,
+           line_err_str_len);
+    err_buf_index= err_buf_index + 1 + line_err_str_len;
+    line_buf_ptr= ic_guint64_str((guint64)error_line, line_buf,
+                                 &line_buf_len);
+    if (line_buf_ptr)
+    {
+      memcpy(&error_buffer[err_buf_index], line_buf_ptr,
+             line_buf_len);
+      err_buf_index= err_buf_index + line_buf_len;
+    }
+    error_buffer[err_buf_index]= CARRIAGE_RETURN;
+  }
+  error_buffer[err_buf_index + 1]= 0; /* Null-terminated string */
+  return error_buffer;  
 }
 
 void
@@ -284,6 +365,10 @@ ic_init_error_messages()
     "Table name too long";
   ic_error_str[IC_ERROR_ALREADY_CREATED_METADATA_OBJECT - IC_FIRST_ERROR]=
     "Metadata object already created on API Data Connection";
+  ic_error_str[IC_ERROR_FAILED_TO_CHANGE_DIR - IC_FIRST_ERROR]=
+    "ic_daemonize failed to change directory";
+  ic_error_str[IC_ERROR_FAILED_OPEN_STDOUT - IC_FIRST_ERROR]=
+    "Failed to open stdout file after daemonize";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)
@@ -295,83 +380,3 @@ ic_init_error_messages()
   return;
 }
 
-void
-ic_print_error(int error_number)
-{
-  gchar buf[IC_MAX_ERROR_STRING_SIZE];
-
-  if (error_number < IC_FIRST_ERROR ||
-      error_number > IC_LAST_ERROR ||
-      !ic_error_str[error_number - IC_FIRST_ERROR])
-  {
-    ic_printf("OS Error number = %d", error_number);
-    if (ic_get_strerror(error_number, buf, sizeof(buf)))
-      ic_printf("OS Error: %s", buf);
-  }
-  else
-    ic_printf("%s", ic_error_str[error_number - IC_FIRST_ERROR]);
-  perror("Last reported OS Error:");
-}
-
-gchar *ic_get_error_message(int error_number)
-{
-  if (error_number < IC_FIRST_ERROR ||
-      error_number > IC_LAST_ERROR ||
-      !ic_error_str[error_number - IC_FIRST_ERROR])
-    return no_such_error_str;
-  else
-    return ic_error_str[error_number - IC_FIRST_ERROR];
-}
-
-gchar*
-ic_common_fill_error_buffer(const gchar *extra_error_message,
-                            guint32 error_line,
-                            int error_code,
-                            gchar *error_buffer)
-{
-  guint32 err_msg_len, err_str_len, err_buf_index;
-  guint32 line_err_str_len, line_buf_len;
-  gchar *line_err_msg= NULL;
-  gchar *protocol_err_msg= "Protocol error on line: ";
-  gchar *line_number_msg= "Error on line: ";
-  gchar *err_msg, *line_buf_ptr;
-  gchar line_buf[128];
-
-  if (!error_buffer)
-    return NULL;
-  if (error_code == IC_PROTOCOL_ERROR)
-    line_err_msg= protocol_err_msg;
-  else if (error_code != 0 && error_line != 0)
-    line_err_msg= line_number_msg;
-  err_msg= ic_get_error_message(error_code);
-  err_msg_len= strlen(err_msg);
-  memcpy(error_buffer, err_msg, err_msg_len);
-  error_buffer[err_msg_len]= CARRIAGE_RETURN;
-  err_buf_index= err_msg_len;
-  if (extra_error_message)
-  {
-    err_str_len= strlen(extra_error_message);
-    memcpy(&error_buffer[err_buf_index + 1], extra_error_message,
-           err_str_len);
-    err_buf_index= err_buf_index + 1 + err_str_len;
-    error_buffer[err_buf_index]= CARRIAGE_RETURN;
-  }
-  if (line_err_msg)
-  {
-    line_err_str_len= strlen(line_err_msg);
-    memcpy(&error_buffer[err_buf_index + 1], line_err_msg,
-           line_err_str_len);
-    err_buf_index= err_buf_index + 1 + line_err_str_len;
-    line_buf_ptr= ic_guint64_str((guint64)error_line, line_buf,
-                                 &line_buf_len);
-    if (line_buf_ptr)
-    {
-      memcpy(&error_buffer[err_buf_index], line_buf_ptr,
-             line_buf_len);
-      err_buf_index= err_buf_index + line_buf_len;
-    }
-    error_buffer[err_buf_index]= CARRIAGE_RETURN;
-  }
-  error_buffer[err_buf_index + 1]= 0; /* Null-terminated string */
-  return error_buffer;  
-}

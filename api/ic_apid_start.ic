@@ -1,4 +1,4 @@
-/* Copyight (C) 2007-2013 iClaustron AB
+/* Copyight (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -107,7 +107,8 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   if (!(*apic))
     goto error;
   
-  ic_printf("Successfully retrieved configuration from iClaustron Cluster Server");
+  ic_printf("Successfully retrieved configuration from iClaustron Cluster"
+            " Server");
   if (!(*apid_global= ic_create_apid_global(*apic,
                                             FALSE,
                                             &ret_code,
@@ -325,7 +326,7 @@ ic_start_program(int argc,
                  gchar *program_name,
                  gchar *start_text,
                  gboolean use_config,
-                 gboolean daemonize)
+                 gboolean daemonize_second_phase)
 {
   int ret_code= IC_ERROR_STARTUP;
 #ifdef DEBUG_BUILD
@@ -341,13 +342,11 @@ ic_start_program(int argc,
   gchar pid_buf[IC_NUMBER_SIZE];
 
   ic_init_error_messages();
-  pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
-  ic_printf("Starting %s program with pid %s", program_name, pid_str);
   if (strcmp(program_name, "ic_csd") == 0)
     is_cluster_server= TRUE;
   use_config_vars= use_config; /* TRUE for Unit test programs */
   if (ic_start_socket_system())
-    goto early_error;
+    goto error;
   context= g_option_context_new(start_text);
   if (!context)
     goto mem_error;
@@ -371,14 +370,22 @@ ic_start_program(int argc,
     goto parse_error;
   g_option_context_free(context);
 
-  if (daemonize && ic_glob_daemonize)
+  if (ic_glob_daemonize)
   {
-    if ((ret_code= ic_daemonize("/dev/null")))
-      return ret_code;
+    /**
+     * First step of daemonize handles the creation of a new process
+     * detached from the original process and closes all files and
+     * stdin, stdout and stderr is mapped to /dev/null.
+     */
+    if ((ret_code= ic_daemonize()))
+      goto error;
+    ic_set_stdout_null();
+    ic_set_umask();
   }
+  ic_set_umask();
 
   if ((ret_code= ic_init()))
-    goto early_error;
+    goto error;
   DEBUG_PRINT(PROGRAM_LEVEL, ("Returning to ic_start_program"));
   DEBUG_ENTRY("ic_start_program");
 #ifdef DEBUG_BUILD
@@ -396,25 +403,43 @@ ic_start_program(int argc,
       (ret_code= ic_set_base_dir(&ic_glob_base_dir)) ||
       (ret_code= ic_set_binary_dir(&ic_glob_binary_dir,
                                    IC_VERSION_STR)))
-    goto error;
+    goto late_error;
   ic_set_port_binary_dir(ic_glob_binary_dir.str);
   ic_set_port_config_dir(ic_glob_config_dir.str);
   ic_glob_process_name= program_name;
+
+  if (daemonize_second_phase && ic_glob_daemonize)
+  {
+    /**
+     * Second step of daemonization after initialising the iClaustron
+     * subsystems sets up a proper stdout and stderr files and writes
+     * the pid file to ensure that the process controller can see that
+     * we exist and know our PID.
+     */
+    if ((ret_code= ic_setup_stdout(ic_glob_data_dir.str)))
+      goto late_error;
+    if ((ret_code= ic_setup_workdir(ic_glob_data_dir.str)))
+      goto late_error;
+    if ((ret_code= ic_write_pid_file()))
+      goto late_error;
+    pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
+    ic_printf("Starting %s program with pid %s", program_name, pid_str);
+  }
   DEBUG_RETURN_INT(0);
 
 parse_error:
   ic_printf("No such program option: %s", error->message);
-  goto early_error;
+  goto error;
 
 mem_error:
   ic_printf("Memory allocation error");
-  goto early_error;
+  goto error;
 
-early_error:
-  return ret_code;
+late_error:
+  DEBUG_RETURN_INT(ret_code);
 
 error:
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 static int

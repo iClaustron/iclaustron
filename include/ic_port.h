@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -123,8 +123,29 @@ IC_TIMER ic_millis_elapsed(IC_TIMER start_time, IC_TIMER end_time);
 void ic_sleep_low(guint32 seconds_to_sleep);
 void ic_microsleep(guint32 microseconds_to_sleep);
 
-/* Interface to daemonize a program */
-int ic_daemonize(gchar *log_file);
+/**
+ * Interfaces to daemonize a program
+ * ---------------------------------
+ * Since daemonization happens very early we have to divide it into
+ * multiple functions. We have to create the new process before we
+ * initialise the iClaustron subsystems to ensure we use the right
+ * PID for creating the debug file and also to ensure that we haven't
+ * opened the debug system before daemonization.
+ * 
+ * After initializing the iClaustron subsystem we need to setup the
+ * working directory and the stdout and stderr files to write output to.
+ * 
+ * We will set the umask of the process also when not running as daemon.
+ * Writing of the pid file happens after daemonization AND after initing
+ * the iClaustron subsystems.
+ */
+int ic_daemonize(void);
+int ic_setup_workdir(gchar *new_work_dir);
+/* Interface to set umask of iClaustron processes */
+void ic_set_umask(void);
+/* Interface to write pid file and setup things to delete it */
+int ic_write_pid_file(void);
+
 /* Interface to set function to call at kill signal */
 typedef void (*IC_SIG_HANDLER_FUNC)(void *param);
 void ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param);
@@ -137,8 +158,9 @@ void ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param);
 void ic_controlled_terminate();
 
 /*
-  Conversion routines from little endian to big endian and vice versa. Also a routine to
-  calculate the value of the byte order bit used in the NDB Protocol.
+  Conversion routines from little endian to big endian and vice versa. Also a
+  routine to calculate the value of the byte order bit used in the NDB
+  Protocol.
 */
 #define ic_swap_endian_word(input_word) \
 { \

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -42,8 +42,16 @@ typedef struct ic_thread_debug IC_THREAD_DEBUG;
 void ic_set_debug(guint32 val);
 guint32 ic_get_debug();
 guint32 ic_get_debug_timestamp();
+
+/**
+ * These definitions control output to stdout, so they are used also
+ * when we're not running in debug mode.
+ */
 void ic_printf(const char *format,...);
 void ic_printf_low(const char *format,...);
+void ic_flush_stdout();
+void ic_set_stdout_null(void);
+int ic_set_stdout(gchar *log_file);
 
 /* Various parts to debug. */
 #define COMM_LEVEL 1

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -3035,8 +3035,11 @@ int main(int argc, char *argv[])
   int ret_code= 0;
   IC_THREADPOOL_STATE *tp_state= NULL;
   IC_STRING log_file;
+  guint32 dummy;
+  gchar *pid_str;
+  gchar pid_buf[IC_NUMBER_SIZE];
  
-  IC_INIT_STRING(&log_file, NULL, 0, FALSE);
+  IC_INIT_STRING(&log_file, NULL, 0, TRUE);
   if ((ret_code= ic_start_program(argc,
                                   argv,
                                   entries,
@@ -3045,14 +3048,27 @@ int main(int argc, char *argv[])
                                   start_text,
                                   TRUE,
                                   FALSE)))
+  {
     return ret_code;
+  }
   if (glob_daemonize)
   {
-    if ((ret_code= ic_add_dup_string(&log_file, ic_glob_data_dir.str)) ||
-        (ret_code= ic_add_dup_string(&log_file, "ic_pcntrld.log")))
+    if ((ret_code= ic_add_dup_string(&log_file,
+                                     ic_glob_data_dir.str)) ||
+        (ret_code= ic_add_dup_string(&log_file,
+                                     "ic_pcntrld.log")))
       goto error;
-    if ((ret_code= ic_daemonize(log_file.str)))
+
+    ic_set_umask();
+    if ((ret_code= ic_setup_stdout(log_file.str)))
       goto error;
+    if ((ret_code= ic_setup_workdir(ic_glob_data_dir.str)))
+      goto error;
+    if ((ret_code= ic_write_pid_file()))
+      goto error;
+    pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
+    ic_printf("Starting ic_pcntrld program with pid %s",
+              pid_str);
   }
   ic_set_die_handler(NULL, NULL);
   ic_set_sig_error_handler(NULL, NULL);
@@ -3063,7 +3079,9 @@ int main(int argc, char *argv[])
   DEBUG_PRINT(PROGRAM_LEVEL, ("Config directory: %s", ic_glob_config_dir.str));
 
   if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
+  {
     return IC_ERROR_MEM_ALLOC;
+  }
   if (!(glob_pc_hash= create_pc_hash()))
     goto error;
   if (!(pc_hash_mutex= ic_mutex_create()))
@@ -3115,19 +3133,35 @@ int main(int argc, char *argv[])
   if ((ret_code= start_check_thread(tp_state)))
     goto error;
   ret_code= start_connection_loop(tp_state);
+
 error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Exiting: err: %d", ret_code));
   ic_set_stop_flag();
   if (tp_state)
+  {
     tp_state->tp_ops.ic_threadpool_stop(tp_state);
+  }
   clean_process_hash(shutdown_processes_flag);
   if (glob_pc_hash)
+  {
     ic_hashtable_destroy(glob_pc_hash, FALSE);
+  }
   if (pc_hash_mutex)
+  {
     ic_mutex_destroy(&pc_hash_mutex);
-  if (log_file.str)
-    ic_free(log_file.str);
+  }
+  if (log_file_stdout.str)
+  {
+    ic_free(log_file_stdout.str);
+  }
+  if (log_file_stderr.str)
+  {
+    ic_free(log_file_stderr.str);
+  }
   if (glob_pc_array)
+  {
     glob_pc_array->dpa_ops.ic_free_dynamic_ptr_array(glob_pc_array);
+  }
   ic_end();
   return ret_code;
 }
