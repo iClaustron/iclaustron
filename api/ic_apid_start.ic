@@ -340,6 +340,9 @@ ic_start_program(int argc,
   guint32 dummy;
   gchar *pid_str;
   gchar pid_buf[IC_NUMBER_SIZE];
+  IC_STRING stdout_file;
+
+  IC_INIT_STRING(&stdout_file, NULL, 0, TRUE);
 
   ic_init_error_messages();
   if (strcmp(program_name, "ic_csd") == 0)
@@ -397,6 +400,20 @@ ic_start_program(int argc,
 #endif
   ic_glob_byte_order= ic_byte_order();
   if ((ret_code= ic_set_data_dir(&ic_glob_data_dir)) ||
+      (ret_code= ic_set_working_dir(&ic_glob_working_dir,
+                                    ic_glob_node_id)) ||
+      /* Program name not used for stdout file of node processes */
+      (ret_code= ic_set_out_file(&ic_glob_stdout_file,
+                                ic_glob_node_id,
+                                NULL,
+                                TRUE,
+                                TRUE)) ||
+      /* Program name not used for pid file of node processes */
+      (ret_code= ic_set_out_file(&ic_glob_pid_file,
+                                ic_glob_node_id,
+                                NULL,
+                                TRUE,
+                                FALSE)) ||
       (ret_code= ic_set_config_dir(&ic_glob_config_dir,
                                    is_cluster_server,
                                    ic_glob_node_id)) ||
@@ -416,11 +433,11 @@ ic_start_program(int argc,
      * the pid file to ensure that the process controller can see that
      * we exist and know our PID.
      */
-    if ((ret_code= ic_setup_stdout(ic_glob_data_dir.str)))
+    if ((ret_code= ic_setup_stdout(ic_glob_stdout_file.str)))
       goto late_error;
-    if ((ret_code= ic_setup_workdir(ic_glob_data_dir.str)))
+    if ((ret_code= ic_setup_workdir(ic_glob_working_dir.str)))
       goto late_error;
-    if ((ret_code= ic_write_pid_file()))
+    if ((ret_code= ic_write_pid_file(ic_glob_pid_file.str)))
       goto late_error;
     pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
     ic_printf("Starting %s program with pid %s", program_name, pid_str);
@@ -493,6 +510,21 @@ void ic_end()
   {
     ic_free(ic_glob_binary_dir.str);
     ic_glob_binary_dir.str= NULL;
+  }
+  if (ic_glob_working_dir.str)
+  {
+    ic_free(ic_glob_working_dir.str);
+    ic_glob_working_dir.str= NULL;
+  }
+  if (ic_glob_stdout_file.str)
+  {
+    ic_free(ic_glob_stdout_file.str);
+    ic_glob_stdout_file.str= NULL;
+  }
+  if (ic_glob_pid_file.str)
+  {
+    ic_free(ic_glob_pid_file.str);
+    ic_glob_pid_file.str= NULL;
   }
   ic_stop_socket_system();
   ic_port_end();

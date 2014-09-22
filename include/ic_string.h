@@ -19,6 +19,9 @@
 IC_STRING ic_glob_config_dir;
 IC_STRING ic_glob_data_dir;
 IC_STRING ic_glob_base_dir;
+IC_STRING ic_glob_working_dir;
+IC_STRING ic_glob_stdout_file;
+IC_STRING ic_glob_pid_file;
 IC_STRING ic_glob_binary_dir;
 gchar *ic_glob_process_name;
 
@@ -57,6 +60,12 @@ struct ic_string
 void ic_set_current_dir(IC_STRING *dir);
 int ic_set_base_dir(IC_STRING *base_dir);
 int ic_set_data_dir(IC_STRING *data_dir);
+int ic_set_working_dir(IC_STRING *working_dir, guint32 node_id);
+int ic_set_out_file(IC_STRING *stdout_file,
+                    guint32 node_id,
+                    gchar *program_name,
+                    gboolean is_node_process,
+                    gboolean is_log_file);
 int ic_set_binary_dir(IC_STRING *binary_dir, gchar *version);
 int ic_set_config_dir(IC_STRING *config_dir,
                       gboolean is_cluster_server,

@@ -357,7 +357,7 @@ void ic_set_stdout_null(void)
 }
 
 int
-ic_set_stdout(gchar *log_file)
+ic_setup_stdout(gchar *log_file)
 {
   FILE *file_des;
   ic_delete_file(log_file);

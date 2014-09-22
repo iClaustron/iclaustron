@@ -51,7 +51,7 @@ void ic_printf(const char *format,...);
 void ic_printf_low(const char *format,...);
 void ic_flush_stdout();
 void ic_set_stdout_null(void);
-int ic_set_stdout(gchar *log_file);
+int ic_setup_stdout(gchar *log_file);
 
 /* Various parts to debug. */
 #define COMM_LEVEL 1

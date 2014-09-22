@@ -1473,15 +1473,18 @@ ic_set_umask()
    * All iClaustron process will limit readability of created files to
    * read and write from own user and own group. No one else will be
    * able to read and write the files created by an iClaustron program.
+   * To set this we have to mask out uses by others outside of our
+   * group and user.
    */
-  mode_t new_mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
+  mode_t new_mode = S_IROTH | S_IWOTH | S_IXOTH;
   umask(new_mode);
 #endif
 }
 
 int
-ic_write_pid_file(void)
+ic_write_pid_file(gchar *pid_file)
 {
+  (void)pid_file;
   return 0;
 }
 

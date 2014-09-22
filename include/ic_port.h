@@ -144,7 +144,7 @@ int ic_setup_workdir(gchar *new_work_dir);
 /* Interface to set umask of iClaustron processes */
 void ic_set_umask(void);
 /* Interface to write pid file and setup things to delete it */
-int ic_write_pid_file(void);
+int ic_write_pid_file(gchar *pid_file);
 
 /* Interface to set function to call at kill signal */
 typedef void (*IC_SIG_HANDLER_FUNC)(void *param);

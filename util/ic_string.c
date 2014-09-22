@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@ IC_STRING ic_glob_config_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_binary_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_working_dir= { NULL, 0, TRUE};
 gchar *ic_glob_process_name= NULL;
 
 /*
@@ -144,7 +145,9 @@ add_dir_slash(IC_STRING *dir)
 #else
   if (ic_add_dup_string(dir, "/"))
 #endif
+  {
     return IC_ERROR_MEM_ALLOC;
+  }
   return 0;
 }
 
@@ -160,7 +163,7 @@ static int
 set_default_dir(const gchar *default_dir,
                 IC_STRING *dir)
 {
-  int error= IC_ERROR_MEM_ALLOC;
+  int ret_code= IC_ERROR_MEM_ALLOC;
   DEBUG_ENTRY("set_default_dir");
 
   IC_INIT_STRING(dir, NULL, 0, TRUE);
@@ -202,7 +205,7 @@ error:
     ic_free(dir->str);
     IC_INIT_STRING(dir, NULL, 0, TRUE);
   }
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -213,13 +216,15 @@ error:
 int
 ic_set_data_dir(IC_STRING *data_dir)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_set_data_dir");
 
-  error= set_default_dir("iclaustron_data", data_dir);
-  if (!error)
+  ret_code= set_default_dir("iclaustron_data", data_dir);
+  if (!ret_code)
+  {
     DEBUG_PRINT(PROGRAM_LEVEL, ("Data dir: %s", data_dir->str));
-  DEBUG_RETURN_INT(error);
+  }
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**
@@ -235,7 +240,9 @@ ic_set_base_dir(IC_STRING *base_dir)
 
   error= set_default_dir("iclaustron_install", base_dir);
   if (!error)
+  {
     DEBUG_PRINT(PROGRAM_LEVEL, ("Base dir: %s", base_dir->str));
+  }
   DEBUG_RETURN_INT(error);
 }
 
@@ -264,19 +271,21 @@ static int
 ic_add_dir(IC_STRING *dir,
            const gchar *dir_name)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_add_dir");
 
-  if ((error= ic_add_dup_string(dir, dir_name)))
+  if ((ret_code= ic_add_dup_string(dir, dir_name)))
     goto error;
-  if ((error= add_dir_slash(dir)))
+  if ((ret_code= add_dir_slash(dir)))
     goto error;
   DEBUG_RETURN_INT(0);
 error:
   if (dir->str)
+  {
     ic_free(dir->str);
+  }
   IC_INIT_STRING(dir, NULL, 0, TRUE);
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /*
@@ -291,20 +300,140 @@ int
 ic_set_binary_dir(IC_STRING *binary_dir,
                   gchar *version)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_set_binary_dir");
 
-  if ((error= ic_set_base_dir(binary_dir)))
+  if ((ret_code= ic_set_base_dir(binary_dir)))
     goto error;
-  if ((error= ic_add_dir(binary_dir, version)))
-    return error;
-  if ((error= ic_add_dir(binary_dir, ic_binary_string.str)))
+  if ((ret_code= ic_add_dir(binary_dir, version)))
+    return ret_code;
+  if ((ret_code= ic_add_dir(binary_dir, ic_binary_string.str)))
     goto error;
   DEBUG_PRINT(CONFIG_LEVEL, ("Binary dir: %s", binary_dir->str));
   DEBUG_RETURN_INT(0);
-
 error:
-  DEBUG_RETURN_INT(error);
+  if (binary_dir->str)
+  {
+    ic_free(binary_dir->str);
+  }
+  IC_INIT_STRING(binary_dir, NULL, 0, TRUE);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/*
+ The default working directory is
+ ICLAUSTRON_DATA_DIR/node_1 for node with id = 1.
+
+ @parameter working_dir        OUT: The place for the result string
+ @parameter node_id            IN:  Our node id
+*/
+int
+ic_set_working_dir(IC_STRING *working_dir,
+                   guint32 node_id)
+{
+  int ret_code;
+  gchar node_str_buf[64];
+  DEBUG_ENTRY("ic_set_working_dir");
+
+  if ((ret_code= ic_set_data_dir(working_dir)))
+    goto error;
+
+  memcpy(node_str_buf, "node_", 5);
+  ic_guint64_str((guint64)node_id,
+                 &node_str_buf[5],
+                 NULL);
+  if ((ret_code= ic_add_dir(working_dir, &node_str_buf[0])))
+    goto error;
+
+  DEBUG_PRINT(CONFIG_LEVEL, ("Working dir: %s", working_dir->str));
+  DEBUG_RETURN_INT(0);
+error:
+  if (working_dir->str)
+  {
+    ic_free(working_dir->str);
+  }
+  IC_INIT_STRING(working_dir, NULL, 0, TRUE);
+  DEBUG_RETURN_INT(ret_code);
+}
+/*
+ The default stdout file is
+ ICLAUSTRON_DATA_DIR/node_1/node_1.log for node with id = 1.
+ The default pid file is
+ ICLAUSTRON_DATA_DIR/node_1/node_1.pid for node with id = 1.
+ The default stdout file for process controller is
+ ICLAUSTRON_DATA_DIR/ic_pcntrld.log
+ The default pid file for process controller is
+ ICLAUSTRON_DATA_DIR/ic_pcntrld.pid
+
+ @parameter out_file           OUT: The place for the result string
+ @parameter node_id            IN:  Our node id
+*/
+int
+ic_set_out_file(IC_STRING *out_file,
+                guint32 node_id,
+                gchar *program_name,
+                gboolean is_node_process,
+                gboolean is_log_file)
+{
+  int ret_code;
+  gchar node_str_buf[64];
+  gchar *ending;
+  DEBUG_ENTRY("ic_set_out_file");
+
+  if (is_log_file)
+  {
+    ending= ".log";
+  }
+  else
+  {
+    ending=".pid";
+  }
+
+  if ((ret_code= ic_set_data_dir(out_file)))
+    goto error;
+
+  if (is_node_process)
+  {
+    (void)program_name;
+    memcpy(node_str_buf, "node_", 5);
+    ic_guint64_str((guint64)node_id,
+                   &node_str_buf[5],
+                   NULL);
+    if ((ret_code= ic_add_dir(out_file, &node_str_buf[0])))
+      goto error;
+
+    if ((ret_code= ic_add_dup_string(out_file,
+                                     &node_str_buf[0])))
+      goto error;
+
+    if ((ret_code= ic_add_dup_string(out_file, ending)))
+      goto error;
+  }
+  else
+  {
+    (void)node_id;
+    if ((ret_code= ic_add_dup_string(out_file,
+                                     program_name)))
+      goto error;
+    if ((ret_code= ic_add_dup_string(out_file, ending)))
+      goto error;
+  }
+  if (is_log_file)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Stdout file: %s", out_file->str));
+  }
+  else
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Pid file: %s", out_file->str));
+  }
+  DEBUG_RETURN_INT(0);
+error:
+  if (out_file->str)
+  {
+    ic_free(out_file->str);
+  }
+  IC_INIT_STRING(out_file, NULL, 0, TRUE);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /*
@@ -325,13 +454,13 @@ ic_set_config_dir(IC_STRING *config_dir,
                   gboolean is_cluster_server,
                   guint32 my_node_id)
 {
-  int error;
+  int ret_code;
   gchar node_str_buf[64];
   DEBUG_ENTRY("ic_set_config_dir");
 
-  if ((error= ic_set_data_dir(config_dir)))
+  if ((ret_code= ic_set_data_dir(config_dir)))
     goto error;
-  if ((error= ic_add_dir(config_dir, ic_config_string.str)))
+  if ((ret_code= ic_add_dir(config_dir, ic_config_string.str)))
     goto error;
   if (is_cluster_server)
   {
@@ -339,13 +468,18 @@ ic_set_config_dir(IC_STRING *config_dir,
     ic_guint64_str((guint64)my_node_id,
                    &node_str_buf[4],
                    NULL);
-    if ((error= ic_add_dir(config_dir, &node_str_buf[0])))
+    if ((ret_code= ic_add_dir(config_dir, &node_str_buf[0])))
       goto error;
   }
   DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", config_dir->str));
   DEBUG_RETURN_INT(0);
 error:
-  DEBUG_RETURN_INT(error);
+  if (config_dir->str)
+  {
+    ic_free(config_dir->str);
+  }
+  IC_INIT_STRING(config_dir, NULL, 0, TRUE);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /**

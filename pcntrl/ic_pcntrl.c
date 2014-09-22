@@ -3034,17 +3034,16 @@ int main(int argc, char *argv[])
 {
   int ret_code= 0;
   IC_THREADPOOL_STATE *tp_state= NULL;
-  IC_STRING log_file;
   guint32 dummy;
   gchar *pid_str;
+  gchar *program_name= "ic_pcntrld";
   gchar pid_buf[IC_NUMBER_SIZE];
  
-  IC_INIT_STRING(&log_file, NULL, 0, TRUE);
   if ((ret_code= ic_start_program(argc,
                                   argv,
                                   entries,
                                   NULL,
-                                  "ic_pcntrld",
+                                  program_name,
                                   start_text,
                                   TRUE,
                                   FALSE)))
@@ -3053,18 +3052,32 @@ int main(int argc, char *argv[])
   }
   if (glob_daemonize)
   {
-    if ((ret_code= ic_add_dup_string(&log_file,
-                                     ic_glob_data_dir.str)) ||
-        (ret_code= ic_add_dup_string(&log_file,
-                                     "ic_pcntrld.log")))
+    ic_free(ic_glob_stdout_file.str);
+    ic_free(ic_glob_pid_file.str);
+
+    IC_INIT_STRING(&ic_glob_stdout_file, NULL, 0, TRUE);
+    IC_INIT_STRING(&ic_glob_pid_file, NULL, 0, TRUE);
+
+    if ((ret_code= ic_set_out_file(&ic_glob_stdout_file,
+                                   ic_glob_node_id,
+                                   program_name,
+                                   FALSE,
+                                   TRUE)))
+      goto error;
+
+    if ((ret_code= ic_set_out_file(&ic_glob_pid_file,
+                                   ic_glob_node_id,
+                                   program_name,
+                                   FALSE,
+                                   FALSE)))
       goto error;
 
     ic_set_umask();
-    if ((ret_code= ic_setup_stdout(log_file.str)))
+    if ((ret_code= ic_setup_stdout(ic_glob_stdout_file.str)))
       goto error;
-    if ((ret_code= ic_setup_workdir(ic_glob_data_dir.str)))
+    if ((ret_code= ic_setup_workdir(ic_glob_working_dir.str)))
       goto error;
-    if ((ret_code= ic_write_pid_file()))
+    if ((ret_code= ic_write_pid_file(ic_glob_pid_file.str)))
       goto error;
     pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
     ic_printf("Starting ic_pcntrld program with pid %s",
@@ -3149,14 +3162,6 @@ error:
   if (pc_hash_mutex)
   {
     ic_mutex_destroy(&pc_hash_mutex);
-  }
-  if (log_file_stdout.str)
-  {
-    ic_free(log_file_stdout.str);
-  }
-  if (log_file_stderr.str)
-  {
-    ic_free(log_file_stderr.str);
   }
   if (glob_pc_array)
   {
