@@ -3252,8 +3252,6 @@ int main(int argc, char *argv[])
     ic_printf("Starting ic_pcntrld program with pid %s",
               pid_str);
   }
-  ic_set_die_handler(NULL, NULL);
-  ic_set_sig_error_handler(NULL, NULL);
 
   DEBUG_PRINT(PROGRAM_LEVEL, ("Base directory: %s", ic_glob_base_dir.str));
   DEBUG_PRINT(PROGRAM_LEVEL, ("Data directory: %s", ic_glob_data_dir.str));

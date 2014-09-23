@@ -436,10 +436,6 @@ ic_start_program(int argc,
     if ((ret_code= ic_setup_workdir(ic_glob_working_dir.str)))
       goto error;
   }
-  else
-  {
-    ic_set_current_dir(&ic_glob_working_dir);
-  }
 
   if ((ret_code= ic_init()))
     goto error;
