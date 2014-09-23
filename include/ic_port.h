@@ -84,7 +84,11 @@ void ic_free_mc(void *ret_obj);
 /* Process start/stop/check calls */
 IC_PID_TYPE ic_get_own_pid();
 int ic_is_process_alive(IC_PID_TYPE pid, const gchar *process_name);
-int ic_start_process(gchar **argv, gchar *working_dir, IC_PID_TYPE *pid);
+int ic_start_process(gchar **argv,
+                     gchar *binary_dir,
+                     gchar *pid_file,
+                     gboolean is_daemon,
+                     IC_PID_TYPE *pid);
 void ic_kill_process(IC_PID_TYPE pid, gboolean hard_kill);
 
 /* iClaustron file routines */

@@ -739,16 +739,49 @@ void strip_leading_blanks(gchar *argv_str)
   }
 }
 
+static int
+get_pid_from_file(gchar *pid_file,
+                  IC_PID_TYPE *pid)
+{
+  int ret_code;
+  int loop= 0;
+  /**
+   * We will read the pid file, if it fails we will wait for a short
+   * while and then try again. We will wait for at most 30 seconds
+   * before we give up.
+   */
+  DEBUG_ENTRY("get_pid_from_file");
+  do
+  {
+    if (!(ret_code= ic_read_pid_file(pid_file, pid)))
+    {
+      /* Success */
+      DEBUG_RETURN_INT(0);
+    }
+    ic_microsleep(100000); /* Sleep 100 ms */
+    loop++;
+  } while (loop < 300);
+  /**
+   * Even after 30 seconds of trying we still failed to discover
+   * any pid file, we give up and assume that the process didn't start
+   * up properly.
+   */
+  DEBUG_RETURN_INT(ret_code);
+}
+
 int ic_start_process(gchar **argv,
-                     gchar *working_dir,
+                     gchar *binary_dir,
+                     gchar *pid_file,
+                     gboolean is_daemon,
                      IC_PID_TYPE *pid)
 {
   GError *error= NULL;
   GPid loc_pid;
   guint32 i= 1;
+  int ret_code;
   DEBUG_ENTRY("ic_start_process");
   DEBUG_PRINT(PROGRAM_LEVEL, ("Starting process %s", argv[0]));
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Working dir = %s", working_dir));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Binary dir = %s", binary_dir));
 
   while (argv[i])
   {
@@ -756,7 +789,7 @@ int ic_start_process(gchar **argv,
     DEBUG_PRINT(PROGRAM_LEVEL, ("Argument %d = %s", i, argv[i]));
     i++;
   }
-  if (!g_spawn_async_with_pipes(working_dir,
+  if (!g_spawn_async_with_pipes(binary_dir,
                                 argv,
                                 NULL, /* environment */
                                 0,    /* Flags */
@@ -771,9 +804,19 @@ int ic_start_process(gchar **argv,
     DEBUG_PRINT(PROGRAM_LEVEL,
       ("Spawn failed with message %s",
       error->message));
-    DEBUG_RETURN_INT(1);
+    DEBUG_RETURN_INT(IC_ERROR_FAILED_TO_SPAWN_PROGRAM);
   }
-  *pid= (IC_PID_TYPE)loc_pid;
+  if (is_daemon)
+  {
+    *pid= (IC_PID_TYPE)loc_pid;
+  }
+  else
+  {
+    if ((ret_code= get_pid_from_file(pid_file, pid)))
+    {
+      DEBUG_RETURN_INT(ret_code);
+    }
+  }
   DEBUG_PRINT(PROGRAM_LEVEL, ("Process with pid %d successfully started",
                               (int)*pid));
   DEBUG_RETURN_INT(0);

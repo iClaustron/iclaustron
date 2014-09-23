@@ -371,6 +371,12 @@ ic_init_error_messages()
     "Failed to open stdout file after daemonize";
   ic_error_str[IC_ERROR_WRONG_PID_FILE_CONTENT - IC_FIRST_ERROR]=
     "Wrong content in pid file found when reading pid file";
+  ic_error_str[IC_ERROR_PROGRAM_NOT_CERTIFIED_FOR_START - IC_FIRST_ERROR]=
+    "Attempt to start uncertified program in process controller";
+  ic_error_str[IC_ERROR_NO_PROPER_NODE_ID_FOR_PROGRAM - IC_FIRST_ERROR]=
+    "Attempt to start program without proper node id set";
+  ic_error_str[IC_ERROR_FAILED_TO_SPAWN_PROGRAM - IC_FIRST_ERROR]=
+    "Failed to spawn program from process controller";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

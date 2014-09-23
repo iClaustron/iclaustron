@@ -1381,17 +1381,76 @@ check_certified_program(gchar *program_name)
   DEBUG_RETURN_INT(IC_ERROR_PROGRAM_NOT_SUPPORTED);
 }
 
+static guint32
+get_node_id_from_str(gchar *str)
+{
+  int ret_code;
+  guint64 number;
+
+  if ((ret_code= ic_conv_str_to_int(str, &number, NULL)))
+  {
+    return 0;
+  }
+  if (number > IC_MAX_NODE_ID)
+  {
+    return 0;
+  }
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Node id of starting program: %u",
+              (guint32)number));
+  return (guint32)number;
+}
+
+/**
+ * To find the pid file we need to retrieve the node id from the
+ * arguments to start the daemon programs. For iClaustron programs
+ * this is found in --node-id and --ndb-nodeid.
+ */
+static guint32
+get_nodeid_in_arg_vector(gchar *arg_vector[], guint32 num_parameters)
+{
+  guint32 i;
+  guint32 node_id= 0;
+  gchar *program_name= arg_vector[0];
+
+  for (i= 1; i < num_parameters; i++)
+  {
+    if (strcmp(program_name, ic_data_server_program_str) == 0)
+    {
+      /* NDB data node program */
+      if (strcmp(arg_vector[i], "--ndb-nodeid") == 0)
+      {
+        if ((i + 1) < num_parameters)
+        {
+          node_id= get_node_id_from_str(arg_vector[i+1]);
+          break;
+        }
+      }
+    }
+    else
+    {
+      if (strcmp(arg_vector[i], "--node-id") == 0)
+      {
+        if ((i + 1) < num_parameters)
+        {
+          node_id= get_node_id_from_str(arg_vector[i+1]);
+          break;
+        }
+      }
+    }
+  }
+  return node_id;
+}
+
 /**
  * To daemonize the programs is the default behaviour.
  * iClaustron programs can run in foreground by using --daemonize set to
  * 0.
  * ndbmtd can be run in foreground by setting --nodaemon or --foreground.
  */
-
 static gboolean
 check_for_daemon_in_arg_vector(gchar *arg_vector[], guint32 num_parameters)
 {
-  gboolean is_daemon= TRUE;
+  gboolean is_daemon_process= TRUE;
   guint32 i;
   gchar *program_name= arg_vector[0];
 
@@ -1402,11 +1461,11 @@ check_for_daemon_in_arg_vector(gchar *arg_vector[], guint32 num_parameters)
       /* NDB data node program */
       if (strcmp(arg_vector[i], "--nodaemon") == 0)
       {
-        is_daemon= FALSE;
+        is_daemon_process= FALSE;
       }
       else if (strcmp(arg_vector[i], "--foreground") == 0)
       {
-        is_daemon= FALSE;
+        is_daemon_process= FALSE;
       }
     }
     else
@@ -1414,17 +1473,17 @@ check_for_daemon_in_arg_vector(gchar *arg_vector[], guint32 num_parameters)
       /* iClaustron programs */
       if (strcmp(arg_vector[i], "--daemonize") == 0)
       {
-        if (strcmp(arg_vector[i+1], "0"))
+        if ((i + 1 < num_parameters) && (strcmp(arg_vector[i+1], "0")))
         {
-          is_daemon= FALSE;
+          is_daemon_process= FALSE;
         }
       }
     }
   }
   DEBUG_PRINT(PROGRAM_LEVEL, ("Process %s will %s be a daemon",
               program_name,
-              (is_daemon ? "": "not")));
-  return is_daemon;
+              (is_daemon_process ? "": "not")));
+  return is_daemon_process;
 }
 
 /**
@@ -1439,16 +1498,19 @@ handle_start(IC_CONNECTION *conn)
   int ret_code;
   guint32 i;
   IC_PID_TYPE pid= (IC_PID_TYPE)0;
-  IC_STRING working_dir;
+  IC_STRING pid_file, binary_dir;
   IC_PC_START *pc_start, *pc_start_check;
   IC_PC_START *pc_start_hash= NULL;
   gchar *pid_str;
   guint32 dummy;
+  guint32 node_id;
   gboolean is_daemon_process;
   gchar pid_buf[IC_NUMBER_SIZE];
   DEBUG_ENTRY("handle_start");
 
-  IC_INIT_STRING(&working_dir, NULL, 0, FALSE);
+  IC_INIT_STRING(&binary_dir, NULL, 0, TRUE);
+  IC_INIT_STRING(&pid_file, NULL, 0, TRUE);
+
   if ((ret_code= rec_start_message(conn, &pc_start)))
   {
     DEBUG_RETURN_INT(ret_code);
@@ -1461,9 +1523,12 @@ handle_start(IC_CONNECTION *conn)
     Prepare the argument vector, first program name and then all the
     parameters passed to the program.
   */
-  arg_vector[0]= pc_start->program_name.str;
-  if (check_certified_program(arg_vector[0]))
+  if (check_certified_program(pc_start->program_name.str))
+  {
+    ret_code= IC_ERROR_PROGRAM_NOT_CERTIFIED_FOR_START;
     goto error;
+  }
+  arg_vector[0]= pc_start->program_name.str;
   for (i= 0; i < pc_start->num_parameters; i++)
   {
     arg_vector[i+1]= pc_start->parameters[i].str;
@@ -1472,6 +1537,14 @@ handle_start(IC_CONNECTION *conn)
   is_daemon_process= check_for_daemon_in_arg_vector(arg_vector,
                                            pc_start->num_parameters+1);
 
+  node_id= get_nodeid_in_arg_vector(arg_vector,
+                                     pc_start->num_parameters+1);
+
+  if (node_id == 0)
+  {
+    ret_code= IC_ERROR_NO_PROPER_NODE_ID_FOR_PROGRAM;
+    goto error;
+  }
   /* Book the process in the hash table */
   if ((ret_code= insert_process(pc_start, &pc_start_hash)))
     goto error;
@@ -1480,16 +1553,33 @@ handle_start(IC_CONNECTION *conn)
     (iclaustron_install) with the version number appended and
     the bin directory where the binaries are placed.
   */
-  if ((ret_code= ic_set_binary_dir(&working_dir,
+  if ((ret_code= ic_set_binary_dir(&binary_dir,
                                    pc_start->version_string.str)))
     goto late_error;
+
+  if (is_daemon_process)
+  {
+    /**
+     * We need the pid file to get hold of the PID of programs that
+     * start up as daemons.
+     */
+    if ((ret_code= ic_set_out_file(&pid_file,
+                                   node_id,
+                                   pc_start->program_name.str,
+                                   TRUE,
+                                   FALSE)))
+      goto error;
+  }
+
   /*
-    Start the actual using the program name, its arguments and the binary
+    Start the program using the program name, its arguments and the binary
     placed in the working bin directory, return the PID of the started
     process.
   */
   if ((ret_code= ic_start_process(&arg_vector[0],
-                                  working_dir.str,
+                                  binary_dir.str,
+                                  pid_file.str,
+                                  is_daemon_process,
                                   &pid)))
     goto late_error;
   /*
@@ -1499,11 +1589,18 @@ handle_start(IC_CONNECTION *conn)
   if ((ret_code= ic_is_process_alive(pid,
                                      pc_start->program_name.str)))
     goto late_error;
-  if (working_dir.str)
+
+  if (binary_dir.str)
   {
-    ic_free(working_dir.str);
+    ic_free(binary_dir.str);
   }
-  working_dir.str= NULL;
+  if (pid_file.str)
+  {
+    ic_free(pid_file.str);
+  }
+  binary_dir.str= NULL;
+  pid_file.str= NULL;
+
   ic_mutex_lock(pc_hash_mutex);
   /*
     pc_start struct is protected by mutex, as soon as the pid is nonzero
@@ -1538,9 +1635,13 @@ late_error:
 mem_error:
   ret_code= IC_ERROR_MEM_ALLOC;
 error:
-  if (working_dir.str)
+  if (binary_dir.str)
   {
-    ic_free(working_dir.str);
+    ic_free(binary_dir.str);
+  }
+  if (pid_file.str)
+  {
+    ic_free(pid_file.str);
   }
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
   if (ret_code == IC_ERROR_PC_PROCESS_ALREADY_RUNNING)
