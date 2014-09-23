@@ -154,7 +154,7 @@ ic_get_cpu_info(guint32 *num_processors,
 end:
   if (file_str)
   {
-    ic_delete_file(file_str, TRUE);
+    ic_delete_file(file_str);
     ic_free(file_str);
   }
   if (file_content)
@@ -268,7 +268,7 @@ void ic_get_mem_info(guint32 *num_numa_nodes,
 end:
   if (file_str)
   {
-    ic_delete_file(file_str, TRUE);
+    ic_delete_file(file_str);
     ic_free(file_str);
   }
   if (file_content)
@@ -333,7 +333,7 @@ void ic_get_disk_info(gchar *dir_name,
 end:
   if (file_str)
   {
-    ic_delete_file(file_str, TRUE);
+    ic_delete_file(file_str);
     ic_free(file_str);
   }
   if (file_content)

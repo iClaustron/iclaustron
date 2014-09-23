@@ -72,7 +72,7 @@
 static gchar *glob_server_name= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_PCNTRL_PORT_STR;
 static guint32 glob_daemonize= 1;
-static gboolean event_occurred= FALSE;
+static gboolean volatile event_occurred= FALSE;
 #ifdef WITH_UNIT_TEST
 static guint32 glob_unit_test= 0;
 #endif
@@ -1177,16 +1177,9 @@ static void
 remove_pc_entry(IC_PC_START *pc_start)
 {
   IC_PC_START *pc_start_check;
-  guint32 dummy;
-  gchar *pid_str;
-  gchar pid_buf[IC_NUMBER_SIZE];
   DEBUG_ENTRY("remove_pc_entry");
 
   event_occurred= TRUE;
-  pid_str= ic_guint64_str(pc_start->pid, pid_buf, &dummy);
-  ic_printf("Program %s with pid %s has stopped",
-            pc_start->program_name.str,
-            pid_str);
   pc_start_check= ic_hashtable_remove(glob_pc_hash,
                                       (void*)pc_start);
   ic_require(pc_start_check == pc_start);
@@ -1226,6 +1219,19 @@ insert_pc_entry(IC_PC_START *pc_start)
   }
 end:
   DEBUG_RETURN_INT(ret_code);
+}
+
+static void
+print_stopped_program(IC_PC_START *pc_start)
+{
+  gchar *pid_str;
+  gchar pid_buf[IC_NUMBER_SIZE];
+  guint32 dummy;
+
+  pid_str= ic_guint64_str(pc_start->pid, pid_buf, &dummy);
+  ic_printf("Program %s with pid %s has stopped",
+            pc_start->program_name.str,
+            pid_str);
 }
 
 /**
@@ -1303,6 +1309,7 @@ try_again:
         remove_pc_entry(pc_start_found);
         ret_code= insert_pc_entry(pc_start);
         ic_mutex_unlock(pc_hash_mutex);
+        print_stopped_program(pc_start_found);
         /* Release memory associated with the deleted process */
         pc_start_found->mc_ptr->mc_ops.ic_mc_free(pc_start_found->mc_ptr);
         goto end;
@@ -1499,7 +1506,7 @@ handle_start(IC_CONNECTION *conn)
   guint32 i;
   IC_PID_TYPE pid= (IC_PID_TYPE)0;
   IC_STRING pid_file, binary_dir;
-  IC_PC_START *pc_start, *pc_start_check;
+  IC_PC_START *pc_start;
   IC_PC_START *pc_start_hash= NULL;
   gchar *pid_str;
   guint32 dummy;
@@ -1622,15 +1629,14 @@ handle_start(IC_CONNECTION *conn)
   DEBUG_RETURN_INT(ret_code);
 
 late_error:
+  ic_mutex_lock(pc_hash_mutex);
+  remove_pc_entry(pc_start);
+  ic_mutex_unlock(pc_hash_mutex);
+
   pid_str= ic_guint64_str(pid, pid_buf, &dummy);
   ic_printf("Failed to start program %s with pid %s",
             pc_start->program_name.str,
             pid_str);
-  ic_mutex_lock(pc_hash_mutex);
-  pc_start_check= ic_hashtable_remove(glob_pc_hash,
-                                      (void*)pc_start);
-  ic_assert(pc_start_check == pc_start);
-  ic_mutex_unlock(pc_hash_mutex);
   goto error;
 mem_error:
   ret_code= IC_ERROR_MEM_ALLOC;
@@ -1787,6 +1793,7 @@ retry_kill_check:
     */
     remove_pc_entry(pc_start_found);
     ic_mutex_unlock(pc_hash_mutex);
+    print_stopped_program(pc_start_found);
     /* Release memory associated with the deleted process */
     pc_start_found->mc_ptr->mc_ops.ic_mc_free(pc_start_found->mc_ptr);
   }
@@ -1841,6 +1848,7 @@ try_again:
         goto error;
       }
       ic_sleep(1);
+      DEBUG_PRINT(THREAD_LEVEL, ("Wake up after sleep in delete_process"));
       goto try_again;
     }
     if (pc_start_found->kill_ongoing)
@@ -2349,7 +2357,7 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
   /* Need to make sure the node directory is created */
   if ((ret_code= ic_set_config_dir(&file_name, TRUE, node_id)))
     goto error_delete_files;
-  ret_code= ic_mkdir(file_name.str, TRUE);
+  ret_code= ic_mkdir(file_name.str);
   ic_free(file_name.str);
   IC_INIT_STRING(&file_name, NULL, 0, FALSE);
   if (ret_code)
@@ -2425,7 +2433,7 @@ error_delete_files:
     ic_require(file_name_array->dpa_ops.ic_get_ptr(file_name_array,
                                                    (guint64)i,
                                                    &mem_alloc_object));
-    (void)ic_delete_file((gchar*)mem_alloc_object, TRUE); /* Ignore error */
+    (void)ic_delete_file((gchar*)mem_alloc_object); /* Ignore error */
     ic_free((gchar*)mem_alloc_object);
   }
   file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
@@ -2642,14 +2650,17 @@ clean_process_hash(gboolean stop_processes)
 
   pc_find.mc_ptr= NULL;
 
+  DEBUG_PRINT(COMM_LEVEL, ("Stop processes: %u", stop_processes));
   ic_mutex_lock(pc_hash_mutex);
   max_index= glob_pc_array->dpa_ops.ic_get_max_index(glob_pc_array);
+  DEBUG_PRINT(COMM_LEVEL, ("max_index = %llu", max_index));
   for (i= 0; i < max_index; i++)
   {
     if (!(ret_code= glob_pc_array->dpa_ops.ic_get_ptr(glob_pc_array,
                                                       i,
                                                       &void_pc_start)))
     {
+      DEBUG_PRINT(COMM_LEVEL, ("Found pc_start entry on index %u", i));
       pc_start= (IC_PC_START*)void_pc_start;
       if (stop_processes && pc_start)
       {
@@ -2659,7 +2670,9 @@ clean_process_hash(gboolean stop_processes)
         ic_mutex_unlock(pc_hash_mutex);
         ret_code= delete_process(&pc_find, FALSE);
         if (ret_code)
+        {
           delete_process(&pc_find, TRUE);
+        }
         if (ret_code)
         {
           /* Print error message about failure to stop process */
@@ -2676,8 +2689,16 @@ clean_process_hash(gboolean stop_processes)
       }
       else
       {
+        /**
+         * We are shutting down and releasing all memory, but we won't
+         * stop the processes we've started or are controlling, we
+         * probably want to come back later and take back the responsibility
+         * of the processes we were in control of.
+         */
         if (pc_start)
+        {
           pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
+        }
       }
     }
   }
@@ -2713,7 +2734,9 @@ run_check_thread(gpointer data)
       pc_start= (IC_PC_START*)ic_hashtable_iterator_value(&check_itr);
       if (pc_start->check_time == check_time /* Already checked */ ||
           pc_start->pid == 0) /* Process not started yet */
+      {
         continue;
+      }
       /* Ensures no one removes it until we're done with check */
       pc_start->check_ongoing= TRUE;
       pc_start->check_time= check_time;
@@ -2726,6 +2749,7 @@ run_check_thread(gpointer data)
         ic_mutex_lock(pc_hash_mutex);
         remove_pc_entry(pc_start);
         ic_mutex_unlock(pc_hash_mutex);
+        print_stopped_program(pc_start);
         /* Release memory associated with the deleted process */
         pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
         /*
@@ -2738,7 +2762,9 @@ run_check_thread(gpointer data)
       }
       ic_mutex_lock(pc_hash_mutex);
       if (pc_start)
+      {
         pc_start->check_ongoing= FALSE;
+      }
     }
     ic_mutex_unlock(pc_hash_mutex);
     for (i= 0; i < 6; i++)

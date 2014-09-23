@@ -27,8 +27,21 @@
   ----------------------------------------
   Error handling interface
 */
-#define ic_assert(cond) g_assert((cond))
+#define ic_assert(cond) \
+{ \
+  if (!(cond)) \
+  { \
+    ic_printf("Failed assert on line %d in file: %s", \
+              __LINE__, __FILE__); \
+    g_assert(FALSE); \
+  } \
+}
+
+#ifdef DEBUG_BUILD
+#define ic_require(cond) ic_assert((cond))
+#else
 #define ic_require(cond) if (!(cond)) { abort();}
+#endif
 
 void ic_init_error_messages();
 void ic_print_error(int error_number);

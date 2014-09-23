@@ -665,6 +665,7 @@ void
 ic_malloc_report(gchar *ptr, size_t size)
 {
   (void)ptr;
+  (void)size;
 #ifdef DEBUG_BUILD
   ic_mutex_lock_low(mem_mutex);
   num_mem_allocs++;
@@ -772,7 +773,7 @@ get_pid_from_file(gchar *pid_file,
 int ic_start_process(gchar **argv,
                      gchar *binary_dir,
                      gchar *pid_file,
-                     gboolean is_daemon,
+                     gboolean is_daemon_process,
                      IC_PID_TYPE *pid)
 {
   GError *error= NULL;
@@ -806,16 +807,16 @@ int ic_start_process(gchar **argv,
       error->message));
     DEBUG_RETURN_INT(IC_ERROR_FAILED_TO_SPAWN_PROGRAM);
   }
-  if (is_daemon)
-  {
-    *pid= (IC_PID_TYPE)loc_pid;
-  }
-  else
+  if (is_daemon_process)
   {
     if ((ret_code= get_pid_from_file(pid_file, pid)))
     {
       DEBUG_RETURN_INT(ret_code);
     }
+  }
+  else
+  {
+    *pid= (IC_PID_TYPE)loc_pid;
   }
   DEBUG_PRINT(PROGRAM_LEVEL, ("Process with pid %d successfully started",
                               (int)*pid));
@@ -886,7 +887,7 @@ int run_process(gchar **argv,
 
 end:
   ic_close_file(file_handle);
-  ic_delete_file(log_file_name, TRUE);
+  ic_delete_file(log_file_name);
 early_end:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -972,11 +973,11 @@ ic_is_process_alive(IC_PID_TYPE pid,
 }
 
 int
-ic_delete_file(const gchar *file_name, gboolean debug)
+ic_delete_file(const gchar *file_name)
 {
   int ret_code;
 
-  if (debug)
+  if (ic_is_debug_system_active())
   {
     DEBUG_PRINT(FILE_LEVEL, ("Delete file %s", file_name));
   }
@@ -1075,11 +1076,11 @@ portable_open_file(IC_FILE_HANDLE *handle,
 }
 
 int
-ic_mkdir(const gchar *dir_name, gboolean debug)
+ic_mkdir(const gchar *dir_name)
 {
   int ret_code;
   gchar buf[1024];
-  if (debug)
+  if (ic_is_debug_system_active())
   {
     DEBUG_PRINT(FILE_LEVEL, ("Create dir_name = %s", dir_name));
   }
@@ -1619,7 +1620,7 @@ ic_setup_workdir(gchar *new_work_dir)
   int ret_code;
   gchar buf[1024];
 
-  if ((ret_code= ic_mkdir(new_work_dir, FALSE)))
+  if ((ret_code= ic_mkdir(new_work_dir)))
   {
     return IC_ERROR_FAILED_TO_CHANGE_DIR;
   }
@@ -1657,7 +1658,7 @@ ic_delete_daemon_file(const gchar *pid_file)
 {
   if (is_daemon_file_written)
   {
-    ic_delete_file(pid_file, FALSE);
+    ic_delete_file(pid_file);
     is_daemon_file_written= FALSE;
   }
 }
@@ -1689,7 +1690,7 @@ ic_write_pid_file(const gchar *pid_file)
   DEBUG_RETURN_INT(0);
 error:
   DEBUG_PRINT(PROGRAM_LEVEL, ("Failed creating pid file %s", pid_file));
-  ic_delete_file(pid_file, TRUE);
+  ic_delete_file(pid_file);
 return_error:
   DEBUG_RETURN_INT(ret_code);
 normal_error:

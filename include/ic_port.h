@@ -97,7 +97,7 @@ int ic_open_file(IC_FILE_HANDLE *handle,
                  gboolean create_flag);
 int ic_create_file(IC_FILE_HANDLE *handle,
                    const gchar *buf);
-int ic_mkdir(const gchar *dir_name, gboolean debug);
+int ic_mkdir(const gchar *dir_name);
 int ic_close_file(IC_FILE_HANDLE file_ptr);
 int ic_write_file(IC_FILE_HANDLE file_ptr,
                   const gchar *buf,
@@ -106,7 +106,7 @@ int ic_read_file(IC_FILE_HANDLE file_ptr,
                  gchar *buf,
                  size_t size,
                  guint64 *len);
-int ic_delete_file(const gchar *file_name, gboolean debug);
+int ic_delete_file(const gchar *file_name);
 void ic_delete_daemon_file(const gchar *pid_file);
 int ic_get_file_contents(const gchar *file,
                          gchar **file_content,

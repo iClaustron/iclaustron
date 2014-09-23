@@ -370,7 +370,7 @@ int
 ic_setup_stdout(gchar *log_file)
 {
   FILE *file_des;
-  ic_delete_file(log_file, TRUE);
+  ic_delete_file(log_file);
   file_des= fopen(log_file, "w");
   if (file_des == NULL)
   {

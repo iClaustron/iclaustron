@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 #include <ic_base_header.h>
 #include <ic_port.h>
 #include <ic_err.h>
+#include <ic_debug.h>
 #include <ic_hashtable.h>
 #include <ic_hashtable_private.h>
 #include <ic_hashtable_itr.h>

@@ -146,7 +146,7 @@ generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
 late_end:
   (void)ic_close_file(cmd_file_handle);
   if (ret_code)
-    (void)ic_delete_file(command_file, TRUE);
+    (void)ic_delete_file(command_file);
 end:
   DEBUG_RETURN_INT(ret_code);
 }

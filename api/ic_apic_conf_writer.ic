@@ -410,14 +410,14 @@ remove_config_files(IC_STRING *config_dir,
   ic_create_config_file_name(&file_name_string, file_name,
                              config_dir, &ic_config_string,
                              config_version);
-  if ((error= ic_delete_file((const gchar *)file_name, TRUE)))
+  if ((error= ic_delete_file((const gchar *)file_name)))
     goto error;
 
   /* Delete the 'grid_common.ini' file */
   ic_create_config_file_name(&file_name_string, file_name,
                              config_dir, &ic_config_string,
                              config_version);
-  if ((error= ic_delete_file((const gchar *)file_name, TRUE)))
+  if ((error= ic_delete_file((const gchar *)file_name)))
     goto error;
 
   while (*clu_infos)
@@ -428,7 +428,7 @@ remove_config_files(IC_STRING *config_dir,
     ic_create_config_file_name(&file_name_string, file_name, config_dir,
                                &clu_info->cluster_name,
                                config_version);
-    if ((error= ic_delete_file((const gchar *)file_name, TRUE)))
+    if ((error= ic_delete_file((const gchar *)file_name)))
       goto error;
   }
   DEBUG_RETURN_INT(0);
@@ -443,7 +443,7 @@ remove_config_version_file(IC_STRING *config_dir)
   gchar buf[IC_MAX_FILE_NAME_SIZE];
 
   ic_create_config_version_file_name(&file_name_string, buf, config_dir);
-  return ic_delete_file((const gchar*)buf, TRUE);
+  return ic_delete_file((const gchar*)buf);
 }
 
 static int
