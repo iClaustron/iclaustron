@@ -49,6 +49,7 @@ guint32 ic_get_debug_timestamp();
  */
 void ic_printf(const char *format,...);
 void ic_printf_low(const char *format,...);
+void ic_putchar(gchar c);
 void ic_flush_stdout();
 void ic_set_stdout_null(void);
 int ic_setup_stdout(gchar *log_file);
@@ -83,6 +84,7 @@ void ic_debug_indent_level_check(int level);
 void ic_debug_thread_init(const gchar *entry_point);
 int ic_debug_open();
 void ic_debug_close();
+gboolean ic_is_debug_system_active();
 void ic_debug_disable(guint32 level);
 void ic_debug_enable(guint32 level);
 

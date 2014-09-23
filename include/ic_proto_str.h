@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -54,6 +54,7 @@ extern const gchar *ic_sql_server_program_str;
 extern const gchar *ic_cluster_manager_program_str;
 extern const gchar *ic_cluster_server_program_str;
 extern const gchar *ic_restore_program_str;
+extern const gchar *ic_process_controller_program_str;
 
 extern const gchar *ic_ndb_node_id_str;
 extern const gchar *ic_ndb_connectstring_str;

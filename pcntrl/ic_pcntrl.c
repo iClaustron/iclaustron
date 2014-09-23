@@ -848,7 +848,7 @@ static int test_disk_info(IC_CONNECTION *conn)
   DEBUG_ENTRY("test_disk_info");
 
   ic_printf("Testing disk info protocol");
-  if ((ret_code= ic_set_data_dir(&dir_name)) ||
+  if ((ret_code= ic_set_data_dir(&dir_name, TRUE)) ||
       (ret_code= ic_send_disk_info_req(conn, dir_name.str)) ||
       (ret_code= rec_disk_info_reply(conn)))
     goto error;
@@ -1053,7 +1053,9 @@ rec_start_message(IC_CONNECTION *conn,
     and also contains a memory container for all the memory allocated.
   */
   if (!(mc_ptr= ic_create_memory_container((guint32)1024, (guint32) 0, FALSE)))
+  {
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
   if (!(*pc_start= (IC_PC_START*)
        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_PC_START))))
     goto mem_error;
@@ -1380,6 +1382,52 @@ check_certified_program(gchar *program_name)
 }
 
 /**
+ * To daemonize the programs is the default behaviour.
+ * iClaustron programs can run in foreground by using --daemonize set to
+ * 0.
+ * ndbmtd can be run in foreground by setting --nodaemon or --foreground.
+ */
+
+static gboolean
+check_for_daemon_in_arg_vector(gchar *arg_vector[], guint32 num_parameters)
+{
+  gboolean is_daemon= TRUE;
+  guint32 i;
+  gchar *program_name= arg_vector[0];
+
+  for (i= 1; i < num_parameters; i++)
+  {
+    if (strcmp(program_name, ic_data_server_program_str) == 0)
+    {
+      /* NDB data node program */
+      if (strcmp(arg_vector[i], "--nodaemon") == 0)
+      {
+        is_daemon= FALSE;
+      }
+      else if (strcmp(arg_vector[i], "--foreground") == 0)
+      {
+        is_daemon= FALSE;
+      }
+    }
+    else
+    {
+      /* iClaustron programs */
+      if (strcmp(arg_vector[i], "--daemonize") == 0)
+      {
+        if (strcmp(arg_vector[i+1], "0"))
+        {
+          is_daemon= FALSE;
+        }
+      }
+    }
+  }
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Process %s will %s be a daemon",
+              program_name,
+              (is_daemon ? "": "not")));
+  return is_daemon;
+}
+
+/**
   Handle a start process request to the process controller
 
   @parameter conn              IN: The connection from the client
@@ -1396,12 +1444,15 @@ handle_start(IC_CONNECTION *conn)
   IC_PC_START *pc_start_hash= NULL;
   gchar *pid_str;
   guint32 dummy;
+  gboolean is_daemon_process;
   gchar pid_buf[IC_NUMBER_SIZE];
   DEBUG_ENTRY("handle_start");
 
   IC_INIT_STRING(&working_dir, NULL, 0, FALSE);
   if ((ret_code= rec_start_message(conn, &pc_start)))
+  {
     DEBUG_RETURN_INT(ret_code);
+  }
   if (!(arg_vector= (gchar**)pc_start->mc_ptr->mc_ops.ic_mc_calloc(
                      pc_start->mc_ptr,
                      (pc_start->num_parameters+2) * sizeof(gchar*))))
@@ -1417,6 +1468,9 @@ handle_start(IC_CONNECTION *conn)
   {
     arg_vector[i+1]= pc_start->parameters[i].str;
   }
+
+  is_daemon_process= check_for_daemon_in_arg_vector(arg_vector,
+                                           pc_start->num_parameters+1);
 
   /* Book the process in the hash table */
   if ((ret_code= insert_process(pc_start, &pc_start_hash)))
@@ -1446,7 +1500,9 @@ handle_start(IC_CONNECTION *conn)
                                      pc_start->program_name.str)))
     goto late_error;
   if (working_dir.str)
+  {
     ic_free(working_dir.str);
+  }
   working_dir.str= NULL;
   ic_mutex_lock(pc_hash_mutex);
   /*
@@ -1483,13 +1539,19 @@ mem_error:
   ret_code= IC_ERROR_MEM_ALLOC;
 error:
   if (working_dir.str)
+  {
     ic_free(working_dir.str);
+  }
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
   if (ret_code == IC_ERROR_PC_PROCESS_ALREADY_RUNNING)
+  {
     ret_code= ic_send_ok_pid_started(conn, pc_start_hash->pid);
+  }
   else
+  {
     ic_send_error_message(conn, 
                           ic_get_error_message(ret_code));
+  }
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -2186,7 +2248,7 @@ handle_copy_cluster_server_files(IC_CONNECTION *conn)
   /* Need to make sure the node directory is created */
   if ((ret_code= ic_set_config_dir(&file_name, TRUE, node_id)))
     goto error_delete_files;
-  ret_code= ic_mkdir(file_name.str);
+  ret_code= ic_mkdir(file_name.str, TRUE);
   ic_free(file_name.str);
   IC_INIT_STRING(&file_name, NULL, 0, FALSE);
   if (ret_code)
@@ -2262,7 +2324,7 @@ error_delete_files:
     ic_require(file_name_array->dpa_ops.ic_get_ptr(file_name_array,
                                                    (guint64)i,
                                                    &mem_alloc_object));
-    (void)ic_delete_file((gchar*)mem_alloc_object); /* Ignore error */
+    (void)ic_delete_file((gchar*)mem_alloc_object, TRUE); /* Ignore error */
     ic_free((gchar*)mem_alloc_object);
   }
   file_name_array->dpa_ops.ic_free_dynamic_ptr_array(file_name_array);
@@ -3054,6 +3116,7 @@ int main(int argc, char *argv[])
   {
     ic_free(ic_glob_stdout_file.str);
     ic_free(ic_glob_pid_file.str);
+    ic_free(ic_glob_working_dir.str);
 
     IC_INIT_STRING(&ic_glob_stdout_file, NULL, 0, TRUE);
     IC_INIT_STRING(&ic_glob_pid_file, NULL, 0, TRUE);
@@ -3071,11 +3134,16 @@ int main(int argc, char *argv[])
                                    FALSE,
                                    FALSE)))
       goto error;
+ 
+    if ((ret_code= ic_set_working_dir(&ic_glob_working_dir,
+                                      ic_glob_node_id,
+                                      FALSE)))
+      goto error;
 
     ic_set_umask();
-    if ((ret_code= ic_setup_stdout(ic_glob_stdout_file.str)))
-      goto error;
     if ((ret_code= ic_setup_workdir(ic_glob_working_dir.str)))
+      goto error;
+    if ((ret_code= ic_setup_stdout(ic_glob_stdout_file.str)))
       goto error;
     if ((ret_code= ic_write_pid_file(ic_glob_pid_file.str)))
       goto error;
@@ -3154,7 +3222,16 @@ error:
   {
     tp_state->tp_ops.ic_threadpool_stop(tp_state);
   }
-  clean_process_hash(shutdown_processes_flag);
+  if (glob_pc_hash &&
+      pc_hash_mutex &&
+      glob_pc_array)
+  {
+    /**
+     * Unless we succeeded in creating all components can there be
+     * entries in the hash table.
+     */
+    clean_process_hash(shutdown_processes_flag);
+  }
   if (glob_pc_hash)
   {
     ic_hashtable_destroy(glob_pc_hash, FALSE);

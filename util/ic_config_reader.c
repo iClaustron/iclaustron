@@ -129,6 +129,7 @@ ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len)
 {
   gchar *rev_str;
   guint32 str_len;
+  guint32 max_len;
   guint64 base= 1;
   guint64 this_number;
   gchar end_char;
@@ -137,16 +138,28 @@ ic_conv_str_to_int(gchar *str, guint64 *number, guint32 *len)
   rev_str= reverse_str;
   *number= 0;
 
-  for (str_len= 0; str_len < 62; str_len++)
+  if (len != NULL)
+  {
+    max_len= *len;
+  }
+  else
+  {
+    max_len= 62;
+  }
+  for (str_len= 0; str_len < 62 && str_len < max_len; str_len++)
   {
     if (!ic_check_digit(str[str_len]))
       break;
   }
   if (str_len > 60 || str_len == 0)
+  {
     return 1;
+  }
   end_char= str[str_len];
   if (len)
+  {
     *len= str_len;
+  }
   ic_reverse_str(str, rev_str, end_char);
   while (*rev_str != end_char)
   {

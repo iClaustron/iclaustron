@@ -369,6 +369,8 @@ ic_init_error_messages()
     "ic_daemonize failed to change directory";
   ic_error_str[IC_ERROR_FAILED_OPEN_STDOUT - IC_FIRST_ERROR]=
     "Failed to open stdout file after daemonize";
+  ic_error_str[IC_ERROR_WRONG_PID_FILE_CONTENT - IC_FIRST_ERROR]=
+    "Wrong content in pid file found when reading pid file";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

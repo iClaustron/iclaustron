@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -39,13 +39,14 @@
 #include <ic_apid.h>
 #include "ic_apid_int.h"
 #include "ic_apid_impl.h"
-#include "ic_apid_static.h"
 #include "ic_apid_general_signals.h"
 #include "ic_apid_dict_signals.h"
 #include "ic_apid_key_signals.h"
 #include "ic_apid_scan_signals.h"
 
 /* Implementation files of the iClaustron Data API */
+/* Static variables and functions */
+#include "ic_apid_static.ic"
 /* The error object */
 #include "ic_apid_error.ic"
 /* Common methods */

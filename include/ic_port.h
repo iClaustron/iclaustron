@@ -54,6 +54,7 @@ void ic_port_init(); /* Debug support and global initialisations */
 void ic_port_end();
 gchar *ic_calloc_low(size_t size);
 gchar *ic_malloc_low(size_t size);
+void ic_malloc_report(gchar *ptr, size_t size);
 void ic_free_low(void *ret_obj);
 gchar *ic_realloc(gchar *ptr, size_t size);
 #ifdef DEBUG_BUILD
@@ -92,7 +93,7 @@ int ic_open_file(IC_FILE_HANDLE *handle,
                  gboolean create_flag);
 int ic_create_file(IC_FILE_HANDLE *handle,
                    const gchar *buf);
-int ic_mkdir(const gchar *dir_name);
+int ic_mkdir(const gchar *dir_name, gboolean debug);
 int ic_close_file(IC_FILE_HANDLE file_ptr);
 int ic_write_file(IC_FILE_HANDLE file_ptr,
                   const gchar *buf,
@@ -101,7 +102,8 @@ int ic_read_file(IC_FILE_HANDLE file_ptr,
                  gchar *buf,
                  size_t size,
                  guint64 *len);
-int ic_delete_file(const gchar *file_name);
+int ic_delete_file(const gchar *file_name, gboolean debug);
+void ic_delete_daemon_file(const gchar *pid_file);
 int ic_get_file_contents(const gchar *file,
                          gchar **file_content,
                          guint64 *file_size);
@@ -144,7 +146,8 @@ int ic_setup_workdir(gchar *new_work_dir);
 /* Interface to set umask of iClaustron processes */
 void ic_set_umask(void);
 /* Interface to write pid file and setup things to delete it */
-int ic_write_pid_file(gchar *pid_file);
+int ic_write_pid_file(const gchar *pid_file);
+int ic_read_pid_file(const gchar *pid_file, IC_PID_TYPE *pid);
 
 /* Interface to set function to call at kill signal */
 typedef void (*IC_SIG_HANDLER_FUNC)(void *param);

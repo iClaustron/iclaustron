@@ -82,6 +82,7 @@ guint32 error_inject= 0;
 static const gchar *port_binary_dir;
 static const gchar *port_config_dir;
 static guint32 ic_stop_flag= 0;
+static guint32 ic_port_inited= 0;
 
 #ifdef WINDOWS
 IC_POLL_FUNCTION ic_poll;
@@ -110,10 +111,10 @@ int ic_start_socket_system()
 #ifdef WINDOWS
   WORD version_requested;
   WSADATA wsa_data;
-  int error;
+  int ret_code;
   version_requested= MAKEWORD(2,2);
 
-  if ((error= WSAStartup(version_requested, &wsa_data)))
+  if ((ret_code= WSAStartup(version_requested, &wsa_data)))
   {
     ic_printf("WSAStartup failed with error code = %d",
               GetLastError());
@@ -201,6 +202,7 @@ ic_port_init()
                                              ic_keys_equal_ptr,
                                              TRUE));
 #endif
+  ic_port_inited= 1;
 }
 
 /**
@@ -208,6 +210,8 @@ ic_port_init()
 */
 void ic_port_end()
 {
+  if (ic_port_inited == 0)
+    return;
 #ifdef DEBUG_BUILD
   IC_HASHTABLE_ITR itr, *hash_itr;
   void *key;
@@ -242,14 +246,22 @@ void ic_port_end()
     ic_printf("num_mem_mc_allocs = %u", (guint32)num_mem_mc_allocs);
 
     if (num_mem_conn_allocs != (guint64)0)
+    {
       ic_printf("Memory leak found in use of comm subsystem or in it");
+    }
     if (num_mem_hash_allocs != (guint64)0)
+    {
       ic_printf("Memory leak found in use of hash tables or in it");
+    }
     if (num_mem_mc_allocs != (guint64)0)
+    {
       ic_printf("Memory leak found in use of memory container or in it");
+    }
   }
   else
+  {
     ic_printf("No memory leaks found");
+  }
 
   ic_mutex_destroy(&mutex_hash_protect);
   ic_mutex_destroy(&mem_mutex);
@@ -273,22 +285,26 @@ void ic_port_end()
 void
 ic_close_socket(int sockfd)
 {
-  int error;
+  int ret_code;
 
 #ifdef WINDOWS
   if (closesocket(sockfd))
-    error= WSAGetLastError();
+  {
+    ret_code= WSAGetLastError();
+  }
 #else
   do
   {
-    error= 0;
+    ret_code= 0;
     if (close(sockfd))
-      error= errno;
-  } while (error == EINTR);
+    {
+      ret_code= errno;
+    }
+  } while (ret_code == EINTR);
 #endif
-  if (error)
+  if (ret_code)
   {
-    DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", error));
+    DEBUG_PRINT(COMM_LEVEL, ("close failed with errno = %d", ret_code));
   }
 }
 
@@ -581,6 +597,10 @@ ic_malloc(size_t size)
 {
   gchar *ret_ptr;
 
+  if (ic_port_inited == 0)
+  {
+    return ic_malloc_low(size);
+  }
   ic_mutex_lock_low(mem_mutex);
   num_mem_allocs++;
   ic_mutex_unlock_low(mem_mutex);
@@ -609,7 +629,9 @@ ic_free_hash(void *ret_ptr, gboolean is_destroy)
   ic_mutex_unlock_low(mem_hash_mutex);
   print_free(ret_ptr, "hash");
   if (is_destroy)
+  {
     remove_alloc_entry(ret_ptr);
+  }
   ic_free_low(ret_ptr);
 }
 
@@ -627,14 +649,30 @@ ic_free_mc(void *ret_ptr)
 void
 ic_free(void *ret_ptr)
 {
-  ic_mutex_lock_low(mem_mutex);
-  num_mem_allocs--;
-  ic_mutex_unlock_low(mem_mutex);
-  print_free(ret_ptr, "gen");
-  remove_alloc_entry(ret_ptr);
+  if (ic_port_inited == 1)
+  {
+    ic_mutex_lock_low(mem_mutex);
+    num_mem_allocs--;
+    ic_mutex_unlock_low(mem_mutex);
+    print_free(ret_ptr, "gen");
+    remove_alloc_entry(ret_ptr);
+  }
   ic_free_low(ret_ptr);
 }
 #endif
+
+void
+ic_malloc_report(gchar *ptr, size_t size)
+{
+  (void)ptr;
+#ifdef DEBUG_BUILD
+  ic_mutex_lock_low(mem_mutex);
+  num_mem_allocs++;
+  ic_mutex_unlock_low(mem_mutex);
+  insert_alloc_entry(ptr);
+  print_alloc(size, ptr, "gen");
+#endif
+}
 
 void ic_controlled_terminate()
 {
@@ -789,17 +827,23 @@ int run_process(gchar **argv,
     goto end;
   }
   if (read_buf[0] == '0')
+  {
     *exit_status= 0;
+  }
   else if (read_buf[0] == '1')
+  {
     *exit_status= 1;
+  }
   else
+  {
     *exit_status= 2;
+  }
   DEBUG_PRINT(PROGRAM_LEVEL,
     ("Exit status %d from run_process", *exit_status));
 
 end:
   ic_close_file(file_handle);
-  ic_delete_file(log_file_name);
+  ic_delete_file(log_file_name, TRUE);
 early_end:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -885,14 +929,26 @@ ic_is_process_alive(IC_PID_TYPE pid,
 }
 
 int
-ic_delete_file(const gchar *file_name)
+ic_delete_file(const gchar *file_name, gboolean debug)
 {
-  int error;
-  DEBUG_ENTRY("ic_delete_file");
-  DEBUG_PRINT(FILE_LEVEL, ("Delete file %s", file_name));
+  int ret_code;
 
-  error= g_unlink(file_name);
-  DEBUG_RETURN_INT(error);
+  if (debug)
+  {
+    DEBUG_PRINT(FILE_LEVEL, ("Delete file %s", file_name));
+  }
+
+  ret_code= g_unlink(file_name);
+  if (ret_code != 0)
+  {
+    ret_code= ic_get_last_error();
+    if (ret_code == ENOENT)
+    {
+      /* File doesn't exist, so we succeeded in deleting it :) */
+      ret_code= 0;
+    }
+  }
+  return ret_code;
 }
 
 #ifdef WINDOWS
@@ -906,11 +962,17 @@ portable_open_file(IC_FILE_HANDLE *handle,
   HANDLE file_handle;
 
   if (!open_flag)
+  {
     create_value= CREATE_ALWAYS;
+  }
   else if (create_flag)
+  {
     create_value= OPEN_ALWAYS;
+  }
   else
+  {
     create_value= OPEN_EXISTING;
+  }
 
   file_handle=
     CreateFile(file_name,
@@ -927,7 +989,9 @@ portable_open_file(IC_FILE_HANDLE *handle,
     return 0;
   }
   else
+  {
     return GetLastError();
+  }
 }
 #else
 static int
@@ -940,16 +1004,26 @@ portable_open_file(IC_FILE_HANDLE *handle,
   int file_ptr;
   
   if (create_flag)
+  {
     flags|= O_CREAT;
+  }
   if (!open_flag)
+  {
     flags|= O_TRUNC;
+  }
 
   if (create_flag)
+  {
     file_ptr= open(file_name, flags, S_IWRITE | S_IREAD);
+  }
   else
+  {
     file_ptr= open(file_name, flags);
+  }
   if (file_ptr  == (int)-1)
+  {
     return errno;
+  }
   else
   {
     *handle= file_ptr;
@@ -958,20 +1032,38 @@ portable_open_file(IC_FILE_HANDLE *handle,
 }
 
 int
-ic_mkdir(const gchar *dir_name)
+ic_mkdir(const gchar *dir_name, gboolean debug)
 {
   int ret_code;
-  DEBUG_ENTRY("mkdir");
-  DEBUG_PRINT(FILE_LEVEL, ("dir_name = %s", dir_name));
+  gchar buf[1024];
+  if (debug)
+  {
+    DEBUG_PRINT(FILE_LEVEL, ("Create dir_name = %s", dir_name));
+  }
 
-  if ((ret_code= mkdir(dir_name, 448)) == (int)-1)
+  /**
+   * 488 is equal to octal 750 which is the sum of
+   * 0400 means read rights for owner
+   * 0200 means write rights for owner
+   * 0100 execution and search rights for owner
+   * 0040 read rights for group
+   * 0010 execution and search rights for group
+   *
+   * So thus no privileges for other than owner and group
+   * and no write privileges for group.
+   */
+  if ((ret_code= mkdir(dir_name, 488)) == (int)-1)
   {
     ret_code= errno;
     if (ret_code == EEXIST)
-      DEBUG_RETURN_INT(0);
-    DEBUG_RETURN_INT(ret_code);
+    {
+      return 0;
+    }
+    strerror_r(ret_code, buf, sizeof(buf));
+    ic_printf("ic_mkdir failed %d: %s", ret_code, buf);
+    return ret_code;
   }
-  DEBUG_RETURN_INT(0);
+  return 0;
 }
 #endif
 
@@ -980,50 +1072,50 @@ ic_open_file(IC_FILE_HANDLE *handle,
              const gchar *file_name,
              gboolean create_flag)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_open_file");
 
-  error= portable_open_file(handle, file_name, create_flag, TRUE);
+  ret_code= portable_open_file(handle, file_name, create_flag, TRUE);
   DEBUG_PRINT(FILE_LEVEL, ("Open file %s with fd = %d", file_name, *handle));
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 int
 ic_create_file(IC_FILE_HANDLE *handle,
                const gchar *file_name)
 {
-  int error;
+  int ret_code;
   DEBUG_ENTRY("ic_create_file");
 
-  error= portable_open_file(handle, file_name, TRUE, FALSE);
+  ret_code= portable_open_file(handle, file_name, TRUE, FALSE);
   DEBUG_PRINT(FILE_LEVEL, ("Create file %s with fd = %d", file_name, *handle));
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 int
 ic_close_file(IC_FILE_HANDLE file_ptr)
 {
-  int error;
+  int ret_code= 0;
   DEBUG_ENTRY("ic_close_file");
 
 #ifndef WINDOWS
   if ((close(file_ptr)) == (int)-1)
-    error= errno;
-  else
-    error= 0;
+  {
+    ret_code= errno;
+  }
 #else
   if (!CloseHandle(file_ptr))
-    error= GetLastError();
-  else
-    error= 0;
+  {
+    ret_code= GetLastError();
+  }
 #endif
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
 get_file_length(IC_FILE_HANDLE file_ptr, guint64 *read_size)
 {
-  int error= 0;
+  int ret_code= 0;
   gint64 size;
   DEBUG_ENTRY("get_file_length");
 #ifndef WINDOWS
@@ -1031,30 +1123,32 @@ get_file_length(IC_FILE_HANDLE file_ptr, guint64 *read_size)
   size= lseek(file_ptr, (off_t)0, SEEK_END);
   if (size == (gint64)-1)
   {
-    error= errno;
+    ret_code= errno;
     goto end;
   }
   *read_size= size;
   size= lseek(file_ptr, (off_t)0, SEEK_SET);
   if (size == (gint64)-1)
   {
-    error= errno;
+    ret_code= errno;
     goto end;
   }
-  error= 0;
+  ret_code= 0;
   if (size != 0)
-    error= 1;
+  {
+    ret_code= 1;
+  }
   goto end;
 #else
   (void)size;
   if (!GetFileSizeEx(file_ptr, (LARGE_INTEGER*)read_size))
   {
-    error= GetLastError();
+    ret_code= GetLastError();
   }
   goto end;
 #endif
 end:
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 int
@@ -1063,15 +1157,15 @@ ic_get_file_contents(const gchar *file,
                      guint64 *file_size)
 {
   IC_FILE_HANDLE file_ptr;
-  int error;
+  int ret_code;
   gchar *loc_ptr;
   guint64 read_size;
   size_t size_left;
   DEBUG_ENTRY("ic_get_file_contents");
 
-  if ((error= ic_open_file(&file_ptr, file, FALSE)))
+  if ((ret_code= ic_open_file(&file_ptr, file, FALSE)))
     goto get_error;
-  if ((error= get_file_length(file_ptr, file_size)))
+  if ((ret_code= get_file_length(file_ptr, file_size)))
     goto error;
   if (!(loc_ptr= ic_malloc((size_t)((*file_size) + 1))))
   {
@@ -1082,7 +1176,7 @@ ic_get_file_contents(const gchar *file,
   size_left= (size_t)*file_size;
   do
   {
-    if ((error= ic_read_file(file_ptr, loc_ptr, size_left, &read_size)))
+    if ((ret_code= ic_read_file(file_ptr, loc_ptr, size_left, &read_size)))
     {
       ic_free(*file_content);
       *file_size= 0;
@@ -1096,9 +1190,9 @@ ic_get_file_contents(const gchar *file,
     size_left-= (size_t)read_size;
   } while (1);
 get_error:
-  error= ic_get_last_error();
+  ret_code= ic_get_last_error();
 error:
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -1116,16 +1210,22 @@ portable_write(IC_FILE_HANDLE file_ptr,
     return 0;
   }
   else
+  {
     return errno;
+  }
 #else
   if (WriteFile(file_ptr,
                 buf,
                 size,
                 ret_size,
                 NULL))
+  {
     return 0;
+  }
   else
+  {
     return GetLastError();
+  }
 #endif
 }
 
@@ -1169,16 +1269,22 @@ portable_read(IC_FILE_HANDLE file_ptr,
     return 0;
   }
   else
+  {
     return errno;
+  }
 #else
   if (ReadFile(file_ptr,
                buf,
                size,
                ret_size,
                NULL))
+  {
     return 0;
+  }
   else
+  {
     return GetLastError();
+  }
 #endif
 }
 
@@ -1192,7 +1298,9 @@ ic_read_file(IC_FILE_HANDLE file_ptr, gchar *buf, size_t size, guint64 *len)
                            (int)size));
 
   if ((ret_code= portable_read(file_ptr, (void*)buf, size, &ret_size)))
+  {
     DEBUG_RETURN_INT(ret_code);
+  }
 
   *len= (guint32)ret_size;
   DEBUG_PRINT(FILE_LEVEL, ("Read = %d", (int)*len));
@@ -1209,8 +1317,11 @@ static void *glob_sig_error_param;
 static void
 sig_error_handler(int signum)
 {
-  DEBUG_PRINT(COMM_LEVEL,
-    ("sig_error_handler: signum = %d", signum));
+  if (ic_is_debug_system_active())
+  {
+    DEBUG_PRINT(COMM_LEVEL,
+      ("sig_error_handler: signum = %d", signum));
+  }
 
   switch (signum)
   {
@@ -1219,14 +1330,16 @@ sig_error_handler(int signum)
     case SIGILL:
     case SIGBUS:
     case SIGSYS:
-      exit(1);
       break;
     default:
       return;
   }
   ic_set_stop_flag();
   if (glob_sig_error_handler)
+  {
     glob_sig_error_handler(glob_sig_error_param);
+  }
+  exit(1);
   return;
 }
 
@@ -1248,8 +1361,11 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
 static void
 kill_handler(int signum)
 {
-  DEBUG_PRINT(COMM_LEVEL,
-    ("kill_handler: signum = %d", signum));
+  if (ic_is_debug_system_active())
+  {
+    DEBUG_PRINT(COMM_LEVEL,
+      ("kill_handler: signum = %d", signum));
+  }
   switch (signum)
   {
     case SIGTERM:
@@ -1270,7 +1386,9 @@ kill_handler(int signum)
   }
   ic_set_stop_flag();
   if (glob_die_handler)
+  {
     glob_die_handler(glob_die_param);
+  }
   return;
 }
 
@@ -1456,10 +1574,18 @@ int
 ic_setup_workdir(gchar *new_work_dir)
 {
   int ret_code;
+  gchar buf[1024];
 
+  if ((ret_code= ic_mkdir(new_work_dir, FALSE)))
+  {
+    return IC_ERROR_FAILED_TO_CHANGE_DIR;
+  }
   ret_code = chdir(new_work_dir);
   if (ret_code < 0)
   {
+    ret_code= ic_get_last_error();
+    strerror_r(ret_code, (gchar*)&buf[0], sizeof(buf));
+    ic_printf("chdir error: %d: %s", ret_code, buf);
     return IC_ERROR_FAILED_TO_CHANGE_DIR;
   }
   return 0;
@@ -1481,11 +1607,90 @@ ic_set_umask()
 #endif
 }
 
-int
-ic_write_pid_file(gchar *pid_file)
+static gboolean is_daemon_file_written= FALSE;
+
+void
+ic_delete_daemon_file(const gchar *pid_file)
 {
-  (void)pid_file;
-  return 0;
+  if (is_daemon_file_written)
+  {
+    ic_delete_file(pid_file, FALSE);
+    is_daemon_file_written= FALSE;
+  }
+}
+
+int
+ic_write_pid_file(const gchar *pid_file)
+{
+  guint32 number_len;
+  int ret_code;
+  IC_FILE_HANDLE handle;
+  gchar buf[IC_NUMBER_SIZE];
+  DEBUG_ENTRY("ic_write_pid_file");
+
+  if ((ret_code= ic_create_file(&handle, (const gchar*)pid_file)))
+    goto normal_error;
+  ic_guint64_str((guint64)ic_get_own_pid(),
+                 &buf[0],
+                 &number_len);
+  if ((ret_code= ic_write_file(handle,
+                               (const gchar*)&buf[0],
+                               number_len)))
+    goto error;
+  if ((ret_code= ic_close_file(handle)))
+    goto error;
+
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Created pid file for process %s",
+                             &buf[0]));
+  is_daemon_file_written= TRUE;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Failed creating pid file %s", pid_file));
+  ic_delete_file(pid_file, TRUE);
+return_error:
+  DEBUG_RETURN_INT(ret_code);
+normal_error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Pid file %s already existed", pid_file));
+  goto return_error;
+}
+
+int
+ic_read_pid_file(const gchar *pid_file, IC_PID_TYPE *pid)
+{
+  int ret_code;
+  gchar *buf_ptr;
+  guint64 buf_size;
+  guint32 number_size;
+  guint64 pid_val;
+  DEBUG_ENTRY("ic_read_pid_file");
+
+  if ((ret_code= ic_get_file_contents(pid_file,
+                                      &buf_ptr,
+                                      &buf_size)))
+    goto error;
+
+  number_size= (guint32)buf_size;
+
+  if ((ret_code= ic_conv_str_to_int(buf_ptr, &pid_val, &number_size)))
+    goto conv_error;
+
+  if (((guint64)number_size) != buf_size)
+    goto conv_error;
+
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Read pidfile %s, found pid %s",
+                             pid_file,
+                             buf_ptr));
+  ic_free(buf_ptr);
+  *pid= (IC_PID_TYPE)pid_val;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Failed to read pidfile %s", pid_file));
+  DEBUG_RETURN_INT(ret_code);
+
+conv_error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Wrong content in pidfile: %s", buf_ptr));
+  ic_free(buf_ptr);
+  DEBUG_RETURN_INT(IC_ERROR_WRONG_PID_FILE_CONTENT);
 }
 
 guint32 ic_byte_order()
@@ -1494,9 +1699,13 @@ guint32 ic_byte_order()
   gchar *loc_char_ptr= (gchar*)&loc_variable;
 
   if (loc_char_ptr[0] == 1)
+  {
     return 0;
+  }
   else
+  {
     return 1;
+  }
 }
 
 #ifdef DEBUG_BUILD
@@ -1517,7 +1726,9 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
   g_mutex_unlock(mutex_hash_protect);
   DEBUG_ENABLE(0);
   if (key || ret_code)
+  {
     abort();
+  }
 }
 
 static void debug_release_mutex(IC_MUTEX *mutex)
@@ -1533,7 +1744,9 @@ static void debug_release_mutex(IC_MUTEX *mutex)
   g_mutex_unlock(mutex_hash_protect);
   DEBUG_ENABLE(0);
   if (!key)
+  {
     abort();
+  }
 }
 #endif
 
@@ -1578,7 +1791,9 @@ IC_COND* ic_cond_create()
   IC_COND *cond;
   cond= (IC_COND*)malloc(sizeof(IC_COND));
   if (cond)
+  {
     g_cond_init(cond);
+  }
   return cond;
 }
 
@@ -1841,6 +2056,8 @@ void ic_memset(gchar *buf, gchar val, int num_bytes)
 {
   int i;
   for (i= 0; i < num_bytes; i++)
+  {
     buf[i]= val;
+  }
 }
 #endif

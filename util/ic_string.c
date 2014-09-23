@@ -32,6 +32,8 @@ IC_STRING ic_glob_data_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_base_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_binary_dir= { NULL, 0, TRUE};
 IC_STRING ic_glob_working_dir= { NULL, 0, TRUE};
+IC_STRING ic_glob_stdout_file= { NULL, 0, TRUE};
+IC_STRING ic_glob_pid_file= { NULL, 0, TRUE};
 gchar *ic_glob_process_name= NULL;
 
 /*
@@ -70,14 +72,12 @@ ic_create_config_version_file_name(IC_STRING *file_name,
                                    gchar *buf,
                                    IC_STRING *config_dir)
 {
-  DEBUG_ENTRY("ic_create_config_version_file_name");
   buf[0]= 0;
   IC_INIT_STRING(file_name, buf, 0, TRUE);
   ic_add_ic_string(file_name, config_dir);
   ic_add_ic_string(file_name, &ic_config_string);
   ic_add_ic_string(file_name, &ic_version_file_string);
   ic_add_ic_string(file_name, &ic_config_ending_string);
-  DEBUG_RETURN_EMPTY;
 }
 
 /**
@@ -100,7 +100,6 @@ ic_create_config_file_name(IC_STRING *file_name,
 {
   gchar int_buf[IC_MAX_INT_STRING];
   IC_STRING ending_string;
-  DEBUG_ENTRY("ic_create_config_file_name");
 
   buf[0]= 0;
   IC_INIT_STRING(file_name, buf, 0, TRUE);
@@ -113,7 +112,6 @@ ic_create_config_file_name(IC_STRING *file_name,
     IC_INIT_STRING(&ending_string, int_buf, strlen(int_buf), TRUE);
     ic_add_ic_string(file_name, &ending_string);
   }
-  DEBUG_RETURN_EMPTY;
 }
 
 /**
@@ -164,7 +162,6 @@ set_default_dir(const gchar *default_dir,
                 IC_STRING *dir)
 {
   int ret_code= IC_ERROR_MEM_ALLOC;
-  DEBUG_ENTRY("set_default_dir");
 
   IC_INIT_STRING(dir, NULL, 0, TRUE);
   /*
@@ -197,7 +194,7 @@ set_default_dir(const gchar *default_dir,
   if (ic_add_dup_string(dir, default_dir) ||
       add_dir_slash(dir))
     goto error;
-  DEBUG_RETURN_INT(0);
+  return 0;
 
 error:
   if (dir->str)
@@ -205,7 +202,7 @@ error:
     ic_free(dir->str);
     IC_INIT_STRING(dir, NULL, 0, TRUE);
   }
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 /**
@@ -214,17 +211,16 @@ error:
   @parameter data_dir            OUT: String referring to data directory
 */
 int
-ic_set_data_dir(IC_STRING *data_dir)
+ic_set_data_dir(IC_STRING *data_dir, gboolean debug)
 {
   int ret_code;
-  DEBUG_ENTRY("ic_set_data_dir");
 
   ret_code= set_default_dir("iclaustron_data", data_dir);
-  if (!ret_code)
+  if (!ret_code && debug)
   {
     DEBUG_PRINT(PROGRAM_LEVEL, ("Data dir: %s", data_dir->str));
   }
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 /**
@@ -235,15 +231,14 @@ ic_set_data_dir(IC_STRING *data_dir)
 int
 ic_set_base_dir(IC_STRING *base_dir)
 {
-  int error;
-  DEBUG_ENTRY("ic_set_base_dir");
+  int ret_code;
 
-  error= set_default_dir("iclaustron_install", base_dir);
-  if (!error)
+  ret_code= set_default_dir("iclaustron_install", base_dir);
+  if (!ret_code)
   {
     DEBUG_PRINT(PROGRAM_LEVEL, ("Base dir: %s", base_dir->str));
   }
-  DEBUG_RETURN_INT(error);
+  return ret_code;
 }
 
 /**
@@ -272,20 +267,19 @@ ic_add_dir(IC_STRING *dir,
            const gchar *dir_name)
 {
   int ret_code;
-  DEBUG_ENTRY("ic_add_dir");
 
   if ((ret_code= ic_add_dup_string(dir, dir_name)))
     goto error;
   if ((ret_code= add_dir_slash(dir)))
     goto error;
-  DEBUG_RETURN_INT(0);
+  return 0;
 error:
   if (dir->str)
   {
     ic_free(dir->str);
   }
   IC_INIT_STRING(dir, NULL, 0, TRUE);
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 /*
@@ -301,7 +295,6 @@ ic_set_binary_dir(IC_STRING *binary_dir,
                   gchar *version)
 {
   int ret_code;
-  DEBUG_ENTRY("ic_set_binary_dir");
 
   if ((ret_code= ic_set_base_dir(binary_dir)))
     goto error;
@@ -310,14 +303,14 @@ ic_set_binary_dir(IC_STRING *binary_dir,
   if ((ret_code= ic_add_dir(binary_dir, ic_binary_string.str)))
     goto error;
   DEBUG_PRINT(CONFIG_LEVEL, ("Binary dir: %s", binary_dir->str));
-  DEBUG_RETURN_INT(0);
+  return 0;
 error:
   if (binary_dir->str)
   {
     ic_free(binary_dir->str);
   }
   IC_INIT_STRING(binary_dir, NULL, 0, TRUE);
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 /*
@@ -329,32 +322,34 @@ error:
 */
 int
 ic_set_working_dir(IC_STRING *working_dir,
-                   guint32 node_id)
+                   guint32 node_id,
+                   gboolean is_node_process)
 {
   int ret_code;
   gchar node_str_buf[64];
-  DEBUG_ENTRY("ic_set_working_dir");
 
-  if ((ret_code= ic_set_data_dir(working_dir)))
+  if ((ret_code= ic_set_data_dir(working_dir, FALSE)))
     goto error;
 
-  memcpy(node_str_buf, "node_", 5);
-  ic_guint64_str((guint64)node_id,
-                 &node_str_buf[5],
-                 NULL);
-  if ((ret_code= ic_add_dir(working_dir, &node_str_buf[0])))
-    goto error;
-
-  DEBUG_PRINT(CONFIG_LEVEL, ("Working dir: %s", working_dir->str));
-  DEBUG_RETURN_INT(0);
+  if (is_node_process)
+  {
+    memcpy(node_str_buf, "node_", 5);
+    ic_guint64_str((guint64)node_id,
+                   &node_str_buf[5],
+                   NULL);
+    if ((ret_code= ic_add_dir(working_dir, &node_str_buf[0])))
+      goto error;
+  }
+  return 0;
 error:
   if (working_dir->str)
   {
     ic_free(working_dir->str);
   }
   IC_INIT_STRING(working_dir, NULL, 0, TRUE);
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
+
 /*
  The default stdout file is
  ICLAUSTRON_DATA_DIR/node_1/node_1.log for node with id = 1.
@@ -378,7 +373,6 @@ ic_set_out_file(IC_STRING *out_file,
   int ret_code;
   gchar node_str_buf[64];
   gchar *ending;
-  DEBUG_ENTRY("ic_set_out_file");
 
   if (is_log_file)
   {
@@ -389,7 +383,7 @@ ic_set_out_file(IC_STRING *out_file,
     ending=".pid";
   }
 
-  if ((ret_code= ic_set_data_dir(out_file)))
+  if ((ret_code= ic_set_data_dir(out_file, FALSE)))
     goto error;
 
   if (is_node_process)
@@ -426,14 +420,14 @@ ic_set_out_file(IC_STRING *out_file,
   {
     DEBUG_PRINT(CONFIG_LEVEL, ("Pid file: %s", out_file->str));
   }
-  DEBUG_RETURN_INT(0);
+  return 0;
 error:
   if (out_file->str)
   {
     ic_free(out_file->str);
   }
   IC_INIT_STRING(out_file, NULL, 0, TRUE);
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 /*
@@ -456,9 +450,8 @@ ic_set_config_dir(IC_STRING *config_dir,
 {
   int ret_code;
   gchar node_str_buf[64];
-  DEBUG_ENTRY("ic_set_config_dir");
 
-  if ((ret_code= ic_set_data_dir(config_dir)))
+  if ((ret_code= ic_set_data_dir(config_dir, FALSE)))
     goto error;
   if ((ret_code= ic_add_dir(config_dir, ic_config_string.str)))
     goto error;
@@ -472,14 +465,14 @@ ic_set_config_dir(IC_STRING *config_dir,
       goto error;
   }
   DEBUG_PRINT(CONFIG_LEVEL, ("Config dir: %s", config_dir->str));
-  DEBUG_RETURN_INT(0);
+  return 0;
 error:
   if (config_dir->str)
   {
     ic_free(config_dir->str);
   }
   IC_INIT_STRING(config_dir, NULL, 0, TRUE);
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 /**
@@ -495,10 +488,14 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char)
   guint32 j= 0;
 
   while (in_buf[i] != end_char)
+  {
     i++;
+  }
   out_buf[i]= in_buf[i]; /* Copy end_char byte */
   while (i)
+  {
     out_buf[j++]= in_buf[--i];
+  }
 }
 
 /**
@@ -531,7 +528,9 @@ gchar *ic_guint64_str(guint64 val, gchar *ptr, guint32 *len)
   buf[i]= 0;
   ic_reverse_str((gchar*)&buf, ptr, 0);
   if (len)
+  {
     *len= i;
+  }
   return ptr;
 }
 
@@ -591,7 +590,9 @@ ic_str_find_first(IC_STRING *ic_str, gchar searched_char)
   for (i= 0; i < ic_str->len; i++)
   {
     if (ic_str->str[i] == searched_char)
+    {
       return i;
+    }
   }
   return ic_str->len;
 }
@@ -614,7 +615,9 @@ ic_add_ic_string(IC_STRING *dest_str, IC_STRING *input_str)
   gchar *end_ptr;
 
   if (!input_str)
+  {
     return;
+  }
   memcpy(start_ptr, input_str->str, input_str->len);
   if (dest_str->is_null_terminated)
   {
@@ -663,7 +666,9 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   gchar *new_str;
 
   if (!add_str)
+  {
     return 0;
+  }
   add_len= strlen(add_str);
   orig_len= dest_str->len;
   new_len= add_len + orig_len;
@@ -671,16 +676,22 @@ ic_add_dup_string(IC_STRING *dest_str, const gchar *add_str)
   if (new_str == NULL)
   {
     if (dest_str->str)
+    {
       ic_free(dest_str->str);
+    }
     IC_INIT_STRING(dest_str, NULL, 0, FALSE);
     return IC_ERROR_MEM_ALLOC;
   }
   if (orig_len > 0)
+  {
     memcpy(new_str, dest_str->str, orig_len);
+  }
   memcpy(new_str + orig_len, add_str, add_len);
   new_str[new_len]= 0; /* We will add a NULL termination just in case */
   if (dest_str->str)
+  {
     ic_free(dest_str->str);
+  }
   dest_str->str= new_str;
   dest_str->len= new_len;
   return 0;
@@ -705,10 +716,14 @@ ic_mc_add_ic_string(IC_MEMORY_CONTAINER *mc_ptr,
   guint32 new_len;
 
   if (!in_str)
+  {
     return 0;
+  }
   new_len= dest_str->len + in_str->len;
   if (!(new_str= (gchar*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, new_len + 1)))
+  {
     return IC_ERROR_MEM_ALLOC;
+  }
   memcpy(new_str, dest_str->str, dest_str->len);
   memcpy(&new_str[dest_str->len], in_str->str, in_str->len);
   new_str[new_len]= 0; /* NULL terminate anyways just in case */
@@ -734,7 +749,9 @@ gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
   if (str && str->str)
   {
     for (i= 0; i < str->len; i++)
+    {
       buf_ptr[i]= str->str[i];
+    }
     buf_ptr[str->len]= 0;
   }
   return buf_ptr;
@@ -748,17 +765,19 @@ gchar *ic_get_ic_string(IC_STRING *str, gchar *buf_ptr)
 void ic_print_ic_string(IC_STRING *str)
 {
   if (str->is_null_terminated)
-    ic_printf("%s", str->str);
+  {
+    ic_printf("%s\n", str->str);
+  }
   else
   {
     guint32 str_len= 0;
     while (str_len < str->len)
     {
-      putchar(str->str[str_len]);
+      ic_putchar(str->str[str_len]);
       str_len++;
     }
-    putchar('\n');
-    fflush(stdout);
+    ic_putchar('\n');
+    ic_flush_stdout();
   }
 }
 
@@ -778,7 +797,9 @@ int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str)
   gchar *second_char= second_str->str;
 
   if (first_len != second_len)
+  {
     return 1;
+  }
   return (memcmp(first_char, second_char, first_len));
 }
 
@@ -797,17 +818,23 @@ int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
   guint32 str_len= cmp_str->len;
 
   if (cmp_str->is_null_terminated)
+  {
     return (strcmp(null_term_str, cmp_str->str) == 0) ? 0 : 1;
+  }
   while (iter_len < str_len)
   {
     if (*null_term_str != *cmp_char)
+    {
       return 1;
+    }
     null_term_str++;
     cmp_char++;
     iter_len++;
   }
   if (*null_term_str == 0)
+  {
     return 0;
+  }
   return 1;
 }
 
@@ -834,7 +861,9 @@ ic_set_up_ic_string(IC_STRING *in_out_str)
   for (i= 0; i < in_out_str->len; i++)
   {
     if (in_out_str->str[i])
+    {
       continue;
+    }
     else
     {
       in_out_str->len= i;
@@ -863,12 +892,16 @@ int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   if (mc_ptr)
   {
     if (!(str= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, in_str->len+1)))
+    {
       return IC_ERROR_MEM_ALLOC;
+    }
   }
   else
   {
     if (!(str= ic_malloc(in_str->len+1)))
+    {
       return IC_ERROR_MEM_ALLOC;
+    }
   }
   IC_COPY_STRING(out_str, in_str);
   out_str->str= str;
@@ -901,10 +934,14 @@ int ic_mc_char_to_strdup(IC_MEMORY_CONTAINER *mc_ptr,
   if (!(loc_ic_str_ptr=
         (IC_STRING*)mc_ptr->mc_ops.ic_mc_alloc(mc_ptr,
                                                sizeof(IC_STRING))))
+  {
     return IC_ERROR_MEM_ALLOC;
+  }
   IC_INIT_STRING(&loc_str, str, str_len, TRUE);
   if (ic_mc_strdup(mc_ptr, loc_ic_str_ptr, &loc_str))
+  {
     return IC_ERROR_MEM_ALLOC;
+  }
   *out_str= loc_ic_str_ptr;
   return 0;
 }
@@ -928,7 +965,9 @@ int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
 
   IC_INIT_STRING(&input_str, in_str, strlen(in_str), TRUE);
   if ((ret_code= ic_mc_strdup(mc_ptr, &dest_str, &input_str)))
+  {
     return ret_code;
+  }
   *out_str= dest_str.str;
   return 0;
 }
@@ -997,12 +1036,16 @@ ic_convert_str_to_int_fixed_size(gchar *str,
   char *end_ptr;
 
   if (num_chars == 0)
+  {
     return TRUE;
+  }
   *ret_number= g_ascii_strtoull(str, &end_ptr, (guint)10);
   if (end_ptr == (str + num_chars))
   {
     if (*ret_number || (num_chars == 1 && (*str == '0')))
+    {
       return FALSE;
+    }
   }
   return TRUE;
 }
@@ -1025,9 +1068,13 @@ ic_convert_to_uppercase(gchar *out_str, gchar *in_str, guint32 str_len)
   for (i= 0; i < str_len; i++)
   {
     if (islower((int)in_str[i]))
+    {
       out_str[i]= in_str[i] - ('a' - 'A');
+    }
     else
+    {
       out_str[i]= in_str[i];
+    }
   }
 }
 
@@ -1058,7 +1105,9 @@ ic_count_lines(gchar *str, guint64 str_size)
     }
   }
   if ((last_carriage_return + 1) != str_size)
+  {
     lines++; /* Count also last line which isn't ended by a carriage return */
+  }
   return lines;
 }
 
@@ -1092,7 +1141,6 @@ ic_get_next_line(gchar **str,
   guint64 loc_str_size= *str_size;
   guint64 i;
   guint64 max_size= IC_MAX(loc_str_size, (buf_size - 1));
-  DEBUG_ENTRY("ic_get_next_line");
 
   *line_size= 0;
   for (i= 0; i < max_size; i++)
@@ -1113,12 +1161,12 @@ ic_get_next_line(gchar **str,
     If we come here the line was too long, we couldn't fit the line in the
     buffer that was provided for this purpose.
   */
-  DEBUG_RETURN_INT(IC_ERROR_LINE_TOO_LONG);
+  return IC_ERROR_LINE_TOO_LONG;
 
 end:
   buf[i]= (gchar)0;
   *str_size= (loc_str_size - (i + 1));
   *str= (loc_str + i + 1);
   *line_size= i;
-  DEBUG_RETURN_INT(0);
+  return 0;
 }

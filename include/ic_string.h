@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -59,8 +59,10 @@ struct ic_string
 */
 void ic_set_current_dir(IC_STRING *dir);
 int ic_set_base_dir(IC_STRING *base_dir);
-int ic_set_data_dir(IC_STRING *data_dir);
-int ic_set_working_dir(IC_STRING *working_dir, guint32 node_id);
+int ic_set_data_dir(IC_STRING *data_dir, gboolean debug);
+int ic_set_working_dir(IC_STRING *working_dir,
+                       guint32 node_id,
+                       gboolean is_node_process);
 int ic_set_out_file(IC_STRING *stdout_file,
                     guint32 node_id,
                     gchar *program_name,

@@ -334,6 +334,15 @@ int ic_debug_open(guint32 node_id)
   return 0;
 }
 
+gboolean ic_is_debug_system_active()
+{
+  if (debug_mutex != NULL)
+  {
+    return TRUE;
+  }
+  return FALSE;
+}
+
 void
 ic_debug_close()
 {
@@ -342,6 +351,7 @@ ic_debug_close()
   fflush(ic_fptr);
   fclose(ic_fptr);
   ic_mutex_destroy(&debug_mutex);
+  debug_mutex= NULL;
   ic_free_low((void*)thread_id_array);
   ic_require(ic_num_threads_debugged == 0);
 }
@@ -360,7 +370,7 @@ int
 ic_setup_stdout(gchar *log_file)
 {
   FILE *file_des;
-  ic_delete_file(log_file);
+  ic_delete_file(log_file, TRUE);
   file_des= fopen(log_file, "w");
   if (file_des == NULL)
   {
@@ -412,6 +422,19 @@ ic_printf(const char *format,...)
 #endif
   ic_flush_stdout();
   va_end(args);
+}
+
+void
+ic_putchar(gchar c)
+{
+  if (stdout_defined == 0)
+  {
+    putchar(c);
+  }
+  else if (stdout_defined > 0)
+  {
+    fputc(c, stdout_fd);
+  }
 }
 
 void

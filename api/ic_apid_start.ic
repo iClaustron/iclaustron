@@ -83,8 +83,6 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   if (!(*tp_state=
           ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
-  ic_set_die_handler(apid_kill_handler, apid_global);
-  ic_set_sig_error_handler(NULL, NULL);
 
   if ((ret_code= ic_parse_connectstring(ic_glob_cs_connectstring,
                                         &conn_str,
@@ -318,6 +316,33 @@ is number of microseconds since the program started.\n\
 ";
 static int use_config_vars;
 
+static gboolean
+check_daemon_program(gchar *program_name)
+{
+  if ((strcmp(program_name, ic_cluster_server_program_str) == 0) ||
+      (strcmp(program_name, ic_cluster_manager_program_str) == 0) ||
+      (strcmp(program_name, ic_file_server_program_str) == 0) ||
+      (strcmp(program_name, ic_rep_server_program_str) == 0) ||
+      (strcmp(program_name, ic_process_controller_program_str) == 0))
+  {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static void
+print_start_program(gchar *program_name)
+{
+  guint32 dummy;
+  gchar *pid_str;
+  gchar pid_buf[IC_NUMBER_SIZE];
+
+  pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
+  ic_printf("Starting %s program with pid %s", program_name, pid_str);
+}
+
+static void ic_end_fe(void *param);
+
 int
 ic_start_program(int argc,
                  gchar *argv[],
@@ -337,13 +362,12 @@ ic_start_program(int argc,
   GOptionGroup *basedir_group;
   GOptionContext *context;
   gboolean is_cluster_server= FALSE;
-  guint32 dummy;
-  gchar *pid_str;
-  gchar pid_buf[IC_NUMBER_SIZE];
   IC_STRING stdout_file;
+  gboolean daemon_program;
 
   IC_INIT_STRING(&stdout_file, NULL, 0, TRUE);
 
+  daemon_program= check_daemon_program(program_name);
   ic_init_error_messages();
   if (strcmp(program_name, "ic_csd") == 0)
     is_cluster_server= TRUE;
@@ -373,7 +397,7 @@ ic_start_program(int argc,
     goto parse_error;
   g_option_context_free(context);
 
-  if (ic_glob_daemonize)
+  if (ic_glob_daemonize && daemon_program)
   {
     /**
      * First step of daemonize handles the creation of a new process
@@ -387,11 +411,60 @@ ic_start_program(int argc,
   }
   ic_set_umask();
 
+  /**
+   * We need to setup the working directory before we initialise the
+   * debugging to ensure that we put the debug log in the proper
+   * working directory so that we can find it together with the
+   * other output files.
+   *
+   * After initialising the debug subsystem we have to report the
+   * allocated memory for the working directory so that we don't
+   * lose track of it.
+   *
+   * For normal programs that aren't daemon programs (like ic_bootstrap,
+   * ic_client and so forth) we simply set the current directory as the
+   * working directory and we do not change the working directory.
+   */
+
+  if (daemon_program)
+  {
+    if ((ret_code= ic_set_working_dir(&ic_glob_working_dir,
+                                      ic_glob_node_id,
+                                      daemonize_second_phase)))
+      goto error;
+
+    if ((ret_code= ic_setup_workdir(ic_glob_working_dir.str)))
+      goto error;
+  }
+  else
+  {
+    ic_set_current_dir(&ic_glob_working_dir);
+  }
+
   if ((ret_code= ic_init()))
     goto error;
+
+  atexit(ic_end);
+  ic_set_sig_error_handler(ic_end_fe, NULL);
+  ic_set_die_handler(ic_end_fe, NULL);
+
+  /**
+   * Report the working directory to our malloc check subsystem since we
+   * did the malloc before we initialised this subsystem.
+   * Not necessary for non-daemon programs since they set the working
+   * directory to a hard-coded value.
+   */
+  if (daemon_program)
+  {
+    ic_malloc_report(ic_glob_working_dir.str,
+                     (size_t)(ic_glob_working_dir.len + 1));
+  }
+
   DEBUG_PRINT(PROGRAM_LEVEL, ("Returning to ic_start_program"));
   DEBUG_ENTRY("ic_start_program");
 #ifdef DEBUG_BUILD
+  DEBUG_PRINT(PROGRAM_LEVEL, ("daemon program is %s",
+                              daemon_program ? "true" : "false"));
   DEBUG_PRINT(PROGRAM_LEVEL, ("argc = %d", argc));
   for (i = 0; i < argc; i++)
   {
@@ -399,9 +472,7 @@ ic_start_program(int argc,
   }
 #endif
   ic_glob_byte_order= ic_byte_order();
-  if ((ret_code= ic_set_data_dir(&ic_glob_data_dir)) ||
-      (ret_code= ic_set_working_dir(&ic_glob_working_dir,
-                                    ic_glob_node_id)) ||
+  if ((ret_code= ic_set_data_dir(&ic_glob_data_dir, TRUE)) ||
       /* Program name not used for stdout file of node processes */
       (ret_code= ic_set_out_file(&ic_glob_stdout_file,
                                 ic_glob_node_id,
@@ -425,7 +496,7 @@ ic_start_program(int argc,
   ic_set_port_config_dir(ic_glob_config_dir.str);
   ic_glob_process_name= program_name;
 
-  if (daemonize_second_phase && ic_glob_daemonize)
+  if (daemonize_second_phase && ic_glob_daemonize && daemon_program)
   {
     /**
      * Second step of daemonization after initialising the iClaustron
@@ -435,12 +506,13 @@ ic_start_program(int argc,
      */
     if ((ret_code= ic_setup_stdout(ic_glob_stdout_file.str)))
       goto late_error;
-    if ((ret_code= ic_setup_workdir(ic_glob_working_dir.str)))
-      goto late_error;
     if ((ret_code= ic_write_pid_file(ic_glob_pid_file.str)))
       goto late_error;
-    pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
-    ic_printf("Starting %s program with pid %s", program_name, pid_str);
+    print_start_program(program_name);
+  }
+  if (!ic_glob_daemonize || !daemon_program)
+  {
+    print_start_program(program_name);
   }
   DEBUG_RETURN_INT(0);
 
@@ -453,11 +525,14 @@ mem_error:
   goto error;
 
 late_error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Late error in start program: %d", ret_code));
   DEBUG_RETURN_INT(ret_code);
 
 error:
   return ret_code;
 }
+
+static int ic_inited= 0;
 
 static int
 ic_init()
@@ -481,15 +556,32 @@ ic_init()
     ic_end();
     DEBUG_RETURN_INT(ret_value);
   }
+  ic_inited= 1;
   DEBUG_RETURN_INT(0);
+}
+
+static void
+ic_end_fe(void *param)
+{
+  (void)param;
+  if (ic_glob_pid_file.str)
+  {
+    ic_delete_daemon_file(ic_glob_pid_file.str);
+  }
 }
 
 void ic_end()
 {
+  if (ic_inited == 0)
+  {
+    return;
+  }
   DEBUG_ENTRY("ic_end");
 
   if (use_config_vars)
+  {
     ic_destroy_conf_hash();
+  }
   ic_ssl_end();
   if (ic_glob_base_dir.str)
   {
@@ -523,10 +615,12 @@ void ic_end()
   }
   if (ic_glob_pid_file.str)
   {
+    ic_delete_daemon_file(ic_glob_pid_file.str);
     ic_free(ic_glob_pid_file.str);
     ic_glob_pid_file.str= NULL;
   }
   ic_stop_socket_system();
   ic_port_end();
   DEBUG_CLOSE;
+  ic_inited= 0;
 }
