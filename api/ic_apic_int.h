@@ -186,7 +186,7 @@ typedef struct ic_temp_api_config_server IC_TEMP_API_CONFIG_SERVER;
 struct ic_int_api_config_server
 {
   IC_API_CLUSTER_OPERATIONS api_op;
-  IC_CLUSTER_CONFIG **conf_objects;
+  IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID+1];
   IC_MEMORY_CONTAINER *mc_ptr;
   IC_TEMP_API_CONFIG_SERVER *temp;
   IC_API_CLUSTER_CONNECTION cluster_conn;
@@ -330,7 +330,7 @@ typedef struct ic_run_cluster_state IC_RUN_CLUSTER_STATE;
 struct ic_rc_config_state
 {
   /* The configuration of each cluster resident in memory */
-  IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID];
+  IC_CLUSTER_CONFIG *conf_objects[IC_MAX_CLUSTER_ID+1];
 
   /* The information about the clusters, name, id and password */
   IC_CLUSTER_CONNECT_INFO **clu_infos;

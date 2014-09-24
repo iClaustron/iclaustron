@@ -371,6 +371,7 @@ set_up_run_obj_master(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 cs_index= 0;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_CONFIG *clu_conf= get_any_cluster_config(&run_obj->new_config);
+  DEBUG_ENTRY("set_up_run_obj_master");
 
   for (i= 1; i <= clu_conf->max_node_id; i++)
   {
@@ -390,6 +391,7 @@ set_up_run_obj_master(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     }
   }
   run_obj->state.master_cs_index= IC_MAX_CLUSTER_SERVERS;
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
@@ -400,6 +402,7 @@ set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   guint32 i;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_CONFIG *clu_conf= get_any_cluster_config(&run_obj->new_config);
+  DEBUG_ENTRY("set_up_run_obj");
 
   run_obj->new_config.num_cluster_servers=
     get_count_cluster_servers(clu_conf);
@@ -419,6 +422,7 @@ set_up_run_obj(IC_INT_RUN_CLUSTER_SERVER *run_obj)
       get_cluster_info(run_obj, used_index)->node_id= cs_conf->node_id;
     }
   }
+  DEBUG_RETURN_EMPTY;
 }
 
 static void
@@ -426,6 +430,7 @@ free_apic_from_run_cluster(IC_API_CONFIG_SERVER *ext_apic)
 {
   guint32 i;
   IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
+  DEBUG_ENTRY("free_apic_from_run_cluster");
 
   for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
   {
@@ -435,6 +440,7 @@ free_apic_from_run_cluster(IC_API_CONFIG_SERVER *ext_apic)
       apic->conf_objects[i]= NULL;
     }
   }
+  DEBUG_RETURN_EMPTY;
 }
 
 /*
@@ -454,6 +460,7 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   gboolean found_cs_nodeid= FALSE;
   IC_MEMORY_CONTAINER *mc_ptr= run_obj->conf_mc_ptr;
   IC_API_CLUSTER_CONNECTION *cluster_conn= &apic->cluster_conn;
+  DEBUG_ENTRY("set_up_apic");
 
   set_up_apic_methods(apic);
   apic->api_op.ic_get_config= null_get_cs_config;
@@ -461,7 +468,9 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 
   apic->max_cluster_id= run_obj->new_config.max_cluster_id;
   apic->use_ic_cs= TRUE;
-  apic->conf_objects= (IC_CLUSTER_CONFIG**)run_obj->new_config.conf_objects;
+  memcpy(apic->conf_objects,
+         run_obj->new_config.conf_objects,
+         sizeof(apic->conf_objects));
   apic->mc_ptr= run_obj->conf_mc_ptr;
 
   clu_conf= get_any_cluster_config(&run_obj->new_config);
@@ -506,11 +515,11 @@ set_up_apic(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   }
   if (!found_cs_nodeid)
   {
-    return IC_ERROR_NO_SUCH_CLUSTER_SERVER_NODEID;
+    DEBUG_RETURN_INT(IC_ERROR_NO_SUCH_CLUSTER_SERVER_NODEID);
   }
-  return 0;
+  DEBUG_RETURN_INT(0);
 error:
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 typedef struct thread_data
@@ -526,20 +535,21 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   IC_CLUSTER_CONNECT_INFO **clu_infos;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
+  DEBUG_ENTRY("load_local_config");
 
   if (!(clu_infos= ic_load_cluster_config_from_file(run_obj->config_dir,
                                 info_cs->config_version_number,
                                 run_obj->conf_mc_ptr,
                                 &run_obj->state.err_obj)))
   {
-    return run_obj->state.err_obj.err_num;
+    DEBUG_RETURN_INT(run_obj->state.err_obj.err_num);
   }
 
   run_obj->new_config.clu_infos= clu_infos;
 
   if ((ret_code= load_config_files(run_obj, clu_infos)))
   {
-    return ret_code;
+    DEBUG_RETURN_INT(ret_code);
   }
 
   /*
@@ -561,7 +571,7 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     /* We've been started with an incorrect node id */
     ic_printf("Error: The Cluster Server have been started with a node id"
               " which isn't a Cluster Server in the configuration");
-    return IC_ERROR_CS_STARTED_WITH_WRONG_NODEID;
+    DEBUG_RETURN_INT(IC_ERROR_CS_STARTED_WITH_WRONG_NODEID);
   }
 
   if (info_cs->config_version_number == 0)
@@ -571,23 +581,24 @@ load_local_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                               clu_infos,
                               run_obj->new_config.conf_objects)))
     {
-      return ret_code;
+      DEBUG_RETURN_INT(ret_code);
     }
   }
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int
 load_config_files_error(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                         IC_CONFIG_ERROR *err_obj)
 {
+  DEBUG_ENTRY("load_config_files_error");
   ic_mutex_lock(run_obj->state.protect_state);
   if (!run_obj->state.err_obj.err_num)
   {
     memcpy(&run_obj->state.err_obj, err_obj, sizeof(IC_CONFIG_ERROR));
   }
   ic_mutex_unlock(run_obj->state.protect_state);
-  return err_obj->err_num;
+  DEBUG_RETURN_INT(err_obj->err_num);
 }
 
 static int
@@ -599,6 +610,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_CLUSTER_CONFIG *cluster, *grid_cluster;
   IC_MEMORY_CONTAINER *mc_ptr= run_obj->conf_mc_ptr;
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
+  DEBUG_ENTRY("load_config_files");
 
   if (!(grid_cluster= ic_load_grid_common_config_server_from_file(
                                             run_obj->config_dir,
@@ -607,7 +619,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                             *clu_infos,
                                             &err_obj)))
   {
-    return load_config_files_error(run_obj, &err_obj);
+    DEBUG_RETURN_INT(load_config_files_error(run_obj, &err_obj));
   }
   while (*clu_infos)
   {
@@ -626,7 +638,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                              clu_info,
                                              &err_obj)))
     {
-      return load_config_files_error(run_obj, &err_obj);
+      DEBUG_RETURN_INT(load_config_files_error(run_obj, &err_obj));
     }
 
     /*
@@ -637,12 +649,12 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     if (ic_mc_strdup(mc_ptr, &cluster->clu_info.cluster_name,
                      &clu_info->cluster_name))
     {
-      return IC_ERROR_MEM_ALLOC;
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
     if (ic_mc_strdup(mc_ptr, &cluster->clu_info.password,
                      &clu_info->password))
     {
-      return IC_ERROR_MEM_ALLOC;
+      DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
     }
 
     cluster->clu_info.cluster_id= clu_info->cluster_id;
@@ -657,15 +669,18 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     if (run_obj->new_config.conf_objects[clu_info->cluster_id])
     {
       ic_hashtable_destroy(cluster->comm_hash, FALSE);
-      return IC_ERROR_CONFLICTING_CLUSTER_IDS;
+      DEBUG_RETURN_INT(IC_ERROR_CONFLICTING_CLUSTER_IDS);
     }
+    DEBUG_PRINT(CONFIG_LEVEL, ("Adding cluster id: %u to new config",
+                clu_info->cluster_id));
+    ic_require(clu_info->cluster_id <= IC_MAX_CLUSTER_ID);
     run_obj->new_config.conf_objects[clu_info->cluster_id]= cluster;
     run_obj->new_config.max_cluster_id=
       IC_MAX(run_obj->new_config.max_cluster_id,
              clu_info->cluster_id);
     run_obj->new_config.num_clusters++;
   }
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -688,7 +703,7 @@ start_connect_cs_threads(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     ic_require(i < IC_MAX_CLUSTER_SERVERS);
     thread_started_flag[i]= FALSE;
     info_cs= get_cluster_info(run_obj, i);
-    if (apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid ||
+    if ((apic->cluster_conn.cs_nodeid[i] == run_obj->cs_nodeid) ||
         info_cs->is_start_thread_active)
       continue;
     num_threads_started++;
@@ -1238,11 +1253,13 @@ error:
 static void
 install_new_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
+  DEBUG_ENTRY("install_new_config");
   /* Install new configuration directly since no config was there before */
   memcpy(&run_obj->config,
          &run_obj->new_config,
          sizeof(IC_RC_CONFIG_STATE));
   ic_zero(&run_obj->new_config, sizeof(run_obj->new_config));
+  DEBUG_RETURN_EMPTY;
 }
 
 /* Implements the start_cluster_server method */

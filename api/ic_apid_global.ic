@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -292,15 +292,25 @@ free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
   if (send_node_conn == NULL)
     goto end;
   if (send_node_conn->conn)
+  {
     send_node_conn->conn->conn_op.ic_free_connection(send_node_conn->conn);
+  }
   if (send_node_conn->cond)
+  {
     ic_cond_destroy(&send_node_conn->cond);
+  }
   if (send_node_conn->mutex)
+  {
     ic_mutex_destroy(&send_node_conn->mutex);
+  }
   if (send_node_conn->string_memory)
+  {
     ic_free(send_node_conn->string_memory);
+  }
   if (send_node_conn->dynamic_port_number_to_release)
+  {
     ic_free(send_node_conn->dynamic_port_number_to_release);
+  }
   ic_free(send_node_conn);
 end:
   DEBUG_RETURN_EMPTY;
@@ -325,7 +335,9 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
   DEBUG_ENTRY("ic_end_apid");
 
   if (!apid_global)
+  {
     DEBUG_RETURN_EMPTY;
+  }
 
   apic= apid_global->apic;
   max_cluster_id= apic->api_op.ic_get_max_cluster_id(apic);
@@ -336,27 +348,45 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
   cluster_data_array= apid_global->cluster_data_array;
 
   if (apid_global->rec_thread_pool)
+  {
     apid_global->rec_thread_pool->tp_ops.ic_threadpool_stop(
                   apid_global->rec_thread_pool);
+  }
   if (apid_global->send_thread_pool)
+  {
     apid_global->send_thread_pool->tp_ops.ic_threadpool_stop(
                   apid_global->send_thread_pool);
+  }
   if (apid_global->cluster_bitmap)
+  {
     ic_free_bitmap(apid_global->cluster_bitmap);
+  }
   if (send_buf_pool)
+  {
     send_buf_pool->sock_buf_ops.ic_free_sock_buf(send_buf_pool);
+  }
   if (ndb_message_pool)
+  {
     ndb_message_pool->sock_buf_ops.ic_free_sock_buf(ndb_message_pool);
+  }
   if (apid_global->mutex)
+  {
     ic_mutex_destroy(&apid_global->mutex);
+  }
   if (apid_global->cond)
+  {
     ic_cond_destroy(&apid_global->cond);
+  }
   if (apid_global->dynamic_map_array)
+  {
     apid_global->dynamic_map_array->dpa_ops.ic_free_dynamic_ptr_array(
       apid_global->dynamic_map_array);
+  }
   for (i= 0; i < apid_global->num_listen_server_threads; i++)
+  {
     close_listen_server_thread(apid_global->listen_server_thread[i],
                                apid_global);
+  }
   if (grid_comm)
   {
     if (grid_comm->cluster_comm_array)
@@ -368,7 +398,9 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
           continue;
         /* Listen threads are released as part of stopping send threads */
         for (j= 1; j <= IC_MAX_NODE_ID; j++)
+        {
           free_send_node_conn(cluster_comm->send_node_conn_array[j]);
+        }
         ic_free(cluster_comm->send_node_conn_array);
         ic_free(cluster_comm);
       }
@@ -381,9 +413,13 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
         if (!grid_comm->thread_conn_array[j])
           continue;
         if (grid_comm->thread_conn_array[j]->mutex)
+        {
           ic_mutex_destroy(&grid_comm->thread_conn_array[j]->mutex);
+        }
         if (grid_comm->thread_conn_array[j]->cond)
+        {
           ic_cond_destroy(&grid_comm->thread_conn_array[j]->cond);
+        }
       }
       ic_free(grid_comm->thread_conn_array);
     }
@@ -397,20 +433,30 @@ ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
       if (cluster_data)
       {
         if (cluster_data->mutex)
+        {
           ic_mutex_destroy(&cluster_data->mutex);
+        }
         if (cluster_data->cond)
+        {
           ic_cond_destroy(&cluster_data->cond);
+        }
         if (cluster_data->cluster_md_hash)
+        {
           ic_hashtable_destroy(cluster_data->cluster_md_hash, FALSE);
+        }
         if (cluster_data->cluster_tc_conn)
+        {
           ic_hashtable_destroy(cluster_data->cluster_tc_conn, FALSE);
+        }
         ic_free(cluster_data);
       }
     }
     ic_free(cluster_data_array);
   }
   if (apid_global->thread_id_mutex)
+  {
     ic_mutex_destroy(&apid_global->thread_id_mutex);
+  }
   ic_free(apid_global);
   DEBUG_RETURN_EMPTY;
 }
@@ -555,7 +601,9 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
     rec_tp_state->tp_ops.ic_threadpool_set_stop_flag(rec_tp_state);
     ic_mutex_lock(apid_global->heartbeat_mutex);
     if (apid_global->heartbeat_thread_waiting)
+    {
       ic_cond_signal(apid_global->heartbeat_cond);
+    }
     ic_mutex_unlock(apid_global->heartbeat_mutex);
     rec_tp_state->tp_ops.ic_threadpool_stop_thread_wait(rec_tp_state,
                                     apid_global->heartbeat_thread_id);
@@ -576,9 +624,11 @@ apid_global_cond_wait(IC_APID_GLOBAL *ext_apid_global)
   ic_mutex_lock(apid_global->mutex);
   if (apid_global->num_user_threads_started > 0 &&
       !ic_get_stop_flag())
+  {
     ic_cond_timed_wait(apid_global->cond,
                        apid_global->mutex,
                        3 * IC_MICROSEC_PER_SECOND);
+  }
   ic_mutex_unlock(apid_global->mutex);
   DEBUG_RETURN_EMPTY;
 }
@@ -591,7 +641,9 @@ apid_global_get_stop(IC_APID_GLOBAL *ext_apid_global)
 
   ic_mutex_lock(apid_global->mutex);
   if (ic_tp_get_stop_flag())
+  {
     apid_global->stop_flag= TRUE;
+  }
   stop_flag= apid_global->stop_flag;
   ic_mutex_unlock(apid_global->mutex);
   return stop_flag;
@@ -677,16 +729,16 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
 {
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
-  int error;
+  int ret_code;
   DEBUG_ENTRY("apid_global_external_connect");
 
   DEBUG_PRINT(CONFIG_LEVEL,
   ("Converting to NDB Protocol, cluster id = %u, node_id = %u",
     cluster_id, node_id));
-  if ((error= map_id_to_send_node_connection(apid_global,
-                                             cluster_id,
-                                             node_id,
-                                             &send_node_conn)))
+  if ((ret_code= map_id_to_send_node_connection(apid_global,
+                                                cluster_id,
+                                                node_id,
+                                                &send_node_conn)))
     goto error;
   ic_mutex_lock(send_node_conn->mutex);
   send_node_conn->conn= conn;
@@ -697,8 +749,8 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
 
 error:
   DEBUG_PRINT(CONFIG_LEVEL,
-    ("Error from ic_external_connect, code = %u", error));
-  DEBUG_RETURN_INT(error);
+    ("Error from ic_external_connect, code = %u", ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int

@@ -249,10 +249,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
   {
     apic->max_cluster_id= max_cluster_id= 0;
   }
-  if (!(apic->conf_objects= (IC_CLUSTER_CONFIG**)
-        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
-           (max_cluster_id + 1) * sizeof(IC_CLUSTER_CONFIG**))) ||
-      !(apic->temp->node_ids= (guint32*)
+  if (!(apic->temp->node_ids= (guint32*)
         mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
             sizeof(guint32) * (max_cluster_id + 1))))
     goto mem_alloc_error;
@@ -357,20 +354,20 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
 mem_alloc_error:
   ret_code= IC_ERROR_MEM_ALLOC;
 error:
-  if (apic->conf_objects)
+  ic_require(apic->max_cluster_id <= IC_MAX_CLUSTER_ID);
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
   {
-    for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    if (clu_conf && clu_conf->cs_conn)
     {
-      IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
-      if (clu_conf && clu_conf->cs_conn)
-      {
-        clu_conf->cs_conn->conn_op.ic_free_connection(clu_conf->cs_conn);
-        clu_conf->cs_conn= NULL;
-      }
+      clu_conf->cs_conn->conn_op.ic_free_connection(clu_conf->cs_conn);
+      clu_conf->cs_conn= NULL;
     }
   }
   if (conn)
+  {
     conn->conn_op.ic_free_connection(conn);
+  }
   DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", ret_code));
   DEBUG_RETURN_INT(ret_code);
 }

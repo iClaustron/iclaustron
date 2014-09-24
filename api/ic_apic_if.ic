@@ -104,9 +104,11 @@ static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *ext_apic,
                                              guint32 cluster_id)
 {
   IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
-  if (!apic->conf_objects ||
-      cluster_id > apic->max_cluster_id)
+  if ((apic->conf_objects == NULL) ||
+      (cluster_id > apic->max_cluster_id))
+  {
     return NULL;
+  }
   return apic->conf_objects[cluster_id];
 }
 
@@ -147,7 +149,9 @@ get_typed_node_object(IC_API_CONFIG_SERVER *ext_apic, guint32 cluster_id,
                                                   &clu_conf);
   if (clu_conf &&
       clu_conf->node_types[node_id] == node_type)
+  {
     return node_config;
+  }
   return NULL;
 }
 
@@ -166,7 +170,9 @@ get_cluster_id_from_name(IC_API_CONFIG_SERVER *ext_apic,
       continue;
     if (ic_cmp_str((const IC_STRING*)&clu_conf->clu_info.cluster_name,
                    cluster_name) == 0)
+    {
       return cluster_id;
+    }
   }
   return IC_MAX_UINT32;
 }
@@ -182,13 +188,17 @@ get_node_id_from_name(IC_API_CONFIG_SERVER *ext_apic,
   guint32 node_id;
 
   if (!(clu_conf= get_cluster_config((IC_API_CONFIG_SERVER*)apic, cluster_id)))
+  {
     return IC_MAX_UINT32;
+  }
   for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
   {
     if (!(ds_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node_id]))
       continue;
     if (ic_cmp_null_term_str((const gchar*)ds_conf->node_name, node_name) == 0)
+    {
       return node_id;
+    }
   }
   return IC_MAX_UINT32;
 }
@@ -217,7 +227,9 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
         }
         ic_assert(!conf_obj->node_ids);
         if (conf_obj->comm_hash)
+        {
           ic_hashtable_destroy(conf_obj->comm_hash, FALSE);
+        }
       }
     }
     apic->mc_ptr->mc_ops.ic_mc_free(apic->mc_ptr);
