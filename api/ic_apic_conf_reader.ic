@@ -97,7 +97,8 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       mandatory_bits= data_server_mandatory_bits;
       if (ds_conf->mandatory_bits != data_server_mandatory_bits)
         goto mandatory_error;
-      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
+      if ((ret_code= ensure_node_name_set(current_config,
+                                          ic_conf->perm_mc_ptr)))
         goto error;
       ensure_pcntrl_hostname_set(current_config);
       if ((ret_code= ensure_node_data_path_set(current_config,

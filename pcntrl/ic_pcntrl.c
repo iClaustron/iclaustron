@@ -2267,6 +2267,37 @@ error:
   goto end;
 }
 
+static int
+create_config_dir()
+{
+  int ret_code;
+  IC_STRING data_dir;
+  IC_STRING config_dir;
+
+  /**
+   * Ensure iclaustron_data directory is created
+   * Next step is to ensure that the
+   * iclaustron_data/config directory is also created
+   */
+  IC_INIT_STRING(&data_dir, NULL, 0, TRUE);
+  if ((ret_code= ic_set_data_dir(&data_dir, FALSE)))
+    goto error;
+  ret_code= ic_mkdir(data_dir.str);
+  ic_free(data_dir.str);
+  if (ret_code)
+    goto error;
+
+  IC_INIT_STRING(&config_dir, NULL, 0, TRUE);
+  if ((ret_code= ic_set_config_dir(&config_dir, FALSE, (guint32)0)))
+    goto error;
+  ret_code= ic_mkdir(config_dir.str);
+  ic_free(config_dir.str);
+  if (ret_code)
+    goto error;
+  return 0;
+error:
+  return ret_code;
+}
 /**
   This method receives the config.ini file and places it in the
   ICLAUSTRON_DATA_DIR/config directory. It overwrites the
@@ -2288,8 +2319,11 @@ handle_copy_config_ini(IC_CONNECTION *conn)
                                ic_number_of_lines_str,
                                &num_lines)))
     goto error;
+
+  /* Make sure the config directory is created */
+  create_config_dir();
   /* Create the config.ini file name */
-  IC_INIT_STRING(&file_name, NULL, 0, FALSE);
+  IC_INIT_STRING(&file_name, NULL, 0, TRUE);
   ic_create_config_file_name(&file_name,
                              file_name_buf,
                              NULL,
