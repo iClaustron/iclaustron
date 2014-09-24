@@ -5005,7 +5005,9 @@ ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
      Allocate memory for key-value pairs, this memory is only temporary for
      this method and its caller, so memory will be freed soon again
   */
-  ic_require(!num_comms);
+
+  ic_require(num_comms);
+
   if (!(loc_key_value_array= (guint32*)ic_calloc(4*len)))
   {
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);

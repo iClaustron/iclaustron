@@ -67,7 +67,7 @@ init_config_object(gchar *conf_object, guint32 size_struct,
     if (conf_entry && conf_entry->config_types & (1 << config_type))
     {
       gchar *var_ptr= conf_object + conf_entry->offset;
-      ic_require(conf_entry->offset >= size_struct);
+      ic_require(conf_entry->offset < size_struct);
       init_config_default_value(var_ptr, conf_entry);
     }
   }
