@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -56,7 +56,9 @@ get_config_entry_mandatory(guint32 bit_id,
     if (conf_entry && conf_entry->is_mandatory &&
         (guint32)conf_entry->mandatory_bit == bit_id &&
         conf_entry->config_types & (1 << conf_type))
+    {
       DEBUG_RETURN_PTR(conf_entry);
+    }
   }
   DEBUG_RETURN_PTR(NULL);
 }
@@ -70,7 +72,7 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CONFIG_TYPES conf_type;
   guint32 i;
-  int error;
+  int ret_code;
   guint64 mandatory_bits, missing_bits, bit64;
   void *current_config;
   IC_CONFIG_ENTRY *conf_entry;
@@ -98,14 +100,18 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
         goto error;
       ensure_pcntrl_hostname_set(current_config);
-      if ((error= ensure_node_data_path_set(current_config,
-                                            ic_conf,
-                                            ic_conf->perm_mc_ptr)))
+      if ((ret_code= ensure_node_data_path_set(current_config,
+                                               ic_conf,
+                                               ic_conf->perm_mc_ptr)))
         goto error;
       if (ds_conf->filesystem_path == NULL)
+      {
         ds_conf->filesystem_path= ds_conf->node_data_path;
+      }
       if (ds_conf->data_server_checkpoint_path == NULL)
+      {
         ds_conf->data_server_checkpoint_path= ds_conf->filesystem_path;
+      }
       break;
     }
     case IC_CLIENT_TYPE:
@@ -119,12 +125,13 @@ complete_section(IC_CONFIG_STRUCT *ic_conf,
       if (((IC_CLIENT_CONFIG*)current_config)->mandatory_bits !=
           client_mandatory_bits)
         goto mandatory_error;
-      if ((error= ensure_node_name_set(current_config, ic_conf->perm_mc_ptr)))
+      if ((ret_code= ensure_node_name_set(current_config,
+                                          ic_conf->perm_mc_ptr)))
         goto error;
       ensure_pcntrl_hostname_set(current_config);
-      if ((error= ensure_node_data_path_set(current_config,
-                                            ic_conf,
-                                            ic_conf->perm_mc_ptr)))
+      if ((ret_code= ensure_node_data_path_set(current_config,
+                                               ic_conf,
+                                               ic_conf->perm_mc_ptr)))
         goto error;
       break;
     case IC_COMM_TYPE:
@@ -146,7 +153,7 @@ end:
   DEBUG_RETURN_INT(0);
 
 error:
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 mandatory_error:
   missing_bits= mandatory_bits ^
          ((IC_DATA_SERVER_CONFIG*)current_config)->mandatory_bits;
@@ -184,7 +191,7 @@ mandatory_error:
       ic_printf("Missing item is %s", conf_entry->config_entry_name.str);
     }
   }
-  DEBUG_RETURN_INT(1);
+  DEBUG_RETURN_INT(IC_ERROR_CONFIGURATION_ERROR);
 }
 
 static void
@@ -237,7 +244,9 @@ ensure_node_data_path_set(void *current_config,
     alloc_len= path_str_len + clu_connect_info->cluster_name.len +
                1 + node_name_str_len + 1;
     if (!(alloc_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, alloc_len)))
+    {
       return IC_ERROR_MEM_ALLOC;
+    }
 
     IC_INIT_STRING(&node_path_string, alloc_ptr, 0, TRUE);
     ic_add_string(&node_path_string, path_str);
@@ -290,7 +299,9 @@ ensure_node_name_set(void *current_config, IC_MEMORY_CONTAINER *mc_ptr)
     num_ptr[num_len]= 0;
     alloc_len= num_len + 1 + 5;
     if (!(alloc_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, alloc_len)))
+    {
       return IC_ERROR_MEM_ALLOC;
+    }
     memcpy(alloc_ptr, node_name_buffer, alloc_len);
     ds_conf->node_name= alloc_ptr;
   }
@@ -551,15 +562,17 @@ conf_serv_add_section(void *ic_conf,
                       IC_STRING *section_name,
                       guint32 pass)
 {
-  int error;
+  int ret_code;
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   DEBUG_ENTRY("conf_serv_add_section");
   DEBUG_IC_STRING(CONFIG_LEVEL, section_name);
   (void)section_number;
 
-  if ((error= complete_section(ic_conf, line_number, pass)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= complete_section(ic_conf, line_number, pass)))
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
   clu_conf->default_section= FALSE;
   if (ic_cmp_null_term_str(data_server_str, section_name) == 0)
   {
@@ -712,15 +725,17 @@ conf_serv_add_grid_common_section(void *ic_conf,
                                   IC_STRING *section_name,
                                   guint32 pass)
 {
-  int error;
+  int ret_code;
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf= conf->config_ptr.clu_conf;
   DEBUG_ENTRY("conf_serv_add_grid_common_section");
   DEBUG_IC_STRING(CONFIG_LEVEL, section_name);
   (void)section_number;
 
-  if ((error= complete_section(ic_conf, line_number, pass)))
-    DEBUG_RETURN_INT(error);
+  if ((ret_code= complete_section(ic_conf, line_number, pass)))
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
   clu_conf->default_section= FALSE;
   if (ic_cmp_null_term_str(cluster_server_str, section_name) == 0)
   {
@@ -798,13 +813,19 @@ conf_serv_add_key(void *ic_conf,
   (void)buf;
 
   if (clu_conf->current_node_config_type == IC_NO_CONFIG_TYPE)
+  {
     DEBUG_RETURN_INT(IC_ERROR_NO_SECTION_DEFINED_YET);
+  }
   if (!(conf_entry= (IC_CONFIG_ENTRY*)ic_hashtable_search(glob_conf_hash,
                                                           (void*)key_name)))
+  {
     DEBUG_RETURN_INT(IC_ERROR_NO_SUCH_CONFIG_KEY);
+  }
   struct_ptr= (gchar*)clu_conf->current_node_config + conf_entry->offset;
   if (!(conf_entry->config_types & (1 << clu_conf->current_node_config_type)))
+  {
     DEBUG_RETURN_INT(IC_ERROR_CORRECT_CONFIG_IN_WRONG_SECTION);
+  }
   if (conf_entry->is_mandatory && (pass != INITIAL_PASS))
   {
     ((IC_DATA_SERVER_CONFIG*)clu_conf->current_node_config)->mandatory_bits|=
@@ -826,9 +847,13 @@ conf_serv_add_key(void *ic_conf,
     DEBUG_RETURN_INT(0);
   }
   if (ic_conv_config_str_to_int(&value, data))
+  {
     DEBUG_RETURN_INT(IC_ERROR_WRONG_CONFIG_NUMBER);
+  }
   if (conf_entry->is_boolean && value > 1)
+  {
     DEBUG_RETURN_INT(IC_ERROR_NO_BOOLEAN_VALUE);
+  }
   num32_check= 1;
   num32_check<<= 32;
   if (!ic_cmp_null_term_str(node_id_str, key_name))
@@ -844,7 +869,8 @@ conf_serv_add_key(void *ic_conf,
           ("Trying to define node %u twice", (guint32)value));
         DEBUG_RETURN_INT(IC_ERROR_NODE_ALREADY_DEFINED);
       }
-      clu_conf->conf->node_config[value]= (gchar*)clu_conf->current_node_config;
+      clu_conf->conf->node_config[value]=
+        (gchar*)clu_conf->current_node_config;
       clu_conf->conf->node_types[value]= 
         (IC_NODE_TYPES)clu_conf->current_node_config_type;
     }
@@ -873,21 +899,30 @@ conf_serv_add_key(void *ic_conf,
     DEBUG_RETURN_INT(IC_ERROR_CONFIG_VALUE_OUT_OF_BOUNDS);
   }
   if (pass == INITIAL_PASS)
+  {
     DEBUG_RETURN_INT(0);
+  }
   /* Assign value of configuration variable according to its data type.  */
   if (conf_entry->data_type == IC_CHAR ||
       conf_entry->data_type == IC_BOOLEAN)
+  {
     *(guint8*)struct_ptr= (guint8)value;
+  }
   else if (conf_entry->data_type == IC_UINT16)
+  {
     *(guint16*)struct_ptr= (guint16)value;
+  }
   else if (conf_entry->data_type == IC_UINT32)
+  {
     *(guint32*)struct_ptr= (guint32)value;
+  }
   else if (conf_entry->data_type == IC_UINT64)
+  {
     *(guint64*)struct_ptr= value;
+  }
   else
   {
-    ic_assert(FALSE);
-    abort();
+    ic_require(FALSE);
     DEBUG_RETURN_INT(1);
   }
   DEBUG_RETURN_INT(0);
@@ -911,7 +946,9 @@ conf_serv_add_comment(void *ic_conf,
   (void)comment;
 
   if (pass == INITIAL_PASS)
+  {
     clu_conf->comments.num_comments++;
+  }
   DEBUG_RETURN_INT(0);
 }
 
@@ -1009,7 +1046,9 @@ verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
       first_node_port_number2= cm_conf->cluster_manager_port_number;
     }
     else
+    {
       first_node_port_number2= 0;
+    }
 
     for (j= i + 1; j <= clu_conf->max_node_id; j++)
     {
@@ -1050,7 +1089,9 @@ verify_hostname_port(IC_CLUSTER_CONFIG *clu_conf)
         second_node_port_number2= cm_conf->cluster_manager_port_number;
       }
       else
+      {
         second_node_port_number2= 0;
+      }
 
       ic_require(second_hostname);
 
@@ -1095,11 +1136,15 @@ conf_serv_verify_conf(void *ic_conf,
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
   IC_CLUSTER_CONFIG_LOAD *clu_conf_load= conf->config_ptr.clu_conf;
   IC_CLUSTER_CONFIG *clu_conf= clu_conf_load->conf;
-  int error;
-  if ((error= complete_section(ic_conf, line_number, pass)))
-    return error;
-  if ((error= verify_hostname_port(clu_conf)))
-    return error;
+  int ret_code;
+  if ((ret_code= complete_section(ic_conf, line_number, pass)))
+  {
+    return ret_code;
+  }
+  if ((ret_code= verify_hostname_port(clu_conf)))
+  {
+    return ret_code;
+  }
   return 0;
 }
 
@@ -1118,7 +1163,9 @@ conf_init_end(void *ic_conf)
       memory container.
     */
     if (clu_conf->temp_mc_ptr)
+    {
       clu_conf->temp_mc_ptr->mc_ops.ic_mc_free(clu_conf->temp_mc_ptr);
+    }
   }
   return;
 }

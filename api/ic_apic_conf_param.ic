@@ -67,8 +67,7 @@ init_config_object(gchar *conf_object, guint32 size_struct,
     if (conf_entry && conf_entry->config_types & (1 << config_type))
     {
       gchar *var_ptr= conf_object + conf_entry->offset;
-      if (conf_entry->offset >= size_struct)
-        abort();
+      ic_require(conf_entry->offset >= size_struct);
       init_config_default_value(var_ptr, conf_entry);
     }
   }
@@ -111,7 +110,7 @@ init_config_default_value(gchar *var_ptr, IC_CONFIG_ENTRY *conf_entry)
       break;
     }
     default:
-      abort();
+      ic_require(FALSE);
       break;
   }
 }
@@ -132,7 +131,9 @@ ic_keys_equal_comms(void *ptr1, void *ptr2)
        sock1->second_node_id == sock2->second_node_id) ||
        (sock1->first_node_id == sock2->second_node_id &&
         sock2->second_node_id == sock1->first_node_id))
+  {
     return 1;
+  }
   return 0;
 }
 
@@ -225,7 +226,9 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
   DEBUG_RETURN_INT(0);
 error:
   if (comm_hash)
+  {
     ic_hashtable_destroy(comm_hash, FALSE);
+  }
   DEBUG_RETURN_INT(1);
 }
 
@@ -236,7 +239,9 @@ ic_print_config_parameters(guint32 mask)
   guint32 inx, i;
 
   if (!glob_conf_entry_inited)
+  {
     return;
+  }
 
   for (i= 0; i < MAX_MAP_CONFIG_ID; i++)
   {
@@ -318,28 +323,50 @@ ic_print_config_parameters(guint32 mask)
           ic_assert(FALSE);
       }
       if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
+      {
         ic_printf("This config variable is used in a client node");
+      }
       if (conf_entry->config_types & (1 << IC_DATA_SERVER_TYPE))
+      {
         ic_printf("This config variable is used in a data server");
+      }
       if (conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE))
+      {
         ic_printf("This config variable is used in a cluster server");
+      }
       if (conf_entry->config_types & (1 << IC_SQL_SERVER_TYPE))
+      {
         ic_printf("This config variable is used in a sql server");
+      }
       if (conf_entry->config_types & (1 << IC_REP_SERVER_TYPE))
+      {
         ic_printf("This config variable is used in a replication server");
+      }
       if (conf_entry->config_types & (1 << IC_FILE_SERVER_TYPE))
+      {
         ic_printf("This config variable is used in a file server");
+      }
       if (conf_entry->config_types & (1 << IC_RESTORE_TYPE))
+      {
         ic_printf("This config variable is used in a restore node");
+      }
       if (conf_entry->config_types & (1 << IC_CLUSTER_MANAGER_TYPE))
+      {
         ic_printf("This config variable is used in a cluster manager");
+      }
       if (conf_entry->config_types & (1 << IC_COMM_TYPE))
+      {
         ic_printf("This config variable is used in connections");
+      }
       if (conf_entry->config_types & (1 << IC_SYSTEM_TYPE))
+      {
         ic_printf("This config variable is used in System (Cluster) section");
+      }
 
       if (conf_entry->is_mandatory)
+      {
         ic_printf("Entry is mandatory and has no default value");
+      }
       else if (conf_entry->is_string_type)
       {
         if (!conf_entry->is_mandatory)
@@ -350,20 +377,30 @@ ic_print_config_parameters(guint32 mask)
         continue;
       }
       else
+      {
         ic_printf("Default value is %u", (guint32)conf_entry->default_value);
+      }
       if (conf_entry->is_boolean)
       {
         ic_printf("Entry is either TRUE or FALSE");
         continue;
       }
       if (conf_entry->is_min_value_defined)
+      {
         ic_printf("Min value defined: %u", (guint32)conf_entry->min_value);
+      }
       else
+      {
         ic_printf("No min value defined");
+      }
       if (conf_entry->is_max_value_defined)
+      {
         ic_printf("Max value defined: %u", (guint32)conf_entry->max_value);
+      }
       else
+      {
         ic_printf("No max value defined");
+      }
     }
   }
 }
@@ -377,16 +414,22 @@ is_entry_used_in_version(IC_CONFIG_ENTRY *conf_entry,
 
   /* Check Ndb Version */
   if ((ic_version_num == 0) && conf_entry->is_only_iclaustron)
+  {
     return FALSE;
+  }
   if (conf_entry->min_ndb_version_used > ndb_version_num ||
       (conf_entry->max_ndb_version_used &&
        conf_entry->max_ndb_version_used < ndb_version_num))
+  {
     return FALSE;
+  }
   /* Check iClaustron Version */
   if (conf_entry->min_ic_version_used > ic_version_num ||
       (conf_entry->max_ic_version_used &&
        conf_entry->max_ic_version_used < ic_version_num))
+  {
     return FALSE;
+  }
   return TRUE;
 }
 
@@ -410,21 +453,33 @@ calculate_mandatory_bits()
     if (conf_entry->is_mandatory)
     {
       if (conf_entry->config_types & (1 << IC_DATA_SERVER_TYPE))
+      {
         data_server_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
+      }
       if (conf_entry->config_types & (1 << IC_CLIENT_TYPE))
+      {
         client_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
+      }
       if ((conf_entry->config_types & (1 << IC_CLUSTER_SERVER_TYPE)) ||
           (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
+      {
         cluster_server_mandatory_bits|=
           (guint64)(1 << conf_entry->mandatory_bit);
+      }
       if ((conf_entry->config_types & (1 << IC_REP_SERVER_TYPE)) ||
           (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
+      {
         rep_server_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
+      }
       if ((conf_entry->config_types & (1 << IC_SQL_SERVER_TYPE)) ||
           (conf_entry->config_types & (1 << IC_CLIENT_TYPE)))
+      {
         sql_server_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
+      }
       if (conf_entry->config_types & (1 << IC_COMM_TYPE))
+      {
         comm_mandatory_bits|= (guint64)(1 << conf_entry->mandatory_bit);
+      }
     }
   }
   {
@@ -487,7 +542,9 @@ void
 ic_destroy_conf_hash()
 {
   if (glob_conf_hash)
+  {
     ic_hashtable_destroy(glob_conf_hash, FALSE);
+  }
   glob_conf_entry_inited= FALSE;
 }
 
@@ -495,21 +552,21 @@ static void
 id_already_used_aborting(int id)
 {
   ic_printf("Id = %d is already used, aborting", id);
-  abort();
+  ic_require(FALSE);
 }
 
 static void
 id_out_of_range(int id)
 {
   ic_printf("Id = % is out of range", id);
-  abort();
+  ic_require(FALSE);
 }
 
 static void
 name_out_of_range(int id)
 {
   ic_printf("Name = % is out of range", id);
-  abort();
+  ic_require(FALSE);
 }
 
 /*
@@ -552,7 +609,8 @@ init_config_parameters()
   "Primary Cluster Server node in the grid";
 
   IC_SET_CONFIG_MAP(SYSTEM_CONFIGURATION_NUMBER, 11);
-  conf_entry->config_id= SYSTEM_CONFIGURATION_NUMBER - SYSTEM_SECTION_ADJUSTMENT;
+  conf_entry->config_id= SYSTEM_CONFIGURATION_NUMBER -
+                         SYSTEM_SECTION_ADJUSTMENT;
   map_inx_to_config_id[11]= SYSTEM_CONFIGURATION_NUMBER -
                             SYSTEM_SECTION_ADJUSTMENT;
   IC_SET_SYSTEM_CONFIG(conf_entry, system_configuration_number,

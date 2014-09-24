@@ -42,7 +42,9 @@ int ic_translate_error_string(gchar *error_str)
   {
     if (ic_error_str[i] &&
         strcmp(ic_error_str[i], error_str) == 0)
+    {
       return (i + IC_FIRST_ERROR);
+    }
   }
   return IC_ERROR_NO_SUCH_ERROR;
 }
@@ -58,10 +60,14 @@ ic_print_error(int error_number)
   {
     ic_printf("OS Error number = %d", error_number);
     if (ic_get_strerror(error_number, buf, sizeof(buf)))
+    {
       ic_printf("OS Error: %s", buf);
+    }
   }
   else
+  {
     ic_printf("%s", ic_error_str[error_number - IC_FIRST_ERROR]);
+  }
   perror("Last reported OS Error:");
 }
 
@@ -70,9 +76,13 @@ gchar *ic_get_error_message(int error_number)
   if (error_number < IC_FIRST_ERROR ||
       error_number > IC_LAST_ERROR ||
       !ic_error_str[error_number - IC_FIRST_ERROR])
+  {
     return no_such_error_str;
+  }
   else
+  {
     return ic_error_str[error_number - IC_FIRST_ERROR];
+  }
 }
 
 gchar*
@@ -90,11 +100,17 @@ ic_common_fill_error_buffer(const gchar *extra_error_message,
   gchar line_buf[128];
 
   if (!error_buffer)
+  {
     return NULL;
+  }
   if (error_code == IC_PROTOCOL_ERROR)
+  {
     line_err_msg= protocol_err_msg;
+  }
   else if (error_code != 0 && error_line != 0)
+  {
     line_err_msg= line_number_msg;
+  }
   err_msg= ic_get_error_message(error_code);
   err_msg_len= strlen(err_msg);
   memcpy(error_buffer, err_msg, err_msg_len);
@@ -377,6 +393,8 @@ ic_init_error_messages()
     "Attempt to start program without proper node id set";
   ic_error_str[IC_ERROR_FAILED_TO_SPAWN_PROGRAM - IC_FIRST_ERROR]=
     "Failed to spawn program from process controller";
+  ic_error_str[IC_ERROR_CONFIGURATION_ERROR - IC_FIRST_ERROR]=
+    "Error found in configuration file(s)";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

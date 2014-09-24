@@ -37,7 +37,9 @@ static gboolean
 ic_check_digit(gchar c)
 {
   if (c < '0' || c > '9')
+  {
     return FALSE;
+  }
   return TRUE;
 }
 
@@ -57,7 +59,9 @@ ic_convert_file_to_dir(gchar *buf, gchar *file_name)
   {
     *buf= *file_name;
     if (*buf == separator)
+    {
       last_separator= buf+1;
+    }
     buf++;
     file_name++;
   }
@@ -89,7 +93,9 @@ ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
   gboolean no_digit_found= FALSE;
 
   if (!ic_cmp_null_term_str(false_str, ic_str))
+  {
     return 0;
+  }
   else if (!ic_cmp_null_term_str(true_str, ic_str))
   {
     number= 1;
@@ -98,7 +104,9 @@ ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
   for (i= 0; i < ic_str->len; i++)
   {
     if (no_digit_found)
+    {
       return 1;
+    }
     if (ic_check_digit(ic_str->str[i]))
     {
       number*= 10;
@@ -109,15 +117,23 @@ ic_conv_config_str_to_int(guint64 *value, IC_STRING *ic_str)
       no_digit_found= TRUE;
       if ((ic_str->str[i] == 'k') ||
           (ic_str->str[i] == 'K'))
+      {
         number*= 1024;
+      }
       else if ((ic_str->str[i] == 'm') ||
                (ic_str->str[i] == 'M'))
+      {
         number*= (1024*1024);
+      }
       else if ((ic_str->str[i] == 'g') ||
                (ic_str->str[i] == 'G'))
+      {
         number*= (1024*1024*1024);
+      }
       else
+      {
         return 1;
+      }
     }
   }
   *value= number;
@@ -180,7 +196,9 @@ read_cr_line(gchar *iter_data)
     gchar iter_char= *iter_data;
     if (iter_char == CARRIAGE_RETURN ||
         iter_char == 0)
+    {
       return len;
+    }
     len++;
     iter_data++;
   } while (len < IC_MAX_CONFIG_LINE_LEN);
@@ -242,7 +260,9 @@ gchar *rm_space(gchar *val_str, guint32 *iter_len, guint32 len)
         val_str[0] == '\t')
        && *iter_len < len;
        val_str++, (*iter_len)++)
+  {
     ;
+  }
   return val_str;
 }
 
