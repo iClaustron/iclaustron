@@ -1,4 +1,4 @@
-/* Copyight (C) 2007-2013 iClaustron AB
+/* Copyight (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -199,13 +199,19 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
           socket_config->second_node_id= other_node_id;
           if (clu_conf->node_types[node_id] == IC_DATA_SERVER_NODE &&
               clu_conf->node_types[other_node_id] != IC_DATA_SERVER_NODE)
+          {
             socket_config->server_node_id= node_id;
+          }
           else if (clu_conf->node_types[other_node_id] ==
                      IC_DATA_SERVER_NODE &&
                    clu_conf->node_types[node_id] != IC_DATA_SERVER_NODE)
+          {
             socket_config->server_node_id= other_node_id;
+          }
           else
+          {
             socket_config->server_node_id= IC_MIN(node_id, other_node_id);
+          }
           clu_conf->comm_config[clu_conf->num_comms++]=
             (gchar*)socket_config;
           if (ic_hashtable_insert(comm_hash, (void*)socket_config,

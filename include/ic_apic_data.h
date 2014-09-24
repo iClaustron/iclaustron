@@ -87,6 +87,7 @@ typedef struct ic_cluster_connect_info IC_CLUSTER_CONNECT_INFO;
 
 struct ic_cluster_config
 {
+  void (*ic_free_cluster_config) (void *clu_conf);
   /*
     DESCRIPTION:
     ------------

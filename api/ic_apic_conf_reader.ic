@@ -1124,6 +1124,18 @@ conf_init_end(void *ic_conf)
 }
 
 static void
+free_cluster_config(void *ext_clu_conf)
+{
+  IC_CLUSTER_CONFIG *clu_conf= (IC_CLUSTER_CONFIG*)ext_clu_conf;
+  DEBUG_ENTRY("free_cluster_config");
+  if (clu_conf && clu_conf->comm_hash)
+  {
+    ic_hashtable_destroy(clu_conf->comm_hash, FALSE);
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
 conf_serv_end(void *ic_conf)
 {
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
@@ -1132,8 +1144,7 @@ conf_serv_end(void *ic_conf)
 
   if (clu_conf)
   {
-    if (clu_conf->conf->comm_hash)
-      ic_hashtable_destroy(clu_conf->conf->comm_hash, FALSE);
+    free_cluster_config(clu_conf->conf);
   }
   DEBUG_RETURN_EMPTY;
 }
@@ -1144,9 +1155,9 @@ static IC_CONFIG_OPERATIONS config_server_ops =
   /* .ic_add_section =  */ conf_serv_add_section,
   /* .ic_add_key     =  */ conf_serv_add_key,
   /* .ic_add_comment =  */ conf_serv_add_comment,
-  /* .ic_config_verify = */conf_serv_verify_conf,
+  /* .ic_config_verify =*/ conf_serv_verify_conf,
   /* .ic_init_end    =  */ conf_init_end,
-  /* .ic_config_end  =  */conf_serv_end
+  /* .ic_config_end  =  */ conf_serv_end
 };
 
 static IC_CONFIG_OPERATIONS grid_common_config_server_ops =
@@ -1155,9 +1166,9 @@ static IC_CONFIG_OPERATIONS grid_common_config_server_ops =
   /* .ic_add_section =  */ conf_serv_add_grid_common_section,
   /* .ic_add_key     =  */ conf_serv_add_key,
   /* .ic_add_comment =  */ conf_serv_add_comment,
-  /* .ic_config_verify = */conf_serv_verify_conf,
+  /* .ic_config_verify =*/ conf_serv_verify_conf,
   /* .ic_init_end    =  */ conf_init_end,
-  /* .ic_config_end  =  */conf_serv_end
+  /* .ic_config_end  =  */ conf_serv_end
 };
 
 /* Prepared for multi-threaded handling of different clusters */
@@ -1237,9 +1248,13 @@ load_config_server_from_files(gchar *config_file,
   DEBUG_ENTRY("load_config_server_from_files");
 
   if (is_grid_common_config)
+  {
     conf_server->clu_conf_ops= &grid_common_config_server_ops;
+  }
   else
+  {
     conf_server->clu_conf_ops= &config_server_ops;
+  }
 
   conf_server->config_ptr.clu_conf= NULL;
   DEBUG_PRINT(CONFIG_LEVEL, ("config_file = %s", config_file));
@@ -1273,12 +1288,20 @@ load_config_server_from_files(gchar *config_file,
     }
   }
   config_server_ops.ic_init_end(conf_server);
+  if (ret_ptr)
+  {
+    ret_ptr->ic_free_cluster_config= free_cluster_config;
+  }
   DEBUG_RETURN_PTR(ret_ptr);
 
 file_open_error:
   if (is_grid_common_config)
+  {
     err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_COMMON_GRID_CONFIG;
+  }
   else
+  {
     err_obj->err_num= IC_ERROR_FAILED_TO_OPEN_CLUSTER_CONFIG;
+  }
   DEBUG_RETURN_PTR(NULL);
 }

@@ -3216,11 +3216,15 @@ static void
 release_hash_on_cluster_config(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   guint32 i;
+  IC_CLUSTER_CONFIG *clu_conf;
 
   for (i= 0; i < IC_MAX_CLUSTER_ID; i++)
   {
-    if (run_obj->config.conf_objects[i])
-      ic_hashtable_destroy(run_obj->config.conf_objects[i]->comm_hash, FALSE);
+    clu_conf= run_obj->config.conf_objects[i];
+    if (clu_conf)
+    {
+      clu_conf->ic_free_cluster_config(clu_conf);
+    }
   }
 }
 

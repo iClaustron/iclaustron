@@ -1157,6 +1157,7 @@ init_global_data(IC_MEMORY_CONTAINER **mc_ptr)
       goto error;
     }
     glob_clusters[i++]= cluster;
+    glob_num_clusters= i; /* For error handling purposes */
   }
   glob_num_clusters= i;
 error:
@@ -1181,6 +1182,7 @@ int main(int argc, char *argv[])
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_MEMORY_CONTAINER *glob_mc_ptr= NULL;
   IC_PARSE_DATA parse_data;
+  IC_CLUSTER_CONFIG *clu_conf;
   gchar *parse_buf= NULL;
   gchar *read_buf;
   gchar *file_content= NULL;
@@ -1190,6 +1192,7 @@ int main(int argc, char *argv[])
   guint32 curr_pos= 0;
   guint32 curr_length= 0;
   guint32 line_size;
+  int i;
   gboolean end_of_input;
 
   if ((ret_code= ic_start_program(argc,
@@ -1254,6 +1257,13 @@ int main(int argc, char *argv[])
             glob_bootstrap_file);
 
 end:
+  for (i= (int)-1; i < (int)glob_num_clusters; i++)
+  {
+    clu_conf= (i < 0) ? glob_grid_cluster : glob_clusters[i];
+    if (clu_conf == NULL)
+      continue;
+    clu_conf->ic_free_cluster_config(clu_conf);
+  }
   if (file_content)
     ic_free(file_content);
   if (glob_mc_ptr)
