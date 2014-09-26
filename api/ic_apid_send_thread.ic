@@ -141,24 +141,32 @@ get_send_node_conn(IC_INT_APID_GLOBAL *apid_global,
                    guint32 cluster_id,
                    guint32 node_id)
 {
-  IC_API_CONFIG_SERVER *apic= apid_global->apic;
   IC_GRID_COMM *grid_comm= apid_global->grid_comm;
-  guint32 max_cluster_id= apic->max_cluster_id;
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  guint32 max_cluster_id= apid_global->max_cluster_id;
   guint32 max_node_id;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_CLUSTER_COMM *cluster_comm;
 
   if (cluster_id > max_cluster_id)
+  {
     return NULL;
+  }
   cluster_comm= grid_comm->cluster_comm_array[cluster_id];
   if (!cluster_comm)
+  {
     return NULL;
+  }
   clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
   if (!clu_conf)
+  {
     return NULL;
+  }
   max_node_id= clu_conf->max_node_id;
   if (node_id > max_node_id)
+  {
     return NULL;
+  }
   return cluster_comm->send_node_conn_array[node_id];
 }
 
@@ -365,7 +373,9 @@ remove_send_thread_from_listen_thread(
                                send_node_conn->apid_global);
   }
   else
+  {
     ic_mutex_unlock(listen_server_thread->mutex);
+  }
   DEBUG_RETURN_EMPTY;
 }
 
@@ -451,6 +461,7 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_NDB_RECEIVE_STATE *rec_state;
   IC_RECEIVE_NODE_CONNECTION *rec_node= &send_node_conn->rec_node;
+  DEBUG_ENTRY("move_node_to_receive_thread");
 
   rec_state= get_first_receive_thread(apid_global,
                                       send_node_conn->cluster_id);
@@ -476,6 +487,7 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   send_node_conn->next_add_node= rec_state->first_add_node;
   rec_state->first_add_node= send_node_conn;
   ic_mutex_unlock(rec_state->mutex);
+  DEBUG_RETURN_EMPTY;
 }
 
 static int
@@ -907,8 +919,11 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                 CONFIG_READ_BUF_SIZE, /* Used by authentication function */
                 client_api_connect,   /* Authentication function */
                 (void*)send_node_conn);  /* Authentication object */
+
     if (send_node_conn->conn == NULL)
+    {
       send_node_conn->stop_ordered= TRUE;
+    }
   }
   DEBUG_RETURN_INT(0);
 }
@@ -935,7 +950,7 @@ run_send_thread(void *data)
     to ensure that all threads and other preparatory activities have
     been done before we start connecting to the cluster. As soon as we
     connect to the cluster we're immediately a real-time application and
-    must avoid to heavy activities such as starting 100's of threads.
+    must avoid to do heavy activities such as starting 100's of threads.
   */
   send_tp->ts_ops.ic_thread_started(thread_state);
 
@@ -1019,6 +1034,8 @@ run_send_thread(void *data)
          the active send thread handling.
       */
       send_tp->ts_ops.ic_thread_unlock(thread_state);
+      if (send_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
+        break;
     }
     /*
       We have successfully connected to another node in this send thread.
@@ -1246,8 +1263,10 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
   IC_SOCKET_LINK_CONFIG *link_config;
   DEBUG_ENTRY("start_send_threads");
 
-  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  for (cluster_id= 0; cluster_id <= apid_global->max_cluster_id; cluster_id++)
   {
+    if (ic_get_stop_flag())
+      break;
     if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
       continue;
     my_node_id= clu_conf->my_node_id;
@@ -1276,7 +1295,9 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
                  (IC_TIMER)link_config->socket_max_wait_in_nanos;
         }
         else
+        {
           send_node_conn->max_wait_in_nanos= 0;
+        }
         send_node_conn->apid_global= apid_global;
         send_node_conn->link_config= link_config;
         send_node_conn->my_node_id= my_node_id;
@@ -1309,7 +1330,15 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
         }
         /* Indicate we have no send thread here */
         if (send_node_conn)
+        {
+          /**
+           * Should only arrive here when using NDB Management server
+           * With iClaustron we should always find a communication object
+           * to all other nodes in the cluster.
+           */
+          ic_assert(!apic->api_op.ic_use_iclaustron_cluster_server(apic));
           send_node_conn->send_thread_ended= TRUE;
+        }
       }
     }
   }

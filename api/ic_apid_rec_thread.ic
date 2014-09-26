@@ -735,7 +735,9 @@ run_receive_thread(void *data)
         ic_malloc(2 * (IC_MAX_THREAD_CONNECTIONS + 1) * sizeof(guint32))))
     goto end;
   for (i= 0; i < 2 * (IC_MAX_THREAD_CONNECTIONS + 1); i++)
+  {
     list_modules_received[i]= IC_MAX_THREAD_CONNECTIONS;
+  }
 
   list_page_modules_received= 
     &list_modules_received[IC_MAX_THREAD_CONNECTIONS + 1];
@@ -798,7 +800,9 @@ run_receive_thread(void *data)
     }
     check_for_reorg_receive_threads(rec_state);
     if (loop_once)
+    {
       check_send_buffers(rec_state);
+    }
   }
 
 end:
@@ -826,7 +830,6 @@ end:
     ic_free(list_modules_received);
   if (temp_thd_conn)
     ic_free(temp_thd_conn);
-  free_rec_thread(rec_state);
   rec_tp->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;
 }
@@ -842,7 +845,9 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
 
   if (!(rec_state=
          (IC_NDB_RECEIVE_STATE*)ic_calloc(sizeof(IC_NDB_RECEIVE_STATE))))
-    return ret_code;
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
   if (!(rec_state->mutex= ic_mutex_create()))
     goto error;
   if (!(rec_state->cond= ic_cond_create()))

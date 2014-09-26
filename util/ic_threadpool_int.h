@@ -107,6 +107,17 @@ struct ic_int_threadpool_state
   guint32 first_stopped_thread_id;
   guint32 num_stopped_threads;
 
+  /**
+   * This variable gives us a hint if we're at all making progress
+   * in the thread pool. If we are out of thread id's in the thread
+   * pool and this number is not moving ahead, then we've probably
+   * got stuck in most or all threads if it happens for a long time.
+   *
+   * If we get no new thread id and we're making progress, then we
+   * know that there is progress at least.
+   */
+  guint64 num_thread_allocations;
+
   /* Keep track of total thread pool size, set once, not protected */
   guint32 threadpool_size;
   /*

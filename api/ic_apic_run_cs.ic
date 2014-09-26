@@ -1064,7 +1064,7 @@ start_connect_missing_cluster_servers(gpointer data)
     ic_mutex_lock(rc_state->protect_state);
     ic_cond_wait(rc_state->connect_cond, rc_state->protect_state);
     ic_mutex_unlock(rc_state->protect_state);
-  } while (1);
+  } while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state));
 
 end_thread:
   tp_state->ts_ops.ic_thread_stops(thread_state);
@@ -2510,8 +2510,9 @@ wait_for_enough_connections(IC_INT_RUN_CLUSTER_SERVER *run_obj,
         */
         DEBUG_PRINT(CONFIG_LEVEL,
           ("No quorum reached, index %u, wait for more nodes", cs_index));
-        ic_cond_timed_wait(rc_state->connect_cond, rc_state->protect_state,
-                           3 * IC_MICROSEC_PER_SECOND);
+        ic_cond_timed_wait(rc_state->connect_cond,
+                           rc_state->protect_state,
+                     IC_WAIT_OTHER_CS_START_TIMER * IC_MICROSEC_PER_SECOND);
         DEBUG_PRINT(CONFIG_LEVEL,
           ("Wakeup after waiting for quorum to be reached, we're connected"));
       }
@@ -2834,7 +2835,8 @@ check_if_cs_started_thread_func(gpointer data)
   IC_CONF_VERSION_TYPE max_committed_version;
   guint32 i;
   int ret_code= 1;
-  gchar *err_str;
+  gchar err_str[ERROR_MESSAGE_SIZE];
+  gchar *err_ptr= &err_str[0];
   IC_CONF_VERSION_TYPE old_version;
   IC_API_CONFIG_SERVER *new_apic;
   IC_API_CLUSTER_CONNECTION api_cluster_conn;
@@ -2929,7 +2931,7 @@ beginning:
                 (guint32)3,
                 TRUE,
                 &ret_code,
-                &err_str)))
+                &err_ptr)))
         {
           ic_printf("Failed to get config from network: %s", err_str);
           ic_print_error(ret_code);
@@ -3110,7 +3112,7 @@ static int
 complete_startup_handling(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int ret_code;
-  gchar *err_str;
+  gchar err_str[ERROR_MESSAGE_SIZE];
   DEBUG_ENTRY("complete_startup_handling");
 
   /*
@@ -3122,7 +3124,7 @@ complete_startup_handling(IC_INT_RUN_CLUSTER_SERVER *run_obj)
                      (IC_API_CONFIG_SERVER*)run_obj->config.apic,
                      TRUE,
                      &ret_code,
-                     &err_str)))
+                     err_str)))
   {
     ic_printf("%s", err_str);
     DEBUG_RETURN_INT(ret_code);
@@ -3326,11 +3328,6 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
 
   if (run_obj)
   {
-    apid_global= run_obj->apid_global;
-    if (apid_global)
-    {
-      apid_global->apid_global_ops->ic_free_apid_global(apid_global);
-    }
     tp_state= run_obj->tp_state;
     if (tp_state)
     {
@@ -3344,6 +3341,15 @@ free_run_cluster(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       ic_cond_broadcast(run_obj->state.check_if_cs_started_cond);
       ic_cond_signal(run_obj->state.wait_server_connect_cond);
       ic_mutex_unlock(run_obj->state.protect_state);
+    }
+    apid_global= run_obj->apid_global;
+    if (apid_global)
+    {
+      apid_global->apid_global_ops->ic_free_apid_global(apid_global);
+    }
+    tp_state= run_obj->tp_state;
+    if (tp_state)
+    {
       tp_state->tp_ops.ic_threadpool_stop(tp_state);
     }
     conn= run_obj->conn;
@@ -3506,12 +3512,18 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     DEBUG_RETURN_INT(ret_code);
   }
 
+  if (tp_state->tp_ops.ic_threadpool_get_stop_flag(tp_state))
+    goto error;
+
   report_startup_completed(run_obj);
 
   if ((ret_code= handle_cluster_server_up_and_down(run_obj)))
   {
     DEBUG_RETURN_INT(ret_code);
   }
+
+  if (tp_state->tp_ops.ic_threadpool_get_stop_flag(tp_state))
+    goto error;
 
   /*
     Startup for our Cluster Server node is completed. It's now time to
@@ -3545,17 +3557,26 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       ("Failed to set-up listening connection"));
     goto error;
   }
-  do
+  while (!tp_state->tp_ops.ic_threadpool_get_stop_flag(tp_state))
   {
     if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(tp_state,
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))
+    {
+      /**
+       * Either we've waited for 60 seconds without getting a free thread
+       * which spells trouble since the Cluster Server doesn't handle
+       * that many long-running activities. Or we have received the stop
+       * flag and it's time to stop simply.
+       */
+      DEBUG_PRINT(THREAD_LEVEL, ("Failed to get new thread id"));
       goto error;
+    }
     if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       DEBUG_PRINT(COMM_LEVEL,
         ("Failed to accept a new connection"));
-      goto error;
+      continue;
     }
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Run cluster server has set up connection and has received"
@@ -3566,7 +3587,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     {
       DEBUG_PRINT(COMM_LEVEL,
       ("Failed to fork a new connection from an accepted connection"));
-      goto error;
+      continue;
     }
     if ((ret_code= start_cluster_server_thread(run_obj,
                                                fork_conn,
@@ -3575,11 +3596,16 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
     {
       DEBUG_PRINT(THREAD_LEVEL,
         ("Start new thread to handle configuration request failed"));
-      goto error;
+      /**
+       * We failed to start thread for new connection. We need to close the
+       * connection and continue processing.
+       */
+      fork_conn->conn_op.ic_close_connection(fork_conn);
+      continue;
     }
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Ready to accept a new connection"));
-  } while (1);
+  }
 
 error:
   DEBUG_RETURN_INT(ret_code);
@@ -4553,9 +4579,10 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
   IC_STRING process_name;
   gchar *read_buf;
   guint32 read_size;
-  guint32 endian_req_len, little_endian_len, big_endian_len;
+  guint32 endian_req_len;
   guint32 state= VERSION_REQ_STATE; /* get nodeid already received */
   int ret_code;
+  gchar endian_buf[32];
   DEBUG_ENTRY("rec_get_nodeid_req");
 
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
@@ -4639,28 +4666,20 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
         state= ENDIAN_REQ_STATE;
         break;
       case ENDIAN_REQ_STATE:
-        endian_req_len= strlen(endian_str);
+        g_snprintf(endian_buf, 32, "%s %s", endian_str, little_endian_str);
+        endian_req_len= strlen(endian_buf);
         if ((read_size < endian_req_len) ||
-            (memcmp(read_buf, endian_str, endian_req_len) != 0))
+            (memcmp(read_buf, endian_buf, endian_req_len) != 0))
         {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Protocol error in endian request state"));
-          PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
-        }
-        little_endian_len= strlen(little_endian_str);
-        big_endian_len= strlen(big_endian_str);
-        if (!((read_size == (endian_req_len + little_endian_len) &&
-              memcmp(read_buf + endian_req_len,
-                     little_endian_str,
-                     little_endian_len) == 0) ||
-             (read_size == endian_req_len + big_endian_len &&
-              memcmp(read_buf + endian_req_len,
-                     big_endian_str,
-                     big_endian_len) == 0)))
-        {
-          DEBUG_PRINT(CONFIG_LEVEL,
-            ("Failure in representation of what endian type"));
-          PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
+          g_snprintf(endian_buf, 32, "%s %s", endian_str, big_endian_str);
+          endian_req_len= strlen(endian_buf);
+          if ((read_size < endian_req_len) ||
+              (memcmp(read_buf, endian_buf, endian_req_len) != 0))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Protocol error in endian request state"));
+            PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
+          }
         }
         state= NAME_REQ_STATE;
         break;

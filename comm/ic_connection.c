@@ -489,12 +489,16 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
     time_out.tv_sec= 1; /* Timeout is 1 second */
 
     if (ic_tp_get_stop_flag())
+    {
       return IC_ERROR_APPLICATION_STOPPED;
+    }
     FD_ZERO(&select_set);
     FD_SET(conn->listen_sockfd, &select_set);
     select(conn->listen_sockfd + 1, &select_set, NULL, NULL, &time_out);
     if (conn->stop_flag)
+    {
       return IC_ERROR_CONNECT_THREAD_STOPPED;
+    }
     if (!(FD_ISSET(conn->listen_sockfd, &select_set)))
     {
       /*
@@ -565,9 +569,13 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
        IP version used.
      */
     if (client_address->ss_family != conn->client_addrinfo->ai_family)
+    {
       return IC_ERROR_DIFFERENT_IP_VERSIONS;
+    }
     if (addr_len != conn->client_addrinfo->ai_addrlen)
+    {
       return IC_ERROR_DIFFERENT_IP_VERSIONS;
+    }
     if (client_address->ss_family == AF_INET)
     {
       ipv4_check_address= (struct sockaddr_in*)conn->client_addrinfo->ai_addr;
@@ -576,21 +584,29 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
         not_accepted= TRUE;
       if (conn->client_port_num != 0 &&
           ipv4_client_address->sin_port != ipv4_check_address->sin_port)
+      {
         not_accepted= TRUE;
+      }
     }
     else if (client_address->ss_family == AF_INET6)
     {
       ipv6_check_address= (struct sockaddr_in6*)conn->client_addrinfo->ai_addr;
       if (conn->client_port_num != 0 &&
           ipv6_client_address->sin6_port != ipv6_check_address->sin6_port)
+      {
         not_accepted= TRUE;
+      }
       if (memcmp(ipv6_client_address->sin6_addr.s6_addr,
                  ipv6_check_address->sin6_addr.s6_addr,
                  sizeof(ipv6_check_address->sin6_addr.s6_addr)))
+      {
         not_accepted= TRUE;
+      }
     }
     else
+    {
       not_accepted= TRUE;
+    }
   }
   /* Record a human-readable address for the client part of the connection */
   ret_code= ic_sock_ntop(client_addr_ptr,
@@ -613,7 +629,9 @@ accept_socket_connection(IC_CONNECTION *ext_conn)
       conn->error_code= IC_ACCEPT_ERROR;
     }
     else
+    {
       handle_socket_error(conn, ret_code);
+    }
     ic_close_socket(ret_sockfd);
     return conn->error_code;
   }

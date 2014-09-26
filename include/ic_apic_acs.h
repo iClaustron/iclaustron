@@ -106,7 +106,6 @@ typedef struct ic_api_cluster_operations IC_API_CLUSTER_OPERATIONS;
 struct ic_api_config_server
 {
   IC_API_CLUSTER_OPERATIONS api_op;
-  guint32 max_cluster_id;
 };
 
 #define REC_BUF_SIZE 256

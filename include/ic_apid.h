@@ -1793,7 +1793,7 @@ struct ic_apid_global_ops
 IC_APID_GLOBAL* ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
                                       gboolean use_external_connect,
                                       int *ret_code,
-                                      gchar **err_str);
+                                      gchar *err_str);
 
 IC_APID_CONNECTION*
 ic_create_apid_connection(IC_APID_GLOBAL *apid_global,
@@ -1840,6 +1840,7 @@ struct ic_apid_global
   IC_APID_GLOBAL_OPS *apid_global_ops;
   IC_METADATA_BIND_OPS *apid_metadata_ops;
   IC_BITMAP *cluster_bitmap;
+  guint32 max_cluster_id;
 };
 
 struct ic_table_def

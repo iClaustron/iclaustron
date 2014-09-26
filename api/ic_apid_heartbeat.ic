@@ -56,9 +56,6 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                 (IC_APID_GLOBAL*)apid_global, NULL)))
     goto mem_error;
   apid_global->heartbeat_conn= heartbeat_conn;
-  if ((!(apid_global->heartbeat_mutex= ic_mutex_create())) ||
-      (!(apid_global->heartbeat_cond= ic_cond_create())))
-    goto mem_error;
   /* Start heartbeat thread */
   if ((error= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
                         tp_state,
@@ -96,7 +93,9 @@ add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     the first node to be connected before starting its activity.
   */
   if (apid_global->heartbeat_thread_waiting)
+  {
     ic_cond_signal(apid_global->heartbeat_cond);
+  }
   send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
   apid_global->first_heartbeat_node= send_node_conn;
   ic_mutex_unlock(apid_global->heartbeat_mutex);
@@ -217,13 +216,14 @@ run_heartbeat_thread(gpointer data)
     ndb_send(last_send_node_conn, hb_page, TRUE);
   }
 end_thread:
-  send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
-                                                      free_pages);
+  if (free_pages)
+  {
+    send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(send_buf_pool,
+                                                        free_pages);
+  }
   /* Free heartbeat resources */
   apid_conn->apid_conn_ops->ic_free_apid_connection(apid_conn);
   apid_global->heartbeat_conn= NULL;
-  ic_mutex_destroy(&apid_global->heartbeat_mutex);
-  ic_cond_destroy(&apid_global->heartbeat_cond);
 
   tp_state->ts_ops.ic_thread_stops(thread_state);
   DEBUG_THREAD_RETURN;

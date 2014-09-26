@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -64,7 +64,11 @@ static gboolean
 tp_get_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
-  return (gboolean)tp_state->stop_flag;
+  if (ic_get_stop_flag() || tp_state->stop_flag)
+  {
+    return TRUE;
+  }
+  return FALSE;
 }
 
 /* Set stop flag for all threads in thread pool */
@@ -197,7 +201,9 @@ thread_wait(IC_THREAD_STATE *ext_thread_state)
   do
   {
     ic_cond_wait(thread_state->cond, thread_state->mutex);
-  } while (thread_state->wait_wakeup && !thread_state->stop_flag);
+  } while (thread_state->wait_wakeup &&
+           !thread_state->stop_flag &&
+           !ic_get_stop_flag());
   DEBUG_RETURN_EMPTY;
 }
 
@@ -287,6 +293,7 @@ get_free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   ic_assert(thread_state->free);
   tp_state->first_free_thread_id= thread_state->next_thread_id;
   tp_state->num_free_threads--;
+  tp_state->num_thread_allocations++;
   thread_state->next_thread_id= IC_MAX_UINT32;
   *thread_id= first_free_thread_id;
   thread_state->free= FALSE;
@@ -296,24 +303,27 @@ get_free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
 
 /* Get a thread object by id, wait for a while if no one available */
 static int
-get_thread_id_wait(IC_THREADPOOL_STATE *ext_tp_state,
+get_thread_id_wait(IC_THREADPOOL_STATE *tp_state,
                    guint32 *thread_id,
                    guint32 time_out_seconds)
 {
   guint32 loc_thread_id= 0;
   guint32 loop_count= 0;
   int ret_code;
+  DEBUG_ENTRY("get_thread_id_wait");
 
-  while ((ret_code= get_free_thread_id(ext_tp_state,
+  while ((ret_code= get_free_thread_id(tp_state,
                                        &loc_thread_id)) &&
-         loop_count < time_out_seconds)
+         ((time_out_seconds == 0) || loop_count < time_out_seconds) &&
+         (!ic_tp_get_stop_flag()))
   {
+    DEBUG_PRINT(THREAD_LEVEL, ("No free threads available, sleep for 1 sec"));
     ic_sleep(1); /* Sleep one second waiting for a thread to finish */
-    check_threads(ext_tp_state);
+    check_threads(tp_state);
     loop_count++;
   }
   *thread_id= loc_thread_id;
-  return ret_code;
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /* Put thread object into free list */
@@ -415,8 +425,10 @@ start_thread_with_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
       do
       {
         ic_cond_wait(thread_state->cond, thread_state->mutex);
-      } while (!(thread_state->stop_flag || thread_state->started));
-      stop_flag= thread_state->stop_flag;
+      } while (!(thread_state->stop_flag ||
+                 ic_get_stop_flag() ||
+                 thread_state->started));
+      stop_flag= thread_state->stop_flag || ic_get_stop_flag();
       ic_cond_signal(thread_state->cond);
       ic_mutex_unlock(thread_state->mutex);
       if (stop_flag)
@@ -488,7 +500,9 @@ run_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
   thread_state= tp_state->thread_state[thread_id];
   ic_mutex_lock(thread_state->mutex);
   /* Start thread waiting for command to start run phase */
-  while (!(thread_state->startup_done || thread_state->stop_flag))
+  while (!(thread_state->startup_done ||
+           thread_state->stop_flag ||
+           ic_get_stop_flag()))
   {
     ic_cond_wait(thread_state->cond, thread_state->mutex);
   }
@@ -617,7 +631,7 @@ thread_startup_done(IC_THREAD_STATE *ext_thread_state)
     ic_assert(thread_state->synch_startup);
     thread_state->startup_done= TRUE;
     ic_cond_signal(thread_state->cond);
-    if (thread_state->stop_flag)
+    if (thread_state->stop_flag || ic_get_stop_flag())
       goto stop_end;
     /* Wait for management thread to signal us to continue */
     if (thread_state->startup_ready_to_proceed)
@@ -626,7 +640,7 @@ thread_startup_done(IC_THREAD_STATE *ext_thread_state)
   } while (1);
   thread_state->synch_startup= FALSE;
   /* Check whether we're requested to stop or not */
-  if (thread_state->stop_flag)
+  if (thread_state->stop_flag || ic_get_stop_flag())
     goto stop_end;
   ic_mutex_unlock(thread_state->mutex);
   DEBUG_RETURN_INT(FALSE);
@@ -659,7 +673,9 @@ ts_get_stop_flag(IC_THREAD_STATE *ext_thread_state)
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
 
   if (ic_get_stop_flag())
+  {
     thread_state->stop_flag= TRUE;
+  }
   return thread_state->stop_flag;
 }
 
@@ -705,6 +721,7 @@ ic_create_threadpool(guint32 pool_size,
 
   thread_state_ptr= tp_state->thread_state_allocation;
   tp_state->threadpool_size= pool_size;
+  tp_state->num_thread_allocations= 0;
   tp_state->first_free_thread_id= IC_MAX_UINT32;
   tp_state->first_stopped_thread_id= IC_MAX_UINT32;
   tp_state->use_internal_mutex= use_internal_mutex;

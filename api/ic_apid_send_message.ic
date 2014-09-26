@@ -681,15 +681,21 @@ map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
   apic= apid_global->apic;
   grid_comm= apid_global->grid_comm;
   ret_code= IC_ERROR_NO_SUCH_CLUSTER;
-  if (cluster_id > apic->max_cluster_id)
+  if (cluster_id > apid_global->max_cluster_id)
+  {
     return ret_code;
+  }
   cluster_comm= grid_comm->cluster_comm_array[cluster_id];
   if (!cluster_comm)
+  {
     return ret_code;
+  }
   ret_code= IC_ERROR_NO_SUCH_NODE;
   loc_send_node_conn= cluster_comm->send_node_conn_array[node_id];
   if (!loc_send_node_conn)
+  {
     return ret_code;
+  }
   *send_node_conn= loc_send_node_conn;
   return 0;
 }

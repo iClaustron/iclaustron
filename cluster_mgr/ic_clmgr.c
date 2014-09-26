@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -748,7 +748,9 @@ ic_list_cmd(IC_PARSE_DATA *parse_data)
   if ((ret_code= ic_send_with_cr(parse_data->conn,
   "CLUSTER_NAME                    CLUSTER_ID")))
     goto error;
-  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  for (cluster_id= 0;
+       cluster_id <= apic->api_op.ic_get_max_cluster_id(apic);
+       cluster_id++)
   {
     clu_conf= apic->api_op.ic_get_cluster_config(apic, (guint32)cluster_id);
     if (!clu_conf)

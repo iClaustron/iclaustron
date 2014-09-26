@@ -158,6 +158,7 @@ ic_get_stop_flag()
 void
 ic_set_stop_flag()
 {
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Set stop flag for process"));
   ic_stop_flag= 1;
 }
 

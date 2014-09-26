@@ -235,6 +235,7 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
           ic_hashtable_destroy(apid_conn->md_hash[i], FALSE);
         }
       }
+      ic_free(apid_conn->md_hash);
     }
     if (apid_conn->tc_conn)
     {
@@ -245,6 +246,7 @@ apid_conn_free_apid_connection(IC_APID_CONNECTION *ext_apid_conn)
           ic_hashtable_destroy(apid_conn->tc_conn[i], FALSE);
         }
       }
+      ic_free(apid_conn->tc_conn);
     }
     if (apid_conn->cluster_id_bitmap)
       ic_free_bitmap(apid_conn->cluster_id_bitmap);

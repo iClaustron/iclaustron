@@ -110,13 +110,17 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   if (!(*apid_global= ic_create_apid_global(*apic,
                                             FALSE,
                                             &ret_code,
-                                            err_str)))
-    goto error;
+                                            error_buf)))
+    goto apid_error;
   *err_str= NULL;
   DEBUG_RETURN_INT(0);
 
 error:
   DEBUG_RETURN_INT(ret_code);
+
+apid_error:
+  ic_printf("%s", error_buf);
+  goto error;
 }
 
 void
@@ -342,6 +346,7 @@ print_start_program(gchar *program_name)
 }
 
 static void ic_end_fe(void *param);
+static void ic_end_fe_no_param(void);
 
 int
 ic_start_program(int argc,
@@ -440,7 +445,7 @@ ic_start_program(int argc,
   if ((ret_code= ic_init()))
     goto error;
 
-  atexit(ic_end);
+  atexit(ic_end_fe_no_param);
   ic_set_sig_error_handler(ic_end_fe, NULL);
   ic_set_die_handler(ic_end_fe, NULL);
 
@@ -554,6 +559,12 @@ ic_init()
   }
   ic_inited= 1;
   DEBUG_RETURN_INT(0);
+}
+
+static void
+ic_end_fe_no_param(void)
+{
+  ic_end_fe(NULL);
 }
 
 static void
