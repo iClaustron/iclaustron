@@ -2831,14 +2831,16 @@ start_check_thread(IC_THREADPOOL_STATE *tp_state)
   guint32 thread_id;
   int ret_code;
   DEBUG_ENTRY("start_check_thread");
-
+  DEBUG_PRINT(THREAD_LEVEL, ("Start thread in run_check_thread"));
   if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread(tp_state,
                                                   &thread_id,
                                                   run_check_thread,
                                                   NULL,
                                                   IC_MEDIUM_STACK_SIZE,
                                                   FALSE)))
+  {
     DEBUG_RETURN_INT(ret_code);
+  }
   DEBUG_RETURN_INT(0);
 }
 
@@ -3229,6 +3231,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
         We have an active connection, we'll handle the connection in a
         separate thread.
       */
+      DEBUG_PRINT(THREAD_LEVEL, ("Starting thread in run_command_handler"));
       if (tp_state->tp_ops.ic_threadpool_start_thread(tp_state,
                                                       &thread_id,
                                                       run_command_handler,

@@ -110,6 +110,10 @@ stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
     ic_mutex_unlock(tp_state->free_list_mutex);
     if (num_free_threads == pool_size)
       break;
+
+    DEBUG_PRINT(THREAD_LEVEL, ("pool_size: %u, num_free: %u",
+                pool_size,
+                num_free_threads));
     if (loop_count > IC_MAX_WAIT_THREADPOOL_STOP)
     {
       ic_printf("We waited for %d seconds to stop threadpool unsuccessfully"
@@ -275,7 +279,7 @@ thread_set_cond(IC_THREAD_STATE *ext_thread_state, IC_COND *cond)
 /* Get a thread object by id */
 static int
 get_free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
-              guint32 *thread_id)
+                   guint32 *thread_id)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   IC_INT_THREAD_STATE *thread_state;
@@ -298,6 +302,7 @@ get_free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   *thread_id= first_free_thread_id;
   thread_state->free= FALSE;
   ic_mutex_unlock(tp_state->free_list_mutex);
+  DEBUG_PRINT(THREAD_LEVEL, ("Allocated thread id: %u", *thread_id));
   return 0;
 }
 
@@ -324,6 +329,27 @@ get_thread_id_wait(IC_THREADPOOL_STATE *tp_state,
   }
   *thread_id= loc_thread_id;
   DEBUG_RETURN_INT(ret_code);
+}
+
+static void
+free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
+               guint32 thread_id)
+{
+  IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
+  IC_INT_THREAD_STATE *thread_state;
+  guint32 first_free_thread_id;
+
+  /* Put thread id into free list */
+  ic_mutex_lock(tp_state->free_list_mutex);
+  thread_state= tp_state->thread_state[thread_id];
+  first_free_thread_id= tp_state->first_free_thread_id;
+  thread_state->next_thread_id= first_free_thread_id;
+  tp_state->first_free_thread_id= thread_id;
+  tp_state->num_free_threads++;
+  ic_assert(!thread_state->free);
+  thread_state->free= TRUE;
+  ic_mutex_unlock(tp_state->free_list_mutex);
+  DEBUG_PRINT(THREAD_LEVEL, ("free thread id: %u", thread_id));
 }
 
 /* Put thread object into free list */
@@ -368,7 +394,6 @@ check_threads(IC_THREADPOOL_STATE *ext_tp_state)
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   IC_INT_THREAD_STATE *thread_state;
   guint32 first_stopped_thread_id;
-  DEBUG_ENTRY("check_threads");
 
   while (1)
   {
@@ -385,7 +410,6 @@ check_threads(IC_THREADPOOL_STATE *ext_tp_state)
     ic_mutex_unlock(tp_state->stop_list_mutex);
     break;
   }
-  DEBUG_RETURN_EMPTY;
 }
 
 /* Start a thread using a specified thread object */
@@ -462,18 +486,23 @@ start_thread(IC_THREADPOOL_STATE *ext_tp_state,
   int ret_code;
   DEBUG_ENTRY("start_thread");
 
-  if ((ret_code= get_free_thread_id(ext_tp_state, &loc_thread_id)) ||
-      (ret_code= start_thread_with_thread_id(ext_tp_state,
-                                             loc_thread_id,
-                                             thread_func,
-                                             thread_obj,
-                                             stack_size,
-                                             synch_startup)))
+  if (!(ret_code= get_free_thread_id(ext_tp_state, &loc_thread_id)))
   {
-    DEBUG_RETURN_INT(ret_code);
+    if ((ret_code= start_thread_with_thread_id(ext_tp_state,
+                                               loc_thread_id,
+                                               thread_func,
+                                               thread_obj,
+                                               stack_size,
+                                               synch_startup)))
+    {
+      free_thread_id(ext_tp_state, loc_thread_id);
+    }
   }
-  *thread_id= loc_thread_id;
-  DEBUG_RETURN_INT(0);
+  if (!ret_code)
+  {
+    *thread_id= loc_thread_id;
+  }
+  DEBUG_RETURN_INT(ret_code);
 }
   
 /* Get thread state object given the thread id */
@@ -743,6 +772,9 @@ ic_create_threadpool(guint32 pool_size,
       goto mem_alloc_error;
     free_thread(tp_state, thread_state, i);
   }
+  DEBUG_PRINT(THREAD_LEVEL, ("pool_size: %u, num_free_threads: %u",
+              tp_state->threadpool_size,
+              tp_state->num_free_threads));
 
   /* Thread pool functions */
   tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id=
@@ -751,6 +783,7 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->tp_ops.ic_threadpool_get_thread_id= get_free_thread_id;
   tp_state->tp_ops.ic_threadpool_get_thread_id_wait= get_thread_id_wait;
   tp_state->tp_ops.ic_threadpool_get_thread_state= get_thread_state;
+  tp_state->tp_ops.ic_threadpool_free_thread_id= free_thread_id;
   tp_state->tp_ops.ic_threadpool_join= join_thread;
   tp_state->tp_ops.ic_threadpool_run_thread= run_thread;
   tp_state->tp_ops.ic_threadpool_stop_thread= stop_thread_without_wait;

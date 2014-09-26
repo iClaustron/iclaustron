@@ -710,7 +710,7 @@ start_connect_cs_threads(IC_INT_RUN_CLUSTER_SERVER *run_obj)
     thread_data.run_obj= run_obj;
     thread_data.cs_index= i;
     info_cs->is_start_thread_active= TRUE;
-    DEBUG_PRINT(CONFIG_LEVEL,
+    DEBUG_PRINT(THREAD_LEVEL,
       ("Start new thread with index %u in start_cs_func", i));
     if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
                                   tp_state,
@@ -996,9 +996,8 @@ start_connect_server_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int ret_code;
   IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
-  DEBUG_ENTRY("start_connect_server_thread");
 
-  DEBUG_PRINT(CONFIG_LEVEL, ("Start connect server thread"));
+  DEBUG_PRINT(THREAD_LEVEL, ("Start thread in connect_server_thread"));
   if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
        tp_state,
        &run_obj->connect_server_thread_id,
@@ -1010,7 +1009,7 @@ start_connect_server_thread(IC_INT_RUN_CLUSTER_SERVER *run_obj)
   tp_state->tp_ops.ic_threadpool_run_thread(tp_state,
                         run_obj->connect_server_thread_id);
 end:
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 static int
@@ -1018,9 +1017,9 @@ handle_cluster_server_up_and_down(IC_INT_RUN_CLUSTER_SERVER *run_obj)
 {
   int ret_code;
   IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
-  DEBUG_ENTRY("handle_cluster_server_up_and_down");
 
-  DEBUG_PRINT(CONFIG_LEVEL, ("Start background thread"));
+  DEBUG_PRINT(THREAD_LEVEL,
+              ("Start thread in start_connect_missing_cluster_servers"));
   ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
        tp_state,
        &run_obj->bg_thread_id,
@@ -1028,7 +1027,7 @@ handle_cluster_server_up_and_down(IC_INT_RUN_CLUSTER_SERVER *run_obj)
        (void*)run_obj,
        IC_MEDIUM_STACK_SIZE,
        FALSE);
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 static gpointer
@@ -3060,6 +3059,8 @@ check_if_cs_started(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_RUN_CLUSTER_STATE *rc_state= &run_obj->state;
   DEBUG_ENTRY("check_if_cs_started");
 
+  DEBUG_PRINT(THREAD_LEVEL,
+              ("Starting thread in check_if_cs_started_thread_func"));
   if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
                 tp_state,
                 &thread_id,
@@ -3499,6 +3500,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   IC_THREADPOOL_STATE *tp_state= run_obj->tp_state;
   gchar str_port[IC_NUMBER_SIZE];
   int ret_code= 0;
+  gboolean allocated_thread= FALSE;
   guint32 thread_id;
   guint32 my_nodeid;
   IC_CONNECTION *conn, *fork_conn;
@@ -3559,6 +3561,16 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
   }
   while (!tp_state->tp_ops.ic_threadpool_get_stop_flag(tp_state))
   {
+    if (allocated_thread)
+    {
+      /**
+       * If for some reason we fail to come to the point of starting the
+       * thread, then we need to release the allocated thread id.
+       * If we manage to start the thread, this will be handled by the
+       * thread that was started as part of thread stop code.
+       */
+      tp_state->tp_ops.ic_threadpool_free_thread_id(tp_state, thread_id);
+    }
     if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(tp_state,
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))
@@ -3572,6 +3584,7 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       DEBUG_PRINT(THREAD_LEVEL, ("Failed to get new thread id"));
       goto error;
     }
+    allocated_thread= TRUE;
     if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       DEBUG_PRINT(COMM_LEVEL,
@@ -3603,8 +3616,17 @@ run_cluster_server(IC_RUN_CLUSTER_SERVER *ext_run_obj)
       fork_conn->conn_op.ic_close_connection(fork_conn);
       continue;
     }
+    /**
+     * Now we have successfully started the new thread, it is now this thread
+     * that has the responsibility to return the thread id to the thread pool.
+     */
+    allocated_thread= FALSE;
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Ready to accept a new connection"));
+  }
+  if (allocated_thread)
+  {
+    tp_state->tp_ops.ic_threadpool_free_thread_id(tp_state, thread_id);
   }
 
 error:
@@ -3633,9 +3655,9 @@ start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER* run_obj,
                             guint32 thread_id)
 {
   int ret_code;
-  DEBUG_ENTRY("start_cluster_server_thread");
 
   conn->conn_op.ic_set_param(conn, (void*)run_obj);
+  DEBUG_PRINT(THREAD_LEVEL, ("Starting thread in run_cluster_server_thread"));
   ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                                               tp_state,
                                               thread_id,
@@ -3643,7 +3665,7 @@ start_cluster_server_thread(IC_INT_RUN_CLUSTER_SERVER* run_obj,
                                               conn,
                                               IC_SMALL_STACK_SIZE,
                                               FALSE);
-  DEBUG_RETURN_INT(ret_code);
+  return ret_code;
 }
 
 /* Run a Cluster Server thread */

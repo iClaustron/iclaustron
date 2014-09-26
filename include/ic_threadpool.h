@@ -132,6 +132,10 @@ struct ic_threadpool_ops
                                             guint32 *thread_id,
                                             guint32 time_out_seconds);
 
+  /* Free a thread id that hadn't successfully been used to start a thread */
+  void (*ic_threadpool_free_thread_id) (IC_THREADPOOL_STATE *tp_state,
+                                       guint32 thread_id);
+
   /* Wait for thread to explicitly have released all its resources */
   void (*ic_threadpool_join) (IC_THREADPOOL_STATE *tp_state,
                               guint32 thread_id);

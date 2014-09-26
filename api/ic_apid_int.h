@@ -652,6 +652,7 @@ struct ic_int_apid_global
   IC_APID_GLOBAL_OPS *apid_global_ops;
   IC_METADATA_BIND_OPS *apid_metadata_ops;
   IC_BITMAP *cluster_bitmap;
+  guint32 max_cluster_id;
   /* Hidden part */
   /* Internal part */
   IC_MUTEX *mutex;
@@ -664,7 +665,6 @@ struct ic_int_apid_global
     cluster id as key.
   */
   IC_APID_CLUSTER_DATA **cluster_data_array;
-  guint32 max_cluster_id;
 
   guint32 num_user_threads_started;
   gboolean stop_flag;

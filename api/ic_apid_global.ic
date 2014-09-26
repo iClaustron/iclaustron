@@ -184,7 +184,7 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
 
   max_cluster_id= apic->api_op.ic_get_max_cluster_id(apic);
   num_bits= max_cluster_id + 1;
-  DEBUG_PRINT(PROGRAM_LEVEL, ("max_cluster_id=%u", max_cluster_id));
+
   if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL,
                                                       num_bits)))
     goto error;
@@ -203,7 +203,6 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   */
   for (i= 0; i <= max_cluster_id; i++)
   {
-    DEBUG_PRINT(PROGRAM_LEVEL, ("Y0"));
     if ((clu_conf= apic->api_op.ic_get_cluster_config(apic, i)))
     {
       if (my_node_id)
@@ -220,7 +219,6 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   ic_require(my_node_id);
   apid_global->my_node_id= my_node_id;
 
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Y1"));
   if (!(apid_global->mutex= ic_mutex_create()))
     goto error;
   if (!(apid_global->cond= ic_cond_create()))
@@ -237,11 +235,9 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
     goto error;
   if (!(apid_global->dynamic_map_array= ic_create_dynamic_ptr_array()))
     goto error;
-  DEBUG_PRINT(PROGRAM_LEVEL, ("apid_global->max_cluster_id=%u",
-              apid_global->max_cluster_id));
+
   for (i= 0; i <= apid_global->max_cluster_id; i++)
   {
-    DEBUG_PRINT(PROGRAM_LEVEL, ("Y3"));
     if ((clu_conf= apic->api_op.ic_get_cluster_config(apic,i)))
     {
       if (!(cluster_comm= (IC_CLUSTER_COMM*)
@@ -275,7 +271,6 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
                                 FALSE)))
         goto error;
 
-      DEBUG_PRINT(PROGRAM_LEVEL, ("Y4"));
       for (j= 1; j <= clu_conf->max_node_id; j++)
       {
         if (clu_conf->node_config[j])
@@ -292,7 +287,6 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
       }
     }
   }
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Y5"));
   DEBUG_RETURN_PTR(apid_global);
 error:
   ic_end_apid(apid_global);
@@ -302,9 +296,11 @@ error:
 static void
 free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
-  DEBUG_ENTRY("free_send_node_conn");
   if (send_node_conn == NULL)
-    goto end;
+  {
+    return;
+  }
+  DEBUG_ENTRY("free_send_node_conn");
   if (send_node_conn->conn)
   {
     send_node_conn->conn->conn_op.ic_free_connection(send_node_conn->conn);
@@ -326,7 +322,6 @@ free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
     ic_free(send_node_conn->dynamic_port_number_to_release);
   }
   ic_free(send_node_conn);
-end:
   DEBUG_RETURN_EMPTY;
 }
 
@@ -553,6 +548,7 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
                     gboolean signal_flag)
 {
   guint32 node_id, cluster_id, i, thread_id;
+  guint32 num_receive_threads;
   IC_CLUSTER_CONFIG *clu_conf;
   IC_API_CONFIG_SERVER *apic= apid_global->apic;
   IC_SEND_NODE_CONNECTION *send_node_conn;
@@ -582,13 +578,10 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
     {
       if (clu_conf->node_config[node_id] && node_id != clu_conf->my_node_id)
       {
-        DEBUG_PRINT(THREAD_LEVEL, ("X00"));
         send_node_conn= cluster_comm->send_node_conn_array[node_id];
         if (send_node_conn)
         {
-          DEBUG_PRINT(THREAD_LEVEL, ("X0"));
           ic_mutex_lock(send_node_conn->mutex);
-          DEBUG_PRINT(THREAD_LEVEL, ("X01"));
           if (!send_node_conn->send_thread_ended)
           {
             if (stop_ordered)
@@ -627,9 +620,7 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
   if (signal_flag)
   {
     /* Wake all receive threads in start position */
-    DEBUG_PRINT(THREAD_LEVEL, ("X1"));
     ic_mutex_lock(apid_global->mutex);
-    DEBUG_PRINT(THREAD_LEVEL, ("X2"));
     for (i= 0; i < apid_global->num_receive_threads; i++)
     {
       DEBUG_PRINT(THREAD_LEVEL, ("Wake receive thread %u to run", i));
@@ -642,21 +633,26 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
   DEBUG_PRINT(THREAD_LEVEL, ("Completed second phase of start_connect_phase"));
   if (stop_ordered)
   {
-    /* Wait for all receive threads to have exited */
+    /**
+     * Wait for all receive threads to have exited
+     * We need to recall the number of receive threads since we cannot
+     * release its data yet. At this point no new receive threads
+     * will be started and no receive threads will be stopped other
+     * through this code.
+     */
+    num_receive_threads= apid_global->num_receive_threads;
     while (1)
     {
-      DEBUG_PRINT(THREAD_LEVEL, ("X3"));
       ic_mutex_lock(apid_global->mutex);
-      DEBUG_PRINT(THREAD_LEVEL, ("X4"));
-      if (apid_global->num_receive_threads == 0)
+      if (num_receive_threads == 0)
       {
         ic_mutex_unlock(apid_global->mutex);
         DEBUG_PRINT(THREAD_LEVEL, ("No receive threads to stop"));
         break;
       }
-      thread_id= apid_global->num_receive_threads - 1;
+      thread_id= num_receive_threads - 1;
       rec_state= apid_global->receive_threads[thread_id];
-      apid_global->num_receive_threads--;
+      num_receive_threads--;
       ic_mutex_unlock(apid_global->mutex);
       DEBUG_PRINT(THREAD_LEVEL, ("Stop receive thread %u now",
                   rec_state->thread_id));

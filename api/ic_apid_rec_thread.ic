@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -693,11 +693,17 @@ free_rec_thread(IC_NDB_RECEIVE_STATE *rec_state)
 {
   DEBUG_ENTRY("free_rec_thread");
   if (rec_state->poll_set)
+  {
     rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
+  }
   if (rec_state->mutex)
+  {
     ic_mutex_destroy(&rec_state->mutex);
+  }
   if (rec_state->cond)
+  {
     ic_cond_destroy(&rec_state->cond);
+  }
   ic_free((void*)rec_state);
   DEBUG_RETURN_EMPTY;
 }
@@ -856,6 +862,7 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
   rec_state->cluster_id= cluster_id;
   rec_state->rec_buf_pool= apid_global->send_buf_pool;
   rec_state->message_pool= apid_global->ndb_message_pool;
+  DEBUG_PRINT(THREAD_LEVEL, ("Starting thread in run_receive_thread"));
   if ((!(rec_state->poll_set= ic_create_poll_set())) ||
       (ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
                         tp_state,

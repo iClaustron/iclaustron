@@ -1116,6 +1116,7 @@ handle_new_connection(IC_CONNECTION *conn,
   DEBUG_ENTRY("handle_new_connection");
 
   conn->conn_op.ic_set_param(conn, (void*)apic);
+  DEBUG_PRINT(THREAD_LEVEL, ("Starting thread in run_handle_new_connection"));
   if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                             tp_state,
                             thread_id,
@@ -1136,16 +1137,18 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
 {
   int ret_code;
   guint32 thread_id;
+  gboolean allocated_thread= FALSE;
   IC_CONNECTION *fork_conn;
   DEBUG_ENTRY("wait_for_connections_and_fork");
 
-  do
+  while (!tp_state->tp_ops.ic_threadpool_get_stop_flag(tp_state))
   {
     if ((ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
                                                      tp_state,
                                                      &thread_id,
                                                      IC_MAX_THREAD_WAIT_TIME)))
       goto error;
+    allocated_thread= TRUE;
     if ((ret_code= conn->conn_op.ic_accept_connection(conn)))
       goto error;
     DEBUG_PRINT(PROGRAM_LEVEL,
@@ -1164,10 +1167,20 @@ wait_for_connections_and_fork(IC_CONNECTION *conn,
         ("Failed to start new Cluster Manager thread"));
       goto error;
     }
-  } while (1);
+    /**
+     * Now it's up to the connection thread to handle the thread id,
+     * we can safely forget it and rely upon the new thread to take
+     * care of its release.
+     */
+    allocated_thread= FALSE;
+  }
   DEBUG_RETURN_INT(0);
 
 error:
+  if (allocated_thread)
+  {
+    tp_state->tp_ops.ic_threadpool_free_thread_id(tp_state, thread_id);
+  }
   DEBUG_RETURN_INT(ret_code);
 }
 

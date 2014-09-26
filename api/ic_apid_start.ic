@@ -207,6 +207,9 @@ ic_run_apid_program(IC_APID_GLOBAL *apid_global,
   apid_global->apid_global_ops->ic_set_thread_func(apid_global, apid_func);
   for (i= 0; i < ic_glob_num_threads; i++)
   {
+    DEBUG_PRINT(THREAD_LEVEL,
+                ("Starting thread with id %u in run_server_thread",
+                 thread_id));
     if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
                             tp_state,
                             &thread_id,

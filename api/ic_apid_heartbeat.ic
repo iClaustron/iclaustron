@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -48,7 +48,8 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                        IC_THREADPOOL_STATE *tp_state)
 {
   IC_APID_CONNECTION *heartbeat_conn;
-  int error;
+  int ret_code;
+  gboolean allocated_thread= FALSE;
   DEBUG_ENTRY("start_heartbeat_thread");
 
   ic_require(!apid_global->heartbeat_conn);
@@ -57,27 +58,36 @@ start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     goto mem_error;
   apid_global->heartbeat_conn= heartbeat_conn;
   /* Start heartbeat thread */
-  if ((error= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
+  if (!(ret_code= tp_state->tp_ops.ic_threadpool_get_thread_id_wait(
                         tp_state,
                         &apid_global->heartbeat_thread_id,
-                        IC_MAX_THREAD_WAIT_TIME)) ||
-      (error= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
+                        IC_MAX_THREAD_WAIT_TIME)))
+  {
+    allocated_thread= TRUE;
+    DEBUG_PRINT(THREAD_LEVEL, ("Starting thread in run_heartbeat_thread"));
+    if ((ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                         tp_state,
                         apid_global->heartbeat_thread_id,
                         run_heartbeat_thread,
                         (void*)apid_global,
                         IC_MEDIUM_STACK_SIZE,
                         TRUE)))
-    goto error;
+      goto error;
+  }
   tp_state->tp_ops.ic_threadpool_run_thread(tp_state,
                                       apid_global->heartbeat_thread_id);
   DEBUG_RETURN_INT(0);
 
 mem_error:
-  error= IC_ERROR_MEM_ALLOC;
+  ret_code= IC_ERROR_MEM_ALLOC;
 error:
+  if (allocated_thread)
+  {
+    tp_state->tp_ops.ic_threadpool_free_thread_id(tp_state,
+                                                  apid_global->heartbeat_thread_id);
+  }
   heartbeat_conn->apid_conn_ops->ic_free_apid_connection(heartbeat_conn);
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static void

@@ -788,6 +788,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
   int ret_code;
   guint32 i, listen_inx;
   gboolean found= FALSE;
+  gboolean allocated_thread= FALSE;
   IC_CONNECTION *send_conn;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   DEBUG_ENTRY("prepare_set_up_send_connection");
@@ -860,6 +861,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                             send_tp,
                             &listen_server_thread->thread_id)))
            break;
+        allocated_thread= TRUE;
         thread_state= send_tp->tp_ops.ic_threadpool_get_thread_state(
                             send_tp,
                             listen_server_thread->thread_id);
@@ -867,6 +869,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                     listen_server_thread->mutex);
         send_tp->ts_ops.ic_thread_set_cond(thread_state,
                     listen_server_thread->cond);
+        DEBUG_PRINT(THREAD_LEVEL, ("Starting thread in run_listen_thread"));
         ret_code= send_tp->tp_ops.ic_threadpool_start_thread_with_thread_id(
                                   send_tp,
                                   listen_server_thread->thread_id,
@@ -878,6 +881,11 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
       if (ret_code)
       {
         /* We didn't succeed in starting listen thread, quit */
+        if (allocated_thread)
+        {
+          send_tp->tp_ops.ic_threadpool_free_thread_id(send_tp,
+                                 listen_server_thread->thread_id);
+        }
         close_listen_server_thread(
            apid_global->listen_server_thread[listen_inx],
            apid_global);
@@ -1119,6 +1127,8 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
                                        send_node_conn->mutex);
   tp_state->ts_ops.ic_thread_set_cond(thread_state,
                                       send_node_conn->cond);
+  DEBUG_PRINT(THREAD_LEVEL, ("Starting thread with id %u in run_send_thread",
+              send_node_conn->thread_id));
   ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                               tp_state,
                               send_node_conn->thread_id,
@@ -1130,6 +1140,11 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     The send thread is done with its start-up phase and we're ready to start
     the next send thread if the start thread was successful.
   */
+  if (ret_code)
+  {
+    tp_state->tp_ops.ic_threadpool_free_thread_id(tp_state,
+                                                  send_node_conn->thread_id);
+  }
   DEBUG_RETURN_INT(ret_code);
 }
 
