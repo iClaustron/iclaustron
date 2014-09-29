@@ -846,6 +846,7 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
 {
   IC_THREADPOOL_STATE *tp_state= apid_global->rec_thread_pool;
   IC_NDB_RECEIVE_STATE *rec_state;
+  guint32 rec_thread_inx;
   int ret_code= IC_ERROR_MEM_ALLOC;
   DEBUG_ENTRY("start_receive_thread");
 
@@ -874,8 +875,12 @@ start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
     goto error;
   /* Wait for receive thread to complete start-up */
   ic_mutex_lock(apid_global->mutex);
-  apid_global->receive_threads[apid_global->num_receive_threads]= rec_state;
-  apid_global->num_receive_threads++;
+  rec_thread_inx= apid_global->num_receive_threads;
+  apid_global->receive_threads[rec_thread_inx]= rec_state;
+  apid_global->num_receive_threads= rec_thread_inx + 1;
+  DEBUG_PRINT(THREAD_LEVEL, ("Rec thread %p in index %u",
+              rec_state,
+              rec_thread_inx));
   ic_mutex_unlock(apid_global->mutex);
   DEBUG_RETURN_INT(0);
 

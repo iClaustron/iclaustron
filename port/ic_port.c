@@ -755,14 +755,19 @@ get_pid_from_file(gchar *pid_file,
   DEBUG_ENTRY("get_pid_from_file");
   do
   {
+    if (ic_get_stop_flag())
+    {
+      ret_code= IC_ERROR_STOP_ORDERED;
+      break;
+    }
     if (!(ret_code= ic_read_pid_file(pid_file, pid)))
     {
       /* Success */
       DEBUG_RETURN_INT(0);
     }
-    ic_microsleep(100000); /* Sleep 100 ms */
+    ic_microsleep(500000); /* Sleep 100 ms */
     loop++;
-  } while (loop < 300);
+  } while (loop < 60);
   /**
    * Even after 30 seconds of trying we still failed to discover
    * any pid file, we give up and assume that the process didn't start

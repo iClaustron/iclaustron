@@ -159,7 +159,6 @@ ic_init_apid(IC_API_CONFIG_SERVER *apic)
   }
 
   apid_global->apic= apic;
-  apid_global->num_receive_threads= 0;
 
   if (!(apid_global->rec_thread_pool= ic_create_threadpool(
                         IC_MAX_RECEIVE_THREADS + 1, FALSE)))
@@ -625,6 +624,9 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
     {
       DEBUG_PRINT(THREAD_LEVEL, ("Wake receive thread %u to run", i));
       rec_state= apid_global->receive_threads[i];
+      DEBUG_PRINT(THREAD_LEVEL, ("rec_state= %p", rec_state));
+      //DEBUG_PRINT(THREAD_LEVEL, ("rec_tp_state= %p", rec_tp_state));
+      //DEBUG_PRINT(THREAD_LEVEL, ("rec_state->thread_id= %u", rec_state->thread_id));
       rec_tp_state->tp_ops.ic_threadpool_run_thread(rec_tp_state,
                                                     rec_state->thread_id);
     }

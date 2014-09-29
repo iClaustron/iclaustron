@@ -43,20 +43,32 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
     {
       thread_state= tp_state->thread_state[i];
       if (thread_state->mutex && !thread_state->use_external_mutex)
+      {
         ic_mutex_destroy(&thread_state->mutex);
+      }
       if (thread_state->cond && !thread_state->use_external_cond)
+      {
         ic_cond_destroy(&thread_state->cond);
+      }
     }
     ic_free((void*)tp_state->thread_state_allocation);
   }
   if (tp_state->thread_state)
+  {
     ic_free((void*)tp_state->thread_state);
+  }
   if (tp_state->stop_list_mutex)
+  {
     ic_mutex_destroy(&tp_state->stop_list_mutex);
+  }
   if (tp_state->stop_list_cond)
+  {
     ic_cond_destroy(&tp_state->stop_list_cond);
+  }
   if (tp_state->free_list_mutex)
+  {
     ic_mutex_destroy(&tp_state->free_list_mutex);
+  }
   ic_free((void*)tp_state);
 }
 
@@ -85,7 +97,9 @@ set_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
     ic_mutex_lock(tp_state->thread_state[i]->mutex);
     tp_state->thread_state[i]->stop_flag= TRUE;
     if (tp_state->thread_state[i]->wait_wakeup)
+    {
       ic_cond_signal(tp_state->thread_state[i]->cond);
+    }
     ic_mutex_unlock(tp_state->thread_state[i]->mutex);
   }
 }
@@ -134,9 +148,8 @@ insert_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id)
   guint32 first_stopped_thread_id;
 
   thread_state= tp_state->thread_state[thread_id];
-  if (!thread_state)
-    abort();
 
+  ic_require(thread_state);
   ic_mutex_lock(tp_state->stop_list_mutex);
   first_stopped_thread_id= tp_state->first_stopped_thread_id;
   if (first_stopped_thread_id != IC_MAX_UINT32)
@@ -168,11 +181,12 @@ remove_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id,
   guint32 prev_thread_id, next_thread_id;
 
   thread_state= tp_state->thread_state[thread_id];
-  if (!thread_state)
-    abort();
 
+  ic_require(thread_state);
   if (!own_mutex)
+  {
     ic_mutex_lock(tp_state->stop_list_mutex);
+  }
   prev_thread_id= thread_state->prev_thread_id;
   next_thread_id= thread_state->next_thread_id;
   if (prev_thread_id != IC_MAX_UINT32)
@@ -256,24 +270,30 @@ static void
 thread_set_mutex(IC_THREAD_STATE *ext_thread_state, IC_MUTEX *mutex)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
-  IC_INT_THREADPOOL_STATE *tp_state= thread_state->tp_state;
+  IC_INT_THREADPOOL_STATE *tp_state;
 
+  tp_state= thread_state->tp_state;
+  ic_mutex_lock(tp_state->free_list_mutex);
   ic_require(tp_state->use_internal_mutex);
   ic_mutex_destroy(&thread_state->mutex);
   thread_state->mutex= mutex;
   thread_state->use_external_mutex= TRUE;
+  ic_mutex_unlock(tp_state->free_list_mutex);
 }
 
 static void
 thread_set_cond(IC_THREAD_STATE *ext_thread_state, IC_COND *cond)
 {
   IC_INT_THREAD_STATE *thread_state= (IC_INT_THREAD_STATE*)ext_thread_state;
-  IC_INT_THREADPOOL_STATE *tp_state= thread_state->tp_state;
+  IC_INT_THREADPOOL_STATE *tp_state;
 
+  tp_state= thread_state->tp_state;
+  ic_mutex_lock(tp_state->free_list_mutex);
   ic_require(tp_state->use_internal_mutex);
   ic_cond_destroy(&thread_state->cond);
   thread_state->cond= cond;
   thread_state->use_external_cond= TRUE;
+  ic_mutex_unlock(tp_state->free_list_mutex);
 }
 
 /* Get a thread object by id */
@@ -348,6 +368,14 @@ free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   tp_state->num_free_threads++;
   ic_assert(!thread_state->free);
   thread_state->free= TRUE;
+  if (thread_state->use_external_mutex == TRUE)
+  {
+    thread_state->mutex= NULL;
+  }
+  if (thread_state->use_external_cond == TRUE)
+  {
+    thread_state->cond= NULL;
+  }
   ic_mutex_unlock(tp_state->free_list_mutex);
   DEBUG_PRINT(THREAD_LEVEL, ("free thread id: %u", thread_id));
 }
@@ -375,8 +403,8 @@ free_thread(IC_INT_THREADPOOL_STATE *tp_state,
   tp_state->num_free_threads++;
   ic_assert(!thread_state->free);
   thread_state->free= TRUE;
-  ic_mutex_unlock(tp_state->free_list_mutex);
   /* Set all state variables to free and not occupied */
+  ic_mutex_unlock(tp_state->free_list_mutex);
   ic_mutex_lock(thread_state->mutex);
   thread_state->started= FALSE;
   thread_state->startup_done= FALSE;
@@ -385,6 +413,16 @@ free_thread(IC_INT_THREADPOOL_STATE *tp_state,
   thread_state->synch_startup= FALSE;
   thread_state->stop_flag= FALSE;
   ic_mutex_unlock(thread_state->mutex);
+  ic_mutex_lock(tp_state->free_list_mutex);
+  if (thread_state->use_external_mutex == TRUE)
+  {
+    thread_state->mutex= NULL;
+  }
+  if (thread_state->use_external_cond == TRUE)
+  {
+    thread_state->cond= NULL;
+  }
+  ic_mutex_unlock(tp_state->free_list_mutex);
 }
 
 /* Check for stopped threads that require to be joined */

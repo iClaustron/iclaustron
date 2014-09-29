@@ -641,18 +641,27 @@ close_listen_server_thread(IC_LISTEN_SERVER_THREAD *listen_server_thread,
   {
     apid_global->listen_server_thread[listen_server_thread->index]= NULL;
     if ((conn= listen_server_thread->conn))
+    {
       conn->conn_op.ic_free_connection(conn);
+    }
     if (listen_server_thread->mutex)
+    {
       ic_mutex_destroy(&listen_server_thread->mutex);
+    }
     if (listen_server_thread->cond)
+    {
       ic_cond_destroy(&listen_server_thread->cond);
+    }
     if (listen_server_thread->first_send_node_conn)
+    {
       g_list_free(listen_server_thread->first_send_node_conn);
+    }
     listen_server_thread->conn= NULL;
     listen_server_thread->mutex= NULL;
     listen_server_thread->cond= NULL;
     listen_server_thread->first_send_node_conn= NULL;
     listen_server_thread->thread_id= IC_MAX_UINT32;
+    ic_free(listen_server_thread);
   }
   DEBUG_RETURN_EMPTY;
 }
@@ -789,7 +798,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
   guint32 i, listen_inx;
   gboolean found= FALSE;
   gboolean allocated_thread= FALSE;
-  IC_CONNECTION *send_conn;
+  IC_CONNECTION *listen_conn;
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   DEBUG_ENTRY("prepare_set_up_send_connection");
 
@@ -803,14 +812,17 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
       When we come here to start things up we're still in single-threaded
       mode, so we don't need to protect things through mutexes.
     */
-    DEBUG_PRINT(COMM_LEVEL, ("server_part"));
-    send_conn= send_node_conn->conn;
+    ic_mutex_lock(apid_global->mutex);
+    DEBUG_PRINT(COMM_LEVEL, ("server_part: host: %s, port: %s",
+                send_node_conn->my_hostname,
+                send_node_conn->my_port_number));
     for (i= 0; i < apid_global->num_listen_server_threads; i++)
     {
       listen_server_thread= apid_global->listen_server_thread[i];
       if (listen_server_thread)
       {
-        if (!send_conn->conn_op.ic_cmp_connection(listen_server_thread->conn,
+        listen_conn= listen_server_thread->conn;
+        if (!listen_conn->conn_op.ic_cmp_connection(listen_conn,
                                             send_node_conn->my_hostname,
                                             send_node_conn->my_port_number))
         {
@@ -826,7 +838,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
       do
       {
         /* Found a new hostname+port combination, we need another*/
-        listen_inx= apid_global->num_listen_server_threads;
+        DEBUG_PRINT(THREAD_LEVEL, ("Allocate listen thread %u", listen_inx));
         if (!(apid_global->listen_server_thread[listen_inx]=
     	  (IC_LISTEN_SERVER_THREAD*)
               ic_calloc(sizeof(IC_LISTEN_SERVER_THREAD))))
@@ -843,6 +855,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                 server_api_connect,   /* Authentication function */
                 (void*)send_node_conn)))  /* Authentication object */
           break;
+        DEBUG_PRINT(THREAD_LEVEL, ("listen thread conn: %p", listen_server_thread->conn));
         listen_server_thread->conn->conn_op.ic_prepare_server_connection(
           listen_server_thread->conn,
           send_node_conn->my_hostname,
@@ -890,10 +903,11 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
            apid_global->listen_server_thread[listen_inx],
            apid_global);
         send_node_conn->send_thread_ended= TRUE;
+        ic_mutex_unlock(apid_global->mutex);
         send_tp->ts_ops.ic_thread_stops(thread_state);
         return 1;
       }
-      apid_global->num_receive_threads++;
+      apid_global->num_listen_server_threads++;
     }
     else
     {
@@ -916,6 +930,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
         send_tp->ts_ops.ic_thread_stops(thread_state);
       }
     }
+    ic_mutex_unlock(apid_global->mutex);
   }
   else
   {

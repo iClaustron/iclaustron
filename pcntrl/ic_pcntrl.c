@@ -3086,35 +3086,53 @@ run_command_handler(gpointer data)
   {
     if (!ic_check_buf(read_buf, read_size, ic_start_str,
                       strlen(ic_start_str)))
+    {
       ret_code= handle_start(conn);
+    }
     else if (!ic_check_buf(read_buf, read_size, ic_stop_str,
                            strlen(ic_stop_str)))
+    {
       ret_code= handle_stop(conn, FALSE);
+    }
     else if (!ic_check_buf(read_buf, read_size, ic_kill_str,
                            strlen(ic_kill_str)))
+    {
       ret_code= handle_stop(conn, TRUE);
+    }
     else if (!ic_check_buf(read_buf, read_size, ic_list_str,
                            strlen(ic_list_str)))
+    {
       ret_code= handle_list(conn, FALSE);
+    }
     else if (!ic_check_buf(read_buf, read_size, ic_list_full_str,
                            strlen(ic_list_full_str)))
+    {
       ret_code= handle_list(conn, TRUE);
+    }
     else if (!ic_check_buf(read_buf, read_size,
                            ic_copy_cluster_server_files_str,
                            strlen(ic_copy_cluster_server_files_str)))
+    {
       ret_code= handle_copy_cluster_server_files(conn);
+    }
     else if (!ic_check_buf(read_buf, read_size,
                            ic_copy_config_ini_str,
                            strlen(ic_copy_config_ini_str)))
+    {
       ret_code= handle_copy_config_ini(conn);
+    }
     else if (!ic_check_buf(read_buf, read_size,
                            ic_get_cpu_info_str,
                            strlen(ic_get_cpu_info_str)))
+    {
       ret_code= handle_get_cpu_info(conn);
+    }
     else if (!ic_check_buf(read_buf, read_size,
                            ic_get_mem_info_str,
                            strlen(ic_get_mem_info_str)))
+    {
       ret_code= handle_get_mem_info(conn);
+    }
     else if (!ic_check_buf(read_buf, read_size,
                            ic_get_disk_info_str,
                            strlen(ic_get_disk_info_str)))
