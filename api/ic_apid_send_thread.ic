@@ -79,9 +79,8 @@ static void close_listen_server_thread(
 static gpointer run_listen_thread(void *data);
 
 /* This functions is used to close down the send thread */
-static void remove_send_thread_from_listen_thread(
-  IC_SEND_NODE_CONNECTION *send_node_conn,
-  IC_LISTEN_SERVER_THREAD *listen_server_thread);
+static void
+remove_send_thread_from_listen_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
 
 /* These functions are used to secure the node connections.  */
 static int server_api_connect(void *data);
@@ -181,9 +180,13 @@ check_timeout_func(void *timeout_obj, int timer)
 {
   (void)timeout_obj;
   if (timer < 2)
+  {
     return 0;
+  }
   else
+  {
     return 1;
+  }
 }
 
 /* TODO: This function needs to check which node was actually connected to */
@@ -193,9 +196,13 @@ check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
 {
   (void)conn;
   if (!send_node_conn->connection_up)
+  {
     return FALSE;
+  }
   else
+  {
     return TRUE;
+  }
 }
 
 static gpointer
@@ -342,14 +349,17 @@ error:
 }
 
 static void
-remove_send_thread_from_listen_thread(
-  IC_SEND_NODE_CONNECTION *send_node_conn,
-  IC_LISTEN_SERVER_THREAD *listen_server_thread)
+remove_send_thread_from_listen_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_THREADPOOL_STATE *tp_state;
+  IC_LISTEN_SERVER_THREAD *listen_server_thread=
+    send_node_conn->listen_server_thread;
   DEBUG_ENTRY("remove_send_thread_from_listen_thread");
 
   ic_mutex_lock(listen_server_thread->mutex);
+  DEBUG_PRINT(THREAD_LEVEL,
+              ("Remove send_node_conn: %p from threads in listen thread",
+               send_node_conn));
   listen_server_thread->first_send_node_conn=
   g_list_remove(listen_server_thread->first_send_node_conn,
                 (void*)send_node_conn);
@@ -363,12 +373,16 @@ remove_send_thread_from_listen_thread(
       When the thread is completed we clean up everything in the
       listen server thread.
     */
+    DEBUG_PRINT(THREAD_LEVEL, ("Stop listen thread %u",
+                listen_server_thread->index));
     listen_server_thread->stop_ordered= TRUE;
     ic_cond_signal(listen_server_thread->cond);
     ic_mutex_unlock(listen_server_thread->mutex);
     tp_state= send_node_conn->apid_global->send_thread_pool;
     tp_state->tp_ops.ic_threadpool_join(tp_state,
                                         listen_server_thread->thread_id);
+    DEBUG_PRINT(THREAD_LEVEL, ("Listen thread %u stopped",
+                listen_server_thread->index));
     close_listen_server_thread(listen_server_thread,
                                send_node_conn->apid_global);
   }
@@ -499,7 +513,9 @@ check_thread_state(void *timeout_obj,
 
   (void)timer;
   if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  {
     return 1;
+  }
   return 0;
 }
 
@@ -563,7 +579,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
       }
       else /* stop_ordered == TRUE */
       {
-        return IC_ERROR_STOP_ORDERED;
+        DEBUG_RETURN_INT(IC_ERROR_STOP_ORDERED);
       }
       ic_mutex_lock(send_node_conn->mutex);
       if (!send_node_conn->stop_ordered)
@@ -602,10 +618,14 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
                                              send_node_conn->my_node_id,
                                              send_node_conn->other_node_id,
                                              &port_number)))
-        return ret_code;
+      {
+        DEBUG_RETURN_INT(ret_code);
+      }
       ic_guint64_str((guint64)port_number, buf, &buf_len);
       if ((ret_code= ic_chardup(&other_port_number, buf)))
-        return ret_code;
+      {
+        DEBUG_RETURN_INT(ret_code);
+      }
       send_node_conn->dynamic_port_number_to_release= other_port_number;
     }
     else
@@ -838,6 +858,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
       do
       {
         /* Found a new hostname+port combination, we need another*/
+        listen_inx= apid_global->num_listen_server_threads;
         DEBUG_PRINT(THREAD_LEVEL, ("Allocate listen thread %u", listen_inx));
         if (!(apid_global->listen_server_thread[listen_inx]=
     	  (IC_LISTEN_SERVER_THREAD*)
@@ -903,9 +924,10 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
            apid_global->listen_server_thread[listen_inx],
            apid_global);
         send_node_conn->send_thread_ended= TRUE;
+        send_node_conn->listen_server_thread= NULL;
         ic_mutex_unlock(apid_global->mutex);
         send_tp->ts_ops.ic_thread_stops(thread_state);
-        return 1;
+        DEBUG_RETURN_INT(1);
       }
       apid_global->num_listen_server_threads++;
     }
@@ -958,7 +980,6 @@ run_send_thread(void *data)
   int ret_code;
   IC_INT_APID_GLOBAL *apid_global;
   IC_CONNECTION *conn;
-  IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_THREADPOOL_STATE *send_tp= thread_state->ic_get_threadpool(thread_state);
   IC_SEND_NODE_CONNECTION *send_node_conn;
@@ -1092,8 +1113,7 @@ end:
       last send thread to remove ourself from a listen thread we
       will also remove the listen thread entirely.
     */
-    remove_send_thread_from_listen_thread(send_node_conn,
-                                          listen_server_thread);
+    remove_send_thread_from_listen_thread(send_node_conn);
   }
   send_node_conn->send_thread_ended= TRUE;
   send_tp->ts_ops.ic_thread_unlock(thread_state);
@@ -1201,7 +1221,9 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   tot_string_len+= server_port_len;
   tot_string_len+= client_port_len;
   if (!(send_node_conn->string_memory= ic_calloc(tot_string_len)))
+  {
     return IC_ERROR_MEM_ALLOC;
+  }
   copy_ptr= send_node_conn->string_memory;
   if (link_config->first_node_id == my_node_id)
   {

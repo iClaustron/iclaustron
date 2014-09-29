@@ -89,19 +89,28 @@ set_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   guint32 i;
+  DEBUG_ENTRY("set_stop_flag");
 
   tp_state->stop_flag= TRUE;
 
   for (i= 0; i < tp_state->threadpool_size; i++)
   {
-    ic_mutex_lock(tp_state->thread_state[i]->mutex);
-    tp_state->thread_state[i]->stop_flag= TRUE;
-    if (tp_state->thread_state[i]->wait_wakeup)
+    /**
+     * If we are using an external mutex and if we are in free list,
+     * then we no longer have a mutex and a condition.
+     */
+    if (tp_state->thread_state[i]->mutex != NULL)
     {
-      ic_cond_signal(tp_state->thread_state[i]->cond);
+      ic_mutex_lock(tp_state->thread_state[i]->mutex);
+      tp_state->thread_state[i]->stop_flag= TRUE;
+      if (tp_state->thread_state[i]->wait_wakeup)
+      {
+        ic_cond_signal(tp_state->thread_state[i]->cond);
+      }
+      ic_mutex_unlock(tp_state->thread_state[i]->mutex);
     }
-    ic_mutex_unlock(tp_state->thread_state[i]->mutex);
   }
+  DEBUG_RETURN_EMPTY;
 }
 
 /* Stop the thread pool */
