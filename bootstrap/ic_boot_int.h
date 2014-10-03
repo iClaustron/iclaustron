@@ -72,8 +72,11 @@ struct ic_parse_data
   /* Command sent by user */
   IC_PARSE_COMMANDS command;
 
-  /* Flag for parser and executer to flag exit */
+  /* Flag for parser and executer to flag exit connection */
   gboolean exit_flag;
+
+  /* Flag from parser saying command wasn't ok, connection still up. */
+  gboolean break_flag;
 
   guint32 next_cs_index;
   guint32 next_mgr_index;

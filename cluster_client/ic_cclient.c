@@ -50,9 +50,9 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
   {
     if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
       goto error;
-    if ((ret_code= ic_send_empty_line(conn)))
-      goto error;
   }
+  if ((ret_code= ic_send_empty_line(conn)))
+    goto error;
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (read_size == 0)

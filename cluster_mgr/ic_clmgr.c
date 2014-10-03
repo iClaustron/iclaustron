@@ -291,6 +291,7 @@ start_node(IC_PARSE_DATA *parse_data,
       Send response to client with information about our successful
       start of a node.
     */
+    /* Send reply to client */
     if ((ret_code= ic_send_with_cr(parse_data->conn,
                                    "Successfully started node:")) ||
         (ret_code= ic_send_start_info(parse_data->conn,
@@ -312,6 +313,9 @@ start_node(IC_PARSE_DATA *parse_data,
       goto error;
     if ((ret_code= ic_rec_empty_line(conn)))
       goto error;
+
+
+    /* Send reply to client */
     if ((ret_code= ic_send_with_cr(parse_data->conn,
                                    "Failed to start node:")) ||
         (ret_code= ic_send_start_info(parse_data->conn,
@@ -1137,6 +1141,7 @@ init_parse_data(IC_PARSE_DATA *parse_data)
   parse_data->default_cluster= TRUE;
   parse_data->cluster_all= FALSE;
   parse_data->node_all= FALSE;
+  parse_data->break_flag= FALSE;
 }
 
 static gpointer
@@ -1152,6 +1157,7 @@ run_handle_new_connection(gpointer data)
   IC_API_CONFIG_SERVER *apic;
   gchar *parse_buf;
   guint32 parse_inx= 0;
+  gboolean too_long_flag= FALSE;
   IC_PARSE_DATA parse_data;
   DEBUG_THREAD_ENTRY("run_handle_new_connection");
   tp_state= thread_state->ic_get_threadpool(thread_state);
@@ -1181,27 +1187,50 @@ run_handle_new_connection(gpointer data)
   {
     if (read_size == 0)
     {
-      init_parse_data(&parse_data);
-      parse_buf[parse_inx]= NULL_BYTE;
-      parse_buf[parse_inx+1]= NULL_BYTE;
-      parse_inx+= 2;
-      DEBUG_PRINT(PROGRAM_LEVEL,
-        ("Ready to execute command:\n%s", parse_buf));
-      ic_mgr_call_parser(parse_buf, parse_inx, &parse_data);
-      if (parse_data.exit_flag)
-        goto exit;
-      mgr_execute(&parse_data);
-      if (parse_data.exit_flag)
-        goto exit;
+      if (too_long_flag == TRUE)
+      {
+        if (ic_send_with_cr(conn, "Error: Out of parse buffer") ||
+            ic_send_empty_line(conn))
+          goto exit;
+        too_long_flag= FALSE;
+      }
+      else
+      {
+        init_parse_data(&parse_data);
+        parse_buf[parse_inx]= NULL_BYTE;
+        parse_buf[parse_inx+1]= NULL_BYTE;
+        DEBUG_PRINT(PROGRAM_LEVEL,
+          ("Ready to execute command with len %u:\n%s",
+           parse_inx,
+           parse_buf));
+        ic_mgr_call_parser(parse_buf, parse_inx, &parse_data);
+        if (parse_data.exit_flag)
+          goto exit;
+        if (!parse_data.break_flag)
+        {
+          /**
+           * Parsing went ok, we can now execute the command as set up
+           * by the parser.
+           */
+          mgr_execute(&parse_data);
+          if (parse_data.exit_flag)
+            goto exit;
+        }
+      }
       /* Initialise index to parser buffer before beginning of new cmd */
-      parse_inx= 0;
+       parse_inx= 0;
       /* Release memory from old query but reuse memory container */
       mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
     }
-    else
+    else if ((parse_inx + read_size) < PARSE_BUF_SIZE)
     {
       memcpy(parse_buf+parse_inx, read_buf, read_size);
       parse_inx+= read_size;
+    }
+    else
+    {
+      /* Out of parse buffer, stop receiving data */
+      too_long_flag= TRUE;
     }
   }
 exit:

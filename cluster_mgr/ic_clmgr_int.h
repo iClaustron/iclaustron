@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -68,6 +68,8 @@ struct ic_parse_data
   IC_CONNECTION *conn;
   /* Flag for parser and executer to flag exit */
   gboolean exit_flag;
+  /* Flag from parser saying command wasn't ok, connection still up. */
+  gboolean break_flag;
   /* Flag for start command to perform initial start */
   gboolean initial_flag;
   /* Process controller will restart a crashed process */

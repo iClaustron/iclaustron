@@ -114,7 +114,7 @@ found_identifier(YYSTYPE *yylval,
 
 void
 ic_mgr_parse_error(void *ext_parse_data,
-        char *s)
+                   char *s)
 {
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
   IC_CONNECTION *conn= parse_data->conn;
@@ -126,6 +126,7 @@ ic_mgr_parse_error(void *ext_parse_data,
   {
     parse_data->exit_flag= TRUE;
   }
+  parse_data->break_flag= TRUE;
 }
 
 #define get_next_char() parse_buf[current_pos]
@@ -290,8 +291,6 @@ ic_mgr_call_parser(gchar *parse_string,
     ic_mgr_parse_error(ext_parse_data, "Missing ; at end of command");
     parse_data->exit_flag= TRUE;
   }
-  parse_string[str_len]= 0; /* Ensure NULL-terminated string for print-outs */
-  DEBUG_PRINT(CONFIG_LEVEL, ("Parser called with string %s", parse_string));
   lex_data->parse_buf= parse_string;
   lex_data->parse_current_pos= 0;
   lex_data->parse_str_len= str_len;

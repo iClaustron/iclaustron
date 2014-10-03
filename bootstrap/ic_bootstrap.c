@@ -924,6 +924,7 @@ boot_execute(IC_PARSE_DATA *parse_data)
 static void
 line_init_parse_data(IC_PARSE_DATA *parse_data)
 {
+  parse_data->break_flag= FALSE;
   parse_data->command= IC_NO_SUCH_CMD;
 }
 
@@ -940,9 +941,15 @@ execute_command(IC_PARSE_DATA *parse_data,
   ic_boot_call_parser(parse_buf, line_size, parse_data);
   if (parse_data->exit_flag)
     goto end;
-  boot_execute(parse_data);
-  if (parse_data->exit_flag)
-    goto end;
+  if (!parse_data->break_flag)
+  {
+    /**
+     * Parsing went ok, we can now execute the command as setup.
+     */
+    boot_execute(parse_data);
+    if (parse_data->exit_flag)
+      goto end;
+  }
   /* Release memory allocated by parser, but keep memory container */
   mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
 end:
@@ -1174,6 +1181,7 @@ init_parse_data(IC_PARSE_DATA *parse_data)
 {
   parse_data->next_cs_index= 0;
   parse_data->next_mgr_index= 0;
+  parse_data->break_flag= FALSE;
 }
 
 int main(int argc, char *argv[])

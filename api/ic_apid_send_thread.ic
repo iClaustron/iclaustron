@@ -56,10 +56,7 @@
   nodes are connecting.
 */
 
-/* Server part needs to return for stop check every 2-3 seconds */
-static int check_timeout_func(void *timeout_obj, int timer);
-
-/* Client part regularly checks if thread needs to stop */
+/* Check regularly if thread needs to stop */
 static int check_thread_state(void *timeout_obj, int timer);
 
 /* Function to check which node was connected to */
@@ -174,21 +171,6 @@ get_send_node_conn(IC_INT_APID_GLOBAL *apid_global,
   send threads in performing the send functionality here.
 */
 
-/* Send thread functions */
-static int
-check_timeout_func(void *timeout_obj, int timer)
-{
-  (void)timeout_obj;
-  if (timer < 2)
-  {
-    return 0;
-  }
-  else
-  {
-    return 1;
-  }
-}
-
 /* TODO: This function needs to check which node was actually connected to */
 static gboolean
 check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
@@ -225,8 +207,8 @@ run_listen_thread(void *data)
   tp_state->ts_ops.ic_thread_started(thread_state);
 
   if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
-                                           check_timeout_func,
-                                           (void*)listen_server_thread)))
+                                           check_thread_state,
+                                           (void*)thread_state)))
     goto error;
   /*
     We need to retrieve the port number that we're listening to and make sure

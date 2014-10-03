@@ -60,7 +60,7 @@ ic_boot_parse_error(void *ext_parse_data,
   IC_PARSE_DATA *parse_data= (IC_PARSE_DATA*)ext_parse_data;
 
   ic_printf("Error: %s", s);
-  parse_data->exit_flag= TRUE;
+  parse_data->break_flag= TRUE;
 }
 
 static int
