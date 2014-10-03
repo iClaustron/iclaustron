@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -666,7 +666,7 @@ unit_test_parse_connectstring()
   if (test_parse_connectstring(",",
             2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
     return 1;
-  if (test_parse_connectstring("",
+  if (test_parse_connectstring(ic_empty_string,
             2, (gchar**)hosts, (gchar**)ports) != IC_ERROR_PARSE_CONNECTSTRING)
     return 1;
   if (test_parse_connectstring("myhost1,,myhost3",

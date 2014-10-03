@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -102,7 +102,9 @@ found_identifier(YYSTYPE *yylval,
                                   str,
                                   str_len,
                                   symbol_value)))
+  {
     return error;
+  }
   if ((*symbol_value) == 0)
   {
     yylval->ic_str= ic_str_ptr;
@@ -120,8 +122,10 @@ ic_mgr_parse_error(void *ext_parse_data,
 
   g_snprintf(buf, 1024, "Error: %s", s);
   if (ic_send_with_cr(conn, buf) ||
-      ic_send_with_cr(conn, ic_empty_string))
+      ic_send_empty_line(conn))
+  {
     parse_data->exit_flag= TRUE;
+  }
 }
 
 #define get_next_char() parse_buf[current_pos]
@@ -182,12 +186,16 @@ ic_mgr_lex(YYSTYPE *yylval,
   else if (isalpha(parse_char))
   {
     if (isupper(parse_char))
+    {
       upper_found= TRUE;
+    }
     for (;;)
     {
       parse_char= get_next_char();
       if (isupper(parse_char))
+      {
         upper_found= TRUE;
+      }
       if (parse_char == '-' ||
           parse_char == '.')
       {
@@ -226,9 +234,13 @@ ic_mgr_lex(YYSTYPE *yylval,
       else
       {
         if (!symbol_value)
+        {
           ret_sym= IDENTIFIER_SYM;
+        }
         else
+        {
           ret_sym= symbol_value;
+        }
         goto end;
       }
     } 

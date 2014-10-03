@@ -58,7 +58,7 @@ struct ic_parse_data
     These variables are initialised before
     call to parser and only used by lexer.
   */
-  IC_LEX_DATA *lex_data;
+  IC_LEX_DATA lex_data;
 
   /* Configuration of the grid of clusters */
   IC_API_CONFIG_SERVER *apic;

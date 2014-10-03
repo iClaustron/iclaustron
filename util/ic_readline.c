@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2013 iClaustron AB
+/* Copyright (C) 2011, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
 {
   IC_STRING line_str;
   int ret_value;
+  DEBUG_ENTRY("ic_read_one_line");
 #ifdef HAVE_LIBREADLINE
   line_str.str= readline(prompt);
 #else
@@ -37,7 +38,9 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
   line_str.str= fgets(line, sizeof(line), stdin);
 #endif
   if (!line_str.str)
-    return IC_ERROR_MEM_ALLOC;
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
   line_str.len= COMMAND_READ_BUF_SIZE;
   ic_set_up_ic_string(&line_str);
   if (!line_str.is_null_terminated)
@@ -47,7 +50,9 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
   }
 #ifdef HAVE_LIBREADLINE
   if (line_str.len)
+  {
     add_history(line_str.str);
+  }
 #endif
   if (line_str.len && 
       line_str.str[line_str.len - 1] == CARRIAGE_RETURN)
@@ -60,7 +65,7 @@ error:
 #ifdef HAVE_LIBREADLINE
   free(line_str.str); /* Allocated by readline => need to use free */
 #endif
-  return ret_value;
+  DEBUG_RETURN_INT(ret_value);
 }
 
 void
@@ -86,14 +91,20 @@ gboolean
 ic_check_last_line(IC_STRING *ic_str)
 {
   if (ic_str->str[ic_str->len - 1] == ';')
+  {
     return TRUE;
+  }
   return FALSE;
 }
 
 void
 ic_output_help(gchar **help_str)
 {
+  DEBUG_ENTRY("ic_output_help");
   gchar **loc_help_str= help_str;
   for ( ; *loc_help_str ; loc_help_str++)
+  {
     ic_printf("%s\n", *loc_help_str);
+  }
+  DEBUG_RETURN_EMPTY;
 }

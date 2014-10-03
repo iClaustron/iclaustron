@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -50,7 +50,7 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
   {
     if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
       goto error;
-    if ((ret_code= ic_send_with_cr(conn, ic_empty_string)))
+    if ((ret_code= ic_send_empty_line(conn)))
       goto error;
   }
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
@@ -82,7 +82,9 @@ command_interpreter(IC_CONNECTION *conn)
   DEBUG_ENTRY("command_interpreter");
 
   for (i= 0; i < 256; i++)
+  {
     line_ptrs[i]= &line_strs[i];
+  }
   do
   {
     lines= 0;
@@ -102,35 +104,43 @@ command_interpreter(IC_CONNECTION *conn)
       if (line_ptr->len == 0)
       {
         if (line_ptr->str)
+        {
           ic_free(line_ptr->str);
+        }
         continue;
       }
       IC_COPY_STRING(line_ptrs[lines], line_ptr);
       lines++;
     } while (!ic_check_last_line(line_ptr));
     if (lines == 1 &&
-        ((ic_cmp_null_term_str("quit;", line_ptrs[0])) ||
-         (ic_cmp_null_term_str("exit;", line_ptrs[0])) ||
-          ic_cmp_null_term_str("q;", line_ptrs[0])))
+        ((ic_cmp_null_term_str("quit;", line_ptrs[0]) == 0) ||
+         (ic_cmp_null_term_str("exit;", line_ptrs[0]) == 0) ||
+         (ic_cmp_null_term_str("q;", line_ptrs[0]) == 0)))
     {
       ic_free(line_ptrs[0]->str);
       break;
     }
-    if (lines == 1 && (ic_cmp_null_term_str("help;", line_ptrs[0])))
+    if (lines == 1 && (ic_cmp_null_term_str("help;", line_ptrs[0]) == 0))
+    {
       ic_output_help(help_str);
+    }
     else if ((error= execute_command(conn, &line_ptrs[0], lines)))
     {
       ic_print_error(error);
       goto error;
     }
     for (i= 0; i < lines; i++)
+    {
       ic_free(line_ptrs[i]->str);
+    }
   } while (TRUE);
   DEBUG_RETURN_INT(0);
 
 error:
   for (i= 0; i < lines; i++)
+  {
     ic_free(line_ptrs[i]->str);
+  }
   DEBUG_RETURN_INT(error);
 }
 

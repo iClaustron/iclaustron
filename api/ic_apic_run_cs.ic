@@ -4083,7 +4083,7 @@ handle_report_event(IC_CONNECTION *conn)
     ret_code= ret_code ? ret_code : IC_PROTOCOL_ERROR;
     PROTOCOL_CONN_CHECK_ERROR_GOTO(ret_code);
   }
-  if ((ret_code= ic_rec_simple_str(conn, ic_empty_string)))
+  if ((ret_code= ic_rec_empty_line(conn)))
     PROTOCOL_CONN_CHECK_ERROR_GOTO(ret_code);
   if ((ret_code= ic_send_with_cr(conn, report_event_reply_str)) ||
       (ret_code= ic_send_with_cr(conn, result_ok_str)) ||
@@ -4144,7 +4144,7 @@ handle_get_mgmd_nodeid_req(IC_CONNECTION *conn,
     *error_line= __LINE__;
     DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
   }
-  if ((ret_code= ic_rec_simple_str(conn, ic_empty_string)) ||
+  if ((ret_code= ic_rec_empty_line(conn)) ||
       (ret_code= ic_send_with_cr(conn, get_mgmd_nodeid_reply_str)) ||
       (ret_code= ic_send_with_cr_with_number(conn,
                                              nodeid_str,
@@ -4414,9 +4414,10 @@ handle_convert_transporter_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
              (guint32)param->client_nodeid, trp_type);
   g_snprintf(cs_buf, sizeof(cs_buf), "%d %d",
              (guint32)param->node_number, trp_type);
-  if ((ret_code= ic_rec_simple_str(conn, ic_empty_string)) ||
+  if ((ret_code= ic_rec_empty_line(conn)) ||
       (ret_code= ic_rec_simple_str(conn, client_buf)) ||
-      (ret_code= ic_send_with_cr(conn, cs_buf)))
+      (ret_code= ic_send_with_cr(conn, cs_buf)) ||
+      (ret_code= conn->conn_op.ic_flush_connection(conn)))
   {
     DEBUG_PRINT(CONFIG_LEVEL,
       ("Protocol error in converting to transporter, code = %d", ret_code));

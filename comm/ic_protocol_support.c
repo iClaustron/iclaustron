@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -55,7 +55,9 @@ ic_check_buf(gchar *read_buf, guint32 read_size, const gchar *str, int str_len)
   DEBUG_ENTRY("ic_check_buf");
   if ((read_size != (guint32)str_len) ||
       (memcmp(read_buf, str, str_len) != 0))
+  {
     DEBUG_RETURN_INT(TRUE);
+  }
   DEBUG_RETURN_INT(FALSE);
 }
 
@@ -87,7 +89,9 @@ ic_check_buf_with_many_int(gchar *read_buf,
   {
     ptr= read_buf+str_len;
     if (*ptr == SPACE_CHAR)
+    {
       ptr++;
+    }
     end_ptr= read_buf + read_size;
     for (i= 0; i < num_elements; i++)
     {
@@ -98,7 +102,9 @@ ic_check_buf_with_many_int(gchar *read_buf,
         goto error;
       ptr+= num_chars;
       if (*ptr == SPACE_CHAR)
+      {
         ptr++;
+      }
       else if (*ptr != '\n' || i != (num_elements - 1))
         goto error;
     }
@@ -129,16 +135,24 @@ ic_check_buf_with_signed_int(gchar *read_buf, guint32 read_size,
   *sign_flag= FALSE;
   if ((read_size < (guint32)str_len + 1) ||
       (memcmp(read_buf, str, str_len) != 0))
+  {
     return TRUE;
+  }
   if (read_buf[str_len] == SPACE_CHAR)
+  {
     str_len++;
+  }
   if (((str_len= (read_buf[str_len] == '-') ? str_len+1 : str_len), FALSE) ||
        (ic_convert_str_to_int_fixed_size(read_buf+str_len,
                                          read_size - str_len,
                                          number)))
+  {
     return TRUE;
+  }
   if (read_buf[str_len] == '-')
+  {
     *sign_flag= TRUE;
+  }
   return FALSE;
 }
 
@@ -161,13 +175,19 @@ ic_check_buf_with_int(gchar *read_buf,
 {
   if ((read_size < (guint32)str_len + 1) ||
       (memcmp(read_buf, str, str_len) != 0))
+  {
     return TRUE;
+  }
   if (read_buf[str_len] == SPACE_CHAR)
+  {
     str_len++;
+  }
   if ((ic_convert_str_to_int_fixed_size(read_buf+str_len,
                                         read_size - str_len,
                                         number)))
+  {
     return TRUE;
+  }
   return FALSE;
 }
 
@@ -190,9 +210,13 @@ ic_check_buf_with_string(gchar *read_buf,
 {
   if ((read_size < (guint32)str_len + 1) ||
       (memcmp(read_buf, str, str_len) != 0))
+  {
     return TRUE;
+  }
   if (read_buf[str_len] == SPACE_CHAR)
+  {
     str_len++;
+  }
   string->len= read_size - str_len;
   string->str= read_buf+str_len;
   string->is_null_terminated= FALSE;
@@ -256,7 +280,9 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
       for (end_line= read_buf, inx= 0;
            inx < size_curr_buf && end_line[inx] != CARRIAGE_RETURN;
            inx++)
+      {
         ;
+      }
       if (inx != size_curr_buf)
       {
         /* Found a line to report */
@@ -285,7 +311,9 @@ ic_rec_with_cr(IC_CONNECTION *ext_conn,
                                                     read_buf + size_curr_buf,
                                                     size_to_read,
                                                     &size_read)))
+    {
       return ret_code;
+    }
     size_curr_buf+= size_read;
   } while (1);
   return 0;
@@ -312,15 +340,23 @@ static int mc_rec_string_impl(IC_MEMORY_CONTAINER *mc_ptr,
   prefix_len= strlen(prefix_str);
   ic_require(prefix_len);
   if (read_size < (prefix_len + 1))
+  {
     return IC_PROTOCOL_ERROR;
+  }
   if (memcmp(read_buf, prefix_str, prefix_len))
+  {
     return IC_PROTOCOL_ERROR;
+  }
   if (read_buf[prefix_len] == SPACE_CHAR)
+  {
     prefix_len++;
+  }
   read_buf+= prefix_len;
   read_size-= prefix_len;
   if (!(str_ptr= mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, read_size+1)))
+  {
     return IC_ERROR_MEM_ALLOC;
+  }
   memcpy(str_ptr, read_buf, read_size);
   IC_INIT_STRING(str, str_ptr, read_size, TRUE);
   return 0;
@@ -429,7 +465,9 @@ ic_rec_string(IC_CONNECTION *conn, const gchar *prefix_str, gchar *read_str)
                      prefix_str_len))
       goto error;
     if (read_buf[prefix_str_len] == SPACE_CHAR)
+    {
       prefix_str_len++;
+    }
     remaining_len= read_size - prefix_str_len;
     memcpy(read_str, &read_buf[prefix_str_len], remaining_len);
     read_str[remaining_len]= 0;
@@ -462,9 +500,13 @@ ic_rec_two_strings(IC_CONNECTION *conn,
   DEBUG_PRINT(COMM_LEVEL, ("Search for %s %s", first_str, second_str));
 
   if ((ret_code= ic_rec_string(conn, first_str, buf)))
+  {
     DEBUG_RETURN_INT(ret_code);
+  }
   if ((memcmp(second_str, buf, second_str_len) != 0))
+  {
     DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+  }
   DEBUG_RETURN_INT(0);
 }
 
@@ -511,7 +553,9 @@ ic_rec_simple_str_impl(IC_CONNECTION *conn,
       *optional_and_found= FALSE;
     }
     else
+    {
       *optional_and_found= TRUE;
+    }
     DEBUG_RETURN_INT(0);
   }
   *optional_and_found= FALSE;
@@ -589,12 +633,16 @@ ic_rec_number_impl(IC_CONNECTION *conn,
                                &local_id))
     {
       if (local_id >= IC_MAX_UINT32)
+      {
         DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+      }
       *id= (guint32)local_id;
       goto end;
     }
     if (!optional)
+    {
       DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+    }
     ic_step_back_rec_with_cr(conn, read_size);
   }
 end:
@@ -628,15 +676,21 @@ ic_rec_boolean(IC_CONNECTION *conn,
   if (memcmp(read_buf, prefix_str, prefix_len))
     goto protocol_error;
   if (read_buf[prefix_len] == SPACE_CHAR)
+  {
     prefix_len++;
+  }
   read_size-= prefix_len;
   read_buf+= prefix_len;
   if (read_size == strlen(ic_true_str) &&
       !memcmp(read_buf, ic_true_str, read_size))
+  {
     *bool_value= 1;
+  }
   else if (read_size == strlen(ic_false_str) &&
            !memcmp(read_buf, ic_false_str, read_size))
+  {
     *bool_value= 0;
+  }
   else
     goto protocol_error;
 end:
@@ -676,9 +730,13 @@ ic_rec_long_number(IC_CONNECTION *conn,
                                prefix_str,
                                strlen(prefix_str),
                                &local_id))
+    {
       *number= local_id;
+    }
     else
+    {
       ret_code= IC_PROTOCOL_ERROR;
+    }
   }
   DEBUG_RETURN_INT(ret_code);
 }
@@ -763,13 +821,19 @@ ic_rec_int_number(IC_CONNECTION *conn,
                                       &local_number, &sign_flag))
     {
       if (local_number >= IC_MAX_UINT32)
+      {
         DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+      }
       *number= (guint32)local_number;
       if (sign_flag)
+      {
         *number= -(*number);
+      }
     }
     else
+    {
       ret_code= IC_PROTOCOL_ERROR;
+    }
   }
   DEBUG_RETURN_INT(ret_code);
 }
@@ -785,7 +849,7 @@ ic_rec_empty_line(IC_CONNECTION *conn)
   int ret_code;
   DEBUG_ENTRY("ic_rec_empty_line");
 
-  ret_code= ic_rec_simple_str(conn, "");
+  ret_code= ic_rec_simple_str(conn, ic_empty_string);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -819,7 +883,9 @@ ic_send_with_cr(IC_CONNECTION *ext_conn, const gchar *send_buf)
                                            1);
     conn->write_buf_pos= 0;
     if (ret_code)
+    {
       return ret_code;
+    }
   }
   /* Copy into buffer, send at least empty line instead or when full */
   memcpy(conn->write_buf+conn->write_buf_pos, send_buf, send_size);
@@ -908,8 +974,10 @@ ic_send_empty_line(IC_CONNECTION *ext_conn)
 {
   int ret_code;
 
-  if ((ret_code= ic_send_with_cr(ext_conn, "")))
+  if ((ret_code= ic_send_with_cr(ext_conn, ic_empty_string)))
+  {
     return ret_code;
+  }
   return ext_conn->conn_op.ic_flush_connection(ext_conn);
 }
 
@@ -930,7 +998,9 @@ ic_send_ok(IC_CONNECTION *conn)
 
   if ((ret_code= ic_send_with_cr(conn, ic_ok_str)) ||
       (ret_code= ic_send_empty_line(conn)))
+  {
     DEBUG_RETURN_INT(ret_code);
+  }
   DEBUG_RETURN_INT(0);
 }
 
@@ -955,7 +1025,9 @@ ic_send_error_message(IC_CONNECTION *conn, const gchar *error_message)
   if ((ret_code= ic_send_with_cr(conn, ic_error_str)) ||
       (ret_code= ic_send_with_cr(conn, error_message)) ||
       (ret_code= ic_send_empty_line(conn)))
+  {
     DEBUG_RETURN_INT(ret_code);
+  }
   DEBUG_RETURN_INT(0);
 }
 
@@ -980,7 +1052,9 @@ ic_rec_error_message(IC_CONNECTION *conn, gchar *buf)
   if ((ret_code= ic_rec_simple_str(conn, ic_error_str)) ||
       (ret_code= ic_rec_with_cr(conn, &buf, &buf_size)) ||
       (ret_code= ic_rec_empty_line(conn)))
+  {
     DEBUG_RETURN_INT(ret_code);
+  }
   DEBUG_RETURN_INT(0);
 }
 
@@ -1009,9 +1083,13 @@ ic_rec_ok_or_error(IC_CONNECTION *conn, gchar *buf, gboolean *ok_found)
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, ok_found)))
     goto end;
   if (!ok_found)
+  {
     ret_code= ic_rec_error_message(conn, buf);
+  }
   else
+  {
     ret_code= ic_rec_empty_line(conn);
+  }
 end:
   DEBUG_RETURN_INT(ret_code);
 }
