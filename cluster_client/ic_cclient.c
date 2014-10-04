@@ -64,9 +64,150 @@ error:
   DEBUG_RETURN_INT(ret_code);
 }
 
-static gchar *help_str[] =
+static gchar *help_str[]=
 {
+  "All commands entered are executed when an end character ';' is found",
+  "at the end of the command line. Commands can span many lines, they are",
+  "not executed until a line is completed with a ;",
+  "",
+  "The following commands are currently supported:",
+  "DIE, KILL, MOVE, RESTART, PERFORM BACKUP, START, LIST, LISTEN,",
+  "SHOW CLUSTER, SHOW CLUSTER STATUS, SHOW CONNECTIONS, SHOW CONFIG,",
+  "SHOW MEMORY, SHOW STATVARS, SHOW STATS, SET STAT_LEVEL, USE CLUSTER,",
+  "USE VERSION NDB, USE VERSION ICLAUSTRON, DISPLAY STATS, TOP"
   "help",
+  "",
+  "All commands are not fully implemented yet",
+  "",
+  "The command help show connections; shows help about the command"
+  "SHOW CONNECTIONS. There is specific help available on all commands",
+  "listed above.",
+  NULL,
+};
+
+static gchar *help_die_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_kill_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_move_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_restart_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_perform_backup_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_start_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_list_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_listen_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_show_cluster_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_show_cluster_status_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_show_connections_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_show_config_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_show_memory_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_show_statvars_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_show_stats_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_set_stat_level_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_use_cluster_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_use_version_ndb_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_use_version_iclaustron_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_display_stats_str[]=
+{
+  "",
+  NULL,
+};
+
+static gchar *help_top_str[]=
+{
+  "",
   NULL,
 };
 
@@ -113,16 +254,114 @@ command_interpreter(IC_CONNECTION *conn)
       lines++;
     } while (!ic_check_last_line(line_ptr));
     if (lines == 1 &&
-        ((ic_cmp_null_term_str("quit;", line_ptrs[0]) == 0) ||
-         (ic_cmp_null_term_str("exit;", line_ptrs[0]) == 0) ||
-         (ic_cmp_null_term_str("q;", line_ptrs[0]) == 0)))
+        ((ic_cmp_null_term_str_upper("QUIT;", line_ptrs[0]) == 0) ||
+         (ic_cmp_null_term_str_upper("EXIT;", line_ptrs[0]) == 0) ||
+         (ic_cmp_null_term_str_upper("Q;", line_ptrs[0]) == 0)))
     {
       ic_free(line_ptrs[0]->str);
       break;
     }
-    if (lines == 1 && (ic_cmp_null_term_str("help;", line_ptrs[0]) == 0))
+    if (lines == 1 && (ic_cmp_null_term_str_upper_part("HELP", line_ptrs[0]) == 0))
     {
-      ic_output_help(help_str);
+      if (ic_cmp_null_term_str_upper("HELP;", line_ptrs[0]))
+      {
+        ic_output_help(help_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP DIE;", line_ptrs[0]))
+      {
+        ic_output_help(help_die_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP KILL;", line_ptrs[0]))
+      {
+        ic_output_help(help_kill_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP MOVE;", line_ptrs[0]))
+      {
+        ic_output_help(help_move_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP RESTART;", line_ptrs[0]))
+      {
+        ic_output_help(help_restart_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP PERFORM BACKUP;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_perform_backup_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP START;", line_ptrs[0]))
+      {
+        ic_output_help(help_start_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP LIST;", line_ptrs[0]))
+      {
+        ic_output_help(help_list_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP LISTEN;", line_ptrs[0]))
+      {
+        ic_output_help(help_listen_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SHOW CLUSTER;", line_ptrs[0]))
+      {
+        ic_output_help(help_show_cluster_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SHOW CLUSTER STATUS;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_show_cluster_status_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SHOW CONNECTIONS;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_show_connections_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SHOW CONFIG;", line_ptrs[0]))
+      {
+        ic_output_help(help_show_config_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SHOW MEMORY;", line_ptrs[0]))
+      {
+        ic_output_help(help_show_memory_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SHOW STATVARS;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_show_statvars_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SHOW STATS;", line_ptrs[0]))
+      {
+        ic_output_help(help_show_stats_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SET STAT_LEVEL;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_set_stat_level_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP USE CLUSTER;", line_ptrs[0]))
+      {
+        ic_output_help(help_use_cluster_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP USE VERSION NDB;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_use_version_ndb_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP USE VERSION ICLAUSTRON;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_use_version_iclaustron_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP DISPLAY STATS;", line_ptrs[0]))
+      {
+        ic_output_help(help_display_stats_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP TOP;", line_ptrs[0]))
+      {
+        ic_output_help(help_top_str);
+      }
+      else
+      {
+        ic_printf("Error: No such command to get help on");
+      }
     }
     else if ((error= execute_command(conn, &line_ptrs[0], lines)))
     {

@@ -117,6 +117,17 @@ void ic_reverse_str(gchar *in_buf, gchar *out_buf, gchar end_char);
   ic_cmp_null_term_str
     This function compares a NULL-terminated string with an IC_STRING
 
+  ic_cmp_null_term_str_upper
+    This function compares a NULL-terminated string with an IC_STRING
+    where we convert the IC_STRING to upper case characters before
+    comparing it.
+
+  ic_cmp_null_term_str_upper_part
+    This function compares a NULL-terminated string with an IC_STRING
+    It reports success if the first part of IC_STRING is equal to the
+    nul terminated string. We convert to upper case and compare only
+    upper case values.
+
   ic_strdup, ic_mc_strdup
     Create a copy of the input IC_STR and allocate memory for the string.
     Assumes someone else allocated memory for new IC_STRING.
@@ -156,6 +167,10 @@ int ic_mc_add_string(IC_MEMORY_CONTAINER *mc_ptr,
 guint32 ic_str_find_first(IC_STRING *ic_str, gchar searched_char);
 void ic_print_ic_string(IC_STRING *str);
 int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str);
+int ic_cmp_null_term_str_upper(const gchar *null_term_str,
+                               const IC_STRING *cmp_str);
+int ic_cmp_null_term_str_upper_part(const gchar *null_term_str,
+                                    const IC_STRING *cmp_str);
 int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str);
 int ic_chardup(gchar **out_str, gchar *in_str);
 int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr, gchar **out_str,

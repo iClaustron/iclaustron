@@ -816,14 +816,17 @@ int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
   guint32 iter_len= 0;
   gchar *cmp_char= cmp_str->str;
   guint32 str_len= cmp_str->len;
+  guint32 null_term_str_len= strlen(null_term_str);
+  gchar c;
 
-  if (cmp_str->is_null_terminated)
+  if (str_len != null_term_str_len)
   {
-    return (strcmp(null_term_str, cmp_str->str) == 0) ? 0 : 1;
+    return 1;
   }
   while (iter_len < str_len)
   {
-    if (*null_term_str != *cmp_char)
+    c= *cmp_char;
+    if (*null_term_str != c)
     {
       return 1;
     }
@@ -831,11 +834,62 @@ int ic_cmp_null_term_str(const gchar *null_term_str, const IC_STRING *cmp_str)
     cmp_char++;
     iter_len++;
   }
-  if (*null_term_str == 0)
+  return 0;
+}
+int ic_cmp_null_term_str_upper(const gchar *null_term_str,
+                               const IC_STRING *cmp_str)
+{
+  guint32 iter_len= 0;
+  gchar *cmp_char= cmp_str->str;
+  guint32 str_len= cmp_str->len;
+  guint32 null_term_str_len= strlen(null_term_str);
+  gchar c;
+
+  if (str_len != null_term_str_len)
   {
-    return 0;
+    return 1;
   }
-  return 1;
+  while (iter_len < null_term_str_len)
+  {
+    c= *cmp_char;
+    c= toupper(c);
+    if (*null_term_str != c)
+    {
+      return 1;
+    }
+    null_term_str++;
+    cmp_char++;
+    iter_len++;
+  }
+  return 0;
+}
+
+int ic_cmp_null_term_str_upper_part(const gchar *null_term_str,
+                                    const IC_STRING *cmp_str)
+{
+  guint32 iter_len= 0;
+  gchar *cmp_char= cmp_str->str;
+  guint32 str_len= cmp_str->len;
+  guint32 null_term_str_len= strlen(null_term_str);
+  gchar c;
+
+  if (str_len < null_term_str_len)
+  {
+    return 1;
+  }
+  while (iter_len < null_term_str_len)
+  {
+    c= *cmp_char;
+    c= toupper(c);
+    if (*null_term_str != c)
+    {
+      return 1;
+    }
+    null_term_str++;
+    cmp_char++;
+    iter_len++;
+  }
+  return 0;
 }
 
 /**
