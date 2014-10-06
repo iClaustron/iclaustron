@@ -103,7 +103,7 @@ int ic_mgr_lex(void *parse_data, void *scanner);
 %%
 
 command:
-    any_command END_SYM
+    any_command
     ;
 
 any_command:

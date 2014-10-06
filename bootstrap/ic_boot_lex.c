@@ -1,4 +1,4 @@
-/* Copyright (C) 2010-2013 iClaustron AB
+/* Copyright (C) 2010, 2014 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -108,6 +108,7 @@ ic_boot_lex(YYSTYPE *yylval,
   int symbol_value= 0;
   guint64 int_val;
 
+  ic_assert(current_pos < lex_data->parse_str_len);
   for (;;)
   {
     parse_char= get_next_char();
@@ -120,7 +121,7 @@ ic_boot_lex(YYSTYPE *yylval,
 
   if (ic_is_end_character(parse_char))
   {
-    /*ret_sym= END_SYM; */
+    current_pos++;
     ret_sym= 0; /* End of input */
   }
   else
@@ -135,25 +136,34 @@ ic_boot_lex(YYSTYPE *yylval,
       count_digits= 1;
       for (;;)
       {
+        ic_assert(current_pos < lex_data->parse_str_len);
         parse_char= get_next_char();
         if (parse_char == '.' || !isdigit(parse_char))
         {
           if (count_digits > max_digits_before_dot)
+          {
             max_digits_before_dot= count_digits;
+          }
           if (count_digits < min_digits_before_dot)
+          {
             min_digits_before_dot= count_digits;
+          }
           count_digits= 0;
           if (parse_char == '.')
+          {
             dot_found++;
+          }
           else
             break;
         }
         else
+        {
           count_digits++;
+        }
         current_pos++;
       }
       if (!ic_is_end_symbol_character(parse_char))
-       goto number_error;
+        goto number_error;
       if (dot_found)
       {
         if (dot_found != DOTS_IN_IP_ADDRESS ||
@@ -208,9 +218,13 @@ ic_boot_lex(YYSTYPE *yylval,
                             &symbol_value))
       {
         if (!symbol_value)
+        {
           ret_sym= IDENTIFIER_SYM;
+        }
         else
+        {
           ret_sym= symbol_value;
+        }
       }
       else
         goto mem_alloc_error;

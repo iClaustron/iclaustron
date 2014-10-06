@@ -147,6 +147,7 @@ ic_mgr_lex(YYSTYPE *yylval,
   int symbol_value= 0;
   guint64 int_val;
 
+  ic_assert(current_pos < lex_data->parse_str_len);
   for (;;)
   {
     parse_char= get_next_char();
@@ -159,7 +160,9 @@ ic_mgr_lex(YYSTYPE *yylval,
 
   if (ic_is_end_character(parse_char))
   {
-    ret_sym= END_SYM;
+    current_pos++;
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Found END_SYM"));
+    ret_sym= 0; /* End of input */
     goto end;
   }
 
@@ -172,6 +175,7 @@ ic_mgr_lex(YYSTYPE *yylval,
       if (!isdigit(parse_char))
         break;
       current_pos++;
+      ic_assert(current_pos < lex_data->parse_str_len);
     }
     if (!ic_is_end_symbol_character(parse_char))
       goto number_error;
@@ -212,6 +216,7 @@ ic_mgr_lex(YYSTYPE *yylval,
           isdigit(parse_char))
       {
         current_pos++;
+        ic_assert(current_pos < lex_data->parse_str_len);
         continue;
       }
       /* Check for correct end of symbol character */
@@ -232,16 +237,19 @@ ic_mgr_lex(YYSTYPE *yylval,
       {
         ic_assert(!symbol_value);
         ret_sym= VERSION_IDENTIFIER_SYM;
+        DEBUG_PRINT(PROGRAM_LEVEL, ("Found version identifier"));
         goto end;
       }
       else
       {
         if (!symbol_value)
         {
+          DEBUG_PRINT(PROGRAM_LEVEL, ("Found identifier"));
           ret_sym= IDENTIFIER_SYM;
         }
         else
         {
+          DEBUG_PRINT(PROGRAM_LEVEL, ("Found symbol, number: %u", symbol_value));
           ret_sym= symbol_value;
         }
         goto end;
@@ -269,6 +277,7 @@ identifier_error:
   return 0;
 
 lex_error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("parse_char: %u", parse_char));
   ic_mgr_parse_error((void*)parse_data,
                      "Incorrect character, lex error");
   return 0;

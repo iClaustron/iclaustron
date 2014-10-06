@@ -39,6 +39,8 @@ static guint32 PARSE_BUF_SIZE = 256 * 1024; /* 256 kByte parse buffer */
 static gchar *not_impl_string= "not implemented yet";
 static gchar *no_such_cluster_string=
 "The specified cluster name doesn't exist in this grid";
+static gchar *no_such_cluster_id_string=
+"The specified cluster id doesn't exist in this grid";
 static gchar *wrong_node_type= "Node id not of specified type";
 static gchar *no_such_node_str="There is no such node in this cluster";
 
@@ -897,6 +899,20 @@ ic_listen_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_show_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
+  guint32 cluster_id;
+
+  if (ic_send_with_cr(parse_data->conn,
+      "Node id    Node name      Node type"))
+  {
+    parse_data->exit_flag= TRUE;
+  }
+  if (parse_data->default_cluster == TRUE)
+  {
+    cluster_id= parse_data->current_cluster_id;
+  }
+  else
+  {
+  }
   if (ic_send_with_cr(parse_data->conn, "SHOW CLUSTER") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -978,35 +994,69 @@ ic_set_stat_level_cmd(IC_PARSE_DATA *parse_data)
   DEBUG_RETURN_EMPTY;
 }
 
+static IC_CLUSTER_CONFIG*
+map_cluster(IC_PARSE_DATA *parse_data)
+{
+  guint32 cluster_id;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_API_CONFIG_SERVER *apic= parse_data->apic;
+
+  if (parse_data->cluster_name.str)
+  {
+    cluster_id= apic->api_op.ic_get_cluster_id_from_name(apic,
+                                           &parse_data->cluster_name);
+  }
+  else
+  {
+    cluster_id= parse_data->cluster_id;
+  }
+  if (cluster_id == IC_MAX_UINT32)
+  {
+    /**
+     * Cluster name wasn't existing, we exit with an error code,
+     */
+    if (ic_send_with_cr(parse_data->conn, no_such_cluster_string) ||
+        ic_send_empty_line(parse_data->conn))
+    {
+      parse_data->exit_flag= TRUE;
+    }
+    DEBUG_RETURN_PTR(NULL);
+  }
+  clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
+  if (!clu_conf)
+  {
+    /**
+     * Cluster id wasn't existing, we exit with an error code,
+     */
+    if (ic_send_with_cr(parse_data->conn, no_such_cluster_id_string) ||
+        ic_send_empty_line(parse_data->conn))
+    {
+      parse_data->exit_flag= TRUE;
+    }
+    DEBUG_RETURN_PTR(NULL);
+  }
+  DEBUG_RETURN_PTR(clu_conf);
+}
+
 static void
 ic_use_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
   gchar buf[256];
-  guint32 cluster_id;
-  IC_API_CONFIG_SERVER *apic= parse_data->apic;
+  IC_CLUSTER_CONFIG *clu_conf;
   DEBUG_ENTRY("ic_use_cluster_cmd");
 
-  ic_printf("len= %u, str= %s", (guint32)parse_data->cluster_name.len,
-            parse_data->cluster_name.str);
-  if (parse_data->cluster_name.str)
+  clu_conf= map_cluster(parse_data);
+  if (!clu_conf)
   {
-    cluster_id= apic->api_op.ic_get_cluster_id_from_name(apic,
-                                               &parse_data->cluster_name);
-    if (cluster_id == IC_MAX_UINT32)
-    {
-      if (ic_send_with_cr(parse_data->conn, no_such_cluster_string) ||
-          ic_send_empty_line(parse_data->conn))
-      {
-        parse_data->exit_flag= TRUE;
-      }
-    }
-    else
-    {
-      parse_data->cluster_id= cluster_id;
-    }
+    DEBUG_RETURN_EMPTY; /* Error message already sent */
   }
-  g_snprintf(buf, 128, "Cluster id set to %u",
-             (guint32)parse_data->cluster_id);
+  /**
+   * We found a perfectly valid cluster id and set this as the new default
+   * cluster id.
+   */
+  parse_data->current_cluster_id= clu_conf->clu_info.cluster_id;
+  g_snprintf(buf, 128, "Cluster id successfully set to %u",
+             (guint32)parse_data->current_cluster_id);
   if (ic_send_with_cr(parse_data->conn, buf) ||
       ic_send_empty_line(parse_data->conn))
   {
