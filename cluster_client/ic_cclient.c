@@ -71,143 +71,346 @@ static gchar *help_str[]=
   "not executed until a line is completed with a ;",
   "",
   "The following commands are currently supported:",
-  "DIE, KILL, MOVE, RESTART, PERFORM BACKUP, START, LIST, LISTEN,",
-  "SHOW CLUSTER, SHOW CLUSTER STATUS, SHOW CONNECTIONS, SHOW CONFIG,",
-  "SHOW MEMORY, SHOW STATVARS, SHOW STATS, SET STAT_LEVEL, USE CLUSTER,",
-  "USE VERSION NDB, USE VERSION ICLAUSTRON, DISPLAY STATS, TOP"
-  "help",
+  "First a set of commands that perform actions to change the cluster status:",
+  "START, RESTART, STOP, DIE, KILL, MOVE, PERFORM BACKUP,",
+  "PERFORM ROLLING UPGRADE",
+  "",
+  "Next a set of commands to display statistics about the cluster operations",
+  "DISPLAY STATS, TOP",
+  "",
+  "Next a set of commands to set the state of the statistics and of the",
+  "parser",
+  "SET STAT_LEVEL, USE CLUSTER USE VERSION NDB, USE VERSION ICLAUSTRON",
+  "",
+  "Then a set of commands to display the status of the cluster in various",
+  "manners",
+  "LIST CLUSTERS, LISTEN CLUSTER_LOG, SHOW CLUSTER, SHOW CLUSTER STATUS,",
+  "SHOW CONNECTIONS, SHOW CONFIG, SHOW MEMORY, SHOW STATVARS, SHOW STATS",
+  "",
+  "There is also help commands available:",
+  "help, displays this help text",
+  "help command, help on a specific command",
+  "help target, help on how to specify a target for the command",
   "",
   "All commands are not fully implemented yet",
-  "",
-  "The command help show connections; shows help about the command"
-  "SHOW CONNECTIONS. There is specific help available on all commands",
-  "listed above.",
   NULL,
 };
 
-static gchar *help_die_str[]=
+static gchar *help_target_str[]=
 {
+  "command CLUSTER MANAGER node reference",
+  "command CLUSTER SERVER node reference",
+  "command DATA SERVER node reference",
+  "command FILE SERVER node reference",
+  "command REPLICATION SERVER node reference",
+  "command RESTORE node reference",
+  "command node reference",
   "",
-  NULL,
-};
-
-static gchar *help_kill_str[]=
-{
+  "command is any of DIE, KILL, STOP, SHOW CONNECTIONS, SHOW CONFIG,",
+  "SHOW MEMORY.",
   "",
-  NULL,
-};
-
-static gchar *help_move_str[]=
-{
+  "node reference is any of the following:",
+  "ALL: all nodes in all clusters",
+  "NODE ALL: All nodes in the current cluster"
+  "CLUSTER id NODE id: The node specified by cluster id and node id",
+  "CLUSTER id NODE name: The node specified by cluster id and node name",
+  "CLUSTER name NODE id: The node specified by cluster name and node id",
+  "CLUSTER name NODE name: The node specified by cluster name and node name",
+  "NODE id: The node specified by node id in current cluster",
+  "NODE name: The node specified by node name in current cluster",
   "",
-  NULL,
-};
-
-static gchar *help_restart_str[]=
-{
+  "We can only affect the cluster manager we are connected to by using the",
+  "commands STOP, DIE or KILL and SHOW commands. All other commands will",
+  "ignore the node we are connected to since this node is needed to execute",
+  "the command",
   "",
-  NULL,
-};
-
-static gchar *help_perform_backup_str[]=
-{
-  "",
+  "The PERFORM ROLLING UPGRADE CLUSTER MANAGERS is a specific case used",
+  "to upgrade the cluster managers including the node we are currently",
+  "connected to. This specific command requires that we are connected to",
+  "at least two cluster managers",
   NULL,
 };
 
 static gchar *help_start_str[]=
 {
+  "START target",
+  "START target INITIAL",
+  "START target RESTART",
+  "START target INITIAL RESTART",
+  "",
+  "Starts the nodes in the target with initial flag and restart flag",
+  "",
+  "If initial flag is set then the node will be started as an empty node",
+  "All recovery data will be lost in this node, this is good as the very",
+  "first start of a node and after some sort of corruption of the node data.",
+  "Could also be used when bringing in a replacement of a computer that",
+  "completely failed",
+  "",
+  "The restart flag indicates whether the node should be restarted after a",
+  "stop, die or kill command and if the restart command should be available",
+  "for the node. If not set then one has to always use the start command to",
+  "explicitly start the node. If restart flag is set the node will also",
+  "automatically restart after a node crash",
+  NULL,
+};
+
+static gchar *help_restart_str[]=
+{
+  "RESTART target",
+  "Restarts the nodes in the target",
+  "If the cluster manager that we are connected to is restarted then",
+  "obviously our connection will be closed when this node is restarted,",
+  "our node will however be the last node to be restarted, so status on",
+  "the other nodes restarted will be provided first",
+  NULL,
+};
+
+static gchar *help_stop_str[]=
+{
+  "STOP target",
+  "Stops all nodes in the target in a graceful manner",
+  NULL,
+};
+
+static gchar *help_die_str[]=
+{
+  "DIE target",
+  "Sends a terminate signal to all nodes in the target",
+  NULL,
+};
+
+static gchar *help_kill_str[]=
+{
+  "KILL target",
+  "Kills all nodes in the target immediately without stopping gracefully or",
+  "terminating them",
+  NULL,
+};
+
+static gchar *help_move_str[]=
+{
+  "MOVE",
+  "MOVE CLUSTER id",
+  "MOVE CLUSTER name",
+  "",
+  "MOVE command not implemented yet",
+  NULL,
+};
+
+static gchar *help_perform_backup_str[]=
+{
+  "PERFORM BACKUP",
+  "PERFORM BACKUP CLUSTER id",
+  "PERFORM BACKUP CLUSTER name",
+  "",
+  "Perform a backup of one cluster, specified as either:",
+  "current cluster, cluster by id or cluster by name",
   "",
   NULL,
 };
 
-static gchar *help_list_str[]=
+static gchar *help_perform_rolling_upgrade_str[]=
 {
+  "PERFORM ROLLING UPGRADE",
+  "PERFORM ROLLING UPGRADE CLUSTER id",
+  "PERFORM ROLLING UPGRADE CLUSTER name",
+  "PERFORM ROLLING UPGRADE CLUSTER SERVERS"
+  "PERFORM ROLLING UPGRADE CLUSTER MANAGERS"
   "",
-  NULL,
-};
-
-static gchar *help_listen_str[]=
-{
+  "Perform a rolling upgrade of one cluster, specified as either:",
+  "current cluster, cluster by id or cluster by name, will not affect",
+  "cluster servers and cluster managers since they are not connected to",
+  "a specific cluster",
   "",
-  NULL,
-};
-
-static gchar *help_show_cluster_str[]=
-{
+  "PERFORM ROLLING UPGRADE CLUSTER SERVERS will upgrade all cluster servers",
+  "PERFORM ROLLING UPGRADE CLUSTER MANAGERS will upgrade all cluster",
+  "managers and will as the last thing upgrade the cluster manager we are"
+  "connected to, this will close the connection to the cluster manager.",
+  "The connection will then be automatically restored after which we can"
+  "check if the status of the cluster manager is correct by e.g. using the",
+  "SHOW MANAGER STATUS command",
   "",
-  NULL,
-};
-
-static gchar *help_show_cluster_status_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_show_connections_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_show_config_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_show_memory_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_show_statvars_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_show_stats_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_set_stat_level_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_use_cluster_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_use_version_ndb_str[]=
-{
-  "",
-  NULL,
-};
-
-static gchar *help_use_version_iclaustron_str[]=
-{
-  "",
+  "So to upgrade a complete iClaustron one needs to perform the following"
+  "commands:",
+  "PERFORM ROLLING UPGRADE on each of the clusters in the grid (these",
+  "commands can be executed in parallel)",
+  "After all these commands are completed one runs:",
+  "PERFORM ROLLING UPGRADE CLUSTER SERVERS to upgrade all cluster servers",
+  "The final step is to then run:",
+  "PERFORM ROLLING UPGRADE CLUSTER MANAGERS to upgrade all cluster managers",
+  "After this command is completed we have upgraded the entire iClaustron",
+  "grid to a new version",
   NULL,
 };
 
 static gchar *help_display_stats_str[]=
 {
+  "DISPLAY STATS NODE id group_specifier variable_specifier",
+  "DISPLAY STATS NODE name group_specifier variable_specifier",
+  "DISPLAY STATS CLUSTER id NODE id group_specifier variable_specifier",
+  "DISPLAY STATS CLUSTER id NODE name group_specifier variable_specifier",
+  "DISPLAY STATS CLUSTER name NODE id group_specifier variable_specifier",
+  "DISPLAY STATS CLUSTER name NODE name group_specifier variable_specifier",
   "",
+  "Display statistics on a specific node given by cluster id/name and",
+  "node id/name (cluster can be omitted in which case the default cluster",
+  "is used)",
+  "",
+  "group_specifier can be either GROUP ALL in which case all statistics"
+  "groups on the node is displayed or GROUP identifer in which case only"
+  "statistics belonging to the specified group is displayed",
+  "",
+  "variable_specifier can be omitted in which case all variables are"
+  "displayed, or VARIABLE identifier is given in which case only statistics"
+  "of the given variable is provided",
   NULL,
 };
 
 static gchar *help_top_str[]=
 {
+  "TOP",
+  "TOP CLUSTER id",
+  "TOP CLUSTER name",
   "",
+  "Display CPU statistics on a cluster given its name or the default cluster",
+  "(if a name is omitted)",
+  NULL,
+};
+
+static gchar *help_set_stat_level_str[]=
+{
+  "SET STAT_LEVEL NODE id group_specifier variable_specifier",
+  "SET STAT_LEVEL NODE name group_specifier variable_specifier",
+  "SET STAT_LEVEL CLUSTER id NODE id group_specifier variable_specifier",
+  "SET STAT_LEVEL CLUSTER id NODE name group_specifier variable_specifier",
+  "SET STAT_LEVEL CLUSTER name NODE id group_specifier variable_specifier",
+  "SET STAT_LEVEL CLUSTER name NODE name group_specifier variable_specifier",
+  "",
+  "Set statistics level on a specific node given by cluster id/name and",
+  "node id/name (cluster can be omitted in which case the default cluster",
+  "is used)",
+  "",
+  "group_specifier can be either GROUP ALL in which case all statistics"
+  "groups on the node is displayed or GROUP identifer in which case only"
+  "statistics belonging to the specified group is displayed",
+  "",
+  "variable_specifier can be omitted in which case all variables are"
+  "displayed, or VARIABLE identifier is given in which case only statistics"
+  "of the given variable is provided",
+  NULL,
+};
+
+static gchar *help_use_cluster_str[]=
+{
+  "USE CLUSTER id",
+  "USE CLUSTER name",
+  "",
+  "Set default cluster either by name or by id",
+  NULL,
+};
+
+static gchar *help_use_version_ndb_str[]=
+{
+  "USE VERSION NDB version_identifier",
+  "",
+  "Set NDB version to be used for the start command on the data servers of"
+  "the clusters. A version identifier could be e.g."
+  "mysql-cluster-gpl-7.4.2",
+  "",
+  "Also used by the perform rolling upgrade command to set the new version",
+  "to use",
+  "",
+  "This variable is set by default to the version number set in the cluster"
+  "manager used to execute the commands",
+  NULL,
+};
+
+static gchar *help_use_version_iclaustron_str[]=
+{
+  "USE VERSION ICLAUSTRON version_identifier",
+  "",
+  "Set iClaustron version to be used for the start command of all nodes",
+  "except the data servers and for the perform rolling upgrade command",
+  "",
+  "A version identifier could be e.g. iclaustron-0.0.1",
+  "",
+  "This variable is set by default to the version number set in the cluster"
+  "manager used to execute the commands",
+  NULL,
+};
+
+static gchar *help_list_clusters_str[]=
+{
+  "LIST CLUSTERS",
+  "List the available clusters",
+  NULL,
+};
+
+static gchar *help_listen_cluster_log_str[]=
+{
+  "LISTEN CLUSTER_LOG",
+  "Listen to the cluster log written by the cluster manager",
+  NULL,
+};
+
+static gchar *help_show_cluster_str[]=
+{
+  "SHOW CLUSTER",
+  "SHOW CLUSTER id",
+  "SHOW CLUSTER name",
+  "",
+  "Show configuration of a specific cluster given by default cluster",
+  "cluster id or cluster name",
+  NULL,
+};
+
+static gchar *help_show_cluster_status_str[]=
+{
+  "SHOW CLUSTER STATUS"
+  "SHOW CLUSTER STATUS id",
+  "SHOW CLUSTER STATUS name",
+  "",
+  "Show status of nodes in a cluster as given by default cluster,"
+  "cluster id or cluster name.",
+  NULL,
+};
+
+static gchar *help_show_connections_str[]=
+{
+  "SHOW CONNECTIONS target",
+  "Show status of connections to a specific set of nodes as specified",
+  "by target",
+  NULL,
+};
+
+static gchar *help_show_config_str[]=
+{
+  "SHOW CONFIG target",
+  "Show config of a specific set of nodes as specified by target",
+  NULL,
+};
+
+static gchar *help_show_memory_str[]=
+{
+  "SHOW MEMORY target",
+  "Show memory usage of a specific set of nodes as specified by target",
+  NULL,
+};
+
+static gchar *help_show_statvars_str[]=
+{
+  "SHOW STATVARS NODE id group_specifier",
+  "SHOW STATVARS CLUSTER id NODE id group_specifier",
+  "SHOW STATVARS CLUSTER id NODE name group_specifier",
+  "SHOW STATVARS CLUSTER name NODE id group_specifier",
+  "SHOW STATVARS CLUSTER name NODE name group_specifier",
+  "",
+  "Show statistics variables in a specific node and for the specified"
+  "groups.",
+  "",
+  "group_specifier can be either GROUP ALL in which case all statistics"
+  "variables on the node is displayed or GROUP identifer in which case only"
+  "statistic variables belonging to the specified group is displayed",
   NULL,
 };
 
@@ -267,6 +470,22 @@ command_interpreter(IC_CONNECTION *conn)
       {
         ic_output_help(help_str);
       }
+      else if (ic_cmp_null_term_str_upper("HELP TARGET;", line_ptrs[0]))
+      {
+        ic_output_help(help_target_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP START;", line_ptrs[0]))
+      {
+        ic_output_help(help_start_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP RESTART;", line_ptrs[0]))
+      {
+        ic_output_help(help_restart_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP STOP;", line_ptrs[0]))
+      {
+        ic_output_help(help_stop_str);
+      }
       else if (ic_cmp_null_term_str_upper("HELP DIE;", line_ptrs[0]))
       {
         ic_output_help(help_die_str);
@@ -279,26 +498,51 @@ command_interpreter(IC_CONNECTION *conn)
       {
         ic_output_help(help_move_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP RESTART;", line_ptrs[0]))
-      {
-        ic_output_help(help_restart_str);
-      }
       else if (ic_cmp_null_term_str_upper("HELP PERFORM BACKUP;",
                                           line_ptrs[0]))
       {
         ic_output_help(help_perform_backup_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP START;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP PERFORM ROLLING UPGRADE;",
+                                          line_ptrs[0]))
       {
-        ic_output_help(help_start_str);
+        ic_output_help(help_perform_rolling_upgrade_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP LIST;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP DISPLAY STATS;", line_ptrs[0]))
       {
-        ic_output_help(help_list_str);
+        ic_output_help(help_display_stats_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP LISTEN;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP TOP;", line_ptrs[0]))
       {
-        ic_output_help(help_listen_str);
+        ic_output_help(help_top_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP SET STAT_LEVEL;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_set_stat_level_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP USE CLUSTER;", line_ptrs[0]))
+      {
+        ic_output_help(help_use_cluster_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP USE VERSION NDB;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_use_version_ndb_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP USE VERSION ICLAUSTRON;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_use_version_iclaustron_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP LIST CLUSTERS;", line_ptrs[0]))
+      {
+        ic_output_help(help_list_clusters_str);
+      }
+      else if (ic_cmp_null_term_str_upper("HELP LISTEN CLUSTER_LOG;",
+                                          line_ptrs[0]))
+      {
+        ic_output_help(help_listen_cluster_log_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP SHOW CLUSTER;", line_ptrs[0]))
       {
@@ -326,37 +570,6 @@ command_interpreter(IC_CONNECTION *conn)
                                           line_ptrs[0]))
       {
         ic_output_help(help_show_statvars_str);
-      }
-      else if (ic_cmp_null_term_str_upper("HELP SHOW STATS;", line_ptrs[0]))
-      {
-        ic_output_help(help_show_stats_str);
-      }
-      else if (ic_cmp_null_term_str_upper("HELP SET STAT_LEVEL;",
-                                          line_ptrs[0]))
-      {
-        ic_output_help(help_set_stat_level_str);
-      }
-      else if (ic_cmp_null_term_str_upper("HELP USE CLUSTER;", line_ptrs[0]))
-      {
-        ic_output_help(help_use_cluster_str);
-      }
-      else if (ic_cmp_null_term_str_upper("HELP USE VERSION NDB;",
-                                          line_ptrs[0]))
-      {
-        ic_output_help(help_use_version_ndb_str);
-      }
-      else if (ic_cmp_null_term_str_upper("HELP USE VERSION ICLAUSTRON;",
-                                          line_ptrs[0]))
-      {
-        ic_output_help(help_use_version_iclaustron_str);
-      }
-      else if (ic_cmp_null_term_str_upper("HELP DISPLAY STATS;", line_ptrs[0]))
-      {
-        ic_output_help(help_display_stats_str);
-      }
-      else if (ic_cmp_null_term_str_upper("HELP TOP;", line_ptrs[0]))
-      {
-        ic_output_help(help_top_str);
       }
       else
       {

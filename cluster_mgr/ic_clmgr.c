@@ -733,6 +733,32 @@ ic_perform_rolling_upgrade_cmd(IC_PARSE_DATA *parse_data)
 }
 
 static void
+ic_perform_rolling_upgrade_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
+{
+  if (ic_send_with_cr(parse_data->conn,
+                      "PERFORM ROLLING UPGRADE CLUSTER SERVERS") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_empty_line(parse_data->conn))
+  {
+    parse_data->exit_flag= TRUE;
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_perform_rolling_upgrade_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
+{
+  if (ic_send_with_cr(parse_data->conn,
+                      "PERFORM ROLLING UPGRADE CLUSTER MANAGERS") ||
+      ic_send_with_cr(parse_data->conn, not_impl_string) ||
+      ic_send_empty_line(parse_data->conn))
+  {
+    parse_data->exit_flag= TRUE;
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
 ic_restart_cmd(IC_PARSE_DATA *parse_data)
 {
   if (ic_send_with_cr(parse_data->conn, "RESTART") ||
@@ -941,18 +967,6 @@ ic_show_statvars_cmd(IC_PARSE_DATA *parse_data)
 }
 
 static void
-ic_show_stats_cmd(IC_PARSE_DATA *parse_data)
-{
-  if (ic_send_with_cr(parse_data->conn, "SHOW STATS") ||
-      ic_send_with_cr(parse_data->conn, not_impl_string) ||
-      ic_send_empty_line(parse_data->conn))
-  {
-    parse_data->exit_flag= TRUE;
-  }
-  DEBUG_RETURN_EMPTY;
-}
-
-static void
 ic_set_stat_level_cmd(IC_PARSE_DATA *parse_data)
 {
   if (ic_send_with_cr(parse_data->conn, "SET STAT LEVEL") ||
@@ -1071,6 +1085,12 @@ mgr_execute(IC_PARSE_DATA *parse_data)
     case IC_PERFORM_ROLLING_UPGRADE_CMD:
       ic_perform_rolling_upgrade_cmd(parse_data);
       break;
+    case IC_PERFORM_ROLLING_UPGRADE_CLUSTER_SERVERS_CMD:
+      ic_perform_rolling_upgrade_cluster_servers_cmd(parse_data);
+      break;
+    case IC_PERFORM_ROLLING_UPGRADE_CLUSTER_MANAGERS_CMD:
+      ic_perform_rolling_upgrade_cluster_managers_cmd(parse_data);
+      break;
     case IC_RESTART_CMD:
       ic_restart_cmd(parse_data);
       break;
@@ -1103,9 +1123,6 @@ mgr_execute(IC_PARSE_DATA *parse_data)
       break;
     case IC_SHOW_STATVARS_CMD:
       ic_show_statvars_cmd(parse_data);
-      break;
-    case IC_SHOW_STATS_CMD:
-      ic_show_stats_cmd(parse_data);
       break;
     case IC_SET_STAT_LEVEL_CMD:
       ic_set_stat_level_cmd(parse_data);
