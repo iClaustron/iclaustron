@@ -18,16 +18,60 @@
 #include <ic_debug.h>
 #include <ic_port.h>
 #include <ic_string.h>
+#include <ic_lex_support.h>
 #ifdef HAVE_LIBREADLINE
 #include <readline/readline.h>
 #include <readline/history.h>
 #endif
 
+static int
+remove_spaces_client(IC_STRING *line_str)
+{
+  guint32 i, index;
+  gboolean space_char= FALSE;
+  gchar c;
+  int ret_code= 0;
+
+  for (i= 0, index= 0; i < line_str->len; i++)
+  {
+    c= line_str->str[i];
+    if (!ic_is_ignore(c))
+    {
+      if (ic_is_end_character(c))
+      {
+        /* Ignore spaces here */
+        line_str->str[index++]= c;
+        if ((i + 1) != line_str->len)
+        {
+          ret_code= IC_ERROR_MALFORMED_CLIENT_STRING;
+          goto error;
+        }
+      }
+      else
+      {
+        if (space_char == TRUE)
+        {
+          line_str->str[index++]= ' ';
+          space_char= FALSE;
+        }
+        line_str->str[index++]= c;
+      }
+    }
+    else
+    {
+      space_char= TRUE;
+    }
+  }
+  line_str->len= index;
+error:
+  return ret_code;
+}
+
 int
 ic_read_one_line(gchar *prompt, IC_STRING *out_str)
 {
   IC_STRING line_str;
-  int ret_value;
+  int ret_code;
   DEBUG_ENTRY("ic_read_one_line");
 #ifdef HAVE_LIBREADLINE
   line_str.str= readline(prompt);
@@ -45,7 +89,7 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
   ic_set_up_ic_string(&line_str);
   if (!line_str.is_null_terminated)
   {
-    ret_value= IC_ERROR_COMMAND_TOO_LONG;
+    ret_code= IC_ERROR_COMMAND_TOO_LONG;
     goto error;
   }
 #ifdef HAVE_LIBREADLINE
@@ -60,12 +104,22 @@ ic_read_one_line(gchar *prompt, IC_STRING *out_str)
     line_str.str[line_str.len - 1]= NULL_BYTE;
     line_str.len--;
   }
-  ret_value= ic_strdup(out_str, &line_str);
+  /**
+   * Remove any surplus spaces to make it easy to search for the various help
+   * commands and other things. 
+   */
+  if ((ret_code= remove_spaces_client(&line_str)))
+  {
+    IC_INIT_STRING(out_str, NULL, 0, FALSE);
+    goto error;
+  }
+
+  ret_code= ic_strdup(out_str, &line_str);
 error:
 #ifdef HAVE_LIBREADLINE
   free(line_str.str); /* Allocated by readline => need to use free */
 #endif
-  DEBUG_RETURN_INT(ret_value);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 void
@@ -90,7 +144,7 @@ ic_close_readline()
 gboolean
 ic_check_last_line(IC_STRING *ic_str)
 {
-  if (ic_str->str[ic_str->len - 1] == ';')
+  if (ic_str->str && ic_str->str[ic_str->len - 1] == ';')
   {
     return TRUE;
   }

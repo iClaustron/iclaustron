@@ -38,13 +38,24 @@ static GOptionEntry entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+static int connect_cluster_mgr(IC_CONNECTION **conn);
+
 static int
-execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
+execute_command(IC_STRING **str_array, guint32 num_lines)
 {
   gchar *read_buf;
   guint32 read_size, i;
   int ret_code;
+  IC_CONNECTION *conn= NULL;
   DEBUG_ENTRY("execute_command");
+
+  /**
+   * Client connects on each command, the client is designed for humans to
+   * send messages, so no need to keep the line open since it can be a very
+   * long time until the next message is to be sent.
+   */
+  if ((ret_code= connect_cluster_mgr(&conn)))
+    goto error;
 
   for (i= 0; i < num_lines; i++)
   {
@@ -58,9 +69,13 @@ execute_command(IC_CONNECTION *conn, IC_STRING **str_array, guint32 num_lines)
     if (read_size == 0)
       break;
     read_buf[read_size]= 0;
-    ic_printf("%s\n", read_buf);
+    ic_printf("%s", read_buf);
   }
 error:
+  if (conn)
+  {
+    conn->conn_op.ic_free_connection(conn);
+  }
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -446,10 +461,10 @@ static gchar *ic_help_show_statvars_str[]=
 };
 
 static int
-command_interpreter(IC_CONNECTION *conn)
+command_interpreter(void)
 {
   guint32 lines, i;
-  int error;
+  int ret_code;
   IC_STRING line_str;
   IC_STRING *line_ptr= &line_str;
   IC_STRING *line_ptrs[256];
@@ -467,20 +482,24 @@ command_interpreter(IC_CONNECTION *conn)
     {
       if (lines >= 2048)
       {
-        error= 1;
+        ret_code= 1;
         lines--;
         goto error;
       }
-      if ((error= ic_read_one_line(ic_prompt, line_ptr)))
+      if ((ret_code= ic_read_one_line(ic_prompt, line_ptr)))
       {
-        ic_print_error(error);
-        DEBUG_RETURN_INT(error);
+        ic_print_error(ret_code);
+        if (ret_code != IC_ERROR_MALFORMED_CLIENT_STRING)
+        {
+          DEBUG_RETURN_INT(ret_code);
+        }
       }
       if (line_ptr->len == 0)
       {
         if (line_ptr->str)
         {
           ic_free(line_ptr->str);
+          line_ptr->str= NULL;
         }
         continue;
       }
@@ -624,9 +643,9 @@ command_interpreter(IC_CONNECTION *conn)
         ic_printf("Error: No such command to get help on");
       }
     }
-    else if ((error= execute_command(conn, &line_ptrs[0], lines)))
+    else if ((ret_code= execute_command(&line_ptrs[0], lines)))
     {
-      ic_print_error(error);
+      ic_print_error(ret_code);
       goto error;
     }
     for (i= 0; i < lines; i++)
@@ -641,7 +660,7 @@ error:
   {
     ic_free(line_ptrs[i]->str);
   }
-  DEBUG_RETURN_INT(error);
+  DEBUG_RETURN_INT(ret_code);
 }
 
 static int
@@ -681,7 +700,6 @@ connect_cluster_mgr(IC_CONNECTION **conn)
 int main(int argc, char *argv[])
 {
   int ret_code= 1;
-  IC_CONNECTION *conn;
 
   if ((ret_code= ic_start_program(argc,
                                   argv,
@@ -694,14 +712,8 @@ int main(int argc, char *argv[])
     return ret_code;
 
   ic_init_readline(glob_history_size);
-  if ((ret_code= connect_cluster_mgr(&conn)))
-    goto error;
-  ret_code= command_interpreter(conn);
-  conn->conn_op.ic_free_connection(conn);
+  ret_code= command_interpreter();
   ic_close_readline();
   ic_end();
-  return ret_code;
-
-error:
   return ret_code;
 }

@@ -68,7 +68,10 @@ ic_print_error(int error_number)
   {
     ic_printf("%s", ic_error_str[error_number - IC_FIRST_ERROR]);
   }
-  perror("Last reported OS Error:");
+  if (ic_get_last_error())
+  {
+    perror("Last reported OS Error:");
+  }
 }
 
 gchar *ic_get_error_message(int error_number)
@@ -395,6 +398,8 @@ ic_init_error_messages()
     "Failed to spawn program from process controller";
   ic_error_str[IC_ERROR_CONFIGURATION_ERROR - IC_FIRST_ERROR]=
     "Error found in configuration file(s)";
+  ic_error_str[IC_ERROR_MALFORMED_CLIENT_STRING - IC_FIRST_ERROR]=
+    "Commands in client must end with ;, any other place for ; is an error";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)
