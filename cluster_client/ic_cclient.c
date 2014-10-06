@@ -64,7 +64,7 @@ error:
   DEBUG_RETURN_INT(ret_code);
 }
 
-static gchar *help_str[]=
+static gchar *ic_help_str[]=
 {
   "All commands entered are executed when an end character ';' is found",
   "at the end of the command line. Commands can span many lines, they are",
@@ -85,7 +85,7 @@ static gchar *help_str[]=
   "Then a set of commands to display the status of the cluster in various",
   "manners",
   "LIST CLUSTERS, LISTEN CLUSTER_LOG, SHOW CLUSTER, SHOW CLUSTER STATUS,",
-  "SHOW CONNECTIONS, SHOW CONFIG, SHOW MEMORY, SHOW STATVARS, SHOW STATS",
+  "SHOW CONNECTIONS, SHOW CONFIG, SHOW MEMORY, SHOW STATVARS",
   "",
   "There is also help commands available:",
   "help, displays this help text",
@@ -96,7 +96,7 @@ static gchar *help_str[]=
   NULL,
 };
 
-static gchar *help_target_str[]=
+static gchar *ic_help_target_str[]=
 {
   "command CLUSTER MANAGER node reference",
   "command CLUSTER SERVER node reference",
@@ -111,7 +111,7 @@ static gchar *help_target_str[]=
   "",
   "node reference is any of the following:",
   "ALL: all nodes in all clusters",
-  "NODE ALL: All nodes in the current cluster"
+  "NODE ALL: All nodes in the current cluster",
   "CLUSTER id NODE id: The node specified by cluster id and node id",
   "CLUSTER id NODE name: The node specified by cluster id and node name",
   "CLUSTER name NODE id: The node specified by cluster name and node id",
@@ -128,10 +128,11 @@ static gchar *help_target_str[]=
   "to upgrade the cluster managers including the node we are currently",
   "connected to. This specific command requires that we are connected to",
   "at least two cluster managers",
+  "",
   NULL,
 };
 
-static gchar *help_start_str[]=
+static gchar *ic_help_start_str[]=
 {
   "START target",
   "START target INITIAL",
@@ -151,53 +152,63 @@ static gchar *help_start_str[]=
   "for the node. If not set then one has to always use the start command to",
   "explicitly start the node. If restart flag is set the node will also",
   "automatically restart after a node crash",
+  "",
   NULL,
 };
 
-static gchar *help_restart_str[]=
+static gchar *ic_help_restart_str[]=
 {
   "RESTART target",
   "Restarts the nodes in the target",
+  "",
   "If the cluster manager that we are connected to is restarted then",
   "obviously our connection will be closed when this node is restarted,",
   "our node will however be the last node to be restarted, so status on",
   "the other nodes restarted will be provided first",
+  "",
   NULL,
 };
 
-static gchar *help_stop_str[]=
+static gchar *ic_help_stop_str[]=
 {
   "STOP target",
+  "",
   "Stops all nodes in the target in a graceful manner",
+  "",
   NULL,
 };
 
-static gchar *help_die_str[]=
+static gchar *ic_help_die_str[]=
 {
   "DIE target",
+  "",
   "Sends a terminate signal to all nodes in the target",
+  "",
   NULL,
 };
 
-static gchar *help_kill_str[]=
+static gchar *ic_help_kill_str[]=
 {
   "KILL target",
+  "",
   "Kills all nodes in the target immediately without stopping gracefully or",
   "terminating them",
+  "",
   NULL,
 };
 
-static gchar *help_move_str[]=
+static gchar *ic_help_move_str[]=
 {
   "MOVE",
   "MOVE CLUSTER id",
   "MOVE CLUSTER name",
   "",
   "MOVE command not implemented yet",
+  "",
   NULL,
 };
 
-static gchar *help_perform_backup_str[]=
+static gchar *ic_help_perform_backup_str[]=
 {
   "PERFORM BACKUP",
   "PERFORM BACKUP CLUSTER id",
@@ -209,13 +220,13 @@ static gchar *help_perform_backup_str[]=
   NULL,
 };
 
-static gchar *help_perform_rolling_upgrade_str[]=
+static gchar *ic_help_perform_rolling_upgrade_str[]=
 {
   "PERFORM ROLLING UPGRADE",
   "PERFORM ROLLING UPGRADE CLUSTER id",
   "PERFORM ROLLING UPGRADE CLUSTER name",
-  "PERFORM ROLLING UPGRADE CLUSTER SERVERS"
-  "PERFORM ROLLING UPGRADE CLUSTER MANAGERS"
+  "PERFORM ROLLING UPGRADE CLUSTER SERVERS",
+  "PERFORM ROLLING UPGRADE CLUSTER MANAGERS",
   "",
   "Perform a rolling upgrade of one cluster, specified as either:",
   "current cluster, cluster by id or cluster by name, will not affect",
@@ -240,10 +251,11 @@ static gchar *help_perform_rolling_upgrade_str[]=
   "PERFORM ROLLING UPGRADE CLUSTER MANAGERS to upgrade all cluster managers",
   "After this command is completed we have upgraded the entire iClaustron",
   "grid to a new version",
+  "",
   NULL,
 };
 
-static gchar *help_display_stats_str[]=
+static gchar *ic_help_display_stats_str[]=
 {
   "DISPLAY STATS NODE id group_specifier variable_specifier",
   "DISPLAY STATS NODE name group_specifier variable_specifier",
@@ -256,17 +268,18 @@ static gchar *help_display_stats_str[]=
   "node id/name (cluster can be omitted in which case the default cluster",
   "is used)",
   "",
-  "group_specifier can be either GROUP ALL in which case all statistics"
-  "groups on the node is displayed or GROUP identifer in which case only"
+  "group_specifier can be either GROUP ALL in which case all statistics",
+  "groups on the node is displayed or GROUP identifer in which case only",
   "statistics belonging to the specified group is displayed",
   "",
-  "variable_specifier can be omitted in which case all variables are"
-  "displayed, or VARIABLE identifier is given in which case only statistics"
+  "variable_specifier can be omitted in which case all variables are",
+  "displayed, or VARIABLE identifier is given in which case only statistics",
   "of the given variable is provided",
+  "",
   NULL,
 };
 
-static gchar *help_top_str[]=
+static gchar *ic_help_top_str[]=
 {
   "TOP",
   "TOP CLUSTER id",
@@ -274,10 +287,11 @@ static gchar *help_top_str[]=
   "",
   "Display CPU statistics on a cluster given its name or the default cluster",
   "(if a name is omitted)",
+  "",
   NULL,
 };
 
-static gchar *help_set_stat_level_str[]=
+static gchar *ic_help_set_stat_level_str[]=
 {
   "SET STAT_LEVEL NODE id group_specifier variable_specifier",
   "SET STAT_LEVEL NODE name group_specifier variable_specifier",
@@ -297,19 +311,21 @@ static gchar *help_set_stat_level_str[]=
   "variable_specifier can be omitted in which case all variables are"
   "displayed, or VARIABLE identifier is given in which case only statistics"
   "of the given variable is provided",
+  "",
   NULL,
 };
 
-static gchar *help_use_cluster_str[]=
+static gchar *ic_help_use_cluster_str[]=
 {
   "USE CLUSTER id",
   "USE CLUSTER name",
   "",
   "Set default cluster either by name or by id",
+  "",
   NULL,
 };
 
-static gchar *help_use_version_ndb_str[]=
+static gchar *ic_help_use_version_ndb_str[]=
 {
   "USE VERSION NDB version_identifier",
   "",
@@ -322,10 +338,11 @@ static gchar *help_use_version_ndb_str[]=
   "",
   "This variable is set by default to the version number set in the cluster"
   "manager used to execute the commands",
+  "",
   NULL,
 };
 
-static gchar *help_use_version_iclaustron_str[]=
+static gchar *ic_help_use_version_iclaustron_str[]=
 {
   "USE VERSION ICLAUSTRON version_identifier",
   "",
@@ -336,24 +353,29 @@ static gchar *help_use_version_iclaustron_str[]=
   "",
   "This variable is set by default to the version number set in the cluster"
   "manager used to execute the commands",
+  "",
   NULL,
 };
 
-static gchar *help_list_clusters_str[]=
+static gchar *ic_help_list_clusters_str[]=
 {
   "LIST CLUSTERS",
+  "",
   "List the available clusters",
+  "",
   NULL,
 };
 
-static gchar *help_listen_cluster_log_str[]=
+static gchar *ic_help_listen_cluster_log_str[]=
 {
   "LISTEN CLUSTER_LOG",
+  "",
   "Listen to the cluster log written by the cluster manager",
+  "",
   NULL,
 };
 
-static gchar *help_show_cluster_str[]=
+static gchar *ic_help_show_cluster_str[]=
 {
   "SHOW CLUSTER",
   "SHOW CLUSTER id",
@@ -361,43 +383,51 @@ static gchar *help_show_cluster_str[]=
   "",
   "Show configuration of a specific cluster given by default cluster",
   "cluster id or cluster name",
+  "",
   NULL,
 };
 
-static gchar *help_show_cluster_status_str[]=
+static gchar *ic_help_show_cluster_status_str[]=
 {
-  "SHOW CLUSTER STATUS"
+  "SHOW CLUSTER STATUS",
   "SHOW CLUSTER STATUS id",
   "SHOW CLUSTER STATUS name",
   "",
   "Show status of nodes in a cluster as given by default cluster,"
   "cluster id or cluster name.",
+  "",
   NULL,
 };
 
-static gchar *help_show_connections_str[]=
+static gchar *ic_help_show_connections_str[]=
 {
   "SHOW CONNECTIONS target",
+  "",
   "Show status of connections to a specific set of nodes as specified",
   "by target",
+  "",
   NULL,
 };
 
-static gchar *help_show_config_str[]=
+static gchar *ic_help_show_config_str[]=
 {
   "SHOW CONFIG target",
+  "",
   "Show config of a specific set of nodes as specified by target",
+  "",
   NULL,
 };
 
-static gchar *help_show_memory_str[]=
+static gchar *ic_help_show_memory_str[]=
 {
   "SHOW MEMORY target",
+  "",
   "Show memory usage of a specific set of nodes as specified by target",
+  "",
   NULL,
 };
 
-static gchar *help_show_statvars_str[]=
+static gchar *ic_help_show_statvars_str[]=
 {
   "SHOW STATVARS NODE id group_specifier",
   "SHOW STATVARS CLUSTER id NODE id group_specifier",
@@ -411,6 +441,7 @@ static gchar *help_show_statvars_str[]=
   "group_specifier can be either GROUP ALL in which case all statistics"
   "variables on the node is displayed or GROUP identifer in which case only"
   "statistic variables belonging to the specified group is displayed",
+  "",
   NULL,
 };
 
@@ -464,112 +495,129 @@ command_interpreter(IC_CONNECTION *conn)
       ic_free(line_ptrs[0]->str);
       break;
     }
-    if (lines == 1 && (ic_cmp_null_term_str_upper_part("HELP", line_ptrs[0]) == 0))
+    if (lines == 1 &&
+        (ic_cmp_null_term_str_upper_part("HELP",
+                                         line_ptrs[0]) == 0))
     {
-      if (ic_cmp_null_term_str_upper("HELP;", line_ptrs[0]))
+      if (ic_cmp_null_term_str_upper("HELP;",
+                                     line_ptrs[0]) == 0)
       {
-        ic_output_help(help_str);
+        ic_output_help(ic_help_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP TARGET;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP TARGET;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_target_str);
+        ic_output_help(ic_help_target_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP START;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP START;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_start_str);
+        ic_output_help(ic_help_start_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP RESTART;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP RESTART;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_restart_str);
+        ic_output_help(ic_help_restart_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP STOP;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP STOP;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_stop_str);
+        ic_output_help(ic_help_stop_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP DIE;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP DIE;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_die_str);
+        ic_output_help(ic_help_die_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP KILL;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP KILL;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_kill_str);
+        ic_output_help(ic_help_kill_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP MOVE;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP MOVE;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_move_str);
+        ic_output_help(ic_help_move_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP PERFORM BACKUP;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_perform_backup_str);
+        ic_output_help(ic_help_perform_backup_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP PERFORM ROLLING UPGRADE;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_perform_rolling_upgrade_str);
+        ic_output_help(ic_help_perform_rolling_upgrade_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP DISPLAY STATS;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP DISPLAY STATS;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_display_stats_str);
+        ic_output_help(ic_help_display_stats_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP TOP;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP TOP;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_top_str);
+        ic_output_help(ic_help_top_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP SET STAT_LEVEL;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_set_stat_level_str);
+        ic_output_help(ic_help_set_stat_level_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP USE CLUSTER;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP USE CLUSTER;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_use_cluster_str);
+        ic_output_help(ic_help_use_cluster_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP USE VERSION NDB;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_use_version_ndb_str);
+        ic_output_help(ic_help_use_version_ndb_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP USE VERSION ICLAUSTRON;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_use_version_iclaustron_str);
+        ic_output_help(ic_help_use_version_iclaustron_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP LIST CLUSTERS;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP LIST CLUSTERS;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_list_clusters_str);
+        ic_output_help(ic_help_list_clusters_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP LISTEN CLUSTER_LOG;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_listen_cluster_log_str);
+        ic_output_help(ic_help_listen_cluster_log_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP SHOW CLUSTER;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP SHOW CLUSTER;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_show_cluster_str);
+        ic_output_help(ic_help_show_cluster_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP SHOW CLUSTER STATUS;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_show_cluster_status_str);
+        ic_output_help(ic_help_show_cluster_status_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP SHOW CONNECTIONS;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_show_connections_str);
+        ic_output_help(ic_help_show_connections_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP SHOW CONFIG;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP SHOW CONFIG;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_show_config_str);
+        ic_output_help(ic_help_show_config_str);
       }
-      else if (ic_cmp_null_term_str_upper("HELP SHOW MEMORY;", line_ptrs[0]))
+      else if (ic_cmp_null_term_str_upper("HELP SHOW MEMORY;",
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_show_memory_str);
+        ic_output_help(ic_help_show_memory_str);
       }
       else if (ic_cmp_null_term_str_upper("HELP SHOW STATVARS;",
-                                          line_ptrs[0]))
+                                          line_ptrs[0]) == 0)
       {
-        ic_output_help(help_show_statvars_str);
+        ic_output_help(ic_help_show_statvars_str);
       }
       else
       {

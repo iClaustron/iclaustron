@@ -104,7 +104,7 @@ ic_output_help(gchar **help_str)
   gchar **loc_help_str= help_str;
   for ( ; *loc_help_str ; loc_help_str++)
   {
-    ic_printf("%s\n", *loc_help_str);
+    ic_printf("%s", *loc_help_str);
   }
   DEBUG_RETURN_EMPTY;
 }
