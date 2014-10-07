@@ -26,6 +26,7 @@
 #include <ic_parse_connectstring.h>
 #include <ic_apid.h>
 #include <ic_lex_support.h>
+#include <ic_proto_str.h>
 #include "ic_clmgr_int.h"
 
 /* Option variables */
@@ -233,6 +234,51 @@ get_node_id(IC_PARSE_DATA *parse_data)
     DEBUG_RETURN_INT(1);
   }
   DEBUG_RETURN_INT(0);
+}
+
+static IC_CLUSTER_CONFIG*
+map_cluster(IC_PARSE_DATA *parse_data)
+{
+  guint32 cluster_id;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_API_CONFIG_SERVER *apic= parse_data->apic;
+  DEBUG_ENTRY("map_cluster");
+
+  if (parse_data->cluster_name.str)
+  {
+    cluster_id= apic->api_op.ic_get_cluster_id_from_name(apic,
+                                           &parse_data->cluster_name);
+  }
+  else
+  {
+    cluster_id= parse_data->cluster_id;
+  }
+  if (cluster_id == IC_MAX_UINT32)
+  {
+    /**
+     * Cluster name wasn't existing, we exit with an error code,
+     */
+    if (ic_send_with_cr(parse_data->conn, no_such_cluster_string) ||
+        ic_send_empty_line(parse_data->conn))
+    {
+      parse_data->exit_flag= TRUE;
+    }
+    DEBUG_RETURN_PTR(NULL);
+  }
+  clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
+  if (!clu_conf)
+  {
+    /**
+     * Cluster id wasn't existing, we exit with an error code,
+     */
+    if (ic_send_with_cr(parse_data->conn, no_such_cluster_id_string) ||
+        ic_send_empty_line(parse_data->conn))
+    {
+      parse_data->exit_flag= TRUE;
+    }
+    DEBUG_RETURN_PTR(NULL);
+  }
+  DEBUG_RETURN_PTR(clu_conf);
 }
 
 /**
@@ -560,8 +606,9 @@ start_cluster_node(IC_PARSE_DATA *parse_data,
       !(param_array[num_params++]= add_connectstring(parse_data,
                                                      ic_cs_connectstring_str,
                                                      clu_conf)))
+  {
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
-
+  }
   DEBUG_RETURN_INT(start_node(parse_data,
                               node_config,
                               ic_def_grid_str,
@@ -677,6 +724,7 @@ start_specific_node(IC_CLUSTER_CONFIG *clu_conf,
 static void
 ic_die_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_die_cmd");
   if (ic_send_with_cr(parse_data->conn, "DIE") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -689,6 +737,7 @@ ic_die_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_kill_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_kill_cmd");
   if (ic_send_with_cr(parse_data->conn, "KILL") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -701,6 +750,7 @@ ic_kill_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_move_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_move_cmd");
   if (ic_send_with_cr(parse_data->conn, "MOVE") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -713,6 +763,7 @@ ic_move_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_perform_backup_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_perform_backup_cmd");
   if (ic_send_with_cr(parse_data->conn, "PERFORM BACKUP") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -725,6 +776,7 @@ ic_perform_backup_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_perform_rolling_upgrade_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_perform_rolling_upgrade_cmd");
   if (ic_send_with_cr(parse_data->conn, "PERFORM ROLLING UPGRADE") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -737,6 +789,7 @@ ic_perform_rolling_upgrade_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_perform_rolling_upgrade_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_perform_rolling_upgrade_cluster_servers_cmd");
   if (ic_send_with_cr(parse_data->conn,
                       "PERFORM ROLLING UPGRADE CLUSTER SERVERS") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
@@ -750,6 +803,7 @@ ic_perform_rolling_upgrade_cluster_servers_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_perform_rolling_upgrade_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_perform_rolling_upgrade_cluster_managers_cmd");
   if (ic_send_with_cr(parse_data->conn,
                       "PERFORM ROLLING UPGRADE CLUSTER MANAGERS") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
@@ -763,6 +817,7 @@ ic_perform_rolling_upgrade_cluster_managers_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_restart_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_restart_cmd");
   if (ic_send_with_cr(parse_data->conn, "RESTART") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -823,6 +878,7 @@ error:
 static void
 ic_stop_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_stop_cmd");
   if (ic_send_with_cr(parse_data->conn, "STOP") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -899,32 +955,97 @@ ic_listen_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_show_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
-  guint32 cluster_id;
+  guint32 print_node_id;
+  guint32 node_id;
+  guint32 dummy;
+  int ret_code;
+  IC_NODE_TYPES print_node_type;
+  gchar *print_node_name;
+  const gchar *print_node_type_str;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_DATA_SERVER_CONFIG *ds_conf;
+  static const int SIZE_NODE_ID_STR= 12;
+  static const int SIZE_NODE_TYPE_STR= 20;
+  static const int SIZE_NODE_ID_AND_TYPE_STR=
+                     SIZE_NODE_ID_STR + SIZE_NODE_TYPE_STR;
+  gchar output_buf[256];
+  DEBUG_ENTRY("ic_show_cluster_cmd");
 
-  if (ic_send_with_cr(parse_data->conn,
-      "Node id    Node name      Node type"))
-  {
-    parse_data->exit_flag= TRUE;
-  }
   if (parse_data->default_cluster == TRUE)
   {
-    cluster_id= parse_data->current_cluster_id;
+    parse_data->cluster_id= parse_data->current_cluster_id;
   }
-  else
+  clu_conf= map_cluster(parse_data);
+  if (!clu_conf)
   {
+    DEBUG_RETURN_EMPTY; /* Error message already sent */
   }
-  if (ic_send_with_cr(parse_data->conn, "SHOW CLUSTER") ||
-      ic_send_with_cr(parse_data->conn, not_impl_string) ||
-      ic_send_empty_line(parse_data->conn))
+  if (ic_send_with_cr(parse_data->conn,
+      "NODE ID    NODE TYPE  NODE NAME"))
   {
     parse_data->exit_flag= TRUE;
   }
+  for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+  {
+    if (!(ds_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node_id]))
+      continue;
+    /**
+     * We map the node data to a data node, we are only looking for
+     * node id and node name here and this is always in the node
+     * common part of the data structure, so it's the same for all
+     * node types.
+     */
+    print_node_id= ds_conf->node_id;
+    ic_assert(node_id == print_node_id);
+    print_node_name= ds_conf->node_name;
+    print_node_type= clu_conf->node_types[node_id];
+    /**
+     * Fill in 12 + 20 spaces for node id and node type. Node name
+     * is last in buffer and is NULL-terminated, so no need to fill
+     * in extra spaces there.
+     */
+    memset(output_buf, SPACE_CHAR, SIZE_NODE_ID_AND_TYPE_STR);
+    (void)ic_guint64_str(print_node_id, output_buf, &dummy);
+    switch (print_node_type)
+    {
+    case IC_DATA_SERVER_NODE:
+      print_node_type_str= ic_data_server_str;
+    case IC_CLIENT_NODE:
+      print_node_type_str= ic_client_node_str;
+    case IC_CLUSTER_SERVER_NODE:
+      print_node_type_str= ic_cluster_server_str;
+    case IC_SQL_SERVER_NODE:
+      print_node_type_str= ic_sql_server_str;
+    case IC_REP_SERVER_NODE:
+      print_node_type_str= ic_rep_server_str;
+    case IC_FILE_SERVER_NODE:
+      print_node_type_str= ic_file_server_str;
+    case IC_RESTORE_NODE:
+      print_node_type_str= ic_restore_node_str;
+    case IC_CLUSTER_MANAGER_NODE:
+      print_node_type_str= ic_cluster_manager_str;
+    default:
+      ic_assert(FALSE);
+    }
+    strcpy(&output_buf[SIZE_NODE_ID_STR], print_node_type_str);
+    ic_require(strlen(print_node_name) <
+                 (sizeof(output_buf) - SIZE_NODE_ID_AND_TYPE_STR));
+    strcpy(&output_buf[SIZE_NODE_ID_AND_TYPE_STR], print_node_name);
+    if ((ret_code= ic_send_with_cr(parse_data->conn, output_buf)))
+      goto error;
+  }
+  if ((ret_code= ic_send_empty_line(parse_data->conn)))
+    goto error;
+  DEBUG_RETURN_EMPTY;
+error:
+  parse_data->exit_flag= TRUE;
   DEBUG_RETURN_EMPTY;
 }
 
 static void
 ic_show_cluster_status_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_show_cluster_status_cmd");
   if (ic_send_with_cr(parse_data->conn, "SHOW CLUSTER STATUS") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -937,6 +1058,7 @@ ic_show_cluster_status_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_show_connections_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_show_connections_cmd");
   if (ic_send_with_cr(parse_data->conn, "SHOW CONNECTIONS") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -949,6 +1071,7 @@ ic_show_connections_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_show_config_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_show_config_cmd");
   if (ic_send_with_cr(parse_data->conn, "SHOW CONFIG") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -961,6 +1084,7 @@ ic_show_config_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_show_memory_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_show_memory_cmd");
   if (ic_send_with_cr(parse_data->conn, "SHOW MEMORY") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -973,6 +1097,7 @@ ic_show_memory_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_show_statvars_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_show_statvars_cmd");
   if (ic_send_with_cr(parse_data->conn, "SHOW STATVARS") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -985,6 +1110,7 @@ ic_show_statvars_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_set_stat_level_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_set_stat_level_cmd");
   if (ic_send_with_cr(parse_data->conn, "SET STAT LEVEL") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -994,54 +1120,10 @@ ic_set_stat_level_cmd(IC_PARSE_DATA *parse_data)
   DEBUG_RETURN_EMPTY;
 }
 
-static IC_CLUSTER_CONFIG*
-map_cluster(IC_PARSE_DATA *parse_data)
-{
-  guint32 cluster_id;
-  IC_CLUSTER_CONFIG *clu_conf;
-  IC_API_CONFIG_SERVER *apic= parse_data->apic;
-
-  if (parse_data->cluster_name.str)
-  {
-    cluster_id= apic->api_op.ic_get_cluster_id_from_name(apic,
-                                           &parse_data->cluster_name);
-  }
-  else
-  {
-    cluster_id= parse_data->cluster_id;
-  }
-  if (cluster_id == IC_MAX_UINT32)
-  {
-    /**
-     * Cluster name wasn't existing, we exit with an error code,
-     */
-    if (ic_send_with_cr(parse_data->conn, no_such_cluster_string) ||
-        ic_send_empty_line(parse_data->conn))
-    {
-      parse_data->exit_flag= TRUE;
-    }
-    DEBUG_RETURN_PTR(NULL);
-  }
-  clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id);
-  if (!clu_conf)
-  {
-    /**
-     * Cluster id wasn't existing, we exit with an error code,
-     */
-    if (ic_send_with_cr(parse_data->conn, no_such_cluster_id_string) ||
-        ic_send_empty_line(parse_data->conn))
-    {
-      parse_data->exit_flag= TRUE;
-    }
-    DEBUG_RETURN_PTR(NULL);
-  }
-  DEBUG_RETURN_PTR(clu_conf);
-}
-
 static void
 ic_use_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
-  gchar buf[256];
+  gchar buf[128];
   IC_CLUSTER_CONFIG *clu_conf;
   DEBUG_ENTRY("ic_use_cluster_cmd");
 
@@ -1068,6 +1150,7 @@ ic_use_cluster_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_display_stats_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_display_stats_cmd");
   if (ic_send_with_cr(parse_data->conn, "DISPLAY STATS") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -1080,6 +1163,7 @@ ic_display_stats_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_top_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_top_cmd");
   if (ic_send_with_cr(parse_data->conn, "TOP") ||
       ic_send_with_cr(parse_data->conn, not_impl_string) ||
       ic_send_empty_line(parse_data->conn))
@@ -1092,6 +1176,7 @@ ic_top_cmd(IC_PARSE_DATA *parse_data)
 static void
 ic_use_ndb_version_cmd(IC_PARSE_DATA *parse_data)
 {
+  DEBUG_ENTRY("ic_use_ndb_version_cmd");
   if (ic_send_with_cr(parse_data->conn, "NDB version identifier set to:") ||
       ic_send_with_cr(parse_data->conn, parse_data->ndb_version_name.str) ||
       ic_send_empty_line(parse_data->conn))

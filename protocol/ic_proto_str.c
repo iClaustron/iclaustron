@@ -109,3 +109,12 @@ const gchar *ic_num_threads_str= "--num-threads";
 const gchar *ic_debug_level_str= "--debug-level";
 const gchar *ic_debug_timestamp_str= "--debug-timestamp";
 #endif
+
+const gchar *ic_data_server_str= "DATA SERVER";
+const gchar *ic_client_node_str= "CLIENT NODE";
+const gchar *ic_cluster_server_str= "CLUSTER SERVER";
+const gchar *ic_sql_server_str= "SQL SERVER";
+const gchar *ic_rep_server_str= "REPLICATION SERVER";
+const gchar *ic_file_server_str= "FILE SERVER";
+const gchar *ic_restore_node_str= "RESTORE NODE";
+const gchar *ic_cluster_manager_str= "CLUSTER MANAGER";

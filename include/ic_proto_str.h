@@ -109,6 +109,16 @@ extern const gchar *ic_dir_str;
 extern const gchar *ic_disk_space_str;
 extern const gchar *ic_no_disk_info_available_str;
 
+/* Node type names, part of e.g. the SHOW CLUSTER command */
+extern const gchar *ic_data_server_str;
+extern const gchar *ic_client_node_str;
+extern const gchar *ic_cluster_server_str;
+extern const gchar *ic_sql_server_str;
+extern const gchar *ic_rep_server_str;
+extern const gchar *ic_file_server_str;
+extern const gchar *ic_restore_node_str;
+extern const gchar *ic_cluster_manager_str;
+
 extern gchar *ic_empty_string;
 extern gchar *ic_err_str;
 #endif
