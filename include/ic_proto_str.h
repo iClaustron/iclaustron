@@ -66,6 +66,7 @@ extern const gchar *ic_server_name_str;
 extern const gchar *ic_server_port_str;
 extern const gchar *ic_data_dir_str;
 extern const gchar *ic_num_threads_str;
+extern const gchar *ic_core_parameter_str;
 #ifdef DEBUG_BUILD
 extern const gchar *ic_debug_level_str;
 extern const gchar *ic_debug_timestamp_str;

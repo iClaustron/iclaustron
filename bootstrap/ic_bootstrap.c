@@ -564,26 +564,38 @@ ic_send_debug_level(IC_CONNECTION *conn)
       
     }
   }
-#else
-  (void)conn;
 #endif
+  if (glob_core)
+  {
+    if ((ret_code= ic_send_with_cr_two_strings(conn,
+                                               ic_parameter_str,
+                                               ic_core_parameter_str)) ||
+        (ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_parameter_str,
+                                               (guint64)glob_core)))
+      return ret_code;
+  }
   return 0;
 }
 
 static guint64
 get_debug_params()
 {
+  guint64 num_params= 0;
+  if (glob_core)
+  {
+    num_params+= (guint64)2;
+  }
 #ifdef DEBUG_BUILD
   if (ic_get_debug())
+  {
     if (ic_get_debug_timestamp())
-      return (guint64)4;
+      num_params+= (guint64)4;
     else
-      return (guint64)2;
-  else
-    return (guint64)0;
-#else
-  return (guint64)0;
+      num_params+= (guint64)2;
+  }
 #endif
+  return num_params;
 }
 
 static int

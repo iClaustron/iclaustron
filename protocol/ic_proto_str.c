@@ -105,6 +105,7 @@ const gchar *ic_server_name_str= "--server-name";
 const gchar *ic_server_port_str="--server-port";
 const gchar *ic_data_dir_str= "--data-dir";
 const gchar *ic_num_threads_str= "--num-threads";
+const gchar *ic_core_parameter_str= "--core";
 #ifdef DEBUG_BUILD
 const gchar *ic_debug_level_str= "--debug-level";
 const gchar *ic_debug_timestamp_str= "--debug-timestamp";

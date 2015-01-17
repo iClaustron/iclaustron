@@ -285,7 +285,7 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
 #ifndef WINDOWS
   getsockopt(sockfd, IPPROTO_TCP, TCP_MAXSEG,
              (void*)&maxseg_size, &sock_len);
-  DEBUG_PRINT(COMM_LEVEL, ("Default TCP_MAXSEG = %d", maxseg_size));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Default TCP_MAXSEG = %d", maxseg_size));
   if (conn->is_wan_connection)
   {
     maxseg_size= set_option_size(sockfd, WAN_TCP_MAXSEG_SIZE, maxseg_size,
@@ -296,7 +296,7 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
     maxseg_size= set_option_size(sockfd, conn->tcp_maxseg_size, maxseg_size,
                                  IPPROTO_TCP, TCP_MAXSEG);
   }
-  DEBUG_PRINT(COMM_LEVEL, ("Used TCP_MAXSEG = %d", maxseg_size));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Used TCP_MAXSEG = %d", maxseg_size));
   conn->conn_stat.used_tcp_maxseg_size= maxseg_size;
 #endif
   sock_len= sizeof(int);
@@ -306,8 +306,8 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
   getsockopt(sockfd, SOL_SOCKET, SO_SNDBUF,
              (void*)&snd_size, &sock_len);
   sock_len= sizeof(int);
-  DEBUG_PRINT(COMM_LEVEL, ("Default SO_RCVBUF = %d", rec_size));
-  DEBUG_PRINT(COMM_LEVEL, ("Default SO_SNDBUF = %d", snd_size));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Default SO_RCVBUF = %d", rec_size));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Default SO_SNDBUF = %d", snd_size));
 
   if (conn->is_wan_connection)
   {
@@ -323,10 +323,10 @@ set_socket_options(IC_INT_CONNECTION *conn, int sockfd)
     snd_size= set_option_size(sockfd, conn->tcp_send_buffer_size,
                               snd_size, SOL_SOCKET, SO_SNDBUF);
   }
-  DEBUG_PRINT(COMM_LEVEL, ("Used SO_RCVBUF = %d", rec_size));
-  DEBUG_PRINT(COMM_LEVEL, ("Used SO_SNDBUF = %d", snd_size));
-  DEBUG_PRINT(COMM_LEVEL, ("Used TCP_NODELAY = %d", no_delay));
-  DEBUG_PRINT(COMM_LEVEL, ("Used SO_REUSEADDR = %d", reuse_addr));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Used SO_RCVBUF = %d", rec_size));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Used SO_SNDBUF = %d", snd_size));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Used TCP_NODELAY = %d", no_delay));
+  DEBUG_PRINT(COMM_DETAIL_LEVEL, ("Used SO_REUSEADDR = %d", reuse_addr));
   conn->conn_stat.used_tcp_receive_buffer_size= rec_size;
   conn->conn_stat.used_tcp_send_buffer_size= snd_size;
   conn->conn_stat.tcp_no_delay= no_delay;
@@ -926,9 +926,11 @@ renew_connect:
             FD_ZERO(&read_set);
             FD_SET(sockfd, &read_set);
             write_set= read_set;
-            ret_code= select(sockfd + 1, &read_set, &write_set,
-                   
-                NULL, &time_out);
+            ret_code= select(sockfd + 1,
+                             &read_set,
+                             &write_set,
+                             NULL,
+                             &time_out);
             if (ret_code == 0)
             {
               /*
@@ -967,13 +969,13 @@ renew_connect:
             {
               if (ret_code != 0)
               {
-                DEBUG_PRINT(COMM_LEVEL,
+                DEBUG_PRINT(COMM_DETAIL_LEVEL,
                             ("getsockopt after select/connect, error = %d",
                             ret_code));
               }
               else
               {
-                DEBUG_PRINT(COMM_LEVEL, ("getsockopt failed, error = %d",
+                DEBUG_PRINT(COMM_DETAIL_LEVEL, ("getsockopt failed, error = %d",
                                          ic_get_last_socket_error()));
               }
               ic_sleep(logarithmic_delay(&delay));

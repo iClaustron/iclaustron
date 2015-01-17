@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1322,7 +1322,8 @@ try_again:
         complex logic.
       */
       if ((ret_code= ic_is_process_alive(pc_start_found->pid,
-                                         pc_start_found->program_name.str)))
+                                         pc_start_found->program_name.str,
+                                         FALSE)))
       {
         if (ret_code == IC_ERROR_CHECK_PROCESS_SCRIPT)
           goto end;
@@ -1594,7 +1595,8 @@ handle_start(IC_CONNECTION *conn)
     the correct program name.
   */
   if ((ret_code= ic_is_process_alive(pid,
-                                     pc_start->program_name.str)))
+                                     pc_start->program_name.str,
+                                     FALSE)))
     goto late_error;
 
   if (binary_dir.str)
@@ -1759,7 +1761,7 @@ kill_process(IC_PC_START *pc_start_found,
   loop_count= 0;
 retry_kill_check:
   ic_sleep(1); /* Sleep 1 seconds to give OS a chance to complete kill */
-  ret_code= ic_is_process_alive(pid, pc_start_found->program_name.str);
+  ret_code= ic_is_process_alive(pid, pc_start_found->program_name.str, FALSE);
   if (ret_code == 0)
   {
     loop_count++;
@@ -2777,7 +2779,8 @@ run_check_thread(gpointer data)
       ic_mutex_unlock(pc_hash_mutex);
       /* Check that it is still alive */
       if ((ret_code= ic_is_process_alive(pc_start->pid,
-                                         pc_start->program_name.str)))
+                                         pc_start->program_name.str,
+                                         TRUE)))
       {
         /* Process was dead, remove it from hashtable */
         ic_mutex_lock(pc_hash_mutex);
@@ -3169,9 +3172,14 @@ run_command_handler(gpointer data)
         Closing the connection in this position is normal behaviour.
       */
       ic_print_error(ret_code);
+      DEBUG_PRINT(PROGRAM_LEVEL,
+        ("Command handler exit, ret_code = %d", ret_code));
     }
-    DEBUG_PRINT(PROGRAM_LEVEL,
-      ("Command handler exit, error %d", ret_code));
+    else
+    {
+      DEBUG_PRINT(PROGRAM_LEVEL,
+        ("Command handler normal exit with end of file"));
+    }
   }
   conn->conn_op.ic_free_connection(conn);
   tp_state->ts_ops.ic_thread_stops(thread_state);

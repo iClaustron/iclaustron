@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -42,6 +42,9 @@
 #endif
 #ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
+#endif
+#ifdef HAVE_SYS_RESOURCE_H
+#include <sys/resource.h>
 #endif
 #ifdef HAVE_TIME_H
 #include <time.h>
@@ -746,6 +749,7 @@ get_pid_from_file(gchar *pid_file,
                   IC_PID_TYPE *pid)
 {
   int ret_code;
+  int first = FALSE;
   int loop= 0;
   /**
    * We will read the pid file, if it fails we will wait for a short
@@ -765,7 +769,15 @@ get_pid_from_file(gchar *pid_file,
       /* Success */
       DEBUG_RETURN_INT(0);
     }
-    ic_microsleep(500000); /* Sleep 100 ms */
+    if (first == FALSE)
+    {
+      ic_microsleep(10000); /* Sleep 10 ms first sleep */
+      first = TRUE;
+    }
+    else
+    {
+      ic_microsleep(500000); /* Sleep 500 ms */
+    }
     loop++;
   } while (loop < 60);
   /**
@@ -900,7 +912,8 @@ early_end:
 
 int
 ic_is_process_alive(IC_PID_TYPE pid,
-                    const gchar *process_name)
+                    const gchar *process_name,
+                    gboolean is_loop_check)
 {
   gchar *argv[8];
   gint exit_status;
@@ -910,12 +923,20 @@ ic_is_process_alive(IC_PID_TYPE pid,
   gchar *script_name;
   gchar *file_number_str;
   int error;
+  int ret_code;
   guint64 loc_file_number;
   gchar pid_buf[IC_MAX_INT_STRING];
   gchar file_number_buf[IC_MAX_INT_STRING];
   gchar full_script_name[IC_MAX_FILE_NAME_SIZE];
   gchar log_file_name_buf[IC_MAX_FILE_NAME_SIZE];
-  DEBUG_ENTRY("ic_is_process_alive");
+  if (is_loop_check)
+  {
+    DEBUG_DISABLE(ALL_DEBUG_LEVELS);
+  }
+  else
+  {
+    DEBUG_ENTRY("ic_is_process_alive");
+  }
 
 #ifdef LINUX
   script_name= "check_process.sh";
@@ -969,13 +990,22 @@ ic_is_process_alive(IC_PID_TYPE pid,
   error= run_process(argv, &exit_status, log_file_name_str.str);
   if (error || exit_status == (gint)2)
   {
-    DEBUG_RETURN_INT(IC_ERROR_CHECK_PROCESS_SCRIPT);
+    ret_code= IC_ERROR_CHECK_PROCESS_SCRIPT;
   }
-  if (exit_status == (gint)1)
+  else if (exit_status == (gint)1)
   {
-    DEBUG_RETURN_INT(0); /* The process was alive */
+    ret_code= 0; /* The process was alive */
   }
-  DEBUG_RETURN_INT(IC_ERROR_PROCESS_NOT_ALIVE);
+  else
+  {
+    ret_code= IC_ERROR_PROCESS_NOT_ALIVE;
+  }
+  if (!is_loop_check)
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
+  DEBUG_ENABLE(ALL_DEBUG_LEVELS);
+  return ret_code;
 }
 
 int
@@ -1389,7 +1419,16 @@ sig_error_handler(int signum)
   {
     glob_sig_error_handler(glob_sig_error_param);
   }
-  exit(1);
+  if (glob_core)
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Abort process"));
+    abort();
+  }
+  else
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Exit process"));
+    exit(1);
+  }
   return;
 }
 
@@ -1639,6 +1678,20 @@ ic_setup_workdir(gchar *new_work_dir)
     return IC_ERROR_FAILED_TO_CHANGE_DIR;
   }
   return 0;
+}
+
+void
+ic_generate_core_files(void)
+{
+#ifndef WINDOWS
+  int ret;
+  struct rlimit rl = { RLIM_INFINITY, RLIM_INFINITY };
+  ret= setrlimit(RLIMIT_CORE, &rl);
+  if (ret)
+  {
+    printf("setrlimit: ret= %d\n", ret);
+  }
+#endif
 }
 
 void

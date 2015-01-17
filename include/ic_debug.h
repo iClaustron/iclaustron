@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 */
 
 extern guint32 glob_debug;
+extern guint32 glob_core;
 extern gchar *glob_debug_file;
 extern guint32 glob_debug_screen;
 extern guint32 glob_debug_timestamp;
@@ -55,21 +56,23 @@ void ic_set_stdout_null(void);
 int ic_setup_stdout(gchar *log_file);
 
 /* Various parts to debug. */
-#define COMM_LEVEL 1
+#define PROGRAM_LEVEL 1
 #define ENTRY_LEVEL 2
-#define CONFIG_LEVEL 4
-#define PROGRAM_LEVEL 8
-#define THREAD_LEVEL 16 
+#define THREAD_LEVEL 4
+#define CONFIG_LEVEL 8
+#define PORT_LEVEL 16
 #define CONFIG_PROTO_LEVEL 32
 #define FILE_LEVEL 64
-#define MALLOC_LEVEL 128 
-#define HEARTBEAT_LEVEL 256
-#define CONFIG_READ_LEVEL 512
-#define PORT_LEVEL 1024
-#define BUILD_CONFIG_HASH_LEVEL 2048
-#define NDB_MESSAGE_LEVEL 4096
-#define ADAPTIVE_SEND_LEVEL 8192
-#define CHECK_POLL_SET_LEVEL 16384
+#define COMM_LEVEL 128
+#define CONFIG_READ_LEVEL 256
+#define BUILD_CONFIG_HASH_LEVEL 512
+#define NDB_MESSAGE_LEVEL 1024
+#define ADAPTIVE_SEND_LEVEL 2048
+#define CHECK_POLL_SET_LEVEL 4096
+#define MALLOC_LEVEL 8192
+#define HEARTBEAT_LEVEL 16384
+#define COMM_DETAIL_LEVEL 32768
+#define ALL_DEBUG_LEVELS 0xFFFFFFFF
 
 #ifdef DEBUG_BUILD
 void ic_debug_print_char_buf(gchar *buf, IC_THREAD_DEBUG *thread_debug);

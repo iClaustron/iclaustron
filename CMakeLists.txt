@@ -190,6 +190,7 @@ check_include_files(arpa/inet.h HAVE_ARPA_INET_H)
 check_include_files(netinet/in.h HAVE_NETINET_IN_H)
 check_include_files(netinet/tcp.h HAVE_NETINET_TCP_H)
 check_include_files(sys/poll.h HAVE_SYS_POLL_H)
+check_include_files(sys/resource.h HAVE_SYS_RESOURCE_H)
 check_include_files(sys/select.h HAVE_SYS_SELECT_H)
 check_include_files(sys/socket.h HAVE_SYS_SOCKET_H)
 check_include_files(sys/times.h HAVE_SYS_TIMES_H)
@@ -412,6 +413,7 @@ add_library(ic_api STATIC
             api/ic_apid_conn.ic
             api/ic_apid_table.ic
             api/ic_apid_tablespace.ic
+            api/ic_apid_static.ic
             api/ic_apic.ic
             api/ic_apic_conf_param.ic
             api/ic_apic_conf_read_transl.ic
@@ -425,8 +427,7 @@ add_library(ic_api STATIC
             api/ic_apic_conf_net_read.ic
             api/ic_apic_int.h
             api/ic_apid_int.h
-            api/ic_apid_impl.h
-            api/ic_apid_static.h)
+            api/ic_apid_impl.h)
 target_link_libraries(ic_api ic_port ic_util ic_comm ic_proto)
 
 #install(TARGETS ic_api

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -244,7 +244,7 @@ map_cluster(IC_PARSE_DATA *parse_data)
   IC_API_CONFIG_SERVER *apic= parse_data->apic;
   DEBUG_ENTRY("map_cluster");
 
-  if (parse_data->cluster_name.str)
+  if (parse_data->cluster_name.str != NULL)
   {
     cluster_id= apic->api_op.ic_get_cluster_id_from_name(apic,
                                            &parse_data->cluster_name);

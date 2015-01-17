@@ -288,6 +288,8 @@ static GOptionEntry debug_entries[] =
     "Flag whether to print debug info to stdout", NULL},
   { "debug-timestamp", 0, 0, G_OPTION_ARG_INT, &glob_debug_timestamp,
     "Flag whether to print timestamps in debug info", NULL},
+  { "core", 0, 0, G_OPTION_ARG_INT, &glob_core,
+    "Generate core files at crash", NULL},
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
@@ -405,6 +407,11 @@ ic_start_program(int argc,
     goto parse_error;
   g_option_context_free(context);
 
+  if (glob_core)
+  {
+    ic_generate_core_files();
+  }
+
   if (ic_glob_daemonize && daemon_program)
   {
     /**
@@ -415,7 +422,6 @@ ic_start_program(int argc,
     if ((ret_code= ic_daemonize()))
       goto error;
     ic_set_stdout_null();
-    ic_set_umask();
   }
   ic_set_umask();
 

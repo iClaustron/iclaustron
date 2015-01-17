@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -83,7 +83,9 @@ void ic_free_mc(void *ret_obj);
 
 /* Process start/stop/check calls */
 IC_PID_TYPE ic_get_own_pid();
-int ic_is_process_alive(IC_PID_TYPE pid, const gchar *process_name);
+int ic_is_process_alive(IC_PID_TYPE pid,
+                        const gchar *process_name,
+                        gboolean is_loop_check);
 int ic_start_process(gchar **argv,
                      gchar *binary_dir,
                      gchar *pid_file,
@@ -147,6 +149,8 @@ void ic_microsleep(guint32 microseconds_to_sleep);
  */
 int ic_daemonize(void);
 int ic_setup_workdir(gchar *new_work_dir);
+/* Interface to enable generation of core files */
+void ic_generate_core_files(void);
 /* Interface to set umask of iClaustron processes */
 void ic_set_umask(void);
 /* Interface to write pid file and setup things to delete it */

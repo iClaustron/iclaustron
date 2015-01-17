@@ -405,7 +405,7 @@ cluster:
 one_cluster_reference:
     cluster_id { PARSE_DATA->cluster_id= $1; }
     | cluster_name
-    { memcpy(&PARSE_DATA->cluster_name, $1,sizeof(IC_STRING)); }
+    { memcpy(&PARSE_DATA->cluster_name, $1, sizeof(IC_STRING)); }
     ;
 
 cluster_id:

@@ -16,6 +16,7 @@
 #include <ic_base_header.h>
 
 guint32 glob_debug= 0;
+guint32 glob_core= 0;
 gchar *glob_debug_file= NULL;
 guint32 glob_debug_screen= 0;
 guint32 glob_debug_timestamp= 0;
