@@ -106,7 +106,7 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
               lex_data->hash_divider);
   symbol_id= lex_data->symbol_map[i];
 #ifdef DEBUG
-  if (symbol_id != SIZE_MAP_SYMBOL)
+  if (symbol_id != 0)
   {
     i= 0;
     do
@@ -123,12 +123,11 @@ ic_found_identifier(IC_LEX_DATA *lex_data,
 #else
   (void)parse_symbols;
 #endif
-  if (symbol_id != SIZE_MAP_SYMBOL)
+  *symbol_value= symbol_id;
+  if (symbol_id != 0)
   {
-    *symbol_value= symbol_id;
     return 0;
   }
-  *symbol_value= 0;
   return ic_mc_char_to_strdup(mc_ptr, ic_str_ptr, str, str_len);
 }
 
