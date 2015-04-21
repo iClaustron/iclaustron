@@ -1192,14 +1192,19 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
     server_port_len++; /* Room for NULL byte */
   }
   else
+  {
     server_port_len= 0;
+  }
   if (link_config->client_port_number != 0)
   {
     client_port_str= ic_guint64_str((guint64)link_config->client_port_number,
                                     client_port, &client_port_len);
     client_port_len++; /* Room for NULL byte */
-  } else
+  }
+  else
+  {
     client_port_len= 0;
+  }
   tot_string_len+= server_port_len;
   tot_string_len+= client_port_len;
   if (!(send_node_conn->string_memory= ic_calloc(tot_string_len)))
@@ -1236,7 +1241,9 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   if (link_config->server_node_id == my_node_id)
   {
     if (server_port_len == 0)
+    {
       send_node_conn->my_port_number= NULL;
+    }
     else
     {
       send_node_conn->my_port_number= copy_ptr;
@@ -1246,7 +1253,9 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
              server_port_len);
     }
     if (client_port_len == 0)
+    {
       send_node_conn->other_port_number= NULL;
+    }
     else
     {
       send_node_conn->other_port_number= copy_ptr;
@@ -1259,7 +1268,9 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
   else
   {
     if (server_port_len == 0)
+    {
       send_node_conn->other_port_number= NULL;
+    }
     else
     {
       send_node_conn->other_port_number= copy_ptr;
@@ -1269,7 +1280,9 @@ set_hostname_and_port(IC_SEND_NODE_CONNECTION *send_node_conn,
              server_port_len);
     }
     if (client_port_len == 0)
+    {
       send_node_conn->my_port_number= NULL;
+    }
     else
     {
       send_node_conn->my_port_number= copy_ptr;

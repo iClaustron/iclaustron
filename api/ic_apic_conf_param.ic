@@ -1827,6 +1827,13 @@ init_config_parameters()
     indicating that a dynamic port is to be used. Ensure that we
     send a negative number and that we can't set this in the configuration
     file.
+
+    At the moment we allow setting the port number on a node. Actually
+    it is currently the only method to set the port number. Possibly we
+    will later on also support dynamic port numbers. NDB Management Server
+    is actually having a bug in that it doesn't support fixed port numbers
+    of a node. Fixed port numbers of a node makes it much easier to use
+    NDB where there are firewalls around.
    */
   IC_SET_CONFIG_MAP(SOCKET_SERVER_PORT_NUMBER, 186);
   IC_SET_SOCKET_CONFIG(conf_entry, server_port_number,

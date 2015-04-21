@@ -21,6 +21,7 @@
 #include <ic_readline.h>
 #include <ic_connection.h>
 #include <ic_protocol_support.h>
+#include <ic_proto_str.h>
 
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
@@ -41,7 +42,9 @@ static GOptionEntry entries[] =
 static int connect_cluster_mgr(IC_CONNECTION **conn);
 
 static int
-execute_command(IC_STRING **str_array, guint32 num_lines)
+execute_command(IC_STRING **str_array,
+                guint32 num_lines,
+                guint64 *connect_code)
 {
   gchar *read_buf;
   guint32 read_size, i;
@@ -57,6 +60,31 @@ execute_command(IC_STRING **str_array, guint32 num_lines)
   if ((ret_code= connect_cluster_mgr(&conn)))
     goto error;
 
+  if ((*connect_code) == (guint64)0)
+  {
+    /**
+     * This is the first connect, we will acquire a connect code that we will
+     * use in all future connections to the cluster manager. This makes it
+     * possible to maintain connections for a very long time without
+     * requiring a TCP/IP connection kept up all the time, thus minimizing
+     * the resources on the cluster manager side.
+     */
+    if ((ret_code= ic_send_with_cr(conn, ic_new_connect_clmgr_str)))
+      goto error;
+    if ((ret_code= ic_rec_long_number(conn,
+                                      ic_connected_clmgr_str,
+                                      connect_code)))
+      goto error;
+  }
+  else
+  {
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_reconnect_clmgr_str,
+                                               (*connect_code))))
+      goto error;
+    if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
+      goto error;
+  }
   for (i= 0; i < num_lines; i++)
   {
     if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
@@ -469,6 +497,7 @@ command_interpreter(void)
   IC_STRING *line_ptr= &line_str;
   IC_STRING *line_ptrs[256];
   IC_STRING line_strs[256];
+  guint64 connect_code= 0;
   DEBUG_ENTRY("command_interpreter");
 
   for (i= 0; i < 256; i++)
@@ -643,7 +672,9 @@ command_interpreter(void)
         ic_printf("Error: No such command to get help on");
       }
     }
-    else if ((ret_code= execute_command(&line_ptrs[0], lines)))
+    else if ((ret_code= execute_command(&line_ptrs[0],
+                                        lines,
+                                        &connect_code)))
     {
       ic_print_error(ret_code);
       goto error;

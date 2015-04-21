@@ -27,6 +27,7 @@
 #include <ic_apid.h>
 #include <ic_lex_support.h>
 #include <ic_proto_str.h>
+#include <ic_hashtable_itr.h>
 #include "ic_clmgr_int.h"
 
 /* Option variables */
@@ -1296,18 +1297,93 @@ init_parse_data(IC_PARSE_DATA *parse_data)
   parse_data->break_flag= FALSE;
 }
 
+static IC_HASHTABLE *glob_connect_hash= NULL;
+static IC_MUTEX *glob_connect_hash_mutex= NULL;
+
+static int
+initialise_connect_hash(void)
+{
+  glob_connect_hash= ic_create_hashtable(64,
+                                         ic_hash_uint32,
+                                         ic_keys_equal_uint32,
+                                         FALSE);
+  if (glob_connect_hash == NULL)
+  {
+    return 1;
+  }
+  glob_connect_hash_mutex= ic_mutex_create();
+  if (glob_connect_hash_mutex == NULL)
+  {
+    ic_hashtable_destroy(glob_connect_hash, FALSE);
+    return 1;
+  }
+  return 0;
+}
+
+static void
+destroy_connect_hash(void)
+{
+  gboolean continue_scan;
+  void* key;
+  IC_HASHTABLE_ITR hash_iterator;
+  IC_PARSE_DATA *parse_data;
+
+  if (glob_connect_hash == NULL)
+    return;
+
+  ic_mutex_lock(glob_connect_hash_mutex);
+  do
+  {
+    continue_scan= FALSE;
+    ic_hashtable_iterator(glob_connect_hash,
+                          &hash_iterator,
+                          TRUE);
+
+    if (ic_hashtable_iterator_advance(&hash_iterator) != 0)
+    {
+      parse_data= (IC_PARSE_DATA*)ic_hashtable_iterator_value(&hash_iterator);
+      key= ic_hashtable_iterator_key(&hash_iterator);
+      ic_hashtable_remove(glob_connect_hash, key);
+      continue_scan= TRUE;
+    }
+  } while (continue_scan);
+  ic_hashtable_destroy(glob_connect_hash, FALSE);
+  ic_mutex_unlock(glob_connect_hash_mutex);
+  ic_mutex_destroy(&glob_connect_hash_mutex);
+}
+
+static int
+find_parse_connection(IC_PARSE_DATA *parse_data, guint64 connect_code)
+{
+  return 0;
+}
+
+static int
+allocate_parse_connection(IC_PARSE_DATA *parse_data, guint64 connect_code)
+{
+  return 0;
+}
+
+static guint64
+generate_connect_code(void)
+{
+  return (guint64)0;
+}
+
 static gpointer
 run_handle_new_connection(gpointer data)
 {
   gchar *read_buf;
   guint32 read_size;
+  guint64 connect_code;
+  gboolean found;
   int ret_code;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_THREADPOOL_STATE *tp_state;
   IC_CONNECTION *conn;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_API_CONFIG_SERVER *apic;
-  gchar *parse_buf;
+  gchar *parse_buf= NULL;
   guint32 parse_inx= 0;
   gboolean too_long_flag= FALSE;
   IC_PARSE_DATA parse_data;
@@ -1320,6 +1396,41 @@ run_handle_new_connection(gpointer data)
 
   apic= (IC_API_CONFIG_SERVER*)conn->conn_op.ic_get_param(conn);
   ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
+  if ((ret_code= ic_rec_simple_str_opt(conn,
+                                       ic_new_connect_clmgr_str,
+                                       &found)))
+    goto error;
+  if (found)
+  {
+    /**
+     * This is the first connect, we will generate a connection code that
+     * the receiver can use as a key to find the parse data back when he
+     * reconnects for a new command. The protocol supports keeping up a
+     * connection even though the TCP/IP connection is broken.
+     * Naturally the cluster manager leaves no guarantees that it will keep
+     * this connection forever, but it will keep it for a long time in
+     * normal situations. The client can also decide to keep the connection
+     * up and running.
+     */
+    connect_code= generate_connect_code();
+    if (allocate_parse_connection(&parse_data, connect_code))
+      goto error;
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_connected_clmgr_str,
+                                               connect_code)))
+      goto error;
+  }
+  else
+  {
+    if ((ret_code= ic_rec_long_number(conn,
+                                      ic_reconnect_clmgr_str,
+                                      &connect_code)))
+      goto error;
+    if (find_parse_connection(&parse_data, connect_code))
+      goto error;
+    if ((ret_code= ic_send_with_cr(conn, ic_ok_str)))
+      goto error;
+  }
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
   {
     ic_print_error(IC_ERROR_MEM_ALLOC);
@@ -1392,7 +1503,10 @@ exit:
               parse_inx));
 
 error:
-  ic_free(parse_buf);
+  if (parse_buf)
+  {
+    ic_free(parse_buf);
+  }
   if (mc_ptr)
   {
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
@@ -1529,6 +1643,9 @@ int main(int argc,
   gchar *err_str= error_str;
   IC_THREADPOOL_STATE *tp_state= NULL;
 
+  glob_connect_hash= NULL;
+  glob_connect_hash_mutex= NULL;
+
   if ((ret_code= ic_start_program(argc,
                                   argv,
                                   entries,
@@ -1554,11 +1671,14 @@ int main(int argc,
                                        &apid_global,
                                        &apic)))
     goto end;
+  if ((ret_code= initialise_connect_hash()))
+    goto end;
   if ((ret_code= set_up_server_connection(&conn)))
     goto end;
   ret_code= wait_for_connections_and_fork(conn, apic, tp_state);
   conn->conn_op.ic_free_connection(conn);
 end:
+  destroy_connect_hash();
   ic_stop_apid_program(ret_code,
                        err_str,
                        apid_global,

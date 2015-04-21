@@ -120,6 +120,11 @@ extern const gchar *ic_file_server_str;
 extern const gchar *ic_restore_node_str;
 extern const gchar *ic_cluster_manager_str;
 
+/* Messages for cluster manager interaction */
+extern const gchar *ic_new_connect_clmgr_str;
+extern const gchar *ic_reconnect_clmgr_str;
+extern const gchar *ic_connected_clmgr_str;
+
 extern gchar *ic_empty_string;
 extern gchar *ic_err_str;
 #endif

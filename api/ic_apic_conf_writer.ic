@@ -939,13 +939,20 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
            (guint64)comm_ptr->client_port_number)))
         goto error;
       if (comm_ptr->server_port_number)
+      {
         server_port= comm_ptr->server_port_number;
+      }
       else
       {
         if (comm_ptr->server_node_id == node1_id)
+        {
           server_port= node1_port;
+        }
         else
+        {
           server_port= node2_port;
+        }
+        comm_ptr->server_port_number = server_port;
       }
       if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
            &get_conf_entry(SOCKET_SERVER_PORT_NUMBER)->config_entry_name,

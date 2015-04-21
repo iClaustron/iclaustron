@@ -104,8 +104,7 @@ static IC_CLUSTER_CONFIG *get_cluster_config(IC_API_CONFIG_SERVER *ext_apic,
                                              guint32 cluster_id)
 {
   IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
-  if ((apic->conf_objects == NULL) ||
-      (cluster_id > apic->max_cluster_id))
+  if (cluster_id > apic->max_cluster_id)
   {
     return NULL;
   }
