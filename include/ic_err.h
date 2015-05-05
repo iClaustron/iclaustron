@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #include <errno.h>
 
 #define IC_FIRST_ERROR 7000
-#define IC_LAST_ERROR 7119
+#define IC_LAST_ERROR 7120
 #define IC_MAX_ERRORS 200
 
 /*
@@ -179,4 +179,5 @@ typedef struct ic_config_error IC_CONFIG_ERROR;
 #define IC_ERROR_FAILED_TO_SPAWN_PROGRAM 7117
 #define IC_ERROR_CONFIGURATION_ERROR 7118
 #define IC_ERROR_MALFORMED_CLIENT_STRING 7119
+#define IC_ERROR_TOO_MANY_CLUSTER_MANAGERS 7120
 #endif

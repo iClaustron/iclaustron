@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -400,6 +400,8 @@ ic_init_error_messages()
     "Error found in configuration file(s)";
   ic_error_str[IC_ERROR_MALFORMED_CLIENT_STRING - IC_FIRST_ERROR]=
     "Commands in client must end with ;, any other place for ; is an error";
+  ic_error_str[IC_ERROR_TOO_MANY_CLUSTER_MANAGERS - IC_FIRST_ERROR]=
+    "Too many cluster managers in configuration";
 #ifdef DEBUG
   /* Verify we have set an error message for all error codes */
   for (i= IC_FIRST_ERROR; i <= IC_LAST_ERROR; i++)

@@ -197,6 +197,8 @@ static const guint32 IC_NDB_HIGH_PRIO= 1;
 #define IC_MAX_CLUSTER_ID 255
 #define IC_MAX_NODE_ID 255
 #define IC_MAX_NDB_DATA_NODES 48
+#define IC_MAX_TOTAL_DATA_SERVERS ((IC_MAX_CLUSTER_ID + 1) * \
+                                    IC_MAX_NDB_DATA_NODES)
 #define IC_MAX_THREAD_CONNECTIONS 256
 #define IC_MAX_CLUSTER_SERVERS 4
 #define IC_MAX_CLUSTER_MANAGERS 4

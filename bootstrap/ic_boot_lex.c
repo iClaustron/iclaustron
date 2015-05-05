@@ -1,4 +1,4 @@
-/* Copyright (C) 2010, 2014 iClaustron AB
+/* Copyright (C) 2010, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -30,8 +30,11 @@
 static IC_PARSE_SYMBOLS parse_symbols[]=
 {
   { "CLUSTER",      CLUSTER_SYM },
+  { "CLUSTER_ID",   CLUSTER_ID_SYM },
+  { "DATA",         DATA_SYM },
   { "=",            EQUAL_SYM },
   { "EXIT",         EXIT_SYM },
+  { "FILE",         FILE_SYM },
   { "FILES",        FILES_SYM },
   { "HOST",         HOST_SYM },
   { "MANAGER",      MANAGER_SYM },
@@ -40,10 +43,12 @@ static IC_PARSE_SYMBOLS parse_symbols[]=
   { "PCNTRL_HOST",  PCNTRL_HOST_SYM },
   { "PCNTRL_PORT",  PCNTRL_PORT_SYM },
   { "PREPARE",      PREPARE_SYM },
+  { "REPLICATION",  REPLICATION_SYM },
   { "QUIT",         QUIT_SYM },
   { "SEND",         SEND_SYM },
   { "SERVER",       SERVER_SYM },
   { "SERVERS",      SERVERS_SYM },
+  { "SQL",          SQL_SYM },
   { "START",        START_SYM },
   { NULL,           0}
 };

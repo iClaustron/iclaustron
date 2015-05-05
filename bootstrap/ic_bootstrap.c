@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -51,9 +51,19 @@ generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
   int ret_code;
   int len;
   guint32 node_id;
+  guint32 num_data_servers= 0;
+  guint32 num_cluster_servers= 0;
+  guint32 num_cluster_managers= 0;
+  guint32 num_sql_servers= 0;
+  guint32 num_file_servers= 0;
+  guint32 num_rep_servers= 0;
   IC_FILE_HANDLE cmd_file_handle;
   IC_CLUSTER_SERVER_CONFIG *cs_conf;
   IC_CLUSTER_MANAGER_CONFIG *mgr_conf;
+  IC_DATA_SERVER_CONFIG *ds_conf;
+  IC_FILE_SERVER_CONFIG *fs_conf;
+  IC_REP_SERVER_CONFIG *rep_conf;
+  IC_SQL_SERVER_CONFIG *sql_conf;
   DEBUG_ENTRY("generate_bootstrap_file");
 
   /* Create file to store generated file */
@@ -67,6 +77,7 @@ generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
     if (glob_grid_cluster->node_types[node_id] == IC_CLUSTER_SERVER_NODE)
     {
       /* Found a Cluster Server, now generate a command line */
+      num_cluster_servers++;
       cs_conf= (IC_CLUSTER_SERVER_CONFIG*)
         glob_grid_cluster->node_config[node_id];
       /*
@@ -92,9 +103,10 @@ generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
                                    len)))
         goto late_end;
     }
-    if (glob_grid_cluster->node_types[node_id] == IC_CLUSTER_MANAGER_NODE)
+    else if (glob_grid_cluster->node_types[node_id] == IC_CLUSTER_MANAGER_NODE)
     {
       /* Found a Cluster Manager, now generate a command line */
+      num_cluster_managers++;
       mgr_conf= (IC_CLUSTER_MANAGER_CONFIG*)
         glob_grid_cluster->node_config[node_id];
       /*
@@ -121,6 +133,172 @@ generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
         goto late_end;
     }
   }
+  for (guint32 i = 0; i < glob_num_clusters; i++)
+  {
+    for (node_id = 1; node_id <= glob_clusters[i]->max_node_id; node_id++)
+    {
+      if (glob_clusters[i]->node_types[node_id] == IC_DATA_SERVER_NODE)
+      {
+        /* Found a Data Server, now generate a command line */
+        num_data_servers++;
+        ds_conf= (IC_DATA_SERVER_CONFIG*)
+          glob_clusters[i]->node_config[node_id];
+        /*
+          Generate a command line like this:
+          PREPARE DATA SERVER HOST=hostname
+                              PCNTRL_HOST=hostname
+                              PCNTRL_PORT=port_number
+                              CLUSTER_ID=cluster_id
+                              NODE_ID=node_id;
+        */
+        len= g_snprintf(parse_buf,
+                        COMMAND_READ_BUF_SIZE,
+                        "PREPARE DATA SERVER "
+                        "HOST=%s "
+                        "PCNTRL_HOST=%s "
+                        "PCNTRL_PORT=%u "
+                        "CLUSTER_ID=%u "
+                        "NODE_ID=%u;\n",
+                        ds_conf->hostname,
+                        ds_conf->pcntrl_hostname,
+                        ds_conf->pcntrl_port,
+                        i,
+                        node_id);
+        if ((ret_code= ic_write_file(cmd_file_handle,
+                                     parse_buf,
+                                     len)))
+          goto late_end;
+      }
+      else if (glob_clusters[i]->node_types[node_id] == IC_FILE_SERVER_NODE)
+      {
+        /* Found a File Server, now generate a command line */
+        num_file_servers++;
+        fs_conf= (IC_FILE_SERVER_CONFIG*)
+          glob_clusters[i]->node_config[node_id];
+        /*
+          Generate a command line like this:
+          PREPARE FILE SERVER HOST=hostname
+                              PCNTRL_HOST=hostname
+                              PCNTRL_PORT=port_number
+                              CLUSTER_ID=cluster_id
+                              NODE_ID=node_id;
+        */
+        len= g_snprintf(parse_buf,
+                        COMMAND_READ_BUF_SIZE,
+                        "PREPARE FILE SERVER "
+                        "HOST=%s "
+                        "PCNTRL_HOST=%s "
+                        "PCNTRL_PORT=%u "
+                        "CLUSTER_ID=%u "
+                        "NODE_ID=%u;\n",
+                        fs_conf->client_conf.hostname,
+                        fs_conf->client_conf.pcntrl_hostname,
+                        fs_conf->client_conf.pcntrl_port,
+                        i,
+                        node_id);
+        if ((ret_code= ic_write_file(cmd_file_handle,
+                                     parse_buf,
+                                     len)))
+          goto late_end;
+      }
+      else if (glob_clusters[i]->node_types[node_id] == IC_REP_SERVER_NODE)
+      {
+        /* Found a Replication Server, now generate a command line */
+        num_rep_servers++;
+        rep_conf= (IC_REP_SERVER_CONFIG*)
+          glob_clusters[i]->node_config[node_id];
+        /*
+          Generate a command line like this:
+          PREPARE REPLICATION SERVER HOST=hostname
+                                     PCNTRL_HOST=hostname
+                                     PCNTRL_PORT=port_number
+                                     CLUSTER_ID=cluster_id
+                                     NODE_ID=node_id;
+        */
+        len= g_snprintf(parse_buf,
+                        COMMAND_READ_BUF_SIZE,
+                        "PREPARE REPLICATION SERVER "
+                        "HOST=%s "
+                        "PCNTRL_HOST=%s "
+                        "PCNTRL_PORT=%u "
+                        "CLUSTER_ID=%u "
+                        "NODE_ID=%u;\n",
+                        rep_conf->client_conf.hostname,
+                        rep_conf->client_conf.pcntrl_hostname,
+                        rep_conf->client_conf.pcntrl_port,
+                        i,
+                        node_id);
+        if ((ret_code= ic_write_file(cmd_file_handle,
+                                     parse_buf,
+                                     len)))
+          goto late_end;
+      }
+      else if (glob_clusters[i]->node_types[node_id] == IC_SQL_SERVER_NODE)
+      {
+        /* Found a SQL Server, now generate a command line */
+        num_sql_servers++;
+        sql_conf= (IC_SQL_SERVER_CONFIG*)
+          glob_clusters[i]->node_config[node_id];
+        /*
+          Generate a command line like this:
+          PREPARE SQL SERVER HOST=hostname
+                             PCNTRL_HOST=hostname
+                             PCNTRL_PORT=port_number
+                             CLUSTER_ID=cluster_id
+                             NODE_ID=node_id;
+        */
+        len= g_snprintf(parse_buf,
+                        COMMAND_READ_BUF_SIZE,
+                        "PREPARE SQL SERVER "
+                        "HOST=%s "
+                        "PCNTRL_HOST=%s "
+                        "PCNTRL_PORT=%u "
+                        "CLUSTER_ID=%u "
+                        "NODE_ID=%u;\n",
+                        sql_conf->client_conf.hostname,
+                        sql_conf->client_conf.pcntrl_hostname,
+                        sql_conf->client_conf.pcntrl_port,
+                        i,
+                        node_id);
+        if ((ret_code= ic_write_file(cmd_file_handle,
+                                     parse_buf,
+                                     len)))
+          goto late_end;
+      }
+    }
+    if (num_data_servers == 0)
+    {
+      ic_printf("Must have at least one Data Server in each Cluster");
+      ret_code= IC_ERROR_CONFIGURATION_ERROR;
+      goto late_end;
+    }
+    num_data_servers= 0;
+  }
+  if (num_cluster_servers == 0)
+  {
+    ic_printf("Must have at least one Cluster Server in config");
+    ret_code= IC_ERROR_CONFIGURATION_ERROR;
+    goto late_end;
+  }
+  else if (num_cluster_managers == 0)
+  {
+    ic_printf("Must have at least one Cluster Manager in config");
+    ret_code= IC_ERROR_CONFIGURATION_ERROR;
+    goto late_end;
+  }
+  else if (num_cluster_servers > IC_MAX_CLUSTER_SERVERS)
+  {
+    ic_printf("Too many Cluster Servers, can have at most 4 of them");
+    ret_code= IC_ERROR_TOO_MANY_CS_HOSTS;
+    goto late_end;
+  }
+  else if (num_cluster_managers > IC_MAX_CLUSTER_MANAGERS)
+  {
+    ic_printf("Too many Cluster Managers, can have at most 4 of them");
+    ret_code= IC_ERROR_TOO_MANY_CLUSTER_MANAGERS;
+    goto late_end;
+  }
+
   len= g_snprintf(parse_buf,
                   COMMAND_READ_BUF_SIZE,
                   "SEND FILES;\n");
@@ -142,6 +320,43 @@ generate_bootstrap_file(gchar *parse_buf, const gchar *command_file)
                                parse_buf,
                                len)))
     goto late_end;
+  len= g_snprintf(parse_buf,
+                  COMMAND_READ_BUF_SIZE,
+                  "START DATA SERVERS;\n");
+  if ((ret_code= ic_write_file(cmd_file_handle,
+                               parse_buf,
+                               len)))
+    goto late_end;
+  if (num_rep_servers > 0)
+  {
+    len= g_snprintf(parse_buf,
+                    COMMAND_READ_BUF_SIZE,
+                    "START REPLICATION SERVERS;\n");
+    if ((ret_code= ic_write_file(cmd_file_handle,
+                                 parse_buf,
+                                 len)))
+      goto late_end;
+  }
+  if (num_file_servers > 0)
+  {
+    len= g_snprintf(parse_buf,
+                  COMMAND_READ_BUF_SIZE,
+                  "START FILE SERVERS;\n");
+    if ((ret_code= ic_write_file(cmd_file_handle,
+                                 parse_buf,
+                                 len)))
+      goto late_end;
+  }
+  if (num_sql_servers > 0)
+  {
+    len= g_snprintf(parse_buf,
+                    COMMAND_READ_BUF_SIZE,
+                    "START SQL SERVERS;\n");
+    if ((ret_code= ic_write_file(cmd_file_handle,
+                                 parse_buf,
+                                 len)))
+      goto late_end;
+  }
 
 late_end:
   (void)ic_close_file(cmd_file_handle);
@@ -193,6 +408,90 @@ error:
   DEBUG_RETURN_INT(1);
 }
 
+static int
+check_ds_node_id(IC_PARSE_DATA *parse_data, guint32 node_id, int include_last)
+{
+  int i;
+  DEBUG_ENTRY("check_ds_node_id");
+
+  for (i= 0;
+       i < (int)(((int)parse_data->next_ds_index - 1) + include_last);
+       i++)
+  {
+    if (node_id == parse_data->ds_data[i].node_id)
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_printf("Multiple nodes with same node id");
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_INT(1);
+}
+
+static int
+check_fs_node_id(IC_PARSE_DATA *parse_data, guint32 node_id, int include_last)
+{
+  int i;
+  DEBUG_ENTRY("check_fs_node_id");
+
+  for (i= 0;
+       i < (int)(((int)parse_data->next_fs_index - 1) + include_last);
+       i++)
+  {
+    if (node_id == parse_data->fs_data[i].node_id)
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_printf("Multiple nodes with same node id");
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_INT(1);
+}
+
+static int
+check_rep_node_id(IC_PARSE_DATA *parse_data, guint32 node_id, int include_last)
+{
+  int i;
+  DEBUG_ENTRY("check_rep_node_id");
+
+  for (i= 0;
+       i < (int)(((int)parse_data->next_rep_index - 1) + include_last);
+       i++)
+  {
+    if (node_id == parse_data->rep_data[i].node_id)
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_printf("Multiple nodes with same node id");
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_INT(1);
+}
+
+static int
+check_sql_node_id(IC_PARSE_DATA *parse_data, guint32 node_id, int include_last)
+{
+  int i;
+  DEBUG_ENTRY("check_sql_node_id");
+
+  for (i= 0;
+       i < (int)(((int)parse_data->next_sql_index - 1) + include_last);
+       i++)
+  {
+    if (node_id == parse_data->sql_data[i].node_id)
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_printf("Multiple nodes with same node id");
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_INT(1);
+}
+
 static void
 ic_prepare_cluster_server_cmd(IC_PARSE_DATA *parse_data)
 {
@@ -207,6 +506,10 @@ ic_prepare_cluster_server_cmd(IC_PARSE_DATA *parse_data)
   }
   node_id= parse_data->cs_data[parse_data->next_cs_index - 1].node_id;
   if (check_cs_node_id(parse_data, node_id, 0) ||
+      check_ds_node_id(parse_data, node_id, 1) ||
+      check_fs_node_id(parse_data, node_id, 1) ||
+      check_rep_node_id(parse_data, node_id, 1) ||
+      check_sql_node_id(parse_data, node_id, 1) ||
       check_mgr_node_id(parse_data, node_id, 1))
   {
     DEBUG_RETURN_EMPTY;
@@ -229,11 +532,137 @@ ic_prepare_cluster_manager_cmd(IC_PARSE_DATA *parse_data)
   }
   node_id= parse_data->mgr_data[parse_data->next_mgr_index - 1].node_id;
   if (check_cs_node_id(parse_data, node_id, 1) ||
+      check_ds_node_id(parse_data, node_id, 1) ||
+      check_fs_node_id(parse_data, node_id, 1) ||
+      check_rep_node_id(parse_data, node_id, 1) ||
+      check_sql_node_id(parse_data, node_id, 1) ||
       check_mgr_node_id(parse_data, node_id, 0))
   {
     DEBUG_RETURN_EMPTY;
   }
   ic_printf("Prepared cluster manager with node id %u", node_id);
+  DEBUG_RETURN_EMPTY;
+}
+
+static int
+check_ds_node_id_and_cluster_id(IC_PARSE_DATA *parse_data,
+                                guint32 cluster_id,
+                                guint32 node_id)
+{
+  int i;
+  DEBUG_ENTRY("check_ds_node_id_and_cluster_id");
+
+  for (i= 0;
+       i < (int)(((int)parse_data->next_ds_index - 1));
+       i++)
+  {
+    if (node_id == parse_data->ds_data[i].node_id &&
+        cluster_id == parse_data->ds_data[i].cluster_id)
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_printf("Multiple data servers with same node id in the same cluster");
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_INT(1);
+}
+
+static void
+ic_prepare_data_server_cmd(IC_PARSE_DATA *parse_data)
+{
+  guint32 node_id;
+  guint32 cluster_id;
+  DEBUG_ENTRY("ic_prepare_data_server_cmd");
+
+  node_id= parse_data->ds_data[parse_data->next_ds_index - 1].node_id;
+  cluster_id= parse_data->ds_data[parse_data->next_ds_index - 1].cluster_id;
+  if (check_cs_node_id(parse_data, node_id, 1) ||
+      check_mgr_node_id(parse_data, node_id, 1) ||
+      check_fs_node_id(parse_data, node_id, 1) ||
+      check_sql_node_id(parse_data, node_id, 1) ||
+      check_rep_node_id(parse_data, node_id, 1) ||
+      check_ds_node_id_and_cluster_id(parse_data,
+                                      cluster_id,
+                                      node_id))
+  {
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared data server with cluster id %u and node id %u",
+            cluster_id,
+            node_id);
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_prepare_file_server_cmd(IC_PARSE_DATA *parse_data)
+{
+  guint32 node_id;
+  guint32 cluster_id;
+  DEBUG_ENTRY("ic_prepare_file_server_cmd");
+
+  node_id= parse_data->fs_data[parse_data->next_fs_index - 1].node_id;
+  cluster_id= parse_data->fs_data[parse_data->next_fs_index - 1].cluster_id;
+  if (check_cs_node_id(parse_data, node_id, 1) ||
+      check_mgr_node_id(parse_data, node_id, 1) ||
+      check_ds_node_id(parse_data, node_id, 1) ||
+      check_rep_node_id(parse_data, node_id, 1) ||
+      check_sql_node_id(parse_data, node_id, 1) ||
+      check_fs_node_id(parse_data, node_id, 0))
+  {
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared file server with cluster id %u and node id %u",
+            cluster_id,
+            node_id);
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_prepare_rep_server_cmd(IC_PARSE_DATA *parse_data)
+{
+  guint32 node_id;
+  guint32 cluster_id;
+  DEBUG_ENTRY("ic_prepare_rep_server_cmd");
+
+  node_id= parse_data->rep_data[parse_data->next_rep_index - 1].node_id;
+  cluster_id= parse_data->rep_data[parse_data->next_rep_index - 1].cluster_id;
+  if (check_cs_node_id(parse_data, node_id, 1) ||
+      check_mgr_node_id(parse_data, node_id, 1) ||
+      check_ds_node_id(parse_data, node_id, 1) ||
+      check_fs_node_id(parse_data, node_id, 1) ||
+      check_sql_node_id(parse_data, node_id, 1) ||
+      check_rep_node_id(parse_data, node_id, 0))
+  {
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared replication server with cluster id %u and node id %u",
+            cluster_id,
+            node_id);
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_prepare_sql_server_cmd(IC_PARSE_DATA *parse_data)
+{
+  guint32 node_id;
+  guint32 cluster_id;
+  DEBUG_ENTRY("ic_prepare_sql_server_cmd");
+
+  node_id= parse_data->sql_data[parse_data->next_sql_index - 1].node_id;
+  cluster_id= parse_data->sql_data[parse_data->next_sql_index - 1].cluster_id;
+  if (check_cs_node_id(parse_data, node_id, 1) ||
+      check_mgr_node_id(parse_data, node_id, 1) ||
+      check_ds_node_id(parse_data, node_id, 1) ||
+      check_fs_node_id(parse_data, node_id, 1) ||
+      check_sql_node_id(parse_data, node_id, 0) ||
+      check_rep_node_id(parse_data, node_id, 1))
+  {
+    DEBUG_RETURN_EMPTY;
+  }
+  ic_printf("Prepared SQL server with cluster id %u and node id %u",
+            cluster_id,
+            node_id);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -897,6 +1326,34 @@ error:
 }
 
 static void
+ic_start_data_servers_cmd(IC_PARSE_DATA *parse_data)
+{
+  DEBUG_ENTRY("ic_start_data_servers_cmd");
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_start_file_servers_cmd(IC_PARSE_DATA *parse_data)
+{
+  DEBUG_ENTRY("ic_start_file_servers_cmd");
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_start_rep_servers_cmd(IC_PARSE_DATA *parse_data)
+{
+  DEBUG_ENTRY("ic_start_rep_servers_cmd");
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_start_sql_servers_cmd(IC_PARSE_DATA *parse_data)
+{
+  DEBUG_ENTRY("ic_start_sql_servers_cmd");
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
 boot_execute(IC_PARSE_DATA *parse_data)
 {
   DEBUG_ENTRY("boot_execute");
@@ -908,6 +1365,18 @@ boot_execute(IC_PARSE_DATA *parse_data)
     case IC_PREPARE_CLUSTER_MANAGER_CMD:
       ic_prepare_cluster_manager_cmd(parse_data);
       break;
+    case IC_PREPARE_DATA_SERVER_CMD:
+      ic_prepare_data_server_cmd(parse_data);
+      break;
+    case IC_PREPARE_FILE_SERVER_CMD:
+      ic_prepare_file_server_cmd(parse_data);
+      break;
+    case IC_PREPARE_REP_SERVER_CMD:
+      ic_prepare_rep_server_cmd(parse_data);
+      break;
+    case IC_PREPARE_SQL_SERVER_CMD:
+      ic_prepare_sql_server_cmd(parse_data);
+      break;
     case IC_SEND_FILES_CMD:
       ic_send_files_cmd(parse_data);
       break;
@@ -916,6 +1385,18 @@ boot_execute(IC_PARSE_DATA *parse_data)
       break;
     case IC_START_CLUSTER_MANAGERS_CMD:
       ic_start_cluster_managers_cmd(parse_data);
+      break;
+    case IC_START_DATA_SERVERS_CMD:
+      ic_start_data_servers_cmd(parse_data);
+      break;
+    case IC_START_REP_SERVERS_CMD:
+      ic_start_rep_servers_cmd(parse_data);
+      break;
+    case IC_START_FILE_SERVERS_CMD:
+      ic_start_file_servers_cmd(parse_data);
+      break;
+    case IC_START_SQL_SERVERS_CMD:
+      ic_start_sql_servers_cmd(parse_data);
       break;
     case IC_EXIT_CMD:
       parse_data->exit_flag= TRUE;
@@ -1113,6 +1594,10 @@ Both the copy phase and the start phase requires that all iClaustron\n\
 Process Controllers for the grid have been started. It is also required\n\
 that all those process controllers are accessible from the machine where\n\
 the bootstrap program is executed.\n\
+\n\
+After starting the cluster servers and cluster managers the data servers\n\
+will be started. After this also the file servers, replication servers,\n\
+sql servers and other servers will be started.\n\
 ";
 
 static int
