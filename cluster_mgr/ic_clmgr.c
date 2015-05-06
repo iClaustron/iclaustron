@@ -1355,12 +1355,16 @@ destroy_connect_hash(void)
 static int
 find_parse_connection(IC_PARSE_DATA *parse_data, guint64 connect_code)
 {
+  (void)parse_data;
+  (void)connect_code;
   return 0;
 }
 
 static int
 allocate_parse_connection(IC_PARSE_DATA *parse_data, guint64 connect_code)
 {
+  (void)parse_data;
+  (void)connect_code;
   return 0;
 }
 

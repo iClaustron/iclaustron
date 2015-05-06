@@ -555,7 +555,7 @@ kqueue_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj
          EV_ADD | EV_ENABLE | EV_CLEAR,
          0,
          0,
-         (void*)index);
+         (void*)&index);
 
   if ((ret_code= kevent(poll_set->poll_set_fd,
                         &add_event,

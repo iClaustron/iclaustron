@@ -1028,6 +1028,40 @@ get_debug_params()
 }
 
 static int
+send_start_info(IC_CONNECTION *conn,
+                const gchar *node_str,
+                const gchar *cluster_name_str,
+                const gchar *program_str)
+{
+  int ret_code;
+  DEBUG_ENTRY("send_start_info");
+
+  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_program_str,
+                                             program_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_version_str,
+                                             IC_VERSION_STR)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_grid_str,
+                                             IC_GRID_STR)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_cluster_str,
+                                             cluster_name_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_node_str,
+                                             node_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_auto_restart_str,
+                                             ic_false_str)))
+  {
+    ;
+  }
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
 start_cluster_manager(IC_CONNECTION *conn,
                       IC_CLUSTER_MANAGER_DATA *mgr_data,
                       IC_CLUSTER_MANAGER_CONFIG *mgr_conf)
@@ -1044,26 +1078,11 @@ start_cluster_manager(IC_CONNECTION *conn,
   DEBUG_ENTRY("start_cluster_manager");
 
   node_str= ic_guint64_str((guint64)mgr_data->node_id, buf, &dummy);
-  /* Start a cluster server */
-  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_program_str,
-                                   ic_cluster_manager_program_str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_version_str,
-                                             IC_VERSION_STR)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_grid_str,
-                                             IC_GRID_STR)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_cluster_str,
-                                   glob_clu_infos[0]->cluster_name.str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_node_str,
-                                             node_str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_auto_restart_str,
-                                             ic_false_str)))
+  /* Start a cluster manager */
+  if ((ret_code= send_start_info(conn,
+                                 node_str,
+                                 glob_clu_infos[0]->cluster_name.str,
+                                 ic_cluster_manager_program_str)))
     goto end;
 
   num_params= get_debug_params() + (guint64)8;
@@ -1143,25 +1162,10 @@ start_cluster_server(IC_CONNECTION *conn,
 
   node_str= ic_guint64_str((guint64)cs_data->node_id, buf, &dummy);
   /* Start a cluster server */
-  if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_program_str,
-                                             ic_cluster_server_program_str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_version_str,
-                                             IC_VERSION_STR)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_grid_str,
-                                             IC_GRID_STR)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_cluster_str,
-                                   glob_clu_infos[0]->cluster_name.str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_node_str,
-                                             node_str)) ||
-      (ret_code= ic_send_with_cr_two_strings(conn,
-                                             ic_auto_restart_str,
-                                             ic_false_str)))
+  if ((ret_code= send_start_info(conn,
+                                 node_str,
+                                 glob_clu_infos[0]->cluster_name.str,
+                                 ic_cluster_server_program_str)))
     goto end;
 
   num_params= get_debug_params() + (guint64)2;
@@ -1210,6 +1214,318 @@ start_cluster_server(IC_CONNECTION *conn,
               pid,
               cs_conf->hostname,
               cs_conf->cluster_server_port_number);
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+start_data_server(IC_CONNECTION *conn,
+                  IC_DATA_SERVER_DATA *ds_data)
+{
+  int ret_code;
+  gchar buf[IC_NUMBER_SIZE + 4];
+  gchar err_buf[ERROR_MESSAGE_SIZE];
+  gchar *node_str;
+  guint32 dummy;
+  guint32 pid;
+  guint64 num_params;
+  gboolean found;
+  gboolean process_already_started= FALSE;
+  DEBUG_ENTRY("start_data_server");
+
+  node_str= ic_guint64_str((guint64)ds_data->node_id, buf, &dummy);
+  /* Start a cluster server */
+  if ((ret_code= send_start_info(conn,
+                                 node_str,
+                                 glob_clu_infos[0]->cluster_name.str,
+                                 ic_data_server_program_str)))
+    goto end;
+
+  /* Data Server doesn't support iClaustron debugging, so skip that part. */
+  num_params= (guint64)2;
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             num_params)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_node_id_str)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)ds_data->node_id)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    goto end;
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
+    goto end;
+  if (!found)
+  {
+    if ((ret_code= ic_rec_simple_str_opt(conn,
+                                         ic_process_already_started_str,
+                                         &found)))
+      goto end;
+    if (!found)
+    {
+      /* Not ok, expect error message instead */
+      if (!ic_receive_error_message(conn, err_buf))
+      {
+        ic_printf("Error: %s", err_buf);
+      }
+      ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
+      goto end;
+    }
+    /* Process already started */
+    process_already_started= TRUE;
+  }
+  if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    goto end;
+  if (process_already_started)
+  {
+    ic_printf("Data Server id %u already started with pid %u",
+              ds_data->node_id,
+              pid);
+  }
+  else
+  {
+    ic_printf("Successfully started Data Server id %u with pid %u"
+              ", on host = %s",
+              ds_data->node_id,
+              pid,
+              ds_data->hostname);
+  }
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+start_file_server(IC_CONNECTION *conn,
+                  IC_FILE_SERVER_DATA *fs_data)
+{
+  int ret_code;
+  gchar buf[IC_NUMBER_SIZE + 4];
+  gchar err_buf[ERROR_MESSAGE_SIZE];
+  gchar *node_str;
+  guint32 dummy;
+  guint32 pid;
+  guint64 num_params;
+  gboolean found;
+  gboolean process_already_started= FALSE;
+  DEBUG_ENTRY("start_file_server");
+
+  node_str= ic_guint64_str((guint64)fs_data->node_id, buf, &dummy);
+  /* Start a file server */
+  if ((ret_code= send_start_info(conn,
+                                 node_str,
+                                 glob_clu_infos[0]->cluster_name.str,
+                                 ic_file_server_program_str)))
+    goto end;
+
+  num_params= get_debug_params() + (guint64)2;
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             num_params)) ||
+      (ret_code= ic_send_debug_level(conn)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_node_id_str)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)fs_data->node_id)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    goto end;
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
+    goto end;
+  if (!found)
+  {
+    if ((ret_code= ic_rec_simple_str_opt(conn,
+                                         ic_process_already_started_str,
+                                         &found)))
+      goto end;
+    if (!found)
+    {
+      /* Not ok, expect error message instead */
+      if (!ic_receive_error_message(conn, err_buf))
+      {
+        ic_printf("Error: %s", err_buf);
+      }
+      ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
+      goto end;
+    }
+    /* Process already started */
+    process_already_started= TRUE;
+  }
+  if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    goto end;
+  if (process_already_started)
+  {
+    ic_printf("File Server id %u already started with pid %u",
+              fs_data->node_id,
+              pid);
+  }
+  else
+  {
+    ic_printf("Successfully started File Server id %u with pid %u"
+              ", on host = %s",
+              fs_data->node_id,
+              pid,
+              fs_data->hostname);
+  }
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+start_rep_server(IC_CONNECTION *conn,
+                  IC_REP_SERVER_DATA *rep_data)
+{
+  int ret_code;
+  gchar buf[IC_NUMBER_SIZE + 4];
+  gchar err_buf[ERROR_MESSAGE_SIZE];
+  gchar *node_str;
+  guint32 dummy;
+  guint32 pid;
+  guint64 num_params;
+  gboolean found;
+  gboolean process_already_started= FALSE;
+  DEBUG_ENTRY("start_rep_server");
+
+  node_str= ic_guint64_str((guint64)rep_data->node_id, buf, &dummy);
+  /* Start a replication server */
+  if ((ret_code= send_start_info(conn,
+                                 node_str,
+                                 glob_clu_infos[0]->cluster_name.str,
+                                 ic_rep_server_program_str)))
+    goto end;
+
+  num_params= get_debug_params() + (guint64)2;
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             num_params)) ||
+      (ret_code= ic_send_debug_level(conn)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_node_id_str)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)rep_data->node_id)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    goto end;
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
+    goto end;
+  if (!found)
+  {
+    if ((ret_code= ic_rec_simple_str_opt(conn,
+                                         ic_process_already_started_str,
+                                         &found)))
+      goto end;
+    if (!found)
+    {
+      /* Not ok, expect error message instead */
+      if (!ic_receive_error_message(conn, err_buf))
+      {
+        ic_printf("Error: %s", err_buf);
+      }
+      ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
+      goto end;
+    }
+    /* Process already started */
+    process_already_started= TRUE;
+  }
+  if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    goto end;
+  if (process_already_started)
+  {
+    ic_printf("Replication Server id %u already started with pid %u",
+              rep_data->node_id,
+              pid);
+  }
+  else
+  {
+    ic_printf("Successfully started Replication Server id %u with pid %u"
+              ", on host = %s",
+              rep_data->node_id,
+              pid,
+              rep_data->hostname);
+  }
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+start_sql_server(IC_CONNECTION *conn,
+                 IC_SQL_SERVER_DATA *sql_data)
+{
+  int ret_code;
+  gchar buf[IC_NUMBER_SIZE + 4];
+  gchar err_buf[ERROR_MESSAGE_SIZE];
+  gchar *node_str;
+  guint32 dummy;
+  guint32 pid;
+  guint64 num_params;
+  gboolean found;
+  gboolean process_already_started= FALSE;
+  DEBUG_ENTRY("start_sql_server");
+
+  node_str= ic_guint64_str((guint64)sql_data->node_id, buf, &dummy);
+  /* Start an SQL server */
+  if ((ret_code= send_start_info(conn,
+                                 node_str,
+                                 glob_clu_infos[0]->cluster_name.str,
+                                 ic_sql_server_program_str)))
+    goto end;
+
+  num_params= get_debug_params() + (guint64)2;
+  if ((ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_num_parameters_str,
+                                             num_params)) ||
+      (ret_code= ic_send_debug_level(conn)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_node_id_str)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)sql_data->node_id)) ||
+      (ret_code= ic_send_empty_line(conn)))
+    goto end;
+  if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
+    goto end;
+  if (!found)
+  {
+    if ((ret_code= ic_rec_simple_str_opt(conn,
+                                         ic_process_already_started_str,
+                                         &found)))
+      goto end;
+    if (!found)
+    {
+      /* Not ok, expect error message instead */
+      if (!ic_receive_error_message(conn, err_buf))
+      {
+        ic_printf("Error: %s", err_buf);
+      }
+      ret_code= IC_ERROR_FAILED_TO_START_PROCESS;
+      goto end;
+    }
+    /* Process already started */
+    process_already_started= TRUE;
+  }
+  if ((ret_code= ic_rec_number(conn, ic_pid_str, &pid)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+    goto end;
+  if (process_already_started)
+  {
+    ic_printf("SQL Server id %u already started with pid %u",
+              sql_data->node_id,
+              pid);
+  }
+  else
+  {
+    ic_printf("Successfully started SQL Server id %u with pid %u"
+              ", on host = %s",
+              sql_data->node_id,
+              pid,
+              sql_data->hostname);
+  }
 end:
   DEBUG_RETURN_INT(ret_code);
 }
@@ -1328,29 +1644,193 @@ error:
 static void
 ic_start_data_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  IC_DATA_SERVER_DATA *ds_data;
+  guint32 i;
+  int ret_code;
+  IC_CONNECTION *conn= NULL;
   DEBUG_ENTRY("ic_start_data_servers_cmd");
+
+  if (parse_data->next_ds_index == 0)
+  {
+    ic_printf("No Data Servers prepared");
+    goto error;
+  }
+  for (i= 0; i < parse_data->next_ds_index; i++)
+  {
+    ds_data= &parse_data->ds_data[i];
+    /* Connect to process control and send start and disconnect */
+    if ((ret_code= start_client_connection(&conn,
+      ds_data->pcntrl_hostname,
+      ds_data->pcntrl_port)))
+    {
+      ic_printf("Failed to open connection to Data Server id %u",
+        ds_data->node_id);
+      ic_printf("Most likely not started ic_pcntrld on host %s at port %u",
+                ds_data->pcntrl_hostname,
+                ds_data->pcntrl_port);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    if ((ret_code= start_data_server(conn, ds_data)))
+    {
+      ic_printf("Failed to start Data Server id %u", ds_data->node_id);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    conn->conn_op.ic_free_connection(conn);
+    conn= NULL;
+  }
+end:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_EMPTY;
+error:
+  parse_data->exit_flag= TRUE;
+  goto end;
 }
 
 static void
 ic_start_file_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  IC_FILE_SERVER_DATA *fs_data;
+  guint32 i;
+  int ret_code;
+  IC_CONNECTION *conn= NULL;
   DEBUG_ENTRY("ic_start_file_servers_cmd");
+
+  if (parse_data->next_fs_index == 0)
+  {
+    ic_printf("No File Servers prepared");
+    DEBUG_RETURN_EMPTY;
+  }
+  for (i= 0; i < parse_data->next_fs_index; i++)
+  {
+    fs_data= &parse_data->fs_data[i];
+    /* Connect to process control and send start and disconnect */
+    if ((ret_code= start_client_connection(&conn,
+      fs_data->pcntrl_hostname,
+      fs_data->pcntrl_port)))
+    {
+      ic_printf("Failed to open connection to File Server id %u",
+        fs_data->node_id);
+      ic_printf("Most likely not started ic_pcntrld on host %s at port %u",
+                fs_data->pcntrl_hostname,
+                fs_data->pcntrl_port);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    if ((ret_code= start_file_server(conn, fs_data)))
+    {
+      ic_printf("Failed to start File Server id %u", fs_data->node_id);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    conn->conn_op.ic_free_connection(conn);
+    conn= NULL;
+  }
+end:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_EMPTY;
+error:
+  parse_data->exit_flag= TRUE;
+  goto end;
 }
 
 static void
 ic_start_rep_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  IC_REP_SERVER_DATA *rep_data;
+  guint32 i;
+  int ret_code;
+  IC_CONNECTION *conn= NULL;
   DEBUG_ENTRY("ic_start_rep_servers_cmd");
+
+  if (parse_data->next_rep_index == 0)
+  {
+    ic_printf("No Replication Servers prepared");
+    DEBUG_RETURN_EMPTY;
+  }
+  for (i= 0; i < parse_data->next_rep_index; i++)
+  {
+    rep_data= &parse_data->rep_data[i];
+    /* Connect to process control and send start and disconnect */
+    if ((ret_code= start_client_connection(&conn,
+      rep_data->pcntrl_hostname,
+      rep_data->pcntrl_port)))
+    {
+      ic_printf("Failed to open connection to Data Server id %u",
+        rep_data->node_id);
+      ic_printf("Most likely not started ic_pcntrld on host %s at port %u",
+                rep_data->pcntrl_hostname,
+                rep_data->pcntrl_port);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    if ((ret_code= start_rep_server(conn, rep_data)))
+    {
+      ic_printf("Failed to start Replication Server id %u", rep_data->node_id);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    conn->conn_op.ic_free_connection(conn);
+    conn= NULL;
+  }
+end:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_EMPTY;
+error:
+  parse_data->exit_flag= TRUE;
+  goto end;
 }
 
 static void
 ic_start_sql_servers_cmd(IC_PARSE_DATA *parse_data)
 {
+  IC_SQL_SERVER_DATA *sql_data;
+  guint32 i;
+  int ret_code;
+  IC_CONNECTION *conn= NULL;
   DEBUG_ENTRY("ic_start_sql_servers_cmd");
+
+  if (parse_data->next_sql_index == 0)
+  {
+    ic_printf("No SQL Servers prepared");
+    DEBUG_RETURN_EMPTY;
+  }
+  for (i= 0; i < parse_data->next_sql_index; i++)
+  {
+    sql_data= &parse_data->sql_data[i];
+    /* Connect to process control and send start and disconnect */
+    if ((ret_code= start_client_connection(&conn,
+      sql_data->pcntrl_hostname,
+      sql_data->pcntrl_port)))
+    {
+      ic_printf("Failed to open connection to SQL Server id %u",
+        sql_data->node_id);
+      ic_printf("Most likely not started ic_pcntrld on host %s at port %u",
+                sql_data->pcntrl_hostname,
+                sql_data->pcntrl_port);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    if ((ret_code= start_sql_server(conn, sql_data)))
+    {
+      ic_printf("Failed to start SQL Server id %u", sql_data->node_id);
+      ic_print_error(ret_code);
+      goto error;
+    }
+    conn->conn_op.ic_free_connection(conn);
+    conn= NULL;
+  }
+end:
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
   DEBUG_RETURN_EMPTY;
+error:
+  parse_data->exit_flag= TRUE;
+  goto end;
 }
 
 static void
