@@ -856,6 +856,18 @@ prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
   hb_page->size= message_size * sizeof(guint32);
 }
 
+/**
+ * API_REGCONF contains the data server node state. This contains lots of
+ * useful information that can be used by the cluster manager. It is also
+ * used to know when we are ready to start using the data server and when
+ * we need to perform a controlled stop of our activities towards this node
+ * to enable it to stop in a graceful manner.
+ *
+ * We record this signal on the send node connection object. We also record
+ * when we receive the very first API_REGREQ, before this we are not allowed
+ * to use the connection for anything apart from the authentication and
+ * API_REGREQ/API_REGCONF.
+ */
 static void
 execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
 {
@@ -870,23 +882,34 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
   ic_require(ndb_message->segment_size[0] == API_REGCONF_LEN);
   ic_require(ndb_message->num_segments == 1);
 
+  send_node_conn= get_send_node_conn(apid_global,
+                                     cluster_id,
+                                     sender_node_id);
+  if (!send_node_conn)
+  {
+    ic_assert(FALSE);
+    return;
+  }
+  ic_mutex_lock(send_node_conn->mutex);
+  send_node_conn->last_api_regconf= *conf;
+  if (!send_node_conn->node_up)
+  {
+    send_node_conn->node_up= TRUE;
+  }
   if (conf->node_state.ndb_start_state == (guint32)IC_NDB_STARTED &&
       apid_global->wait_first_node_connect)
   {
-    send_node_conn= get_send_node_conn(apid_global,
-                                       cluster_id,
-                                       sender_node_id);
-    if (send_node_conn)
-    {
-      ic_mutex_lock(send_node_conn->mutex);
-      send_node_conn->node_started= TRUE;
-      ic_mutex_unlock(send_node_conn->mutex);
-    }
+    send_node_conn->node_started= TRUE;
+    ic_mutex_unlock(send_node_conn->mutex);
     DEBUG_PRINT(PROGRAM_LEVEL, ("Wake up waiters for first node connect"));
     ic_mutex_lock(apid_global->mutex);
     apid_global->wait_first_node_connect= FALSE;
     ic_cond_broadcast(apid_global->cond);
     ic_mutex_unlock(apid_global->mutex);
+  }
+  else
+  {
+    ic_mutex_unlock(send_node_conn->mutex);
   }
   DEBUG_RETURN_EMPTY;
 }

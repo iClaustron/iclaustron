@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2014 iClaustron AB
+/* Copyright (C) 2009, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -37,9 +37,9 @@
 #include <ic_threadpool.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
+#include "ic_apid_general_signals.h"
 #include "ic_apid_int.h"
 #include "ic_apid_impl.h"
-#include "ic_apid_general_signals.h"
 #include "ic_apid_dict_signals.h"
 #include "ic_apid_key_signals.h"
 #include "ic_apid_scan_signals.h"

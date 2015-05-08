@@ -817,7 +817,7 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
    * thread pool.
    */
   send_node_conn->conn= conn;
-  send_node_conn->node_up= TRUE;
+  send_node_conn->connection_up= TRUE;
   ic_cond_signal(send_node_conn->cond);
   ic_mutex_unlock(send_node_conn->mutex);
   DEBUG_RETURN_INT(0);

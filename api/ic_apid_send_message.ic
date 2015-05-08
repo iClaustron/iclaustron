@@ -534,17 +534,11 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   ic_require(rec_state == send_node_conn->rec_state ||
              send_node_conn->rec_state == NULL);
 
+  rem_node_from_receive_thread(rec_state, send_node_conn);
+
   send_node_conn->node_up= FALSE;
   send_node_conn->connection_up= FALSE;
-  send_node_conn->node_started= FALSE;
-  send_node_conn->stopping= FALSE;
-  /* Ensure receive thread removes it from its list of active nodes */
-  if (!send_node_conn->next_rem_node &&
-      send_node_conn->rec_state)
-  {
-    send_node_conn->next_rem_node= rec_state->first_rem_node;
-    rec_state->first_rem_node= send_node_conn;
-  }
+
   if (send_node_conn->first_sbp)
   {
     send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
@@ -552,6 +546,7 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   }
   DEBUG_PRINT(COMM_LEVEL, ("Node failed = %u",
               send_node_conn->other_node_id));
+
   rem_node_from_heartbeat_thread(apid_global, send_node_conn);
 
   ic_mutex_unlock(apid_global->heartbeat_mutex);

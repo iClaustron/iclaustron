@@ -383,7 +383,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   send_node_conn->send_thread_is_sending= FALSE;
   send_node_conn->send_thread_active= TRUE;
 
-  while (!send_node_conn->stop_ordered && send_node_conn->node_up)
+  while (!send_node_conn->stop_ordered && send_node_conn->connection_up)
   {
     if (!send_node_conn->first_sbp)
     {
@@ -392,7 +392,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
       send_node_conn->send_thread_is_sending= FALSE;
       send_tp->ts_ops.ic_thread_wait(thread_state);
     }
-    if (send_node_conn->stop_ordered || !send_node_conn->node_up)
+    if (send_node_conn->stop_ordered || !send_node_conn->connection_up)
       break;
     ic_assert(send_node_conn->send_thread_is_sending);
     ic_assert(send_node_conn->send_active);
@@ -404,7 +404,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
                        iovec_size, send_size);
     send_tp->ts_ops.ic_thread_lock(thread_state);
   }
-  if (!send_node_conn->node_up)
+  if (!send_node_conn->connection_up)
   {
     send_tp->ts_ops.ic_thread_unlock(thread_state);
     node_failure_handling(send_node_conn);
@@ -513,7 +513,15 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   guint32 buf_len;
   IC_API_CONFIG_SERVER *apic;
   IC_THREADPOOL_STATE *tp_state= send_node_conn->apid_global->send_thread_pool;
+  guint32 cluster_id;
+  guint32 my_node_id;
+  guint32 other_node_id;
   DEBUG_ENTRY("connect_by_send_thread");
+
+  ic_mutex_lock(send_node_conn->mutex);
+  cluster_id= send_node_conn->cluster_id;
+  my_node_id= send_node_conn->my_node_id;
+  other_node_id= send_node_conn->other_node_id;
 
   if (is_server_part)
   {
@@ -529,7 +537,6 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
       phase and finally also checking if it's desired that we simply
       stop the send thread due to stopping the API instance.
     */
-    ic_mutex_lock(send_node_conn->mutex);
     while (!send_node_conn->connection_up ||
            send_node_conn->stop_ordered ||
            ic_get_stop_flag())
@@ -560,8 +567,6 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   else /* Client connection */
   {
     DEBUG_PRINT(THREAD_LEVEL, ("client_part"));
-    conn= send_node_conn->conn;
-    link_config= send_node_conn->link_config;
     if (!send_node_conn->other_port_number)
     {
       /*
@@ -581,12 +586,13 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
         send_node_conn->dynamic_port_number_to_release= NULL;
       }
       apic= send_node_conn->apid_global->apic;
+      ic_mutex_unlock(send_node_conn->mutex);
       if ((ret_code= apic->api_op.ic_get_dynamic_port_number(apic,
                                              (void*)tp_state,
                                              (void*)thread_state,
-                                             send_node_conn->cluster_id,
-                                             send_node_conn->my_node_id,
-                                             send_node_conn->other_node_id,
+                                             cluster_id,
+                                             my_node_id,
+                                             other_node_id,
                                              &port_number)))
       {
         DEBUG_RETURN_INT(ret_code);
@@ -596,10 +602,15 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
       {
         DEBUG_RETURN_INT(ret_code);
       }
+      ic_mutex_lock(send_node_conn->mutex);
       send_node_conn->dynamic_port_number_to_release= other_port_number;
     }
     else
+    {
       other_port_number= send_node_conn->other_port_number;
+    }
+    conn= send_node_conn->conn;
+    link_config= send_node_conn->link_config;
     conn->conn_op.ic_prepare_client_connection(conn,
                                          send_node_conn->other_hostname,
                                          other_port_number,
@@ -611,17 +622,35 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
              link_config->is_wan_connection,
              link_config->socket_read_buffer_size,
              link_config->socket_write_buffer_size);
+    ic_mutex_unlock(send_node_conn->mutex);
     if ((ret_code= conn->conn_op.ic_set_up_connection(conn,
                                                       check_thread_state,
                                                       (void*)thread_state)))
       goto end;
-    if ((ret_code= authenticate_client_connection(conn,
-                                       send_node_conn->my_node_id,
-                                       send_node_conn->other_node_id)))
+    ret_code= authenticate_client_connection(conn,
+                                             my_node_id,
+                                             other_node_id);
+    ic_mutex_lock(send_node_conn->mutex);
+    if (ret_code)
     {
-      /* Authentication failed, drop connection */
+      /* Authentication failed, recreate connection */
       conn->conn_op.ic_free_connection(conn);
+      send_node_conn->conn= ic_create_socket_object(
+                  TRUE,   /* is client */
+                  FALSE,  /* Mutex supplied by API code instead */
+                  FALSE,  /* This thread is already a connection thread */
+                  CONFIG_READ_BUF_SIZE); /* Used by authentication function */
+
+      if (send_node_conn->conn == NULL)
+      {
+        send_node_conn->stop_ordered= TRUE;
+      }
     }
+    else
+    {
+      send_node_conn->connection_up= TRUE;
+    }
+    ic_mutex_unlock(send_node_conn->mutex);
   }
 end:
   DEBUG_RETURN_INT(ret_code);
@@ -773,6 +802,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
   IC_LISTEN_SERVER_THREAD *listen_server_thread= NULL;
   DEBUG_ENTRY("prepare_set_up_send_connection");
 
+  ic_mutex_lock(apid_global->mutex);
   if (is_server_part)
   {
     /*
@@ -783,7 +813,6 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
       When we come here to start things up we're still in single-threaded
       mode, so we don't need to protect things through mutexes.
     */
-    ic_mutex_lock(apid_global->mutex);
     DEBUG_PRINT(COMM_LEVEL, ("server_part: host: %s, port: %s",
                 send_node_conn->my_hostname,
                 send_node_conn->my_port_number));
@@ -917,6 +946,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
     {
       send_node_conn->stop_ordered= TRUE;
     }
+    ic_mutex_unlock(apid_global->mutex);
   }
   DEBUG_RETURN_INT(0);
 }
@@ -1028,7 +1058,6 @@ run_send_thread(void *data)
       connection now. Also set node state to indicate node is up.
     */
     send_node_conn->message_id= 1;
-    send_node_conn->node_up= TRUE;
     move_node_to_receive_thread(send_node_conn);
     /*
       Move node also to heartbeat thread to ensure keep sending heartbeat
@@ -1079,6 +1108,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
       we don't need a send thread and also there is no need for a
       connection and thus no need for a thread to start the connection.
     */
+    send_node_conn->connection_up= TRUE;
     send_node_conn->node_up= TRUE;
     DEBUG_RETURN_INT(0);
   }

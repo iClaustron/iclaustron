@@ -54,6 +54,10 @@ static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
 /* Internal function to handle node connection failure */
 static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
 
+/* Function to remove node from send thread */
+static int
+rem_node_from_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                             IC_SEND_NODE_CONNECTION *send_node_conn);
 /* Internal function to send a NDB message */
 static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,

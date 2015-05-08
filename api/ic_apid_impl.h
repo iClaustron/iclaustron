@@ -251,26 +251,32 @@ struct ic_send_node_connection
   gboolean send_active;
   /**
    * A connection to a data server node goes through the following phases:
-   * 1) A connection is established. This sets the connection_up variable
-   *    to true.
+   * 1) A connection is established.
    * 2A) The connection has completed performing the login action of the
    *     NDB protocol. No other action is allowed during this phase.
-   *     After completing the login the variable node_up is set.
+   *     After completing the login the variable connection_up is set.
    * 2B) For a cluster server we convert the connection used to retrieve the
    *     configuration and use this as the connection. At conversion we
-   *     set the node_up variable to true.
-   * 3)  After node_up has been set the node is added to the heartbeat thread
-   *     which will immediately start sending API_REGREQ signals to the data
-   *     server node.
-   * 4)  Each time we receive an API_REGCONF we will update the start state
+   *     set the connection_up variable to true.
+   * 3)  After connection_up has been set the node is added to the heartbeat
+   *     thread which will immediately start sending API_REGREQ signals to the
+   *     data server node.
+   * 4)  At reception of the first API_REGREQ message we will set the various
+   *     state variables that comes along with the API_REGREQ message. We will
+   *     also set the state node_up to true to indicate that we've now
+   *     completed the process of setting up a connection to a data server,
+   *     We cannot start sending other things than API_REGREQ until we've
+   *     received an API_REGCONF such that we know the state of data server
+   *     node.
+   * 5)  Each time we receive an API_REGCONF we will update the start state
    *     of the data node as well as the start type if any start is ongoing.
    *     When the start state reaches IC_NDB_STARTED the data server node
    *     is ready to start receiving user transactions and meta data
    *     transactions.
-   * 5)  Eventually the node can go through a controlled stop. In this case
+   * 6)  Eventually the node can go through a controlled stop. In this case
    *     the API_REGCONF signal will carry information about that the node
    *     is stopping and which activities that can no longer be started.
-   * 6)  At any point in time the data server can disconnect. This will be
+   * 7)  At any point in time the data server can disconnect. This will be
    *     discovered as a dropped connection. Any time this happens we will
    *     call node_failure_handling that will set connection_up to false,
    *     node_up to false, node start state to IC_NDB_NOT_STARTED.
@@ -279,7 +285,7 @@ struct ic_send_node_connection
    *     connection to the node. So when we later manage to reestablish the
    *     connection to the node it might directly report IC_NDB_STARTED on the
    *     very first API_REGCONF it sends.
-   * 7)  We can also decide to disconnect, most likely because we are shutting
+   * 8)  We can also decide to disconnect, most likely because we are shutting
    *     down our node. It can also happen if for some reason we get a local
    *     problem.
    */
@@ -287,8 +293,18 @@ struct ic_send_node_connection
   gboolean node_up;
   /* Indicates if the connection is up. */
   gboolean connection_up;
-  /* Indicates if the node is started, thus ready for transactions */
-  gboolean node_started;
+  /**
+   * Indicates if we successfully inserted it into poll set.
+   * This also indicates that the node is currently attached to a receive
+   * thread.
+   */
+  gboolean in_poll_set;
+  /**
+   * We save the state received in the last API_REGCONF from the data server
+   * node, this will provide a lot of valuable information about the state of
+   * the cluster and in particular of the data server nodes.
+   */
+  IC_API_REGCONF last_api_regconf;
   /*
     Indicates if the node is going through shutdown and we need to
     stop starting new activities
