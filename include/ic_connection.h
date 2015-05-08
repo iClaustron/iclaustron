@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -37,7 +37,6 @@
 #endif
 
 typedef int (*accept_timeout_func) (void*, int);
-typedef int (*authenticate_func) (void*);
 
 typedef union ic_ip_address IC_IP_ADDRESS;
 union ic_ip_address
@@ -97,8 +96,6 @@ struct ic_connect_operations
     is_mutex_used : Is it necessary to protect all accesses by mutex
     is_connect_thread_used : Is it necessary to handle connects in a separate
                 thread.
-    Finally an authenticate function and object can be provided in the
-    create socket call.
     We've added a number of initialisation support routines which should
     be used after ic_create_socket_object but before ic_set_up_connection.
     For ic_prepare_extra_parameters all parameters are optional. To set the
@@ -240,6 +237,8 @@ struct ic_connect_operations
                                         gulong *microseconds);
   gboolean (*ic_is_conn_connected)     (IC_CONNECTION *conn);
   gboolean (*ic_is_conn_thread_active) (IC_CONNECTION *conn);
+  void (*ic_set_ssl_used_for_data)     (IC_CONNECTION *conn);
+  void (*ic_reset_ssl_used_for_data)   (IC_CONNECTION *conn);
   /*
     Free all memory connected to a connection object
     It also closes all connection if not already done
@@ -304,11 +303,9 @@ struct ic_connection
 };
 
 /*
-  There are three levels in the connection set-up. The connection set-up will
+  There are two levels in the connection set-up. The connection set-up will
   always start by performing a normal TCP/IP connection. When this connection
   is up one will create an SSL session if we created a SSL socket object.
-  The final and third phase is application specific authentication logic
-  which is also optional.
 
   In addition the connect can be performed in a separate thread. In this case
   the application should not use the connection other than checking whether
@@ -333,9 +330,7 @@ IC_CONNECTION
   *ic_create_socket_object(gboolean is_client,
                            gboolean is_mutex_used,
                            gboolean is_connect_thread_used,
-                           guint32  read_buf_size,
-                           authenticate_func func,
-                           void *auth_obj);
+                           guint32  read_buf_size);
 
 IC_CONNECTION
   *ic_create_ssl_object(gboolean is_client,
@@ -344,9 +339,7 @@ IC_CONNECTION
                         IC_STRING *passwd_string,
                         gboolean is_ssl_used_for_data,
                         gboolean is_connect_thread_used,
-                        guint32  read_buf_size,
-                        authenticate_func func,
-                        void *auth_obj);
+                        guint32  read_buf_size);
 /* SSL initialisation routines */
 int ic_ssl_init();
 void ic_ssl_end();

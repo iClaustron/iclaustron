@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -702,8 +702,7 @@ connect_cluster_mgr(IC_CONNECTION **conn)
   DEBUG_ENTRY("connect_cluster_mgr");
 
   if (!(loc_conn= ic_create_socket_object(TRUE, FALSE, FALSE,
-                                          COMMAND_READ_BUF_SIZE,
-                                          NULL, NULL)))
+                                          COMMAND_READ_BUF_SIZE)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
     DEBUG_RETURN_INT(1);

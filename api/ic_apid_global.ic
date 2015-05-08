@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -896,7 +896,7 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
       {
         ic_mutex_lock(send_node_conn->mutex);
         if (send_node_conn->cluster_id == cluster_id &&
-            send_node_conn->traffic_ready)
+            send_node_conn->node_started)
         {
           found= TRUE;
           ic_mutex_unlock(send_node_conn->mutex);

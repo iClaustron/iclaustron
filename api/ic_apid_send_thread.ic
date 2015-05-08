@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2014 iClaustron AB
+/* Copyright (C) 2009, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -59,10 +59,6 @@
 /* Check regularly if thread needs to stop */
 static int check_thread_state(void *timeout_obj, int timer);
 
-/* Function to check which node was connected to */
-static gboolean check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                 IC_CONNECTION *conn);
-
 /* This function is used to close down the listen server thread */
 static void close_listen_server_thread(
           IC_LISTEN_SERVER_THREAD *listen_server_thread,
@@ -80,8 +76,6 @@ static void
 remove_send_thread_from_listen_thread(IC_SEND_NODE_CONNECTION *send_node_conn);
 
 /* These functions are used to secure the node connections.  */
-static int server_api_connect(void *data);
-static int client_api_connect(void *data);
 static int authenticate_client_connection(IC_CONNECTION *conn,
                                           guint32 my_nodeid,
                                           guint32 server_nodeid);
@@ -171,22 +165,6 @@ get_send_node_conn(IC_INT_APID_GLOBAL *apid_global,
   send threads in performing the send functionality here.
 */
 
-/* TODO: This function needs to check which node was actually connected to */
-static gboolean
-check_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
-                 IC_CONNECTION *conn)
-{
-  (void)conn;
-  if (!send_node_conn->connection_up)
-  {
-    return FALSE;
-  }
-  else
-  {
-    return TRUE;
-  }
-}
-
 static gpointer
 run_listen_thread(void *data)
 {
@@ -198,6 +176,7 @@ run_listen_thread(void *data)
   GList *list_iterator;
   gboolean found;
   int ret_code;
+  guint32 other_node_id;
   DEBUG_THREAD_ENTRY("run_listen_thread");
   tp_state= thread_state->ic_get_threadpool(thread_state);
   listen_server_thread= (IC_LISTEN_SERVER_THREAD*)
@@ -225,16 +204,24 @@ run_listen_thread(void *data)
   if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
     goto end;
   /* We have been asked to start listening and so we start listening */
-  do
+  while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
     if (!(ret_code= conn->conn_op.ic_accept_connection(conn)))
     {
       if (!(fork_conn= conn->conn_op.ic_fork_accept_connection(conn,
                                                      FALSE))) /* No mutex */
         break;
+      if (authenticate_server_connection(fork_conn,
+                                         listen_server_thread->my_node_id,
+                                         &other_node_id))
+      {
+        /* An error occurred in the authentication of the connection */
+        fork_conn->conn_op.ic_free_connection(fork_conn);
+        continue;
+      }
       /*
-         We have a new connection, deliver it to the send thread and
-         receive thread.
+         We have a new connection between listen_server_thread->my_node_id and
+         other_node_id. Deliver it to the send thread and receive thread.
       */
       ic_mutex_lock(listen_server_thread->mutex);
       if (listen_server_thread->stop_ordered)
@@ -259,7 +246,9 @@ run_listen_thread(void *data)
           right one that uses this connection.
         */
         ic_mutex_lock(iter_send_node_conn->mutex);
-        if (!check_connection(iter_send_node_conn, fork_conn))
+        if ((iter_send_node_conn->other_node_id  == other_node_id) &&
+            (iter_send_node_conn->my_node_id ==
+              listen_server_thread->my_node_id))
         {
           /*
             We have found the right send node connection, give the
@@ -294,10 +283,9 @@ run_listen_thread(void *data)
         We got a timeout, check if we're ordered to stop and if so
         we will stop. Otherwise we'll simply continue.
       */
-      if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
-        break;
+      ;
     }
-  } while (1);
+  }
   /*
     We got memory allocation failure most likely, it's not so easy to
     continue in this case, so we tell all dependent send connections
@@ -627,6 +615,13 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
                                                       check_thread_state,
                                                       (void*)thread_state)))
       goto end;
+    if ((ret_code= authenticate_client_connection(conn,
+                                       send_node_conn->my_node_id,
+                                       send_node_conn->other_node_id)))
+    {
+      /* Authentication failed, drop connection */
+      conn->conn_op.ic_free_connection(conn);
+    }
   }
 end:
   DEBUG_RETURN_INT(ret_code);
@@ -693,6 +688,7 @@ authenticate_client_connection(IC_CONNECTION *conn,
   int error;
   DEBUG_ENTRY("authenticate_client_connection");
 
+  conn->conn_op.ic_set_ssl_used_for_data(conn);
   g_snprintf(client_buf, (int)64, "%u 1", my_nodeid);
   g_snprintf(server_buf, (int)64, "%u 1", server_nodeid);
   if ((error= ic_send_with_cr(conn, "ndbd")) ||
@@ -707,10 +703,12 @@ authenticate_client_connection(IC_CONNECTION *conn,
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, server_buf)))
   {
+    conn->conn_op.ic_reset_ssl_used_for_data(conn);
     if (!error)
       error= IC_PROTOCOL_ERROR;
     DEBUG_RETURN_INT(error);
   }
+  conn->conn_op.ic_reset_ssl_used_for_data(conn);
   DEBUG_RETURN_INT(0);
 }
 
@@ -728,6 +726,7 @@ authenticate_server_connection(IC_CONNECTION *conn,
   DEBUG_ENTRY("authenticate_server_connection");
 
   /* Retrieve client node id and verify that server is my node id */
+  conn->conn_op.ic_set_ssl_used_for_data(conn);
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
       (!strcmp(read_buf, "ndbd")) ||
@@ -749,44 +748,14 @@ authenticate_server_connection(IC_CONNECTION *conn,
       (error= ic_send_with_cr(conn, "1 1")) ||
       (error= conn->conn_op.ic_flush_connection(conn)))
   {
+    conn->conn_op.ic_reset_ssl_used_for_data(conn);
     if (!error)
       error= IC_PROTOCOL_ERROR;
     DEBUG_RETURN_INT(error);
   }
+  conn->conn_op.ic_reset_ssl_used_for_data(conn);
   *client_nodeid= (guint32)client_id;
   DEBUG_RETURN_INT(0);
-}
-
-/*
-  This callback is called by the object connecting the server to the
-  client using the NDB Protocol. This method calls a method on the
-  IC_API_CONFIG_SERVER object implementing the server side of the set-up
-  of this protocol.
-*/
-static int
-server_api_connect(void *data)
-{
-  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
-
-  return authenticate_server_connection(send_node_conn->conn,
-                                        send_node_conn->my_node_id,
-                                        &send_node_conn->other_node_id);
-}
-
-/*
-  This callback is called by the object connecting the client to the
-  server using the NDB Protocol. This method calls a method on the
-  IC_API_CONFIG_SERVER object implementing the client side of the set-up
-  of this protocol.
-*/
-static int
-client_api_connect(void *data)
-{
-  IC_SEND_NODE_CONNECTION *send_node_conn= (IC_SEND_NODE_CONNECTION*)data;
-
-  return authenticate_client_connection(send_node_conn->conn,
-                                        send_node_conn->my_node_id,
-                                        send_node_conn->other_node_id);
 }
 
 static int
@@ -839,7 +808,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
       ret_code= 1;
       do
       {
-        /* Found a new hostname+port combination, we need another*/
+        /* Found a new hostname+port combination, we need more listen threads*/
         listen_inx= apid_global->num_listen_server_threads;
         DEBUG_PRINT(THREAD_LEVEL, ("Allocate listen thread %u", listen_inx));
         if (!(apid_global->listen_server_thread[listen_inx]=
@@ -849,14 +818,13 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
         /* Successful allocation of memory */
         listen_server_thread= apid_global->listen_server_thread[listen_inx];
         listen_server_thread->index= listen_inx;
+        listen_server_thread->my_node_id= apid_global->my_node_id;
         send_node_conn->listen_server_thread= listen_server_thread;
         if (!(listen_server_thread->conn= ic_create_socket_object(
                 FALSE,  /* This is a server connection */
                 FALSE,  /* Mutex supplied by API code instead */
                 FALSE,  /* This thread is already a connection thread */
-                CONFIG_READ_BUF_SIZE, /* Used by authentication function */
-                server_api_connect,   /* Authentication function */
-                (void*)send_node_conn)))  /* Authentication object */
+                CONFIG_READ_BUF_SIZE))) /* Used by authentication function */
           break;
         DEBUG_PRINT(THREAD_LEVEL, ("listen thread conn: %p", listen_server_thread->conn));
         listen_server_thread->conn->conn_op.ic_prepare_server_connection(
@@ -943,9 +911,7 @@ prepare_set_up_send_connection(IC_SEND_NODE_CONNECTION *send_node_conn,
                 TRUE,   /* is client */
                 FALSE,  /* Mutex supplied by API code instead */
                 FALSE,  /* This thread is already a connection thread */
-                CONFIG_READ_BUF_SIZE, /* Used by authentication function */
-                client_api_connect,   /* Authentication function */
-                (void*)send_node_conn);  /* Authentication object */
+                CONFIG_READ_BUF_SIZE); /* Used by authentication function */
 
     if (send_node_conn->conn == NULL)
     {
@@ -961,7 +927,6 @@ run_send_thread(void *data)
   gboolean is_server_part;
   int ret_code;
   IC_INT_APID_GLOBAL *apid_global;
-  IC_CONNECTION *conn;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
   IC_THREADPOOL_STATE *send_tp= thread_state->ic_get_threadpool(thread_state);
   IC_SEND_NODE_CONNECTION *send_node_conn;
@@ -1027,20 +992,13 @@ run_send_thread(void *data)
         continue after sleeping for a few seconds.
       */
       ic_print_error(ret_code);
-      ic_sleep(1);
+      ic_sleep(3);
     }
     if (!apid_global->use_external_connect)
     {
       if ((ret_code= connect_by_send_thread(send_node_conn,
                                             thread_state,
                                             is_server_part)))
-        continue;
-      conn= send_node_conn->conn;
-      /*
-        The send thread needs to perform the login function before moving onto
-        the NDB Protocol phase.
-      */
-      if ((ret_code= conn->conn_op.ic_login_connection(conn)))
         continue;
     }
     else

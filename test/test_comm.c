@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -129,8 +129,7 @@ connection_test(gboolean use_ssl)
   else
   {
     if (!(conn= ic_create_socket_object(glob_is_client, TRUE, FALSE,
-                                        CONFIG_READ_BUF_SIZE,
-                                        NULL, NULL)))
+                                        CONFIG_READ_BUF_SIZE)))
     {
       ic_printf("Memory allocation error");
       return IC_ERROR_MEM_ALLOC;
@@ -277,8 +276,7 @@ test_pcntrl()
   IC_CONNECTION *conn;
 
   if (!(conn= ic_create_socket_object(TRUE, TRUE, FALSE,
-                                      CONFIG_READ_BUF_SIZE,
-                                      NULL, NULL)))
+                                      CONFIG_READ_BUF_SIZE)))
   {
     ic_printf("Memory allocation error");
     return IC_ERROR_MEM_ALLOC;

@@ -75,8 +75,7 @@ connect_pcntrl(IC_CONNECTION **conn, const gchar *node_config)
   pcntrl_port= ic_guint64_str(pcntrl_port_num,
                               pcntrl_port_buf, &len);
   if (!(local_conn= ic_create_socket_object(TRUE, FALSE, FALSE,
-                                            CONFIG_READ_BUF_SIZE,
-                                            NULL, NULL)))
+                                            CONFIG_READ_BUF_SIZE)))
     return IC_ERROR_MEM_ALLOC;
   local_conn->conn_op.ic_prepare_client_connection(
                  local_conn,
@@ -1543,6 +1542,7 @@ handle_new_connection(IC_CONNECTION *conn,
   }
   DEBUG_RETURN_INT(0);
 }
+
 static int
 wait_for_connections_and_fork(IC_CONNECTION *conn,
                               IC_API_CONFIG_SERVER *apic,
@@ -1605,8 +1605,7 @@ set_up_server_connection(IC_CONNECTION **conn)
   DEBUG_ENTRY("set_up_server_connection");
 
   if (!(loc_conn= ic_create_socket_object(FALSE, TRUE, FALSE,
-                                          COMMAND_READ_BUF_SIZE,
-                                          NULL, NULL)))
+                                          COMMAND_READ_BUF_SIZE)))
   {
     DEBUG_PRINT(COMM_LEVEL, ("Failed to create Connection object"));
     DEBUG_RETURN_INT(1);

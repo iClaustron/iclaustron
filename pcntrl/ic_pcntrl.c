@@ -211,8 +211,7 @@ static int start_client_connection(IC_CONNECTION **conn)
   DEBUG_ENTRY("start_client_connection");
 
   if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
-                                      CONFIG_READ_BUF_SIZE,
-                                      NULL, NULL)))
+                                      CONFIG_READ_BUF_SIZE)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   (*conn)->conn_op.ic_prepare_client_connection(*conn,
                                                 glob_server_name,
@@ -1765,7 +1764,7 @@ retry_kill_check:
   if (ret_code == 0)
   {
     loop_count++;
-    if (loop_count > 3)
+    if (loop_count > 10)
     {
       ret_code= IC_ERROR_FAILED_TO_STOP_PROCESS;
       goto error;
@@ -2300,6 +2299,7 @@ create_config_dir()
 error:
   return ret_code;
 }
+
 /**
   This method receives the config.ini file and places it in the
   ICLAUSTRON_DATA_DIR/config directory. It overwrites the
@@ -2849,7 +2849,7 @@ start_check_thread(IC_THREADPOOL_STATE *tp_state)
 
 /**
   The command handler is a thread that is executed on behalf of one of the
-  Cluster Managers in a Grid.
+  Cluster Managers or the bootstrap process in a Grid.
 
   The Cluster Manager can ask the iClaustron Process Controller for 5 tasks.
   1) It can ask to get a node started
@@ -3203,8 +3203,7 @@ int start_connection_loop(IC_THREADPOOL_STATE *tp_state)
   DEBUG_ENTRY("start_connection_loop");
 
   if (!(conn= ic_create_socket_object(FALSE, FALSE, FALSE,
-                                      CONFIG_READ_BUF_SIZE,
-                                      NULL, NULL)))
+                                      CONFIG_READ_BUF_SIZE)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 
   conn->conn_op.ic_prepare_server_connection(conn,

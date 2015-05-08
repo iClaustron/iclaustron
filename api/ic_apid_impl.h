@@ -161,7 +161,7 @@ struct ic_temp_thread_connection
 struct ic_listen_server_thread
 {
   IC_CONNECTION *conn;
-  guint32 cluster_id;
+  guint32 my_node_id;
   guint32 thread_id;
   guint32 index;
   guint32 listen_port;
@@ -249,12 +249,46 @@ struct ic_send_node_connection
   guint32 queued_bytes;
   /* When any thread is actively sending already this boolean is set */
   gboolean send_active;
+  /**
+   * A connection to a data server node goes through the following phases:
+   * 1) A connection is established. This sets the connection_up variable
+   *    to true.
+   * 2A) The connection has completed performing the login action of the
+   *     NDB protocol. No other action is allowed during this phase.
+   *     After completing the login the variable node_up is set.
+   * 2B) For a cluster server we convert the connection used to retrieve the
+   *     configuration and use this as the connection. At conversion we
+   *     set the node_up variable to true.
+   * 3)  After node_up has been set the node is added to the heartbeat thread
+   *     which will immediately start sending API_REGREQ signals to the data
+   *     server node.
+   * 4)  Each time we receive an API_REGCONF we will update the start state
+   *     of the data node as well as the start type if any start is ongoing.
+   *     When the start state reaches IC_NDB_STARTED the data server node
+   *     is ready to start receiving user transactions and meta data
+   *     transactions.
+   * 5)  Eventually the node can go through a controlled stop. In this case
+   *     the API_REGCONF signal will carry information about that the node
+   *     is stopping and which activities that can no longer be started.
+   * 6)  At any point in time the data server can disconnect. This will be
+   *     discovered as a dropped connection. Any time this happens we will
+   *     call node_failure_handling that will set connection_up to false,
+   *     node_up to false, node start state to IC_NDB_NOT_STARTED.
+   *     NOTE: That we see a failed node doesn't absolutely say that the node
+   *     actually failed, it could be simply that we for some reason lost the
+   *     connection to the node. So when we later manage to reestablish the
+   *     connection to the node it might directly report IC_NDB_STARTED on the
+   *     very first API_REGCONF it sends.
+   * 7)  We can also decide to disconnect, most likely because we are shutting
+   *     down our node. It can also happen if for some reason we get a local
+   *     problem.
+   */
   /* Indicates if node is up, if not it's no use sending */
   gboolean node_up;
   /* Indicates if the connection is up. */
   gboolean connection_up;
-  /* Indicates if the node is ready for traffic */
-  gboolean traffic_ready;
+  /* Indicates if the node is started, thus ready for transactions */
+  gboolean node_started;
   /*
     Indicates if the node is going through shutdown and we need to
     stop starting new activities

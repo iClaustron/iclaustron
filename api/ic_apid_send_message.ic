@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -536,7 +536,7 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
 
   send_node_conn->node_up= FALSE;
   send_node_conn->connection_up= FALSE;
-  send_node_conn->traffic_ready= FALSE;
+  send_node_conn->node_started= FALSE;
   send_node_conn->stopping= FALSE;
   /* Ensure receive thread removes it from its list of active nodes */
   if (!send_node_conn->next_rem_node &&
@@ -600,7 +600,8 @@ prepare_real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
 */
 static int
 real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
-                   IC_IOVEC *write_vector, guint32 iovec_size,
+                   IC_IOVEC *write_vector,
+                   guint32 iovec_size,
                    guint32 send_size)
 {
   int error;

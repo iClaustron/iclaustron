@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -379,29 +379,21 @@ ic_sock_ntop(const struct sockaddr *sa,
   return 0;
 }
 
-static int
-login_connection(IC_CONNECTION *ext_conn)
+static void
+set_ssl_used_for_data(IC_CONNECTION *ext_conn)
 {
   IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
-  int error;
-  gboolean save_ssl_used_for_data;
+  conn->save_is_ssl_used_for_data= conn->is_ssl_used_for_data;
+  conn->is_ssl_used_for_data= TRUE;
+  return;
+}
 
-  if (conn->auth_func)
-  {
-    save_ssl_used_for_data= conn->is_ssl_used_for_data;
-    conn->is_ssl_used_for_data= TRUE;
-    error= conn->auth_func(conn->auth_obj);
-    conn->is_ssl_used_for_data= save_ssl_used_for_data;
-    if (error)
-      goto error;
-  }
-  conn->error_code= 0;
-  return 0;
-error:
-  /* error handler */
-  close_socket_connection(ext_conn);
-  conn->error_code= error;
-  return error;
+static void
+reset_ssl_used_for_data(IC_CONNECTION *ext_conn)
+{
+  IC_INT_CONNECTION *conn= (IC_INT_CONNECTION*)ext_conn;
+  conn->is_ssl_used_for_data= conn->save_is_ssl_used_for_data;
+  return;
 }
 
 #ifdef DEBUG_BUILD
@@ -2011,9 +2003,7 @@ int_create_socket_object(gboolean is_client,
                          gboolean is_connect_thread_used,
                          gboolean is_ssl,
                          gboolean is_ssl_used_for_data,
-                         guint32 read_buf_size,
-                         authenticate_func auth_func,
-                         void *auth_obj)
+                         guint32 read_buf_size)
 {
   int size_object= is_ssl ?
       sizeof(IC_SSL_CONNECTION) : sizeof(IC_INT_CONNECTION);
@@ -2041,7 +2031,6 @@ int_create_socket_object(gboolean is_client,
     }
   }
   conn->conn_op.ic_set_up_connection= set_up_socket_connection;
-  conn->conn_op.ic_login_connection= login_connection;
   conn->conn_op.ic_accept_connection= accept_socket_connection;
   conn->conn_op.ic_check_connection= check_connection;
   conn->conn_op.ic_close_connection= close_socket_connection;
@@ -2070,9 +2059,12 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_get_fd= get_fd;
   conn->conn_op.ic_set_rec_wait_ms= set_rec_wait_ms;
   conn->conn_op.ic_get_rec_wait_ms= get_rec_wait_ms;
+  conn->conn_op.ic_set_ssl_used_for_data= set_ssl_used_for_data;
+  conn->conn_op.ic_reset_ssl_used_for_data= reset_ssl_used_for_data;
 
   conn->is_ssl_connection= is_ssl;
   conn->is_ssl_used_for_data= is_ssl_used_for_data;
+  conn->save_is_ssl_used_for_data= is_ssl_used_for_data;
   conn->is_client= is_client;
   conn->is_connect_thread_used= is_connect_thread_used;
   conn->backlog= 1;
@@ -2086,9 +2078,6 @@ int_create_socket_object(gboolean is_client,
   conn->conn_op.ic_get_port_number= get_port_number;
 
   init_connect_stat(conn);
-
-  conn->auth_func= auth_func;
-  conn->auth_obj= auth_obj;
 
   if (create_mutexes(conn))
     goto error;
@@ -2111,9 +2100,7 @@ IC_CONNECTION*
 ic_create_socket_object(gboolean is_client,
                         gboolean is_mutex_used,
                         gboolean is_connect_thread_used,
-                        guint32 read_buf_size,
-                        authenticate_func auth_func,
-                        void *auth_obj)
+                        guint32 read_buf_size)
 {
   IC_CONNECTION *conn_ptr;
   DEBUG_ENTRY("ic_create_socket_object");
@@ -2122,9 +2109,7 @@ ic_create_socket_object(gboolean is_client,
                                      is_connect_thread_used,
                                      FALSE,
                                      FALSE,
-                                     read_buf_size,
-                                     auth_func,
-                                     auth_obj);
+                                     read_buf_size);
   DEBUG_RETURN_PTR(conn_ptr);
 }
 
@@ -2525,9 +2510,7 @@ ic_create_ssl_object(gboolean is_client,
                      IC_STRING *passwd_string,
                      gboolean is_ssl_used_for_data,
                      gboolean is_connect_thread_used,
-                     guint32 read_buf_size,
-                     authenticate_func auth_func,
-                     void *auth_obj)
+                     guint32 read_buf_size)
 {
   IC_INT_CONNECTION *conn;
   IC_CONNECTION *ext_conn;
@@ -2537,8 +2520,7 @@ ic_create_ssl_object(gboolean is_client,
   if (!(ext_conn= int_create_socket_object(is_client, FALSE,
                                            is_connect_thread_used,
                                            TRUE, is_ssl_used_for_data,
-                                           read_buf_size,
-                                           auth_func, auth_obj)))
+                                           read_buf_size)))
   {
     DEBUG_RETURN_PTR(NULL);
   }

@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2014 iClaustron AB
+/* Copyright (C) 2009, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -25,8 +25,7 @@
   Then we also have the run heartbeat thread method that implements the
   heartbeat thread. This thread has one support function that packs the
   API_HEARTBEATREQ message and one support function that does the
-  actual send of the heartbeat message (prepare_send_heartbeat and
-  real_send_heartbeat).
+  actual send of the heartbeat message (prepare_send_heartbeat and ndb_send).
 
   Finally there is a callback method that is called when the
   API_HEARTBEATCONF message is received. This method belongs to the
@@ -39,8 +38,6 @@ static void add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
 static void prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
                                    IC_SOCK_BUF_PAGE *heartbeat_page,
                                    guint32 thread_id);
-static int real_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
-                               IC_SOCK_BUF_PAGE *heartbeat_page);
 static gpointer run_heartbeat_thread(gpointer data);
 
 static int

@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -92,10 +92,10 @@
   Fixed module ids:
   Module to receive packed messages in API: 2047
   Module for Heartbeat mechanism in API:    4002
-  Module for Transaction Coordinator in NDB: 245
-  Module for Dictionary in NDB             : 250
-  Module for Heartbeat handler in NDB      : 252
-  Module for Triggers in NDB               : 257
+  Module for Transaction Coordinator in NDB: 245 (DBTC)
+  Module for Dictionary in NDB             : 250 (DBDICT)
+  Module for Heartbeat handler in NDB      : 252 (QMGR)
+  Module for Event handling in NDB         : 257 (TRIX)
 */
 struct ic_exec_message_func
 {
@@ -879,7 +879,7 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
     if (send_node_conn)
     {
       ic_mutex_lock(send_node_conn->mutex);
-      send_node_conn->traffic_ready= TRUE;
+      send_node_conn->node_started= TRUE;
       ic_mutex_unlock(send_node_conn->mutex);
     }
     DEBUG_PRINT(PROGRAM_LEVEL, ("Wake up waiters for first node connect"));

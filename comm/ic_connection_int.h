@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -147,15 +147,6 @@ struct ic_int_connection
   gboolean is_client;
 
   /*
-    In some cases the application logic requires some authentication
-    processing to occur after completing all parts of the connection
-    set-up. This is signalled through the use of a user-supplied
-    authentication function.
-  */
-  authenticate_func auth_func;
-  void *auth_obj;
-
-  /*
     When calling ic_set_up_connection on the server side we want to ensure
     that we can stop the server connection by calling a callback function
     defined here. It requires an object along with it, it the function will
@@ -258,6 +249,7 @@ struct ic_int_connection
   gboolean is_wan_connection;
   gboolean is_ssl_connection;
   gboolean is_ssl_used_for_data;
+  gboolean save_is_ssl_used_for_data;
 };
 
 #define IC_SSL_SUCCESS 1

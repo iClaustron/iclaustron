@@ -699,8 +699,7 @@ static int start_client_connection(IC_CONNECTION **conn,
   DEBUG_ENTRY("start_client_connection");
 
   if (!(*conn= ic_create_socket_object(TRUE, FALSE, FALSE,
-                                      CONFIG_READ_BUF_SIZE,
-                                      NULL, NULL)))
+                                      CONFIG_READ_BUF_SIZE)))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   server_port_str= ic_guint64_str((guint64)server_port, buf, &dummy);
   (*conn)->conn_op.ic_prepare_client_connection(*conn,
@@ -1031,9 +1030,12 @@ static int
 send_start_info(IC_CONNECTION *conn,
                 const gchar *node_str,
                 const gchar *cluster_name_str,
-                const gchar *program_str)
+                const gchar *program_str,
+                gboolean is_iclaustron)
 {
   int ret_code;
+  gchar *version_str= is_iclaustron ? IC_VERSION_STR :
+                                      MYSQL_VERSION_STRING;
   DEBUG_ENTRY("send_start_info");
 
   if ((ret_code= ic_send_with_cr(conn, ic_start_str)) ||
@@ -1042,7 +1044,7 @@ send_start_info(IC_CONNECTION *conn,
                                              program_str)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_version_str,
-                                             IC_VERSION_STR)) ||
+                                             version_str)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_grid_str,
                                              IC_GRID_STR)) ||
@@ -1082,7 +1084,8 @@ start_cluster_manager(IC_CONNECTION *conn,
   if ((ret_code= send_start_info(conn,
                                  node_str,
                                  glob_clu_infos[0]->cluster_name.str,
-                                 ic_cluster_manager_program_str)))
+                                 ic_cluster_manager_program_str,
+                                 TRUE)))
     goto end;
 
   num_params= get_debug_params() + (guint64)8;
@@ -1165,7 +1168,8 @@ start_cluster_server(IC_CONNECTION *conn,
   if ((ret_code= send_start_info(conn,
                                  node_str,
                                  glob_clu_infos[0]->cluster_name.str,
-                                 ic_cluster_server_program_str)))
+                                 ic_cluster_server_program_str,
+                                 TRUE)))
     goto end;
 
   num_params= get_debug_params() + (guint64)2;
@@ -1238,7 +1242,8 @@ start_data_server(IC_CONNECTION *conn,
   if ((ret_code= send_start_info(conn,
                                  node_str,
                                  glob_clu_infos[0]->cluster_name.str,
-                                 ic_data_server_program_str)))
+                                 ic_data_server_program_str,
+                                 FALSE)))
     goto end;
 
   /* Data Server doesn't support iClaustron debugging, so skip that part. */
@@ -1316,7 +1321,8 @@ start_file_server(IC_CONNECTION *conn,
   if ((ret_code= send_start_info(conn,
                                  node_str,
                                  glob_clu_infos[0]->cluster_name.str,
-                                 ic_file_server_program_str)))
+                                 ic_file_server_program_str,
+                                 TRUE)))
     goto end;
 
   num_params= get_debug_params() + (guint64)2;
@@ -1394,7 +1400,8 @@ start_rep_server(IC_CONNECTION *conn,
   if ((ret_code= send_start_info(conn,
                                  node_str,
                                  glob_clu_infos[0]->cluster_name.str,
-                                 ic_rep_server_program_str)))
+                                 ic_rep_server_program_str,
+                                 TRUE)))
     goto end;
 
   num_params= get_debug_params() + (guint64)2;
@@ -1472,7 +1479,8 @@ start_sql_server(IC_CONNECTION *conn,
   if ((ret_code= send_start_info(conn,
                                  node_str,
                                  glob_clu_infos[0]->cluster_name.str,
-                                 ic_sql_server_program_str)))
+                                 ic_sql_server_program_str,
+                                 FALSE)))
     goto end;
 
   num_params= get_debug_params() + (guint64)2;

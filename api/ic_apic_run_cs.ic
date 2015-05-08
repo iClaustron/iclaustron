@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2014 iClaustron AB
+/* Copyright (C) 2009, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -869,8 +869,7 @@ connect_server_thread(gpointer data)
   apic= run_obj->config.apic;
 
   if (!(conn= ic_create_socket_object(FALSE, FALSE, FALSE,
-                                      CONFIG_READ_BUF_SIZE,
-                                      NULL, NULL)))
+                                      CONFIG_READ_BUF_SIZE)))
   {
     ret_code= IC_ERROR_MEM_ALLOC;
     goto error;
@@ -3247,9 +3246,7 @@ ic_create_run_cluster(IC_STRING *config_dir,
                            FALSE, /* Server connection */
                            FALSE, /* Don't use mutex */
                            FALSE, /* Don't use connect thread */
-                           CONFIG_READ_BUF_SIZE,
-                           NULL,  /* Don't use authentication function */
-                           NULL))) /* No authentication object */
+                           CONFIG_READ_BUF_SIZE)))
     goto error;
 
   run_obj->run_op.ic_start_cluster_server= start_cluster_server;
