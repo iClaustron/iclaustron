@@ -1381,3 +1381,14 @@ start_send_threads(IC_INT_APID_GLOBAL *apid_global)
 error:
   DEBUG_RETURN_INT(error);
 }
+
+static gboolean
+check_node_started(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  if (send_node_conn->node_up &&
+      send_node_conn->last_api_regconf.node_state.ndb_start_state ==
+      (guint32)IC_NDB_STARTED)
+    return TRUE;
+  return FALSE;
+}
+

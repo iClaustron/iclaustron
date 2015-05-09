@@ -899,11 +899,9 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
   if (conf->node_state.ndb_start_state == (guint32)IC_NDB_STARTED &&
       apid_global->wait_first_node_connect)
   {
-    send_node_conn->node_started= TRUE;
     ic_mutex_unlock(send_node_conn->mutex);
     DEBUG_PRINT(PROGRAM_LEVEL, ("Wake up waiters for first node connect"));
     ic_mutex_lock(apid_global->mutex);
-    apid_global->wait_first_node_connect= FALSE;
     ic_cond_broadcast(apid_global->cond);
     ic_mutex_unlock(apid_global->mutex);
   }

@@ -370,6 +370,8 @@ struct ic_send_node_connection
   IC_TIMER last_send_timers[IC_MAX_SEND_TIMERS];
 };
 
+static gboolean check_node_started(IC_SEND_NODE_CONNECTION *send_node_conn);
+
 struct ic_cluster_comm
 {
   IC_SEND_NODE_CONNECTION **send_node_conn_array;

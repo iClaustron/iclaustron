@@ -896,7 +896,7 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
       {
         ic_mutex_lock(send_node_conn->mutex);
         if (send_node_conn->cluster_id == cluster_id &&
-            send_node_conn->node_started)
+            check_node_started(send_node_conn))
         {
           found= TRUE;
           ic_mutex_unlock(send_node_conn->mutex);
@@ -911,6 +911,7 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
     }
     if (found)
     {
+      apid_global->wait_first_node_connect= FALSE;
       ic_mutex_unlock(apid_global->mutex);
       DEBUG_RETURN_INT(0);
     }
@@ -927,6 +928,7 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
                        apid_global->mutex,
                        IC_MICROSEC_PER_SECOND);
   } while (1);
+  ic_assert(FALSE); /* Should never arrive here */
   DEBUG_RETURN_INT(0);
 }
 

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -24,6 +24,8 @@
 #include <ic_connection.h>
 #include <ic_apic.h>
 #include <ic_apid.h>
+
+static int program_ret_code= 0;
 
 /*
    We now have a local Data API connection and we are ready to create
@@ -108,6 +110,7 @@ run_bootstrap_thread(IC_APID_CONNECTION *apid_conn,
     goto error;
   md_trans->md_trans_ops->ic_free_md_trans(md_trans);
   ic_printf("Successfully created table: file_table");
+  program_ret_code= 0;
   DEBUG_RETURN_INT(0);
 
 error:
@@ -115,6 +118,7 @@ error:
     md_trans->md_trans_ops->ic_free_md_trans(md_trans);
   ic_printf("Failed to create table: file_table, ret_code = %u",
             ret_code);
+  program_ret_code= 1;
   DEBUG_RETURN_INT(0);
 }
 
@@ -153,5 +157,5 @@ end:
                        apid_global,
                        apic,
                        tp_state);
-  return ret_code;
+  return program_ret_code;
 }
