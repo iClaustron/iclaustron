@@ -69,7 +69,9 @@ get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state);
 static int handle_node_error(int error,
                              IC_THREAD_CONNECTION **thd_conn);
 static void add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
-static void rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
+static void rem_nodes_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
+static int rem_node_from_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                                   IC_SEND_NODE_CONNECTION *send_node_conn);
 static void check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state);
 static void check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state);
 
@@ -218,7 +220,6 @@ rem_nodes_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
 {
   IC_SEND_NODE_CONNECTION *send_node_conn, *next_send_node_conn;
   int ret_code;
-  DEBUG_ENTRY("rem_nodes_receive_thread");
 
   while (1)
   {
@@ -245,7 +246,6 @@ rem_nodes_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
     }
   }
   ic_mutex_unlock(rec_state->mutex);
-  DEBUG_RETURN_EMPTY;
 }
 
 static void
@@ -267,7 +267,7 @@ check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
     it is on the add list.
   */
   add_node_receive_thread(rec_state);
-  rem_node_receive_thread(rec_state);
+  rem_nodes_receive_thread(rec_state);
 }
 
 static void

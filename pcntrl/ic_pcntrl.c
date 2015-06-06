@@ -1576,6 +1576,38 @@ handle_start(IC_CONNECTION *conn)
                                    TRUE,
                                    FALSE)))
       goto error;
+    if ((ret_code= ic_read_pid_file(pid_file.str, &pid)) == 0)
+    {
+      if ((ret_code= ic_is_process_alive(pid,
+                                         pc_start->program_name.str,
+                                         FALSE)) == 0)
+      {
+        int secs_to_wait = 0;
+        /**
+         * The pid file exists and we have read a pid and we have even
+         * verified that the node is still the same node running. We need
+         * to ensure this node is killed before we can start a new process
+         * using the same node id. This could be a leftover process from an
+         * old cluster. We kill it hard to ensure it goes away quickly.
+         */
+        ic_kill_process(pid, TRUE);
+        while ((ret_code= ic_is_process_alive(pid,
+                                         pc_start->program_name.str,
+                                         FALSE)) == 0)
+        {
+          /**
+           * Process is still alive, wait for a few seconds before we
+           * give up the waiting.
+           * TODO: What to do if the process doesn't go away?
+           */
+           ic_sleep(1);
+           if (secs_to_wait++ > 30)
+             break;
+        }
+      }
+      /* In all cases ensure that the pid file goes away. */
+      ic_delete_daemon_file(pid_file.str);
+    }
   }
 
   /*

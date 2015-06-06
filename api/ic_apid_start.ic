@@ -61,13 +61,6 @@ GOptionEntry ic_apid_entries[] =
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
-static void
-apid_kill_handler(void *param)
-{
-  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)param;
-  apid_global->apid_global_ops->ic_set_stop_flag((IC_APID_GLOBAL*)apid_global);
-}
-
 int
 ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
                       gchar **err_str,
