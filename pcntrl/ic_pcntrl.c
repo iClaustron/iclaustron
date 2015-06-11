@@ -1424,7 +1424,7 @@ get_nodeid_in_arg_vector(gchar *arg_vector[], guint32 num_parameters)
     if (strcmp(program_name, ic_data_server_program_str) == 0)
     {
       /* NDB data node program */
-      if (strcmp(arg_vector[i], "--ndb-nodeid") == 0)
+      if (strcmp(arg_vector[i], ic_ndb_node_id_str) == 0)
       {
         if ((i + 1) < num_parameters)
         {
@@ -1435,7 +1435,7 @@ get_nodeid_in_arg_vector(gchar *arg_vector[], guint32 num_parameters)
     }
     else
     {
-      if (strcmp(arg_vector[i], "--node-id") == 0)
+      if (strcmp(arg_vector[i], ic_node_id_str) == 0)
       {
         if ((i + 1) < num_parameters)
         {
@@ -1505,7 +1505,7 @@ handle_start(IC_CONNECTION *conn)
   int ret_code;
   guint32 i;
   IC_PID_TYPE pid= (IC_PID_TYPE)0;
-  IC_STRING pid_file, binary_dir;
+  IC_STRING pid_file, binary_dir, log_file, working_dir;
   IC_PC_START *pc_start;
   IC_PC_START *pc_start_hash= NULL;
   gchar *pid_str;
@@ -1517,6 +1517,8 @@ handle_start(IC_CONNECTION *conn)
 
   IC_INIT_STRING(&binary_dir, NULL, 0, TRUE);
   IC_INIT_STRING(&pid_file, NULL, 0, TRUE);
+  IC_INIT_STRING(&log_file, NULL, 0, TRUE);
+  IC_INIT_STRING(&working_dir, NULL, 0, TRUE);
 
   if ((ret_code= rec_start_message(conn, &pc_start)))
   {
@@ -1524,8 +1526,11 @@ handle_start(IC_CONNECTION *conn)
   }
   if (!(arg_vector= (gchar**)pc_start->mc_ptr->mc_ops.ic_mc_calloc(
                      pc_start->mc_ptr,
-                     (pc_start->num_parameters+2) * sizeof(gchar*))))
+                     (pc_start->num_parameters+8) * sizeof(gchar*))))
     goto mem_error;
+
+  pc_start->arg_vector= arg_vector;
+  pc_start->num_arguments= pc_start->num_parameters;
   /*
     Prepare the argument vector, first program name and then all the
     parameters passed to the program.
@@ -1545,7 +1550,7 @@ handle_start(IC_CONNECTION *conn)
                                            pc_start->num_parameters+1);
 
   node_id= get_nodeid_in_arg_vector(arg_vector,
-                                     pc_start->num_parameters+1);
+                                    pc_start->num_parameters+1);
 
   if (node_id == 0)
   {
@@ -1608,6 +1613,59 @@ handle_start(IC_CONNECTION *conn)
       /* In all cases ensure that the pid file goes away. */
       ic_delete_daemon_file(pid_file.str);
     }
+    if (strcmp(arg_vector[0], ic_data_server_program_str) == 0)
+    {
+      /*
+        For data node programs that are not running in foreground we add
+        parameters to set it to using no angel process, to be a daemon process,
+        we specify the exact location of both the pid file and the log file to
+        follow the iClaustron standard location of pid files and log files.
+
+        We start by duplicating the pid file string using the memory container,
+        similarly we put the log file string in the memory container. We also
+        duplicate all other strings to ensure that we don't crash due to
+        skipping spaces or any other change of the strings.
+
+        Finally we also need to ensure that the directory for the node
+        actually exists since the data server program expects the data
+        directory to exist when starting up.
+      */
+      if ((ret_code= ic_set_out_file(&log_file,
+                                     node_id,
+                                     pc_start->program_name.str,
+                                     TRUE,
+                                     TRUE)))
+        goto error;
+      pc_start->num_arguments+= 6;
+      if ((ret_code= ic_mc_chardup(pc_start->mc_ptr,
+                         &pc_start->arg_vector[pc_start->num_parameters+1],
+                         (gchar*)ic_no_angel_str)))
+        goto error;
+      if ((ret_code= ic_mc_chardup(pc_start->mc_ptr,
+                         &pc_start->arg_vector[pc_start->num_parameters+2],
+                         (gchar*)ic_daemon_str)))
+        goto error;
+      if ((ret_code= ic_mc_chardup(pc_start->mc_ptr,
+                         &pc_start->arg_vector[pc_start->num_parameters+3],
+                         (gchar*)ic_pid_file_str)))
+        goto error;
+      if ((ret_code= ic_mc_chardup(pc_start->mc_ptr,
+                         &pc_start->arg_vector[pc_start->num_parameters+4],
+                         pid_file.str)))
+        goto error;
+      if ((ret_code= ic_mc_chardup(pc_start->mc_ptr,
+                         &pc_start->arg_vector[pc_start->num_parameters+5],
+                         (gchar*)ic_log_file_str)))
+        goto error;
+      if ((ret_code= ic_mc_chardup(pc_start->mc_ptr,
+                         &pc_start->arg_vector[pc_start->num_parameters+6],
+                         log_file.str)))
+        goto error;
+      if ((ret_code= ic_set_working_dir(&working_dir, node_id, TRUE)))
+        goto error;
+      if ((ret_code= ic_mkdir(working_dir.str)))
+        goto error;
+    }
   }
 
   /*
@@ -1638,8 +1696,18 @@ handle_start(IC_CONNECTION *conn)
   {
     ic_free(pid_file.str);
   }
+  if (log_file.str)
+  {
+    ic_free(log_file.str);
+  }
+  if (working_dir.str)
+  {
+    ic_free(working_dir.str);
+  }
   binary_dir.str= NULL;
   pid_file.str= NULL;
+  log_file.str= NULL;
+  working_dir.str= NULL;
 
   ic_mutex_lock(pc_hash_mutex);
   /*
@@ -1681,6 +1749,14 @@ error:
   if (pid_file.str)
   {
     ic_free(pid_file.str);
+  }
+  if (log_file.str)
+  {
+    ic_free(log_file.str);
+  }
+  if (working_dir.str)
+  {
+    ic_free(working_dir.str);
   }
   pc_start->mc_ptr->mc_ops.ic_mc_free(pc_start->mc_ptr);
   if (ret_code == IC_ERROR_PC_PROCESS_ALREADY_RUNNING)

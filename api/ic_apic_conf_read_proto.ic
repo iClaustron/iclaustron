@@ -336,7 +336,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
                                                      conn,
                                                      cluster_id)) ||
           (ret_code= send_convert_transporter_req(apic, conn, cluster_id)) ||
-          (ret_code= rec_convert_transporter_reply(apic, conn, cluster_id)))
+          (ret_code= rec_convert_transporter_reply(apic, conn, cs_nodeid)))
         goto error;
     }
     clu_conf->cs_conn= conn;
@@ -479,10 +479,9 @@ send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
 {
   gchar endian_buf[32];
   gchar name_buf[128];
-  guint64 node_type= 1;
+  guint64 node_type= IC_API_TYPE_PROTOCOL;
   guint64 version_no;
   guint32 node_id= apic->temp->node_ids[cluster_id];
-  node_id= 0;
   DEBUG_ENTRY("send_get_nodeid_req");
 
   version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
@@ -999,6 +998,7 @@ connect_any_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
   int ret_code= 1;
   guint32 timer= 0;
   guint32 i, start_id, end_id;
+  guint32 sleep_time= 1;
   DEBUG_ENTRY("connect_any_cluster_server");
   
   start_id= 0;
@@ -1026,7 +1026,11 @@ connect_any_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
     timer++;
     if (cs_timeout && timer >= cs_timeout)
       break;
-    ic_sleep(3);
+    ic_sleep(sleep_time);
+    if (sleep_time < 3)
+    {
+      sleep_time++;
+    }
   } while (1);
 end:
 error:

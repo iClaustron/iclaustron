@@ -72,7 +72,6 @@ get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
   IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
   IC_THREAD_CONNECTION *thd_conn= apid_conn->thread_conn;
   IC_SOCK_BUF_PAGE *sock_buf_page;
-  DEBUG_ENTRY("get_thread_messages");
 
   ic_mutex_lock(thd_conn->mutex);
   sock_buf_page= thd_conn->first_received_message;
@@ -93,7 +92,7 @@ get_thread_messages(IC_INT_APID_CONNECTION *ext_apid_conn,
     thd_conn->last_received_message= NULL;
   }
   ic_mutex_unlock(thd_conn->mutex);
-  DEBUG_RETURN_PTR(sock_buf_page);
+  return sock_buf_page;
 }
 
 /* Create a IC_NDB_MESSAGE for execution by the user thread.  */

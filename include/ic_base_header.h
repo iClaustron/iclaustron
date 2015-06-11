@@ -186,9 +186,9 @@ static const guint32 IC_NDB_HIGH_PRIO= 1;
 #define IC_VERSION 0x000001
 #define IC_VERSION_STR "iclaustron-0.0.1"
 #define IC_GRID_STR "grid"
-#define NDB_VERSION 0x070205
-#define MYSQL_VERSION 0x050520
-#define MYSQL_VERSION_STRING "mysql-5.5.20-ndb-7.2.5"
+#define NDB_VERSION 0x070209
+#define MYSQL_VERSION 0x050528
+#define MYSQL_VERSION_STRING "mysql-cluster-gpl-7.2.9"
 
 #define IC_VERSION_BIT_START 24
 #define IC_PROTOCOL_BIT 20

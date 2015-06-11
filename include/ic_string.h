@@ -173,11 +173,13 @@ int ic_cmp_null_term_str_upper_part(const gchar *null_term_str,
                                     const IC_STRING *cmp_str);
 int ic_cmp_str(const IC_STRING *first_str, const IC_STRING *second_str);
 int ic_chardup(gchar **out_str, gchar *in_str);
-int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr, gchar **out_str,
+int ic_mc_chardup(IC_MEMORY_CONTAINER *mc_ptr,
+                  gchar **out_str,
                   gchar *in_str);
 int ic_strdup(IC_STRING *out_str, IC_STRING *in_str);
 int ic_mc_strdup(IC_MEMORY_CONTAINER *mc_ptr,
-                 IC_STRING *out_str, IC_STRING *in_str);
+                 IC_STRING *out_str,
+                 IC_STRING *in_str);
 int ic_mc_char_to_strdup(IC_MEMORY_CONTAINER *mc_ptr,
                          IC_STRING **out_str,
                          gchar *str,

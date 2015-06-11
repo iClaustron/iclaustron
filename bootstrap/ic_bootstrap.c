@@ -1235,6 +1235,7 @@ start_data_server(IC_CONNECTION *conn,
   guint64 num_params;
   gboolean found;
   gboolean process_already_started= FALSE;
+  gchar *connect_string= NULL;
   DEBUG_ENTRY("start_data_server");
 
   node_str= ic_guint64_str((guint64)ds_data->node_id, buf, &dummy);
@@ -1246,17 +1247,25 @@ start_data_server(IC_CONNECTION *conn,
                                  FALSE)))
     goto end;
 
+  if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
+    goto end;
   /* Data Server doesn't support iClaustron debugging, so skip that part. */
-  num_params= (guint64)2;
+  num_params= (guint64)4;
   if ((ret_code= ic_send_with_cr_with_number(conn,
                                              ic_num_parameters_str,
                                              num_params)) ||
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
-                                             ic_node_id_str)) ||
+                                             ic_ndb_node_id_str)) ||
       (ret_code= ic_send_with_cr_with_number(conn,
                                              ic_parameter_str,
                                              (guint64)ds_data->node_id)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_ndb_connectstring_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             connect_string)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
@@ -1298,6 +1307,8 @@ start_data_server(IC_CONNECTION *conn,
               ds_data->hostname);
   }
 end:
+  if (connect_string)
+    ic_free(connect_string);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1314,6 +1325,7 @@ start_file_server(IC_CONNECTION *conn,
   guint64 num_params;
   gboolean found;
   gboolean process_already_started= FALSE;
+  gchar *connect_string= NULL;
   DEBUG_ENTRY("start_file_server");
 
   node_str= ic_guint64_str((guint64)fs_data->node_id, buf, &dummy);
@@ -1325,7 +1337,9 @@ start_file_server(IC_CONNECTION *conn,
                                  TRUE)))
     goto end;
 
-  num_params= get_debug_params() + (guint64)2;
+  if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
+    goto end;
+  num_params= get_debug_params() + (guint64)4;
   if ((ret_code= ic_send_with_cr_with_number(conn,
                                              ic_num_parameters_str,
                                              num_params)) ||
@@ -1336,6 +1350,12 @@ start_file_server(IC_CONNECTION *conn,
       (ret_code= ic_send_with_cr_with_number(conn,
                                              ic_parameter_str,
                                              (guint64)fs_data->node_id)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_cs_connectstring_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             connect_string)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
@@ -1377,6 +1397,8 @@ start_file_server(IC_CONNECTION *conn,
               fs_data->hostname);
   }
 end:
+  if (connect_string)
+    ic_free(connect_string);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1393,6 +1415,7 @@ start_rep_server(IC_CONNECTION *conn,
   guint64 num_params;
   gboolean found;
   gboolean process_already_started= FALSE;
+  gchar *connect_string= NULL;
   DEBUG_ENTRY("start_rep_server");
 
   node_str= ic_guint64_str((guint64)rep_data->node_id, buf, &dummy);
@@ -1404,7 +1427,9 @@ start_rep_server(IC_CONNECTION *conn,
                                  TRUE)))
     goto end;
 
-  num_params= get_debug_params() + (guint64)2;
+  if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
+    goto end;
+  num_params= get_debug_params() + (guint64)4;
   if ((ret_code= ic_send_with_cr_with_number(conn,
                                              ic_num_parameters_str,
                                              num_params)) ||
@@ -1415,6 +1440,12 @@ start_rep_server(IC_CONNECTION *conn,
       (ret_code= ic_send_with_cr_with_number(conn,
                                              ic_parameter_str,
                                              (guint64)rep_data->node_id)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_cs_connectstring_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             connect_string)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
@@ -1456,6 +1487,8 @@ start_rep_server(IC_CONNECTION *conn,
               rep_data->hostname);
   }
 end:
+  if (connect_string)
+    ic_free(connect_string);
   DEBUG_RETURN_INT(ret_code);
 }
 
@@ -1472,6 +1505,7 @@ start_sql_server(IC_CONNECTION *conn,
   guint64 num_params;
   gboolean found;
   gboolean process_already_started= FALSE;
+  gchar *connect_string= NULL;
   DEBUG_ENTRY("start_sql_server");
 
   node_str= ic_guint64_str((guint64)sql_data->node_id, buf, &dummy);
@@ -1483,7 +1517,9 @@ start_sql_server(IC_CONNECTION *conn,
                                  FALSE)))
     goto end;
 
-  num_params= get_debug_params() + (guint64)2;
+  if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
+    goto end;
+  num_params= get_debug_params() + (guint64)4;
   if ((ret_code= ic_send_with_cr_with_number(conn,
                                              ic_num_parameters_str,
                                              num_params)) ||
@@ -1494,6 +1530,12 @@ start_sql_server(IC_CONNECTION *conn,
       (ret_code= ic_send_with_cr_with_number(conn,
                                              ic_parameter_str,
                                              (guint64)sql_data->node_id)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_ndb_connectstring_str)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             connect_string)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
@@ -1535,6 +1577,8 @@ start_sql_server(IC_CONNECTION *conn,
               sql_data->hostname);
   }
 end:
+  if (connect_string)
+    ic_free(connect_string);
   DEBUG_RETURN_INT(ret_code);
 }
 

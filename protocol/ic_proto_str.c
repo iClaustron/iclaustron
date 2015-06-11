@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -95,7 +95,11 @@ const gchar *ic_cluster_server_program_str= "ic_csd";
 const gchar *ic_restore_program_str= "ndb_restore";
 const gchar *ic_process_controller_program_str= "ic_pcntrld";
 
-const gchar *ic_ndb_node_id_str= " --ndb-node-id=";
+const gchar *ic_no_angel_str= "--noangel";
+const gchar *ic_daemon_str= "--daemon";
+const gchar *ic_pid_file_str= "--pid-file";
+const gchar *ic_log_file_str= "--log-file";
+const gchar *ic_ndb_node_id_str= "--ndb-nodeid";
 const gchar *ic_ndb_connectstring_str= "--ndb-connectstring";
 const gchar *ic_cs_connectstring_str= "--cs-connectstring";
 const gchar *ic_initial_flag_str= "--initial";

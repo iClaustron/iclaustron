@@ -870,6 +870,7 @@ renew_connect:
     ic_close_socket(sockfd);
     if ((ret_code= check_user_timeout(conn, &timer)))
       return ret_code;
+    ic_sleep(logarithmic_delay(&delay));
   }
   first= FALSE;
   if ((sockfd= socket(conn->server_addrinfo->ai_family,
@@ -942,7 +943,6 @@ renew_connect:
                 DEBUG_PRINT(COMM_LEVEL,
                             ("select after connect, error = %d",
                             ic_get_last_socket_error()));
-                ic_sleep(logarithmic_delay(&delay));
                 goto renew_connect;
               }
               break;
@@ -970,7 +970,6 @@ renew_connect:
                 DEBUG_PRINT(COMM_DETAIL_LEVEL, ("getsockopt failed, error = %d",
                                          ic_get_last_socket_error()));
               }
-              ic_sleep(logarithmic_delay(&delay));
               goto renew_connect;
             }
             break;

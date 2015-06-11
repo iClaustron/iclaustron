@@ -15,6 +15,21 @@
 
 #ifndef IC_APIC_DATA_H
 #define IC_APIC_DATA_H
+
+/*
+  A node type in the protocol between Cluster Server and the other nodes
+  in the cluster can be 3 values, 0 for data server, 1 for API node and
+  2 for cluster server. These are the only values supported in the protocol.
+*/
+enum ic_nodetype_protocol
+{
+  IC_DATA_SERVER_TYPE_PROTOCOL = 0,
+  IC_API_TYPE_PROTOCOL = 1,
+  IC_CLUSTER_SERVER_TYPE_PROTOCOL = 2
+};
+
+typedef enum ic_nodetype_protocol IC_NODETYPE_PROTOCOL;
+
 /*
   A node type can always be mapped directly to a config type.
   The opposite isn't true since one config type is the

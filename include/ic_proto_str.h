@@ -56,6 +56,10 @@ extern const gchar *ic_cluster_server_program_str;
 extern const gchar *ic_restore_program_str;
 extern const gchar *ic_process_controller_program_str;
 
+extern const gchar *ic_no_angel_str;
+extern const gchar *ic_daemon_str;
+extern const gchar *ic_pid_file_str;
+extern const gchar *ic_log_file_str;
 extern const gchar *ic_ndb_node_id_str;
 extern const gchar *ic_ndb_connectstring_str;
 extern const gchar *ic_cs_connectstring_str;

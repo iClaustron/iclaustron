@@ -1,4 +1,4 @@
-/* Copyight (C) 2007, 2014 iClaustron AB
+/* Copyight (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -833,7 +833,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_ram_memory,
                        IC_UINT64, 256*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, DataMemory);
-  IC_SET_CONFIG_MIN(conf_entry, 16*1024*1024);
+  IC_SET_CONFIG_MIN(conf_entry, 1*1024*1024);
   conf_entry->config_entry_description=
   "Size of memory used to store RAM-based records";
 
@@ -841,7 +841,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_hash_memory,
                        IC_UINT64, 64*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, IndexMemory);
-  IC_SET_CONFIG_MIN(conf_entry, 8*1024*1024);
+  IC_SET_CONFIG_MIN(conf_entry, 1*1024*1024);
   conf_entry->config_entry_description=
   "Size of memory used to store primary hash index on all tables and"
   " unique hash indexes";
@@ -943,6 +943,7 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DAEMON_RESTART_AT_ERROR, 44);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_automatic_restart, FALSE,
                              IC_ONLINE_CHANGE);
+  IC_SET_CONFIG_MAX(conf_entry, FALSE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, StopOnError);
   conf_entry->config_entry_description=
   "If set, data server restarts automatically after a failure";
@@ -2255,7 +2256,7 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry, number_of_redo_log_parts,
                        IC_UINT32, 4, IC_INITIAL_NODE_RESTART);
   IC_SET_NDB_CONFIG_NAME(conf_entry, NoOfFragmentLogParts);
-  conf_entry->min_ndb_version_used= 0x70205;
+  conf_entry->min_ndb_version_used= 0x70209;
   IC_SET_CONFIG_MIN(conf_entry, 4);
   conf_entry->config_entry_description=
   "Number of REDO log parts, each part can be handled by separate LDM threads";

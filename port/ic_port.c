@@ -825,6 +825,7 @@ int ic_start_process(gchar **argv,
       error->message));
     DEBUG_RETURN_INT(IC_ERROR_FAILED_TO_SPAWN_PROGRAM);
   }
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Spawned off program with pid: %d", loc_pid));
   if (is_daemon_process)
   {
     if ((ret_code= get_pid_from_file(pid_file, pid)))
@@ -1484,8 +1485,6 @@ kill_handler(int signum)
 void
 ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
 {
-  DEBUG_ENTRY("unix:ic_set_die_handler");
-
   glob_die_param= param;
   glob_die_handler= die_handler;
   signal(SIGTERM, kill_handler);
@@ -1499,7 +1498,6 @@ ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
   signal(SIGPWR, kill_handler);
 #endif
 #endif
-  DEBUG_RETURN_EMPTY;
 }
 #else
 void

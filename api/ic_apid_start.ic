@@ -123,7 +123,10 @@ ic_stop_apid_program(int ret_code,
                      IC_API_CONFIG_SERVER *apic,
                      IC_THREADPOOL_STATE *tp_state)
 {
-  DEBUG_PRINT(PROGRAM_LEVEL, ("Enter: ic_stop_apid_program"));
+  if (ic_is_debug_system_active())
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Enter: ic_stop_apid_program"));
+  }
   if (err_str)
     ic_printf("%s", err_str);
   if (!err_str && ret_code)

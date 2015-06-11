@@ -196,6 +196,7 @@ struct ic_pc_start
   IC_STRING version_string;
   IC_STRING program_name;
   IC_STRING *parameters;
+  gchar **arg_vector;
   IC_MEMORY_CONTAINER *mc_ptr;
   IC_PC_START *next_pc_start;
   IC_PID_TYPE pid;
@@ -203,6 +204,7 @@ struct ic_pc_start
   guint64 dyn_trans_index;
   guint64 check_time;
   guint32 num_parameters;
+  guint32 num_arguments;
   gboolean autorestart;
   gboolean check_ongoing;
   gboolean kill_ongoing;

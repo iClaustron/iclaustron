@@ -20,6 +20,19 @@ static void dec_config_ref_count(IC_INT_RUN_CLUSTER_SERVER *run_obj);
 static void check_ready_to_release_config(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                           gboolean lock_held);
 static int check_for_stopped_rcs_threads(void *obj, int not_used);
+static int rec_get_version_req(IC_CONNECTION *conn);
+static int send_get_version_reply(IC_CONNECTION *conn,
+                                  guint64 node_type);
+static int rec_get_config_req(IC_CONNECTION *conn,
+                              guint64 *version_number,
+                              guint64 node_type);
+static int send_get_config_reply(IC_CONNECTION *conn,
+                                 gchar *config_base64_str,
+                                 guint32 config_len);
+static int ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
+                                guint8 **base64_array,
+                                guint32 *base64_array_len,
+                                guint64 version_number);
 
 /*
   MODULE: Support functions for Cluster Server
@@ -3683,6 +3696,7 @@ run_cluster_server_thread(gpointer data)
   rcs_tp= thread_state->ic_get_threadpool(thread_state);
   conn= (IC_CONNECTION*) rcs_tp->ts_ops.ic_thread_get_object(thread_state);
 
+  param.cluster_id= 0; /* Only support cluster id 0 for now */
   rcs_tp->ts_ops.ic_thread_started(thread_state);
   run_obj= (IC_INT_RUN_CLUSTER_SERVER*)conn->conn_op.ic_get_param(conn);
   /*
@@ -3697,7 +3711,9 @@ run_cluster_server_thread(gpointer data)
     switch (state)
     {
       case INITIAL_STATE:
-        if (!ic_check_buf(read_buf, read_size, get_cluster_list_str,
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          get_cluster_list_str,
                           strlen(get_cluster_list_str)))
         {
           if ((ret_code= handle_get_cluster_list(run_obj, conn)))
@@ -3708,7 +3724,9 @@ run_cluster_server_thread(gpointer data)
           state= WAIT_GET_NODEID;
           break;
         }
-        if (!ic_check_buf(read_buf, read_size, get_nodeid_str,
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          get_nodeid_str,
                           strlen(get_nodeid_str)))
         {
           if ((ret_code= handle_config_request(run_obj, conn, &param)))
@@ -3719,7 +3737,9 @@ run_cluster_server_thread(gpointer data)
           state= WAIT_GET_MGMD_NODEID;
           break;
         }
-        if (!ic_check_buf(read_buf, read_size, report_event_str,
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          report_event_str,
                           strlen(report_event_str)))
         {
           if ((ret_code= handle_report_event(conn)))
@@ -3729,7 +3749,9 @@ run_cluster_server_thread(gpointer data)
           }
           break; /* The report event is always done in separate connection */
         }
-        if (!ic_check_buf(read_buf, read_size, set_connection_parameter_str,
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          set_connection_parameter_str,
                           strlen(set_connection_parameter_str)))
         {
           if ((ret_code= handle_set_connection_parameter_req(run_obj,
@@ -3742,6 +3764,58 @@ run_cluster_server_thread(gpointer data)
           /* Always sent as only message in separate connection */
           goto end_thread;
         }
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          get_version_str,
+                          strlen(get_version_str)))
+        {
+          /* Only used by NDB data nodes */
+          ic_step_back_rec_with_cr(conn, read_size);
+          if ((ret_code= rec_get_version_req(conn)) ||
+              (ret_code= send_get_version_reply(conn,
+                                                (guint64)IC_DATA_SERVER_NODE)))
+          {
+            error_line= __LINE__;
+            goto error;
+          }
+          /* Keep initial state */
+          break;
+        }
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          get_config_str,
+                          strlen(get_config_str)))
+        {
+          guint8 *config_base64_str;
+          guint32 config_len;
+          guint64 version_number= 0;
+          ic_step_back_rec_with_cr(conn, read_size);
+          if ((ret_code= rec_get_config_req(conn,
+                                            &version_number,
+                                            IC_DATA_SERVER_TYPE_PROTOCOL)) ||
+              (ret_code= ic_get_base64_config(
+                    run_obj->config.conf_objects[0],
+                    &config_base64_str,
+                    &config_len,
+                    version_number)))
+          {
+            error_line= __LINE__;
+            goto error;
+          }
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Converted configuration to a base64 representation"));
+          ret_code= send_get_config_reply(conn,
+                                          (gchar*)config_base64_str,
+                                          config_len);
+          ic_free((gchar*)config_base64_str);
+          if (ret_code)
+          {
+            error_line= __LINE__;
+            goto error;
+          }
+          state= WAIT_GET_MGMD_NODEID;
+          break;
+        }
         /* Fall through since get connection parameter is also allowed */
       case GET_CONNECTION_PARAMETER:
         if ((ret_code= handle_get_connection_parameter(run_obj,
@@ -3753,7 +3827,9 @@ run_cluster_server_thread(gpointer data)
         state= GET_CONNECTION_PARAMETER;
         break; /* Always handled in separate connection */
       case WAIT_GET_NODEID:
-        if (!ic_check_buf(read_buf, read_size, get_nodeid_str,
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          get_nodeid_str,
                           strlen(get_nodeid_str)))
         {
           if ((ret_code= handle_config_request(run_obj, conn, &param)))
@@ -3776,7 +3852,9 @@ run_cluster_server_thread(gpointer data)
         state= WAIT_SET_CONNECTION;
         break;
       case WAIT_SET_CONNECTION:
-        if (!ic_check_buf(read_buf, read_size, set_connection_parameter_str,
+        if (!ic_check_buf(read_buf,
+                          read_size,
+                          set_connection_parameter_str,
                           strlen(set_connection_parameter_str)))
         {
           if ((ret_code= handle_set_connection_parameter_req(
@@ -4397,28 +4475,48 @@ handle_convert_transporter_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
                                    guint32 *error_line)
 {
   int ret_code;
+  guint32 loc_read_size;
+  guint32 len;
+  gchar *loc_read_buf;
+  guint64 number;
   int trp_type= IC_TCP_TRANSPORTER_TYPE;
-  gchar client_buf[2*IC_MAX_INT_STRING], cs_buf[2*IC_MAX_INT_STRING];
+  gchar cs_buf[2*IC_MAX_INT_STRING + 2];
   DEBUG_ENTRY("handle_convert_transporter_request");
 
-  if (ic_check_buf(read_buf, read_size, convert_transporter_str,
+  if (ic_check_buf(read_buf,
+                   read_size,
+                   convert_transporter_str,
                    strlen(convert_transporter_str)))
   {
     *error_line= __LINE__;
     DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
   }
-  g_snprintf(client_buf, sizeof(client_buf), "%d %d",
-             (guint32)param->client_nodeid, trp_type);
   g_snprintf(cs_buf, sizeof(cs_buf), "%d %d",
-             (guint32)param->node_number, trp_type);
-  if ((ret_code= ic_rec_empty_line(conn)) ||
-      (ret_code= ic_rec_simple_str(conn, client_buf)) ||
-      (ret_code= ic_send_with_cr(conn, cs_buf)) ||
+             (guint32)run_obj->cs_nodeid, trp_type);
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
+  if ((ret_code= ic_rec_with_cr(conn, &loc_read_buf, &loc_read_size)))
+    goto error;
+
+  /*
+    We get node_id_remote trp_type where node_id_remote is the string
+    of the remote node id, then we have a space and finally a 0 as a
+    character giving a TCP transporter type.
+  */
+  if ((ic_conv_str_to_int(loc_read_buf, &number, &len) != 0) ||
+      (number > IC_MAX_NODE_ID) ||
+      (loc_read_buf[len] != ' ') ||
+      (((int)(loc_read_buf[len + 1] - '0')) != trp_type) ||
+      (loc_read_size != (len + 2)))
+  {
+    *error_line= __LINE__;
+    DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+  }
+  param->node_number= (guint32)number;
+  if ((ret_code= ic_send_with_cr(conn, cs_buf)) ||
       (ret_code= conn->conn_op.ic_flush_connection(conn)))
   {
-    DEBUG_PRINT(CONFIG_LEVEL,
-      ("Protocol error in converting to transporter, code = %d", ret_code));
-    DEBUG_RETURN_INT(ret_code);
+    goto error;
   }
   /*
     At this point the connection is turned into a NDB Protocol
@@ -4442,6 +4540,11 @@ handle_convert_transporter_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     DEBUG_RETURN_INT(ret_code);
   }
   DEBUG_RETURN_INT(0);
+
+error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Protocol error in converting to transporter, code = %d", ret_code));
+  DEBUG_RETURN_INT(ret_code);
 }
 
 /*
@@ -4489,10 +4592,12 @@ static int rec_get_nodeid_req(IC_CONNECTION *conn,
 static int send_get_nodeid_reply(IC_CONNECTION *conn, guint32 node_id);
 static int rec_get_version_req(IC_CONNECTION *conn);
 static int send_get_version_reply(IC_CONNECTION *conn, guint64 node_type);
-static int rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
-                              guint64 node_type);
-static int send_get_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
+static int send_get_config_reply(IC_CONNECTION *conn,
+                                 gchar *config_base64_str,
                                  guint32 config_len);
+static int rec_get_config_req(IC_CONNECTION *conn,
+                              guint64 *version_number,
+                              guint64 node_type);
 static int ic_get_base64_config(IC_CLUSTER_CONFIG *clu_conf,
                                 guint8 **base64_array,
                                 guint32 *base64_array_len,
@@ -4502,7 +4607,8 @@ static int ic_get_key_value_sections_config(IC_CLUSTER_CONFIG *clu_conf,
                                             guint32 *key_value_array_len,
                                             guint64 version_number);
 static guint32 get_length_of_section(IC_CONFIG_TYPES config_type,
-                                     gchar *conf, guint64 version_number);
+                                     gchar *conf,
+                                     guint64 version_number);
 static IC_SOCKET_LINK_CONFIG*
 get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
                  IC_SOCKET_LINK_CONFIG *comm_section,
@@ -4567,7 +4673,7 @@ handle_config_request(IC_INT_RUN_CLUSTER_SERVER *run_obj,
       (ret_code= rec_get_version_req(conn)) ||
       (ret_code= send_get_version_reply(conn, param->node_type)) ||
       (ret_code= rec_get_config_req(conn,
-                                    param->version_number,
+                                    &param->version_number,
                                     param->node_type)) ||
       (ret_code= ic_get_base64_config(
               run_obj->config.conf_objects[param->cluster_id],
@@ -4701,7 +4807,14 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
             PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
           }
         }
-        state= NAME_REQ_STATE;
+        if (!ic_is_bit_set(*version_number, IC_PROTOCOL_BIT))
+        {
+          state= LOG_EVENT_REQ_STATE;
+        }
+        else
+        {
+          state= NAME_REQ_STATE;
+        }
         break;
       case NAME_REQ_STATE:
         if (ic_check_buf_with_string(read_buf,
@@ -4733,7 +4846,9 @@ rec_get_nodeid_req(IC_CONNECTION *conn,
           *cluster_id= 0;
         }
         else
+        {
           state= CLUSTER_ID_REQ_STATE;
+        }
         break;
       case CLUSTER_ID_REQ_STATE:
         if (ic_check_buf_with_int(read_buf,
@@ -4811,7 +4926,7 @@ send_get_version_reply(IC_CONNECTION *conn,
   guint64 mysql_minor_number= (MYSQL_VERSION >> 4) & 0xF;
   guint64 mysql_build_number= MYSQL_VERSION & 0xF;
   guint64 version_no=
-    get_iclaustron_protocol_version(node_type != IC_DATA_SERVER_NODE);
+    get_iclaustron_protocol_version(node_type != IC_DATA_SERVER_TYPE_PROTOCOL);
   DEBUG_ENTRY("send_get_version_reply");
 
   if (ic_send_with_cr(conn, version_str) ||
@@ -4832,7 +4947,8 @@ send_get_version_reply(IC_CONNECTION *conn,
 
 /* Handle receive get configuration request protocol action */
 static int
-rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
+rec_get_config_req(IC_CONNECTION *conn,
+                   guint64 *version_number,
                    guint64 node_type)
 {
   gchar *read_buf;
@@ -4862,11 +4978,16 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
                                   ic_version_str,
                                   strlen(ic_version_str),
                                   &read_version_num) ||
-            (version_number != read_version_num))
+            (((*version_number) != 0) && 
+             ((*version_number) != read_version_num)))
         {
           DEBUG_PRINT(CONFIG_LEVEL,
             ("Protocol error in version request state"));
           PROTOCOL_CONN_CHECK_DEBUG_RETURN(FALSE);
+        }
+        if ((*version_number) == 0)
+        {
+          (*version_number)= read_version_num;
         }
         state= NODETYPE_REQ_STATE;
         break;
@@ -4904,7 +5025,8 @@ rec_get_config_req(IC_CONNECTION *conn, guint64 version_number,
 
 /* Handle send configuration reply protocol action */
 static int
-send_get_config_reply(IC_CONNECTION *conn, gchar *config_base64_str,
+send_get_config_reply(IC_CONNECTION *conn,
+                      gchar *config_base64_str,
                       guint32 config_len)
 {
   gchar content_buf[2*IC_MAX_INT_STRING];
