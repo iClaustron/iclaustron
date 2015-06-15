@@ -84,7 +84,7 @@ guint32 error_inject= 0;
 #endif
 static const gchar *port_binary_dir;
 static const gchar *port_config_dir;
-static guint32 ic_stop_flag= 0;
+static guint32 volatile ic_stop_flag= 0;
 static guint32 ic_port_inited= 0;
 
 #ifdef WINDOWS
@@ -1407,10 +1407,12 @@ sig_error_handler(int signum)
   switch (signum)
   {
     case SIGSEGV:
+    case SIGABRT:
     case SIGFPE:
     case SIGILL:
     case SIGBUS:
     case SIGSYS:
+    case SIGQUIT:
       break;
     default:
       return;
@@ -1420,7 +1422,7 @@ sig_error_handler(int signum)
   {
     glob_sig_error_handler(glob_sig_error_param);
   }
-  if (glob_core)
+  if (TRUE || glob_core)
   {
     DEBUG_PRINT(PROGRAM_LEVEL, ("Abort process"));
     abort();
@@ -1439,9 +1441,12 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
   DEBUG_ENTRY("unix:ic_set_sig_error_handler");
   glob_sig_error_handler= error_handler;
   glob_sig_error_param= param;
+  /* signal(SIGEMT, sig_error_handler); */
+  signal(SIGABRT, sig_error_handler);
   signal(SIGSEGV, sig_error_handler);
   signal(SIGFPE, sig_error_handler);
   signal(SIGILL, sig_error_handler);
+  signal(SIGQUIT, sig_error_handler);
   /* signal(SIGBUS, sig_error_handler); */
   signal(SIGSYS, sig_error_handler);
   signal(SIGPIPE, SIG_IGN);
@@ -1459,8 +1464,8 @@ kill_handler(int signum)
   switch (signum)
   {
     case SIGTERM:
-    case SIGABRT:
-    case SIGQUIT:
+    case SIGINT:
+    case SIGHUP:
     case SIGXCPU:
 #ifdef SIGINFO
     case SIGINFO:
@@ -1487,9 +1492,9 @@ ic_set_die_handler(IC_SIG_HANDLER_FUNC die_handler, void *param)
 {
   glob_die_param= param;
   glob_die_handler= die_handler;
+  signal(SIGHUP, kill_handler);
   signal(SIGTERM, kill_handler);
-  signal(SIGABRT, kill_handler);
-  signal(SIGQUIT, kill_handler);
+  signal(SIGINT, kill_handler);
   signal(SIGXCPU, kill_handler);
 #ifdef SIGINFO
   signal(SIGINFO, kill_handler);
@@ -1708,16 +1713,10 @@ ic_set_umask()
 #endif
 }
 
-static gboolean is_daemon_file_written= FALSE;
-
 void
 ic_delete_daemon_file(const gchar *pid_file)
 {
-  if (is_daemon_file_written)
-  {
-    ic_delete_file(pid_file);
-    is_daemon_file_written= FALSE;
-  }
+  ic_delete_file(pid_file);
 }
 
 int
@@ -1743,7 +1742,6 @@ ic_write_pid_file(const gchar *pid_file)
 
   DEBUG_PRINT(PROGRAM_LEVEL, ("Created pid file for process %s",
                              &buf[0]));
-  is_daemon_file_written= TRUE;
   DEBUG_RETURN_INT(0);
 error:
   DEBUG_PRINT(PROGRAM_LEVEL, ("Failed creating pid file %s", pid_file));

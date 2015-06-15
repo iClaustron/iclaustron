@@ -59,6 +59,8 @@ static GOptionEntry entries[]=
   { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
+static guint64 get_num_cookies(void);
+
 static int
 connect_pcntrl(IC_CONNECTION **conn, const gchar *node_config)
 {
@@ -1200,6 +1202,40 @@ ic_use_iclaustron_version_cmd(IC_PARSE_DATA *parse_data)
 }
 
 static void
+ic_count_cookies_cmd(IC_PARSE_DATA *parse_data)
+{
+  gchar output_buf[2048];
+  gchar *output_ptr= output_buf;
+  guint32 num_cookies_size;
+  guint64 num_cookies;
+  DEBUG_ENTRY("ic_count_cookies_cmd");
+
+  num_cookies= get_num_cookies();
+  output_ptr= ic_guint64_str(num_cookies, output_ptr, &num_cookies_size);
+  output_ptr[num_cookies_size]= 0;
+  if (ic_send_with_cr(parse_data->conn,
+                      "NUM_COOKIES") ||
+      ic_send_with_cr(parse_data->conn,
+                      output_ptr) ||
+      ic_send_empty_line(parse_data->conn))
+  {
+    parse_data->exit_flag= TRUE;
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+ic_stop_client_cmd(IC_PARSE_DATA *parse_data)
+{
+  DEBUG_ENTRY("ic_stop_client_cmd");
+  if (ic_send_with_cr(parse_data->conn, ic_connection_closed_str) ||
+      ic_send_empty_line(parse_data->conn))
+    ;
+  parse_data->exit_flag= TRUE;
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
 mgr_execute(IC_PARSE_DATA *parse_data)
 {
   DEBUG_ENTRY("mgr_execute");
@@ -1278,6 +1314,12 @@ mgr_execute(IC_PARSE_DATA *parse_data)
     case IC_USE_VERSION_ICLAUSTRON_CMD:
       ic_use_iclaustron_version_cmd(parse_data);
       break;
+    case IC_COUNT_COOKIES_CMD:
+      ic_count_cookies_cmd(parse_data);
+      break;
+    case IC_STOP_CLIENT_CMD:
+      ic_stop_client_cmd(parse_data);
+      break;
     default:
       report_error(parse_data, not_impl_string);
       break;
@@ -1298,23 +1340,36 @@ init_parse_data(IC_PARSE_DATA *parse_data)
 
 static IC_HASHTABLE *glob_connect_hash= NULL;
 static IC_MUTEX *glob_connect_hash_mutex= NULL;
+static guint64 glob_next_connect_code= 1;
+static guint64 glob_num_cookies= 0;
+
+static guint64 get_num_cookies(void)
+{
+  guint64 num_cookies;
+  ic_mutex_lock(glob_connect_hash_mutex);
+  num_cookies= glob_num_cookies;
+  ic_mutex_unlock(glob_connect_hash_mutex);
+  return num_cookies;
+}
 
 static int
 initialise_connect_hash(void)
 {
+  glob_next_connect_code= 1;
+  glob_num_cookies= 0;
   glob_connect_hash= ic_create_hashtable(64,
-                                         ic_hash_uint32,
-                                         ic_keys_equal_uint32,
+                                         ic_hash_uint64,
+                                         ic_keys_equal_uint64,
                                          FALSE);
   if (glob_connect_hash == NULL)
   {
-    return 1;
+    return IC_ERROR_MEM_ALLOC;
   }
   glob_connect_hash_mutex= ic_mutex_create();
   if (glob_connect_hash_mutex == NULL)
   {
     ic_hashtable_destroy(glob_connect_hash, FALSE);
-    return 1;
+    return IC_ERROR_MEM_ALLOC;
   }
   return 0;
 }
@@ -1347,30 +1402,66 @@ destroy_connect_hash(void)
     }
   } while (continue_scan);
   ic_hashtable_destroy(glob_connect_hash, FALSE);
+  glob_num_cookies= 0;
   ic_mutex_unlock(glob_connect_hash_mutex);
   ic_mutex_destroy(&glob_connect_hash_mutex);
 }
 
 static int
-find_parse_connection(IC_PARSE_DATA *parse_data, guint64 connect_code)
+find_parse_connection(IC_PARSE_DATA **parse_data, guint64 connect_code)
 {
-  (void)parse_data;
-  (void)connect_code;
+  IC_PARSE_DATA *loc_parse_data;
+  ic_mutex_lock(glob_connect_hash_mutex);
+  loc_parse_data= ic_hashtable_search(glob_connect_hash, &connect_code);
+  ic_mutex_unlock(glob_connect_hash_mutex);
+  if (loc_parse_data == NULL)
+  {
+    *parse_data= NULL;
+    return 1;
+  }
+  ic_require(loc_parse_data->connect_code == connect_code);
+  *parse_data= loc_parse_data;
   return 0;
+}
+
+static void
+remove_parse_connection(IC_PARSE_DATA *parse_data)
+{
+  IC_PARSE_DATA *loc_parse_data;
+  ic_mutex_lock(glob_connect_hash_mutex);
+  loc_parse_data= ic_hashtable_remove(glob_connect_hash,
+                                      &parse_data->connect_code);
+  glob_num_cookies--;
+  ic_mutex_unlock(glob_connect_hash_mutex);
+  ic_require(parse_data == loc_parse_data);
+  ic_require(parse_data != NULL);
 }
 
 static int
-allocate_parse_connection(IC_PARSE_DATA *parse_data, guint64 connect_code)
+allocate_parse_connection(IC_PARSE_DATA **parse_data)
 {
-  (void)parse_data;
-  (void)connect_code;
+  int ret_code;
+  IC_PARSE_DATA *loc_parse_data;
+  loc_parse_data= (IC_PARSE_DATA*)ic_calloc(sizeof(IC_PARSE_DATA));
+  if (loc_parse_data == NULL)
+  {
+    return IC_ERROR_MEM_ALLOC;
+  }
+  ic_mutex_lock(glob_connect_hash_mutex);
+  loc_parse_data->connect_code= glob_next_connect_code++;
+  ret_code= ic_hashtable_insert(glob_connect_hash,
+                                &loc_parse_data->connect_code,
+                                loc_parse_data);
+  glob_num_cookies++;
+  ic_mutex_unlock(glob_connect_hash_mutex);
+  if (ret_code)
+  {
+    *parse_data= NULL;
+    ic_free(loc_parse_data);
+    return IC_ERROR_MEM_ALLOC;
+  }
+  *parse_data= loc_parse_data;
   return 0;
-}
-
-static guint64
-generate_connect_code(void)
-{
-  return (guint64)0;
 }
 
 static gpointer
@@ -1378,7 +1469,6 @@ run_handle_new_connection(gpointer data)
 {
   gchar *read_buf;
   guint32 read_size;
-  guint64 connect_code;
   gboolean found;
   int ret_code;
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
@@ -1386,10 +1476,10 @@ run_handle_new_connection(gpointer data)
   IC_CONNECTION *conn;
   IC_MEMORY_CONTAINER *mc_ptr= NULL;
   IC_API_CONFIG_SERVER *apic;
-  gchar *parse_buf= NULL;
   guint32 parse_inx= 0;
-  gboolean too_long_flag= FALSE;
-  IC_PARSE_DATA parse_data;
+  IC_PARSE_DATA *parse_data= NULL;
+  guint64 connect_code= 0;
+  gchar *parse_buf= NULL;
   DEBUG_THREAD_ENTRY("run_handle_new_connection");
   tp_state= thread_state->ic_get_threadpool(thread_state);
   conn= (IC_CONNECTION*)
@@ -1398,7 +1488,6 @@ run_handle_new_connection(gpointer data)
   tp_state->ts_ops.ic_thread_started(thread_state);
 
   apic= (IC_API_CONFIG_SERVER*)conn->conn_op.ic_get_param(conn);
-  ic_zero(&parse_data, sizeof(IC_PARSE_DATA));
   if ((ret_code= ic_rec_simple_str_opt(conn,
                                        ic_new_connect_clmgr_str,
                                        &found)))
@@ -1415,78 +1504,81 @@ run_handle_new_connection(gpointer data)
      * normal situations. The client can also decide to keep the connection
      * up and running.
      */
-    connect_code= generate_connect_code();
-    if (allocate_parse_connection(&parse_data, connect_code))
+    if ((ret_code= ic_rec_empty_line(conn)))
       goto error;
+    if (allocate_parse_connection(&parse_data))
+      goto error;
+    if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, FALSE)))
+      goto error;
+    parse_data->lex_data.mc_ptr= mc_ptr;
+    parse_data->apic= apic;
+    parse_data->conn= conn;
+    parse_data->current_cluster_id= IC_MAX_UINT32;
     if ((ret_code= ic_send_with_cr_with_number(conn,
                                                ic_connected_clmgr_str,
-                                               connect_code)))
+                                               parse_data->connect_code)) ||
+        (ret_code= ic_send_empty_line(conn)))
+    {
       goto error;
+    }
   }
   else
   {
     if ((ret_code= ic_rec_long_number(conn,
                                       ic_reconnect_clmgr_str,
-                                      &connect_code)))
+                                      &connect_code)) ||
+        (ret_code= ic_rec_empty_line(conn)))
       goto error;
     if (find_parse_connection(&parse_data, connect_code))
       goto error;
-    if ((ret_code= ic_send_with_cr(conn, ic_ok_str)))
+    if ((ret_code= ic_send_with_cr(conn, ic_ok_str)) ||
+        (ret_code= ic_send_empty_line(conn)))
+      goto error;
+    parse_data->conn= conn;
+    mc_ptr= parse_data->lex_data.mc_ptr;
+    if (apic != parse_data->apic)
       goto error;
   }
+  ic_require(parse_data);
   if (!(parse_buf= ic_malloc(PARSE_BUF_SIZE)))
-  {
-    ic_print_error(IC_ERROR_MEM_ALLOC);
     goto error;
-  }
-  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, FALSE)))
-  {
-    ic_print_error(IC_ERROR_MEM_ALLOC);
-    goto error;
-  }
-  parse_data.lex_data.mc_ptr= mc_ptr;
-  parse_data.apic= apic;
-  parse_data.conn= conn;
-  parse_data.current_cluster_id= IC_MAX_UINT32;
   DEBUG_PRINT(THREAD_LEVEL, ("conn: %p", conn));
   while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
   {
     if (read_size == 0)
     {
-      if (too_long_flag == TRUE)
+      if (parse_inx == 0)
       {
-        if (ic_send_with_cr(conn, "Error: Out of parse buffer") ||
-            ic_send_empty_line(conn))
-          goto exit;
-        too_long_flag= FALSE;
+        /* No command to execute, immediate return with retained cookie */
+        break;
       }
-      else
+      init_parse_data(parse_data);
+      parse_buf[parse_inx]= NULL_BYTE;
+      parse_buf[parse_inx+1]= NULL_BYTE;
+      DEBUG_PRINT(PROGRAM_LEVEL,
+        ("Ready to execute command with len %u:\n%s using object: 0x%llx",
+         parse_inx,
+         parse_buf,
+         parse_data));
+      ic_mgr_call_parser(parse_buf, parse_inx, parse_data);
+      if (parse_data->exit_flag)
+        goto exit;
+      if (!parse_data->break_flag)
       {
-        init_parse_data(&parse_data);
-        parse_buf[parse_inx]= NULL_BYTE;
-        parse_buf[parse_inx+1]= NULL_BYTE;
-        DEBUG_PRINT(PROGRAM_LEVEL,
-          ("Ready to execute command with len %u:\n%s",
-           parse_inx,
-           parse_buf));
-        ic_mgr_call_parser(parse_buf, parse_inx, &parse_data);
-        if (parse_data.exit_flag)
+        /**
+         * Parsing went ok, we can now execute the command as set up
+         * by the parser.
+         */
+        mgr_execute(parse_data);
+        if (parse_data->exit_flag)
           goto exit;
-        if (!parse_data.break_flag)
-        {
-          /**
-           * Parsing went ok, we can now execute the command as set up
-           * by the parser.
-           */
-          mgr_execute(&parse_data);
-          if (parse_data.exit_flag)
-            goto exit;
-        }
       }
-      /* Initialise index to parser buffer before beginning of new cmd */
-       parse_inx= 0;
-      /* Release memory from old query but reuse memory container */
-      mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
+      /*
+        We have executed one command, we will now disconnect, but we will
+        leave the context such that we can reconnect and connect to this
+        context and continue as if we were using the same connection.
+       */
+      break;
     }
     else if ((parse_inx + read_size) < PARSE_BUF_SIZE)
     {
@@ -1496,23 +1588,50 @@ run_handle_new_connection(gpointer data)
     else
     {
       /* Out of parse buffer, stop receiving data */
-      too_long_flag= TRUE;
+      if (ic_send_with_cr(conn, "Error: Out of parse buffer") ||
+          ic_send_empty_line(conn))
+        ;
+      goto error;
     }
   }
+  if (ret_code != 0)
+    goto error;
+
+  /*
+    Normal path, keep parse data object as a cookie with connect_code
+    as key
+   */
+  DEBUG_PRINT(PROGRAM_LEVEL, ("End of client command, keep cookie"));
+  mc_ptr->mc_ops.ic_mc_reset(mc_ptr);
+  parse_data->conn= NULL;
+  goto end;
+
 exit:
   DEBUG_PRINT(PROGRAM_LEVEL, ("End of client connection, ret_code = %d"
                               " parse_inx = %u",
               ret_code,
               parse_inx));
 
+  remove_parse_connection(parse_data);
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  ic_require(parse_data->connect_code != 0);
+  ic_free(parse_data);
+  goto end;
+
 error:
-  if (parse_buf)
+  if (parse_data != NULL)
   {
-    ic_free(parse_buf);
+    ic_free(parse_data);
   }
-  if (mc_ptr)
+  if (mc_ptr != NULL)
   {
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  }
+
+end:
+  if (parse_buf != NULL)
+  {
+    ic_free(parse_buf);
   }
   conn->conn_op.ic_free_connection(conn);
   tp_state->ts_ops.ic_thread_stops(thread_state);

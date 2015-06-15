@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -45,9 +45,12 @@ int ic_mgr_lex(void *parse_data, void *scanner);
 %token CLUSTER_LOG_SYM
 %token CONFIG_SYM
 %token CONNECTIONS_SYM
+%token COOKIES_SYM
+%token COUNT_SYM
 %token DATA_SYM
 %token DIE_SYM
 %token DISPLAY_SYM
+%token EXIT_SYM
 %token FILE_SYM
 %token FROM_SYM
 %token GROUP_SYM
@@ -65,6 +68,7 @@ int ic_mgr_lex(void *parse_data, void *scanner);
 %token NODEGROUP_SYM
 %token NODEGROUPS_SYM
 %token PERFORM_SYM
+%token QUIT_SYM
 %token REPLICATION_SYM
 %token RESTART_SYM
 %token RESTORE_SYM
@@ -111,7 +115,30 @@ any_command:
     | statistics_command
     | set_state_command
     | status_command
+    | stop_client_command
+    | cookie_command
     ;
+
+cookie_command:
+    count_cookies_command
+    ;
+
+stop_client_command:
+    exit_command
+    | quit_command
+    ;
+
+count_cookies_command:
+    COUNT_SYM COOKIES_SYM
+    { PARSE_DATA->command= IC_COUNT_COOKIES_CMD; }
+
+exit_command:
+    EXIT_SYM
+    { PARSE_DATA->command= IC_STOP_CLIENT_CMD; }
+
+quit_command:
+    QUIT_SYM
+    { PARSE_DATA->command= IC_STOP_CLIENT_CMD; }
 
 /**
  * Action commands, commands to start and stop nodes in various ways and

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -37,9 +37,12 @@ static IC_PARSE_SYMBOLS parse_symbols[]=
   { "CLUSTER_LOG",  CLUSTER_LOG_SYM },
   { "CONFIG",       CONFIG_SYM },
   { "CONNECTIONS",  CONNECTIONS_SYM },
+  { "COOKIES",      COOKIES_SYM },
+  { "COUNT",        COUNT_SYM },
   { "DATA",         DATA_SYM },
   { "DIE",          DIE_SYM },
   { "DISPLAY",      DISPLAY_SYM },
+  { "EXIT",         EXIT_SYM },
   { "FILE",         FILE_SYM },
   { "FROM",         FROM_SYM },
   { "GROUP",        GROUP_SYM },
@@ -56,8 +59,9 @@ static IC_PARSE_SYMBOLS parse_symbols[]=
   { "NODE",         NODE_SYM },
   { "NODEGROUP",    NODEGROUP_SYM },
   { "NODEGROUPS",   NODEGROUPS_SYM },
-  { "RESTORE",      RESTORE_SYM },
+  { "QUIT",         QUIT_SYM },
   { "PERFORM",      PERFORM_SYM },
+  { "RESTORE",      RESTORE_SYM },
   { "REPLICATION",  REPLICATION_SYM },
   { "RESTART",      RESTART_SYM },
   { "ROLLING",      ROLLING_SYM },

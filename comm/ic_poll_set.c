@@ -555,7 +555,7 @@ kqueue_poll_set_add_connection(IC_POLL_SET *ext_poll_set, int fd, void *user_obj
          EV_ADD | EV_ENABLE | EV_CLEAR,
          0,
          0,
-         (void*)&index);
+         (void*)poll_set->poll_connections[index]);
 
   if ((ret_code= kevent(poll_set->poll_set_fd,
                         &add_event,
@@ -657,7 +657,9 @@ kqueue_check_poll_set(IC_POLL_SET *ext_poll_set, int ms_time)
   */
   for (i= 0; i < ret_code; i++)
   {
-    index= (guint32)rec_event[i].udata;
+    poll_conn= (IC_POLL_CONNECTION*)rec_event[i].udata;
+    index= poll_conn->index;
+    ic_require(index < poll_set->num_allocated_connections);
     poll_conn= poll_set->poll_connections[index];
     poll_set->ready_connections[i]= poll_conn;
     poll_conn->ret_code= 0;

@@ -1072,6 +1072,7 @@ run_send_thread(void *data)
     active_send_thread(send_node_conn, send_tp, thread_state);
   }
 end:
+  DEBUG_PRINT(COMM_LEVEL, ("Send thread will be closed down"));
   send_tp->ts_ops.ic_thread_lock(thread_state);
   if (is_server_part && !apid_global->use_external_connect)
   {

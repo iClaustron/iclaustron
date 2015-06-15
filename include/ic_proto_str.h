@@ -128,6 +128,7 @@ extern const gchar *ic_cluster_manager_str;
 extern const gchar *ic_new_connect_clmgr_str;
 extern const gchar *ic_reconnect_clmgr_str;
 extern const gchar *ic_connected_clmgr_str;
+extern const gchar *ic_connection_closed_str;
 
 extern gchar *ic_empty_string;
 extern gchar *ic_err_str;

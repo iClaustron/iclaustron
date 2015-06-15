@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2014 iClaustron AB
+/* Copyright (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -48,6 +48,8 @@ enum ic_parse_commands
   IC_USE_VERSION_ICLAUSTRON_CMD= 21,
   IC_PERFORM_ROLLING_UPGRADE_CLUSTER_SERVERS_CMD= 22,
   IC_PERFORM_ROLLING_UPGRADE_CLUSTER_MANAGERS_CMD= 23,
+  IC_COUNT_COOKIES_CMD= 24,
+  IC_STOP_CLIENT_CMD= 25,
   IC_NO_SUCH_CMD= 999
 };
 typedef enum ic_parse_commands IC_PARSE_COMMANDS;
@@ -97,6 +99,7 @@ struct ic_parse_data
   guint64   node_id;
   gboolean  node_all;
   gboolean  default_node;
+  guint64   connect_code;
 };
 typedef struct ic_parse_data IC_PARSE_DATA;
 

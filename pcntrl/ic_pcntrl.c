@@ -1611,6 +1611,8 @@ handle_start(IC_CONNECTION *conn)
         }
       }
       /* In all cases ensure that the pid file goes away. */
+      pid= 0;
+      DEBUG_PRINT(PROGRAM_LEVEL, ("Delete pid file: %s", pid_file.str));
       ic_delete_daemon_file(pid_file.str);
     }
     if (strcmp(arg_vector[0], ic_data_server_program_str) == 0)

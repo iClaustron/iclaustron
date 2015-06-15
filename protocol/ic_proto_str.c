@@ -124,6 +124,8 @@ const gchar *ic_file_server_str= "FILE SERVER";
 const gchar *ic_restore_node_str= "RESTORE NODE";
 const gchar *ic_cluster_manager_str= "CLUSTER MANAGER";
 
+/* Client to Cluster Manager protocol strings */
 const gchar *ic_new_connect_clmgr_str= "CONNECT CLUSTER MANAGER";
 const gchar *ic_reconnect_clmgr_str= "RECONNECT CLUSTER MANAGER";
 const gchar *ic_connected_clmgr_str= "CONNECTED CLUSTER MANAGER";
+const gchar *ic_connection_closed_str= "CONNECTION CLOSED";

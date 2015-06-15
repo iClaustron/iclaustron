@@ -26,6 +26,9 @@
 static gchar *glob_server_ip= "127.0.0.1";
 static gchar *glob_server_port= IC_DEF_CLUSTER_MANAGER_PORT_STR;
 static guint32 glob_history_size= 100;
+static guint64 glob_connect_code= 0;
+static gboolean glob_executing= TRUE;
+static IC_MUTEX *end_mutex= NULL;
 static gchar *ic_prompt= "iClaustron client> ";
 
 static GOptionEntry entries[] = 
@@ -40,72 +43,6 @@ static GOptionEntry entries[] =
 };
 
 static int connect_cluster_mgr(IC_CONNECTION **conn);
-
-static int
-execute_command(IC_STRING **str_array,
-                guint32 num_lines,
-                guint64 *connect_code)
-{
-  gchar *read_buf;
-  guint32 read_size, i;
-  int ret_code;
-  IC_CONNECTION *conn= NULL;
-  DEBUG_ENTRY("execute_command");
-
-  /**
-   * Client connects on each command, the client is designed for humans to
-   * send messages, so no need to keep the line open since it can be a very
-   * long time until the next message is to be sent.
-   */
-  if ((ret_code= connect_cluster_mgr(&conn)))
-    goto error;
-
-  if ((*connect_code) == (guint64)0)
-  {
-    /**
-     * This is the first connect, we will acquire a connect code that we will
-     * use in all future connections to the cluster manager. This makes it
-     * possible to maintain connections for a very long time without
-     * requiring a TCP/IP connection kept up all the time, thus minimizing
-     * the resources on the cluster manager side.
-     */
-    if ((ret_code= ic_send_with_cr(conn, ic_new_connect_clmgr_str)))
-      goto error;
-    if ((ret_code= ic_rec_long_number(conn,
-                                      ic_connected_clmgr_str,
-                                      connect_code)))
-      goto error;
-  }
-  else
-  {
-    if ((ret_code= ic_send_with_cr_with_number(conn,
-                                               ic_reconnect_clmgr_str,
-                                               (*connect_code))))
-      goto error;
-    if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)))
-      goto error;
-  }
-  for (i= 0; i < num_lines; i++)
-  {
-    if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
-      goto error;
-  }
-  if ((ret_code= ic_send_empty_line(conn)))
-    goto error;
-  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
-  {
-    if (read_size == 0)
-      break;
-    read_buf[read_size]= 0;
-    ic_printf("%s", read_buf);
-  }
-error:
-  if (conn)
-  {
-    conn->conn_op.ic_free_connection(conn);
-  }
-  DEBUG_RETURN_INT(ret_code);
-}
 
 static gchar *ic_help_str[]=
 {
@@ -489,6 +426,83 @@ static gchar *ic_help_show_statvars_str[]=
 };
 
 static int
+execute_command(IC_STRING **str_array,
+                guint32 num_lines,
+                gboolean print_output)
+{
+  gchar *read_buf;
+  guint32 read_size, i;
+  int ret_code;
+  IC_CONNECTION *conn= NULL;
+  DEBUG_ENTRY("execute_command");
+
+  /**
+   * Client connects on each command, the client is designed for humans to
+   * send messages, so no need to keep the line open since it can be a very
+   * long time until the next message is to be sent.
+   */
+  if ((ret_code= connect_cluster_mgr(&conn)))
+    goto error;
+
+  if (glob_connect_code == (guint64)0)
+  {
+    /**
+     * This is the first connect, we will acquire a connect code that we will
+     * use in all future connections to the cluster manager. This makes it
+     * possible to maintain connections for a very long time without
+     * requiring a TCP/IP connection kept up all the time, thus minimizing
+     * the resources on the cluster manager side.
+     */
+    if ((ret_code= ic_send_with_cr(conn, ic_new_connect_clmgr_str)) ||
+        (ret_code= ic_send_empty_line(conn)))
+      goto error;
+    if ((ret_code= ic_rec_long_number(conn,
+                                      ic_connected_clmgr_str,
+                                      &glob_connect_code)) ||
+        (ret_code= ic_rec_empty_line(conn)))
+
+      goto error;
+  }
+  else
+  {
+    if ((ret_code= ic_send_with_cr_with_number(conn,
+                                               ic_reconnect_clmgr_str,
+                                               glob_connect_code)) ||
+        (ret_code= ic_send_empty_line(conn)))
+      goto error;
+    if ((ret_code= ic_rec_simple_str(conn, ic_ok_str)) ||
+        (ret_code= ic_rec_empty_line(conn)))
+      goto error;
+  }
+  for (i= 0; i < num_lines; i++)
+  {
+    if ((ret_code= ic_send_with_cr(conn, str_array[i]->str)))
+      goto error;
+  }
+  if ((ret_code= ic_send_empty_line(conn)))
+    goto error;
+  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    if (read_size == 0)
+      break;
+    read_buf[read_size]= 0;
+    if (print_output)
+    {
+      ic_printf("%s", read_buf);
+    }
+  }
+end:
+  if (conn)
+  {
+    conn->conn_op.ic_free_connection(conn);
+  }
+  DEBUG_RETURN_INT(ret_code);
+error:
+  ic_print_error(ret_code);
+  goto end;
+}
+
+static int
 command_interpreter(void)
 {
   guint32 lines, i;
@@ -497,7 +511,6 @@ command_interpreter(void)
   IC_STRING *line_ptr= &line_str;
   IC_STRING *line_ptrs[256];
   IC_STRING line_strs[256];
-  guint64 connect_code= 0;
   DEBUG_ENTRY("command_interpreter");
 
   for (i= 0; i < 256; i++)
@@ -515,6 +528,13 @@ command_interpreter(void)
         lines--;
         goto error;
       }
+      ic_mutex_lock(end_mutex);
+      glob_executing= FALSE;
+      ic_mutex_unlock(end_mutex);
+      if (ic_get_stop_flag() == TRUE)
+      {
+        DEBUG_RETURN_INT(0);
+      }
       if ((ret_code= ic_read_one_line(ic_prompt, line_ptr)))
       {
         ic_print_error(ret_code);
@@ -523,6 +543,14 @@ command_interpreter(void)
           DEBUG_RETURN_INT(ret_code);
         }
       }
+      ic_mutex_lock(end_mutex);
+      glob_executing= TRUE;
+      if (ic_get_stop_flag() == TRUE)
+      {
+        ic_mutex_unlock(end_mutex);
+        DEBUG_RETURN_INT(0);
+      }
+      ic_mutex_unlock(end_mutex);
       if (line_ptr->len == 0)
       {
         if (line_ptr->str)
@@ -535,14 +563,6 @@ command_interpreter(void)
       IC_COPY_STRING(line_ptrs[lines], line_ptr);
       lines++;
     } while (!ic_check_last_line(line_ptr));
-    if (lines == 1 &&
-        ((ic_cmp_null_term_str_upper("QUIT;", line_ptrs[0]) == 0) ||
-         (ic_cmp_null_term_str_upper("EXIT;", line_ptrs[0]) == 0) ||
-         (ic_cmp_null_term_str_upper("Q;", line_ptrs[0]) == 0)))
-    {
-      ic_free(line_ptrs[0]->str);
-      break;
-    }
     if (lines == 1 &&
         (ic_cmp_null_term_str_upper_part("HELP",
                                          line_ptrs[0]) == 0))
@@ -672,18 +692,23 @@ command_interpreter(void)
         ic_printf("Error: No such command to get help on");
       }
     }
-    else if ((ret_code= execute_command(&line_ptrs[0],
-                                        lines,
-                                        &connect_code)))
+    else if ((ret_code= execute_command(&line_ptrs[0], lines, TRUE)))
     {
       ic_print_error(ret_code);
       goto error;
+    }
+    if (lines == 1 &&
+        ((ic_cmp_null_term_str_upper("QUIT;", line_ptrs[0]) == 0) ||
+         (ic_cmp_null_term_str_upper("EXIT;", line_ptrs[0]) == 0)))
+    {
+      ic_free(line_ptrs[0]->str);
+      break;
     }
     for (i= 0; i < lines; i++)
     {
       ic_free(line_ptrs[i]->str);
     }
-  } while (TRUE);
+  } while (ic_get_stop_flag() == FALSE);
   DEBUG_RETURN_INT(0);
 
 error:
@@ -727,6 +752,36 @@ connect_cluster_mgr(IC_CONNECTION **conn)
   DEBUG_RETURN_INT(0);
 }
 
+static void
+ic_end_client(void *param)
+{
+  IC_STRING *line_ptrs;
+  IC_STRING line_strs;
+  (void)param;
+  DEBUG_ENTRY("ic_end_client");
+  if (end_mutex != NULL)
+  {
+    ic_mutex_lock(end_mutex);
+    if (glob_executing == FALSE)
+    {
+      /* We need to remove cookie before exiting */
+      DEBUG_PRINT(PROGRAM_LEVEL, ("Remove cookie before exit"));
+      line_ptrs= &line_strs;
+      IC_INIT_STRING(&line_strs, "EXIT;", 5, FALSE);
+      execute_command(&line_ptrs, 1, FALSE);
+      ic_printf("");
+      /*
+        We will exit here since the process otherwise will be stuck
+        waiting for user input, someone has already decided to exit
+        process, so we will have to do it from here.
+      */
+      exit(1);
+    }
+    ic_mutex_unlock(end_mutex);
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
 int main(int argc, char *argv[])
 {
   int ret_code= 1;
@@ -742,8 +797,12 @@ int main(int argc, char *argv[])
     return ret_code;
 
   ic_init_readline(glob_history_size);
+  end_mutex= ic_mutex_create();
+  ic_require(end_mutex != NULL);
+  ic_set_die_handler(ic_end_client, NULL);
   ret_code= command_interpreter();
   ic_close_readline();
+  ic_mutex_destroy(&end_mutex);
   ic_end();
   return ret_code;
 }
