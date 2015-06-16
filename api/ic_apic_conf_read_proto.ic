@@ -275,6 +275,7 @@ get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
       goto error;
     }
     apic->conf_objects[cluster_id]= clu_conf;
+    DEBUG_PRINT(CONFIG_LEVEL, ("Cluster conf object: 0x%llX", clu_conf));
     apic->temp->node_ids[cluster_id]= node_id;
     clu_conf->my_node_id= node_id;
   }

@@ -954,12 +954,13 @@ ic_listen_cmd(IC_PARSE_DATA *parse_data)
   DEBUG_RETURN_EMPTY;
 }
 
+/* Handle command SHOW CLUSTER; */
 static void
 ic_show_cluster_cmd(IC_PARSE_DATA *parse_data)
 {
   guint32 print_node_id;
   guint32 node_id;
-  guint32 dummy;
+  guint32 len;
   int ret_code;
   IC_NODE_TYPES print_node_type;
   gchar *print_node_name;
@@ -983,7 +984,7 @@ ic_show_cluster_cmd(IC_PARSE_DATA *parse_data)
     DEBUG_RETURN_EMPTY; /* Error message already sent */
   }
   if (ic_send_with_cr(parse_data->conn,
-      "NODE ID    NODE TYPE  NODE NAME"))
+      "NODE ID    NODE TYPE           NODE NAME"))
   {
     parse_data->exit_flag= TRUE;
   }
@@ -998,41 +999,55 @@ ic_show_cluster_cmd(IC_PARSE_DATA *parse_data)
      * node types.
      */
     print_node_id= ds_conf->node_id;
-    ic_assert(node_id == print_node_id);
     print_node_name= ds_conf->node_name;
     print_node_type= clu_conf->node_types[node_id];
+    DEBUG_PRINT(PROGRAM_LEVEL, ("node_id: %u, p_node_id: %u, node name: %s, node_type:"
+                                " %u, obj: 0x%llX",
+                node_id, print_node_id, print_node_name, print_node_type, ds_conf));
+    ic_assert(node_id == print_node_id);
     /**
      * Fill in 12 + 20 spaces for node id and node type. Node name
      * is last in buffer and is NULL-terminated, so no need to fill
      * in extra spaces there.
      */
     memset(output_buf, SPACE_CHAR, SIZE_NODE_ID_AND_TYPE_STR);
-    (void)ic_guint64_str(print_node_id, output_buf, &dummy);
+    (void)ic_guint64_str(print_node_id, output_buf, &len);
+    output_buf[len]= SPACE_CHAR;
     switch (print_node_type)
     {
     case IC_DATA_SERVER_NODE:
       print_node_type_str= ic_data_server_str;
+      break;
     case IC_CLIENT_NODE:
       print_node_type_str= ic_client_node_str;
+      break;
     case IC_CLUSTER_SERVER_NODE:
       print_node_type_str= ic_cluster_server_str;
+      break;
     case IC_SQL_SERVER_NODE:
       print_node_type_str= ic_sql_server_str;
+      break;
     case IC_REP_SERVER_NODE:
       print_node_type_str= ic_rep_server_str;
+      break;
     case IC_FILE_SERVER_NODE:
       print_node_type_str= ic_file_server_str;
+      break;
     case IC_RESTORE_NODE:
       print_node_type_str= ic_restore_node_str;
+      break;
     case IC_CLUSTER_MANAGER_NODE:
       print_node_type_str= ic_cluster_manager_str;
+      break;
     default:
       ic_assert(FALSE);
     }
-    strcpy(&output_buf[SIZE_NODE_ID_STR], print_node_type_str);
-    ic_require(strlen(print_node_name) <
-                 (sizeof(output_buf) - SIZE_NODE_ID_AND_TYPE_STR));
-    strcpy(&output_buf[SIZE_NODE_ID_AND_TYPE_STR], print_node_name);
+    len= strlen(print_node_type_str);
+    memcpy(&output_buf[SIZE_NODE_ID_STR], print_node_type_str, len);
+    ic_require(len < (sizeof(output_buf) - SIZE_NODE_ID_AND_TYPE_STR));
+    len= strlen(print_node_name);
+    memcpy(&output_buf[SIZE_NODE_ID_AND_TYPE_STR], print_node_name, len);
+    output_buf[SIZE_NODE_ID_AND_TYPE_STR + len]= 0;
     if ((ret_code= ic_send_with_cr(parse_data->conn, output_buf)))
       goto error;
   }
@@ -1556,10 +1571,10 @@ run_handle_new_connection(gpointer data)
       parse_buf[parse_inx]= NULL_BYTE;
       parse_buf[parse_inx+1]= NULL_BYTE;
       DEBUG_PRINT(PROGRAM_LEVEL,
-        ("Ready to execute command with len %u:\n%s using object: 0x%llx",
+        ("Ready to execute command with len %u:\n%s using apic: 0x%llX",
          parse_inx,
          parse_buf,
-         parse_data));
+         parse_data->apic));
       ic_mgr_call_parser(parse_buf, parse_inx, parse_data);
       if (parse_data->exit_flag)
         goto exit;

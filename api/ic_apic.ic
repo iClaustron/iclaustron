@@ -1,4 +1,4 @@
-/* Copyight (C) 2007-2013 iClaustron AB
+/* Copyight (C) 2007, 2015 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -763,3 +763,6 @@ static int connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
                                   void *timeout_obj);
 
 static gboolean is_iclaustron_version(guint64 version_number);
+
+static int ensure_node_name_set(void *current_config,
+                                IC_MEMORY_CONTAINER *mc_ptr);

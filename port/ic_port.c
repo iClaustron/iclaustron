@@ -1407,7 +1407,6 @@ sig_error_handler(int signum)
   switch (signum)
   {
     case SIGSEGV:
-    case SIGABRT:
     case SIGFPE:
     case SIGILL:
     case SIGBUS:
@@ -1442,7 +1441,6 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
   glob_sig_error_handler= error_handler;
   glob_sig_error_param= param;
   /* signal(SIGEMT, sig_error_handler); */
-  signal(SIGABRT, sig_error_handler);
   signal(SIGSEGV, sig_error_handler);
   signal(SIGFPE, sig_error_handler);
   signal(SIGILL, sig_error_handler);

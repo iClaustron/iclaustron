@@ -90,7 +90,6 @@ ic_hash_uint64(void *key)
   unsigned int hash_value= 23;
   guint32 i;
 
-  DEBUG_PRINT(COMM_LEVEL, ("HASH: key: 0x%llx", key));
   for (i= 0; i < 8; i++)
   {
     hash_value= ((147*hash_value) + val_str[i]);
@@ -132,7 +131,6 @@ ic_keys_equal_ptr(void *ptr1, void *ptr2)
 int
 ic_keys_equal_uint64(void *key1, void* key2)
 {
-  DEBUG_PRINT(COMM_LEVEL, ("EQ: key1: 0x%llx, key2: 0x%llx", key1, key2));
   guint64 *val_ptr1= (guint64*)key1;
   guint64 *val_ptr2= (guint64*)key2;
   guint64 val1= *val_ptr1;
