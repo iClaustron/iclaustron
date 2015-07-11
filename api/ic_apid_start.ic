@@ -132,12 +132,12 @@ ic_stop_apid_program(int ret_code,
   if (!err_str && ret_code)
     ic_print_error(ret_code);
   ic_set_die_handler(NULL, NULL);
+  if (tp_state)
+    tp_state->tp_ops.ic_threadpool_stop(tp_state);
   if (apid_global)
     apid_global->apid_global_ops->ic_free_apid_global(apid_global);
   if (apic)
     apic->api_op.ic_free_config(apic);
-  if (tp_state)
-    tp_state->tp_ops.ic_threadpool_stop(tp_state);
   ic_end();
 }
 

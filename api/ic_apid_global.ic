@@ -884,6 +884,11 @@ apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
   ic_mutex_lock(apid_global->mutex);
   do
   {
+    if (ic_get_stop_flag())
+    {
+      ic_mutex_unlock(apid_global->mutex);
+      DEBUG_RETURN_INT(IC_ERROR_STOP_ORDERED);
+    }
     for (i = 0; i < IC_MAX_RECEIVE_THREADS; i++)
     {
       rec_state= apid_global->receive_threads[i];

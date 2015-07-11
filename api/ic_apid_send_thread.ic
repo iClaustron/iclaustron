@@ -257,6 +257,7 @@ run_listen_thread(void *data)
           */
           found= TRUE;
           iter_send_node_conn->connection_up= TRUE;
+          iter_send_node_conn->conn= fork_conn;
           ic_cond_signal(iter_send_node_conn->cond);
           ic_mutex_unlock(iter_send_node_conn->mutex);
           break;
@@ -716,6 +717,8 @@ authenticate_client_connection(IC_CONNECTION *conn,
   gchar server_buf[64];
   int error;
   DEBUG_ENTRY("authenticate_client_connection");
+  DEBUG_PRINT(COMM_LEVEL, ("my_nodeid: %u, server_nodeid: %u",
+                           my_nodeid, server_nodeid));
 
   conn->conn_op.ic_set_ssl_used_for_data(conn);
   g_snprintf(client_buf, (int)64, "%u 1", my_nodeid);
@@ -751,10 +754,14 @@ authenticate_server_connection(IC_CONNECTION *conn,
   int error;
   guint32 len;
   guint32 index;
-  guint64 my_id, client_id;
+  guint64 client_id;
+  guint64 type;
+  gchar buf[64];
   DEBUG_ENTRY("authenticate_server_connection");
+  DEBUG_PRINT(COMM_LEVEL, ("my_nodeid: %u", my_nodeid));
 
   /* Retrieve client node id and verify that server is my node id */
+  g_snprintf(buf, (int)64, "%u 1", my_nodeid);
   conn->conn_op.ic_set_ssl_used_for_data(conn);
   if ((error= ic_rec_with_cr(conn, &read_buf, &read_size)) ||
       (error= IC_AUTHENTICATE_ERROR, FALSE) ||
@@ -771,10 +778,11 @@ authenticate_server_connection(IC_CONNECTION *conn,
       (read_buf[len] != ' ') ||
       (index= len + 1, FALSE) ||
       (len= (read_size - (len + 1)), FALSE) ||
-      (ic_conv_str_to_int(&read_buf[index], &my_id, &len)) ||
-      ((guint64)my_nodeid != my_id) ||
+      (ic_conv_str_to_int(&read_buf[index], &type, &len)) ||
+      ((guint64)1 != type) ||
       (client_id >= IC_MAX_NODE_ID) ||
-      (error= ic_send_with_cr(conn, "1 1")) ||
+      (client_id == 0) ||
+      (error= ic_send_with_cr(conn, buf)) ||
       (error= conn->conn_op.ic_flush_connection(conn)))
   {
     conn->conn_op.ic_reset_ssl_used_for_data(conn);
