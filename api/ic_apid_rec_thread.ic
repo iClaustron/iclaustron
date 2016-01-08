@@ -108,9 +108,12 @@ static void
 insert_add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
                                IC_SEND_NODE_CONNECTION *send_node_conn)
 {
+  DEBUG_ENTRY("insert_add_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", send_node_conn->other_node_id));
   send_node_conn->rec_state= rec_state;
   send_node_conn->next_add_node= rec_state->first_add_node;
   rec_state->first_add_node= send_node_conn;
+  DEBUG_RETURN_EMPTY;
 }
 
 static gboolean
@@ -118,13 +121,17 @@ remove_add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
                                IC_SEND_NODE_CONNECTION *rem_send_node_conn)
 {
   gboolean found= FALSE;
-  IC_SEND_NODE_CONNECTION *next_send_node_conn, *prev_send_node_conn;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  IC_SEND_NODE_CONNECTION *prev_send_node_conn= NULL;
+  DEBUG_ENTRY("remove_add_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", rem_send_node_conn->other_node_id));
 
   next_send_node_conn= rec_state->first_add_node;
   while (next_send_node_conn)
   {
     if (next_send_node_conn == rem_send_node_conn)
     {
+      found= TRUE;
       if (prev_send_node_conn == NULL)
       {
         rec_state->first_add_node= rem_send_node_conn->next_add_node;
@@ -137,15 +144,18 @@ remove_add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
     prev_send_node_conn= next_send_node_conn;
     next_send_node_conn= next_send_node_conn->next_add_node;
   }
-  return found;
+  DEBUG_RETURN_INT(found);
 }
 
 static void
 insert_rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
                                IC_SEND_NODE_CONNECTION *send_node_conn)
 {
+  DEBUG_ENTRY("insert_rem_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", send_node_conn->other_node_id));
   send_node_conn->next_rem_node= rec_state->first_rem_node;
   rec_state->first_rem_node= send_node_conn;
+  DEBUG_RETURN_EMPTY;
 }
 
 static gboolean
@@ -153,7 +163,10 @@ remove_rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
                                IC_SEND_NODE_CONNECTION *rem_send_node_conn)
 {
   gboolean found= FALSE;
-  IC_SEND_NODE_CONNECTION *next_send_node_conn, *prev_send_node_conn;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  IC_SEND_NODE_CONNECTION *prev_send_node_conn= NULL;
+  DEBUG_ENTRY("remove_rem_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", rem_send_node_conn->other_node_id));
 
   next_send_node_conn= rec_state->first_rem_node;
   while (next_send_node_conn)
@@ -172,15 +185,18 @@ remove_rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
     prev_send_node_conn= next_send_node_conn;
     next_send_node_conn= next_send_node_conn->next_rem_node;
   }
-  return found;
+  DEBUG_RETURN_INT(found);
 }
 
 static void
 insert_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
                            IC_SEND_NODE_CONNECTION *send_node_conn)
 {
+  DEBUG_ENTRY("insert_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", send_node_conn->other_node_id));
   send_node_conn->next_send_node= rec_state->first_send_node;
   rec_state->first_send_node= send_node_conn;
+  DEBUG_RETURN_EMPTY;
 }
 
 static gboolean
@@ -188,7 +204,10 @@ remove_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
                            IC_SEND_NODE_CONNECTION *rem_send_node_conn)
 {
   gboolean found= FALSE;
-  IC_SEND_NODE_CONNECTION *next_send_node_conn, *prev_send_node_conn;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  IC_SEND_NODE_CONNECTION *prev_send_node_conn= NULL;
+  DEBUG_ENTRY("remove_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", rem_send_node_conn->other_node_id));
 
   next_send_node_conn= rec_state->first_send_node;
   while (next_send_node_conn)
@@ -208,6 +227,7 @@ remove_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
     prev_send_node_conn= next_send_node_conn;
     next_send_node_conn= next_send_node_conn->next_send_node;
   }
+  DEBUG_RETURN_INT(found);
   return found;
 }
 
@@ -218,6 +238,7 @@ add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
   IC_CONNECTION *conn;
   IC_SEND_NODE_CONNECTION *send_node_conn;
   int conn_fd, ret_code;
+  gboolean found= FALSE;
 
 restart:
   ic_mutex_lock(rec_state->mutex);
@@ -229,7 +250,8 @@ restart:
      * Add to list of nodes handled by the receive thread.
      */
     ic_mutex_lock(send_node_conn->mutex);
-    remove_add_node_receive_thread(rec_state, send_node_conn);
+    found= remove_add_node_receive_thread(rec_state, send_node_conn);
+    ic_require(found);
     insert_node_receive_thread(rec_state, send_node_conn);
   }
   if (send_node_conn)
@@ -263,6 +285,7 @@ restart:
     ic_mutex_unlock(send_node_conn->mutex);
     goto restart;
   }
+  ic_mutex_unlock(rec_state->mutex);
 }
 
 static int
