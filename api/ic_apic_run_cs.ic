@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -5407,8 +5407,7 @@ get_comm_section(IC_CLUSTER_CONFIG *clu_conf,
                      IC_COMM_TYPE);
   comm_section->first_node_id= node1;
   comm_section->second_node_id= node2;
-  if (clu_conf->node_types[node1] == IC_DATA_SERVER_NODE ||
-      clu_conf->node_types[node2] != IC_DATA_SERVER_NODE)
+  if (node1 == get_comm_server_node(clu_conf, node1, node2))
   {
     comm_section->server_node_id= node1;
     server_conf= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node1];

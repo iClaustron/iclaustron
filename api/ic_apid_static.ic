@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -52,16 +52,27 @@ static void close_listen_server_thread(
 static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                   IC_THREADPOOL_STATE *tp_state);
 /* Internal function to handle node connection failure */
-static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
+static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 gboolean called_from_remove_rec_thread);
 
-/* Function to remove node from send thread */
-static int
-rem_node_from_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
-                             IC_SEND_NODE_CONNECTION *send_node_conn);
+/* Function to add/remove node from send thread */
+static void
+insert_add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                               IC_SEND_NODE_CONNECTION *send_node_conn);
+
+static gboolean
+remove_add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                               IC_SEND_NODE_CONNECTION *send_node_conn);
+
+static void
+insert_rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                               IC_SEND_NODE_CONNECTION *send_node_conn);
+
 /* Internal function to send a NDB message */
 static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,
-                    gboolean force_send);
+                    gboolean force_send,
+                    gboolean ignore_node_up);
 
 /* Internal function to prepare NDB message for sending */
 static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,

@@ -1,4 +1,4 @@
-/* Copyight (C) 2007, 2015 iClaustron AB
+/* Copyight (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -137,6 +137,54 @@ ic_keys_equal_comms(void *ptr1, void *ptr2)
   return 0;
 }
 
+/**
+ * Data nodes require the server node to be the management server
+ * always, so ensure that the management server is server in those
+ * cases.
+ *
+ * When iClaustron nodes connect to the data nodes they will
+ * otherwise always do this as clients.
+ *
+ * Finally when two iClaustron nodes connect it will be the node
+ * with the minimum node id that will be the server node.
+ */
+static guint32
+get_comm_server_node(IC_CLUSTER_CONFIG  *clu_conf,
+                     guint32 node_id,
+                     guint32 other_node_id)
+{
+  DEBUG_PRINT(CONFIG_LEVEL, ("node1: %u, node2: %u", node_id, other_node_id));
+  if (clu_conf->node_types[node_id] == IC_CLUSTER_SERVER_NODE &&
+      clu_conf->node_types[other_node_id] == IC_DATA_SERVER_NODE)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("First node server MGM SERVER"));
+    return node_id;
+  }
+  else if (clu_conf->node_types[other_node_id] == IC_CLUSTER_SERVER_NODE &&
+           clu_conf->node_types[node_id] == IC_DATA_SERVER_NODE)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Second node server MGM SERVER"));
+    return other_node_id;
+  }
+  else if (clu_conf->node_types[node_id] == IC_DATA_SERVER_NODE &&
+           clu_conf->node_types[other_node_id] != IC_DATA_SERVER_NODE)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("First node server Data Node SERVER"));
+    return node_id;
+  }
+  else if (clu_conf->node_types[other_node_id] == IC_DATA_SERVER_NODE &&
+           clu_conf->node_types[node_id] != IC_DATA_SERVER_NODE)
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Second node server Data Node SERVER"));
+    return other_node_id;
+  }
+  else
+  {
+    DEBUG_PRINT(CONFIG_LEVEL, ("Min node Server"));
+    return IC_MIN(node_id, other_node_id);
+  }
+}
+
 static int
 build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
                     IC_CLUSTER_CONFIG_LOAD *clu_conf_load)
@@ -198,21 +246,10 @@ build_hash_on_comms(IC_CLUSTER_CONFIG *clu_conf,
           socket_config->second_hostname= second_node->hostname;
           socket_config->first_node_id= node_id;
           socket_config->second_node_id= other_node_id;
-          if (clu_conf->node_types[node_id] == IC_DATA_SERVER_NODE &&
-              clu_conf->node_types[other_node_id] != IC_DATA_SERVER_NODE)
-          {
-            socket_config->server_node_id= node_id;
-          }
-          else if (clu_conf->node_types[other_node_id] ==
-                     IC_DATA_SERVER_NODE &&
-                   clu_conf->node_types[node_id] != IC_DATA_SERVER_NODE)
-          {
-            socket_config->server_node_id= other_node_id;
-          }
-          else
-          {
-            socket_config->server_node_id= IC_MIN(node_id, other_node_id);
-          }
+          guint32 server_node_id = get_comm_server_node(clu_conf,
+                                                        node_id,
+                                                        other_node_id);
+          socket_config->server_node_id = server_node_id;
           clu_conf->comm_config[clu_conf->num_comms++]=
             (gchar*)socket_config;
           if (ic_hashtable_insert(comm_hash, (void*)socket_config,

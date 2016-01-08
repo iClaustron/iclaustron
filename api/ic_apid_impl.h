@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -291,6 +291,8 @@ struct ic_send_node_connection
    */
   /* Indicates if node is up, if not it's no use sending */
   gboolean node_up;
+  /* Indicates if node hasn't died yet */
+  gboolean node_dead;
   /* Indicates if the connection is up. */
   gboolean connection_up;
   /**

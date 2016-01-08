@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -882,6 +882,30 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
   ic_require(ndb_message->segment_size[0] == API_REGCONF_LEN);
   ic_require(ndb_message->num_segments == 1);
 
+  DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+    ("sender_node_id: %u, "
+     "ref: 0x%x, version: 0x%x, frequency: %u, mysql_ver: 0x%x"
+     ", min_ver: 0x%x, start_state: %u, node_group: %u, "
+     "dynamic_id: %u, start_phase_shutdown_flag: %u, "
+     "start_type_time_out: %u, none_alarm_time: %u, "
+     "single_user_flag: %u, single_user_node: %u, "
+     "connected_node_map: 0x%x",
+     sender_node_id,
+     conf->ndb_reference,
+     conf->ndb_version,
+     conf->hb_frequency,
+     conf->mysql_version,
+     conf->min_version,
+     conf->node_state.ndb_start_state,
+     conf->node_state.ndb_node_group,
+     conf->node_state.ndb_dynamic_id,
+     conf->node_state.ndb_stopping.shutdown_flag,
+     conf->node_state.ndb_stopping.time_out,
+     conf->node_state.ndb_stopping.alarm_time,
+     conf->node_state.single_user_mode_flag,
+     conf->node_state.single_user_node,
+     conf->node_state.connected_node_bitmap[0]));
+
   send_node_conn= get_send_node_conn(apid_global,
                                      cluster_id,
                                      sender_node_id);
@@ -894,6 +918,7 @@ execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
   send_node_conn->last_api_regconf= *conf;
   if (!send_node_conn->node_up)
   {
+    DEBUG_PRINT(NDB_MESSAGE_LEVEL, ("Node %u is now up", sender_node_id));
     send_node_conn->node_up= TRUE;
   }
   if (conf->node_state.ndb_start_state == (guint32)IC_NDB_STARTED &&

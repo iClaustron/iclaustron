@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -91,9 +91,9 @@ static void
 add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                              IC_SEND_NODE_CONNECTION *send_node_conn)
 {
-  DEBUG_ENTRY("add_node_to_heartbeat_thread");
-
   ic_require(send_node_conn);
+  DEBUG_PRINT(ENTRY_LEVEL,
+    ("Adding node %u to heartbeat", send_node_conn->other_node_id));
   ic_mutex_lock(apid_global->heartbeat_mutex);
   /*
     If this is the first node added the heartbeat thread is waiting for
@@ -106,7 +106,6 @@ add_node_to_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
   send_node_conn->next_heartbeat_node= apid_global->first_heartbeat_node;
   apid_global->first_heartbeat_node= send_node_conn;
   ic_mutex_unlock(apid_global->heartbeat_mutex);
-  DEBUG_RETURN_EMPTY;
 }
 
 static void
@@ -114,7 +113,8 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                IC_SEND_NODE_CONNECTION *send_node_conn)
 {
   IC_SEND_NODE_CONNECTION *prev_node= NULL, *next_node;
-  DEBUG_ENTRY("rem_node_from_heartbeat_thread");
+  DEBUG_PRINT(ENTRY_LEVEL,
+    ("Removing node %u from heartbeat", send_node_conn->other_node_id));
 
   next_node= apid_global->first_heartbeat_node;
   while (next_node != send_node_conn && next_node)
@@ -129,7 +129,6 @@ rem_node_from_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
     apid_global->first_heartbeat_node= next_node->next_heartbeat_node;
   if (send_node_conn == apid_global->curr_heartbeat_node)
     apid_global->curr_heartbeat_node= send_node_conn->next_heartbeat_node;
-  DEBUG_RETURN_EMPTY;
 }
 
 static gpointer
@@ -185,6 +184,7 @@ run_heartbeat_thread(gpointer data)
     {
       last_send_node_conn= apid_global->first_heartbeat_node;
       apid_global->curr_heartbeat_node= apid_global->first_heartbeat_node;
+      DEBUG_PRINT(HEARTBEAT_LEVEL, ("Set first heartbeat node"));
     }
     else
     {
@@ -216,11 +216,13 @@ run_heartbeat_thread(gpointer data)
         ;
       }
     }
+    DEBUG_PRINT(HEARTBEAT_LEVEL, ("prepare_send_heartbeat for node: %u",
+                                  last_send_node_conn->other_node_id));
     prepare_send_heartbeat(last_send_node_conn, hb_page,
          ((IC_INT_APID_CONNECTION*)apid_global->heartbeat_conn)->thread_id);
     ic_mutex_unlock(apid_global->heartbeat_mutex);
     /* Failure handling of ndb_send is handled already when returning */
-    ndb_send(last_send_node_conn, hb_page, TRUE);
+    ndb_send(last_send_node_conn, hb_page, TRUE, TRUE);
   }
 end_thread:
   if (free_pages)

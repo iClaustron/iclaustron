@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -944,7 +944,7 @@ write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
       }
       else
       {
-        if (comm_ptr->server_node_id == node1_id)
+        if (get_comm_server_node(clu_conf, node1_id, node2_id) == node1_id)
         {
           server_port= node1_port;
         }

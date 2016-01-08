@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -257,6 +257,7 @@ run_listen_thread(void *data)
           */
           found= TRUE;
           iter_send_node_conn->connection_up= TRUE;
+          iter_send_node_conn->node_dead = FALSE;
           iter_send_node_conn->conn= fork_conn;
           ic_cond_signal(iter_send_node_conn->cond);
           ic_mutex_unlock(iter_send_node_conn->mutex);
@@ -408,7 +409,7 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
   if (!send_node_conn->connection_up)
   {
     send_tp->ts_ops.ic_thread_unlock(thread_state);
-    node_failure_handling(send_node_conn);
+    node_failure_handling(send_node_conn, FALSE);
     send_tp->ts_ops.ic_thread_lock(thread_state);
   }
   send_node_conn->send_active= FALSE;
@@ -446,7 +447,11 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_NDB_RECEIVE_STATE *rec_state;
   IC_RECEIVE_NODE_CONNECTION *rec_node= &send_node_conn->rec_node;
-  DEBUG_ENTRY("move_node_to_receive_thread");
+
+  DEBUG_PRINT(ENTRY_LEVEL,
+    ("Adding node %u to receive thread %u",
+     send_node_conn->other_node_id,
+     0));
 
   rec_state= get_first_receive_thread(apid_global,
                                       send_node_conn->cluster_id);
@@ -468,11 +473,8 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   rec_node->buf_page= NULL;
 
   ic_mutex_lock(rec_state->mutex);
-  send_node_conn->rec_state= rec_state;
-  send_node_conn->next_add_node= rec_state->first_add_node;
-  rec_state->first_add_node= send_node_conn;
+  insert_add_node_receive_thread(rec_state, send_node_conn);
   ic_mutex_unlock(rec_state->mutex);
-  DEBUG_RETURN_EMPTY;
 }
 
 static int
@@ -650,6 +652,7 @@ connect_by_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
     else
     {
       send_node_conn->connection_up= TRUE;
+      send_node_conn->node_dead = FALSE;
     }
     ic_mutex_unlock(send_node_conn->mutex);
   }
@@ -1119,6 +1122,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     */
     send_node_conn->connection_up= TRUE;
     send_node_conn->node_up= TRUE;
+    send_node_conn->node_dead = FALSE;
     DEBUG_RETURN_INT(0);
   }
   /*
@@ -1141,8 +1145,10 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
                                        send_node_conn->mutex);
   tp_state->ts_ops.ic_thread_set_cond(thread_state,
                                       send_node_conn->cond);
-  DEBUG_PRINT(THREAD_LEVEL, ("Starting thread with id %u in run_send_thread",
-              send_node_conn->thread_id));
+  DEBUG_PRINT(THREAD_LEVEL,
+    ("Starting thread with id %u in run_send_thread to handle node: %u",
+     send_node_conn->thread_id,
+     send_node_conn->other_node_id));
   ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                               tp_state,
                               send_node_conn->thread_id,

@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -959,7 +959,7 @@ conf_serv_add_comment(void *ic_conf,
 }
 
 static void
-set_port_number(IC_SOCKET_LINK_CONFIG *comm_obj,
+get_port_number(IC_SOCKET_LINK_CONFIG *comm_obj,
                 guint32 first_node_id,
                 guint32 *first_node_port_number,
                 guint32 *second_node_port_number)
@@ -997,7 +997,7 @@ get_node_port_number(guint32 first_node_id,
       {
         /* We found a match */
         *first_hostname= comm_obj->first_hostname;
-        set_port_number(comm_obj,
+        get_port_number(comm_obj,
                         first_node_id,
                         first_node_port_number,
                         second_node_port_number);
@@ -1010,7 +1010,7 @@ get_node_port_number(guint32 first_node_id,
       {
         /* We found a match */
         *second_hostname= comm_obj->second_hostname;
-        set_port_number(comm_obj,
+        get_port_number(comm_obj,
                         first_node_id,
                         first_node_port_number,
                         second_node_port_number);

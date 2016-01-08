@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -108,7 +108,8 @@ ic_send_messages(IC_APID_CONNECTION *ext_apid_conn, gboolean force_send)
       goto error;
     if ((ret_code= ndb_send(send_node_conn,
                             send_cluster_node->first_sock_buf_page,
-                            force_send)))
+                            force_send,
+                            FALSE)))
       goto error;
     send_cluster_node= IC_GET_NEXT_DLL(send_cluster_node, send_cluster_node);
   }
@@ -136,7 +137,8 @@ error:
 */
 static int ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                     IC_SOCK_BUF_PAGE *first_page_to_send,
-                    gboolean force_send);
+                    gboolean force_send,
+                    gboolean ignore_node_up);
 
 static guint32 fill_ndb_message_header(IC_SEND_NODE_CONNECTION *send_node_conn,
                                        guint32 message_id,
@@ -169,8 +171,8 @@ static int real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                               IC_IOVEC *write_vector,
                               guint32 iovec_size,
                               guint32 send_size);
-static int send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
-static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn);
+static int send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                              gboolean ignore_node_up);
 
 /* Function used to map cluster_id and node_id to send node connection */
 static int map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
@@ -422,7 +424,8 @@ fill_in_message_id_in_ndb_message(IC_SEND_NODE_CONNECTION *send_node_conn,
 static int
 ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
          IC_SOCK_BUF_PAGE *first_page_to_send,
-         gboolean force_send)
+         gboolean force_send,
+         gboolean ignore_node_up)
 {
   IC_SOCK_BUF_PAGE *last_page_to_send;
   guint32 send_size;
@@ -446,12 +449,15 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   }
   /* Start critical section for sending */
   ic_mutex_lock(send_node_conn->mutex);
-  if (!send_node_conn->node_up)
+  if (send_node_conn->node_dead ||
+      (!send_node_conn->node_up &&
+       !ignore_node_up))
   {
     send_buf_pool= send_node_conn->apid_global->send_buf_pool;
     send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
       send_buf_pool, first_page_to_send);
     ic_mutex_unlock(send_node_conn->mutex);
+    DEBUG_PRINT(NDB_MESSAGE_LEVEL, ("ndb_send failed, node down"));
     return IC_ERROR_NODE_DOWN;
   }
   if (send_node_conn->link_config->use_message_id)
@@ -482,6 +488,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   current_time= ic_gethrtime();
   if (!send_node_conn->send_active)
   {
+    DEBUG_PRINT(NDB_MESSAGE_LEVEL, ("send_active is set to true in ndb_send"));
     return_imm= FALSE;
     send_node_conn->send_active= TRUE;
     prepare_real_send_handling(send_node_conn, &send_size,
@@ -507,11 +514,12 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
                                  send_size)))
     return error;
   /* Send done handling includes a new critical section for sending */
-  return send_done_handling(send_node_conn);
+  return send_done_handling(send_node_conn, ignore_node_up);
 }
 
 static int
-node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                      gboolean called_from_remove_rec_thread)
 {
   IC_INT_APID_GLOBAL *apid_global= send_node_conn->apid_global;
   IC_SOCK_BUF *send_buf_pool= apid_global->send_buf_pool;
@@ -534,10 +542,24 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   ic_require(rec_state == send_node_conn->rec_state ||
              send_node_conn->rec_state == NULL);
 
-  rem_node_from_receive_thread(rec_state, send_node_conn);
+  /**
+   * Give receive thread responsibility to remove node from receiving.
+   * We add the node to the list of connections to be removed and we
+   * drop it from the list of connections to be added.
+   *
+   * The receive thread cannot interact other than through add and
+   * remove calls with other threads. This means that signals can
+   * be sent to user threads even after this for a short time.
+   */
+  remove_add_node_receive_thread(rec_state, send_node_conn);
+  if (!called_from_remove_rec_thread)
+  {
+    insert_rem_node_receive_thread(rec_state, send_node_conn);
+  }
 
   send_node_conn->node_up= FALSE;
   send_node_conn->connection_up= FALSE;
+  send_node_conn->node_dead = TRUE;
 
   if (send_node_conn->first_sbp)
   {
@@ -624,14 +646,15 @@ real_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
       handling since either the connection was broken or it was slow to
       the point of being similar to broken.
     */
-    node_failure_handling(send_node_conn);
+    node_failure_handling(send_node_conn, FALSE);
     DEBUG_RETURN_INT(error);
   }
   DEBUG_RETURN_INT(0);
 }
 
 static int
-send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                   gboolean ignore_node_up)
 {
   gboolean signal_send_thread= FALSE;
   int error;
@@ -640,7 +663,7 @@ send_done_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
   /* Handle send done */
   error= 0;
   ic_mutex_lock(send_node_conn->mutex);
-  if (!send_node_conn->node_up)
+  if (!send_node_conn->node_up && !ignore_node_up)
     error= IC_ERROR_NODE_DOWN;
   else if (send_node_conn->first_sbp)
   {
@@ -784,7 +807,8 @@ send_message(IC_INT_APID_CONNECTION *apid_conn,
   /* Send message data */
   if ((ret_code= ndb_send(send_node_conn,
                           send_page,
-                          TRUE)))
+                          TRUE,
+                          FALSE)))
     goto error;
   return 0;
 error:

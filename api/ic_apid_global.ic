@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2015 iClaustron AB
+/* Copyright (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -818,6 +818,8 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
    */
   send_node_conn->conn= conn;
   send_node_conn->connection_up= TRUE;
+  send_node_conn->node_up= FALSE;
+  send_node_conn->node_dead= FALSE;
   ic_cond_signal(send_node_conn->cond);
   ic_mutex_unlock(send_node_conn->mutex);
   DEBUG_RETURN_INT(0);
@@ -850,7 +852,8 @@ apid_global_get_master_node_id(IC_APID_GLOBAL *ext_apid_global,
     while (send_node_conn)
     {
       ic_mutex_lock(send_node_conn->mutex);
-      if (send_node_conn->cluster_id == cluster_id)
+      if (send_node_conn->cluster_id == cluster_id &&
+          check_node_started(send_node_conn))
       {
         *master_node_id= send_node_conn->other_node_id;
         ic_mutex_unlock(send_node_conn->mutex);
