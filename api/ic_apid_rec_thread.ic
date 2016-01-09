@@ -714,7 +714,8 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
 
         DEBUG_PRINT(COMM_LEVEL, ("Message received from %u with size %u",
                     receiver_module_id, message_size));
-        if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
+        if (receiver_module_id != IC_NDB_PACKED_MODULE_ID &&
+            receiver_module_id >= IC_NDB_MIN_MODULE_ID_FOR_THREADS)
         {
           /* Normal messages go this way */
           receiver_module_id-= IC_NDB_MIN_MODULE_ID_FOR_THREADS;
@@ -752,6 +753,11 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
                                    receiver_module_id,
                                    list_modules_received,
                                    list_modules_received_index);
+        }
+        else if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
+        {
+          DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+            ("Message to module id %u not allowed", receiver_module_id));
         }
         else
         {
