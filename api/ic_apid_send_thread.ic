@@ -394,7 +394,9 @@ active_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn,
       send_node_conn->send_thread_is_sending= FALSE;
       send_tp->ts_ops.ic_thread_wait(thread_state);
     }
-    if (send_node_conn->stop_ordered || !send_node_conn->connection_up)
+    if (send_node_conn->stop_ordered ||
+        !send_node_conn->connection_up ||
+        send_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
       break;
     ic_assert(send_node_conn->send_thread_is_sending);
     ic_assert(send_node_conn->send_active);
@@ -465,6 +467,7 @@ move_node_to_receive_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     except for some dynamic variables used by the receive thread.
   */
   rec_node->conn= send_node_conn->conn;
+  rec_node->send_node_conn= send_node_conn;
   rec_node->my_node_id= send_node_conn->my_node_id;
   rec_node->other_node_id= send_node_conn->other_node_id;
   rec_node->cluster_id= send_node_conn->cluster_id;
@@ -483,13 +486,14 @@ check_thread_state(void *timeout_obj,
 {
   IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)timeout_obj;
   IC_THREADPOOL_STATE *tp_state= thread_state->ic_get_threadpool(thread_state);
+  DEBUG_ENTRY("check_thread_state");
 
   (void)timer;
   if (tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
   {
-    return 1;
+    DEBUG_RETURN_INT(1);
   }
-  return 0;
+  DEBUG_RETURN_INT(0);
 }
 
 /*

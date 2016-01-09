@@ -561,6 +561,18 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
               stop_ordered,
               signal_flag));
 
+  if (stop_ordered)
+  {
+    /**
+     * Stop send thread pool to speed up processing of thread stops.
+     */
+    send_tp_state->tp_ops.ic_threadpool_set_stop_flag(send_tp_state);
+    /*
+       Ensure we speed up end process by waking heartbeat thread if
+       it sleeps and ensure it also has stopped.
+    */
+    rec_tp_state->tp_ops.ic_threadpool_set_stop_flag(rec_tp_state);
+  }
   /*
     There is no protection of this array since there is only one
     occasion when we remove things from it, this is when the
@@ -625,8 +637,11 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
       DEBUG_PRINT(THREAD_LEVEL, ("Wake receive thread %u to run", i));
       rec_state= apid_global->receive_threads[i];
       DEBUG_PRINT(THREAD_LEVEL, ("rec_state= %p", rec_state));
-      //DEBUG_PRINT(THREAD_LEVEL, ("rec_tp_state= %p", rec_tp_state));
-      //DEBUG_PRINT(THREAD_LEVEL, ("rec_state->thread_id= %u", rec_state->thread_id));
+      /*
+      DEBUG_PRINT(THREAD_LEVEL, ("rec_tp_state= %p", rec_tp_state));
+      DEBUG_PRINT(THREAD_LEVEL, ("rec_state->thread_id= %u",
+                    rec_state->thread_id));
+      */
       rec_tp_state->tp_ops.ic_threadpool_run_thread(rec_tp_state,
                                                     rec_state->thread_id);
     }
@@ -661,11 +676,6 @@ start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
       rec_tp_state->tp_ops.ic_threadpool_stop_thread_wait(rec_tp_state,
                                               rec_state->thread_id);
     }
-    /*
-       Ensure we speed up end process by waking heartbeat thread if
-       it sleeps and ensure it also has stopped.
-    */
-    rec_tp_state->tp_ops.ic_threadpool_set_stop_flag(rec_tp_state);
     DEBUG_PRINT(THREAD_LEVEL, ("Stop heartbeat thread now"));
     ic_mutex_lock(apid_global->heartbeat_mutex);
     if (apid_global->heartbeat_thread_waiting)

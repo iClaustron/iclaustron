@@ -1760,8 +1760,8 @@ ic_start_file_servers_cmd(IC_PARSE_DATA *parse_data)
     fs_data= &parse_data->fs_data[i];
     /* Connect to process control and send start and disconnect */
     if ((ret_code= start_client_connection(&conn,
-      fs_data->pcntrl_hostname,
-      fs_data->pcntrl_port)))
+                                           fs_data->pcntrl_hostname,
+                                           fs_data->pcntrl_port)))
     {
       ic_printf("Failed to open connection to File Server id %u",
         fs_data->node_id);

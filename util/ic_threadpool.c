@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2015 iClaustron AB
+/* Copyright (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -36,6 +36,7 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
 {
   guint32 i;
   IC_INT_THREAD_STATE *thread_state;
+  DEBUG_ENTRY("free_threadpool");
 
   if (tp_state->thread_state_allocation)
   {
@@ -70,6 +71,7 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
     ic_mutex_destroy(&tp_state->free_list_mutex);
   }
   ic_free((void*)tp_state);
+  DEBUG_RETURN_EMPTY;
 }
 
 static gboolean
@@ -592,6 +594,16 @@ run_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 static void
 join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 {
+  IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
+  if (tp_state->stop_flag)
+  {
+    /**
+     * No need to wait for thread to stop when we already have stopped the
+     * thread pool and as part of this we will wait for the stop of the
+     * thread.
+     */
+    return;
+  }
   internal_join_thread(ext_tp_state, thread_id, FALSE);
 }
 

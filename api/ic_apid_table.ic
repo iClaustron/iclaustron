@@ -1535,6 +1535,7 @@ create_fake_table_def(IC_APID_CLUSTER_DATA *clu_data,
   loc_table_def->table_def_ops= &glob_table_def_ops;
   loc_table_def->create_state= MD_TABLE_IN_CREATION;
   loc_table_def->cluster_id= clu_data->cluster_id;
+  loc_table_def->mc_ptr= mc_ptr;
   if ((ret_code= ic_hashtable_insert(clu_data->cluster_md_hash,
                                      (void*)name_str,
                                      (void*)loc_table_def)))
@@ -1548,6 +1549,6 @@ create_fake_table_def(IC_APID_CLUSTER_DATA *clu_data,
   return loc_table_def;
 
 error:
-  loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   return NULL; 
 }
