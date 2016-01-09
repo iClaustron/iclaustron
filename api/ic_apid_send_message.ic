@@ -508,11 +508,14 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   /* End critical section for sending */
   ic_mutex_unlock(send_node_conn->mutex);
   if (return_imm)
+  {
     return 0;
+  }
   /* We will send now */
   if ((error= real_send_handling(send_node_conn, write_vector, iovec_size,
                                  send_size)))
-    return error;
+  {
+  }
   /* Send done handling includes a new critical section for sending */
   return send_done_handling(send_node_conn, ignore_node_up);
 }

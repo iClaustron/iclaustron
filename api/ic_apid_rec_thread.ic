@@ -708,6 +708,8 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
           break;
         }
 
+        DEBUG_PRINT(COMM_LEVEL, ("Message received from %u with size %u",
+                    receiver_module_id, message_size));
         if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
         {
           /* Normal messages go this way */
