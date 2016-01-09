@@ -66,8 +66,9 @@ get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state);
   the load on the node. There is also a method used when a node connection
   have been broken.
 */
-static int handle_node_error(int error,
-                             IC_THREAD_CONNECTION **thd_conn);
+static int handle_node_error(IC_NDB_RECEIVE_STATE *rec_state,
+                             IC_RECEIVE_NODE_CONNECTION *rec_node,
+                             int error);
 static void add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
 static void rem_nodes_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
 static int rem_node_from_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
@@ -76,12 +77,14 @@ static void check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state);
 static void check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state);
 
 static int
-handle_node_error(int error,
-                  IC_THREAD_CONNECTION **thd_conn)
+handle_node_error(IC_NDB_RECEIVE_STATE *rec_state,
+                  IC_RECEIVE_NODE_CONNECTION *rec_node,
+                  int error)
 {
   int ret_code= 0;
 
-  (void) thd_conn;
+  (void)rec_state;
+  node_failure_handling(rec_node->send_node_conn, FALSE);
   if (error == IC_ERROR_MEM_ALLOC)
   {
     /*
@@ -173,6 +176,7 @@ remove_rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
   {
     if (next_send_node_conn == rem_send_node_conn)
     {
+      found= TRUE;
       if (prev_send_node_conn == NULL)
       {
         rec_state->first_rem_node= rem_send_node_conn->next_rem_node;
@@ -949,9 +953,9 @@ run_receive_thread(void *data)
                                       &list_modules_received_index,
                                       list_page_modules_received)))
       {
-        if (handle_node_error(ret_code,
-                              thd_conn))
-          goto end;
+        handle_node_error(rec_state,
+                          rec_node,
+                          ret_code);
       }
       else
       {

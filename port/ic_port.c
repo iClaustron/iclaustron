@@ -1437,6 +1437,7 @@ sig_error_handler(int signum)
 void
 ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
 {
+#ifndef DEBUG_BUILD
   DEBUG_ENTRY("unix:ic_set_sig_error_handler");
   glob_sig_error_handler= error_handler;
   glob_sig_error_param= param;
@@ -1449,6 +1450,7 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
   signal(SIGSYS, sig_error_handler);
   signal(SIGPIPE, SIG_IGN);
   DEBUG_RETURN_EMPTY;
+#endif
 }
 
 static void

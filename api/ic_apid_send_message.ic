@@ -520,7 +520,7 @@ ndb_send(IC_SEND_NODE_CONNECTION *send_node_conn,
   return send_done_handling(send_node_conn, ignore_node_up);
 }
 
-static int
+static void
 node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
                       gboolean called_from_remove_rec_thread)
 {
@@ -542,42 +542,44 @@ node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
   ic_mutex_lock(rec_state->mutex);
   ic_mutex_lock(send_node_conn->mutex);
 
-  ic_require(rec_state == send_node_conn->rec_state ||
-             send_node_conn->rec_state == NULL);
-
-  /**
-   * Give receive thread responsibility to remove node from receiving.
-   * We add the node to the list of connections to be removed and we
-   * drop it from the list of connections to be added.
-   *
-   * The receive thread cannot interact other than through add and
-   * remove calls with other threads. This means that signals can
-   * be sent to user threads even after this for a short time.
-   */
-  remove_add_node_receive_thread(rec_state, send_node_conn);
-  if (!called_from_remove_rec_thread)
+  if (!send_node_conn->node_dead)
   {
-    insert_rem_node_receive_thread(rec_state, send_node_conn);
+    ic_require(rec_state == send_node_conn->rec_state ||
+               send_node_conn->rec_state == NULL);
+
+    /**
+     * Give receive thread responsibility to remove node from receiving.
+     * We add the node to the list of connections to be removed and we
+     * drop it from the list of connections to be added.
+     *
+     * The receive thread cannot interact other than through add and
+     * remove calls with other threads. This means that signals can
+     * be sent to user threads even after this for a short time.
+     */
+    remove_add_node_receive_thread(rec_state, send_node_conn);
+    if (!called_from_remove_rec_thread)
+    {
+      insert_rem_node_receive_thread(rec_state, send_node_conn);
+    }
+
+    send_node_conn->node_up= FALSE;
+    send_node_conn->connection_up= FALSE;
+    send_node_conn->node_dead = TRUE;
+    rem_node_from_heartbeat_thread(apid_global, send_node_conn);
   }
-
-  send_node_conn->node_up= FALSE;
-  send_node_conn->connection_up= FALSE;
-  send_node_conn->node_dead = TRUE;
-
   if (send_node_conn->first_sbp)
   {
     send_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
       send_buf_pool, send_node_conn->first_sbp);
+    send_node_conn->first_sbp= NULL;
   }
   DEBUG_PRINT(COMM_LEVEL, ("Node failed = %u",
               send_node_conn->other_node_id));
 
-  rem_node_from_heartbeat_thread(apid_global, send_node_conn);
-
   ic_mutex_unlock(apid_global->heartbeat_mutex);
   ic_mutex_unlock(rec_state->mutex);
   ic_mutex_unlock(send_node_conn->mutex);
-  DEBUG_RETURN_INT(0);
+  DEBUG_RETURN_EMPTY;
 }
 
 static void

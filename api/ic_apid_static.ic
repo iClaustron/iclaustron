@@ -52,8 +52,8 @@ static void close_listen_server_thread(
 static int start_heartbeat_thread(IC_INT_APID_GLOBAL *apid_global,
                                   IC_THREADPOOL_STATE *tp_state);
 /* Internal function to handle node connection failure */
-static int node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
-                                 gboolean called_from_remove_rec_thread);
+static void node_failure_handling(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                  gboolean called_from_remove_rec_thread);
 
 /* Function to add/remove node from send thread */
 static void
