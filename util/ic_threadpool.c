@@ -37,19 +37,20 @@ free_threadpool(IC_INT_THREADPOOL_STATE *tp_state)
   guint32 i;
   IC_INT_THREAD_STATE *thread_state;
   DEBUG_ENTRY("free_threadpool");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Free pool: %s", tp_state->pool_name));
 
   if (tp_state->thread_state_allocation)
   {
     for (i= 0; i < tp_state->threadpool_size; i++)
     {
       thread_state= tp_state->thread_state[i];
-      if (thread_state->mutex && !thread_state->use_external_mutex)
+      if (thread_state->internal_mutex)
       {
-        ic_mutex_destroy(&thread_state->mutex);
+        ic_mutex_destroy(&thread_state->internal_mutex);
       }
-      if (thread_state->cond && !thread_state->use_external_cond)
+      if (thread_state->internal_cond)
       {
-        ic_cond_destroy(&thread_state->cond);
+        ic_cond_destroy(&thread_state->internal_cond);
       }
     }
     ic_free((void*)tp_state->thread_state_allocation);
@@ -92,6 +93,7 @@ set_stop_flag(IC_THREADPOOL_STATE *ext_tp_state)
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   guint32 i;
   DEBUG_ENTRY("set_stop_flag");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Pool: %s", tp_state->pool_name));
 
   tp_state->stop_flag= TRUE;
 
@@ -123,6 +125,7 @@ stop_threadpool(IC_THREADPOOL_STATE *ext_tp_state)
   guint32 loop_count= 0;
   guint32 num_free_threads, pool_size;
   DEBUG_ENTRY("stop_threadpool");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Pool: %s", tp_state->pool_name));
 
   set_stop_flag(ext_tp_state);
 
@@ -285,8 +288,6 @@ thread_set_mutex(IC_THREAD_STATE *ext_thread_state, IC_MUTEX *mutex)
 
   tp_state= thread_state->tp_state;
   ic_mutex_lock(tp_state->free_list_mutex);
-  ic_require(tp_state->use_internal_mutex);
-  ic_mutex_destroy(&thread_state->mutex);
   thread_state->mutex= mutex;
   thread_state->use_external_mutex= TRUE;
   ic_mutex_unlock(tp_state->free_list_mutex);
@@ -300,8 +301,6 @@ thread_set_cond(IC_THREAD_STATE *ext_thread_state, IC_COND *cond)
 
   tp_state= thread_state->tp_state;
   ic_mutex_lock(tp_state->free_list_mutex);
-  ic_require(tp_state->use_internal_mutex);
-  ic_cond_destroy(&thread_state->cond);
   thread_state->cond= cond;
   thread_state->use_external_cond= TRUE;
   ic_mutex_unlock(tp_state->free_list_mutex);
@@ -333,7 +332,8 @@ get_free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   *thread_id= first_free_thread_id;
   thread_state->free= FALSE;
   ic_mutex_unlock(tp_state->free_list_mutex);
-  DEBUG_PRINT(THREAD_LEVEL, ("Allocated thread id: %u", *thread_id));
+  DEBUG_PRINT(THREAD_LEVEL, ("Allocated thread id: %u in %s",
+                             *thread_id, tp_state->pool_name));
   return 0;
 }
 
@@ -381,14 +381,17 @@ free_thread_id(IC_THREADPOOL_STATE *ext_tp_state,
   thread_state->free= TRUE;
   if (thread_state->use_external_mutex == TRUE)
   {
-    thread_state->mutex= NULL;
+    thread_state->mutex= thread_state->internal_mutex;
+    thread_state->use_external_mutex= FALSE;
   }
   if (thread_state->use_external_cond == TRUE)
   {
-    thread_state->cond= NULL;
+    thread_state->cond= thread_state->internal_cond;
+    thread_state->use_external_cond= FALSE;
   }
   ic_mutex_unlock(tp_state->free_list_mutex);
-  DEBUG_PRINT(THREAD_LEVEL, ("free thread id: %u", thread_id));
+  DEBUG_PRINT(THREAD_LEVEL, ("free thread id: %u in %s",
+                             thread_id, tp_state->pool_name));
 }
 
 /* Put thread object into free list */
@@ -401,7 +404,8 @@ free_thread(IC_INT_THREADPOOL_STATE *tp_state,
 
   if (thread_state->inited)
   {
-    DEBUG_PRINT(THREAD_LEVEL, ("free thread with id = %d", thread_id));
+    DEBUG_PRINT(THREAD_LEVEL, ("free thread with id = %d in %s",
+                               thread_id, tp_state->pool_name));
   }
   thread_state->inited= TRUE;
   thread_state->thread= NULL;
@@ -427,11 +431,13 @@ free_thread(IC_INT_THREADPOOL_STATE *tp_state,
   ic_mutex_lock(tp_state->free_list_mutex);
   if (thread_state->use_external_mutex == TRUE)
   {
-    thread_state->mutex= NULL;
+    thread_state->mutex= thread_state->internal_mutex;
+    thread_state->use_external_mutex= FALSE;
   }
   if (thread_state->use_external_cond == TRUE)
   {
-    thread_state->cond= NULL;
+    thread_state->cond= thread_state->internal_cond;
+    thread_state->use_external_cond= FALSE;
   }
   ic_mutex_unlock(tp_state->free_list_mutex);
 }
@@ -573,6 +579,7 @@ run_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   IC_INT_THREAD_STATE *thread_state;
   DEBUG_ENTRY("run_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Pool: %s", tp_state->pool_name));
 
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
@@ -594,7 +601,6 @@ run_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 static void
 join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 {
-  IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   internal_join_thread(ext_tp_state, thread_id, FALSE);
 }
 
@@ -606,7 +612,8 @@ internal_join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id,
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   IC_INT_THREAD_STATE *thread_state;
   DEBUG_ENTRY("internal_join_thread");
-  DEBUG_PRINT(PROGRAM_LEVEL, ("thread_id = %u", thread_id));
+  DEBUG_PRINT(ENTRY_LEVEL, ("thread_id = %u, Pool: %s",
+                              thread_id, tp_state->pool_name));
 
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
@@ -623,7 +630,8 @@ stop_thread_without_wait(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   IC_INT_THREAD_STATE *thread_state;
   DEBUG_ENTRY("stop_thread_without_wait");
-  DEBUG_PRINT(PROGRAM_LEVEL, ("thread_id = %u", thread_id));
+  DEBUG_PRINT(ENTRY_LEVEL, ("thread_id = %u",
+                            thread_id, tp_state->pool_name));
 
   ic_require(thread_id < tp_state->threadpool_size);
   thread_state= tp_state->thread_state[thread_id];
@@ -684,8 +692,8 @@ thread_stops(IC_THREAD_STATE *ext_thread_state)
   DEBUG_ENTRY("thread_stops");
 
   insert_stopped_list(tp_state, thread_state->thread_id);
-  DEBUG_PRINT(THREAD_LEVEL, ("thread with id %d stops",
-                             thread_state->thread_id));
+  DEBUG_PRINT(THREAD_LEVEL, ("thread with id %d stops in %s",
+                             thread_state->thread_id, tp_state->pool_name));
   ic_mutex_lock(thread_state->mutex);
   ic_assert(thread_state->started);
   thread_state->started= FALSE;
@@ -768,13 +776,14 @@ get_threadpool(IC_THREAD_STATE *ext_thread_state)
 
 IC_THREADPOOL_STATE*
 ic_create_threadpool(guint32 pool_size,
-                     gboolean use_internal_mutex)
+                     gchar *threadpool_name)
 {
   gchar *thread_state_ptr;
   guint32 thread_state_size, i;
   IC_INT_THREAD_STATE *thread_state;
   IC_INT_THREADPOOL_STATE *tp_state;
   DEBUG_ENTRY("ic_create_threadpool");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Pool: %s", threadpool_name));
 
   if (!(tp_state= (IC_INT_THREADPOOL_STATE*)
         ic_calloc(sizeof(IC_INT_THREADPOOL_STATE))))
@@ -803,7 +812,7 @@ ic_create_threadpool(guint32 pool_size,
   tp_state->num_thread_allocations= 0;
   tp_state->first_free_thread_id= IC_MAX_UINT32;
   tp_state->first_stopped_thread_id= IC_MAX_UINT32;
-  tp_state->use_internal_mutex= use_internal_mutex;
+  tp_state->pool_name= threadpool_name;
 
   for (i= 0; i < pool_size; i++)
   {
@@ -813,8 +822,10 @@ ic_create_threadpool(guint32 pool_size,
     thread_state->tp_state= tp_state;
     thread_state->thread_id= i;
     thread_state->mutex= ic_mutex_create();
+    thread_state->internal_mutex= thread_state->mutex;
     thread_state->use_external_mutex= FALSE;
     thread_state->cond= ic_cond_create();
+    thread_state->internal_cond= thread_state->cond;
     thread_state->use_external_cond= FALSE;
     thread_state->ic_get_threadpool= get_threadpool;
     if (thread_state->mutex == NULL ||

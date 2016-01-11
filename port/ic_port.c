@@ -1392,6 +1392,8 @@ ic_read_file(IC_FILE_HANDLE file_ptr, gchar *buf, size_t size, guint64 *len)
 #include <signal.h>
 static IC_SIG_HANDLER_FUNC glob_die_handler= NULL;
 static void *glob_die_param;
+
+#ifndef DEBUG_BUILD
 static IC_SIG_HANDLER_FUNC glob_sig_error_handler= NULL;
 static void *glob_sig_error_param;
 
@@ -1433,6 +1435,7 @@ sig_error_handler(int signum)
   }
   return;
 }
+#endif
 
 void
 ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -77,7 +77,9 @@ struct ic_int_thread_state
 
   /* The mutex and condition is mainly used for startup synchronisation.  */
   IC_MUTEX *mutex;
+  IC_MUTEX *internal_mutex;
   IC_COND *cond;
+  IC_COND *internal_cond;
   gboolean use_external_mutex;
   gboolean use_external_cond;
 };
@@ -97,8 +99,6 @@ struct ic_int_threadpool_state
 
   /* Pointer to first free thread object, protected by free list mutex */
   guint32 first_free_thread_id;
-  /* Use internal mutex or not */
-  guint32 use_internal_mutex;
   /*
     Pointer to first stopped thread waiting to be joined
     Number of stopped threads in list
@@ -151,4 +151,5 @@ struct ic_int_threadpool_state
   IC_INT_THREAD_STATE **thread_state;
   /* Memory allocation variable for all the thread state objects */
   gchar *thread_state_allocation;
+  gchar *pool_name;
 };

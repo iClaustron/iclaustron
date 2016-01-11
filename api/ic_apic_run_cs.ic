@@ -3230,7 +3230,8 @@ ic_create_run_cluster(IC_STRING *config_dir,
     goto error;
   if (!(run_obj->config_cond= ic_cond_create()))
     goto error;
-  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE,
+                                       "mgm_client")))
     goto error;
 
   /*

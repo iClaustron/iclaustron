@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2015 iClaustron AB
+/* Copyright (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -3456,7 +3456,8 @@ int main(int argc, char *argv[])
   DEBUG_PRINT(PROGRAM_LEVEL, ("Binary directory: %s", ic_glob_binary_dir.str));
   DEBUG_PRINT(PROGRAM_LEVEL, ("Config directory: %s", ic_glob_config_dir.str));
 
-  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, TRUE)))
+  if (!(tp_state= ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE,
+                                       "pcntrl")))
   {
     return IC_ERROR_MEM_ALLOC;
   }

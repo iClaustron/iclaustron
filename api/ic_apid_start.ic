@@ -74,7 +74,8 @@ ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
   DEBUG_ENTRY("ic_start_apid_program");
 
   if (!(*tp_state=
-          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE, FALSE)))
+          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE,
+                               "api_user")))
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
 
   if ((ret_code= ic_parse_connectstring(ic_glob_cs_connectstring,

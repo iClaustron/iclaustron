@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -193,7 +193,7 @@ struct ic_threadpool_state
 };
 
 IC_THREADPOOL_STATE*
-ic_create_threadpool(guint32 pool_size, gboolean use_internal_mutex);
+ic_create_threadpool(guint32 pool_size, gchar *pool_name);
 
 /* Get threadpool state from thread local storage */
 IC_THREADPOOL_STATE*
