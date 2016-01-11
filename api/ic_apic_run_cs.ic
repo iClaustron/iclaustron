@@ -5612,20 +5612,27 @@ fill_key_value_section(IC_CONFIG_TYPES config_type,
       value= 0;
       break;
     case IC_DATA_SERVER_TYPE:
+      value= IC_DATA_SERVER_TYPE_PROTOCOL;
+      break;
     case IC_CLUSTER_SERVER_TYPE:
-    /*
-      config_type value is one higher than the value used in the
-      protocol.
-     */
-      value= ((guint32)config_type - 1);
+      value= IC_CLUSTER_SERVER_TYPE_PROTOCOL;
       break;
     default:
       if (!is_iclaustron_version(version_number))
       {
-        value= IC_CLIENT_TYPE;
+        /**
+         * A NDB node is contacting us, in this case we can only
+         * use the client type as the NDB protocol supports,
+         * iClaustron nodes support more node types.
+         */
+        value= IC_API_TYPE_PROTOCOL;
       }
       else
       {
+        /**
+         * The iClaustron config type is one higher than the node type
+         * sent in the protocol.
+         */
         value= ((guint32)config_type - 1);
       }
       break;

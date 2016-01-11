@@ -1,4 +1,4 @@
-/* Copyight (C) 2007, 2015 iClaustron AB
+/* Copyight (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -129,7 +129,12 @@
   There also some special configuration id's.
   One is 16382 which describes the parent section which for all node sections
   is equal to 0.
-  999 is a configuration id describing the node type.
+
+  999 is a configuration id describing the node type for node sections and the
+  communication type for communication sections. 0 is DB node type, 1 is API
+  node type, 2 is MGM node type. 0 is TCP communication type (currently only
+  supported by iClaustron).
+
   3 is the configuration id providing the node id.
 
   -------------------
