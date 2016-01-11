@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2015 iClaustron AB
+/* Copyright (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1450,6 +1450,9 @@ ic_set_sig_error_handler(IC_SIG_HANDLER_FUNC error_handler, void *param)
   signal(SIGSYS, sig_error_handler);
   signal(SIGPIPE, SIG_IGN);
   DEBUG_RETURN_EMPTY;
+#else
+  (void)error_handler;
+  (void)param;
 #endif
 }
 
@@ -1815,6 +1818,7 @@ static void debug_lock_mutex(IC_MUTEX *mutex)
   guint64 search_key= (guint64)mutex;
   guint64 self= (guint64)pthread_self();
 
+  ic_assert(search_key > 0);
   search_key |= (self << 32);
   DEBUG_DISABLE(0);
   g_mutex_lock(mutex_hash_protect);
@@ -1836,6 +1840,7 @@ static void debug_release_mutex(IC_MUTEX *mutex)
   guint64 search_key= (guint64)mutex;
   guint64 self= (guint64)pthread_self();
 
+  ic_assert(search_key > 0);
   search_key |= (self << 32);
   DEBUG_DISABLE(0);
   g_mutex_lock(mutex_hash_protect);
@@ -1863,11 +1868,9 @@ void ic_cond_wait(IC_COND *cond, IC_MUTEX *mutex)
 {
 #ifdef DEBUG_BUILD
   debug_release_mutex(mutex);
-#endif
-  g_cond_wait(cond, mutex);
-#ifdef DEBUG_BUILD
   debug_lock_mutex(mutex);
 #endif
+  g_cond_wait(cond, mutex);
 }
 
 void ic_cond_timed_wait(IC_COND *cond,
@@ -1878,11 +1881,9 @@ void ic_cond_timed_wait(IC_COND *cond,
   stop_timer+= (gint64)micros;
 #ifdef DEBUG_BUILD
   debug_release_mutex(mutex);
-#endif
-  g_cond_wait_until(cond, mutex, stop_timer);
-#ifdef DEBUG_BUILD
   debug_lock_mutex(mutex);
 #endif
+  g_cond_wait_until(cond, mutex, stop_timer);
 }
 
 IC_COND* ic_cond_create()
@@ -1908,10 +1909,10 @@ void ic_cond_destroy(IC_COND **cond)
 
 void ic_mutex_lock(IC_MUTEX *mutex)
 {
-  g_mutex_lock(mutex);
 #ifdef DEBUG_BUILD
   debug_lock_mutex(mutex);
 #endif
+  g_mutex_lock(mutex);
 }
 
 void ic_mutex_lock_low(IC_MUTEX *mutex)
@@ -1921,10 +1922,10 @@ void ic_mutex_lock_low(IC_MUTEX *mutex)
 
 void ic_mutex_unlock(IC_MUTEX *mutex)
 {
+  g_mutex_unlock(mutex);
 #ifdef DEBUG_BUILD
   debug_release_mutex(mutex);
 #endif
-  g_mutex_unlock(mutex);
 }
 
 void ic_mutex_unlock_low(IC_MUTEX *mutex)

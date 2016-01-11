@@ -28,7 +28,7 @@ static gboolean thread_startup_done(IC_THREAD_STATE *ext_thread_state);
 static void join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id);
 static void internal_join_thread(IC_THREADPOOL_STATE *ext_tp_state,
                                  guint32 thread_id,
-                                 gboolean own_mutex);
+                                 gboolean locked_mutex);
 
 /* Free all resources connected to the thread pool */
 static void
@@ -186,7 +186,7 @@ insert_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id)
 
 static void
 remove_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id,
-                    gboolean own_mutex)
+                    gboolean locked_mutex)
 {
   IC_INT_THREAD_STATE *thread_state, *prev_thread_state, *next_thread_state;
   guint32 prev_thread_id, next_thread_id;
@@ -194,7 +194,7 @@ remove_stopped_list(IC_INT_THREADPOOL_STATE *tp_state, guint32 thread_id,
   thread_state= tp_state->thread_state[thread_id];
 
   ic_require(thread_state);
-  if (!own_mutex)
+  if (!locked_mutex)
   {
     ic_mutex_lock(tp_state->stop_list_mutex);
   }
@@ -595,22 +595,13 @@ static void
 join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
-  if (tp_state->stop_flag)
-  {
-    /**
-     * No need to wait for thread to stop when we already have stopped the
-     * thread pool and as part of this we will wait for the stop of the
-     * thread.
-     */
-    return;
-  }
   internal_join_thread(ext_tp_state, thread_id, FALSE);
 }
 
 /* Join the thread with the given thread id (wait for thread to complete) */
 static void
 internal_join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id,
-                     gboolean own_mutex)
+                     gboolean locked_mutex)
 {
   IC_INT_THREADPOOL_STATE *tp_state= (IC_INT_THREADPOOL_STATE*)ext_tp_state;
   IC_INT_THREAD_STATE *thread_state;
@@ -621,7 +612,7 @@ internal_join_thread(IC_THREADPOOL_STATE *ext_tp_state, guint32 thread_id,
   thread_state= tp_state->thread_state[thread_id];
 
   g_thread_join(thread_state->thread);
-  remove_stopped_list(tp_state, thread_id, own_mutex);
+  remove_stopped_list(tp_state, thread_id, locked_mutex);
   free_thread(tp_state, thread_state, thread_id);
   DEBUG_RETURN_EMPTY;
 }
