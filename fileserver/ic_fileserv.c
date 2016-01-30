@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007, 2016 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -30,6 +30,110 @@ static const gchar *file_server_ptr= "file_server";
 static const gchar *file_table_ptr= "file_table";
 static const gchar *file_key_ptr= "file_key";
 static const gchar *file_data_ptr= "file_data";
+
+static gboolean ic_glob_bootstrap_flag= FALSE;
+
+/**
+ * Mutexes that protect the startup phase of the file server threads.
+ * The first thread to complete connecting to the cluster will perform
+ * the start phase. If we are bootstrapping the file server this means
+ * creating the file system tables. In all cases it means retrieving the
+ * file server metadata from the data nodes.
+ *
+ * The mutex protects the variables
+ * g_first_thread_started
+ *   Flag indicating if someone started as first thread yet.
+ * g_first_thread_completed
+ *   Flag indicating if first thread has completed its startup yet.
+ * g_startup_success
+ *   Flag indicating if first thread succeeded in starting.
+ */
+static IC_MUTEX *g_start_mutex;
+static IC_COND  *g_start_cond;
+
+static gboolean g_first_thread_started= FALSE;
+static gboolean g_first_thread_completed= FALSE;
+static gboolean g_startup_success= FALSE;
+
+/*
+   We now have a local Data API connection and we are ready to create
+   the tables required by the iClaustron File Server.
+*/
+static int
+run_bootstrap(IC_APID_CONNECTION *apid_conn)
+{
+  int ret_code;
+  IC_METADATA_TRANSACTION *md_trans= NULL;
+  IC_ALTER_TABLE *md_alter_table= NULL;
+  const gchar *pk_names[1];
+  const gchar *file_key_str= "file_key";
+  DEBUG_ENTRY("run_bootstrap_thread");
+
+  pk_names[0]= file_key_str;
+
+  ret_code= IC_ERROR_MEM_ALLOC;
+  /*
+    Creating the file_table has the following steps:
+    1) Create metadata transaction
+    2) Create metadata operation
+    3) Create table
+    4) Add two fields (file_key and file_data)
+    5) Add primary key index on file_key
+    6) Commit metadata transaction (this is where the data node is
+       contacted.
+  */
+  if ((!(md_trans= ic_create_metadata_transaction(apid_conn,
+                                                  0,
+                                                  &ret_code))) ||
+
+      ((ret_code= md_trans->md_trans_ops->ic_create_metadata_op(
+         md_trans,
+         &md_alter_table))) ||
+
+      ((ret_code= md_alter_table->alter_table_ops->ic_create_table(
+         md_alter_table,
+         "std",
+         "file_server",
+         "file_table",
+         NULL))) || /* Tablespace name not provided yet */
+
+      ((ret_code= md_alter_table->alter_table_ops->ic_add_field(
+         md_alter_table,
+         file_key_str,
+         IC_API_BIG_UNSIGNED,
+         1 /* A single field, not an array */,
+         FALSE /* Not nullable */,
+         FALSE /* Not stored on disk */))) ||
+
+      ((ret_code= md_alter_table->alter_table_ops->ic_add_field(
+         md_alter_table,
+         "file_data",
+         IC_API_BINARY,
+         8192 /* Maximum size of each part of the file */,
+         TRUE /* Nullable */,
+         FALSE /* Not stored on disk for now */))) ||
+
+      ((ret_code= md_alter_table->alter_table_ops->ic_add_index(
+         md_alter_table,
+         "file_table_pkey",
+         pk_names,
+         1,
+         IC_PRIMARY_KEY,
+         FALSE /* No null values allowed in index */))) ||
+
+      ((ret_code= md_trans->md_trans_ops->ic_md_commit(md_trans)))) 
+    goto error;
+  md_trans->md_trans_ops->ic_free_md_trans(md_trans);
+  ic_printf("Successfully created table: file_table");
+  DEBUG_RETURN_INT(0);
+
+error:
+  if (md_trans)
+    md_trans->md_trans_ops->ic_free_md_trans(md_trans);
+  ic_printf("Failed to create table: file_table, ret_code = %u",
+            ret_code);
+  DEBUG_RETURN_INT(1);
+}
 
 static int
 get_file_table_meta_data(IC_APID_GLOBAL *apid_global,
@@ -193,6 +297,7 @@ insert_file_object(IC_APID_CONNECTION *apid_conn,
    file system transactions to keep our local cache consistent with the
    global NDB file system.
 */
+#define START_TIMEOUT 30
 static int
 run_file_server_thread(IC_APID_CONNECTION *apid_conn,
                        IC_THREAD_STATE *thread_state)
@@ -213,6 +318,10 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
   guint64 file_key= 13;
   int ret_code;
   guint32 cluster_id= 0;
+  gboolean bootstrap_failed= FALSE;
+  gboolean is_first_thread;
+  gboolean startup_success= FALSE;
+  guint32 i;
   gchar *data_str= "Some random string with data in it";
   DEBUG_ENTRY("run_file_server_thread");
 
@@ -227,15 +336,90 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
     DEBUG_RETURN_INT(ret_code);
   }
 
-  if ((ret_code= get_file_table_meta_data(apid_global,
-                                          apid_conn,
-                                          &md_trans,
-                                          &table_def,
-                                          &file_key_id,
-                                          &file_data_id,
-                                          cluster_id)))
-    goto error;
+  ic_mutex_lock(g_start_mutex);
+  if (g_first_thread_started)
+  {
+    is_first_thread= FALSE;
+    /**
+     * Wait for other thread to take care of startup logic.
+     * This thread will wake us up when done.
+     */
+    do
+    {
+      ic_cond_wait(g_start_cond, g_start_mutex);
+    } while (!g_first_thread_completed);
+    startup_success= g_startup_success;
+    ic_mutex_unlock(g_start_mutex);
+    if (!startup_success)
+    {
+      /* Startup failed in first thread, we will stop */
+      goto end;
+    }
+  }
+  else
+  {
+    g_first_thread_started= TRUE;
+    ic_mutex_unlock(g_start_mutex);
+    is_first_thread= TRUE;
+    if (ic_glob_bootstrap_flag)
+    {
+      if (run_bootstrap(apid_conn))
+      {
+        /**
+         * Bootstrap failed, we assume tables already exist and attempt
+         * to continue without bootstrap.
+         */
+        bootstrap_failed= TRUE;
+      }
+    }
+  }
+  for (i= 0; i < START_TIMEOUT; i++)
+  {
+    if ((ret_code= get_file_table_meta_data(apid_global,
+                                            apid_conn,
+                                            &md_trans,
+                                            &table_def,
+                                            &file_key_id,
+                                            &file_data_id,
+                                            cluster_id)))
+    {
+      if (bootstrap_failed)
+      {
+        /* We cannot continue, both bootstrap AND get meta data failed. */
+        break;
+      }
+      ic_sleep(1);
+    }
+    else
+    {
+      startup_success= TRUE;
+      break;
+    }
+  }
 
+  /**
+   * We have successfully retrieved the metadata objects. We are now ready
+   * to start running the file server. If we were first thread we will also
+   * wake all other threads such that they similarly can proceed.
+   */
+  if (is_first_thread)
+  {
+    ic_mutex_lock(g_start_mutex);
+    g_startup_success= startup_success;
+    g_first_thread_completed= TRUE;
+    ic_cond_broadcast(g_start_cond);
+    ic_mutex_unlock(g_start_mutex);
+  }
+  if (!startup_success)
+  {
+    /* We failed to startup properly, we will quit */
+    goto end;
+  }
+
+  /**
+   * Run file server logic starts:
+   * -----------------------------
+   */
   if ((ret_code= get_file_table_query_object(apid_global,
                                              table_def,
                                              file_key_id,
@@ -266,7 +450,25 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
 error:
   /* Handle errors reported through IC_APID_ERROR */
   DEBUG_RETURN_INT(ret_code);
+end:
+  DEBUG_RETURN_INT(0);
 }
+
+static void
+init_file_server(void)
+{
+  g_start_mutex= ic_mutex_create();
+  g_start_cond= ic_cond_create();
+  ic_require(g_start_mutex && g_start_cond);
+}
+
+GOptionEntry ic_fs_extra_entries [] =
+{
+  { "bootstrap", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_bootstrap_flag,
+    "Bootstrap file server by creating file server tables", NULL },
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
 
 int main(int argc, char *argv[])
 {
@@ -280,18 +482,22 @@ int main(int argc, char *argv[])
   if ((ret_code= ic_start_program(argc,
                                   argv,
                                   ic_apid_entries,
-                                  NULL,
+                                  ic_fs_extra_entries,
                                   "ic_fsd",
                                   "- iClaustron File Server",
                                   TRUE,
                                   TRUE)))
     goto end;
+
+  init_file_server();
+
   if ((ret_code= ic_start_apid_program(&tp_state,
                                        &err_str,
                                        error_str,
                                        &apid_global,
                                        &apic)))
     goto end;
+
   ret_code= ic_run_apid_program(apid_global,
                                 tp_state,
                                 run_file_server_thread,

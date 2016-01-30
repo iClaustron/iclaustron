@@ -1063,7 +1063,8 @@ run_send_thread(void *data)
          the active send thread handling.
       */
       send_tp->ts_ops.ic_thread_unlock(thread_state);
-      if (send_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
+      if (send_tp->ts_ops.ic_thread_get_stop_flag(thread_state) ||
+          ic_get_stop_flag())
         break;
     }
     /*
@@ -1072,6 +1073,8 @@ run_send_thread(void *data)
       thread. First initialise the message id since we have a new
       connection now. Also set node state to indicate node is up.
     */
+    DEBUG_PRINT(THREAD_LEVEL, ("Connected to node %u using external connect",
+                               send_node_conn->other_node_id));
     send_node_conn->message_id= 1;
     move_node_to_receive_thread(send_node_conn);
     /*
@@ -1101,6 +1104,7 @@ end:
     remove_send_thread_from_listen_thread(send_node_conn);
   }
   send_node_conn->send_thread_ended= TRUE;
+  send_node_conn->thread_state= NULL;
   send_tp->ts_ops.ic_thread_unlock(thread_state);
   /* Thread is ready to stop */
   send_tp->ts_ops.ic_thread_stops(thread_state);
@@ -1153,6 +1157,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
     ("Starting thread with id %u in run_send_thread to handle node: %u",
      send_node_conn->thread_id,
      send_node_conn->other_node_id));
+  send_node_conn->thread_state= thread_state;
   ret_code= tp_state->tp_ops.ic_threadpool_start_thread_with_thread_id(
                               tp_state,
                               send_node_conn->thread_id,
@@ -1166,6 +1171,7 @@ start_send_thread(IC_SEND_NODE_CONNECTION *send_node_conn)
   */
   if (ret_code)
   {
+    send_node_conn->thread_state= NULL;
     tp_state->tp_ops.ic_threadpool_free_thread_id(tp_state,
                                                   send_node_conn->thread_id);
   }

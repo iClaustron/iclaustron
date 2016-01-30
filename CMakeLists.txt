@@ -513,11 +513,6 @@ target_link_libraries(ic_fsd ic_port ic_util ic_comm ic_proto ic_api
                       ${ICLAUSTRON_LIBS})
 install(TARGETS ic_fsd DESTINATION bin)
 
-add_executable(ic_fs_bootstrap fileserver/ic_fileserv_bootstrap.c)
-target_link_libraries(ic_fs_bootstrap ic_port ic_util ic_comm
-                      ic_proto ic_api ${ICLAUSTRON_LIBS})
-install(TARGETS ic_fs_bootstrap DESTINATION bin)
-
 #Build Replication Server binary
 add_executable(ic_repd repserver/ic_repserv.c)
 target_link_libraries(ic_repd ic_port ic_util ic_comm ic_proto ic_api

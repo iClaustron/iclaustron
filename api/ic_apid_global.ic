@@ -810,6 +810,8 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
 {
   IC_SEND_NODE_CONNECTION *send_node_conn;
   IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  IC_THREAD_STATE *thread_state;
+  IC_THREADPOOL_STATE *tp_state;
   int ret_code;
   DEBUG_ENTRY("apid_global_external_connect");
 
@@ -822,18 +824,17 @@ apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
                                                 &send_node_conn)))
     goto error;
   ic_mutex_lock(send_node_conn->mutex);
-  /**
-   * This is equivalent to calling ic_thread_wake on send thread that
-   * handles the connection to this node. We have mapped this mutex
-   * and condition to the thread's mutex and condition in the
-   * thread pool.
-   */
   send_node_conn->conn= conn;
   send_node_conn->connection_up= TRUE;
   send_node_conn->node_up= FALSE;
   send_node_conn->node_dead= FALSE;
-  ic_cond_signal(send_node_conn->cond);
+  thread_state= send_node_conn->thread_state;
   ic_mutex_unlock(send_node_conn->mutex);
+
+  DEBUG_PRINT(THREAD_LEVEL, ("Wake send thread up to handle new connection"));
+  ic_assert(thread_state != NULL);
+  tp_state= apid_global->send_thread_pool;
+  tp_state->ts_ops.ic_thread_wake(thread_state);
   DEBUG_RETURN_INT(0);
 
 error:

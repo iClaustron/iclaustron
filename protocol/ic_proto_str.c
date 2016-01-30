@@ -87,8 +87,7 @@ const gchar *ic_ndb_program_str= "ndbmtd";
 
 const gchar *ic_def_grid_str= "iclaustron";
 const gchar *ic_data_server_program_str= "ndbmtd";
-//const gchar *ic_file_server_program_str= "ic_fsd";
-const gchar *ic_file_server_program_str= "ic_fs_bootstrap";
+const gchar *ic_file_server_program_str= "ic_fsd";
 const gchar *ic_rep_server_program_str= "ic_repd";
 const gchar *ic_sql_server_program_str= "mysqld";
 const gchar *ic_cluster_manager_program_str= "ic_clmgrd";

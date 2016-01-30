@@ -232,7 +232,9 @@ thread_wait(IC_THREAD_STATE *ext_thread_state)
   thread_state->wait_wakeup= TRUE;
   do
   {
-    ic_cond_wait(thread_state->cond, thread_state->mutex);
+    ic_cond_timed_wait(thread_state->cond,
+                       thread_state->mutex,
+                       3 * IC_MICROSEC_PER_SECOND);
   } while (thread_state->wait_wakeup &&
            !thread_state->stop_flag &&
            !ic_get_stop_flag());
