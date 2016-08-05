@@ -16,15 +16,8 @@
 ## This is the template to produce Makefile.in for this directory
 ## This directory is used to build the iClaustron File Server
 ##
-bin_PROGRAMS = ic_fsd ic_fs_bootstrap
-ic_fs_bootstrap_SOURCES = ic_fileserv_bootstrap.c
+bin_PROGRAMS = ic_fsd
 ic_fsd_SOURCES = ic_fileserv.c
-ic_fs_bootstrap_LDADD = $(LDADD) \
-			../port/libic_port.la \
-			../util/libic_util.la \
-			../comm/libic_comm.la \
-			../protocol/libic_proto.la \
-			../api/libic_api.la
 ic_fsd_LDADD = $(LDADD) \
 			../port/libic_port.la \
 			../util/libic_util.la \

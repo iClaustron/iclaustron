@@ -31,34 +31,21 @@ static const gchar *file_table_ptr= "file_table";
 static const gchar *file_key_ptr= "file_key";
 static const gchar *file_data_ptr= "file_data";
 
-static gboolean ic_glob_bootstrap_flag= FALSE;
+static int glob_bootstrap = 0;
+
+static IC_MUTEX *fs_mutex = NULL;
+
+static GOptionEntry fs_entries[] =
+{
+  { "bootstrap", 0, 0, G_OPTION_ARG_INT, &glob_bootstrap,
+    "Bootstrap file server", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
 
 /**
- * Mutexes that protect the startup phase of the file server threads.
- * The first thread to complete connecting to the cluster will perform
- * the start phase. If we are bootstrapping the file server this means
- * creating the file system tables. In all cases it means retrieving the
- * file server metadata from the data nodes.
- *
- * The mutex protects the variables
- * g_first_thread_started
- *   Flag indicating if someone started as first thread yet.
- * g_first_thread_completed
- *   Flag indicating if first thread has completed its startup yet.
- * g_startup_success
- *   Flag indicating if first thread succeeded in starting.
+ * We now have a local Data API connection and we are ready to create
+ * the tables required by the iClaustron File Server.
  */
-static IC_MUTEX *g_start_mutex;
-static IC_COND  *g_start_cond;
-
-static gboolean g_first_thread_started= FALSE;
-static gboolean g_first_thread_completed= FALSE;
-static gboolean g_startup_success= FALSE;
-
-/*
-   We now have a local Data API connection and we are ready to create
-   the tables required by the iClaustron File Server.
-*/
 static int
 run_bootstrap(IC_APID_CONNECTION *apid_conn)
 {
@@ -70,8 +57,8 @@ run_bootstrap(IC_APID_CONNECTION *apid_conn)
   DEBUG_ENTRY("run_bootstrap_thread");
 
   pk_names[0]= file_key_str;
-
   ret_code= IC_ERROR_MEM_ALLOC;
+
   /*
     Creating the file_table has the following steps:
     1) Create metadata transaction
@@ -336,42 +323,27 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
     DEBUG_RETURN_INT(ret_code);
   }
 
-  ic_mutex_lock(g_start_mutex);
-  if (g_first_thread_started)
+  /**
+   * Only the first thread to come here will run the bootstrap code.
+   * All other threads, including other file server programs running
+   * without bootstrap flag will try to get the meta data for the
+   * file server, if it fails they will try again and do so for a
+   * while until they decide the bootstrap didn't work.
+   *
+   * After successful bootstrap and retrieve of meta data object the
+   * file server is ready to take care of file services.
+   */
+  ic_mutex_lock(fs_mutex);
+  if (glob_bootstrap == 1)
   {
-    is_first_thread= FALSE;
-    /**
-     * Wait for other thread to take care of startup logic.
-     * This thread will wake us up when done.
-     */
-    do
-    {
-      ic_cond_wait(g_start_cond, g_start_mutex);
-    } while (!g_first_thread_completed);
-    startup_success= g_startup_success;
-    ic_mutex_unlock(g_start_mutex);
-    if (!startup_success)
-    {
-      /* Startup failed in first thread, we will stop */
-      goto end;
-    }
+    glob_bootstrap = 0;
+    ic_mutex_unlock(fs_mutex);
+    if ((ret_code = run_bootstrap_thread(apid_conn, thread_state)))
+      goto error;
   }
   else
   {
-    g_first_thread_started= TRUE;
-    ic_mutex_unlock(g_start_mutex);
-    is_first_thread= TRUE;
-    if (ic_glob_bootstrap_flag)
-    {
-      if (run_bootstrap(apid_conn))
-      {
-        /**
-         * Bootstrap failed, we assume tables already exist and attempt
-         * to continue without bootstrap.
-         */
-        bootstrap_failed= TRUE;
-      }
-    }
+    ic_mutex_unlock(fs_mutex);
   }
   for (i= 0; i < START_TIMEOUT; i++)
   {
@@ -383,37 +355,12 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
                                             &file_data_id,
                                             cluster_id)))
     {
-      if (bootstrap_failed)
-      {
-        /* We cannot continue, both bootstrap AND get meta data failed. */
-        break;
-      }
       ic_sleep(1);
     }
     else
     {
-      startup_success= TRUE;
       break;
     }
-  }
-
-  /**
-   * We have successfully retrieved the metadata objects. We are now ready
-   * to start running the file server. If we were first thread we will also
-   * wake all other threads such that they similarly can proceed.
-   */
-  if (is_first_thread)
-  {
-    ic_mutex_lock(g_start_mutex);
-    g_startup_success= startup_success;
-    g_first_thread_completed= TRUE;
-    ic_cond_broadcast(g_start_cond);
-    ic_mutex_unlock(g_start_mutex);
-  }
-  if (!startup_success)
-  {
-    /* We failed to startup properly, we will quit */
-    goto end;
   }
 
   /**
@@ -457,18 +404,16 @@ end:
 static void
 init_file_server(void)
 {
-  g_start_mutex= ic_mutex_create();
-  g_start_cond= ic_cond_create();
-  ic_require(g_start_mutex && g_start_cond);
+  fs_mutex = ic_mutex_create();
+  ic_require(fs_mutex != NULL);
 }
 
-GOptionEntry ic_fs_extra_entries [] =
+static void
+stop_file_server(void)
 {
-  { "bootstrap", 0, 0, G_OPTION_ARG_STRING,
-    &ic_glob_bootstrap_flag,
-    "Bootstrap file server by creating file server tables", NULL },
-  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
-};
+  if (fs_mutex != NULL)
+    ic_mutex_destroy(fs_mutex);
+}
 
 int main(int argc, char *argv[])
 {
@@ -482,7 +427,7 @@ int main(int argc, char *argv[])
   if ((ret_code= ic_start_program(argc,
                                   argv,
                                   ic_apid_entries,
-                                  ic_fs_extra_entries,
+                                  fs_entries,
                                   "ic_fsd",
                                   "- iClaustron File Server",
                                   TRUE,
@@ -502,7 +447,9 @@ int main(int argc, char *argv[])
                                 tp_state,
                                 run_file_server_thread,
                                 &err_str);
+
 end:
+  stop_file_server();
   ic_stop_apid_program(ret_code,
                        err_str,
                        apid_global,
