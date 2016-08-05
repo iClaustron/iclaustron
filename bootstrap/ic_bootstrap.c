@@ -1314,7 +1314,8 @@ end:
 
 static int
 start_file_server(IC_CONNECTION *conn,
-                  IC_FILE_SERVER_DATA *fs_data)
+                  IC_FILE_SERVER_DATA *fs_data,
+                  gboolean bootstrap)
 {
   int ret_code;
   gchar buf[IC_NUMBER_SIZE + 4];
@@ -1339,7 +1340,7 @@ start_file_server(IC_CONNECTION *conn,
 
   if (!(connect_string= ic_get_connectstring(glob_grid_cluster)))
     goto end;
-  num_params= get_debug_params() + (guint64)4;
+  num_params= get_debug_params() + (guint64)6;
   if ((ret_code= ic_send_with_cr_with_number(conn,
                                              ic_num_parameters_str,
                                              num_params)) ||
@@ -1356,6 +1357,12 @@ start_file_server(IC_CONNECTION *conn,
       (ret_code= ic_send_with_cr_two_strings(conn,
                                              ic_parameter_str,
                                              connect_string)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_parameter_str,
+                                             ic_bootstrap_str)) ||
+      (ret_code= ic_send_with_cr_with_number(conn,
+                                             ic_parameter_str,
+                                             (guint64)bootstrap)) ||
       (ret_code= ic_send_empty_line(conn)))
     goto end;
   if ((ret_code= ic_rec_simple_str_opt(conn, ic_ok_str, &found)))
@@ -1771,7 +1778,7 @@ ic_start_file_servers_cmd(IC_PARSE_DATA *parse_data)
       ic_print_error(ret_code);
       goto error;
     }
-    if ((ret_code= start_file_server(conn, fs_data)))
+    if ((ret_code= start_file_server(conn, fs_data, (i == 0))))
     {
       ic_printf("Failed to start File Server id %u", fs_data->node_id);
       ic_print_error(ret_code);

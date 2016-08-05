@@ -31,6 +31,7 @@ static const gchar *file_table_ptr= "file_table";
 static const gchar *file_key_ptr= "file_key";
 static const gchar *file_data_ptr= "file_data";
 
+#define NDB_TABLE_ALREADY_EXISTS_ERROR 721
 static int glob_bootstrap = 0;
 
 static IC_MUTEX *fs_mutex = NULL;
@@ -54,7 +55,7 @@ run_bootstrap(IC_APID_CONNECTION *apid_conn)
   IC_ALTER_TABLE *md_alter_table= NULL;
   const gchar *pk_names[1];
   const gchar *file_key_str= "file_key";
-  DEBUG_ENTRY("run_bootstrap_thread");
+  DEBUG_ENTRY("run_bootstrap");
 
   pk_names[0]= file_key_str;
   ret_code= IC_ERROR_MEM_ALLOC;
@@ -117,9 +118,14 @@ run_bootstrap(IC_APID_CONNECTION *apid_conn)
 error:
   if (md_trans)
     md_trans->md_trans_ops->ic_free_md_trans(md_trans);
-  ic_printf("Failed to create table: file_table, ret_code = %u",
-            ret_code);
-  DEBUG_RETURN_INT(1);
+  if (ret_code != NDB_TABLE_ALREADY_EXISTS_ERROR)
+  {
+    ic_printf("Failed to create table: file_table, ret_code = %u",
+              ret_code);
+    DEBUG_RETURN_INT(1);
+  }
+  ic_printf("Table: file_table already existed, ok");
+  DEBUG_RETURN_INT(0);
 }
 
 static int
@@ -305,9 +311,6 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
   guint64 file_key= 13;
   int ret_code;
   guint32 cluster_id= 0;
-  gboolean bootstrap_failed= FALSE;
-  gboolean is_first_thread;
-  gboolean startup_success= FALSE;
   guint32 i;
   gchar *data_str= "Some random string with data in it";
   DEBUG_ENTRY("run_file_server_thread");
@@ -338,7 +341,7 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
   {
     glob_bootstrap = 0;
     ic_mutex_unlock(fs_mutex);
-    if ((ret_code = run_bootstrap_thread(apid_conn, thread_state)))
+    if ((ret_code = run_bootstrap(apid_conn)))
       goto error;
   }
   else
@@ -397,8 +400,6 @@ run_file_server_thread(IC_APID_CONNECTION *apid_conn,
 error:
   /* Handle errors reported through IC_APID_ERROR */
   DEBUG_RETURN_INT(ret_code);
-end:
-  DEBUG_RETURN_INT(0);
 }
 
 static void
@@ -412,7 +413,7 @@ static void
 stop_file_server(void)
 {
   if (fs_mutex != NULL)
-    ic_mutex_destroy(fs_mutex);
+    ic_mutex_destroy(&fs_mutex);
 }
 
 int main(int argc, char *argv[])

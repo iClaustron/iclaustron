@@ -66,6 +66,7 @@ extern const gchar *ic_cs_connectstring_str;
 extern const gchar *ic_initial_flag_str;
 extern const gchar *ic_cluster_id_str;
 extern const gchar *ic_node_id_str;
+extern const gchar *ic_bootstrap_str;
 extern const gchar *ic_server_name_str;
 extern const gchar *ic_server_port_str;
 extern const gchar *ic_data_dir_str;

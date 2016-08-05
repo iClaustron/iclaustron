@@ -105,6 +105,7 @@ const gchar *ic_cs_connectstring_str= "--cs-connectstring";
 const gchar *ic_initial_flag_str= "--initial";
 const gchar *ic_cluster_id_str= "--cluster-id";
 const gchar *ic_node_id_str= "--node-id";
+const gchar *ic_bootstrap_str= "--bootstrap";
 const gchar *ic_server_name_str= "--server-name";
 const gchar *ic_server_port_str="--server-port";
 const gchar *ic_data_dir_str= "--data-dir";

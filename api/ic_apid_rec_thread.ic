@@ -218,6 +218,7 @@ remove_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
   {
     if (next_send_node_conn == rem_send_node_conn)
     {
+      found= TRUE;
       if (prev_send_node_conn == NULL)
       {
         rec_state->first_send_node= rem_send_node_conn->next_send_node;
@@ -232,7 +233,6 @@ remove_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
     next_send_node_conn= next_send_node_conn->next_send_node;
   }
   DEBUG_RETURN_INT(found);
-  return found;
 }
 
 static void
@@ -419,7 +419,8 @@ get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
 }
 
 static void
-read_message_early(gchar *read_ptr, guint32 *message_size,
+read_message_early(gchar *read_ptr,
+                   guint32 *message_size,
                    guint32 *receiver_module_id)
 {
   guint32 *message_ptr= (guint32*)read_ptr;
@@ -701,7 +702,8 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
       {
         if (!read_header_flag)
         {
-          read_message_early(read_ptr, &message_size,
+          read_message_early(read_ptr,
+                             &message_size,
                              &receiver_module_id);
           read_header_flag= TRUE;
         }
@@ -712,8 +714,11 @@ ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
           break;
         }
 
-        DEBUG_PRINT(COMM_LEVEL, ("Message received from %u with size %u",
-                    receiver_module_id, message_size));
+        DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+                    ("Message received from node %u to module %u with size %u",
+                     rec_node->other_node_id,
+                     receiver_module_id,
+                     message_size));
         if (receiver_module_id != IC_NDB_PACKED_MODULE_ID &&
             receiver_module_id >= IC_NDB_MIN_MODULE_ID_FOR_THREADS)
         {
