@@ -63,7 +63,7 @@
  *  get_64bit_value: Get 64 bit value from key-value pairs
  *  key_type_error: Report an error on key-value pairs
  */
-static gchar ver_string[8]= { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x56 };
+static gchar ver_string[8]= { 0x4E, 0x44, 0x42, 0x43, 0x4F, 0x4E, 0x46, 0x32 };
 static int
 analyse_key_value(guint32 *key_value, guint32 len,
                   IC_INT_API_CONFIG_SERVER *apic,
@@ -229,6 +229,10 @@ analyse_key_value(guint32 *key_value, guint32 len,
   guint32 node_section, node_index;
   DEBUG_ENTRY("analyse_key_value");
 
+  for (guint32 i = 0; i < len; i++)
+  {
+    ic_printf("key[%u] = 0x%x", i, g_ntohl(key_value[i]));
+  }
   conf_obj= apic->conf_objects[cluster_id];
   conf_obj->num_nodes= 0;
   for (pass= 0; pass < 2; pass++)

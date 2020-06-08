@@ -551,7 +551,7 @@ static const gchar *data_str= "data:";
 
 static const gchar *get_nodeid_str= "get nodeid";
 static const gchar *get_nodeid_reply_str= "get nodeid reply";
-static const gchar *get_config_str= "get config";
+static const gchar *get_config_str= "get config_v2";
 static const gchar *get_config_reply_str= "get config reply";
 static const gchar *nodeid_str= "nodeid:";
 static const gchar *node1_str= "node1:";

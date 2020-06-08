@@ -414,12 +414,6 @@ ic_printf(const char *format,...)
   {
     fprintf(stdout_fd, "%s\n", buf);
   }
-#ifdef DEBUG_BUILD
-  if (debug_mutex) /* Verify debug system is up and running */
-  {
-    DEBUG_PRINT(PROGRAM_LEVEL, ("%s", buf));
-  }
-#endif
   ic_flush_stdout();
   va_end(args);
 }
