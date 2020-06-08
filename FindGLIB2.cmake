@@ -120,6 +120,7 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
           /usr/lib64/glib-2.0/include
           /usr/lib/glib-2.0/include
           /usr/local/lib/glib-2.0/include
+          /usr/lib/x86_64-linux-gnu/glib-2.0/include
         NO_DEFAULT_PATH)
     else(NOT WIN32)
       find_path(GLIBCONFIG_INCLUDE_DIR

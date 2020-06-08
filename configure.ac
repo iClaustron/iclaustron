@@ -4,10 +4,10 @@ dnl After that invoking automake (AM_INIT_AUTOMAKE) and then creating the
 dnl portability header file config.h
 
 AC_PREREQ(2.59)
-AC_INIT
+AC_INIT([iclaustron], [0.0.1])
 AC_CONFIG_AUX_DIR(config)
 AC_CANONICAL_SYSTEM
-AM_INIT_AUTOMAKE(iclaustron, 0.0.1)
+AM_INIT_AUTOMAKE
 AM_CONFIG_HEADER(include/config.h)
 AC_LANG(C)
 
