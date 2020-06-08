@@ -212,23 +212,20 @@ free_cs_config(IC_API_CONFIG_SERVER *ext_apic)
   {
     if (apic->config_mutex)
       ic_mutex_destroy(&apic->config_mutex);
-    if (apic->conf_objects)
+    for (i= 0; i <= apic->max_cluster_id; i++)
     {
-      for (i= 0; i <= apic->max_cluster_id; i++)
+      IC_CLUSTER_CONFIG *conf_obj= apic->conf_objects[i];
+      if (!conf_obj)
+        continue;
+      if (conf_obj->cs_conn)
       {
-        IC_CLUSTER_CONFIG *conf_obj= apic->conf_objects[i];
-        if (!conf_obj)
-          continue;
-        if (conf_obj->cs_conn)
-        {
-          conf_obj->cs_conn->conn_op.ic_free_connection(conf_obj->cs_conn);
-          conf_obj->cs_conn= NULL;
-        }
-        ic_assert(!conf_obj->node_ids);
-        if (conf_obj->comm_hash)
-        {
-          ic_hashtable_destroy(conf_obj->comm_hash, FALSE);
-        }
+        conf_obj->cs_conn->conn_op.ic_free_connection(conf_obj->cs_conn);
+        conf_obj->cs_conn= NULL;
+      }
+      ic_assert(!conf_obj->node_ids);
+      if (conf_obj->comm_hash)
+      {
+        ic_hashtable_destroy(conf_obj->comm_hash, FALSE);
       }
     }
     apic->mc_ptr->mc_ops.ic_mc_free(apic->mc_ptr);
