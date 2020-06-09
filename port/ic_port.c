@@ -1693,9 +1693,9 @@ void
 ic_generate_core_files(void)
 {
 #ifndef WINDOWS
-  int ret;
-  struct rlimit rl = { RLIM_INFINITY, RLIM_INFINITY };
-  ret= setrlimit(RLIMIT_CORE, &rl);
+  int ret = 0;
+  //struct rlimit rl = { RLIM_INFINITY, RLIM_INFINITY };
+  //ret= setrlimit(RLIMIT_CORE, &rl);
   if (ret)
   {
     printf("setrlimit: ret= %d\n", ret);
