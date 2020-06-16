@@ -1,4 +1,4 @@
-/* Copyight (C) 2007, 2016 iClaustron AB
+/* Copyight (C) 2020, 2020 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -13,3 +13,153 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
+
+
+static void
+free_cluster_config(IC_CLUSTER_CONFIG *cluster_config)
+{
+}
+static int
+get_node_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
+                       guint32 *return_value,
+                       guint32 node_id,
+                       guint32 key)
+{
+  IC_INT_CLUSTER_CONFIG *cluster_config =
+    (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+}
+static int
+get_node_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config
+                       guint64 *return_value,
+                       guint32 node_id,
+                       guint32 key)
+{
+  IC_INT_CLUSTER_CONFIG *cluster_config =
+    (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+}
+static int
+get_node_config_str(IC_CLUSTER_CONFIG *ext_cluster_config,
+                    IC_STRING *return_value,
+                    guint32 node_id,
+                    guint32 key)
+{
+  IC_INT_CLUSTER_CONFIG *cluster_config =
+    (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+}
+static int
+get_comm_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
+                       guint32 *return_value,
+                       guint32 node_id,
+                       guint32 key)
+{
+  IC_INT_CLUSTER_CONFIG *cluster_config =
+    (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+}
+static int
+get_comm_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config,
+                       guint64 *return_value,
+                       guint32 node_id,
+                       guint32 key)
+{
+  IC_INT_CLUSTER_CONFIG *cluster_config =
+    (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+}
+static int
+get_comm_config_str(IC_CLUSTER_CONFIG *ext_cluster_config,
+                    IC_STRING *return_value,
+                    guint32 node_id,
+                    guint32 key)
+{
+  IC_INT_CLUSTER_CONFIG *cluster_config =
+    (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+}
+
+static guint32
+find_nodeid(guint32 next_index, 
+            guint32 *key_value,
+            guint32 *node_id, 
+            guint32 *node_type)
+{
+  guint32 next_len = key_value[next_index];
+  guint32 current_next_index = next_index;
+  next_index += next_len;
+  guint32 total_entries = key_value[current_next_index + 1];
+  *node_type = key_value[current_next_index + 2];
+  guint32 loop_next_index = current_next_index + 3;
+  while (total_entries > 0)
+  {
+    guint32 first_word = key_value[loop_next_index];
+    guint32 key_type = first_word >> IC_CL_KEY_SHIFT;
+    guint32 key = first_word & IC_CL_NEW_KEY_MASK;
+    switch (key_type)
+    {
+      case 1:
+      {
+        if (key = x)
+        {
+          *node_id = key_value[loop_next_index + 1];
+          return next_index;
+        }
+        loop_next_index += 2;
+      }
+      case 2:
+      {
+        loop_next_index += 3;
+      }
+      case 4:
+      {
+        guint32 str_len = key_value[loop_next_index + 1];
+        guint32 word_count = (str_len + 3)/4;
+        loop_next_index += (word_count + 2);
+      }
+      default:
+    }
+    total_entries--;
+  }
+  return 0; 
+  
+}
+
+
+
+IC_CLUSTER_CONFIG*
+ic_create_network_cluster_config(guint32 *key_value,
+                                 guint32 len,
+                                 guint32 cluster_id)
+  guint32 *section_def_dn = &key_value[7];
+  guint32 next_len = key_value[7];
+  guint32 next_index = 7 + next_len;
+  guint32 *section_def_api = *cluster_config[next_index];
+  next_len = key[next_index];
+  next_index += next_len;
+  guint32 *section_def_mgm = *cluster_config[next_index];
+  next_len = key[next_index];
+  next_index += next_len;
+  guint32 *section_def_tcp = *cluster_config[next_index]; 
+  next_len = key[next_index];
+  next_index += next_len;
+  guint32 *section_def_shm = *cluster_config[next_index];
+  next_len = key[next_index];
+  next_index += next_len;
+  guint32 *section_def_system = *cluster_config[next_index];
+  next_len = key[next_index];
+  next_index += next_len;
+  
+  guint32 total_nodes = key_value[3] + 
+    key_value[4] + key_value[5];
+  for (guint32 i = 0; i < total_nodes; i++)
+  {
+    current_next_index = next_index;
+    next_index = find_nodeid(next_index,
+                             key_value,
+                             &node_id,
+                             &node_type);
+   if (next_index == 0)
+   {
+     // handle error
+   }
+   node_section_ptrs[node_id] = current_next_index;
+   node_type_array[node_id] = node_type; 
+  }
+{
+}

@@ -102,7 +102,19 @@ typedef struct ic_cluster_connect_info IC_CLUSTER_CONNECT_INFO;
 
 struct ic_cluster_config
 {
-  void (*ic_free_cluster_config) (void *clu_conf);
+  void(*ic_free_cluster_config_info) (IC_CLUSTER_CONFIG *cluster_config);
+
+  int(*get_node_config_uint32) (IC_CLUSTER_CONFIG *cluster_config);
+
+  int(*get_node_config_uint64) (IC_CLUSTER_CONFIG *cluster_config);
+
+  int(*get_node_config_str) (IC_CLUSTER_CONFIG *cluster_config);
+
+  int(*get_comm_config_uint32) (IC_CLUSTER_CONFIG *cluster_config);
+
+  int(*get_comm_config_uint64) (IC_CLUSTER_CONFIG *cluster_config);
+
+  int(*get_comm_config_str) (IC_CLUSTER_CONFIG *cluster_config);
   /*
     DESCRIPTION:
     ------------
@@ -135,7 +147,6 @@ struct ic_cluster_config
     Also the node_types array is addressed by nodeid in the final version of
     this data structure.
   */
-  gchar **node_config;
   /*
     comm_config is an array of pointers that point to structs of the
     types:
@@ -147,7 +158,6 @@ struct ic_cluster_config
     for each entry. Currently only socket links are possible. Thus this
     array is currently not implemented.
   */
-  gchar **comm_config;
 
   /*
     We have a name and an id and a password on all clusters. This is
@@ -155,28 +165,15 @@ struct ic_cluster_config
     the rest of the information is stored in each specific cluster
     configuration file. There is also a cluster id for each cluster.
   */
-  IC_CLUSTER_CONNECT_INFO clu_info;
   /*
     As part of receiving the configuration we also receive information
     about the cluster (system).
   */
-  IC_SYSTEM_CONFIG sys_conf;
 
   /*
     We keep track of the number of nodes of various types, maximum node id
     and the number of communication objects.
   */
-  guint32 max_node_id;
-  guint32 num_nodes;
-  guint32 num_data_servers;
-  guint32 num_cluster_servers;
-  guint32 num_clients;
-  guint32 num_sql_servers;
-  guint32 num_rep_servers;
-  guint32 num_file_servers;
-  guint32 num_restore_nodes;
-  guint32 num_cluster_mgrs;
-  guint32 num_comms;
   /*
     node_ids is an array of the node ids used temporarily when building the
     data structures, this is not to be used after that, should be a NULL
@@ -199,14 +196,13 @@ struct ic_cluster_config
     nodeid, we will complete the NDB Management Protocol as part of setting
     up the Data API.
   */
-  guint32 *node_ids;
-  guint32 my_node_id;
-  guint32 cs_nodeid;
-  IC_CONNECTION *cs_conn;
-  IC_NODE_TYPES *node_types;
-  IC_HASHTABLE *comm_hash;
 };
 typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
+
+IC_CLUSTER_CONFIG*
+ic_create_network_cluster_config(guint32 *key_value,
+                                 guint32 len,
+                                 guint32 cluster_id);
 
 /* Mandatory bits is first in all node types and also in comm type */
 #define IC_NODE_COMMON_DECLARES \

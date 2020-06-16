@@ -658,6 +658,7 @@ static const gchar *ic_starting_str= "starting";
 #define IC_CL_KEY_SHIFT 28
 #define IC_CL_SECT_SHIFT 14
 #define IC_CL_SECT_MASK 0x3FFF
+#define IC_CL_NEW_KEY_MASK 0x0FFFFFFF
 #define IC_CL_INT32_TYPE 1
 #define IC_CL_CHAR_TYPE  2
 #define IC_CL_SECT_TYPE  3
