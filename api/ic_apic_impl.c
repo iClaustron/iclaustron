@@ -52,3 +52,4 @@
 #include "ic_apic_if.ic"
 #include "ic_apic_run_cs.ic"
 #include "ic_apic_conf_net_read.ic"
+#include "ic_apic_cluster_config.ic"

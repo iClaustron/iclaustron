@@ -72,6 +72,7 @@ int ic_setup_stdout(gchar *log_file);
 #define MALLOC_LEVEL 8192
 #define HEARTBEAT_LEVEL 16384
 #define COMM_DETAIL_LEVEL 32768
+#define FIND_NODE_CONFIG_LEVEL 65536
 #define ALL_DEBUG_LEVELS 0xFFFFFFFF
 
 #ifdef DEBUG_BUILD

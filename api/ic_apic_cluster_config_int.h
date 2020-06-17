@@ -15,5 +15,16 @@
 struct ic_int_cluster_config
 {
   IC_CLUSTER_CONFIG clu_conf_ops;
+  guint32 *key_value;
+  guint32 len;
+  guint32 cluster_id;
+  guint32 section_def_dn_index;
+  guint32 section_def_api_index;
+  guint32 section_def_mgm_index;
+  guint32 section_def_tcp_index;
+  guint32 section_def_shm_index;
+  guint32 section_def_system_index;
+  guint32 node_section_ptrs[MAX_NODEID + 1];
+  guint8 node_type_array[MAX_NODEID + 1];
 
 };

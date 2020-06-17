@@ -102,19 +102,42 @@ typedef struct ic_cluster_connect_info IC_CLUSTER_CONNECT_INFO;
 
 struct ic_cluster_config
 {
-  void(*ic_free_cluster_config_info) (IC_CLUSTER_CONFIG *cluster_config);
+  void(*ic_free_cluster_config)  (void *cluster_config);
 
-  int(*get_node_config_uint32) (IC_CLUSTER_CONFIG *cluster_config);
+  int(*ic_get_node_config_uint32) (void *cluster_config);
 
-  int(*get_node_config_uint64) (IC_CLUSTER_CONFIG *cluster_config);
+  int(*ic_get_node_config_uint64) (void *cluster_config);
 
-  int(*get_node_config_str) (IC_CLUSTER_CONFIG *cluster_config);
+  int(*ic_get_node_config_str) (void *cluster_config);
 
-  int(*get_comm_config_uint32) (IC_CLUSTER_CONFIG *cluster_config);
+  int(*ic_get_comm_config_uint32) (void *cluster_config);
 
-  int(*get_comm_config_uint64) (IC_CLUSTER_CONFIG *cluster_config);
+  int(*ic_get_comm_config_uint64) (void *cluster_config);
 
-  int(*get_comm_config_str) (IC_CLUSTER_CONFIG *cluster_config);
+  int(*ic_get_comm_config_str) (void *cluster_config);
+  
+  gchar **node_config;
+  gchar **comm_config;
+  IC_CLUSTER_CONNECT_INFO clu_info;
+  IC_SYSTEM_CONFIG sys_conf;
+  guint32 max_node_id;
+  guint32 num_nodes;
+  guint32 num_data_servers;
+  guint32 num_cluster_servers;
+  guint32 num_clients;
+  guint32 num_sql_servers;
+  guint32 num_rep_servers;
+  guint32 num_file_servers;
+  guint32 num_restore_nodes;
+  guint32 num_cluster_mgrs;
+  guint32 num_comms;
+  guint32 *node_ids;
+  guint32 my_node_id;
+  guint32 cs_nodeid;
+  IC_CONNECTION *cs_conn;
+  IC_NODE_TYPES *node_types;
+  IC_HASHTABLE *comm_hash;
+  
   /*
     DESCRIPTION:
     ------------
