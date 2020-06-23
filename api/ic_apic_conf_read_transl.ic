@@ -215,9 +215,10 @@ analyse_key_value(guint32 *key_value, guint32 len,
                   IC_INT_API_CONFIG_SERVER *apic,
                   guint32 cluster_id)
 {
+  int error_code;
+  IC_CLUSTER_CONFIG *conf_obj;
   guint32 *key_value_start= key_value;
   guint32 *key_value_end= key_value + len;
-  IC_CLUSTER_CONFIG *conf_obj;
   gboolean first= TRUE;
   gboolean first_data_server= TRUE;
   int ret_code;
@@ -228,11 +229,15 @@ analyse_key_value(guint32 *key_value, guint32 len,
   guint32 num_apis= 0;
   guint32 node_section, node_index;
   DEBUG_ENTRY("analyse_key_value");
-
   for (guint32 i = 0; i < len; i++)
   {
     ic_printf("key[%u] = 0x%x", i, g_ntohl(key_value[i]));
   }
+  conf_obj =  ic_create_network_cluster_config(key_value,
+                                               len,
+                                               cluster_id,
+                                               &error_code);
+
   conf_obj= apic->conf_objects[cluster_id];
   conf_obj->num_nodes= 0;
   for (pass= 0; pass < 2; pass++)
@@ -1054,7 +1059,7 @@ get_conf_entry(guint32 hash_key)
   if (hash_key < MAX_MAP_CONFIG_ID)
   {
     id= map_config_id_to_inx[hash_key];
-    if (id < MAX_CONFIG_ID)
+    if ((id < MAX_CONFIG_ID) && (id != 0))
     {
       conf_entry= &glob_conf_entry[id];
       if (!conf_entry)

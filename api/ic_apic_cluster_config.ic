@@ -12,28 +12,23 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+#include "ic_apic_cluster_config_int.h"
 
 
-
-static void
-free_cluster_config(IC_CLUSTER_CONFIG *cluster_config)
-{
-}
 static guint32
 find_config_entry_uint32(guint32 section_start,
                          guint32 key, 
                          guint32 *key_value,
                          guint32 *config_value)
 {
-  guint32 section_len = key_value[section_start];
-  guint32 total_entries = key_value[section_start + 1];
+  guint32 total_entries = g_ntohl(key_value[section_start + 1]);
   guint32 loop_next_index = section_start + 3;
   DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
     ("start of current section %u, total entries in current section %u",
      section_start, total_entries));
   while (total_entries > 0)
   {
-    guint32 first_word = key_value[loop_next_index];
+    guint32 first_word = g_ntohl(key_value[loop_next_index]);
     guint32 key_type = first_word >> IC_CL_KEY_SHIFT;
     guint32 config_id = first_word & IC_CL_NEW_KEY_MASK;
     DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
@@ -44,7 +39,7 @@ find_config_entry_uint32(guint32 section_start,
       {
         if (config_id == key)
         {
-          *config_value = key_value[loop_next_index + 1];
+          *config_value = g_ntohl(key_value[loop_next_index + 1]);
           return 0;
         }
         loop_next_index += 2;
@@ -57,7 +52,7 @@ find_config_entry_uint32(guint32 section_start,
       }
       case 4:
       {
-        guint32 str_len = key_value[loop_next_index + 1];
+        guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
         guint32 word_count = (str_len + 3)/4;
         loop_next_index += (word_count + 2);
         break;
@@ -75,19 +70,18 @@ find_config_entry_uint32(guint32 section_start,
 }
 static guint32
 find_config_entry_uint64(guint32 section_start,
-                          guint32 key,
-                          guint32 *key_value,
-                          guint64 *config_value)
+                         guint32 key,
+                         guint32 *key_value,
+                         guint64 *config_value)
 {
-  guint32 section_len = key_value[section_start];
-  guint32 total_entries = key_value[section_start + 1];
+  guint32 total_entries = g_ntohl(key_value[section_start + 1]);
   guint32 loop_next_index = section_start + 3;
   DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
     ("start of current section %u, total entries in current section %u",
      section_start, total_entries));
   while (total_entries > 0)
   {
-    guint32 first_word = key_value[loop_next_index];
+    guint32 first_word = g_ntohl(key_value[loop_next_index]);
     guint32 key_type = first_word >> IC_CL_KEY_SHIFT;
     guint32 config_id = first_word & IC_CL_NEW_KEY_MASK;
     DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
@@ -103,8 +97,8 @@ find_config_entry_uint64(guint32 section_start,
       {
         if (config_id == key)
         {
-          guint64 val_high = key_value[loop_next_index + 1];
-          guint64 val_low = key_value[loop_next_index + 2];
+          guint64 val_high = g_ntohl(key_value[loop_next_index + 1]);
+          guint64 val_low = g_ntohl(key_value[loop_next_index + 2]);
           guint64 val = val_low + (val_high << 32);
           *config_value = val;
           return 0;
@@ -114,7 +108,7 @@ find_config_entry_uint64(guint32 section_start,
       }
       case 4:
       {
-        guint32 str_len = key_value[loop_next_index + 1];
+        guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
         guint32 word_count = (str_len + 3)/4;
         loop_next_index += (word_count + 2);
         break;
@@ -135,8 +129,7 @@ find_config_entry_string(guint32 section_start,
                          guint32 *key_value,
                          IC_STRING *config_value)
 {
-  guint32 section_len = key_value[section_start];
-  guint32 total_entries = key_value[section_start + 1];
+  guint32 total_entries = g_ntohl(key_value[section_start + 1]);
   guint32 loop_next_index = section_start + 3;
   DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
     ("start of current section %u, total entries in current section %u",
@@ -144,7 +137,7 @@ find_config_entry_string(guint32 section_start,
 
   while (total_entries > 0)
   {
-    guint32 first_word = key_value[loop_next_index];
+    guint32 first_word = g_ntohl(key_value[loop_next_index]);
     guint32 key_type = first_word >> IC_CL_KEY_SHIFT;
     guint32 config_id = first_word & IC_CL_NEW_KEY_MASK;
     DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
@@ -163,7 +156,7 @@ find_config_entry_string(guint32 section_start,
       }
       case 4:
       {
-        guint32 str_len = key_value[loop_next_index + 1];
+        guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
         guint32 word_count = (str_len + 3)/4;
         loop_next_index += (word_count + 2);
         if (config_id == key)
@@ -226,7 +219,7 @@ get_node_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
   IC_INT_CLUSTER_CONFIG *cluster_config =
     (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
   
-  guint32 return_code = find_config_entry_guint32(
+  guint32 return_code = find_config_entry_uint32(
                         cluster_config->node_section_ptrs[node_id],
                         key,
                         cluster_config->key_value,
@@ -235,7 +228,7 @@ get_node_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
   {
     return return_code;
   }
-  guint32 section_start = 0;                          
+  guint32 *section_start;                          
   guint32 ret_value = get_def_node_section(
                               cluster_config,
                               cluster_config->node_type_array[node_id],
@@ -245,7 +238,7 @@ get_node_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
     // handle error
     return IC_ERROR_NO_DEF_NODE_SECT_FOUND;
   }
-  return_code = find_config_entry_guint32(section_start,
+  return_code = find_config_entry_uint32(section_start,
                                           key,
                                           cluster_config->key_value,
                                           return_value);
@@ -254,14 +247,14 @@ get_node_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
 
 
 static int
-get_node_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config
+get_node_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config,
                        guint64 *return_value,
                        guint32 node_id,
                        guint32 key)
 {
   IC_INT_CLUSTER_CONFIG *cluster_config =
     (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
-  guint32 return_code = find_config_entry_guint64(
+  guint32 return_code = find_config_entry_uint64(
                              cluster_config->node_section_ptrs[node_id],
                              key,
                              cluster_config->key_value,
@@ -270,7 +263,7 @@ get_node_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config
   {
     return return_code;
   }
-  guint32 section_start = 0;                          
+  guint32 *section_start;                          
   guint32 ret_value = get_def_node_section(
                               cluster_config,
                               cluster_config->node_type_array[node_id],
@@ -280,7 +273,7 @@ get_node_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config
     // handle error
     return IC_ERROR_NO_DEF_NODE_SECT_FOUND;
   }
-  return_code = find_config_entry_guint64(section_start,
+  return_code = find_config_entry_uint64(section_start,
                                           key,
                                           cluster_config->key_value,
                                           return_value);
@@ -303,7 +296,7 @@ get_node_config_str(IC_CLUSTER_CONFIG *ext_cluster_config,
   {
     return return_code;
   }
-  guint32 section_start = 0;                          
+  guint32 *section_start;                          
   guint32 ret_value = get_def_node_section(
                               cluster_config,
                               cluster_config->node_type_array[node_id],
@@ -353,19 +346,19 @@ find_nodeid(guint32 next_index,
             guint32 *node_id, 
             guint32 *node_type)
 {
-  guint32 next_len = key_value[next_index];
+  guint32 next_len = g_ntohl(key_value[next_index]);
   guint32 current_next_index = next_index;
   next_index += next_len;
-  guint32 total_entries = key_value[current_next_index + 1];
-  *node_type = key_value[current_next_index + 2];
+  guint32 total_entries = g_ntohl(key_value[current_next_index + 1]);
+  *node_type = g_ntohl(key_value[current_next_index + 2]);
   guint32 loop_next_index = current_next_index + 3;
   DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
-    ("total entries %u node type %u",
-     total_entries, node_type));
+    ("total entries %u node type %x",
+     total_entries, *node_type));
 
   while (total_entries > 0)
   {
-    guint32 first_word = key_value[loop_next_index];
+    guint32 first_word = g_ntohl(key_value[loop_next_index]);
     guint32 key_type = first_word >> IC_CL_KEY_SHIFT;
     guint32 key = first_word & IC_CL_NEW_KEY_MASK;
     DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
@@ -375,9 +368,9 @@ find_nodeid(guint32 next_index,
     {
       case 1:
       {
-        if (key = IC_NODE_ID)
+        if (key == IC_NODE_ID)
         {
-          *node_id = key_value[loop_next_index + 1];
+          *node_id = g_ntohl(key_value[loop_next_index + 1]);
           return next_index;
         }
         loop_next_index += 2;
@@ -388,7 +381,7 @@ find_nodeid(guint32 next_index,
       }
       case 4:
       {
-        guint32 str_len = key_value[loop_next_index + 1];
+        guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
         guint32 word_count = (str_len + 3)/4;
         loop_next_index += (word_count + 2);
       }
@@ -404,22 +397,102 @@ find_nodeid(guint32 next_index,
   
 }
 
+static guint32
+check_section(guint32 *key_value,
+              guint32 section_start,
+              gboolean is_system_section)
+{
+  IC_CONFIG_ENTRY *conf_obj;
+  guint32 total_entries = g_ntohl(key_value[section_start + 1]);
+  guint32 loop_next_index = section_start + 3;
+  DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+    ("start of current section %u, total entries in current section %u",
+     section_start, total_entries));
+  while (total_entries > 0)
+  {
+    guint32 first_word= g_ntohl(key_value[loop_next_index]);
+    guint32 key_type= first_word >> IC_CL_KEY_SHIFT;
+    guint32 key= first_word & IC_CL_NEW_KEY_MASK;
+    if (is_system_section)
+    {
+      key += SYSTEM_SECTION_ADJUSTMENT;
+    }
+    conf_obj= get_conf_entry(key);
+    DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+    ("config id %u", key));
+    if (conf_obj == NULL)
+    {
+      return 1;
+    }
+    switch (key_type)
+    {
+      case 1:
+      { 
+        DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+        ("config entry name %s, ndb entry name %s, config types %u",
+         conf_obj->config_entry_name.str,
+         conf_obj->ndb_entry_name.str,
+         conf_obj->config_types));
+        loop_next_index += 2; 
+        break;
+      }
+      case 4:
+      {
+        DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+        ("config entry name %s, ndb entry name %s, config types %u,"
+          "max value %llu, min value %llu",
+         conf_obj->config_entry_name.str,
+         conf_obj->ndb_entry_name.str,
+         conf_obj->config_types,
+         conf_obj->max_value,
+         conf_obj->min_value));
+        loop_next_index += 3;
+        break;
+      }
+      case 2:
+      {
+        guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
+        guint32 word_count = (str_len + 3)/4;
+        loop_next_index += (word_count + 2);
+        DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+        ("config entry name %s, ndb entry name %s, word count %u",
+         conf_obj->config_entry_name.str,
+         conf_obj->ndb_entry_name.str,
+         word_count));
+        break;
+      }
+      default:
+      {
+        ic_require(FALSE);
+        return 1;
+      }
+    }
+    total_entries--;
+  }
+  return 0; ;
+}
 
 
 IC_CLUSTER_CONFIG*
 ic_create_network_cluster_config(guint32 *key_value,
                                  guint32 len,
-                                 guint32 cluster_id)
+                                 guint32 cluster_id,
+                                 int *error_code)
+{
+  guint32 ret;
   IC_INT_CLUSTER_CONFIG *conf;
   guint32 *my_key_value;
-  if ((conf= (IC_INT_CLUSTER_CONFIG*)ic_calloc(sizeof(*conf))))
+  DEBUG_ENTRY("create network cluster config");
+  if (!(conf= (IC_INT_CLUSTER_CONFIG*)ic_calloc(sizeof(*conf))))
   {
-    return IC_MEM_ALLOC_ERROR;
+    *error_code = IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_PTR(NULL);
   }
-  if ((my_key_value = (guint32*)ic_calloc(len*4)))
+  if (!(my_key_value = (guint32*)ic_calloc(len*4)))
   {
     ic_free(conf);
-    return IC_MEM_ALLOC_ERROR;
+    *error_code = IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_PTR(NULL);
   }
   memcpy(my_key_value, key_value, 4*len);
   conf-> key_value = my_key_value;
@@ -429,52 +502,105 @@ ic_create_network_cluster_config(guint32 *key_value,
     ("length %u cluster_id %u", len, cluster_id));
  
   conf-> section_def_dn_index = 7;
-  guint32 next_len = key_value[7];
-  guint32 next_index = 7 + next_len;
   DEBUG_PRINT(CONFIG_PROTO_LEVEL,
-    ("start of default datanode section index %u", next_index));
+    ("start of default datanode section index %u",
+     conf->section_def_dn_index));
+  if ((ret= check_section(key_value, 
+                          conf-> section_def_dn_index,
+                          FALSE)) !=0)
+  {
+    return ret;
+  }
+  guint32 next_len = g_ntohl(key_value[7]);
+  guint32 next_index = 7 + next_len;
 
 
   conf-> section_def_api_index = next_index;
-  next_len = key_value[next_index];
-  next_index += next_len;
   DEBUG_PRINT(CONFIG_PROTO_LEVEL,
-    ("start of default api node section index  %u", next_index));
+    ("start of default api node section index  %u", 
+     conf->section_def_api_index));
+  if ((ret= check_section(key_value,
+                          conf-> section_def_api_index,
+                          FALSE)) !=0)
+  {
+    return ret;
+  }
+  next_len = g_ntohl(key_value[next_index]);
+  next_index += next_len;
 
 
   conf-> section_def_mgm_index = next_index;
-  next_len = key_value[next_index];
-  next_index += next_len;
   DEBUG_PRINT(CONFIG_PROTO_LEVEL,
-    ("start of default mgm node section index %u", next_index));
+    ("start of default mgm node section index %u", 
+     conf->section_def_mgm_index));
+  if ((ret= check_section(key_value,
+                          conf-> section_def_mgm_index,
+                          FALSE)) !=0)
+  {
+    return ret;
+  }
+  next_len = g_ntohl(key_value[next_index]);
+  next_index += next_len;
 
 
   conf-> section_def_tcp_index = next_index; 
-  next_len = key_value[next_index];
-  next_index += next_len;
   DEBUG_PRINT(CONFIG_PROTO_LEVEL,
-    ("start of default tcp section index %u", next_index));
+    ("start of default tcp section index %u", 
+     conf->section_def_tcp_index));
+  if ((ret= check_section(key_value,
+                          conf-> section_def_tcp_index,
+                          FALSE)) !=0)
+  {
+    return ret;
+  }
+  next_len = g_ntohl(key_value[next_index]);
+  next_index += next_len;
 
 
   conf-> section_def_shm_index = next_index;
-  next_len = key_value[next_index];
-  next_index += next_len;
   DEBUG_PRINT(CONFIG_PROTO_LEVEL,
-    ("start of default shm section index %u", next_index));
+    ("start of default shm section index %u", 
+     conf->section_def_shm_index));
+  if ((ret= check_section(key_value,
+                          conf-> section_def_shm_index,
+                          FALSE)) !=0)
+  {
+    return ret;
+  }
+  next_len = g_ntohl(key_value[next_index]);
+  next_index += next_len;
 
 
   conf-> section_def_system_index = next_index;
-  next_len = key_value[next_index];
-  next_index += next_len;
   DEBUG_PRINT(CONFIG_PROTO_LEVEL,
-    ("start of system section index %u", next_index));
+    ("start of system section index %u", 
+      conf->section_def_system_index));
+  if ((ret= check_section(key_value,
+                          conf-> section_def_system_index,
+                          TRUE)) !=0)
+  {
+    return ret;
+  }
+  next_len = g_ntohl(key_value[next_index]);
+  next_index += next_len;
 
   
-  guint32 total_nodes = key_value[3] + 
-    key_value[4] + key_value[5];
+  guint32 total_nodes = g_ntohl(key_value[3]) + 
+    g_ntohl(key_value[4]) + g_ntohl(key_value[5]);
+  guint32 current_next_index = 0;
+  guint32 node_id = 0;
+  guint32 node_type = 0;
   for (guint32 i = 0; i < total_nodes; i++)
   {
     current_next_index = next_index;
+    DEBUG_PRINT(CONFIG_PROTO_LEVEL,
+    ("find nodeid nextindex %u",next_index));
+    if ((ret= check_section(key_value,
+                            next_index,
+                            FALSE)) !=0)
+    {
+      return ret;
+    }
     next_index = find_nodeid(next_index,
                              key_value,
                              &node_id,
@@ -490,5 +616,6 @@ ic_create_network_cluster_config(guint32 *key_value,
    conf->node_section_ptrs[node_id] = current_next_index;
    conf->node_type_array[node_id] = (guint8)node_type; 
   }
-{
+  DEBUG_RETURN_PTR(conf);
 }
+

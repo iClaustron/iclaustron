@@ -336,7 +336,6 @@ int ic_debug_open(guint32 node_id)
 
 gboolean ic_is_debug_system_active()
 {
-x
   if (debug_mutex != NULL)
   {
     return TRUE;

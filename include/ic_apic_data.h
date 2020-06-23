@@ -225,7 +225,8 @@ typedef struct ic_cluster_config IC_CLUSTER_CONFIG;
 IC_CLUSTER_CONFIG*
 ic_create_network_cluster_config(guint32 *key_value,
                                  guint32 len,
-                                 guint32 cluster_id);
+                                 guint32 cluster_id,
+                                 int *error_code);
 
 /* Mandatory bits is first in all node types and also in comm type */
 #define IC_NODE_COMMON_DECLARES \
@@ -237,8 +238,10 @@ ic_create_network_cluster_config(guint32 *key_value,
   guint32 node_id;        \
   guint32 port_number;    \
   guint32 pcntrl_port;    \
+  guint32 x13;            \
   guint64 network_buffer_size; \
-  guint64 more_network_buffer_size;
+  guint64 more_network_buffer_size; \
+  gchar dedicated_node_id;  
   
 struct ic_data_server_config
 {
@@ -255,11 +258,17 @@ struct ic_data_server_config
   gchar *data_server_initial_log_file_group;
   gchar *data_server_initial_tablespace;
   gchar *data_server_cpu_thread_configuration;
+  gchar *x42;
 
   guint64 size_of_ram_memory;
   guint64 size_of_hash_memory;
   guint64 page_cache_size;
   guint64 data_server_memory_pool;
+  guint64 x9;
+  guint64 x10;
+  guint64 x11;
+  guint64 x12;
+  guint64 x38;
 
   guint32 max_number_of_trace_files;
   guint32 number_of_replicas;
@@ -366,6 +375,34 @@ struct ic_data_server_config
   guint32 data_server_max_queries_per_transaction;
   guint32 data_server_always_free_pct;
   guint32 data_server_resolve_method;
+  guint32 epoch_replication_buffer_size;
+  guint32 x1;
+  guint32 x2;
+  guint32 x3;
+  guint32 x6;
+  guint32 x8;
+  guint32 x14;
+  guint32 x15;
+  guint32 x16;
+  guint32 x17;
+  guint32 x18;
+  guint32 x19;
+  guint32 x22;
+  guint32 x23;
+  guint32 x24;
+  guint32 x25;
+  guint32 x27;
+  guint32 x30;
+  guint32 x31;
+  guint32 x32;
+  guint32 x33;
+  guint32 x34;
+  guint32 x35;
+  guint32 x36;
+  guint32 x37;
+  guint32 x39;
+  guint32 x41;
+  guint32 x43;
 
   gchar use_unswappable_memory;
   gchar data_server_automatic_restart;
@@ -376,6 +413,16 @@ struct ic_data_server_config
   gchar use_o_direct;
   gchar data_server_copy_data_algorithm;
   gchar data_server_crash_flag_on_checksum_error;
+  gchar x4;
+  gchar x5;
+  gchar x7;
+  gchar x20;
+  gchar x21;
+  gchar x26;
+  gchar x28;
+  gchar x29;
+  gchar x40;
+
 };
 typedef struct ic_data_server_config IC_DATA_SERVER_CONFIG;
 
@@ -393,6 +440,9 @@ struct ic_client_config
   guint32 client_max_batch_byte_size;
   guint32 client_batch_byte_size;
   guint32 client_batch_size;
+  guint32 x44;
+  guint32 x45;
+  guint32 x46;
 
   guint32 apid_num_threads;
   guint32 client_default_redo_operation_type;
@@ -414,6 +464,7 @@ struct ic_cluster_server_config
   IC_CLIENT_COMMON_DECLARES;
   /* End of section in common with Client config */
   guint32 cluster_server_port_number;
+  guint32 x47;
 
   gchar *cluster_server_event_log;
 };
@@ -454,12 +505,16 @@ struct ic_restore_config
 };
 typedef struct ic_restore_config IC_RESTORE_CONFIG;
 
+
+#define IC_COMM_COMMON_DECLARES \
+  guint64 mandatory_bits;  \
+  gchar *first_hostname;  \
+  gchar *second_hostname;  \
+  gchar x48;  
+
 struct ic_socket_link_config
 {
-  guint64 mandatory_bits;
-
-  gchar *first_hostname;
-  gchar *second_hostname;
+  IC_COMM_COMMON_DECLARES;
 
   guint32 socket_write_buffer_size;
   guint32 socket_read_buffer_size;
@@ -469,6 +524,7 @@ struct ic_socket_link_config
   guint32 socket_max_wait_in_nanos;
   guint32 socket_overload;
   guint32 server_port_number;
+  guint32 x49;
   /* Ignore socket_overload for now */
 
   guint16 first_node_id;
@@ -488,16 +544,12 @@ typedef struct ic_socket_link_config IC_SOCKET_LINK_CONFIG;
 
 struct ic_sci_comm_link_config
 {
-  guint64 mandatory_bits;
-  gchar *first_hostname;
-  gchar *second_hostname;
+  IC_COMM_COMMON_DECLARES;
 };
 
 struct ic_shm_comm_link_config
 {
-  guint64 mandatory_bits;
-  gchar *first_hostname;
-  gchar *second_hostname;
+  IC_COMM_COMMON_DECLARES;
 };
 
 struct ic_comm_link_config

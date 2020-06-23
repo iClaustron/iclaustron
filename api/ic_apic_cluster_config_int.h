@@ -24,7 +24,9 @@ struct ic_int_cluster_config
   guint32 section_def_tcp_index;
   guint32 section_def_shm_index;
   guint32 section_def_system_index;
-  guint32 node_section_ptrs[MAX_NODEID + 1];
-  guint8 node_type_array[MAX_NODEID + 1];
+  guint32 node_section_ptrs[IC_MAX_NODE_ID + 1];
+  guint8 node_type_array[IC_MAX_NODE_ID + 1];
 
 };
+
+typedef struct ic_int_cluster_config IC_INT_CLUSTER_CONFIG;
