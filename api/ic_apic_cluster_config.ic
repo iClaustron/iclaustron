@@ -228,20 +228,20 @@ get_node_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
   {
     return return_code;
   }
-  guint32 *section_start;                          
+  guint32 section_start;                          
   guint32 ret_value = get_def_node_section(
                               cluster_config,
                               cluster_config->node_type_array[node_id],
-                              *section_start);
+                              &section_start);
   if (ret_value != 0)
   {
     // handle error
     return IC_ERROR_NO_DEF_NODE_SECT_FOUND;
   }
   return_code = find_config_entry_uint32(section_start,
-                                          key,
-                                          cluster_config->key_value,
-                                          return_value);
+                                         key,
+                                         cluster_config->key_value,
+                                         return_value);
   return return_code;
 }
 
@@ -263,20 +263,20 @@ get_node_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config,
   {
     return return_code;
   }
-  guint32 *section_start;                          
+  guint32 section_start;                          
   guint32 ret_value = get_def_node_section(
                               cluster_config,
                               cluster_config->node_type_array[node_id],
-                              *section_start);
+                              &section_start);
   if (ret_value != 0)
   {
     // handle error
     return IC_ERROR_NO_DEF_NODE_SECT_FOUND;
   }
   return_code = find_config_entry_uint64(section_start,
-                                          key,
-                                          cluster_config->key_value,
-                                          return_value);
+                                         key,
+                                         cluster_config->key_value,
+                                         return_value);
   return return_code;
 }
 static int
@@ -296,11 +296,11 @@ get_node_config_str(IC_CLUSTER_CONFIG *ext_cluster_config,
   {
     return return_code;
   }
-  guint32 *section_start;                          
+  guint32 section_start;                          
   guint32 ret_value = get_def_node_section(
                               cluster_config,
                               cluster_config->node_type_array[node_id],
-                              *section_start);
+                              &section_start);
   if (ret_value != 0)
   {
     // handle error
@@ -320,6 +320,7 @@ get_comm_config_uint32(IC_CLUSTER_CONFIG *ext_cluster_config,
 {
   IC_INT_CLUSTER_CONFIG *cluster_config =
     (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+  return 0;
 }
 static int
 get_comm_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config,
@@ -329,6 +330,7 @@ get_comm_config_uint64(IC_CLUSTER_CONFIG *ext_cluster_config,
 {
   IC_INT_CLUSTER_CONFIG *cluster_config =
     (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+  return 0;
 }
 static int
 get_comm_config_str(IC_CLUSTER_CONFIG *ext_cluster_config,
@@ -338,6 +340,7 @@ get_comm_config_str(IC_CLUSTER_CONFIG *ext_cluster_config,
 {
   IC_INT_CLUSTER_CONFIG *cluster_config =
     (IC_INT_CLUSTER_CONFIG*)ext_cluster_config;
+  return 0;
 }
 
 static guint32
@@ -374,16 +377,19 @@ find_nodeid(guint32 next_index,
           return next_index;
         }
         loop_next_index += 2;
+        break;
       }
       case 2:
       {
         loop_next_index += 3;
+        break;
       }
       case 4:
       {
         guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
         guint32 word_count = (str_len + 3)/4;
         loop_next_index += (word_count + 2);
+        break;
       }
       default:
       {
@@ -509,7 +515,8 @@ ic_create_network_cluster_config(guint32 *key_value,
                           conf-> section_def_dn_index,
                           FALSE)) !=0)
   {
-    return ret;
+    *error_code= ret;
+    return NULL;
   }
   guint32 next_len = g_ntohl(key_value[7]);
   guint32 next_index = 7 + next_len;
@@ -523,7 +530,8 @@ ic_create_network_cluster_config(guint32 *key_value,
                           conf-> section_def_api_index,
                           FALSE)) !=0)
   {
-    return ret;
+    *error_code= ret;
+    return NULL;
   }
   next_len = g_ntohl(key_value[next_index]);
   next_index += next_len;
@@ -537,7 +545,8 @@ ic_create_network_cluster_config(guint32 *key_value,
                           conf-> section_def_mgm_index,
                           FALSE)) !=0)
   {
-    return ret;
+    *error_code= ret;
+    return NULL;
   }
   next_len = g_ntohl(key_value[next_index]);
   next_index += next_len;
@@ -551,7 +560,8 @@ ic_create_network_cluster_config(guint32 *key_value,
                           conf-> section_def_tcp_index,
                           FALSE)) !=0)
   {
-    return ret;
+    *error_code= ret;
+    return NULL;
   }
   next_len = g_ntohl(key_value[next_index]);
   next_index += next_len;
@@ -565,7 +575,8 @@ ic_create_network_cluster_config(guint32 *key_value,
                           conf-> section_def_shm_index,
                           FALSE)) !=0)
   {
-    return ret;
+    *error_code= ret;
+    return NULL;
   }
   next_len = g_ntohl(key_value[next_index]);
   next_index += next_len;
@@ -579,7 +590,8 @@ ic_create_network_cluster_config(guint32 *key_value,
                           conf-> section_def_system_index,
                           TRUE)) !=0)
   {
-    return ret;
+    *error_code= ret;
+    return NULL;
   }
   next_len = g_ntohl(key_value[next_index]);
   next_index += next_len;
@@ -599,7 +611,8 @@ ic_create_network_cluster_config(guint32 *key_value,
                             next_index,
                             FALSE)) !=0)
     {
-      return ret;
+      *error_code= ret;
+      return NULL;
     }
     next_index = find_nodeid(next_index,
                              key_value,
@@ -616,6 +629,6 @@ ic_create_network_cluster_config(guint32 *key_value,
    conf->node_section_ptrs[node_id] = current_next_index;
    conf->node_type_array[node_id] = (guint8)node_type; 
   }
-  DEBUG_RETURN_PTR(conf);
+  DEBUG_RETURN_PTR((IC_CLUSTER_CONFIG*)conf);
 }
 
