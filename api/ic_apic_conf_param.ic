@@ -893,9 +893,9 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_HASH_MEMORY, 33);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_hash_memory,
-                       IC_UINT64, 64*1024*1024, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT64, 0, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, IndexMemory);
-  IC_SET_CONFIG_MIN(conf_entry, 1*1024*1024);
+  IC_SET_CONFIG_MIN(conf_entry, 0);
   conf_entry->config_entry_description=
   "Size of memory used to store primary hash index on all tables and"
   " unique hash indexes";
@@ -997,7 +997,6 @@ init_config_parameters()
   IC_SET_CONFIG_MAP(DATA_SERVER_DAEMON_RESTART_AT_ERROR, 44);
   IC_SET_DATA_SERVER_BOOLEAN(conf_entry, data_server_automatic_restart, FALSE,
                              IC_ONLINE_CHANGE);
-  IC_SET_CONFIG_MAX(conf_entry, FALSE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, StopOnError);
   conf_entry->config_entry_description=
   "If set, data server restarts automatically after a failure";
@@ -1025,9 +1024,9 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECK_INTERVAL, 49);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, timer_check_interval,
-                            IC_UINT32, 500, IC_NOT_CHANGEABLE);
+                            IC_UINT32, 1000, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, TimeBetweenInactiveTransactionAbortCheck);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 500, 500);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1000, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Time in ms between checks after transaction timeouts";
 
@@ -1071,31 +1070,31 @@ init_config_parameters()
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_memory,
                        IC_UINT32, 4*1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, BackupMemory);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 4*1024*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Size of memory buffers for local checkpoint and backup";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_DATA_MEMORY, 54);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_data_memory,
-                       IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, BackupDataBufferSize);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 512*1024, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Size of data memory buffers for local checkpoint and backup";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_LOG_MEMORY, 55);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_log_memory,
-                       IC_UINT32, 2*1024*1024, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 16*1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, BackupLogBufferSize);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, 2*1024*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 2*1024*1024, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Size of log memory buffers for local checkpoint and backup";
 
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_WRITE_SIZE, 56);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_write_size,
-                       IC_UINT32, 64*1024, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 256*1024, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, BackupWriteSize);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 64*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 32*1024, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Size of default writes in local checkpoint and backups";
 
@@ -1107,9 +1106,9 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_CHECKPOINT_MAX_WRITE_SIZE, 59);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, checkpoint_max_write_size,
-                       IC_UINT32, 256*1024, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, BackupMaxWriteSize);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 256*1024, 256*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 256*1024, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Size of maximum writes in local checkpoint and backups";
 
@@ -1224,9 +1223,9 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_SCAN_BATCH_SIZE, 73);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_scan_batch,
-                       IC_UINT32, 64, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 256, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, BatchSizePerLocalScan);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64, 64);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 1, 992);
   conf_entry->config_entry_description=
   "Number of records sent in a scan from the local data server node";
 
@@ -1254,9 +1253,9 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_LONG_MESSAGE_MEMORY, 77);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, long_message_memory,
-                       IC_UINT32, 4*1024*1024, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 64*1024*1024*1024, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, LongMessageBuffer);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 4*1024*1024, 4*1024*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 512*1024, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Size of long memory buffers";
 
@@ -1298,9 +1297,9 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_STRING_MEMORY, 81);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, size_of_string_memory,
-                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 5, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, StringMemory);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 0);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, IC_MAX_UINT32);
   conf_entry->config_entry_description=
   "Size of string memory";
 
@@ -2056,17 +2055,17 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(SOCKET_KERNEL_READ_BUFFER_SIZE, 197);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_read_buffer_size,
-                       IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, TCP_RCV_BUF_SIZE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2*1024*1024*1024);
   conf_entry->config_entry_description=
   "Size of receive buffer for socket in OS kernel";
 
   IC_SET_CONFIG_MAP(SOCKET_KERNEL_WRITE_BUFFER_SIZE, 198);
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_write_buffer_size,
-                       IC_UINT32, 128*1024, IC_ROLLING_UPGRADE_CHANGE);
+                       IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, TCP_SND_BUF_SIZE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 64*1024, 256*1024*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2*1024*1024*1024);
   conf_entry->config_entry_description=
   "Size of send buffer of socket inside the OS kernel";
 
@@ -2137,9 +2136,9 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_PARALLEL_BUILD_INDEX, 216);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, data_server_parallel_build_index,
-                            IC_UINT32, 0, IC_ONLINE_CHANGE);
+                            IC_UINT32, 128, IC_ONLINE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, BuildIndexThreads);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 64);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 128);
   conf_entry->config_entry_description=
   "Number of parallel threads used to build indexes at node start";
 

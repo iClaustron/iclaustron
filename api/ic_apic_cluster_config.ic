@@ -402,7 +402,120 @@ find_nodeid(guint32 next_index,
   return 0; 
   
 }
+static guint32
+find_comm_nodeid1(guint32 *key_value, 
+                  guint32 next_index,
+                  guint32 *node_id1)
+{
+  guint32 total_entries = g_ntohl(key_value[next_index + 1]);
+  guint32 loop_next_index = next_index + 3;
+  DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+    ("total entries %u",
+     total_entries));
 
+  while (total_entries > 0)
+  {
+    guint32 first_word = g_ntohl(key_value[loop_next_index]);
+    guint32 key_type = first_word >> IC_CL_KEY_SHIFT;
+    guint32 key = first_word & IC_CL_NEW_KEY_MASK;
+    DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+    ("key %u key type %u", key, key_type));
+
+    switch (key_type)
+    {
+      case 1:
+      {
+        if (key == SOCKET_FIRST_NODE_ID)
+        {
+          *node_id1 = g_ntohl(key_value[loop_next_index + 1]);
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+          ("node_id1 = %u",
+           *node_id1));
+          return 0;
+        }
+        loop_next_index += 2;
+        break;
+      }
+      case 2:
+      {
+        loop_next_index += 3;
+        break;
+      }
+      case 4:
+      {
+        guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
+        guint32 word_count = (str_len + 3)/4;
+        loop_next_index += (word_count + 2);
+        break;
+      }
+      default:
+      {
+        ic_require(FALSE);
+        return 1;
+      }
+    }
+    total_entries--;
+  }
+  return 1; 
+  
+}
+static guint32
+find_comm_nodeid2(guint32 *key_value, 
+                  guint32 next_index,
+                  guint32 *node_id2)
+{
+  guint32 total_entries = g_ntohl(key_value[next_index + 1]);
+  guint32 loop_next_index = next_index + 3;
+  DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+    ("total entries %u",
+     total_entries));
+
+  while (total_entries > 0)
+  {
+    guint32 first_word = g_ntohl(key_value[loop_next_index]);
+    guint32 key_type = first_word >> IC_CL_KEY_SHIFT;
+    guint32 key = first_word & IC_CL_NEW_KEY_MASK;
+    DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+    ("key %u key type %u", key, key_type));
+
+    switch (key_type)
+    {
+      case 1:
+      {
+        if (key == SOCKET_SECOND_NODE_ID)
+        {
+          *node_id2 = g_ntohl(key_value[loop_next_index + 1]);
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+          ("node_id2 = %u",
+           *node_id2));
+          return 0;
+        }
+        loop_next_index += 2;
+        break;
+      }
+      case 2:
+      {
+        loop_next_index += 3;
+        break;
+      }
+      case 4:
+      {
+        guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
+        guint32 word_count = (str_len + 3)/4;
+        loop_next_index += (word_count + 2);
+        break;
+      }
+      default:
+      {
+        ic_require(FALSE);
+        return 1;
+      }
+    }
+    total_entries--;
+  }
+  return 1; 
+  
+}
 static guint32
 check_section(guint32 *key_value,
               guint32 section_start,
@@ -433,25 +546,89 @@ check_section(guint32 *key_value,
     switch (key_type)
     {
       case 1:
-      { 
+      {  
+        guint32 val= g_ntohl(key_value[loop_next_index+ 1]);
         DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
-        ("config entry name %s, ndb entry name %s, config types %u",
+        ("config entry name %s, ndb entry name %s, config types %u,"
+          "max value %llu, min value %llu, value %llu",
          conf_obj->config_entry_name.str,
          conf_obj->ndb_entry_name.str,
-         conf_obj->config_types));
+         conf_obj->config_types,
+         conf_obj->max_value,
+         conf_obj->min_value,
+         val));
+        if (conf_obj-> is_deprecated)
+        {
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+          ("is deprecated %u", conf_obj->is_deprecated));
+          loop_next_index += 2;
+          break;
+        }
+        if (conf_obj->is_max_value_defined && val > conf_obj->max_value)
+        {
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+            ("is max value defined %u, max value %llu",
+            conf_obj->is_max_value_defined,
+            conf_obj->max_value));
+          return 1;
+        }
+        if (conf_obj->is_min_value_defined && val < conf_obj->min_value)
+        {
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+            ("is min value defined %u, min value %llu",
+            conf_obj->is_min_value_defined,
+            conf_obj->min_value));
+          return 1;
+        }
+        if ((conf_obj->is_boolean == TRUE) && (val != TRUE && val != FALSE))
+        {
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+            ("is_boolean %u, value %u TRUE %u",
+            conf_obj->is_boolean,
+            val,
+	    TRUE));
+          return 1;
+        }
         loop_next_index += 2; 
         break;
       }
       case 4:
       {
+        guint64 val_high = g_ntohl(key_value[loop_next_index + 1]);
+        guint64 val_low = g_ntohl(key_value[loop_next_index + 2]);
+        guint64 val = val_low + (val_high << 32);
         DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
         ("config entry name %s, ndb entry name %s, config types %u,"
-          "max value %llu, min value %llu",
+          "max value %llu, min value %llu, value %llu",
          conf_obj->config_entry_name.str,
          conf_obj->ndb_entry_name.str,
          conf_obj->config_types,
          conf_obj->max_value,
-         conf_obj->min_value));
+         conf_obj->min_value,
+         val));
+        if (conf_obj-> is_deprecated)
+        {
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+          ("is deprecated %u", conf_obj->is_deprecated));
+          loop_next_index += 3;
+          break;
+        }
+        if (conf_obj->is_max_value_defined && val > conf_obj->max_value)
+        {
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+            ("is max value defined %u, max value %llu",
+            conf_obj->is_max_value_defined,
+            conf_obj->max_value));
+          return 1;
+        }
+        if (conf_obj->is_min_value_defined && val < conf_obj->min_value)
+        {
+          DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
+            ("is min value defined %u, min value %llu",
+            conf_obj->is_min_value_defined,
+            conf_obj->min_value));
+          return 1;
+        }
         loop_next_index += 3;
         break;
       }
@@ -459,12 +636,14 @@ check_section(guint32 *key_value,
       {
         guint32 str_len = g_ntohl(key_value[loop_next_index + 1]);
         guint32 word_count = (str_len + 3)/4;
-        loop_next_index += (word_count + 2);
         DEBUG_PRINT(FIND_NODE_CONFIG_LEVEL,
-        ("config entry name %s, ndb entry name %s, word count %u",
-         conf_obj->config_entry_name.str,
-         conf_obj->ndb_entry_name.str,
-         word_count));
+          ("config entry name %s, ndb entry name %s, word count %u, "
+           "string %s",
+           conf_obj->config_entry_name.str,
+           conf_obj->ndb_entry_name.str,
+           word_count,
+           (gchar*)&key_value[loop_next_index + 2]));
+        loop_next_index += (word_count + 2);
         break;
       }
       default:
@@ -478,6 +657,26 @@ check_section(guint32 *key_value,
   return 0; ;
 }
 
+static unsigned int
+hash_comm_fn(void *ptr)
+{
+  IC_COMM_SEARCH *hash= (IC_COMM_SEARCH*)ptr;
+  return hash->node_id1 ^ hash->node_id2;
+}
+static int
+equal_comm_fn(void *ptr1, void *ptr2)
+{
+  IC_COMM_SEARCH *hash1= (IC_COMM_SEARCH*)ptr1;
+  IC_COMM_SEARCH *hash2= (IC_COMM_SEARCH*)ptr2;
+  if ((hash1->node_id1 == hash2->node_id1 &&
+       hash1->node_id2 == hash2->node_id2) ||
+       (hash1->node_id1 == hash2->node_id2 &&
+        hash2->node_id2 == hash1->node_id1))
+  {
+    return 1;
+  }
+  return 0;
+}
 
 IC_CLUSTER_CONFIG*
 ic_create_network_cluster_config(guint32 *key_value,
@@ -599,6 +798,7 @@ ic_create_network_cluster_config(guint32 *key_value,
   
   guint32 total_nodes = g_ntohl(key_value[3]) + 
     g_ntohl(key_value[4]) + g_ntohl(key_value[5]);
+  guint32 num_comm_sections= g_ntohl(key_value[6]);
   guint32 current_next_index = 0;
   guint32 node_id = 0;
   guint32 node_type = 0;
@@ -629,6 +829,69 @@ ic_create_network_cluster_config(guint32 *key_value,
    conf->node_section_ptrs[node_id] = current_next_index;
    conf->node_type_array[node_id] = (guint8)node_type; 
   }
+  IC_HASHTABLE *comm_hash;
+  IC_COMM_SEARCH *comm_search;
+  if ((comm_hash= ic_create_hashtable(IC_DEF_HASH,
+                                      hash_comm_fn,
+                                      equal_comm_fn,
+                                      FALSE)))
+  {
+    if (!(comm_search= (IC_COMM_SEARCH*)ic_calloc(
+      sizeof(IC_COMM_SEARCH)*num_comm_sections)))
+    {
+      *error_code = IC_ERROR_MEM_ALLOC;
+      DEBUG_RETURN_PTR(NULL);
+    }
+  }
+  conf->comm_array= comm_search;
+  guint32 node_id1= 0;
+  guint32 node_id2= 0;
+    DEBUG_PRINT(CONFIG_PROTO_LEVEL,
+      ("number of communication sections %u",
+      num_comm_sections));
+  for (guint32 i= 0; i<num_comm_sections; i++)
+  {
+    DEBUG_PRINT(CONFIG_PROTO_LEVEL,
+      ("start of communication section index %u",
+      next_index));
+    if((ret= check_section(key_value,
+                           next_index,
+                           FALSE)) != 0)
+    {
+      *error_code= ret;
+      return NULL;
+    }
+    if ((ret= find_comm_nodeid1(key_value,
+                                next_index,
+                                &node_id1)) != 0)
+    {
+      *error_code= ret;
+      return NULL;
+    } 
+    if ((ret= find_comm_nodeid2(key_value,
+                                next_index,
+                                &node_id2)) != 0)
+    {
+      *error_code= ret;
+      return NULL;
+    } 
+    DEBUG_PRINT(CONFIG_PROTO_LEVEL,
+      ("node id1 %u, node id2 %u",node_id1, node_id2));
+    comm_search[i].node_id1 = node_id1;
+    comm_search[i].node_id2 = node_id2;
+    comm_search[i].index = next_index;
+    if ((ret = ic_hashtable_insert(comm_hash,
+                        (void*)&comm_search[i], 
+                        (void*)&comm_search[i])) != 0)
+    {
+      *error_code= ret;
+      return NULL;
+    }  
+    next_len = g_ntohl(key_value[next_index]);
+    next_index += next_len;
+    DEBUG_PRINT(CONFIG_PROTO_LEVEL,
+      ("next index %u", next_index));
+  }                                     
   DEBUG_RETURN_PTR((IC_CLUSTER_CONFIG*)conf);
 }
 

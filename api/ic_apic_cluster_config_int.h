@@ -12,6 +12,15 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+#define IC_DEF_HASH 1000
+struct ic_comm_search
+{
+  guint32 node_id1;
+  guint32 node_id2;
+  guint32 index;
+};
+
+typedef struct ic_comm_search IC_COMM_SEARCH;
 struct ic_int_cluster_config
 {
   IC_CLUSTER_CONFIG clu_conf_ops;
@@ -26,7 +35,9 @@ struct ic_int_cluster_config
   guint32 section_def_system_index;
   guint32 node_section_ptrs[IC_MAX_NODE_ID + 1];
   guint8 node_type_array[IC_MAX_NODE_ID + 1];
+  IC_COMM_SEARCH *comm_array;
 
 };
 
 typedef struct ic_int_cluster_config IC_INT_CLUSTER_CONFIG;
+
