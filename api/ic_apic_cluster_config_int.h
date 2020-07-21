@@ -41,3 +41,24 @@ struct ic_int_cluster_config
 
 typedef struct ic_int_cluster_config IC_INT_CLUSTER_CONFIG;
 
+struct ic_temp_cluster_config
+{
+  guint32 dn_node_id;
+  guint32 cs_node_id;
+  guint32 client_node_id;
+  guint32 tcp_node_id1;
+  guint32 tcp_node_id2;
+  guint32 shm_node_id1;
+  guint32 shm_node_id2;
+  guint32 system_node_id;
+  gchar *dn_def_section;
+  gchar *api_def_section;
+  gchar *mgm_def_section;
+  gchar *tcp_def_section;
+  gchar *shm_def_section;
+  gchar *system_def_section;
+  gchar **node_sections;
+  gchar **comm_sections;
+};
+
+typedef struct ic_temp_cluster_config IC_TEMP_CLUSTER_CONFIG;

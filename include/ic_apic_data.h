@@ -53,7 +53,8 @@ enum ic_config_types
   IC_CLUSTER_MANAGER_TYPE = 9,
   IC_COMM_TYPE = 5,
   IC_SYSTEM_TYPE = 10,
-  IC_NUMBER_OF_CONFIG_TYPES = 11
+  IC_SHM_TYPE = 11,
+  IC_NUMBER_OF_CONFIG_TYPES = 12
 };
 typedef enum ic_config_types IC_CONFIG_TYPES;
 
@@ -115,6 +116,8 @@ struct ic_cluster_config
   int(*ic_get_comm_config_uint64) (void *cluster_config);
 
   int(*ic_get_comm_config_str) (void *cluster_config);
+  
+  int(*ic_modify_cluster_config) (void *cluster_config);
   
   gchar **node_config;
   gchar **comm_config;
@@ -227,6 +230,9 @@ ic_create_network_cluster_config(guint32 *key_value,
                                  guint32 len,
                                  guint32 cluster_id,
                                  int *error_code);
+
+IC_CLUSTER_CONFIG*
+ic_create_file_cluster_config(IC_CLUSTER_CONFIG *clu_obj);
 
 /* Mandatory bits is first in all node types and also in comm type */
 #define IC_NODE_COMMON_DECLARES \

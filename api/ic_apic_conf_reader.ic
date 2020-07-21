@@ -1177,18 +1177,6 @@ conf_init_end(void *ic_conf)
 }
 
 static void
-free_cluster_config(void *ext_clu_conf)
-{
-  IC_CLUSTER_CONFIG *clu_conf= (IC_CLUSTER_CONFIG*)ext_clu_conf;
-  DEBUG_ENTRY("free_cluster_config");
-  if (clu_conf && clu_conf->comm_hash)
-  {
-    ic_hashtable_destroy(clu_conf->comm_hash, FALSE);
-  }
-  DEBUG_RETURN_EMPTY;
-}
-
-static void
 conf_serv_end(void *ic_conf)
 {
   IC_CONFIG_STRUCT *conf= (IC_CONFIG_STRUCT*)ic_conf;
@@ -1197,7 +1185,7 @@ conf_serv_end(void *ic_conf)
 
   if (clu_conf)
   {
-    free_cluster_config(clu_conf->conf);
+    clu_conf->conf->ic_free_cluster_config(clu_conf->conf);
   }
   DEBUG_RETURN_EMPTY;
 }
@@ -1343,7 +1331,7 @@ load_config_server_from_files(gchar *config_file,
   config_server_ops.ic_init_end(conf_server);
   if (ret_ptr)
   {
-    ret_ptr->ic_free_cluster_config= free_cluster_config;
+    ret_ptr= ic_create_file_cluster_config(ret_ptr);
   }
   DEBUG_RETURN_PTR(ret_ptr);
 

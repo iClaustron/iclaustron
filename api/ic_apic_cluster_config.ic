@@ -677,6 +677,1153 @@ equal_comm_fn(void *ptr1, void *ptr2)
   }
   return 0;
 }
+static guint32
+get_conf_len(IC_CONFIG_TYPES config_type,
+             gchar* config_struct_ptr,
+             guint32 key)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  if ((conf_entry = get_conf_entry(key)) == NULL)
+  {
+    DEBUG_RETURN_INT(0);
+  }
+  if ((conf_entry-> config_types & (1 << config_type)) == 0)
+  {
+    DEBUG_RETURN_INT(0);
+  }
+  switch (conf_entry-> data_type)
+  {
+    case IC_UINT32:
+    case IC_SECTION_TYPE:
+    case IC_CHAR:
+    case IC_BOOLEAN:
+    case IC_UINT16:
+    case IC_ENUM:
+    case IC_BITMASK:
+    {
+      DEBUG_RETURN_INT(4);
+    }
+    case IC_UINT64:
+    {
+      DEBUG_RETURN_INT(8);
+    }
+    case IC_CHARPTR:
+    {
+      guint32 offset = conf_entry->offset;
+      gchar* ptr = config_struct_ptr + offset;
+      gchar* char_ptr= *ptr;
+      if (char_ptr == NULL)
+      {
+        DEBUG_RETURN_INT(0);
+      }
+      guint32 str_len = strlen(char_ptr);
+      guint32 word_count = (str_len + 4)/4;
+      guint32 byte_count = word_count * 4;
+      DEBUG_RETURN_INT(byte_count);
+    }
+    default:
+    {
+      ic_require(FALSE);
+      DEBUG_RETURN_INT(0);
+    }
+  }
+}
+
+static void
+get_conf_info(guint32 *key_value,
+              gboolean *is_iclaustron_conf,
+              guint32 *len,
+              guint32 *type)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  ic_require((conf_entry = get_conf_entry(*key_value)) != NULL);
+  *is_iclaustron_conf= conf_entry->is_only_iclaustron;
+  switch (conf_entry-> data_type)
+  {
+    case IC_UINT32:
+    case IC_SECTION_TYPE:
+    case IC_CHAR:
+    case IC_BOOLEAN:
+    case IC_UINT16:
+    case IC_ENUM:
+    case IC_BITMASK:
+    {
+      *len= 4;
+      *type= IC_UINT32;
+      break;
+    }
+    case IC_UINT64:
+    {
+      *len= 8;
+      *type= IC_UINT64;
+      break;
+    }
+    case IC_CHARPTR:
+    {
+      guint32 str_len = key_value[1];
+      guint32 word_count = (str_len + 3)/4;
+      *len= word_count + 2;
+      *type= IC_CHARPTR;
+      break;
+    }
+    default:
+    {
+      ic_require(FALSE);
+    }
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static gchar*
+write_conf_entry(IC_CONFIG_TYPES config_type,
+                 gchar *config_struct_ptr,
+                 gchar *write_ptr,
+                 guint32 key)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  if ((conf_entry = get_conf_entry(key)) == NULL)
+  {
+    DEBUG_RETURN_INT(write_ptr);
+  }
+  if ((conf_entry-> config_types & (1 << config_type)) == 0)
+  {
+    DEBUG_RETURN_INT(write_ptr);
+  }
+  switch (conf_entry-> data_type)
+  {
+    case IC_UINT32:
+    case IC_SECTION_TYPE:
+    case IC_CHAR:
+    case IC_BOOLEAN:
+    case IC_UINT16:
+    case IC_ENUM:
+    case IC_BITMASK:
+    {
+      guint32 offset = conf_entry->offset;
+      gchar* ptr = config_struct_ptr + offset;
+      memcpy(write_ptr, ptr, 4);
+      DEBUG_RETURN_INT(write_ptr + 4);
+    }
+    case IC_UINT64:
+    {
+      guint32 offset = conf_entry->offset;
+      gchar* ptr = config_struct_ptr + offset;
+      memcpy(write_ptr, ptr, 8);
+      DEBUG_RETURN_INT(write_ptr + 8);
+    }
+    case IC_CHARPTR:
+    {
+      guint32 offset = conf_entry->offset;
+      gchar* ptr = config_struct_ptr + offset;
+      gchar* char_ptr= *ptr;
+      if (char_ptr == NULL)
+      {
+        DEBUG_RETURN_INT(write_ptr);
+      }
+      guint32 str_len = strlen(char_ptr);
+      guint32 word_count = (str_len + 4)/4;
+      guint32 byte_count = word_count * 4;
+      memset(write_ptr, 0, byte_count);
+      memcpy(write_ptr, char_ptr, (str_len + 1));
+      DEBUG_RETURN_INT(write_ptr + byte_count);
+    }
+    default:
+    {
+      ic_require(FALSE);
+      DEBUG_RETURN_INT(write_ptr);
+    }
+  }
+}
+
+static guint32
+create_data_node_default(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                         IC_INT_CLUSTER_CONFIG *clu_obj,
+                         IC_MEMORY_CONTAINER *mc_ptr)
+{
+  guint32 found_node_id = 0;
+  for (guint32 i= 1; i <= clu_obj->clu_conf_ops.max_node_id; i++)
+  {
+    if (clu_obj->clu_conf_ops.node_types[i] == IC_DATA_SERVER_NODE)
+    {
+      found_node_id= i;
+    }
+  }
+  if (found_node_id == 0)
+  {
+    DEBUG_RETURN_INT(1);
+  }
+  IC_DATA_SERVER_CONFIG *ds_conf= 
+  (IC_DATA_SERVER_CONFIG*)clu_obj->clu_conf_ops.node_config[found_node_id];
+  guint32 len= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    len += get_conf_len(IC_DATA_SERVER_TYPE,
+                        ds_conf,
+                        i);
+  }
+  len += 12;
+  gchar *mem_dn_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len);
+  if (mem_dn_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  gchar *tmp_dn_ptr= mem_dn_ptr + 12;
+  guint32 num_entries= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    gchar *comp_dn_ptr= tmp_dn_ptr;
+    tmp_dn_ptr= write_conf_entry(IC_DATA_SERVER_TYPE,
+                                 ds_conf,
+                                 tmp_dn_ptr,
+                                 i);
+    if (comp_dn_ptr != tmp_dn_ptr)
+    {
+      num_entries++;
+    }
+  }
+  ic_require((mem_dn_ptr - tmp_dn_ptr) == len);
+  guint32 *header= (guint32*)mem_dn_ptr;
+  header[0]= len/4;
+  header[1]= num_entries;
+  header[2]= IC_DATA_SERVER_TYPE;
+  temp_cluster_config->dn_node_id= found_node_id;
+  DEBUG_RETURN_INT(0); 
+} 
+
+static guint32
+create_cluster_server_default(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                              IC_INT_CLUSTER_CONFIG *clu_obj,
+                              IC_MEMORY_CONTAINER *mc_ptr)
+{
+  guint32 found_node_id= 0;
+  for (guint32 i= 1; i <= clu_obj->clu_conf_ops.max_node_id; i++)
+  {
+    if (clu_obj->clu_conf_ops.node_types[i] == IC_CLUSTER_SERVER_NODE)
+    {
+      found_node_id= i;
+    }
+  }
+  if (found_node_id == 0)
+  {
+    DEBUG_RETURN_INT(1);
+  }
+  IC_CLUSTER_SERVER_CONFIG *cs_conf= 
+  (IC_CLUSTER_SERVER_CONFIG*)clu_obj->clu_conf_ops.node_config[found_node_id];
+  guint32 len= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    len += get_conf_len(IC_CLUSTER_SERVER_TYPE,
+                        cs_conf,
+                        i);
+  }
+  len += 12;
+  gchar *mem_cs_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len);
+  if (mem_cs_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  gchar *tmp_cs_ptr= mem_cs_ptr + 12;
+  guint32 num_entries= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    gchar *comp_cs_ptr= tmp_cs_ptr;
+    tmp_cs_ptr= write_conf_entry(IC_CLUSTER_SERVER_TYPE,
+                                 cs_conf,
+                                 tmp_cs_ptr,
+                                 i);
+    if (comp_cs_ptr != tmp_cs_ptr)
+    {
+      num_entries++;
+    }
+  }
+  ic_require((mem_cs_ptr - tmp_cs_ptr) == len);
+  guint32 *header= (guint32*)mem_cs_ptr;
+  header[0]= len/4;
+  header[1]= num_entries;
+  header[2]= IC_CLUSTER_SERVER_TYPE;
+  temp_cluster_config->cs_node_id= found_node_id;
+  DEBUG_RETURN_INT(0);
+}
+
+static guint32
+create_client_default(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                      IC_INT_CLUSTER_CONFIG *clu_obj,
+                      IC_MEMORY_CONTAINER *mc_ptr)
+{
+  guint32 found_node_id= 0;
+  for (guint32 i= 1; i <= clu_obj->clu_conf_ops.max_node_id; i++)
+  {
+    if (clu_obj->clu_conf_ops.node_types[i] == IC_CLIENT_NODE)
+    {
+      found_node_id= i;
+    }
+  }
+  if (found_node_id == 0)
+  {
+    DEBUG_RETURN_INT(1);
+  }
+  IC_CLUSTER_SERVER_CONFIG *client_conf= 
+  (IC_CLIENT_CONFIG*)clu_obj->clu_conf_ops.node_config[found_node_id];
+  guint32 len= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    len += get_conf_len(IC_CLIENT_TYPE,
+                        client_conf,
+                        i);
+  }
+  len += 12;
+  gchar *mem_client_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len);
+  if (mem_client_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  gchar *tmp_client_ptr= mem_client_ptr + 12;
+  guint32 num_entries= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    gchar *comp_client_ptr= tmp_client_ptr;
+    tmp_client_ptr= write_conf_entry(IC_CLIENT_TYPE,
+                                     client_conf,
+                                     tmp_client_ptr,
+                                     i);
+    if (comp_client_ptr != tmp_client_ptr)
+    {
+      num_entries++;
+    }
+  }
+  ic_require((mem_client_ptr - tmp_client_ptr) == len);
+  guint32 *header= (guint32*)mem_client_ptr;
+  header[0]= len/4;
+  header[1]= num_entries;
+  header[2]= IC_CLIENT_TYPE;
+  temp_cluster_config->client_node_id= found_node_id;
+  DEBUG_RETURN_INT(0);
+}
+
+
+static guint32
+create_tcp_default(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                   IC_INT_CLUSTER_CONFIG *clu_obj,
+                   IC_MEMORY_CONTAINER *mc_ptr)
+{
+  IC_SOCKET_LINK_CONFIG *tcp_conf= 
+  (IC_SOCKET_LINK_CONFIG*)clu_obj->clu_conf_ops.comm_config[0];
+  guint32 len= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    len += get_conf_len(IC_COMM_TYPE,
+                        tcp_conf,
+                        i);
+  }
+  len += 12;
+  gchar *mem_tcp_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len);
+  if (mem_tcp_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  gchar *tmp_tcp_ptr= mem_tcp_ptr + 12;
+  guint32 num_entries= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    gchar *comp_tcp_ptr= tmp_tcp_ptr;
+    tmp_tcp_ptr= write_conf_entry(IC_COMM_TYPE,
+                                 tcp_conf,
+                                 tmp_tcp_ptr,
+                                 i);
+    if (comp_tcp_ptr != tmp_tcp_ptr)
+    {
+      num_entries++;
+    }
+  }
+  ic_require((mem_tcp_ptr - tmp_tcp_ptr) == len);
+  guint32 *header= (guint32*)mem_tcp_ptr;
+  header[0]= len/4;
+  header[1]= num_entries;
+  header[2]= IC_COMM_TYPE;
+  temp_cluster_config->tcp_node_id1= tcp_conf->first_node_id;
+  temp_cluster_config->tcp_node_id2= tcp_conf->second_node_id;
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+create_shm_default(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                   IC_MEMORY_CONTAINER *mc_ptr)
+{
+  guint32 len= 12;
+  gchar *mem_shm_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len);
+  if (mem_shm_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  guint32 num_entries= 0;
+  guint32 *header= (guint32*)mem_shm_ptr;
+  header[0]= len/4;
+  header[1]= num_entries;
+  header[2]= IC_SHM_TYPE;
+  DEBUG_RETURN_INT(0);
+}
+static guint32
+create_system_section(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                      IC_INT_CLUSTER_CONFIG *clu_obj,
+                      IC_MEMORY_CONTAINER *mc_ptr)
+{
+  guint32 found_node_id= 0;
+  for (guint32 i= 1; i <= clu_obj->clu_conf_ops.max_node_id; i++)
+  {
+    if (clu_obj->clu_conf_ops.node_types[i] == IC_CLIENT_NODE)
+    {
+      found_node_id= i;
+    }
+  }
+  if (found_node_id == 0)
+  {
+    DEBUG_RETURN_INT(1);
+  }
+  IC_CLUSTER_SERVER_CONFIG *ds_conf= 
+  (IC_CLIENT_CONFIG*)clu_obj->clu_conf_ops.node_config[found_node_id];
+  guint32 len= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    len += get_conf_len(IC_CLIENT_TYPE,
+                        ds_conf,
+                        i);
+  }
+  len += 12;
+  gchar *mem_dn_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len);
+  if (mem_dn_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  gchar *tmp_dn_ptr= mem_dn_ptr + 12;
+  guint32 num_entries= 0;
+  for (guint32 i= 0; i < MAX_MAP_CONFIG_ID; i++)
+  {
+    gchar *comp_dn_ptr= tmp_dn_ptr;
+    tmp_dn_ptr= write_conf_entry(IC_CLIENT_TYPE,
+                                 ds_conf,
+                                 tmp_dn_ptr,
+                                 i);
+    if (comp_dn_ptr != tmp_dn_ptr)
+    {
+      num_entries++;
+    }
+  }
+  ic_require((mem_dn_ptr - tmp_dn_ptr) == len);
+  guint32 *header= (guint32*)mem_dn_ptr;
+  header[0]= len/4;
+  header[1]= num_entries;
+  header[2]= IC_CLIENT_TYPE;
+  temp_cluster_config->system_node_id= found_node_id;
+}
+
+static gboolean
+is_entry_default(IC_CONFIG_TYPES config_type,
+                 gchar *config_struct_ptr,
+                 gchar *default_struct_ptr,
+                 guint32 key)
+{
+  IC_CONFIG_ENTRY *conf_entry;
+  if ((conf_entry = get_conf_entry(key)) == NULL)
+  {
+    DEBUG_RETURN_INT(FALSE);
+  }
+  if ((conf_entry-> config_types & (1 << config_type)) == 0)
+  {
+    DEBUG_RETURN_INT(FALSE);
+  }
+  if ((key == IC_NODE_ID) || 
+      (key == SOCKET_FIRST_NODE_ID) || 
+      (key == SOCKET_SECOND_NODE_ID))
+  {
+    DEBUG_RETURN_INT(TRUE);
+  }
+  switch (conf_entry-> data_type)
+  {
+    case IC_UINT32:
+    case IC_SECTION_TYPE:
+    case IC_CHAR:
+    case IC_BOOLEAN:
+    case IC_UINT16:
+    case IC_ENUM:
+    case IC_BITMASK:
+    {
+      guint32 offset = conf_entry->offset;
+      gchar* config_ptr = config_struct_ptr + offset;
+      gchar* default_ptr = default_struct_ptr + offset;
+      if((memcmp(config_struct_ptr, default_struct_ptr, 4)) == 0)
+      {
+        DEBUG_RETURN_INT(TRUE);
+      }
+      DEBUG_RETURN_INT(FALSE);
+    }
+    case IC_UINT64:
+    {
+      guint32 offset = conf_entry->offset;
+      gchar* ptr = config_struct_ptr + offset;
+      gchar* default_ptr = default_struct_ptr + offset;
+      if((memcmp(config_struct_ptr, default_struct_ptr, 8)) == 0)
+      {
+        DEBUG_RETURN_INT(TRUE);
+      }
+      DEBUG_RETURN_INT(FALSE);
+    }
+    case IC_CHARPTR:
+    {
+      guint32 offset = conf_entry->offset;
+      gchar* ptr = config_struct_ptr + offset;
+      gchar* default_ptr = default_struct_ptr + offset;
+      gchar* char_ptr= *ptr;
+      gchar* char_default_ptr= *default_ptr;
+      if (char_default_ptr == NULL)
+      {
+        DEBUG_RETURN_INT(FALSE);
+      }
+      if (char_ptr == NULL)
+      {
+        DEBUG_RETURN_INT(TRUE);
+      }
+      guint32 str_len = strlen(char_ptr);
+      guint32 default_str_len = strlen(char_default_ptr);
+      if (str_len != default_str_len)
+      {
+        DEBUG_RETURN_INT(FALSE);
+      }
+      if((memcmp(char_ptr, char_default_ptr, str_len)) == 0)
+      {
+        DEBUG_RETURN_INT(TRUE);
+      }
+      DEBUG_RETURN_INT(FALSE);
+    }
+    default:
+    {
+      ic_require(FALSE);
+      DEBUG_RETURN_INT(FALSE);
+    }
+  }
+}
+
+static guint32
+fill_same_node_default(guint32 node_id,
+                       IC_CONFIG_TYPES type,
+                       IC_MEMORY_CONTAINER *mc_ptr,
+                       guint32 index,
+                       IC_TEMP_CLUSTER_CONFIG *temp_cluster_config)
+{
+  gchar *mem_node_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, 20);
+  if (mem_node_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  guint32 *header= (guint32*)mem_node_ptr;
+  header[0]= 20;
+  header[1]= 1;
+  header[2]= type;
+  header[3]= (IC_UINT32<<IC_CL_KEY_SHIFT) + IC_NODE_ID;
+  header[4]= node_id;
+  temp_cluster_config->node_sections[index]= mem_node_ptr;
+}
+
+static guint32
+fill_section(gchar *ptr,
+             gchar *default_ptr, 
+             IC_CONFIG_TYPES type,
+             IC_MEMORY_CONTAINER *mc_ptr,
+             guint32 index,
+             IC_TEMP_CLUSTER_CONFIG *temp_cluster_config)
+{
+  guint32 len= 0;
+  for (guint32 i= 0; i > MAX_MAP_CONFIG_ID; i++)
+  {
+    if (!is_entry_default(type,
+                          ptr,
+                          default_ptr,
+                          i))
+    {
+      len += get_conf_len(type,
+                          ptr,
+                          i);
+    }
+  }
+  gchar *mem_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, len);
+  if (mem_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  guint32 header_len= 12;
+  guint32 num_entries= 0;
+  gchar *tmp_write_ptr= mem_ptr + header_len;
+  for (guint32 i= 0; i > MAX_MAP_CONFIG_ID; i++)
+  {
+    if (is_entry_default(type,
+                          ptr,
+                          default_ptr,
+                          i))
+    {
+      gchar *comp_write_ptr= tmp_write_ptr;
+      tmp_write_ptr= write_conf_entry(type,
+                                      ptr,
+                                      tmp_write_ptr,
+                                      i);
+      if (comp_write_ptr != tmp_write_ptr)
+      {
+        num_entries++;
+      }
+    }
+  }
+  ic_require((mem_ptr - tmp_write_ptr) == len);
+  guint32 *header= (guint32*)mem_ptr;
+  header[0]= len/4;
+  header[1]= num_entries;
+  header[2]= type;
+  switch (type)
+  {
+    case IC_DATA_SERVER_TYPE:
+    case IC_CLUSTER_SERVER_TYPE:
+    case IC_CLIENT_TYPE:
+    {
+      temp_cluster_config->node_sections[index]= mem_ptr;
+      DEBUG_RETURN_INT(0);
+    }
+    case IC_COMM_TYPE:
+    {
+      temp_cluster_config->comm_sections[index]= mem_ptr;
+      DEBUG_RETURN_INT(0);
+    }
+    default:
+    {
+      ic_require(FALSE);
+      DEBUG_RETURN_INT(1);
+    }
+  }
+}
+
+static guint32
+create_node_section(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                    IC_INT_CLUSTER_CONFIG *clu_obj,
+                    IC_MEMORY_CONTAINER *mc_ptr,
+                    guint32 index)
+{
+  gchar *ptr= clu_obj->clu_conf_ops.node_config[index];
+  IC_NODE_TYPES node_type= clu_obj->clu_conf_ops.node_types[index];
+  IC_DATA_SERVER_CONFIG *ds_ptr= (IC_DATA_SERVER_CONFIG*)ptr;
+  guint32 node_id= ds_ptr->node_id;
+  ic_require(node_id == index);
+  guint32 cmp_node_id;
+  IC_CONFIG_TYPES type;
+  switch(node_type)
+  {
+    case IC_DATA_SERVER_NODE:
+    {
+      cmp_node_id= temp_cluster_config->dn_node_id;
+      type= IC_DATA_SERVER_TYPE;
+    }
+    case IC_CLIENT_NODE:
+    {
+      cmp_node_id= temp_cluster_config->client_node_id;
+      type= IC_CLIENT_TYPE;
+    }
+    case IC_CLUSTER_SERVER_NODE:
+    {
+      cmp_node_id= temp_cluster_config->cs_node_id;
+      type= IC_CLUSTER_SERVER_TYPE;
+    }
+    default:
+    {
+      ic_require(FALSE);
+      DEBUG_RETURN_INT(1);
+    }
+  } 
+  if (node_id == cmp_node_id)
+  {
+    DEBUG_RETURN_INT(fill_same_node_default(node_id,
+                                            type,
+                                            mc_ptr,
+                                            index,
+                                            temp_cluster_config));
+  }
+  gchar *default_ptr= clu_obj->clu_conf_ops.node_config[cmp_node_id];
+  DEBUG_RETURN_INT(fill_section(ptr,
+                                default_ptr,
+                                type,
+                                mc_ptr,
+                                index,
+                                temp_cluster_config));
+}
+
+static guint32
+fill_same_comm_default(guint32 node_id1,
+                       guint32 node_id2,
+                       IC_CONFIG_TYPES type,
+                       IC_MEMORY_CONTAINER *mc_ptr,
+                       guint32 index,
+                       IC_TEMP_CLUSTER_CONFIG *temp_cluster_config)
+{
+  gchar *mem_comm_ptr= mc_ptr->mc_ops.ic_mc_alloc(mc_ptr, 20);
+  if (mem_comm_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  guint32 *header= (guint32*)mem_comm_ptr;
+  header[0]= 28;
+  header[1]= 2;
+  header[2]= type;
+  header[3]= (IC_UINT32<<IC_CL_KEY_SHIFT) + SOCKET_FIRST_NODE_ID;
+  header[4]= node_id1;
+  header[5]= (IC_UINT32<<IC_CL_KEY_SHIFT) + SOCKET_SECOND_NODE_ID;
+  header[6]= node_id2;
+  temp_cluster_config->comm_sections[index]= mem_comm_ptr;
+}
+
+static guint32
+create_comm_section(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                    IC_INT_CLUSTER_CONFIG *clu_obj,
+                    IC_MEMORY_CONTAINER *mc_ptr,
+                    guint32 index)
+{
+  gchar *ptr= clu_obj->clu_conf_ops.comm_config[index];
+  IC_SOCKET_LINK_CONFIG *comm_ptr= (IC_SOCKET_LINK_CONFIG*)ptr;
+  guint32 node_id1= comm_ptr->first_node_id;
+  guint32 node_id2= comm_ptr->second_node_id;
+  guint32 cmp_node_id;
+  IC_CONFIG_TYPES type = IC_COMM_TYPE;
+  if ((node_id1 == temp_cluster_config->tcp_node_id1) &&
+       node_id2 == temp_cluster_config->tcp_node_id2)
+  {
+    DEBUG_RETURN_INT(fill_same_comm_default(node_id1,
+                                            node_id2,
+                                            type,
+                                            mc_ptr,
+                                            index,
+                                            temp_cluster_config));
+  }
+  DEBUG_RETURN_INT(fill_section(ptr,
+                                comm_ptr,
+                                type,
+                                mc_ptr,
+                                index,
+                                temp_cluster_config));
+}
+static guint32
+calculate_tot_len(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                  IC_INT_CLUSTER_CONFIG *clu_obj)
+{
+  guint32 len;
+  guint32 header_len= 28;
+  guint32* dn_def_section= (guint32*)temp_cluster_config->dn_def_section;
+  guint32* api_def_section= (guint32*)temp_cluster_config->api_def_section; 
+  guint32* mgm_def_section= (guint32*)temp_cluster_config->mgm_def_section; 
+  guint32* tcp_def_section= (guint32*)temp_cluster_config->tcp_def_section; 
+  guint32* shm_def_section= (guint32*)temp_cluster_config->shm_def_section; 
+  guint32* system_def_section= (guint32*)
+                              temp_cluster_config->system_def_section; 
+  len= header_len + dn_def_section[0] + api_def_section[0] + 
+       mgm_def_section[0] + tcp_def_section[0] + 
+       shm_def_section[0] + system_def_section[0];
+  for (guint32 i= 0; i > clu_obj->clu_conf_ops.num_nodes; i++)
+  {
+    guint32* node_section= (guint32*)temp_cluster_config->node_sections[i];
+    len += node_section[0];
+  }
+  for (guint32 i= 0; i > clu_obj->clu_conf_ops.num_comms; i++)
+  {
+    guint32* comm_section = (guint32*)temp_cluster_config->comm_sections[i];
+    len += comm_section[0];
+  }
+  DEBUG_RETURN_INT(len);	
+}
+static guint32
+create_cluster_config(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
+                      IC_INT_CLUSTER_CONFIG *clu_obj,
+                      gchar *mem_ptr,
+                      guint32 tot_len)
+{
+  guint32 len;
+  guint32 header_len= 28;
+  guint32* ptr= (guint32*)mem_ptr;
+  ptr[0]= tot_len;
+  ptr[1]= 2;
+  ptr[2]= 5;
+  ptr[3]= clu_obj->clu_conf_ops.num_data_servers;
+  ptr[4]= clu_obj->clu_conf_ops.num_clients;
+  ptr[5]= clu_obj->clu_conf_ops.num_cluster_servers;
+  ptr[6]= clu_obj->clu_conf_ops.num_comms;
+  
+  mem_ptr += header_len; 
+  guint32* dn_def_section= (guint32*)temp_cluster_config->dn_def_section;
+  memcpy(mem_ptr, dn_def_section, dn_def_section[0]);
+  mem_ptr += dn_def_section[0];
+  guint32* api_def_section= (guint32*)temp_cluster_config->api_def_section; 
+  memcpy(mem_ptr, api_def_section, api_def_section[0]);
+  mem_ptr += api_def_section[0];
+  guint32* mgm_def_section= (guint32*)temp_cluster_config->mgm_def_section; 
+  memcpy(mem_ptr, mgm_def_section, mgm_def_section[0]);
+  mem_ptr += mgm_def_section[0];
+  guint32* tcp_def_section= (guint32*)temp_cluster_config->tcp_def_section; 
+  memcpy(mem_ptr, tcp_def_section, tcp_def_section[0]);
+  mem_ptr += tcp_def_section[0];
+  guint32* shm_def_section= (guint32*)temp_cluster_config->shm_def_section; 
+  memcpy(mem_ptr, shm_def_section, shm_def_section[0]);
+  mem_ptr += shm_def_section[0];
+  guint32* system_def_section= (guint32*)
+  memcpy(mem_ptr, system_def_section, system_def_section[0]);
+  mem_ptr += system_def_section[0];
+
+  for (guint32 i= 0; i > clu_obj->clu_conf_ops.num_nodes; i++)
+  {
+    guint32* node_section= (guint32*)temp_cluster_config->node_sections[i];
+    memcpy(mem_ptr, node_section, node_section[0]);
+    mem_ptr += node_section[0];
+  }
+  for (guint32 i= 0; i > clu_obj->clu_conf_ops.num_comms; i++)
+  {
+    guint32* comm_section = (guint32*)temp_cluster_config->comm_sections[i];
+    memcpy(mem_ptr, comm_section, comm_section[0]);
+    mem_ptr += comm_section[0];
+  }
+}
+static guint32
+modify_cluster_config(IC_INT_CLUSTER_CONFIG *clu_obj)
+{
+  DEBUG_ENTRY("modify cluster config");
+  IC_MEMORY_CONTAINER *mc_ptr;
+  int ret;
+  guint32 len;
+  if((mc_ptr= ic_create_memory_container(8192,
+                                         0,
+                                         FALSE)) == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  IC_TEMP_CLUSTER_CONFIG temp_cluster_config;
+  temp_cluster_config.node_sections = mc_ptr->
+  mc_ops.ic_mc_alloc(mc_ptr, sizeof(gchar*)*clu_obj->clu_conf_ops.num_nodes);
+  if (temp_cluster_config.node_sections == NULL)
+  {
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+  temp_cluster_config.comm_sections = mc_ptr->
+  mc_ops.ic_mc_alloc(mc_ptr, sizeof(gchar*)*clu_obj->clu_conf_ops.num_comms);
+  if (temp_cluster_config.comm_sections == NULL)
+  {
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }
+   
+  if ((ret= create_data_node_default(&temp_cluster_config,
+                                     clu_obj,
+                                     mc_ptr)) != 0)
+  {
+    DEBUG_RETURN_INT(ret);
+  } 
+  if ((ret= create_cluster_server_default(&temp_cluster_config,
+                                          clu_obj,
+                                          mc_ptr)) != 0)
+  {
+    DEBUG_RETURN_INT(ret);
+  }
+  if ((ret= create_client_default(&temp_cluster_config,
+                                  clu_obj,
+                                  mc_ptr)) != 0)
+  {
+    DEBUG_RETURN_INT(ret);
+  }
+  if ((ret= create_tcp_default(&temp_cluster_config,
+                               clu_obj,
+                               mc_ptr)) != 0)
+  {
+    DEBUG_RETURN_INT(ret);
+  }
+  if ((ret= create_shm_default(&temp_cluster_config,
+                               mc_ptr)) != 0)
+  {
+    DEBUG_RETURN_INT(ret);
+  }
+  if ((ret= create_system_section(&temp_cluster_config,
+                                  clu_obj,
+                                  mc_ptr)) != 0)
+  {
+    DEBUG_RETURN_INT(ret);
+  }
+  for (guint32 i = 0; i < clu_obj->clu_conf_ops.num_nodes; i++)
+  {
+    if ((ret= create_node_section(&temp_cluster_config,
+                                  clu_obj,
+                                  mc_ptr,
+                                  i)) != 0)
+    {
+      DEBUG_RETURN_INT(ret);
+    }
+  }
+  for (guint32 i = 0; i < clu_obj->clu_conf_ops.num_comms; i++)
+  {
+    if ((ret= create_comm_section(&temp_cluster_config,
+                                  clu_obj,
+                                  mc_ptr,
+                                  i)) != 0)
+    {
+      DEBUG_RETURN_INT(ret);
+    }
+  }
+  if ((len= calculate_tot_len(&temp_cluster_config,
+                              clu_obj)) != 0)
+  {
+      DEBUG_RETURN_INT(ret);
+  }
+  gchar *mem_ptr= ic_malloc(len);
+  if (mem_ptr == NULL)
+  {
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  }  
+  if ((ret= create_cluster_config(&temp_cluster_config,
+                                  clu_obj,
+                                  mem_ptr,
+                                  len)) != 0)
+  {
+      DEBUG_RETURN_INT(ret);
+  }
+  clu_obj->key_value= mem_ptr;
+  clu_obj->len= len;
+  clu_obj->cluster_id= 0;
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  DEBUG_RETURN_INT(0);  
+}
+
+static void
+free_cluster_config(void *ext_clu_conf)
+{
+  IC_CLUSTER_CONFIG *clu_conf= (IC_CLUSTER_CONFIG*)ext_clu_conf;
+  DEBUG_ENTRY("free_cluster_config");
+  if (clu_conf && clu_conf->comm_hash)
+  {
+    ic_hashtable_destroy(clu_conf->comm_hash, FALSE);
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+count_section_length(guint32 *key_value,
+                     gboolean is_iclaustron_node,
+                     guint32 *len)
+{
+  guint32 num_entries= key_value[1];
+  gboolean is_iclaustron_only;
+  guint32 element_len;
+  guint32 dummy;
+  key_value += 3;
+  for (guint32 i= 0; i < num_entries; i++)
+  {
+    get_conf_info(key_value,
+                  &is_iclaustron_only,
+                  &element_len,
+                  &dummy);
+    key_value += element_len;
+    if (!is_iclaustron_node  && is_iclaustron_only)
+    {
+      len -= element_len;
+    }
+  }
+}
+
+static guint32*
+copy_section(guint32 *key_value,
+             guint32 *dest_key_value,
+             gboolean is_iclaustron_node)
+{
+  guint32 num_entries= key_value[1];
+  gboolean is_iclaustron_only;
+  guint32 element_len;
+  guint32 type;
+  guint32 section_len= key_value[0];
+  dest_key_value[2]= key_value[2];
+  guint32 section_entries= num_entries; 
+
+  for (guint32 i= 0; i < num_entries; i++)
+  {
+    get_conf_info(key_value,
+                  &is_iclaustron_only,
+                  &element_len,
+                  &type);
+    if (!is_iclaustron_node  && is_iclaustron_only)
+    {
+      section_len -= element_len;
+      section_entries--;
+    }
+    else
+    {
+      switch(type)
+      {
+        case IC_UINT32:
+        {
+          dest_key_value[0]= g_htonl(key_value[0]);
+          dest_key_value[1]= g_htonl(key_value[1]);
+          break;  
+        }
+        case IC_UINT64:
+        {
+          dest_key_value[0]= g_htonl(key_value[0]);
+          dest_key_value[1]= g_htonl(key_value[1]);
+          dest_key_value[2]= g_htonl(key_value[2]);
+          break;
+        }
+        case IC_CHARPTR:
+        {
+          
+          dest_key_value[0]= g_htonl(key_value[0]);
+          dest_key_value[1]= g_htonl(key_value[1]);
+          memcpy(&dest_key_value[2], &key_value[2], (element_len - 2)*4);
+          break;
+        }
+        default:
+        {
+          ic_require(FALSE);
+        }
+      }
+      dest_key_value += element_len; 
+    }
+    key_value += element_len;
+  }
+}
+static guint32
+calc_check_sum(guint32 *my_key_value,
+               guint32 len)
+{
+  guint32 check_sum= 0;
+  for (guint32 i= 0; i < len-1; i++)
+  {
+    check_sum ^= my_key_value[i];
+  }
+  DEBUG_RETURN_INT(check_sum);
+}
+
+static guint32*
+get_key_val_array(void *ext_clu_conf,
+                  guint32 node_id,
+                  gboolean is_iclaustron_conf,
+                  int *error_code)
+{ 
+  IC_INT_CLUSTER_CONFIG *clu_conf= (IC_INT_CLUSTER_CONFIG*)ext_clu_conf;
+  DEBUG_ENTRY("get key value array");
+  guint32 *orig_key_value= clu_conf->key_value;
+  guint32 len= clu_conf->len;
+  guint32 *key_value= orig_key_value;
+  guint32 num_nodes= orig_key_value[3] + 
+                     orig_key_value[4] + 
+                     orig_key_value[5];
+  guint32 num_comms= orig_key_value[6];
+  *key_value += 7;
+  for(guint32 i= 0; i < 6 + num_nodes; i++)
+  {
+    guint32 section_len= key_value[0];
+    if(is_iclaustron_conf)
+    {
+      count_section_length(key_value,
+                           is_iclaustron_conf,
+                           &len);
+    }
+    *key_value += section_len;
+  }
+  guint32 count_comms= num_comms;
+  for(guint32 i= 0; i < num_comms; i++)
+  {
+    guint32 section_len= key_value[0];
+    guint32 node_id1;
+    guint32 node_id2;
+    ic_require((find_comm_nodeid1(key_value, 
+                                  0,
+                                  &node_id1)) == 0);
+    ic_require((find_comm_nodeid1(key_value, 
+                                  0,
+                                  &node_id1)) == 0);
+    if (node_id == node_id1 || node_id == node_id2)
+    {
+      if(is_iclaustron_conf)
+      {
+        count_section_length(key_value,
+                             is_iclaustron_conf,
+                             &len);
+      }
+    }
+    else
+    {
+      len -= section_len;
+      count_comms--;
+    }
+    *key_value += section_len;
+  }
+  len += 3;
+  guint32 *my_key_value;
+  if (!(my_key_value = (guint32*)ic_calloc(len*4)))
+  {
+    *error_code = IC_ERROR_MEM_ALLOC;
+    DEBUG_RETURN_PTR(NULL);
+  }
+  key_value= orig_key_value;
+  guint32 *dest_key_value= my_key_value;
+  char *str= "NDBCONF2";
+  memcpy(key_value, str, 8);
+  *key_value+= 2;
+  key_value[0]= g_htonl(len);
+  key_value[1]= g_htonl(orig_key_value[1]);
+  key_value[2]= g_htonl(orig_key_value[2]);
+  key_value[3]= g_htonl(orig_key_value[3]);
+  key_value[4]= g_htonl(orig_key_value[4]);
+  key_value[5]= g_htonl(orig_key_value[5]);
+  key_value[6]= g_htonl(count_comms);
+
+  for(guint32 i= 0; i < 6 + num_nodes; i++)
+  {
+    guint32 section_len= key_value[0];
+    dest_key_value = copy_section(key_value,
+                                  dest_key_value,
+                                  is_iclaustron_conf);
+    key_value += section_len;
+  }
+  
+  for(guint32 i= 0; i < num_comms; i++)
+  {
+    guint32 section_len= key_value[0];
+    guint32 node_id1;
+    guint32 node_id2;
+    ic_require((find_comm_nodeid1(key_value, 
+                                  0,
+                                  &node_id1)) == 0);
+    ic_require((find_comm_nodeid1(key_value, 
+                                  0,
+                                  &node_id1)) == 0);
+    if (node_id == node_id1 || node_id == node_id2)
+    {
+      dest_key_value = copy_section(key_value,
+                                    dest_key_value,
+                                    is_iclaustron_conf);
+    }
+    else
+    {
+      len -= section_len;
+    }
+    key_value += section_len;
+  }
+  guint32 check_sum= calc_check_sum(my_key_value,
+                                    len);
+  my_key_value[len-1]= check_sum;
+  DEBUG_RETURN_PTR(my_key_value);   
+}
+                  
+
+IC_CLUSTER_CONFIG*
+ic_create_file_cluster_config(IC_CLUSTER_CONFIG *clu_obj)
+{
+  clu_obj->ic_modify_cluster_config= modify_cluster_config;
+  clu_obj->ic_get_node_config_uint32= get_node_config_uint32;
+  clu_obj->ic_get_node_config_uint64= get_node_config_uint64; 
+  clu_obj->ic_get_node_config_str= get_node_config_str; 
+  clu_obj->ic_get_comm_config_uint32= get_comm_config_uint32;
+  clu_obj->ic_get_comm_config_uint64= get_comm_config_uint64; 
+  clu_obj->ic_get_comm_config_str= get_comm_config_str;
+  clu_obj->ic_modify_cluster_config= modify_cluster_config;
+  clu_obj->ic_free_cluster_config= free_cluster_config; 
+  DEBUG_RETURN_PTR(clu_obj);
+}
 
 IC_CLUSTER_CONFIG*
 ic_create_network_cluster_config(guint32 *key_value,

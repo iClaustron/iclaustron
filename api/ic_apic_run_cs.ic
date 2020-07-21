@@ -653,6 +653,10 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     {
       DEBUG_RETURN_INT(load_config_files_error(run_obj, &err_obj));
     }
+    if (!(cluster->ic_modify_cluster_config(cluster)))
+    {
+      DEBUG_RETURN_INT(&err_obj);
+    }
 
     /*
       Copy information from cluster configuration file which isn't set in

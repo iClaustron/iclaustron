@@ -229,10 +229,6 @@ analyse_key_value(guint32 *key_value, guint32 len,
   guint32 num_apis= 0;
   guint32 node_section, node_index;
   DEBUG_ENTRY("analyse_key_value");
-  for (guint32 i = 0; i < len; i++)
-  {
-    ic_printf("key[%u] = 0x%x", i, g_ntohl(key_value[i]));
-  }
   conf_obj =  ic_create_network_cluster_config(key_value,
                                                len,
                                                cluster_id,
