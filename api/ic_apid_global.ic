@@ -1,0 +1,1039 @@
+/* Copyright (C) 2007, 2016 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  The iClaustron Data API is an API to be able to access NDB Data nodes through
+  a C-based API. It uses a very flexible data structure making it possible to
+  describe very complex queries and allow the API to control the execution of
+  this query as described by the data structure defined.
+
+  The API can connect to one or many NDB Clusters. There is one socket
+  connection for each node in each cluster.
+
+  THREAD DESCRIPTIONS
+  -------------------
+  The implementation uses a wide range of threads to implement this API.
+
+  1. Receive threads
+  ------------------
+  At first there is a set of receive threads. There is at least one such
+  thread, but could potentially have up to one thread per node connection.
+  The important part here is that each connection is always mapped to one
+  and only one receiver thread. One receiver thread can however handle one
+  or many socket connections. The receive threads share a thread pool to
+  make sure we can control the use of CPU cores and memory allocation for
+  receive threads.
+
+  2. Send threads
+  ---------------
+  Each socket connection also has a send part, there is a one-to-one mapping
+  between send threads and socket connections. The send thread is responsible
+  for the connection set-up and tear-down, for server connections it is
+  assisted in this responsibility by the listen server threads. The send
+  threads and the connect threads share another thread pool to control its
+  use of CPU cores and memory allocation.
+
+  3. Connect threads (listen server threads)
+  ------------------------------------------
+  There is also a set of connection threads. The reason to have this is to
+  handle the socket connections that are a server part. This thread is
+  connected to the send thread as part of the connection set-up phase.
+  There is a mapping of each socket connection which is a server side of the
+  connection to one such connect thread. All server socket connections
+  sharing the same hostname and port will use the same connect thread.
+
+  4. User threads
+  ---------------
+  Finally there is a set of user threads. These are managed by the API user
+  and not by the API.
+
+  DATA STRUCTURE DESCRIPTIONS
+  ---------------------------
+  Each thread has a data structure connected to it. In addition there are
+  a number of other important data structures. All data structures
+  representing a thread always have one variable mutex and one variable
+  cond which represents the mutex protecting this data structure and the
+  condition used to communicate between threads using the data structure.
+  It has also a thread variable containing the thread data structure used
+  to wait for the thread to die.
+
+  1. IC_THREAD_CONNECTION
+  -----------------------
+  This data structure is used to represent the user thread.
+
+  2. IC_APID_CONNECTION
+  ---------------------
+  This data structures also represents the user thread, however this data
+  structure focus on the API data structures and do not handle the
+  protection and the communication with other threads.
+
+  3. IC_SEND_NODE_CONNECTION
+  --------------------------
+  This data structure contains the data needed by the send thread. It does
+  also handle the socket connection phase for both server connections and
+  client connections.
+
+  4. IC_NDB_RECEIVE_STATE
+  -----------------------
+  This data structure represents the receive thread.
+
+  5. IC_LISTEN_SERVER_THREAD
+  --------------------------
+  This data structure represents the connection thread.
+
+  6. IC_NDB_MESSAGE
+  -----------------
+  This data structure represents one NDB message and is used in the user
+  API thread.
+
+  7. IC_NDB_MESSAGE_OPAQUE_AREA
+  -----------------------------
+  This data structure is filled in by the receiver thread and is used to
+  fill in the IC_NDB_MESSAGE data.
+
+  8. IC_MESSAGE_ERROR_OBJECT
+  --------------------------
+  This data structure is used to represent an error that occurred.
+*/
+
+/*
+  GLOBAL DATA API INITIALISATION MODULE
+  -------------------------------------
+  This module contains the code to initialise and set-up and tear down the
+  global part of the data part. This part contains all the threads required
+  to handle the Data API except the user threads which are created by the
+  user application.
+
+  There is one global data object per API node, this object can be connected
+  to many clusters simultaneously. All of those connections wil share the
+  same node id in all clusters.
+
+  It is possible to have several global data object per process, if so these
+  will represent completely independent connections the clusters. Thus they
+  will have no shared state with the other global objects. The only common
+  thing we implement for these objects is a function to round robin usage to
+  the global objects.
+*/
+/*
+  This method is used to initialise all the data structures and allocate
+  memory for the various parts required on a global level for the Data
+  API. This method only allocates the memory and does not start any
+  threads, it must be called before any start thread handling can be done.
+*/
+static void ic_end_apid(IC_INT_APID_GLOBAL *apid_global);
+static void start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
+                                gboolean stop_ordered,
+                                gboolean signal_flag);
+
+static IC_INT_APID_GLOBAL*
+ic_init_apid(IC_API_CONFIG_SERVER *apic)
+{
+  IC_INT_APID_GLOBAL *apid_global;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_CLUSTER_COMM *cluster_comm;
+  IC_APID_CLUSTER_DATA *cluster_data;
+  guint32 i, j, num_bits;
+  guint32 max_cluster_id;
+  guint32 my_node_id= 0;
+  DEBUG_ENTRY("ic_init_apid");
+
+  initialize_message_func_array();
+
+  if (!(apid_global= (IC_INT_APID_GLOBAL*)
+       ic_calloc(sizeof(IC_INT_APID_GLOBAL))))
+  {
+    DEBUG_RETURN_PTR(NULL);
+  }
+
+  apid_global->apic= apic;
+
+  if (!(apid_global->rec_thread_pool= ic_create_threadpool(
+                        IC_MAX_RECEIVE_THREADS + 1,
+                        "receive")))
+    goto error;
+
+  if (!(apid_global->send_thread_pool= ic_create_threadpool(
+                        IC_DEFAULT_MAX_THREADPOOL_SIZE,
+                        "send")))
+    goto error;
+
+  if (!(apid_global->grid_comm=
+       (IC_GRID_COMM*)ic_calloc(sizeof(IC_GRID_COMM))))
+    goto error;
+
+  if (!(apid_global->grid_comm->cluster_comm_array= (IC_CLUSTER_COMM**)
+        ic_calloc((IC_MAX_CLUSTER_ID + 1) * sizeof(IC_SEND_NODE_CONNECTION*))))
+    goto error;
+
+  if (!(apid_global->grid_comm->thread_conn_array= (IC_THREAD_CONNECTION**)
+        ic_calloc((IC_MAX_THREAD_CONNECTIONS + 1) *
+        sizeof(IC_THREAD_CONNECTION*))))
+    goto error;
+
+  max_cluster_id= apic->api_op.ic_get_max_cluster_id(apic);
+  num_bits= max_cluster_id + 1;
+
+  if (!(apid_global->cluster_bitmap= ic_create_bitmap(NULL,
+                                                      num_bits)))
+    goto error;
+
+  if (!(apid_global->cluster_data_array= (IC_APID_CLUSTER_DATA**)
+        ic_calloc(sizeof(IC_APID_CLUSTER_DATA*) * num_bits)))
+    goto error;
+
+  apid_global->max_cluster_id= max_cluster_id;
+
+  /*
+    Set bits for all clusters in the configuration.
+    Set my node id in this API node. There could be several API
+    nodes in one process, each API node is represented by one
+    apid_global and apic object.
+  */
+  for (i= 0; i <= max_cluster_id; i++)
+  {
+    if ((clu_conf= apic->api_op.ic_get_cluster_config(apic, i)))
+    {
+      if (my_node_id)
+      {
+        ic_require(my_node_id == clu_conf->my_node_id);
+      }
+      else
+      {
+        my_node_id= clu_conf->my_node_id;
+      }
+      ic_bitmap_set_bit(apid_global->cluster_bitmap, i);
+    }
+  }
+  ic_require(my_node_id);
+  apid_global->my_node_id= my_node_id;
+
+  if (!(apid_global->mutex= ic_mutex_create()))
+    goto error;
+  if (!(apid_global->cond= ic_cond_create()))
+    goto error;
+  if ((!(apid_global->heartbeat_mutex= ic_mutex_create())) ||
+      (!(apid_global->heartbeat_cond= ic_cond_create())))
+    goto error;
+  if (!(apid_global->send_buf_pool= ic_create_sock_buf(IC_MEMBUF_SIZE,
+                                                       1024)))
+    goto error;
+  if (!(apid_global->ndb_message_pool= ic_create_sock_buf(0, 16384)))
+    goto error;
+  if (!(apid_global->thread_id_mutex= ic_mutex_create()))
+    goto error;
+  if (!(apid_global->dynamic_map_array= ic_create_dynamic_ptr_array()))
+    goto error;
+
+  for (i= 0; i <= apid_global->max_cluster_id; i++)
+  {
+    if ((clu_conf= apic->api_op.ic_get_cluster_config(apic,i)))
+    {
+      if (!(cluster_comm= (IC_CLUSTER_COMM*)
+                     ic_calloc(sizeof(IC_CLUSTER_COMM))))
+        goto error;
+      apid_global->grid_comm->cluster_comm_array[i]= cluster_comm;
+
+      if (!(cluster_comm->send_node_conn_array= (IC_SEND_NODE_CONNECTION**)
+            ic_calloc((IC_MAX_NODE_ID + 1)*sizeof(IC_SEND_NODE_CONNECTION*))))
+        goto error;
+
+      if (!(cluster_data= (IC_APID_CLUSTER_DATA*)
+            ic_calloc(sizeof(IC_APID_CLUSTER_DATA))))
+        goto error;
+      apid_global->cluster_data_array[i]= cluster_data;
+      cluster_data->cluster_id= i;
+      if (!(cluster_data->mutex= ic_mutex_create()))
+        goto error;
+      if (!(cluster_data->cond= ic_cond_create()))
+        goto error;
+      if (!(cluster_data->cluster_md_hash=
+            ic_create_hashtable(5,
+                                ic_hash_str,
+                                ic_keys_equal_str,
+                                FALSE)))
+        goto error;
+      if (!(cluster_data->cluster_tc_conn=
+            ic_create_hashtable(5,
+                                ic_hash_uint32,
+                                ic_keys_equal_uint32,
+                                FALSE)))
+        goto error;
+
+      for (j= 1; j <= clu_conf->max_node_id; j++)
+      {
+        if (clu_conf->node_config[j])
+        {
+          if (!(send_node_conn= (IC_SEND_NODE_CONNECTION*)
+              ic_calloc(sizeof(IC_SEND_NODE_CONNECTION))))
+            goto error;
+          cluster_comm->send_node_conn_array[j]= send_node_conn;
+          if (!(send_node_conn->mutex= ic_mutex_create()))
+            goto error;
+          if (!(send_node_conn->cond= ic_cond_create()))
+            goto error;
+        }
+      }
+    }
+  }
+  DEBUG_RETURN_PTR(apid_global);
+error:
+  ic_end_apid(apid_global);
+  DEBUG_RETURN_PTR(NULL);
+}
+
+static void
+free_send_node_conn(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  if (send_node_conn == NULL)
+  {
+    return;
+  }
+  DEBUG_ENTRY("free_send_node_conn");
+  if (send_node_conn->conn)
+  {
+    send_node_conn->conn->conn_op.ic_free_connection(send_node_conn->conn);
+  }
+  if (send_node_conn->cond)
+  {
+    ic_cond_destroy(&send_node_conn->cond);
+  }
+  if (send_node_conn->mutex)
+  {
+    ic_mutex_destroy(&send_node_conn->mutex);
+  }
+  if (send_node_conn->string_memory)
+  {
+    ic_free(send_node_conn->string_memory);
+  }
+  if (send_node_conn->dynamic_port_number_to_release)
+  {
+    ic_free(send_node_conn->dynamic_port_number_to_release);
+  }
+  ic_free(send_node_conn);
+  DEBUG_RETURN_EMPTY;
+}
+
+static void free_rec_thread(IC_NDB_RECEIVE_STATE *rec_state);
+/*
+  This method is called when shutting down a global Data API object. It
+  requires all the threads to have been stopped and is only releasing the
+  memory on the global Data API object.
+*/
+static void
+ic_end_apid(IC_INT_APID_GLOBAL *apid_global)
+{
+  IC_NDB_RECEIVE_STATE *rec_state;
+  IC_SOCK_BUF *send_buf_pool;
+  IC_SOCK_BUF *ndb_message_pool;
+  IC_GRID_COMM *grid_comm;
+  IC_APID_CLUSTER_DATA **cluster_data_array, *cluster_data;
+  IC_CLUSTER_COMM *cluster_comm;
+  guint32 i, j;
+  guint32 max_cluster_id;
+  DEBUG_ENTRY("ic_end_apid");
+
+  if (!apid_global)
+  {
+    DEBUG_RETURN_EMPTY;
+  }
+
+  max_cluster_id= apid_global->max_cluster_id;
+
+  send_buf_pool= apid_global->send_buf_pool;
+  ndb_message_pool= apid_global->ndb_message_pool;
+  grid_comm= apid_global->grid_comm;
+  cluster_data_array= apid_global->cluster_data_array;
+
+  if (apid_global->rec_thread_pool)
+  {
+    apid_global->rec_thread_pool->tp_ops.ic_threadpool_set_stop_flag(
+                  apid_global->rec_thread_pool);
+  }
+  if (apid_global->send_thread_pool)
+  {
+    apid_global->send_thread_pool->tp_ops.ic_threadpool_set_stop_flag(
+                  apid_global->send_thread_pool);
+  }
+  if (apid_global->rec_thread_pool)
+  {
+    apid_global->rec_thread_pool->tp_ops.ic_threadpool_stop(
+                  apid_global->rec_thread_pool);
+  }
+  if (apid_global->send_thread_pool)
+  {
+    apid_global->send_thread_pool->tp_ops.ic_threadpool_stop(
+                  apid_global->send_thread_pool);
+  }
+  for (i= 0; i < apid_global->num_receive_threads; i++)
+  {
+    if ((rec_state= apid_global->receive_threads[i]))
+    {
+      free_rec_thread(rec_state);
+    }
+  }
+  if (apid_global->cluster_bitmap)
+  {
+    ic_free_bitmap(apid_global->cluster_bitmap);
+  }
+  if (send_buf_pool)
+  {
+    send_buf_pool->sock_buf_ops.ic_free_sock_buf(send_buf_pool);
+  }
+  if (ndb_message_pool)
+  {
+    ndb_message_pool->sock_buf_ops.ic_free_sock_buf(ndb_message_pool);
+  }
+  if (apid_global->heartbeat_mutex)
+  {
+    ic_mutex_destroy(&apid_global->heartbeat_mutex);
+  }
+  if (apid_global->heartbeat_cond)
+  {
+    ic_cond_destroy(&apid_global->heartbeat_cond);
+  }
+  if (apid_global->mutex)
+  {
+    ic_mutex_destroy(&apid_global->mutex);
+  }
+  if (apid_global->cond)
+  {
+    ic_cond_destroy(&apid_global->cond);
+  }
+  if (apid_global->dynamic_map_array)
+  {
+    apid_global->dynamic_map_array->dpa_ops.ic_free_dynamic_ptr_array(
+      apid_global->dynamic_map_array);
+  }
+  for (i= 0; i < apid_global->num_listen_server_threads; i++)
+  {
+    close_listen_server_thread(apid_global->listen_server_thread[i],
+                               apid_global);
+  }
+  if (grid_comm)
+  {
+    if (grid_comm->cluster_comm_array)
+    {
+      for (i= 0; i <= IC_MAX_CLUSTER_ID; i++)
+      {
+        cluster_comm= grid_comm->cluster_comm_array[i];
+        if (cluster_comm == NULL)
+          continue;
+        /* Listen threads are released as part of stopping send threads */
+        for (j= 1; j <= IC_MAX_NODE_ID; j++)
+        {
+          free_send_node_conn(cluster_comm->send_node_conn_array[j]);
+        }
+        ic_free(cluster_comm->send_node_conn_array);
+        ic_free(cluster_comm);
+      }
+      ic_free(grid_comm->cluster_comm_array);
+    }
+    if (grid_comm->thread_conn_array)
+    {
+      for (j= 0; j < IC_MAX_THREAD_CONNECTIONS; j++)
+      {
+        if (!grid_comm->thread_conn_array[j])
+          continue;
+        if (grid_comm->thread_conn_array[j]->mutex)
+        {
+          ic_mutex_destroy(&grid_comm->thread_conn_array[j]->mutex);
+        }
+        if (grid_comm->thread_conn_array[j]->cond)
+        {
+          ic_cond_destroy(&grid_comm->thread_conn_array[j]->cond);
+        }
+      }
+      ic_free(grid_comm->thread_conn_array);
+    }
+    ic_free(grid_comm);
+  }
+  if (cluster_data_array)
+  {
+    for (i= 0; i <= max_cluster_id; i++)
+    {
+      cluster_data= cluster_data_array[i];
+      if (cluster_data)
+      {
+        if (cluster_data->mutex)
+        {
+          ic_mutex_destroy(&cluster_data->mutex);
+        }
+        if (cluster_data->cond)
+        {
+          ic_cond_destroy(&cluster_data->cond);
+        }
+        if (cluster_data->cluster_md_hash)
+        {
+          ic_hashtable_destroy(cluster_data->cluster_md_hash, FALSE);
+        }
+        if (cluster_data->cluster_tc_conn)
+        {
+          ic_hashtable_destroy(cluster_data->cluster_tc_conn, FALSE);
+        }
+        ic_free(cluster_data);
+      }
+    }
+    ic_free(cluster_data_array);
+  }
+  if (apid_global->thread_id_mutex)
+  {
+    ic_mutex_destroy(&apid_global->thread_id_mutex);
+  }
+  ic_free(apid_global);
+  DEBUG_RETURN_EMPTY;
+}
+
+/*
+  This is the method used to start up all the threads in the Data API,
+  including the send threads, the receive threads and the listen server
+  threads. It will also start connecting to the various clusters that
+  the Data API should be connected to.
+*/
+static int
+ic_apid_global_connect(IC_INT_APID_GLOBAL *apid_global)
+{
+  int ret_code= 0;
+  IC_BITMAP *cluster_bitmap= apid_global->cluster_bitmap;
+  guint32 num_cluster_map_bits= ic_bitmap_get_num_bits(cluster_bitmap);
+  guint32 cluster_id;
+  DEBUG_ENTRY("ic_apid_global_connect");
+
+  if ((ret_code= start_send_threads(apid_global)))
+    goto error;
+  if (ic_get_stop_flag())
+    goto stop_error;
+  for (cluster_id= 0; cluster_id < num_cluster_map_bits; cluster_id++)
+  {
+    if (ic_get_stop_flag())
+      goto stop_error;
+    if (ic_bitmap_get_bit(cluster_bitmap, cluster_id))
+    {
+      if ((ret_code= start_receive_thread(apid_global, cluster_id)))
+        goto error;
+    }
+  }
+
+  /*
+    We are now ready to signal to all send threads that they can start up the
+    connect process to the other nodes in the cluster.
+  */
+  if (ic_get_stop_flag())
+    goto stop_error;
+  start_connect_phase(apid_global, FALSE, TRUE);
+  DEBUG_RETURN_INT(0);
+error:
+  apid_global->stop_flag= TRUE;
+  start_connect_phase(apid_global, TRUE, TRUE);
+  DEBUG_RETURN_INT(ret_code);
+stop_error:
+  ret_code= IC_ERROR_STOP_ORDERED;
+  goto error;
+}
+
+static void
+start_connect_phase(IC_INT_APID_GLOBAL *apid_global,
+                    gboolean stop_ordered,
+                    gboolean signal_flag)
+{
+  guint32 node_id, cluster_id, i, thread_id;
+  guint32 num_receive_threads;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_API_CONFIG_SERVER *apic= apid_global->apic;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_GRID_COMM *grid_comm= apid_global->grid_comm;
+  IC_CLUSTER_COMM *cluster_comm;
+  IC_THREADPOOL_STATE *send_tp_state= apid_global->send_thread_pool;
+  IC_THREADPOOL_STATE *rec_tp_state= apid_global->rec_thread_pool;
+  IC_NDB_RECEIVE_STATE *rec_state;
+  DEBUG_ENTRY("start_connect_phase");
+  DEBUG_PRINT(ENTRY_LEVEL, ("stop_ordered: %d, signal_flag: %d",
+              stop_ordered,
+              signal_flag));
+
+  if (stop_ordered)
+  {
+    /**
+     * Stop send thread pool to speed up processing of thread stops.
+     */
+    send_tp_state->tp_ops.ic_threadpool_set_stop_flag(send_tp_state);
+    /*
+       Ensure we speed up end process by waking heartbeat thread if
+       it sleeps and ensure it also has stopped.
+    */
+    rec_tp_state->tp_ops.ic_threadpool_set_stop_flag(rec_tp_state);
+  }
+  /*
+    There is no protection of this array since there is only one
+    occasion when we remove things from it, this is when the
+    API is deallocated. We insert things by inserting pointers to
+    objects already fully prepared, also the size of the arrays are
+    prepared for the worst case and thus no array growth is needed.
+  */
+  for (cluster_id= 0; cluster_id <= apid_global->max_cluster_id; cluster_id++)
+  {
+    if (!(clu_conf= apic->api_op.ic_get_cluster_config(apic, cluster_id)))
+      continue;
+    cluster_comm= grid_comm->cluster_comm_array[cluster_id];
+    for (node_id= 1; node_id <= clu_conf->max_node_id; node_id++)
+    {
+      if (clu_conf->node_config[node_id] && node_id != clu_conf->my_node_id)
+      {
+        send_node_conn= cluster_comm->send_node_conn_array[node_id];
+        if (send_node_conn)
+        {
+          ic_mutex_lock(send_node_conn->mutex);
+          if (!send_node_conn->send_thread_ended)
+          {
+            if (stop_ordered)
+            {
+              send_node_conn->stop_ordered= TRUE;
+            }
+            thread_id= send_node_conn->thread_id;
+            ic_mutex_unlock(send_node_conn->mutex);
+            /* Wake up send thread to connect/shutdown */
+            if (stop_ordered)
+            {
+              /*
+                In this we need to wait for send thread to stop before
+                we continue.
+              */
+              DEBUG_PRINT(THREAD_LEVEL, ("Stop send thread: %u", thread_id));
+              send_tp_state->tp_ops.ic_threadpool_stop_thread_wait(
+                                                              send_tp_state,
+                                                              thread_id);
+            }
+            else if (signal_flag)
+            {
+              DEBUG_PRINT(THREAD_LEVEL, ("Wake send thread %u to run",
+                          thread_id));
+              send_tp_state->tp_ops.ic_threadpool_run_thread(send_tp_state,
+                                                             thread_id);
+            }
+            continue;
+          }
+          ic_mutex_unlock(send_node_conn->mutex);
+        }
+      }
+    }
+  }
+  DEBUG_PRINT(THREAD_LEVEL, ("Completed first phase of start_connect_phase"));
+  if (signal_flag)
+  {
+    /* Wake all receive threads in start position */
+    ic_mutex_lock(apid_global->mutex);
+    for (i= 0; i < apid_global->num_receive_threads; i++)
+    {
+      DEBUG_PRINT(THREAD_LEVEL, ("Wake receive thread %u to run", i));
+      rec_state= apid_global->receive_threads[i];
+      DEBUG_PRINT(THREAD_LEVEL, ("rec_state= %p", rec_state));
+      /*
+      DEBUG_PRINT(THREAD_LEVEL, ("rec_tp_state= %p", rec_tp_state));
+      DEBUG_PRINT(THREAD_LEVEL, ("rec_state->thread_id= %u",
+                    rec_state->thread_id));
+      */
+      rec_tp_state->tp_ops.ic_threadpool_run_thread(rec_tp_state,
+                                                    rec_state->thread_id);
+    }
+    ic_mutex_unlock(apid_global->mutex);
+  }
+  DEBUG_PRINT(THREAD_LEVEL, ("Completed second phase of start_connect_phase"));
+  if (stop_ordered)
+  {
+    /**
+     * Wait for all receive threads to have exited
+     * We need to recall the number of receive threads since we cannot
+     * release its data yet. At this point no new receive threads
+     * will be started and no receive threads will be stopped other
+     * through this code.
+     */
+    num_receive_threads= apid_global->num_receive_threads;
+    while (1)
+    {
+      ic_mutex_lock(apid_global->mutex);
+      if (num_receive_threads == 0)
+      {
+        ic_mutex_unlock(apid_global->mutex);
+        DEBUG_PRINT(THREAD_LEVEL, ("No receive threads to stop"));
+        break;
+      }
+      thread_id= num_receive_threads - 1;
+      rec_state= apid_global->receive_threads[thread_id];
+      num_receive_threads--;
+      ic_mutex_unlock(apid_global->mutex);
+      DEBUG_PRINT(THREAD_LEVEL, ("Stop receive thread %u now",
+                  rec_state->thread_id));
+      rec_tp_state->tp_ops.ic_threadpool_stop_thread_wait(rec_tp_state,
+                                              rec_state->thread_id);
+    }
+    DEBUG_PRINT(THREAD_LEVEL, ("Stop heartbeat thread now"));
+    ic_mutex_lock(apid_global->heartbeat_mutex);
+    if (apid_global->heartbeat_thread_waiting)
+    {
+      ic_cond_signal(apid_global->heartbeat_cond);
+    }
+    ic_mutex_unlock(apid_global->heartbeat_mutex);
+    rec_tp_state->tp_ops.ic_threadpool_stop_thread_wait(rec_tp_state,
+                                    apid_global->heartbeat_thread_id);
+    DEBUG_PRINT(THREAD_LEVEL, ("Heartbeat thread stopped now"));
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+/*
+  Functions accessible through the IC_APID_GLOBAL interface
+  ---------------------------------------------------------
+*/
+static void
+apid_global_cond_wait(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_cond_wait");
+
+  ic_mutex_lock(apid_global->mutex);
+  if (apid_global->num_user_threads_started > 0 &&
+      !ic_get_stop_flag())
+  {
+    ic_cond_timed_wait(apid_global->cond,
+                       apid_global->mutex,
+                       3 * IC_MICROSEC_PER_SECOND);
+  }
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
+}
+
+static gboolean
+apid_global_get_stop(IC_APID_GLOBAL *ext_apid_global)
+{
+  gboolean stop_flag;
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+
+  ic_mutex_lock(apid_global->mutex);
+  if (ic_tp_get_stop_flag())
+  {
+    apid_global->stop_flag= TRUE;
+  }
+  stop_flag= apid_global->stop_flag;
+  ic_mutex_unlock(apid_global->mutex);
+  return stop_flag;
+}
+
+static void
+apid_global_set_stop(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_set_stop");
+
+  ic_mutex_lock(apid_global->mutex);
+  apid_global->stop_flag= TRUE;
+  ic_cond_signal(apid_global->cond);
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
+}
+
+static guint32
+apid_global_get_num_user_threads(IC_APID_GLOBAL *ext_apid_global)
+{
+  guint32 num_user_threads;
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_get_num_user_threads");
+
+  ic_mutex_lock(apid_global->mutex);
+  num_user_threads= apid_global->num_user_threads_started;
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_INT(num_user_threads);
+}
+
+void
+apid_global_add_user_thread(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_add_user_thread");
+
+  ic_mutex_lock(apid_global->mutex);
+  apid_global->num_user_threads_started++;
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
+}
+
+void
+apid_global_remove_user_thread(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_remove_user_thread");
+
+  ic_mutex_lock(apid_global->mutex);
+  apid_global->num_user_threads_started--;
+  ic_cond_signal(apid_global->cond);
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_EMPTY;
+}
+
+void
+apid_global_set_thread_func(IC_APID_GLOBAL *ext_apid_global,
+                            IC_RUN_APID_THREAD_FUNC apid_func)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+
+  apid_global->apid_func= apid_func;
+}
+
+IC_RUN_APID_THREAD_FUNC
+apid_global_get_thread_func(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+
+  return apid_global->apid_func;
+}
+
+/*
+  This function is used by Cluster Server to transfer a connection
+   to the Data API.
+*/
+static int
+apid_global_external_connect(IC_APID_GLOBAL *ext_apid_global,
+                             guint32 cluster_id,
+                             guint32 node_id,
+                             IC_CONNECTION *conn)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  IC_THREAD_STATE *thread_state;
+  IC_THREADPOOL_STATE *tp_state;
+  int ret_code;
+  DEBUG_ENTRY("apid_global_external_connect");
+
+  DEBUG_PRINT(CONFIG_LEVEL,
+  ("Converting to NDB Protocol, cluster id = %u, node_id = %u",
+    cluster_id, node_id));
+  if ((ret_code= map_id_to_send_node_connection(apid_global,
+                                                cluster_id,
+                                                node_id,
+                                                &send_node_conn)))
+    goto error;
+  ic_mutex_lock(send_node_conn->mutex);
+  send_node_conn->conn= conn;
+  send_node_conn->connection_up= TRUE;
+  send_node_conn->node_up= FALSE;
+  send_node_conn->node_dead= FALSE;
+  thread_state= send_node_conn->thread_state;
+  ic_mutex_unlock(send_node_conn->mutex);
+
+  DEBUG_PRINT(THREAD_LEVEL, ("Wake send thread up to handle new connection"));
+  ic_assert(thread_state != NULL);
+  tp_state= apid_global->send_thread_pool;
+  tp_state->ts_ops.ic_thread_wake(thread_state);
+  DEBUG_RETURN_INT(0);
+
+error:
+  DEBUG_PRINT(CONFIG_LEVEL,
+    ("Error from ic_external_connect, code = %u", ret_code));
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+apid_global_get_master_node_id(IC_APID_GLOBAL *ext_apid_global,
+                               guint32 cluster_id,
+                               guint32 *master_node_id)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  IC_NDB_RECEIVE_STATE *rec_state;
+  guint32 i;
+  DEBUG_ENTRY("apid_global_get_master_node_id");
+
+  ic_mutex_lock(apid_global->mutex);
+  for (i= 0; i < IC_MAX_RECEIVE_THREADS; i++)
+  {
+    rec_state= apid_global->receive_threads[i];
+    if (!rec_state)
+      continue;
+    ic_mutex_lock(rec_state->mutex);
+    send_node_conn= rec_state->first_send_node;
+    while (send_node_conn)
+    {
+      ic_mutex_lock(send_node_conn->mutex);
+      if (send_node_conn->cluster_id == cluster_id &&
+          check_node_started(send_node_conn))
+      {
+        *master_node_id= send_node_conn->other_node_id;
+        ic_mutex_unlock(send_node_conn->mutex);
+        ic_mutex_unlock(rec_state->mutex);
+        ic_mutex_unlock(apid_global->mutex);
+        DEBUG_RETURN_INT(0);
+      }
+      ic_mutex_unlock(send_node_conn->mutex);
+      send_node_conn= send_node_conn->next_send_node;
+    }
+    ic_mutex_unlock(rec_state->mutex);
+  }
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_INT(IC_ERROR_FOUND_NO_CONNECTED_NODES);
+}
+
+static int
+apid_global_wait_first_node_connect(IC_APID_GLOBAL *ext_apid_global,
+                                    guint32 cluster_id,
+                                    glong wait_time)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  IC_NDB_RECEIVE_STATE *rec_state;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  gboolean found;
+  guint32 i;
+  IC_TIMER start_timer, current_timer, elapsed_timer;
+  DEBUG_ENTRY("apid_global_wait_first_node_connect");
+
+  start_timer= ic_gethrtime(); 
+  ic_mutex_lock(apid_global->mutex);
+  do
+  {
+    if (ic_get_stop_flag())
+    {
+      ic_mutex_unlock(apid_global->mutex);
+      DEBUG_RETURN_INT(IC_ERROR_STOP_ORDERED);
+    }
+    for (i = 0; i < IC_MAX_RECEIVE_THREADS; i++)
+    {
+      rec_state= apid_global->receive_threads[i];
+      if (!rec_state || rec_state->cluster_id != cluster_id)
+        continue;
+      ic_mutex_lock(rec_state->mutex);
+      send_node_conn= rec_state->first_send_node;
+      found= FALSE;
+      while (send_node_conn)
+      {
+        ic_mutex_lock(send_node_conn->mutex);
+        if (send_node_conn->cluster_id == cluster_id &&
+            check_node_started(send_node_conn))
+        {
+          found= TRUE;
+          ic_mutex_unlock(send_node_conn->mutex);
+          break;
+        }
+        ic_mutex_unlock(send_node_conn->mutex);
+        send_node_conn= send_node_conn->next_send_node;
+      }
+      ic_mutex_unlock(rec_state->mutex);
+      if (found)
+        break;
+    }
+    if (found)
+    {
+      apid_global->wait_first_node_connect= FALSE;
+      ic_mutex_unlock(apid_global->mutex);
+      DEBUG_RETURN_INT(0);
+    }
+    current_timer= ic_gethrtime();
+    elapsed_timer= ic_millis_elapsed(start_timer, current_timer);
+    if (elapsed_timer > (IC_TIMER)wait_time)
+    {
+      ic_mutex_unlock(apid_global->mutex);
+      DEBUG_RETURN_INT(IC_ERROR_TIMEOUT_WAITING_FOR_NODES);
+    }
+    apid_global->wait_first_node_connect= TRUE;
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Wait for first node connect"));
+    ic_cond_timed_wait(apid_global->cond,
+                       apid_global->mutex,
+                       IC_MICROSEC_PER_SECOND);
+  } while (1);
+  ic_assert(FALSE); /* Should never arrive here */
+  DEBUG_RETURN_INT(0);
+}
+
+/*
+  This method is used to tear down the global Data API part. It will
+  disconnect all the connections to all cluster nodes and stop all
+  Data API threads.
+*/
+static void
+apid_global_free(IC_APID_GLOBAL *ext_apid_global)
+{
+  IC_INT_APID_GLOBAL *apid_global= (IC_INT_APID_GLOBAL*)ext_apid_global;
+  DEBUG_ENTRY("apid_global_free");
+
+  apid_global->stop_flag= TRUE;
+  start_connect_phase(apid_global, TRUE, FALSE);
+  ic_end_apid(apid_global);
+  DEBUG_RETURN_EMPTY;
+}
+
+static IC_APID_GLOBAL_OPS glob_apid_global_ops=
+{
+  /* .ic_cond_wait               = */ apid_global_cond_wait,
+  /* .ic_get_stop_flag           = */ apid_global_get_stop,
+  /* .ic_set_stop_flag           = */ apid_global_set_stop,
+  /* .ic_get_num_user_threads    = */ apid_global_get_num_user_threads,
+  /* .ic_add_user_thread         = */ apid_global_add_user_thread,
+  /* .ic_remove_user_thread      = */ apid_global_remove_user_thread,
+  /* .ic_set_thread_func         = */ apid_global_set_thread_func,
+  /* .ic_get_thread_func         = */ apid_global_get_thread_func,
+  /* .ic_external_connect        = */ apid_global_external_connect,
+  /* .ic_wait_first_node_connect = */ apid_global_wait_first_node_connect,
+  /* .ic_get_master_node_id      = */ apid_global_get_master_node_id,
+  /* .ic_free_apid_global        = */ apid_global_free
+};
+
+/*
+  External interface to GLOBAL DATA API INITIALISATION MODULE
+  -----------------------------------------------------------
+*/
+
+IC_APID_GLOBAL*
+ic_create_apid_global(IC_API_CONFIG_SERVER *apic,
+                      gboolean use_external_connect,
+                      int *ret_code,
+                      gchar *err_str)
+{
+  IC_INT_APID_GLOBAL *apid_global;
+  gchar *err_string;
+  int error;
+  DEBUG_ENTRY("ic_create_apid_global");
+
+  if (!(apid_global= ic_init_apid(apic)))
+  {
+    *ret_code= IC_ERROR_MEM_ALLOC;
+    goto error;
+  }
+  if (ic_get_stop_flag())
+  {
+    *ret_code= IC_ERROR_STOP_ORDERED;
+    ic_end_apid(apid_global);
+    goto error;
+  }
+  apid_global->apid_global_ops= &glob_apid_global_ops;
+  apid_global->apid_metadata_ops= &glob_metadata_bind_ops;
+  apid_global->use_external_connect= use_external_connect;
+
+  if ((error= start_heartbeat_thread(apid_global,
+                                     apid_global->rec_thread_pool)))
+  {
+    ic_end_apid(apid_global);
+    *ret_code= error;
+    goto error;
+  }
+
+  if ((error= ic_apid_global_connect(apid_global)))
+  {
+    ic_end_apid(apid_global);
+    *ret_code= error;
+    goto error;
+  }
+  DEBUG_RETURN_PTR((IC_APID_GLOBAL*)apid_global);
+error:
+  err_string= ic_common_fill_error_buffer(NULL, 0, *ret_code, err_str);
+  ic_assert(err_string == err_str);
+  DEBUG_RETURN_PTR(NULL);
+}

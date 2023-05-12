@@ -1,0 +1,207 @@
+/* Copyright (C) 2009-2013 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  ADAPTIVE SEND MODULE
+  --------------------
+  The idea behind this algorithm is that we want to maintain a level
+  of buffering such that 95% of the sends do not have to wait more
+  than a configured amount of nanoseconds. Assuming a normal distribution
+  we can do statistical analysis of both real waits and waits that we
+  decided to not take to see where the appropriate level of buffering
+  occurs to meet at least 95% of the sends in the predefined timeframe.
+
+  This module is a support module to the Send Message Module.
+*/
+
+/*
+  The first method adaptive_send_algorithm_decision does the analysis of
+  whether or not to wait or not and the second routine 
+  adaptive_send_algorithm_statistics gathers the statistics. The third
+  method adaptive_send_algorithm_adjust is called by the receiver thread
+  very regularly to ensure that no messages are lost in the wait for
+  another application thread, it also adjusts the statistics by calling
+  the statistics method.
+*/
+static void
+adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 gboolean *will_wait,
+                                 IC_TIMER current_time);
+static void
+adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                   IC_TIMER current_time);
+static void
+adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn);
+
+/* This function is called very regularly from the receive thread */
+static IC_SEND_NODE_CONNECTION*
+adaptive_send_handling(IC_SEND_NODE_CONNECTION *conn);
+
+/*
+  This method is needed to make sure that messages sent using the
+  adaptive algorithm gets sent eventually. The adaptive send algorithm
+  aims that send should be done when a number of threads have decided to
+  send and to group those sends such that we get better buffering on the
+  connection. The algorithm keeps statistics on use of a node connection
+  for this purpose. However in the case that no thread shows up to send
+  the data we need to send it anyways and this method is called regularly
+  (at least as often as the receive thread wakes up to receive data).
+*/
+static IC_SEND_NODE_CONNECTION*
+adaptive_send_handling(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  gboolean wake_send_thread;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  DEBUG_ENTRY("adaptive_send_handling");
+
+  wake_send_thread= FALSE;
+  ic_mutex_lock(send_node_conn->mutex);
+  adaptive_send_algorithm_adjust(send_node_conn);
+  if (send_node_conn->first_sbp)
+  {
+    /*
+      Someone has left buffers around waiting for a sender, we need to
+      wake the send thread to handle this sending in this case.
+    */
+    wake_send_thread= TRUE;
+  }
+  next_send_node_conn= send_node_conn->next_send_node;
+  ic_mutex_unlock(send_node_conn->mutex);
+  if (wake_send_thread)
+    ic_cond_signal(send_node_conn->cond);
+  DEBUG_RETURN_PTR(next_send_node_conn);
+}
+
+static void
+adaptive_send_algorithm_decision(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                 gboolean *will_wait,
+                                 IC_TIMER current_time)
+{
+  guint32 num_waits= send_node_conn->num_waits;
+  IC_TIMER first_buffered_timer= send_node_conn->first_buffered_timer;
+  DEBUG_ENTRY("adaptive_send_algorithm_decision");
+
+  /*
+    We start by checking whether it's allowed to wait any further based
+    on how many we already buffered. Then we check that we haven't
+    already waited for a longer time than allowed.
+  */
+  if (num_waits >= send_node_conn->max_num_waits)
+    goto no_wait;
+  if (!ic_check_defined_time(first_buffered_timer) &&
+      (ic_nanos_elapsed(first_buffered_timer, current_time) >
+       send_node_conn->max_wait_in_nanos))
+    goto no_wait;
+  /*
+    If we come here it means that we haven't waited long enough yet and
+    there is room for one more to wait according to the current state of
+    the adaptive algorithm. Thus we decide to wait.
+  */
+  if (num_waits == 0)
+    send_node_conn->first_buffered_timer= current_time;
+  send_node_conn->num_waits= num_waits + 1;
+  *will_wait= TRUE;
+  DEBUG_RETURN_EMPTY;
+
+no_wait:
+  send_node_conn->first_buffered_timer= UNDEFINED_TIME;
+  send_node_conn->num_waits= 0;
+  *will_wait= FALSE;
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+adaptive_send_algorithm_statistics(IC_SEND_NODE_CONNECTION *send_node_conn,
+                                   IC_TIMER current_time)
+{
+  guint32 new_send_timer_index, i;
+  guint32 last_send_timer_index= send_node_conn->last_send_timer_index;
+  guint32 max_num_waits, max_num_waits_plus_one, timer_index1, timer_index2;
+  guint32 num_stats;
+  IC_TIMER start_time1, start_time2, elapsed_time1, elapsed_time2;
+  DEBUG_ENTRY("adaptive_send_algorithm_statistics");
+
+  max_num_waits= send_node_conn->max_num_waits;
+  max_num_waits_plus_one= max_num_waits + 1;
+  timer_index1= last_send_timer_index - max_num_waits;
+  timer_index2= last_send_timer_index - max_num_waits_plus_one;
+  start_time1= send_node_conn->last_send_timers[timer_index1];
+  start_time2= send_node_conn->last_send_timers[timer_index2];
+  elapsed_time1= current_time - start_time1;
+  elapsed_time2= current_time - start_time2;
+
+  send_node_conn->tot_curr_wait_time+= elapsed_time1;
+  send_node_conn->tot_wait_time_plus_one+= elapsed_time2;
+
+  num_stats= send_node_conn->num_stats;
+  send_node_conn->num_stats= num_stats + 1;
+  last_send_timer_index++;
+  if (last_send_timer_index == IC_MAX_SEND_TIMERS)
+  {
+    /* Compress array into first 8 entries to free up new entries */
+    for (i= 0; i < IC_MAX_SENDS_TRACKED; i++)
+    {
+      last_send_timer_index--;
+      new_send_timer_index= last_send_timer_index - IC_MAX_SENDS_TRACKED;
+      send_node_conn->last_send_timers[new_send_timer_index]=
+        send_node_conn->last_send_timers[last_send_timer_index];
+    }
+  }
+  send_node_conn->last_send_timers[last_send_timer_index]= current_time;
+  send_node_conn->last_send_timer_index= last_send_timer_index;
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+adaptive_send_algorithm_adjust(IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  guint64 mean_curr_wait_time, mean_wait_time_plus_one, limit;
+  DEBUG_ENTRY("adaptive_send_algorithm_adjust");
+
+  adaptive_send_algorithm_statistics(send_node_conn, ic_gethrtime());
+  /*
+    We assume a gaussian distribution which requires us to be 1.96*mean
+    value to be within 95% confidence interval and we approximate this
+    by 2. Thus to keep 95% within max_wait_in_nanos the mean value
+    should be max_wait_in_nanos/1.96.
+  */
+  limit= send_node_conn->max_wait_in_nanos / 2;
+  mean_curr_wait_time= send_node_conn->tot_curr_wait_time /
+                       send_node_conn->num_stats;
+  mean_wait_time_plus_one= send_node_conn->tot_wait_time_plus_one /
+                           send_node_conn->num_stats;
+  send_node_conn->tot_curr_wait_time= 0;
+  send_node_conn->tot_wait_time_plus_one= 0;
+  send_node_conn->num_stats= 0;
+  if (mean_curr_wait_time > limit)
+  {
+    /*
+      The mean waiting time is currently out of bounds, we need to
+      decrease it even further to adapt to the new conditions.
+    */
+    if (send_node_conn->max_num_waits > 0)
+      send_node_conn->max_num_waits--;
+  }
+  if (mean_wait_time_plus_one < limit)
+  {
+    /*
+      The mean waiting is within limits even if we increase the number
+      of waiters we can accept.
+    */
+    if (send_node_conn->max_num_waits < IC_MAX_SENDS_TRACKED)
+      send_node_conn->max_num_waits++;
+  }
+  DEBUG_RETURN_EMPTY;
+}

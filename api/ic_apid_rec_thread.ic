@@ -1,0 +1,1071 @@
+/* Copyright (C) 2009, 2016 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  RECEIVE THREAD MODULE:
+  ----------------------
+  This module contains the code that handles the receiver threads which takes
+  care of reading from the socket and directing the NDB message to the proper
+  user thread.
+*/
+
+/* This functions starts a receive thread */
+static int start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
+                                guint32 cluster_id);
+/* This is the main function of the receive thread */
+static gpointer run_receive_thread(void *data);
+
+/*
+  The receiver thread is responsible to receive messages from other nodes
+  using the NDB Protocol and send it on to the application threads. The
+  ndb_receive_node function takes care of receiving messages from one
+  node and packaging it in a format that can be received by application
+  threads.
+  The post_ndb_messages function ensures that the messages are delivered to
+  the application threads.
+  The read_message_early is a support method to read the first part of the
+  NDB Protocol.
+  The receiver thread uses various variants of polling (different variants
+  dependent on OS, implemented in IC_POLL_SET object). The two methods
+  get_first_rec_node and get_next_rec_node ensures that we get the nodes
+  which have data waiting.
+*/
+static int ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
+                            IC_RECEIVE_NODE_CONNECTION *rec_node,
+                            IC_THREAD_CONNECTION **thd_conn,
+                            IC_TEMP_THREAD_CONNECTION *temp_thread_conn,
+                            guint32 *list_modules_received,
+                            guint32 *list_modules_received_index,
+                            guint32 *list_page_modules_received);
+static void post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
+                              IC_TEMP_THREAD_CONNECTION *temp_thread_conn,
+                              guint32 *list_modules_received,
+                              guint32 *list_modules_received_index);
+static void read_message_early(gchar *read_ptr, guint32 *message_size,
+                               guint32 *receiver_module_id);
+static IC_RECEIVE_NODE_CONNECTION*
+get_first_rec_node(IC_NDB_RECEIVE_STATE *rec_state);
+static IC_RECEIVE_NODE_CONNECTION*
+get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state);
+/*
+  The remaining methods are there to handle additions and removals of node
+  connections from the receiver thread. Currently we don't have any
+  adaptiveness to this change but the idea is to make this part adapt to
+  the load on the node. There is also a method used when a node connection
+  have been broken.
+*/
+static int handle_node_error(IC_NDB_RECEIVE_STATE *rec_state,
+                             IC_RECEIVE_NODE_CONNECTION *rec_node,
+                             int error);
+static void add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
+static void rem_nodes_receive_thread(IC_NDB_RECEIVE_STATE *rec_state);
+static int rem_node_from_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                                   IC_SEND_NODE_CONNECTION *send_node_conn);
+static void check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state);
+static void check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state);
+
+static int
+handle_node_error(IC_NDB_RECEIVE_STATE *rec_state,
+                  IC_RECEIVE_NODE_CONNECTION *rec_node,
+                  int error)
+{
+  int ret_code= 0;
+
+  (void)rec_state;
+  node_failure_handling(rec_node->send_node_conn, FALSE);
+  if (error == IC_ERROR_MEM_ALLOC)
+  {
+    /*
+      Will be very hard to continue in a low-memory situation. In the
+      future we might add some code to get rid of memory not badly
+      needed but for now we simply stop this node entirely in a
+      controlled manner.
+    */
+    ret_code= 1;
+  }
+  else
+  {
+    /*
+      Any other fault happening will be treated as a close down of the
+      socket connection and allow us to continue operating in a normal
+      manner. TODO: Close down logic needed here.
+    */
+    ret_code= 0;
+  }
+  return ret_code;
+}
+
+static void
+insert_add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                               IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  DEBUG_ENTRY("insert_add_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", send_node_conn->other_node_id));
+  send_node_conn->rec_state= rec_state;
+  send_node_conn->next_add_node= rec_state->first_add_node;
+  rec_state->first_add_node= send_node_conn;
+  DEBUG_RETURN_EMPTY;
+}
+
+static gboolean
+remove_add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                               IC_SEND_NODE_CONNECTION *rem_send_node_conn)
+{
+  gboolean found= FALSE;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  IC_SEND_NODE_CONNECTION *prev_send_node_conn= NULL;
+  DEBUG_ENTRY("remove_add_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", rem_send_node_conn->other_node_id));
+
+  next_send_node_conn= rec_state->first_add_node;
+  while (next_send_node_conn)
+  {
+    if (next_send_node_conn == rem_send_node_conn)
+    {
+      found= TRUE;
+      if (prev_send_node_conn == NULL)
+      {
+        rec_state->first_add_node= rem_send_node_conn->next_add_node;
+      }
+      else
+      {
+        prev_send_node_conn->next_add_node= rem_send_node_conn->next_add_node;
+      }
+    }
+    prev_send_node_conn= next_send_node_conn;
+    next_send_node_conn= next_send_node_conn->next_add_node;
+  }
+  DEBUG_RETURN_INT(found);
+}
+
+static void
+insert_rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                               IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  DEBUG_ENTRY("insert_rem_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", send_node_conn->other_node_id));
+  send_node_conn->next_rem_node= rec_state->first_rem_node;
+  rec_state->first_rem_node= send_node_conn;
+  DEBUG_RETURN_EMPTY;
+}
+
+static gboolean
+remove_rem_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                               IC_SEND_NODE_CONNECTION *rem_send_node_conn)
+{
+  gboolean found= FALSE;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  IC_SEND_NODE_CONNECTION *prev_send_node_conn= NULL;
+  DEBUG_ENTRY("remove_rem_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", rem_send_node_conn->other_node_id));
+
+  next_send_node_conn= rec_state->first_rem_node;
+  while (next_send_node_conn)
+  {
+    if (next_send_node_conn == rem_send_node_conn)
+    {
+      found= TRUE;
+      if (prev_send_node_conn == NULL)
+      {
+        rec_state->first_rem_node= rem_send_node_conn->next_rem_node;
+      }
+      else
+      {
+        prev_send_node_conn->next_rem_node= rem_send_node_conn->next_rem_node;
+      }
+    }
+    prev_send_node_conn= next_send_node_conn;
+    next_send_node_conn= next_send_node_conn->next_rem_node;
+  }
+  DEBUG_RETURN_INT(found);
+}
+
+static void
+insert_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                           IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  DEBUG_ENTRY("insert_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", send_node_conn->other_node_id));
+  send_node_conn->next_send_node= rec_state->first_send_node;
+  rec_state->first_send_node= send_node_conn;
+  DEBUG_RETURN_EMPTY;
+}
+
+static gboolean
+remove_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                           IC_SEND_NODE_CONNECTION *rem_send_node_conn)
+{
+  gboolean found= FALSE;
+  IC_SEND_NODE_CONNECTION *next_send_node_conn;
+  IC_SEND_NODE_CONNECTION *prev_send_node_conn= NULL;
+  DEBUG_ENTRY("remove_node_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node: %u", rem_send_node_conn->other_node_id));
+
+  next_send_node_conn= rec_state->first_send_node;
+  while (next_send_node_conn)
+  {
+    if (next_send_node_conn == rem_send_node_conn)
+    {
+      found= TRUE;
+      if (prev_send_node_conn == NULL)
+      {
+        rec_state->first_send_node= rem_send_node_conn->next_send_node;
+      }
+      else
+      {
+        prev_send_node_conn->next_send_node=
+          rem_send_node_conn->next_send_node;
+      }
+    }
+    prev_send_node_conn= next_send_node_conn;
+    next_send_node_conn= next_send_node_conn->next_send_node;
+  }
+  DEBUG_RETURN_INT(found);
+}
+
+static void
+add_node_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  IC_CONNECTION *conn;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  int conn_fd, ret_code;
+  gboolean found= FALSE;
+
+restart:
+  ic_mutex_lock(rec_state->mutex);
+  send_node_conn= rec_state->first_add_node;
+  if (send_node_conn)
+  {
+    /**
+     * Remove from list of nodes to add.
+     * Add to list of nodes handled by the receive thread.
+     */
+    ic_mutex_lock(send_node_conn->mutex);
+    found= remove_add_node_receive_thread(rec_state, send_node_conn);
+    ic_require(found);
+    insert_node_receive_thread(rec_state, send_node_conn);
+  }
+  if (send_node_conn)
+  {
+    DEBUG_PRINT(COMM_LEVEL,
+      ("Adding node id = %u in cluster %u to receive thread",
+       send_node_conn->other_node_id, send_node_conn->cluster_id));
+    if (send_node_conn->connection_up &&
+        !send_node_conn->stop_ordered)
+    {
+      conn= send_node_conn->conn;
+      conn_fd= conn->conn_op.ic_get_fd(conn);
+      if ((ret_code= poll_set->poll_ops.ic_poll_set_add_connection(poll_set,
+                                             conn_fd,
+                                             &send_node_conn->rec_node)))
+      {
+        remove_node_receive_thread(rec_state, send_node_conn);
+        ic_mutex_unlock(rec_state->mutex);
+        ic_mutex_unlock(send_node_conn->mutex);
+        node_failure_handling(send_node_conn, FALSE);
+        goto restart;
+      }
+      else
+      {
+        /* Set up variables to indicate it's in receive thread now */
+        send_node_conn->in_poll_set= TRUE;
+        send_node_conn->rec_state= rec_state;
+      }
+    }
+    ic_mutex_unlock(rec_state->mutex);
+    ic_mutex_unlock(send_node_conn->mutex);
+    goto restart;
+  }
+  ic_mutex_unlock(rec_state->mutex);
+}
+
+static int
+rem_node_from_receive_thread(IC_NDB_RECEIVE_STATE *rec_state,
+                             IC_SEND_NODE_CONNECTION *send_node_conn)
+{
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  IC_CONNECTION *conn;
+  gboolean found;
+  int ret_code, conn_fd;
+  DEBUG_ENTRY("rem_node_from_receive_thread");
+  DEBUG_PRINT(ENTRY_LEVEL, ("Node %u removed", send_node_conn->other_node_id));
+
+  ic_assert(send_node_conn->rec_state != NULL);
+  /* Remove send node connection from receive thread list */
+  remove_node_receive_thread(rec_state, send_node_conn);
+  /* Remove from remove node list */
+  found = remove_rem_node_receive_thread(rec_state, send_node_conn);
+  ic_require(found);
+
+  /* Disconnect node from receive thread */
+  send_node_conn->rec_state= NULL;
+  /* Disconnect from poll set of this receive thread */
+  if (send_node_conn->in_poll_set)
+  {
+    conn= send_node_conn->conn;
+    conn_fd= conn->conn_op.ic_get_fd(conn);
+    send_node_conn->in_poll_set= FALSE;
+    if ((ret_code= poll_set->poll_ops.ic_poll_set_remove_connection(poll_set,
+                                                                    conn_fd)))
+    {
+      DEBUG_RETURN_INT(ret_code);
+    }
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static void
+rem_nodes_receive_thread(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  int ret_code;
+
+  while (1)
+  {
+    ic_mutex_lock(rec_state->mutex);
+    send_node_conn= rec_state->first_rem_node;
+    if (send_node_conn == NULL)
+      break;
+    DEBUG_PRINT(COMM_LEVEL,
+      ("Removing node id = %u in cluster %u from receive thread",
+       send_node_conn->other_node_id, send_node_conn->cluster_id));
+    ic_mutex_lock(send_node_conn->mutex);
+    if ((ret_code= rem_node_from_receive_thread(rec_state, send_node_conn)))
+    {
+      ic_print_error(ret_code);
+      ic_mutex_unlock(rec_state->mutex);
+      ic_mutex_unlock(send_node_conn->mutex);
+      node_failure_handling(send_node_conn, TRUE);
+    }
+    else
+    {
+      ic_mutex_unlock(send_node_conn->mutex);
+      ic_mutex_unlock(rec_state->mutex);
+    }
+  }
+  ic_mutex_unlock(rec_state->mutex);
+}
+
+static void
+check_for_reorg_receive_threads(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  /*
+    We need to check for:
+    1) Someone ordering this node to stop, as part of this the
+    stop_ordered flag on the receive thread needs to be set.
+    2) Someone ordering a change of socket connections. This
+    means that a socket connection is moved from one receive
+    thread to another. This is ordered by setting the change_flag
+    on the receive thread data structure.
+    3) We also update all the statistics in this slot such that
+    the thread deciding on reorganization of socket connections
+    has statistics to use here.
+
+    Remove nodes last since a we want a failed node to be removed even if
+    it is on the add list.
+  */
+  add_node_receive_thread(rec_state);
+  rem_nodes_receive_thread(rec_state);
+}
+
+static void
+check_send_buffers(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_SEND_NODE_CONNECTION *send_node_conn= rec_state->first_send_node;
+
+  DEBUG_DISABLE(ADAPTIVE_SEND_LEVEL);
+  while (send_node_conn)
+    send_node_conn= adaptive_send_handling(send_node_conn);
+  DEBUG_ENABLE(ADAPTIVE_SEND_LEVEL);
+}
+
+static IC_RECEIVE_NODE_CONNECTION*
+get_first_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  const IC_POLL_CONNECTION *poll_conn;
+  int ret_code;
+  DEBUG_ENTRY("get_first_rec_node");
+
+  if ((ret_code= poll_set->poll_ops.ic_check_poll_set(poll_set, (int)10)) ||
+      (!(poll_conn= poll_set->poll_ops.ic_get_next_connection(poll_set))))
+    DEBUG_RETURN_PTR(NULL);
+  DEBUG_RETURN_PTR(poll_conn->user_obj);
+}
+
+static IC_RECEIVE_NODE_CONNECTION*
+get_next_rec_node(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  IC_POLL_SET *poll_set= rec_state->poll_set;
+  const IC_POLL_CONNECTION *poll_conn;
+  DEBUG_ENTRY("get_next_rec_node");
+
+  if (!(poll_conn= poll_set->poll_ops.ic_get_next_connection(poll_set)))
+    DEBUG_RETURN_PTR(NULL);
+  DEBUG_RETURN_PTR(poll_conn->user_obj);
+}
+
+static void
+read_message_early(gchar *read_ptr,
+                   guint32 *message_size,
+                   guint32 *receiver_module_id)
+{
+  guint32 *message_ptr= (guint32*)read_ptr;
+  guint32 word1, word3;
+
+  word1= message_ptr[0];
+  word3= message_ptr[2];
+  if ((word1 & 1) != ic_glob_byte_order)
+  {
+    /*
+      The sender and receiver use a different endian, we need to swap the
+      endian before reading the values from the message received.
+    */
+    ic_swap_endian_word(word1);
+    ic_swap_endian_word(word3);
+  }
+  *receiver_module_id= word3 >> 16;
+  *message_size= get_message_size(word1);
+}
+
+/*
+  We get a linked list of IC_SOCK_BUF_PAGE which each contain a reference
+  to a list of IC_NDB_MESSAGE object. We will ensure that these messages are
+  posted to the proper thread. They will be put in a linked list of NDB
+  messages waiting to be executed by this application thread.
+*/
+static void
+post_ndb_messages(IC_THREAD_CONNECTION **thd_conn,
+                  IC_TEMP_THREAD_CONNECTION *temp_thd_conn,
+                  guint32 *list_modules_received,
+                  guint32 *list_modules_received_index)
+{
+  guint32 i, module_id;
+  guint32 max_id= *list_modules_received_index;
+  gboolean signal_flag= FALSE;
+  IC_SOCK_BUF_PAGE *first_ndb_message_page, *last_ndb_message_page;
+  IC_THREAD_CONNECTION *loc_thd_conn;
+  IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn;
+
+  ic_require(max_id <= IC_MAX_THREAD_CONNECTIONS);
+  for (i= 0; i < max_id; i++)
+  {
+    /*
+      We have a list of module ids which have messages to be sent.
+      We'll go through this list and send each list of NDB messages to
+      the proper application thread.
+
+      We also ensure that we clear the list as we go through it to
+      ensure we need no special initialisation code afterwards.
+    */
+    module_id= list_modules_received[i];
+
+    /* Get list and reset number of messages in list */
+    loc_temp_thd_conn= &temp_thd_conn[module_id];
+    first_ndb_message_page= loc_temp_thd_conn->first_received_message;
+    last_ndb_message_page= loc_temp_thd_conn->last_received_message;
+
+    ic_require(first_ndb_message_page);
+    loc_temp_thd_conn->first_received_message= NULL;
+    loc_temp_thd_conn->last_received_message= NULL;
+    loc_temp_thd_conn->last_long_received_message= NULL;
+    loc_thd_conn= thd_conn[module_id];
+
+
+    /* START Critical Section, delivering NDB messages to application thread */
+    ic_mutex_lock(loc_thd_conn->mutex);
+    /* Link it into list on this thread connection object */
+    if (loc_thd_conn->first_received_message)
+    {
+      /* Link first_message into the queue last */
+      loc_thd_conn->last_received_message->next_sock_buf_page=
+        first_ndb_message_page;
+    }
+    else
+    {
+      /* Queue was empty, put first message first */
+      loc_thd_conn->first_received_message= first_ndb_message_page;
+    }
+    /* Set last message inserted to be last in queue */
+    loc_thd_conn->last_received_message= last_ndb_message_page;
+    /* Now check if we need to wake the application thread */
+    if (loc_thd_conn->thread_wait_cond)
+    {
+      loc_thd_conn->thread_wait_cond= FALSE;
+      signal_flag= TRUE;
+    }
+    ic_mutex_unlock(loc_thd_conn->mutex);
+    /* END Critical Section with delayed wake up signal */
+    if (signal_flag)
+    {
+      /*
+        Thread is waiting for our wake-up signal, wake it up. We optimise by
+        waking after releasing the mutex. This effectively means that it is
+        possible for the application thread to wake up and consume before
+        this signal is received. However this constitutes no problem other
+        than that the application thread will wake up and discover there is
+        nothing to receive and if it is already awake the signal will be lost
+        since there is no one to wake up which is also not a problem. It was
+        the objective to wake it up to consume the NDB messages and this
+        was achieved in all cases.
+      */
+      ic_cond_signal(loc_thd_conn->cond);
+      signal_flag= FALSE;
+    }
+  }
+  *list_modules_received_index= 0;
+  return;
+}
+
+static void
+prepare_opaque_area(IC_SOCK_BUF_PAGE *ndb_message_page,
+                    IC_RECEIVE_NODE_CONNECTION *rec_node)
+{
+  IC_NDB_MESSAGE_OPAQUE_AREA *ndb_message_opaque;
+
+  ic_assert(sizeof(IC_NDB_MESSAGE_OPAQUE_AREA) <=
+            sizeof(ndb_message_page->opaque_area));
+
+  ndb_message_opaque= (IC_NDB_MESSAGE_OPAQUE_AREA*)
+    &ndb_message_page->opaque_area[0];
+  ndb_message_opaque->sender_node_id= rec_node->other_node_id;
+  ndb_message_opaque->receiver_node_id= rec_node->my_node_id;
+  ndb_message_opaque->cluster_id= rec_node->cluster_id;
+  ndb_message_opaque->version_num= 0; /* Define value although unused */
+  ndb_message_opaque->send_node_conn= rec_node->send_node_conn;
+  ndb_message_page->ref_count= 0;
+}
+
+static void
+put_message_on_temp_list(IC_SOCK_BUF_PAGE *ndb_message_page,
+                         IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn,
+                         guint32 receiver_module_id,
+                         guint32 *list_modules_received,
+                         guint32 *list_modules_received_index)
+{
+  guint32 index;
+  IC_SOCK_BUF_PAGE *first_page, *last_page;
+
+  /*
+    We keep track on if there are any messages already received to this
+    application thread. If it is the first message we will put it into
+    the list of application threads which have non-empty lists and that
+    thus requires attention in the post_ndb_messages method.
+  */
+  first_page= loc_temp_thd_conn->first_received_message;
+  last_page= loc_temp_thd_conn->last_received_message;
+  if (!first_page)
+  {
+    index= *list_modules_received_index;
+    loc_temp_thd_conn->first_received_message= ndb_message_page;
+    list_modules_received[index]= receiver_module_id;
+    *list_modules_received_index= index + 1;
+  }
+  else
+  {
+    last_page->next_sock_buf_page= ndb_message_page;
+  }
+  loc_temp_thd_conn->last_received_message= ndb_message_page;
+  ndb_message_page->next_sock_buf_page= NULL;
+}
+
+/*
+  We keep track of modules that have received messages on this
+  page to save on some atomic operations in the application thread
+  when receiving NDB messages. We only need to care about this for
+  message longer than our definition of a standard cache line size.
+  If we have several messages arriving to an application thread we
+  will only set the reference counter on the first and will set the
+  corresponding ref_count indicator on the last NDB message in the
+  buffer which is a long message.
+*/
+static void
+page_ref_count_handling(IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn,
+                        guint32 receiver_module_id,
+                        guint32 *p_index,
+                        guint32 *list_page_modules_received,
+                        IC_SOCK_BUF_PAGE *buf_page,
+                        IC_SOCK_BUF_PAGE *ndb_message_page)
+{
+  guint32 num_messages_on_page;
+  gint ref_count;
+  guint32 index;
+
+  num_messages_on_page= loc_temp_thd_conn->num_messages_on_page;
+  if (!num_messages_on_page)
+  {
+    index= *p_index;
+    ref_count= buf_page->ref_count;
+    list_page_modules_received[index]= receiver_module_id;
+    loc_temp_thd_conn->num_messages_on_page=
+      num_messages_on_page + 1;
+    *p_index= index + 1;
+    buf_page->ref_count= ref_count + 1;
+  }
+  loc_temp_thd_conn->last_long_received_message= ndb_message_page;
+}
+
+#define MAX_NDB_RECEIVE_LOOPS 16
+static int
+ndb_receive_node(IC_NDB_RECEIVE_STATE *rec_state,
+                 IC_RECEIVE_NODE_CONNECTION *rec_node,
+                 IC_THREAD_CONNECTION **thd_conn,
+                 IC_TEMP_THREAD_CONNECTION *temp_thd_conn,
+                 guint32 *list_modules_received,
+                 guint32 *list_modules_received_index,
+                 guint32 *list_page_modules_received)
+{
+  IC_CONNECTION *conn= rec_node->conn;
+  IC_SOCK_BUF *rec_buf_pool= rec_state->rec_buf_pool;
+  IC_SOCK_BUF *message_pool= rec_state->message_pool;
+  guint32 read_size= rec_node->read_size;
+  guint32 real_read_size;
+  guint32 p_index= 0, i, module_id;
+  gboolean read_header_flag= rec_node->read_header_flag;
+  gchar *read_ptr;
+  guint32 page_size= rec_buf_pool->page_size;
+  guint32 start_size;
+  guint32 message_size= 0;
+  guint32 receiver_module_id= IC_MAX_THREAD_CONNECTIONS;
+  guint32 loop_count= 0;
+  int ret_code;
+  gboolean any_message_received= FALSE;
+  gboolean read_more;
+  IC_TEMP_THREAD_CONNECTION *loc_temp_thd_conn;
+  IC_SOCK_BUF_PAGE *buf_page, *new_buf_page;
+  IC_SOCK_BUF_PAGE *ndb_message_page;
+  IC_SOCK_BUF *sock_buf_container;
+  DEBUG_ENTRY("ndb_receive_node");
+
+  ic_assert(message_pool->page_size == 0);
+
+  /*
+    We get a receive buffer from the global pool of free buffers.
+    This buffer will be returned to the free pool by the last
+    thread that executes a message in this pool.
+  */
+  while (1)
+  {
+    if (read_size == 0)
+    {
+      if (!(buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
+              rec_buf_pool,
+              (guint32)0,
+              &rec_state->free_rec_pages,
+              NUM_RECEIVE_PAGES_ALLOC)))
+        goto mem_pool_error;
+    }
+    else
+      buf_page= rec_node->buf_page;
+    read_ptr= buf_page->sock_buf;
+    start_size= read_size;
+    ret_code= conn->conn_op.ic_read_connection(conn,
+                                               read_ptr + read_size,
+                                               page_size - read_size,
+                                               &real_read_size);
+    if (!ret_code)
+    {
+      /*
+        We received data in the NDB Protocol, now chunk it up in its
+        respective NDB messages and send those NDB messages to the
+        thread that expects them. The actual execution of the NDB
+        messages happens in the thread that the NDB message is destined
+        for.
+
+        We check to see if we read an entire page in which case we
+        might have more data to read.
+      */
+      DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+                  ("Read %u bytes from NDB Protocol on socket %d",
+                  real_read_size, conn->conn_op.ic_get_fd(conn)));
+      read_size= start_size + real_read_size;
+      read_more= (read_size == page_size);
+      /*
+        Check that we have at least received the header of the next
+        NDB message first, this is at least 12 bytes in size in the
+        NDB Protocol.
+      */
+      while (read_size >= MIN_NDB_HEADER_SIZE)
+      {
+        if (!read_header_flag)
+        {
+          read_message_early(read_ptr,
+                             &message_size,
+                             &receiver_module_id);
+          read_header_flag= TRUE;
+        }
+        message_size*= sizeof(guint32); /* Convert num words to num bytes */
+        if (message_size > read_size)
+        {
+          /* We haven't received a complete message yet */
+          break;
+        }
+
+        DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+                    ("Message received from node %u to module %u with size %u",
+                     rec_node->other_node_id,
+                     receiver_module_id,
+                     message_size));
+        if (receiver_module_id != IC_NDB_PACKED_MODULE_ID &&
+            receiver_module_id >= IC_NDB_MIN_MODULE_ID_FOR_THREADS)
+        {
+          /* Normal messages go this way */
+          receiver_module_id-= IC_NDB_MIN_MODULE_ID_FOR_THREADS;
+          loc_temp_thd_conn= &temp_thd_conn[receiver_module_id];
+          if (!(ndb_message_page=
+                message_pool->sock_buf_ops.ic_get_sock_buf_page(
+                  message_pool,
+                  message_size,
+                  &rec_state->free_ndb_messages,
+                  NUM_NDB_SIGNAL_ALLOC)))
+            goto mem_pool_error;
+          if (message_size <= IC_STD_CACHE_LINE_SIZE)
+          {
+            /*
+              Message shorter than our definition of standard cache size
+              will be copied instead of read from buffer to avoid having
+              to synchronize with atomic increments in the case of short
+              messages. So we simply copy the message to the buffer.
+            */
+            memcpy(ndb_message_page->sock_buf, read_ptr, message_size);
+          }
+          else
+          {
+            page_ref_count_handling(loc_temp_thd_conn,
+                                    receiver_module_id,
+                                    &p_index,
+                                    list_page_modules_received,
+                                    buf_page,
+                                    ndb_message_page);
+            ndb_message_page->sock_buf= (gchar*)read_ptr;
+          }
+          prepare_opaque_area(ndb_message_page, rec_node);
+          put_message_on_temp_list(ndb_message_page,
+                                   loc_temp_thd_conn,
+                                   receiver_module_id,
+                                   list_modules_received,
+                                   list_modules_received_index);
+        }
+        else if (receiver_module_id != IC_NDB_PACKED_MODULE_ID)
+        {
+          DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+            ("Message to module id %u not allowed", receiver_module_id));
+        }
+        else
+        {
+          /*
+            This is a special message which is sent packed, one such packed
+            message is NDB_PRIM_KEYCONF. Packed messages require some special
+            treatment since they contain several messages in one.
+          */
+          abort(); /* TODO */
+          loc_temp_thd_conn= &temp_thd_conn[receiver_module_id];
+        }
+        any_message_received= TRUE;
+        read_header_flag= FALSE;
+        read_size-= message_size;
+        read_ptr+= message_size;
+      }
+      if (read_size > 0)
+      {
+        /* We received an incomplete NDB Signal */
+        if (any_message_received)
+        {
+          /*
+            At least one message was received and we need to post
+            these NDB Signals and thus we need to transfer the
+            incomplete message before posting the messages. When
+            the messages have been posted to another thread can get
+            access to the socket buffer page and even release
+            it before we have transferred the incomplete message
+            if we post before we transfer the incomplete message.
+          */
+          if (!(new_buf_page= rec_buf_pool->sock_buf_ops.ic_get_sock_buf_page(
+                  rec_buf_pool,
+                  (guint32)0,
+                  &rec_state->free_rec_pages,
+                  NUM_RECEIVE_PAGES_ALLOC)))
+            goto mem_pool_error;
+
+          memcpy(new_buf_page->sock_buf,
+                 buf_page->sock_buf,
+                 read_size);
+          rec_node->buf_page= new_buf_page;
+          rec_node->read_size= read_size;
+          rec_node->read_header_flag= read_header_flag;
+        }
+      }
+      else
+      {
+        rec_node->buf_page= NULL;
+        rec_node->read_size= 0;
+        rec_node->read_header_flag= FALSE;
+      }
+      /*
+        We now need to set ref_count to 1 on the last NDB message
+        on each application thread receiving message from this page.
+      */
+      if (p_index == 0)
+      {
+        /*
+          We handled only short messages and thus we can return the buffer
+          immediately since no application thread will read anything from
+          the buffer.
+        */
+        sock_buf_container= buf_page->sock_buf_container;
+        sock_buf_container->sock_buf_ops.ic_return_sock_buf_page(
+          sock_buf_container,
+          buf_page);
+        buf_page= NULL; /* Safety initialisation */
+      }
+      else
+      {
+        for (i= 0; i < p_index; i++)
+        {
+          module_id= list_page_modules_received[i];
+          loc_temp_thd_conn= &temp_thd_conn[module_id];
+          ndb_message_page= loc_temp_thd_conn->last_long_received_message;
+          ndb_message_page->ref_count= 1;
+          loc_temp_thd_conn->num_messages_on_page= 0;
+        }
+        p_index= 0;
+      }
+
+      if (!read_more || (loop_count++ >= MAX_NDB_RECEIVE_LOOPS))
+        break;
+    }
+    else
+      break;
+  }
+  if (ret_code)
+  {
+    DEBUG_PRINT(COMM_LEVEL, ("Error %d on NDB Protocol socket %d",
+                ret_code, conn->conn_op.ic_get_fd(conn)));
+    if (any_message_received)
+    {
+      post_ndb_messages(thd_conn,
+                        temp_thd_conn,
+                        list_modules_received,
+                        list_modules_received_index);
+    }
+  }
+end:
+  DEBUG_RETURN_INT(ret_code);
+mem_pool_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
+  goto end;
+}
+
+static void
+free_rec_thread(IC_NDB_RECEIVE_STATE *rec_state)
+{
+  DEBUG_ENTRY("free_rec_thread");
+  if (rec_state->poll_set)
+  {
+    rec_state->poll_set->poll_ops.ic_free_poll_set(rec_state->poll_set);
+  }
+  if (rec_state->mutex)
+  {
+    ic_mutex_destroy(&rec_state->mutex);
+  }
+  if (rec_state->cond)
+  {
+    ic_cond_destroy(&rec_state->cond);
+  }
+  ic_free((void*)rec_state);
+  DEBUG_RETURN_EMPTY;
+}
+
+static gpointer
+run_receive_thread(void *data)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *rec_tp;
+  IC_NDB_RECEIVE_STATE *rec_state;
+  int ret_code;
+  IC_INT_APID_GLOBAL *apid_global;
+  IC_THREAD_CONNECTION **thd_conn;
+  IC_TEMP_THREAD_CONNECTION *temp_thd_conn= NULL;
+  guint32 *list_modules_received= NULL;
+  guint32 *list_page_modules_received;
+  guint32 list_modules_received_index= 0;
+  guint32 i;
+  gboolean loop_once;
+  IC_RECEIVE_NODE_CONNECTION *rec_node;
+  DEBUG_THREAD_ENTRY("run_receive_thread");
+  rec_tp= thread_state->ic_get_threadpool(thread_state);
+  rec_state= (IC_NDB_RECEIVE_STATE*)
+    rec_tp->ts_ops.ic_thread_get_object(thread_state);
+  apid_global= rec_state->apid_global;
+  thd_conn= apid_global->grid_comm->thread_conn_array;
+
+  rec_tp->ts_ops.ic_thread_started(thread_state);
+
+  if (!(temp_thd_conn= (IC_TEMP_THREAD_CONNECTION*)
+        ic_calloc(IC_MAX_THREAD_CONNECTIONS *
+                  sizeof(IC_TEMP_THREAD_CONNECTION))))
+    goto end;
+  if (!(list_modules_received= (guint32*)
+        ic_malloc(2 * (IC_MAX_THREAD_CONNECTIONS + 1) * sizeof(guint32))))
+    goto end;
+  for (i= 0; i < 2 * (IC_MAX_THREAD_CONNECTIONS + 1); i++)
+  {
+    list_modules_received[i]= IC_MAX_THREAD_CONNECTIONS;
+  }
+
+  list_page_modules_received= 
+    &list_modules_received[IC_MAX_THREAD_CONNECTIONS + 1];
+
+  /* Flag start-up done and wait for start order */
+  rec_tp->ts_ops.ic_thread_startup_done(thread_state);
+
+  while (!rec_tp->ts_ops.ic_thread_get_stop_flag(thread_state))
+  {
+    loop_once= FALSE;
+    /* Check for which nodes to receive from */
+    /* Loop over each node to receive from */
+    if (rec_state->first_send_node)
+    {
+      /* This is where we poll for data on all connected nodes. */
+      DEBUG_DISABLE(CHECK_POLL_SET_LEVEL);
+      rec_node= get_first_rec_node(rec_state);
+      DEBUG_ENABLE(CHECK_POLL_SET_LEVEL);
+    }
+    else
+    {
+      /*
+        No nodes using this receive thread, sleep for a while and
+        check again
+      */
+      rec_node= NULL;
+      ic_microsleep(10000);
+    }
+    while (rec_node)
+    {
+      loop_once= TRUE;
+      if ((ret_code= ndb_receive_node(rec_state,
+                                      rec_node,
+                                      thd_conn,
+                                      temp_thd_conn,
+                                      list_modules_received,
+                                      &list_modules_received_index,
+                                      list_page_modules_received)))
+      {
+        handle_node_error(rec_state,
+                          rec_node,
+                          ret_code);
+      }
+      else
+      {
+        /*
+          Here is the place where we need to employ some clever scheuling
+          principles. The question is simply put how often to post ndb
+          messages to the application threads. At first we simply post
+          ndb messages for each node we receive from.
+        */
+        post_ndb_messages(thd_conn,
+                          temp_thd_conn,
+                          list_modules_received,
+                          &list_modules_received_index);
+      }
+      DEBUG_DISABLE(CHECK_POLL_SET_LEVEL);
+      rec_node= get_next_rec_node(rec_state);
+      DEBUG_ENABLE(CHECK_POLL_SET_LEVEL);
+    }
+    check_for_reorg_receive_threads(rec_state);
+    if (loop_once)
+    {
+      check_send_buffers(rec_state);
+    }
+  }
+
+end:
+  DEBUG_PRINT(THREAD_LEVEL,
+    ("receive thread id: %d is stopping now",
+     rec_tp->ts_ops.ic_thread_get_id(thread_state)));
+
+  if (rec_state->free_rec_pages)
+  {
+    rec_state->rec_buf_pool->sock_buf_ops.ic_return_sock_buf_page(
+      rec_state->rec_buf_pool,
+      rec_state->free_rec_pages);
+    rec_state->free_rec_pages= NULL;
+  }
+
+  if (rec_state->free_ndb_messages)
+  {
+    rec_state->message_pool->sock_buf_ops.ic_return_sock_buf_page(
+      rec_state->message_pool,
+      rec_state->free_ndb_messages);
+    rec_state->free_ndb_messages= NULL;
+  }
+
+  if (list_modules_received)
+    ic_free(list_modules_received);
+  if (temp_thd_conn)
+    ic_free(temp_thd_conn);
+  rec_tp->ts_ops.ic_thread_stops(thread_state);
+  DEBUG_THREAD_RETURN;
+}
+
+static int
+start_receive_thread(IC_INT_APID_GLOBAL *apid_global,
+                     guint32 cluster_id)
+{
+  IC_THREADPOOL_STATE *tp_state= apid_global->rec_thread_pool;
+  IC_NDB_RECEIVE_STATE *rec_state;
+  guint32 rec_thread_inx;
+  int ret_code= IC_ERROR_MEM_ALLOC;
+  DEBUG_ENTRY("start_receive_thread");
+
+  if (!(rec_state=
+         (IC_NDB_RECEIVE_STATE*)ic_calloc(sizeof(IC_NDB_RECEIVE_STATE))))
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
+  if (!(rec_state->mutex= ic_mutex_create()))
+    goto error;
+  if (!(rec_state->cond= ic_cond_create()))
+    goto error;
+  rec_state->apid_global= apid_global;
+  rec_state->cluster_id= cluster_id;
+  rec_state->rec_buf_pool= apid_global->send_buf_pool;
+  rec_state->message_pool= apid_global->ndb_message_pool;
+  DEBUG_PRINT(THREAD_LEVEL, ("Starting thread in run_receive_thread"));
+  if ((!(rec_state->poll_set= ic_create_poll_set())) ||
+      (ret_code= tp_state->tp_ops.ic_threadpool_start_thread(
+                        tp_state,
+                        &rec_state->thread_id,
+                        run_receive_thread,
+                        (gpointer)rec_state,
+                        IC_MEDIUM_STACK_SIZE,
+                        TRUE)))
+    goto error;
+  /* Wait for receive thread to complete start-up */
+  ic_mutex_lock(apid_global->mutex);
+  rec_thread_inx= apid_global->num_receive_threads;
+  apid_global->receive_threads[rec_thread_inx]= rec_state;
+  apid_global->num_receive_threads= rec_thread_inx + 1;
+  DEBUG_PRINT(THREAD_LEVEL, ("Rec thread %p in index %u",
+              rec_state,
+              rec_thread_inx));
+  ic_mutex_unlock(apid_global->mutex);
+  DEBUG_RETURN_INT(0);
+
+error:
+  free_rec_thread(rec_state);
+  DEBUG_RETURN_INT(ret_code);
+}

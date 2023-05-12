@@ -1,0 +1,1032 @@
+/* Copyright (C) 2009, 2016 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  Message Logic Modules
+  ---------------------
+
+  We handle reception of NDB messages in one or more separate threads, each
+  thread can handle one or more sockets. If there is only one socket to
+  handle it can use socket read immediately, otherwise we can use either
+  poll, or epoll on Linux or other similar variant on other operating
+  system.
+
+  This thread only handles reception of the lowest layer of the NDB Protocol.
+
+  We mainly transport a header about the message to enable a quick conversion
+  of the message to a IC_NDB_MESSAGE struct in the user thread. In this
+  struct we set up data, their sizes, message numbers, receiving module,
+  sender module, receiving node id, sender node id and various other data.
+
+  The actual handling of the NDB message is handled by the application thread.
+  This thread receives a IC_NDB_MESSAGE struct which gives all information
+  about the signal, including a reference to the IC_SOCK_BUF_PAGE such that
+  the last executer of a signal in a page can return the page to the free
+  area.
+
+  In this manner we don't need to copy any data from the buffer we receive
+  the NDB message into with the exception of messages that comes from more
+  than one recv system call.
+
+  Each application thread has a IC_THREAD_CONNECTION struct which is
+  protected by a mutex such that this thread can easily transfer NDB
+  messages to these threads. This thread will acquire the mutex, put the
+  messages into a linked list of signals waiting to be executed, check if
+  the application thread is hanging on the mutex and if so wake it up
+  after releasing the mutex.
+
+  To avoid having to protect also the array of IC_THREAD_CONNECTION we
+  preallocate the maximum number of IC_THREAD_CONNECTION we can have
+  and set their initial state to not used.
+
+  One problem to resolve is what to do if a thread doesn't handle it's
+  messages for some reason. This could happen in an overload situation,
+  it could happen also due to programming errors from the application,
+  the application might send requests asynchronously and then by mistake
+  never call receive to handle the sent requests. To protect the system
+  in these cases we need to ensure that the thread isn't allowed to send
+  any more requests if he has data waiting to be received. In this way we
+  can limit the amount of memory a certain thread can hold up.
+  
+  In addition as an extra security precaution we can have a thread that
+  walks around the IC_THREAD_CONNECTION and if it finds a slow thread it
+  moves the messages from its buffers into packed buffers to avoid that
+  it holds up lots of memory to contain a short message. Eventually we
+  could also decide to kill the thread from an NDB point of view. This
+  would mean drop all messages and set the iClaustron Data Server API in
+  such a state that the only function allowed is to deallocate the objects
+  allocated in this thread. This does also require a possibility to inform
+  DBTC that this thread has been dropped.
+*/
+
+#define NUM_RECEIVE_PAGES_ALLOC 2
+#define NUM_NDB_SIGNAL_ALLOC 32
+#define MIN_NDB_HEADER_SIZE 12
+#define MAX_LOOP_CHECK 100000
+#define IC_MAX_TIME 10000000
+
+/*
+  MESSAGE LOGIC MODULE
+  --------------------
+  This module contains the code of all messages received in the Data Server
+  API. This code signals to the Execute Message Module if there have been
+  events on the user level which needs to be taken care of. These user
+  level events are then usually handled by callbacks after handling all
+  messages received. It's of vital importance that the user thread doesn't
+  block for an extended period while executing messages.
+*/
+
+/*
+  Fixed module ids:
+  Module to receive packed messages in API: 2047
+  Module for Heartbeat mechanism in API:    4002
+  Module for Transaction Coordinator in NDB: 245 (DBTC)
+  Module for Dictionary in NDB             : 250 (DBDICT)
+  Module for Heartbeat handler in NDB      : 252 (QMGR)
+  Module for Event handling in NDB         : 257 (TRIX)
+*/
+struct ic_exec_message_func
+{
+  void (*ic_exec_message_func) (IC_NDB_MESSAGE *message);
+};
+typedef struct ic_exec_message_func IC_EXEC_MESSAGE_FUNC;
+
+static IC_EXEC_MESSAGE_FUNC ic_exec_message_func_array[2][1024];
+
+static void
+handle_key_ai(IC_INT_APID_QUERY *apid_query,
+              IC_TRANSACTION *trans,
+              guint32 *ai_data,
+              guint32 data_size)
+{
+  (void)apid_query;
+  (void)trans;
+  (void)ai_data;
+  (void)data_size;
+  return;
+}
+
+static void
+handle_scan_ai(IC_INT_APID_QUERY *apid_query,
+               IC_TRANSACTION *trans,
+               guint32 *ai_data,
+               guint32 data_size)
+{
+  (void)apid_query;
+  (void)trans;
+  (void)ai_data;
+  (void)data_size;
+  return;
+}
+
+/*
+  This message is part of three different protocols, the primary key query
+  protocol, the unique key query protocol and the scan protocol. It always
+  contains the result of reading one record and the field ids are interpreted
+  using the object reference we stored when sending the message.
+
+  RECORD_INFO
+  -----------
+  Signal Format:
+  Word 0: Our object reference
+  Word 1: Transaction id part 1
+  Word 2: Transaction id part 2
+  One segment which contains the actual read data from the record together
+  with some field ids and other information in the RECORD_INFO data
+  protocol.
+*/
+static void
+execRECORD_INFO_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  guint32 *header_data= ndb_message->segment_ptr[0];
+  guint32 header_size= ndb_message->segment_size[0];
+  guint32 *attrinfo_data;
+  void *connection_obj;
+  IC_INT_APID_QUERY *apid_query;
+  IC_TRANSACTION *trans_op;
+  IC_DYNAMIC_PTR_ARRAY *dyn_trans= 0;
+  guint32 data_size;
+  guint32 transid[2];
+  guint64 connection_ptr= header_data[0];
+  guint32 transid_part1= header_data[1];
+  guint32 transid_part2= header_data[2];
+
+  if (dyn_trans->dpa_ops.ic_get_ptr(dyn_trans,
+                                    connection_ptr,
+                                    &connection_obj))
+  { 
+    return;
+  }
+  apid_query= (IC_INT_APID_QUERY*)connection_obj;
+  if (ndb_message->num_segments == 1)
+  {
+    attrinfo_data= ndb_message->segment_ptr[1];
+    data_size= ndb_message->segment_size[1];
+    ic_assert(header_size == 3);
+  }
+  else
+  {
+    ic_assert(ndb_message->num_segments == 0);
+    ic_assert(header_size <= 25);
+    attrinfo_data= &header_data[3];
+    data_size= header_size - 3;
+  }
+  trans_op= apid_query->trans_obj;
+  ic_get_transaction_id(trans_op, transid);
+  if (transid[0] != transid_part1 ||
+      transid[1] != transid_part2)
+  {
+    ic_assert(FALSE);
+    return;
+  }
+  if (apid_query->query_type == IC_SCAN_QUERY)
+  {
+    handle_scan_ai(apid_query,
+                   trans_op,
+                   attrinfo_data,
+                   data_size);
+  }
+  else
+  {
+    handle_key_ai(apid_query,
+                  trans_op,
+                  attrinfo_data,
+                  data_size);
+  }
+  return;
+}
+
+/*
+  The transaction commit protocol
+
+  This protocol is initiated by the API using the NDB_COMMITREQ message.
+  In many cases transactions are committed using the primary/unique key
+  query protocol since there is a flag in this message indicating
+  transaction commit desired. In this case the NDB_PRIM_KEYCONF and
+  NDB_UNIQ_KEYCONF will contain an indication of a successfully committed
+  transaction.
+
+  NDB_COMMITREQ
+  -------------
+  Word 1: NDB transaction reference
+  Word 2-3: Transaction identity
+
+  NDB_COMMITCONF
+  --------------
+  Word 1: Our transaction reference
+    Bit 31: Indicator of that NDB_COMMIT_ACK needs to be sent
+  Word 2-3: Transaction identity
+  Word 4-5: Global checkpoint identity (high part first)
+
+  NDB_COMMITREF
+  -------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Error code
+*/
+static void
+execNDB_COMMITCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_COMMITREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+/*
+  The transaction abort protocol
+
+  The abort protocol is always initiated from the API node using the
+  NDB_ABORTREQ message.
+
+  NDB_ABORTREQ
+  ------------
+  Word 1: NDB transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Potentially bad data from API (Bit 0 set)
+
+  NDB_ABORTCONF
+  -------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+
+  NDB_ABORTREF
+  ------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Error code
+  Word 5: Connect state when sending message
+
+  In the case of a transaction committed using the primary/unique key query 
+  protocol we get a report of an aborted transaction using NDB_ABORTREP instead.
+  So this message is part of those protocols.
+
+  NDB_ABORTREP
+  ------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+  Word 4: Error code
+  Word 5: Error data
+*/
+static void
+execNDB_ABORTCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_ABORTREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_ABORTREP_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+/*
+  In the case of a Node failure of the transaction coordinator data node
+  we get either NDB_NODEFAIL_KEYCONF or NDB_NODEFAIL_KEYREF to indicate whether
+  the transaction was successfully committed or whether it was aborted.
+
+  NDB_NODEFAIL_KEYCONF
+  --------------------
+  Word 1: Our transaction reference
+    Bit 31: Indicator of that NDB_COMMIT_ACK needs to be sent
+  Word 2-3: Transaction identity
+
+  NDB_NODEFAIL_KEYREF
+  -------------------
+  Word 1: Our transaction reference
+  Word 2-3: Transaction identity
+*/
+static void
+execNDB_NODEFAIL_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_NODEFAIL_KEYREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+/*
+  Primary Key query protocol
+
+  This protocol is used to perform any action Read/Insert/Delete/Update/Write
+  on one record using the primary key as reference to the record. It contains
+  a specification of fields to read or for modifying queries a list of fields
+  to update together with their new value. It is also possible to send along
+  an interpreted program that can perform the read/write based on some
+  condition and it can even write specific fields or read specific fields
+  conditionally based on some condition in the record.
+
+  Start of a transaction is performed through a primary key query or
+  through a unique key query. Scans are always independent transactions
+  and thus if locks from a scan have to be kept for the entire duration of
+  the transaction it is necessary to send a specific primary key query to
+  read the record, this query can be used without reading any fields.
+
+  NDB_PRIM_KEYREQ
+  ---------------
+
+  Word 1: The NDB connection reference
+  Word 2: Our object reference for this query 
+  Word 3: API version (stored in lower 16 bits)
+  Word 4: Table identity
+  Word 5: Flags
+    Bit 0: Dirty flag
+    -----------------
+      This flag differs for read and writes.
+      Reads:
+      ------
+      For reads it specifies that we want to read the latest committed record,
+      thus this type of read doesn't require waiting for any locks. This
+      is the variant normally used for reads in SQL mode READ COMMITTED.
+      Writes:
+      -------
+      This flag should not be used with writes.
+      When this flag is set we will commit locally on each replica, thus this
+      flag will disable proper transaction handling. 
+      It's possible with this flag to get the replicas out of order of each
+      other.
+    Bit 1: No fields stored on disk will be read/updated indicator
+    --------------------------------------------------------------
+      When this flag is set it indicates that all fields in the query are
+      main memory stored fields, this makes it easier for the NDB kernel to
+      handle those queries much faster, so a form of optimisation.
+    Bit 2: Distribution Key indicator
+    ---------------------------------
+      For tables that use only a subset of the primary key as distribution
+      key it is possible to either calculate the hash value of the distribution
+      key in the API or let the NDB data node do it. If the API does it, it
+      sets this flag and puts the hash value in the optional distribution
+      hash value below.
+    Bit 3: Not used
+    ---------------
+    Bit 4: Commit flag (this query is last in transaction, commit it)
+    ---------------------------------------------------------------------
+    Bit 5-7: Operation Type
+    -----------------------
+      0 = Read
+      1 = Update
+      2 = Insert
+      3 = Delete
+      4 = Write
+      5 = Read with Exclusive Lock
+      6-7 = Not used
+    Bit 8: Simple flag
+    ------------------
+      This flag is valid in regard to read queries. A simple read means
+      that we take a row level lock before reading the row to ensure we read
+      the latest committed data, however after reading the record we will
+      release the lock before sending the message with the read record and
+      thus not waiting for the transaction to commit. This is used to
+      implement lower isolation levels than serialisability.
+    Bit 9: Not used
+    ---------------
+    Bit 10: Execute flag
+    --------------------
+      In the NDB Protocol it is possible to send several key queries after
+      each other without waiting for a response. However the last one sent
+      in a train of query messages must have the execute flag set. This
+      is to ensure that the NDB Data nodes know if it can close the transaction
+      at failures and also to ensure that there is always a response sent
+      after receiving a message train.
+    Bit 11: Start transaction flag
+    ------------------------------
+      The start of a transaction is always performed by sending a key query
+      with the start transaction flag set.
+    Bit 12-13: Abort Type
+    ---------------------
+      0 = Abort On Error
+      1 = Not used
+      2 = Commit as much as possible even on error
+      3 = Not used
+    Bit 14: Scan Flags used
+    -----------------------
+    This flag is set to indicate that we are about to take over a lock from a
+    scan query. Thus the NDB data node have a lock currently and before
+    we send a message to continue the scan we have the possibility to take
+    over the lock. If we don't synchronize this the lock might be released
+    before we reach the row in the node.
+    Bit 15: Interpreted flag (Attribute information is an interpreted program)
+    --------------------------------------------------------------------------
+      NDB Data nodes have a simple interpreter that can be used to make
+      conditional updates and deletes. It can also be used to perform simple
+      queries on the fields such as a = a + 1.
+    Bit 16-31: Not used (Bit 19 used only by NDB nodes for reorg)
+    -------------------------------------------------------------
+  Word 6: Schema version of table
+  Word 7-8: Transaction identity
+
+  Word 9 and 10 are both optional and each will be present or not
+  dependent on their respective flags in Word 5 above.
+  Word 9:  Scan flags
+    Bit 0: Take over indicator
+    Bit 1-18: Take over information
+    Bit 19: Not used
+    Bit 20-31: Take over node
+  Word 10: Distribution Hash Value
+
+  All bits not used should be 0.
+
+  Then there are two sections:
+  ----------------------------
+
+  Section 0:
+  ----------
+  Key information. This is the primary key information. Each field in the
+  primary key is stored in aligned on a 4-byte boundary. So if a key field
+  is 10 bytes long it will use 12 bytes of key information and the last
+  two bytes will be set to 0.
+
+  Section 1:
+  ----------
+  Attribute information, this is information about fields to read and when
+  updating them also their new values, can also contain an interpreted
+  program.
+
+  NDB_PRIM_KEYCONF
+  ----------------
+  NDB_PRIM_KEYCONF can arrive packed or unpacked. The packed version always
+  arrives to module id = 2047 whereas the unpacked arrives directly to the
+  senders module. The unpacked does not contain the header part and the
+  length is always the same since there is always only one query sent
+  in the response.
+
+  The packed format looks like:
+  Word 0: Header
+    Bit 0-15:  Length of this confirmation message 
+    Bit 16-31: Our module reference
+  Word 1: Our transaction reference
+  Word 2: Most significant part of Global Checkpoint Identity
+  Word 3: Flags
+    Bit 0-15: Number of query confirmations in this message
+    Bit 16: Commit flag (indicates whether transaction is now committed)
+    Bit 17: Commit Marker flag (can only be set when commit flag is set)
+      When the commit ack marker flag is set it is necessary for the API
+      to send NDB_COMMIT_ACK to the NDB data node which ensures that the
+      data node knows when the API have received the confirmation of the
+      commit.
+    Bit 18-31: Not used
+  Word 4-5: Transaction identity
+
+  After this comes a set of queries that are confirmed in this message.
+  Each query have 2 words:
+  Word 1: Our query reference
+  Word 2:
+    Bit 0-15: Length of read data
+    Bit 31: Dirty read bit flag
+
+  Finally after the query words there is a last word:
+  Word last: Least significant part of Global Checkpoint identity
+
+  NDB_PRIM_KEYREF
+  ---------------
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Always equal to 0
+
+  NDB_COMMIT_ACK
+  --------------
+*/
+static void
+execNDB_PRIM_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_PRIM_KEYREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+/*
+  Unique key query protocol
+
+  This protocol is exactly the same as the primary key query protocol
+  except that it operates on a unique key instead of on a primary key.
+  In the description below we focus on the differences to the primary key
+  query protocol.
+
+  NDB_UNIQ_KEYREQ
+  ---------------
+  Sent from API -> Data Node
+  The layout of this message is the same as for NDB_PRIM_KEYREQ. However the
+  table identity is rather the Index identity of the unique key. Also scan
+  flags used for scan takeover isn't applicable and neither is distribution
+  key logic.
+
+  NDB_UNIQ_KEYCONF
+  ----------------
+  Exactly the same layout as NDB_PRIM_KEYCONF
+
+  NDB_UNIQ_KEYREF
+  ---------------
+  This message has the same words but word 5 is the unique index identity
+  rather than always 0.
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Unique Index Id
+*/
+static void
+execNDB_UNIQ_KEYCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_UNIQ_KEYREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+/*
+  The scan table/index protocol
+
+  This protocol is used to scan a table for all its records or only one
+  of its partitions. It can also be used similarly to scan an index of
+  a table. In scanning an index one can send along a start range and an
+  end range. In both cases one can also send along a generic interpreted
+  program to define more conditions on which records to return. The scan
+  also defines which fields to return for records that should be returned
+  to the API node.
+
+  The protocol is a bit more complex. Thus it is required to also describe
+  the order messages are sent and received.
+
+  It is initiated by a NDB_SCANREQ message that specifies which table/index
+  to scan and if the partitions on this table/index to use.
+
+  The Data Node sends one RECORD_INFO message for each record that is
+  returned to the scanner. After sending a set of records the Data Node
+  will send a NDB_SCANCONF message with the list of references to records
+  received from the Data Nodes. When this message arrives the API can start
+  handling the RECORD_INFO messages. Actually the RECORD_INFO messages
+  can arrive both before and after the NDB_SCANCONF messages. Thus we have to
+  keep track of the number of received records to ensure we have all records
+  to handle the NDB_SCANCONF message.
+
+  After sending NDB_SCANCONF, the Data Node awaits a NDB_SCAN_CONTINUE_REQ
+  message from the API node. In any such message the API can decide to close
+  the scan.
+
+  After sending a NDB_SCAN_CONTINUE_REQ message the API should be ready for
+  a new NDB_SCANCONF message.
+
+  At anytime when expecting a NDB_SCANCONF message it is possible to receive
+  a NDB_SCANREF message instead. This indicates a failure of the scan in
+  some manner. If the Data Node also requests a specific close in this message
+  then the API node have to respond with a NDB_SCAN_CONTINUE_REQ with the 
+  close flag set.
+
+  So the normal process of messages is:
+  (API) NDB_SCANREQ ---->  (Data Node)
+  Repeat below two steps until NDB_SCANCONF contains flag for closed flag set
+  When close flag is set in NDB_SCANCONF the API can safely dismiss the message.
+  (API) <-------- (Data Node) NDB_SCANCONF
+  (API) NDB_SCAN_CONTINUE_REQ(no_close_flag_set) ----> (Data Node)
+
+  NDB_SCANREQ:
+  ------------
+  Word 1: The NDB transaction reference used for this scan
+    A scan always uses its own connection and is a separate transaction thus.
+    If a scan is to be part of a transaction there is another word to
+    specify this transaction reference, also one should make sure that they
+    use the same transaction identity.
+  Word 2: Not used
+  Word 3: Flags
+    Bit 0-7: Scan parallelism
+      This must not be 0.
+      This indicates how many partitions we should scan in parallel. We will
+      never scan more in parallel than the number of partitions that exist
+      in the table.
+    Bit 8: Lock mode
+      This flag is interesting if the Read Committed flag isn't set.
+      0 = Read Mode
+      1 = Exclusive
+    Bit 9: Is any field read on disk flag
+    Bit 10: Hold Lock mode
+      If this flag is set and Read Committed isn't set then the lock will be
+      held while the API is reading the record thus giving the API the
+      chance to take over the lock and ensure that the record is locked until
+      commit time.
+    Bit 11: Read Committed flag
+    Bit 12: Key flag
+      If this flag is set there will be two messages sent for each record,
+      in addition to the record description there will also be information
+      about the primary key of the record already prepared in key format.
+      This message is sent in a NDB_KEYDATA message.
+    Bit 13: Use scan in record order
+      NDB can scan data both in the order the records end up in the hash index
+      or in the order they are stored. If the bit is set the scan is performed
+      in the order they are stored.
+    Bit 14: Use descending scan order
+      This bit is only relevant for scans on an index.
+    Bit 15: Use a range scan
+      This bit is only relevant for scans on an index.
+    Bit 16-25: Scan batch size
+      This indicates the maximum number of records that each node can
+      send before waiting for the API to consume all those records.
+    Bit 26: Distribution key flag (=> Distribution key hash value sent also)
+    Bit 27-31: Not used
+  Word 4: Table/Index identity
+  Word 5: Schema version
+  Word 6: Stored Procedure Identity (Not used)
+  Word 7-8: Transaction identity
+  Word 9: This is the reference to the transaction which this scan is part of.
+    If the scan isn't part of another transaction one should send
+    0xFFFFFFFF in this word.
+  Word 10: How many bytes should each batch contain
+    A batch is a number of records that each node which is scanned will send
+    before stopping, it will continue when the API has received those
+    records from the previous batch and sent a NDB_SCAN_CONTINUE_REQ to get
+    more records. This is a method to ensure that the API can keep up with
+    the flow of records while at the same time parallelizing as much as
+    possible. In many cases the scan is performed on all partitions in
+    parallel. A scan is either performed on all partitions or on only one
+    partition. It is performed on only one when the scan is performed on an
+    index which contains all fields which are part of the distribution key
+    and also it is a requirement that the search condition is a equality
+    condition.
+  Word 11: First batch size
+  Word 12: Distribution key hash value (Optional word, used if flag set)
+
+  There are also three sections in this message.
+
+    Section 0: Our scan record references
+    -------------------------------------
+      One such scan record references is sent by the data node for each record
+      sent as part of the scan. Thus the parallelism is limited by the number
+      of scan record references. The number of scan record references should
+      be equal to ScanParallelism * scanBatchSize (see above).
+
+    Section 1: Attribute information
+    --------------------------------
+      This is the specification of which attributes to read, it can also be an
+      interpreted program used to filter away some of the scanned records
+      already in the data node before sending it over the wire.
+
+    Section 2: Key information
+    --------------------------
+      ?
+
+  NDB_SCAN_CONTINUE_REQ:
+  ----------------------
+  Word 1: NDB Object reference
+  Word 2: Stop scan indicator
+  Word 3-4: Transaction id
+  
+  There is also sent a list of scan partition references. If this list
+  is longer than 21 words it is sent as the first section of the
+  message. If the list is 21 or shorter, the references are sent in the
+  main message starting at word 5.
+
+  NDB_SCANCONF
+  -----------
+  Word 1: Our object reference
+  Word 2: Flags
+    Bit 0-7: Number of records received (0-255)
+    Bit 8-9: Status of scan
+      0 = x
+      1 = x
+      2 = x
+      3 = x
+  Word 3-4: Transaction id
+
+  NDB_SCANREF
+  -----------
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+  Word 2-3: Transaction Id
+  Word 4: Error code
+  Word 5: Flag indicating whether close scan is needed
+
+  A close is not needed in the case when the scan process haven't even started
+  yet.
+*/
+static void
+execNDB_SCANCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_SCANREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+/*
+  API Heartbeat protocol
+
+  API_REGREQ
+  ---------
+  Sent from API -> Data Node
+  Word 1: Our module reference
+  Word 2: Our NDB version number
+  Word 3: Our MySQL version number
+
+  API_REGREF
+  ----------
+  Sent from Data Node -> API node
+  Word 1: Senders reference
+  Word 2: NDB node version
+  Word 3: error code (1 = Wrong Type and 2 = Unsupported version)
+  Word 4: MySQL base version
+
+  API_REGCONF
+  -----------
+  Sent from Data Node -> API node
+  Word 1: Senders reference
+  Word 2: NDB node version
+  Word 3: Heartbeat frequency for the API node to use
+  Word 4: MySQL base version
+  Word 5: Minimum compatible version
+  Word 6: Start Level
+    0 = Nothing is started
+    1 = Very early start
+    2 = All parts are starting up
+    3 = NDB is started
+    4 = NDB is in Single User Mode
+    5-8 = NDB is stopping node, no more transactions to be started
+  Word 7: Node group of NDB node
+  Word 8: Start Id of NDB node
+  IF Start Level is 4 THEN
+    Word 9: Start Phase
+    Word 10: Start Type
+      0 = Initial Start
+      1 = System Restart
+      2 = Node restart
+    Word 11: Ignore
+  ELSE IF Start Level is 5-8 THEN
+  ELSE
+    Ignore Word 9-11:
+  ENDIF
+  Word 12: Flag indicating of NDB in Single User Mode
+  Word 13: Node Id of the Single User API node
+  Word 14-21: Bitmask of node 1 through 255
+    A bit set indicates that the node with the id is connected to the
+    NDB node that sent the message.
+    Bit 1 in Word 14 is bit for node id 1, bit 0 in Word 16 is for node id
+    64 and finally bit 6 in word 19 is for node id 166.
+
+  As an API node the only thing we care about is the minimum compatible
+  the MySQL version possibly, the heartbeat frequency to use and the start
+  level of the node which indicates what messages the node is ready to
+  receive.
+
+  For management reasons we might be interested in the bitmap to provide
+  information to a management application of the cluster state. The same
+  applies for all other information in the message which normally isn't of
+  interest. So we will store all information about the node in the send
+  node connection for use of anyone interested.
+*/
+static void
+prepare_send_heartbeat(IC_SEND_NODE_CONNECTION *send_node_conn,
+                       IC_SOCK_BUF_PAGE *hb_page,
+                       guint32 thread_id)
+{
+  guint32 message_size;
+  guint32 len;
+  IC_API_REGREQ hb_req;
+  void *message_ptr;
+
+  /* Fill in message data */
+  hb_req.my_reference= ic_get_ic_reference(send_node_conn->my_node_id,
+                                            thread_id);
+  hb_req.my_ndb_version= NDB_VERSION;
+  hb_req.my_mysql_version= MYSQL_VERSION;
+  DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+    ("API_REGREQ: word1: 0x%x, word2: 0x%x, word3: 0x%x, module: %u,"
+     " thread_id: %u",
+     hb_req.my_reference, hb_req.my_ndb_version, hb_req.my_mysql_version,
+     IC_NDB_QMGR_MODULE, send_node_conn->thread_id));
+
+  message_ptr= &hb_req;
+  len= API_REGREQ_LEN;
+  message_size= fill_ndb_message_header(send_node_conn,
+                                 API_REGREQ_GSN,
+                                 IC_NDB_NORMAL_PRIO,
+                                 send_node_conn->thread_id,
+                                 IC_NDB_QMGR_MODULE,
+                                 hb_page->sock_buf,
+                                 1, /* No extra segments */
+                                 &message_ptr,
+                                 &len,
+                                 0);
+  hb_page->size= message_size * sizeof(guint32);
+}
+
+/**
+ * API_REGCONF contains the data server node state. This contains lots of
+ * useful information that can be used by the cluster manager. It is also
+ * used to know when we are ready to start using the data server and when
+ * we need to perform a controlled stop of our activities towards this node
+ * to enable it to stop in a graceful manner.
+ *
+ * We record this signal on the send node connection object. We also record
+ * when we receive the very first API_REGREQ, before this we are not allowed
+ * to use the connection for anything apart from the authentication and
+ * API_REGREQ/API_REGCONF.
+ */
+static void
+execAPI_REGCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  IC_API_REGCONF *conf= (IC_API_REGCONF*)ndb_message->segment_ptr[0];
+  IC_INT_APID_CONNECTION *apid_conn= ndb_message->apid_conn;
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
+  guint32 cluster_id= ndb_message->cluster_id;
+  guint32 sender_node_id= ndb_message->sender_node_id;
+  IC_SEND_NODE_CONNECTION *send_node_conn;
+  DEBUG_ENTRY("execAPI_REGCONF_v0");
+
+  ic_require(ndb_message->segment_size[0] == API_REGCONF_LEN);
+  ic_require(ndb_message->num_segments == 1);
+
+  DEBUG_PRINT(NDB_MESSAGE_LEVEL,
+    ("sender_node_id: %u, "
+     "ref: 0x%x, version: 0x%x, frequency: %u, mysql_ver: 0x%x"
+     ", min_ver: 0x%x, start_state: %u, node_group: %u, "
+     "dynamic_id: %u, start_phase_shutdown_flag: %u, "
+     "start_type_time_out: %u, none_alarm_time: %u, "
+     "single_user_flag: %u, single_user_node: %u, "
+     "connected_node_map: 0x%x",
+     sender_node_id,
+     conf->ndb_reference,
+     conf->ndb_version,
+     conf->hb_frequency,
+     conf->mysql_version,
+     conf->min_version,
+     conf->node_state.ndb_start_state,
+     conf->node_state.ndb_node_group,
+     conf->node_state.ndb_dynamic_id,
+     conf->node_state.ndb_stopping.shutdown_flag,
+     conf->node_state.ndb_stopping.time_out,
+     conf->node_state.ndb_stopping.alarm_time,
+     conf->node_state.single_user_mode_flag,
+     conf->node_state.single_user_node,
+     conf->node_state.connected_node_bitmap[0]));
+
+  send_node_conn= get_send_node_conn(apid_global,
+                                     cluster_id,
+                                     sender_node_id);
+  if (!send_node_conn)
+  {
+    ic_assert(FALSE);
+    return;
+  }
+  ic_mutex_lock(send_node_conn->mutex);
+  send_node_conn->last_api_regconf= *conf;
+  if (!send_node_conn->node_up)
+  {
+    DEBUG_PRINT(NDB_MESSAGE_LEVEL, ("Node %u is now up", sender_node_id));
+    send_node_conn->node_up= TRUE;
+  }
+  if (conf->node_state.ndb_start_state == (guint32)IC_NDB_STARTED &&
+      apid_global->wait_first_node_connect)
+  {
+    ic_mutex_unlock(send_node_conn->mutex);
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Wake up waiters for first node connect"));
+    ic_mutex_lock(apid_global->mutex);
+    ic_cond_broadcast(apid_global->cond);
+    ic_mutex_unlock(apid_global->mutex);
+  }
+  else
+  {
+    ic_mutex_unlock(send_node_conn->mutex);
+  }
+  DEBUG_RETURN_EMPTY;
+}
+
+static void
+execAPI_REGREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  DEBUG_ENTRY("execAPI_REGREF_v0");
+  (void)ndb_message;
+  DEBUG_RETURN_EMPTY;
+}
+
+/*
+  NDB_CONNECT Protocol
+
+  This protocol is used to connect to a transaction record in a Data Node.
+  It is initiated from the API.
+
+  NDB_CONNECTREQ:
+  ---------------
+  Word 1: Our object reference
+  Word 2: Our module reference
+
+  NDB_CONNECTCONF
+  ---------------
+  Word 1: Our object reference
+  Word 2: The NDB object reference
+
+  NDB_CONNECTREF
+  --------------
+  Word 1: Our object reference
+  Word 2: Error code
+    219 = No free connections
+    203 = Cluster not started yet
+    281 = Cluster shutting down
+    280 = Node shutting down
+    282 = State error
+*/
+static void
+execNDB_CONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execNDB_CONNECTREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+/*
+  NDB_DISCONNECT Protocol
+
+  This protocol is used to release a transaction record in the Data Node.
+  It is initiated from the API node.
+
+  NDB_DISCONNECTREQ
+  -----------------
+  Sent from API -> Data Node
+  Word 1: The NDB object reference
+  Word 2: Our module reference
+  Word 3: Our object reference
+
+  NDB_DISCONNECTCONF
+  ------------------
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+
+  NDB_DISCONNECTREF
+  -----------------
+  Sent from Data Node -> API node
+  Word 1: Our object reference
+  Word 2: Error code
+  Word 3: Error Line number (reference to NDB code)
+    229 = Invalid NDB object reference
+
+  Normally this message have 3 data words, but in case NDB has stored
+  a module reference which isn't the one sent in the release message
+  there will also be two additional words added:
+  Word 4: Our module reference as sent
+  Word 5: The module reference of the connection as NDB views it
+*/
+static void
+execDISCONNECTCONF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}
+
+static void
+execDISCONNECTREF_v0(IC_NDB_MESSAGE *ndb_message)
+{
+  (void)ndb_message;
+  return;
+}

@@ -1,0 +1,1678 @@
+/* Copyright (C) 2009, 2016 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: iClaustron Configuration Writer
+  ---------------------------------------
+  This module implements two methods:
+    ic_write_full_config_to_disk
+    ic_load_config_version
+
+  It is a support module for the Run Cluster Server module.
+
+  This module has a large number of support methods to implement its
+  functionality. It also makes heavy use of the dynamic array module
+  which has the capability to write a dynamic array to a file. So the
+  basic idea of the implementation is to write into the dynamic array
+  and when done, write the entire dynamic array to a file.
+
+  The writing of the configuration is complex also since it also implements
+  transactional support in writing many files to disk atomically. To
+  support this we use a configuration version file with state information
+  in it.
+
+  To handle the transactional handling we start by removing any half-written
+  configuration write first, then we write all the new configuration files
+  using a new version number. When all this is done we perform an atomic
+  write of the configuration version number file. This is the commit. After
+  this we remove the old configuration files from the previous version.
+
+  To support this we have a method which removes configuration files of a
+  specific version:
+    remove_config_files
+
+  There is also a method:
+    remove_config_version_line
+  This is only used to clean up after an unsuccessful bootstrap writing the
+  first configuration version.
+  
+  The method to write the configuration version is:
+    write_config_version_file
+  Description of its subroutines will be described further below.
+
+  We have another method writing all configuration files:
+    write_config_files
+
+  Writing all configuration files is a complex operation and has a number
+  of support methods:
+    write_grid_config_file: Writes the configuration file of the grid
+    write_cluster_config_file: Writes a cluster configuration file
+
+  All writing of configuration files requires the support method:
+    write_new_section_header: Write a section header e.g. [cluster]<CR>
+
+  The write_cluster_config_file is a complex operation and to save space
+  in the configuration we calculate all defaults for sections and write those
+  first in the file to avoid having to write those each time. This is
+  implemented using the support methods:
+    write_default_sections:
+    write_default_section
+
+  In a similar manner the various node sections are written using the
+  methods:
+    write_node_sections
+    write_node_section
+
+  The communication sections are written using one routine:
+    write_comm_sections
+
+  All of these section write methods are using a set of lower level methods
+  to implement its functionality:
+    write_line_with_int_value: Write one config line with an integer value
+    write_line_with_char_value: Write config line with character value
+
+  The default section writes must check whether all sections of a certain
+  type uses the same value which is implemented in the following methods:
+    check_if_all_same_value_int
+    check_if_all_same_value_charptr
+  These methods use the support methods:
+    check_int_value
+    check_str_value
+
+  Finally node sections use the support method:
+    get_node_data
+
+
+  The support method write_config_version_file is also used by the method:
+    ic_load_config_version
+ 
+  When starting the Cluster Server it's necessary to lock the configuration
+  to ensure that no more than one Cluster Server process uses the config
+  at a time. This is performed by writing to the configuration version file
+  with our pid and a state that indicates that the configuration is in use.
+
+  So the way to get the configuration version is
+  1) Read configuration file
+  2) If busy check if process still alive
+  3) If no process busy on config, write our pid and busy state into
+     configuration version file
+  4) If someone already owns the config report an error
+
+  The update of the configuration version file is done through the method:
+  write_config_version_file
+  in both variants which uses the support method:
+    write_cv_file
+  to perform the actual write of the configuration version file.
+
+  The reading of the configuration file is done through the method:
+    read_config_version_file
+
+  These methods have support methods:
+    insert_line_config_version_line
+    cmp_config_version_line
+*/
+static int
+ic_write_full_config_to_disk(IC_STRING *config_dir,
+                             IC_CONF_VERSION_TYPE *old_config_version_number,
+                             IC_CLUSTER_CONNECT_INFO **clu_infos,
+                             IC_CLUSTER_CONFIG **clusters);
+static int
+ic_load_config_version(IC_STRING *config_dir,
+                       const gchar *process_name,
+                       IC_CONF_VERSION_TYPE *config_version,
+                       IC_CONF_STATE_TYPE *state,
+                       IC_PID_TYPE *pid);
+static int
+remove_config_files(IC_STRING *config_dir,
+                    IC_CLUSTER_CONNECT_INFO **clu_infos,
+                    IC_CONF_VERSION_TYPE config_version);
+static int
+remove_config_version_file(IC_STRING *config_dir);
+static int
+write_config_files(IC_STRING *config_dir,
+                   IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   IC_CLUSTER_CONFIG **clusters,
+                   IC_CONF_VERSION_TYPE config_version);
+static int
+write_grid_config_file(IC_STRING *config_dir,
+                       IC_CLUSTER_CONNECT_INFO **clu_infos,
+                       IC_CONF_VERSION_TYPE config_version);
+static int
+write_cluster_config_file(IC_STRING *config_dir,
+                          IC_CLUSTER_CONFIG *clu_conf,
+                          IC_CONF_VERSION_TYPE config_version,
+                          gboolean is_grid_common_config);
+static int
+write_new_section_header(IC_DYNAMIC_ARRAY *dyn_array,
+                         IC_DYNAMIC_ARRAY_OPS *da_ops,
+                         gchar *buf,
+                         const gchar *section_name,
+                         gboolean first_call);
+static int
+write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                       IC_DYNAMIC_ARRAY_OPS *da_ops,
+                       gchar *buf,
+                       IC_CLUSTER_CONFIG *clu_conf,
+                       IC_CLUSTER_CONFIG_LOAD *clu_def,
+                       gboolean is_grid_common_config);
+static int
+write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
+                      IC_DYNAMIC_ARRAY_OPS *da_ops,
+                      gchar *buf,
+                      IC_CLUSTER_CONFIG *clu_conf,
+                      IC_CLUSTER_CONFIG_LOAD *clu_def,
+                      IC_CONFIG_TYPES section_type);
+static int
+write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                    IC_DYNAMIC_ARRAY_OPS *da_ops,
+                    gchar *buf,
+                    IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_def,
+                    gboolean is_grid_common_config);
+static int
+write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
+                   IC_DYNAMIC_ARRAY_OPS *da_ops,
+                   IC_NODE_TYPES node_type,
+                   gchar *buf,
+                   gchar *struct_ptr,
+                   gchar *default_struct_ptr);
+static int
+write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                    IC_DYNAMIC_ARRAY_OPS *da_ops,
+                    gchar *buf,
+                    IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_def);
+static int
+write_line_with_int_value(IC_DYNAMIC_ARRAY *dyn_array,
+                          IC_DYNAMIC_ARRAY_OPS *da_ops,
+                          gchar *buf,
+                          IC_STRING *name_var,
+                          guint64 value);
+static int
+write_line_with_char_value(IC_DYNAMIC_ARRAY *dyn_array,
+                           IC_DYNAMIC_ARRAY_OPS *da_ops,
+                           gchar *buf,
+                           IC_STRING *name_var,
+                           gchar *val_str);
+static int
+check_if_all_same_value_charptr(IC_CLUSTER_CONFIG *clu_conf,
+                                IC_CONFIG_TYPES section_type,
+                                guint32 offset,
+                                gchar **val_str);
+static int
+check_if_all_same_value_int(IC_CLUSTER_CONFIG *clu_conf,
+                            IC_CONFIG_TYPES section_type,
+                            guint32 offset,
+                            guint64 *value,
+                            IC_CONFIG_DATA_TYPE data_type);
+static int
+check_str_value(gchar **val_str, gchar *str_ptr, gboolean *first);
+static int
+check_int_value(guint64 data, guint64 *value, gboolean *first);
+static guint64
+get_node_data(const gchar *struct_ptr, guint32 offset,
+              IC_CONFIG_DATA_TYPE data_type);
+
+static int
+write_config_version_file(IC_STRING *config_dir,
+                          IC_CONF_VERSION_TYPE config_version,
+                          IC_CONF_STATE_TYPE state,
+                          IC_PID_TYPE pid);
+static int
+write_cv_file(IC_STRING *config_dir,
+              IC_CONF_VERSION_TYPE config_version,
+              IC_CONF_STATE_TYPE state,
+              IC_PID_TYPE pid);
+static int
+read_config_version_file(IC_STRING *config_dir,
+                         IC_CONF_VERSION_TYPE *config_version,
+                         IC_CONF_STATE_TYPE *state,
+                         IC_PID_TYPE *pid);
+static void
+insert_line_config_version_file(IC_STRING *str,
+                                gchar **ptr,
+                                guint64 value);
+static int
+cmp_config_version_line(IC_STRING *str,
+                        guint64 *len,
+                        guint64 *value,
+                        gchar **ptr);
+
+/* Here is the source code for the module */
+static int
+ic_write_full_config_to_disk(IC_STRING *config_dir,
+                             IC_CONF_VERSION_TYPE *old_config_version_number,
+                             IC_CLUSTER_CONNECT_INFO **clu_infos,
+                             IC_CLUSTER_CONFIG **clusters)
+{
+  int error= 0;
+  IC_CONF_VERSION_TYPE old_version= *old_config_version_number;
+  IC_PID_TYPE own_pid;
+  DEBUG_ENTRY("ic_write_full_config_to_disk");
+
+  /*
+   The first step before writing anything is to ensure that the previous
+   write was successfully completed. This is accomplished by removing any
+   files related to the previous version which might still be left in the
+   directory (this could potentially happen since writing the new config is
+   a multi-step write.
+
+   1) Write the new configuration files with the new configuration version
+     This step means updating the cluster configuration file plus each
+     configuration file of each cluster.
+   2) Update the config.version file with the new config version number
+   3) Remove the old config version files
+
+   If a crash occurs after step 2) but before step 3) has completed the
+   configuration change was still successful although it didn't finish the
+   clean-up. To finish the clean-up we perform it always before updating to
+   a new version since it is safe to remove config files that are no longer
+   current. Thus we add a step 0:
+
+   0) Remove the cluster configuration file and all configuration files for
+      all clusters for old_config_version_number - 1. This is only applicable
+      if old_config_version_number > 1. Otherwise no previous version can
+      exist.
+
+   When the old config version number is 0 it means that we're writing the
+   first version and we can thus skip both step 0 and step 3, also step 2
+   is a create rather than an update.
+
+   When the old config version number is 1 we can skip step 0 but need to
+   perform step 3.
+  */
+  own_pid= ic_get_own_pid();
+  if (old_version > (guint64)1)
+  {
+    /* Step 0 */
+    if ((error= remove_config_files(config_dir, clu_infos, old_version - 1)))
+      DEBUG_RETURN_INT(error);
+  }
+  /* Step 1 */
+  if ((error= write_config_files(config_dir, clu_infos, clusters,
+                                 old_version + 1)))
+    goto error;
+  /* Step 2 */
+  if ((error= write_config_version_file(config_dir,
+                                        (IC_CONF_VERSION_TYPE)(old_version + 1),
+                                        (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY,
+                                        own_pid)))
+    goto error;
+  if (old_version > 0)
+  {
+    /* Step 3 */
+    if ((error= remove_config_files(config_dir, clu_infos, old_version)))
+      DEBUG_RETURN_INT(error);
+  }
+  /* Step 4, update the version number */
+  *old_config_version_number= old_version + 1;
+  DEBUG_RETURN_INT(0);
+error:
+  (void)remove_config_files(config_dir, clu_infos, old_version + 1);
+  if (old_version == 0)
+  {
+    remove_config_version_file(config_dir);
+  }
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+ic_load_config_version(IC_STRING *config_dir,
+                       const gchar *process_name,
+                       IC_CONF_VERSION_TYPE *config_version,
+                       IC_CONF_STATE_TYPE *state,
+                       IC_PID_TYPE *pid)
+{
+  IC_PID_TYPE loc_pid;
+  int error;
+  DEBUG_ENTRY("ic_load_config_version");
+
+  *pid= ic_get_own_pid();
+  if (!(error= read_config_version_file(config_dir,
+                                        config_version,
+                                        state,
+                                        &loc_pid)))
+  {
+    if (*state == CONFIG_STATE_IDLE)
+    {
+      /*
+        Configuration not in update process. It is also idle in the sense
+        that no other process is active using this configuration. In this
+        state we can trust the version number read and update the file
+        such that the state is set to busy with our own process id.
+        We write the configuration version with our pid to ensure that we
+        have locked the ownership of the grid configuration.
+      */
+      *state= (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY;
+      if ((error= write_config_version_file(config_dir,
+                                            *config_version,
+                                            *state,
+                                            *pid)))
+      {
+        DEBUG_RETURN_INT(error);
+      }
+      DEBUG_RETURN_INT(0);
+    }
+    error= ic_is_process_alive(loc_pid, process_name, FALSE);
+    if (error == 0)
+    {
+      /*
+        Another process is still running a Cluster Server on the same
+        configuration files. We will report this as an error to the
+        caller.
+      */
+      error= IC_ERROR_COULD_NOT_LOCK_CONFIGURATION;
+      DEBUG_RETURN_INT(error);
+    }
+    if (error == IC_ERROR_CHECK_PROCESS_SCRIPT)
+    {
+      DEBUG_RETURN_INT(error);
+    }
+    ic_assert(IC_ERROR_PROCESS_NOT_ALIVE);
+    error= 0;
+    *state= (IC_CONF_STATE_TYPE)CONFIG_STATE_BUSY;
+    if ((error= write_config_version_file(config_dir,
+                                          *config_version,
+                                          *state,
+                                          *pid)))
+    {
+      DEBUG_RETURN_INT(error);
+    }
+    DEBUG_RETURN_INT(0);
+  }
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+remove_config_files(IC_STRING *config_dir,
+                    IC_CLUSTER_CONNECT_INFO **clu_infos,
+                    IC_CONF_VERSION_TYPE config_version)
+{
+  int error;
+  IC_STRING file_name_string;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("remove_config_files");
+
+  /* Delete the 'config.ini' file */
+  ic_create_config_file_name(&file_name_string, file_name,
+                             config_dir, &ic_config_string,
+                             config_version);
+  if ((error= ic_delete_file((const gchar *)file_name)))
+    goto error;
+
+  /* Delete the 'grid_common.ini' file */
+  ic_create_config_file_name(&file_name_string, file_name,
+                             config_dir, &ic_config_string,
+                             config_version);
+  if ((error= ic_delete_file((const gchar *)file_name)))
+    goto error;
+
+  while (*clu_infos)
+  {
+    clu_info= *clu_infos;
+    clu_infos++;
+    IC_INIT_STRING(&file_name_string, file_name, 0, TRUE);
+    ic_create_config_file_name(&file_name_string, file_name, config_dir,
+                               &clu_info->cluster_name,
+                               config_version);
+    if ((error= ic_delete_file((const gchar *)file_name)))
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+remove_config_version_file(IC_STRING *config_dir)
+{
+  IC_STRING file_name_string;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+
+  ic_create_config_version_file_name(&file_name_string, buf, config_dir);
+  return ic_delete_file((const gchar*)buf);
+}
+
+static int
+write_config_files(IC_STRING *config_dir,
+                   IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   IC_CLUSTER_CONFIG **clusters,
+                   IC_CONF_VERSION_TYPE config_version)
+{
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  IC_CLUSTER_CONFIG *clu_conf;
+  int error;
+  DEBUG_ENTRY("write_config_files");
+
+  if ((error= write_grid_config_file(config_dir,
+                                     clu_infos,
+                                     config_version)))
+    goto error;
+
+  /* Use first cluster to write grid_common.ini, any can be used */
+  clu_info= *clu_infos;
+  clu_conf= clusters[clu_info->cluster_id];
+  if ((error= write_cluster_config_file(config_dir,
+                                        clu_conf,
+                                        config_version,
+                                        TRUE)))
+    goto error;
+
+  while (*clu_infos)
+  {
+    clu_info= *clu_infos;
+    clu_infos++;
+    clu_conf= clusters[clu_info->cluster_id];
+    if ((error= write_cluster_config_file(config_dir,
+                                          clu_conf,
+                                          config_version,
+                                          FALSE)))
+      goto error;
+  }
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+write_grid_config_file(IC_STRING *config_dir,
+                       IC_CLUSTER_CONNECT_INFO **clu_infos,
+                       IC_CONF_VERSION_TYPE config_version)
+{
+  IC_DYNAMIC_ARRAY *dyn_array;
+  IC_CLUSTER_CONNECT_INFO *clu_info;
+  IC_DYNAMIC_ARRAY_OPS *da_ops;
+  IC_STRING file_name_str;
+  int error= IC_ERROR_MEM_ALLOC;
+  IC_FILE_HANDLE file_ptr;
+  gboolean first_call= TRUE;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("write_grid_config_file");
+
+  ic_create_config_file_name(&file_name_str,
+                             buf,
+                             config_dir,
+                             &ic_config_string,
+                             config_version);
+  /* We are writing a new file here */
+  if ((error= ic_create_file(&file_ptr, (const gchar *)buf)))
+    goto file_error;
+
+  if (!(dyn_array= ic_create_simple_dynamic_array()))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  da_ops= &dyn_array->da_ops;
+
+  while (*clu_infos)
+  {
+    clu_info= *clu_infos;
+    clu_infos++;
+  /* Write [cluster]<CR> into the buffer */
+    if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                       cluster_str, first_call)))
+      goto error;
+    first_call= FALSE;
+  /* Write cluster_name: __name__<CR> into the buffer */
+    if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_name_str,
+                                        (guint32)strlen(cluster_name_str)))
+      goto error;
+    buf[0]= ':';
+    buf[1]= ' ';
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+      goto error;
+    if (da_ops->ic_insert_dynamic_array(dyn_array,
+                                        clu_info->cluster_name.str,
+                                        clu_info->cluster_name.len))
+      goto error;
+    buf[0]= CARRIAGE_RETURN;
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+
+  /* Write cluster_id: __id__<CR> into the buffer */
+    if (da_ops->ic_insert_dynamic_array(dyn_array, cluster_id_string,
+                                        (guint32)strlen(cluster_id_string)))
+      goto error;
+    buf[0]= ':';
+    buf[1]= ' ';
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+      goto error;
+  
+    if (!ic_guint64_str((guint64)clu_info->cluster_id, buf, NULL))
+      goto error;
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, strlen(buf)))
+      goto error;
+    buf[0]= CARRIAGE_RETURN;
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+
+  /* Write password: __password__<CR> into the buffer */
+    if (da_ops->ic_insert_dynamic_array(dyn_array,
+                                        cluster_password_str,
+                                        (guint32)strlen(cluster_password_str)))
+      goto error;
+    buf[0]= ':';
+    buf[1]= ' ';
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+      goto error;
+    if (da_ops->ic_insert_dynamic_array(dyn_array,
+                                        clu_info->password.str,
+                                        clu_info->password.len))
+      goto error;
+    buf[0]= CARRIAGE_RETURN;
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+  }
+  if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
+                                                     file_ptr)))
+    goto error;
+  error= 0;
+error:
+  ic_close_file(file_ptr);
+  da_ops->ic_free_dynamic_array(dyn_array);
+file_error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+write_cluster_config_file(IC_STRING *config_dir,
+                          IC_CLUSTER_CONFIG *clu_conf,
+                          IC_CONF_VERSION_TYPE config_version,
+                          gboolean is_grid_common_config)
+{
+  IC_DYNAMIC_ARRAY *dyn_array;
+  IC_DYNAMIC_ARRAY_OPS *da_ops;
+  IC_STRING file_name_str;
+  int error= IC_ERROR_MEM_ALLOC;
+  IC_FILE_HANDLE file_ptr;
+  IC_CLUSTER_CONFIG_LOAD clu_def;
+  gchar buf[IC_MAX_FILE_NAME_SIZE];
+  IC_STRING *file_name;
+  DEBUG_ENTRY("write_cluster_config_file");
+
+  ic_zero(&clu_def, sizeof(IC_CLUSTER_CONFIG_LOAD));
+  /*
+     We start by creating the new configuration file and a dynamic array
+     used to fill in the content of this new file before we write it.
+  */
+  if (is_grid_common_config)
+    file_name= &ic_grid_common_config_string;
+  else
+    file_name= &clu_conf->clu_info.cluster_name;
+
+  ic_create_config_file_name(&file_name_str,
+                             buf,
+                             config_dir,
+                             file_name,
+                             config_version);
+
+  /* We are writing a new file here */
+  if ((error= ic_create_file(&file_ptr, (const gchar *)buf)))
+    goto file_error;
+
+  if (!(dyn_array= ic_create_simple_dynamic_array()))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  da_ops= &dyn_array->da_ops;
+
+  if ((error= write_default_sections(dyn_array, da_ops, buf,
+                                     clu_conf, &clu_def,
+                                     is_grid_common_config)))
+    goto error;
+ 
+  if ((error= write_node_sections(dyn_array, da_ops, buf,
+                                  clu_conf, &clu_def,
+                                  is_grid_common_config)))
+    goto error;
+
+  if (!is_grid_common_config)
+  {
+    if ((error= write_comm_sections(dyn_array, da_ops, buf,
+                                    clu_conf, &clu_def)))
+      goto error;
+  }
+
+  if ((error= da_ops->ic_write_dynamic_array_to_disk(dyn_array,
+                                                     file_ptr)))
+    goto error;
+  error= 0;
+
+error:
+  ic_close_file(file_ptr);
+  da_ops->ic_free_dynamic_array(dyn_array);
+file_error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+write_new_section_header(IC_DYNAMIC_ARRAY *dyn_array,
+                         IC_DYNAMIC_ARRAY_OPS *da_ops,
+                         gchar *buf,
+                         const gchar *section_name,
+                         gboolean first_call)
+{
+  int error= IC_ERROR_MEM_ALLOC;
+  DEBUG_ENTRY("write_new_section_header");
+
+  if (!first_call)
+  {
+    buf[0]= CARRIAGE_RETURN;
+    if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+      goto error;
+  }
+  buf[0]= '[';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, section_name,
+                                      (guint32)strlen(section_name)))
+    goto error;
+  buf[0]= ']';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  buf[0]= CARRIAGE_RETURN;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  error= 0;
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static gboolean
+should_write_this_section(gboolean is_grid_common_config,
+                          IC_CONFIG_TYPES node_type)
+{
+  if (is_grid_common_config)
+  {
+    if (!(node_type == IC_CLUSTER_SERVER_TYPE ||
+          node_type == IC_CLUSTER_MANAGER_TYPE))
+      return FALSE;
+  }
+  else
+  {
+    if (node_type == IC_CLUSTER_SERVER_TYPE ||
+        node_type == IC_CLUSTER_MANAGER_TYPE)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+static int
+write_default_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                       IC_DYNAMIC_ARRAY_OPS *da_ops,
+                       gchar *buf,
+                       IC_CLUSTER_CONFIG *clu_conf,
+                       IC_CLUSTER_CONFIG_LOAD *clu_def,
+                       gboolean is_grid_common_config)
+{
+  guint32 i;
+  int error= 0;
+  gboolean first_call= TRUE;
+  gboolean any_node_of_type[IC_NUMBER_OF_CONFIG_TYPES];
+  const gchar *node_type_str[IC_NUMBER_OF_CONFIG_TYPES];
+  DEBUG_ENTRY("write_default_sections");
+
+  for (i= 0; i < IC_NUMBER_OF_CONFIG_TYPES; i++)
+    any_node_of_type[i]= FALSE;
+
+  node_type_str[IC_NOT_EXIST_NODE_TYPE]= NULL;
+  node_type_str[IC_DATA_SERVER_TYPE]= data_server_def_str;
+  node_type_str[IC_CLIENT_TYPE]= client_node_def_str;
+  node_type_str[IC_CLUSTER_SERVER_TYPE]= cluster_server_def_str;
+  node_type_str[IC_SQL_SERVER_TYPE]= sql_server_def_str;
+  node_type_str[IC_REP_SERVER_TYPE]= rep_server_def_str;
+  node_type_str[IC_FILE_SERVER_TYPE]= file_server_def_str;
+  node_type_str[IC_RESTORE_TYPE]= restore_node_def_str;
+  node_type_str[IC_CLUSTER_MANAGER_TYPE]= cluster_mgr_def_str;
+  node_type_str[IC_COMM_TYPE]= socket_def_str;
+
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+    any_node_of_type[clu_conf->node_types[i]]= TRUE;
+  any_node_of_type[IC_NO_CONFIG_TYPE]= FALSE;
+
+  for (i= 0; i < IC_NUMBER_OF_CONFIG_TYPES; i++)
+  {
+    /*
+      First step is to write all the default sections and also to
+      record all the defaults. We need to record all defaults to avoid issues
+      if we at some point decide to change the default value of a certain
+      configuration parameter in a later release of the iClaustron software.
+
+      It isn't necessary to write defaults for a node type not existing in
+      this cluster.
+
+      We always write a default communication section.
+    */
+
+    /*
+      grid_common.ini only writes Cluster Server and Cluster Manager
+      default sections. Cluster config files writes everything
+      excepts those two sections.
+    */
+    if (!should_write_this_section(is_grid_common_config,
+                                   (IC_CONFIG_TYPES)i))
+      continue;
+ 
+    if (any_node_of_type[i] || ((IC_CONFIG_TYPES)i == IC_COMM_TYPE))
+    {
+      /* Write e.g. [data server default] and its defaults into the buffer */
+      if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                           node_type_str[i], first_call)))
+        goto error;
+      first_call= FALSE;
+      if ((error= write_default_section(dyn_array, da_ops, buf, clu_conf,
+                                        clu_def, (IC_CONFIG_TYPES)i)))
+        goto error;
+    }
+  }
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+write_node_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                    IC_DYNAMIC_ARRAY_OPS *da_ops,
+                    gchar *buf,
+                    IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_def,
+                    gboolean is_grid_common_config)
+{
+  IC_NODE_TYPES node_type;
+  guint32 i;
+  gchar *struct_ptr, *default_struct_ptr;
+  const gchar *sect_name;
+  int error= 0;
+  DEBUG_ENTRY("write_node_sections");
+
+  /*
+    Now it is time to write all node specific configuration items.
+    This is performed node by node, only values that differs from
+    default values are recorded in the node specific section.
+  */
+  for (i= 1; i <= clu_conf->max_node_id; i++)
+  {
+    struct_ptr= clu_conf->node_config[i];
+    if (!struct_ptr)
+      continue;
+    node_type= clu_conf->node_types[i];
+
+    if (!should_write_this_section(is_grid_common_config,
+                                   (IC_CONFIG_TYPES)node_type))
+      continue;
+
+    switch (node_type)
+    {
+      case IC_DATA_SERVER_NODE:
+        sect_name= data_server_str;
+        default_struct_ptr= (gchar*)&clu_def->default_data_server_config;
+        break;
+      case IC_CLIENT_NODE:
+        sect_name= client_node_str;
+        default_struct_ptr= (gchar*)&clu_def->default_client_config;
+        break;
+      case IC_CLUSTER_SERVER_NODE:
+        sect_name= cluster_server_str;
+        default_struct_ptr= (gchar*)&clu_def->default_cluster_server_config;
+        break;
+      case IC_SQL_SERVER_NODE:
+        sect_name= sql_server_str;
+        default_struct_ptr= (gchar*)&clu_def->default_sql_server_config;
+        break;
+      case IC_REP_SERVER_NODE:
+        sect_name= rep_server_str;
+        default_struct_ptr= (gchar*)&clu_def->default_rep_server_config;
+        break;
+      case IC_FILE_SERVER_NODE:
+        sect_name= file_server_str;
+        default_struct_ptr= (gchar*)&clu_def->default_file_server_config;
+        break;
+      case IC_RESTORE_NODE:
+        sect_name= restore_node_str;
+        default_struct_ptr= (gchar*)&clu_def->default_restore_config;
+        break;
+      case IC_CLUSTER_MANAGER_NODE:
+        sect_name= cluster_mgr_str;
+        default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
+        break;
+      default:
+        ic_assert(FALSE);
+        return 1;
+    }
+    if ((error= write_new_section_header(dyn_array, da_ops,
+                                         buf, sect_name, FALSE)))
+      goto error;
+    if ((error= write_node_section(dyn_array, da_ops, node_type, buf,
+                                   struct_ptr, default_struct_ptr)))
+      goto error;
+  }
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+write_comm_sections(IC_DYNAMIC_ARRAY *dyn_array,
+                    IC_DYNAMIC_ARRAY_OPS *da_ops,
+                    gchar *buf,
+                    IC_CLUSTER_CONFIG *clu_conf,
+                    IC_CLUSTER_CONFIG_LOAD *clu_def)
+{
+  guint32 i;
+  guint32 node1_id, node2_id, node1_port, node2_port, server_port;
+  gchar *first_hostname, *second_hostname;
+  IC_SOCKET_LINK_CONFIG *comm_ptr, *default_comm_ptr;
+  IC_DATA_SERVER_CONFIG *node1_ptr, *node2_ptr;
+  int error= 0;
+  DEBUG_ENTRY("write_comm_sections");
+
+  for (i= 0; i < clu_conf->num_comms; i++)
+  {
+    /*
+      To speed up execution a bit we check specific config items rather than
+      go through all configuration items for each communication section.
+      This is an optimisation that means that we have to add code here every
+      time we add or remove a configuration parameter for communication
+      sections.
+    */
+    default_comm_ptr= &clu_def->default_socket_config;
+    comm_ptr= (IC_SOCKET_LINK_CONFIG*)clu_conf->comm_config[i];
+    node1_id= comm_ptr->first_node_id;
+    node2_id= comm_ptr->second_node_id;
+    node1_ptr= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node1_id];
+    node2_ptr= (IC_DATA_SERVER_CONFIG*)clu_conf->node_config[node2_id];
+    node1_port= node1_ptr->port_number;
+    node2_port= node2_ptr->port_number;
+    first_hostname= node1_ptr->hostname;
+    second_hostname= node2_ptr->hostname;
+    if ((strcmp(first_hostname, comm_ptr->first_hostname) != 0) ||
+        (strcmp(second_hostname, comm_ptr->second_hostname) != 0) ||
+        ((node1_id == comm_ptr->server_node_id) ?
+         ((node1_port != comm_ptr->server_port_number) ||
+          (node2_port != comm_ptr->client_port_number)) :
+         ((node1_port != comm_ptr->client_port_number) ||
+          (node2_port != comm_ptr->server_port_number))) ||
+        (default_comm_ptr->socket_write_buffer_size !=
+         comm_ptr->socket_write_buffer_size) ||
+        (default_comm_ptr->socket_read_buffer_size !=
+         comm_ptr->socket_read_buffer_size) ||
+        (default_comm_ptr->socket_kernel_read_buffer_size !=
+         comm_ptr->socket_kernel_read_buffer_size) ||
+        (default_comm_ptr->socket_kernel_write_buffer_size !=
+         comm_ptr->socket_kernel_write_buffer_size) ||
+        (default_comm_ptr->socket_max_wait_in_nanos !=
+         comm_ptr->socket_max_wait_in_nanos) ||
+        (default_comm_ptr->socket_maxseg_size !=
+         comm_ptr->socket_maxseg_size) ||
+        (default_comm_ptr->use_message_id !=
+         comm_ptr->use_message_id) ||
+        (default_comm_ptr->use_checksum !=
+         comm_ptr->use_checksum) ||
+        (default_comm_ptr->socket_bind_address != 
+         comm_ptr->socket_bind_address))
+    {
+      if ((error= write_new_section_header(dyn_array, da_ops, buf,
+                                           socket_str, FALSE)))
+        goto error;
+      /* This section isn't a default section so we need to fill it in */
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_FIRST_NODE_ID)->config_entry_name,
+           (guint64)node1_id)))
+        goto error;
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_SECOND_NODE_ID)->config_entry_name,
+           (guint64)node2_id)))
+        goto error;
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_SERVER_NODE_ID)->config_entry_name,
+           (guint64)comm_ptr->server_node_id)))
+        goto error;
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_CLIENT_PORT_NUMBER)->config_entry_name,
+           (guint64)comm_ptr->client_port_number)))
+        goto error;
+      if (comm_ptr->server_port_number)
+      {
+        server_port= comm_ptr->server_port_number;
+      }
+      else
+      {
+        if (get_comm_server_node(clu_conf, node1_id, node2_id) == node1_id)
+        {
+          server_port= node1_port;
+        }
+        else
+        {
+          server_port= node2_port;
+        }
+        comm_ptr->server_port_number = server_port;
+      }
+      if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_SERVER_PORT_NUMBER)->config_entry_name,
+           (guint64)server_port)))
+        goto error;
+      if (strcmp(first_hostname, comm_ptr->first_hostname) != 0)
+      {
+        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_FIRST_HOSTNAME)->config_entry_name,
+           comm_ptr->first_hostname)))
+          goto error;
+      }
+      if (strcmp(second_hostname, comm_ptr->second_hostname) != 0)
+      {
+        if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_SECOND_HOSTNAME)->config_entry_name,
+           comm_ptr->second_hostname)))
+          goto error;
+      }
+      if (comm_ptr->socket_write_buffer_size !=
+          default_comm_ptr->socket_write_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_WRITE_BUFFER_SIZE)->config_entry_name,
+           comm_ptr->socket_write_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_read_buffer_size !=
+          default_comm_ptr->socket_read_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_READ_BUFFER_SIZE)->config_entry_name,
+           comm_ptr->socket_read_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_kernel_write_buffer_size !=
+          default_comm_ptr->socket_kernel_write_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_KERNEL_WRITE_BUFFER_SIZE)->config_entry_name,
+           comm_ptr->socket_kernel_write_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_kernel_read_buffer_size !=
+          default_comm_ptr->socket_kernel_read_buffer_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+          &get_conf_entry(SOCKET_KERNEL_READ_BUFFER_SIZE)->config_entry_name,
+          comm_ptr->socket_kernel_read_buffer_size)))
+          goto error;
+      }
+      if (comm_ptr->socket_max_wait_in_nanos !=
+          default_comm_ptr->socket_max_wait_in_nanos)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_MAXSEG_SIZE)->config_entry_name,
+           comm_ptr->socket_max_wait_in_nanos)))
+          goto error;
+      }
+      if (comm_ptr->socket_maxseg_size !=
+          default_comm_ptr->socket_maxseg_size)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_MAXSEG_SIZE)->config_entry_name,
+           comm_ptr->socket_maxseg_size)))
+          goto error;
+      }
+      if (comm_ptr->use_message_id !=
+          default_comm_ptr->use_message_id)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_USE_MESSAGE_NUMBER)->config_entry_name,
+           comm_ptr->use_message_id)))
+          goto error;
+      }
+      if (comm_ptr->use_checksum !=
+          default_comm_ptr->use_checksum)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_USE_CHECKSUM)->config_entry_name,
+           comm_ptr->use_checksum)))
+          goto error;
+      }
+      if (comm_ptr->socket_bind_address !=
+          default_comm_ptr->socket_bind_address)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+           &get_conf_entry(SOCKET_BIND_ADDRESS)->config_entry_name,
+           comm_ptr->socket_bind_address)))
+          goto error;
+      }
+    }
+  }
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+write_default_section(IC_DYNAMIC_ARRAY *dyn_array,
+                      IC_DYNAMIC_ARRAY_OPS *da_ops,
+                      gchar *buf,
+                      IC_CLUSTER_CONFIG *clu_conf,
+                      IC_CLUSTER_CONFIG_LOAD *clu_def,
+                      IC_CONFIG_TYPES section_type)
+{
+  gchar *default_struct_ptr;
+  gchar *data_ptr;
+  guint32 i, inx;
+  guint64 value= 0;
+  gchar *val_str= NULL;
+  IC_CONFIG_ENTRY *conf_entry;
+  int error;
+  DEBUG_ENTRY("write_default_section");
+
+  switch (section_type)
+  {
+    case IC_DATA_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_data_server_config;
+      break;
+    case IC_CLIENT_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_client_config;
+      break;
+    case IC_CLUSTER_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_cluster_server_config;
+      break;
+    case IC_SQL_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_sql_server_config;
+      break;
+    case IC_REP_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_rep_server_config;
+      break;
+    case IC_FILE_SERVER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_file_server_config;
+      break;
+    case IC_RESTORE_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_restore_config;
+      break;
+    case IC_CLUSTER_MANAGER_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_cluster_mgr_config;
+      break;
+    case IC_COMM_TYPE:
+      default_struct_ptr= (gchar*)&clu_def->default_socket_config;
+      break;
+    default:
+      DEBUG_RETURN_INT(1);
+  }
+  for (i= 0; i <= glob_max_config_id; i++)
+  {
+    if ((inx= map_inx_to_config_id[i]))
+    {
+      conf_entry= &glob_conf_entry[i];
+      if ((!(conf_entry->config_types & (1 << section_type))) ||
+          conf_entry->is_mandatory ||
+          conf_entry->is_derived_default)
+        continue;
+      /* We found a configuration item of this section type, handle it */
+      data_ptr= default_struct_ptr + conf_entry->offset;
+      if (conf_entry->data_type != IC_CHARPTR &&
+          conf_entry->data_type != IC_ENUM)
+      {
+        if ((error= check_if_all_same_value_int(clu_conf, section_type,
+                                                conf_entry->offset,
+                                                &value,
+                                                conf_entry->data_type)))
+        {
+          if (error == 2)
+            DEBUG_RETURN_INT(1);
+          /*
+            There was differing values in the nodes and thus we need to
+            the standard default value.
+          */
+          value= conf_entry->default_value;
+        }
+      }
+      else
+      {
+        if ((error= check_if_all_same_value_charptr(clu_conf, section_type,
+                                                    conf_entry->offset,
+                                                    &val_str)))
+        {
+          if (error == 2)
+            DEBUG_RETURN_INT(1);
+          val_str= conf_entry->default_string;
+        }
+      }
+      switch (conf_entry->data_type)
+      {
+        case IC_CHAR:
+        case IC_BOOLEAN:
+          *(guint8*)data_ptr= (guint8)value;
+          break;
+        case IC_UINT16:
+          *(guint16*)data_ptr= (guint16)value;
+          break;
+        case IC_UINT32:
+          *(guint32*)data_ptr= (guint32)value;
+          break;
+        case IC_UINT64:
+          *(guint64*)data_ptr= value;
+          break;
+        case IC_CHARPTR:
+        case IC_ENUM:
+          *(gchar**)data_ptr= val_str;
+          break;
+        default:
+          ic_assert(FALSE);
+          DEBUG_RETURN_INT(1);
+      }
+      if (conf_entry->data_type != IC_CHARPTR &&
+          conf_entry->data_type != IC_ENUM)
+      {
+        if ((error= write_line_with_int_value(dyn_array, da_ops, buf,
+                                              &conf_entry->config_entry_name,
+                                              value)))
+          DEBUG_RETURN_INT(error);
+      }
+      else
+      {
+        if (strcmp(val_str, ic_empty_string) != 0)
+        {
+          if ((error= write_line_with_char_value(dyn_array, da_ops, buf,
+                                                 &conf_entry->config_entry_name,
+                                                 val_str)))
+            DEBUG_RETURN_INT(error);
+        }
+      }
+    }
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+write_node_section(IC_DYNAMIC_ARRAY *dyn_array,
+                   IC_DYNAMIC_ARRAY_OPS *da_ops,
+                   IC_NODE_TYPES node_type,
+                   gchar *buf,
+                   gchar *struct_ptr,
+                   gchar *default_struct_ptr)
+{
+  guint32 i, inx, offset;
+  IC_CONFIG_ENTRY *conf_entry;
+  IC_CONFIG_TYPES section_type= (IC_CONFIG_TYPES)node_type;
+  guint64 value= 0, default_value= 0;
+  IC_STRING *entry_name;
+  IC_CONFIG_DATA_TYPE data_type;
+  gchar *str_ptr;
+  int error;
+  DEBUG_ENTRY("write_node_section");
+
+  for (i= 0; i <= glob_max_config_id; i++)
+  {
+    if ((inx= map_inx_to_config_id[i]))
+    {
+      conf_entry= &glob_conf_entry[i];
+      if (!(conf_entry->config_types & (1 << section_type)))
+        continue;
+      /* We found a configuration item of this section type, handle it */
+      data_type= conf_entry->data_type;
+      offset= conf_entry->offset;
+      if (data_type != IC_CHARPTR &&
+          data_type != IC_ENUM)
+      {
+        value= get_node_data(struct_ptr, offset, data_type);
+        default_value= get_node_data(default_struct_ptr, offset, data_type);
+      }
+      entry_name= &conf_entry->config_entry_name;
+      /* Check if non-mandatory config variable is different from default */
+      if (data_type != IC_CHARPTR &&
+          data_type != IC_ENUM)
+      {
+        if (!conf_entry->is_mandatory && value == default_value)
+          continue;
+        /* We need to write a configuration variable line */
+        if (!(error= write_line_with_int_value(dyn_array, da_ops, buf,
+                                               entry_name, value)))
+          continue;
+      }
+      else
+      {
+        if (!conf_entry->is_mandatory &&
+            (strcmp(struct_ptr + offset, default_struct_ptr + offset) == 0))
+          continue;
+        str_ptr= *(gchar**)(struct_ptr + offset);
+        /* We need to write a configuration variable line */
+        if (!(error= write_line_with_char_value(dyn_array, da_ops, buf,
+                                                entry_name,
+                                                str_ptr)))
+          continue;
+      }
+      DEBUG_RETURN_INT(error);
+    }
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+write_line_with_int_value(IC_DYNAMIC_ARRAY *dyn_array,
+                          IC_DYNAMIC_ARRAY_OPS *da_ops,
+                          gchar *buf,
+                          IC_STRING *name_var,
+                          guint64 value)
+{
+  int error= IC_ERROR_MEM_ALLOC;
+  DEBUG_ENTRY("write_line_with_int_value");
+
+  if (da_ops->ic_insert_dynamic_array(dyn_array, name_var->str, name_var->len))
+    goto error;
+
+  buf[0]= ':';
+  buf[1]= ' ';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+    goto error;
+
+  if (!ic_guint64_str(value, buf, NULL))
+    goto error;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, strlen(buf)))
+    goto error;
+  
+  buf[0]= CARRIAGE_RETURN;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  error= 0;
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+write_line_with_char_value(IC_DYNAMIC_ARRAY *dyn_array,
+                           IC_DYNAMIC_ARRAY_OPS *da_ops,
+                           gchar *buf,
+                           IC_STRING *name_var,
+                           gchar *val_str)
+{
+  int error= IC_ERROR_MEM_ALLOC;
+  DEBUG_ENTRY("write_line_with_char_value");
+
+  if (da_ops->ic_insert_dynamic_array(dyn_array, name_var->str, name_var->len))
+    goto error;
+
+  buf[0]= ':';
+  buf[1]= ' ';
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)2))
+    goto error;
+
+  if (da_ops->ic_insert_dynamic_array(dyn_array, val_str, strlen(val_str)))
+    goto error;
+
+  buf[0]= CARRIAGE_RETURN;
+  if (da_ops->ic_insert_dynamic_array(dyn_array, buf, (guint32)1))
+    goto error;
+  error= 0;
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+check_if_all_same_value_charptr(IC_CLUSTER_CONFIG *clu_conf,
+                                IC_CONFIG_TYPES section_type,
+                                guint32 offset,
+                                gchar **val_str)
+{
+  gchar **str_ptr;
+  gboolean first= TRUE;
+  guint32 max_node_id;
+  guint32 i, num_comms;
+
+  if (section_type != IC_COMM_TYPE)
+  {
+    max_node_id= clu_conf->max_node_id;
+    for (i= 1; i <= max_node_id; i++)
+    {
+      if (clu_conf->node_types[i] == (IC_NODE_TYPES)section_type)
+      {
+        ic_assert(clu_conf->node_config[i]);
+        if (clu_conf->node_config[i] == NULL)
+          return 2;
+        str_ptr= (gchar**)(clu_conf->node_config[i] + offset);
+        if (check_str_value(val_str, *str_ptr, &first))
+          return 1;
+      }
+    }
+  }
+  else
+  {
+    num_comms= clu_conf->num_comms;
+    for (i= 0; i < num_comms; i++)
+    {
+      if (clu_conf->comm_config[i] == NULL)
+        continue;
+      str_ptr= (gchar**)(clu_conf->comm_config[i] + offset);
+      if (check_str_value(val_str, *str_ptr, &first))
+        return 1;
+    }
+  }
+  return 0;
+}
+
+static int
+check_if_all_same_value_int(IC_CLUSTER_CONFIG *clu_conf,
+                            IC_CONFIG_TYPES section_type,
+                            guint32 offset,
+                            guint64 *value,
+                            IC_CONFIG_DATA_TYPE data_type)
+{
+  guint64 data;
+  gboolean first= TRUE;
+  guint32 max_node_id;
+  guint32 i, num_comms;
+
+  if (section_type != IC_COMM_TYPE)
+  {
+    max_node_id= clu_conf->max_node_id;
+    for (i= 1; i <= max_node_id; i++)
+    {
+      if (clu_conf->node_types[i] == (IC_NODE_TYPES)section_type)
+      {
+        ic_assert(clu_conf->node_config[i]);
+        if (clu_conf->node_config[i] == NULL)
+          return 2;
+        data= get_node_data(clu_conf->node_config[i], offset, data_type);
+        if (check_int_value(data, value, &first))
+          return 1;
+      }
+    }
+  }
+  else
+  {
+    num_comms= clu_conf->num_comms;
+    for (i= 0; i < num_comms; i++)
+    {
+      ic_assert(clu_conf->comm_config[i]);
+      if (clu_conf->comm_config[i] == NULL)
+        return 2;
+      data= get_node_data(clu_conf->comm_config[i], offset, data_type);
+      if (check_int_value(data, value, &first))
+        return 1;
+    }
+  }
+  return 0;
+}
+
+static guint64
+get_node_data(const gchar *struct_ptr, guint32 offset,
+              IC_CONFIG_DATA_TYPE data_type)
+{
+  guint64 value= 0;
+  switch (data_type)
+  {
+    case IC_BOOLEAN:
+    case IC_CHAR:
+      value= (guint64)*(guint8*)(struct_ptr+offset);
+      break;
+    case IC_UINT16:
+      value= (guint64)*(guint16*)(struct_ptr+offset);
+      break;
+    case IC_UINT32:
+      value= (guint64)*(guint32*)(struct_ptr+offset);
+      break;
+    case IC_UINT64:
+      value= *(guint64*)(struct_ptr+offset);
+      break;
+    default:
+      ic_assert(FALSE);
+  }
+  return value;
+}
+
+static int
+check_str_value(gchar **val_str, gchar *str_ptr, gboolean *first)
+{
+  if (*first)
+  {
+    *val_str= str_ptr;
+    *first= FALSE;
+  }
+  else
+  {
+    if (strcmp(str_ptr, *val_str) != 0)
+      return 1;
+  }
+  return 0;
+}
+
+static int
+check_int_value(guint64 data, guint64 *value, gboolean *first)
+{
+  if (*first)
+  {
+    *value= data;
+    *first= FALSE;
+  }
+  else
+  {
+    if (data != (*value))
+      return 1;
+  }
+  return 0;
+}
+
+static int
+write_config_version_file(IC_STRING *config_dir,
+                          IC_CONF_VERSION_TYPE config_version,
+                          IC_CONF_STATE_TYPE state,
+                          IC_PID_TYPE pid)
+{
+  IC_CONF_STATE_TYPE read_state;
+  IC_CONF_VERSION_TYPE read_cv;
+  IC_PID_TYPE read_pid;
+  int error;
+  DEBUG_ENTRY("write_config_version_file");
+
+  if ((error= write_cv_file(config_dir,
+                            config_version,
+                            state,
+                            pid)))
+    goto error;
+  if ((error= read_config_version_file(config_dir,
+                                       &read_cv,
+                                       &read_state,
+                                       &read_pid)))
+    goto error;
+  if ((read_cv != config_version) ||
+      (read_state != state) ||
+      (read_pid != pid))
+  {
+    /*
+      We have written the config version file but after reading it,
+      the values doesn't match. This means someone else have got
+      there before us. In this case we need to stop this process
+      and let the other process win.
+    */
+    error= 1;
+  }
+  /*
+    We are now safe since our pid is written into the config version
+    file and anyone trying to start using this config directory will
+    have to check if our process is awake. So as long as we are alive
+    we are safe.
+    error == 0 in this path.
+  */
+error:
+  DEBUG_RETURN_INT(error);
+}
+
+#define CV_FILE_SIZE 64
+static void init_cv_buf(gchar *space_buf)
+{
+  memset(space_buf, SPACE_CHAR, CV_FILE_SIZE);
+  space_buf[CV_FILE_SIZE - 1]= CARRIAGE_RETURN;
+}
+
+static int
+write_cv_file(IC_STRING *config_dir,
+              IC_CONF_VERSION_TYPE config_version,
+              IC_CONF_STATE_TYPE state,
+              IC_PID_TYPE pid)
+{
+  IC_FILE_HANDLE file_ptr;
+  int error;
+  IC_STRING file_name_string, str;
+  gchar buf[CV_FILE_SIZE];
+  gchar *ptr= buf;
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("write_cv_file");
+
+  init_cv_buf(buf);
+  /*
+    Create a string like
+    version: <config_version><CR>
+    state: <state><CR>
+    pid: <pid><CR>
+    Last line is space filled up to 64 bytes
+
+    The version is the current version of the configuration
+    State is either idle if no one is currently running the
+    cluster server using this configuration, it's busy when
+    someone is running and isn't updating the configuration,
+    finally it can be in a number of states which is used
+    when the configuration is updated.
+  */
+  IC_INIT_STRING(&str, (gchar*)ic_version_str, strlen(ic_version_str), TRUE);
+  insert_line_config_version_file(&str, &ptr, (guint64)config_version);
+  IC_INIT_STRING(&str, (gchar*)state_str, strlen(state_str), TRUE);
+  insert_line_config_version_file(&str, &ptr, (guint64)state);
+  IC_INIT_STRING(&str, (gchar*)ic_pid_str, strlen(ic_pid_str), TRUE);
+  insert_line_config_version_file(&str, &ptr, (guint64)pid);
+
+  ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
+  if (config_version == (guint64)0)
+  {
+    /* This is the initial write of the file */
+    if ((error= ic_create_file(&file_ptr, (const gchar *)file_name)))
+      goto file_error;
+    ic_close_file(file_ptr);
+  }
+  /* Open config.version for writing */
+  if ((error= ic_open_file(&file_ptr, (const gchar *)file_name, FALSE)))
+    goto file_error;
+  error= ic_write_file(file_ptr, (const gchar*)buf, (size_t)CV_FILE_SIZE);
+  ic_close_file(file_ptr);
+file_error:
+  if (error == ENOENT)
+    error= IC_ERROR_FAILED_TO_CREATE_CONFIG_VERSION;
+  DEBUG_RETURN_INT(error);
+}
+
+static void
+insert_line_config_version_file(IC_STRING *str,
+                                gchar **ptr,
+                                guint64 value)
+{
+  guint32 str_len;
+  gchar *loc_ptr= *ptr;
+
+  memcpy(loc_ptr, str->str, str->len);
+  loc_ptr+= str->len;
+  loc_ptr[0]= SPACE_CHAR;
+  loc_ptr++;
+  loc_ptr= ic_guint64_str(value, loc_ptr, &str_len);
+  loc_ptr+= str_len;
+  *loc_ptr= CARRIAGE_RETURN;
+  loc_ptr++;
+  *ptr= loc_ptr;
+}
+
+static int
+read_config_version_file(IC_STRING *config_dir,
+                         IC_CONF_VERSION_TYPE *config_version,
+                         IC_CONF_STATE_TYPE *state,
+                         IC_PID_TYPE *pid)
+{
+  IC_STRING file_name_string;
+  IC_STRING str;
+  int error;
+  guint64 len;
+  gchar *ptr, *release_ptr;
+  gchar space_buf[CV_FILE_SIZE];
+  gchar file_name[IC_MAX_FILE_NAME_SIZE];
+  DEBUG_ENTRY("read_config_version_file");
+
+  init_cv_buf(space_buf);
+  ic_create_config_version_file_name(&file_name_string, file_name, config_dir);
+  if ((error= ic_get_file_contents(file_name, &release_ptr, &len)))
+  {
+    if (error == ENOENT)
+    {
+      *config_version= 0;
+      *state= CONFIG_STATE_IDLE;
+      *pid= 0;
+      DEBUG_RETURN_INT(0);
+    }
+    DEBUG_RETURN_INT(error);
+  }
+
+  /* config_version.ini is always 64 bytes in size.  */
+  error= IC_ERROR_INCONSISTENT_CONTENT_IN_CONFIG_VERSION_FILE;
+  if (len != CV_FILE_SIZE)
+    goto file_error;
+
+  ptr= release_ptr;
+  /*
+    Read a string like
+    version: <config_version><CR>
+    state: <state><CR>
+    pid: <pid><CR>
+  */
+  IC_INIT_STRING(&str, (gchar*)ic_version_str, strlen(ic_version_str), TRUE);
+  if ((error= cmp_config_version_line(&str, &len, config_version, &ptr)))
+    goto file_error;
+  IC_INIT_STRING(&str, (gchar*)state_str, strlen(state_str), TRUE);
+  if ((error= cmp_config_version_line(&str, &len, state, &ptr)))
+    goto file_error;
+  IC_INIT_STRING(&str, (gchar*)ic_pid_str, strlen(ic_pid_str), TRUE);
+  if ((error= cmp_config_version_line(&str, &len, pid, &ptr)))
+    goto file_error;
+
+  /* config_version.ini is always filled with spaces at the end + CR */
+  error= IC_ERROR_INCONSISTENT_CONTENT_IN_CONFIG_VERSION_FILE;
+  if ((memcmp(ptr, &space_buf[CV_FILE_SIZE - len], len)))
+    goto file_error;
+  error= 0;
+
+file_error:
+  ic_free(release_ptr);
+  DEBUG_RETURN_INT(error);
+}
+
+static int
+cmp_config_version_line(IC_STRING *str,
+                        guint64 *len,
+                        guint64 *value,
+                        gchar **ptr)
+{
+  guint64 loc_value;
+  guint32 value_len;
+  guint64 loc_len= *len;
+  gchar *loc_ptr= *ptr;
+  int error= IC_ERROR_SYNTAX_ERROR_IN_CONFIG_VERSION_FILE;
+
+  if (memcmp(loc_ptr, str->str, str->len) || loc_len < str->len)
+    goto file_error;
+  if (loc_ptr[str->len] != SPACE_CHAR)
+    goto file_error;
+  loc_len-= (str->len + 1);
+  loc_ptr+= (str->len + 1);
+  value_len= loc_len;
+  if (ic_conv_str_to_int(loc_ptr, &loc_value, &value_len))
+    goto file_error;
+  if ((loc_len < (value_len + 1)) ||
+      (loc_value > (guint64)(((guint64)1) << 32)))
+    goto file_error;
+  *value= loc_value;
+  loc_ptr+= value_len;
+  if (*loc_ptr != CARRIAGE_RETURN)
+    goto file_error;
+  loc_ptr++;
+  loc_len-= (value_len + 1);
+  *ptr= loc_ptr;
+  *len= loc_len;
+  return 0;
+file_error:
+  return error;
+}

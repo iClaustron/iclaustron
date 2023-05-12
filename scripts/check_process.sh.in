@@ -1,0 +1,191 @@
+#!/bin/bash
+## Copyright (C) 2008-2013 iClaustron AB
+## This program is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation; version 2 of the License.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+exit_func()
+{
+  if test "x$LOG_FILE" != "x" ; then
+    echo "$EXIT_CODE" > $LOG_FILE
+  fi
+  exit 0
+}
+
+check_os()
+{
+  OS_NAME=`$UNAME -s`
+  case $OS_NAME in
+    *Linux* )
+      TARGET_OS="Linux"
+      ;;
+    *Solaris* )
+      TARGET_OS="Solaris"
+      ;;
+    *Darwin* )
+      TARGET_OS="MacOSX"
+      ;;
+    * )
+      TARGET_OS="Linux"
+      ;;
+  esac
+}
+
+check_binaries()
+{
+  ret=1
+  if test -x $PS ; then
+    FAULTY_PROCESS="ps"
+    return $ret
+  fi
+  if test -x $GREP ; then
+    FAULTY_PROCESS="grep"
+    return $ret
+  fi
+  if test -x $WC ; then
+    FAULTY_PROCESS="wc"
+    return $ret
+  fi
+  if test -x $UNAME ; then
+    FAULTY_PROCESS="uname"
+    return $ret
+  fi
+  if test -x $SED ; then
+    FAULTY_PROCESS="sed"
+    return $ret
+  fi
+  ret=0
+  return $ret
+}
+
+check_process_alive()
+{
+  if test "x$TARGET_OS" = "xSolaris" ; then
+    LINES=`$PS -p $SEARCHED_PID -o comm | \
+           $GREP $SEARCHED_PROCESS | \
+           $WC -l`
+  else
+    LINES=`$PS -p $SEARCHED_PID -o command | \
+           $GREP $SEARCHED_PROCESS | \
+           $WC -l | $SED -e 's/ //g'`
+  fi
+  if test "x$LINES" = "x0" ; then
+    EXIT_CODE=0
+  else
+    if test "x$LINES" = "x1" ; then
+      EXIT_CODE=1
+    else
+      EXIT_CODE=2
+    fi
+  fi
+}
+
+set_binaries()
+{
+  WHICH=`which which`
+  if test "x$WHICH" = "x" ; then
+    WHICH="/usr/bin/which"
+  fi
+  if ! test -x $WHICH ; then
+    PS="/bin/ps"
+    GREP="/bin/grep"
+    WC="/usr/bin/wc"
+    UNAME="/bin/uname"
+    SED="/bin/sed"
+  else
+    PS=`$WHICH ps`
+    GREP=`$WHICH grep`
+    WC=`$WHICH wc`
+    UNAME=`$WHICH uname`
+    SED=`$WHICH sed`
+  fi
+  if test "x$PS" = "x" ; then
+    PS="/bin/ps"
+  fi
+  if test "x$GREP" = "x" ; then
+    GREP="/bin/grep"
+  fi
+  if test "x$WC" = "x" ; then
+    WC="/bin/wc"
+  fi
+  if test "x$UNAME" = "x" ; then
+    UNAME="/bin/uname"
+  fi
+  if test "x$SED" = "x" ; then
+    SED="/bin/sed"
+  fi
+}
+
+WHICH=
+PS=
+GREP=
+WC=
+UNAME=
+SED=
+LINES=
+SEARCHED_PID=
+SEARCHED_PROCESS=
+PROCESS_NAME=
+PROCESS_PID=
+TARGET_OS=
+LOG_FILE=
+EXIT_CODE=2
+
+  while test $# -gt 0
+  do
+    case $1 in
+    --process_name )
+      shift
+      if test "x$PROCESS_NAME" = "x1" ; then
+        exit_func
+      fi
+      PROCESS_NAME="1"
+      SEARCHED_PROCESS="$1"
+      ;;
+    --pid )
+      shift
+      if test "x$PROCESS_PID" = "x1" ; then
+        exit_func
+      fi
+      PROCESS_PID="1"
+      SEARCHED_PID="$1"
+      ;;
+    --log_file )
+      shift
+      if test "x$LOG_FILE" != "x" ; then
+        exit_func
+      fi
+      LOG_FILE="$1"
+      ;;
+    * )
+      exit_func
+    esac
+    shift
+  done
+  if test "x$PROCESS_NAME" = "x" ; then
+    exit_func
+  fi
+  if test "x$PROCESS_PID" = "x" ; then
+    exit_func
+  fi
+  if test "x$LOG_FILE" = "x" ; then
+    exit_func
+  fi
+
+  set_binaries
+  if check_binaries; then
+    exit_func
+  else
+    check_os
+    check_process_alive
+  fi
+  exit_func

@@ -1,0 +1,341 @@
+#!/bin/bash
+## Copyright (C) 2011-2013 iClaustron AB
+## This program is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation; version 2 of the License.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+exit_func()
+{
+  if test "x$TMP_FILE" != "x" &&
+     test "x$RM" != "x" &&
+     test -f $TMP_FILE ; then
+    $RM $TMP_FILE
+  fi
+  if test "x$LOG_FILE" != "x" ; then
+    echo "$EXIT_CODE" > $LOG_FILE
+  fi
+  exit 0
+}
+
+set_binaries()
+{
+  WHICH=`which which`
+  if test "x$WHICH" = "x" ; then
+    WHICH="/usr_bin/which"
+  fi
+  if ! test -x $WHICH ; then
+    CAT="/bin/cat"
+    ECHO="/bin/echo"
+    GREP="/bin/grep"
+    AWK="/usr/bin/awk"
+    WC="/usr/bin/wc"
+    RM="/bin/rm"
+    UNIQ="/usr/bin/uniq"
+    NUMACTL="/usr/bin/numactl"
+    DF="/bin/df"
+  else
+    CAT=`$WHICH cat`
+    ECHO=`$WHICH echo`
+    GREP=`$WHICH grep`
+    AWK=`$WHICH awk`
+    WC=`$WHICH wc`
+    RM=`$WHICH rm`
+    UNIQ=`$WHICH uniq`
+    NUMACTL=`$WHICH numactl`
+    DF=`$WHICH df`
+  fi
+}
+
+check_binaries()
+{
+  if ! test -x $RM || \
+     ! test -x $ECHO || \
+     ! test -x $GREP || \
+     ! test -x $AWK ; then
+    exit_func
+  fi
+  if test "x$CHECK_CPU" != "x" ; then
+    if ! test -x $CAT || \
+       ! test -x $UNIQ || \
+       ! test -x $WC ; then
+      exit_func
+    fi
+  fi
+  if test "x$CHECK_MEM" != "x" ; then
+    if ! test -x $CAT ; then
+      exit_func
+    fi
+  fi
+  if test "x$CHECK_DISK" != "x" ; then
+    if ! test -x $DF ; then
+      exit_func
+    fi
+  fi
+  check_numactl
+}
+
+check_numactl()
+{
+  if ! test -x $NUMACTL ; then
+    NUMACTL=
+  fi
+}
+
+get_num_numa_nodes()
+{
+  if test "x$NUMACTL" = "x" ; then
+    NUM_NUMA_NODES="1"
+  else
+    NUM_NUMA_NODES=`$NUMACTL --hardware | $GREP 'available:' | $AWK '{print $2}'`
+  fi
+}
+
+get_numa_node_ids()
+{
+  for ((i = 0; i < $NUM_PROCESSORS; i += 1))
+  do
+    NUMA_NODE_ID_ARRAY[${i}]="0"
+  done
+  if test "x$NUMACTL" != "x" ; then
+    $NUMACTL --hardware | $GREP 'cpus:' | \
+      $AWK \
+      '{ \
+        for (i = 4; i <= NF ; i++) \
+          printf("%s %s\n", $2, $i) \
+      }' > $TMP_FILE
+    while read NUMA_ID PROCESSOR_ID
+    do
+      NUMA_NODE_ID_ARRAY[${PROCESSOR_ID}]="$NUMA_ID"
+    done < $TMP_FILE
+  fi
+}
+
+get_numa_node_memory_sizes()
+{
+  for ((i = 0; i < NUM_NUMA_NODES; i += 1))
+  do
+    NUMA_NODE_MEM_SIZE[${i}]="0"
+  done
+  $NUMACTL --hardware | $GREP 'size:' | \
+    $AWK \
+    '{ \
+       printf("%s %s\n", $2, $4) \
+    }' > $TMP_FILE
+  while read NUMA_ID MEM_SIZE
+  do
+    NUMA_NODE_MEM_SIZE[${NUMA_ID}]="$MEM_SIZE"
+  done < $TMP_FILE
+}
+
+get_cpu_info()
+{
+  CPUINFO="/proc/cpuinfo"
+  NUM_PROCESSORS=`$CAT $CPUINFO | $GREP processor | $WC -l`
+  NUM_CORES=`$CAT $CPUINFO | $GREP 'core id' | uniq | $WC -l`
+  NUM_SOCKETS=`$CAT $CPUINFO | $GREP 'physical id' |  uniq |$WC -l`
+  ((NUM_THREADS_PER_CPU=NUM_PROCESSORS/NUM_CORES))
+
+  get_num_numa_nodes
+  CPU_ID_ARRAY=`$CAT $CPUINFO | $GREP 'physical id' | $AWK '{print $4}'`
+  CORE_ID_ARRAY=`$CAT $CPUINFO | $GREP 'core id' | $AWK '{print $4}'`
+  $ECHO "Number of CPU processors: ${NUM_PROCESSORS}" > $OUT_FILE
+  $ECHO "Number of CPU sockets: ${NUM_SOCKETS}" >> $OUT_FILE
+  $ECHO "Number of CPU cores: ${NUM_CORES}" >> $OUT_FILE
+  $ECHO "Number of NUMA nodes: ${NUM_NUMA_NODES}" >> $OUT_FILE
+  get_numa_node_ids
+
+  i="0"
+  $CAT $CPUINFO | \
+    $GREP processor | \
+    $AWK '{print $3}' \
+      > $TMP_FILE
+  while read PROC_ID
+  do
+    PROCESSOR_ARRAY[${i}]="$PROC_ID"
+    ((i+=1))
+  done < $TMP_FILE
+  if test "x$i" != "x$NUM_PROCESSORS" ; then
+    exit_func
+  fi
+  i="0"
+  $CAT $CPUINFO | \
+    $GREP 'core id' | \
+    $AWK '{print $4}' \
+      > $TMP_FILE
+  while read CORE_ID
+  do
+    CORE_ID_ARRAY[${i}]="$CORE_ID"
+    ((i+=1))
+  done < $TMP_FILE
+  if test "x$i" != "x$NUM_PROCESSORS" ; then
+    exit_func
+  fi
+  i="0"
+  $CAT $CPUINFO | \
+    $GREP 'physical id' | \
+    $AWK '{print $4}' \
+      > $TMP_FILE
+  while read SOCKET_ID
+  do
+    SOCKET_ID_ARRAY[${i}]="$SOCKET_ID"
+    ((i+=1))
+  done < $TMP_FILE
+  if test "x$i" != "x$NUM_PROCESSORS" ; then
+    exit_func
+  fi
+  $RM $TMP_FILE
+  for ((i = 0; i < NUM_PROCESSORS; i+=1 ))
+  do
+    PROC_ID="${PROCESSOR_ARRAY[${i}]}"
+    CORE_ID="${CORE_ID_ARRAY[${i}]}"
+    SOCKET_ID="${SOCKET_ID_ARRAY[${i}]}"
+    NUMA_NODE_ID="${NUMA_NODE_ID_ARRAY[${i}]}"
+    $ECHO "CPU processor id = $PROC_ID, core id = $CORE_ID, numa node id = $NUMA_NODE_ID, cpu id = $SOCKET_ID" \
+      >> $OUT_FILE
+  done
+}
+
+get_mem_info()
+{
+  if test "x$NUMACTL" != "x" ; then
+    get_num_numa_nodes
+    get_numa_node_memory_sizes
+    TOTAL_MEMORY_SIZE="0"
+    for ((i = 0; i < NUM_NUMA_NODES; i += 1))
+    do
+      MEM_SIZE="${NUMA_NODE_MEM_SIZE[${i}]}"
+      ((TOTAL_MEMORY_SIZE += MEM_SIZE))
+    done
+    $ECHO "Number of NUMA nodes: ${NUM_NUMA_NODES}" > $OUT_FILE
+    $ECHO "Memory size = $TOTAL_MEMORY_SIZE MBytes" >> $OUT_FILE 
+    for ((i = 0; i < NUM_NUMA_NODES; i += 1))
+    do
+      MEM_SIZE="${NUMA_NODE_MEM_SIZE[${i}]}"
+      $ECHO "Numa node id = ${i}, Memory size = $MEM_SIZE MBytes" \
+        >> $OUT_FILE
+    done
+  else
+    MEMINFO="/proc/meminfo"
+    TOTAL_MEMORY_SIZE=`$CAT $MEMINFO | $GREP 'MemTotal:' | \
+      $AWK '{printf("%u", $2/1024)}'`
+    $ECHO "Number of NUMA nodes: 1" > $OUT_FILE
+    $ECHO "Memory size = $TOTAL_MEMORY_SIZE MBytes" >> $OUT_FILE 
+    $ECHO "Numa node id = 0, Memory size = $TOTAL_MEMORY_SIZE MBytes" \
+      >> $OUT_FILE
+  fi
+}
+
+get_disk_info()
+{
+  $DF -k $DISK_FILE | \
+    $GREP -v 'Available' | \
+    $AWK '{printf("Disk space = %u GBytes\n", $2/(1024*1024))}' \
+      > $OUT_FILE
+}
+
+#Programs used
+WHICH=
+CAT=
+GREP=
+AWK=
+WC=
+RM=
+DF=
+ECHO=
+NUMACTL=
+UNIQ=
+
+#Files used
+OUT_FILE="out.tmp"
+TMP_FILE=
+DISK_FILE=
+LOG_FILE=
+
+#What program to run
+CHECK_CPU=
+CHECK_MEM=
+CHECK_DISK=
+
+#Local variables used
+EXIT_CODE="1"
+NUM_NUMA_NODES=
+PROCESSOR_ID=
+CORE_ID=
+SOCKET_ID=
+MEMINFO=
+CPUINFO=
+TOTAL_MEMORY_SIZE=
+MEM_SIZE=
+
+  while test $# -gt 0
+  do
+    case $1 in
+      --output_file )
+        shift
+        if test "x$OUT_FILE" != "xout.tmp" ; then
+          exit_func
+        fi
+        OUT_FILE="$1"
+        ;;
+      --log_file )
+        shift
+        if test "x$LOG_FILE" != "x" ; then
+          exit_func
+        fi
+        LOG_FILE="$1"
+        ;;
+      --tmp_file )
+        shift
+        if test "x$TMP_FILE" != "x" ; then
+          exit_func
+        fi
+        TMP_FILE="$1"
+        ;;
+      --get_cpu_info )
+        CHECK_CPU="yes"
+        ;;
+      --get_mem_info )
+        CHECK_MEM="yes"
+        ;;
+      --get_disk_info )
+        CHECK_DISK="yes"
+        shift
+        if test "x$DISK_FILE" != "x" ; then
+          exit_func
+        fi
+        DISK_FILE="$1"
+        ;;
+      * )
+        exit_func
+    esac
+    shift
+  done
+  if test "x$OUT_FILE" = "x" ; then
+    exit 0 # No file to report error to
+  fi
+  if test "x$TMP_FILE" = "x" ; then
+    exit 0 # No file to use for temporary storage
+  fi
+  set_binaries
+  check_binaries
+  if test "x$CHECK_CPU" = "xyes" ; then
+    get_cpu_info
+  fi
+  if test "x$CHECK_MEM" = "xyes" ; then
+    get_mem_info
+  fi
+  if test "x$CHECK_DISK" = "xyes" ; then
+    get_disk_info
+  fi
+  # Exit script successfully
+  EXIT_CODE="0"
+  exit_func

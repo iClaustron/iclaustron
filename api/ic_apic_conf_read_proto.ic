@@ -1,0 +1,1136 @@
+/* Copyright (C) 2009, 2015 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Configuration reader client, Protocol Part
+  --------------------------------------------------
+  This module implements one of the methods in the IC_API_CONFIG_SERVER
+  interface. It is the get_cs_config method.
+
+  This method connects to one of the provided cluster servers. Then it
+  retrieves the configuration from this cluster server. In a successful
+  case we keep this connection so that it can be kept for other usage
+  such that we can stay informed about changes of the configuration.
+  The configuration is by default locked in the sense that the configuration
+  cannot be changed until the connection is converted to a information
+  channel where the requester of the configuration also is informed of
+  any changes to the configuration in proper order.
+
+  This module makes use of the other Configuration reader client module
+  which translates the received base64 encoded string into a cluster
+  configuration. In addition it makes heavy use of the Support module for
+  NDB Management Protocol support.
+
+  The method implemented is the:
+  get_cs_config
+
+  This method first calls the connect_any_cluster_server to set-up the
+  socket connections to the Cluster Server through help of the method
+    set_up_cluster_server_connection
+
+  After connection has been set-up the client asks for the cluster id
+  information using the method:
+  get_cluster_ids
+
+  The final step is the actual protocol part to retrieve the configuration
+  which are implemented by the protocol support methods:
+    send_get_nodeid_req
+    send_get_version_req
+    send_get_config_req
+    send_get_mgmd_nodeid_req
+    send_convert_transporter_req
+    client_set_connection_parameter
+    rec_get_nodeid_reply
+    rec_get_version_reply
+    rec_get_config_reply
+    rec_get_mgmd_nodeid_reply
+    rec_convert_transporter_reply
+
+  As part of the rec_get_config_reply method we call the translate_config
+  method which is implemented in the other Configuration reader client
+  module.
+*/
+static int get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
+                           IC_CONNECTION *conn,
+                           IC_CLUSTER_CONNECT_INFO **clu_infos);
+static int send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
+                               IC_CONNECTION *conn,
+                               guint32 cluster_id);
+static int send_get_version_req(IC_CONNECTION *conn);
+static int send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
+                               IC_CONNECTION *conn);
+static int send_get_mgmd_nodeid_req(IC_CONNECTION *conn);
+
+static int send_convert_transporter_req(IC_INT_API_CONFIG_SERVER *apic,
+                                        IC_CONNECTION *conn,
+                                        guint32 cluster_id);
+static int rec_get_mgmd_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                     IC_CONNECTION *conn,
+                                     guint32 cluster_id,
+                                     guint32 *cs_nodeid);
+static int rec_convert_transporter_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                         IC_CONNECTION *conn,
+                                         guint32 cs_nodeid);
+static int rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                IC_CONNECTION *conn,
+                                guint32 cluster_id);
+static int client_set_connection_parameter(IC_INT_API_CONFIG_SERVER *apic,
+                                           IC_CONNECTION *conn,
+                                           guint32 cluster_id);
+static int rec_get_version_reply(IC_CONNECTION *conn,
+                                 gboolean *is_iclaustron_conf_server);
+static int rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                                IC_CONNECTION *conn,
+                                guint32 cluster_id);
+static int connect_any_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
+                                      IC_CONNECTION **conn_ptr,
+                                      guint32 *used_cluster_server_id,
+                                      guint32 cs_timeout,
+                                      gchar **err_str);
+static int set_up_cluster_server_connection(IC_CONNECTION **conn,
+                                            gchar *server_name,
+                                            gchar *server_port,
+                                            gchar *client_name,
+                                            gchar **err_str,
+                                            gboolean is_client,
+                                            accept_timeout_func timeout_func,
+                                            void *timeout_obj);
+static guint64 get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server);
+static guint32 count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos);
+
+static int get_dynamic_port_number(IC_API_CONFIG_SERVER *apic,
+                                   void *tp_state,
+                                   void *thread_state,
+                                   guint32 cluster_id,
+                                   guint32 my_nodeid,
+                                   guint32 other_nodeid,
+                                   guint32 *port_number);
+
+static int
+null_get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
+                   IC_CLUSTER_CONNECT_INFO **clu_infos,
+                   guint32 node_id,
+                   guint32 cs_timeout)
+{
+  (void)ext_apic;
+  (void)clu_infos;
+  (void)node_id;
+  (void)cs_timeout;
+  return IC_ERROR_GET_CONFIG_BY_CLUSTER_SERVER;
+}
+
+static int
+get_dynamic_port_number(IC_API_CONFIG_SERVER *ext_apic,
+                        void *ext_tp_state,
+                        void *ext_thread_state,
+                        guint32 cluster_id,
+                        guint32 my_nodeid,
+                        guint32 other_nodeid,
+                        guint32 *port_number)
+{
+  IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
+  IC_THREADPOOL_STATE *tp_state= (IC_THREADPOOL_STATE*)ext_tp_state;
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)ext_thread_state;
+  IC_CONNECTION *conn= NULL;
+  gchar *err_str;
+  guint32 dummy;
+  int ret_code= 0;
+  int loc_port_number;
+  DEBUG_ENTRY("get_dynamic_port_number");
+
+  *port_number= 0;
+  while (!tp_state->ts_ops.ic_thread_get_stop_flag(thread_state))
+  {
+    if (!(ret_code= connect_any_cluster_server(apic,
+                                               &conn,
+                                               &dummy,
+                                               (guint32)5,
+                                               &err_str)))
+    {
+      if (!((ret_code= ic_send_with_cr(conn,
+                                       get_connection_parameter_str)) ||
+            (ret_code= ic_send_cluster_id(conn,
+                                          cluster_id,
+                                          apic->use_ic_cs)) ||
+            (ret_code= ic_send_with_cr_with_number(conn,
+                                                   node1_str,
+                                                   (guint64)my_nodeid)) ||
+            (ret_code= ic_send_with_cr_with_number(conn,
+                                                   node2_str,
+                                                   (guint64)other_nodeid)) ||
+            (ret_code= ic_send_with_cr_with_number(conn,
+                                                   param_str,
+                                     (guint64)SOCKET_SERVER_PORT_NUMBER)) ||
+            (ret_code= ic_send_empty_line(conn)) ||
+            (ret_code= ic_rec_simple_str(conn,
+                               get_connection_parameter_reply_str)) ||
+            (ret_code= ic_rec_int_number(conn, value_str, &loc_port_number)) ||
+            (ret_code= ic_rec_simple_str(conn, result_ok_str))))
+      {
+        /*
+          We were successful in connecting to the Cluster Server and were also
+          successful in retrieving a port number, if it is 0 then the other
+          node haven't started yet and we wait for a few seconds before
+          trying again.
+        */
+        if (loc_port_number != 0)
+        {
+          /* Found a port number to use, return with it */
+          *port_number= (loc_port_number < 0) ?
+             -loc_port_number : loc_port_number;
+          break;
+        }
+      }
+      conn->conn_op.ic_free_connection(conn);
+      conn= NULL;
+      /* Retry after short sleep */
+      ic_sleep(3);
+    }
+  }
+  /* Release connection to Cluster Server before returning */
+  if (conn)
+    conn->conn_op.ic_free_connection(conn);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+get_cs_config(IC_API_CONFIG_SERVER *ext_apic,
+              IC_CLUSTER_CONNECT_INFO **clu_infos,
+              guint32 node_id,
+              guint32 cs_timeout)
+{
+  IC_INT_API_CONFIG_SERVER *apic= (IC_INT_API_CONFIG_SERVER*)ext_apic;
+  guint32 i, max_cluster_id= 0;
+  guint32 cluster_id, num_clusters;
+  int ret_code= IC_END_OF_FILE;
+  IC_CONNECTION *conn= NULL;
+  IC_CLUSTER_CONFIG *clu_conf;
+  IC_MEMORY_CONTAINER *mc_ptr= apic->mc_ptr;
+  guint32 used_cluster_server_id;
+  gboolean is_iclaustron_conf_server;
+  DEBUG_ENTRY("get_cs_config");
+
+  if (apic->use_ic_cs)
+    num_clusters= count_clusters(clu_infos);
+  else
+    num_clusters= 1;
+  if ((ret_code= connect_any_cluster_server(apic,
+                                            &conn,
+                                            &used_cluster_server_id,
+                                            cs_timeout,
+                                            &apic->err_str)))
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
+  if (apic->use_ic_cs)
+  {
+    if ((ret_code= get_cluster_ids(apic, conn, clu_infos)))
+    {
+      conn->conn_op.ic_free_connection(conn);
+      DEBUG_RETURN_INT(ret_code);
+    }
+    for (i= 0; i < num_clusters; i++)
+      max_cluster_id= IC_MAX(max_cluster_id, clu_infos[i]->cluster_id);
+    apic->max_cluster_id= max_cluster_id;
+  }
+  else
+  {
+    apic->max_cluster_id= max_cluster_id= 0;
+  }
+  if (!(apic->temp->node_ids= (guint32*)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+            sizeof(guint32) * (max_cluster_id + 1))))
+    goto mem_alloc_error;
+
+  for (i= 0; i < num_clusters; i++)
+  {
+    if (apic->use_ic_cs)
+      cluster_id= clu_infos[i]->cluster_id;
+    else
+      cluster_id= 0;
+    if (!(clu_conf= (IC_CLUSTER_CONFIG*)
+        mc_ptr->mc_ops.ic_mc_calloc(mc_ptr, sizeof(IC_CLUSTER_CONFIG))))
+      goto mem_alloc_error;
+    if (ic_mc_strdup(mc_ptr, &clu_conf->clu_info.cluster_name,
+                       &clu_infos[i]->cluster_name) ||
+        ic_mc_strdup(mc_ptr, &clu_conf->clu_info.password,
+                       &clu_infos[i]->password))
+      goto mem_alloc_error;
+    clu_conf->clu_info.cluster_id= cluster_id;
+    if (apic->conf_objects[cluster_id])
+    {
+      ret_code= IC_ERROR_CONFLICTING_CLUSTER_IDS;
+      goto error;
+    }
+    apic->conf_objects[cluster_id]= clu_conf;
+    DEBUG_PRINT(CONFIG_LEVEL, ("Cluster conf object: 0x%llX", clu_conf));
+    apic->temp->node_ids[cluster_id]= node_id;
+    clu_conf->my_node_id= node_id;
+  }
+
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    guint32 cs_nodeid;
+
+    if (!clu_conf)
+      continue;
+
+    /*
+      1) Send request to Cluster Server to get a nodeid and acquire this
+         nodeid to ensure no one else uses the same nodeid in the cluster.
+      2) Receive response to this message
+      3) Send request to Cluster Server to get version information
+      4) Get version information
+      5) Send request to get cluster configuration
+      6) Get cluster configuration
+      7) Send request to get nodeid of Cluster Server
+      8) Receive response to this message
+      9) Send request to set connection parameters
+      10) Receive response to this message
+      11) Repeat step 9) and 10) for as long as needed
+      12) Send request to convert connection to NDB Protocol connection
+      13) Receive response to this message
+
+      After this protocol serie is completed, this node has a nodeid,
+      the Cluster Server node id is known and we have an already
+      working connection to this server. Thus when we set-up the
+      Data API towards this node, we can reuse the connection already
+      established.
+      
+      Step 9-13 is necessary to move to the startup of the Data API since
+      it involves providing dynamic port assignments made to nodes during
+      set-up of server part of the connections.
+    */
+    if ((ret_code= send_get_nodeid_req(apic, conn, cluster_id)) ||
+        (ret_code= rec_get_nodeid_reply(apic, conn, cluster_id)))
+      goto error;
+
+    /* Set the node id we received */
+    clu_conf->my_node_id= apic->temp->node_ids[cluster_id];
+    DEBUG_PRINT(CONFIG_LEVEL, ("Assigned node_id = %u in cluster_id = %u",
+                               clu_conf->my_node_id, cluster_id));
+
+    if ((ret_code= send_get_version_req(conn)) ||
+        (ret_code= rec_get_version_reply(conn, &is_iclaustron_conf_server)) ||
+        (ret_code= send_get_config_req(apic, conn)) ||
+        (ret_code= rec_get_config_reply(apic, conn, cluster_id)) ||
+        (ret_code= send_get_mgmd_nodeid_req(conn)) ||
+        (ret_code= rec_get_mgmd_nodeid_reply(apic, conn,
+                                             cluster_id, &cs_nodeid)))
+      goto error;
+    if (is_iclaustron_conf_server)
+    {
+      if ((ret_code= client_set_connection_parameter(apic,
+                                                     conn,
+                                                     cluster_id)) ||
+          (ret_code= send_convert_transporter_req(apic, conn, cluster_id)) ||
+          (ret_code= rec_convert_transporter_reply(apic, conn, cs_nodeid)))
+        goto error;
+    }
+    clu_conf->cs_conn= conn;
+    clu_conf->cs_nodeid= cs_nodeid;
+    conn= NULL;
+  }
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    if (clu_conf && build_hash_on_comms(clu_conf, NULL))
+      goto mem_alloc_error;
+  }
+  DEBUG_RETURN_INT(0);
+
+mem_alloc_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
+error:
+  ic_require(apic->max_cluster_id <= IC_MAX_CLUSTER_ID);
+  for (cluster_id= 0; cluster_id <= apic->max_cluster_id; cluster_id++)
+  {
+    IC_CLUSTER_CONFIG *clu_conf= apic->conf_objects[cluster_id];
+    if (clu_conf && clu_conf->cs_conn)
+    {
+      clu_conf->cs_conn->conn_op.ic_free_connection(clu_conf->cs_conn);
+      clu_conf->cs_conn= NULL;
+    }
+  }
+  if (conn)
+  {
+    conn->conn_op.ic_free_connection(conn);
+  }
+  DEBUG_PRINT(CONFIG_LEVEL, ("Error: %d\n", ret_code));
+  DEBUG_RETURN_INT(ret_code);
+}
+
+#define RECEIVE_CLUSTER_NAME 1
+#define RECEIVE_CLUSTER_ID 2
+
+static int
+get_cluster_ids(IC_INT_API_CONFIG_SERVER *apic,
+                IC_CONNECTION *conn,
+                IC_CLUSTER_CONNECT_INFO **clu_infos)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  guint32 state, num_clusters_found= 0;
+  guint32 num_clusters= 0;
+  guint32 cluster_name_req_len;
+  guint64 cluster_id;
+  IC_CLUSTER_CONNECT_INFO *found_clu_info= NULL;
+  IC_CLUSTER_CONNECT_INFO **clu_info_iter, *clu_info;
+  int ret_code;
+  DEBUG_ENTRY("get_cluster_ids");
+
+  num_clusters= count_clusters(clu_infos);
+  if (ic_send_with_cr(conn, get_cluster_list_str) ||
+      ic_send_empty_line(conn))
+  {
+    ret_code= conn->conn_op.ic_get_error_code(conn);
+    goto error;
+  }
+  if ((ret_code= ic_rec_simple_str(conn, get_cluster_list_reply_str)))
+    PROTOCOL_CHECK_ERROR_GOTO(ret_code);
+  state= RECEIVE_CLUSTER_NAME;
+  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    if (!ic_check_buf(read_buf,
+                      read_size,
+                      end_get_cluster_list_str,
+                      strlen(end_get_cluster_list_str)))
+      break;
+    switch (state)
+    {
+      case RECEIVE_CLUSTER_NAME:
+        cluster_name_req_len= strlen(cluster_name_string);
+        if ((read_size < cluster_name_req_len) ||
+            (memcmp(read_buf,
+                    cluster_name_string,
+                    cluster_name_req_len) != 0))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in receive cluster name state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        found_clu_info= NULL;
+        clu_info_iter= clu_infos;
+        while (*clu_info_iter)
+        {
+          clu_info= *clu_info_iter;
+          if ((clu_info->cluster_name.len ==
+               (read_size - cluster_name_req_len)) &&
+              (memcmp(clu_info->cluster_name.str,
+                      read_buf + cluster_name_req_len,
+                      clu_info->cluster_name.len) == 0))
+          {
+            found_clu_info= clu_info;
+            break;
+          }
+          clu_info_iter++;
+        }
+        state= RECEIVE_CLUSTER_ID;
+        break;
+      case RECEIVE_CLUSTER_ID:
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  cluster_id_str,
+                                  strlen(cluster_id_str),
+                                  &cluster_id))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in receive cluster id state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        PROTOCOL_CHECK_GOTO(cluster_id <= IC_MAX_CLUSTER_ID);
+        if (found_clu_info)
+        {
+          found_clu_info->cluster_id= (guint32)cluster_id;
+          num_clusters_found++;
+        }
+        state= RECEIVE_CLUSTER_NAME;
+        break;
+      default:
+        ic_assert(FALSE);
+    }
+  }
+  if ((ret_code= ic_rec_empty_line(conn)))
+    goto error;
+  ret_code= 1;
+  if (num_clusters_found != num_clusters)
+    goto error;
+  DEBUG_RETURN_INT(0);
+error:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+send_get_nodeid_req(IC_INT_API_CONFIG_SERVER *apic,
+                    IC_CONNECTION *conn,
+                    guint32 cluster_id)
+{
+  gchar endian_buf[32];
+  gchar name_buf[128];
+  guint64 node_type= IC_API_TYPE_PROTOCOL;
+  guint64 version_no;
+  guint32 node_id= apic->temp->node_ids[cluster_id];
+  DEBUG_ENTRY("send_get_nodeid_req");
+
+  version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
+#if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
+  g_snprintf(endian_buf, 32, "%s %s", endian_str, little_endian_str);
+#else
+  g_snprintf(endian_buf, 32, "%s %s", endian_str, big_endian_str);
+#endif
+  g_snprintf(name_buf, 128, "%s %s", name_str, ic_glob_process_name);
+ 
+  if (ic_send_with_cr(conn, get_nodeid_str) ||
+      ic_send_with_cr_with_number(conn, ic_version_str, version_no) ||
+      ic_send_with_cr_with_number(conn, nodetype_str, node_type) ||
+      ic_send_with_cr_with_number(conn, nodeid_str, (guint64)node_id) ||
+      ic_send_with_cr(conn, user_str) ||
+      ic_send_with_cr(conn, password_str) ||
+      ic_send_with_cr(conn, public_key_str) ||
+      ic_send_with_cr(conn, endian_buf) ||
+      ic_send_with_cr(conn, name_buf) ||
+      ic_send_with_cr(conn, log_event_str) ||
+      (apic->use_ic_cs &&
+      ic_send_with_cr_with_number(conn,
+                                  cluster_id_str,
+                                  (guint64)cluster_id)) ||
+      ic_send_empty_line(conn))
+  {
+    DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+send_get_version_req(IC_CONNECTION *conn)
+{
+  DEBUG_ENTRY("send_get_version_req");
+
+  if (ic_send_with_cr(conn, get_version_str) ||
+      ic_send_empty_line(conn))
+  {
+    DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+send_get_config_req(IC_INT_API_CONFIG_SERVER *apic,
+                    IC_CONNECTION *conn)
+{
+  guint64 version_no;
+  guint64 node_type= 1;
+  DEBUG_ENTRY("send_get_config_req");
+
+  version_no= get_iclaustron_protocol_version(apic->use_ic_cs);
+  if (ic_send_with_cr(conn, get_config_str) ||
+      ic_send_with_cr_with_number(conn, ic_version_str, version_no) ||
+      ic_send_with_cr_with_number(conn, nodetype_str, node_type) ||
+      ic_send_empty_line(conn))
+  {
+    DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+send_get_mgmd_nodeid_req(IC_CONNECTION *conn)
+{
+  DEBUG_ENTRY("send_get_mgmd_nodeid_req");
+
+  if (ic_send_with_cr(conn, get_mgmd_nodeid_str) ||
+      ic_send_empty_line(conn))
+  {
+    DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+send_convert_transporter_req(IC_INT_API_CONFIG_SERVER *apic,
+                             IC_CONNECTION *conn,
+                             guint32 cluster_id)
+{
+  guint32 our_nodeid= apic->temp->node_ids[cluster_id];
+  gchar buf[64];
+  DEBUG_ENTRY("send_convert_transporter_req");
+
+  g_snprintf(buf, 64, "%d %d", our_nodeid, IC_TCP_TRANSPORTER_TYPE);
+  if (ic_send_with_cr(conn, convert_transporter_str) ||
+      ic_send_empty_line(conn) ||
+      ic_send_with_cr(conn, buf) ||
+      ic_send_empty_line(conn))
+  {
+    DEBUG_RETURN_INT(conn->conn_op.ic_get_error_code(conn));
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+rec_get_mgmd_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                          IC_CONNECTION *conn,
+                          guint32 cluster_id,
+                          guint32 *cs_nodeid)
+{
+  int ret_code;
+  int loc_nodeid;
+  IC_CLUSTER_CONFIG *clu_conf;
+  DEBUG_ENTRY("rec_get_mgmd_nodeid_reply");
+
+  if ((ret_code= ic_rec_simple_str(conn, get_mgmd_nodeid_reply_str)) ||
+      (ret_code= ic_rec_int_number(conn, nodeid_str, &loc_nodeid)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+  {
+    DEBUG_RETURN_INT(ret_code);
+  }
+  clu_conf= apic->conf_objects[cluster_id];
+  if (loc_nodeid < 1 ||
+      loc_nodeid > IC_MAX_NODE_ID ||
+      loc_nodeid > (int)clu_conf->max_node_id ||
+      clu_conf->node_types[loc_nodeid] != IC_CLUSTER_SERVER_NODE)
+  {
+    set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__);
+    DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+  }
+  *cs_nodeid= loc_nodeid;
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+rec_get_version_reply(IC_CONNECTION *conn,
+                      gboolean *is_iclaustron_conf_server)
+{
+  int ret_code;
+  guint64 version_no= 0;
+  guint32 major_number, minor_number, build_number;
+  guint32 mysql_major_number, mysql_minor_number, mysql_build_number;
+  gchar buffer[COMMAND_READ_BUF_SIZE];
+  DEBUG_ENTRY("rec_get_version_reply");
+
+  if ((ret_code= ic_rec_simple_str(conn, version_str)) ||
+      (ret_code= ic_rec_long_number(conn, id_str, &version_no)) ||
+      (ret_code= ic_rec_number(conn, major_str, &major_number)) ||
+      (ret_code= ic_rec_number(conn, minor_str, &minor_number)) ||
+      (ret_code= ic_rec_number(conn, build_str, &build_number)) ||
+      (ret_code= ic_rec_string(conn, string_str, (gchar*)buffer)) ||
+      (ret_code= ic_rec_number(conn,
+                               mysql_major_str,
+                               &mysql_major_number)) ||
+      (ret_code= ic_rec_number(conn,
+                               mysql_minor_str,
+                               &mysql_minor_number)) ||
+      (ret_code= ic_rec_number(conn,
+                               mysql_build_str,
+                               &mysql_build_number)) ||
+      (ret_code= ic_rec_empty_line(conn)))
+  {
+    ;
+  }
+  *is_iclaustron_conf_server= is_iclaustron_version(version_no);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+rec_convert_transporter_reply(IC_INT_API_CONFIG_SERVER *apic,
+                              IC_CONNECTION *conn,
+                              guint32 cs_nodeid)
+{
+  int ret_code;
+  gchar buf[64];
+  DEBUG_ENTRY("rec_convert_transporter_reply");
+
+  g_snprintf(buf, 64, "%d %d", cs_nodeid, IC_TCP_TRANSPORTER_TYPE);
+  if ((ret_code= ic_rec_simple_str(conn, buf)))
+  {
+    set_error_line((IC_API_CONFIG_SERVER*)apic, (guint32)__LINE__);
+    DEBUG_RETURN_INT(IC_PROTOCOL_ERROR);
+  }
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+client_set_connection_parameter(IC_INT_API_CONFIG_SERVER *apic,
+                                IC_CONNECTION *conn,
+                                guint32 cluster_id)
+{
+  (void)apic;
+  (void)conn;
+  (void)cluster_id;
+  return 0;
+}
+
+static int
+rec_get_nodeid_reply(IC_INT_API_CONFIG_SERVER *apic,
+                     IC_CONNECTION *conn,
+                     guint32 cluster_id)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  int ret_code;
+  guint64 node_number;
+  guint64 error_code= 0;
+  guint32 state= GET_NODEID_REPLY_STATE;
+  IC_STRING error_string;
+  gchar *str;
+  gchar buffer[IC_MAX_ERROR_STRING_SIZE];
+  DEBUG_ENTRY("rec_get_nodeid_reply");
+
+  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    switch (state)
+    {
+      case GET_NODEID_REPLY_STATE:
+        /*
+          The protocol is decoded in the order of the case statements in
+          the switch statements.
+        
+          Receive:
+          get nodeid reply<CR>
+        */
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         get_nodeid_reply_str,
+                         strlen(get_nodeid_reply_str)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in Get nodeid reply state"));
+          PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+        }
+        state= NODEID_STATE;
+        break;
+      case NODEID_STATE:
+        /*
+          Receive:
+          nodeid: __nodeid<CR>
+          Where __nodeid is an integer giving the nodeid of the starting
+          process
+        */
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  nodeid_str,
+                                  strlen(nodeid_str),
+                                  &node_number) ||
+            (node_number > IC_MAX_NODE_ID))
+        {
+          if (ic_check_buf_with_string(read_buf,
+                                       read_size,
+                                       result_str,
+                                       strlen(result_str),
+                                       &error_string))
+          {
+            DEBUG_PRINT(CONFIG_LEVEL,
+              ("Protocol error in nodeid state"));
+            PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+          }
+          /*
+            The configuration server reported an error, print it and
+            get the error code.
+          */
+          str= ic_get_ic_string(&error_string, (gchar*)&buffer);
+          ic_printf("%s : %s", get_nodeid_reply_str, str);
+          state= RESULT_ERROR_STATE;
+        }
+        else
+        {
+          DEBUG_PRINT(CONFIG_LEVEL, ("Nodeid = %u", (guint32)node_number));
+          apic->temp->node_ids[cluster_id]= (guint32)node_number;
+          state= RESULT_OK_STATE;
+        }
+        break;
+      case RESULT_OK_STATE:
+        /*
+          Receive:
+          result: Ok<CR>
+        */
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         result_ok_str,
+                         strlen(result_ok_str)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in result ok state"));
+          PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+        }
+        state= WAIT_EMPTY_RETURN_STATE;
+        break;
+      case WAIT_EMPTY_RETURN_STATE:
+        /*
+          Receive:
+          <CR>
+        */
+        if (read_size != 0)
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in wait empty state"));
+          PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+        }
+        goto end;
+      case RESULT_ERROR_STATE:
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  error_code_str,
+                                  strlen(error_code_str),
+                                  &error_code))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in result error state"));
+          PROTOCOL_CHECK_DEBUG_RETURN(FALSE);
+        }
+        ic_printf("%s error_code: %d", get_nodeid_reply_str, (int)error_code);
+        state= WAIT_EMPTY_RETURN_STATE;
+        break;
+      default:
+        ic_require(FALSE);
+        break;
+    }
+  }
+end:
+  if (error_code != 0)
+  {
+    /* Report error code from config server if one arrived */
+    ret_code= (int)error_code;
+  }
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+rec_get_config_reply(IC_INT_API_CONFIG_SERVER *apic,
+                     IC_CONNECTION *conn,
+                     guint32 cluster_id)
+{
+  gchar *read_buf;
+  guint32 read_size;
+  gchar *config_buf= NULL;
+  guint32 config_size= 0;
+  guint32 rec_config_size= 0;
+  int ret_code= 0;
+  guint64 content_length;
+  guint32 state= GET_CONFIG_REPLY_STATE;
+  DEBUG_ENTRY("rec_get_config_reply");
+
+  while (!(ret_code= ic_rec_with_cr(conn, &read_buf, &read_size)))
+  {
+    switch (state)
+    {
+      case GET_CONFIG_REPLY_STATE:
+        /*
+          The protocol is decoded in the order of the case statements in the
+          switch statements.
+ 
+          Receive:
+          get config reply<CR>
+        */
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         get_config_reply_str,
+                         strlen(get_config_reply_str)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in get config reply state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        state= RESULT_OK_STATE;
+        break;
+      case RESULT_OK_STATE:
+        /*
+          Receive:
+          result: Ok<CR>
+        */
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         result_ok_str,
+                         strlen(result_ok_str)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in result ok state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        state= CONTENT_LENGTH_STATE;
+        break;
+      case CONTENT_LENGTH_STATE:
+        /*
+          Receive:
+          Content-Length: __length<CR>
+          Where __length is a decimal-coded number indicating length in bytes
+        */
+        if (ic_check_buf_with_int(read_buf,
+                                  read_size,
+                                  content_len_str,
+                                  strlen(content_len_str),
+                                  &content_length) ||
+            (content_length > MAX_CONTENT_LEN))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in content length state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        state= OCTET_STREAM_STATE;
+        break;
+      case OCTET_STREAM_STATE:
+        /*
+          Receive:
+          Content-Type: ndbconfig/octet-stream<CR>
+        */
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         octet_stream_str,
+                         strlen(octet_stream_str)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in octet stream state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        state= CONTENT_ENCODING_STATE;
+        break;
+      case CONTENT_ENCODING_STATE:
+        /*
+          Receive:
+          Content-Transfer-Encoding: base64
+        */
+        if (ic_check_buf(read_buf,
+                         read_size,
+                         content_encoding_str,
+                         strlen(content_encoding_str)))
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in content encoding state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        /*
+          Here we need to allocate receive buffer for configuration plus the
+          place to put the encoded binary data.
+          This is a temporary memory allocation only for this method.
+        */
+        if (!(config_buf= ic_calloc((size_t)content_length)))
+          DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+        config_size= 0;
+        rec_config_size= 0;
+        state= WAIT_EMPTY_RETURN_STATE;
+        break;
+      case WAIT_EMPTY_RETURN_STATE:
+      case WAIT_LAST_EMPTY_RETURN_STATE:
+        /*
+          Receive:
+          <CR>
+        */
+        if (read_size != 0)
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in wait empty return state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        if (state == WAIT_EMPTY_RETURN_STATE)
+          state= RECEIVE_CONFIG_STATE;
+        else
+          goto end;
+        break;
+      case RECEIVE_CONFIG_STATE:
+        /*
+          At this point we should now start receiving the configuration in
+          base64 encoded format. It will arrive in 76 character chunks
+          followed by a carriage return.
+        */
+        ic_assert(config_buf);
+        memcpy(config_buf+config_size, read_buf, read_size);
+        config_size+= read_size;
+        rec_config_size+= (read_size + 1);
+        if (rec_config_size >= content_length)
+        {
+          /*
+            This is the last line, we have now received the config
+            and are ready to translate it.
+          */
+          DEBUG_PRINT(CONFIG_LEVEL, ("Start decoding"));
+          if ((ret_code= translate_config(apic,
+                                          cluster_id,
+                                          config_buf,
+                                          config_size)))
+            goto error;
+          state= WAIT_LAST_EMPTY_RETURN_STATE;
+        }
+        else if (read_size != CONFIG_LINE_LEN)
+        {
+          DEBUG_PRINT(CONFIG_LEVEL,
+            ("Protocol error in config receive state"));
+          PROTOCOL_CHECK_GOTO(FALSE);
+        }
+        break;
+      case RESULT_ERROR_STATE:
+        break;
+      default:
+        break;
+    }
+  }
+error:
+end:
+  if (config_buf)
+    ic_free(config_buf);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+cs_timeout_func(void *timeout_obj, int timer)
+{
+  (void)timeout_obj;
+  (void)timer;
+  return 1; /* Immediate timeout */
+}
+
+static int
+connect_any_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
+                           IC_CONNECTION **conn_ptr,
+                           guint32 *used_cluster_server_id,
+                           guint32 cs_timeout,
+                           gchar **err_str)
+{
+  int ret_code= 1;
+  guint32 timer= 0;
+  guint32 i, start_id, end_id;
+  guint32 sleep_time= 1;
+  DEBUG_ENTRY("connect_any_cluster_server");
+  
+  start_id= 0;
+  end_id= apic->cluster_conn.num_cluster_servers - 1;
+
+  do
+  {
+    for (i= start_id; i <= end_id; i++)
+    {
+      if (!(ret_code= set_up_cluster_server_connection(conn_ptr,
+                    apic->cluster_conn.cluster_server_ips[i],
+                    apic->cluster_conn.cluster_server_ports[i],
+                    apic->cluster_conn.cluster_server_ips[0],
+                    err_str,
+                    TRUE,
+                    cs_timeout_func,
+                    NULL)))
+      {
+        *used_cluster_server_id= i;
+        goto end;
+      }
+      if (ret_code != IC_ERROR_CONNECT_TIMEOUT)
+        goto error;
+    }
+    timer++;
+    if (cs_timeout && timer >= cs_timeout)
+      break;
+    ic_sleep(sleep_time);
+    if (sleep_time < 3)
+    {
+      sleep_time++;
+    }
+  } while (1);
+end:
+error:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+connect_cluster_server(IC_INT_API_CONFIG_SERVER *apic,
+                       IC_CONNECTION **conn_ptr,
+                       guint32 id,
+                       gboolean is_client,
+                       gchar **err_str,
+                       accept_timeout_func timeout_func,
+                       void *timeout_obj)
+{
+  int ret_code;
+  guint32 server_id= is_client ? id : 0;
+  DEBUG_ENTRY("connect_cluster_server");
+  
+  ret_code= set_up_cluster_server_connection(conn_ptr,
+     apic->cluster_conn.cluster_server_ips[server_id],
+     apic->cluster_conn.cluster_server_ports[server_id],
+     is_client ? apic->cluster_conn.cluster_server_ips[0] : NULL,
+     err_str,
+     is_client,
+     timeout_func,
+     timeout_obj);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+set_up_cluster_server_connection(IC_CONNECTION **conn,
+                                 gchar *server_name,
+                                 gchar *server_port,
+                                 gchar *client_name,
+                                 gchar **err_str,
+                                 gboolean is_client,
+                                 accept_timeout_func timeout_func,
+                                 void *timeout_obj)
+{
+  int ret_code;
+  IC_CONNECTION *loc_conn;
+  DEBUG_ENTRY("set_up_cluster_server_connection");
+
+  if (!(loc_conn= ic_create_socket_object(is_client, FALSE, FALSE,
+                                          CONFIG_READ_BUF_SIZE)))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  if (is_client)
+    loc_conn->conn_op.ic_prepare_client_connection(loc_conn,
+                                                   server_name,
+                                                   server_port,
+                                                   client_name,
+                                                   NULL);
+  else
+    loc_conn->conn_op.ic_prepare_server_connection(loc_conn,
+                                                   server_name,
+                                                   server_port,
+                                                   client_name,
+                                                   NULL,
+                                                   0,
+                                                   FALSE);
+
+  if ((ret_code= loc_conn->conn_op.ic_set_up_connection(loc_conn,
+                                                        timeout_func,
+                                                        timeout_obj)))
+  {
+    DEBUG_PRINT(COMM_LEVEL, ("Connect failed with error %d", ret_code));
+    *err_str= (gchar*)loc_conn->conn_op.ic_get_error_str(loc_conn);
+    loc_conn->conn_op.ic_free_connection(loc_conn);
+    DEBUG_RETURN_INT(ret_code);
+  }
+  *conn= loc_conn;
+  DEBUG_PRINT(COMM_LEVEL,
+              ("Successfully set-up connection to cluster server"));
+  DEBUG_RETURN_INT(0);
+}
+
+static guint64
+get_iclaustron_protocol_version(gboolean use_iclaustron_cluster_server)
+{
+  guint64 version_no= NDB_VERSION;
+  if (use_iclaustron_cluster_server)
+  {
+    version_no+= (IC_VERSION << IC_VERSION_BIT_START);
+    ic_set_bit(version_no, IC_PROTOCOL_BIT);
+  }
+  return version_no;
+}
+
+static guint32
+count_clusters(IC_CLUSTER_CONNECT_INFO **clu_infos)
+{
+  IC_CLUSTER_CONNECT_INFO **clu_info_iter;
+  guint32 num_clusters= 0;
+  clu_info_iter= clu_infos;
+  while (*clu_info_iter)
+  {
+    num_clusters++;
+    clu_info_iter++;
+  }
+  return num_clusters;
+}

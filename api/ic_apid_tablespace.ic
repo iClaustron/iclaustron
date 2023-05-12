@@ -1,0 +1,194 @@
+/* Copyright (C) 2009-2013 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+static int
+ts_set_initial_size(IC_ALTER_TABLESPACE *alter_ts,
+                    guint64 size)
+{
+  (void)alter_ts;
+  (void)size;
+  return 0;
+}
+
+static int
+ts_set_buffer_size(IC_ALTER_TABLESPACE *alter_ts,
+                   guint64 buf_size)
+{
+  (void)alter_ts;
+  (void)buf_size;
+  return 0;
+}
+
+static int
+ts_set_autoextend_size(IC_ALTER_TABLESPACE *alter_ts,
+                       guint64 auto_extend_size)
+{
+  (void)alter_ts;
+  (void)auto_extend_size;
+  return 0;
+}
+
+static int
+ts_set_max_size(IC_ALTER_TABLESPACE *alter_ts,
+                guint64 ts_max_size)
+{
+  (void)alter_ts;
+  (void)ts_max_size;
+  return 0;
+}
+
+static int
+ts_set_extent_size(IC_ALTER_TABLESPACE *alter_ts,
+                   guint64 extent_size)
+{
+  (void)alter_ts;
+  (void)extent_size;
+  return 0;
+}
+
+static int
+ts_set_nodegroup(IC_ALTER_TABLESPACE *alter_ts,
+                 guint32 node_group)
+{
+  (void)alter_ts;
+  (void)node_group;
+  return 0;
+}
+
+static int
+ts_create_tablespace(IC_ALTER_TABLESPACE *alter_ts,
+                     const gchar *tablespace_name,
+                     const gchar *data_file_name,
+                     const gchar *log_file_group_name,
+                     const gchar *tablespace_comment)
+{
+  (void)alter_ts;
+  (void)tablespace_name;
+  (void)data_file_name;
+  (void)log_file_group_name;
+  (void)tablespace_comment;
+  return 0;
+}
+
+static int
+ts_create_undo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *log_file_group_name,
+                              const gchar *data_file_name,
+                              guint64 file_size,
+                              const gchar *comment)
+{
+  (void)alter_ts;
+  (void)log_file_group_name;
+  (void)data_file_name;
+  (void)file_size;
+  (void)comment;
+  return 0;
+}
+
+static int
+ts_create_redo_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *log_file_group_name,
+                              const gchar *data_file_name,
+                              guint64 file_size,
+                              const gchar *comment)
+{
+  (void)alter_ts;
+  (void)log_file_group_name;
+  (void)data_file_name;
+  (void)file_size;
+  (void)comment;
+  return 0;
+}
+
+static int
+ts_drop_tablespace(IC_ALTER_TABLESPACE *alter_ts,
+                   const gchar *tablespace_name)
+{
+  (void)alter_ts;
+  (void)tablespace_name;
+  return 0;
+}
+
+static int
+ts_drop_log_file_group(IC_ALTER_TABLESPACE *alter_ts,
+                       const gchar *log_file_group_name)
+{
+  (void)alter_ts;
+  (void)log_file_group_name;
+  return 0;
+}
+
+static int
+ts_add_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
+                    const gchar *tablespace_name,
+                    const gchar *data_file_name)
+{
+  (void)alter_ts;
+  (void)tablespace_name;
+  (void)data_file_name;
+  return 0;
+}
+
+static int
+ts_add_lg_data_file(IC_ALTER_TABLESPACE *alter_ts,
+                    const gchar *log_file_group_name,
+                    const gchar *data_file_name)
+{
+  (void)alter_ts;
+  (void)log_file_group_name;
+  (void)data_file_name;
+  return 0;
+}
+
+static int
+ts_alter_ts_data_file(IC_ALTER_TABLESPACE *alter_ts,
+                      const gchar *tablespace_name,
+                      const gchar *data_file_name)
+{
+  (void)alter_ts;
+  (void)tablespace_name;
+  (void)data_file_name;
+  return 0;
+}
+
+static int
+ts_set_tablespace_access_mode(IC_ALTER_TABLESPACE *alter_ts,
+                              const gchar *tablespace_name,
+                              IC_TABLESPACE_ACCESS_MODE access_mode)
+{
+  (void)alter_ts;
+  (void)tablespace_name;
+  (void)access_mode;
+  return 0;
+}
+
+static IC_ALTER_TABLESPACE_OPS glob_tablespace_ops=
+{
+  /* .ic_set_initial_size         = */ ts_set_initial_size,
+  /* .ic_set_buffer_size          = */ ts_set_buffer_size,
+  /* .ic_set_autoextend_size      = */ ts_set_autoextend_size,
+  /* .ic_set_max_size             = */ ts_set_max_size,
+  /* .ic_set_extent_size          = */ ts_set_extent_size,
+  /* .ic_set_nodegroup            = */ ts_set_nodegroup,
+  /* .ic_create_tablespace        = */ ts_create_tablespace,
+  /* .ic_create_undo_log_file_group = */ ts_create_undo_log_file_group,
+  /* .ic_create_redo_log_file_group = */ ts_create_redo_log_file_group,
+  /* .ic_drop_tablespace          = */ ts_drop_tablespace,
+  /* .ic_drop_log_file_group      = */ ts_drop_log_file_group,
+  /* .ic_add_ts_data_file         = */ ts_add_ts_data_file,
+  /* .ic_add_lg_data_file         = */ ts_add_lg_data_file,
+  /* .ic_alter_ts_data_file       = */ ts_alter_ts_data_file,
+  /* .ic_set_tablespace_access_mode = */ ts_set_tablespace_access_mode
+};

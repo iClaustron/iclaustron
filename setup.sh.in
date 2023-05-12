@@ -1,0 +1,770 @@
+#!/bin/bash
+# Copyright (C) 2007-2013 iClaustron AB
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; version 2 of the License.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+#
+
+#
+# These variables contain the version of the MySQL and iClaustron
+# These are constants, the scripts are generated anew for each
+# new version of iClaustron. There is also a DBT2 version available
+# such that this script can also be used to distribute DBT2 as
+# part of a MySQL-only package.
+MYSQL_VERSION="mysql-5.1.28-ndb-6.3.19"
+ICLAUSTRON_VERSION="iclaustron-0.0.1"
+DBT2_VERSION="dbt2-0.37.38"
+
+# This variable defines whether this script is used to install binaries
+# or whether it is a pure source build. SOURCE_BUILD="n" for binary
+# distributions. A source build script can generate a binary installation
+# archive and will then install this using this generated archive and
+# by invoking this script with --install it will be converted to a binary
+# installation script.
+SOURCE_BUILD="y"
+
+#These variables define whether to include MySQL and iClaustron and DBT2
+#in the build process. These variables are set properly before using the
+#script to create a self-extracting archive for MySQL and iClaustron
+#distribution.
+BUILD_ICLAUSTRON="n"
+BUILD_MYSQL="y"
+BUILD_DBT2="y"
+
+#Check that no inconsistent setting has been set
+if test "x$BUILD_DBT2" = "xy" ; then
+  if test "x$BUILD_MYSQL" != "xy" ; then
+    echo "DBT2 only allowed together with MySQL"
+    exit 1
+  fi
+fi
+
+#Ensure all messages are sent both to the log file and to the terminal
+msg_to_log()
+{
+  echo "$*" >> $LOG_FILE
+  if test "x$?" != "x0" ; then
+    echo "Failed to write to $LOG_FILE"
+    exit 1
+  fi
+}
+
+#Method used to write any output to log what script is doing
+output_msg()
+{
+  echo "$*"
+  msg_to_log $*
+}
+
+#Method to create a directory and all potential subdirectories if needed
+create_dir()
+{
+  if ! test -d $CREATE_DIR ; then
+    mkdir -p $CREATE_DIR
+    if ! test -d $CREATE_DIR ; then
+      if test "x$LOG_FILE_CREATED" = "xy" ; then
+        output_msg "Failed to create $CREATE_DIR"
+      else
+        echo "Failed to create $CREATE_DIR"
+      fi
+      exit 1
+    fi
+    if test "x$LOG_FILE_CREATED" = "xy" ; then
+      output_msg "Successfully created $CREATE_DIR"
+    else
+      echo "Successfully created $CREATE_DIR"
+    fi
+  fi
+}
+
+#Method to execute any command and verify command was a success
+exec_command()
+{
+  output_msg "Executing $*"
+  eval $*
+  if test "x$?" != "x0" ; then
+    output_msg "Failed command $*"
+    exit 1
+  fi
+}
+
+#Get port from user@host:port specification
+get_port()
+{
+  PORT_NUM=`echo $1 | awk 'BEGIN {FS = ":"} {print $2}'`
+}
+
+#Get user@host from user@host:port specification
+get_user_and_host()
+{
+  USER_AND_HOST=`echo $1 | awk 'BEGIN {FS = ":"} {print $1}'`
+}
+
+#Get username from user@host:port specification
+get_username()
+{
+  USERNAME=`echo $1 | awk 'BEGIN {FS = "@"} {print $1}'`
+}
+
+#Get host:port from user@host:port specification
+get_host_and_port()
+{
+  HOST_AND_PORT=`echo $1 | awk 'BEGIN {FS = "@"} {print $2}'`
+}
+
+#Get port from user@host:port specification
+get_host()
+{
+  get_host_and_port
+  HOST_NAME=`echo $HOST_AND_PORT | awk 'BEGIN {FS = ":"} {print $2}'`
+}
+
+#
+# Parameter1: Prompt ($*)
+# Parameter2: Default answer when only return used (DEFAULT_VAR)
+#
+# Output parameter: INPUT_VAR
+#
+read_input()
+{
+  read -p "$*" INPUT_VAR
+  if test -z "$INPUT_VAR" ; then
+    INPUT_VAR=$DEFAULT_ANSWER
+  fi
+}
+
+#
+# Parameter1: Prompt ($*)
+# Parameter2: 1 => Use Y as default, otherwise => Use N as default
+# Sent in DEFAULT_ANSWER
+#
+# Output parameter: INPUT_VAR
+#
+read_yn()
+{
+  IC_PROMPT="$*"
+
+  if test "x$DEFAULT_ANSWER" = "xy" ; then
+    IC_PROMPT="$IC_PROMPT [Y/n]:"
+  else
+    IC_PROMPT="$IC_PROMPT [y/N]:"
+  fi
+  while [ 0 ] ; do
+    read_input $IC_PROMPT
+    INPUT_VAR=`echo $INPUT_VAR | sed 's/Y/y/g'`
+    INPUT_VAR=`echo $INPUT_VAR | sed 's/N/n/g'`
+    if test "x$INPUT_VAR" = "xy" ; then
+      break
+    fi
+    if test "x$INPUT_VAR" = "xn" ; then
+      break
+    fi
+  done
+  msg_to_log "$IC_PROMPT $INPUT_VAR"
+  if test "x$INPUT_VAR" = "xy" ; then
+    return 1
+  else
+    return 0
+  fi
+}
+
+check_node()
+{
+  echo "Testing to see if host $1 is available"
+  ping -c 1 -t 5 -W 5 $1 >> /dev/null
+  if test "x$?" != "x0" ; then
+    output_msg "Host $1 isn't available, error code $?"
+    return 1
+  fi
+  return 0
+}
+
+get_debug_install()
+{
+  if test "x$SOURCE_BUILD" = "xy" ; then
+    DEFAULT_ANSWER="n"
+    read_yn "Would you like to build a debug version"
+    if test "x$?" = "x1" ; then
+      output_msg "Building debug version"
+      WITH_DEBUG="--with-debug"
+    else
+      output_msg "Building production version"
+    fi
+  fi
+  return 0
+}
+
+check_port()
+{
+  return 0
+}
+
+get_host_user_and_port()
+{
+  DEFAULT_ANSWER="no_host_given"
+  read_input "Provide hostname: "
+  if test "x$INPUT_VAR" != "no_host_given" ; then
+    check_node $INPUT_VAR
+    if test "x$?" = "x0" ; then
+      NODE=$INPUT_VAR
+      DEFAULT_ANSWER=$USER
+      read_input "What user should you use on this host ($USER): "
+      NODE="${INPUT_VAR}@${NODE}"
+      DEFAULT_ANSWER=22
+      read_input "What SSH port should be used [22: Default SSH port] :"
+      check_port $INPUT_VAR
+      if test "x$?" = "x0" ; then
+        NODE="${NODE}:${INPUT_VAR}"
+        output_msg "Added host $NODE"
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+get_dependent_node_install()
+{
+  DEPENDENT_NODE_LIST=""
+  if test "x$SOURCE_BUILD" = "xy" ; then
+    output_msg "Add set of nodes where the binaries built on the previous node"
+    output_msg "will be distributed to"
+    while [ 0 ] ; do
+      DEFAULT_ANSWER="y"
+      read_yn "Would you like to distribute the binaries to more nodes"
+      if test "x$INPUT_VAR" = "xy" ; then
+        get_host_user_and_port
+        if test "x$?" = "x0" ; then
+          DEPENDENT_NODE_LIST="$DEPENDENT_NODE_LIST $NODE"
+        fi
+      else
+        break
+      fi
+    done
+  fi
+  return 0
+}
+
+get_node_install()
+{
+  if test "x$SOURCE_BUILD" = "xy" ; then
+
+    READ_YN_LOCAL_MACHINE="Would you like to build source on this machine"
+    READ_YN_REMOTE_MACHINE="Would you like to build on another node"
+  else
+    READ_YN_LOCAL_MACHINE="Would you like to install on this machine"
+    READ_YN_REMOTE_MACHINE="Would you like to add another node to install at"
+  fi
+  DEFAULT_ANSWER="y"
+  read_yn $READ_YN_LOCAL_MACHINE
+  if test "x$INPUT_VAR" = "xy" ; then
+    if test "x$SOURCE_BUILD" = "xy" ; then
+      get_dependent_node_install
+      LOCAL_DEP_NODE_LIST="$DEPENDENT_NODE_LIST"
+    fi
+    LOCAL_INSTALL="y"
+  fi
+  BUILD_NODE="0"
+  while [ 0 ] ; do
+    DEFAULT_ANSWER="y"
+    read_yn $READ_YN_REMOTE_MACHINE
+    if test "x$INPUT_VAR" = "xy" ; then
+      get_host_user_and_port
+      if test "x$?" = "x0" ; then
+        REMOTE_INSTALL="y"
+        NODE_LIST="$NODE_LIST $NODE"
+        if test "x$SOURCE_BUILD" = "xy" ; then
+          get_dependent_node_install
+          DEP_ARRAY_NODE_LIST[BUILD_NODE]=$DEPENDENT_NODE_LIST
+          ((BUILD_NODE+=1))
+        fi
+      fi
+    else
+      break
+    fi
+  done
+}
+
+#Unpack the source tarballs into the SRC_INSTALL_DIR
+unpack_tarballs()
+{
+  exec_command cd $SRC_INSTALL_DIR
+  if test "x$BUILD_MYSQL" = "xy" ; then
+    COMMAND="cp ${USER_PWD}/${MYSQL_VERSION}.tar.gz"
+    COMMAND="$COMMAND ${MYSQL_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="tar xfz ${MYSQL_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="rm ${MYSQL_VERSION}.tar.gz"
+    exec_command $COMMAND
+  fi
+  if test "x$BUILD_ICLAUSTRON" = "xy" ; then
+    COMMAND="cp ${USER_PWD}/${ICLAUSTRON_VERSION}.tar.gz"
+    COMMAND="$COMMAND ${ICLAUSTRON_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="tar xfz ${ICLAUSTRON_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="rm ${ICLAUSTRON_VERSION}.tar.gz"
+    exec_command $COMMAND
+  fi
+  if test "x$BUILD_DBT2" = "xy" ; then
+    COMMAND="cp ${USER_PWD}/${DBT2_VERSION}.tar.gz"
+    COMMAND="$COMMAND ${DBT2_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="tar xfz ${DBT2_VERSION}.tar.gz"
+    exec_command $COMMAND
+    COMMAND="rm ${DBT2_VERSION}.tar.gz"
+    exec_command $COMMAND
+  fi
+  exec_command cd ${USER_PWD}
+}
+
+# $1 is the node specification to which we are setting up SSH towards
+setup_ssh_node()
+{
+  SSH_NODE="$1"
+  get_port $SSH_NODE
+  SSH_PORT="$PORT_NUM"
+  get_user_and_host $SSH_NODE
+  SSH_USER_HOST="$USER_AND_HOST"
+  SSH="ssh -p $SSH_PORT $SSH_USER_HOST"
+}
+
+build_local()
+{
+  output_msg "Build local"
+  unpack_tarballs
+  if test "x$BUILD_ICLAUSTRON" = "xy" ; then
+    CREATE_DIR=${BIN_INSTALL_DIR}/${ICLAUSTRON_VERSION}
+    ICLAUSTRON_INSTALL_DIR=$CREATE_DIR
+    create_dir
+
+    output_msg "Building iClaustron"
+    exec_command cd ${SRC_INSTALL_DIR}/${ICLAUSTRON_VERSION}
+    exec_command ./configure --with-production \
+                 --with-readline --prefix=$ICLAUSTRON_INSTALL_DIR $WITH_DEBUG
+    exec_command make
+    exec_command make install
+    exec_command cd ..
+    output_msg "Successfully built and installed $ICLAUSTRON_VERSION"
+  fi
+  if test "x$BUILD_MYSQL" = "xy" ; then
+    CREATE_DIR=${BIN_INSTALL_DIR}/${MYSQL_VERSION}
+    MYSQL_INSTALL_DIR=$CREATE_DIR
+    create_dir
+
+    output_msg "Building MySQL version: $MYSQL_VERSION"
+    exec_command cd ${SRC_INSTALL_DIR}/${MYSQL_VERSION}
+    exec_command BUILD/build_mccge.sh --prefix=$MYSQL_INSTALL_DIR $WITH_DEBUG
+    exec_command make install
+    exec_command cd ..
+    output_msg "Successfully built and installed $MYSQL_VERSION"
+    if test "x$BUILD_DBT2" = "xy" ; then
+      output_msg "Building DBT2 version: $DBT2_VERSION"
+      exec_command cd ${SRC_INSTALL_DIR}/${DBT2_VERSION}
+      exec_command ./configure --with-mysql=${BIN_INSTALL_DIR}/${MYSQL_VERSION}
+      exec_command make
+      exec_command cd ..
+    fi
+  fi
+#
+# Now that we've successfully built the MySQL and iClaustron and a potential
+# DBT2 source code we'll create compressed tar-files of the binaries for later
+# distribution to other dependent nodes
+#
+  if test "x$BIN_TAR_FILES" = "xy" ; then
+# Verify that pwd works before using it
+    exec_command cd $BIN_INSTALL_DIR
+    output_msg "Create compressed tar files of the installed binaries"
+    if test "x$BUILD_MYSQL" = "xy" ; then
+      MYSQL_TARBALL="${MYSQL_VERSION}_binary.tar.gz"
+      COMMAND="tar cfz ${MYSQL_VERSION}_binary.tar.gz $MYSQL_VERSION"
+      exec_command $COMMAND
+      if test "x$BUILD_DBT2" = "xy" ; then
+        exec_command cd $SRC_INSTALL_DIR
+        DBT2_TARBALL="${DBT2_VERSION}_binary.tar.gz"
+        COMMAND="tar cfz ${DBT2_VERSION}_binary.tar.gz $DBT2_VERSION"
+        exec_command $COMMAND
+        exec_command cd $BIN_INSTALL_DIR
+      fi
+    fi
+    if test "x$BUILD_ICLAUSTRON" = "xy" ; then
+      ICLAUSTRON_TARBALL="${ICLAUSTRON_VERSION}_binary.tar.gz"
+      COMMAND="tar cfz ${ICLAUSTRON_VERSION}_binary.tar.gz $ICLAUSTRON_VERSION"
+      exec_command $COMMAND
+    fi
+  fi
+  exec_command cd ${USER_PWD}
+}
+
+remove_tar_files()
+{
+  output_msg "Remove tar files with binaries"
+  if test "x$MYSQL_TARBALL" != "x" ; then
+    exec_command rm ${BIN_INSTALL_DIR}/${MYSQL_TARBALL}
+    if test "x$DBT2_TARBALL" != "x" ; then
+      exec_command rm ${SRC_INSTALL_DIR}/${DBT2_TARBALL}
+    fi
+  fi
+  if test "x$ICLAUSTRON_TARBALL" != "x" ; then
+    exec_command rm ${BIN_INSTALL_DIR}/${ICLAUSTRON_TARBALL}
+  fi
+  return 0
+}
+
+# $1 is the node specification where to remove remote tarballs
+remove_remote_tar_files()
+{
+  LOCAL_NODE="$1"
+  output_msg "Remove remote tar files with binaries"
+  setup_ssh_node $LOCAL_NODE
+  if test "x$MYSQL_TARBALL" != "x" ; then
+    exec_command $SSH rm ${BIN_INSTALL_DIR}/${MYSQL_TARBALL}
+    if test "x$DBT2_TARBALL" != "x" ; then
+      exec_command $SSH rm ${SRC_INSTALL_DIR}/${DBT2_TARBALL}
+    fi
+  fi
+  if test "x$ICLAUSTRON_TARBALL" != "x" ; then
+    exec_command $SSH rm ${BIN_INSTALL_DIR}/${ICLAUSTRON_TARBALL}
+  fi
+  return 0
+}
+
+install_local()
+{
+  return 0
+}
+
+remote_copy_source()
+{
+  output_msg "Copying self-extracting archive of source to $1"
+  return 0
+}
+
+remote_copy_binary()
+{
+  output_msg "Copying self-extracting archive of binaries to  $1"
+  return 0
+}
+
+remote_copy_back_binary()
+{
+  output_msg "Copying binaries from  $1 to local tmp directory"
+# Step 1: Create compressed tarballs on remote host
+  return 0
+}
+
+remote_build_source()
+{
+  output_msg "Build binaries at $1"
+  return 0
+}
+
+# $1 contains the NODE specification where to install the binaries
+# $2 contains the directory on the remote node where to install
+remote_install_binary()
+{
+  LOCAL_NODE="$1"
+  LOCAL_DIR="$2"
+  output_msg "Install binaries at $1 in directory $2"
+
+  exec_command cd $BIN_INSTALL_DIR
+  get_port $LOCAL_NODE
+  LOCAL_PORT="$PORT_NUM"
+  get_user_and_host $LOCAL_NODE
+  LOCAL_USER_HOST="$USER_AND_HOST"
+
+  if test "x$MYSQL_TARBALL" != "x" ; then
+    setup_ssh_node $LOCAL_NODE
+    exec_command $SSH mkdir -p ${LOCAL_DIR}
+    COMMAND="scp -P $LOCAL_PORT $MYSQL_TARBALL"
+    COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}"
+    exec_command $COMMAND
+    setup_ssh_node $LOCAL_NODE
+    COMMAND="$SSH tar xfz ${LOCAL_DIR}/${MYSQL_TARBALL} -C ${LOCAL_DIR}"
+    exec_command $COMMAND
+  fi
+  if test "x$ICLAUSTRON_TARBALL" != "x" ; then
+    setup_ssh_node $LOCAL_NODE
+    exec_command $SSH mkdir -p ${LOCAL_DIR}
+    COMMAND="scp -P $LOCAL_PORT $ICLAUSTRON_TARBALL"
+    COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${ICLAUSTRON_TARBALL}"
+    exec_command $COMMAND
+    setup_ssh_node $LOCAL_NODE
+    COMMAND="$SSH tar xfz ${LOCAL_DIR}/${ICLAUSTRON_TARBALL} -C ${LOCAL_DIR}"
+    exec_command $COMMAND
+  fi
+  exec_command cd ${USER_PWD}
+  return 0
+}
+
+# $1 contains the NODE specification where to install the binaries
+# $2 contains the directory on the remote node where to install
+remote_install_dbt2_binary()
+{
+  if test "x$BUILD_DBT2" != "xy" ; then
+    return 0
+  fi
+  LOCAL_NODE="$1"
+  LOCAL_DIR="$2"
+  output_msg "Install DBT2 binaries at $1 in directory $2"
+
+  exec_command cd $SRC_INSTALL_DIR
+  get_port $LOCAL_NODE
+  LOCAL_PORT="$PORT_NUM"
+  get_user_and_host $LOCAL_NODE
+  LOCAL_USER_HOST="$USER_AND_HOST"
+
+  setup_ssh_node $LOCAL_NODE
+  exec_command $SSH "mkdir -p ${LOCAL_DIR}"
+  COMMAND="scp -P $LOCAL_PORT $DBT2_TARBALL"
+  COMMAND="$COMMAND ${LOCAL_USER_HOST}:${LOCAL_DIR}/${DBT2_TARBALL}"
+  exec_command $COMMAND
+  setup_ssh_node $LOCAL_NODE
+  COMMAND="$SSH tar xfz ${LOCAL_DIR}/${DBT2_TARBALL} -C ${LOCAL_DIR}"
+  exec_command $COMMAND
+  exec_command cd ${USER_PWD}
+  return 0
+}
+
+display_help()
+{
+  cat <<EOF
+  This script is used to install iClaustron software in a distributed
+  environment. It can also be used to install MySQL only or iClaustron
+  only environments. Normally an iClaustron environment installs both
+  the iClaustron environment together with the appropriate MySQL Cluster
+  installation.
+
+  ACTIVITY:
+  ---------
+  --bin-install-dir    : Used to change from default binary installation
+                         directory. The default here is for root, lroot and
+                         groot user to use /var/lib/iclaustron, for other
+                         users the default is HOME/iclaustron_install.
+                         The actual installation directory is
+                         BIN_INSTALL_DIR/ICLAUSTRON_VERSION and
+                         BIN_INSTALL_DIR/MYSQL_VERSION respectively.
+  --src-install-dir    : Used to change from default source installation
+                         directory. The default here is for root, lroot and
+                         groot user to use HOME/icl_src_installation, for
+                         other users the default is HOME/iclaustron_install.
+                         The actual installation directory is
+                         SRC_INSTALL_DIR/ICLAUSTRON_VERSION and
+                         SRC_INSTALL_DIR/MYSQL_VERSION respectively.
+  --log-dir            : Change the directory where the log file is stored.
+                         The log file is stored in
+                         LOG_DIR/iclaustron_installation.log
+                         The default for this is to use the source directory
+                         for source builds and the binary directory for
+                         binary installation.
+  --local              : This option has no parameters. Setting it means we
+                         are doing an installation only on our local node. No
+                         distributed installation or builds at all.
+  --install            : Only binary installation.
+  --create-tar-bins    : Create tarball for binary distribution after building
+                         the source (only applicable for source builds).
+  --with-debug         : Build source as debug build (only applicable for
+                         source builds).
+  --help               : Display this help text
+EOF
+}
+
+#
+# Start of shell script
+#
+
+MYSQL_TARBALL=
+ICLAUSTRON_TARBALL=
+COMMAND=
+USER_BIN_INSTALL_DIR=
+USER_SRC_INSTALL_DIR=
+USER_LOG_DIR=
+IC_PROMPT=
+INPUT_VAR=
+DEFAULT_ANSWER=
+LOG_FILE=
+CREATE_DIR=
+SRC_INSTALL_DIR=
+BIN_INSTALL_DIR=
+MYSQL_INSTALL_DIR=
+ICLAUSTRON_INSTALL_DIR=
+WITH_DEBUG=
+LOCAL_ONLY=
+LOCAL_INSTALL="n"
+REMOTE_INSTALL="n"
+LOG_FILE_CREATED="n"
+LOCAL_DEP_NODE_LIST=
+DEPENDENT_NODE_LIST=
+# DEP_ARRAY_NODE_LIST contains an array of arrays. It contains one array of
+# nodes for each build node. The list of build nodes is in NODE_LIST.
+DEP_ARRAY_NODE_LIST=
+NODE_LIST=
+
+BUILD_NODE_LIST=
+BUILD_NODE=
+NODE=
+BIN_NODE=
+CURRENT_PWD=
+BIN_TAR_FILES=
+USER_PWD=
+USE_DATE=
+ROOT_USER="n"
+
+while test $# -gt 0
+do
+  case $1 in
+  --bin-install-dir )
+    shift
+    USER_BIN_INSTALL_DIR="$1"
+    ;;
+  --src-install-dir )
+    shift
+    USER_SRC_INSTALL_DIR="$1"
+    ;;
+  --log-dir )
+    shift
+    USER_LOG_DIR="$1"
+    ;;
+  --local )
+    LOCAL_ONLY="y"
+    ;;
+  --install )
+    SOURCE_BUILD="n"
+    ;;
+  --create-tar-bins )
+    BIN_TAR_FILES="y"
+    ;;
+  --with-debug )
+    WITH_DEBUG="--with-debug"
+    ;;
+  --help )
+    display_help
+    exit 0
+    ;;
+  * )
+    echo "Faulty parameter $1"
+    display_help
+    exit 1
+    ;;
+  esac
+  shift
+done
+
+USER_PWD=`pwd`
+USE_DATE=`date`
+
+if test "x$USER" = "xroot" ; then
+  ROOT_USER="y"
+fi
+if test "x$USER" = "xlroot" ; then
+  ROOT_USER="y"
+fi
+if test "x$USER" = "xgroot" ; then
+  ROOT_USER="y"
+fi
+if test "x$ROOT_USER" = "xy" ; then
+  BIN_INSTALL_DIR="/var/lib/iclaustron"
+  SRC_INSTALL_DIR="/usr/local/iclaustron"
+else
+  BIN_INSTALL_DIR="$HOME/iclaustron_install"
+  SRC_INSTALL_DIR="${HOME}/icl_src_installation"
+fi
+if test "x$USER_BIN_INSTALL_DIR" != "x" ; then
+  BIN_INSTALL_DIR="$USER_BIN_INSTALL_DIR"
+fi
+if test "x$USER_SRC_INSTALL_DIR" != "x" ; then
+  SRC_INSTALL_DIR="$USER_SRC_INSTALL_DIR"
+fi
+if test "x$USER_LOG_DIR" != "x" ; then
+  LOG_DIR="$USER_LOG_DIR"
+else
+  if test "x$SOURCE_BUILD" = "xy" ; then
+    LOG_DIR="${SRC_INSTALL_DIR}"
+  else
+    LOG_DIR="${BIN_INSTALL_DIR}"
+  fi
+fi
+LOG_FILE="${LOG_DIR}/iclaustron_installation.log"
+
+CREATE_DIR=$LOG_DIR
+create_dir
+echo "Message log created for iclaustron installation on $USE_DATE" > $LOG_FILE
+LOG_FILE_CREATED="y"
+
+CREATE_DIR=$BIN_INSTALL_DIR
+create_dir
+CREATE_DIR=$SRC_INSTALL_DIR
+create_dir
+
+if test "x$?" != "x0" ; then
+  echo "Failed to write to $LOG_FILE"
+  exit 1
+fi
+if test "x$SOURCE_BUILD" = "xy" ; then
+  output_msg "Source will be installed at $SRC_INSTALL_DIR"
+fi
+output_msg "Binaries will be installed at $BIN_INSTALL_DIR"
+output_msg "Log file is stored in $LOG_FILE"
+
+if test "x$LOCAL_ONLY" = "x" ; then
+  get_node_install
+  get_debug_install
+else
+  LOCAL_INSTALL="y"
+  REMOTE_INSTALL="n"
+fi
+
+output_msg "LOCAL_INSTALL = " $LOCAL_INSTALL
+output_msg "REMOTE_INSTALL = " $REMOTE_INSTALL
+
+if test "x$LOCAL_INSTALL" = "xy" ; then
+  if test "x$SOURCE_BUILD" = "xy" ; then
+    if test "x$LOCAL_DEP_NODE_LIST" != "x" ; then
+      BIN_TAR_FILES="y"
+    fi
+    build_local
+    for NODE in $LOCAL_DEP_NODE_LIST
+    do
+      remote_install_binary $NODE $BIN_INSTALL_DIR
+      remote_install_dbt2_binary $NODE $SRC_INSTALL_DIR
+      remove_remote_tar_files $NODE
+    done
+    remove_tar_files
+  else
+    install_local
+  fi
+fi
+
+if test "x$REMOTE_INSTALL" = "xy" ; then
+# Copy installation archive to all nodes listed and execute
+# self-extracting archive on all local nodes
+  output_msg "Remote Install started"
+  BUILD_NODE="0"
+  for NODE in $NODE_LIST
+  do
+    if test "x$SOURCE_BUILD" = "xy" ; then
+      remote_copy_source $NODE
+      remote_build_source $NODE
+      remote_copy_back_binary $NODE
+      BUILD_NODE_LIST=$DEP_ARRAY_NODE_LIST[BUILD_NODE]
+      for BIN_NODE in $BUILD_NODE_LIST
+      do
+        remote_install_binary $BIN_NODE $BIN_INSTALL_DIR
+      done
+      ((BUILD_NODE+=1))
+    else
+      remote_install_binary $NODE $BIN_INSTALL_DIR
+    fi
+  done
+fi

@@ -1,0 +1,639 @@
+/* Copyight (C) 2007, 2016 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: iClaustron Initialise and End Functions
+  -----------------------------------------------
+  This module contains a number of common function used by most Data API
+  programs for program options and various common start-up code.
+
+  Every iClaustron program should start by calling ic_start_program
+  before using any of the iClaustron functionality and after
+  completing using the iClaustron API one should call ic_end().
+
+  ic_start_program will define automatically a set of debug options
+  for the program which are common to all iClaustron programs. The
+  program can also supply a set of options unique to this particular
+  program. In addition a start text should be provided.
+
+  So for most iClaustron programs this means calling these functions
+  at the start of the main function and at the end of the main
+  function.
+*/
+GOptionEntry ic_apid_entries[] = 
+{
+  { "cs-connectstring", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_cs_connectstring,
+    "Connect string to Cluster Servers", NULL},
+  { "cs-hostname", 0, 0, G_OPTION_ARG_STRING,
+     &ic_glob_cs_server_name,
+    "Set Server Hostname of Cluster Server", NULL},
+  { "cs-port", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_cs_server_port,
+    "Set Server Port of Cluster Server", NULL},
+  { "cs-timeout", 0, 0, G_OPTION_ARG_INT,
+    &ic_glob_cs_timeout,
+    "Time to wait for Cluster Servers connecting, 0=no timeout", NULL},
+  { "node-id", 0, 0, G_OPTION_ARG_INT,
+    &ic_glob_node_id,
+    "Node id of this server in all clusters", NULL},
+  { "num-threads", 0, 0, G_OPTION_ARG_INT,
+    &ic_glob_num_threads,
+    "Number of threads executing in process", NULL},
+  { "use-iclaustron-cluster-server", 0, 0, G_OPTION_ARG_INT,
+     &ic_glob_use_iclaustron_cluster_server,
+    "Use of iClaustron Cluster Server (default) or NDB mgm server", NULL},
+  { "daemonize", 0, 0, G_OPTION_ARG_INT,
+     &ic_glob_daemonize,
+    "Daemonize program", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
+int
+ic_start_apid_program(IC_THREADPOOL_STATE **tp_state,
+                      gchar **err_str,
+                      gchar *error_buf,
+                      IC_APID_GLOBAL **apid_global,
+                      IC_API_CONFIG_SERVER **apic)
+{
+  IC_CONNECT_STRING conn_str;
+  IC_API_CLUSTER_CONNECTION api_cluster_conn;
+  int ret_code;
+  DEBUG_ENTRY("ic_start_apid_program");
+
+  if (!(*tp_state=
+          ic_create_threadpool(IC_DEFAULT_MAX_THREADPOOL_SIZE,
+                               "api_user")))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+
+  if ((ret_code= ic_parse_connectstring(ic_glob_cs_connectstring,
+                                        &conn_str,
+                                        ic_glob_cs_server_name,
+                                        ic_glob_cs_server_port)))
+    goto error;
+  *err_str= error_buf;
+  ic_printf("Trying to get configuration from iClaustron Cluster Server");
+  *apic= ic_get_configuration(&api_cluster_conn,
+                              &ic_glob_config_dir,
+                              ic_glob_node_id,
+                              conn_str.num_cs_servers,
+                              conn_str.cs_hosts,
+                              conn_str.cs_ports,
+                              ic_glob_cs_timeout,
+                              ic_glob_use_iclaustron_cluster_server,
+                              &ret_code,
+                              err_str);
+  conn_str.mc_ptr->mc_ops.ic_mc_free(conn_str.mc_ptr);
+  if (!(*apic))
+    goto error;
+  
+  ic_printf("Successfully retrieved configuration from iClaustron Cluster"
+            " Server");
+  if (!(*apid_global= ic_create_apid_global(*apic,
+                                            FALSE,
+                                            &ret_code,
+                                            error_buf)))
+    goto apid_error;
+  *err_str= NULL;
+  DEBUG_RETURN_INT(0);
+
+error:
+  DEBUG_RETURN_INT(ret_code);
+
+apid_error:
+  ic_printf("%s", error_buf);
+  goto error;
+}
+
+void
+ic_stop_apid_program(int ret_code,
+                     gchar *err_str,
+                     IC_APID_GLOBAL *apid_global,
+                     IC_API_CONFIG_SERVER *apic,
+                     IC_THREADPOOL_STATE *tp_state)
+{
+  if (ic_is_debug_system_active())
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("Enter: ic_stop_apid_program"));
+  }
+  if (err_str)
+    ic_printf("%s", err_str);
+  if (!err_str && ret_code)
+    ic_print_error(ret_code);
+  ic_set_die_handler(NULL, NULL);
+  if (tp_state)
+    tp_state->tp_ops.ic_threadpool_stop(tp_state);
+  if (apid_global)
+    apid_global->apid_global_ops->ic_free_apid_global(apid_global);
+  if (apic)
+    apic->api_op.ic_free_config(apic);
+  ic_end();
+}
+
+static gpointer
+run_server_thread(gpointer data)
+{
+  IC_THREAD_STATE *thread_state= (IC_THREAD_STATE*)data;
+  IC_THREADPOOL_STATE *tp_state;
+  IC_APID_GLOBAL *apid_global;
+  IC_APID_CONNECTION *apid_conn= NULL;
+  gboolean stop_flag;
+  int ret_code;
+  IC_RUN_APID_THREAD_FUNC apid_func;
+  DEBUG_THREAD_ENTRY("run_server_thread");
+  tp_state= thread_state->ic_get_threadpool(thread_state);
+  apid_global= (IC_APID_GLOBAL*)
+    tp_state->ts_ops.ic_thread_get_object(thread_state);
+
+  apid_func= apid_global->apid_global_ops->ic_get_thread_func(apid_global);
+  tp_state->ts_ops.ic_thread_started(thread_state);
+  apid_global->apid_global_ops->ic_add_user_thread(apid_global);
+  stop_flag= apid_global->apid_global_ops->ic_get_stop_flag(apid_global);
+  if (stop_flag)
+    goto error;
+  /*
+    Now start-up has completed and at this point in time we have connections
+    to all clusters already set-up. So all we need to do now is start a local
+    IC_APID_CONNECTION and start using it based on input from users
+  */
+  if (!(apid_conn= ic_create_apid_connection(apid_global,
+                                             apid_global->cluster_bitmap)))
+    goto error;
+  if (tp_state->ts_ops.ic_thread_startup_done(thread_state))
+    goto error;
+  /*
+     We now have a local Data API connection and we are ready to issue
+     file system transactions to keep our local cache consistent with the
+     global NDB file system
+  */
+  ret_code= apid_func(apid_conn, thread_state);
+  if (ret_code)
+    ic_print_error(ret_code);
+error:
+  if (apid_conn)
+    apid_conn->apid_conn_ops->ic_free_apid_connection(apid_conn);
+  apid_global->apid_global_ops->ic_remove_user_thread(apid_global);
+  tp_state->ts_ops.ic_thread_stops(thread_state);
+  DEBUG_THREAD_RETURN;
+}
+
+int
+ic_run_apid_program(IC_APID_GLOBAL *apid_global,
+                    IC_THREADPOOL_STATE *tp_state,
+                    IC_RUN_APID_THREAD_FUNC apid_func,
+                    gchar **err_str)
+{
+  int error= 0;
+  guint32 i, thread_id;
+  DEBUG_ENTRY("ic_run_apid_program");
+
+  *err_str= NULL;
+  ic_printf("Ready to start server threads");
+  apid_global->apid_global_ops->ic_set_thread_func(apid_global, apid_func);
+  for (i= 0; i < ic_glob_num_threads; i++)
+  {
+    DEBUG_PRINT(THREAD_LEVEL,
+                ("Starting thread with id %u in run_server_thread",
+                 thread_id));
+    if ((error= tp_state->tp_ops.ic_threadpool_start_thread(
+                            tp_state,
+                            &thread_id,
+                            run_server_thread,
+                            (gpointer)apid_global,
+                            IC_MEDIUM_STACK_SIZE,
+                            TRUE)))
+    {
+      apid_global->apid_global_ops->ic_set_stop_flag(apid_global);
+      break;
+    }
+    tp_state->tp_ops.ic_threadpool_run_thread(tp_state, thread_id);
+  }
+  while (1)
+  {
+    if (apid_global->apid_global_ops->ic_get_num_user_threads(apid_global)
+        == 0 ||
+        ic_get_stop_flag())
+    {
+      break;
+    }
+    apid_global->apid_global_ops->ic_cond_wait(apid_global);
+    tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
+  }
+  tp_state->tp_ops.ic_threadpool_check_threads(tp_state);
+  DEBUG_RETURN_INT(error);
+}
+
+static int ic_init();
+
+/* Base directory group */
+static GOptionEntry basedir_entries[] =
+{
+  { "iclaustron-version", 0, 0, G_OPTION_ARG_STRING,
+    &ic_glob_version_path,
+    "Version string to find iClaustron binaries used by this program, default "
+    IC_VERSION_STR, NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
+static gchar *help_basedir= "Group of flags to set base directory";
+static gchar *basedir_description= "\
+Basedir Flags\n\
+-------------\n\
+These flags are used to point out the directory where the iClaustron\n\
+programs expects to find the binaries. Many iClaustron programs make use\n\
+of scripts for some advanced information on processes and system.\n\
+\n\
+iClaustron expects an organisation where basedir is the directory where\n\
+all binaries are found under. Under the basedir there can be many\n\
+directories. These represents different versions of iClaustron and\n\
+MySQL. So e.g. iclaustron-0.0.1 is the directory where the binaries\n\
+for this version is expected to be placed. The binaries are thus in\n\
+this case placed in basedir/iclaustron-0.0.1/bin. Only the iClaustron\n\
+version can be set since iClaustron only call iClaustron scripts\n\
+The only MySQL binaries used are the ndbmtd and mysqld and these\n\
+are always called from ic_pcntrld (the iClaustron process controller).\n\
+\n\
+The iClaustron process controller reuses the basedir as well for all\n\
+processes started by the process controller. However the version is\n\
+provided by the client (mostly the cluster manager which gets the\n\
+version from the commands sent to the cluster manager).\n\
+\n\
+For normal users basedir is $HOME/iclaustron_install/, for root users\n\
+it is /var/lib/iclaustron_install/.\n\
+";
+
+/* Debug group */
+static GOptionEntry debug_entries[] = 
+{
+  { "debug-level", 0, 0, G_OPTION_ARG_INT, &glob_debug,
+    "Set Debug Level", NULL},
+  { "debug-file", 0, 0, G_OPTION_ARG_STRING, &glob_debug_file,
+    "Set Debug File", NULL},
+  { "debug-screen", 0, 0, G_OPTION_ARG_INT, &glob_debug_screen,
+    "Flag whether to print debug info to stdout", NULL},
+  { "debug-timestamp", 0, 0, G_OPTION_ARG_INT, &glob_debug_timestamp,
+    "Flag whether to print timestamps in debug info", NULL},
+  { "core", 0, 0, G_OPTION_ARG_INT, &glob_core,
+    "Generate core files at crash", NULL},
+  { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+};
+
+static gchar *help_debug= "Group of flags to set-up debugging";
+
+static gchar *debug_description= "\
+Debug Flags\n\
+-----------\n\
+Group of flags to set-up debugging level and where to pipe debug output \n\
+Debug level is actually several levels, one can decide to debug a certain\n\
+area at a time. Each area has a bit in debug level. So if one wants to\n\
+debug the communication area one sets debug_level to 1 (set bit 0). By\n\
+setting several bits it is possible to debug several areas at once.\n\
+\n\
+Current levels defined: \n\
+  Level 0 (= 1): Communication debugging\n\
+  Level 1 (= 2): Entry into functions debugging\n\
+  Level 2 (= 4): Configuration debugging\n\
+  Level 3 (= 8): Debugging specific to the currently executing program\n\
+  Level 4 (=16): Debugging of threads\n\
+  Level 5 (=32): Debugging of Configuration Protocol\n\
+  Level 6 (=64): Debugging of memory allocation\n\
+  Level 7 (=128): Debugging of heartbeat handling\n\
+  Level 8 (=256): Debugging of read of configuration\n\
+\n\
+It is possible to pipe output also to the screen in addition to a debug\n\
+file by setting --debug_screen=1. It's possible to set the whereabouts\n\
+of the debug file by --debug_file=filename. Default is that the debug\n\
+file is created where the binary is started. It is also possible to add\n\
+a timestamp to every debug line to make it easier to understand timing of\n\
+the program, this is done by setting --debug_timestamp=1. The time reported\n\
+is number of microseconds since the program started.\n\
+";
+static int use_config_vars;
+
+static gboolean
+check_daemon_program(gchar *program_name)
+{
+  if ((strcmp(program_name, ic_cluster_server_program_str) == 0) ||
+      (strcmp(program_name, ic_cluster_manager_program_str) == 0) ||
+      (strcmp(program_name, ic_file_server_program_str) == 0) ||
+      (strcmp(program_name, ic_rep_server_program_str) == 0) ||
+      (strcmp(program_name, ic_process_controller_program_str) == 0))
+  {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static void
+print_start_program(gchar *program_name)
+{
+  guint32 dummy;
+  gchar *pid_str;
+  gchar pid_buf[IC_NUMBER_SIZE];
+
+  pid_str= ic_guint64_str(ic_get_own_pid(), pid_buf, &dummy);
+  ic_printf("Starting %s program with pid %s", program_name, pid_str);
+}
+
+static void ic_end_fe(void *param);
+static void ic_end_fe_no_param(void);
+
+int
+ic_start_program(int argc,
+                 gchar *argv[],
+                 GOptionEntry entries[],
+                 GOptionEntry add_entries[],
+                 gchar *program_name,
+                 gchar *start_text,
+                 gboolean use_config,
+                 gboolean daemonize_second_phase)
+{
+  int ret_code= IC_ERROR_STARTUP;
+#ifdef DEBUG_BUILD
+  int i;
+#endif
+  GError *error= NULL;
+  GOptionGroup *debug_group;
+  GOptionGroup *basedir_group;
+  GOptionContext *context;
+  gboolean is_cluster_server= FALSE;
+  IC_STRING stdout_file;
+  gboolean daemon_program;
+
+  IC_INIT_STRING(&stdout_file, NULL, 0, TRUE);
+
+  daemon_program= check_daemon_program(program_name);
+  ic_init_error_messages();
+  if (strcmp(program_name, "ic_csd") == 0)
+    is_cluster_server= TRUE;
+  use_config_vars= use_config; /* TRUE for Unit test programs */
+  if (ic_start_socket_system())
+    goto error;
+  context= g_option_context_new(start_text);
+  if (!context)
+    goto mem_error;
+  /* Read command options */
+  g_option_context_add_main_entries(context, entries, NULL);
+  if (add_entries)
+    g_option_context_add_main_entries(context, add_entries, NULL);
+  basedir_group= g_option_group_new("basedir", basedir_description,
+                                     help_basedir, NULL, NULL);
+  if (!basedir_group)
+    goto mem_error;
+  debug_group= g_option_group_new("debug", debug_description,
+                                  help_debug, NULL, NULL);
+  if (!debug_group)
+    goto mem_error;
+  g_option_group_add_entries(debug_group, debug_entries);
+  g_option_context_add_group(context, debug_group);
+  g_option_group_add_entries(basedir_group, basedir_entries);
+  g_option_context_add_group(context, basedir_group);
+  if (!g_option_context_parse(context, &argc, &argv, &error))
+    goto parse_error;
+  g_option_context_free(context);
+
+  if (glob_core)
+  {
+    ic_generate_core_files();
+  }
+
+  if (ic_glob_daemonize && daemon_program)
+  {
+    /**
+     * First step of daemonize handles the creation of a new process
+     * detached from the original process and closes all files and
+     * stdin, stdout and stderr is mapped to /dev/null.
+     */
+    if ((ret_code= ic_daemonize()))
+      goto error;
+    ic_set_stdout_null();
+  }
+  ic_set_umask();
+
+  /**
+   * We need to setup the working directory before we initialise the
+   * debugging to ensure that we put the debug log in the proper
+   * working directory so that we can find it together with the
+   * other output files.
+   *
+   * After initialising the debug subsystem we have to report the
+   * allocated memory for the working directory so that we don't
+   * lose track of it.
+   *
+   * For normal programs that aren't daemon programs (like ic_bootstrap,
+   * ic_client and so forth) we simply set the current directory as the
+   * working directory and we do not change the working directory.
+   */
+
+  if (daemon_program)
+  {
+    if ((ret_code= ic_set_working_dir(&ic_glob_working_dir,
+                                      ic_glob_node_id,
+                                      daemonize_second_phase)))
+      goto error;
+
+    if ((ret_code= ic_setup_workdir(ic_glob_working_dir.str)))
+      goto error;
+  }
+
+  if ((ret_code= ic_init()))
+    goto error;
+
+  atexit(ic_end_fe_no_param);
+  ic_set_sig_error_handler(ic_end_fe, NULL);
+  ic_set_die_handler(ic_end_fe, NULL);
+
+  /**
+   * Report the working directory to our malloc check subsystem since we
+   * did the malloc before we initialised this subsystem.
+   * Not necessary for non-daemon programs since they set the working
+   * directory to a hard-coded value.
+   */
+  if (daemon_program)
+  {
+    ic_malloc_report(ic_glob_working_dir.str,
+                     (size_t)(ic_glob_working_dir.len + 1));
+  }
+
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Returning to ic_start_program"));
+  DEBUG_ENTRY("ic_start_program");
+#ifdef DEBUG_BUILD
+  DEBUG_PRINT(PROGRAM_LEVEL, ("daemon program is %s",
+                              daemon_program ? "true" : "false"));
+  DEBUG_PRINT(PROGRAM_LEVEL, ("argc = %d", argc));
+  for (i = 0; i < argc; i++)
+  {
+    DEBUG_PRINT(PROGRAM_LEVEL, ("argv[%d] = %s", i, argv[i]));
+  }
+#endif
+  ic_glob_byte_order= ic_byte_order();
+  if ((ret_code= ic_set_data_dir(&ic_glob_data_dir, TRUE)) ||
+      /* Program name not used for stdout file of node processes */
+      (ret_code= ic_set_out_file(&ic_glob_stdout_file,
+                                ic_glob_node_id,
+                                NULL,
+                                TRUE,
+                                TRUE)) ||
+      /* Program name not used for pid file of node processes */
+      (ret_code= ic_set_out_file(&ic_glob_pid_file,
+                                ic_glob_node_id,
+                                NULL,
+                                TRUE,
+                                FALSE)) ||
+      (ret_code= ic_set_config_dir(&ic_glob_config_dir,
+                                   is_cluster_server,
+                                   ic_glob_node_id)) ||
+      (ret_code= ic_set_base_dir(&ic_glob_base_dir)) ||
+      (ret_code= ic_set_binary_dir(&ic_glob_binary_dir,
+                                   IC_VERSION_STR)))
+    goto late_error;
+  ic_set_port_binary_dir(ic_glob_binary_dir.str);
+  ic_set_port_config_dir(ic_glob_config_dir.str);
+  ic_glob_process_name= program_name;
+
+  if (daemonize_second_phase && ic_glob_daemonize && daemon_program)
+  {
+    /**
+     * Second step of daemonization after initialising the iClaustron
+     * subsystems sets up a proper stdout and stderr files and writes
+     * the pid file to ensure that the process controller can see that
+     * we exist and know our PID.
+     */
+    if ((ret_code= ic_setup_stdout(ic_glob_stdout_file.str)))
+      goto late_error;
+    if ((ret_code= ic_write_pid_file(ic_glob_pid_file.str)))
+      goto late_error;
+    print_start_program(program_name);
+  }
+  if (!ic_glob_daemonize || !daemon_program)
+  {
+    print_start_program(program_name);
+  }
+  DEBUG_RETURN_INT(0);
+
+parse_error:
+  ic_printf("No such program option: %s", error->message);
+  goto error;
+
+mem_error:
+  ic_printf("Memory allocation error");
+  goto error;
+
+late_error:
+  DEBUG_PRINT(PROGRAM_LEVEL, ("Late error in start program: %d", ret_code));
+  DEBUG_RETURN_INT(ret_code);
+
+error:
+  return ret_code;
+}
+
+static int ic_inited= 0;
+
+static int
+ic_init()
+{
+  int ret_value;
+
+  DEBUG_OPEN(ic_glob_node_id);
+  DEBUG_ENTRY("ic_init");
+
+  ic_port_init();
+  if (use_config_vars)
+  {
+    if ((ret_value= ic_init_config_parameters()))
+    {
+      ic_end();
+      DEBUG_RETURN_INT(ret_value);
+    }
+  }
+  if ((ret_value= ic_ssl_init()))
+  {
+    ic_end();
+    DEBUG_RETURN_INT(ret_value);
+  }
+  ic_inited= 1;
+  DEBUG_RETURN_INT(0);
+}
+
+static void
+ic_end_fe_no_param(void)
+{
+  ic_end_fe(NULL);
+}
+
+static void
+ic_end_fe(void *param)
+{
+  (void)param;
+  if (ic_glob_pid_file.str)
+  {
+    ic_delete_daemon_file(ic_glob_pid_file.str);
+  }
+}
+
+void ic_end()
+{
+  if (ic_inited == 0)
+  {
+    return;
+  }
+  DEBUG_ENTRY("ic_end");
+
+  if (use_config_vars)
+  {
+    ic_destroy_conf_hash();
+  }
+  ic_ssl_end();
+  if (ic_glob_base_dir.str)
+  {
+    ic_free(ic_glob_base_dir.str);
+    ic_glob_base_dir.str= NULL;
+  }
+  if (ic_glob_config_dir.str)
+  {
+    ic_free(ic_glob_config_dir.str);
+    ic_glob_config_dir.str= NULL;
+  }
+  if (ic_glob_data_dir.str)
+  {
+    ic_free(ic_glob_data_dir.str);
+    ic_glob_data_dir.str= NULL;
+  }
+  if (ic_glob_binary_dir.str)
+  {
+    ic_free(ic_glob_binary_dir.str);
+    ic_glob_binary_dir.str= NULL;
+  }
+  if (ic_glob_working_dir.str)
+  {
+    ic_free(ic_glob_working_dir.str);
+    ic_glob_working_dir.str= NULL;
+  }
+  if (ic_glob_stdout_file.str)
+  {
+    ic_free(ic_glob_stdout_file.str);
+    ic_glob_stdout_file.str= NULL;
+  }
+  if (ic_glob_pid_file.str)
+  {
+    ic_delete_daemon_file(ic_glob_pid_file.str);
+    ic_free(ic_glob_pid_file.str);
+    ic_glob_pid_file.str= NULL;
+  }
+  ic_stop_socket_system();
+  ic_port_end();
+  DEBUG_CLOSE;
+  ic_inited= 0;
+}

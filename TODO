@@ -1,0 +1,35 @@
+1) Implement first step of Data API
+2) Add management functionality for Cluster Manager
+3) Implement Process Controller and add support for it from Cluster Manager
+4) Implement FUSE File Server
+5) Portability to Windows
+6) Portability to FreeBSD
+7) Update protocol for Cluster Server
+8) Implement second step of Data API
+9) Test Support using CMake
+10) Cluster installation script
+11) Packages for Windows, Debian, Red Hat, OpenSolaris
+12) Implement BLOB support in NDB
+13) Mapping from File Layout to Clusters
+14) Optimise iClaustron and NDB
+15) Document iClaustron and its changes to NDB
+16) Release iClaustron
+17) Implement Graphical User interface
+18) Implement iClaustron Replication Server
+
+Implemented already
+-------------------
+1) Basic Cluster Server
+2) Basic Configuration Reader from network
+3) Startup and lower levels of Data API
+4) Stub of Process Controller
+5) Portability to Linux
+6) Portability to Mac OS X
+7) Portability to Solaris
+8) Cluster Client implemented
+9) Framework for Cluster Manager
+10) Build Framework for configure
+11) Build Framework for CMake (stub for Windows portability)
+12) Prepared for Portability to FreeBSD
+13) First step of distributed installation script
+14) A number of utilities

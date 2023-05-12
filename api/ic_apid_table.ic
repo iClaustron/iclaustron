@@ -1,0 +1,1554 @@
+/* Copyright (C) 2009-2014 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/**
+  Table bind is implemented in a number of levels. We keep a hash
+  table of table definitions in each IC_APID_CONNECTION object.
+  These table definitions are actually shared with all other
+  IC_APID_CONNECTION objects. Each object has a reference count to
+  ensure it isn't released before each IC_APID_CONNECTION has removed
+  their reference to the object. Before using an object one always
+  checks that the object is still valid, whenever a user of the
+  object discovers that it is no longer valid, it marks the object
+  as invalid.
+
+  When a new table object needs to be allocated only one IC_APID_CONNECTION
+  object will perform the actual creation of the object and all others
+  will hang on a conditional wait until the creation is completed.
+
+  When we don't find an object in the local hash table we proceed as follows:
+  1) Acquire a mutex on the cluster context
+  2) Check if we can find the object in the cluster hash table
+     If we can't find such an object proceed to description below
+  3) Check if found object is in creation state
+     If it is, place us in the wait queue for it to be created and wait
+     using a conditional wait until this object is created.
+     If the object is an object that is properly created then we add one
+     to the reference count and release the mutex and proceeed to place
+     the object in our local hash table. The same also happens after our
+     conditional wait if the creation was successful.
+
+  Whenever we need to insert a new object into the cluster area we proceed
+  as follows:
+  1) Acquire a mutex on the cluster context
+  2) Create a fake table definition and place this into the cluster hash
+     table. The only relevant information in this table definition is its
+     state as under construction and it will also contains links to any
+     other IC_APID_CONNECTION waiting for the real metadata object to be
+     created. A small variation on this theme is when we need to replace the
+     old metadata object with a new one. In this case the old object is the
+     fake object in a sense.
+
+  Analysis of performance of table_bind:
+
+  In the normal case there will only be a hash lookup in a local hash table
+  before we have found the metadata object. There is a cost attached to
+  creating new objects, but this cost is only taken once per object in the
+  process. The same object is reused then by all cluster objects.
+
+  The same happens when a metadata object is changed, in this case someone
+  will discover that the object is no longer valid and will place a marker
+  on the object to indicate object is no longer valid. This marker isn't
+  protected by mutex since using an old object will be discovered by the
+  NDB kernel.
+
+  Whenever an object is deemed invalid it is taken out of the cluster hash
+  table and placed in a special list of old metadata objects. This list
+  is used to ensure that we will always fully clean up in all cases even
+  when the application doesn't perform a nice cleanup.
+*/
+
+static gchar*
+create_search_name(gchar *buf,
+                   guint32 buf_size,
+                   guint32 num_names,
+                   const gchar **name)
+{
+  guint32 name_len[8];
+  guint32 i;
+  gchar *buf_ptr= buf;
+  guint32 total_len= 0;
+
+  if (num_names > 8)
+    return NULL;
+  for (i= 0; i < num_names; i++)
+  {
+    name_len[i]= strlen(name[i]);
+    total_len+= name_len[i];
+  }
+
+  if (total_len >= buf_size)
+    return NULL;
+
+  for (i= 0; i < num_names; i++)
+  {
+    memcpy(buf_ptr, name[i], name_len[i]);
+    buf_ptr+= name_len[i];
+  }
+  buf[total_len]= 0; /* Create null-terminated string */
+  return buf;
+}
+
+static IC_INT_TABLE_DEF*
+create_fake_table_def(IC_APID_CLUSTER_DATA *clu_data,
+                      const IC_STRING *name_str);
+
+/**
+  The updates made here are protected by keeping the mutex on the
+  IC_APID_CLUSTER_DATA.
+*/
+static void
+insert_in_create_wait_list(IC_INT_APID_CONNECTION *apid_conn,
+                           IC_INT_TABLE_DEF *table_def)
+{
+  if (table_def->first_wait_get_table)
+  {
+    table_def->last_wait_get_table->next_wait_get_table= apid_conn;
+    table_def->last_wait_get_table= apid_conn;
+  }
+  else
+  {
+    table_def->first_wait_get_table= apid_conn;
+    table_def->last_wait_get_table= apid_conn;
+  }
+}
+
+static void
+wake_up_get_table_waiters(IC_INT_TABLE_DEF *table_def)
+{
+  IC_INT_APID_CONNECTION *apid_conn;
+
+  apid_conn= table_def->first_wait_get_table;
+  while (apid_conn)
+  {
+    ic_cond_signal(apid_conn->signal);
+    apid_conn= apid_conn->next_wait_get_table;
+  }
+  table_def->first_wait_get_table= NULL;
+  table_def->last_wait_get_table= NULL;
+}
+
+static IC_APID_CLUSTER_DATA*
+get_cluster_data(IC_INT_APID_CONNECTION *apid_conn,
+                 guint32 cluster_id)
+{
+  IC_INT_APID_GLOBAL *apid_global= apid_conn->apid_global;
+  IC_APID_CLUSTER_DATA *clu_data;
+
+  ic_require(cluster_id <= apid_global->max_cluster_id);
+  clu_data= apid_global->cluster_data_array[cluster_id];
+  ic_require(clu_data != NULL);
+  return clu_data;
+}
+
+static void
+dec_table_ref_count(IC_INT_TABLE_DEF *loc_table_def,
+                    IC_APID_CLUSTER_DATA *clu_data)
+{
+  ic_mutex_lock(clu_data->mutex);
+  loc_table_def->ref_count--;
+  if (loc_table_def->ref_count == 0)
+  {
+    /**
+      We are the last to remove our reference to this object, we will
+      deallocate the object.
+    */
+    loc_table_def->mc_ptr->mc_ops.ic_mc_free(loc_table_def->mc_ptr);
+  }
+  ic_mutex_unlock(clu_data->mutex);
+}
+
+static int
+md_bind_table_bind(IC_APID_CONNECTION *ext_apid_conn,
+                   IC_METADATA_TRANSACTION *ext_md_trans,
+                   IC_TABLE_DEF **table_def,
+                   const gchar *schema_name,
+                   const gchar *db_name,
+                   const gchar *table_name)
+{
+  int ret_code;
+  const gchar *name_array[3];
+  IC_INT_TABLE_DEF *loc_table_def;
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  gchar buf[IC_MAX_TABLE_NAME_SIZE];
+  gchar *name_ptr;
+  IC_STRING name_str;
+  IC_APID_CLUSTER_DATA *clu_data;
+  IC_INT_METADATA_TRANSACTION *md_trans =
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  guint32 cluster_id = md_trans->cluster_id;
+  DEBUG_ENTRY("md_bind_table_bind");
+
+  /* Verify that we can use this cluster id in this connection */
+
+  /* Create a search string using the metadata object name */
+  name_array[0]= schema_name;
+  name_array[1]= db_name;
+  name_array[2]= table_name;
+  if (!(name_ptr= create_search_name(buf,
+                                     (guint32)IC_MAX_TABLE_NAME_SIZE,
+                                     (guint32)3,
+                                     &name_array[0])))
+  {
+    DEBUG_RETURN_INT(IC_ERROR_TOO_LONG_TABLE_NAME);
+  }
+  IC_HASHTABLE *md_hash = apid_conn->md_hash[cluster_id];
+  IC_INIT_STRING(&name_str, name_ptr, strlen(name_ptr), TRUE);
+  if ((loc_table_def= ic_hashtable_search(md_hash,
+                                          (void*)&name_str)))
+  {
+    /**
+      We found a local table definition, we can simply use this, it's ready
+      to go.
+    */
+    if (loc_table_def->valid)
+      goto end;
+
+    /**
+      Someone has invalidated the table definition, we will remove our
+      instance of this table definition and then proceed as if we had
+      no local instance.
+    */
+    clu_data= get_cluster_data(apid_conn, cluster_id);
+    ic_hashtable_remove(md_hash, (void*)&name_str);
+    dec_table_ref_count(loc_table_def, clu_data);
+    /**
+      We will proceed now as if we didn't have any local reference to
+      begin with.
+    */
+  }
+
+  /**
+    We found no table definition locally, let's first see if we have one
+    stored globally.
+  */
+  clu_data= get_cluster_data(apid_conn, cluster_id);
+  ic_mutex_lock(clu_data->mutex);
+  if ((loc_table_def= ic_hashtable_search(clu_data->cluster_md_hash,
+                                          (void*)&name_str)))
+  {
+    /**
+      We found a global definition, place the global definition in the
+      local hash table and proceed, first we need to increment the
+      reference count to ensure that no one removes the object.
+    */
+    loc_table_def->ref_count++;
+    if (loc_table_def->create_state == MD_TABLE_IN_CREATION)
+    {
+      /**
+        We found an object which is currently being created. We will
+        place ourselves in the queue on this object to be woken up
+        when the object is created or failed to be created.
+      */
+      if (loc_table_def->ret_code)
+      {
+        /**
+          The creation have already failed, report error code and
+          be done with it.
+        */
+        ret_code= loc_table_def->ret_code;
+        goto error;
+      }
+      insert_in_create_wait_list(apid_conn, loc_table_def);
+      ic_cond_wait(apid_conn->signal, clu_data->mutex);
+      /**
+         The creation is either successfully completed or failed. We will
+         continue and report to the application level.
+      */
+      if (loc_table_def->ret_code)
+      {
+        /* Creation failed */
+        ret_code= loc_table_def->ret_code;
+        goto error;
+      }
+    }
+    ic_require(loc_table_def->create_state == MD_TABLE_CREATED);
+    if (!(ret_code= ic_hashtable_insert(md_hash,
+                                        (void*)&name_str,
+                                        (void*)loc_table_def)))
+    {
+      /*
+        We failed to insert it locally, we will report this as an
+        error to the application level.
+      */
+      goto error;
+    }
+    ic_mutex_unlock(clu_data->mutex);
+    /**
+      We found an object globally and successfully inserted it
+      locally, we will now return to the application level and
+      provide them with the requested object.
+    */
+    goto end;
+  }
+  else
+  {
+    /**
+      We also found no object globally, we will now proceed by first
+      creating a fake object that contains the state of being in
+      creation mode.
+
+      Other old objects could exist as well, but in this case they are
+      immediately removed from the cluster hash table, only valid objects
+      and objects still under creation are stored in this cluster hash table.
+    */
+    loc_table_def= create_fake_table_def(clu_data, &name_str);
+    ic_mutex_unlock(clu_data->mutex);
+  }
+end:
+  *table_def= (IC_TABLE_DEF*)loc_table_def;
+  DEBUG_RETURN_INT(0);
+
+error:
+  ic_mutex_unlock(clu_data->mutex);
+  dec_table_ref_count(loc_table_def, clu_data);
+  DEBUG_RETURN_INT(loc_table_def->ret_code);
+}
+
+static int
+md_bind_index_bind(IC_APID_CONNECTION *apid_conn,
+                   IC_METADATA_TRANSACTION *md_trans_obj,
+                   IC_TABLE_DEF **table_def,
+                   const gchar *schema_name,
+                   const gchar *db_name,
+                   const gchar *table_name,
+                   const gchar *index_name)
+{
+  (void)apid_conn;
+  (void)md_trans_obj;
+  (void)table_def;
+  (void)schema_name;
+  (void)db_name;
+  (void)table_name;
+  (void)index_name;
+  return 0;
+}
+
+static int
+md_bind_table_unbind(IC_APID_CONNECTION *apid_conn,
+                     IC_TABLE_DEF *table_def)
+{
+  (void)apid_conn;
+  (void)table_def;
+  return 0;
+}
+
+static IC_METADATA_BIND_OPS glob_metadata_bind_ops=
+{
+  /* .ic_table_bind              = */ md_bind_table_bind,
+  /* .ic_index_bind              = */ md_bind_index_bind,
+  /* .ic_table_unbind            = */ md_bind_table_unbind
+};
+
+/*
+  MODULE: Table definition interface
+  ----------------------------------
+  This module implements the IC_TABLE_DEF interface which is used to fetch
+  metadata about a table, its indexes and its fields.
+*/
+
+static IC_FIELD_DEF*
+get_field_def_from_hash(IC_TABLE_DEF *ext_table_def,
+                        const gchar *field_name)
+{
+  IC_INT_TABLE_DEF *table_def = (IC_INT_TABLE_DEF*)ext_table_def;
+  return (IC_FIELD_DEF*)ic_hashtable_search(table_def->field_hash,
+                                            (void*)field_name);
+}
+
+static IC_FIELD_DEF*
+get_field_def_from_index(IC_TABLE_DEF *ext_table_def,
+                         const guint32 field_id)
+{
+  IC_INT_TABLE_DEF *table_def = (IC_INT_TABLE_DEF*)ext_table_def;
+  IC_FIELD_DEF *field;
+
+  if (field_id < table_def->num_fields)
+  {
+    return NULL;
+  }
+  if (!(field= table_def->fields[field_id]))
+  {
+    return NULL;
+  }
+  return field;
+}
+
+static int
+table_def_get_table_id(IC_TABLE_DEF *ext_table_def,
+                       guint32 *table_id)
+{
+  IC_INT_TABLE_DEF *table_def = (IC_INT_TABLE_DEF*)ext_table_def;
+  *table_id= table_def->table_id;
+  return 0;
+}
+
+static int
+table_def_get_field_id(IC_TABLE_DEF *table_def,
+                       const gchar *field_name,
+                       guint32 *field_id)
+{
+  IC_FIELD_DEF *field;
+
+  if (!(field= get_field_def_from_hash(table_def, field_name)))
+  {
+    return IC_ERROR_FIELD_NOT_DEFINED;
+  }
+  *field_id= field->field_id;
+  return 0;
+}
+
+static int
+table_def_get_field_name(IC_TABLE_DEF *table_def,
+                         guint32 field_id,
+                         gchar **field_name)
+{
+  IC_FIELD_DEF *field;
+
+  if (!(field= get_field_def_from_index(table_def, field_id)))
+  {
+    return IC_ERROR_FIELD_NOT_DEFINED;
+  }
+  *field_name= field->field_name;
+  return 0;
+}
+
+static int
+table_def_get_field_type(IC_TABLE_DEF *table_def,
+                         guint32 field_id,
+                         IC_FIELD_TYPE *field_data_type)
+{
+  IC_FIELD_DEF *field;
+
+  if (!(field= get_field_def_from_index(table_def, field_id)))
+  {
+    return IC_ERROR_FIELD_NOT_DEFINED;
+  }
+  *field_data_type= field->field_type;
+  return 0;
+}
+
+static int
+table_def_get_field_len(IC_TABLE_DEF *table_def,
+                        guint32 field_id,
+                        guint32 *field_len)
+{
+  (void)table_def;
+  (void)field_id;
+  (void)field_len;
+  return 0;
+}
+
+static int
+table_def_get_buf(IC_TABLE_DEF *table_def,
+                  IC_BITMAP *used_fields,
+                  gchar **data_buffer,
+                  guint8 **null_buffer,
+                  guint32 *data_buffer_size,
+                  guint32 *null_buffer_size)
+{
+  (void)table_def;
+  (void)used_fields;
+  (void)data_buffer;
+  (void)null_buffer;
+  (void)data_buffer_size;
+  (void)null_buffer_size;
+  return 0;
+}
+
+static int
+table_def_get_buf_offset(IC_TABLE_DEF *table_def,
+                         guint32 field_id,
+                         guint32 *offset,
+                         guint32 *null_bit_offset)
+{
+  (void)table_def;
+  (void)field_id;
+  (void)offset;
+  (void)null_bit_offset;
+  return 0;
+}
+
+static IC_TABLE_DEF_OPS glob_table_def_ops=
+{
+  /* .ic_get_table_id             = */ table_def_get_table_id,
+  /* .ic_get_field_id             = */ table_def_get_field_id,
+  /* .ic_get_field_name           = */ table_def_get_field_name,
+  /* .ic_get_field_type           = */ table_def_get_field_type,
+  /* .ic_get_field_len            = */ table_def_get_field_len,
+  /* .ic_get_buf                  = */ table_def_get_buf,
+  /* .ic_get_buf_offset           = */ table_def_get_buf_offset
+};
+
+static int
+index_def_get_index_id(IC_INDEX_DEF *index_def,
+                       guint32 *index_id)
+{
+  (void)index_def;
+  (void)index_id;
+  return 0;
+}
+
+static int
+index_def_get_table_id(IC_INDEX_DEF *index_def,
+                       guint32 *table_id)
+{
+  (void)index_def;
+  (void)table_id;
+  return 0;
+}
+
+static int
+index_def_get_num_key_fields(IC_INDEX_DEF *index_def,
+                             guint32 *num_key_fields)
+{
+  (void)index_def;
+  (void)num_key_fields;
+  return 0;
+}
+
+static int
+index_def_get_key_field_id(IC_INDEX_DEF *index_def,
+                           guint32 key_field_id_order,
+                           guint32 *field_id)
+{
+  (void)index_def;
+  (void)key_field_id_order;
+  (void)field_id;
+  return 0;
+}
+
+static IC_INDEX_DEF_OPS glob_index_def_ops=
+{
+  /* .ic_get_index_id           = */ index_def_get_index_id,
+  /* .ic_get_table_id           = */ index_def_get_table_id,
+  /* .ic_get_num_key_fields     = */ index_def_get_num_key_fields,
+  /* .ic_get_key_field_id       = */ index_def_get_key_field_id
+};
+
+
+/* Find field/index in list added/dropped fields/indexes */
+static IC_DEFINE_FIELD*
+find_field_in_add_field(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
+{
+  IC_DEFINE_FIELD *def_type;
+  DEBUG_ENTRY("find_field_in_add_field");
+
+  FOR_EACH_SLL(def_type, alter_table, add_field)
+  {
+    if (strcmp(def_type->name, name) == 0)
+      DEBUG_RETURN_PTR(def_type);
+  }
+  DEBUG_RETURN_PTR(NULL);
+}
+
+static IC_DEFINE_FIELD*
+find_field_in_drop_field(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
+{
+  IC_DEFINE_FIELD *def_type;
+  DEBUG_ENTRY("find_field_in_drop_field");
+
+  FOR_EACH_SLL(def_type, alter_table, drop_field)
+  {
+    if (strcmp(def_type->name, name) == 0)
+      DEBUG_RETURN_PTR(def_type);
+  }
+  DEBUG_RETURN_PTR(NULL);
+}
+
+static IC_DEFINE_INDEX*
+find_index_in_add_index(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
+{
+  IC_DEFINE_INDEX *def_type;
+  DEBUG_ENTRY("find_index_in_add_index");
+
+  FOR_EACH_SLL(def_type, alter_table, add_index)
+  {
+    if (strcmp(def_type->name, name) == 0)
+      DEBUG_RETURN_PTR(def_type);
+  }
+  DEBUG_RETURN_PTR(NULL);
+}
+
+static IC_DEFINE_INDEX*
+find_index_in_drop_index(IC_INT_ALTER_TABLE *alter_table, const gchar *name)
+{
+  IC_DEFINE_INDEX *def_type;
+  DEBUG_ENTRY("find_index_in_drop_index");
+
+  FOR_EACH_SLL(def_type, alter_table, drop_index)
+  {
+    if (strcmp(def_type->name, name) == 0)
+      DEBUG_RETURN_PTR(def_type);
+  }
+  DEBUG_RETURN_PTR(NULL);
+}
+
+/* Check if field type can have a character set defined */
+static inline gboolean
+is_charset_field(IC_FIELD_TYPE field_type)
+{
+  switch (field_type)
+  {
+    case IC_API_LONG_VARCHAR:
+    case IC_API_VARCHAR:
+    case IC_API_CHAR:
+      return TRUE;
+    default:
+      return FALSE;
+  }
+}
+
+/* Check if field type is of decimal type */
+static inline gboolean
+is_decimal_field(IC_FIELD_TYPE field_type)
+{
+  switch (field_type)
+  {
+    case IC_API_DECIMAL:
+    case IC_API_DECIMAL_UNSIGNED:
+      return TRUE;
+    default:
+      return FALSE;
+  }
+}
+
+/* Allocate an IC_DEFINE_FIELD and its name */
+static IC_DEFINE_FIELD*
+allocate_def_field(IC_INT_ALTER_TABLE *alter_table, const gchar *field_name)
+{
+  guint32 field_name_len;
+  IC_DEFINE_FIELD *def_field;
+  int size;
+  DEBUG_ENTRY("allocate_def_field");
+
+  field_name_len= strlen(field_name);
+  size= sizeof(IC_DEFINE_FIELD) + field_name_len + 1;
+  if (!(def_field= (IC_DEFINE_FIELD*)
+      alter_table->mc_ptr->mc_ops.ic_mc_calloc(alter_table->mc_ptr, size)))
+    DEBUG_RETURN_PTR(NULL);
+  def_field->name= (gchar*)def_field + sizeof(IC_DEFINE_FIELD);
+  memcpy(def_field->name, field_name, field_name_len);
+  DEBUG_RETURN_PTR(def_field);
+}
+
+/* Allocate an IC_DEFINE_INDEX, place for name and array of fields */
+static IC_DEFINE_INDEX*
+allocate_def_index(IC_INT_ALTER_TABLE *alter_table,
+                   guint32 num_fields,
+                   const gchar *index_name)
+{
+  guint32 index_name_len;
+  IC_DEFINE_INDEX *def_index;
+  int size;
+  gchar *ptr;
+  DEBUG_ENTRY("allocate_def_index");
+
+  index_name_len= strlen(index_name);
+  size= sizeof(IC_DEFINE_INDEX) + index_name_len + 1;
+  size+= num_fields * sizeof(IC_DEFINE_FIELD*);
+  if (!(def_index= (IC_DEFINE_INDEX*)
+      alter_table->mc_ptr->mc_ops.ic_mc_calloc(alter_table->mc_ptr, size)))
+    DEBUG_RETURN_PTR(NULL);
+  ptr= (gchar*)def_index;
+  ptr+= sizeof(IC_DEFINE_INDEX);
+  def_index->def_fields= (IC_DEFINE_FIELD**)ptr;
+  ptr+= num_fields * sizeof(IC_DEFINE_FIELD*);
+  def_index->name= ptr;
+  memcpy(def_index->name, index_name, index_name_len);
+  DEBUG_RETURN_PTR(def_index);
+}
+
+static int
+add_slash(IC_STRING *dest_str, IC_MEMORY_CONTAINER *mc_ptr)
+{
+  IC_STRING in_str;
+  gchar *slash_str= "/";
+
+  IC_INIT_STRING(&in_str, slash_str, strlen(slash_str), TRUE);
+  if (ic_mc_add_ic_string(mc_ptr, dest_str, &in_str))
+    return TRUE;
+  return FALSE;
+}
+
+static int
+set_table_name(IC_INT_ALTER_TABLE *alter_table,
+               gchar **full_table_name,
+               const gchar *schema_name,
+               const gchar *db_name,
+               const gchar *table_name)
+{
+  IC_STRING dest_str, in_str;
+  IC_MEMORY_CONTAINER *mc_ptr= alter_table->mc_ptr;
+  int ret_code= 0;
+  DEBUG_ENTRY("set_table_name");
+
+  IC_INIT_STRING(&dest_str, NULL, 0, TRUE);
+  if (schema_name)
+  {
+    IC_INIT_STRING(&in_str, (gchar*)schema_name, strlen(schema_name), TRUE);
+    if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
+      goto mem_error;
+    if (add_slash(&dest_str, mc_ptr))
+      goto mem_error;
+  }
+  else
+  {
+    ret_code= IC_ERROR_MISSING_SCHEMA_NAME;
+    goto end;
+  }
+  if (db_name)
+  {
+    IC_INIT_STRING(&in_str, (gchar*)db_name, strlen(db_name), TRUE);
+    if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
+      goto mem_error;
+    if (add_slash(&dest_str, mc_ptr))
+      goto mem_error;
+  }
+  else
+  {
+    ret_code= IC_ERROR_MISSING_DATABASE_NAME;
+    goto end;
+  }
+  if (table_name)
+  {
+    IC_INIT_STRING(&in_str, (gchar*)table_name, strlen(table_name), TRUE);
+    if (ic_mc_add_ic_string(mc_ptr, &dest_str, &in_str))
+      goto mem_error;
+  }
+  else
+  {
+    ret_code= IC_ERROR_MISSING_TABLE_NAME;
+    goto end;
+  }
+  *full_table_name= dest_str.str;
+end:
+  DEBUG_RETURN_INT(ret_code);
+mem_error:
+  ret_code= IC_ERROR_MEM_ALLOC;
+  goto end;
+}
+
+/*
+  Implements ic_add_field method. Set characteristics common for
+  all fields. Check first that field isn't already defined.
+*/
+static int
+at_add_field(IC_ALTER_TABLE *ext_alter_table,
+             const gchar *field_name,
+             IC_FIELD_TYPE field_type,
+             guint32 array_size,
+             gboolean is_nullable,
+             gboolean is_field_disk_stored)
+{
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  IC_DEFINE_FIELD *def_field;
+  int ret_code= 0;
+  guint32 field_size;
+  DEBUG_ENTRY("at_add_field");
+
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
+  if ((def_field= find_field_in_add_field(alter_table, field_name)))
+  {
+    ret_code= IC_ERROR_FIELD_ALREADY_DEFINED;
+    goto end;
+  }
+  if (!(def_field= allocate_def_field(alter_table, field_name)))
+  {
+    ret_code= IC_ERROR_MEM_ALLOC;
+    goto end;
+  }
+
+  def_field->type= field_type;
+  switch (field_type)
+  {
+    /* Set field size according to data type for integer types */
+    case IC_API_TINY_INT:
+    case IC_API_TINY_UNSIGNED:
+      field_size= 1;
+      break;
+    case IC_API_SMALL_INT:
+    case IC_API_SMALL_UNSIGNED:
+      field_size= 2;
+      break;
+    case IC_API_MEDIUM_INT:
+    case IC_API_MEDIUM_UNSIGNED:
+      field_size= 1;
+      array_size*= 3;
+      break;
+    case IC_API_INT:
+    case IC_API_UNSIGNED:
+      field_size= 4;
+      break;
+    case IC_API_BIG_INT:
+    case IC_API_BIG_UNSIGNED:
+      field_size= 8;
+      break;
+    case IC_API_FLOAT:
+      field_size= 4;
+      break;
+    case IC_API_DOUBLE:
+      field_size= 8;
+      break;
+    case IC_API_BIT:
+      field_size= 0;
+      break;
+    case IC_API_CHAR:
+    case IC_API_VARCHAR:
+    case IC_API_BINARY:
+    case IC_API_VARBINARY:
+    case IC_API_BLOB:
+    case IC_API_TEXT:
+      field_size= 1;
+      break;
+    case IC_API_DATE:
+      field_size= 1;
+      array_size*= 3;
+      break;
+    case IC_API_DATETIME:
+      field_size= 1;
+      array_size*= 8;
+      break;
+    case IC_API_TIME:
+      field_size= 1;
+      array_size*= 3;
+      break;
+    case IC_API_YEAR:
+      field_size= 1;
+      break;
+    case IC_API_DECIMAL:
+    case IC_API_DECIMAL_UNSIGNED:
+      field_size= 1;
+      break;
+    default:
+      ret_code= IC_ERROR_NO_SUCH_DATA_TYPE;
+      goto end;
+  }
+  def_field->size= field_size;
+  def_field->array_size= array_size;
+  def_field->is_nullable= is_nullable;
+  def_field->is_field_disk_stored= is_field_disk_stored;
+  alter_table->num_fields++;
+  if (is_field_disk_stored)
+    alter_table->is_table_disk_stored= TRUE;
+  IC_INSERT_SLL(alter_table, def_field, add_field);
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_set_charset method. Set character set id on field.  */
+static int
+at_set_charset(IC_ALTER_TABLE *ext_alter_table,
+               const gchar *field_name,
+               guint32 cs_id)
+{
+  int ret_code= 0;
+  IC_DEFINE_FIELD *def_field;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_set_charset");
+
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
+  if ((def_field= find_field_in_add_field(alter_table, field_name)))
+  {
+    ret_code= IC_ERROR_FIELD_NOT_DEFINED;
+    goto end;
+  }
+  if (!is_charset_field(def_field->type))
+  {
+    ret_code= IC_ERROR_NOT_A_CHARSET_FIELD;
+    goto end;
+  }
+  def_field->charset_id= cs_id;
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_set_decimal_field method. Sets scale and precision */
+static int
+at_set_decimal_field(IC_ALTER_TABLE *ext_alter_table,
+                     const gchar *field_name,
+                     guint32 scale,
+                     guint32 precision)
+{
+  int ret_code= 0;
+  IC_DEFINE_FIELD *def_field;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_set_decimal_field");
+
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
+  if ((def_field= find_field_in_add_field(alter_table, field_name)))
+  {
+    ret_code= IC_ERROR_FIELD_NOT_DEFINED;
+    goto end;
+  }
+  if (!is_decimal_field(def_field->type))
+  {
+    ret_code= IC_ERROR_NOT_A_DECIMAL_FIELD;
+    goto end;
+  }
+  def_field->scale= scale;
+  def_field->precision= precision;
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_drop_field method */
+static int
+at_drop_field(IC_ALTER_TABLE *ext_alter_table,
+              const gchar *field_name)
+{
+  int ret_code= 0;
+  IC_DEFINE_FIELD *def_field;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_drop_field");
+
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
+  if (alter_table->alter_op_type == IC_CREATE_TABLE_OP)
+  {
+    return IC_ERROR_ILLEGAL_MD_OPERATION_CREATE;
+    goto end;
+  }
+  if (!(def_field= find_field_in_add_field(alter_table, field_name)))
+  {
+    ret_code= IC_ERROR_FIELD_NOT_DEFINED;
+    goto end;
+  }
+  if ((def_field= find_field_in_drop_field(alter_table, field_name)))
+  {
+    ret_code= IC_ERROR_FIELD_ALREADY_DEFINED;
+    goto end;
+  }
+  if (!(def_field= allocate_def_field(alter_table, field_name)))
+  {
+    ret_code= IC_ERROR_MEM_ALLOC;
+    goto end;
+  }
+  IC_INSERT_SLL(alter_table, def_field, drop_field);
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_add_index method. */
+static int
+at_add_index(IC_ALTER_TABLE *ext_alter_table,
+             const gchar *index_name,
+             const gchar **field_names,
+             guint32 num_fields,
+             IC_INDEX_TYPE index_type,
+             gboolean is_null_values_in_index_allowed)
+{
+  guint32 i;
+  int ret_code= 0;
+  IC_DEFINE_INDEX *def_index;
+  IC_DEFINE_FIELD *def_field;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_add_index");
+
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    DEBUG_RETURN_INT(IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME);
+  if ((def_index= find_index_in_add_index(alter_table, index_name)))
+  {
+    ret_code= IC_ERROR_INDEX_ALREADY_DEFINED;
+    goto end;
+  }
+  if (!(def_index= allocate_def_index(alter_table,
+                                      num_fields,
+                                      index_name)))
+  {
+    ret_code= IC_ERROR_MEM_ALLOC;
+    goto end;
+  }
+  for (i= 0; i < num_fields; i++)
+  {
+    if (!(def_field= find_field_in_add_field(alter_table, field_names[i])))
+    {
+      ret_code= IC_ERROR_FIELD_NOT_DEFINED;
+      goto end;
+    }
+    if (index_type == IC_PRIMARY_KEY)
+    {
+      def_field->is_part_of_pkey= TRUE;
+    }
+    def_index->def_fields[i]= def_field;
+  }
+  def_index->num_fields= num_fields;
+  def_index->type= index_type;
+  def_index->is_null_values_in_index_allowed= is_null_values_in_index_allowed;
+  IC_INSERT_SLL(alter_table, def_index, add_index);
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_drop_index method. */
+static int
+at_drop_index(IC_ALTER_TABLE *ext_alter_table,
+              const gchar *index_name)
+{
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  IC_DEFINE_INDEX *def_index;
+  int ret_code= 0;
+  DEBUG_ENTRY("at_drop_index");
+
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
+    goto end;
+  }
+  if (alter_table->alter_op_type == IC_CREATE_TABLE_OP)
+  {
+    ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_CREATE;
+    goto end;
+  }
+  if (!(def_index= find_index_in_add_index(alter_table, index_name)))
+  {
+    ret_code= IC_ERROR_INDEX_NOT_DEFINED;
+    goto end;
+  }
+  if ((def_index= find_index_in_drop_index(alter_table, index_name)))
+  {
+    ret_code= IC_ERROR_INDEX_ALREADY_DEFINED;
+    goto end;
+  }
+  if (!(def_index= allocate_def_index(alter_table,
+                                     (guint32)0,
+                                     index_name)))
+  {
+    ret_code= IC_ERROR_MEM_ALLOC;
+    goto end;
+  }
+  IC_INSERT_SLL(alter_table, def_index, drop_index);
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_define_partitioning method */
+static int
+at_define_partitioning(IC_ALTER_TABLE *ext_alter_table,
+                       IC_PARTITION_TYPE partition_type,
+                       const gchar **field_names,
+                       guint32 num_fields,
+                       const gchar **partition_names,
+                       guint32 *map_partition_to_nodegroup,
+                       const gchar **map_partition_to_tablespace,
+                       guint32 num_partitions)
+{
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_define_partitioning");
+
+  (void)partition_type;
+  (void)field_names;
+  (void)num_fields;
+  (void)partition_names;
+  (void)map_partition_to_nodegroup;
+  (void)map_partition_to_tablespace;
+  (void)num_partitions;
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+      alter_table->alter_op_type != IC_ALTER_TABLE_OP)
+    DEBUG_RETURN_INT(IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME);
+  DEBUG_RETURN_INT(0);
+}
+
+/* Implements ic_create_table method */
+static int
+at_create_table(IC_ALTER_TABLE *ext_alter_table,
+                const gchar *schema_name,
+                const gchar *db_name,
+                const gchar *table_name,
+                const gchar *tablespace_name)
+{
+  int ret_code;
+  gchar *full_table_name;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_create_table");
+
+  (void)tablespace_name;
+  if ((ret_code= set_table_name(alter_table,
+                                &full_table_name,
+                                schema_name,
+                                db_name,
+                                table_name)))
+    goto end;
+  alter_table->table_name= full_table_name;
+  alter_table->alter_op_type= IC_CREATE_TABLE_OP;
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_drop_table method */
+static int
+at_drop_table(IC_ALTER_TABLE *ext_alter_table,
+              const gchar *schema_name,
+              const gchar *db_name,
+              const gchar *table_name)
+{
+  int ret_code;
+  gchar *full_table_name;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_drop_table");
+
+  if ((ret_code= set_table_name(alter_table,
+                                &full_table_name,
+                                schema_name,
+                                db_name,
+                                table_name)))
+    goto end;
+  alter_table->table_name= full_table_name;
+  alter_table->alter_op_type= IC_DROP_TABLE_OP;
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_alter_table method */
+static int
+at_alter_table(IC_ALTER_TABLE *ext_alter_table,
+               const gchar *schema_name,
+               const gchar *db_name,
+               const gchar *table_name)
+{
+  int ret_code;
+  gchar *full_table_name;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_alter_table");
+
+  if ((ret_code= set_table_name(alter_table,
+                                &full_table_name,
+                                schema_name,
+                                db_name,
+                                table_name)))
+    goto end;
+  alter_table->table_name= full_table_name;
+  alter_table->alter_op_type= IC_ALTER_TABLE_OP;
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+/* Implements ic_rename_table */
+static int
+at_rename_table(IC_ALTER_TABLE *ext_alter_table,
+                const gchar *old_schema_name,
+                const gchar *old_db_name,
+                const gchar *old_table_name,
+                const gchar *new_schema_name,
+                const gchar *new_db_name,
+                const gchar *new_table_name)
+{
+  int ret_code= IC_ERROR_MEM_ALLOC;
+  gchar *full_old_table_name;
+  gchar *full_new_table_name;
+  IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
+  DEBUG_ENTRY("at_rename_table");
+
+  if ((ret_code= set_table_name(alter_table,
+                                &full_old_table_name,
+                                old_schema_name,
+                                old_db_name,
+                                old_table_name)))
+    goto end;
+  if ((ret_code= set_table_name(alter_table,
+                                &full_new_table_name,
+                                new_schema_name,
+                                new_db_name,
+                                new_table_name)))
+    goto end;
+
+  alter_table->old_table_name= full_old_table_name;
+  alter_table->table_name= full_new_table_name;
+  alter_table->alter_op_type= IC_RENAME_TABLE_OP;
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static IC_ALTER_TABLE_OPS glob_alter_table_ops=
+{
+  /* .ic_add_field              = */ at_add_field,
+  /* .ic_set_charset            = */ at_set_charset,
+  /* .ic_set_decimal_field      = */ at_set_decimal_field,
+  /* .ic_drop_field             = */ at_drop_field,
+  /* .ic_add_index              = */ at_add_index,
+  /* .ic_drop_index             = */ at_drop_index,
+  /* .ic_define_partitioning    = */ at_define_partitioning,
+  /* .ic_create_table           = */ at_create_table,
+  /* .ic_drop_table             = */ at_drop_table,
+  /* .ic_alter_table            = */ at_alter_table,
+  /* .ic_rename_table           = */ at_rename_table
+};
+
+static guint32
+get_ndb_field_size(IC_DEFINE_FIELD *def_field, gboolean fixed_size)
+{
+  guint32 size= def_field->size * def_field->array_size;
+
+  (void)fixed_size;
+  switch (def_field->type)
+  {
+    case IC_API_VARCHAR:
+    case IC_API_VARBINARY:
+      size++;
+      break;
+    case IC_API_LONG_VARCHAR:
+    case IC_API_LONG_VARBINARY:
+      size+= 2;
+      break;
+    default:
+      break;
+  }
+  return ic_align(size, 4);
+}
+
+static int
+check_for_primary_key(IC_INT_ALTER_TABLE *alter_table)
+{
+  gboolean found_pk= FALSE;
+  IC_DEFINE_INDEX *def_index;
+
+  def_index= IC_GET_FIRST_SLL(alter_table, add_index);
+  while (def_index)
+  {
+    if (def_index->type == IC_PRIMARY_KEY)
+    {
+      found_pk= TRUE;
+      break;
+    }
+    def_index= IC_GET_NEXT_SLL(def_index, add_index);
+  }
+  if (found_pk)
+    return 0;
+  return 1;
+}
+
+static int
+check_record_size(IC_INT_ALTER_TABLE *alter_table)
+{
+  guint32 record_size= 0;
+  IC_DEFINE_FIELD *def_field;
+
+  def_field= IC_GET_FIRST_SLL(alter_table, add_field);
+  while (def_field)
+  {
+    record_size+= get_ndb_field_size(def_field, TRUE);
+    def_field= IC_GET_NEXT_SLL(def_field, add_field);
+  }
+  if (record_size > IC_MAX_RECORD_SIZE)
+    return 1;
+  return 0;
+}
+
+static int
+verify_create_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  if (!alter_table->first_add_field)
+    return IC_ERROR_MD_COMMIT_NO_OPERATION;
+  if (check_for_primary_key(alter_table))
+    return IC_ERROR_TABLE_MUST_HAVE_PRIMARY_KEY;
+  if (check_record_size(alter_table))
+    return IC_ERROR_RECORD_SIZE_TOO_BIG;
+  return 0;
+}
+
+
+static int
+verify_alter_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
+static int
+verify_drop_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
+static int
+verify_rename_table(IC_INT_ALTER_TABLE *alter_table)
+{
+  (void)alter_table;
+  return 0;
+}
+
+static int
+mdt_create_metadata_op(IC_METADATA_TRANSACTION *ext_md_trans,
+                       IC_ALTER_TABLE **ext_alter_table)
+{
+  IC_INT_METADATA_TRANSACTION *md_trans=
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  IC_INT_ALTER_TABLE *alter_table;
+  DEBUG_ENTRY("mdt_create_metadata_op");
+
+  if (md_trans->first_alter_ts || md_trans->first_alter_table)
+    DEBUG_RETURN_INT(IC_ERROR_MULTIPLE_METADATA_OPS);
+  if (!(alter_table= (IC_INT_ALTER_TABLE*)
+      md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
+                                            sizeof(IC_INT_ALTER_TABLE))))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  alter_table->mc_ptr= md_trans->mc_ptr;
+  alter_table->md_trans= md_trans;
+  alter_table->is_table_logged= TRUE;
+  alter_table->tablespace_id= IC_RNIL;
+  alter_table->tablespace_version= IC_MINUS_ONE;
+  alter_table->alter_table_ops= &glob_alter_table_ops;
+  *ext_alter_table= (IC_ALTER_TABLE*)alter_table;
+  IC_INSERT_SLL(md_trans, alter_table, alter_table);
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+mdt_create_tablespace_op(IC_METADATA_TRANSACTION *ext_md_trans,
+                         IC_ALTER_TABLESPACE **ext_alter_ts)
+{
+  IC_INT_METADATA_TRANSACTION *md_trans=
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  IC_INT_ALTER_TABLESPACE *alter_ts;
+  DEBUG_ENTRY("mdt_create_tablespace_op");
+
+  if (md_trans->first_alter_ts || md_trans->first_alter_table)
+    return IC_ERROR_MULTIPLE_METADATA_OPS;
+  if (!(alter_ts= (IC_INT_ALTER_TABLESPACE*)
+      md_trans->mc_ptr->mc_ops.ic_mc_calloc(md_trans->mc_ptr,
+                                            sizeof(IC_INT_ALTER_TABLESPACE))))
+    DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
+  alter_ts->mc_ptr= md_trans->mc_ptr;
+  alter_ts->md_trans= md_trans;
+  *ext_alter_ts= (IC_ALTER_TABLESPACE*)alter_ts;
+  IC_INSERT_SLL(md_trans, alter_ts, alter_ts);
+  DEBUG_RETURN_INT(0);
+}
+
+static int
+md_commit_alter_tablespace(IC_INT_METADATA_TRANSACTION *md_trans,
+                           IC_INT_ALTER_TABLESPACE *alter_ts)
+{
+  int ret_code;
+  DEBUG_ENTRY("md_commit_alter_tablespace");
+
+  md_trans->current_alter_ts= alter_ts;
+  ret_code= execute_meta_data_transaction(md_trans);
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+md_commit_alter_table(IC_INT_METADATA_TRANSACTION *md_trans,
+                      IC_INT_ALTER_TABLE *alter_table)
+{
+  int ret_code= 0;
+  DEBUG_ENTRY("md_commit_alter_table");
+
+  md_trans->current_alter_table= alter_table;
+  switch (alter_table->alter_op_type)
+  {
+    /*
+      Verify that the operation defined by the user is allowed and doesn't
+      use things not supported by NDB.
+    */
+    case IC_CREATE_TABLE_OP:
+    {
+      if ((ret_code= verify_create_table(alter_table)))
+        goto end;
+      break;
+    }
+    case IC_ALTER_TABLE_OP:
+    {
+      if ((ret_code= verify_alter_table(alter_table)))
+        goto end;
+      break;
+    }
+    case IC_DROP_TABLE_OP:
+    {
+      if ((ret_code= verify_drop_table(alter_table)))
+        goto end;
+      break;
+    }
+    case IC_RENAME_TABLE_OP:
+    {
+      if ((ret_code= verify_rename_table(alter_table)))
+        goto end;
+      break;
+    }
+    default:
+      ic_require(FALSE);
+      break;
+  }
+  ret_code= execute_meta_data_transaction(md_trans);
+end:
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static int
+mdt_md_commit(IC_METADATA_TRANSACTION *ext_md_trans)
+{
+  int ret_code;
+  IC_INT_METADATA_TRANSACTION *md_trans=
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  DEBUG_ENTRY("mdt_md_commit");
+
+  if (md_trans->first_alter_ts)
+  {
+    ic_assert(!md_trans->first_alter_table);
+    ret_code= md_commit_alter_tablespace(md_trans,
+                                         md_trans->first_alter_ts);
+  }
+  else if (md_trans->first_alter_table)
+  {
+    ic_assert(!md_trans->first_alter_ts);
+    ret_code= md_commit_alter_table(md_trans,
+                                    md_trans->first_alter_table);
+  }
+  else
+    ret_code= IC_ERROR_MD_COMMIT_NO_OPERATION;
+  DEBUG_RETURN_INT(ret_code);
+}
+
+static IC_APID_ERROR*
+mdt_get_error_object(IC_METADATA_TRANSACTION *ext_md_trans)
+{
+  IC_INT_METADATA_TRANSACTION *md_trans=
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  DEBUG_ENTRY("mdt_get_error_object");
+  DEBUG_RETURN_PTR((IC_APID_ERROR*)&md_trans->error_object);
+}
+
+static int
+mdt_free_md_trans(IC_METADATA_TRANSACTION *ext_md_trans)
+{
+  IC_INT_METADATA_TRANSACTION *md_trans=
+    (IC_INT_METADATA_TRANSACTION*)ext_md_trans;
+  IC_INT_APID_CONNECTION *apid_conn= md_trans->apid_conn;
+  DEBUG_ENTRY("mdt_free_md_trans");
+
+  if (apid_conn)
+    apid_conn->md_trans= NULL;
+  md_trans->mc_ptr->mc_ops.ic_mc_free(md_trans->mc_ptr);
+  DEBUG_RETURN_INT(0);
+}
+
+static IC_METADATA_TRANSACTION_OPS glob_metadata_transaction_ops=
+{
+  /* .ic_create_metadata_op     = */ mdt_create_metadata_op,
+  /* .ic_create_tablespace_op   = */ mdt_create_tablespace_op,
+  /* .ic_md_commit              = */ mdt_md_commit,
+  /* .ic_md_get_error_object    = */ mdt_get_error_object,
+  /* .ic_free_md_trans          = */ mdt_free_md_trans
+};
+
+IC_METADATA_TRANSACTION*
+ic_create_metadata_transaction(IC_APID_CONNECTION *ext_apid_conn,
+                               guint32 cluster_id,
+                               int *error)
+{
+  IC_INT_METADATA_TRANSACTION *md_trans;
+  IC_INT_APID_CONNECTION *apid_conn= (IC_INT_APID_CONNECTION*)ext_apid_conn;
+  IC_MEMORY_CONTAINER *mc_ptr;
+  DEBUG_ENTRY("ic_create_metadata_transaction");
+
+  *error= 0;
+  if (apid_conn->md_trans)
+  {
+    *error= IC_ERROR_ALREADY_CREATED_METADATA_OBJECT;
+    goto error;
+  }
+  if (!apid_conn->apid_global->cluster_data_array[cluster_id])
+  {
+    *error= IC_ERROR_NO_SUCH_CLUSTER;
+    goto error;
+  }
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, TRUE)))
+  {
+    *error= IC_ERROR_MEM_ALLOC;
+    goto error;
+  }
+  if (!(md_trans= (IC_INT_METADATA_TRANSACTION*)
+      mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                                  sizeof(IC_INT_METADATA_TRANSACTION))))
+  {
+    *error= IC_ERROR_MEM_ALLOC;
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+    goto error;
+  }
+  md_trans->md_trans_ops= &glob_metadata_transaction_ops;
+  md_trans->cluster_id= cluster_id;
+  md_trans->apid_conn= (IC_INT_APID_CONNECTION*)apid_conn;
+  md_trans->mc_ptr= mc_ptr;
+
+  md_trans->error_object.apid_error_ops= &glob_apid_error_ops;
+  md_trans->error_object.apid_error_ops->ic_init_apid_error(
+        (IC_APID_ERROR*)&md_trans->error_object);
+
+  apid_conn->md_trans= md_trans;
+  DEBUG_RETURN_PTR((IC_METADATA_TRANSACTION*)md_trans);
+error:
+  DEBUG_RETURN_PTR(NULL);
+}
+
+static IC_INT_TABLE_DEF*
+create_fake_table_def(IC_APID_CLUSTER_DATA *clu_data,
+                      const IC_STRING *name_str)
+{
+  int ret_code;
+  IC_INT_TABLE_DEF *loc_table_def;
+  IC_MEMORY_CONTAINER *mc_ptr;
+
+  if (!(mc_ptr= ic_create_memory_container(256, 0, FALSE)))
+  {
+    return NULL;
+  }
+  if ((loc_table_def= (IC_INT_TABLE_DEF*)
+                       mc_ptr->mc_ops.ic_mc_calloc(mc_ptr,
+                                                   sizeof(IC_INT_TABLE_DEF))))
+    goto error;
+
+  /* Initialise table object */
+  loc_table_def->table_def_ops= &glob_table_def_ops;
+  loc_table_def->create_state= MD_TABLE_IN_CREATION;
+  loc_table_def->cluster_id= clu_data->cluster_id;
+  loc_table_def->mc_ptr= mc_ptr;
+  if ((ret_code= ic_hashtable_insert(clu_data->cluster_md_hash,
+                                     (void*)name_str,
+                                     (void*)loc_table_def)))
+    goto error;
+  loc_table_def->ref_count++;
+  ic_mutex_unlock(clu_data->mutex);
+  /* TODO: Insert code to actually get table definition from NDB. */
+  ic_mutex_lock(clu_data->mutex);
+  loc_table_def->create_state= MD_TABLE_CREATED;
+  wake_up_get_table_waiters(loc_table_def);
+  return loc_table_def;
+
+error:
+  mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  return NULL; 
+}

@@ -1,0 +1,196 @@
+/* Copyright (C) 2009-2013 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/* Initialize function pointer array for messages */
+static void
+initialize_message_func_array()
+{
+  guint32 i;
+  for (i= 0; i < 1024; i++)
+  {
+    ic_exec_message_func_array[0][i].ic_exec_message_func= NULL;
+    ic_exec_message_func_array[1][i].ic_exec_message_func= NULL;
+  }
+  /* Heartbeat messages */
+  ic_exec_message_func_array[0][API_REGCONF_GSN].ic_exec_message_func=
+    execAPI_REGCONF_v0;
+  ic_exec_message_func_array[0][API_REGREF_GSN].ic_exec_message_func=
+    execAPI_REGREF_v0;
+
+  /* Container for record data from NDB Kernel */
+  ic_exec_message_func_array[0][5].ic_exec_message_func=
+    execRECORD_INFO_v0;
+
+  /* Message about outcome of query in Node failure situation */
+  ic_exec_message_func_array[0][8].ic_exec_message_func=
+    execNDB_NODEFAIL_KEYCONF_v0;
+  ic_exec_message_func_array[0][9].ic_exec_message_func=
+    execNDB_NODEFAIL_KEYREF_v0;
+
+  /*
+    Read/Update/Delete/Write using primary key message responses + RECORD_INFO
+    This is the most common messages used together with the NDB_SCAN* messages
+    since these are the messages used to get/set data in NDB. NDB_UNIQ*
+    messages are equivalents, but using unique indexes instead of a primary
+    key index, these unique indexes are using a separate lookup in a unique
+    key table and then internally in NDB reuses the same code paths as these
+    messages do. The unique key table contains the unqiue key as primary key
+    and the primary key as fields in the table.
+  */
+  ic_exec_message_func_array[0][10].ic_exec_message_func=
+    execNDB_PRIM_KEYCONF_v0;
+  ic_exec_message_func_array[0][11].ic_exec_message_func=
+    execNDB_PRIM_KEYREF_v0;
+
+  /* Abort response messages */
+  ic_exec_message_func_array[0][13].ic_exec_message_func=
+    execNDB_ABORTCONF_v0;
+  ic_exec_message_func_array[0][14].ic_exec_message_func=
+    execNDB_ABORTREF_v0;
+  ic_exec_message_func_array[0][16].ic_exec_message_func=
+    execNDB_ABORTREP_v0;
+
+  /* Commit response messages */
+  ic_exec_message_func_array[0][17].ic_exec_message_func=
+    execNDB_COMMITCONF_v0;
+  ic_exec_message_func_array[0][19].ic_exec_message_func=
+    execNDB_COMMITREF_v0;
+
+  /* 23 = NDB_GET_TABLE_REF see below */
+
+  /* Scan table/index message responses, see also RECORD_INFO */
+  ic_exec_message_func_array[0][29].ic_exec_message_func=
+    execNDB_SCANCONF_v0;
+  ic_exec_message_func_array[0][31].ic_exec_message_func=
+    execNDB_SCANREF_v0;
+
+  /* Connect to a transaction record in NDB */
+  ic_exec_message_func_array[0][37].ic_exec_message_func=
+    execNDB_CONNECTCONF_v0;
+  ic_exec_message_func_array[0][38].ic_exec_message_func=
+    execNDB_CONNECTREF_v0;
+
+  /* Disconnect from a transaction record in NDB */
+  ic_exec_message_func_array[0][34].ic_exec_message_func=
+    execDISCONNECTCONF_v0;
+  ic_exec_message_func_array[0][35].ic_exec_message_func=
+    execDISCONNECTREF_v0;
+
+  /* Drop table messages */
+  ic_exec_message_func_array[0][DROP_TABLE_REF_GSN].ic_exec_message_func=
+    execDROP_TABLE_REF_v0;
+  ic_exec_message_func_array[0][DROP_TABLE_CONF_GSN].ic_exec_message_func=
+    execDROP_TABLE_CONF_v0;
+
+  /* Get table messages */
+  ic_exec_message_func_array[0][GET_TABINFO_CONF_GSN].
+       ic_exec_message_func= execGET_TABINFO_CONF_v0;
+  ic_exec_message_func_array[0][GET_TABINFO_REF_GSN].
+       ic_exec_message_func= execGET_TABINFO_REF_v0;
+
+  /* List table messages */
+  ic_exec_message_func_array[0][LIST_TABLES_CONF_GSN].
+       ic_exec_message_func= execLIST_TABLES_CONF_v0;
+
+  /* Create partition map response messages */
+  ic_exec_message_func_array[0][CREATE_HASH_MAP_CONF_GSN].
+       ic_exec_message_func= execCREATE_HASH_MAP_CONF_v0;
+  ic_exec_message_func_array[0][CREATE_HASH_MAP_REF_GSN].
+       ic_exec_message_func= execCREATE_HASH_MAP_REF_v0;
+ 
+  /* Create index response messages */
+  ic_exec_message_func_array[0][CREATE_INDEX_CONF_GSN].ic_exec_message_func=
+    execCREATE_INDEX_CONF_v0;
+  ic_exec_message_func_array[0][CREATE_INDEX_REF_GSN].ic_exec_message_func=
+    execCREATE_INDEX_REF_v0;
+ 
+  /* Drop index response messages */
+  ic_exec_message_func_array[0][DROP_INDEX_CONF_GSN].ic_exec_message_func=
+    execDROP_INDEX_CONF_v0;
+  ic_exec_message_func_array[0][DROP_INDEX_REF_GSN].ic_exec_message_func=
+    execDROP_INDEX_REF_v0;
+
+  /* Unique key read/update/delete/write response messages */
+  ic_exec_message_func_array[0][520].ic_exec_message_func=
+    execNDB_UNIQ_KEYCONF_v0;
+  ic_exec_message_func_array[0][521].ic_exec_message_func=
+    execNDB_UNIQ_KEYREF_v0;
+
+  /* Create table messages */
+  ic_exec_message_func_array[0][CREATE_TABLE_CONF_GSN].
+       ic_exec_message_func= execCREATE_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][CREATE_TABLE_REF_GSN].
+       ic_exec_message_func= execCREATE_TABLE_REF_v0;
+
+  /* Alter table messages */
+  ic_exec_message_func_array[0][ALTER_TABLE_REF_GSN].ic_exec_message_func=
+    execALTER_TABLE_REF_v0;
+  ic_exec_message_func_array[0][ALTER_TABLE_CONF_GSN].ic_exec_message_func=
+    execALTER_TABLE_CONF_v0;
+  ic_exec_message_func_array[0][ALTER_TABLE_REP_GSN].ic_exec_message_func=
+    execALTER_TABLE_REP_v0;
+
+  /* Alter table messages */
+  ic_exec_message_func_array[0][ALTER_INDEX_REF_GSN].ic_exec_message_func=
+    execALTER_INDEX_REF_v0;
+  ic_exec_message_func_array[0][ALTER_INDEX_CONF_GSN].ic_exec_message_func=
+    execALTER_INDEX_CONF_v0;
+
+  /* 606 = NDB_ALTER_TABLE_REP, see above */
+
+  /* Get table id messages */
+  ic_exec_message_func_array[0][684].ic_exec_message_func=
+    execGET_TABLE_ID_REF_v0;
+  ic_exec_message_func_array[0][685].ic_exec_message_func=
+    execGET_TABLE_ID_CONF_v0;
+
+  /* Create tablespace/log file group messages */
+  ic_exec_message_func_array[0][714].
+    ic_exec_message_func= execCREATE_TABLESPACE_REF_v0;
+  ic_exec_message_func_array[0][715].
+    ic_exec_message_func= execCREATE_TABLESPACE_CONF_v0;
+
+  /* Create tablespace/log file group files */
+  ic_exec_message_func_array[0][717].ic_exec_message_func=
+    execCREATE_TS_FILE_REF_v0;
+  ic_exec_message_func_array[0][718].ic_exec_message_func=
+    execCREATE_TS_FILE_CONF_v0;
+
+  /* Drop tablespace/log file group messages */
+  ic_exec_message_func_array[0][720].ic_exec_message_func=
+    execDROP_TABLESPACE_REF_v0;
+  ic_exec_message_func_array[0][721].ic_exec_message_func=
+    execDROP_TABLESPACE_CONF_v0;
+
+  /* Drop tablespace/log file group files */
+  ic_exec_message_func_array[0][724].ic_exec_message_func=
+    execDROP_TS_FILE_CONF_v0;
+  ic_exec_message_func_array[0][723].ic_exec_message_func=
+    execDROP_TS_FILE_REF_v0;
+
+  /* Start metadata transaction messages */
+  ic_exec_message_func_array[0][SCHEMA_TRANS_BEGIN_CONF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_BEGIN_CONF_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_BEGIN_REF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_BEGIN_REF_v0;
+
+  /* Commit metadata transaction messages */
+  ic_exec_message_func_array[0][SCHEMA_TRANS_END_CONF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_END_CONF_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_END_REF_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_END_REF_v0;
+  ic_exec_message_func_array[0][SCHEMA_TRANS_END_REP_GSN].
+       ic_exec_message_func= execSCHEMA_TRANS_END_REP_v0;
+}

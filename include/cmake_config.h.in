@@ -1,0 +1,55 @@
+#define iClaustron_VERSION_MAJOR @iClaustron_VERSION_MAJOR@
+#define iClaustron_VERSION_MINOR @iClaustron_VERSION_MINOR@
+#define iClaustron_VERSION_BUILD @iClaustron_VERSION_BUILD@
+#define PACKAGE "@ICLAUSTRON_PACKAGE_NAME@"
+#define VERSION "@ICLAUSTRON_VERSION@"
+#cmakedefine LINUX
+#cmakedefine MACOSX
+#cmakedefine SOLARIS
+#cmakedefine FREEBSD
+#cmakedefine WINDOWS
+#cmakedefine HAVE_CLOCK_GETTIME
+#cmakedefine WITH_PRODUCTION
+#cmakedefine WITH_DEBUG
+#cmakedefine HAVE_READLINE
+#cmakedefine WITH_DTRACE
+#cmakedefine WITH_OPENSSL
+#cmakedefine WITH_CYASSL
+#cmakedefine HAVE_BZERO
+#cmakedefine HAVE_MEMSET
+#cmakedefine HAVE_BREAK
+#cmakedefine HAVE_GETHRTIME
+#cmakedefine HAVE_GETTIMEOFDAY
+#cmakedefine HAVE_SOCKET
+#cmakedefine HAVE_EPOLL_CREATE
+#cmakedefine HAVE_KQUEUE
+#cmakedefine HAVE_PORT_CREATE
+#cmakedefine HAVE_IO_COMPLETION
+#cmakedefine HAVE_POLL
+#cmakedefine HAVE_BIND
+#cmakedefine HAVE_CONNECT
+#cmakedefine HAVE_LISTEN
+#cmakedefine HAVE_ACCEPT
+#cmakedefine HAVE_GETADDRINFO
+#cmakedefine HAVE_FREEADDRINFO
+#cmakedefine HAVE_INET_NTOP
+#cmakedefine HAVE_SENDMSG
+#cmakedefine HAVE_UNISTD_H
+#cmakedefine HAVE_NETINET_IN_H
+#cmakedefine HAVE_NETINET_TCP_H
+#cmakedefine HAVE_POLL_H
+#cmakedefine HAVE_SYS_POLL_H
+#cmakedefine HAVE_SYS_TYPES_H
+#cmakedefine HAVE_SYS_TIME_H
+#cmakedefine HAVE_SYS_TIMES_H
+#cmakedefine HAVE_SYS_SOCKET_H
+#cmakedefine HAVE_SYS_SELECT_H
+#cmakedefine HAVE_FCNTL_H
+#cmakedefine HAVE_NETDB_H
+#cmakedefine HAVE_ARPA_INET_H
+#cmakedefine HAVE_READLINE
+#cmakedefine HAVE_OPENSSL
+#cmakedefine HAVE_CYASSL
+#cmakedefine HAVE_SSL
+#cmakedefine HAVE_DTRACE
+

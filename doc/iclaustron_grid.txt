@@ -1,0 +1,64 @@
+Copyright (C) 2010-2013 iClaustron AB. All Rights Reserved.
+
+iClaustron is a set of programs which can be used to run a grid of clusters
+providing a large Clustered file system to the end users of the iClaustron
+API.
+
+A full iClaustron Grid contains one or more iClaustron Clusters. Each cluster
+contains a set of iClaustron nodes. There is a wide set of different types of
+nodes in a cluster.
+
+The iClaustron Cluster Servers contains the configuration of the iClaustron
+Grid. These nodes acts as a simple distributed database ensuring atomic
+updates of this configuration and ensuring that these changes are propagated
+to the individual nodes at proper times. Any node starting up in a cluster
+must access one of those iClaustron Cluster Servers to receive the grid
+configuration which they are allowed to access.
+
+The iClaustron Cluster Manager is a program that can be accessed from an
+iClaustron Client program. The Cluster Manager contains a parser that
+handles a command language from which it is possible to look at the state
+of iClaustron Grid and all its parts. It is also possible to change the
+state, both of the configuration and start, restart and perform software
+upgrades of the individual servers in the grid. The iClaustron Cluster
+Manager listens on a socket for commands according to a very simple
+protocol. It's thus possible to access it from any program written to
+handle this protocol in addition to the iClaustron Client program.
+
+The Data Server nodes are the heart of the iClaustron Grid, this is where
+the data is stored. The Data Server nodes are the Data Nodes of MySQL Cluster.
+iClaustron implements a way of accessing data in MySQL Cluster through a
+file system API and also ensuring that this file system can access data
+stored in multiple clusters. The Data Servers support active-active
+replication inside the iClaustron Cluster.
+
+The iClaustron File Server contains an implementation of the iClaustron API
+which is used to make file system API users able to access data in the
+iClaustron Grid. In the initial implementation it's intended to use the
+FUSE API to achieve this. Later more ways will be added. The end goal is to
+make a module inside the Linux OS such that efficient access to the iClaustron
+Grid can be performed from any Linux program.
+
+The iClaustron Replication Server is a program that is used to replicate
+changes inside one of the iClaustron Clusters to another cluster. This
+cluster can be inside the same iClaustron Grid or in a different iClaustron
+Grid.
+
+There is also another program which is an important part of the iClaustron
+package. This is the iClaustron Process Controller (ic_pcntrld). This program
+needs to be installed and will run on each computer (or virtual machine) which
+implements a part of the iClaustron Grid. This program is used to start and
+stop the iClaustron processes. It's mainly controlled by the Cluster Manager
+but other programs can also operate on it using the network protocol it
+implements. The iClaustron Cluster Manager can also use it to access various
+statistics on the computer it operates on.
+
+Finally the iClaustron package also contains a program ic_configurator to
+assist the user in writing the initial configuration files, another program
+ic_bootstrap to start up the Cluster Servers and Cluster Managers as part
+of the initial start of the iClaustron Grid. Finally another important
+program is the ic_client which is used to enter client commands to the
+Cluster Manager to manage the iClaustron Grid.
+
+It is possible to also integrate MySQL Servers inside the iClaustron Grid,
+this is not part of the current development.

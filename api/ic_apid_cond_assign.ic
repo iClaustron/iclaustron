@@ -1,0 +1,108 @@
+/* Copyright (C) 2009-2013 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Define Conditional Assignments module
+  ---------------------------------------------
+  This module contains the methods needed to define conditional assignments
+  used in write operation.
+*/
+static IC_WHERE_CONDITION*
+assign_create_where_condition(IC_CONDITIONAL_ASSIGNMENT *cond_assign)
+{
+  (void)cond_assign;
+  return NULL;
+}
+
+static int
+assign_map_condition(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                     IC_APID_GLOBAL *apid_global,
+                     guint32 where_cond_id)
+{
+  (void)cond_assign;
+  (void)apid_global;
+  (void)where_cond_id;
+  return 0;
+}
+
+static int
+assign_read_field_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                              guint32 *memory_address,
+                              guint32 field_id)
+{
+  (void)cond_assign;
+  (void)memory_address;
+  (void)field_id;
+  return 0;
+}
+
+static int
+assign_read_const_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                              guint32 *memory_address,
+                              gchar *const_ptr,
+                              guint32 const_len,
+                              IC_FIELD_TYPE const_type)
+{
+  (void)cond_assign;
+  (void)memory_address;
+  (void)const_ptr;
+  (void)const_len;
+  (void)const_type;
+  return 0;
+}
+
+static int
+assign_define_calculation(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                          guint32 *returned_memory_address,
+                          guint32 left_memory_address,
+                          guint32 right_memory_address,
+                          IC_CALCULATION_TYPE calc_type)
+{
+  (void)cond_assign;
+  (void)returned_memory_address;
+  (void)left_memory_address;
+  (void)right_memory_address;
+  (void)calc_type;
+  return 0;
+}
+
+static int
+assign_write_field_into_memory(IC_CONDITIONAL_ASSIGNMENT *cond_assign,
+                               guint32 memory_address,
+                               guint32 field_id)
+{
+  (void)cond_assign;
+  (void)memory_address;
+  (void)field_id;
+  return 0;
+}
+
+static int
+assign_free(IC_CONDITIONAL_ASSIGNMENT** cond_assigns)
+{
+  (void)cond_assigns;
+  return 0;
+}
+
+static IC_CONDITIONAL_ASSIGNMENT_OPS glob_cond_assign_ops =
+{
+  /* .ic_create_assignment_condition     = */ assign_create_where_condition,
+  /* .ic_map_assignment_condition        = */ assign_map_condition,
+  /* .ic_read_field_into_memory          = */ assign_read_field_into_memory,
+  /* .ic_read_const_into_memory          = */ assign_read_const_into_memory,
+  /* .ic_define_calculation              = */ assign_define_calculation,
+  /* .ic_write_field_into_memory         = */ assign_write_field_into_memory,
+  /* .ic_free_cond_assign                = */ assign_free
+};

@@ -1,0 +1,61 @@
+/* Copyright (C) 2009-2013 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+static void
+apid_error_init_apid_error(IC_APID_ERROR *ext_apid_error)
+{
+  IC_INT_APID_ERROR *apid_error= (IC_INT_APID_ERROR*)ext_apid_error;
+  apid_error->error_msg= "No error";
+  apid_error->error_code= 0;
+  apid_error->error_category= IC_CATEGORY_NO_ERROR;
+  apid_error->error_severity= IC_SEVERITY_NO_ERROR;
+}
+
+static int
+apid_error_get_apid_error_code(IC_APID_ERROR *ext_apid_error)
+{
+  IC_INT_APID_ERROR *apid_error= (IC_INT_APID_ERROR*)ext_apid_error;
+  return apid_error->error_code;
+}
+
+static const gchar*
+apid_error_get_apid_error_msg(IC_APID_ERROR *ext_apid_error)
+{
+  IC_INT_APID_ERROR *apid_error= (IC_INT_APID_ERROR*)ext_apid_error;
+  return (const gchar*)apid_error->error_msg;
+}
+
+static IC_ERROR_CATEGORY
+apid_error_get_apid_error_category(IC_APID_ERROR *ext_apid_error)
+{
+  IC_INT_APID_ERROR *apid_error= (IC_INT_APID_ERROR*)ext_apid_error;
+  return apid_error->error_category;
+}
+
+static IC_ERROR_SEVERITY_LEVEL
+apid_error_get_apid_error_severity(IC_APID_ERROR *ext_apid_error)
+{
+  IC_INT_APID_ERROR *apid_error= (IC_INT_APID_ERROR*)ext_apid_error;
+  return apid_error->error_severity;
+}
+
+static IC_APID_ERROR_OPS glob_apid_error_ops=
+{
+  /* .ic_init_apid_error              = */ apid_error_init_apid_error,
+  /* .ic_get_apid_error_code          = */ apid_error_get_apid_error_code,
+  /* .ic_get_apid_error_msg           = */ apid_error_get_apid_error_msg,
+  /* .ic_get_apid_error_category      = */ apid_error_get_apid_error_category,
+  /* .ic_get_apid_error_severity      = */ apid_error_get_apid_error_severity
+};

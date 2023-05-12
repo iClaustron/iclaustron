@@ -1,0 +1,83 @@
+/* Copyright (C) 2009-2013 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Configuration protocol support functions
+  ------------------------------------------------
+  This module has a number of support functions often used in protocol
+  actions.
+*/
+
+/*
+  In all iClaustron protocols where cluster id is possible to use it is
+  also ok to not specify the cluster id, this always means that cluster
+  id is equal to 0.
+
+  This makes it easier to interoperate with non-iClaustron converted NDB
+  binaries. However there is an obvious limitation to using such binaries
+  since there is only one cluster possible to maintain for iClaustron.
+*/
+static int
+ic_rec_cluster_id(IC_CONNECTION *conn,
+                  guint32 *cluster_id)
+{
+  *cluster_id= 0; /* Default value */
+  return ic_rec_opt_number(conn, cluster_id_str, cluster_id);
+}
+
+static int
+ic_send_cluster_id(IC_CONNECTION *conn,
+                   guint32 cluster_id,
+                   gboolean use_iclaustron)
+{
+  if (use_iclaustron)
+    return ic_send_with_cr_with_number(conn,
+                                       cluster_id_str,
+                                       (guint64)cluster_id);
+  return 0;
+}
+
+/*
+  MODULE: Support for iClaustron Protocols
+  ----------------------------------------
+*/
+int
+ic_send_start_info(IC_CONNECTION *conn,
+                   const gchar *program_name,
+                   const gchar *version_name,
+                   const gchar *grid_name,
+                   const gchar *cluster_name,
+                   const gchar *node_name)
+{
+  int ret_code;
+
+  if ((ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_program_str,
+                                             program_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_version_str,
+                                             version_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_grid_str,
+                                             grid_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_cluster_str,
+                                             cluster_name)) ||
+      (ret_code= ic_send_with_cr_two_strings(conn,
+                                             ic_node_str,
+                                             node_name)))
+    return ret_code;
+  return 0;
+}

@@ -1,0 +1,89 @@
+/* Copyright (C) 2009-2013 iClaustron AB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  MODULE: Read Configuration from network
+  ---------------------------------------
+  This module is a single method that implements an overlay of creating
+  a IC_API_CONFIG_SERVER object and retrieving configuration from the
+  provided cluster server. It's used by most every iClaustron except for
+  the Cluster Server (even the Cluster Server uses it in rare cases,
+  since all programs need to do this we supply a single interface to
+  provide this functionality.
+
+  ic_get_configuration: Retrieve configuration from Cluster Server
+*/
+IC_API_CONFIG_SERVER*
+ic_get_configuration(IC_API_CLUSTER_CONNECTION *api_cluster_conn,
+                     IC_STRING *config_dir,
+                     guint32 node_id,
+                     guint32 num_cs_servers,
+                     gchar **cluster_server_ips,
+                     gchar **cluster_server_ports,
+                     guint32 cs_timeout,
+                     gboolean use_iclaustron_cluster_server,
+                     int *error,
+                     gchar **err_str)
+{
+  IC_CLUSTER_CONNECT_INFO **clu_infos;
+  IC_API_CONFIG_SERVER *apic= NULL;
+  IC_MEMORY_CONTAINER *mc_ptr= NULL;
+  IC_CONFIG_ERROR err_obj;
+  int ret_code;
+  gchar *save_err_str= *err_str;
+
+  *err_str= NULL;
+  ret_code= 0;
+  if (!(mc_ptr= ic_create_memory_container(MC_DEFAULT_BASE_SIZE, 0, FALSE)))
+    goto early_end;
+
+  DEBUG_DISABLE(CONFIG_READ_LEVEL);
+  if (!(clu_infos= ic_load_cluster_config_from_file(config_dir,
+                                                    (guint32)0,
+                                                    mc_ptr,
+                                                    &err_obj)))
+  {
+    *err_str= ic_common_fill_error_buffer(NULL,
+                                          err_obj.line_number,
+                                          err_obj.err_num,
+                                          *err_str);
+    ret_code= err_obj.err_num;
+    goto end;
+  }
+
+  api_cluster_conn->num_cluster_servers= num_cs_servers;
+  api_cluster_conn->cluster_server_ips= cluster_server_ips;
+  api_cluster_conn->cluster_server_ports= cluster_server_ports;
+  if ((apic= ic_create_api_cluster(api_cluster_conn,
+                                   use_iclaustron_cluster_server)))
+  {
+    if (!(ret_code= apic->api_op.ic_get_config(apic,
+                                               clu_infos,
+                                               node_id,
+                                               cs_timeout)))
+      goto end;
+    *err_str= save_err_str;
+    *err_str= apic->api_op.ic_fill_error_buffer(apic, ret_code, *err_str);
+    apic->api_op.ic_free_config(apic);
+    apic= NULL;
+  }
+end:
+  DEBUG_ENABLE(CONFIG_READ_LEVEL);
+early_end:
+  if (mc_ptr)
+    mc_ptr->mc_ops.ic_mc_free(mc_ptr);
+  *error= ret_code;
+  return apic;
+}
