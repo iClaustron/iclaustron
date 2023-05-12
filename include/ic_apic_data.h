@@ -103,21 +103,39 @@ typedef struct ic_cluster_connect_info IC_CLUSTER_CONNECT_INFO;
 
 struct ic_cluster_config
 {
-  void(*ic_free_cluster_config)  (void *cluster_config);
+  void(*ic_free_cluster_config)  (struct ic_cluster_config *cluster_config);
 
-  int(*ic_get_node_config_uint32) (void *cluster_config);
+  int(*ic_get_node_config_uint32) (struct ic_cluster_config *cluster_config,
+                                   guint32 *return_value,
+                                   guint32 node_id,
+                                   guint32 key);
 
-  int(*ic_get_node_config_uint64) (void *cluster_config);
+  int(*ic_get_node_config_uint64) (struct ic_cluster_config *cluster_config,
+                                   guint64 *return_value,
+                                   guint32 node_id,
+                                   guint32 key);
 
-  int(*ic_get_node_config_str) (void *cluster_config);
+  int(*ic_get_node_config_str) (struct ic_cluster_config *cluster_config,
+                                IC_STRING *return_value,
+                                guint32 node_id,
+                                guint32 key);
 
-  int(*ic_get_comm_config_uint32) (void *cluster_config);
+  int(*ic_get_comm_config_uint32) (struct ic_cluster_config *cluster_config,
+                                   guint32 *return_value,
+                                   guint32 node_id,
+                                   guint32 key);
 
-  int(*ic_get_comm_config_uint64) (void *cluster_config);
+  int(*ic_get_comm_config_uint64) (struct ic_cluster_config *cluster_config,
+                                   guint64 *return_value,
+                                   guint32 node_id,
+                                   guint32 key);
 
-  int(*ic_get_comm_config_str) (void *cluster_config);
+  int(*ic_get_comm_config_str) (struct ic_cluster_config *cluster_config,
+                                IC_STRING *return_value,
+                                guint32 node_id,
+                                guint32 key);
   
-  int(*ic_modify_cluster_config) (void *cluster_config);
+  int(*ic_modify_cluster_config) (struct ic_cluster_config *cluster_config);
   
   gchar **node_config;
   gchar **comm_config;

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2013 iClaustron AB
+/* Copyright (C) 2007-2023 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -414,7 +414,7 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
   IC_DYNAMIC_ARRAY_INDEX *old_last_dyn_index= dyn_array->ord_array.last_dyn_index;
   IC_DYNAMIC_ARRAY_INDEX *loop_dyn_index= old_last_dyn_index;
   guint64 buf_size= 0;
-  guint32 ins_buf_count= 0;
+  //guint32 ins_buf_count= 0;
   guint64 old_bytes_used= dyn_array->sd_array.bytes_used;
   guint32 old_index_levels= dyn_array->ord_array.index_levels;
 
@@ -463,7 +463,7 @@ insert_ordered_dynamic_array(IC_DYNAMIC_ARRAY *ext_dyn_array,
       old_top_dyn_index->parent_dyn_index= NULL;
       return ret_code;
     }
-    ins_buf_count++;
+    //ins_buf_count++;
   }
   return 0;
 }

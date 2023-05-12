@@ -1,4 +1,4 @@
-/* Copyight (C) 2007, 2016 iClaustron AB
+/* Copyight (C) 2007, 2023 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1253,7 +1253,7 @@ init_config_parameters()
 
   IC_SET_CONFIG_MAP(DATA_SERVER_LONG_MESSAGE_MEMORY, 77);
   IC_SET_DATA_SERVER_CONFIG(conf_entry, long_message_memory,
-                       IC_UINT32, 64*1024*1024*1024, IC_NOT_CHANGEABLE);
+                       IC_UINT32, 0, IC_NOT_CHANGEABLE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, LongMessageBuffer);
   IC_SET_CONFIG_MIN_MAX(conf_entry, 512*1024, IC_MAX_UINT32);
   conf_entry->config_entry_description=
@@ -2057,7 +2057,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_read_buffer_size,
                        IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, TCP_RCV_BUF_SIZE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2*1024*1024*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2*1024*1024*1023);
   conf_entry->config_entry_description=
   "Size of receive buffer for socket in OS kernel";
 
@@ -2065,7 +2065,7 @@ init_config_parameters()
   IC_SET_SOCKET_CONFIG(conf_entry, socket_kernel_write_buffer_size,
                        IC_UINT32, 0, IC_ROLLING_UPGRADE_CHANGE);
   IC_SET_NDB_CONFIG_NAME(conf_entry, TCP_SND_BUF_SIZE);
-  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2*1024*1024*1024);
+  IC_SET_CONFIG_MIN_MAX(conf_entry, 0, 2*1024*1024*1023);
   conf_entry->config_entry_description=
   "Size of send buffer of socket inside the OS kernel";
 

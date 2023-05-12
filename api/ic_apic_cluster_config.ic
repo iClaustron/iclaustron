@@ -1,4 +1,4 @@
-/* Copyight (C) 2020, 2020 iClaustron AB
+/* Copyight (C) 2020, 2023 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1434,12 +1434,12 @@ calculate_tot_len(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
 static guint32
 create_cluster_config(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
                       IC_INT_CLUSTER_CONFIG *clu_obj,
-                      gchar *mem_ptr,
+                      guint32 *ptr,
                       guint32 tot_len)
 {
   guint32 len;
   guint32 header_len= 28;
-  guint32* ptr= (guint32*)mem_ptr;
+  gchar* mem_ptr= (guint32*)ptr;
   ptr[0]= tot_len;
   ptr[1]= 2;
   ptr[2]= 5;
@@ -1481,9 +1481,10 @@ create_cluster_config(IC_TEMP_CLUSTER_CONFIG *temp_cluster_config,
     mem_ptr += comm_section[0];
   }
 }
-static guint32
-modify_cluster_config(IC_INT_CLUSTER_CONFIG *clu_obj)
+static int
+modify_cluster_config(IC_CLUSTER_CONFIG *ext_clu_conf)
 {
+  IC_INT_CLUSTER_CONFIG *clu_conf= (IC_INT_CLUSTER_CONFIG*)ext_clu_conf;
   DEBUG_ENTRY("modify cluster config");
   IC_MEMORY_CONTAINER *mc_ptr;
   int ret;
@@ -1496,14 +1497,14 @@ modify_cluster_config(IC_INT_CLUSTER_CONFIG *clu_obj)
   }
   IC_TEMP_CLUSTER_CONFIG temp_cluster_config;
   temp_cluster_config.node_sections = mc_ptr->
-  mc_ops.ic_mc_alloc(mc_ptr, sizeof(gchar*)*clu_obj->clu_conf_ops.num_nodes);
+  mc_ops.ic_mc_alloc(mc_ptr, sizeof(gchar*)*clu_conf->clu_conf_ops.num_nodes);
   if (temp_cluster_config.node_sections == NULL)
   {
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }
-  temp_cluster_config.comm_sections = mc_ptr->
-  mc_ops.ic_mc_alloc(mc_ptr, sizeof(gchar*)*clu_obj->clu_conf_ops.num_comms);
+  temp_cluster_config.comm_sections = (gchar**)mc_ptr->
+  mc_ops.ic_mc_alloc(mc_ptr, sizeof(gchar*)*clu_conf->clu_conf_ops.num_comms);
   if (temp_cluster_config.comm_sections == NULL)
   {
     mc_ptr->mc_ops.ic_mc_free(mc_ptr);
@@ -1511,25 +1512,25 @@ modify_cluster_config(IC_INT_CLUSTER_CONFIG *clu_obj)
   }
    
   if ((ret= create_data_node_default(&temp_cluster_config,
-                                     clu_obj,
+                                     clu_conf,
                                      mc_ptr)) != 0)
   {
     DEBUG_RETURN_INT(ret);
   } 
   if ((ret= create_cluster_server_default(&temp_cluster_config,
-                                          clu_obj,
+                                          clu_conf,
                                           mc_ptr)) != 0)
   {
     DEBUG_RETURN_INT(ret);
   }
   if ((ret= create_client_default(&temp_cluster_config,
-                                  clu_obj,
+                                  clu_conf,
                                   mc_ptr)) != 0)
   {
     DEBUG_RETURN_INT(ret);
   }
   if ((ret= create_tcp_default(&temp_cluster_config,
-                               clu_obj,
+                               clu_conf,
                                mc_ptr)) != 0)
   {
     DEBUG_RETURN_INT(ret);
@@ -1540,25 +1541,25 @@ modify_cluster_config(IC_INT_CLUSTER_CONFIG *clu_obj)
     DEBUG_RETURN_INT(ret);
   }
   if ((ret= create_system_section(&temp_cluster_config,
-                                  clu_obj,
+                                  clu_conf,
                                   mc_ptr)) != 0)
   {
     DEBUG_RETURN_INT(ret);
   }
-  for (guint32 i = 0; i < clu_obj->clu_conf_ops.num_nodes; i++)
+  for (guint32 i = 0; i < clu_conf->clu_conf_ops.num_nodes; i++)
   {
     if ((ret= create_node_section(&temp_cluster_config,
-                                  clu_obj,
+                                  clu_conf,
                                   mc_ptr,
                                   i)) != 0)
     {
       DEBUG_RETURN_INT(ret);
     }
   }
-  for (guint32 i = 0; i < clu_obj->clu_conf_ops.num_comms; i++)
+  for (guint32 i = 0; i < clu_conf->clu_conf_ops.num_comms; i++)
   {
     if ((ret= create_comm_section(&temp_cluster_config,
-                                  clu_obj,
+                                  clu_conf,
                                   mc_ptr,
                                   i)) != 0)
     {
@@ -1566,38 +1567,43 @@ modify_cluster_config(IC_INT_CLUSTER_CONFIG *clu_obj)
     }
   }
   if ((len= calculate_tot_len(&temp_cluster_config,
-                              clu_obj)) != 0)
+                              clu_conf)) != 0)
   {
       DEBUG_RETURN_INT(ret);
   }
-  gchar *mem_ptr= ic_malloc(len);
+  guint32 *mem_ptr= (guint32*)ic_malloc(len);
   if (mem_ptr == NULL)
   {
     DEBUG_RETURN_INT(IC_ERROR_MEM_ALLOC);
   }  
   if ((ret= create_cluster_config(&temp_cluster_config,
-                                  clu_obj,
+                                  clu_conf,
                                   mem_ptr,
                                   len)) != 0)
   {
       DEBUG_RETURN_INT(ret);
   }
-  clu_obj->key_value= mem_ptr;
-  clu_obj->len= len;
-  clu_obj->cluster_id= 0;
+  clu_conf->key_value= mem_ptr;
+  clu_conf->len= len;
+  clu_conf->cluster_id= 0;
   mc_ptr->mc_ops.ic_mc_free(mc_ptr);
   DEBUG_RETURN_INT(0);  
 }
 
 static void
-free_cluster_config(void *ext_clu_conf)
+free_cluster_config(IC_CLUSTER_CONFIG *ext_clu_conf)
 {
-  IC_CLUSTER_CONFIG *clu_conf= (IC_CLUSTER_CONFIG*)ext_clu_conf;
+  IC_INT_CLUSTER_CONFIG *clu_conf= (IC_INT_CLUSTER_CONFIG*)ext_clu_conf;
   DEBUG_ENTRY("free_cluster_config");
   if (clu_conf && clu_conf->comm_hash)
   {
     ic_hashtable_destroy(clu_conf->comm_hash, FALSE);
   }
+  if (clu_conf && clu_conf->comm_array)
+  {
+    ic_free(clu_conf->comm_array);
+  }
+  ic_free(clu_conf);
   DEBUG_RETURN_EMPTY;
 }
 
@@ -1991,6 +1997,7 @@ ic_create_network_cluster_config(guint32 *key_value,
     }
   }
   conf->comm_array= comm_search;
+  conf->comm_hash= comm_hash;
   guint32 node_id1= 0;
   guint32 node_id2= 0;
     DEBUG_PRINT(CONFIG_PROTO_LEVEL,

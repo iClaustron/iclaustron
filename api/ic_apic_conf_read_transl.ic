@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2015 iClaustron AB
+/* Copyright (C) 2009, 2023 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -355,7 +355,8 @@ analyse_key_value(guint32 *key_value, guint32 len,
           PROTOCOL_CHECK_GOTO(
             (hash_key == 1000 &&
               (value == (system_section << IC_CL_SECT_SHIFT))) ||
-            (hash_key == 2000 && (1 << IC_CL_SECT_SHIFT)) ||
+            (hash_key == 2000 &&
+              (value == ((system_section + 1) << IC_CL_SECT_SHIFT))) ||
             (hash_key == 3000 &&
               (value == ((system_section + 2) << IC_CL_SECT_SHIFT))));
           PROTOCOL_CHECK_GOTO(key_type == IC_CL_SECT_TYPE);

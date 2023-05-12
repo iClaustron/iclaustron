@@ -36,6 +36,7 @@ struct ic_int_cluster_config
   guint32 node_section_ptrs[IC_MAX_NODE_ID + 1];
   guint8 node_type_array[IC_MAX_NODE_ID + 1];
   IC_COMM_SEARCH *comm_array;
+  IC_HASHTABLE *comm_hash;
 
 };
 

@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2014 iClaustron AB
+/* Copyright (C) 2009-2023 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -864,7 +864,7 @@ at_set_charset(IC_ALTER_TABLE *ext_alter_table,
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   DEBUG_ENTRY("at_set_charset");
 
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
   {
     ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
@@ -897,7 +897,7 @@ at_set_decimal_field(IC_ALTER_TABLE *ext_alter_table,
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   DEBUG_ENTRY("at_set_decimal_field");
 
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
   {
     ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
@@ -929,7 +929,7 @@ at_drop_field(IC_ALTER_TABLE *ext_alter_table,
   IC_INT_ALTER_TABLE *alter_table= (IC_INT_ALTER_TABLE*)ext_alter_table;
   DEBUG_ENTRY("at_drop_field");
 
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
   {
     ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
@@ -1022,7 +1022,7 @@ at_drop_index(IC_ALTER_TABLE *ext_alter_table,
   int ret_code= 0;
   DEBUG_ENTRY("at_drop_index");
 
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
   {
     ret_code= IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME;
@@ -1076,7 +1076,7 @@ at_define_partitioning(IC_ALTER_TABLE *ext_alter_table,
   (void)map_partition_to_nodegroup;
   (void)map_partition_to_tablespace;
   (void)num_partitions;
-  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP ||
+  if (alter_table->alter_op_type != IC_CREATE_TABLE_OP &&
       alter_table->alter_op_type != IC_ALTER_TABLE_OP)
     DEBUG_RETURN_INT(IC_ERROR_ILLEGAL_MD_OPERATION_DROP_RENAME);
   DEBUG_RETURN_INT(0);

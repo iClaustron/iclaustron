@@ -623,6 +623,7 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
   IC_CLUSTER_CONFIG *cluster, *grid_cluster;
   IC_MEMORY_CONTAINER *mc_ptr= run_obj->conf_mc_ptr;
   IC_INFO_CLUSTER_SERVER *info_cs= get_my_cluster_info(run_obj);
+  int ret_code = 0;
   DEBUG_ENTRY("load_config_files");
 
   if (!(grid_cluster= ic_load_grid_common_config_server_from_file(
@@ -653,9 +654,9 @@ load_config_files(IC_INT_RUN_CLUSTER_SERVER *run_obj,
     {
       DEBUG_RETURN_INT(load_config_files_error(run_obj, &err_obj));
     }
-    if (!(cluster->ic_modify_cluster_config(cluster)))
+    if (ret_code= cluster->ic_modify_cluster_config(cluster))
     {
-      DEBUG_RETURN_INT(&err_obj);
+      DEBUG_RETURN_INT(ret_code);
     }
 
     /*

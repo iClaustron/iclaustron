@@ -1,4 +1,4 @@
-/* Copyright (C) 2007, 2015 iClaustron AB
+/* Copyright (C) 2007, 2023 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -86,7 +86,7 @@ void ic_debug_return(gboolean ptr_val,
 void ic_debug_thread_return();
 void ic_debug_indent_level_check(int level);
 void ic_debug_thread_init(const gchar *entry_point);
-int ic_debug_open();
+int ic_debug_open(guint32 node_id);
 void ic_debug_close();
 gboolean ic_is_debug_system_active();
 void ic_debug_disable(guint32 level);

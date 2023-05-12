@@ -1,4 +1,4 @@
-/* Copyright (C) 2009, 2016 iClaustron AB
+/* Copyright (C) 2009, 2023 iClaustron AB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -702,11 +702,11 @@ map_id_to_send_node_connection(IC_INT_APID_GLOBAL *apid_global,
 {
   IC_SEND_NODE_CONNECTION *loc_send_node_conn;
   IC_CLUSTER_COMM *cluster_comm;
-  IC_API_CONFIG_SERVER *apic;
+  //IC_API_CONFIG_SERVER *apic;
   IC_GRID_COMM *grid_comm;
   int ret_code;
 
-  apic= apid_global->apic;
+  //apic= apid_global->apic;
   grid_comm= apid_global->grid_comm;
   ret_code= IC_ERROR_NO_SUCH_CLUSTER;
   if (cluster_id > apid_global->max_cluster_id)
