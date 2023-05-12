@@ -12,9 +12,9 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
-project (iClaustron)
+cmake_minimum_required (VERSION 3.0)
 
-cmake_minimum_required (VERSION 2.6)
+project (iClaustron)
 
 if (WIN32)
   set(WINDOWS 1)
@@ -147,13 +147,13 @@ configure_file("${PROJECT_SOURCE_DIR}/scripts/windows_check_process.sh.in"
                "${PROJECT_BINARY_DIR}/scripts/windows_check_process.sh"
                @ONLY)
 
-option(WITH_UNIT_TEST "Build unit test programs" OFF)
+option(WITH_UNIT_TEST "Build unit test programs" ON)
 option(WITH_PRODUCTION "Build a production version" OFF)
-option(WITH_DEBUG "Build a debug version" OFF)
+option(WITH_DEBUG "Build a debug version" ON)
 option(WITH_READLINE "Use readline package" ON)
 option(WITH_DTRACE "Use DTrace probes" OFF)
 option(WITH_OPENSSL "Use OpenSSL package" OFF)
-option(WITH_CYASSL "Use CYassl package" OFF)
+option(WITH_CYASSL "Use CYassl package" ON)
 
 #We need PkgConfig to discover glib and other packages we need
 set (CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
@@ -161,6 +161,7 @@ find_package(GLIB2 REQUIRED)
 include_directories(${GLIB2_INCLUDE_DIRS})
 add_definitions(${GLIB2_DEFINITIONS})
 #Not necessary to do link_directories since libraries are full path
+cmake_policy(SET CMP0075 NEW)
 set (CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${GLIB2_LIBRARIES})
 
 include(CheckFunctionExists)

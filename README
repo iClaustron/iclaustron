@@ -181,7 +181,9 @@ sudo apt-get install libreadline5-dev (if readline is used)
 sudo apt-get install libncurses5-dev (if readline is used)
 sudo apt-get install openssl (if openssl is to be used)
 
-In addition it is required to install CMake 2.6 if building using
+In addition it is required to install CMake 3.0 if building using
 CMake instead of autotools. Since there is a requirement on the
-version of CMake here (>= 2.6), it is usually a good idea to download the
-CMake from www.cmake.org.
+version of CMake here (>= 3.0).
+
+To build on Mac OS X it is tested with installing Mac Ports and installing
+glib2-devel using sudo port install glib2-devel.

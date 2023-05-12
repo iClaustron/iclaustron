@@ -24,7 +24,8 @@ else (GLIB2_LIBRARIES AND GLIB2_INCLUDE_DIRS)
   # use pkg-config to get the directories and then use these values
   # in the FIND_PATH() and FIND_LIBRARY() calls
   set (GLIB2_DEFINITIONS "")
-  include(FindPkgConfig)
+  include(CMakeFindDependencyMacro)
+  find_dependency(PkgConfig)
 
   set (WINDOWS_GLIB_INCLUDE "C:\\Program Files\\GTK\\include\\glib-2.0")
   set (WINDOWS_GLIB_INCLUDE ${WINDOWS_GLIB_INCLUDE} "C:\\Program Files (x86)\\GTK\\include\\glib-2.0")
