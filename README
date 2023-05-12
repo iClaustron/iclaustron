@@ -1,3 +1,9 @@
+iClaustron is a hobby-project that isn't currently finished, the code is
+uploaded to GitHub for future development. It has served as an educational
+project in setting up a new tool developed in C both for autoconf and for
+CMake. Thus most of the content of the README is what is intended and most
+of it isn't in a finished state.
+
 iClaustron is a tool package designed to enable also non-DBMS applications
 to take advantage of the features developed for NDB Cluster. It features
 an API to connect applications to the NDB Data Servers. It contains an
@@ -174,7 +180,6 @@ sudo apt-get install libtool (if using bootstrap.sh.in)
 sudo apt-get install libreadline5-dev (if readline is used)
 sudo apt-get install libncurses5-dev (if readline is used)
 sudo apt-get install openssl (if openssl is to be used)
-sudo apt-get install subversion (To get iClaustron tree from Subversion tree)
 
 In addition it is required to install CMake 2.6 if building using
 CMake instead of autotools. Since there is a requirement on the
