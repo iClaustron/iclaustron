@@ -55,9 +55,7 @@ dependencies = [
 name = "ic_protocol"
 version = "0.1.0"
 dependencies = [
- "ic_comm",
  "ic_port",
- "ic_util",
 ]
 
 [[package]]

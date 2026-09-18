@@ -6,12 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "iClaustron protocol helpers: base64 and management protocol strings"
+description = "iClaustron protocol helpers: base64 and the management protocol vocabulary"
 
 [lints]
 workspace = true
 
 [dependencies]
 ic_port.workspace = true
-ic_util.workspace = true
-ic_comm.workspace = true
