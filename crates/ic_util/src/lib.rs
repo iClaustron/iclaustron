@@ -20,6 +20,8 @@
 //!   `nodeid=` and `bind-address=` options.
 //! - [`string`]: the few string helpers with no direct equivalent in the
 //!   Rust standard library.
+//! - [`threadpool`]: numbered threads with stop flags, the ones the Data
+//!   API's send, receive and heartbeat threads run in.
 
 pub mod bitmap;
 pub mod connectstring;
@@ -27,3 +29,4 @@ pub mod dyn_array;
 pub mod mc;
 pub mod ptr_array;
 pub mod string;
+pub mod threadpool;
