@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+/legacy-c/build
+/tags
+/TAGS

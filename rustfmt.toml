@@ -1,0 +1,11 @@
+# Stable rustfmt options only. Indentation is 2 spaces, as in the C code
+# under legacy-c/. Brace placement is not configurable on
+# stable: the default keeps `{` on the same line and only moves it down
+# when the line would exceed max_width. The rule is therefore to keep
+# every line within 80 columns, splitting long conditions into separate
+# `if` statements or a named bool rather than letting the brace move.
+max_width = 80
+hard_tabs = false
+tab_spaces = 2
+use_small_heuristics = "Default"
+newline_style = "Unix"

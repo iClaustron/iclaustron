@@ -1,0 +1,25 @@
+[package]
+name = "ic_apid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iClaustron Data API: transactions and key operations against RonDB 26.10 data nodes"
+
+[lints]
+workspace = true
+
+[dependencies]
+ic_port.workspace = true
+ic_util.workspace = true
+ic_comm.workspace = true
+ic_protocol.workspace = true
+ic_apic.workspace = true
+ic_ndb_signals.workspace = true
+
+[features]
+default = []
+# Integration tests need a live cluster; see doc/dev-cluster.md.
+integration = []

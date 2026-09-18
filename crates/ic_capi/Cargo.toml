@@ -1,0 +1,18 @@
+[package]
+name = "ic_capi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iClaustron C ABI: libiclaustron shared and static library"
+
+[lints]
+workspace = true
+
+[dependencies]
+ic_apid.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]

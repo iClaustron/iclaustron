@@ -1,0 +1,15 @@
+[package]
+name = "ic_util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iClaustron utilities: errors, debug tracing, memory container, bitmap, arrays, strings, thread pool"
+
+[lints]
+workspace = true
+
+[dependencies]
+ic_port.workspace = true

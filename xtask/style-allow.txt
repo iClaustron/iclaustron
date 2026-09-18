@@ -1,0 +1,16 @@
+# Allow-list for `cargo xtask style`.
+# One entry per line: <path substring>:<pattern>
+# Every entry needs a reason; the style guide (doc/rust/07-style-guide.md)
+# sanctions these cases explicitly.
+
+# Thread-local state needs interior mutability; this is the Rust
+# equivalent of the C g_private_get/g_private_set pairs. Confined to the
+# per-thread debug tracer and the per-thread lock-ordering stack.
+crates/ic_port/src/debug.rs:RefCell<
+crates/ic_port/src/sync.rs:RefCell<
+
+# The sanctioned macros: ic_printf!, ic_assert!, ic_require!,
+# debug_entry!, debug_print!. No other macro_rules! is allowed.
+crates/ic_port/src/output.rs:macro_rules!
+crates/ic_port/src/err.rs:macro_rules!
+crates/ic_port/src/debug.rs:macro_rules!

@@ -1,0 +1,22 @@
+[package]
+name = "ic_port"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iClaustron portability layer: OS access, sync primitives, time, errors, debug tracing, options; replaces glib"
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true
+
+[features]
+default = []
+# Compile the DEBUG_ENTRY/DEBUG_PRINT machinery in. Without it the
+# debug_entry!/debug_print! macros expand to nothing, as in a C release
+# build without DEBUG_BUILD.
+debug_build = []

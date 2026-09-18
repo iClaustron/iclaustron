@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ic_port",
+    "crates/ic_util",
+    "crates/ic_comm",
+    "crates/ic_protocol",
+    "crates/ic_apic",
+    "crates/ic_ndb_signals",
+    "crates/ic_apid",
+    "crates/ic_capi",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Mikael Ronström"]
+repository = "https://github.com/iClaustron/iclaustron"
+
+[workspace.dependencies]
+libc = "0.2"
+ic_port = { path = "crates/ic_port" }
+ic_util = { path = "crates/ic_util" }
+ic_comm = { path = "crates/ic_comm" }
+ic_protocol = { path = "crates/ic_protocol" }
+ic_apic = { path = "crates/ic_apic" }
+ic_ndb_signals = { path = "crates/ic_ndb_signals" }
+ic_apid = { path = "crates/ic_apid" }
+
+# Lints shared by every crate. Each crate opts in with `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# Style guide (doc/rust/07-style-guide.md) items clippy can express.
+needless_lifetimes = "deny"
+unwrap_used = "warn"
+expect_used = "warn"
+iter_over_hash_type = "warn"
+too_many_arguments = "allow"      # C-style functions have many arguments
+new_without_default = "allow"     # explicit constructors are preferred
+missing_safety_doc = "deny"       # every unsafe fn documents its contract
+
+[profile.release]
+debug = 1                          # line tables for profiling
