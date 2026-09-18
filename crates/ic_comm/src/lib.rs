@@ -15,5 +15,7 @@
 //!   statistics the C `IC_CONNECTION` carried.
 //! - [`line_proto`]: the line-oriented management protocol helpers.
 
+pub mod connection;
+pub mod line_proto;
 pub mod poll_set;
 pub mod sock_buf;
