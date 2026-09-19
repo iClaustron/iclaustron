@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7131;
+pub const IC_LAST_ERROR: i32 = 7133;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -289,6 +289,10 @@ pub const IC_ERROR_INTERNAL_PANIC: i32 = 7129;
 pub const IC_ERROR_CONDITION_TOO_COMPLEX: i32 = 7130;
 /// No such field in table or record.
 pub const IC_ERROR_NO_SUCH_FIELD: i32 = 7131;
+/// The management server refused the request and said why.
+pub const IC_ERROR_MGM_SERVER_REFUSED: i32 = 7132;
+/// The management server is too old to serve this library.
+pub const IC_ERROR_MGM_VERSION_TOO_OLD: i32 = 7133;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -636,6 +640,10 @@ pub fn message(code: i32) -> &'static str {
       "Condition needs more interpreter registers than available"
     }
     IC_ERROR_NO_SUCH_FIELD => "No such field in table or record",
+    IC_ERROR_MGM_SERVER_REFUSED => "The management server refused the request",
+    IC_ERROR_MGM_VERSION_TOO_OLD => {
+      "The management server is too old for this library"
+    }
     _ => "Unknown error code",
   }
 }

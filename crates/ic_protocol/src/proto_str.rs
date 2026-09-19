@@ -145,12 +145,6 @@ pub const NODE_TYPE_API: u32 = 1;
 /// A management server.
 pub const NODE_TYPE_MGM: u32 = 2;
 
-/// The name of the connection parameter holding a node's port, asked
-/// for when the configuration gives port 0 and the real port is
-/// assigned dynamically.
-/// Verify: RonDB `include/mgmapi/mgmapi_config_parameters.h:365`.
-pub const CFG_CONNECTION_SERVER_PORT: u32 = 406;
-
 #[cfg(test)]
 mod tests {
   use super::*;

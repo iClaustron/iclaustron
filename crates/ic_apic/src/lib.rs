@@ -17,9 +17,9 @@
 //! - [`conf_blob`]: decoding the binary configuration the management
 //!   server sends.
 //! - [`data`]: the typed configuration the rest of the library uses.
-//! - `mgm_client`: the conversation with the management server, still
-//!   to be written.
+//! - [`mgm_client`]: the conversation with the management server.
 
 pub mod conf_blob;
 pub mod conf_param;
 pub mod data;
+pub mod mgm_client;

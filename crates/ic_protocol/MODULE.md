@@ -42,12 +42,15 @@ Base64 and the vocabulary of the NDB management protocol. See
 | connection parameter | `get connection parameter`, replying with ` reply` | `mgmapi.cpp:3560,3565` |
 | transporter handover | `transporter connect` | `mgmapi.cpp:3600` |
 | node types | DB 0, API 1, MGM 2 | `mgmapi_config_parameters.h:455` |
-| server port parameter | 406 | `mgmapi_config_parameters.h:365` |
 
 Two replies do not follow the rule that a reply is the command plus
 " reply": `get version` answers `version`, and `get status` answers
 `node status`. A test asserts both, so a careless tidy-up cannot break
 them.
+
+Configuration parameter ids live in `ic_apic::conf_param`, not here:
+they are configuration, not protocol vocabulary, and only the
+configuration client uses them.
 
 ## Rust notes for C readers
 
