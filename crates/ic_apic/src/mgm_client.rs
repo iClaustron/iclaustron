@@ -31,8 +31,11 @@ use ic_comm::connection::Connection;
 use ic_comm::line_proto;
 use ic_comm::line_proto::LineReader;
 use ic_port::consts::IC_NDB_VERSION;
+use ic_port::debug::IC_COMM_LEVEL;
 use ic_port::debug::IC_CONFIG_PROTO_LEVEL;
 use ic_port::err;
+use ic_port::sync::IcMutex;
+use ic_port::sync::IC_MUTEX_LEVEL_UNORDERED;
 use ic_port::IcError;
 use ic_protocol::base64;
 use ic_protocol::proto_str::*;
@@ -70,6 +73,40 @@ enum Arg<'a> {
   Number(u64),
   /// Written as `name:"value"`.
   Text(&'a str),
+}
+
+/// The management server's error code for a node id request that was
+/// refused for good: asking again will not change the answer. Every
+/// other refusal may succeed if asked again.
+/// Verify: `mgmapi_error.h`, the alloc node id failures.
+pub const IC_MGM_ALLOCID_NOT_RETRIABLE: u32 = 1102;
+/// The words with which the management server says an id is held by
+/// another node. The error code does not tell this refusal from "the
+/// cluster is not ready", both being "retry may succeed", so the text
+/// is the only way to know. The server documents that the MySQL server
+/// matches on these texts too, which makes them interface in practice.
+/// Verify: `MgmtSrvr.cpp`, the end of `alloc_node_id_impl`.
+pub const IC_MGM_TEXT_ID_HELD: &str = "already allocated by another node";
+
+/// What the management server last said when it refused a request, in
+/// its own words. Like `errno`, it is only meaningful straight after a
+/// call failed with a refusal.
+static LAST_REFUSAL: IcMutex<String> =
+  IcMutex::new(IC_MUTEX_LEVEL_UNORDERED, String::new());
+
+/// The management server's own words for its last refusal.
+pub fn last_refusal() -> String {
+  LAST_REFUSAL.lock().clone()
+}
+
+/// True when an error means a management server answered and said no,
+/// which is when [`last_refusal`] has something to say. An unreachable
+/// server is not a refusal.
+pub fn is_refusal(code: i32) -> bool {
+  code == err::IC_ERROR_MGM_SERVER_REFUSED
+    || code == err::IC_ERROR_NO_NODEID
+    || code == err::IC_ERROR_NODEID_IN_USE
+    || code == err::IC_ERROR_NODEID_NOT_ALLOWED
 }
 
 /// A connection to a management server, with the conversation on top.
@@ -209,12 +246,19 @@ impl MgmClient {
     if result == IC_RESULT_OK {
       return Ok(());
     }
-    ic_port::ic_printf!(
+    // Traced, not printed: a caller that retries for the length of an
+    // outage would otherwise fill the application's output. Whoever
+    // wants the words asks for them with `last_refusal`.
+    ic_port::debug_print!(
+      IC_CONFIG_PROTO_LEVEL | IC_COMM_LEVEL,
       "Management server {}:{} refused: {}",
       self.host,
       self.port,
       result
     );
+    let mut last = LAST_REFUSAL.lock();
+    last.clear();
+    last.push_str(result);
     Err(IcError::new(err::IC_ERROR_MGM_SERVER_REFUSED))
   }
 
@@ -303,7 +347,7 @@ impl MgmClient {
     self.send_request(IC_CMD_GET_NODEID, &args)?;
     let fields = self.read_reply(IC_REPLY_GET_NODEID)?;
     if self.check_result(&fields).is_err() {
-      return Err(IcError::new(err::IC_ERROR_NO_NODEID));
+      return Err(IcError::new(node_id_refusal(&fields)));
     }
     let node_id = MgmClient::field_u32(&fields, IC_ARG_NODEID)?;
     ic_port::debug_print!(
@@ -402,6 +446,29 @@ impl std::fmt::Debug for MgmClient {
       self.version.build
     )
   }
+}
+
+/// Which error a refused node id request amounts to. The three kinds
+/// call for different things: wait and ask again, give the id up, or
+/// stop asking for it altogether.
+fn node_id_refusal(fields: &HashMap<String, String>) -> i32 {
+  let mut server_code: u32 = 0;
+  if let Some(text) = fields.get(IC_ARG_ERROR_CODE) {
+    if let Ok(value) = text.parse::<u32>() {
+      server_code = value;
+    }
+  }
+  if server_code == IC_MGM_ALLOCID_NOT_RETRIABLE {
+    return err::IC_ERROR_NODEID_NOT_ALLOWED;
+  }
+  if let Some(result) = fields.get(IC_ARG_RESULT) {
+    if result.contains(IC_MGM_TEXT_ID_HELD) {
+      return err::IC_ERROR_NODEID_IN_USE;
+    }
+  }
+  // The cluster is not ready, the id is still being cleared up after
+  // its last holder, or anything else that time may cure.
+  err::IC_ERROR_NO_NODEID
 }
 
 /// Connect to a management server, get a node id and the configuration,
@@ -596,6 +663,66 @@ mod tests {
     let cs = connect_string(port);
     let err = fetch_configuration(&cs, 5000, None).expect_err("refused");
     assert_eq!(err.code, err::IC_ERROR_NO_NODEID);
+    let _ = handle.join();
+  }
+
+  fn refusal(result: &str, error_code: Option<&str>) -> i32 {
+    let mut fields: HashMap<String, String> = HashMap::new();
+    fields.insert(IC_ARG_RESULT.to_string(), result.to_string());
+    if let Some(code) = error_code {
+      fields.insert(IC_ARG_ERROR_CODE.to_string(), code.to_string());
+    }
+    node_id_refusal(&fields)
+  }
+
+  #[test]
+  fn a_cluster_that_is_not_ready_is_worth_asking_again() {
+    // Seen live during a cluster restart. It must not count as our id
+    // having gone to somebody else, or a node would give up its
+    // identity because the cluster was slow to come back.
+    let code =
+      refusal("Cluster not ready for nodeid allocation.", Some("1101"));
+    assert_eq!(code, err::IC_ERROR_NO_NODEID);
+  }
+
+  #[test]
+  fn an_id_held_by_another_node_is_told_apart_by_its_words() {
+    // The server's code is the same 1101 as above, so only the text
+    // says that waiting will not help.
+    let code =
+      refusal("Id 192 already allocated by another node.", Some("1101"));
+    assert_eq!(code, err::IC_ERROR_NODEID_IN_USE);
+    // A server too old to send the code is read the same way.
+    let code = refusal("Id 192 already allocated by another node.", None);
+    assert_eq!(code, err::IC_ERROR_NODEID_IN_USE);
+  }
+
+  #[test]
+  fn an_id_reserved_on_this_management_server_is_not_held_for_good() {
+    // This is a reservation that times out, quite possibly our own
+    // from a moment ago, so it is worth asking again.
+    let code =
+      refusal("Id 192 is already allocated by this ndb_mgmd", Some("1101"));
+    assert_eq!(code, err::IC_ERROR_NO_NODEID);
+  }
+
+  #[test]
+  fn a_refusal_for_good_says_so_whatever_the_words() {
+    let code =
+      refusal("No node defined with id=192 in config file.", Some("1102"));
+    assert_eq!(code, err::IC_ERROR_NODEID_NOT_ALLOWED);
+  }
+
+  #[test]
+  fn the_servers_own_words_can_be_asked_for() {
+    let refused =
+      "get nodeid reply\nresult: Cluster not ready for nodeid allocation.\n\n";
+    let (port, handle) = fake_mgmd(VERSION_OK, refused);
+    let cs = connect_string(port);
+    let _ = fetch_configuration(&cs, 5000, None).expect_err("refused");
+    // Other tests refuse things too and the words are process wide, so
+    // only check that something was kept.
+    assert!(!last_refusal().is_empty());
     let _ = handle.join();
   }
 

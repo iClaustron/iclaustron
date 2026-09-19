@@ -19,29 +19,95 @@
 //!   has started;
 //! - a poll set watches every connected socket, so a node going away is
 //!   noticed when it closes rather than when we next try to write;
-//! - heartbeats go out on schedule, since a data node that stops
-//!   hearing from us declares us dead.
+//! - heartbeats go out on schedule, and a node that keeps its socket
+//!   open but stops answering them is declared lost.
 //!
-//! A failure another data node reports is recorded on the link but does
-//! not hold the retry back. The C send thread retries regardless, and a
-//! data node not yet ready to talk refuses the connection, which costs
-//! nothing. Waiting for the takeover to be reported would only make
-//! recovery slower.
+//! # Losing a link is not losing a node
+//!
+//! This part follows the data nodes' protocol, not the C. The C handles
+//! neither `NODE_FAILREP` nor `NF_COMPLETEREP` and treats every closed
+//! socket alike.
+//!
+//! There are two kinds of evidence and they mean different things.
+//!
+//! **Our own evidence**: the socket closed, a send failed, the
+//! heartbeats stopped. That says our link to the node is gone. It says
+//! nothing about the node, which may be up and serving every other
+//! client, and a data node does nothing special when it loses an API
+//! link. Nobody will ever report a takeover for a node that did not
+//! fail, so the link is simply dialled again on the usual delay. The
+//! error for it is `IC_ERROR_LINK_LOST`, not a node failure and
+//! certainly not a cluster failure. The C++ API reports this state to
+//! applications as error 4009, "cluster failure", which it is not.
+//!
+//! **The cluster's evidence**: a data node sends `NODE_FAILREP` naming
+//! the node. Now the node is known to have failed, and it is **not
+//! dialled again until a surviving data node reports, with
+//! `NF_COMPLETEREP`, that the failure has been fully handled**. Every
+//! surviving data node sends that report to every API node once all its
+//! blocks are done. Two things depend on the wait. The report is what
+//! tells an API node that no more will be heard about transactions that
+//! were running on the failed node, so they can be aborted. And
+//! dialling early would let us reach the restarted node before noticing
+//! that the rest of the cluster had gone too, so that a whole cluster
+//! restart would look like one node bouncing.
+//!
+//! The two usually arrive together when a node dies: the socket closes
+//! and a moment later the report comes. Dialling in between is
+//! harmless, because a dead node refuses the connection, and the report
+//! then stops the dialling.
+//!
+//! If no data node is connected at all there is nobody to send either
+//! report, so every wait ends by itself.
+//!
+//! # Losing every link can lose the node id
+//!
+//! Once we are connected to data nodes, our claim on our node id is
+//! those connections and nothing else: the management server's own
+//! reservation is dropped as soon as the id is held by a connected
+//! transporter. Lose every link and, once the data nodes have finished
+//! handling our disappearance, the id is free. An id written in the
+//! connectstring is asked for by nobody else. An id the management
+//! server chose for us can be given to the next API node that asks for
+//! any id, and dialling a data node with it then would present two
+//! nodes under one id.
+//!
+//! So after losing every link, a node whose id was chosen for it goes
+//! back to the management server before dialling anyone. It asks for
+//! the same id first, which keeps its identity when the id is still
+//! free, and takes a new one when it is not, together with the
+//! configuration as that new node sees it.
+//!
+//! Verify: `MgmtSrvr.cpp`, the release of the local reservation on
+//! `CONNECT_REP`, `NODE_FAILREP` and `NF_COMPLETEREP`, and
+//! `alloc_node_id_req`, which asks the data nodes. The C++ API claims
+//! an id once, in `ndb_cluster_connection.cpp`, and not again.
+//!
+//! Verify: `ClusterMgr.cpp`, the connect gate at the top of the node
+//! loop in `threadMain`, `execNODE_FAILREP` and `execNF_COMPLETEREP`;
+//! `QmgrMain.cpp`, `execNDB_FAILCONF`, for the data node's side. One
+//! deliberate difference: the C++ API treats its own disconnect as a
+//! failure report and then waits for a takeover report, which for a
+//! link-only loss never comes. Confirmed with the author of the
+//! protocol that the data node has no handling that would resolve it.
+//!
+//! # Threads
 //!
 //! In this release one thread drives all of it through [`poll`]. The
 //! threaded form of the design keeps the same states and transitions,
-//! with a send thread per node doing the connecting and a receive
-//! thread owning the poll set. Until then, connecting happens on the
-//! polling thread, so a host that swallows packets rather than
-//! refusing them can hold up a round for as long as the connect
-//! timeout. A node that is merely down refuses at once and costs
-//! nothing.
+//! with a connect thread per node and receive threads owning the poll
+//! sets. Until then, connecting happens on the polling thread, so a
+//! host that swallows packets rather than refusing them can hold up a
+//! round for as long as the connect timeout. A node that is merely down
+//! refuses at once and costs nothing.
 //!
 //! [`poll`]: NodeManager::poll
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use ic_apic::data::ClusterConfig;
+use ic_apic::mgm_client;
 use ic_apic::mgm_client::MgmClient;
 use ic_comm::poll_set::PollSet;
 use ic_ndb_signals::gsn;
@@ -50,6 +116,7 @@ use ic_ndb_signals::qmgr::NodeFailRep;
 use ic_ndb_signals::qmgr::NodeState;
 use ic_port::debug::IC_COMM_LEVEL;
 use ic_port::debug::IC_HEARTBEAT_LEVEL;
+use ic_port::err;
 use ic_port::time::IcTimer;
 use ic_port::IcError;
 use ic_util::connectstring::ConnectString;
@@ -57,27 +124,44 @@ use ic_util::connectstring::ConnectString;
 use crate::node_connect::resolve_port;
 use crate::node_connect::NodeConnection;
 use crate::node_connect::ReceivedSignal;
+use crate::node_state::PublishedNodeState;
 
 /// How long to wait before the first retry of a failed link.
 pub const IC_FIRST_RETRY_MS: u32 = 1000;
 /// The longest the retry delay grows to.
 pub const IC_MAX_RETRY_MS: u32 = 10_000;
-/// Fraction of the heartbeat interval we actually send at, so that a
-/// missed round is not immediately fatal. The C++ client uses a fifth.
-pub const IC_HEARTBEAT_DIVISOR: u32 = 5;
+/// Heartbeats go out this many times per check interval, so that one
+/// lost round is not a missed interval.
+/// Verify: `ClusterMgr.cpp`, `get_send_heartbeat_interval`.
+pub const IC_HEARTBEATS_PER_INTERVAL: u32 = 2;
+/// The shortest check interval, whatever a node reports.
+/// Verify: `ClusterMgr.hpp`, the minimum heartbeat interval.
+pub const IC_MIN_HEARTBEAT_INTERVAL_MS: u32 = 100;
+/// How many times the management server must say our old node id is
+/// held by another node before we accept a different one. Changing
+/// identity is not something to do on the first no. Refusals that time
+/// may cure, such as a cluster that is not ready, do not count at all:
+/// the id is asked for again for as long as it takes.
+pub const IC_SAME_NODE_ID_ATTEMPTS: u32 = 3;
+/// A node is lost at this many check intervals in a row without an
+/// answer, which is at least three whole intervals of silence.
+/// Verify: `ClusterMgr.cpp`, the missed heartbeat test in `threadMain`.
+pub const IC_MAX_MISSED_HEARTBEATS: u32 = 4;
 
 /// Where a link to one data node stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LinkStatus {
-  /// Not connected, and waiting before trying again.
+  /// Not connected, and being dialled on a growing delay. Either it
+  /// has never been connected, or our link to it broke and no data node
+  /// has said the node itself failed, or its failure has been reported
+  /// as handled.
   #[default]
   Disconnected,
   /// Connected and registered; the node answers our signals.
   Connected,
-  /// Not connected, and another data node has confirmed that this one
-  /// failed. It is retried like any other disconnected node: a node
-  /// that is not ready to talk refuses, which costs nothing.
-  Failing,
+  /// A data node has reported that this node failed. It is not dialled
+  /// until a surviving data node reports the failure fully handled.
+  AwaitingTakeover,
 }
 
 /// One link to one data node, and what we know about it.
@@ -86,18 +170,28 @@ pub struct NodeLink {
   pub node_id: u32,
   /// Where the link stands.
   pub status: LinkStatus,
-  /// What the node last told us about itself.
+  /// What the node last told us about itself. This is the whole reply
+  /// and belongs to the thread driving the link; other threads read
+  /// [`published`](Self::published) instead.
   pub node_state: Option<NodeState>,
   /// How many times connecting has failed since it last worked.
   pub failed_attempts: u32,
   /// The last error, for reporting.
   pub last_error: Option<IcError>,
-  /// How long the node lets us go silent before declaring us dead. We
-  /// send well inside it.
+  /// The node's heartbeat check interval.
   pub heartbeat_interval_ms: u32,
+  /// Check intervals in a row that ended without an answer.
+  pub missed_heartbeats: u32,
+  /// The node's state as other threads may read it, without a lock.
+  pub published: Arc<PublishedNodeState>,
   connection: Option<NodeConnection>,
+  /// True once a data node has reported this node failed, until we are
+  /// next connected to it. Every surviving node reports the same
+  /// failure, and this is what makes all but the first do nothing.
+  failure_reported: bool,
   retry_at: IcTimer,
   heartbeat_at: IcTimer,
+  check_at: IcTimer,
 }
 
 impl std::fmt::Debug for NodeLink {
@@ -117,15 +211,20 @@ impl NodeLink {
   fn new(node_id: u32, heartbeat_interval_ms: u32) -> NodeLink {
     NodeLink {
       node_id,
+      // A node that was never connected has no failure to wait out.
       status: LinkStatus::Disconnected,
       node_state: None,
       failed_attempts: 0,
       last_error: None,
       heartbeat_interval_ms,
+      missed_heartbeats: 0,
+      published: Arc::new(PublishedNodeState::new()),
       connection: None,
+      failure_reported: false,
       // Nothing to wait for before the first attempt.
       retry_at: 0,
       heartbeat_at: 0,
+      check_at: 0,
     }
   }
 
@@ -142,14 +241,17 @@ impl NodeLink {
     }
   }
 
-  /// How often we actually send, which is well inside the interval the
-  /// node allows.
-  pub fn heartbeat_period_ms(&self) -> u32 {
-    let mut period = self.heartbeat_interval_ms / IC_HEARTBEAT_DIVISOR;
-    if period == 0 {
-      period = 1000;
+  /// The check interval with the floor applied.
+  pub fn check_interval_ms(&self) -> u32 {
+    if self.heartbeat_interval_ms < IC_MIN_HEARTBEAT_INTERVAL_MS {
+      return IC_MIN_HEARTBEAT_INTERVAL_MS;
     }
-    period
+    self.heartbeat_interval_ms
+  }
+
+  /// How often we send a heartbeat.
+  pub fn heartbeat_period_ms(&self) -> u32 {
+    self.check_interval_ms() / IC_HEARTBEATS_PER_INTERVAL
   }
 }
 
@@ -159,6 +261,20 @@ pub struct NodeManager {
   mgm: Option<MgmClient>,
   connect_string: ConnectString,
   mgm_timeout_ms: u32,
+  /// The name we give the management server when claiming a node id.
+  node_name: Option<String>,
+  /// True when the management server chose our node id, false when the
+  /// connectstring named it.
+  node_id_is_dynamic: bool,
+  /// True from losing every link until the node id has been claimed
+  /// again. Nothing is dialled while it is set.
+  must_reclaim_node_id: bool,
+  /// Failed attempts of any kind, which set the delay before the next.
+  reclaim_attempts: u32,
+  /// Times the management server said our old id is held by another
+  /// node. Neither an unreachable server nor a "not now" counts here.
+  same_id_refusals: u32,
+  reclaim_at: IcTimer,
   links: BTreeMap<u32, NodeLink>,
   poll_set: PollSet,
 }
@@ -181,12 +297,16 @@ impl NodeManager {
   /// The management server is kept, because the port of a data node is
   /// asked of it on every attempt. `connect_string` lets a management
   /// connection that has gone away be made again, which matters for a
-  /// client meant to run for weeks.
+  /// client meant to run for weeks. It also says whether our node id
+  /// was written in it or chosen for us, which decides what has to
+  /// happen after losing every link. `node_name` is what the management
+  /// server logs against our node id.
   pub fn new(
     config: ClusterConfig,
     mgm: MgmClient,
     connect_string: ConnectString,
     mgm_timeout_ms: u32,
+    node_name: Option<&str>,
   ) -> Result<NodeManager, IcError> {
     let mut links: BTreeMap<u32, NodeLink> = BTreeMap::new();
     for node_id in config.connectable_data_nodes() {
@@ -196,11 +316,22 @@ impl NodeManager {
       };
       links.insert(node_id, NodeLink::new(node_id, interval));
     }
+    let node_id_is_dynamic = connect_string.node_id.is_none();
+    let mut owned_name: Option<String> = None;
+    if let Some(name) = node_name {
+      owned_name = Some(name.to_string());
+    }
     Ok(NodeManager {
       config,
       mgm: Some(mgm),
       connect_string,
       mgm_timeout_ms,
+      node_name: owned_name,
+      node_id_is_dynamic,
+      must_reclaim_node_id: false,
+      reclaim_attempts: 0,
+      same_id_refusals: 0,
+      reclaim_at: 0,
       links,
       poll_set: PollSet::new()?,
     })
@@ -219,6 +350,14 @@ impl NodeManager {
   /// One link.
   pub fn link(&self, node_id: u32) -> Option<&NodeLink> {
     self.links.get(&node_id)
+  }
+
+  /// A node's state as any thread may read it. The handle stays good
+  /// for the life of the manager, across any number of reconnects.
+  pub fn published(&self, node_id: u32) -> Option<Arc<PublishedNodeState>> {
+    // `?` on an Option: no such node, so return None now.
+    let link = self.links.get(&node_id)?;
+    Some(Arc::clone(&link.published))
   }
 
   /// How many data nodes answer our signals.
@@ -244,8 +383,9 @@ impl NodeManager {
   }
 
   /// Do one round of work, waiting up to `wait_ms` for a socket to say
-  /// something: connect what is due, read what has arrived, and send
-  /// the heartbeats that are due.
+  /// something: connect what is due, read what has arrived, send the
+  /// heartbeats that are due, and notice the nodes that stopped
+  /// answering them.
   ///
   /// Call it in a loop. It never blocks longer than asked, so a caller
   /// can do other work between rounds.
@@ -253,15 +393,25 @@ impl NodeManager {
     self.connect_due_links();
     self.read_ready_links(wait_ms)?;
     self.send_due_heartbeats();
+    self.check_missed_heartbeats();
     Ok(())
   }
 
+  // ---- Connecting ----
+
   /// Connect every link whose retry time has come.
   fn connect_due_links(&mut self) {
+    if self.must_reclaim_node_id && !self.reclaim_node_id() {
+      // Dialling under an id that may now be someone else's is worse
+      // than not dialling.
+      return;
+    }
     let now = ic_port::time::gethrtime();
     let mut due: Vec<u32> = Vec::new();
     for link in self.links.values() {
-      if link.status == LinkStatus::Connected {
+      // A node awaiting its takeover report is not dialled, however
+      // long its retry time has been past.
+      if link.status != LinkStatus::Disconnected {
         continue;
       }
       if link.retry_at == 0 || now >= link.retry_at {
@@ -289,6 +439,16 @@ impl NodeManager {
         return;
       }
     };
+    // Registration ends with the node describing itself, so a
+    // connection without a state is one that did not register.
+    let state = match connection.node_state {
+      Some(state) => state,
+      None => {
+        connection.close();
+        self.record_failure(node_id, IcError::new(err::IC_ERROR_NODE_DOWN));
+        return;
+      }
+    };
     // Watch the socket before the link counts as up. A connection
     // nobody watches would never be seen to close, which is the one
     // thing this module exists to notice.
@@ -299,14 +459,19 @@ impl NodeManager {
       return;
     }
     if let Some(link) = self.links.get_mut(&node_id) {
-      link.node_state = connection.node_state;
+      let now = ic_port::time::gethrtime();
+      link.node_state = Some(state);
       link.heartbeat_interval_ms = connection.heartbeat_interval_ms;
       link.connection = Some(connection);
       link.status = LinkStatus::Connected;
+      link.failure_reported = false;
       link.failed_attempts = 0;
+      link.missed_heartbeats = 0;
       link.last_error = None;
-      link.heartbeat_at =
-        ic_port::time::gethrtime() + period_nanos(link.heartbeat_period_ms());
+      link.heartbeat_at = now + period_nanos(link.heartbeat_period_ms());
+      link.check_at = now + period_nanos(link.check_interval_ms());
+      // Last, so that a reader seeing "connected" finds a link that is.
+      link.published.publish_connected(&state, now);
       ic_port::debug_print!(IC_COMM_LEVEL, "Connected to node {}", node_id);
     }
   }
@@ -327,6 +492,8 @@ impl NodeManager {
       );
     }
   }
+
+  // ---- Receiving ----
 
   /// Wait for any socket to have something and read what is there.
   fn read_ready_links(&mut self, wait_ms: u32) -> Result<(), IcError> {
@@ -357,9 +524,9 @@ impl NodeManager {
     let signals = match result {
       Ok(signals) => signals,
       Err(e) => {
-        // The socket closed or failed. This is how a node going away is
-        // noticed promptly rather than at the next send.
-        self.drop_link(node_id, e);
+        // The socket closed or failed, which we learn now rather than
+        // at the next send.
+        self.link_lost(node_id, e);
         return;
       }
     };
@@ -382,57 +549,39 @@ impl NodeManager {
           report.failed_nodes
         );
         for failed in &report.failed_nodes {
-          self.mark_failing(*failed);
+          self.node_failure_reported(*failed);
         }
       }
       return;
     }
     if signal.gsn == gsn::IC_GSN_NF_COMPLETEREP {
       if let Ok(report) = NfCompleteRep::decode(&signal.data) {
-        if report.is_whole_node() {
-          // Once there are transactions to recover, this is where the
-          // ones that were waiting on the failed node are settled.
-          ic_port::debug_print!(
-            IC_HEARTBEAT_LEVEL,
-            "Node {} reports node {} fully taken over",
-            node_id,
-            report.failed_node_id
-          );
-        }
+        self.takeover_reported(node_id, report.failed_node_id);
       }
       return;
     }
     if let Some(link) = self.links.get_mut(&node_id) {
       if let Some(connection) = link.connection.as_mut() {
         if connection.apply_signal(signal.gsn, &signal.data) {
+          // The node answered a heartbeat.
+          link.missed_heartbeats = 0;
           link.node_state = connection.node_state;
           link.heartbeat_interval_ms = connection.heartbeat_interval_ms;
+          if let Some(state) = connection.node_state {
+            link
+              .published
+              .publish_regconf(&state, ic_port::time::gethrtime());
+          }
         }
       }
     }
   }
 
-  fn mark_failing(&mut self, node_id: u32) {
-    let should_drop = match self.links.get(&node_id) {
-      Some(link) => link.status == LinkStatus::Connected,
-      None => return,
-    };
-    if should_drop {
-      // Another node saw the failure before our own socket did.
-      self.drop_link(node_id, IcError::new(ic_port::err::IC_ERROR_NODE_DOWN));
-    }
-    if let Some(link) = self.links.get_mut(&node_id) {
-      link.status = LinkStatus::Failing;
-      ic_port::debug_print!(
-        IC_HEARTBEAT_LEVEL,
-        "Node {} has failed; its work is being taken over",
-        node_id
-      );
-    }
-  }
+  // ---- Losing a link, losing a node ----
 
-  /// Give up on a link and arrange for it to be retried.
-  fn drop_link(&mut self, node_id: u32, error: IcError) {
+  /// Close a link's socket and publish it as down. Returns false if
+  /// there was nothing to close.
+  fn tear_down(&mut self, node_id: u32) -> bool {
     // Stop watching the socket before closing it, or the poll set
     // would be left holding a descriptor number that the next
     // connection may reuse.
@@ -442,19 +591,217 @@ impl NodeManager {
         fd = connection.fd();
       }
     }
-    if fd >= 0 {
-      let _ = self.poll_set.remove_connection(fd);
+    if fd < 0 {
+      return false;
     }
+    let _ = self.poll_set.remove_connection(fd);
     if let Some(link) = self.links.get_mut(&node_id) {
+      // First, so that no reader sends to a node we are tearing down.
+      link.published.publish_down();
       if let Some(connection) = link.connection.as_mut() {
         connection.close();
       }
       link.connection = None;
       link.node_state = None;
-      link.status = LinkStatus::Disconnected;
+      link.missed_heartbeats = 0;
     }
-    self.record_failure(node_id, error);
+    true
   }
+
+  /// Our own evidence: the socket closed, a send failed, or the
+  /// heartbeats stopped. The link is gone. Whether the node is, we do
+  /// not know, so it is dialled again on the usual delay.
+  fn link_lost(&mut self, node_id: u32, error: IcError) {
+    if !self.tear_down(node_id) {
+      return;
+    }
+    if let Some(link) = self.links.get_mut(&node_id) {
+      link.status = LinkStatus::Disconnected;
+      link.failed_attempts = 0;
+    }
+    // Sets the error and the time of the first attempt.
+    self.record_failure(node_id, error);
+    self.end_waits_if_alone();
+  }
+
+  /// The cluster's evidence: a data node says this node failed. It is
+  /// not dialled again until the failure is reported as handled.
+  fn node_failure_reported(&mut self, node_id: u32) {
+    match self.links.get_mut(&node_id) {
+      Some(link) => {
+        if link.failure_reported {
+          // Another node reporting the failure we already know of.
+          return;
+        }
+        link.failure_reported = true;
+      }
+      // A node we have no link to, such as another API node.
+      None => return,
+    }
+    // The report can beat our own socket to it.
+    self.tear_down(node_id);
+    if let Some(link) = self.links.get_mut(&node_id) {
+      link.status = LinkStatus::AwaitingTakeover;
+      link.failed_attempts = 0;
+      link.last_error = Some(IcError::new(err::IC_ERROR_NODE_DOWN));
+      ic_port::debug_print!(
+        IC_HEARTBEAT_LEVEL,
+        "Node {} has failed; not dialling until that has been handled",
+        node_id
+      );
+    }
+    self.end_waits_if_alone();
+  }
+
+  /// A surviving data node says a failure has been fully handled, so
+  /// the failed node may be dialled again.
+  fn takeover_reported(&mut self, reporter: u32, failed_node_id: u32) {
+    if let Some(link) = self.links.get_mut(&failed_node_id) {
+      // Every surviving node sends one, so all but the first find the
+      // wait already over.
+      if link.status != LinkStatus::AwaitingTakeover {
+        return;
+      }
+      link.status = LinkStatus::Disconnected;
+      link.retry_at = 0;
+      ic_port::debug_print!(
+        IC_HEARTBEAT_LEVEL,
+        "Node {} reports the failure of node {} fully handled; dialling",
+        reporter,
+        failed_node_id
+      );
+    }
+  }
+
+  /// With no data node connected there is nobody to report a failure
+  /// or its handling, so every wait ends here.
+  fn end_waits_if_alone(&mut self) {
+    if self.num_connected() != 0 {
+      return;
+    }
+    for link in self.links.values_mut() {
+      if link.status == LinkStatus::AwaitingTakeover {
+        link.status = LinkStatus::Disconnected;
+        link.retry_at = 0;
+      }
+    }
+    ic_port::debug_print!(
+      IC_HEARTBEAT_LEVEL,
+      "No data node is connected; the whole cluster is gone from here"
+    );
+    if self.node_id_is_dynamic && !self.must_reclaim_node_id {
+      // Our connections were our only claim on the id.
+      self.must_reclaim_node_id = true;
+      self.reclaim_attempts = 0;
+      self.same_id_refusals = 0;
+      self.reclaim_at = 0;
+    }
+  }
+
+  // ---- Our own node id ----
+
+  /// Claim a node id again after losing every link. True when we hold
+  /// one and may dial.
+  fn reclaim_node_id(&mut self) -> bool {
+    let now = ic_port::time::gethrtime();
+    if self.reclaim_at != 0 && now < self.reclaim_at {
+      return false;
+    }
+    let old_node_id = self.config.api.node_id;
+    let name = self.node_name.clone();
+    // The same id first. If it is still free we stay who we were.
+    let mut wanted = self.connect_string.clone();
+    wanted.node_id = Some(old_node_id);
+    let mut fetched = mgm_client::fetch_configuration(
+      &wanted,
+      self.mgm_timeout_ms,
+      name.as_deref(),
+    );
+    // There are three kinds of no. "Not now" is asked again for as long
+    // as it takes; seen live, a restarting cluster says it for several
+    // seconds. "Another node holds it" is believed after a few times.
+    // "The configuration does not allow it" is believed at once.
+    let mut refusal: i32 = 0;
+    if let Err(e) = &fetched {
+      refusal = e.code;
+    }
+    if refusal == err::IC_ERROR_NODEID_IN_USE {
+      self.same_id_refusals += 1;
+    }
+    let give_it_up = refusal == err::IC_ERROR_NODEID_NOT_ALLOWED
+      || (refusal == err::IC_ERROR_NODEID_IN_USE
+        && self.same_id_refusals >= IC_SAME_NODE_ID_ATTEMPTS);
+    if give_it_up {
+      ic_port::debug_print!(
+        IC_COMM_LEVEL,
+        "Node id {} has been given away; asking for another",
+        old_node_id
+      );
+      wanted.node_id = None;
+      fetched = mgm_client::fetch_configuration(
+        &wanted,
+        self.mgm_timeout_ms,
+        name.as_deref(),
+      );
+    }
+    let (config, client) = match fetched {
+      Ok(pair) => pair,
+      Err(e) => {
+        self.reclaim_attempts += 1;
+        let delay = retry_delay_ms(self.reclaim_attempts);
+        self.reclaim_at = now + period_nanos(delay);
+        // The server's words only when it was the server that said no;
+        // after an unreachable server they would be stale.
+        let mut words = String::new();
+        if mgm_client::is_refusal(e.code) {
+          words = mgm_client::last_refusal();
+        }
+        ic_port::debug_print!(
+          IC_COMM_LEVEL,
+          "Could not claim a node id ({}) {}; next attempt in {} ms",
+          e.message(),
+          words,
+          delay
+        );
+        return false;
+      }
+    };
+    ic_port::debug_print!(
+      IC_COMM_LEVEL,
+      "Holding node id {} (was {})",
+      config.api.node_id,
+      old_node_id
+    );
+    self.adopt_configuration(config);
+    self.mgm = Some(client);
+    self.must_reclaim_node_id = false;
+    self.reclaim_attempts = 0;
+    self.reclaim_at = 0;
+    true
+  }
+
+  /// Take a configuration fetched again, possibly as a different node.
+  /// Only called with no link connected, so there is nothing to close.
+  fn adopt_configuration(&mut self, config: ClusterConfig) {
+    let mut links: BTreeMap<u32, NodeLink> = BTreeMap::new();
+    for node_id in config.connectable_data_nodes() {
+      let interval = match config.data_node(node_id) {
+        Some(node) => node.api_heartbeat_interval_ms,
+        None => 0,
+      };
+      // Keep the link we had, so that a handle on its published state
+      // taken before the outage still follows the node after it.
+      let link = match self.links.remove(&node_id) {
+        Some(link) => link,
+        None => NodeLink::new(node_id, interval),
+      };
+      links.insert(node_id, link);
+    }
+    self.links = links;
+    self.config = config;
+  }
+
+  // ---- Heartbeats ----
 
   /// Send a heartbeat on every link whose turn has come.
   fn send_due_heartbeats(&mut self) {
@@ -483,10 +830,46 @@ impl NodeManager {
               + period_nanos(link.heartbeat_period_ms());
           }
         }
-        Err(e) => self.drop_link(node_id, e),
+        Err(e) => self.link_lost(node_id, e),
       }
     }
   }
+
+  /// Count the check intervals that ended without an answer, and lose
+  /// the nodes that have gone too many in a row.
+  ///
+  /// This catches what the poll set cannot: a node whose process has
+  /// hung, or a network that drops packets without resetting the
+  /// connection. The socket stays open and nothing arrives on it.
+  fn check_missed_heartbeats(&mut self) {
+    let now = ic_port::time::gethrtime();
+    let mut silent: Vec<u32> = Vec::new();
+    for link in self.links.values_mut() {
+      if link.status != LinkStatus::Connected || now < link.check_at {
+        continue;
+      }
+      // An answer sets the count back to zero, so at rest it moves
+      // between zero and one.
+      link.missed_heartbeats += 1;
+      link.check_at = now + period_nanos(link.check_interval_ms());
+      if link.missed_heartbeats >= 2 {
+        ic_port::debug_print!(
+          IC_HEARTBEAT_LEVEL,
+          "Node {} has missed {} heartbeat(s)",
+          link.node_id,
+          link.missed_heartbeats - 1
+        );
+      }
+      if link.missed_heartbeats >= IC_MAX_MISSED_HEARTBEATS {
+        silent.push(link.node_id);
+      }
+    }
+    for node_id in silent {
+      self.link_lost(node_id, IcError::new(err::IC_ERROR_HEARTBEAT_MISSED));
+    }
+  }
+
+  // ---- The management server ----
 
   /// Ask the management server which port a data node listens on.
   ///
@@ -497,7 +880,7 @@ impl NodeManager {
   fn node_port(&mut self, node_id: u32) -> Result<u16, IcError> {
     let link = match self.config.link_to(node_id) {
       Some(link) => link.clone(),
-      None => return Err(IcError::new(ic_port::err::IC_ERROR_NO_SUCH_NODE)),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
     if !link.port_is_dynamic() {
       return Ok(link.server_port);
@@ -507,7 +890,7 @@ impl NodeManager {
       match resolve_port(&link, own_node_id, mgm) {
         Ok(port) => return Ok(port),
         Err(e) => {
-          if e.code == ic_port::err::IC_ERROR_NODE_DOWN {
+          if e.code == err::IC_ERROR_NODE_DOWN {
             // The node has not reported a port yet, which says nothing
             // about the management server.
             return Err(e);
@@ -524,7 +907,7 @@ impl NodeManager {
     self.renew_mgm()?;
     match self.mgm.as_mut() {
       Some(mgm) => resolve_port(&link, own_node_id, mgm),
-      None => Err(IcError::new(ic_port::err::IC_ERROR_MGM_SERVER_REFUSED)),
+      None => Err(IcError::new(err::IC_ERROR_MGM_SERVER_REFUSED)),
     }
   }
 
@@ -547,6 +930,7 @@ impl NodeManager {
   /// Close every connection.
   pub fn close(&mut self) {
     for link in self.links.values_mut() {
+      link.published.publish_down();
       if let Some(connection) = link.connection.as_mut() {
         let _ = self.poll_set.remove_connection(connection.fd());
         connection.close();
@@ -596,26 +980,37 @@ mod tests {
   }
 
   #[test]
-  fn heartbeats_go_out_well_inside_the_interval() {
+  fn heartbeats_go_out_twice_per_check_interval() {
     let link = NodeLink::new(2, 30000);
-    // A data node declares us dead after its interval, so we send at a
-    // fraction of it.
-    assert_eq!(link.heartbeat_period_ms(), 6000);
+    assert_eq!(link.check_interval_ms(), 30000);
+    assert_eq!(link.heartbeat_period_ms(), 15000);
     let fast = NodeLink::new(2, 1500);
-    assert_eq!(fast.heartbeat_period_ms(), 300);
-    // A node that reports nothing still gets heartbeats.
+    assert_eq!(fast.heartbeat_period_ms(), 750);
+  }
+
+  #[test]
+  fn a_tiny_or_missing_interval_is_raised_to_the_floor() {
+    // Without the floor a node reporting nothing would be sent a
+    // heartbeat on every round, and declared lost in no time at all.
     let unset = NodeLink::new(2, 0);
-    assert_eq!(unset.heartbeat_period_ms(), 1000);
+    assert_eq!(unset.check_interval_ms(), IC_MIN_HEARTBEAT_INTERVAL_MS);
+    assert_eq!(unset.heartbeat_period_ms(), 50);
+    let tiny = NodeLink::new(2, 7);
+    assert_eq!(tiny.check_interval_ms(), IC_MIN_HEARTBEAT_INTERVAL_MS);
   }
 
   #[test]
   fn a_new_link_is_ready_to_connect() {
+    // A node that was never connected has no failure to wait out, so it
+    // starts out being dialled rather than awaiting a takeover.
     let link = NodeLink::new(2, 30000);
     assert_eq!(link.status, LinkStatus::Disconnected);
     assert!(!link.is_connected());
     assert!(!link.is_started());
+    assert!(!link.failure_reported);
     assert_eq!(link.retry_at, 0);
     assert_eq!(link.failed_attempts, 0);
+    assert!(!link.published.is_connected());
   }
 
   #[test]

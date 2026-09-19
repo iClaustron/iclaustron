@@ -332,7 +332,7 @@ impl NodeConnection {
       }
       let size = self.reader.read_from(&self.conn)?;
       if size == 0 {
-        return Err(IcError::new(err::IC_ERROR_NODE_DOWN));
+        return Err(IcError::new(err::IC_ERROR_LINK_LOST));
       }
     }
   }
@@ -403,9 +403,10 @@ impl NodeConnection {
   pub fn read_available(&mut self) -> Result<Vec<ReceivedSignal>, IcError> {
     let size = self.reader.read_from(&self.conn)?;
     if size == 0 {
-      // The peer closed. This is how a node failure is noticed
-      // promptly, rather than when the next send fails.
-      return Err(IcError::new(err::IC_ERROR_NODE_DOWN));
+      // The peer closed, which we notice now rather than when the next
+      // send fails. It is the link that is known to be gone, not the
+      // node: only another data node's failure report says that.
+      return Err(IcError::new(err::IC_ERROR_LINK_LOST));
     }
     let mut signals: Vec<ReceivedSignal> = Vec::new();
     while self.reader.has_message() {

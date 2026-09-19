@@ -43,6 +43,9 @@ use ic_port::IcError;
 /// shared memory or RDMA between data nodes, but an API node uses TCP.
 /// Verify: `TransporterDefinitions.hpp:49`.
 pub const IC_TRANSPORTER_TYPE_TCP: u32 = 1;
+/// What a data node answers to our hello when it is not expecting a
+/// connection from us yet.
+pub const IC_HELLO_NOT_EXPECTED: &str = "BYE";
 
 /// The line we send to say what we can do about encryption. Cleartext
 /// for now; TLS is a later release.
@@ -131,6 +134,15 @@ pub fn say_hello(
   line_proto::send_line(conn, &hello)?;
   let reply = reader.read_line(conn)?;
   ic_port::debug_print!(IC_COMM_LEVEL, "Hello reply: {}", reply);
+  if reply.trim() == IC_HELLO_NOT_EXPECTED {
+    // The node is not expecting a connection from us, which is what a
+    // restarting node answers until it opens up to API nodes. It asks
+    // the client to be the one to close, so that the lingering socket
+    // state lands on us and not on the server. Our caller closes.
+    // Verify: `TransporterRegistry.cpp`, the wrong-state branch of
+    // `connect_server`.
+    return Err(IcError::new(err::IC_ERROR_NODE_NOT_READY));
+  }
   let (their_node_id, their_type) = parse_hello_reply(&reply)?;
   if their_node_id != remote_node_id {
     ic_port::ic_printf!(
@@ -163,8 +175,9 @@ fn parse_hello_reply(reply: &str) -> Result<(u32, u32), IcError> {
     }
   }
   if numbers.len() < 2 {
-    // A server that refuses the connection answers "BYE" instead, and
-    // a server in the wrong state may answer nothing sensible at all.
+    // "BYE" never gets this far, the caller having taken it to mean
+    // the node is not ready. What is left is a server answering
+    // nothing sensible at all.
     return Err(bad);
   }
   Ok((numbers[0], numbers[1]))
@@ -337,12 +350,26 @@ mod tests {
   }
 
   #[test]
-  fn a_refusal_is_reported() {
-    // A data node that will not accept us answers "BYE".
+  fn a_node_that_is_not_ready_says_so_and_is_not_an_authentication_error() {
+    // A data node answers "BYE" when its transporter towards us is not
+    // open yet, which a restarting node does once on every restart. It
+    // used to be reported as an authentication error, which sent the
+    // reader looking for a fault that was not there.
     let (port, handle) = fake_data_node("Cleartext ok\n", "BYE\n", b"");
     let err =
       connect_to_data_node(&config_for(port), 192, 2).expect_err("refused");
-    assert_eq!(err.code, err::IC_AUTHENTICATE_ERROR);
+    assert_eq!(err.code, err::IC_ERROR_NODE_NOT_READY);
+    let _ = handle.join();
+  }
+
+  #[test]
+  fn a_reply_that_is_neither_numbers_nor_bye_is_still_an_error() {
+    // Only the one word means "not ready". Anything else unreadable
+    // must not be mistaken for it, or a real fault would be retried
+    // quietly for ever.
+    let (port, handle) = fake_data_node("Cleartext ok\n", "GOODBYE\n", b"");
+    let err = connect_to_data_node(&config_for(port), 192, 2).expect_err("bad");
+    assert_ne!(err.code, err::IC_ERROR_NODE_NOT_READY);
     let _ = handle.join();
   }
 

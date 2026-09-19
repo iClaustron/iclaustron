@@ -10,8 +10,12 @@
 //! cluster at all.
 //!
 //! It also shows what happens when a node stops. Restart a data node
-//! while it runs and the loss should be reported within a heartbeat,
-//! then the node reconnected once it is back.
+//! while it runs. The link should be reported lost at once, then the
+//! node reported failed by the cluster and left alone until its failure
+//! is reported handled, then reconnected once it is back. Breaking only
+//! the connection, with the node left running, should show the link
+//! lost and dialled again with no failure report at all. Debug level
+//! 16384 shows each step.
 //!
 //! ```text
 //!   ic_node_ping localhost:1186
@@ -116,8 +120,13 @@ fn run() -> i32 {
   );
   println!();
 
-  let mut manager = match NodeManager::new(config, mgm, connect_string, 30_000)
-  {
+  let mut manager = match NodeManager::new(
+    config,
+    mgm,
+    connect_string,
+    30_000,
+    Some("ic_node_ping"),
+  ) {
     Ok(manager) => manager,
     Err(e) => {
       report("Could not set up the node manager", &e);
@@ -170,8 +179,8 @@ fn report_links(manager: &NodeManager) {
       state.start_level, state.node_group
     );
     println!(
-      "           it allows {} ms of silence, we send every {} ms",
-      link.heartbeat_interval_ms,
+      "           heartbeat check every {} ms, we send every {} ms",
+      link.check_interval_ms(),
       link.heartbeat_period_ms()
     );
     println!(
@@ -193,8 +202,10 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
   println!();
   let start = ic_port::time::gethrtime();
   let mut was: BTreeMap<u32, LinkStatus> = BTreeMap::new();
+  let mut was_started: BTreeMap<u32, bool> = BTreeMap::new();
   for link in manager.links().values() {
     was.insert(link.node_id, link.status);
+    was_started.insert(link.node_id, link.is_started());
   }
   let mut losses: u64 = 0;
   let mut recoveries: u64 = 0;
@@ -215,35 +226,56 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
       return 1;
     }
     for link in manager.links().values() {
+      let seconds_in = elapsed / 1000;
+      // Connected is not the same as able to serve: a restarting node
+      // accepts us well before it has started.
+      let started = link.is_started();
+      let started_before = was_started.insert(link.node_id, started);
       let before = was.insert(link.node_id, link.status);
       if before == Some(link.status) {
+        if started && started_before == Some(false) {
+          println!("{:>5} s  node {} has started", seconds_in, link.node_id);
+        }
         continue;
       }
-      let seconds_in = elapsed / 1000;
       match link.status {
         LinkStatus::Connected => {
           recoveries += 1;
-          println!("{:>5} s  node {} is up again", seconds_in, link.node_id);
+          if started {
+            println!(
+              "{:>5} s  node {} is connected again",
+              seconds_in, link.node_id
+            );
+          } else {
+            println!(
+              "{:>5} s  node {} is connected again, still starting",
+              seconds_in, link.node_id
+            );
+          }
         }
-        LinkStatus::Failing => {
+        LinkStatus::AwaitingTakeover => {
+          if before == Some(LinkStatus::Connected) {
+            // The report beat our own socket to it.
+            losses += 1;
+          }
           println!(
-            "{:>5} s  node {} confirmed failed by another node",
+            "{:>5} s  node {} reported failed by the cluster",
             seconds_in, link.node_id
+          );
+          println!(
+            "         not dialling it until the failure is reported handled"
           );
         }
         LinkStatus::Disconnected => {
-          losses += 1;
-          match link.last_error {
-            Some(e) => println!(
-              "{:>5} s  node {} lost: {} ({})",
-              seconds_in,
-              link.node_id,
-              e.message(),
-              e.code
-            ),
-            None => {
-              println!("{:>5} s  node {} lost", seconds_in, link.node_id)
-            }
+          if before == Some(LinkStatus::AwaitingTakeover) {
+            println!(
+              "{:>5} s  node {} may be dialled again",
+              seconds_in, link.node_id
+            );
+          } else {
+            losses += 1;
+            report_loss(seconds_in, link.node_id, link.last_error);
+            println!("         dialling; no node has reported that it failed");
           }
         }
       }
@@ -262,6 +294,28 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
   0
 }
 
+fn report_loss(seconds_in: u64, node_id: u32, error: Option<IcError>) {
+  match error {
+    Some(e) => println!(
+      "{:>5} s  node {} lost: {} ({})",
+      seconds_in,
+      node_id,
+      e.message(),
+      e.code
+    ),
+    None => println!("{:>5} s  node {} lost", seconds_in, node_id),
+  }
+}
+
 fn report(what: &str, error: &IcError) {
   println!("{}: {} ({})", what, error.message(), error.code);
+  print_refusal(error);
+}
+
+/// When a management server said no, say why in its own words. The
+/// library keeps them and leaves the printing to us.
+fn print_refusal(error: &IcError) {
+  if mgm_client::is_refusal(error.code) {
+    println!("The management server said: {}", mgm_client::last_refusal());
+  }
 }

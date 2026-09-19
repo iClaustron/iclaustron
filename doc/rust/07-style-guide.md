@@ -13,6 +13,7 @@ rewrite it. Performance is not an excuse; nothing below costs performance.
 | `enum` with data | only for `Result`/`Option` and a few clearly documented message types | tagged unions are familiar from C `struct {tag; union}` |
 | `impl Type { fn method(&mut self) }` | replaces the `_OPS` vtables | `conn.read_key(...)` reads like `conn->ops->ic_read_key(conn, ...)` |
 | `Result<T, IcError>` and `?` | all fallible functions | `?` is "return on error"; one token, one meaning |
+| `?` on an `Option` | a lookup that may find nothing, in a function that itself returns `Option` | the same token with the same meaning: "if this is `None`, return `None` now". Clippy rejects the `match` that spells it out and offers a closure instead, which we do not want |
 | `Option<T>` | nullable values | replaces `NULL` checks with something the compiler enforces |
 | `match` | dispatch on enums/integers | same as `switch` without fall-through bugs |
 | Small `Option`/`Result` methods | `map`, `unwrap_or`, `unwrap_or_default`, `as_deref`, `is_none`, `take`, `ok_or` | these act on one value, not a collection; clippy requires them and they are shorter than the `match` they replace |

@@ -133,6 +133,10 @@ fn run() -> i32 {
 
 fn report(what: &str, error: &IcError) {
   println!("{}: {} ({})", what, error.message(), error.code);
+  // The library keeps a refusal's words and leaves the printing to us.
+  if mgm_client::is_refusal(error.code) {
+    println!("The management server said: {}", mgm_client::last_refusal());
+  }
 }
 
 fn print_config(config: &ClusterConfig) {

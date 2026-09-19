@@ -108,7 +108,9 @@ route; user threads execute.**
   from the management server, connects, performs the transporter
   handshake and the node-id hello, then hands the connected socket to
   this node's receive thread. It retries on a growing delay for as long
-  as the node is down, and goes back to retrying when the node is lost.
+  as the node is down. When a connected node is lost it does **not** go
+  straight back to dialling: it waits until the node may be dialled
+  again, see "Node failure flow".
   One thread per node rather than one shared thread keeps a slow or
   unreachable node from delaying every other node's reconnect, and a
   thread asleep on a retry timer costs little. The C merges this role
@@ -152,12 +154,24 @@ The rules that keep it true:
   the last `API_REGCONF`. The full node state blob stays private to the
   receive thread, because a 16-word structure cannot be read atomically
   and a torn read would be worse than a stale scalar.
-- `NODE_FAILREP` names a node other than the one whose socket it arrived
-  on, and that node usually belongs to a different receive thread. It
-  therefore **must not write connection state**, or the single-writer
-  rule breaks. It is used only to post "node failed" notices to user
-  threads so they can fail their in-flight queries early. The failed
-  node's own receive thread will see the close and publish the state.
+- `NODE_FAILREP` and `NF_COMPLETEREP` name a node other than the one
+  whose socket they arrived on, and that node usually belongs to a
+  different receive thread. They therefore **must not write link
+  state**, or the single-writer rule breaks. The failed node's own
+  receive thread sees the close and publishes that.
+
+**Membership state is a second, smaller thing, and it is not
+single-writer.** Whether a lost node may be dialled again depends on
+evidence that arrives on any socket: the node's own close, another
+node's `NODE_FAILREP`, another node's `NF_COMPLETEREP`. It is a state
+machine of three phases per node, connected, awaiting the takeover
+report, and being dialled, and every transition in it is "the first
+evidence wins and the rest do nothing". That is what compare-and-swap on
+one atomic word gives, so it needs no mutex either, but it is shared
+between threads in a way link state is not and the two must not be
+merged. The rule that ends every wait when no data node is connected
+needs a count of connected nodes, which is one more atomic. The
+single-threaded `node_manager` holds both as plain fields today.
 
 What this buys, measured against the C: `node_failure_handling` in
 `ic_apid_rec_thread.ic` takes the heartbeat mutex, a receive state mutex
@@ -175,17 +189,18 @@ thread keeps no list, so its mutex is not needed either.
 a node's send chain, and each user thread's inbound queue. Heartbeat
 handling in the receive thread does not remove the per-node mutex, since
 that mutex exists for the send chain. It removes the state contention on
-it, which is small in absolute terms: at 144 nodes and a six second
-period, `API_REGCONF` arrives about 24 times a second in total.
+it, which is small in absolute terms: heartbeats go out twice per check
+interval per node, so even 144 nodes on a one second interval produce
+under 300 `API_REGCONF` a second in total.
 
-**Two paths report a node going away, and they stay separate.** A socket
-that closes is seen by the receive thread, which drops the link at once
-and tells the connect thread to start again. That involves no signal and
-no other thread. `NODE_FAILREP` is the cluster's opinion, and it arrives
-earlier than the close in some failures, so it is worth having as a head
-start on failing queries. The C handles neither `NODE_FAILREP` nor
-`NF_COMPLETEREP` at all and relies only on the dropped socket, so this is
-new work rather than a translation.
+**Losing a link is not losing a node, and the two are kept apart.**
+Our own evidence, the socket closing or a send failing or the heartbeats
+stopping, says the link is gone. It says nothing about the node, which
+may be up and serving everyone else. Only `NODE_FAILREP` from another
+data node says a node failed. The C handles neither `NODE_FAILREP` nor
+`NF_COMPLETEREP` and treats every closed socket alike, so this is new
+work rather than a translation, and the reference for it is the data
+nodes' protocol (`ClusterMgr.cpp`, `QmgrMain.cpp`), not the C.
 
 Why this split: the C++ NDB API's receive thread both receives and
 executes signals, then wakes the target thread. Under many client threads
@@ -252,24 +267,74 @@ Debug builds check the ordering at every lock (`ic_port::sync`).
 
 ## Node failure flow
 
-1. The node's own receive thread sees the socket close, or the heartbeat
-   thread finds the last `API_REGCONF` too old and tells that receive
-   thread. Either way the node's receive thread is the one that acts: it
-   publishes `node_up = false`, drops the socket out of its poll set,
-   posts a "node down" notice to every user thread queue, and wakes the
-   node's connect thread.
-2. `NODE_FAILREP` about that node may arrive first, on a different
-   node's socket. The receive thread that reads it posts the notices
-   early so user threads can start failing queries, and changes no
-   connection state. Step 1 still happens when the close is seen.
+1. **The link goes.** The node's socket closes, a send to it fails, or
+   it has answered no heartbeat for four check intervals in a row. The
+   node's own receive thread publishes the link as down, drops the
+   socket from its poll set, and posts a "link lost" notice to every
+   user thread queue. The connect thread starts dialling again on the
+   usual delay, because at this point nothing says the node failed. If
+   nothing more arrives this is the whole story: the node was up all
+   along, the link comes back, and nobody ever reports a takeover
+   because there was none. A data node does nothing special when it
+   loses an API link.
+2. **The cluster says the node failed.** A data node sends
+   `NODE_FAILREP` naming it, usually a moment after step 1 and
+   sometimes before it. Every surviving node sends one and only the
+   first does anything. The link is torn down if it still stood, the
+   node's membership state moves to awaiting takeover, and the connect
+   thread **stops dialling**. Dialling between steps 1 and 2 did no
+   harm, because a dead node refuses the connection.
 3. Each user thread, on its next `poll`, fails every sent query whose TC
    node is the dead node with a temporary node-failure error and completes
    the transaction as aborted, or as committed if `TCKEY_FAILCONF` says
    the commit happened.
-4. The connect thread has been retrying since step 1 and reconnects when
-   the node accepts again. `NF_COMPLETEREP` says the cluster finished
-   taking the node's work over; it settles recovering transactions and
-   does not gate reconnection.
+4. **A node reported failed is not dialled until its failure is
+   reported handled.** Every surviving data node sends `NF_COMPLETEREP`
+   to every registered API node once all its blocks have finished
+   handling the failure. The first to arrive moves the node to being
+   dialled, and the connect thread starts. The block field of that
+   report carries the sender's cluster manager reference, not zero, and
+   is ignored; the failed node id is what counts.
+5. If no data node is connected at all, nobody can send that report, so
+   every wait ends at once. That state means the whole cluster is gone
+   from where we stand, and it is the state the wait exists to make
+   visible: it is where whatever a cluster restart invalidates, such as
+   the dictionary cache, gets invalidated.
+6. **In that state our node id may no longer be ours.** Once connected,
+   our only claim on the id is our connections; the management server
+   drops its own reservation as soon as a transporter holds the id. An
+   id named in the connectstring is asked for by nobody else. An id the
+   management server chose for us can go to the next API node that asks
+   for any id. So a node with a chosen id returns to the management
+   server before dialling anyone: it asks for the same id, several
+   times since a refusal just after an outage may only mean the data
+   nodes are still clearing up after us, and only then accepts another.
+   A new id means a new identity: the configuration is fetched again as
+   that node, and every block reference we hand out changes with it.
+   With threads, that is a stop-the-world event for user threads, which
+   is one more reason to try hard for the old id first.
+
+Why wait at step 4 for a node the cluster has reported failed, rather
+than redial at once as the C does. Two reasons, both from the data nodes' side of the protocol.
+The report is what tells an API node that nothing more will be heard
+about transactions that were running on the failed node. And redialling
+early lets the API reach the restarted node before it has noticed that
+the other nodes went down too, so a whole cluster restart passes for one
+node bouncing and step 5 never happens. An earlier revision of this
+chapter said the report "does not gate reconnection". That was wrong,
+and came from reading only the C.
+
+**Where we differ from the C++ API, on purpose.** It treats its own
+disconnect as a failure report and then waits for a takeover report. For
+a link-only loss that report never comes, since no data node reports a
+takeover for a node that did not fail, and the data node has no handling
+that would resolve it (confirmed with the author of the protocol,
+2026-09-19). In that state the C++ API tends to give applications error
+4009, "cluster failure", which it is not. Here step 1 and step 2 are
+separate events with separate errors, `IC_ERROR_LINK_LOST` and
+`IC_ERROR_NODE_DOWN`, and neither is ever presented as the cluster
+failing while another data node is connected. "The whole cluster is
+gone" is step 5 and nothing else.
 
 ## Memory
 

@@ -396,13 +396,25 @@ pub fn nodes_in_bitmap(bitmap: &[u32]) -> Vec<u32> {
 
 /// A failed node's work has been taken over, so it may be reconnected.
 ///
-/// A data node sends one of these per block, and one with a block
-/// number of zero meaning the whole node is finished. Until that
-/// arrives, reconnecting to the failed node is premature.
-/// Verify: `NFCompleteRep.hpp`.
+/// Every surviving data node sends one to every API node it has
+/// registered, once all of its blocks have finished handling the
+/// failure. It is what lets an API node abort the transactions that
+/// were waiting on the failed node, and until one arrives, reconnecting
+/// to that node is premature.
+///
+/// **The block field does not say "whole node" by being zero.** Inside
+/// a data node these reports travel block to block and zero has that
+/// meaning there, but the one that reaches an API node is sent by the
+/// cluster manager block with its own reference in the field. An API
+/// node acts on the failed node id alone and ignores the block. An
+/// earlier version of this decoder tested for zero and would have
+/// ignored every real report.
+/// Verify: `NFCompleteRep.hpp`; `QmgrMain.cpp`, `execNDB_FAILCONF`
+/// (the send to API nodes); `ClusterMgr.cpp`, `execNF_COMPLETEREP`
+/// (the receiver, which reads only the failed node id).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NfCompleteRep {
-  /// Which block finished, or zero for the whole node.
+  /// The block that finished. Informational: see the note above.
   pub block_no: u32,
   /// The node reporting.
   pub node_id: u32,
@@ -424,12 +436,6 @@ impl NfCompleteRep {
       failed_node_id: data[2],
       from: data[4],
     })
-  }
-
-  /// True when the whole node has finished failing, which is when it
-  /// may be connected to again.
-  pub fn is_whole_node(&self) -> bool {
-    self.block_no == 0
   }
 }
 
@@ -575,15 +581,18 @@ mod tests {
   }
 
   #[test]
-  fn a_takeover_report_says_when_a_node_is_done() {
-    let per_block = NfCompleteRep::decode(&[245, 1, 2, 0, 1]).expect("dec");
-    assert_eq!(per_block.block_no, 245);
-    assert_eq!(per_block.node_id, 1);
-    assert_eq!(per_block.failed_node_id, 2);
-    assert!(!per_block.is_whole_node());
-    let whole = NfCompleteRep::decode(&[0, 1, 2, 0, 1]).expect("dec");
-    assert!(whole.is_whole_node());
-    assert!(NfCompleteRep::decode(&[0, 1, 2, 0]).is_err());
+  fn a_takeover_report_names_the_node_that_is_done() {
+    // As a data node sends it to us: its cluster manager block in the
+    // first word, not zero. The failed node id is what matters.
+    let qmgr_ref = number_to_ref(IC_BLOCK_QMGR, 1);
+    let report =
+      NfCompleteRep::decode(&[qmgr_ref, 1, 2, 0, 4870]).expect("dec");
+    assert_eq!(report.block_no, qmgr_ref);
+    assert_eq!(report.node_id, 1);
+    assert_eq!(report.failed_node_id, 2);
+    assert_eq!(report.from, 4870);
+    // One word short is not a report.
+    assert!(NfCompleteRep::decode(&[qmgr_ref, 1, 2, 0]).is_err());
   }
 
   #[test]

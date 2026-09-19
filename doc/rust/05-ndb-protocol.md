@@ -54,6 +54,18 @@ both. On rejection the server may write `BYE`. Verify:
 two-integer form (`"<nodeid> 1"`); the server still parses 2, 3 or 4
 integers, but we send four.
 
+### 1.2a When the node says `BYE`
+
+Instead of the two numbers, a data node may answer the hello with the
+single word `BYE`. It does so when its transporter towards us is not in
+the connecting state, which is the ordinary condition of a restarting
+node that has not yet opened up to API nodes. It is not an
+authentication failure. The node then waits for the client to close
+first, so that the lingering socket state lands on the client. We
+return `IC_ERROR_NODE_NOT_READY` and redial on the usual delay. Seen
+live once in every node restart, between "connection refused" and the
+first accepted hello. Verify: `TransporterRegistry.cpp:810-850`.
+
 ### 1.3 Via the management server
 
 `ndb_mgmd` can convert a management connection into a transporter
@@ -62,6 +74,43 @@ then performs 1.2 on the same socket. The C cluster server (out of scope)
 implemented the *server* side of this; we do not use the mgm path.
 Verify: `src/mgmapi/mgmapi.cpp` (`ndb_mgm_convert_to_transporter`),
 `TransporterRegistry.cpp:4230-4267`.
+
+### 1.3a How long a node id stays ours
+
+The management server reserves an id when it grants one, for a limited
+time, and drops the reservation as soon as the id is held by a connected
+transporter, and also on `NODE_FAILREP` or `NF_COMPLETEREP` naming it.
+From then on a request for an id is decided by asking the data nodes,
+which refuse one that is connected. So an API node's claim on its id,
+once it is connected, is its connections and nothing else. **An API node
+that loses every connection can lose its id**, if the id was chosen for
+it rather than named in its connectstring, because the next node asking
+for any id may be given it (pointed out by the author, 2026-09-19). The
+C++ API claims an id once and never again. We claim it again after
+losing every link and before dialling; see chapter 02, "Node failure
+flow". A session may ask for an id more than once; nothing in the
+server ties a session to one request. Verify: `MgmtSrvr.cpp:4067-4089`,
+`:4145`, `:4206-4270`, `:4273-4320`; `Services.cpp:734-830`;
+`ndb_cluster_connection.cpp:1399-1401`.
+
+**What a refusal means.** A refused request carries `error_code` when
+the request carried `log_event`, which ours does. The code separates
+only two cases: 1102 is final (the id is not in the configuration, is of
+another node type, or belongs to another host), and everything else,
+1101 and 1103, "may succeed if asked again". In particular **"held by
+another node" and "cluster not ready" are both 1101** and only the text
+tells them apart: `Id N already allocated by another node.` against
+`Cluster not ready for nodeid allocation.` The server's source notes
+that the MySQL server matches on these texts as well, so they are
+interface in practice. A third text, `already allocated by this
+ndb_mgmd`, is a reservation on that server that times out, quite
+possibly our own. We map the three kinds to `IC_ERROR_NODEID_NOT_ALLOWED`,
+`IC_ERROR_NODEID_IN_USE` and `IC_ERROR_NO_NODEID`. Seen live: a
+restarting cluster answers "not ready" for several seconds, which an
+earlier revision counted towards giving the id up. An earlier revision
+of this section also claimed the code told the first two apart; it does
+not. Verify: `mgmapi_error.h:80-87`, `MgmtSrvr.cpp:5040-5080`,
+`Services.cpp:753`, `:816`.
 
 ### 1.4 Reconnect policy
 
@@ -193,6 +242,56 @@ compatibility and answers `API_REGREF` on mismatch. We announce 26.10.0
   only then may transactions be aborted with the right error and the node
   be reconnected. Verify: `ClusterMgr.cpp:2304-2404`,
   `src/ndbapi/Ndbif.cpp:1346-1372`, `Ndb.cpp:272-314`.
+
+  The detail, as implemented in `ic_apid::node_manager`:
+
+  - **Counting missed heartbeats.** A counter per node goes up by one at
+    the end of every check interval and back to zero on every
+    `API_REGCONF`, so at rest it moves between zero and one. The node is
+    lost when it reaches 4, which is at least three whole intervals of
+    silence. The check interval has a floor of 100 ms whatever the node
+    reports. Verify: `ClusterMgr.cpp:485-540`, `:1844-1861`;
+    `ClusterMgr.hpp:99`.
+  - **Every sign of a failure converges.** A disconnect of a node that
+    had finished connecting is handled as if a `NODE_FAILREP` naming
+    that one node had arrived, unless one already has. So the socket
+    closing, the heartbeats stopping and another node's report all run
+    the same handling, and only the first for a given connection does
+    anything. Verify: `ClusterMgr.cpp:2200-2300` (disconnect),
+    `:2302-2375` (the report).
+  - **The reconnect gate.** A data node that is not connected is not
+    dialled while its takeover report is outstanding. The stated reason
+    is that cluster disconnect can then be detected reliably. The flag
+    is cleared on the first handling of a failure, set by
+    `NF_COMPLETEREP`, and set again on connect. Verify:
+    `ClusterMgr.cpp:448-461`, `:2092-2106`, `:2165-2178`, `:2355-2364`.
+  - **Who sends `NF_COMPLETEREP` to an API node, and what is in it.**
+    Every surviving data node, once all of its blocks have handled the
+    failure, to every API node it holds as registered. Its block field
+    carries the sender's `QMGR` reference, **not zero**. Zero means
+    "whole node" only between blocks inside a data node. The API side
+    reads the failed node id and nothing else. Verify:
+    `QmgrMain.cpp:4860-4880`, `ClusterMgr.cpp:2092-2106`.
+  - **When nobody is left to report.** If handling a failure leaves no
+    data node alive, the API completes every outstanding takeover
+    itself, since no `NF_COMPLETEREP` can come. Verify:
+    `ClusterMgr.cpp:2383-2401`.
+  - **A lost link is not a failed node.** When only the API's link to a
+    node drops and the node stays up, no `NODE_FAILREP` arrives, and the
+    data node has no special handling of the state (confirmed with the
+    author, 2026-09-19). The reference rules above would leave that node
+    undialled until it really restarts or every other node is lost,
+    because nobody reports a takeover for a node that did not fail, and
+    the C++ API tends to answer applications with 4009, "cluster
+    failure", meanwhile. We differ deliberately: our own evidence of a
+    loss (socket, send, heartbeat silence) only redials, with
+    `IC_ERROR_LINK_LOST`; the reconnect gate applies only once a data
+    node has actually sent `NODE_FAILREP` for the node.
+
+  The iClaustron C implements none of this. It has no handler for either
+  signal and redials a lost node on a three second timer. **For protocol
+  behaviour this chapter is the authority and the C is not**; the C is
+  the authority for structure.
 - Other membership GSNs: `CONNECT_REP 163`, `CLOSE_COMREQ 127`,
   `ALLOC_NODEID_CONF 61`, `TAKE_OVERTCCONF 399`, `DUMP_STATE_ORD 465`,
   `EVENT_REP 247`. RonDB-only: `ACTIVATE_*`, `DEACTIVATE_*`,
@@ -552,6 +651,15 @@ TemporaryError, PermanentError, UnknownResult). Verify:
 Our table keeps code, MySQL code and classification (interface data) and
 carries our own message text. `IC_ERROR_SEVERITY_LEVEL` maps from status
 and `IC_ERROR_CATEGORY` from classification.
+
+**Never report more than is known.** The C++ API answers 4009, "cluster
+failure", in states that are not one, such as a single broken link to a
+node that is still up, and an application cannot act sensibly on that.
+Our errors name what we actually know: `IC_ERROR_LINK_LOST` when our
+connection to one node broke, `IC_ERROR_NODE_DOWN` when a data node has
+reported a node failed, and a cluster-level error only when no data node
+is connected at all. The first two are temporary errors that invite a
+retry on another node.
 
 ## 11. Events (0.3)
 

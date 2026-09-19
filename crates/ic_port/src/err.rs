@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7133;
+pub const IC_LAST_ERROR: i32 = 7138;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -293,6 +293,24 @@ pub const IC_ERROR_NO_SUCH_FIELD: i32 = 7131;
 pub const IC_ERROR_MGM_SERVER_REFUSED: i32 = 7132;
 /// The management server is too old to serve this library.
 pub const IC_ERROR_MGM_VERSION_TOO_OLD: i32 = 7133;
+/// A data node kept its socket open but stopped answering heartbeats.
+pub const IC_ERROR_HEARTBEAT_MISSED: i32 = 7134;
+/// Our connection to a data node broke. This says nothing about the
+/// node, which may well be up and serving everyone else, and still less
+/// about the cluster. Only a failure report from another data node says
+/// a node is down; that is [`IC_ERROR_NODE_DOWN`].
+pub const IC_ERROR_LINK_LOST: i32 = 7135;
+/// A data node answered our hello by asking us to go away, because it
+/// is not expecting a connection from us yet. Ordinary while a node is
+/// restarting; try again later.
+pub const IC_ERROR_NODE_NOT_READY: i32 = 7136;
+/// The management server says the node id we asked for is held by
+/// another node. Unlike [`IC_ERROR_NO_NODEID`], waiting does not help
+/// for as long as that node lives.
+pub const IC_ERROR_NODEID_IN_USE: i32 = 7137;
+/// The management server says the configuration does not allow the
+/// node id we asked for, and that asking again will not change it.
+pub const IC_ERROR_NODEID_NOT_ALLOWED: i32 = 7138;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -542,7 +560,7 @@ pub fn message(code: i32) -> &'static str {
     }
     IC_ERROR_WRONG_NODE_ID => "Wrong node id",
     IC_ERROR_CHANGE_VIEW => "Cluster Server changed view on master node order",
-    IC_ERROR_NO_NODEID => "Node id needs to be provided",
+    IC_ERROR_NO_NODEID => "No node id granted for now; asking again may help",
     IC_ERROR_NO_SUCH_CLUSTER_SERVER_NODEID => {
       "Node id provided didn't exist in config"
     }
@@ -643,6 +661,13 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_MGM_SERVER_REFUSED => "The management server refused the request",
     IC_ERROR_MGM_VERSION_TOO_OLD => {
       "The management server is too old for this library"
+    }
+    IC_ERROR_HEARTBEAT_MISSED => "Data node stopped answering heartbeats",
+    IC_ERROR_LINK_LOST => "Connection to data node lost; the node may be up",
+    IC_ERROR_NODE_NOT_READY => "Data node is not accepting our connection yet",
+    IC_ERROR_NODEID_IN_USE => "Node id is held by another node",
+    IC_ERROR_NODEID_NOT_ALLOWED => {
+      "The configuration does not allow this node id here"
     }
     _ => "Unknown error code",
   }
