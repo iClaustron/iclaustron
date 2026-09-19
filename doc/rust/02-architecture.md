@@ -189,9 +189,9 @@ thread keeps no list, so its mutex is not needed either.
 a node's send chain, and each user thread's inbound queue. Heartbeat
 handling in the receive thread does not remove the per-node mutex, since
 that mutex exists for the send chain. It removes the state contention on
-it, which is small in absolute terms: heartbeats go out twice per check
-interval per node, so even 144 nodes on a one second interval produce
-under 300 `API_REGCONF` a second in total.
+it, which is small in absolute terms: heartbeats go out three times per
+check interval per node, so even 144 nodes on a one second interval
+produce under 450 `API_REGCONF` a second in total.
 
 **Losing a link is not losing a node, and the two are kept apart.**
 Our own evidence, the socket closing or a send failing or the heartbeats
@@ -306,13 +306,33 @@ Debug builds check the ordering at every lock (`ic_port::sync`).
    id named in the connectstring is asked for by nobody else. An id the
    management server chose for us can go to the next API node that asks
    for any id. So a node with a chosen id returns to the management
-   server before dialling anyone: it asks for the same id, several
-   times since a refusal just after an outage may only mean the data
-   nodes are still clearing up after us, and only then accepts another.
-   A new id means a new identity: the configuration is fetched again as
-   that node, and every block reference we hand out changes with it.
-   With threads, that is a stop-the-world event for user threads, which
-   is one more reason to try hard for the old id first.
+   server before dialling anyone. It asks for the same id first, asks
+   again for as long as the answer is "not now", and takes another id
+   the moment the answer is that the id is held. A new id means a new
+   identity: the configuration is fetched again as that node, and every
+   block reference we hand out changes with it. With threads, that is a
+   stop-the-world event for user threads, though one that comes when
+   they have nothing in flight.
+
+   **Decided (author, 2026-09-19): take a new id at once, but only if
+   any id will do.** After a link loss the "other node" holding our id
+   is usually our own old connection, which the data nodes have not yet
+   timed out (seen live; chapter 05, 1.3a). Waiting for it means being
+   away for four heartbeat intervals, two minutes on a cluster with a
+   30 second interval, which is what the C++ API amounts to. Taking
+   another id has us back in seconds, and with every link lost nothing
+   is in flight, so identity is never cheaper to change. The old id
+   occupies an API slot until it times out; if a flapping network ever
+   uses the slots up, the request for any id is refused as "not now"
+   and asked again until one frees.
+
+   **An application started with a stated node id never takes
+   another.** Startup parameters will let the node id be given when the
+   application starts, as `nodeid=` in the connectstring already does.
+   That id is then the only one the node may run under. It skips the
+   management server entirely after an outage, redials under its id,
+   and is answered `BYE` until the data nodes have let the old
+   connection go.
 
 Why wait at step 4 for a node the cluster has reported failed, rather
 than redial at once as the C does. Two reasons, both from the data nodes' side of the protocol.

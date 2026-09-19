@@ -105,7 +105,21 @@ that the MySQL server matches on these texts as well, so they are
 interface in practice. A third text, `already allocated by this
 ndb_mgmd`, is a reservation on that server that times out, quite
 possibly our own. We map the three kinds to `IC_ERROR_NODEID_NOT_ALLOWED`,
-`IC_ERROR_NODEID_IN_USE` and `IC_ERROR_NO_NODEID`. Seen live: a
+`IC_ERROR_NODEID_IN_USE` and `IC_ERROR_NO_NODEID`.
+
+**"Another node" is usually ourselves.** Seen live (2026-09-19, network
+cut on the API side for about 15 s): every link was lost, and on
+returning the server refused our old id as "already allocated by another
+node" three times running. Nobody had taken it. The data nodes had never
+seen our sockets close, so to them the old connection was still up, and
+it stays up until they have gone four heartbeat intervals without
+hearing from it, two minutes on that cluster. The refusal therefore
+means "the cluster counts this id as connected" and nothing more. We
+take another id at once if any id will do, and never if the application
+was started with a stated one (decided by the author; chapter 02, "Node
+failure flow"); the C++ API,
+which never asks again, simply redials under the old id and is answered
+`BYE` until the data nodes time the old connection out. Seen live: a
 restarting cluster answers "not ready" for several seconds, which an
 earlier revision counted towards giving the id up. An earlier revision
 of this section also claimed the code told the first two apart; it does
@@ -217,6 +231,13 @@ compatibility and answers `API_REGREF` on mismatch. We announce 26.10.0
   reference, NDB version, MySQL version (3 words). Verify:
   `include/kernel/signaldata/ApiRegSignalData.hpp:34-51`,
   `src/ndbapi/ClusterMgr.cpp:371-561`.
+
+  **We send every third of the check interval, not every half.** The
+  author judges half too seldom (2026-09-19). Sending more often than
+  the C++ API does is safe by construction, since the data node only
+  counts intervals in which it heard nothing. `ic_apid::node_manager`,
+  `IC_HEARTBEATS_PER_INTERVAL`, with a compile-time check that it is
+  never set below three.
 - `API_REGCONF` (GSN 1), 22 words in this order: `qmgrRef, version,
   apiHeartbeatInterval, mysql_version, minDbVersion`, then the 16-word
   `nodeState`, then `minApiVersion` **after** it. The order matters and

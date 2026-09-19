@@ -72,11 +72,17 @@
 //! any id, and dialling a data node with it then would present two
 //! nodes under one id.
 //!
-//! So after losing every link, a node whose id was chosen for it goes
-//! back to the management server before dialling anyone. It asks for
-//! the same id first, which keeps its identity when the id is still
-//! free, and takes a new one when it is not, together with the
-//! configuration as that new node sees it.
+//! So after losing every link, a node that can accept any id goes back
+//! to the management server before dialling anyone. It asks for the
+//! same id first, which keeps its identity when the id is free, and
+//! takes another at once when the server says the id is held, together
+//! with the configuration as that new node sees it. "Held" usually
+//! means held by our own old connection, which the data nodes have not
+//! yet timed out; waiting for that can take minutes.
+//!
+//! A node started with a stated node id never does any of this. That
+//! id is the only one it may run under, so it redials under it and is
+//! turned away until the data nodes have let the old connection go.
 //!
 //! Verify: `MgmtSrvr.cpp`, the release of the local reservation on
 //! `CONNECT_REP`, `NODE_FAILREP` and `NF_COMPLETEREP`, and
@@ -130,19 +136,22 @@ use crate::node_state::PublishedNodeState;
 pub const IC_FIRST_RETRY_MS: u32 = 1000;
 /// The longest the retry delay grows to.
 pub const IC_MAX_RETRY_MS: u32 = 10_000;
-/// Heartbeats go out this many times per check interval, so that one
-/// lost round is not a missed interval.
-/// Verify: `ClusterMgr.cpp`, `get_send_heartbeat_interval`.
-pub const IC_HEARTBEATS_PER_INTERVAL: u32 = 2;
+/// Heartbeats go out at least this many times per check interval, so
+/// that a late or lost round still leaves the interval with heartbeats
+/// in it.
+///
+/// A deliberate difference: the C++ API sends twice per interval, and
+/// the author of the protocol judges that too seldom (2026-09-19).
+/// Sending more often than the other side expects is always safe; the
+/// data node only ever counts intervals in which it heard nothing.
+/// Verify the C++ rule: `ClusterMgr.cpp`, `get_send_heartbeat_interval`.
+pub const IC_HEARTBEATS_PER_INTERVAL: u32 = 3;
+
+// Fewer than three is the rule this constant exists to prevent.
+const _: () = assert!(IC_HEARTBEATS_PER_INTERVAL >= 3);
 /// The shortest check interval, whatever a node reports.
 /// Verify: `ClusterMgr.hpp`, the minimum heartbeat interval.
 pub const IC_MIN_HEARTBEAT_INTERVAL_MS: u32 = 100;
-/// How many times the management server must say our old node id is
-/// held by another node before we accept a different one. Changing
-/// identity is not something to do on the first no. Refusals that time
-/// may cure, such as a cluster that is not ready, do not count at all:
-/// the id is asked for again for as long as it takes.
-pub const IC_SAME_NODE_ID_ATTEMPTS: u32 = 3;
 /// A node is lost at this many check intervals in a row without an
 /// answer, which is at least three whole intervals of silence.
 /// Verify: `ClusterMgr.cpp`, the missed heartbeat test in `threadMain`.
@@ -249,7 +258,8 @@ impl NodeLink {
     self.heartbeat_interval_ms
   }
 
-  /// How often we send a heartbeat.
+  /// How often we send a heartbeat. The division rounds down, which
+  /// errs towards sending slightly more often, never less.
   pub fn heartbeat_period_ms(&self) -> u32 {
     self.check_interval_ms() / IC_HEARTBEATS_PER_INTERVAL
   }
@@ -263,17 +273,16 @@ pub struct NodeManager {
   mgm_timeout_ms: u32,
   /// The name we give the management server when claiming a node id.
   node_name: Option<String>,
-  /// True when the management server chose our node id, false when the
-  /// connectstring named it.
+  /// True when any node id will do, so the management server chose ours.
+  /// False when the application was started with a stated node id, in
+  /// which case that id is the only one we ever run under: we never ask
+  /// for another, however long the stated one is unavailable.
   node_id_is_dynamic: bool,
   /// True from losing every link until the node id has been claimed
   /// again. Nothing is dialled while it is set.
   must_reclaim_node_id: bool,
   /// Failed attempts of any kind, which set the delay before the next.
   reclaim_attempts: u32,
-  /// Times the management server said our old id is held by another
-  /// node. Neither an unreachable server nor a "not now" counts here.
-  same_id_refusals: u32,
   reclaim_at: IcTimer,
   links: BTreeMap<u32, NodeLink>,
   poll_set: PollSet,
@@ -330,7 +339,6 @@ impl NodeManager {
       node_id_is_dynamic,
       must_reclaim_node_id: false,
       reclaim_attempts: 0,
-      same_id_refusals: 0,
       reclaim_at: 0,
       links,
       poll_set: PollSet::new()?,
@@ -693,7 +701,6 @@ impl NodeManager {
       // Our connections were our only claim on the id.
       self.must_reclaim_node_id = true;
       self.reclaim_attempts = 0;
-      self.same_id_refusals = 0;
       self.reclaim_at = 0;
     }
   }
@@ -719,24 +726,41 @@ impl NodeManager {
     );
     // There are three kinds of no. "Not now" is asked again for as long
     // as it takes; seen live, a restarting cluster says it for several
-    // seconds. "Another node holds it" is believed after a few times.
-    // "The configuration does not allow it" is believed at once.
+    // seconds. The other two make us take another id at once, which we
+    // may do because this whole function only runs for a node that can
+    // accept any id.
+    //
+    // "Held by another node" means only that the cluster counts the id
+    // as connected, and after a link loss the other node is usually
+    // ourselves: the data nodes have not noticed we went away, and will
+    // not for four heartbeat intervals. Waiting that out can take
+    // minutes. Taking a new id has us back in seconds, and this is the
+    // cheapest moment there is to change identity, since with every
+    // link lost nothing is in flight. The old id holds an API slot until
+    // it times out; if that ever leaves no id free, the request for any
+    // id is refused as "not now" and simply asked again.
     let mut refusal: i32 = 0;
     if let Err(e) = &fetched {
       refusal = e.code;
     }
-    if refusal == err::IC_ERROR_NODEID_IN_USE {
-      self.same_id_refusals += 1;
-    }
-    let give_it_up = refusal == err::IC_ERROR_NODEID_NOT_ALLOWED
-      || (refusal == err::IC_ERROR_NODEID_IN_USE
-        && self.same_id_refusals >= IC_SAME_NODE_ID_ATTEMPTS);
-    if give_it_up {
-      ic_port::debug_print!(
-        IC_COMM_LEVEL,
-        "Node id {} has been given away; asking for another",
-        old_node_id
-      );
+    let take_another = refusal == err::IC_ERROR_NODEID_IN_USE
+      || refusal == err::IC_ERROR_NODEID_NOT_ALLOWED;
+    if take_another {
+      if refusal == err::IC_ERROR_NODEID_IN_USE {
+        ic_port::debug_print!(
+          IC_COMM_LEVEL,
+          "The cluster still counts node id {} as connected; asking for \
+           another",
+          old_node_id
+        );
+      } else {
+        ic_port::debug_print!(
+          IC_COMM_LEVEL,
+          "The configuration no longer allows node id {}; asking for \
+           another",
+          old_node_id
+        );
+      }
       wanted.node_id = None;
       fetched = mgm_client::fetch_configuration(
         &wanted,
@@ -980,12 +1004,17 @@ mod tests {
   }
 
   #[test]
-  fn heartbeats_go_out_twice_per_check_interval() {
+  fn heartbeats_go_out_at_least_three_times_per_check_interval() {
     let link = NodeLink::new(2, 30000);
     assert_eq!(link.check_interval_ms(), 30000);
-    assert_eq!(link.heartbeat_period_ms(), 15000);
+    assert_eq!(link.heartbeat_period_ms(), 10000);
     let fast = NodeLink::new(2, 1500);
-    assert_eq!(fast.heartbeat_period_ms(), 750);
+    assert_eq!(fast.heartbeat_period_ms(), 500);
+    // An interval that does not divide evenly rounds the period down,
+    // so three sends still fit inside it.
+    let odd = NodeLink::new(2, 1000);
+    assert_eq!(odd.heartbeat_period_ms(), 333);
+    assert!(odd.heartbeat_period_ms() * 3 <= odd.check_interval_ms());
   }
 
   #[test]
@@ -994,7 +1023,7 @@ mod tests {
     // heartbeat on every round, and declared lost in no time at all.
     let unset = NodeLink::new(2, 0);
     assert_eq!(unset.check_interval_ms(), IC_MIN_HEARTBEAT_INTERVAL_MS);
-    assert_eq!(unset.heartbeat_period_ms(), 50);
+    assert_eq!(unset.heartbeat_period_ms(), 33);
     let tiny = NodeLink::new(2, 7);
     assert_eq!(tiny.check_interval_ms(), IC_MIN_HEARTBEAT_INTERVAL_MS);
   }
