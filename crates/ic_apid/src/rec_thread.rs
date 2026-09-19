@@ -18,7 +18,8 @@
 //! 2. Install the links connect threads have handed over.
 //! 3. Wait in the poll set for up to [`IC_RECEIVE_POLL_MS`], and read
 //!    every socket that has something.
-//! 4. Route each signal. One for a user thread goes to its inbox unread.
+//! 4. Route each signal, after taking a packed one apart into the
+//!    signals it holds. One for a user thread goes to its inbox unread.
 //!    One for our own fixed blocks is about the node that sent it, and is
 //!    executed here: that is what makes this thread the one writer of
 //!    the node's published state. The one exception is the dictionary's
@@ -38,7 +39,10 @@ use std::sync::Arc;
 use ic_comm::connection::Connection;
 use ic_comm::poll_set::PollSet;
 use ic_ndb_signals::alter_table_rep::AlterTableRep;
+use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
+use ic_ndb_signals::header::FragmentInfo;
+use ic_ndb_signals::packed;
 use ic_ndb_signals::qmgr::ApiRegConf;
 use ic_ndb_signals::qmgr::NfCompleteRep;
 use ic_ndb_signals::qmgr::NodeFailRep;
@@ -320,6 +324,10 @@ impl Receiver {
       return;
     }
     for signal in signals.drain(..) {
+      if signal.receiver_block == blocks::IC_BLOCK_API_PACKED {
+        self.route_packed(index, signal);
+        continue;
+      }
       // What is for a user thread goes to its inbox unread. What comes
       // back is for one of our own fixed blocks and is about the node
       // that sent it, which is ours to execute.
@@ -328,6 +336,40 @@ impl Receiver {
       }
     }
     self.signals = signals;
+  }
+
+  /// Take a packed signal apart and route each part as if it had come
+  /// alone. Every part has the packed signal's number and sender, and
+  /// the block its own header names. See `ic_ndb_signals::packed`.
+  fn route_packed(&mut self, index: usize, packed_signal: ReceivedSignal) {
+    let parts = match packed::unpack(&packed_signal.data) {
+      Ok(parts) => parts,
+      Err(e) => {
+        ic_port::debug_print!(
+          IC_NDB_MESSAGE_LEVEL,
+          "Unreadable packed {} from node {}: {}",
+          gsn::gsn_name(packed_signal.gsn).unwrap_or("signal"),
+          packed_signal.sender_node_id,
+          e.message()
+        );
+        return;
+      }
+    };
+    for part in parts {
+      let end = part.start + part.len;
+      let signal = ReceivedSignal {
+        gsn: packed_signal.gsn,
+        receiver_block: part.receiver_block,
+        sender_block: packed_signal.sender_block,
+        sender_node_id: packed_signal.sender_node_id,
+        fragment_info: FragmentInfo::Whole,
+        data: packed_signal.data[part.start..end].to_vec(),
+        sections: Vec::new(),
+      };
+      if let Some(own) = self.router.route(signal) {
+        self.execute(index, &own);
+      }
+    }
   }
 
   // ---- The signals this thread executes ----

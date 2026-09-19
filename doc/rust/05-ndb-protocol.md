@@ -526,6 +526,26 @@ iClaustron documents bits 0–15 in prose in `ic_apid_handle_messages.ic`
 under the name `NDB_PRIM_KEYREQ`; the stock GSN and the RonDB bits above
 supersede it.
 
+As built (`ic_ndb_signals::tc_key`), checked against the reference:
+
+- **The optional words were wrong above.** After the eight fixed words
+  come, each only if its flag is set and in this order: the user id and
+  its version for RonDB's rate limits (flag bit 29, two words), the scan
+  information (bit 14), the distribution key (bit 2). Nothing else is
+  read from a long request. Verify: `NdbOperationExec.cpp`,
+  `fillTcKeyReqHdr`; `DbtcMain.cpp`, `execTCKEYREQ`, where the words are
+  found.
+- **A long request must be exactly as long as its flags make it.** The
+  coordinator checks the length against eight plus the optional words,
+  and refuses anything else as a malicious signal. Verify:
+  `DbtcMain.cpp`, `execTCKEYREQ`, the length check after the optional
+  words.
+- A committed read sets both the simple and the dirty flag; a simple
+  read sets only simple. Verify: `NdbOperationDefine.cpp`, the lock mode
+  switch.
+- Operation types: read 0, update 1, insert 2, delete 3, write 4, read
+  exclusive 5, refresh 6, unlock 7. Verify: `kernel_types.h`.
+
 KEYINFO section: key column values in primary-key order, each padded to
 4-byte alignment. Verify: `include/kernel/signaldata/KeyInfo.hpp:71-95`.
 
@@ -566,6 +586,44 @@ bits 0–14 byte length; length 0 means NULL. Pseudo-columns
   requested.
 - Commit-ack: when `TCKEYCONF` bit 17 is set, send `TC_COMMIT_ACK`
   (GSN 469) back to TC. Verify: `Ndbif.cpp:493-520`.
+
+As built (`ic_ndb_signals::tc_key`, `packed`, and the receive thread),
+with what the reference showed on the way:
+
+- **Every reply names its receiver in its first word**, which the
+  reference states as a rule for all traffic signals. `TCKEYCONF` names
+  the transaction by the pointer given at seize time, or is RNIL, and
+  the transaction is then found from the operations it lists.
+  `TCKEYREF` and `TRANSID_AI` name the operation by the pointer the
+  request gave it. Verify: `Ndbif.cpp`, the dispatch of each.
+- **`TRANSID_AI` comes from the node that read the row**, which need
+  not be the coordinator's node. Its three header words are the
+  operation pointer and the transaction id; a long one has the row in
+  section 0, and one sent in fragments has a fourth word, the row's
+  whole length. Verify: `TransIdAI.hpp`.
+- **Per operation, `TCKEYCONF` gives the words of row data to expect.**
+  With the top bit set it is a dirty read, and the low bits name the
+  reading node. An operation is complete when its `TRANSID_AI` words
+  reach the count, or at the first `TRANSID_AI` of a dirty read; with no
+  words expected, `TCKEYCONF` alone completes it. A dirty read whose
+  reading node fails before its row arrives fails with 4119. Verify:
+  `NdbReceiver.hpp`, `execTCOPCONF`; `NdbReceiver.cpp`,
+  `execTRANSID_AI`; `NdbTransaction.cpp`, `receiveTCKEYCONF`.
+- The commit marker counts only when the commit bit is set too, and
+  the low word of the global checkpoint follows the operations only
+  when the signal is long enough to hold it. Verify: `TcKeyConf.hpp`,
+  `getMarkerFlag`; `receiveTCKEYCONF`.
+- **`TC_COMMIT_ACK` is two words, the transaction id,** sent to the
+  block that sent the `TCKEYCONF`, and sent even when the confirmation
+  is otherwise rejected. Verify: `NdbTransaction.cpp`,
+  `sendTC_COMMIT_ACK`; `Ndbif.cpp`.
+- **Both `TCKEYCONF` and short `TRANSID_AI` arrive packed.** A signal
+  to `API_PACKED` (2047) holds several signals of its own signal number,
+  each behind a header word with its length less three in bits 0–4 and
+  its block in bits 16–31. The receive thread takes it apart and routes
+  each part by its own block. Verify: `TransporterFacade.cpp`, where
+  `API_PACKED` is taken apart; `DbtcMain.cpp`, `sendPackedTCKEYCONF`;
+  `DbtupBuffer.cpp`, `sendAPI_TRANSID_AI`.
 
 ### 6.6 Completion accounting (the rule that makes `poll` correct)
 

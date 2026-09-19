@@ -28,14 +28,21 @@
 //! - [`alter_table_rep`]: the notice that a table was altered or
 //!   dropped.
 //! - [`tc_seize`]: taking and giving back a transaction record.
+//! - [`tc_key`]: key operations, their replies, and the commit
+//!   acknowledgement.
+//! - [`attr_header`]: the word in front of each column's value.
+//! - [`packed`]: several small signals sent to an API node as one.
 
 pub mod alter_table_rep;
+pub mod attr_header;
 pub mod blocks;
 pub mod dict_tab_info;
 pub mod get_tab_info;
 pub mod gsn;
 pub mod header;
 pub mod list_tables;
+pub mod packed;
 pub mod qmgr;
 pub mod simple_properties;
+pub mod tc_key;
 pub mod tc_seize;
