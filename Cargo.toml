@@ -9,6 +9,7 @@ members = [
     "crates/ic_ndb_signals",
     "crates/ic_apid",
     "crates/ic_capi",
+    "tools/ic_config_dump",
     "xtask",
 ]
 
@@ -29,6 +30,7 @@ ic_protocol = { path = "crates/ic_protocol" }
 ic_apic = { path = "crates/ic_apic" }
 ic_ndb_signals = { path = "crates/ic_ndb_signals" }
 ic_apid = { path = "crates/ic_apid" }
+ic_capi = { path = "crates/ic_capi" }
 
 # Lints shared by every crate. Each crate opts in with `[lints] workspace = true`.
 [workspace.lints.rust]

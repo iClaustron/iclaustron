@@ -17,7 +17,7 @@ Phase 0 checklist (see `doc/rust/06-phases.md`):
 - [x] `cargo xtask tags` for vim/gvim navigation over Rust and C (replaces `git_tags.sh`)
 - [x] Rust toolchain installed, `cargo build --workspace` and `cargo xtask check` pass
 - [ ] Header reviewed (developer)
-- [ ] RonDB 26.10 development cluster running (developer)
+- [x] RonDB 26.10 development cluster running
 
 ## Layout
 

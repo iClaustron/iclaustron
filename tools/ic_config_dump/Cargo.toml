@@ -1,0 +1,17 @@
+[package]
+name = "ic_config_dump"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Print the cluster configuration a RonDB management server serves"
+
+[lints]
+workspace = true
+
+[dependencies]
+ic_port.workspace = true
+ic_util.workspace = true
+ic_apic.workspace = true

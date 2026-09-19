@@ -41,6 +41,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic_config_dump"
+version = "0.1.0"
+dependencies = [
+ "ic_apic",
+ "ic_port",
+ "ic_util",
+]
+
+[[package]]
 name = "ic_ndb_signals"
 version = "0.1.0"
 

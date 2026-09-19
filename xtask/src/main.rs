@@ -162,6 +162,7 @@ fn run_style() -> i32 {
   let mut forbidden: u32 = 0;
   let mut files: Vec<String> = Vec::new();
   collect_rs_files(Path::new("crates"), &mut files);
+  collect_rs_files(Path::new("tools"), &mut files);
   collect_rs_files(Path::new("xtask"), &mut files);
   for file in &files {
     let text = match fs::read_to_string(file) {

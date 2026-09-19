@@ -41,7 +41,7 @@
 //! Verify: RonDB 26.10 `src/common/mgmcommon/ConfigObject.cpp:1032`
 //! and `src/common/mgmcommon/ConfigSection.cpp:290,928`.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use ic_port::err;
 use ic_port::IcError;
@@ -61,7 +61,7 @@ const V2_KEY_MASK: u32 = 0x0FFF_FFFF;
 
 /// What kind of section this is.
 /// Verify: `include/util/ConfigSection.hpp:52`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u32)]
 pub enum SectionType {
   /// Not a valid section.
@@ -170,7 +170,11 @@ pub struct Section {
   /// What this section describes.
   pub section_type: SectionType,
   /// Parameter id to value, holding only what this section states.
-  pub entries: HashMap<u32, ConfigValue>,
+  ///
+  /// Ordered rather than hashed: a section holds a few dozen entries at
+  /// most, so lookup cost is the same either way, and printing or
+  /// comparing two configurations gives the same order every time.
+  pub entries: BTreeMap<u32, ConfigValue>,
 }
 
 impl Section {
@@ -189,7 +193,7 @@ impl Section {
 #[derive(Clone, Debug, Default)]
 pub struct ConfigBlob {
   /// The default section for each type that has one.
-  pub defaults: HashMap<SectionType, Section>,
+  pub defaults: BTreeMap<SectionType, Section>,
   /// The cluster-wide section.
   pub system: Section,
   /// One section per node, data nodes first, then API nodes, then
@@ -285,7 +289,7 @@ fn decode_section(reader: &mut Reader<'_>) -> Result<Section, IcError> {
   }
   let mut section = Section {
     section_type,
-    entries: HashMap::with_capacity(num_entries as usize),
+    entries: BTreeMap::new(),
   };
   let mut i: u32 = 0;
   while i < num_entries {
