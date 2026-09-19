@@ -21,6 +21,14 @@
 //! of the original that its number names. Fragments of different
 //! signals are told apart by their sender and fragment id.
 //!
+//! **The joined signal keeps the first fragment's data.** That is the
+//! original's when the kernel's fragmenting send split it, which copies
+//! the data into every piece. A block may also split an answer by hand
+//! and put values of each piece's own in the data: the dictionary's
+//! `LIST_TABLES_CONF` carries the count of objects in that piece. A
+//! handler for such a signal takes those values from the joined
+//! sections instead; `list_tables` counts objects by section length.
+//!
 //! The C does no reassembly on the receiving side at all: iClaustron
 //! only ever sent fragmented signals, for schema changes. This follows
 //! the kernel's sender, which is what the layout above is taken from.

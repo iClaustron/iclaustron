@@ -143,6 +143,8 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
       Ok(info) => {
         let map = hash_map_of(global, &inbox, &info);
         print_table(&info, map.as_ref());
+        print_indexes(global, &inbox, &info);
+        print_own_lines(&info, map.as_ref());
       }
       Err(e) => {
         println!("-- {}.{} --", database, table);
@@ -224,9 +226,19 @@ fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
   for attr in &table.attributes {
     println!("{}", describe_attribute(attr));
   }
+}
+
+/// What ndb_desc does not show, after everything it does.
+fn print_own_lines(table: &TableInfo, map: Option<&HashMapInfo>) {
   println!("-- iClaustron --");
   println!("Database: {}", table.database());
   println!("Table id: {}", table.table_id);
+  let hash = if table.hash_function == 0 {
+    "MD5"
+  } else {
+    "XXH3 64-bit"
+  };
+  println!("Hash function: {}", hash);
   if let Some(map) = map {
     println!(
       "Hash map: id {}, version {}, {} buckets over {} fragments",
@@ -235,6 +247,66 @@ fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
       map.fragments.len(),
       map.fragment_count()
     );
+  }
+}
+
+/// The indexes, as ndb_desc lists them: first the primary key, which
+/// is the table itself rather than an index of its own, then every
+/// index in id order, each with its columns.
+fn print_indexes(
+  global: &ApidGlobal,
+  inbox: &ThreadConnection,
+  table: &TableInfo,
+) {
+  // The reference prints the heading with a space at its end.
+  println!("-- Indexes -- ");
+  let mut key_names: Vec<&str> = Vec::new();
+  for attr in &table.attributes {
+    if attr.primary_key {
+      key_names.push(&attr.name);
+    }
+  }
+  println!("PRIMARY KEY({}) - UniqueHashIndex", key_names.join(", "));
+  let listed = dict_client::list_dependents(global, inbox, table.table_id);
+  let mut objects = match listed {
+    Ok(objects) => objects,
+    Err(e) => {
+      report("Could not list its indexes", &e);
+      return;
+    }
+  };
+  objects.sort_by_key(|object| object.id);
+  for object in &objects {
+    let kind = index_type_name(object.object_type);
+    if kind.is_empty() {
+      // A trigger, a large-object table or another dependent.
+      continue;
+    }
+    let index = match dict_client::get_table_by_id(global, inbox, object.id) {
+      Ok(index) => index,
+      Err(e) => {
+        report("Could not fetch an index", &e);
+        continue;
+      }
+    };
+    // The last column is a hidden reference back to the table's row,
+    // not one of the index's own.
+    let mut columns: Vec<&str> = Vec::new();
+    let mut i: usize = 0;
+    while i + 1 < index.attributes.len() {
+      columns.push(&index.attributes[i].name);
+      i += 1;
+    }
+    println!("{}({}) - {}", object.short_name(), columns.join(", "), kind);
+  }
+}
+
+/// What ndb_desc calls an index type, or nothing for other objects.
+fn index_type_name(object_type: u32) -> &'static str {
+  match object_type {
+    dict_tab_info::IC_TABLE_TYPE_UNIQUE_HASH_INDEX => "UniqueHashIndex",
+    dict_tab_info::IC_TABLE_TYPE_ORDERED_INDEX => "OrderedIndex",
+    _ => "",
   }
 }
 

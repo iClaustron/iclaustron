@@ -47,6 +47,10 @@ use ic_ndb_signals::get_tab_info::GetTabInfoRef;
 use ic_ndb_signals::get_tab_info::GetTabInfoReq;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header::SignalHeader;
+use ic_ndb_signals::list_tables;
+use ic_ndb_signals::list_tables::ListTablesConf;
+use ic_ndb_signals::list_tables::ListTablesReq;
+use ic_ndb_signals::list_tables::ListedObject;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
@@ -71,14 +75,16 @@ static NEXT_REQUEST: AtomicU32 = AtomicU32::new(1);
 enum Asking<'a> {
   /// A table, by its internal name.
   ByName(&'a str),
-  /// Any object, such as a hash map, by its id.
+  /// Any object, such as a hash map or an index, by its id.
   ById(u32),
+  /// The objects that depend on a table, such as its indexes.
+  DependentsOf(u32),
 }
 
 /// How one attempt ended.
 enum Attempt {
-  /// The description's words, not yet read.
-  Done(Vec<u32>),
+  /// The whole answer, fragments joined, not yet read.
+  Done(ReceivedSignal),
   /// Worth asking again.
   Again(IcError),
   /// Not worth asking again.
@@ -101,10 +107,32 @@ pub fn get_table(
   table: &str,
 ) -> Result<TableInfo, IcError> {
   let name = internal_name(database, table);
-  let words = fetch(global, inbox, Asking::ByName(&name))?;
+  let answer = fetch(global, inbox, Asking::ByName(&name))?;
   // A description that cannot be read would read the same way again,
   // so it is not asked for again.
-  dict_tab_info::parse_table_info(&words)
+  dict_tab_info::parse_table_info(answer.section(0))
+}
+
+/// Fetch a table or an index by id. An index is described as a table of
+/// its own, whose `primary_table_id` names the table it indexes.
+pub fn get_table_by_id(
+  global: &ApidGlobal,
+  inbox: &ThreadConnection,
+  table_id: u32,
+) -> Result<TableInfo, IcError> {
+  let answer = fetch(global, inbox, Asking::ById(table_id))?;
+  dict_tab_info::parse_table_info(answer.section(0))
+}
+
+/// The objects that depend on a table: its indexes, and others such as
+/// triggers and the tables holding its large objects.
+pub fn list_dependents(
+  global: &ApidGlobal,
+  inbox: &ThreadConnection,
+  table_id: u32,
+) -> Result<Vec<ListedObject>, IcError> {
+  let answer = fetch(global, inbox, Asking::DependentsOf(table_id))?;
+  list_tables::parse_listed_objects(answer.section(0), answer.section(1))
 }
 
 /// Fetch a hash map, by the id a table names in `hash_map_object_id`.
@@ -118,8 +146,8 @@ pub fn get_hash_map(
   inbox: &ThreadConnection,
   object_id: u32,
 ) -> Result<HashMapInfo, IcError> {
-  let words = fetch(global, inbox, Asking::ById(object_id))?;
-  dict_tab_info::parse_hash_map_info(&words)
+  let answer = fetch(global, inbox, Asking::ById(object_id))?;
+  dict_tab_info::parse_hash_map_info(answer.section(0))
 }
 
 /// Ask until answered, or until asking again is pointless.
@@ -127,11 +155,11 @@ fn fetch(
   global: &ApidGlobal,
   inbox: &ThreadConnection,
   asking: Asking<'_>,
-) -> Result<Vec<u32>, IcError> {
+) -> Result<ReceivedSignal, IcError> {
   let mut attempt: u32 = 0;
   loop {
     match fetch_once(global, inbox, &asking, attempt) {
-      Attempt::Done(words) => return Ok(words),
+      Attempt::Done(answer) => return Ok(answer),
       Attempt::Failed(e) => return Err(e),
       Attempt::Again(e) => {
         attempt += 1;
@@ -168,11 +196,12 @@ fn fetch_once(
   let request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
   let own_ref =
     blocks::number_to_ref(inbox.block_number(), global.own_node_id());
-  let header = SignalHeader::new(
-    gsn::IC_GSN_GET_TABINFOREQ,
-    inbox.block_number(),
-    blocks::IC_BLOCK_DBDICT,
-  );
+  let mut gsn_value = gsn::IC_GSN_GET_TABINFOREQ;
+  if let Asking::DependentsOf(_) = asking {
+    gsn_value = gsn::IC_GSN_LIST_TABLES_REQ;
+  }
+  let header =
+    SignalHeader::new(gsn_value, inbox.block_number(), blocks::IC_BLOCK_DBDICT);
   let sent = match asking {
     Asking::ByName(name) => {
       let request = GetTabInfoReq::by_name(request_id, own_ref, name);
@@ -182,6 +211,11 @@ fn fetch_once(
     }
     Asking::ById(object_id) => {
       let request = GetTabInfoReq::by_id(request_id, own_ref, *object_id);
+      global.send(node_id, &header, &request.encode(), &[])
+    }
+    Asking::DependentsOf(table_id) => {
+      let request =
+        ListTablesReq::dependents_of(request_id, own_ref, *table_id);
       global.send(node_id, &header, &request.encode(), &[])
     }
   };
@@ -229,7 +263,9 @@ fn take_answer(
   signal: ReceivedSignal,
   request_id: u32,
 ) -> Option<Attempt> {
-  if signal.gsn == gsn::IC_GSN_GET_TABINFO_CONF {
+  if signal.gsn == gsn::IC_GSN_GET_TABINFO_CONF
+    || signal.gsn == gsn::IC_GSN_LIST_TABLES_CONF
+  {
     let added = match assembler.add(signal) {
       Ok(added) => added,
       // A broken train of fragments; the whole answer is lost.
@@ -237,7 +273,10 @@ fn take_answer(
     };
     // `None` while fragments are still to come: keep waiting.
     let whole = added?;
-    return description_of(&whole, request_id);
+    if whole.gsn == gsn::IC_GSN_LIST_TABLES_CONF {
+      return list_of(whole, request_id);
+    }
+    return description_of(whole, request_id);
   }
   if signal.gsn == gsn::IC_GSN_GET_TABINFOREF {
     let refusal = match GetTabInfoRef::decode(&signal.data) {
@@ -252,15 +291,15 @@ fn take_answer(
   }
   ic_port::debug_print!(
     IC_NDB_MESSAGE_LEVEL,
-    "Dropped {} from node {} while waiting for a table description",
+    "Dropped {} from node {} while waiting for the dictionary",
     gsn::gsn_name(signal.gsn).unwrap_or("an unknown signal"),
     signal.sender_node_id
   );
   None
 }
 
-/// A whole answer: read the description it carries.
-fn description_of(whole: &ReceivedSignal, request_id: u32) -> Option<Attempt> {
+/// A whole description: check it is ours and complete.
+fn description_of(whole: ReceivedSignal, request_id: u32) -> Option<Attempt> {
   let conf = match GetTabInfoConf::decode(&whole.data) {
     Ok(conf) => conf,
     Err(e) => return Some(Attempt::Again(e)),
@@ -268,13 +307,25 @@ fn description_of(whole: &ReceivedSignal, request_id: u32) -> Option<Attempt> {
   if conf.sender_data != request_id {
     return None;
   }
-  let words = whole.section(0);
-  if words.len() != conf.total_len as usize {
+  if whole.section(0).len() != conf.total_len as usize {
     // Fragments went missing on the way.
     let e = IcError::new(err::IC_ERROR_BAD_TABLE_DESCRIPTION);
     return Some(Attempt::Again(e));
   }
-  Some(Attempt::Done(words.to_vec()))
+  Some(Attempt::Done(whole))
+}
+
+/// A whole list: check it is ours. Its count is not checked, since once
+/// joined it is the first piece's alone; see `list_tables`.
+fn list_of(whole: ReceivedSignal, request_id: u32) -> Option<Attempt> {
+  let conf = match ListTablesConf::decode(&whole.data) {
+    Ok(conf) => conf,
+    Err(e) => return Some(Attempt::Again(e)),
+  };
+  if conf.sender_data != request_id {
+    return None;
+  }
+  Some(Attempt::Done(whole))
 }
 
 /// What a refusal amounts to.
@@ -364,8 +415,9 @@ mod tests {
     };
     let mut assembler = FragmentAssembler::new();
     match take_answer(&mut assembler, signal, 7) {
-      Some(Attempt::Done(words)) => {
-        let info = dict_tab_info::parse_table_info(&words).expect("table");
+      Some(Attempt::Done(answer)) => {
+        let words = answer.section(0);
+        let info = dict_tab_info::parse_table_info(words).expect("table");
         assert_eq!(info.table_name(), "t1");
       }
       _ => panic!("expected the table"),
@@ -401,8 +453,9 @@ mod tests {
     let mut assembler = FragmentAssembler::new();
     assert!(take_answer(&mut assembler, first, 7).is_none());
     match take_answer(&mut assembler, last, 7) {
-      Some(Attempt::Done(words)) => {
-        let info = dict_tab_info::parse_table_info(&words).expect("table");
+      Some(Attempt::Done(answer)) => {
+        let words = answer.section(0);
+        let info = dict_tab_info::parse_table_info(words).expect("table");
         assert_eq!(info.attributes.len(), 1);
       }
       _ => panic!("expected the table"),
@@ -420,6 +473,27 @@ mod tests {
     };
     let mut assembler = FragmentAssembler::new();
     assert!(take_answer(&mut assembler, signal, 7).is_none());
+  }
+
+  #[test]
+  fn a_list_is_answered_by_its_own_signal() {
+    // Two objects, no names asked for.
+    let signal = ReceivedSignal {
+      gsn: gsn::IC_GSN_LIST_TABLES_CONF,
+      data: vec![7, 2],
+      sections: vec![vec![0, 14, 3, 0, 15, 6]],
+      ..ReceivedSignal::default()
+    };
+    let mut assembler = FragmentAssembler::new();
+    match take_answer(&mut assembler, signal, 7) {
+      Some(Attempt::Done(answer)) => {
+        let objects = list_tables::parse_listed_objects(answer.section(0), &[])
+          .expect("list");
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[1].object_type, 6);
+      }
+      _ => panic!("expected the list"),
+    }
   }
 
   #[test]

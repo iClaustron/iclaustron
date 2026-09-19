@@ -219,6 +219,15 @@ carried the real signal data. That is wrong, and the reference's own
 `execGET_TABINFO_CONF` depends on it being wrong: it reads the request
 id from every fragment.
 
+**But not every fragmented signal repeats its data.** A block may split
+an answer by hand, with the same trailing section numbers and fragment
+id, and put values belonging to each piece in the data. `Dbdict` does
+this for `LIST_TABLES_CONF`: each piece's `noOfTables` counts only that
+piece's objects, and the API adds them up (`execLIST_TABLES_CONF`). A
+piece may also carry one section, or none. A generic reassembler keeps
+the first piece's data, so such values must come from the joined
+sections. Verify: `Dbdict.cpp`, `sendLIST_TABLES_CONF`.
+
 **When a signal is split.** The fragmenting send sends a signal whole
 when its data and sections come to at most `MAX_SIZE_SINGLE_SIGNAL`,
 7400 words, and otherwise splits it into pieces of `FRAGMENT_WORD_SIZE`
@@ -759,6 +768,18 @@ are the short-form trains (unused by us). Verify:
   - The "frm data" `ndb_desc` counts is whichever of `FrmData` (27) or
     `MysqlDictMetadata` (30) arrived; the reference keeps either as the
     same blob. Verify: `NdbTableImpl::IndirectReader`.
+- **A table's schema version is two counters** (author, 2026-09-19):
+  bits 24–31 go up by one for every online change, bits 0–23 for every
+  offline change. Operations are checked against bits 0–23 only, so an
+  online change leaves operations prepared with the previous version
+  working, while an offline change makes them fail with a wrong schema
+  version. `ndb_desc` prints the whole word: seen live, a table altered
+  once online reads 16777217, which is 0x01000001. For the table cache
+  (below) this means an online change is not noticed through errors;
+  the API has to refetch to learn of it. Verify: `Dbdict.cpp`,
+  `alter_obj_inc_schema_version` and `create_obj_inc_schema_version`;
+  `kernel_types.h`, `table_version_major`; `DbtcMain.cpp`,
+  `TableRecord::getErrorCode`; `DbspjMain.cpp` checks the same way.
 - After parsing a hash-map table, fetch its hash map object (also via
   `GET_TABINFOREQ` by id) to fill the hash → fragment array. Verify:
   `NdbDictionaryImpl.cpp:3703-3714`.
@@ -767,6 +788,30 @@ are the short-form trains (unused by us). Verify:
   change detected by table version mismatch (errors 241/284) forcing a
   refetch. Verify: `src/ndbapi/DictCache.hpp:64-95`.
 - `LIST_TABLES_REQ` (GSN 193) / `CONF` (194) for listing.
+
+  As built (`ic_ndb_signals::list_tables`, `dict_client::list_dependents`):
+  the request is five words, senderData, senderRef, a flags word, table
+  id, table type. The flags word asks for names (bit 28), indexes only
+  (29) or the dependents of one table (30), and repeats the table id in
+  its low 12 bits for data nodes that only read the older form. The
+  answer is senderData and a count, with three words per object in
+  section 0 (flags with store, temporary and state, then id, then type)
+  and, when asked for, the names in section 1, each a byte length
+  counting its NUL and then the name. Every current data node answers
+  in this long form (`listObjects` always expects it). The dictionary
+  splits a long answer by hand; see §2.1.
+
+  A table's indexes are its dependents of type unique hash index (3) or
+  ordered index (6). Each is fetched as a table of its own; its last
+  column is a hidden reference to the table's row (`NDB$PK` or
+  `NDB$TNODE`) and is not one of the index's columns. Index names are
+  `sys/def/<table id>/<name>`, or `<db>/<schema>/<table id>/<name>` for
+  indexes made before that form; the name is the part after the last
+  separator. The primary key is not an index of its own: `ndb_desc`
+  prints it as a unique hash index made from the table's key columns.
+  Verify: `NdbDictionary.cpp`, the `-- Indexes --` section of `print`;
+  `NdbDictionaryImpl.cpp`, `create_index_obj_from_table` and
+  `internal_index_name`; `Ndb.cpp`, `externalizeIndexName`.
 - DDL: `SCHEMA_TRANS_BEGIN_REQ/CONF` → `CREATE_TABLE_REQ` (+ DictTabInfo
   section) / `CREATE_HASH_MAP_REQ` / `CREATE_INDX_REQ` / `DROP_TABLE_REQ`
   / `ALTER_TABLE_REQ` → `SCHEMA_TRANS_END_REQ/CONF`. Verify:
