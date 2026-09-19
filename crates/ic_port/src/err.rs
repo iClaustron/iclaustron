@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7145;
+pub const IC_LAST_ERROR: i32 = 7147;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -328,6 +328,11 @@ pub const IC_ERROR_BAD_TABLE_DESCRIPTION: i32 = 7143;
 pub const IC_ERROR_TABLE_KEEPS_CHANGING: i32 = 7144;
 /// The table has no index of that name.
 pub const IC_ERROR_NO_SUCH_INDEX: i32 = 7145;
+/// A record's fields or null bits overlap, or lie outside its row.
+pub const IC_ERROR_RECORD_LAYOUT: i32 = 7146;
+/// The field has no null bit in the record: a nullable field was given
+/// none, or NULL was set on a field that cannot be NULL.
+pub const IC_ERROR_NO_NULL_BIT: i32 = 7147;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -695,6 +700,8 @@ pub fn message(code: i32) -> &'static str {
       "The table changed every time it was fetched"
     }
     IC_ERROR_NO_SUCH_INDEX => "No such index on the table",
+    IC_ERROR_RECORD_LAYOUT => "Record fields overlap or lie outside the row",
+    IC_ERROR_NO_NULL_BIT => "The field has no null bit in the record",
     _ => "Unknown error code",
   }
 }

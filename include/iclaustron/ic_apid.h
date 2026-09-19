@@ -290,8 +290,10 @@ typedef struct ic_apid_error
 
   The application chooses alignment; the API validates that fields do not
   overlap and fit within row_size. ic_table_def_default_record() builds a
-  naturally aligned record for callers who do not want to write the struct
-  by hand and reports the offsets with ic_record_get_field_layout().
+  record for callers who do not want to write the struct by hand, with
+  every field on a 4-byte boundary as the data node keeps it (8 for
+  8-byte integers and doubles), and reports the offsets with
+  ic_record_get_field_layout().
 
   Fields in a record are numbered by their position in the spec array
   (0..num_fields-1). Field masks passed with queries are bitmaps over these
@@ -610,7 +612,7 @@ int ic_table_def_create_record(IC_TABLE_DEF *table_def,
                                uint32_t num_fields,
                                uint32_t row_size,
                                IC_RECORD **record);
-/* A naturally aligned record over the given fields (all fields if
+/* A word-aligned record over the given fields (all fields but blobs if
    field_ids is NULL); ask ic_record_get_field_layout() for the offsets. */
 int ic_table_def_default_record(IC_TABLE_DEF *table_def,
                                 const uint32_t *field_ids,

@@ -170,7 +170,7 @@ functions; explicit shifts and masks, no bit-field macros.
 | `ic_apid_start.ic` | `program.rs` | 1:1 | option groups via `ic_port::options`; the iClaustron-cluster-server options Out |
 | `ic_apid_conn.ic` | `apid_conn.rs` | 1:1 + New | first cut built: inbox, `poll`, fragments joined, expected replies; `read_key`, `write_key`, transaction start/commit/rollback get real bodies; savepoint functions removed |
 | `ic_apid_op.ic` | `query.rs` | Redesign | record-based binding (04); fix the inverted alloc check |
-| `ic_apid_table.ic` | `dict_cache.rs`, `record.rs` | 1:1 + New | binding via the dictionary built in `dict_cache.rs` (`TableDef`, `IndexDef`, the shared cache, invalidation by `ALTER_TABLE_REP`); `Record` creation from a field spec still to come |
+| `ic_apid_table.ic` | `dict_cache.rs`, `record.rs` | 1:1 + New | binding via the dictionary built in `dict_cache.rs` (`TableDef`, `IndexDef`, the shared cache, invalidation by `ALTER_TABLE_REP`); `Record` from a field spec and the default record built in `record.rs`; index key records still to come |
 | `ic_apid_trans.ic` (stubs) | `transaction.rs` | New | TC seize, ids, flags, completion accounting, commit/abort, node failure |
 | `ic_apid_where.ic`, `ic_apid_cond_assign.ic` (stubs) | `where_cond.rs`, `cond_assign.rs`, `interp_gen.rs` | New | builder → RonDB 26.10 interpreter program |
 | — | `hash.rs` | New | MD5 and XXH3 64-bit distribution hashing, hash map → fragment → node |

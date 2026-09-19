@@ -102,6 +102,15 @@ conversion is needed on the hot path):
   with natural alignment and reports the offsets, for users who do not
   want to write the struct by hand (this is `ic_get_buf`/
   `ic_get_buf_offset` from the C header, now returning a record).
+  As built (`ic_apid::record`): values and null bits are checked bit by
+  bit for overlap, as the reference checks, and a NOT NULL field's null
+  bit is ignored, as there. The default record puts the null bits
+  first, eight to a byte in attribute order, then the fields in
+  attribute order, each on a 4-byte boundary as the data node keeps a
+  column and as a value arrives in a signal (author, 2026-09-19), with
+  eight-byte integers and doubles on eight as a C compiler places
+  them, and rounds the row to eight bytes; left without field ids it
+  leaves the blob columns out.
 - Key records: a record over the key fields only (for `read_key` etc.).
   A record covering all key fields of the table can serve as both key and
   attribute record.

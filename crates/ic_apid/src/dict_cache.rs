@@ -67,6 +67,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use ic_ndb_signals::dict_tab_info;
+use ic_ndb_signals::dict_tab_info::AttributeInfo;
 use ic_ndb_signals::dict_tab_info::HashMapInfo;
 use ic_ndb_signals::dict_tab_info::TableInfo;
 use ic_port::err;
@@ -103,6 +104,17 @@ impl std::fmt::Debug for TableDef {
 }
 
 impl TableDef {
+  pub(crate) fn new(
+    info: TableInfo,
+    hash_map: Option<Arc<HashMapInfo>>,
+  ) -> TableDef {
+    TableDef {
+      info,
+      hash_map,
+      valid: AtomicBool::new(true),
+    }
+  }
+
   /// Everything the dictionary said about the table.
   pub fn info(&self) -> &TableInfo {
     &self.info
@@ -121,6 +133,29 @@ impl TableDef {
   /// The version every operation on the table names.
   pub fn table_version(&self) -> u32 {
     self.info.table_version
+  }
+
+  /// How many fields the table has.
+  pub fn num_fields(&self) -> u32 {
+    self.info.attributes.len() as u32
+  }
+
+  /// A field's id, by its name (`ic_table_def_get_field_id`). The id is
+  /// the attribute id signals name the column by.
+  pub fn field_id(&self, name: &str) -> Result<u32, IcError> {
+    match self.info.attribute(name) {
+      Some(attr) => Ok(attr.attribute_id),
+      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    }
+  }
+
+  /// A field, by its id.
+  pub fn field(&self, field_id: u32) -> Option<&AttributeInfo> {
+    self
+      .info
+      .attributes
+      .iter()
+      .find(|attr| attr.attribute_id == field_id)
   }
 
   /// Which fragment each key hash goes to, if the table is placed by a
@@ -528,11 +563,7 @@ fn fetch_table(
       }
     };
   }
-  Ok(TableDef {
-    info,
-    hash_map,
-    valid: AtomicBool::new(true),
-  })
+  Ok(TableDef::new(info, hash_map))
 }
 
 /// Bind an index of a table already bound: by its current name, or by
@@ -629,11 +660,7 @@ mod tests {
     info.name = name.to_string();
     info.table_id = id;
     info.table_version = version;
-    TableDef {
-      info,
-      hash_map: None,
-      valid: AtomicBool::new(true),
-    }
+    TableDef::new(info, None)
   }
 
   /// A description with every field at its default.

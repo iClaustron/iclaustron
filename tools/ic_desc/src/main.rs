@@ -8,6 +8,7 @@
 //!   ic_desc -c localhost:1186 -d ictest t1
 //!   ic_desc -c localhost:1186 -d ictest t1 t2 --debug-level 1024
 //!   ic_desc -c localhost:1186 -d ictest t1 --watch 60
+//!   ic_desc -c localhost:1186 -d ictest t1 --record
 //! ```
 //!
 //! It starts the Data API, makes one connection as a user thread does,
@@ -27,6 +28,9 @@
 //! table through a MySQL server meanwhile, and the data nodes' notice
 //! should let the cached one go at once. Debug level 1024 shows the
 //! notices, among every other signal.
+//!
+//! `--record` also prints the default record over the table: where each
+//! field lies in the row, every one on a word, and its null bit.
 
 use ic_apic::mgm_client;
 use std::sync::Arc;
@@ -35,6 +39,7 @@ use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::dict_client;
+use ic_apid::record::Record;
 use ic_ndb_signals::dict_tab_info;
 use ic_ndb_signals::dict_tab_info::AttributeInfo;
 use ic_ndb_signals::dict_tab_info::HashMapInfo;
@@ -44,7 +49,7 @@ use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
 
-const OPTIONS: [OptionEntry; 5] = [
+const OPTIONS: [OptionEntry; 6] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -74,6 +79,12 @@ const OPTIONS: [OptionEntry; 5] = [
     short_name: b'w',
     kind: OptionKind::Int,
     help: "Then bind the tables every second for this many seconds",
+  },
+  OptionEntry {
+    long_name: "record",
+    short_name: b'r',
+    kind: OptionKind::Flag,
+    help: "Also print the default record over each table",
   },
 ];
 
@@ -138,7 +149,8 @@ fn run() -> i32 {
     }
   };
   let watch = parser.get_int_or("watch", 0) as u32;
-  let code = describe_all(&global, &database, &tables, watch);
+  let record = parser.get_flag("record");
+  let code = describe_all(&global, &database, &tables, watch, record);
   global.stop();
   code
 }
@@ -148,6 +160,7 @@ fn describe_all(
   database: &str,
   tables: &[String],
   watch: u32,
+  record: bool,
 ) -> i32 {
   if global.wait_for_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
@@ -167,6 +180,9 @@ fn describe_all(
         print_table(def.info(), def.hash_map());
         print_indexes(&mut conn, database, table, def.info());
         print_own_lines(def.info(), def.hash_map());
+        if record {
+          print_default_record(&def);
+        }
       }
       Err(e) => {
         println!("-- {}.{} --", database, table);
@@ -186,6 +202,45 @@ fn describe_all(
     );
   }
   code
+}
+
+/// The default record over the table: offset, size and null bit of each
+/// field.
+fn print_default_record(table: &Arc<TableDef>) {
+  let rec = match Record::default_for(table, None) {
+    Ok(rec) => rec,
+    Err(e) => {
+      report("Could not make its default record", &e);
+      return;
+    }
+  };
+  println!("-- Default record, {} bytes --", rec.row_size());
+  let mut position: u32 = 0;
+  while position < rec.num_fields() {
+    if let Some(field) = rec.field(position) {
+      let name = match table.field(field.field_id()) {
+        Some(attr) => attr.name.as_str(),
+        None => "?",
+      };
+      let mut null = String::new();
+      if field.is_nullable() {
+        null = format!(
+          ", null bit {} of byte {}",
+          field.null_bit(),
+          field.null_byte_offset()
+        );
+      }
+      println!(
+        "{} {}: offset {}, {} bytes{}",
+        name,
+        dict_tab_info::type_name(field.field_type()),
+        field.offset(),
+        field.size(),
+        null
+      );
+    }
+    position += 1;
+  }
 }
 
 /// Bind the tables again once a second, and say whenever that gives a
