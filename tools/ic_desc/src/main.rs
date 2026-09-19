@@ -7,6 +7,7 @@
 //! ```text
 //!   ic_desc -c localhost:1186 -d ictest t1
 //!   ic_desc -c localhost:1186 -d ictest t1 t2 --debug-level 1024
+//!   ic_desc -c localhost:1186 -d ictest t1 --watch 60
 //! ```
 //!
 //! It starts the Data API, makes one connection as a user thread does,
@@ -19,10 +20,20 @@
 //!
 //! Debug level 1024 traces every signal in and out, which shows the
 //! request, and the answer in fragments if the data node split it.
+//!
+//! Tables and indexes are bound as an application binds them, through
+//! the dictionary cache. `--watch` then binds the tables again every
+//! second and says when that gives a new description: alter or drop a
+//! table through a MySQL server meanwhile, and the data nodes' notice
+//! should let the cached one go at once. Debug level 1024 shows the
+//! notices, among every other signal.
 
 use ic_apic::mgm_client;
+use std::sync::Arc;
+
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
+use ic_apid::dict_cache::TableDef;
 use ic_apid::dict_client;
 use ic_ndb_signals::dict_tab_info;
 use ic_ndb_signals::dict_tab_info::AttributeInfo;
@@ -33,7 +44,7 @@ use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
 
-const OPTIONS: [OptionEntry; 4] = [
+const OPTIONS: [OptionEntry; 5] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -57,6 +68,12 @@ const OPTIONS: [OptionEntry; 4] = [
     short_name: 0,
     kind: OptionKind::Int,
     help: "Debug level bits; 1024 traces every signal",
+  },
+  OptionEntry {
+    long_name: "watch",
+    short_name: b'w',
+    kind: OptionKind::Int,
+    help: "Then bind the tables every second for this many seconds",
   },
 ];
 
@@ -120,12 +137,18 @@ fn run() -> i32 {
       return 1;
     }
   };
-  let code = describe_all(&global, &database, &tables);
+  let watch = parser.get_int_or("watch", 0) as u32;
+  let code = describe_all(&global, &database, &tables, watch);
   global.stop();
   code
 }
 
-fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
+fn describe_all(
+  global: &ApidGlobal,
+  database: &str,
+  tables: &[String],
+  watch: u32,
+) -> i32 {
   if global.wait_for_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
     return 1;
@@ -139,12 +162,11 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
   };
   let mut code = 0;
   for table in tables {
-    match dict_client::get_table(&mut conn, database, table) {
-      Ok(info) => {
-        let map = hash_map_of(&mut conn, &info);
-        print_table(&info, map.as_ref());
-        print_indexes(&mut conn, &info);
-        print_own_lines(&info, map.as_ref());
+    match conn.table_bind(database, table) {
+      Ok(def) => {
+        print_table(def.info(), def.hash_map());
+        print_indexes(&mut conn, database, table, def.info());
+        print_own_lines(def.info(), def.hash_map());
       }
       Err(e) => {
         println!("-- {}.{} --", database, table);
@@ -153,6 +175,9 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
       }
     }
     println!();
+  }
+  if watch > 0 {
+    watch_tables(&mut conn, database, tables, watch);
   }
   if conn.unexpected() > 0 {
     println!(
@@ -163,20 +188,52 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
   code
 }
 
-/// The table's hash map, if it is placed by one. A map that cannot be
-/// fetched is reported and the table printed without it.
-fn hash_map_of(
+/// Bind the tables again once a second, and say whenever that gives a
+/// description other than the one before: after the dictionary's notice
+/// has let the cached one go, or once the table can no longer be bound.
+fn watch_tables(
   conn: &mut ApidConnection,
-  table: &TableInfo,
-) -> Option<HashMapInfo> {
-  if table.hash_map_object_id == dict_tab_info::IC_RNIL {
-    return None;
+  database: &str,
+  tables: &[String],
+  seconds: u32,
+) {
+  let mut bound: Vec<Option<Arc<TableDef>>> = Vec::new();
+  for table in tables {
+    bound.push(conn.table_bind(database, table).ok());
   }
-  match dict_client::get_hash_map(conn, table.hash_map_object_id) {
-    Ok(map) => Some(map),
-    Err(e) => {
-      report("Could not fetch its hash map", &e);
-      None
+  println!("Binding every second for {} seconds", seconds);
+  let mut elapsed: u32 = 0;
+  while elapsed < seconds {
+    ic_port::time::microsleep(1_000_000);
+    elapsed += 1;
+    let mut i: usize = 0;
+    while i < tables.len() {
+      let now = match conn.table_bind(database, &tables[i]) {
+        Ok(def) => Some(def),
+        Err(e) => {
+          if bound[i].is_some() {
+            println!("{:>4} s  {}: {}", elapsed, tables[i], e.message());
+          }
+          None
+        }
+      };
+      let changed = match (&bound[i], &now) {
+        (Some(was), Some(def)) => !Arc::ptr_eq(was, def),
+        (None, Some(_)) => true,
+        _ => false,
+      };
+      if let (true, Some(def)) = (changed, &now) {
+        println!(
+          "{:>4} s  {}: version upper {}, lower {}, {} column(s)",
+          elapsed,
+          tables[i],
+          def.info().version_upper(),
+          def.info().version_lower(),
+          def.info().attributes.len()
+        );
+      }
+      bound[i] = now;
+      i += 1;
     }
   }
 }
@@ -263,8 +320,14 @@ fn print_own_lines(table: &TableInfo, map: Option<&HashMapInfo>) {
 
 /// The indexes, as ndb_desc lists them: first the primary key, which
 /// is the table itself rather than an index of its own, then every
-/// index in id order, each with its columns.
-fn print_indexes(conn: &mut ApidConnection, table: &TableInfo) {
+/// index in id order, each with its columns. The list comes from the
+/// dictionary; each index is then bound by name.
+fn print_indexes(
+  conn: &mut ApidConnection,
+  database: &str,
+  table_name: &str,
+  table: &TableInfo,
+) {
   // The reference prints the heading with a space at its end.
   println!("-- Indexes -- ");
   let mut key_names: Vec<&str> = Vec::new();
@@ -289,19 +352,21 @@ fn print_indexes(conn: &mut ApidConnection, table: &TableInfo) {
       // A trigger, a large-object table or another dependent.
       continue;
     }
-    let index = match dict_client::get_table_by_id(conn, object.id) {
+    let bound = conn.index_bind(database, object.short_name(), table_name);
+    let index = match bound {
       Ok(index) => index,
       Err(e) => {
-        report("Could not fetch an index", &e);
+        report("Could not bind an index", &e);
         continue;
       }
     };
     // The last column is a hidden reference back to the table's row,
     // not one of the index's own.
+    let attributes = &index.info().attributes;
     let mut columns: Vec<&str> = Vec::new();
     let mut i: usize = 0;
-    while i + 1 < index.attributes.len() {
-      columns.push(&index.attributes[i].name);
+    while i + 1 < attributes.len() {
+      columns.push(&attributes[i].name);
       i += 1;
     }
     println!("{}({}) - {}", object.short_name(), columns.join(", "), kind);

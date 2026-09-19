@@ -25,8 +25,11 @@
 //! - [`dict_tab_info`]: what a table looks like to the dictionary.
 //! - [`get_tab_info`]: asking the dictionary for a table.
 //! - [`list_tables`]: asking the dictionary what objects exist.
+//! - [`alter_table_rep`]: the notice that a table was altered or
+//!   dropped.
 //! - [`tc_seize`]: taking and giving back a transaction record.
 
+pub mod alter_table_rep;
 pub mod blocks;
 pub mod dict_tab_info;
 pub mod get_tab_info;

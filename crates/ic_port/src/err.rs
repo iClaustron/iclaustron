@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7143;
+pub const IC_LAST_ERROR: i32 = 7145;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -323,6 +323,11 @@ pub const IC_ERROR_DICT_REFUSED: i32 = 7141;
 pub const IC_ERROR_NO_STARTED_DATA_NODE: i32 = 7142;
 /// A table description arrived that cannot be read.
 pub const IC_ERROR_BAD_TABLE_DESCRIPTION: i32 = 7143;
+/// Every description fetched of a table was already out of date when it
+/// arrived: the table kept being altered while it was fetched.
+pub const IC_ERROR_TABLE_KEEPS_CHANGING: i32 = 7144;
+/// The table has no index of that name.
+pub const IC_ERROR_NO_SUCH_INDEX: i32 = 7145;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -686,6 +691,10 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_DICT_REFUSED => "The data node's dictionary refused the request",
     IC_ERROR_NO_STARTED_DATA_NODE => "No data node is connected and started",
     IC_ERROR_BAD_TABLE_DESCRIPTION => "Table description cannot be read",
+    IC_ERROR_TABLE_KEEPS_CHANGING => {
+      "The table changed every time it was fetched"
+    }
+    IC_ERROR_NO_SUCH_INDEX => "No such index on the table",
     _ => "Unknown error code",
   }
 }

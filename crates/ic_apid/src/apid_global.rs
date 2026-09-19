@@ -83,6 +83,7 @@ use ic_util::threadpool::ThreadPool;
 
 use crate::apid_conn::ApidConnection;
 use crate::connect_thread;
+use crate::dict_cache::DictCache;
 use crate::heartbeat;
 use crate::node_connect::resolve_port;
 use crate::node_connect::words_as_bytes;
@@ -491,6 +492,8 @@ pub(crate) struct ApidShared {
   /// One per data node, fixed at start.
   pub(crate) nodes: Vec<Arc<NodeShared>>,
   pub(crate) thread_table: Arc<ThreadTable>,
+  /// Table and index descriptions, shared by every user thread.
+  pub(crate) dict_cache: DictCache,
 }
 
 impl ApidShared {
@@ -584,6 +587,16 @@ impl ApidShared {
         IC_HEARTBEAT_LEVEL,
         "No data node is connected; the whole cluster is gone from here"
       );
+      // A cluster restarted meanwhile may give the same ids to other
+      // tables, so nothing cached can be trusted.
+      let dropped = self.dict_cache.invalidate_all();
+      if dropped != 0 {
+        ic_port::debug_print!(
+          IC_HEARTBEAT_LEVEL,
+          "Let go of {} cached table and index description(s)",
+          dropped
+        );
+      }
     }
     if self.node_id_is_dynamic {
       // Our connections were our only claim on the id.
@@ -899,6 +912,7 @@ impl ApidGlobal {
       alone: AtomicBool::new(false),
       nodes,
       thread_table: Arc::new(ThreadTable::new()),
+      dict_cache: DictCache::new(),
     });
 
     let num_nodes = shared.nodes.len();

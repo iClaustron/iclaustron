@@ -39,6 +39,7 @@
 //! [`ApidGlobal::create_connection`]:
 //!   crate::apid_global::ApidGlobal::create_connection
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ic_ndb_signals::blocks;
@@ -49,6 +50,10 @@ use ic_port::err;
 use ic_port::IcError;
 
 use crate::apid_global::ApidShared;
+use crate::dict_cache;
+use crate::dict_cache::IndexDef;
+use crate::dict_cache::TableDef;
+use crate::dict_client;
 use crate::fragments::FragmentAssembler;
 use crate::node_connect::ReceivedSignal;
 use crate::thread_conn::ThreadConnection;
@@ -198,6 +203,10 @@ pub struct ApidConnection {
   next_request_id: u32,
   /// Signals that arrived and that no request was waiting for.
   unexpected: u64,
+  /// The tables this thread has bound, by internal name.
+  tables: HashMap<String, Arc<TableDef>>,
+  /// The indexes this thread has bound, by `database/table/index`.
+  indexes: HashMap<String, Arc<IndexDef>>,
 }
 
 impl std::fmt::Debug for ApidConnection {
@@ -224,6 +233,8 @@ impl ApidConnection {
       expectations: Expectations::default(),
       next_request_id: 1,
       unexpected: 0,
+      tables: HashMap::new(),
+      indexes: HashMap::new(),
     })
   }
 
@@ -388,6 +399,81 @@ impl ApidConnection {
       }
       self.poll(slice);
     }
+  }
+
+  // ---- Tables and indexes ----
+
+  /// A table's description (`ic_apid_conn_table_bind`): from what this
+  /// thread has bound, from the cache every thread shares, or from the
+  /// dictionary, with its hash map. What was bound before is given
+  /// again for as long as it is valid, which takes no lock.
+  pub fn table_bind(
+    &mut self,
+    database: &str,
+    table: &str,
+  ) -> Result<Arc<TableDef>, IcError> {
+    let name = dict_client::internal_name(database, table);
+    if let Some(def) = self.tables.get(&name) {
+      if def.is_valid() {
+        return Ok(Arc::clone(def));
+      }
+    }
+    self.tables.remove(&name);
+    let shared = Arc::clone(&self.shared);
+    let def = dict_cache::bind_table(&shared.dict_cache, self, &name)?;
+    self.tables.insert(name, Arc::clone(&def));
+    Ok(def)
+  }
+
+  /// An index's description (`ic_apid_conn_index_bind`), for the table's
+  /// current version. The name is the index's own, as `ndb_desc` lists
+  /// it, such as `uk$unique` for the hash part of a unique key.
+  pub fn index_bind(
+    &mut self,
+    database: &str,
+    index: &str,
+    table: &str,
+  ) -> Result<Arc<IndexDef>, IcError> {
+    let table_def = self.table_bind(database, table)?;
+    let key = format!("{}/{}/{}", database, table, index);
+    if let Some(def) = self.indexes.get(&key) {
+      let fits = def.is_valid()
+        && def.table_id() == table_def.table_id()
+        && def.table_version() == table_def.table_version();
+      if fits {
+        return Ok(Arc::clone(def));
+      }
+    }
+    self.indexes.remove(&key);
+    let shared = Arc::clone(&self.shared);
+    let def = dict_cache::bind_index(
+      &shared.dict_cache,
+      self,
+      database,
+      index,
+      &table_def,
+    )?;
+    self.indexes.insert(key, Arc::clone(&def));
+    Ok(def)
+  }
+
+  /// Stop keeping a table bound (`ic_apid_conn_table_unbind`). It lives
+  /// on for as long as anyone holds it.
+  pub fn table_unbind(&mut self, table: &TableDef) {
+    let held = match self.tables.get(table.name()) {
+      Some(def) => std::ptr::eq(Arc::as_ptr(def), table),
+      None => false,
+    };
+    if held {
+      self.tables.remove(table.name());
+    }
+  }
+
+  /// Say that an operation failed because the table has changed since
+  /// it was bound. Every thread's next bind fetches it again.
+  pub fn table_changed(&mut self, table: &TableDef) {
+    self.shared.dict_cache.forget_table(table);
+    self.table_unbind(table);
   }
 
   /// One signal from the inbox: joined, then matched.

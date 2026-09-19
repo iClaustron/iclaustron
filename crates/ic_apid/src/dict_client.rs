@@ -99,8 +99,15 @@ pub fn get_table(
   database: &str,
   table: &str,
 ) -> Result<TableInfo, IcError> {
-  let name = internal_name(database, table);
-  let answer = fetch(conn, Asking::ByName(&name))?;
+  get_table_named(conn, &internal_name(database, table))
+}
+
+/// Fetch a table's or an index's description by its internal name.
+pub fn get_table_named(
+  conn: &mut ApidConnection,
+  name: &str,
+) -> Result<TableInfo, IcError> {
+  let answer = fetch(conn, Asking::ByName(name))?;
   // A description that cannot be read would read the same way again,
   // so it is not asked for again.
   dict_tab_info::parse_table_info(answer.section(0))

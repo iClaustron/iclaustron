@@ -24,6 +24,7 @@
 //! - [`rec_thread`]: the receive thread, which reads and routes.
 //! - [`heartbeat`]: the heartbeat thread.
 //! - [`dict_client`]: fetching a table's description.
+//! - [`dict_cache`]: the descriptions every thread shares, and binding.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
 //! - [`signal_reader`]: turning the byte stream back into signals.
@@ -35,6 +36,7 @@
 pub mod apid_conn;
 pub mod apid_global;
 pub mod connect_thread;
+pub mod dict_cache;
 pub mod dict_client;
 pub mod fragments;
 pub mod handshake;

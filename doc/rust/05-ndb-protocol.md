@@ -778,7 +778,8 @@ are the short-form trains (unused by us). Verify:
   two apart, as upper 1, lower 1 (`TableInfo::version_upper` and
   `version_lower`). For the table cache
   (below) this means an online change is not noticed through errors;
-  the API has to refetch to learn of it. Verify: `Dbdict.cpp`,
+  the API learns of it from the dictionary's notice (below) and
+  refetches. Verify: `Dbdict.cpp`,
   `alter_obj_inc_schema_version` and `create_obj_inc_schema_version`;
   `kernel_types.h`, `table_version_major`; `DbtcMain.cpp`,
   `TableRecord::getErrorCode`; `DbspjMain.cpp` checks the same way.
@@ -789,6 +790,45 @@ are the short-form trains (unused by us). Verify:
   ref-counted cache keyed by internal name `db/schema/table`; schema
   change detected by table version mismatch (errors 241/284) forcing a
   refetch. Verify: `src/ndbapi/DictCache.hpp:64-95`.
+
+  As built (`ic_apid::dict_cache`, `ApidConnection::table_bind` and
+  `index_bind`), with what was found in the reference on the way:
+  - **The dictionary tells API nodes when a table changes.**
+    `ALTER_TABLE_REP` (GSN 606) goes to every API node's cluster
+    manager block (0x0FA2), unasked. Three words, table id, table
+    version and kind of change (1 altered, 2 dropped), and the internal
+    name in section 0, NUL-padded to 128 bytes. The version is the one
+    that no longer holds, the one before an alteration, and the name is
+    the one before a rename. Verify: `AlterTable.hpp`, `AlterTableRep`.
+  - An alteration is sent by every data node, through its own cluster
+    manager, to every API node registered there, so it arrives once per
+    data node. Verify: `Dbdict.cpp`, `alterTable_fromCommitComplete`;
+    `QmgrMain.cpp`, `execAPI_BROADCAST_REP`.
+  - A drop is sent by the master alone, and only to API nodes whose
+    reported version is 26.05 or later, or 26.02.5 and 25.10.14 in
+    their series. The code, not its comment, decides: 26.04 does not
+    get it. We report 26.10. Verify: `Dbdict.cpp`, `dropTable_commit`;
+    `ndb_version.h.in`, `ndbd_support_drop_table_notification`.
+  - The reference lets go of the cached object whose name, id and
+    version all match, and marks a name being fetched so that what the
+    fetch brings back is not trusted. Verify: `ClusterMgr.cpp`,
+    `GSN_ALTER_TABLE_REP`; `DictCache.cpp`, `alter_table_rep`. Here the
+    fetch is repeated only if it brought back the version a notice
+    named, so the copies from the other data nodes cost nothing.
+  - When the last data node link goes, the reference lets go of
+    everything cached except fetches under way. Verify:
+    `ClusterMgr.cpp`, where the count of connected nodes reaches zero;
+    `DictCache.cpp`, `invalidate_all`.
+  - An index's internal name is `sys/def/<table id>/<index>`, or
+    `<database>/<schema>/<table id>/<index>` for one made by an older
+    version, which is tried when the first is not found. The index
+    object remembers the table id and version it was made for, and one
+    found for another version is fetched again. Here the index holds
+    that table object itself, so the version lives as long as the index
+    does, and the cache lets go of a version's indexes with it. Verify:
+    `NdbDictionaryImpl.hpp`, `getIndexGlobal`; `NdbDictionaryImpl.cpp`,
+    `internal_index_name`, `old_internal_index_name`,
+    `create_index_obj_from_table`.
 - `LIST_TABLES_REQ` (GSN 193) / `CONF` (194) for listing.
 
   As built (`ic_ndb_signals::list_tables`, `dict_client::list_dependents`):

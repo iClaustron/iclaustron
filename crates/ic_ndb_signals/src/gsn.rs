@@ -118,6 +118,9 @@ pub const IC_GSN_GET_TABINFOREF: u16 = 23;
 pub const IC_GSN_LIST_TABLES_REQ: u16 = 193;
 /// The list of tables. Verify: line 282.
 pub const IC_GSN_LIST_TABLES_CONF: u16 = 194;
+/// A table was altered or dropped, sent unasked to every API node.
+/// Verify: line 836.
+pub const IC_GSN_ALTER_TABLE_REP: u16 = 606;
 
 // Every signal number has to fit the 16 bits the header gives it. The
 // type already says so; this catches a number written as a wider
@@ -171,6 +174,7 @@ pub fn gsn_name(gsn: u16) -> Option<&'static str> {
     IC_GSN_GET_TABINFOREF => Some("GET_TABINFOREF"),
     IC_GSN_LIST_TABLES_REQ => Some("LIST_TABLES_REQ"),
     IC_GSN_LIST_TABLES_CONF => Some("LIST_TABLES_CONF"),
+    IC_GSN_ALTER_TABLE_REP => Some("ALTER_TABLE_REP"),
     _ => None,
   }
 }
@@ -205,6 +209,7 @@ mod tests {
       IC_GSN_SCAN_TABREQ,
       IC_GSN_GET_TABINFOREQ,
       IC_GSN_GET_TABINFO_CONF,
+      IC_GSN_ALTER_TABLE_REP,
     ];
     let mut i: usize = 0;
     while i < all.len() {

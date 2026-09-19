@@ -43,7 +43,8 @@ ApidGlobal  (one per process; owns config, node table, threads, pools)
  ├─ HeartbeatThread            (API_REGREQ loop; reads node state, never writes)
  ├─ ThreadConnection[thread]   (per user thread: inbound signal queue + condvar)
  ├─ SockBuf                    (page pool for wire data)
- ├─ GlobalDictCache            (TableDef by name, ref-counted, versioned)
+ ├─ DictCache                  (TableDef by name, shared by Arc, versioned;
+ │                              built: ic_apid::dict_cache)
  └─ global WhereCondition / ConditionalAssignment pools
 
 ApidConnection  (one per user thread; created from ApidGlobal)
@@ -103,7 +104,11 @@ route; user threads execute.**
   `API_REGREF` for the nodes it owns**, rather than routing them. This
   is what makes node state lock-free, and it is the one place where
   reading signal content in a receive thread pays for itself. See
-  "Node state has one writer" below.
+  "Node state has one writer" below. It also executes the other
+  signals addressed to our cluster manager block rather than to a user
+  thread: `NODE_FAILREP`, `NF_COMPLETEREP`, and `ALTER_TABLE_REP`, the
+  dictionary's notice that a table changed, which lets go of the cached
+  description under the dictionary cache's lock, holding no other.
 - **Connect thread per node** (minimum stack size): resolves the port
   from the management server, connects, performs the transporter
   handshake and the node-id hello, then hands the connected socket to
@@ -417,7 +422,9 @@ Debug builds check the ordering at every lock (`ic_port::sync`).
    every wait ends at once. That state means the whole cluster is gone
    from where we stand, and it is the state the wait exists to make
    visible: it is where whatever a cluster restart invalidates, such as
-   the dictionary cache, gets invalidated.
+   the dictionary cache, gets invalidated. Built for the cache:
+   `note_link_lost` lets go of every cached description, as the
+   reference does when its count of connected nodes reaches zero.
 6. **In that state our node id may no longer be ours.** Once connected,
    our only claim on the id is our connections; the management server
    drops its own reservation as soon as a transporter holds the id. An

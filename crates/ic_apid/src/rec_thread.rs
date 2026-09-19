@@ -21,7 +21,8 @@
 //! 4. Route each signal. One for a user thread goes to its inbox unread.
 //!    One for our own fixed blocks is about the node that sent it, and is
 //!    executed here: that is what makes this thread the one writer of
-//!    the node's published state.
+//!    the node's published state. The one exception is the dictionary's
+//!    notice that a table changed, which goes to the dictionary cache.
 //! 5. Post every inbox that got something, once, and wake its thread.
 //!
 //! A socket that closes is noticed here, when it is read, which is as
@@ -36,6 +37,7 @@ use std::sync::Arc;
 
 use ic_comm::connection::Connection;
 use ic_comm::poll_set::PollSet;
+use ic_ndb_signals::alter_table_rep::AlterTableRep;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::qmgr::ApiRegConf;
 use ic_ndb_signals::qmgr::NfCompleteRep;
@@ -376,12 +378,50 @@ impl Receiver {
       }
       return;
     }
+    if signal.gsn == gsn::IC_GSN_ALTER_TABLE_REP {
+      self.table_changed(node_id, signal);
+      return;
+    }
     ic_port::debug_print!(
       IC_NDB_MESSAGE_LEVEL,
       "No handler for {} from node {} to block {:#06x}",
       gsn::gsn_name(signal.gsn).unwrap_or("an unknown signal"),
       node_id,
       signal.receiver_block
+    );
+  }
+
+  /// A table was altered or dropped: whatever is cached of the version
+  /// named is let go of, with the indexes bound for it. An alteration is
+  /// reported by every data node; only the first report finds anything.
+  fn table_changed(&self, node_id: u32, signal: &ReceivedSignal) {
+    let rep = match AlterTableRep::decode(&signal.data, signal.section(0)) {
+      Ok(rep) => rep,
+      Err(e) => {
+        ic_port::debug_print!(
+          IC_NDB_MESSAGE_LEVEL,
+          "Unreadable ALTER_TABLE_REP from node {}: {}",
+          node_id,
+          e.message()
+        );
+        return;
+      }
+    };
+    let dropped = self.shared.dict_cache.table_changed(
+      &rep.name,
+      rep.table_id,
+      rep.table_version,
+    );
+    ic_port::debug_print!(
+      IC_NDB_MESSAGE_LEVEL,
+      "Node {} says {} (id {}, version {:#x}) was {}; {} cached object(s) \
+       let go of",
+      node_id,
+      rep.name,
+      rep.table_id,
+      rep.table_version,
+      if rep.is_drop() { "dropped" } else { "altered" },
+      dropped
     );
   }
 
