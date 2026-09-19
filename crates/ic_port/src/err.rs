@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7147;
+pub const IC_LAST_ERROR: i32 = 7149;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -333,6 +333,11 @@ pub const IC_ERROR_RECORD_LAYOUT: i32 = 7146;
 /// The field has no null bit in the record: a nullable field was given
 /// none, or NULL was set on a field that cannot be NULL.
 pub const IC_ERROR_NO_NULL_BIT: i32 = 7147;
+/// The key record does not fit the operation: it lacks a primary key
+/// field, or is for another table than the attribute record.
+pub const IC_ERROR_KEY_RECORD: i32 = 7148;
+/// A variable-sized value says it is longer than its field.
+pub const IC_ERROR_VALUE_TOO_LONG: i32 = 7149;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -702,6 +707,8 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_NO_SUCH_INDEX => "No such index on the table",
     IC_ERROR_RECORD_LAYOUT => "Record fields overlap or lie outside the row",
     IC_ERROR_NO_NULL_BIT => "The field has no null bit in the record",
+    IC_ERROR_KEY_RECORD => "The key record does not fit the operation",
+    IC_ERROR_VALUE_TOO_LONG => "A value is longer than its field",
     _ => "Unknown error code",
   }
 }

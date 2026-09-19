@@ -297,12 +297,18 @@ pub const IC_FRAGMENT_TYPE_HASH_MAP: u32 = 9;
 pub const IC_PARTITION_BALANCE_FOR_RP_BY_LDM: u32 = !1;
 
 // A column element is sized as a power of two bits; these are the
-// powers the types use.
-const IC_ATTR_SIZE_BIT: u32 = 0;
-const IC_ATTR_SIZE_8: u32 = 3;
-const IC_ATTR_SIZE_16: u32 = 4;
-const IC_ATTR_SIZE_32: u32 = 5;
-const IC_ATTR_SIZE_64: u32 = 6;
+// powers the types use. A packed row places a value by it: bits packed
+// together, bytes where they fall, words on a word.
+/// Element size of a bit column: single bits.
+pub const IC_ATTR_SIZE_BIT: u32 = 0;
+/// Element size of byte types.
+pub const IC_ATTR_SIZE_8: u32 = 3;
+/// Element size of 16-bit integers.
+pub const IC_ATTR_SIZE_16: u32 = 4;
+/// Element size of 32-bit integers and floats.
+pub const IC_ATTR_SIZE_32: u32 = 5;
+/// Element size of 64-bit integers and doubles.
+pub const IC_ATTR_SIZE_64: u32 = 6;
 
 /// The head of a large-object column, in words, before its inline data.
 const IC_BLOB_V1_HEAD_WORDS: u32 = 2;

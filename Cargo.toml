@@ -12,6 +12,7 @@ members = [
     "tools/ic_config_dump",
     "tools/ic_desc",
     "tools/ic_node_ping",
+    "tools/ic_read",
     "xtask",
 ]
 

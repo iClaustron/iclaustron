@@ -26,6 +26,8 @@
 //! - [`dict_client`]: fetching a table's description.
 //! - [`dict_cache`]: the descriptions every thread shares, and binding.
 //! - [`record`]: how a table's fields lie in a row the application owns.
+//! - [`row_codec`]: rows to and from the words of a key operation.
+//! - [`key_op`]: the first key operation, a committed read by key.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
 //! - [`signal_reader`]: turning the byte stream back into signals.
@@ -42,9 +44,11 @@ pub mod dict_client;
 pub mod fragments;
 pub mod handshake;
 pub mod heartbeat;
+pub mod key_op;
 pub mod node_connect;
 pub mod node_state;
 pub mod rec_thread;
 pub mod record;
+pub mod row_codec;
 pub mod signal_reader;
 pub mod thread_conn;

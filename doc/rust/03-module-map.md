@@ -174,7 +174,8 @@ functions; explicit shifts and masks, no bit-field macros.
 | `ic_apid_trans.ic` (stubs) | `transaction.rs` | New | TC seize, ids, flags, completion accounting, commit/abort, node failure |
 | `ic_apid_where.ic`, `ic_apid_cond_assign.ic` (stubs) | `where_cond.rs`, `cond_assign.rs`, `interp_gen.rs` | New | builder → RonDB 26.10 interpreter program |
 | — | `hash.rs` | New | MD5 and XXH3 64-bit distribution hashing, hash map → fragment → node |
-| — | `row_codec.rs` | New | `TRANSID_AI` ↔ record row; ATTRINFO/KEYINFO from record rows |
+| — | `row_codec.rs` | New | `TRANSID_AI` ↔ record row; ATTRINFO/KEYINFO from record rows; first cut built: key, packed read request, packed row unpacked |
+| — | `key_op.rs` | New | the first key operation, a committed read waited for; a stepping stone to `transaction.rs` |
 | `ic_apid_range.ic`, `ic_apid_tablespace.ic` | `range.rs`, `tablespace.rs` | later releases | |
 
 ## Crate `ic_capi` — New

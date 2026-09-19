@@ -212,6 +212,10 @@ struct TableSlots {
   /// Where the next search for a free slot starts: just past the last
   /// one handed out, so that a freed id rests as long as possible.
   next: usize,
+  /// Per slot, the low word of the next transaction id. A connection
+  /// that takes the slot goes on from where the last one left it, so
+  /// that its block number never makes the same id twice.
+  trans_counters: Vec<u32>,
 }
 
 /// Finds a user thread's inbox by its thread id
@@ -247,13 +251,20 @@ impl ThreadTable {
   /// A table with every slot free.
   pub fn new() -> ThreadTable {
     let mut slots: Vec<Option<Arc<ThreadConnection>>> = Vec::new();
+    let mut trans_counters: Vec<u32> = Vec::new();
     let mut i: u32 = 0;
     while i < IC_MAX_THREAD_CONNECTIONS {
       slots.push(None);
+      trans_counters.push(0);
       i += 1;
     }
+    let table = TableSlots {
+      slots,
+      next: 0,
+      trans_counters,
+    };
     ThreadTable {
-      slots: IcMutex::new(IC_MUTEX_LEVEL_GLOBAL, TableSlots { slots, next: 0 }),
+      slots: IcMutex::new(IC_MUTEX_LEVEL_GLOBAL, table),
       changes: AtomicU32::new(0),
       unroutable: AtomicU64::new(0),
     }
@@ -292,6 +303,24 @@ impl ThreadTable {
     // copy right now sees either the old table and a closed inbox, or
     // the new table.
     conn.close();
+  }
+
+  /// Where a new connection in slot `thread_id` starts its transaction
+  /// ids' low word.
+  pub(crate) fn trans_counter(&self, thread_id: u32) -> u32 {
+    let table = self.slots.lock();
+    match table.trans_counters.get(thread_id as usize) {
+      Some(counter) => *counter,
+      None => 0,
+    }
+  }
+
+  /// Keep where a connection leaving slot `thread_id` got to.
+  pub(crate) fn keep_trans_counter(&self, thread_id: u32, counter: u32) {
+    let mut table = self.slots.lock();
+    if let Some(kept) = table.trans_counters.get_mut(thread_id as usize) {
+      *kept = counter;
+    }
   }
 
   /// How many times the table has changed.

@@ -466,6 +466,15 @@ Client-side only: a 64-bit value whose high word is unique per client
 block and whose low word is a counter. Sent as `transId1` (low) and
 `transId2` (high) in every signal. Verify: `Ndb.cpp:2219`.
 
+As built (`ApidConnection::next_transaction_id`): the block number in
+bits 52–63, our node id in bits 40–51, the counter in the low word,
+starting again at 0 after `0xFFFFFFFF`. The counter is kept per block
+number when a connection goes, and the next connection with that block
+number goes on from it, so no id is made twice. Verify: `Ndbif.cpp`,
+where the first id of an `Ndb` is made; `Ndbinit.cpp`, where its counter
+is kept for the block; `ndb_cluster_connection.cpp`,
+`get_next_transid`.
+
 ### 6.3 Choosing the TC node (hinting)
 
 1. Concatenate distribution-key column values in attribute-id order, each
@@ -550,7 +559,23 @@ KEYINFO section: key column values in primary-key order, each padded to
 4-byte alignment. Verify: `include/kernel/signaldata/KeyInfo.hpp:71-95`.
 
 ATTRINFO section. For a plain read: a list of attribute headers (one word
-each) naming the columns. For a plain write: attribute header + value
+each) naming the columns. The record path of the reference reads
+**packed** instead, and so do we (`ic_apid::row_codec`, as the author
+pointed out): one header, `READ_ALL` (0xFFF0) with the column count as
+its size when every column is read, otherwise `READ_PACKED` (0xFFF3)
+with a bitmask of the attribute ids after it. The row comes back behind
+one `READ_PACKED` header whose size is a result bitmap's in bytes. The
+bitmap has a bit per attribute id, set if read, and after each nullable
+column read one more, set if NULL. The values follow in attribute
+order, NULLs taking no room: a byte-sized type (characters, 8- and
+16-bit elements) at the next byte, a 32- or 64-bit one at the next
+word, bit columns packed together bit by bit from a word, and whatever
+follows them after the last word they touched. A variable-sized value
+starts with its one or two length bytes. There is no packed form for
+writing: an update sends a header and value per column. Verify:
+`NdbOperationExec.cpp`, `buildSignalsNdbRecord`; `DbtupRoutines.cpp`,
+`read_packed` and `updateAttributes`; `NdbReceiver.cpp`,
+`unpackNdbRecord` and `pad_pos`. For a plain write: attribute header + value
 words per column. For interpreted operations and all scans the section
 starts with five length words: (1) reads before the program, (2) the
 program, (3) updates after, (4) reads after, (5) subroutines; each part is

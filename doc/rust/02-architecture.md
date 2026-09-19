@@ -337,7 +337,11 @@ As built (`ic_apid::apid_conn`):
   when sending, not read from the request.
 - The first matching reply completes the request. `TCKEYREQ`, answered
   by several signals, needs the expectation to stay until the final
-  one; that is the next extension.
+  one: `expect_several` keeps it until the request is forgotten, and
+  `take_replies` hands out what has come. Such an expectation may also
+  take replies from any node, as `TRANSID_AI` comes from the node that
+  read the row; the loss of the link to the node the request went to
+  still ends the wait. The key operation code decides when it is done.
 - Each expectation records the link generation it was sent over. After
   every `poll`, a request whose node's link is down, or is a newer link
   than the one it went over, is completed with the node's error. Its

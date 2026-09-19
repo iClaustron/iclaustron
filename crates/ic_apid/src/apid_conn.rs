@@ -45,6 +45,11 @@ use std::sync::Arc;
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header::SignalHeader;
+use ic_ndb_signals::tc_seize::TcReleaseReq;
+use ic_ndb_signals::tc_seize::TcSeizeConf;
+use ic_ndb_signals::tc_seize::TcSeizeRef;
+use ic_ndb_signals::tc_seize::TcSeizeReq;
+use ic_ndb_signals::tc_seize::IC_ANY_TC_INSTANCE;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
@@ -58,24 +63,42 @@ use crate::fragments::FragmentAssembler;
 use crate::node_connect::ReceivedSignal;
 use crate::thread_conn::ThreadConnection;
 
+/// How long seizing a transaction record waits for the coordinator.
+pub const IC_TC_SEIZE_WAIT_MS: u32 = 5_000;
+
 /// How long [`ApidConnection::wait_for`] sleeps on its inbox at a time,
 /// so that a link lost meanwhile is noticed without waiting for the
 /// timeout.
 pub const IC_CALL_SLICE_MS: u32 = 100;
 
-/// A reply a request is waiting for.
+/// The replies a request is waiting for.
 struct Expectation {
-  /// The number the reply echoes in its first data word.
+  /// The number the replies echo in their first data word.
   request_id: u32,
   /// The node the request went to.
   node_id: u32,
-  /// The link to that node the request went over. A reply cannot come
-  /// over any other.
+  /// The link to that node the request went over. Its loss ends the
+  /// wait, whichever node the replies come from.
   generation: u32,
   /// The signal numbers that answer the request.
   gsns: Vec<u16>,
-  /// The reply, or why there will be none. `None` while waiting.
-  outcome: Option<Result<ReceivedSignal, IcError>>,
+  /// Replies are gathered until the request is forgotten, rather than
+  /// the first one completing it.
+  several: bool,
+  /// Replies may come from any node, as a row does from the node that
+  /// read it.
+  any_node: bool,
+  /// Replies that have come and not been taken.
+  replies: Vec<ReceivedSignal>,
+  /// Why no more will come, if so.
+  failed: Option<IcError>,
+}
+
+impl Expectation {
+  /// Still taking replies.
+  fn open(&self) -> bool {
+    self.failed.is_none() && (self.several || self.replies.is_empty())
+  }
 }
 
 /// The replies a connection is waiting for. Kept apart from the
@@ -92,13 +115,18 @@ impl Expectations {
     node_id: u32,
     generation: u32,
     gsns: &[u16],
+    several: bool,
+    any_node: bool,
   ) {
     self.list.push(Expectation {
       request_id,
       node_id,
       generation,
       gsns: gsns.to_vec(),
-      outcome: None,
+      several,
+      any_node,
+      replies: Vec::new(),
+      failed: None,
     });
   }
 
@@ -112,12 +140,13 @@ impl Expectations {
     let mut i: usize = 0;
     while i < self.list.len() {
       let exp = &self.list[i];
-      let answers = exp.outcome.is_none()
+      let from_node = exp.any_node || exp.node_id == signal.sender_node_id;
+      let answers = exp.open()
         && exp.request_id == first
-        && exp.node_id == signal.sender_node_id
+        && from_node
         && exp.gsns.contains(&signal.gsn);
       if answers {
-        self.list[i].outcome = Some(Ok(signal));
+        self.list[i].replies.push(signal);
         return None;
       }
       i += 1;
@@ -125,8 +154,8 @@ impl Expectations {
     Some(signal)
   }
 
-  /// Complete with `error` every request still waiting on `node_id` that
-  /// went over a link other than the one up now, if any is.
+  /// End with `error` every wait on `node_id` for a request that went
+  /// over a link other than the one up now, if any is.
   fn link_changed(
     &mut self,
     node_id: u32,
@@ -135,11 +164,11 @@ impl Expectations {
     error: IcError,
   ) {
     for exp in &mut self.list {
-      if exp.outcome.is_some() || exp.node_id != node_id {
+      if !exp.open() || exp.node_id != node_id {
         continue;
       }
       if !connected || exp.generation != generation {
-        exp.outcome = Some(Err(error));
+        exp.failed = Some(error);
       }
     }
   }
@@ -148,23 +177,49 @@ impl Expectations {
   fn waiting_nodes(&self) -> Vec<u32> {
     let mut nodes: Vec<u32> = Vec::new();
     for exp in &self.list {
-      if exp.outcome.is_none() && !nodes.contains(&exp.node_id) {
+      if exp.open() && !nodes.contains(&exp.node_id) {
         nodes.push(exp.node_id);
       }
     }
     nodes
   }
 
-  /// The outcome of a request, if it has one, which also forgets it.
+  /// The reply to a request answered by one, or why there will be none.
+  /// Taking it forgets the request.
   fn take(
     &mut self,
     request_id: u32,
   ) -> Option<Result<ReceivedSignal, IcError>> {
-    let index = self
-      .list
-      .iter()
-      .position(|exp| exp.request_id == request_id && exp.outcome.is_some())?;
-    self.list.remove(index).outcome
+    let mut i: usize = 0;
+    while i < self.list.len() {
+      let exp = &self.list[i];
+      if exp.request_id == request_id && !exp.several && !exp.open() {
+        let mut exp = self.list.remove(i);
+        if let Some(e) = exp.failed {
+          return Some(Err(e));
+        }
+        return exp.replies.pop().map(Ok);
+      }
+      i += 1;
+    }
+    None
+  }
+
+  /// The replies gathered for a request answered by several, each
+  /// handed out once, or why no more will come.
+  fn take_several(
+    &mut self,
+    request_id: u32,
+  ) -> Result<Vec<ReceivedSignal>, IcError> {
+    for exp in &mut self.list {
+      if exp.request_id == request_id && exp.several {
+        if let Some(e) = exp.failed {
+          return Err(e);
+        }
+        return Ok(std::mem::take(&mut exp.replies));
+      }
+    }
+    Ok(Vec::new())
   }
 
   /// Stop waiting for a request, answered or not.
@@ -183,12 +238,31 @@ impl Expectations {
   fn waiting(&self) -> usize {
     let mut count: usize = 0;
     for exp in &self.list {
-      if exp.outcome.is_none() {
+      if exp.open() {
         count += 1;
       }
     }
     count
   }
+}
+
+/// A transaction record at one node's coordinator, seized for this
+/// thread. The data node frees an API node's records when it loses its
+/// link, so a record lives no longer than the link it was seized over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TcRecord {
+  /// The node whose coordinator holds it.
+  pub node_id: u32,
+  /// The link it was seized over.
+  generation: u32,
+  /// Our pointer for it, which `TCKEYCONF` names.
+  pub api_ptr: u32,
+  /// The coordinator's pointer for it.
+  pub tc_ptr: u32,
+  /// The coordinator block to send to, its instance included.
+  pub tc_block: u16,
+  /// A transaction is using it.
+  busy: bool,
 }
 
 /// A user thread's connection to the cluster.
@@ -207,6 +281,11 @@ pub struct ApidConnection {
   tables: HashMap<String, Arc<TableDef>>,
   /// The indexes this thread has bound, by `database/table/index`.
   indexes: HashMap<String, Arc<IndexDef>>,
+  /// Transaction records seized at the coordinators, at most a few per
+  /// node.
+  tc_records: Vec<TcRecord>,
+  /// The low word of the next transaction id.
+  trans_counter: u32,
 }
 
 impl std::fmt::Debug for ApidConnection {
@@ -226,6 +305,7 @@ impl ApidConnection {
     shared: Arc<ApidShared>,
   ) -> Result<ApidConnection, IcError> {
     let inbox = shared.thread_table.allocate()?;
+    let trans_counter = shared.thread_table.trans_counter(inbox.thread_id());
     Ok(ApidConnection {
       shared,
       inbox,
@@ -235,6 +315,8 @@ impl ApidConnection {
       unexpected: 0,
       tables: HashMap::new(),
       indexes: HashMap::new(),
+      tc_records: Vec::new(),
+      trans_counter,
     })
   }
 
@@ -313,8 +395,44 @@ impl ApidConnection {
     node.send(header, data, sections)?;
     // Nothing is read from the inbox but by this thread, so the reply
     // cannot be taken before this is recorded.
-    self.expectations.add(request_id, node_id, generation, gsns);
+    self
+      .expectations
+      .add(request_id, node_id, generation, gsns, false, false);
     Ok(())
+  }
+
+  /// Say that a request about to be sent to `node_id` is answered by
+  /// several signals, `gsns`, echoing `request_id` in their first data
+  /// word, gathered until the request is forgotten. With `any_node`
+  /// they may come from any node, as a row comes from the node that read
+  /// it; the loss of the link to `node_id` still ends the wait. Said
+  /// before sending, so that a link replaced meanwhile is seen as
+  /// another. The replies are handed out by
+  /// [`take_replies`](Self::take_replies).
+  pub fn expect_several(
+    &mut self,
+    request_id: u32,
+    node_id: u32,
+    gsns: &[u16],
+    any_node: bool,
+  ) -> Result<(), IcError> {
+    let generation = match self.shared.node(node_id) {
+      Some(node) => node.published.generation(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    self
+      .expectations
+      .add(request_id, node_id, generation, gsns, true, any_node);
+    Ok(())
+  }
+
+  /// The replies gathered for a request that expects several, each
+  /// handed out once, or why no more will come.
+  pub fn take_replies(
+    &mut self,
+    request_id: u32,
+  ) -> Result<Vec<ReceivedSignal>, IcError> {
+    self.expectations.take_several(request_id)
   }
 
   /// The reply to a request, if it has arrived or will never come.
@@ -398,6 +516,145 @@ impl ApidConnection {
         slice = IC_CALL_SLICE_MS;
       }
       self.poll(slice);
+    }
+  }
+
+  // ---- Transactions ----
+
+  /// A new transaction id (`Ndb::allocate_transaction_id`): this
+  /// thread's block number in bits 52 to 63, our node id in bits 40 to
+  /// 51, and a count in the low word. The count goes on from where the
+  /// last connection with this block number left it, so an id is not
+  /// used twice. Verify: `Ndbif.cpp`, where the first id is made;
+  /// `Ndbinit.cpp`, where the count is kept for the block.
+  pub fn next_transaction_id(&mut self) -> u64 {
+    let low = self.trans_counter;
+    self.trans_counter = self.trans_counter.wrapping_add(1);
+    let block = self.block_number() as u64 & 0xFFF;
+    let node = self.shared.own_node_id() as u64 & 0xFFF;
+    (block << 52) | (node << 40) | low as u64
+  }
+
+  /// A transaction record at `node_id`'s coordinator for a transaction
+  /// to use: a free one this thread holds, or a new one seized. Given
+  /// back with [`free_tc_record`](Self::free_tc_record).
+  pub fn tc_record(&mut self, node_id: u32) -> Result<TcRecord, IcError> {
+    self.drop_lost_tc_records();
+    for rec in &mut self.tc_records {
+      if rec.node_id == node_id && !rec.busy {
+        rec.busy = true;
+        return Ok(*rec);
+      }
+    }
+    let generation = match self.shared.node(node_id) {
+      Some(node) => node.published.generation(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    let api_ptr = self.next_request_id();
+    let seize = TcSeizeReq {
+      api_connect_ptr: api_ptr,
+      api_block_ref: self.block_ref(),
+      instance: IC_ANY_TC_INSTANCE,
+    };
+    let header = SignalHeader::new(
+      gsn::IC_GSN_TCSEIZEREQ,
+      self.block_number(),
+      blocks::IC_BLOCK_DBTC,
+    );
+    let replies = [gsn::IC_GSN_TCSEIZECONF, gsn::IC_GSN_TCSEIZEREF];
+    let reply = self.call(
+      node_id,
+      &header,
+      &seize.encode(),
+      &[],
+      &replies,
+      IC_TC_SEIZE_WAIT_MS,
+    )?;
+    if reply.gsn == gsn::IC_GSN_TCSEIZEREF {
+      let refusal = TcSeizeRef::decode(&reply.data)?;
+      return Err(IcError::new(refusal.error_code as i32));
+    }
+    let conf = TcSeizeConf::decode(&reply.data)?;
+    let rec = TcRecord {
+      node_id,
+      generation,
+      api_ptr,
+      tc_ptr: conf.tc_connect_ptr,
+      tc_block: blocks::ref_to_block(conf.tc_block_ref),
+      busy: true,
+    };
+    self.tc_records.push(rec);
+    Ok(rec)
+  }
+
+  /// Give a transaction record back once its transaction is over.
+  pub fn free_tc_record(&mut self, rec: &TcRecord) {
+    for held in &mut self.tc_records {
+      if held.api_ptr == rec.api_ptr {
+        held.busy = false;
+      }
+    }
+  }
+
+  /// Stop using a transaction record whose state is not known, such as
+  /// one whose transaction timed out. The coordinator keeps it until the
+  /// link goes.
+  pub fn lose_tc_record(&mut self, rec: &TcRecord) {
+    let mut i: usize = 0;
+    while i < self.tc_records.len() {
+      if self.tc_records[i].api_ptr == rec.api_ptr {
+        self.tc_records.remove(i);
+      } else {
+        i += 1;
+      }
+    }
+  }
+
+  /// Forget the records seized over links that have gone: the data
+  /// node has freed them.
+  fn drop_lost_tc_records(&mut self) {
+    let mut i: usize = 0;
+    while i < self.tc_records.len() {
+      let rec = self.tc_records[i];
+      let alive = self.link_is(rec.node_id, rec.generation);
+      if alive {
+        i += 1;
+      } else {
+        self.tc_records.remove(i);
+      }
+    }
+  }
+
+  /// True if the link to `node_id` is up and is the one of `generation`.
+  fn link_is(&self, node_id: u32, generation: u32) -> bool {
+    match self.shared.node(node_id) {
+      Some(node) => {
+        node.published.is_connected()
+          && node.published.generation() == generation
+      }
+      None => false,
+    }
+  }
+
+  /// Give back every free record whose link still stands, without
+  /// waiting for the answers: the connection is going.
+  fn release_tc_records(&mut self) {
+    let own_ref = self.block_ref();
+    let block = self.block_number();
+    for rec in &self.tc_records {
+      if rec.busy || !self.link_is(rec.node_id, rec.generation) {
+        continue;
+      }
+      let release = TcReleaseReq {
+        tc_connect_ptr: rec.tc_ptr,
+        api_block_ref: own_ref,
+        api_connect_ptr: rec.api_ptr,
+      };
+      let header =
+        SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, block, rec.tc_block);
+      if let Some(node) = self.shared.node(rec.node_id) {
+        let _ = node.send(&header, &release.encode(), &[]);
+      }
     }
   }
 
@@ -532,6 +789,11 @@ impl ApidConnection {
 
 impl Drop for ApidConnection {
   fn drop(&mut self) {
+    self.release_tc_records();
+    self
+      .shared
+      .thread_table
+      .keep_trans_counter(self.inbox.thread_id(), self.trans_counter);
     self.shared.thread_table.release(&self.inbox);
   }
 }
@@ -555,8 +817,8 @@ mod tests {
   #[test]
   fn a_reply_goes_to_the_request_it_echoes() {
     let mut exp = Expectations::default();
-    exp.add(7, 1, 3, &[CONF, REF]);
-    exp.add(8, 1, 3, &[CONF, REF]);
+    exp.add(7, 1, 3, &[CONF, REF], false, false);
+    exp.add(8, 1, 3, &[CONF, REF], false, false);
     assert!(exp.offer(reply(CONF, 1, 8)).is_none());
     assert_eq!(exp.waiting(), 1);
     let got = exp.take(8).expect("answered").expect("ok");
@@ -570,7 +832,7 @@ mod tests {
   #[test]
   fn a_signal_of_another_kind_or_node_is_not_a_reply() {
     let mut exp = Expectations::default();
-    exp.add(7, 1, 3, &[CONF, REF]);
+    exp.add(7, 1, 3, &[CONF, REF], false, false);
     // Wrong signal number, wrong node, wrong request number.
     assert!(exp.offer(reply(194, 1, 7)).is_some());
     assert!(exp.offer(reply(CONF, 2, 7)).is_some());
@@ -581,7 +843,7 @@ mod tests {
   #[test]
   fn a_second_reply_to_an_answered_request_is_unexpected() {
     let mut exp = Expectations::default();
-    exp.add(7, 1, 3, &[CONF, REF]);
+    exp.add(7, 1, 3, &[CONF, REF], false, false);
     assert!(exp.offer(reply(CONF, 1, 7)).is_none());
     assert!(exp.offer(reply(REF, 1, 7)).is_some());
   }
@@ -589,8 +851,8 @@ mod tests {
   #[test]
   fn a_lost_link_fails_the_requests_that_went_over_it() {
     let mut exp = Expectations::default();
-    exp.add(7, 1, 3, &[CONF]);
-    exp.add(8, 2, 5, &[CONF]);
+    exp.add(7, 1, 3, &[CONF], false, false);
+    exp.add(8, 2, 5, &[CONF], false, false);
     let lost = IcError::new(err::IC_ERROR_LINK_LOST);
     // Node 1's link went down.
     exp.link_changed(1, false, 3, lost);
@@ -606,7 +868,7 @@ mod tests {
     // Down and up again between two polls: the link is up, but it is a
     // new one, and the reply to the old request is not coming over it.
     let mut exp = Expectations::default();
-    exp.add(7, 1, 3, &[CONF]);
+    exp.add(7, 1, 3, &[CONF], false, false);
     let lost = IcError::new(err::IC_ERROR_LINK_LOST);
     exp.link_changed(1, true, 3, lost);
     assert!(exp.take(7).is_none());
@@ -617,7 +879,7 @@ mod tests {
   #[test]
   fn a_request_given_up_on_is_forgotten() {
     let mut exp = Expectations::default();
-    exp.add(7, 1, 3, &[CONF]);
+    exp.add(7, 1, 3, &[CONF], false, false);
     exp.forget(7);
     assert_eq!(exp.waiting(), 0);
     // Its reply, arriving late, is unexpected.
@@ -627,12 +889,54 @@ mod tests {
   #[test]
   fn a_signal_without_data_is_nobodys() {
     let mut exp = Expectations::default();
-    exp.add(0, 1, 3, &[CONF]);
+    exp.add(0, 1, 3, &[CONF], false, false);
     let empty = ReceivedSignal {
       gsn: CONF,
       sender_node_id: 1,
       ..ReceivedSignal::default()
     };
     assert!(exp.offer(empty).is_some());
+  }
+
+  const ROW: u16 = 5;
+  const KEYREF: u16 = 11;
+
+  #[test]
+  fn several_replies_are_gathered_from_any_node() {
+    let mut exp = Expectations::default();
+    // An operation sent to node 1, whose row may come from any node.
+    exp.add(22, 1, 3, &[KEYREF, ROW], true, true);
+    assert!(exp.offer(reply(ROW, 2, 22)).is_none());
+    assert!(exp.offer(reply(ROW, 3, 22)).is_none());
+    let got = exp.take_several(22).expect("replies");
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[1].sender_node_id, 3);
+    // Each is handed out once; the request still waits.
+    assert!(exp.take_several(22).expect("none yet").is_empty());
+    assert!(exp.offer(reply(KEYREF, 1, 22)).is_none());
+    assert_eq!(exp.take_several(22).expect("the refusal").len(), 1);
+    assert_eq!(exp.waiting(), 1);
+    exp.forget(22);
+    assert!(exp.offer(reply(ROW, 2, 22)).is_some());
+  }
+
+  #[test]
+  fn several_replies_from_one_node_only_take_that_node() {
+    let mut exp = Expectations::default();
+    exp.add(7, 1, 3, &[CONF], true, false);
+    assert!(exp.offer(reply(CONF, 2, 7)).is_some());
+    assert!(exp.offer(reply(CONF, 1, 7)).is_none());
+  }
+
+  #[test]
+  fn losing_the_link_ends_several_replies_too() {
+    let mut exp = Expectations::default();
+    exp.add(22, 1, 3, &[ROW], true, true);
+    let lost = IcError::new(err::IC_ERROR_LINK_LOST);
+    exp.link_changed(1, false, 3, lost);
+    let e = exp.take_several(22).expect_err("ended");
+    assert_eq!(e.code, err::IC_ERROR_LINK_LOST);
+    // A row arriving after that is nobody's.
+    assert!(exp.offer(reply(ROW, 2, 22)).is_some());
   }
 }
