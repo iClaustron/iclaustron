@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7138;
+pub const IC_LAST_ERROR: i32 = 7139;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -311,6 +311,9 @@ pub const IC_ERROR_NODEID_IN_USE: i32 = 7137;
 /// The management server says the configuration does not allow the
 /// node id we asked for, and that asking again will not change it.
 pub const IC_ERROR_NODEID_NOT_ALLOWED: i32 = 7138;
+/// Every user thread slot is taken. Each user thread is a block of its
+/// own in the cluster's eyes, and there is a fixed number of them.
+pub const IC_ERROR_TOO_MANY_USER_THREADS: i32 = 7139;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -669,6 +672,7 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_NODEID_NOT_ALLOWED => {
       "The configuration does not allow this node id here"
     }
+    IC_ERROR_TOO_MANY_USER_THREADS => "Too many user threads",
     _ => "Unknown error code",
   }
 }

@@ -21,9 +21,12 @@
 //! - [`node_connect`]: one connection to one data node.
 //! - [`node_manager`]: keeping connections to every data node.
 //! - [`node_state`]: what every thread may know about a node, lock-free.
+//! - [`thread_conn`]: handing signals from a receive thread to the user
+//!   thread they are for.
 
 pub mod handshake;
 pub mod node_connect;
 pub mod node_manager;
 pub mod node_state;
 pub mod signal_reader;
+pub mod thread_conn;

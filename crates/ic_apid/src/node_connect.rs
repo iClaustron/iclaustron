@@ -136,6 +136,13 @@ pub fn resolve_port(
 pub struct ReceivedSignal {
   /// Which signal it is.
   pub gsn: u16,
+  /// The block it is addressed to, which is what routing goes by: a
+  /// user thread's block, or one of our fixed blocks.
+  pub receiver_block: u16,
+  /// The block that sent it, for replying.
+  pub sender_block: u16,
+  /// The node that sent it.
+  pub sender_node_id: u32,
   /// The signal data words.
   pub data: Vec<u32>,
   /// The sections that were present, in order.
@@ -430,6 +437,9 @@ impl NodeConnection {
         }
         signals.push(ReceivedSignal {
           gsn: gsn_value,
+          receiver_block: message.header.receiver_block,
+          sender_block: message.header.sender_block,
+          sender_node_id: self.node_id,
           data: message.data.to_vec(),
           sections,
         });
@@ -495,7 +505,7 @@ mod tests {
     let signal = ReceivedSignal {
       gsn: 26,
       data: vec![1, 2, 3],
-      sections: Vec::new(),
+      ..ReceivedSignal::default()
     };
     assert!(signal.section(0).is_empty());
     assert!(signal.section(2).is_empty());
@@ -507,6 +517,7 @@ mod tests {
       gsn: 26,
       data: vec![1, 2, 3],
       sections: vec![vec![0x10], vec![0x20, 0x21]],
+      ..ReceivedSignal::default()
     };
     assert_eq!(signal.section(0), &[0x10]);
     assert_eq!(signal.section(1), &[0x20, 0x21]);

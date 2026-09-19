@@ -66,6 +66,7 @@ add notes for anything specific to that crate.
 |---|---|---|
 | `g_thread_try_new(f, arg)` | `std::thread::Builder::new().name(..).stack_size(..).spawn(move \|\| f(arg))` | The closure captures `arg`; the plan wraps this in `ic_port::thread::spawn(name, stack, fn, arg)` so callers pass a function pointer. |
 | `IC_MUTEX *m; ic_mutex_lock(m); data...; ic_mutex_unlock(m);` | `let mut guard = m.lock(); guard.field = ...;` unlock at end of scope | A `Mutex<T>` *contains* the data it protects; you cannot touch the data without locking, and unlock is automatic when the guard goes out of scope. |
+| `ic_mutex_unlock(m);` and then more work, such as `ic_cond_signal(c);` after the unlock | `drop(guard);` then the work | `drop(guard)` is the explicit unlock, for when the mutex must be released before the end of the scope. `thread_conn.rs` uses it to wake a user thread only after releasing the inbox, as `post_ndb_messages` does in the C. |
 | `ic_cond_wait(c, m)` | `guard = c.wait(guard)` | Same semantics; the guard proves the mutex is held. |
 | `g_private_get()` thread-local | `thread_local! { static X: ... }` | |
 | `volatile gboolean stop_flag` | `AtomicBool` with `load`/`store` | `volatile` is not a synchronisation tool in C either; atomics are. |
