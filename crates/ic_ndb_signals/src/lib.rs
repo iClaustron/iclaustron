@@ -1,17 +1,26 @@
+// Copyright (c) 2007-2015 iClaustron AB.
 // Copyright (c) 2026 Hopsworks and/or its affiliates.
 // Licensed under the MIT License. See LICENSE in the repository root.
 
-//! `ic_ndb_signals`: the NDB protocol as spoken by RonDB 26.10.
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
+
+//! `ic_ndb_signals`: the NDB protocol as RonDB 26.10 speaks it.
 //!
-//! Global signal numbers, block numbers and references, the Protocol6
-//! signal header, sections, and one module per signal family with
-//! `encode`/`decode` functions over 32-bit words. Written from
-//! doc/rust/05-ndb-protocol.md; every constant carries a verification
-//! pointer into the RonDB sources. This crate has no dependencies so it
-//! can be fuzzed on its own.
+//! Signals are how an API node and a data node talk once the transporter
+//! handshake is done. A signal is a 12-byte header, up to 25 words of
+//! data, and up to three sections of any length; what it means is
+//! decided by its global signal number and the blocks it travels
+//! between.
 //!
-//! Module plan (doc/rust/03-module-map.md): `gsn`, `blocks`, `header`,
-//! `sections`, `qmgr`, `tc`, `dict`, `interp`, `errors`; later `scan`,
-//! `event`, `ddl`.
+//! This crate is only the wire format: no sockets, no threads, no state.
+//! That makes it the piece that can be tested and fuzzed on its own, and
+//! it is why it depends on nothing but the portability layer.
 //!
-//! Phase 0: empty. Modules are added from Phase 3.
+//! Modules:
+//! - [`blocks`]: block numbers and the references built from them.
+//! - [`gsn`]: the signal numbers this library sends and receives.
+//! - [`header`]: the signal header and the layout of a message.
+
+pub mod blocks;
+pub mod gsn;
+pub mod header;

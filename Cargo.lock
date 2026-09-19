@@ -52,6 +52,9 @@ dependencies = [
 [[package]]
 name = "ic_ndb_signals"
 version = "0.1.0"
+dependencies = [
+ "ic_port",
+]
 
 [[package]]
 name = "ic_port"
