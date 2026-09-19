@@ -21,8 +21,10 @@
 //! - [`gsn`]: the signal numbers this library sends and receives.
 //! - [`header`]: the signal header and the layout of a message.
 //! - [`qmgr`]: heartbeats and what a data node says about itself.
+//! - [`tc_seize`]: taking and giving back a transaction record.
 
 pub mod blocks;
 pub mod gsn;
 pub mod header;
 pub mod qmgr;
+pub mod tc_seize;

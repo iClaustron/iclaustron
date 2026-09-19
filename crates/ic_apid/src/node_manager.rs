@@ -117,6 +117,7 @@ use ic_apic::mgm_client;
 use ic_apic::mgm_client::MgmClient;
 use ic_comm::poll_set::PollSet;
 use ic_ndb_signals::gsn;
+use ic_ndb_signals::header::SignalHeader;
 use ic_ndb_signals::qmgr::NfCompleteRep;
 use ic_ndb_signals::qmgr::NodeFailRep;
 use ic_ndb_signals::qmgr::NodeState;
@@ -131,6 +132,8 @@ use crate::node_connect::resolve_port;
 use crate::node_connect::NodeConnection;
 use crate::node_connect::ReceivedSignal;
 use crate::node_state::PublishedNodeState;
+use crate::thread_conn::Router;
+use crate::thread_conn::ThreadTable;
 
 /// How long to wait before the first retry of a failed link.
 pub const IC_FIRST_RETRY_MS: u32 = 1000;
@@ -286,6 +289,11 @@ pub struct NodeManager {
   reclaim_at: IcTimer,
   links: BTreeMap<u32, NodeLink>,
   poll_set: PollSet,
+  /// Where user threads get their inboxes.
+  thread_table: Arc<ThreadTable>,
+  /// Sorts what arrives by the user thread it is for. This thread is
+  /// the receive thread for now, so the router is ours.
+  router: Router,
 }
 
 impl std::fmt::Debug for NodeManager {
@@ -326,6 +334,8 @@ impl NodeManager {
       links.insert(node_id, NodeLink::new(node_id, interval));
     }
     let node_id_is_dynamic = connect_string.node_id.is_none();
+    let thread_table = Arc::new(ThreadTable::new());
+    let router = Router::new(Arc::clone(&thread_table));
     let mut owned_name: Option<String> = None;
     if let Some(name) = node_name {
       owned_name = Some(name.to_string());
@@ -342,6 +352,8 @@ impl NodeManager {
       reclaim_at: 0,
       links,
       poll_set: PollSet::new()?,
+      thread_table,
+      router,
     })
   }
 
@@ -366,6 +378,51 @@ impl NodeManager {
     // `?` on an Option: no such node, so return None now.
     let link = self.links.get(&node_id)?;
     Some(Arc::clone(&link.published))
+  }
+
+  /// Our own node id. It can change after every link has been lost, if
+  /// any id will do; see the module note.
+  pub fn own_node_id(&self) -> u32 {
+    self.config.api.node_id
+  }
+
+  /// The table user threads take their inboxes from. A signal a data
+  /// node addresses to a user thread's block ends up in that thread's
+  /// inbox; this manager never looks inside it.
+  pub fn thread_table(&self) -> Arc<ThreadTable> {
+    Arc::clone(&self.thread_table)
+  }
+
+  /// Send a signal to a data node.
+  ///
+  /// For the thread that drives [`poll`](Self::poll), which for now is
+  /// also the only thread that can send. With the send path of the
+  /// thread design, a user thread sends for itself.
+  pub fn send(
+    &mut self,
+    node_id: u32,
+    header: &SignalHeader,
+    data: &[u32],
+  ) -> Result<(), IcError> {
+    let result = match self.links.get_mut(&node_id) {
+      Some(link) => match link.connection.as_mut() {
+        Some(connection) => connection.send_signal(header, data, &[]),
+        None => {
+          // Say what is known and no more: a node the cluster reported
+          // failed is down, anything else is only a link we lack.
+          if link.status == LinkStatus::AwaitingTakeover {
+            return Err(IcError::new(err::IC_ERROR_NODE_DOWN));
+          }
+          return Err(IcError::new(err::IC_ERROR_LINK_LOST));
+        }
+      },
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    if let Err(e) = result {
+      self.link_lost(node_id, e);
+      return Err(e);
+    }
+    Ok(())
   }
 
   /// How many data nodes answer our signals.
@@ -518,6 +575,12 @@ impl NodeManager {
     for node_id in ready {
       self.read_link(node_id);
     }
+    // One post per round, after every ready socket has been read, so
+    // that a user thread hearing from several nodes is locked and woken
+    // once. The C posts after each node and notes that how often to
+    // post "needs clever scheduling principles"; once per round is the
+    // obvious next step from there.
+    self.router.post_all();
     Ok(())
   }
 
@@ -538,8 +601,13 @@ impl NodeManager {
         return;
       }
     };
-    for signal in &signals {
-      self.handle_signal(node_id, signal);
+    for signal in signals {
+      // What is for a user thread goes to its inbox unread. What comes
+      // back is for one of our own fixed blocks and is about the node
+      // that sent it, which is ours to execute.
+      if let Some(own) = self.router.route(signal) {
+        self.handle_signal(node_id, &own);
+      }
     }
   }
 

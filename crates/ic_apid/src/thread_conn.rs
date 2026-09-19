@@ -48,6 +48,17 @@
 //! takes the mutex only when the table's change counter, one atomic
 //! load per round, says the copy is stale.
 //!
+//! # Block numbers are reused, so an inbox can get strays
+//!
+//! A thread id is a block number, and there are only so many. When a
+//! user thread exits, a late answer to it may arrive after another
+//! thread has been given the same id, and it is then delivered to the
+//! new thread. No routing scheme can prevent that, the C has the same
+//! exposure, and it is why every answer names a record by a pointer the
+//! user thread checks against its own before believing it. To make it
+//! rare rather than merely survivable, ids are handed out in rotation:
+//! a freed id is not used again until every other id has been.
+//!
 //! **Note for C readers.** `Arc<ThreadConnection>` is a pointer with an
 //! atomic reference count; the inbox is freed when the last holder lets
 //! go. It is what makes it safe for a receive thread to still hold an
@@ -198,6 +209,9 @@ impl ThreadConnection {
 struct TableSlots {
   /// One slot per thread id; `None` is a free slot.
   slots: Vec<Option<Arc<ThreadConnection>>>,
+  /// Where the next search for a free slot starts: just past the last
+  /// one handed out, so that a freed id rests as long as possible.
+  next: usize,
 }
 
 /// Finds a user thread's inbox by its thread id
@@ -239,24 +253,28 @@ impl ThreadTable {
       i += 1;
     }
     ThreadTable {
-      slots: IcMutex::new(IC_MUTEX_LEVEL_GLOBAL, TableSlots { slots }),
+      slots: IcMutex::new(IC_MUTEX_LEVEL_GLOBAL, TableSlots { slots, next: 0 }),
       changes: AtomicU32::new(0),
       unroutable: AtomicU64::new(0),
     }
   }
 
-  /// Give a new user thread an inbox, in the first free slot.
+  /// Give a new user thread an inbox, in the next free slot going
+  /// round the table.
   pub fn allocate(&self) -> Result<Arc<ThreadConnection>, IcError> {
     let mut table = self.slots.lock();
-    let mut thread_id: usize = 0;
-    while thread_id < table.slots.len() {
+    let size = table.slots.len();
+    let mut tried: usize = 0;
+    while tried < size {
+      let thread_id = (table.next + tried) % size;
       if table.slots[thread_id].is_none() {
         let conn = Arc::new(ThreadConnection::new(thread_id as u32));
         table.slots[thread_id] = Some(Arc::clone(&conn));
+        table.next = (thread_id + 1) % size;
         self.changes.fetch_add(1, Ordering::Release);
         return Ok(conn);
       }
-      thread_id += 1;
+      tried += 1;
     }
     Err(IcError::new(err::IC_ERROR_TOO_MANY_USER_THREADS))
   }
@@ -354,7 +372,17 @@ impl Router {
       Some(thread_id) => thread_id as usize,
       None => return Some(signal),
     };
-    let owned = thread_id < self.copy.len() && self.copy[thread_id].is_some();
+    let mut owned =
+      thread_id < self.copy.len() && self.copy[thread_id].is_some();
+    if !owned && self.table.changes() != self.copy_changes {
+      // Our copy may simply be older than the thread. A user thread
+      // takes an inbox and sends at once, and the answer can be here
+      // within the same round, before any end-of-round refresh. Seen
+      // live: the first answer ever routed was dropped this way. A miss
+      // is rare, so looking again costs nothing that matters.
+      self.copy_changes = self.table.copy_into(&mut self.copy);
+      owned = thread_id < self.copy.len() && self.copy[thread_id].is_some();
+    }
     if !owned {
       // A reply to a thread that has exited, or a routing mistake.
       self.table.unroutable.fetch_add(1, Ordering::Relaxed);
@@ -394,8 +422,9 @@ impl Router {
       i += 1;
     }
     self.touched.clear();
-    // After posting, not before: the batches were sorted against the
-    // copy we had, and must be posted against the same one.
+    // Finding new threads does not depend on this; `route` looks again
+    // on a miss. This lets go of inboxes whose threads have exited,
+    // which our copy would otherwise keep alive.
     if self.table.changes() != self.copy_changes {
       self.copy_changes = self.table.copy_into(&mut self.copy);
     }
@@ -428,16 +457,29 @@ mod tests {
   }
 
   #[test]
-  fn a_released_slot_is_used_again() {
-    // Thread ids are block numbers, of which there is a fixed supply,
-    // so an application that starts and stops threads must get them
-    // back.
+  fn a_released_id_rests_before_it_is_used_again() {
+    // A late answer to a thread that has exited must find nobody home,
+    // not a new thread under the old number.
     let table = ThreadTable::new();
     let first = table.allocate().expect("first");
     let _second = table.allocate().expect("second");
     table.release(&first);
     let third = table.allocate().expect("third");
-    assert_eq!(third.thread_id(), 0);
+    assert_eq!(third.thread_id(), 2);
+  }
+
+  #[test]
+  fn released_ids_do_come_back_once_the_table_has_gone_round() {
+    // There is a fixed supply, so an application that starts and stops
+    // threads for ever must get them back in the end.
+    let table = ThreadTable::new();
+    let mut i: u32 = 0;
+    while i < IC_MAX_THREAD_CONNECTIONS * 3 {
+      let conn = table.allocate().expect("always room for one");
+      assert_eq!(conn.thread_id(), i % IC_MAX_THREAD_CONNECTIONS);
+      table.release(&conn);
+      i += 1;
+    }
   }
 
   #[test]
@@ -506,15 +548,34 @@ mod tests {
   }
 
   #[test]
-  fn a_router_notices_threads_that_come_later() {
-    // The router copied the table when it was made. A thread created
-    // afterwards must still be reachable, from the next round on.
+  fn an_answer_reaches_a_thread_created_a_moment_ago() {
+    // Found on a live cluster. A user thread takes an inbox and sends
+    // at once; the answer arrives in the router's very next round. The
+    // router's copy of the table is older than the thread, and it used
+    // to drop the answer as being for nobody. An earlier version of
+    // this test posted an empty round first, which hid exactly that.
     let table = Arc::new(ThreadTable::new());
     let mut router = Router::new(Arc::clone(&table));
     let late = table.allocate().expect("late");
-    router.post_all();
     assert!(router.route(signal_for(&late, 10)).is_none());
     router.post_all();
+    assert_eq!(late.take(0).len(), 1);
+    assert_eq!(table.unroutable(), 0);
+  }
+
+  #[test]
+  fn a_thread_created_in_the_middle_of_a_round_is_found_too() {
+    // With real receive threads the inbox can appear while a round is
+    // under way, after other signals have already been sorted.
+    let table = Arc::new(ThreadTable::new());
+    let early = table.allocate().expect("early");
+    let mut router = Router::new(Arc::clone(&table));
+    assert!(router.route(signal_for(&early, 10)).is_none());
+    let late = table.allocate().expect("late");
+    assert!(router.route(signal_for(&late, 11)).is_none());
+    assert!(router.route(signal_for(&early, 12)).is_none());
+    router.post_all();
+    assert_eq!(early.take(0).len(), 2);
     assert_eq!(late.take(0).len(), 1);
     assert_eq!(table.unroutable(), 0);
   }

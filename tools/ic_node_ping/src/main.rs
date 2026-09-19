@@ -30,6 +30,15 @@ use std::collections::BTreeMap;
 use ic_apic::mgm_client;
 use ic_apid::node_manager::LinkStatus;
 use ic_apid::node_manager::NodeManager;
+use ic_apid::thread_conn::ThreadConnection;
+use ic_ndb_signals::blocks;
+use ic_ndb_signals::gsn;
+use ic_ndb_signals::header::SignalHeader;
+use ic_ndb_signals::tc_seize::TcReleaseReq;
+use ic_ndb_signals::tc_seize::TcSeizeConf;
+use ic_ndb_signals::tc_seize::TcSeizeRef;
+use ic_ndb_signals::tc_seize::TcSeizeReq;
+use ic_ndb_signals::tc_seize::IC_ANY_TC_INSTANCE;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
@@ -147,6 +156,8 @@ fn run() -> i32 {
   }
   println!();
   println!("Connected to {} data node(s)", manager.num_connected());
+  println!();
+  seize_on_every_node(&mut manager);
 
   let seconds = parser.get_int_or("seconds", 0) as u64;
   if seconds == 0 {
@@ -154,6 +165,145 @@ fn run() -> i32 {
     return 0;
   }
   keep_alive(&mut manager, seconds)
+}
+
+/// Take a transaction record on every started node and give it back.
+///
+/// This is the first exchange made as a user thread would make it: sent
+/// under a user thread's own block number, with the answer addressed to
+/// that block. The manager never looks at the answer. It sorts it into
+/// the inbox by block number, and we find it there, which is the whole
+/// of the threading model seen from outside.
+fn seize_on_every_node(manager: &mut NodeManager) {
+  let table = manager.thread_table();
+  let inbox = match table.allocate() {
+    Ok(inbox) => inbox,
+    Err(e) => {
+      report("Could not get an inbox", &e);
+      return;
+    }
+  };
+  println!(
+    "As user thread {}, block {:#06x}:",
+    inbox.thread_id(),
+    inbox.block_number()
+  );
+  for node_id in manager.started_nodes() {
+    seize_and_release(manager, &inbox, node_id);
+  }
+  table.release(&inbox);
+  if table.unroutable() != 0 {
+    println!("{} signal(s) had no inbox to go to", table.unroutable());
+  }
+}
+
+fn seize_and_release(
+  manager: &mut NodeManager,
+  inbox: &ThreadConnection,
+  node_id: u32,
+) {
+  let own_ref =
+    blocks::number_to_ref(inbox.block_number(), manager.own_node_id());
+  // Our own name for the record. It comes back in every answer.
+  let our_ptr: u32 = 1000 + node_id;
+  let seize = TcSeizeReq {
+    api_connect_ptr: our_ptr,
+    api_block_ref: own_ref,
+    instance: IC_ANY_TC_INSTANCE,
+  };
+  let header = SignalHeader::new(
+    gsn::IC_GSN_TCSEIZEREQ,
+    inbox.block_number(),
+    blocks::IC_BLOCK_DBTC,
+  );
+  if let Err(e) = manager.send(node_id, &header, &seize.encode()) {
+    println!("node {:<4} seize not sent: {}", node_id, e.message());
+    return;
+  }
+  let (answer, data) = wait_for_answer(manager, inbox);
+  if answer == gsn::IC_GSN_TCSEIZEREF {
+    match TcSeizeRef::decode(&data) {
+      Ok(refusal) => println!(
+        "node {:<4} would not give us a transaction record: NDB error {}",
+        node_id, refusal.error_code
+      ),
+      Err(e) => println!("node {:<4} bad refusal: {}", node_id, e.message()),
+    }
+    return;
+  }
+  if answer != gsn::IC_GSN_TCSEIZECONF {
+    println!("node {:<4} did not answer the seize in time", node_id);
+    return;
+  }
+  let conf = match TcSeizeConf::decode(&data) {
+    Ok(conf) => conf,
+    Err(e) => {
+      println!("node {:<4} bad answer: {}", node_id, e.message());
+      return;
+    }
+  };
+  // The coordinator's block number carries its instance in a form we
+  // have no need to take apart: it is only ever sent back.
+  let tc_block = blocks::ref_to_block(conf.tc_block_ref);
+  println!(
+    "node {:<4} gave us transaction record {} at coordinator {:#06x}{}",
+    node_id,
+    conf.tc_connect_ptr,
+    tc_block,
+    if conf.api_connect_ptr == our_ptr {
+      ""
+    } else {
+      " (but for a pointer that is not ours)"
+    }
+  );
+  let release = TcReleaseReq {
+    tc_connect_ptr: conf.tc_connect_ptr,
+    api_block_ref: own_ref,
+    api_connect_ptr: our_ptr,
+  };
+  let header =
+    SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, inbox.block_number(), tc_block);
+  if let Err(e) = manager.send(node_id, &header, &release.encode()) {
+    println!("node {:<4} release not sent: {}", node_id, e.message());
+    return;
+  }
+  let (answer, _data) = wait_for_answer(manager, inbox);
+  if answer == gsn::IC_GSN_TCRELEASECONF {
+    println!("node {:<4} took it back", node_id);
+  } else if answer == gsn::IC_GSN_TCRELEASEREF {
+    println!("node {:<4} would not take it back", node_id);
+  } else {
+    println!("node {:<4} did not answer the release in time", node_id);
+  }
+}
+
+/// Drive the manager until something is in the inbox, or five seconds
+/// pass. Gives the signal number and data of the first signal found,
+/// or zero and nothing.
+///
+/// In this release the thread that polls is also the thread that reads
+/// the inbox. With receive threads, a user thread only does the second
+/// half, waiting on its inbox while a receive thread fills it.
+fn wait_for_answer(
+  manager: &mut NodeManager,
+  inbox: &ThreadConnection,
+) -> (u16, Vec<u32>) {
+  let start = ic_port::time::gethrtime();
+  loop {
+    if manager.poll(50).is_err() {
+      return (0, Vec::new());
+    }
+    let mut got = inbox.take(0);
+    if !got.is_empty() {
+      let first = got.remove(0);
+      return (first.gsn, first.data);
+    }
+    let waited =
+      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+    if waited > 5000 {
+      return (0, Vec::new());
+    }
+  }
 }
 
 /// Print what every link looks like now.

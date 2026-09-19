@@ -62,6 +62,7 @@ version = "0.1.0"
 dependencies = [
  "ic_apic",
  "ic_apid",
+ "ic_ndb_signals",
  "ic_port",
  "ic_util",
 ]

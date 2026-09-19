@@ -385,6 +385,35 @@ record. Records are cached per node per client and released with
 `TCRELEASEREQ` (GSN 36) at shutdown. Verify: `src/ndbapi/Ndb.cpp:112-169`,
 `Ndbif.cpp:1014`, `Ndblist.cpp:418`.
 
+The words, as `ic_ndb_signals::tc_seize` has them, none with sections:
+
+| Signal | GSN | Words |
+|---|---|---|
+| `TCSEIZEREQ` | 39 | our pointer, our block reference, instance wanted (0 for any) |
+| `TCSEIZECONF` | 37 | our pointer, the coordinator's pointer, the coordinator's block reference |
+| `TCSEIZEREF` | 38 | our pointer, NDB error code |
+| `TCRELEASEREQ` | 36 | **the coordinator's pointer**, our block reference, our pointer |
+| `TCRELEASECONF` | 34 | our pointer |
+| `TCRELEASEREF` | 35 | our pointer, NDB error code, source line of the refusal |
+
+The release does not mirror the seize: the coordinator's pointer comes
+first, because it is the coordinator that has to find the record. A
+seize is refused when the node is not started or is shutting down, or
+has no record free. Verify: `DbtcMain.cpp:2366-2500`,
+`NdbApiSignal.cpp:134-138`.
+
+**The coordinator's block reference is echoed, never decoded.** Its
+upper sixteen bits hold the block and the instance, and RonDB packs up
+to 1024 instances into them with a transform of its own
+(`RefConvert.hpp`, `blockToMain` and `blockToInstance`). An API node has
+no use for the instance: it sends later signals to exactly the sixteen
+bits it was given.
+
+These are the first signals sent under a user thread's block number, so
+their answers are the first to be routed to a user thread's inbox
+instead of being executed where they arrive. `ic_node_ping` does the
+exchange on every started node for that reason.
+
 ### 6.2 Transaction id
 
 Client-side only: a 64-bit value whose high word is unique per client
