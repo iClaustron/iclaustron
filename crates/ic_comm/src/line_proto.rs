@@ -211,6 +211,19 @@ impl LineReader {
     }
   }
 
+  /// Take whatever has been read but not yet returned as a line.
+  ///
+  /// After a handshake the same socket carries something else, and a
+  /// read may well have pulled in the first bytes of it along with the
+  /// last line. Those bytes belong to whoever takes over the socket;
+  /// dropping them loses the start of the first signal.
+  pub fn take_buffered(&mut self) -> Vec<u8> {
+    let rest = self.buf[self.start..].to_vec();
+    self.buf.clear();
+    self.start = 0;
+    rest
+  }
+
   /// Read the exact number of bytes that follow a reply, used for the
   /// base64 configuration blob that comes after its header lines.
   pub fn read_exact(
@@ -442,6 +455,22 @@ mod tests {
     let mut reader = LineReader::new();
     let result = reader.read_line(&conn);
     assert_eq!(result, Err(IcError::new(err::IC_END_OF_FILE)));
+    handle.join().expect("join");
+  }
+
+  #[test]
+  fn bytes_past_the_last_line_are_handed_on() {
+    // A handshake reply and the first bytes of what follows arrive in
+    // one read; the reader must not swallow the tail.
+    let (port, handle) = scripted_server("ok\n\x01\x02\x03");
+    let conn = connect(port);
+    send_empty_line(&conn).expect("send");
+    send_empty_line(&conn).expect("send");
+    let mut reader = LineReader::new();
+    reader.expect_line(&conn, "ok").expect("line");
+    let rest = reader.take_buffered();
+    assert_eq!(rest, vec![1u8, 2, 3]);
+    assert!(reader.take_buffered().is_empty());
     handle.join().expect("join");
   }
 

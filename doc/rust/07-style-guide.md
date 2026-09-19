@@ -114,6 +114,16 @@ The construct-by-construct translation table, with explanations and two
 worked examples, is [11-c-to-rust-mappings.md](11-c-to-rust-mappings.md).
 Every crate `MODULE.md` adds a "Rust notes for C readers" section.
 
+## Debug for public types
+
+Every public type that a caller holds gets a `Debug` implementation,
+written by hand so it prints what identifies the thing rather than its
+whole contents: a connection prints its address and whether it is open,
+not its statistics. Two reasons. It is what appears in a log line or an
+error message when something goes wrong at three in the morning. And
+the standard test helpers, `expect`, `expect_err`, `assert_eq!`, all
+require it, so a type without one cannot be tested conveniently.
+
 ## Comments
 
 - `///` for documentation on a public item, `//!` at the top of a file
