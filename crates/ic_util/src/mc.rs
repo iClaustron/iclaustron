@@ -23,9 +23,9 @@
 use ic_port::consts::ic_align;
 
 /// Smallest buffer the container will allocate.
-pub const MC_MIN_BASE_SIZE: u32 = 128;
+pub const IC_MC_MIN_BASE_SIZE: u32 = 128;
 /// Buffer size used when the caller has no preference.
-pub const MC_DEFAULT_BASE_SIZE: u32 = 8180;
+pub const IC_MC_DEFAULT_BASE_SIZE: u32 = 8180;
 
 /// A piece of memory handed out by a [`MemoryContainer`]. Copyable, like
 /// the pointer it replaces.
@@ -63,15 +63,15 @@ pub struct MemoryContainer {
 
 impl MemoryContainer {
   /// A container whose buffers are `base_size` bytes (at least
-  /// [`MC_MIN_BASE_SIZE`]). `max_size` of 0 means no limit; otherwise an
+  /// [`IC_MC_MIN_BASE_SIZE`]). `max_size` of 0 means no limit; otherwise an
   /// allocation that would take the total past it fails.
   ///
   /// The C version took a `use_mutex` flag. A container shared between
   /// threads is wrapped in an `IcMutex` by its owner instead.
   pub fn new(base_size: u32, max_size: u64) -> MemoryContainer {
     let mut size = base_size;
-    if size < MC_MIN_BASE_SIZE {
-      size = MC_MIN_BASE_SIZE;
+    if size < IC_MC_MIN_BASE_SIZE {
+      size = IC_MC_MIN_BASE_SIZE;
     }
     size = ic_align(size as usize, 8) as u32;
     let mut limit = max_size;
@@ -90,7 +90,7 @@ impl MemoryContainer {
 
   /// A container with the default buffer size and no limit.
   pub fn with_default_size() -> MemoryContainer {
-    MemoryContainer::new(MC_DEFAULT_BASE_SIZE, 0)
+    MemoryContainer::new(IC_MC_DEFAULT_BASE_SIZE, 0)
   }
 
   /// Reserve `size` bytes, rounded up to a multiple of 8 as the C did.
@@ -115,11 +115,10 @@ impl MemoryContainer {
       self.total_size = new_total;
       return Some(handle);
     }
-    /*
-      The rest of the current buffer is given up. A request larger than
-      the base size gets a buffer of its own, and the buffer being filled
-      stays current so its remaining space is not wasted.
-    */
+    //
+    // The rest of the current buffer is given up. A request larger than
+    // the base size gets a buffer of its own, and the buffer being filled
+    // stays current so its remaining space is not wasted.
     if want > self.base_size {
       self.buffers.push(vec![0u8; want as usize]);
       let handle = McHandle {
@@ -291,8 +290,8 @@ mod tests {
     assert_eq!(mc.bytes(h), b"localhost:1186");
   }
 
-  /* The C unit test, test type 1: many random allocations over many
-  containers with resets in between. */
+  // The C unit test, test type 1: many random allocations over many
+  // containers with resets in between.
   #[test]
   fn many_random_allocations() {
     let mut seed: u32 = 1;

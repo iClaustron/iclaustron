@@ -236,10 +236,10 @@ fn print_raw(config: &ClusterConfig) {
   }
   for section in &blob.links {
     let one = blob
-      .value_u32(section, conf_param::CFG_CONNECTION_NODE_1)
+      .value_u32(section, conf_param::IC_CFG_CONNECTION_NODE_1)
       .unwrap_or(0);
     let two = blob
-      .value_u32(section, conf_param::CFG_CONNECTION_NODE_2)
+      .value_u32(section, conf_param::IC_CFG_CONNECTION_NODE_2)
       .unwrap_or(0);
     let name = format!("{:?} link {} to {}", section.section_type, one, two);
     print_section(&name, section);
@@ -249,7 +249,7 @@ fn print_raw(config: &ClusterConfig) {
 fn print_section(name: &str, section: &Section) {
   println!("  [{}] {} parameters", name, section.entries.len());
   for (key, value) in &section.entries {
-    let label = match conf_param::parameter_name(*key) {
+    let label = match conf_param::parameter_name(section.section_type, *key) {
       Some(text) => text.to_string(),
       None => format!("#{}", key),
     };

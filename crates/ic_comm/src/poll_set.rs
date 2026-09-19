@@ -510,8 +510,8 @@ mod tests {
     assert_eq!(ready, 1);
     let conn = set.next_connection().expect("connection");
     assert_eq!(conn.user_obj, 7);
-    /* A read now returns end of file whether or not the backend
-    flagged the hang-up. */
+    // A read now returns end of file whether or not the backend
+    // flagged the hang-up.
     let mut buf = [0u8; 4];
     let n = server.read(&mut buf).expect("read");
     assert_eq!(n, 0);

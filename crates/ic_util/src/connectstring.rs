@@ -57,8 +57,8 @@ fn parse_host_and_port(text: &str) -> Result<MgmServer, IcError> {
   if text.is_empty() {
     return Err(bad);
   }
-  /* An IPv6 address is written in brackets so its colons do not read as
-  the port separator. */
+  // An IPv6 address is written in brackets so its colons do not read as
+  // the port separator.
   if let Some(rest) = text.strip_prefix('[') {
     let end = match rest.find(']') {
       Some(pos) => pos,
@@ -146,7 +146,11 @@ pub fn parse(connect_string: &str) -> Result<ConnectString, IcError> {
         Ok(v) => v,
         Err(_) => return Err(IcError::new(err::IC_ERROR_PARSE_CONNECTSTRING)),
       };
-      if node_id == 0 || node_id > ic_port::consts::IC_MAX_NODE_ID {
+      // Checked against what the protocol can carry, not against a
+      // cluster's current limit: that limit rises between releases and
+      // the configuration, which we do not have yet, is what really
+      // decides.
+      if node_id == 0 || node_id > ic_port::consts::IC_MAX_NODE_ID_WIRE {
         return Err(IcError::new(err::IC_ERROR_WRONG_NODE_ID));
       }
       result.node_id = Some(node_id);
@@ -226,6 +230,9 @@ mod tests {
     assert_eq!(c.bind_address, Some("10.0.0.5".to_string()));
     let c = parse("NodeId=7,host1").expect("parse");
     assert_eq!(c.node_id, Some(7));
+    /* RonDB API node ids go well past 255. */
+    let c = parse("nodeid=1600,host1").expect("parse");
+    assert_eq!(c.node_id, Some(1600));
   }
 
   #[test]
@@ -246,7 +253,10 @@ mod tests {
     assert!(parse("host:99999").is_err());
     assert!(parse("ho st").is_err());
     assert!(parse("nodeid=0,host").is_err());
-    assert!(parse("nodeid=999,host").is_err());
+    assert!(parse("nodeid=99999,host").is_err());
+    // The limit rises between releases, so a plausible large id is
+    // accepted here and settled against the configuration later.
+    assert!(parse("nodeid=8191,host").is_ok());
     assert!(parse("nodeid=x,host").is_err());
     assert!(parse("[::1").is_err());
     assert!(parse("h1,h2,h3,h4,h5").is_err());

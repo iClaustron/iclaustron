@@ -66,7 +66,7 @@ Verify: `src/mgmapi/mgmapi.cpp` (`ndb_mgm_convert_to_transporter`),
 ### 1.4 Reconnect policy
 
 Connect attempts are rate limited with a backoff; RonDB additionally has a
-node "active" flag in config (`CFG_NODE_ACTIVE`) and refuses connections
+node "active" flag in config (`IC_CFG_NODE_ACTIVE`) and refuses connections
 to/from inactive nodes. Verify: `Transporter.cpp:290`, `:517`,
 `TransporterRegistry.cpp:737`.
 
@@ -559,7 +559,34 @@ transaction hinted with the table id as key. Verify: `Ndb.cpp:1646-1663`.
 `MAX_GSN 982`. Verify: `include/ndbapi/ndbapi_limits.h:30-45`,
 `GlobalSignalNumbers.h:40`.
 
-## 14. Delta from NDB 7.2.9 (iClaustron's baseline) to RonDB 26.10
+## 14. Node ids, and why nothing is sized by them
+
+The highest node id a cluster allows has risen with every era of the
+product: 255 in NDB 7.2, which is what the C code assumed, 2039 in
+RonDB 26.10 (`ndb_limits.h:70`, `MAX_NODES_ID`), and 8191 in a coming
+release. Data nodes stay in the low numbers (`MAX_DATA_NODE_ID 144`),
+but API nodes are routinely given large ids: a stock test cluster hands
+out 1271 and 1600.
+
+Two consequences for this library.
+
+- **Nothing is sized by the limit.** Anything indexed by node id is a
+  map, or a vector sized from the configuration actually received. A
+  cluster with larger ids then needs no code change and no rebuild.
+  `IC_MAX_NODE_ID` exists only as a sanity bound where no configuration
+  is available yet, such as reading a connectstring, and even there the
+  check is against `IC_MAX_NODE_ID_WIRE`, the 16 bits a block reference
+  gives the node id, which cannot change without changing the protocol.
+- **Node bitmaps in signals grow with it.** The connected-node bitmap in
+  `API_REGCONF` and the failed-node bitmap in `NODE_FAILREP` are sized
+  by the cluster's node id limit, so they long ago outgrew the 25 data
+  words a signal carries and travel in a section. Any decoder for them
+  must take the length from the signal rather than assume one.
+  Verify when Phase 3 reaches them: `ClusterMgr.cpp:2304`, which already
+  handles three different encodings of the same bitmap.
+
+
+## 15. Delta from NDB 7.2.9 (iClaustron's baseline) to RonDB 26.10
 
 Everything the C code "knows" about the protocol dates from 7.2.9 and must
 be treated as a hypothesis. Known differences the port must apply:
@@ -581,4 +608,4 @@ be treated as a hypothesis. Known differences the port must apply:
 | Column types | up to Datetime/Timestamp | `Time2`, `Datetime2`, `Timestamp2` with fractional seconds; `Longvarchar` in indexes |
 | Interpreter | 7.2 instruction set (registers, branches, LIKE) | plus memory regions, searches, sorting, conversions, interpreter I/O, partial column writes |
 | Transporters | TCP, SHM, SCI | TCP, SHM, RDMA; multi-transporters (DB↔DB only); API uses TCP only |
-| Version words | `NDB_VERSION 0x080014` in `ic_base_header.h` | `0x1A0A00` |
+| Version words | `IC_NDB_VERSION 0x080014` in `ic_base_header.h` | `0x1A0A00` |

@@ -151,7 +151,7 @@ into the Rust standard library and dependencies, `rusty-tags`
 
 - `IC_DEBUG=level_bits` env var driving the ported `DEBUG_*` machinery,
   same 17 level bits as the C.
-- `NDB_MESSAGE_LEVEL` prints every signal in and out as
+- `IC_NDB_MESSAGE_LEVEL` prints every signal in and out as
   `gsn name, sender/receiver block refs, words, sections` using the
   `ic_ndb_signals` decoders. This is the single most useful tool during
   phases 3–6.

@@ -11,7 +11,7 @@
 //! bits; a message is printed when its level bit is set.
 //!
 //! The macros [`debug_entry!`] and [`debug_print!`] expand to code that
-//! tests the constant [`DEBUG_BUILD`], which is true only with the
+//! tests the constant [`IC_DEBUG_BUILD`], which is true only with the
 //! `debug_build` cargo feature; in a normal build the compiler removes
 //! them completely, as the C preprocessor did.
 //!
@@ -35,44 +35,44 @@ use crate::consts::IC_MICROSEC_PER_SECOND;
 use crate::time;
 
 /// True when the crate is built with the `debug_build` feature.
-pub const DEBUG_BUILD: bool = cfg!(feature = "debug_build");
+pub const IC_DEBUG_BUILD: bool = cfg!(feature = "debug_build");
 
 /// Debug level bit: the program's own debugging.
-pub const PROGRAM_LEVEL: u32 = 1;
+pub const IC_PROGRAM_LEVEL: u32 = 1;
 /// Debug level bit: function entry and exit.
-pub const ENTRY_LEVEL: u32 = 2;
+pub const IC_ENTRY_LEVEL: u32 = 2;
 /// Debug level bit: thread start and stop.
-pub const THREAD_LEVEL: u32 = 4;
+pub const IC_THREAD_LEVEL: u32 = 4;
 /// Debug level bit: configuration handling.
-pub const CONFIG_LEVEL: u32 = 8;
+pub const IC_CONFIG_LEVEL: u32 = 8;
 /// Debug level bit: the port layer.
-pub const PORT_LEVEL: u32 = 16;
+pub const IC_PORT_LEVEL: u32 = 16;
 /// Debug level bit: the management protocol.
-pub const CONFIG_PROTO_LEVEL: u32 = 32;
+pub const IC_CONFIG_PROTO_LEVEL: u32 = 32;
 /// Debug level bit: file operations.
-pub const FILE_LEVEL: u32 = 64;
+pub const IC_FILE_LEVEL: u32 = 64;
 /// Debug level bit: communication.
-pub const COMM_LEVEL: u32 = 128;
+pub const IC_COMM_LEVEL: u32 = 128;
 /// Debug level bit: reading of configuration.
-pub const CONFIG_READ_LEVEL: u32 = 256;
+pub const IC_CONFIG_READ_LEVEL: u32 = 256;
 /// Debug level bit: building the configuration hash.
-pub const BUILD_CONFIG_HASH_LEVEL: u32 = 512;
+pub const IC_BUILD_CONFIG_HASH_LEVEL: u32 = 512;
 /// Debug level bit: every NDB signal sent and received.
-pub const NDB_MESSAGE_LEVEL: u32 = 1024;
+pub const IC_NDB_MESSAGE_LEVEL: u32 = 1024;
 /// Debug level bit: the adaptive send algorithm.
-pub const ADAPTIVE_SEND_LEVEL: u32 = 2048;
+pub const IC_ADAPTIVE_SEND_LEVEL: u32 = 2048;
 /// Debug level bit: poll set checks.
-pub const CHECK_POLL_SET_LEVEL: u32 = 4096;
+pub const IC_CHECK_POLL_SET_LEVEL: u32 = 4096;
 /// Debug level bit: memory allocation.
-pub const MALLOC_LEVEL: u32 = 8192;
+pub const IC_MALLOC_LEVEL: u32 = 8192;
 /// Debug level bit: heartbeat handling.
-pub const HEARTBEAT_LEVEL: u32 = 16384;
+pub const IC_HEARTBEAT_LEVEL: u32 = 16384;
 /// Debug level bit: communication details.
-pub const COMM_DETAIL_LEVEL: u32 = 32768;
+pub const IC_COMM_DETAIL_LEVEL: u32 = 32768;
 /// Debug level bit: node configuration lookups.
-pub const FIND_NODE_CONFIG_LEVEL: u32 = 65536;
+pub const IC_FIND_NODE_CONFIG_LEVEL: u32 = 65536;
 /// All debug level bits.
-pub const ALL_DEBUG_LEVELS: u32 = 0xFFFF_FFFF;
+pub const IC_ALL_DEBUG_LEVELS: u32 = 0xFFFF_FFFF;
 
 /// Deepest call nesting the tracer keeps names for.
 pub const IC_DEBUG_MAX_INDENT_LEVEL: usize = 128;
@@ -346,7 +346,7 @@ pub fn thread_return() {
   if !inited {
     return;
   }
-  if is_level(THREAD_LEVEL) {
+  if is_level(IC_THREAD_LEVEL) {
     print_str(&format!("Exit from thread id={}", thread_id));
   }
   if indent != 0 {
@@ -372,7 +372,7 @@ pub fn entry(entry_point: &'static str) {
     }
     t.indent_level = level + 1;
   });
-  if is_level(ENTRY_LEVEL) {
+  if is_level(IC_ENTRY_LEVEL) {
     print_str(&format!("Entry into {}", entry_point));
   }
 }
@@ -405,7 +405,7 @@ pub fn ret() {
   if indent == 0 {
     return;
   }
-  if is_level(ENTRY_LEVEL) {
+  if is_level(IC_ENTRY_LEVEL) {
     print_str(&format!("Exit from {}, void", name));
   }
   pop_entry();
@@ -418,7 +418,7 @@ pub fn ret_int(value: i32) {
   if indent == 0 {
     return;
   }
-  if is_level(ENTRY_LEVEL) {
+  if is_level(IC_ENTRY_LEVEL) {
     print_str(&format!("Exit from {}, int_val= {}", name, value));
   }
   pop_entry();
@@ -478,7 +478,7 @@ impl Drop for EntryGuard {
 /// Record entry and return a guard that records the exit. Returns `None`
 /// (and does nothing) unless built with `debug_build`.
 pub fn entry_guard(entry_point: &'static str) -> Option<EntryGuard> {
-  if !DEBUG_BUILD {
+  if !IC_DEBUG_BUILD {
     return None;
   }
   entry(entry_point);
@@ -499,7 +499,7 @@ macro_rules! debug_entry {
 #[macro_export]
 macro_rules! debug_print {
     ($level:expr, $($arg:tt)*) => {
-        if $crate::debug::DEBUG_BUILD && $crate::debug::is_level($level) {
+        if $crate::debug::IC_DEBUG_BUILD && $crate::debug::is_level($level) {
             $crate::debug::print_fmt(format_args!($($arg)*));
         }
     };
@@ -531,22 +531,22 @@ mod tests {
   fn disable_and_enable_nest() {
     set_level(0);
     thread_init(None);
-    disable(PROGRAM_LEVEL);
-    disable(PROGRAM_LEVEL);
+    disable(IC_PROGRAM_LEVEL);
+    disable(IC_PROGRAM_LEVEL);
     THREAD.with(|cell| assert!(!cell.borrow().enabled));
-    enable(PROGRAM_LEVEL);
+    enable(IC_PROGRAM_LEVEL);
     THREAD.with(|cell| assert!(!cell.borrow().enabled));
-    enable(PROGRAM_LEVEL);
+    enable(IC_PROGRAM_LEVEL);
     THREAD.with(|cell| assert!(cell.borrow().enabled));
     thread_return();
   }
 
   #[test]
   fn level_bits() {
-    set_level(COMM_LEVEL | FILE_LEVEL);
-    assert!(is_level(COMM_LEVEL));
-    assert!(is_level(FILE_LEVEL | PROGRAM_LEVEL));
-    assert!(!is_level(PROGRAM_LEVEL));
+    set_level(IC_COMM_LEVEL | IC_FILE_LEVEL);
+    assert!(is_level(IC_COMM_LEVEL));
+    assert!(is_level(IC_FILE_LEVEL | IC_PROGRAM_LEVEL));
+    assert!(!is_level(IC_PROGRAM_LEVEL));
     set_level(0);
   }
 }

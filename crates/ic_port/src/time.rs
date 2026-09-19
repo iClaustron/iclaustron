@@ -13,17 +13,17 @@ use std::time::Instant;
 pub type IcTimer = u64;
 
 /// The value meaning "no time recorded".
-pub const UNDEFINED_TIME: IcTimer = 0;
+pub const IC_UNDEFINED_TIME: IcTimer = 0;
 
 static ORIGIN: OnceLock<Instant> = OnceLock::new();
 
 /// True if the timer holds a recorded time.
 pub fn check_defined_time(timer: IcTimer) -> bool {
-  timer != UNDEFINED_TIME
+  timer != IC_UNDEFINED_TIME
 }
 
 /// Current monotonic time in nanoseconds. Never returns
-/// [`UNDEFINED_TIME`].
+/// [`IC_UNDEFINED_TIME`].
 pub fn gethrtime() -> IcTimer {
   let origin = ORIGIN.get_or_init(Instant::now);
   let nanos = origin.elapsed().as_nanos() as u64;

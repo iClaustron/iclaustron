@@ -6,7 +6,7 @@
 //! `ic_start_socket_system`, `ic_stop_socket_system`, non-blocking mode,
 //! and the platform difference around `SIGPIPE` on send).
 
-use crate::debug::COMM_LEVEL;
+use crate::debug::IC_COMM_LEVEL;
 use crate::IcError;
 
 /// The value of a socket descriptor that is not open.
@@ -42,7 +42,7 @@ pub fn close_socket(sockfd: i32) {
     }
     let err = crate::oserr::last_socket_error();
     if err != libc::EINTR {
-      crate::debug_print!(COMM_LEVEL, "close failed with errno = {}", err);
+      crate::debug_print!(IC_COMM_LEVEL, "close failed with errno = {}", err);
       return;
     }
   }

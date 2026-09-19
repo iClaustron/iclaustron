@@ -46,18 +46,18 @@ use std::collections::BTreeMap;
 use ic_port::err;
 use ic_port::IcError;
 
-use crate::conf_param::CFG_NODE_ID;
-use crate::conf_param::CFG_TYPE_OF_SECTION;
+use crate::conf_param::IC_CFG_NODE_ID;
+use crate::conf_param::IC_CFG_TYPE_OF_SECTION;
 
 /// The eight bytes every version 2 configuration starts with.
-pub const MAGIC_V2: &[u8; 8] = b"NDBCONF2";
+pub const IC_MAGIC_V2: &[u8; 8] = b"NDBCONF2";
 /// The eight bytes a version 1 configuration starts with, which a
 /// RonDB 26.10 management server no longer sends.
-pub const MAGIC_V1: &[u8; 8] = b"NDBCONFV";
+pub const IC_MAGIC_V1: &[u8; 8] = b"NDBCONFV";
 
-const V2_TYPE_SHIFT: u32 = 28;
-const V2_TYPE_MASK: u32 = 15;
-const V2_KEY_MASK: u32 = 0x0FFF_FFFF;
+const IC_V2_TYPE_SHIFT: u32 = 28;
+const IC_V2_TYPE_MASK: u32 = 15;
+const IC_V2_KEY_MASK: u32 = 0x0FFF_FFFF;
 
 /// What kind of section this is.
 /// Verify: `include/util/ConfigSection.hpp:52`.
@@ -185,7 +185,7 @@ impl Section {
 
   /// The node id this section describes, for a node section.
   pub fn node_id(&self) -> Option<u32> {
-    self.get(CFG_NODE_ID)?.as_u32()
+    self.get(IC_CFG_NODE_ID)?.as_u32()
   }
 }
 
@@ -245,8 +245,8 @@ fn decode_entry(
 ) -> Result<(u32, ConfigValue), IcError> {
   let bad = IcError::new(err::IC_ERROR_INCONSISTENT_DATA);
   let key_word = reader.next_word()?;
-  let value_type = (key_word >> V2_TYPE_SHIFT) & V2_TYPE_MASK;
-  let key = key_word & V2_KEY_MASK;
+  let value_type = (key_word >> IC_V2_TYPE_SHIFT) & IC_V2_TYPE_MASK;
+  let key = key_word & IC_V2_KEY_MASK;
   match value_type {
     1 => Ok((key, ConfigValue::Int(reader.next_word()?))),
     4 => {
@@ -255,8 +255,8 @@ fn decode_entry(
       Ok((key, ConfigValue::Int64((high << 32) + low)))
     }
     2 => {
-      /* The length counts the terminating NUL; the bytes are padded
-      out to a whole number of words. */
+      // The length counts the terminating NUL; the bytes are padded
+      // out to a whole number of words.
       let len_with_nul = reader.next_word()? as usize;
       if len_with_nul == 0 {
         return Err(bad);
@@ -265,8 +265,8 @@ fn decode_entry(
       let words = reader.next_words(num_words)?;
       let mut bytes: Vec<u8> = Vec::with_capacity(num_words * 4);
       for word in words {
-        /* The bytes of a string are in the order they were written,
-        not a number, so they are taken as they lie. */
+        // The bytes of a string are in the order they were written,
+        // not a number, so they are taken as they lie.
         bytes.extend_from_slice(&word.to_ne_bytes());
       }
       bytes.truncate(len_with_nul - 1);
@@ -322,12 +322,12 @@ impl ConfigBlob {
     if bytes.len() < 12 || bytes.len() % 4 != 0 {
       return Err(bad);
     }
-    if &bytes[..8] == MAGIC_V1 {
-      /* Version 1 was retired before RonDB 26.10; a server sending it
-      is too old for this library. */
+    if &bytes[..8] == IC_MAGIC_V1 {
+      // Version 1 was retired before RonDB 26.10; a server sending it
+      // is too old for this library.
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
-    if &bytes[..8] != MAGIC_V2 {
+    if &bytes[..8] != IC_MAGIC_V2 {
       return Err(bad);
     }
     let mut words: Vec<u32> = Vec::with_capacity(bytes.len() / 4);
@@ -458,14 +458,14 @@ impl ConfigBlob {
   /// The section describing the link between two nodes, whichever order
   /// they are given in.
   pub fn link(&self, node_a: u32, node_b: u32) -> Option<&Section> {
-    use crate::conf_param::CFG_CONNECTION_NODE_1;
-    use crate::conf_param::CFG_CONNECTION_NODE_2;
+    use crate::conf_param::IC_CFG_CONNECTION_NODE_1;
+    use crate::conf_param::IC_CFG_CONNECTION_NODE_2;
     for section in &self.links {
-      let one = match self.value_u32(section, CFG_CONNECTION_NODE_1) {
+      let one = match self.value_u32(section, IC_CFG_CONNECTION_NODE_1) {
         Some(id) => id,
         None => continue,
       };
-      let two = match self.value_u32(section, CFG_CONNECTION_NODE_2) {
+      let two = match self.value_u32(section, IC_CFG_CONNECTION_NODE_2) {
         Some(id) => id,
         None => continue,
       };
@@ -529,16 +529,16 @@ impl BlobBuilder {
     for (key, value) in entries {
       match value {
         ConfigValue::Int(v) => {
-          self.push((1 << V2_TYPE_SHIFT) | key);
+          self.push((1 << IC_V2_TYPE_SHIFT) | key);
           self.push(*v);
         }
         ConfigValue::Int64(v) => {
-          self.push((4 << V2_TYPE_SHIFT) | key);
+          self.push((4 << IC_V2_TYPE_SHIFT) | key);
           self.push((*v >> 32) as u32);
           self.push((*v & 0xFFFF_FFFF) as u32);
         }
         ConfigValue::Str(text) => {
-          self.push((2 << V2_TYPE_SHIFT) | key);
+          self.push((2 << IC_V2_TYPE_SHIFT) | key);
           let len_with_nul = text.len() + 1;
           self.push(len_with_nul as u32);
           let num_words = len_with_nul.div_ceil(4);
@@ -556,7 +556,7 @@ impl BlobBuilder {
           }
         }
         ConfigValue::Section(v) => {
-          self.push((3 << V2_TYPE_SHIFT) | key);
+          self.push((3 << IC_V2_TYPE_SHIFT) | key);
           self.push(*v);
         }
       }
@@ -574,7 +574,10 @@ impl BlobBuilder {
   ) {
     let count = entries.len() + 1;
     let mut all: Vec<(u32, ConfigValue)> = Vec::with_capacity(count);
-    all.push((CFG_TYPE_OF_SECTION, ConfigValue::Int(section_type as u32)));
+    all.push((
+      IC_CFG_TYPE_OF_SECTION,
+      ConfigValue::Int(section_type as u32),
+    ));
     for entry in entries {
       all.push(entry.clone());
     }
@@ -611,24 +614,24 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (CFG_DB_NO_REPLICAS, ConfigValue::Int(2)),
-        (CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(1500)),
+        (IC_CFG_DB_NO_REPLICAS, ConfigValue::Int(2)),
+        (IC_CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(1500)),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
       &[
-        (CFG_BATCH_SIZE, ConfigValue::Int(256)),
-        (CFG_BATCH_BYTE_SIZE, ConfigValue::Int(16384)),
-        (CFG_MAX_SCAN_BATCH_SIZE, ConfigValue::Int(262144)),
+        (IC_CFG_BATCH_SIZE, ConfigValue::Int(256)),
+        (IC_CFG_BATCH_BYTE_SIZE, ConfigValue::Int(16384)),
+        (IC_CFG_MAX_SCAN_BATCH_SIZE, ConfigValue::Int(262144)),
       ],
     );
     b.typed_section(SectionType::MgmNode, &[]);
     b.typed_section(
       SectionType::Tcp,
       &[
-        (CFG_TCP_SEND_BUFFER_SIZE, ConfigValue::Int(2097152)),
-        (CFG_CONNECTION_CHECKSUM, ConfigValue::Int(0)),
+        (IC_CFG_TCP_SEND_BUFFER_SIZE, ConfigValue::Int(2097152)),
+        (IC_CFG_CONNECTION_CHECKSUM, ConfigValue::Int(0)),
       ],
     );
     b.typed_section(SectionType::Shm, &[]);
@@ -641,27 +644,33 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (CFG_NODE_ID, ConfigValue::Int(1)),
-        (CFG_NODE_HOST, ConfigValue::Str("node1.example".to_string())),
-        (CFG_DB_NODEGROUP, ConfigValue::Int(0)),
+        (IC_CFG_NODE_ID, ConfigValue::Int(1)),
+        (
+          IC_CFG_NODE_HOST,
+          ConfigValue::Str("node1.example".to_string()),
+        ),
+        (IC_CFG_DB_NODEGROUP, ConfigValue::Int(0)),
       ],
     );
     b.typed_section(
       SectionType::DataNode,
       &[
-        (CFG_NODE_ID, ConfigValue::Int(2)),
-        (CFG_NODE_HOST, ConfigValue::Str("node2.example".to_string())),
-        (CFG_DB_NODEGROUP, ConfigValue::Int(0)),
+        (IC_CFG_NODE_ID, ConfigValue::Int(2)),
+        (
+          IC_CFG_NODE_HOST,
+          ConfigValue::Str("node2.example".to_string()),
+        ),
+        (IC_CFG_DB_NODEGROUP, ConfigValue::Int(0)),
         /* This one overrides the default heartbeat interval. */
-        (CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(3000)),
+        (IC_CFG_DB_API_HEARTBEAT_INTERVAL, ConfigValue::Int(3000)),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
       &[
-        (CFG_NODE_ID, ConfigValue::Int(68)),
+        (IC_CFG_NODE_ID, ConfigValue::Int(68)),
         (
-          CFG_TOTAL_SEND_BUFFER_MEMORY,
+          IC_CFG_TOTAL_SEND_BUFFER_MEMORY,
           ConfigValue::Int64(8 * 1024 * 1024),
         ),
       ],
@@ -669,20 +678,23 @@ mod tests {
     b.typed_section(
       SectionType::MgmNode,
       &[
-        (CFG_NODE_ID, ConfigValue::Int(65)),
-        (CFG_NODE_HOST, ConfigValue::Str("mgm.example".to_string())),
+        (IC_CFG_NODE_ID, ConfigValue::Int(65)),
+        (
+          IC_CFG_NODE_HOST,
+          ConfigValue::Str("mgm.example".to_string()),
+        ),
       ],
     );
     /* Links: API node to each data node, and between the data nodes. */
     b.typed_section(
       SectionType::Tcp,
       &[
-        (CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(0)),
-        (CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(1)),
+        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
+        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
+        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(0)),
+        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(1)),
         (
-          CFG_CONNECTION_HOSTNAME_1,
+          IC_CFG_CONNECTION_HOSTNAME_1,
           ConfigValue::Str("node1.example".to_string()),
         ),
       ],
@@ -690,19 +702,19 @@ mod tests {
     b.typed_section(
       SectionType::Tcp,
       &[
-        (CFG_CONNECTION_NODE_1, ConfigValue::Int(2)),
-        (CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(45000)),
-        (CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(2)),
-        (CFG_CONNECTION_CHECKSUM, ConfigValue::Int(1)),
+        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(2)),
+        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
+        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(45000)),
+        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(2)),
+        (IC_CFG_CONNECTION_CHECKSUM, ConfigValue::Int(1)),
       ],
     );
     b.typed_section(
       SectionType::Tcp,
       &[
-        (CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (CFG_CONNECTION_NODE_2, ConfigValue::Int(2)),
-        (CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(44000)),
+        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
+        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(2)),
+        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(44000)),
       ],
     );
     b.finish()
@@ -728,28 +740,31 @@ mod tests {
     let node1 = blob.node(1).expect("node 1");
     let node2 = blob.node(2).expect("node 2");
     assert_eq!(node1.section_type, SectionType::DataNode);
-    assert_eq!(blob.value_str(node1, CFG_NODE_HOST), Some("node1.example"));
-    /* Node 1 does not state the heartbeat interval, so the data node
-    default applies; node 2 states its own. */
     assert_eq!(
-      blob.value_u32(node1, CFG_DB_API_HEARTBEAT_INTERVAL),
+      blob.value_str(node1, IC_CFG_NODE_HOST),
+      Some("node1.example")
+    );
+    // Node 1 does not state the heartbeat interval, so the data node
+    // default applies; node 2 states its own.
+    assert_eq!(
+      blob.value_u32(node1, IC_CFG_DB_API_HEARTBEAT_INTERVAL),
       Some(1500)
     );
     assert_eq!(
-      blob.value_u32(node2, CFG_DB_API_HEARTBEAT_INTERVAL),
+      blob.value_u32(node2, IC_CFG_DB_API_HEARTBEAT_INTERVAL),
       Some(3000)
     );
-    assert_eq!(blob.value_u32(node1, CFG_DB_NO_REPLICAS), Some(2));
+    assert_eq!(blob.value_u32(node1, IC_CFG_DB_NO_REPLICAS), Some(2));
     /* An API node reads its own settings the same way. */
     let api = blob.node(68).expect("node 68");
     assert_eq!(api.section_type, SectionType::ApiNode);
-    assert_eq!(blob.value_u32(api, CFG_BATCH_SIZE), Some(256));
+    assert_eq!(blob.value_u32(api, IC_CFG_BATCH_SIZE), Some(256));
     assert_eq!(
-      blob.value_u64(api, CFG_TOTAL_SEND_BUFFER_MEMORY),
+      blob.value_u64(api, IC_CFG_TOTAL_SEND_BUFFER_MEMORY),
       Some(8 * 1024 * 1024)
     );
     /* A parameter nobody states reads as absent. */
-    assert_eq!(blob.value_u32(api, CFG_AUTO_RECONNECT), None);
+    assert_eq!(blob.value_u32(api, IC_CFG_AUTO_RECONNECT), None);
   }
 
   #[test]
@@ -757,20 +772,23 @@ mod tests {
     let blob = ConfigBlob::decode(&sample_blob()).expect("decode");
     let link = blob.link(68, 2).expect("link");
     assert_eq!(
-      blob.value_u32(link, CFG_CONNECTION_SERVER_PORT),
+      blob.value_u32(link, IC_CFG_CONNECTION_SERVER_PORT),
       Some(45000)
     );
     let same = blob.link(2, 68).expect("link the other way");
     assert_eq!(
-      blob.value_u32(same, CFG_CONNECTION_SERVER_PORT),
+      blob.value_u32(same, IC_CFG_CONNECTION_SERVER_PORT),
       Some(45000)
     );
     /* Checksum is off by default but on for this link. */
-    assert_eq!(blob.value_u32(link, CFG_CONNECTION_CHECKSUM), Some(1));
+    assert_eq!(blob.value_u32(link, IC_CFG_CONNECTION_CHECKSUM), Some(1));
     let other = blob.link(68, 1).expect("other link");
-    assert_eq!(blob.value_u32(other, CFG_CONNECTION_CHECKSUM), Some(0));
+    assert_eq!(blob.value_u32(other, IC_CFG_CONNECTION_CHECKSUM), Some(0));
     /* Port 0 means the data node's port is assigned dynamically. */
-    assert_eq!(blob.value_u32(other, CFG_CONNECTION_SERVER_PORT), Some(0));
+    assert_eq!(
+      blob.value_u32(other, IC_CFG_CONNECTION_SERVER_PORT),
+      Some(0)
+    );
     assert!(blob.link(1, 99).is_none());
   }
 
@@ -787,8 +805,8 @@ mod tests {
 
   #[test]
   fn strings_of_every_length() {
-    /* The padding to whole words is where a string decoder goes wrong,
-    so every length up to three words is checked. */
+    // The padding to whole words is where a string decoder goes wrong,
+    // so every length up to three words is checked.
     let mut len: usize = 0;
     while len < 12 {
       let text = "x".repeat(len);
@@ -802,29 +820,29 @@ mod tests {
       b.typed_section(
         SectionType::DataNode,
         &[
-          (CFG_NODE_ID, ConfigValue::Int(1)),
-          (CFG_NODE_HOST, ConfigValue::Str(text.clone())),
+          (IC_CFG_NODE_ID, ConfigValue::Int(1)),
+          (IC_CFG_NODE_HOST, ConfigValue::Str(text.clone())),
         ],
       );
       b.typed_section(
         SectionType::ApiNode,
-        &[(CFG_NODE_ID, ConfigValue::Int(68))],
+        &[(IC_CFG_NODE_ID, ConfigValue::Int(68))],
       );
       b.typed_section(
         SectionType::MgmNode,
-        &[(CFG_NODE_ID, ConfigValue::Int(65))],
+        &[(IC_CFG_NODE_ID, ConfigValue::Int(65))],
       );
       b.typed_section(
         SectionType::Tcp,
         &[
-          (CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-          (CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
+          (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
+          (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
         ],
       );
       let blob = ConfigBlob::decode(&b.finish()).expect("decode");
       let node = blob.node(1).expect("node");
       assert_eq!(
-        blob.value_str(node, CFG_NODE_HOST),
+        blob.value_str(node, IC_CFG_NODE_HOST),
         Some(text.as_str()),
         "length {}",
         len
@@ -843,7 +861,7 @@ mod tests {
     assert!(ConfigBlob::decode(&good[..good.len() - 1]).is_err());
     /* The version 1 format, which we do not accept. */
     let mut v1 = good.clone();
-    v1[..8].copy_from_slice(MAGIC_V1);
+    v1[..8].copy_from_slice(IC_MAGIC_V1);
     let err = ConfigBlob::decode(&v1).expect_err("v1");
     assert_eq!(err.code, err::IC_ERROR_NOT_SUPPORTED);
     /* A flipped bit anywhere fails the checksum. */

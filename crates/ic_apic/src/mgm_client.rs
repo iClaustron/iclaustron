@@ -30,8 +30,8 @@ use ic_comm::connection::ConnectConfig;
 use ic_comm::connection::Connection;
 use ic_comm::line_proto;
 use ic_comm::line_proto::LineReader;
-use ic_port::consts::NDB_VERSION;
-use ic_port::debug::CONFIG_PROTO_LEVEL;
+use ic_port::consts::IC_NDB_VERSION;
+use ic_port::debug::IC_CONFIG_PROTO_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
 use ic_protocol::base64;
@@ -44,12 +44,12 @@ use crate::data::ClusterConfig;
 
 /// How long to wait for a management server to answer, unless told
 /// otherwise.
-pub const DEFAULT_TIMEOUT_MS: u32 = 30_000;
+pub const IC_DEFAULT_MGM_TIMEOUT_MS: u32 = 30_000;
 
 /// The oldest management server this library will talk to, as
 /// `(major, minor)`. Older servers do not serve the version 2
 /// configuration format.
-pub const MIN_MGM_VERSION: (u32, u32) = (24, 10);
+pub const IC_MIN_MGM_VERSION: (u32, u32) = (24, 10);
 
 /// What a management server reports about itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -106,7 +106,7 @@ impl MgmClient {
       port,
     };
     client.version = client.read_version()?;
-    if client.version.major < MIN_MGM_VERSION.0 {
+    if client.version.major < IC_MIN_MGM_VERSION.0 {
       return Err(IcError::new(err::IC_ERROR_MGM_VERSION_TOO_OLD));
     }
     Ok(client)
@@ -124,7 +124,7 @@ impl MgmClient {
         Ok(client) => return Ok(client),
         Err(e) => {
           ic_port::debug_print!(
-            CONFIG_PROTO_LEVEL,
+            IC_CONFIG_PROTO_LEVEL,
             "Management server {}:{} did not answer: {}",
             server.host,
             server.port,
@@ -202,11 +202,11 @@ impl MgmClient {
     &self,
     fields: &HashMap<String, String>,
   ) -> Result<(), IcError> {
-    let result = match fields.get(ARG_RESULT) {
+    let result = match fields.get(IC_ARG_RESULT) {
       Some(value) => value.as_str(),
       None => return Err(IcError::new(err::IC_PROTOCOL_ERROR)),
     };
-    if result == RESULT_OK {
+    if result == IC_RESULT_OK {
       return Ok(());
     }
     ic_port::ic_printf!(
@@ -234,15 +234,15 @@ impl MgmClient {
 
   fn read_version(&mut self) -> Result<MgmVersion, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::read_version");
-    self.send_request(CMD_GET_VERSION, &[])?;
-    let fields = self.read_reply(REPLY_GET_VERSION)?;
+    self.send_request(IC_CMD_GET_VERSION, &[])?;
+    let fields = self.read_reply(IC_REPLY_GET_VERSION)?;
     let major = MgmClient::field_u32(&fields, "major")?;
     let minor = MgmClient::field_u32(&fields, "minor")?;
     /* A management server may leave the build number out. */
     let build = MgmClient::field_u32(&fields, "build").unwrap_or(0);
     let text = fields.get("string").cloned().unwrap_or_default();
     ic_port::debug_print!(
-      CONFIG_PROTO_LEVEL,
+      IC_CONFIG_PROTO_LEVEL,
       "Management server {}:{} is version {}.{}.{} ({})",
       self.host,
       self.port,
@@ -269,31 +269,31 @@ impl MgmClient {
   ) -> Result<u32, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::alloc_node_id");
     let endian = if ic_port::endian::byte_order() == 0 {
-      ENDIAN_LITTLE
+      IC_ENDIAN_LITTLE
     } else {
-      ENDIAN_BIG
+      IC_ENDIAN_BIG
     };
     let mut args: Vec<(&str, Arg<'_>)> = vec![
-      (ARG_VERSION, Arg::Number(NDB_VERSION as u64)),
-      (ARG_NODETYPE, Arg::Number(NODE_TYPE_API as u64)),
-      (ARG_NODEID, Arg::Number(wanted_node_id as u64)),
-      (ARG_USER, Arg::Text(USER_MYSQLD)),
-      (ARG_PASSWORD, Arg::Text(USER_MYSQLD)),
-      (ARG_PUBLIC_KEY, Arg::Text(PUBLIC_KEY_TEXT)),
-      (ARG_ENDIAN, Arg::Text(endian)),
+      (IC_ARG_VERSION, Arg::Number(IC_NDB_VERSION as u64)),
+      (IC_ARG_NODETYPE, Arg::Number(IC_NODE_TYPE_API as u64)),
+      (IC_ARG_NODEID, Arg::Number(wanted_node_id as u64)),
+      (IC_ARG_USER, Arg::Text(IC_USER_MYSQLD)),
+      (IC_ARG_PASSWORD, Arg::Text(IC_USER_MYSQLD)),
+      (IC_ARG_PUBLIC_KEY, Arg::Text(IC_PUBLIC_KEY_TEXT)),
+      (IC_ARG_ENDIAN, Arg::Text(endian)),
     ];
     if let Some(text) = name {
-      args.push((ARG_NAME, Arg::Text(text)));
+      args.push((IC_ARG_NAME, Arg::Text(text)));
     }
-    args.push((ARG_LOG_EVENT, Arg::Number(1)));
-    self.send_request(CMD_GET_NODEID, &args)?;
-    let fields = self.read_reply(REPLY_GET_NODEID)?;
+    args.push((IC_ARG_LOG_EVENT, Arg::Number(1)));
+    self.send_request(IC_CMD_GET_NODEID, &args)?;
+    let fields = self.read_reply(IC_REPLY_GET_NODEID)?;
     if self.check_result(&fields).is_err() {
       return Err(IcError::new(err::IC_ERROR_NO_NODEID));
     }
-    let node_id = MgmClient::field_u32(&fields, ARG_NODEID)?;
+    let node_id = MgmClient::field_u32(&fields, IC_ARG_NODEID)?;
     ic_port::debug_print!(
-      CONFIG_PROTO_LEVEL,
+      IC_CONFIG_PROTO_LEVEL,
       "Management server gave us node id {}",
       node_id
     );
@@ -306,30 +306,30 @@ impl MgmClient {
   pub fn get_config(&mut self, node_id: u32) -> Result<Vec<u8>, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::get_config");
     self.send_request(
-      CMD_GET_CONFIG_V2,
+      IC_CMD_GET_CONFIG_V2,
       &[
-        (ARG_VERSION, Arg::Number(NDB_VERSION as u64)),
-        (ARG_NODETYPE, Arg::Number(NODE_TYPE_API as u64)),
-        (ARG_NODE, Arg::Number(node_id as u64)),
+        (IC_ARG_VERSION, Arg::Number(IC_NDB_VERSION as u64)),
+        (IC_ARG_NODETYPE, Arg::Number(IC_NODE_TYPE_API as u64)),
+        (IC_ARG_NODE, Arg::Number(node_id as u64)),
       ],
     )?;
-    let fields = self.read_reply(REPLY_GET_CONFIG)?;
+    let fields = self.read_reply(IC_REPLY_GET_CONFIG)?;
     self.check_result(&fields)?;
     let content_type = fields.get("content-type");
-    if content_type.map(|s| s.as_str()) != Some(CONTENT_TYPE_CONFIG) {
+    if content_type.map(|s| s.as_str()) != Some(IC_CONTENT_TYPE_CONFIG) {
       return Err(IcError::new(err::IC_PROTOCOL_ERROR));
     }
     let encoding = fields.get("content-transfer-encoding");
-    if encoding.map(|s| s.as_str()) != Some(CONTENT_ENCODING_BASE64) {
+    if encoding.map(|s| s.as_str()) != Some(IC_CONTENT_ENCODING_BASE64) {
       return Err(IcError::new(err::IC_PROTOCOL_ERROR));
     }
     let length = MgmClient::field_u32(&fields, "content-length")? as usize;
-    /* The server writes one more byte than it counted: the newline
-    that ends the last line of base64. */
+    // The server writes one more byte than it counted: the newline
+    // that ends the last line of base64.
     let encoded = self.reader.read_exact(&self.conn, length + 1)?;
     let blob = base64::decode(&encoded)?;
     ic_port::debug_print!(
-      CONFIG_PROTO_LEVEL,
+      IC_CONFIG_PROTO_LEVEL,
       "Configuration is {} base64 characters, {} bytes decoded",
       length,
       blob.len()
@@ -348,23 +348,23 @@ impl MgmClient {
   ) -> Result<u32, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::get_connection_parameter");
     self.send_request(
-      CMD_GET_CONNECTION_PARAMETER,
+      IC_CMD_GET_CONNECTION_PARAMETER,
       &[
-        (ARG_NODE1, Arg::Number(node_1 as u64)),
-        (ARG_NODE2, Arg::Number(node_2 as u64)),
-        (ARG_PARAM, Arg::Number(parameter as u64)),
+        (IC_ARG_NODE1, Arg::Number(node_1 as u64)),
+        (IC_ARG_NODE2, Arg::Number(node_2 as u64)),
+        (IC_ARG_PARAM, Arg::Number(parameter as u64)),
       ],
     )?;
-    let fields = self.read_reply(REPLY_GET_CONNECTION_PARAMETER)?;
+    let fields = self.read_reply(IC_REPLY_GET_CONNECTION_PARAMETER)?;
     self.check_result(&fields)?;
-    MgmClient::field_u32(&fields, ARG_VALUE)
+    MgmClient::field_u32(&fields, IC_ARG_VALUE)
   }
 
   /// Hand this connection over to the signal protocol: after this the
   /// management protocol is finished with it and the transporter
   /// handshake follows (`ndb_mgm_convert_to_transporter`).
   pub fn into_transporter(self) -> Result<Connection, IcError> {
-    line_proto::send_line(&self.conn, CMD_TRANSPORTER_CONNECT)?;
+    line_proto::send_line(&self.conn, IC_CMD_TRANSPORTER_CONNECT)?;
     line_proto::send_empty_line(&self.conn)?;
     Ok(self.conn)
   }
@@ -421,11 +421,11 @@ mod tests {
     let mut b = BlobBuilder::new(1, 1, 1, 1);
     b.typed_section(
       SectionType::DataNode,
-      &[(CFG_DB_NO_REPLICAS, ConfigValue::Int(1))],
+      &[(IC_CFG_DB_NO_REPLICAS, ConfigValue::Int(1))],
     );
     b.typed_section(
       SectionType::ApiNode,
-      &[(CFG_BATCH_SIZE, ConfigValue::Int(64))],
+      &[(IC_CFG_BATCH_SIZE, ConfigValue::Int(64))],
     );
     b.typed_section(SectionType::MgmNode, &[]);
     b.typed_section(SectionType::Tcp, &[]);
@@ -434,25 +434,25 @@ mod tests {
     b.typed_section(
       SectionType::DataNode,
       &[
-        (CFG_NODE_ID, ConfigValue::Int(1)),
-        (CFG_NODE_HOST, ConfigValue::Str("127.0.0.1".to_string())),
+        (IC_CFG_NODE_ID, ConfigValue::Int(1)),
+        (IC_CFG_NODE_HOST, ConfigValue::Str("127.0.0.1".to_string())),
       ],
     );
     b.typed_section(
       SectionType::ApiNode,
-      &[(CFG_NODE_ID, ConfigValue::Int(68))],
+      &[(IC_CFG_NODE_ID, ConfigValue::Int(68))],
     );
     b.typed_section(
       SectionType::MgmNode,
-      &[(CFG_NODE_ID, ConfigValue::Int(65))],
+      &[(IC_CFG_NODE_ID, ConfigValue::Int(65))],
     );
     b.typed_section(
       SectionType::Tcp,
       &[
-        (CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
-        (CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
-        (CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(1)),
-        (CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(0)),
+        (IC_CFG_CONNECTION_NODE_1, ConfigValue::Int(1)),
+        (IC_CFG_CONNECTION_NODE_2, ConfigValue::Int(68)),
+        (IC_CFG_CONNECTION_NODE_ID_SERVER, ConfigValue::Int(1)),
+        (IC_CFG_CONNECTION_SERVER_PORT, ConfigValue::Int(0)),
       ],
     );
     b.finish()
@@ -484,8 +484,8 @@ mod tests {
         pending.extend_from_slice(&buf[..size]);
         /* A request is finished when an empty line arrives. */
         while let Some(at) = find_blank_line(&pending) {
-          /* `at` is the index of the second newline, so the request
-          runs up to and including it. */
+          // `at` is the index of the second newline, so the request
+          // runs up to and including it.
           let text = String::from_utf8_lossy(&pending[..at]).to_string();
           pending.drain(..at + 1);
           for line in text.split('\n') {
@@ -522,8 +522,8 @@ mod tests {
     format!(
       "get config reply\nresult: Ok\nContent-Type: {}\n\
        Content-Transfer-Encoding: {}\nContent-Length: {}\n\n{}",
-      CONTENT_TYPE_CONFIG,
-      CONTENT_ENCODING_BASE64,
+      IC_CONTENT_TYPE_CONFIG,
+      IC_CONTENT_ENCODING_BASE64,
       encoded.len() - 1,
       encoded
     )
@@ -557,8 +557,8 @@ mod tests {
     assert_eq!(client.version().text, "RonDB-26.10.0");
     drop(client);
     let asked = handle.join().expect("join");
-    /* The three requests, in order, with arguments in the shape the
-    management server's parser expects. */
+    // The three requests, in order, with arguments in the shape the
+    // management server's parser expects.
     assert_eq!(asked[0], "get version");
     assert!(asked.contains(&"get nodeid".to_string()));
     assert!(asked.contains(&"nodetype: 1".to_string()));

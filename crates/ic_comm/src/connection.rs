@@ -32,14 +32,14 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use ic_port::debug::COMM_LEVEL;
+use ic_port::debug::IC_COMM_LEVEL;
 use ic_port::err;
 use ic_port::time;
 use ic_port::IcError;
 
 /// Number of message size ranges the statistics count: 0 to 31 bytes,
 /// 32 to 63, and so on up to 512 kBytes and larger.
-pub const NUM_SIZE_RANGES: usize = 16;
+pub const IC_NUM_SIZE_RANGES: usize = 16;
 
 /// How a connection should be made and what socket options to use.
 ///
@@ -88,9 +88,9 @@ pub struct ConnectStatSnapshot {
   /// Reads that failed.
   pub num_rec_errors: u64,
   /// Writes counted by size range.
-  pub num_sent_buf_range: [u32; NUM_SIZE_RANGES],
+  pub num_sent_buf_range: [u32; IC_NUM_SIZE_RANGES],
   /// Reads counted by size range.
-  pub num_rec_buf_range: [u32; NUM_SIZE_RANGES],
+  pub num_rec_buf_range: [u32; IC_NUM_SIZE_RANGES],
   /// `SO_RCVBUF` as the system actually set it.
   pub used_tcp_receive_buffer_size: i32,
   /// `SO_SNDBUF` as the system actually set it.
@@ -107,8 +107,8 @@ struct ConnectStat {
   num_send_errors: AtomicU64,
   num_send_timeouts: AtomicU64,
   num_rec_errors: AtomicU64,
-  num_sent_buf_range: [AtomicU32; NUM_SIZE_RANGES],
-  num_rec_buf_range: [AtomicU32; NUM_SIZE_RANGES],
+  num_sent_buf_range: [AtomicU32; IC_NUM_SIZE_RANGES],
+  num_rec_buf_range: [AtomicU32; IC_NUM_SIZE_RANGES],
 }
 
 impl ConnectStat {
@@ -133,14 +133,14 @@ impl ConnectStat {
 pub fn size_range(size: u64) -> usize {
   let mut range: usize = 0;
   let mut limit: u64 = 32;
-  while range < NUM_SIZE_RANGES - 1 {
+  while range < IC_NUM_SIZE_RANGES - 1 {
     if size < limit {
       return range;
     }
     limit *= 2;
     range += 1;
   }
-  NUM_SIZE_RANGES - 1
+  IC_NUM_SIZE_RANGES - 1
 }
 
 /// A connected TCP socket.
@@ -244,12 +244,11 @@ impl Connection {
     };
     let fd = stream.as_raw_fd();
     ic_port::socket::set_no_sigpipe(fd)?;
-    /*
-      Nagle's algorithm holds a small write back waiting for more data,
-      which is exactly wrong for a protocol of small signals with a
-      reply expected. A wide area link is the one case where the extra
-      round trips cost more than the delay.
-    */
+    //
+    // Nagle's algorithm holds a small write back waiting for more data,
+    // which is exactly wrong for a protocol of small signals with a
+    // reply expected. A wide area link is the one case where the extra
+    // round trips cost more than the delay.
     if !config.is_wan_connection {
       let _ = set_int_option(fd, libc::IPPROTO_TCP, libc::TCP_NODELAY, 1);
     }
@@ -273,7 +272,7 @@ impl Connection {
     let used_snd = get_int_option(fd, libc::SOL_SOCKET, libc::SO_SNDBUF);
     let used_seg = get_int_option(fd, libc::IPPROTO_TCP, libc::TCP_MAXSEG);
     ic_port::debug_print!(
-      COMM_LEVEL,
+      IC_COMM_LEVEL,
       "Connected to {}:{} from local port {}",
       config.server_name,
       config.server_port,
@@ -466,8 +465,8 @@ impl Connection {
           return Ok(size);
         }
         Err(e) => {
-          /* A signal interrupted the call; nothing was read, try again.
-          Returning 0 here would look like the peer closing. */
+          // A signal interrupted the call; nothing was read, try again.
+          // Returning 0 here would look like the peer closing.
           if e.kind() == std::io::ErrorKind::Interrupted {
             continue;
           }
@@ -524,14 +523,13 @@ impl Connection {
       return Ok(());
     }
     let mut stream = &self.stream;
-    /*
-      A short write leaves part of one buffer and some whole buffers to
-      go. Rather than editing the slice list in place, which would mean
-      holding a reference into it while writing it, the remainder is
-      described by which buffer we are in and how far into it, and the
-      list is rebuilt from the caller's buffers. Short writes are rare,
-      so the rebuild costs nothing in practice.
-    */
+    //
+    // A short write leaves part of one buffer and some whole buffers to
+    // go. Rather than editing the slice list in place, which would mean
+    // holding a reference into it while writing it, the remainder is
+    // described by which buffer we are in and how far into it, and the
+    // list is rebuilt from the caller's buffers. Short writes are rare,
+    // so the rebuild costs nothing in practice.
     let mut buf_index: usize = 0;
     let mut buf_offset: usize = 0;
     while buf_index < bufs.len() {
@@ -606,7 +604,7 @@ impl Connection {
     }
     let _ = self.stream.shutdown(std::net::Shutdown::Both);
     ic_port::debug_print!(
-      COMM_LEVEL,
+      IC_COMM_LEVEL,
       "Closed connection to {}:{}",
       self.server_name,
       self.server_port
@@ -623,14 +621,14 @@ impl Connection {
       num_send_errors: self.stat.num_send_errors.load(Ordering::Relaxed),
       num_send_timeouts: self.stat.num_send_timeouts.load(Ordering::Relaxed),
       num_rec_errors: self.stat.num_rec_errors.load(Ordering::Relaxed),
-      num_sent_buf_range: [0; NUM_SIZE_RANGES],
-      num_rec_buf_range: [0; NUM_SIZE_RANGES],
+      num_sent_buf_range: [0; IC_NUM_SIZE_RANGES],
+      num_rec_buf_range: [0; IC_NUM_SIZE_RANGES],
       used_tcp_receive_buffer_size: self.used_tcp_receive_buffer_size,
       used_tcp_send_buffer_size: self.used_tcp_send_buffer_size,
       used_tcp_maxseg_size: self.used_tcp_maxseg_size,
     };
     let mut i: usize = 0;
-    while i < NUM_SIZE_RANGES {
+    while i < IC_NUM_SIZE_RANGES {
       snapshot.num_sent_buf_range[i] =
         self.stat.num_sent_buf_range[i].load(Ordering::Relaxed);
       snapshot.num_rec_buf_range[i] =
@@ -831,6 +829,6 @@ mod tests {
     assert_eq!(size_range(32), 1);
     assert_eq!(size_range(63), 1);
     assert_eq!(size_range(64), 2);
-    assert_eq!(size_range(1 << 20), NUM_SIZE_RANGES - 1);
+    assert_eq!(size_range(1 << 20), IC_NUM_SIZE_RANGES - 1);
   }
 }

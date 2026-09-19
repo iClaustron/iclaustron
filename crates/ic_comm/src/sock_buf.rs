@@ -18,17 +18,16 @@
 //! it. The count is maintained by whoever shares the page, which for now
 //! is the Data API's receive path.
 
-/*
-  Every page is its own allocation, held as Box<SockBufPage>, and clippy
-  points out that a Vec of Box is one indirection more than a Vec of
-  values. That indirection is the point here. A page is shared between
-  the receive thread and the user threads it carries signals for, and
-  they agree on it through the reference count inside the page, so the
-  page has to keep one address for its whole life. A Vec of values would
-  move a page whenever the Vec grew, and again when it was handed out.
-  The C had the same property for the same reason, and sized the page to
-  a cache line so that two pages in two threads never shared one.
-*/
+//
+// Every page is its own allocation, held as Box<SockBufPage>, and clippy
+// points out that a Vec of Box is one indirection more than a Vec of
+// values. That indirection is the point here. A page is shared between
+// the receive thread and the user threads it carries signals for, and
+// they agree on it through the reference count inside the page, so the
+// page has to keep one address for its whole life. A Vec of values would
+// move a page whenever the Vec grew, and again when it was handed out.
+// The C had the same property for the same reason, and sized the page to
+// a cache line so that two pages in two threads never shared one.
 #![allow(clippy::vec_box)]
 
 use std::sync::atomic::AtomicI32;
@@ -40,7 +39,7 @@ use ic_port::sync::IC_MUTEX_LEVEL_SOCK_BUF;
 
 /// Words of space on every page that its owner may use for its own
 /// bookkeeping, as the C `opaque_area` did.
-pub const SOCK_BUF_OPAQUE_WORDS: usize = 8;
+pub const IC_SOCK_BUF_OPAQUE_WORDS: usize = 8;
 
 /// One buffer page.
 ///
@@ -56,7 +55,7 @@ pub struct SockBufPage {
   data_len: u32,
   ref_count: AtomicI32,
   /// Scratch space for the page's current owner.
-  pub opaque: [u32; SOCK_BUF_OPAQUE_WORDS],
+  pub opaque: [u32; IC_SOCK_BUF_OPAQUE_WORDS],
 }
 
 impl SockBufPage {
@@ -65,7 +64,7 @@ impl SockBufPage {
       buf: vec![0u8; page_size],
       data_len: 0,
       ref_count: AtomicI32::new(1),
-      opaque: [0; SOCK_BUF_OPAQUE_WORDS],
+      opaque: [0; IC_SOCK_BUF_OPAQUE_WORDS],
     }
   }
 
@@ -127,7 +126,7 @@ impl SockBufPage {
   fn reset(&mut self) {
     self.data_len = 0;
     self.ref_count.store(1, Ordering::Release);
-    self.opaque = [0; SOCK_BUF_OPAQUE_WORDS];
+    self.opaque = [0; IC_SOCK_BUF_OPAQUE_WORDS];
   }
 }
 

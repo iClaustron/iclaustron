@@ -36,7 +36,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use ic_port::debug::THREAD_LEVEL;
+use ic_port::debug::IC_THREAD_LEVEL;
 use ic_port::err;
 use ic_port::sync::IcCond;
 use ic_port::sync::IcMutex;
@@ -336,7 +336,7 @@ impl ThreadPool {
     self.slots[index].state = Some(Arc::clone(&state));
     self.slots[index].handle = Some(handle);
     ic_port::debug_print!(
-      THREAD_LEVEL,
+      IC_THREAD_LEVEL,
       "Started thread {} in pool {}",
       thread_id,
       self.name
@@ -409,7 +409,7 @@ impl ThreadPool {
       let _ = h.join();
     }
     ic_port::debug_print!(
-      THREAD_LEVEL,
+      IC_THREAD_LEVEL,
       "Joined thread {} in pool {}",
       thread_id,
       self.name

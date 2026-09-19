@@ -114,6 +114,19 @@ The construct-by-construct translation table, with explanations and two
 worked examples, is [11-c-to-rust-mappings.md](11-c-to-rust-mappings.md).
 Every crate `MODULE.md` adds a "Rust notes for C readers" section.
 
+## Comments
+
+- `///` for documentation on a public item, `//!` at the top of a file
+  for the module. Every public item has one.
+- `//` for everything else, including explanations several lines long.
+- Not `/* ... */` across several lines. rustfmt does not understand the
+  alignment of a continuation line and pushes it back to the left, which
+  leaves the comment ragged and makes `cargo fmt --check` fight every
+  edit. A single-line `/* ... */` is fine where it reads better, such as
+  a note inside an expression.
+- Comments say why, not what. The C header's prose is the specification
+  and belongs in `///` on the item it describes.
+
 ## Layout conventions
 
 - 80 columns and 2-space indentation, as the C code. `rustfmt` with a

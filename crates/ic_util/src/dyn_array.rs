@@ -128,8 +128,8 @@ mod tests {
     assert!(a.read_at(2, &mut out).is_ok());
   }
 
-  /* The C unit test, test type 2: insert many blocks and read them all
-  back at their recorded positions. */
+  // The C unit test, test type 2: insert many blocks and read them all
+  // back at their recorded positions.
   #[test]
   fn many_inserts_read_back() {
     let mut a = DynArray::with_capacity(1024);

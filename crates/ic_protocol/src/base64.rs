@@ -17,9 +17,9 @@ use ic_port::err;
 use ic_port::IcError;
 
 /// Characters per line the encoder produces, matching the C.
-pub const BASE64_LINE_LEN: usize = 76;
+pub const IC_BASE64_LINE_LEN: usize = 76;
 
-const ENCODE_TABLE: &[u8; 64] =
+const IC_ENCODE_TABLE: &[u8; 64] =
   b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// The six bits a base64 character stands for, or `None` if it is not a
@@ -73,15 +73,16 @@ fn encode_inner(src: &[u8], break_lines: bool) -> String {
     let b0 = src[i] as u32;
     let b1 = if left > 1 { src[i + 1] as u32 } else { 0 };
     let b2 = if left > 2 { src[i + 2] as u32 } else { 0 };
-    out.push(ENCODE_TABLE[(b0 >> 2) as usize] as char);
-    out.push(ENCODE_TABLE[(((b0 & 0x3) << 4) | (b1 >> 4)) as usize] as char);
+    out.push(IC_ENCODE_TABLE[(b0 >> 2) as usize] as char);
+    out.push(IC_ENCODE_TABLE[(((b0 & 0x3) << 4) | (b1 >> 4)) as usize] as char);
     if left > 1 {
-      out.push(ENCODE_TABLE[(((b1 & 0xF) << 2) | (b2 >> 6)) as usize] as char);
+      let index = (((b1 & 0xF) << 2) | (b2 >> 6)) as usize;
+      out.push(IC_ENCODE_TABLE[index] as char);
     } else {
       out.push('=');
     }
     if left > 2 {
-      out.push(ENCODE_TABLE[(b2 & 0x3F) as usize] as char);
+      out.push(IC_ENCODE_TABLE[(b2 & 0x3F) as usize] as char);
     } else {
       out.push('=');
     }
@@ -226,7 +227,7 @@ mod tests {
     }
     assert_eq!(lines.len(), 3);
     for line in &lines {
-      assert_eq!(line.len(), BASE64_LINE_LEN);
+      assert_eq!(line.len(), IC_BASE64_LINE_LEN);
     }
     assert!(text.ends_with('\n'));
     assert_eq!(decode(text.as_bytes()).expect("decode"), data);
@@ -256,8 +257,8 @@ mod tests {
 
   #[test]
   fn a_trailing_nul_ends_the_blob() {
-    /* The C encoder wrote a NUL after the last line and the reply from
-    the management server carries one too. */
+    // The C encoder wrote a NUL after the last line and the reply from
+    // the management server carries one too.
     let mut text: Vec<u8> = b"Zm9vYmFy\n".to_vec();
     text.push(0);
     assert_eq!(decode(&text).expect("decode"), b"foobar");

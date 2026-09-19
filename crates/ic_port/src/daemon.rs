@@ -18,8 +18,8 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
-use crate::debug::COMM_LEVEL;
-use crate::debug::PROGRAM_LEVEL;
+use crate::debug::IC_COMM_LEVEL;
+use crate::debug::IC_PROGRAM_LEVEL;
 use crate::err;
 use crate::IcError;
 
@@ -59,7 +59,7 @@ fn ignore(signum: libc::c_int) {
 }
 
 extern "C" fn kill_handler(signum: libc::c_int) {
-  crate::debug_print!(COMM_LEVEL, "kill_handler: signum = {}", signum);
+  crate::debug_print!(IC_COMM_LEVEL, "kill_handler: signum = {}", signum);
   let handled = signum == libc::SIGTERM
     || signum == libc::SIGINT
     || signum == libc::SIGHUP
@@ -74,7 +74,7 @@ extern "C" fn kill_handler(signum: libc::c_int) {
 }
 
 extern "C" fn sig_error_handler(signum: libc::c_int) {
-  crate::debug_print!(COMM_LEVEL, "sig_error_handler: signum = {}", signum);
+  crate::debug_print!(IC_COMM_LEVEL, "sig_error_handler: signum = {}", signum);
   let handled = signum == libc::SIGSEGV
     || signum == libc::SIGFPE
     || signum == libc::SIGILL
@@ -86,7 +86,7 @@ extern "C" fn sig_error_handler(signum: libc::c_int) {
   }
   crate::stop::set_stop_flag();
   call_stored_handler(&SIG_ERROR_HANDLER, &SIG_ERROR_PARAM);
-  crate::debug_print!(PROGRAM_LEVEL, "Abort process");
+  crate::debug_print!(IC_PROGRAM_LEVEL, "Abort process");
   std::process::abort();
 }
 
@@ -249,7 +249,7 @@ pub fn write_pid_file(pid_file: &str) -> Result<(), IcError> {
     Ok(f) => f,
     Err(e) => {
       crate::debug_print!(
-        PROGRAM_LEVEL,
+        IC_PROGRAM_LEVEL,
         "Pid file {} could not be created",
         pid_file
       );
@@ -265,7 +265,11 @@ pub fn write_pid_file(pid_file: &str) -> Result<(), IcError> {
     let _ = crate::file::delete_file(pid_file);
     return Err(e);
   }
-  crate::debug_print!(PROGRAM_LEVEL, "Created pid file for process {}", text);
+  crate::debug_print!(
+    IC_PROGRAM_LEVEL,
+    "Created pid file for process {}",
+    text
+  );
   Ok(())
 }
 
@@ -277,7 +281,7 @@ pub fn read_pid_file(pid_file: &str) -> Result<u64, IcError> {
   match text.trim().parse::<u64>() {
     Ok(pid) => {
       crate::debug_print!(
-        PROGRAM_LEVEL,
+        IC_PROGRAM_LEVEL,
         "Read pidfile {}, found pid {}",
         pid_file,
         pid
@@ -285,7 +289,11 @@ pub fn read_pid_file(pid_file: &str) -> Result<u64, IcError> {
       Ok(pid)
     }
     Err(_) => {
-      crate::debug_print!(PROGRAM_LEVEL, "Wrong content in pidfile: {}", text);
+      crate::debug_print!(
+        IC_PROGRAM_LEVEL,
+        "Wrong content in pidfile: {}",
+        text
+      );
       Err(IcError::new(err::IC_ERROR_WRONG_PID_FILE_CONTENT))
     }
   }

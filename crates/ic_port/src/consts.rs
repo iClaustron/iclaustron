@@ -30,11 +30,11 @@ pub const IC_MAX_SEND_BUFFERS: usize = 16;
 pub const IC_MEMBUF_SIZE: usize = 32768;
 
 /// Buffer size used when reading a configuration line.
-pub const CONFIG_READ_BUF_SIZE: usize = 256;
+pub const IC_CONFIG_READ_BUF_SIZE: usize = 256;
 /// Largest error string returned to the application.
 pub const IC_MAX_ERROR_STRING_SIZE: usize = 256;
 /// Buffer size used when reading a protocol command line.
-pub const COMMAND_READ_BUF_SIZE: usize = 2048;
+pub const IC_COMMAND_READ_BUF_SIZE: usize = 2048;
 /// Buffer size large enough for any printed 64-bit number.
 pub const IC_NUMBER_SIZE: usize = 32;
 /// Buffer size large enough for any printed IP address.
@@ -50,13 +50,13 @@ pub const IC_DEF_CLUSTER_SERVER_PORT_STR: &str = "1186";
 pub const IC_DEF_PORT: u16 = 1187;
 
 /// Stack size for lightweight library threads (bytes).
-pub const IC_SMALL_STACK_SIZE: usize = 64 * 1024 + PTHREAD_STACK_MIN;
+pub const IC_SMALL_STACK_SIZE: usize = 64 * 1024 + IC_PTHREAD_STACK_MIN;
 /// Stack size for medium library threads (bytes).
-pub const IC_MEDIUM_STACK_SIZE: usize = 256 * 1024 + PTHREAD_STACK_MIN;
+pub const IC_MEDIUM_STACK_SIZE: usize = 256 * 1024 + IC_PTHREAD_STACK_MIN;
 /// Stack size 0 means the platform default (usually around 1 MByte).
 pub const IC_NORMAL_STACK_SIZE: usize = 0;
 /// Minimum stack the threading library needs for itself.
-pub const PTHREAD_STACK_MIN: usize = 64 * 1024;
+pub const IC_PTHREAD_STACK_MIN: usize = 64 * 1024;
 
 /// Assumed cache line size for padding hot structures.
 pub const IC_STD_CACHE_LINE_SIZE: usize = 128;
@@ -114,7 +114,7 @@ pub const IC_MICROSEC_PER_MILLI: u64 = 1000;
 /// Seconds between stop flag checks in long waits.
 pub const IC_STOP_CHECK_TIMER: u32 = 3;
 /// Size of error message buffers.
-pub const ERROR_MESSAGE_SIZE: usize = 512;
+pub const IC_ERROR_MSG_BUF_SIZE: usize = 512;
 
 /// iClaustron version number.
 pub const IC_VERSION: u32 = 0x00_0100;
@@ -123,20 +123,48 @@ pub const IC_VERSION_STR: &str = "iclaustron-0.1.0";
 /// NDB version announced to the cluster: RonDB 26.10.0 encoded as
 /// `(major << 16) | (minor << 8) | build`. Verify:
 /// RonDB `include/ndb_version.h.in:48-61`.
-pub const NDB_VERSION: u32 = 0x1A_0A00;
+pub const IC_NDB_VERSION: u32 = 0x1A_0A00;
 /// MySQL version announced to the cluster; RonDB uses the same number.
-pub const MYSQL_VERSION: u32 = 0x1A_0A00;
+pub const IC_MYSQL_VERSION: u32 = 0x1A_0A00;
 /// Version string announced to the cluster.
-pub const MYSQL_VERSION_STRING: &str = "rondb-26.10.0";
+pub const IC_MYSQL_VERSION_STRING: &str = "rondb-26.10.0";
 /// Bit position of the version field in the NDB protocol.
 pub const IC_VERSION_BIT_START: u32 = 24;
 /// Bit position of the protocol flag in the NDB protocol.
 pub const IC_PROTOCOL_BIT: u32 = 20;
 
-/// Highest node id in a cluster.
-pub const IC_MAX_NODE_ID: u32 = 255;
-/// Highest number of data nodes in a RonDB cluster (`MAX_NDB_NODES - 1`).
-/// Verify: RonDB `include/kernel/ndb_limits.h`.
+/// The largest node id the protocol itself can carry. A block
+/// reference packs the node id into its low 16 bits, so this cannot
+/// change without changing the protocol.
+/// Verify: RonDB `include/kernel/RefConvert.hpp`, `refToNode`.
+pub const IC_MAX_NODE_ID_WIRE: u32 = 65535;
+
+/// The largest node id a cluster currently allows.
+///
+/// This number keeps rising: NDB 7.2 stopped at 255, RonDB 26.10 allows
+/// 2039, and a coming release raises it to 8191. **Nothing should size
+/// an array by it.** Anything indexed by node id is either a map, or a
+/// vector sized from the configuration actually received, so that a
+/// cluster with larger ids needs no change here. The constant exists
+/// only for a sanity check where no configuration is available yet,
+/// such as reading a connectstring.
+/// Verify: RonDB `include/kernel/ndb_limits.h:70`, `MAX_NODES_ID`.
+pub const IC_MAX_NODE_ID: u32 = 8191;
+/// Highest node id a data node may have. Data nodes keep the small
+/// numbers, and this limit is set by how the kernel addresses them
+/// rather than by the size of a node id.
+/// Verify: `ndb_limits.h:62`, `MAX_DATA_NODE_ID`.
+pub const IC_MAX_DATA_NODE_ID: u32 = 144;
+
+// Checked when the crate is compiled, not when tests are run. An API
+// node id of 1600 is ordinary in RonDB, so a limit of 255 would reject
+// a real cluster; the limit keeps rising and these say what has to stay
+// true when it does.
+const _: () = assert!(IC_MAX_NODE_ID >= 8191);
+const _: () = assert!(IC_MAX_NODE_ID < IC_MAX_NODE_ID_WIRE);
+const _: () = assert!(IC_MAX_DATA_NODE_ID < IC_MAX_NODE_ID);
+/// Highest number of data nodes in a RonDB cluster.
+/// Verify: `ndb_limits.h:44`, `ABS_MAX_NDB_NODES` less one.
 pub const IC_MAX_NDB_DATA_NODES: u32 = 144;
 /// Highest number of user threads (connection objects) per process.
 pub const IC_MAX_THREAD_CONNECTIONS: u32 = 256;
@@ -153,15 +181,15 @@ pub const IC_MAX_RECORD_SIZE: usize = 72000;
 pub const IC_MAX_TABLE_NAME_SIZE: usize = 512;
 
 /// The space character.
-pub const SPACE_CHAR: u8 = 32;
+pub const IC_SPACE_CHAR: u8 = 32;
 /// Line terminator used by the NDB management protocol (`\n`).
-pub const CARRIAGE_RETURN: u8 = 10;
+pub const IC_CARRIAGE_RETURN: u8 = 10;
 /// The `\r` character.
-pub const LINE_FEED: u8 = 13;
+pub const IC_LINE_FEED: u8 = 13;
 /// The NUL byte.
-pub const NULL_BYTE: u8 = 0;
+pub const IC_NULL_BYTE: u8 = 0;
 /// Command separator in the client protocols.
-pub const CMD_SEPARATOR: u8 = b';';
+pub const IC_CMD_SEPARATOR: u8 = b';';
 
 /// Round `a` up to a multiple of `b` (`ic_align` in the C code).
 pub fn ic_align(a: usize, b: usize) -> usize {
@@ -185,8 +213,8 @@ mod tests {
 
   #[test]
   fn ndb_version_is_26_10_0() {
-    assert_eq!(NDB_VERSION >> 16, 26);
-    assert_eq!((NDB_VERSION >> 8) & 0xFF, 10);
-    assert_eq!(NDB_VERSION & 0xFF, 0);
+    assert_eq!(IC_NDB_VERSION >> 16, 26);
+    assert_eq!((IC_NDB_VERSION >> 8) & 0xFF, 10);
+    assert_eq!(IC_NDB_VERSION & 0xFF, 0);
   }
 }

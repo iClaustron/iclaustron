@@ -22,11 +22,11 @@ use ic_port::err;
 use ic_port::IcError;
 
 /// Highest slot index, so also the largest number of live objects.
-pub const PTR_ARRAY_MAX_ENTRIES: u32 = 0x00FF_FFFF;
+pub const IC_PTR_ARRAY_MAX_ENTRIES: u32 = 0x00FF_FFFF;
 
-const INDEX_MASK: u32 = 0x00FF_FFFF;
-const GENERATION_SHIFT: u32 = 24;
-const GENERATION_MASK: u32 = 0xFF;
+const IC_INDEX_MASK: u32 = 0x00FF_FFFF;
+const IC_GENERATION_SHIFT: u32 = 24;
+const IC_GENERATION_MASK: u32 = 0xFF;
 
 /// The id of an object in a [`PtrArray`]: what travels in a signal.
 ///
@@ -49,12 +49,12 @@ impl PtrId {
 
   /// The slot this id names.
   pub fn index(&self) -> u32 {
-    self.0 & INDEX_MASK
+    self.0 & IC_INDEX_MASK
   }
 
   /// The generation this id was issued in.
   pub fn generation(&self) -> u32 {
-    (self.0 >> GENERATION_SHIFT) & GENERATION_MASK
+    (self.0 >> IC_GENERATION_SHIFT) & IC_GENERATION_MASK
   }
 
   /// True for an id that cannot name any object.
@@ -105,10 +105,10 @@ impl<T> PtrArray<T> {
       let slot = &mut self.slots[index as usize];
       slot.value = Some(value);
       self.num_entries += 1;
-      return Ok(PtrId(index | (slot.generation << GENERATION_SHIFT)));
+      return Ok(PtrId(index | (slot.generation << IC_GENERATION_SHIFT)));
     }
     let index = self.slots.len() as u32;
-    if index > PTR_ARRAY_MAX_ENTRIES {
+    if index > IC_PTR_ARRAY_MAX_ENTRIES {
       return Err(IcError::new(err::IC_ERROR_PTR_ARRAY_INDEX_OUT_OF_BOUND));
     }
     /* Generations start at 1 so that a valid id is never the word 0. */
@@ -117,7 +117,7 @@ impl<T> PtrArray<T> {
       value: Some(value),
     });
     self.num_entries += 1;
-    Ok(PtrId(index | (1 << GENERATION_SHIFT)))
+    Ok(PtrId(index | (1 << IC_GENERATION_SHIFT)))
   }
 
   /// The object an id names, or `None` if the id is stale or was never
@@ -148,10 +148,10 @@ impl<T> PtrArray<T> {
       return None;
     }
     let value = slot.value.take()?;
-    /* Bump the generation so ids already in flight stop matching. It
-    wraps at 8 bits; a slot reused 256 times with a reply still
-    outstanding is not a case worth more bits. */
-    slot.generation = (slot.generation + 1) & GENERATION_MASK;
+    // Bump the generation so ids already in flight stop matching. It
+    // wraps at 8 bits; a slot reused 256 times with a reply still
+    // outstanding is not a case worth more bits.
+    slot.generation = (slot.generation + 1) & IC_GENERATION_MASK;
     if slot.generation == 0 {
       slot.generation = 1;
     }
@@ -239,8 +239,8 @@ mod tests {
     assert_eq!(a.get(PtrId::from_u32(0xFFFF_FFFF)), None);
   }
 
-  /* The C unit test, test type 4: insert many, remove some, check that
-  what is left still reads back and that slots are reused. */
+  // The C unit test, test type 4: insert many, remove some, check that
+  // what is left still reads back and that slots are reused.
   #[test]
   fn many_inserts_and_removes() {
     let mut a: PtrArray<u32> = PtrArray::new();

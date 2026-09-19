@@ -15,7 +15,7 @@ use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 
-use crate::debug::FILE_LEVEL;
+use crate::debug::IC_FILE_LEVEL;
 use crate::IcError;
 
 /// Open an existing file read/write; create it first if `create_flag`.
@@ -32,7 +32,7 @@ pub fn open_file(file_name: &str, create_flag: bool) -> Result<File, IcError> {
   }
   match options.open(file_name) {
     Ok(f) => {
-      crate::debug_print!(FILE_LEVEL, "Open file {}", file_name);
+      crate::debug_print!(IC_FILE_LEVEL, "Open file {}", file_name);
       Ok(f)
     }
     Err(e) => Err(IcError::from_io(&e)),
@@ -52,7 +52,7 @@ pub fn create_file(file_name: &str) -> Result<File, IcError> {
     .custom_flags(libc::O_SYNC);
   match options.open(file_name) {
     Ok(f) => {
-      crate::debug_print!(FILE_LEVEL, "Create file {}", file_name);
+      crate::debug_print!(IC_FILE_LEVEL, "Create file {}", file_name);
       Ok(f)
     }
     Err(e) => Err(IcError::from_io(&e)),
@@ -61,7 +61,7 @@ pub fn create_file(file_name: &str) -> Result<File, IcError> {
 
 /// Create a directory with mode 0750; an existing directory is fine.
 pub fn mkdir(dir_name: &str) -> Result<(), IcError> {
-  crate::debug_print!(FILE_LEVEL, "Create dir_name = {}", dir_name);
+  crate::debug_print!(IC_FILE_LEVEL, "Create dir_name = {}", dir_name);
   let result = DirBuilder::new().mode(0o750).create(dir_name);
   match result {
     Ok(()) => Ok(()),
@@ -90,7 +90,7 @@ pub fn close_file(file: File) -> Result<(), IcError> {
 /// Write the whole buffer, retrying partial writes.
 pub fn write_file(file: &mut File, buf: &[u8]) -> Result<(), IcError> {
   let _dbg = crate::debug_entry!("write_file");
-  crate::debug_print!(FILE_LEVEL, "Write file, size = {}", buf.len());
+  crate::debug_print!(IC_FILE_LEVEL, "Write file, size = {}", buf.len());
   match file.write_all(buf) {
     Ok(()) => Ok(()),
     Err(e) => Err(IcError::from_io(&e)),
@@ -103,7 +103,7 @@ pub fn read_file(file: &mut File, buf: &mut [u8]) -> Result<u64, IcError> {
   let _dbg = crate::debug_entry!("read_file");
   match file.read(buf) {
     Ok(n) => {
-      crate::debug_print!(FILE_LEVEL, "Read = {}", n);
+      crate::debug_print!(IC_FILE_LEVEL, "Read = {}", n);
       Ok(n as u64)
     }
     Err(e) => Err(IcError::from_io(&e)),
@@ -112,7 +112,7 @@ pub fn read_file(file: &mut File, buf: &mut [u8]) -> Result<u64, IcError> {
 
 /// Delete a file; a file that does not exist counts as deleted.
 pub fn delete_file(file_name: &str) -> Result<(), IcError> {
-  crate::debug_print!(FILE_LEVEL, "Delete file {}", file_name);
+  crate::debug_print!(IC_FILE_LEVEL, "Delete file {}", file_name);
   match std::fs::remove_file(file_name) {
     Ok(()) => Ok(()),
     Err(e) => {

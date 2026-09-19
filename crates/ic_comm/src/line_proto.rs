@@ -33,8 +33,8 @@
 //! reads that connection. Keeping it separate is what lets one thread
 //! read while another writes without either needing a lock.
 
-use ic_port::consts::CARRIAGE_RETURN;
-use ic_port::debug::CONFIG_PROTO_LEVEL;
+use ic_port::consts::IC_CARRIAGE_RETURN;
+use ic_port::debug::IC_CONFIG_PROTO_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
 
@@ -42,10 +42,10 @@ use crate::connection::Connection;
 
 /// Largest line the protocol may send, as the management server's own
 /// parser allows.
-pub const MAX_LINE_LEN: usize = 512;
+pub const IC_MAX_LINE_LEN: usize = 512;
 
 /// Size the read buffer grows to before a line is refused.
-const MAX_BUFFERED: usize = 64 * 1024;
+const IC_MAX_BUFFERED: usize = 64 * 1024;
 
 /// Reads whole lines from a connection, keeping whatever arrived past
 /// the end of the current line for the next call.
@@ -59,7 +59,7 @@ impl LineReader {
   /// A reader with an empty buffer.
   pub fn new() -> LineReader {
     LineReader {
-      buf: Vec::with_capacity(MAX_LINE_LEN),
+      buf: Vec::with_capacity(IC_MAX_LINE_LEN),
       start: 0,
     }
   }
@@ -79,7 +79,7 @@ impl LineReader {
   fn find_newline(&self) -> Option<usize> {
     let mut i = self.start;
     while i < self.buf.len() {
-      if self.buf[i] == CARRIAGE_RETURN {
+      if self.buf[i] == IC_CARRIAGE_RETURN {
         return Some(i);
       }
       i += 1;
@@ -107,10 +107,10 @@ impl LineReader {
     loop {
       if let Some(at) = self.find_newline() {
         let line = self.take_line(at);
-        ic_port::debug_print!(CONFIG_PROTO_LEVEL, "Received: {}", line);
+        ic_port::debug_print!(IC_CONFIG_PROTO_LEVEL, "Received: {}", line);
         return Ok(line);
       }
-      if self.buf.len() - self.start > MAX_BUFFERED {
+      if self.buf.len() - self.start > IC_MAX_BUFFERED {
         return Err(IcError::new(err::IC_ERROR_LINE_TOO_LONG));
       }
       /* Drop the consumed front of the buffer before reading more. */
@@ -137,7 +137,7 @@ impl LineReader {
     let line = self.read_line(conn)?;
     if line != expected {
       ic_port::debug_print!(
-        CONFIG_PROTO_LEVEL,
+        IC_CONFIG_PROTO_LEVEL,
         "Expected '{}' but got '{}'",
         expected,
         line
@@ -168,7 +168,7 @@ impl LineReader {
       Some(value) => Ok(value),
       None => {
         ic_port::debug_print!(
-          CONFIG_PROTO_LEVEL,
+          IC_CONFIG_PROTO_LEVEL,
           "Expected '{}: ...' but got '{}'",
           name,
           line
@@ -259,13 +259,13 @@ pub fn value_of(line: &str, name: &str) -> Option<String> {
 /// Send one line, with the newline the protocol expects
 /// (`ic_send_with_cr`).
 pub fn send_line(conn: &Connection, line: &str) -> Result<(), IcError> {
-  if line.len() > MAX_LINE_LEN {
+  if line.len() > IC_MAX_LINE_LEN {
     return Err(IcError::new(err::IC_ERROR_LINE_TOO_LONG));
   }
-  ic_port::debug_print!(CONFIG_PROTO_LEVEL, "Sending: {}", line);
+  ic_port::debug_print!(IC_CONFIG_PROTO_LEVEL, "Sending: {}", line);
   let mut out: Vec<u8> = Vec::with_capacity(line.len() + 1);
   out.extend_from_slice(line.as_bytes());
-  out.push(CARRIAGE_RETURN);
+  out.push(IC_CARRIAGE_RETURN);
   conn.write(&out)
 }
 
@@ -411,8 +411,8 @@ mod tests {
 
   #[test]
   fn bytes_after_the_header_are_read_exactly() {
-    /* This is the shape of a get config reply: header lines, an empty
-    line, then Content-Length bytes of base64. */
+    // This is the shape of a get config reply: header lines, an empty
+    // line, then Content-Length bytes of base64.
     let reply = "get config reply\nresult: Ok\n\
                  Content-Length: 10\n\nABCDEFGHIJrest";
     let (port, handle) = scripted_server(reply);
@@ -463,7 +463,7 @@ mod tests {
   fn a_line_that_is_too_long_is_refused() {
     let (port, handle) = scripted_server("ok\n\n");
     let conn = connect(port);
-    let long = "x".repeat(MAX_LINE_LEN + 1);
+    let long = "x".repeat(IC_MAX_LINE_LEN + 1);
     let result = send_line(&conn, &long);
     assert_eq!(result, Err(IcError::new(err::IC_ERROR_LINE_TOO_LONG)));
     send_empty_line(&conn).expect("send");
