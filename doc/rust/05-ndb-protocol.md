@@ -126,6 +126,19 @@ of this section also claimed the code told the first two apart; it does
 not. Verify: `mgmapi_error.h:80-87`, `MgmtSrvr.cpp:5040-5080`,
 `Services.cpp:753`, `:816`.
 
+**How a pulled cable shows, seen live on macOS (2026-09-19).** Pulling
+the API host's Ethernet cable for about 10 s did nothing at all: the
+links carried on, TCP resent what had queued, and neither side's
+heartbeat count came near its limit. Pulling it for about 20 s lost
+every link at once with "Can't assign requested address" (errno 49),
+reported on the reading side of the sockets by the receive thread, with
+no heartbeat write failing first. So macOS, once it has removed the
+interface's address, reports the error on every socket bound to it, and
+the difference between the two pulls is whether it got that far. It is
+not a matter of when the next heartbeat happens to be written. A cut
+that leaves our address in place is found only by heartbeat silence,
+after three to four check intervals.
+
 ### 1.4 Reconnect policy
 
 Connect attempts are rate limited with a backoff; RonDB additionally has a
@@ -235,7 +248,7 @@ compatibility and answers `API_REGREF` on mismatch. We announce 26.10.0
   **We send every third of the check interval, not every half.** The
   author judges half too seldom (2026-09-19). Sending more often than
   the C++ API does is safe by construction, since the data node only
-  counts intervals in which it heard nothing. `ic_apid::node_manager`,
+  counts intervals in which it heard nothing. `ic_apid::apid_global`,
   `IC_HEARTBEATS_PER_INTERVAL`, with a compile-time check that it is
   never set below three.
 - `API_REGCONF` (GSN 1), 22 words in this order: `qmgrRef, version,
@@ -264,7 +277,8 @@ compatibility and answers `API_REGREF` on mismatch. We announce 26.10.0
   be reconnected. Verify: `ClusterMgr.cpp:2304-2404`,
   `src/ndbapi/Ndbif.cpp:1346-1372`, `Ndb.cpp:272-314`.
 
-  The detail, as implemented in `ic_apid::node_manager`:
+  The detail, as implemented in `ic_apid` (`apid_global`,
+  `rec_thread`, `heartbeat`, `connect_thread`):
 
   - **Counting missed heartbeats.** A counter per node goes up by one at
     the end of every check interval and back to zero on every

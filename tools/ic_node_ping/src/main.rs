@@ -17,6 +17,12 @@
 //! lost and dialled again with no failure report at all. Debug level
 //! 16384 shows each step.
 //!
+//! The command drives nothing itself. It starts the Data API's threads,
+//! which connect, read, route and keep heartbeats, and then only
+//! watches, and acts as one user thread for the seize: it sends under
+//! its own block number and waits on its own inbox. An application
+//! looks the same.
+//!
 //! ```text
 //!   ic_node_ping localhost:1186
 //!   ic_node_ping localhost:1186 --seconds 600 --debug-level 1024
@@ -28,8 +34,9 @@
 use std::collections::BTreeMap;
 
 use ic_apic::mgm_client;
-use ic_apid::node_manager::LinkStatus;
-use ic_apid::node_manager::NodeManager;
+use ic_apid::apid_global::ApidGlobal;
+use ic_apid::apid_global::LinkStatus;
+use ic_apid::apid_global::NodeShared;
 use ic_apid::thread_conn::ThreadConnection;
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
@@ -129,53 +136,53 @@ fn run() -> i32 {
   );
   println!();
 
-  let mut manager = match NodeManager::new(
+  let mut global = match ApidGlobal::start(
     config,
     mgm,
     connect_string,
     30_000,
     Some("ic_node_ping"),
   ) {
-    Ok(manager) => manager,
+    Ok(global) => global,
     Err(e) => {
-      report("Could not set up the node manager", &e);
+      report("Could not start the Data API threads", &e);
       return 1;
     }
   };
 
-  // The first round connects every data node.
-  if let Err(e) = manager.poll(0) {
-    report("Could not connect to the data nodes", &e);
-    return 1;
-  }
-  report_links(&manager);
-  if manager.num_connected() == 0 {
+  // The threads connect in the background; give them a moment.
+  global.wait_for_started(15_000);
+  report_nodes(&global);
+  if global.num_connected() == 0 {
     println!();
     println!("No data node accepted us");
+    global.stop();
     return 1;
   }
   println!();
-  println!("Connected to {} data node(s)", manager.num_connected());
+  println!("Connected to {} data node(s)", global.num_connected());
   println!();
-  seize_on_every_node(&mut manager);
+  seize_on_every_node(&global);
 
   let seconds = parser.get_int_or("seconds", 0) as u64;
-  if seconds == 0 {
-    manager.close();
-    return 0;
-  }
-  keep_alive(&mut manager, seconds)
+  let code = if seconds == 0 {
+    0
+  } else {
+    keep_alive(&global, seconds)
+  };
+  global.stop();
+  code
 }
 
 /// Take a transaction record on every started node and give it back.
 ///
-/// This is the first exchange made as a user thread would make it: sent
-/// under a user thread's own block number, with the answer addressed to
-/// that block. The manager never looks at the answer. It sorts it into
-/// the inbox by block number, and we find it there, which is the whole
+/// This is the first exchange made as a user thread makes it: sent
+/// under our own block number, with the answer addressed to that block.
+/// The receive thread never looks at the answer. It sorts it into our
+/// inbox by block number, and we wait there for it, which is the whole
 /// of the threading model seen from outside.
-fn seize_on_every_node(manager: &mut NodeManager) {
-  let table = manager.thread_table();
+fn seize_on_every_node(global: &ApidGlobal) {
+  let table = global.thread_table();
   let inbox = match table.allocate() {
     Ok(inbox) => inbox,
     Err(e) => {
@@ -188,8 +195,8 @@ fn seize_on_every_node(manager: &mut NodeManager) {
     inbox.thread_id(),
     inbox.block_number()
   );
-  for node_id in manager.started_nodes() {
-    seize_and_release(manager, &inbox, node_id);
+  for node_id in global.started_nodes() {
+    seize_and_release(global, &inbox, node_id);
   }
   table.release(&inbox);
   if table.unroutable() != 0 {
@@ -198,12 +205,12 @@ fn seize_on_every_node(manager: &mut NodeManager) {
 }
 
 fn seize_and_release(
-  manager: &mut NodeManager,
+  global: &ApidGlobal,
   inbox: &ThreadConnection,
   node_id: u32,
 ) {
   let own_ref =
-    blocks::number_to_ref(inbox.block_number(), manager.own_node_id());
+    blocks::number_to_ref(inbox.block_number(), global.own_node_id());
   // Our own name for the record. It comes back in every answer.
   let our_ptr: u32 = 1000 + node_id;
   let seize = TcSeizeReq {
@@ -216,11 +223,11 @@ fn seize_and_release(
     inbox.block_number(),
     blocks::IC_BLOCK_DBTC,
   );
-  if let Err(e) = manager.send(node_id, &header, &seize.encode()) {
+  if let Err(e) = global.send(node_id, &header, &seize.encode()) {
     println!("node {:<4} seize not sent: {}", node_id, e.message());
     return;
   }
-  let (answer, data) = wait_for_answer(manager, inbox);
+  let (answer, data) = wait_for_answer(inbox);
   if answer == gsn::IC_GSN_TCSEIZEREF {
     match TcSeizeRef::decode(&data) {
       Ok(refusal) => println!(
@@ -263,11 +270,11 @@ fn seize_and_release(
   };
   let header =
     SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, inbox.block_number(), tc_block);
-  if let Err(e) = manager.send(node_id, &header, &release.encode()) {
+  if let Err(e) = global.send(node_id, &header, &release.encode()) {
     println!("node {:<4} release not sent: {}", node_id, e.message());
     return;
   }
-  let (answer, _data) = wait_for_answer(manager, inbox);
+  let (answer, _data) = wait_for_answer(inbox);
   if answer == gsn::IC_GSN_TCRELEASECONF {
     println!("node {:<4} took it back", node_id);
   } else if answer == gsn::IC_GSN_TCRELEASEREF {
@@ -277,75 +284,63 @@ fn seize_and_release(
   }
 }
 
-/// Drive the manager until something is in the inbox, or five seconds
-/// pass. Gives the signal number and data of the first signal found,
-/// or zero and nothing.
+/// Wait on our inbox for up to five seconds. Gives the signal number
+/// and data of the first signal found, or zero and nothing.
 ///
-/// In this release the thread that polls is also the thread that reads
-/// the inbox. With receive threads, a user thread only does the second
-/// half, waiting on its inbox while a receive thread fills it.
-fn wait_for_answer(
-  manager: &mut NodeManager,
-  inbox: &ThreadConnection,
-) -> (u16, Vec<u32>) {
+/// This is all a user thread does to receive: it sleeps on its inbox
+/// and a receive thread wakes it when something is put there.
+fn wait_for_answer(inbox: &ThreadConnection) -> (u16, Vec<u32>) {
   let start = ic_port::time::gethrtime();
   loop {
-    if manager.poll(50).is_err() {
+    let waited =
+      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+    if waited >= 5000 {
       return (0, Vec::new());
     }
-    let mut got = inbox.take(0);
+    let mut got = inbox.take(5000 - waited as u32);
     if !got.is_empty() {
       let first = got.remove(0);
       return (first.gsn, first.data);
     }
-    let waited =
-      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
-    if waited > 5000 {
-      return (0, Vec::new());
-    }
+    // Woken for nothing, or the wait ran out; go round.
   }
 }
 
-/// Print what every link looks like now.
-fn report_links(manager: &NodeManager) {
-  for link in manager.links().values() {
-    print!("node {:<4} ", link.node_id);
-    if !link.is_connected() {
-      match link.last_error {
+/// Print what every node looks like now.
+fn report_nodes(global: &ApidGlobal) {
+  for node in global.nodes() {
+    print!("node {:<4} ", node.node_id);
+    if !node.published.is_connected() {
+      match node.last_error() {
         Some(e) => println!("not connected: {} ({})", e.message(), e.code),
         None => println!("not connected"),
       }
       continue;
     }
-    let state = match link.node_state {
-      Some(state) => state,
-      None => {
-        println!("connected");
-        continue;
-      }
-    };
     println!(
       "connected, {:?}, node group {}",
-      state.start_level, state.node_group
+      node.published.start_level(),
+      node.published.node_group()
     );
     println!(
       "           heartbeat check every {} ms, we send every {} ms",
-      link.check_interval_ms(),
-      link.heartbeat_period_ms()
+      node.check_interval_ms(),
+      node.heartbeat_period_ms()
     );
-    println!(
-      "           it can see node(s) {:?}",
-      state.connected_node_ids()
-    );
+    if let Some(state) = node.node_state() {
+      println!(
+        "           it can see node(s) {:?}",
+        state.connected_node_ids()
+      );
+    }
   }
 }
 
-/// Keep every link up for as long as asked, reporting each change.
+/// Watch every node for as long as asked, reporting each change.
 ///
-/// Nothing here connects or reconnects: the manager does that, and this
-/// loop only says what it sees. That is the point of the command, since
-/// an application's loop looks the same.
-fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
+/// Nothing here connects or reconnects: the Data API's threads do that,
+/// and this loop only says what it sees.
+fn keep_alive(global: &ApidGlobal, seconds: u64) -> i32 {
   println!();
   println!("Keeping the connections up for {} s", seconds);
   println!("Restart a data node to see the loss reported and made good");
@@ -353,9 +348,10 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
   let start = ic_port::time::gethrtime();
   let mut was: BTreeMap<u32, LinkStatus> = BTreeMap::new();
   let mut was_started: BTreeMap<u32, bool> = BTreeMap::new();
-  for link in manager.links().values() {
-    was.insert(link.node_id, link.status);
-    was_started.insert(link.node_id, link.is_started());
+  let mut was_node_id = global.own_node_id();
+  for node in global.nodes() {
+    was.insert(node.node_id, view_of(node));
+    was_started.insert(node.node_id, node.published.is_started());
   }
   let mut losses: u64 = 0;
   let mut recoveries: u64 = 0;
@@ -369,37 +365,42 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
       println!("Stopping");
       break;
     }
-    // A short wait keeps the loop responsive to a socket closing while
-    // leaving the heartbeats to the manager.
-    if let Err(e) = manager.poll(200) {
-      report("The node manager stopped", &e);
-      return 1;
+    ic_port::time::microsleep(200_000);
+    let seconds_in = elapsed / 1000;
+    if global.own_node_id() != was_node_id {
+      println!(
+        "{:>5} s  we are node {} now, having been node {}",
+        seconds_in,
+        global.own_node_id(),
+        was_node_id
+      );
+      was_node_id = global.own_node_id();
     }
-    for link in manager.links().values() {
-      let seconds_in = elapsed / 1000;
+    for node in global.nodes() {
       // Connected is not the same as able to serve: a restarting node
       // accepts us well before it has started.
-      let started = link.is_started();
-      let started_before = was_started.insert(link.node_id, started);
-      let before = was.insert(link.node_id, link.status);
-      if before == Some(link.status) {
+      let status = view_of(node);
+      let started = node.published.is_started();
+      let started_before = was_started.insert(node.node_id, started);
+      let before = was.insert(node.node_id, status);
+      if before == Some(status) {
         if started && started_before == Some(false) {
-          println!("{:>5} s  node {} has started", seconds_in, link.node_id);
+          println!("{:>5} s  node {} has started", seconds_in, node.node_id);
         }
         continue;
       }
-      match link.status {
+      match status {
         LinkStatus::Connected => {
           recoveries += 1;
           if started {
             println!(
               "{:>5} s  node {} is connected again",
-              seconds_in, link.node_id
+              seconds_in, node.node_id
             );
           } else {
             println!(
               "{:>5} s  node {} is connected again, still starting",
-              seconds_in, link.node_id
+              seconds_in, node.node_id
             );
           }
         }
@@ -410,7 +411,7 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
           }
           println!(
             "{:>5} s  node {} reported failed by the cluster",
-            seconds_in, link.node_id
+            seconds_in, node.node_id
           );
           println!(
             "         not dialling it until the failure is reported handled"
@@ -420,12 +421,24 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
           if before == Some(LinkStatus::AwaitingTakeover) {
             println!(
               "{:>5} s  node {} may be dialled again",
-              seconds_in, link.node_id
+              seconds_in, node.node_id
             );
           } else {
             losses += 1;
-            report_loss(seconds_in, link.node_id, link.last_error);
-            println!("         dialling; no node has reported that it failed");
+            report_loss(seconds_in, node.node_id, node.last_error());
+            // We look five times a second, and a node can be lost,
+            // reported failed and reported handled in less. The recorded
+            // error says which kind of loss it was.
+            if was_reported_failed(node) {
+              println!(
+                "         reported failed by the cluster and already \
+                 handled; dialling"
+              );
+            } else {
+              println!(
+                "         dialling; no node has reported that it failed"
+              );
+            }
           }
         }
       }
@@ -436,12 +449,34 @@ fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
     "Done: {} loss(es), {} recovery(ies), {} of {} node(s) connected",
     losses,
     recoveries,
-    manager.num_connected(),
-    manager.links().len()
+    global.num_connected(),
+    global.nodes().len()
   );
-  report_links(manager);
-  manager.close();
+  report_nodes(global);
   0
+}
+
+/// How a node looks to someone watching: connected only once its link
+/// is installed and published, which is later than a connect thread
+/// claiming it, and otherwise whether the cluster has it down as failed.
+fn view_of(node: &NodeShared) -> LinkStatus {
+  if node.published.is_connected() {
+    return LinkStatus::Connected;
+  }
+  if node.membership() == LinkStatus::AwaitingTakeover {
+    return LinkStatus::AwaitingTakeover;
+  }
+  LinkStatus::Disconnected
+}
+
+/// True when the last thing recorded about the node is that the cluster
+/// reported it failed, as opposed to our link simply breaking.
+fn was_reported_failed(node: &NodeShared) -> bool {
+  let last = match node.last_error() {
+    Some(e) => e,
+    None => return false,
+  };
+  last.code == ic_port::err::IC_ERROR_NODE_DOWN
 }
 
 fn report_loss(seconds_in: u64, node_id: u32, error: Option<IcError>) {

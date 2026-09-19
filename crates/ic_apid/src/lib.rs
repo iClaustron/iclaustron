@@ -16,17 +16,24 @@
 //! signals itself and then wakes the user thread.
 //!
 //! Modules:
+//! - [`apid_global`]: the object every thread works from, and starting
+//!   and stopping the threads.
+//! - [`connect_thread`]: the thread per data node that dials it.
+//! - [`rec_thread`]: the receive thread, which reads and routes.
+//! - [`heartbeat`]: the heartbeat thread.
 //! - [`handshake`]: becoming a transporter connection to a data node.
 //! - [`signal_reader`]: turning the byte stream back into signals.
 //! - [`node_connect`]: one connection to one data node.
-//! - [`node_manager`]: keeping connections to every data node.
 //! - [`node_state`]: what every thread may know about a node, lock-free.
 //! - [`thread_conn`]: handing signals from a receive thread to the user
 //!   thread they are for.
 
+pub mod apid_global;
+pub mod connect_thread;
 pub mod handshake;
+pub mod heartbeat;
 pub mod node_connect;
-pub mod node_manager;
 pub mod node_state;
+pub mod rec_thread;
 pub mod signal_reader;
 pub mod thread_conn;

@@ -416,38 +416,16 @@ impl NodeConnection {
       return Err(IcError::new(err::IC_ERROR_LINK_LOST));
     }
     let mut signals: Vec<ReceivedSignal> = Vec::new();
-    while self.reader.has_message() {
-      let len = {
-        let words = self.reader.complete_words();
-        let message = header::decode(words)?;
-        let gsn_value = message.header.gsn();
-        ic_port::debug_print!(
-          IC_NDB_MESSAGE_LEVEL,
-          "<- node {} {} ({} words, {} section(s))",
-          self.node_id,
-          gsn::gsn_name(gsn_value).unwrap_or("unknown"),
-          message.data.len(),
-          message.header.num_sections
-        );
-        let mut sections: Vec<Vec<u32>> = Vec::new();
-        let mut index: usize = 0;
-        while index < message.header.num_sections as usize {
-          sections.push(message.sections[index].to_vec());
-          index += 1;
-        }
-        signals.push(ReceivedSignal {
-          gsn: gsn_value,
-          receiver_block: message.header.receiver_block,
-          sender_block: message.header.sender_block,
-          sender_node_id: self.node_id,
-          data: message.data.to_vec(),
-          sections,
-        });
-        message.total_words
-      };
-      self.reader.consume(len);
-    }
+    take_signals(&mut self.reader, self.node_id, &mut signals)?;
     Ok(signals)
+  }
+
+  /// Give up the connection as its two halves: the socket, and the
+  /// reader holding any bytes that arrived past the registration. A
+  /// connect thread does this to hand a registered link to the receive
+  /// thread that will own it from then on.
+  pub fn into_parts(self) -> (Connection, SignalReader) {
+    (self.conn, self.reader)
   }
 
   /// Take what a signal says about the node, if it is one that speaks
@@ -483,9 +461,54 @@ impl NodeConnection {
   }
 }
 
+/// Take every complete signal the reader holds, appending them to
+/// `out`, without reading the socket. Bytes of a signal not yet complete
+/// stay in the reader for the next read.
+///
+/// Shared by a connection that reads for itself and by a receive thread
+/// that owns the reader of a link handed to it.
+pub fn take_signals(
+  reader: &mut SignalReader,
+  node_id: u32,
+  out: &mut Vec<ReceivedSignal>,
+) -> Result<(), IcError> {
+  while reader.has_message() {
+    let len = {
+      let words = reader.complete_words();
+      let message = header::decode(words)?;
+      let gsn_value = message.header.gsn();
+      ic_port::debug_print!(
+        IC_NDB_MESSAGE_LEVEL,
+        "<- node {} {} ({} words, {} section(s))",
+        node_id,
+        gsn::gsn_name(gsn_value).unwrap_or("unknown"),
+        message.data.len(),
+        message.header.num_sections
+      );
+      let mut sections: Vec<Vec<u32>> = Vec::new();
+      let mut index: usize = 0;
+      while index < message.header.num_sections as usize {
+        sections.push(message.sections[index].to_vec());
+        index += 1;
+      }
+      out.push(ReceivedSignal {
+        gsn: gsn_value,
+        receiver_block: message.header.receiver_block,
+        sender_block: message.header.sender_block,
+        sender_node_id: node_id,
+        data: message.data.to_vec(),
+        sections,
+      });
+      message.total_words
+    };
+    reader.consume(len);
+  }
+  Ok(())
+}
+
 /// The words of a message seen as the bytes to put on the wire. No
 /// conversion happens: the protocol carries the sender's own order.
-fn words_as_bytes(words: &[u32]) -> &[u8] {
+pub(crate) fn words_as_bytes(words: &[u32]) -> &[u8] {
   let ptr = words.as_ptr() as *const u8;
   // SAFETY: the pointer comes from a live slice of that many words, so
   // the range covers exactly its storage, and every byte pattern is a

@@ -170,8 +170,16 @@ evidence wins and the rest do nothing". That is what compare-and-swap on
 one atomic word gives, so it needs no mutex either, but it is shared
 between threads in a way link state is not and the two must not be
 merged. The rule that ends every wait when no data node is connected
-needs a count of connected nodes, which is one more atomic. The
-single-threaded `node_manager` holds both as plain fields today.
+looks at every node's membership, which is one atomic load each.
+
+As built (`ic_apid::apid_global`, `NodeShared`): the membership word is
+changed only by compare-and-swap, except that a failure report sets it
+outright, since a report outranks whatever the link was doing. A connect
+thread moves it from disconnected to connected when it claims a new
+link, under the identity lock, so that a node id reclaim cannot happen
+in between. A failure report from any receive thread asks the owning
+receive thread to drop the link, through a per-node request word, rather
+than touching the link itself.
 
 What this buys, measured against the C: `node_failure_handling` in
 `ic_apid_rec_thread.ic` takes the heartbeat mutex, a receive state mutex
@@ -222,6 +230,29 @@ Consequences designed in:
   addressed to a block it does not route with only a debug print
   (`ic_apid_rec_thread.ic`, "Message to module id %u not allowed"),
   which makes a routing mistake invisible in a production build.
+
+### Building it in steps
+
+Agreed with the author (2026-09-19) as a sequence of steps, each ending
+somewhere testable against a live cluster:
+
+1. **Shapes on one thread.** Published node state, inboxes, the thread
+   table and the router, driven by a single polling loop. Done; the
+   polling loop has since been replaced by step 2.
+2. **Dedicated threads.** A connect thread per node, one receive thread
+   that owns the poll set and the router and executes the signals about
+   the node they came from, and one heartbeat thread. User threads send
+   under a per-node mutex held for one write, and wait on their inbox.
+   Done (`apid_global`, `connect_thread`, `rec_thread`, `heartbeat`).
+3. **User threads for real.** An `ApidConnection` per user thread
+   wrapping its inbox and block number, with a `poll` that executes what
+   it takes. The first key lookup lands here.
+4. **The real send path.** The claim flag, user threads writing outside
+   the mutex, the send thread pool taking overflow, adaptive send.
+5. **Several receive threads**, each given a share of the nodes at
+   start. Everything shared is already per node, so this is assignment.
+6. **Later.** Wake-up threads for rounds that wake hundreds of user
+   threads, and load-based placement of nodes on receive threads.
 
 Mutex ordering levels (lock lower before higher, never the reverse):
 
