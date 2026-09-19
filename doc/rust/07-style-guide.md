@@ -16,6 +16,7 @@ rewrite it. Performance is not an excuse; nothing below costs performance.
 | `Option<T>` | nullable values | replaces `NULL` checks with something the compiler enforces |
 | `match` | dispatch on enums/integers | same as `switch` without fall-through bugs |
 | Small `Option`/`Result` methods | `map`, `unwrap_or`, `unwrap_or_default`, `as_deref`, `is_none`, `take`, `ok_or` | these act on one value, not a collection; clippy requires them and they are shorter than the `match` they replace |
+| A single question about a collection | `.iter().find(...)`, `.any(...)`, `.all(...)`, `.position(...)`, `.count()` | one call that answers a question, not a pipeline that builds something; clippy requires these too |
 | `for i in 0..n`, `while`, `loop` | all iteration | explicit loops, no adaptor chains |
 | `&[T]`, `&mut [T]`, `Vec<T>` | buffers | pointer+length pairs with bounds checks |
 | `Box<T>` | heap objects with one owner | `malloc`+`free` handled by the compiler |
@@ -46,9 +47,14 @@ rewrite it. Performance is not an excuse; nothing below costs performance.
   `user_ref: *mut c_void` (C API) or `usize` (Rust API), exactly as in
   `IC_APID_CALLBACK_FUNC`.
 - **Iterator adaptor chains over collections** (`.iter().map().filter()
-  .collect()`). Write one `for` loop. This does not cover the small
-  `Option`/`Result` methods above: `opt.map(|v| v.to_string())` acts on a
-  single value and is allowed.
+  .collect()`). Write one `for` loop.
+
+  The line is between building something and asking something. Two or
+  more adaptors that transform a collection into another collection are
+  a pipeline: write the loop. One call that answers a question about a
+  collection (`find`, `any`, `all`, `position`, `count`) or that acts on
+  a single `Option` or `Result` (`map`, `unwrap_or`) is allowed, reads
+  as what it is, and is what clippy insists on.
 - **Macros** other than: `debug_entry!`/`debug_return!` (port of
   `DEBUG_ENTRY`/`DEBUG_RETURN`), `ic_assert!`, and the `bitflags`-free
   constant tables. No `macro_rules!` that generates types or impls.

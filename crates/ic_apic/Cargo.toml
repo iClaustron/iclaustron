@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "iClaustron configuration client: ndb_mgmd text protocol, config blob decode, typed API-node config"
+description = "iClaustron configuration client: ndb_mgmd protocol, config blob decode, typed API-node config"
 
 [lints]
 workspace = true
