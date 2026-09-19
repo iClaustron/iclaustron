@@ -21,6 +21,8 @@
 //! - [`connect_thread`]: the thread per data node that dials it.
 //! - [`rec_thread`]: the receive thread, which reads and routes.
 //! - [`heartbeat`]: the heartbeat thread.
+//! - [`dict_client`]: fetching a table's description.
+//! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
 //! - [`signal_reader`]: turning the byte stream back into signals.
 //! - [`node_connect`]: one connection to one data node.
@@ -30,6 +32,8 @@
 
 pub mod apid_global;
 pub mod connect_thread;
+pub mod dict_client;
+pub mod fragments;
 pub mod handshake;
 pub mod heartbeat;
 pub mod node_connect;

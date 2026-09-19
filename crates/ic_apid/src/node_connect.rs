@@ -30,6 +30,7 @@ use ic_comm::connection::Connection;
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header;
+use ic_ndb_signals::header::FragmentInfo;
 use ic_ndb_signals::header::SignalHeader;
 use ic_ndb_signals::qmgr::ApiRegConf;
 use ic_ndb_signals::qmgr::ApiRegRef;
@@ -143,6 +144,11 @@ pub struct ReceivedSignal {
   pub sender_block: u16,
   /// The node that sent it.
   pub sender_node_id: u32,
+  /// Where it stands in a train of fragments, when the sender had to
+  /// split a large signal. A fragment's data ends with the numbers of
+  /// the sections it carries and a fragment id; see
+  /// [`fragments`](crate::fragments).
+  pub fragment_info: FragmentInfo,
   /// The signal data words.
   pub data: Vec<u32>,
   /// The sections that were present, in order.
@@ -496,6 +502,7 @@ pub fn take_signals(
         receiver_block: message.header.receiver_block,
         sender_block: message.header.sender_block,
         sender_node_id: node_id,
+        fragment_info: message.header.fragment_info,
         data: message.data.to_vec(),
         sections,
       });

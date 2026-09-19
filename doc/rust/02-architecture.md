@@ -246,13 +246,80 @@ somewhere testable against a live cluster:
    Done (`apid_global`, `connect_thread`, `rec_thread`, `heartbeat`).
 3. **User threads for real.** An `ApidConnection` per user thread
    wrapping its inbox and block number, with a `poll` that executes what
-   it takes. The first key lookup lands here.
+   it takes, with **expected replies** and **fragments reassembled
+   before anyone sees them** (both below). The first key
+   lookup lands here, once a table can be fetched from the dictionary
+   (phase 4), since an operation names its table's id and version.
 4. **The real send path.** The claim flag, user threads writing outside
    the mutex, the send thread pool taking overflow, adaptive send.
 5. **Several receive threads**, each given a share of the nodes at
    start. Everything shared is already per node, so this is assignment.
 6. **Later.** Wake-up threads for rounds that wake hundreds of user
    threads, and load-based placement of nodes on receive threads.
+
+### Fragmented signals never leave the library (decided)
+
+Asked for by the author (2026-09-19): **the API reassembles fragmented
+signals in the user thread, so that neither an application nor a
+higher-level API built on this one ever deals with a fragment.** A
+fragment is a transport detail, like the signal header, and stays below
+the line the header already stays below.
+
+What that means for step 3:
+
+- Reassembly happens once, in the per-thread connection object's
+  `poll`, as the first thing done with each signal taken from the inbox.
+  Every handler, and everything above, receives only whole signals. A
+  handler is never written with fragments in mind.
+- It stays in the user thread, not the receive thread, for the reason
+  the rest of this chapter gives: the receive thread only routes, and
+  every fragment of a reply is addressed to the same block, so all of
+  them land in the same inbox in order.
+- The assembler's state belongs to the connection object, one per user
+  thread, keyed by sending node, sending block and fragment id. When a
+  node's link is lost, the fragments begun from that node can never be
+  finished and are dropped with it.
+- Expected replies (below) are matched against the whole signal. A
+  reply that arrives in five fragments is still one reply.
+
+Today `ic_apid::fragments` does the reassembly, but `dict_client` calls
+it itself, because there is no connection object yet. That call moves
+into `poll` with step 3, and `dict_client` then sees whole signals like
+everything else.
+
+### Expected replies (decided, not yet built)
+
+Asked for by the author (2026-09-19); to be implemented with step 3.
+
+**When a user thread sends a signal, it says which signal numbers it
+expects back.** A `TCSEIZEREQ` expects `TCSEIZECONF` or `TCSEIZEREF`; a
+`GET_TABINFOREQ` expects `GET_TABINFO_CONF` or `GET_TABINFOREF`; a
+`TCKEYREQ` expects `TCKEYCONF`, `TCKEYREF` and `TRANSID_AI`. The
+expectation is recorded with the request's own number (the `senderData`
+or connect pointer the reply echoes) and the node it was sent to, and is
+cleared when a final reply arrives.
+
+What it gives, as seen from here:
+
+- **A signal nobody expects is visible.** A late reply to a request
+  already answered or abandoned, or a signal of the wrong kind, is
+  caught at the point it arrives and counted, rather than being handled
+  as if it belonged. Today `dict_client` can only drop, with a trace,
+  whatever arrives while it waits, because nothing says who else might
+  be waiting for it.
+- **Several requests can wait on one inbox.** A signal is handed to the
+  expectation it matches, not to whichever code happens to be reading
+  the inbox, which is what the blocking fetch of today cannot do.
+- **A node failure fails exactly what was waiting on it.** The
+  expectations recorded against the failed node are the requests to
+  complete with a node-failure error, with no scan of every query.
+
+Open for when it is built: whether the check happens only in the user
+thread, where the expectation is created and consumed and needs no lock,
+or also in the receive thread, which would let it drop an unexpected
+signal before it reaches an inbox but would have to read another
+thread's expectations. The first keeps the receive thread a pure router,
+as the rest of this chapter wants.
 
 Mutex ordering levels (lock lower before higher, never the reverse):
 

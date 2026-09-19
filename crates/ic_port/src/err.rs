@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7139;
+pub const IC_LAST_ERROR: i32 = 7143;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -314,6 +314,15 @@ pub const IC_ERROR_NODEID_NOT_ALLOWED: i32 = 7138;
 /// Every user thread slot is taken. Each user thread is a block of its
 /// own in the cluster's eyes, and there is a fixed number of them.
 pub const IC_ERROR_TOO_MANY_USER_THREADS: i32 = 7139;
+/// The data nodes do not know the table, or the id asked for.
+pub const IC_ERROR_NO_SUCH_TABLE: i32 = 7140;
+/// A data node's dictionary refused a request for a reason other than
+/// the table not existing; the NDB code is in the trace.
+pub const IC_ERROR_DICT_REFUSED: i32 = 7141;
+/// No data node is connected and started, so there is nobody to ask.
+pub const IC_ERROR_NO_STARTED_DATA_NODE: i32 = 7142;
+/// A table description arrived that cannot be read.
+pub const IC_ERROR_BAD_TABLE_DESCRIPTION: i32 = 7143;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -673,6 +682,10 @@ pub fn message(code: i32) -> &'static str {
       "The configuration does not allow this node id here"
     }
     IC_ERROR_TOO_MANY_USER_THREADS => "Too many user threads",
+    IC_ERROR_NO_SUCH_TABLE => "No such table in the cluster",
+    IC_ERROR_DICT_REFUSED => "The data node's dictionary refused the request",
+    IC_ERROR_NO_STARTED_DATA_NODE => "No data node is connected and started",
+    IC_ERROR_BAD_TABLE_DESCRIPTION => "Table description cannot be read",
     _ => "Unknown error code",
   }
 }

@@ -145,6 +145,12 @@ superseded by records; `set_partition_id(s)` stays (scans, later).
 - `batch_hint`: `None | BatchSafe | BatchUnsafe` → TCKEYREQ bits 22/23.
 - Callbacks fire on the thread calling `poll`/`flush`; a `None` callback
   leaves the query for `get_next_executed_query`.
+- **No protocol detail reaches the caller.** A reply the data node sent
+  in fragments is put back together inside `poll` before it is executed,
+  so an application, or an API layered on this one, sees a completed
+  query and never a fragment, a signal or a signal number. (Decided by
+  the author, 2026-09-19; mechanism in chapter 02, "Fragmented signals
+  never leave the library".)
 
 ## Transactions
 

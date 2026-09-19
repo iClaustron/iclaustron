@@ -21,10 +21,16 @@
 //! - [`gsn`]: the signal numbers this library sends and receives.
 //! - [`header`]: the signal header and the layout of a message.
 //! - [`qmgr`]: heartbeats and what a data node says about itself.
+//! - [`simple_properties`]: the key-value encoding of descriptions.
+//! - [`dict_tab_info`]: what a table looks like to the dictionary.
+//! - [`get_tab_info`]: asking the dictionary for a table.
 //! - [`tc_seize`]: taking and giving back a transaction record.
 
 pub mod blocks;
+pub mod dict_tab_info;
+pub mod get_tab_info;
 pub mod gsn;
 pub mod header;
 pub mod qmgr;
+pub mod simple_properties;
 pub mod tc_seize;

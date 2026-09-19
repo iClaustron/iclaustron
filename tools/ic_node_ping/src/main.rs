@@ -223,7 +223,7 @@ fn seize_and_release(
     inbox.block_number(),
     blocks::IC_BLOCK_DBTC,
   );
-  if let Err(e) = global.send(node_id, &header, &seize.encode()) {
+  if let Err(e) = global.send(node_id, &header, &seize.encode(), &[]) {
     println!("node {:<4} seize not sent: {}", node_id, e.message());
     return;
   }
@@ -270,7 +270,7 @@ fn seize_and_release(
   };
   let header =
     SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, inbox.block_number(), tc_block);
-  if let Err(e) = global.send(node_id, &header, &release.encode()) {
+  if let Err(e) = global.send(node_id, &header, &release.encode(), &[]) {
     println!("node {:<4} release not sent: {}", node_id, e.message());
     return;
   }

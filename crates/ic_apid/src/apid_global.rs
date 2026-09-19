@@ -959,15 +959,17 @@ impl ApidGlobal {
     self.shared.node(node_id)
   }
 
-  /// Send a signal to a data node, from any thread.
+  /// Send a signal to a data node, from any thread. `sections` may be
+  /// empty; a long signal carries up to three.
   pub fn send(
     &self,
     node_id: u32,
     header: &SignalHeader,
     data: &[u32],
+    sections: &[&[u32]],
   ) -> Result<(), IcError> {
     match self.shared.node(node_id) {
-      Some(node) => node.send(header, data, &[]),
+      Some(node) => node.send(header, data, sections),
       None => Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     }
   }

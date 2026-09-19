@@ -204,15 +204,38 @@ Checksum: XOR of all words except the checksum word itself. Verify:
 
 When the sections exceed the per-signal limit the sender emits several
 signals with the same GSN and fragment info 1 (first), 2 (middle),
-3 (last). Non-final fragments carry as signal data only: one word per
-carried section giving the original section number, then one word with a
-per-connection fragment id. The final fragment carries the real signal
-data followed by the same mapping words and fragment id. Sections are
-split on 60-word boundaries. The receiver reassembles by
-(sender ref, fragment id). Verify: `src/ndbapi/TransporterFacade.cpp:2185-2405`,
-`src/ndbapi/AssembleFragments.hpp:58-145`, `NdbApiSignal.hpp:93-99`.
-On the API side only event (SUMA) traffic and DDL arrive fragmented;
-iClaustron already sends fragmented `CREATE_TABLE_REQ`.
+3 (last). **Every fragment carries the full original signal data**,
+followed by one word per section it carries giving that section's
+original number, then one word with the fragment id; its sections are
+the pieces of the original sections. Sections are split on 60-word
+boundaries, and the highest-numbered section is sent first. The receiver
+appends each carried piece to the original section its number names and
+tells trains apart by (sender, fragment id). Verify: `SimulatedBlock.cpp`,
+`sendFirstFragment` and `sendNextLinearFragment`; `NdbApiSignal.hpp`,
+`getFragmentId` and `getFragmentSectionNumber`.
+
+An earlier revision of this section said that only the final fragment
+carried the real signal data. That is wrong, and the reference's own
+`execGET_TABINFO_CONF` depends on it being wrong: it reads the request
+id from every fragment.
+
+**When a signal is split.** The fragmenting send sends a signal whole
+when its data and sections come to at most `MAX_SIZE_SINGLE_SIGNAL`,
+7400 words, and otherwise splits it into pieces of `FRAGMENT_WORD_SIZE`
+words: 3840 in a release build, 120 in a debug build (`VM_TRACE`). The
+one exception is `TRANSID_AI`, which a debug build splits above 240
+words (`DEB_MAX_SIZE_SINGLE_SIGNAL`). Verify: `SimulatedBlock.cpp`,
+`sendFirstFragment`; `ndb_limits.h:305-306`; `SimulatedBlock.hpp:1003-1011`.
+The comment above `FRAGMENT_WORD_SIZE` says splitting starts above the
+piece size; the code says otherwise, and a first draft of this section,
+written from the comment, was wrong in the same way.
+
+So a table description arrives whole unless it is very large, and row
+data from a debug data node can arrive in pieces. The API side must
+reassemble at least `GET_TABINFO_CONF` and `TRANSID_AI`, not only event
+traffic as an earlier revision said. `ic_apid::fragments` does it, in
+the user thread that executes the signal. The largest whole signal,
+7400 words, fits in our 32 KB receive limit.
 
 ## 3. Block numbers and references
 
@@ -614,12 +637,39 @@ are the short-form trains (unused by us). Verify:
   `include/kernel/signaldata/GetTabInfo.hpp:38-110`,
   `src/ndbapi/NdbDictionaryImpl.cpp:3605-3629`. iClaustron has the
   structs and GSNs but never sends the request.
+
+  As built (`ic_ndb_signals::get_tab_info`, `ic_apid::dict_client`),
+  each point checked against the reference:
+  - The name is the internal `database/def/table`. The length word
+    counts a terminating NUL, and section 0 is the name, the NUL and
+    zero padding to whole words, in native byte order since the receiver
+    reads it as bytes. The request goes to `DBDICT` on any started node,
+    with requestType 3 and schemaTransId 0.
+  - The answer's six words are senderData, tableId, gci, totalLen in
+    words, tableType, senderRef. `GET_TABINFOREF` is seven words, with
+    the error code sixth and the source line seventh; an older data node
+    sends five with the code last.
+  - The reference asks up to a hundred times, 50 to 100 ms apart with a
+    random spread, on Busy (701), on the node failing mid-request, and
+    on a timeout, each time to an alive node. 723 and 709 mean no such
+    table and are final.
+  - After parsing, a table placed by hash map needs its hash map, fetched
+    by id the same way. Not yet done: printing a table does not need it,
+    choosing a node for a key operation will.
 - SimpleProperties encoding (network byte order): head word
   `(valueType << 16) | key`; `Uint32 = 0` one word, `String = 1` and
   `Binary = 2` length word then padded bytes, `Uint64 = 4` two words low
   then high. Verify: `include/util/SimpleProperties.hpp:47-95`,
   `src/common/util/SimpleProperties.cpp:36-204`. iClaustron's
   `fill_create_table_info_properties` writes this format.
+
+  **Two byte orders in one buffer.** Heads, numbers and lengths are
+  stored with `htonl` into words of their own; string bytes are copied
+  in raw. The words then travel in the sender's order like any signal
+  word. So a receiver of the same byte order reads a number as
+  `from_be` of the native word and a string as the native bytes of its
+  words. A string's length counts its terminating NUL. The reader skips
+  keys it does not know (`unpack`, `ignoreUnknownKeys`).
 - DictTabInfo keys: table keys 1–30 and 127–171 (`TableName 1, TableId 2,
   TableVersion 3, NoOfKeyAttr 5, NoOfAttributes 6, KeyLength 12,
   FragmentTypeVal 13, TableTypeVal 18, PrimaryTableId 20,
@@ -638,6 +688,49 @@ are the short-form trains (unused by us). Verify:
   table is part of the protocol.** Verify:
   `include/kernel/signaldata/DictTabInfo.hpp:97-663`. iClaustron's
   `ic_apid_dict_signals.h` already lists keys and defaults.
+
+  How the reference reads it, and so how `ic_ndb_signals::dict_tab_info`
+  does:
+  - **The table part ends at the first `AttributeName`**, which is the
+    break key of the table mapping; `TableEnd` is not in it and is
+    skipped like any unknown key. Each attribute then runs from its
+    `AttributeName` to `AttributeEnd`, and there must be exactly
+    `NoOfAttributes` of them.
+  - **The defaults are the ones `Table::init` and `Attribute::init` set,
+    not the ones the comments beside the keys name.** The comments are
+    out of date in several places: the default fragment type is
+    hash-map partitioning (9), not a small table; `NoOfKeyAttr` starts
+    at 0, not 1; `MinLoadFactor` is 78, not 70. An attribute defaults to
+    type Unsigned, 32-bit elements, one element, fixed array, in memory.
+  - **Sizes are worked out, not read.** `translateExtType` sets the
+    element size and count from type, length, precision and scale, and
+    the parser calls it for every attribute. Decimals use MySQL's
+    `decimal_bin_size` (four bytes per nine digits either side of the
+    point, less for the rest), with precision at most 65 and scale below
+    31.
+  - The character set number is the high half of `AttributeExtPrecision`.
+    Char, Varchar, Longvarchar and Text must have one and nothing else
+    may, or the table is refused.
+  - A default value is binary: a four-byte attribute header in network
+    order whose low 15 bits are the value's byte size, then the value.
+    **Every column is sent one; a size of zero means no default.** The
+    value is not in network order, whatever the comment beside the code
+    says: `convertByteOrder` only acts on a big-endian host (or twice,
+    cancelling out, under `VM_TRACE`), so on a little-endian API the
+    bytes are used as the data node stored them. Verify:
+    `AttributeHeader.hpp`, `getByteSize`; `NdbSqlUtil.cpp`,
+    `convertByteOrder`. Found live: a first `ic_desc` printed a default
+    on every column.
+  - **No column marked as distribution key means the whole primary key
+    is.** A table created without a partitioning clause sends no
+    `AttributeDKey` at all; the reference then marks every primary key
+    column ("none is all"), and does the same when all of them are
+    marked. Key hashing depends on it. Verify: `NdbDictionaryImpl.cpp`,
+    `NdbTableImpl::computeAggregates`. Found live: `ndb_desc` showed
+    `DISTRIBUTION KEY` where a first `ic_desc` did not.
+  - The "frm data" `ndb_desc` counts is whichever of `FrmData` (27) or
+    `MysqlDictMetadata` (30) arrived; the reference keeps either as the
+    same blob. Verify: `NdbTableImpl::IndirectReader`.
 - After parsing a hash-map table, fetch its hash map object (also via
   `GET_TABINFOREQ` by id) to fill the hash → fragment array. Verify:
   `NdbDictionaryImpl.cpp:3703-3714`.

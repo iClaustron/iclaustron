@@ -86,8 +86,11 @@ typedef struct ic_conditional_assignment IC_CONDITIONAL_ASSIGNMENT;
 /* Enumerations (values are part of the ABI: append, never insert)     */
 /* ------------------------------------------------------------------ */
 
-/* Field (column) types as defined by RonDB 26.10. Values follow the NDB
-   type numbering so that they can be compared with ndb_desc output. */
+/* Field (column) types as defined by RonDB 26.10. The values are the NDB
+   type numbers the data nodes send, so a type read from the dictionary is
+   used as it is. An earlier draft of this header numbered them in a
+   different order from 14 on; nothing had been built on it. Verify:
+   ndb_constants.h, NDB_TYPE_*; ic_ndb_signals::dict_tab_info. */
 typedef enum ic_field_type
 {
   IC_TYPE_UNDEFINED = 0,
@@ -104,23 +107,23 @@ typedef enum ic_field_type
   IC_TYPE_FLOAT = 11,            /* 4 bytes IEEE */
   IC_TYPE_DOUBLE = 12,           /* 8 bytes IEEE */
   IC_TYPE_OLDDECIMAL = 13,
-  IC_TYPE_OLDDECIMALUNSIGNED = 14,
-  IC_TYPE_DECIMAL = 15,          /* packed binary, size from precision/scale */
-  IC_TYPE_DECIMALUNSIGNED = 16,
-  IC_TYPE_CHAR = 17,             /* fixed length, space padded */
-  IC_TYPE_VARCHAR = 18,          /* 1 length byte + data */
-  IC_TYPE_BINARY = 19,           /* fixed length */
-  IC_TYPE_VARBINARY = 20,        /* 1 length byte + data */
-  IC_TYPE_DATETIME = 21,         /* 8 bytes */
-  IC_TYPE_DATE = 22,             /* 3 bytes */
-  IC_TYPE_BLOB = 23,             /* not supported in records (later release) */
-  IC_TYPE_TEXT = 24,             /* not supported in records (later release) */
-  IC_TYPE_BIT = 25,              /* n bits, stored in ceil(n/32) words */
-  IC_TYPE_LONGVARCHAR = 26,      /* 2 length bytes (little endian) + data */
-  IC_TYPE_LONGVARBINARY = 27,    /* 2 length bytes (little endian) + data */
-  IC_TYPE_TIME = 28,             /* 3 bytes */
-  IC_TYPE_YEAR = 29,             /* 1 byte */
-  IC_TYPE_TIMESTAMP = 30,        /* 4 bytes */
+  IC_TYPE_CHAR = 14,             /* fixed length, space padded */
+  IC_TYPE_VARCHAR = 15,          /* 1 length byte + data */
+  IC_TYPE_BINARY = 16,           /* fixed length */
+  IC_TYPE_VARBINARY = 17,        /* 1 length byte + data */
+  IC_TYPE_DATETIME = 18,         /* 8 bytes */
+  IC_TYPE_DATE = 19,             /* 3 bytes */
+  IC_TYPE_BLOB = 20,             /* not supported in records (later release) */
+  IC_TYPE_TEXT = 21,             /* not supported in records (later release) */
+  IC_TYPE_BIT = 22,              /* n bits, stored in ceil(n/32) words */
+  IC_TYPE_LONGVARCHAR = 23,      /* 2 length bytes (little endian) + data */
+  IC_TYPE_LONGVARBINARY = 24,    /* 2 length bytes (little endian) + data */
+  IC_TYPE_TIME = 25,             /* 3 bytes */
+  IC_TYPE_YEAR = 26,             /* 1 byte */
+  IC_TYPE_TIMESTAMP = 27,        /* 4 bytes */
+  IC_TYPE_OLDDECIMALUNSIGNED = 28,
+  IC_TYPE_DECIMAL = 29,          /* packed binary, size from precision/scale */
+  IC_TYPE_DECIMALUNSIGNED = 30,
   IC_TYPE_TIME2 = 31,            /* 3 + fractional bytes */
   IC_TYPE_DATETIME2 = 32,        /* 5 + fractional bytes */
   IC_TYPE_TIMESTAMP2 = 33        /* 4 + fractional bytes */
