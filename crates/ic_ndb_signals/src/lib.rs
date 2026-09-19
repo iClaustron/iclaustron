@@ -20,7 +20,9 @@
 //! - [`blocks`]: block numbers and the references built from them.
 //! - [`gsn`]: the signal numbers this library sends and receives.
 //! - [`header`]: the signal header and the layout of a message.
+//! - [`qmgr`]: heartbeats and what a data node says about itself.
 
 pub mod blocks;
 pub mod gsn;
 pub mod header;
+pub mod qmgr;
