@@ -232,6 +232,20 @@ impl MgmClient {
     }
   }
 
+  fn field_i32(
+    fields: &HashMap<String, String>,
+    name: &str,
+  ) -> Result<i32, IcError> {
+    let text = match fields.get(name) {
+      Some(value) => value,
+      None => return Err(IcError::new(err::IC_PROTOCOL_ERROR)),
+    };
+    match text.parse::<i32>() {
+      Ok(value) => Ok(value),
+      Err(_) => Err(IcError::new(err::IC_PROTOCOL_ERROR)),
+    }
+  }
+
   fn read_version(&mut self) -> Result<MgmVersion, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::read_version");
     self.send_request(IC_CMD_GET_VERSION, &[])?;
@@ -340,12 +354,18 @@ impl MgmClient {
   /// Ask for one parameter of the link between two nodes, which is how
   /// a data node's port is found when the configuration says zero
   /// (`ndb_mgm_get_connection_int_parameter`).
+  ///
+  /// The answer is signed, and for a port the sign carries meaning: a
+  /// negative value is a port the node was given when it started
+  /// rather than one written in the configuration, and the port itself
+  /// is the absolute value. A value of `-59733` means port 59733,
+  /// assigned dynamically.
   pub fn get_connection_parameter(
     &mut self,
     node_1: u32,
     node_2: u32,
     parameter: u32,
-  ) -> Result<u32, IcError> {
+  ) -> Result<i32, IcError> {
     let _dbg = ic_port::debug_entry!("MgmClient::get_connection_parameter");
     self.send_request(
       IC_CMD_GET_CONNECTION_PARAMETER,
@@ -357,7 +377,7 @@ impl MgmClient {
     )?;
     let fields = self.read_reply(IC_REPLY_GET_CONNECTION_PARAMETER)?;
     self.check_result(&fields)?;
-    MgmClient::field_u32(&fields, IC_ARG_VALUE)
+    MgmClient::field_i32(&fields, IC_ARG_VALUE)
   }
 
   /// Hand this connection over to the signal protocol: after this the

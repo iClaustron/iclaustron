@@ -221,14 +221,16 @@ pub struct ApiRegConf {
   pub qmgr_ref: u32,
   /// The node's NDB version.
   pub version: u32,
-  /// How often the node expects to hear from us, in milliseconds. This
-  /// is the same number and the same unit as `HeartbeatIntervalDbApi`
-  /// in the configuration.
+  /// How often the node expects to hear from us, in hundredths of a
+  /// second. Use [`heartbeat_interval_ms`](ApiRegConf::heartbeat_interval_ms)
+  /// rather than this field directly.
   ///
-  /// The management server's own heartbeat, which travels a different
-  /// path, is in hundredths of a second, so the C++ cluster manager
-  /// multiplies that one by ten. Do not apply that here.
-  pub api_heartbeat_interval_ms: u32,
+  /// The configuration states `HeartbeatIntervalDbApi` in
+  /// milliseconds, and the signal carries a tenth of it: a cluster
+  /// configured for 30000 ms answers 3000 here. Confirmed against a
+  /// live RonDB 26.10 cluster, and matching the C++ cluster manager,
+  /// which multiplies this field by ten.
+  pub api_heartbeat_interval: u32,
   /// The node's MySQL version.
   pub mysql_version: u32,
   /// The oldest version among the data nodes, which limits what the
@@ -241,6 +243,11 @@ pub struct ApiRegConf {
 }
 
 impl ApiRegConf {
+  /// How often the node expects to hear from us, in milliseconds.
+  pub fn heartbeat_interval_ms(&self) -> u32 {
+    self.api_heartbeat_interval * 10
+  }
+
   /// Read the answer out of the words of a signal.
   pub fn decode(words: &[u32]) -> Result<ApiRegConf, IcError> {
     if words.len() < IC_API_REGCONF_LEN {
@@ -249,7 +256,7 @@ impl ApiRegConf {
     Ok(ApiRegConf {
       qmgr_ref: words[0],
       version: words[1],
-      api_heartbeat_interval_ms: words[2],
+      api_heartbeat_interval: words[2],
       mysql_version: words[3],
       min_db_version: words[4],
       node_state: NodeState::decode(&words[5..5 + IC_NODE_STATE_LEN])?,
@@ -262,7 +269,7 @@ impl ApiRegConf {
     let mut words = [0u32; IC_API_REGCONF_LEN];
     words[0] = self.qmgr_ref;
     words[1] = self.version;
-    words[2] = self.api_heartbeat_interval_ms;
+    words[2] = self.api_heartbeat_interval;
     words[3] = self.mysql_version;
     words[4] = self.min_db_version;
     let state = &self.node_state;
@@ -349,7 +356,7 @@ mod tests {
     ApiRegConf {
       qmgr_ref: number_to_ref(IC_BLOCK_QMGR, 2),
       version: 0x1A_0A00,
-      api_heartbeat_interval_ms: 3000,
+      api_heartbeat_interval: 3000,
       mysql_version: 0x1A_0A00,
       min_db_version: 0x1A_0A00,
       min_api_version: 0x1A_0A00,
@@ -366,7 +373,9 @@ mod tests {
     let decoded = ApiRegConf::decode(&words).expect("decode");
     assert_eq!(decoded.qmgr_ref, original.qmgr_ref);
     assert_eq!(ref_to_node(decoded.qmgr_ref), 2);
-    assert_eq!(decoded.api_heartbeat_interval_ms, 3000);
+    assert_eq!(decoded.api_heartbeat_interval, 3000);
+    // The configuration would call this 30000 milliseconds.
+    assert_eq!(decoded.heartbeat_interval_ms(), 30000);
     assert_eq!(decoded.min_db_version, 0x1A_0A00);
     assert_eq!(decoded.min_api_version, 0x1A_0A00);
     assert_eq!(decoded.node_state.start_level, StartLevel::Started);

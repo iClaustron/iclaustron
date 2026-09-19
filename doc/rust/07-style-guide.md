@@ -114,6 +114,15 @@ The construct-by-construct translation table, with explanations and two
 worked examples, is [11-c-to-rust-mappings.md](11-c-to-rust-mappings.md).
 Every crate `MODULE.md` adds a "Rust notes for C readers" section.
 
+## Tracing
+
+`debug_print!(LEVEL, ...)` is always compiled and gated at run time on
+the level bits, so any build can be traced by setting a level. A
+diagnostic that needs a rebuild to switch on is one nobody uses in the
+field, and the cost is a single predictable branch. `debug_entry!`, the
+per-call entry and exit tracing, stays behind the `debug_build` feature
+because its volume is different in kind.
+
 ## Debug for public types
 
 Every public type that a caller holds gets a `Debug` implementation,

@@ -57,6 +57,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic_node_ping"
+version = "0.1.0"
+dependencies = [
+ "ic_apic",
+ "ic_apid",
+ "ic_port",
+ "ic_util",
+]
+
+[[package]]
 name = "ic_port"
 version = "0.1.0"
 dependencies = [

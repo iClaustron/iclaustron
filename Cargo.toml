@@ -10,6 +10,7 @@ members = [
     "crates/ic_apid",
     "crates/ic_capi",
     "tools/ic_config_dump",
+    "tools/ic_node_ping",
     "xtask",
 ]
 

@@ -83,6 +83,12 @@ impl std::fmt::Debug for NodeConnection {
 
 /// The port to dial for a link, asking the management server when the
 /// configuration says the node picks its own.
+///
+/// The management server answers with a signed number whose sign says
+/// where the port came from: a negative value is a port assigned when
+/// the node started, and the port is its absolute value, so `-59733`
+/// means port 59733. Zero means the node has not been given one yet,
+/// which is what an unstarted node looks like.
 pub fn resolve_port(
   link: &TcpLinkConfig,
   own_node_id: u32,
@@ -91,14 +97,15 @@ pub fn resolve_port(
   if !link.port_is_dynamic() {
     return Ok(link.server_port);
   }
-  // The two nodes are named in the order the configuration has them,
-  // which is not necessarily ours first.
-  let port = mgm.get_connection_parameter(
+  let other = link.other_node(own_node_id);
+  // The nodes are named in the order the configuration has them, which
+  // is not necessarily ours first.
+  let value = mgm.get_connection_parameter(
     link.node_1,
     link.node_2,
     IC_CFG_CONNECTION_SERVER_PORT,
   )?;
-  let other = link.other_node(own_node_id);
+  let port = value.unsigned_abs();
   if port == 0 || port > u16::MAX as u32 {
     ic_port::ic_printf!(
       "Node {} has no port yet; it is probably still starting",
@@ -106,6 +113,17 @@ pub fn resolve_port(
     );
     return Err(IcError::new(err::IC_ERROR_NODE_DOWN));
   }
+  ic_port::debug_print!(
+    ic_port::debug::IC_COMM_LEVEL,
+    "Node {} listens on port {}{}",
+    other,
+    port,
+    if value < 0 {
+      " (assigned at startup)"
+    } else {
+      ""
+    }
+  );
   Ok(port as u16)
 }
 
@@ -299,8 +317,10 @@ impl NodeConnection {
           conf.node_state.start_level,
           conf.node_state.node_group
         );
-        if conf.api_heartbeat_interval_ms != 0 {
-          self.heartbeat_interval_ms = conf.api_heartbeat_interval_ms;
+        if conf.api_heartbeat_interval != 0 {
+          // The signal carries hundredths of a second; this field and
+          // the configuration are both in milliseconds.
+          self.heartbeat_interval_ms = conf.heartbeat_interval_ms();
         }
         self.node_state = Some(conf.node_state);
         return Ok(());

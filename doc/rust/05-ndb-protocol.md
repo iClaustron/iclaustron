@@ -168,14 +168,24 @@ compatibility and answers `API_REGREF` on mismatch. We announce 26.10.0
   reference, NDB version, MySQL version (3 words). Verify:
   `include/kernel/signaldata/ApiRegSignalData.hpp:34-51`,
   `src/ndbapi/ClusterMgr.cpp:371-561`.
-- `API_REGCONF` (GSN 1): `qmgrRef, version, apiHeartbeatInterval
-  (centiseconds), mysql_version, minDbVersion, minApiVersion, nodeState`
-  where nodeState includes start level, node group, dynamic id, start
-  phase, single-user mode and a connected-nodes bitmap. A data node counts
-  as usable when started, or in single-user mode, or (RonDB) past the
-  restart barrier while recovering. Verify: `ApiRegSignalData.hpp:87-108`,
-  `ClusterMgr.cpp:1676-1905`. iClaustron's `execAPI_REGCONF_v0` decodes
-  this and is carried over.
+- `API_REGCONF` (GSN 1), 22 words in this order: `qmgrRef, version,
+  apiHeartbeatInterval, mysql_version, minDbVersion`, then the 16-word
+  `nodeState`, then `minApiVersion` **after** it. The order matters and
+  is easy to get wrong; `minApiVersion` is the last word, not the sixth.
+  The node state holds start level, node group, dynamic id, start phase,
+  single-user mode and a connected-nodes bitmap of 256 bits, which stays
+  256 bits however far node ids rise because it only covers data nodes.
+  A data node counts as usable when started, or in single-user mode, or
+  (RonDB) past the restart barrier while recovering.
+
+  `apiHeartbeatInterval` is in **hundredths of a second**, a tenth of the
+  `HeartbeatIntervalDbApi` the configuration states in milliseconds: a
+  cluster configured for 30000 ms answers 3000 here. Confirmed against a
+  live RonDB 26.10 cluster, and matching the C++ cluster manager, which
+  multiplies this field by ten.
+
+  Verify: `ApiRegSignalData.hpp:87-108`, `NodeState.hpp:113`,
+  `ClusterMgr.cpp:1676-1905`.
 - `API_REGREF` (GSN 2): rejection, e.g. version mismatch.
 - Node declared dead after 4 missed heartbeats; then `NODE_FAILREP`
   (GSN 26) is sent to self and broadcast to all client blocks, followed by
@@ -209,7 +219,15 @@ over.
   `Content-Type: ndbconfig/octet-stream`,
   `Content-Transfer-Encoding: base64`; then `Content-Length + 1` raw bytes
   of base64 follow the empty line. Verify: `mgmapi.cpp:3090-3214`.
-- `get connection parameter` for dynamic ports;
+- `get connection parameter` with `node1`, `node2` and `param`,
+  answering `value` and `result`. The value is **signed**, and for
+  `CFG_CONNECTION_SERVER_PORT` (406) the sign is information: a negative
+  value means the port was assigned when the node started rather than
+  written in the configuration, and the port is its absolute value, so
+  `-59733` means port 59733. Zero means the node has not been given a
+  port yet. Verify: `TransporterRegistry.cpp:3997`, which takes the
+  same absolute value on the listening side.
+- Also
   `transporter connect` (1.3).
 
 ### 5.2 Binary configuration format

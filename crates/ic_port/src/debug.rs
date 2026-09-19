@@ -261,10 +261,11 @@ fn print_line(text: &str, thread_id: u32, indent_level: usize) {
     i += 1;
   }
   line.push_str(text);
-  if SCREEN.load(Ordering::Relaxed) {
+  let mut slot = lock_file();
+  // With no debug file open, the screen is the only place to go.
+  if SCREEN.load(Ordering::Relaxed) || slot.is_none() {
     crate::ic_printf!("{}", line);
   }
-  let mut slot = lock_file();
   if let Some(f) = slot.as_mut() {
     let _ = f.write_all(line.as_bytes());
     let _ = f.write_all(b"\n");
@@ -275,6 +276,8 @@ fn print_line(text: &str, thread_id: u32, indent_level: usize) {
 /// Print one debug line for the calling thread, if its output is
 /// enabled (`ic_debug_print_char_buf`).
 pub fn print_str(text: &str) {
+  // A thread that never registered itself still deserves to be traced.
+  ensure_thread_inited();
   let mut enabled = false;
   let mut thread_id: u32 = 0;
   let mut indent: usize = 0;
@@ -495,11 +498,17 @@ macro_rules! debug_entry {
 }
 
 /// `debug_print!(LEVEL, "format", args...)`: print a debug line when the
-/// level bit is set. Nothing in a normal build.
+/// level bit is set.
+///
+/// Always compiled, and gated at run time on the level. Tracing a
+/// release binary in the field is worth far more than the one
+/// predictable branch it costs, and a diagnostic that needs a rebuild
+/// to switch on is one nobody uses. The high-volume entry and exit
+/// tracing of `debug_entry!` stays behind the `debug_build` feature.
 #[macro_export]
 macro_rules! debug_print {
     ($level:expr, $($arg:tt)*) => {
-        if $crate::debug::IC_DEBUG_BUILD && $crate::debug::is_level($level) {
+        if $crate::debug::is_level($level) {
             $crate::debug::print_fmt(format_args!($($arg)*));
         }
     };
