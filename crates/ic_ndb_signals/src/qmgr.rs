@@ -323,6 +323,116 @@ impl ApiRegRef {
   }
 }
 
+/// Words of signal data in an `NF_COMPLETEREP`.
+/// Verify: `NFCompleteRep.hpp`, `SignalLength`.
+pub const IC_NF_COMPLETEREP_LEN: usize = 5;
+
+/// Words of signal data in the modern `NODE_FAILREP`, whose bitmap of
+/// failed nodes travels in a section rather than in the signal.
+/// Verify: `NodeFailRep.hpp`, `SignalLength`.
+pub const IC_NODE_FAILREP_LEN: usize = 3;
+
+/// One or more nodes have failed.
+///
+/// The bitmap of failed nodes is carried in one of three ways, which is
+/// why its length is never assumed: in the modern form the signal data
+/// is three words and the bitmap is in section 0; in the two older
+/// forms it follows the three words inside the signal, sized either for
+/// data nodes alone or for every node. The length is always the signal
+/// data length less three.
+/// Verify: `NodeFailRep.hpp`, `getNodeMaskLength`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NodeFailRep {
+  /// Which failure this is, counting up as nodes fail.
+  pub fail_number: u32,
+  /// The master data node, set only when the report comes from the
+  /// start and stop block rather than the cluster manager.
+  pub master_node_id: u32,
+  /// How many nodes the bitmap names.
+  pub num_nodes: u32,
+  /// The nodes that failed.
+  pub failed_nodes: Vec<u32>,
+}
+
+impl NodeFailRep {
+  /// Read the report. `section` is section 0 of the signal, which is
+  /// where the bitmap lives unless the signal carries it inline.
+  pub fn decode(data: &[u32], section: &[u32]) -> Result<NodeFailRep, IcError> {
+    if data.len() < IC_NODE_FAILREP_LEN {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    // Anything past the three fixed words is the bitmap; if there is
+    // nothing past them, it came in the section.
+    let bitmap: &[u32] = if data.len() > IC_NODE_FAILREP_LEN {
+      &data[IC_NODE_FAILREP_LEN..]
+    } else {
+      section
+    };
+    Ok(NodeFailRep {
+      fail_number: data[0],
+      master_node_id: data[1],
+      num_nodes: data[2],
+      failed_nodes: nodes_in_bitmap(bitmap),
+    })
+  }
+}
+
+/// The node ids set in a bitmap of any length.
+pub fn nodes_in_bitmap(bitmap: &[u32]) -> Vec<u32> {
+  let mut out: Vec<u32> = Vec::new();
+  let mut word: usize = 0;
+  while word < bitmap.len() {
+    let mut bit: u32 = 0;
+    while bit < 32 {
+      if (bitmap[word] & (1 << bit)) != 0 {
+        out.push((word as u32) * 32 + bit);
+      }
+      bit += 1;
+    }
+    word += 1;
+  }
+  out
+}
+
+/// A failed node's work has been taken over, so it may be reconnected.
+///
+/// A data node sends one of these per block, and one with a block
+/// number of zero meaning the whole node is finished. Until that
+/// arrives, reconnecting to the failed node is premature.
+/// Verify: `NFCompleteRep.hpp`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NfCompleteRep {
+  /// Which block finished, or zero for the whole node.
+  pub block_no: u32,
+  /// The node reporting.
+  pub node_id: u32,
+  /// The node that failed.
+  pub failed_node_id: u32,
+  /// Where the report came from.
+  pub from: u32,
+}
+
+impl NfCompleteRep {
+  /// Read the report.
+  pub fn decode(data: &[u32]) -> Result<NfCompleteRep, IcError> {
+    if data.len() < IC_NF_COMPLETEREP_LEN {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    Ok(NfCompleteRep {
+      block_no: data[0],
+      node_id: data[1],
+      failed_node_id: data[2],
+      from: data[4],
+    })
+  }
+
+  /// True when the whole node has finished failing, which is when it
+  /// may be connected to again.
+  pub fn is_whole_node(&self) -> bool {
+    self.block_no == 0
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -425,6 +535,65 @@ mod tests {
     let words = [0, 0, 77, 0];
     let refusal = ApiRegRef::decode(&words).expect("decode");
     assert_eq!(refusal.reason(), ApiRegRefError::Unknown);
+  }
+
+  fn bitmap_of(nodes: &[u32], words: usize) -> Vec<u32> {
+    let mut bitmap = vec![0u32; words];
+    for node in nodes {
+      bitmap[(*node / 32) as usize] |= 1 << (*node & 31);
+    }
+    bitmap
+  }
+
+  #[test]
+  fn a_failure_report_in_any_of_its_three_shapes() {
+    // Modern: three words and the bitmap in a section.
+    let section = bitmap_of(&[2], 64);
+    let report = NodeFailRep::decode(&[7, 1, 1], &section).expect("modern");
+    assert_eq!(report.fail_number, 7);
+    assert_eq!(report.master_node_id, 1);
+    assert_eq!(report.num_nodes, 1);
+    assert_eq!(report.failed_nodes, vec![2]);
+
+    // Older, data nodes only: the bitmap follows the three words.
+    let mut data = vec![7u32, 1, 2];
+    data.extend_from_slice(&bitmap_of(&[2, 3], 2));
+    let report = NodeFailRep::decode(&data, &[]).expect("inline short");
+    assert_eq!(report.failed_nodes, vec![2, 3]);
+
+    // Older, every node: a longer bitmap, same place.
+    let mut data = vec![7u32, 1, 2];
+    data.extend_from_slice(&bitmap_of(&[2, 192], 64));
+    let report = NodeFailRep::decode(&data, &[]).expect("inline long");
+    assert_eq!(report.failed_nodes, vec![2, 192]);
+
+    // An inline bitmap wins over a section, since a signal carrying
+    // both would be malformed and the inline one is what it claims.
+    let report = NodeFailRep::decode(&data, &section).expect("both");
+    assert_eq!(report.failed_nodes, vec![2, 192]);
+    assert!(NodeFailRep::decode(&[7, 1], &section).is_err());
+  }
+
+  #[test]
+  fn a_takeover_report_says_when_a_node_is_done() {
+    let per_block = NfCompleteRep::decode(&[245, 1, 2, 0, 1]).expect("dec");
+    assert_eq!(per_block.block_no, 245);
+    assert_eq!(per_block.node_id, 1);
+    assert_eq!(per_block.failed_node_id, 2);
+    assert!(!per_block.is_whole_node());
+    let whole = NfCompleteRep::decode(&[0, 1, 2, 0, 1]).expect("dec");
+    assert!(whole.is_whole_node());
+    assert!(NfCompleteRep::decode(&[0, 1, 2, 0]).is_err());
+  }
+
+  #[test]
+  fn bitmaps_of_any_length_are_read() {
+    assert_eq!(nodes_in_bitmap(&[]), Vec::<u32>::new());
+    assert_eq!(nodes_in_bitmap(&[0b1010]), vec![1, 3]);
+    assert_eq!(nodes_in_bitmap(&[0, 1]), vec![32]);
+    // A bitmap sized for every node reaches far past 255.
+    let wide = bitmap_of(&[1600], 64);
+    assert_eq!(nodes_in_bitmap(&wide), vec![1600]);
   }
 
   #[test]

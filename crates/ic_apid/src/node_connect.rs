@@ -127,15 +127,65 @@ pub fn resolve_port(
   Ok(port as u16)
 }
 
+/// A signal taken off the wire, owning its words.
+///
+/// The words are copied out of the receive buffer so that the buffer
+/// can be reused while the signal is handled. A signal handed to
+/// another thread has to own its words in any case.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReceivedSignal {
+  /// Which signal it is.
+  pub gsn: u16,
+  /// The signal data words.
+  pub data: Vec<u32>,
+  /// The sections that were present, in order.
+  pub sections: Vec<Vec<u32>>,
+}
+
+impl ReceivedSignal {
+  /// One section, or an empty slice when the signal did not carry it.
+  pub fn section(&self, index: usize) -> &[u32] {
+    match self.sections.get(index) {
+      Some(section) => section,
+      None => &[],
+    }
+  }
+}
+
 impl NodeConnection {
   /// Connect to a data node and register with it, so that it will
   /// answer our signals.
+  ///
+  /// The port is asked of the management server, because a data node
+  /// that has restarted comes back on a different one. A caller that
+  /// manages the management connection itself should ask with
+  /// [`resolve_port`] and call [`connect_to_port`] instead, so that a
+  /// management server that has gone away can be told apart from a data
+  /// node that has.
+  ///
+  /// [`connect_to_port`]: NodeConnection::connect_to_port
   pub fn connect(
     config: &ClusterConfig,
     mgm: &mut MgmClient,
     node_id: u32,
   ) -> Result<NodeConnection, IcError> {
     let _dbg = ic_port::debug_entry!("NodeConnection::connect");
+    let link = match config.link_to(node_id) {
+      Some(link) => link.clone(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    let port = resolve_port(&link, config.api.node_id, mgm)?;
+    NodeConnection::connect_to_port(config, node_id, port)
+  }
+
+  /// Connect to a data node on a port already known and register with
+  /// it.
+  pub fn connect_to_port(
+    config: &ClusterConfig,
+    node_id: u32,
+    port: u16,
+  ) -> Result<NodeConnection, IcError> {
+    let _dbg = ic_port::debug_entry!("NodeConnection::connect_to_port");
     let link = match config.link_to(node_id) {
       Some(link) => link.clone(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
@@ -151,7 +201,6 @@ impl NodeConnection {
       );
       return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
     }
-    let port = resolve_port(&link, own_node_id, mgm)?;
     let connect_config = ConnectConfig {
       server_name: link.server_host.clone(),
       server_port: port,
@@ -345,6 +394,68 @@ impl NodeConnection {
     }
   }
 
+  /// Read whatever has arrived and return every whole signal in it,
+  /// without waiting.
+  ///
+  /// This is what a receive thread calls once a poll set says the
+  /// socket is ready. An empty result means the bytes that arrived did
+  /// not complete a signal, which is ordinary.
+  pub fn read_available(&mut self) -> Result<Vec<ReceivedSignal>, IcError> {
+    let size = self.reader.read_from(&self.conn)?;
+    if size == 0 {
+      // The peer closed. This is how a node failure is noticed
+      // promptly, rather than when the next send fails.
+      return Err(IcError::new(err::IC_ERROR_NODE_DOWN));
+    }
+    let mut signals: Vec<ReceivedSignal> = Vec::new();
+    while self.reader.has_message() {
+      let len = {
+        let words = self.reader.complete_words();
+        let message = header::decode(words)?;
+        let gsn_value = message.header.gsn();
+        ic_port::debug_print!(
+          IC_NDB_MESSAGE_LEVEL,
+          "<- node {} {} ({} words, {} section(s))",
+          self.node_id,
+          gsn::gsn_name(gsn_value).unwrap_or("unknown"),
+          message.data.len(),
+          message.header.num_sections
+        );
+        let mut sections: Vec<Vec<u32>> = Vec::new();
+        let mut index: usize = 0;
+        while index < message.header.num_sections as usize {
+          sections.push(message.sections[index].to_vec());
+          index += 1;
+        }
+        signals.push(ReceivedSignal {
+          gsn: gsn_value,
+          data: message.data.to_vec(),
+          sections,
+        });
+        message.total_words
+      };
+      self.reader.consume(len);
+    }
+    Ok(signals)
+  }
+
+  /// Take what a signal says about the node, if it is one that speaks
+  /// about node state.
+  pub fn apply_signal(&mut self, gsn_value: u16, data: &[u32]) -> bool {
+    if gsn_value != gsn::IC_GSN_API_REGCONF {
+      return false;
+    }
+    let conf = match ApiRegConf::decode(data) {
+      Ok(conf) => conf,
+      Err(_) => return false,
+    };
+    if conf.api_heartbeat_interval != 0 {
+      self.heartbeat_interval_ms = conf.heartbeat_interval_ms();
+    }
+    self.node_state = Some(conf.node_state);
+    true
+  }
+
   /// Send a heartbeat and read the answer, which is what keeps a
   /// connection alive.
   pub fn heartbeat_round(&mut self, wait_ms: u32) -> Result<(), IcError> {
@@ -373,6 +484,34 @@ fn words_as_bytes(words: &[u32]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
+  use super::ReceivedSignal;
+
+  #[test]
+  fn a_signal_without_sections_reads_them_as_empty() {
+    // A handler asks for the section it expects without first asking
+    // whether it is there, so an absent one has to read as empty
+    // rather than panic.
+    let signal = ReceivedSignal {
+      gsn: 26,
+      data: vec![1, 2, 3],
+      sections: Vec::new(),
+    };
+    assert!(signal.section(0).is_empty());
+    assert!(signal.section(2).is_empty());
+  }
+
+  #[test]
+  fn a_signal_hands_back_the_sections_it_carries() {
+    let signal = ReceivedSignal {
+      gsn: 26,
+      data: vec![1, 2, 3],
+      sections: vec![vec![0x10], vec![0x20, 0x21]],
+    };
+    assert_eq!(signal.section(0), &[0x10]);
+    assert_eq!(signal.section(1), &[0x20, 0x21]);
+    assert!(signal.section(2).is_empty());
+  }
+
   use super::*;
   use ic_apic::data::ApiNodeConfig;
 

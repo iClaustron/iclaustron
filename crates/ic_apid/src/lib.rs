@@ -19,7 +19,9 @@
 //! - [`handshake`]: becoming a transporter connection to a data node.
 //! - [`signal_reader`]: turning the byte stream back into signals.
 //! - [`node_connect`]: one connection to one data node.
+//! - [`node_manager`]: keeping connections to every data node.
 
 pub mod handshake;
 pub mod node_connect;
+pub mod node_manager;
 pub mod signal_reader;

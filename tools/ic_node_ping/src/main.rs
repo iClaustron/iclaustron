@@ -9,6 +9,10 @@
 //! for as long as asked. It is what proves the library can talk to a
 //! cluster at all.
 //!
+//! It also shows what happens when a node stops. Restart a data node
+//! while it runs and the loss should be reported within a heartbeat,
+//! then the node reconnected once it is back.
+//!
 //! ```text
 //!   ic_node_ping localhost:1186
 //!   ic_node_ping localhost:1186 --seconds 600 --debug-level 1024
@@ -17,16 +21,17 @@
 //! Debug level 1024 traces every signal in and out, 16384 the heartbeat
 //! handling, 32 the management protocol.
 
-use ic_apic::data::ClusterConfig;
+use std::collections::BTreeMap;
+
 use ic_apic::mgm_client;
-use ic_apic::mgm_client::MgmClient;
-use ic_apid::node_connect::NodeConnection;
+use ic_apid::node_manager::LinkStatus;
+use ic_apid::node_manager::NodeManager;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
 
-const OPTIONS: [OptionEntry; 5] = [
+const OPTIONS: [OptionEntry; 4] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -43,13 +48,7 @@ const OPTIONS: [OptionEntry; 5] = [
     long_name: "seconds",
     short_name: b's',
     kind: OptionKind::Int,
-    help: "How long to keep the connections alive; 0 just connects",
-  },
-  OptionEntry {
-    long_name: "interval",
-    short_name: 0,
-    kind: OptionKind::Int,
-    help: "Milliseconds between heartbeats; 0 uses the configured value",
+    help: "How long to keep the connections up; 0 just connects",
   },
   OptionEntry {
     long_name: "debug-level",
@@ -103,7 +102,7 @@ fn run() -> i32 {
     30_000,
     Some("ic_node_ping"),
   );
-  let (config, mut mgm) = match fetched {
+  let (config, mgm) = match fetched {
     Ok(pair) => pair,
     Err(e) => {
       report("Could not fetch the configuration", &e);
@@ -117,77 +116,88 @@ fn run() -> i32 {
   );
   println!();
 
-  let connections = connect_all(&config, &mut mgm);
-  if connections.is_empty() {
+  let mut manager = match NodeManager::new(config, mgm, connect_string, 30_000)
+  {
+    Ok(manager) => manager,
+    Err(e) => {
+      report("Could not set up the node manager", &e);
+      return 1;
+    }
+  };
+
+  // The first round connects every data node.
+  if let Err(e) = manager.poll(0) {
+    report("Could not connect to the data nodes", &e);
+    return 1;
+  }
+  report_links(&manager);
+  if manager.num_connected() == 0 {
     println!();
     println!("No data node accepted us");
     return 1;
   }
   println!();
-  println!("Connected to {} data node(s)", connections.len());
+  println!("Connected to {} data node(s)", manager.num_connected());
 
   let seconds = parser.get_int_or("seconds", 0) as u64;
   if seconds == 0 {
+    manager.close();
     return 0;
   }
-  keep_alive(
-    connections,
-    seconds,
-    parser.get_int_or("interval", 0) as u32,
-  )
+  keep_alive(&mut manager, seconds)
 }
 
-fn connect_all(
-  config: &ClusterConfig,
-  mgm: &mut MgmClient,
-) -> Vec<NodeConnection> {
-  let mut connections: Vec<NodeConnection> = Vec::new();
-  for node in &config.data_nodes {
-    print!("node {:<4} ", node.node_id);
-    match NodeConnection::connect(config, mgm, node.node_id) {
-      Ok(connection) => {
-        let state = match connection.node_state {
-          Some(state) => state,
-          None => continue,
-        };
-        println!(
-          "connected, {:?}, node group {}, heartbeat every {} ms",
-          state.start_level, state.node_group, connection.heartbeat_interval_ms
-        );
-        let seen = state.connected_node_ids();
-        println!("           it can see node(s) {:?}", seen);
-        connections.push(connection);
+/// Print what every link looks like now.
+fn report_links(manager: &NodeManager) {
+  for link in manager.links().values() {
+    print!("node {:<4} ", link.node_id);
+    if !link.is_connected() {
+      match link.last_error {
+        Some(e) => println!("not connected: {} ({})", e.message(), e.code),
+        None => println!("not connected"),
       }
-      Err(e) => {
-        println!("failed: {} ({})", e.message(), e.code);
-      }
+      continue;
     }
+    let state = match link.node_state {
+      Some(state) => state,
+      None => {
+        println!("connected");
+        continue;
+      }
+    };
+    println!(
+      "connected, {:?}, node group {}",
+      state.start_level, state.node_group
+    );
+    println!(
+      "           it allows {} ms of silence, we send every {} ms",
+      link.heartbeat_interval_ms,
+      link.heartbeat_period_ms()
+    );
+    println!(
+      "           it can see node(s) {:?}",
+      state.connected_node_ids()
+    );
   }
-  connections
 }
 
-fn keep_alive(
-  mut connections: Vec<NodeConnection>,
-  seconds: u64,
-  interval_override: u32,
-) -> i32 {
-  // A data node declares us dead if it hears nothing for its heartbeat
-  // interval, so send well inside it. The C++ client uses a fifth.
-  let mut interval_ms = interval_override;
-  if interval_ms == 0 {
-    interval_ms = connections[0].heartbeat_interval_ms / 5;
-    if interval_ms == 0 {
-      interval_ms = 1000;
-    }
-  }
+/// Keep every link up for as long as asked, reporting each change.
+///
+/// Nothing here connects or reconnects: the manager does that, and this
+/// loop only says what it sees. That is the point of the command, since
+/// an application's loop looks the same.
+fn keep_alive(manager: &mut NodeManager, seconds: u64) -> i32 {
   println!();
-  println!(
-    "Keeping the connections alive for {} s, a heartbeat every {} ms",
-    seconds, interval_ms
-  );
+  println!("Keeping the connections up for {} s", seconds);
+  println!("Restart a data node to see the loss reported and made good");
+  println!();
   let start = ic_port::time::gethrtime();
-  let mut rounds: u64 = 0;
-  let mut failures: u64 = 0;
+  let mut was: BTreeMap<u32, LinkStatus> = BTreeMap::new();
+  for link in manager.links().values() {
+    was.insert(link.node_id, link.status);
+  }
+  let mut losses: u64 = 0;
+  let mut recoveries: u64 = 0;
   loop {
     let elapsed =
       ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
@@ -198,42 +208,57 @@ fn keep_alive(
       println!("Stopping");
       break;
     }
-    ic_port::time::microsleep(interval_ms * 1000);
-    rounds += 1;
-    let mut i: usize = 0;
-    while i < connections.len() {
-      let node_id = connections[i].node_id;
-      match connections[i].heartbeat_round(5000) {
-        Ok(()) => {}
-        Err(e) => {
-          failures += 1;
-          println!(
-            "node {} heartbeat failed after {} s: {} ({})",
-            node_id,
-            elapsed / 1000,
-            e.message(),
-            e.code
-          );
-          connections.remove(i);
-          continue;
-        }
-      }
-      i += 1;
-    }
-    if connections.is_empty() {
-      println!("Every connection is gone");
+    // A short wait keeps the loop responsive to a socket closing while
+    // leaving the heartbeats to the manager.
+    if let Err(e) = manager.poll(200) {
+      report("The node manager stopped", &e);
       return 1;
     }
+    for link in manager.links().values() {
+      let before = was.insert(link.node_id, link.status);
+      if before == Some(link.status) {
+        continue;
+      }
+      let seconds_in = elapsed / 1000;
+      match link.status {
+        LinkStatus::Connected => {
+          recoveries += 1;
+          println!("{:>5} s  node {} is up again", seconds_in, link.node_id);
+        }
+        LinkStatus::Failing => {
+          println!(
+            "{:>5} s  node {} confirmed failed by another node",
+            seconds_in, link.node_id
+          );
+        }
+        LinkStatus::Disconnected => {
+          losses += 1;
+          match link.last_error {
+            Some(e) => println!(
+              "{:>5} s  node {} lost: {} ({})",
+              seconds_in,
+              link.node_id,
+              e.message(),
+              e.code
+            ),
+            None => {
+              println!("{:>5} s  node {} lost", seconds_in, link.node_id)
+            }
+          }
+        }
+      }
+    }
   }
+  println!();
   println!(
-    "Done: {} heartbeat round(s), {} failure(s), {} connection(s) left",
-    rounds,
-    failures,
-    connections.len()
+    "Done: {} loss(es), {} recovery(ies), {} of {} node(s) connected",
+    losses,
+    recoveries,
+    manager.num_connected(),
+    manager.links().len()
   );
-  for connection in &connections {
-    println!("  {:?}", connection);
-  }
+  report_links(manager);
+  manager.close();
   0
 }
 
