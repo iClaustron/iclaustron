@@ -17,5 +17,7 @@
 //!
 //! Modules:
 //! - [`handshake`]: becoming a transporter connection to a data node.
+//! - [`signal_reader`]: turning the byte stream back into signals.
 
 pub mod handshake;
+pub mod signal_reader;
