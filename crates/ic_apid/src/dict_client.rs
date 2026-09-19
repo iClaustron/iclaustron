@@ -27,9 +27,9 @@
 //! by having every request say which replies it expects
 //! (doc/rust/02-architecture.md, "Expected replies").
 //!
-//! Not yet fetched: the table's hash map, which says which fragment a
-//! key hash belongs to. Printing a table does not need it; choosing the
-//! node to send a key operation to will.
+//! A table placed by hash map also needs its hash map, which says which
+//! fragment a key hash belongs to: [`get_hash_map`] fetches it by the id
+//! the table names. The reference does both in one call.
 //!
 //! Verify: `NdbDictionaryImpl.cpp`, `NdbDictInterface::getTable` and
 //! `dictSignal`.
@@ -39,6 +39,7 @@ use std::sync::atomic::Ordering;
 
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::dict_tab_info;
+use ic_ndb_signals::dict_tab_info::HashMapInfo;
 use ic_ndb_signals::dict_tab_info::TableInfo;
 use ic_ndb_signals::get_tab_info;
 use ic_ndb_signals::get_tab_info::GetTabInfoConf;
@@ -66,9 +67,18 @@ pub const IC_DICT_SCHEMA: &str = "def";
 /// recognised as such. Any number will do as long as it moves on.
 static NEXT_REQUEST: AtomicU32 = AtomicU32::new(1);
 
+/// What to ask the dictionary for.
+enum Asking<'a> {
+  /// A table, by its internal name.
+  ByName(&'a str),
+  /// Any object, such as a hash map, by its id.
+  ById(u32),
+}
+
 /// How one attempt ended.
 enum Attempt {
-  Done(Box<TableInfo>),
+  /// The description's words, not yet read.
+  Done(Vec<u32>),
   /// Worth asking again.
   Again(IcError),
   /// Not worth asking again.
@@ -91,10 +101,37 @@ pub fn get_table(
   table: &str,
 ) -> Result<TableInfo, IcError> {
   let name = internal_name(database, table);
+  let words = fetch(global, inbox, Asking::ByName(&name))?;
+  // A description that cannot be read would read the same way again,
+  // so it is not asked for again.
+  dict_tab_info::parse_table_info(&words)
+}
+
+/// Fetch a hash map, by the id a table names in `hash_map_object_id`.
+///
+/// A key operation needs its table's hash map, to find the fragment and
+/// so the node a key belongs to. The reference fetches it as part of
+/// fetching the table; here it is its own request, since printing a
+/// table needs only its name.
+pub fn get_hash_map(
+  global: &ApidGlobal,
+  inbox: &ThreadConnection,
+  object_id: u32,
+) -> Result<HashMapInfo, IcError> {
+  let words = fetch(global, inbox, Asking::ById(object_id))?;
+  dict_tab_info::parse_hash_map_info(&words)
+}
+
+/// Ask until answered, or until asking again is pointless.
+fn fetch(
+  global: &ApidGlobal,
+  inbox: &ThreadConnection,
+  asking: Asking<'_>,
+) -> Result<Vec<u32>, IcError> {
   let mut attempt: u32 = 0;
   loop {
-    match fetch_once(global, inbox, &name, attempt) {
-      Attempt::Done(info) => return Ok(*info),
+    match fetch_once(global, inbox, &asking, attempt) {
+      Attempt::Done(words) => return Ok(words),
       Attempt::Failed(e) => return Err(e),
       Attempt::Again(e) => {
         attempt += 1;
@@ -104,8 +141,7 @@ pub fn get_table(
         let pause = retry_pause_ms(attempt);
         ic_port::debug_print!(
           IC_NDB_MESSAGE_LEVEL,
-          "Asking again for {} in {} ms: {}",
-          name,
+          "Asking the dictionary again in {} ms: {}",
           pause,
           e.message()
         );
@@ -119,7 +155,7 @@ pub fn get_table(
 fn fetch_once(
   global: &ApidGlobal,
   inbox: &ThreadConnection,
-  name: &str,
+  asking: &Asking<'_>,
   attempt: u32,
 ) -> Attempt {
   let started = global.started_nodes();
@@ -132,15 +168,24 @@ fn fetch_once(
   let request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
   let own_ref =
     blocks::number_to_ref(inbox.block_number(), global.own_node_id());
-  let request = GetTabInfoReq::by_name(request_id, own_ref, name);
-  let section = get_tab_info::name_section(name);
   let header = SignalHeader::new(
     gsn::IC_GSN_GET_TABINFOREQ,
     inbox.block_number(),
     blocks::IC_BLOCK_DBDICT,
   );
-  let sections: [&[u32]; 1] = [&section];
-  if let Err(e) = global.send(node_id, &header, &request.encode(), &sections) {
+  let sent = match asking {
+    Asking::ByName(name) => {
+      let request = GetTabInfoReq::by_name(request_id, own_ref, name);
+      let section = get_tab_info::name_section(name);
+      let sections: [&[u32]; 1] = [&section];
+      global.send(node_id, &header, &request.encode(), &sections)
+    }
+    Asking::ById(object_id) => {
+      let request = GetTabInfoReq::by_id(request_id, own_ref, *object_id);
+      global.send(node_id, &header, &request.encode(), &[])
+    }
+  };
+  if let Err(e) = sent {
     return Attempt::Again(e);
   }
   wait_for_answer(global, inbox, node_id, request_id)
@@ -229,11 +274,7 @@ fn description_of(whole: &ReceivedSignal, request_id: u32) -> Option<Attempt> {
     let e = IcError::new(err::IC_ERROR_BAD_TABLE_DESCRIPTION);
     return Some(Attempt::Again(e));
   }
-  match dict_tab_info::parse_table_info(words) {
-    Ok(info) => Some(Attempt::Done(Box::new(info))),
-    // Asking again would bring the same description.
-    Err(e) => Some(Attempt::Failed(e)),
-  }
+  Some(Attempt::Done(words.to_vec()))
 }
 
 /// What a refusal amounts to.
@@ -323,7 +364,10 @@ mod tests {
     };
     let mut assembler = FragmentAssembler::new();
     match take_answer(&mut assembler, signal, 7) {
-      Some(Attempt::Done(info)) => assert_eq!(info.table_name(), "t1"),
+      Some(Attempt::Done(words)) => {
+        let info = dict_tab_info::parse_table_info(&words).expect("table");
+        assert_eq!(info.table_name(), "t1");
+      }
       _ => panic!("expected the table"),
     }
   }
@@ -357,7 +401,10 @@ mod tests {
     let mut assembler = FragmentAssembler::new();
     assert!(take_answer(&mut assembler, first, 7).is_none());
     match take_answer(&mut assembler, last, 7) {
-      Some(Attempt::Done(info)) => assert_eq!(info.attributes.len(), 1),
+      Some(Attempt::Done(words)) => {
+        let info = dict_tab_info::parse_table_info(&words).expect("table");
+        assert_eq!(info.attributes.len(), 1);
+      }
       _ => panic!("expected the table"),
     }
   }

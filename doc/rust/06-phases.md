@@ -107,7 +107,8 @@ its `MODULE.md` with the "Rust notes for C readers" section.
 
 ## Phase 5 — Transactions and key operations (4–5 weeks)
 
-- `hash.rs`: MD5 and xxhash64, distribution key assembly from a record,
+- `hash.rs`: MD5 and XXH3 64-bit (not XXH64; see 05 §6.3), distribution
+  key assembly from a record,
   fanout tables, hash map lookup, replica selection (read backup, fully
   replicated).
 - `transaction.rs`: TC seize per thread per node, ids, start/execute/

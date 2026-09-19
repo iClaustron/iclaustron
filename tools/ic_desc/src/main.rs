@@ -22,8 +22,10 @@
 use ic_apic::mgm_client;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::dict_client;
+use ic_apid::thread_conn::ThreadConnection;
 use ic_ndb_signals::dict_tab_info;
 use ic_ndb_signals::dict_tab_info::AttributeInfo;
+use ic_ndb_signals::dict_tab_info::HashMapInfo;
 use ic_ndb_signals::dict_tab_info::TableInfo;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
@@ -138,7 +140,10 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
   let mut code = 0;
   for table in tables {
     match dict_client::get_table(global, &inbox, database, table) {
-      Ok(info) => print_table(&info),
+      Ok(info) => {
+        let map = hash_map_of(global, &inbox, &info);
+        print_table(&info, map.as_ref());
+      }
       Err(e) => {
         println!("-- {}.{} --", database, table);
         report("Could not describe it", &e);
@@ -151,7 +156,26 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
   code
 }
 
-fn print_table(table: &TableInfo) {
+/// The table's hash map, if it is placed by one. A map that cannot be
+/// fetched is reported and the table printed without it.
+fn hash_map_of(
+  global: &ApidGlobal,
+  inbox: &ThreadConnection,
+  table: &TableInfo,
+) -> Option<HashMapInfo> {
+  if table.hash_map_object_id == dict_tab_info::IC_RNIL {
+    return None;
+  }
+  match dict_client::get_hash_map(global, inbox, table.hash_map_object_id) {
+    Ok(map) => Some(map),
+    Err(e) => {
+      report("Could not fetch its hash map", &e);
+      None
+    }
+  }
+}
+
+fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
   // The lines and their order are ndb_desc's, so that the two can be
   // compared line by line. Ours alone come at the end.
   println!("-- {} --", table.table_name());
@@ -190,10 +214,8 @@ fn print_table(table: &TableInfo) {
     options.push("nologging");
   }
   println!("Table options: {}", options.join(", "));
-  if table.hash_map_object_id != dict_tab_info::IC_RNIL {
-    // The reference prints the hash map's name, which takes fetching
-    // the hash map itself; not done yet.
-    println!("HashMap: id {}", table.hash_map_object_id);
+  if let Some(map) = map {
+    println!("HashMap: {}", map.name);
   }
   if table.ttl_sec != dict_tab_info::IC_RNIL {
     println!("TTL: {} s on column {}", table.ttl_sec, table.ttl_column_no);
@@ -205,6 +227,15 @@ fn print_table(table: &TableInfo) {
   println!("-- iClaustron --");
   println!("Database: {}", table.database());
   println!("Table id: {}", table.table_id);
+  if let Some(map) = map {
+    println!(
+      "Hash map: id {}, version {}, {} buckets over {} fragments",
+      map.object_id,
+      map.version,
+      map.fragments.len(),
+      map.fragment_count()
+    );
+  }
 }
 
 fn yes_no(on: bool) -> &'static str {

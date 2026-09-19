@@ -39,6 +39,17 @@ use crate::simple_properties::PropertyValue;
 /// The dictionary's "no such thing" value.
 pub const IC_RNIL: u32 = 0xFFFF_FF00;
 
+// ---- Hash map keys ----
+
+/// A hash map's name, such as `DEFAULT-HASHMAP-3840-8`.
+pub const IC_DHMI_NAME: u16 = 1;
+/// The size of the bucket array **in bytes**, two per bucket.
+pub const IC_DHMI_BUCKETS: u16 = 2;
+/// The bucket array: one 16-bit fragment number per bucket.
+pub const IC_DHMI_VALUES: u16 = 3;
+// A hash map's id and version use the table keys of the same meaning,
+// `IC_DTI_HASH_MAP_OBJECT_ID` and `IC_DTI_HASH_MAP_VERSION`.
+
 // ---- Table keys ----
 
 /// The table's internal name, `database/schema/table`.
@@ -715,6 +726,95 @@ impl TableInfo {
   }
 }
 
+/// A hash map: which fragment each bucket of key hashes goes to.
+///
+/// A table placed by hash map sends a row to fragment
+/// `fragments[hash % fragments.len()]`, where the hash is taken over
+/// the row's distribution key. Many tables share one map, named after
+/// its bucket and fragment counts.
+/// Verify: `NdbDictionary.cpp`, `Table::getPartitionId`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HashMapInfo {
+  /// The map's name.
+  pub name: String,
+  /// Its id, which a table names with `IC_DTI_HASH_MAP_OBJECT_ID`.
+  pub object_id: u32,
+  /// Its version.
+  pub version: u32,
+  /// The fragment each bucket goes to.
+  pub fragments: Vec<u16>,
+}
+
+impl HashMapInfo {
+  /// The fragment a key hash goes to.
+  pub fn fragment_of(&self, hash: u32) -> u32 {
+    if self.fragments.is_empty() {
+      return 0;
+    }
+    self.fragments[hash as usize % self.fragments.len()] as u32
+  }
+
+  /// How many distinct fragments the map sends rows to.
+  pub fn fragment_count(&self) -> u32 {
+    let mut highest: u32 = 0;
+    for fragment in &self.fragments {
+      if *fragment as u32 + 1 > highest {
+        highest = *fragment as u32 + 1;
+      }
+    }
+    highest
+  }
+}
+
+/// Read a hash map description.
+///
+/// Every value defaults to zero and there is no end marker: the map is
+/// whatever the properties say. The bucket count is sent as a length in
+/// bytes. The buckets themselves are 16-bit numbers copied as the data
+/// node holds them, so they are read in our own byte order, which the
+/// protocol assumes is theirs.
+/// Verify: `DictTabInfo.cpp`, `DictHashMapInfo::Mapping` and `init`;
+/// `NdbDictionaryImpl.cpp`, `parseHashMapInfo`.
+pub fn parse_hash_map_info(words: &[u32]) -> Result<HashMapInfo, IcError> {
+  let bad = IcError::new(err::IC_ERROR_BAD_TABLE_DESCRIPTION);
+  let mut reader = PropertyReader::new(words);
+  let mut name = String::new();
+  let mut object_id: u32 = 0;
+  let mut version: u32 = 0;
+  let mut bucket_bytes: u32 = 0;
+  let mut values: Vec<u8> = Vec::new();
+  while let Some(property) = reader.read_next()? {
+    match property.key {
+      IC_DHMI_NAME => name = text_of(&property),
+      IC_DHMI_BUCKETS => bucket_bytes = property.as_u32(),
+      IC_DHMI_VALUES => {
+        if let PropertyValue::Binary(bytes) = property.value {
+          values = bytes;
+        }
+      }
+      IC_DTI_HASH_MAP_OBJECT_ID => object_id = property.as_u32(),
+      IC_DTI_HASH_MAP_VERSION => version = property.as_u32(),
+      _ => {}
+    }
+  }
+  let buckets = (bucket_bytes / 2) as usize;
+  if buckets == 0 || values.len() < 2 * buckets {
+    return Err(bad);
+  }
+  let mut fragments: Vec<u16> = Vec::with_capacity(buckets);
+  let mut i: usize = 0;
+  while i < buckets {
+    fragments.push(u16::from_ne_bytes([values[2 * i], values[2 * i + 1]]));
+    i += 1;
+  }
+  Ok(HashMapInfo {
+    name,
+    object_id,
+    version,
+    fragments,
+  })
+}
+
 /// Read a table description.
 pub fn parse_table_info(words: &[u32]) -> Result<TableInfo, IcError> {
   let bad = IcError::new(err::IC_ERROR_BAD_TABLE_DESCRIPTION);
@@ -980,6 +1080,50 @@ mod tests {
     // A size larger than what came is not trusted.
     let short = 9u32.to_be_bytes();
     assert!(default_value_of(&short).is_empty());
+  }
+
+  fn hash_map_words(buckets: &[u16]) -> Vec<u32> {
+    let mut bytes: Vec<u8> = Vec::new();
+    for bucket in buckets {
+      bytes.extend_from_slice(&bucket.to_ne_bytes());
+    }
+    let mut w = PropertyWriter::new();
+    w.add_string(IC_DHMI_NAME, "DEFAULT-HASHMAP-4-2");
+    w.add_u32(IC_DHMI_BUCKETS, (2 * buckets.len()) as u32);
+    w.add_binary(IC_DHMI_VALUES, &bytes);
+    w.add_u32(IC_DTI_HASH_MAP_OBJECT_ID, 1);
+    w.add_u32(IC_DTI_HASH_MAP_VERSION, 7);
+    w.words().to_vec()
+  }
+
+  #[test]
+  fn a_hash_map_says_which_fragment_a_hash_goes_to() {
+    let map =
+      parse_hash_map_info(&hash_map_words(&[0, 1, 0, 1])).expect("parsed");
+    assert_eq!(map.name, "DEFAULT-HASHMAP-4-2");
+    assert_eq!(map.object_id, 1);
+    assert_eq!(map.version, 7);
+    assert_eq!(map.fragments, vec![0, 1, 0, 1]);
+    assert_eq!(map.fragment_count(), 2);
+    // The hash picks a bucket, and the bucket names the fragment.
+    assert_eq!(map.fragment_of(5), 1);
+    assert_eq!(map.fragment_of(6), 0);
+  }
+
+  #[test]
+  fn the_bucket_count_is_sent_in_bytes() {
+    // Four buckets are announced as eight bytes. Reading the count as
+    // buckets would ask for eight and find the values short.
+    let words = hash_map_words(&[3, 2, 1, 0]);
+    let map = parse_hash_map_info(&words).expect("parsed");
+    assert_eq!(map.fragments.len(), 4);
+  }
+
+  #[test]
+  fn a_hash_map_without_buckets_is_refused() {
+    let mut w = PropertyWriter::new();
+    w.add_string(IC_DHMI_NAME, "EMPTY");
+    assert!(parse_hash_map_info(w.words()).is_err());
   }
 
   #[test]

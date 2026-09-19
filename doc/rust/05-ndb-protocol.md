@@ -461,10 +461,21 @@ block and whose low word is a counter. Sent as `transId1` (low) and
 
 1. Concatenate distribution-key column values in attribute-id order, each
    padded to a 4-byte boundary; charset columns are normalised first.
-2. Hash: MD5 producing 4 words (legacy) or xxhash64 split into two words
-   (RonDB tables with `HashFunctionFlag`). **The distribution hash is word
-   1 of the result, not word 0.** Verify: `include/util/rondb_hash.hpp:52`,
-   `src/common/util/rondb_hash.cpp:33-191`, `Ndb.cpp:431-611`, `:565`.
+2. Hash, chosen per table by `HashFunctionFlag` (DictTabInfo key 163):
+   0, or not sent, is MD5 producing 4 words; non-zero is **XXH3, 64-bit**
+   (`XXH3_64bits` of the xxHash library, seed 0), split into two words,
+   low then high. **Not XXH64**, which an earlier revision of this plan
+   named: the two are different functions, and the wrong one sends every
+   key to the wrong fragment. The AVX2 path calls the same function.
+   **The distribution hash is word 1 of the result, not word 0**: the
+   second word of the MD5 digest, or the high 32 bits of XXH3. A table
+   gets the new hash when the API creating it is RonDB 22.10.1 or later,
+   so tables made by a 26.10 mysqld have the flag; an index uses its
+   table's function. Verify: `include/util/rondb_hash.hpp:52`,
+   `src/common/util/rondb_hash.cpp:33-60`, `xxhash_std.cpp:31`,
+   `xxhash_avx2.cpp:38`, `ndb_version.h.in`,
+   `ndbd_support_new_hash_function`, `NdbDictionaryImpl.cpp:4014`,
+   `Ndb.cpp:431-611`, `:565`.
 3. RonDB fanout tables hash a base prefix and a detail suffix separately
    and combine `((base/fanout)*fanout) + (detail % fanout)`. Verify:
    `Ndb.cpp:357-425`.
@@ -479,8 +490,10 @@ block and whose low word is a counter. Sent as `transId1` (low) and
    the fragment. Verify: `Ndb.cpp:786-873`.
 
 This whole chain lives in `ic_apid::hash` and is driven by the
-`IC_TRANSACTION_HINT`. The MD5 and xxhash64 implementations are written
-in-tree (both are public algorithms).
+`IC_TRANSACTION_HINT`. The MD5 and XXH3 implementations are written
+in-tree (both are public algorithms). XXH3 has to match the xxHash
+library bit for bit, including its handling of short inputs; its test
+vectors are the check.
 
 ### 6.4 TCKEYREQ (GSN 12)
 
@@ -654,8 +667,23 @@ are the short-form trains (unused by us). Verify:
     on a timeout, each time to an alive node. 723 and 709 mean no such
     table and are final.
   - After parsing, a table placed by hash map needs its hash map, fetched
-    by id the same way. Not yet done: printing a table does not need it,
-    choosing a node for a key operation will.
+    by id the same way (requestType 2, the id in word 4, no section).
+    As built in `dict_client::get_hash_map` and
+    `dict_tab_info::parse_hash_map_info`:
+    - Keys: name 1, bucket array size 2, bucket array 3; the map's id and
+      version reuse the table keys `HashMapObjectId` (153) and
+      `HashMapVersion` (154). Every value defaults to zero, and there is
+      no end marker.
+    - **The bucket count is sent as a size in bytes**, two per bucket;
+      the reference halves it after reading. The buckets are 16-bit
+      fragment numbers copied as the data node holds them, so they are
+      read in the receiver's own byte order.
+    - A row goes to fragment `buckets[hash % buckets.len()]`, the hash
+      taken over the distribution key. `DEFAULT-HASHMAP-3840-8` is 3840
+      buckets over 8 fragments.
+    Verify: `NdbDictionaryImpl.cpp`, `get_hashmap` and
+    `parseHashMapInfo`; `DictTabInfo.cpp`, `DictHashMapInfo::Mapping`;
+    `NdbDictionary.cpp`, `Table::getPartitionId`.
 - SimpleProperties encoding (network byte order): head word
   `(valueType << 16) | key`; `Uint32 = 0` one word, `String = 1` and
   `Binary = 2` length word then padded bytes, `Uint64 = 4` two words low
@@ -886,7 +914,7 @@ be treated as a hypothesis. Known differences the port must apply:
 | Heartbeat | `API_REGREQ` 3 words | same 3 words; `API_REGCONF` gained `minDbVersion`/`minApiVersion` and RonDB restart-barrier liveness rule |
 | Node failure | `NODE_FAILREP` fixed bitmap | three formats incl. a long section; `NF_COMPLETEREP` gating of reconnect |
 | Block numbers | `IC_NDB_MIN_MODULE_ID_FOR_THREADS 32768`, `IC_NDB_PACKED_MODULE_ID 2047` | unchanged; plus fixed `API_CLUSTERMGR 4002`; kernel blocks extended to `0x111` (query blocks) |
-| Partitioning | hash maps (introduced 7.2) with MD5 | MD5 or xxhash64 per table (`HashFunctionFlag`), fanout tables, read backup, fully replicated, dynamic primary replicas |
+| Partitioning | hash maps (introduced 7.2) with MD5 | MD5 or XXH3 64-bit per table (`HashFunctionFlag`), fanout tables, read backup, fully replicated, dynamic primary replicas |
 | Dictionary | DictTabInfo keys up to ~160 | keys to 171 (TTL, hash function, fanout, ring buffer); `GET_TABINFO_CONF` long signal; `MysqlDictMetadata` replaces frm data |
 | Column types | up to Datetime/Timestamp | `Time2`, `Datetime2`, `Timestamp2` with fractional seconds; `Longvarchar` in indexes |
 | Interpreter | 7.2 instruction set (registers, branches, LIKE) | plus memory regions, searches, sorting, conversions, interpreter I/O, partial column writes |

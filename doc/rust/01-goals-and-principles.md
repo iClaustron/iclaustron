@@ -91,7 +91,7 @@ touched.
    completed and enforced in debug builds.
 
 8. **Small dependency surface.** No glib. Standard library plus `libc`.
-   Base64, MD5, xxhash64, option parsing and the poll-set abstraction are
+   Base64, MD5, XXH3, option parsing and the poll-set abstraction are
    written in-tree. `std::collections::HashMap` replaces the C hash table.
 
 9. **Stable C ABI.** All cross-boundary types are `#[repr(C)]` or opaque
