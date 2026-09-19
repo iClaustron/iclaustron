@@ -168,7 +168,7 @@ functions; explicit shifts and masks, no bit-field macros.
 | `ic_apid_handle_dict_messages.ic` | `dict_client.rs` | New + 1:1 | `GET_TABINFOREQ` send + DictTabInfo parse (new); the DDL path is carried over but parked until the DDL release |
 | `ic_apid_global.ic` | `global.rs` | 1:1 | `external_connect` (cluster server hand-off) Out |
 | `ic_apid_start.ic` | `program.rs` | 1:1 | option groups via `ic_port::options`; the iClaustron-cluster-server options Out |
-| `ic_apid_conn.ic` | `connection.rs` | 1:1 + New | `read_key`, `write_key`, transaction start/commit/rollback get real bodies; savepoint functions removed |
+| `ic_apid_conn.ic` | `apid_conn.rs` | 1:1 + New | first cut built: inbox, `poll`, fragments joined, expected replies; `read_key`, `write_key`, transaction start/commit/rollback get real bodies; savepoint functions removed |
 | `ic_apid_op.ic` | `query.rs` | Redesign | record-based binding (04); fix the inverted alloc check |
 | `ic_apid_table.ic` | `table_def.rs`, `record.rs` | 1:1 + New | real binding via dictionary; `Record` creation from a field spec |
 | `ic_apid_trans.ic` (stubs) | `transaction.rs` | New | TC seize, ids, flags, completion accounting, commit/abort, node failure |

@@ -39,6 +39,13 @@ use crate::simple_properties::PropertyValue;
 /// The dictionary's "no such thing" value.
 pub const IC_RNIL: u32 = 0xFFFF_FF00;
 
+/// The bits of a schema version that count offline changes, 0 to 23.
+/// Bits 24 to 31 count online changes. Operations are checked against
+/// the lower bits only. Verify: `kernel_types.h`, `table_version_major`.
+pub const IC_TABLE_VERSION_LOWER_MASK: u32 = 0x00FF_FFFF;
+/// Where the count of online changes starts.
+pub const IC_TABLE_VERSION_UPPER_SHIFT: u32 = 24;
+
 // ---- Hash map keys ----
 
 /// A hash map's name, such as `DEFAULT-HASHMAP-3840-8`.
@@ -506,7 +513,9 @@ pub struct TableInfo {
   pub name: String,
   /// The id.
   pub table_id: u32,
-  /// The version, which changes with every alteration.
+  /// The version, which changes with every alteration: two counters in
+  /// one word, see [`version_upper`](Self::version_upper) and
+  /// [`version_lower`](Self::version_lower).
   pub table_version: u32,
   /// What kind of object, one of the `IC_TABLE_TYPE_*` values.
   pub table_type: u32,
@@ -723,6 +732,18 @@ impl TableInfo {
   /// A column by name.
   pub fn attribute(&self, name: &str) -> Option<&AttributeInfo> {
     self.attributes.iter().find(|attr| attr.name == name)
+  }
+
+  /// The upper version, bits 24 to 31: how many online changes. An
+  /// operation prepared before one still works after it.
+  pub fn version_upper(&self) -> u32 {
+    self.table_version >> IC_TABLE_VERSION_UPPER_SHIFT
+  }
+
+  /// The lower version, bits 0 to 23: how many offline changes. The
+  /// data nodes check operations against this part alone.
+  pub fn version_lower(&self) -> u32 {
+    self.table_version & IC_TABLE_VERSION_LOWER_MASK
   }
 }
 
@@ -1016,6 +1037,17 @@ mod tests {
   }
 
   #[test]
+  fn a_version_is_two_counters() {
+    // Seen live: a table altered once online, after being created.
+    let table = TableInfo {
+      table_version: 16_777_217,
+      ..parse_table_info(&sample()).expect("parsed")
+    };
+    assert_eq!(table.version_upper(), 1);
+    assert_eq!(table.version_lower(), 1);
+  }
+
+  #[test]
   fn a_table_and_its_columns_are_read() {
     let table = parse_table_info(&sample()).expect("parsed");
     assert_eq!(table.name, "ictest/def/t1");
@@ -1023,6 +1055,8 @@ mod tests {
     assert_eq!(table.table_name(), "t1");
     assert_eq!(table.table_id, 17);
     assert_eq!(table.table_version, 3);
+    assert_eq!(table.version_upper(), 0);
+    assert_eq!(table.version_lower(), 3);
     assert!(table.read_backup);
     assert_eq!(table.attributes.len(), 2);
     let id = table.attribute("id").expect("id");

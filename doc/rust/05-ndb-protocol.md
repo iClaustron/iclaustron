@@ -774,7 +774,9 @@ are the short-form trains (unused by us). Verify:
   online change leaves operations prepared with the previous version
   working, while an offline change makes them fail with a wrong schema
   version. `ndb_desc` prints the whole word: seen live, a table altered
-  once online reads 16777217, which is 0x01000001. For the table cache
+  once online reads 16777217, which is 0x01000001. `ic_desc` prints the
+  two apart, as upper 1, lower 1 (`TableInfo::version_upper` and
+  `version_lower`). For the table cache
   (below) this means an online change is not noticed through errors;
   the API has to refetch to learn of it. Verify: `Dbdict.cpp`,
   `alter_obj_inc_schema_version` and `create_obj_inc_schema_version`;

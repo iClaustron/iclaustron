@@ -81,6 +81,7 @@ use ic_port::IcError;
 use ic_util::connectstring::ConnectString;
 use ic_util::threadpool::ThreadPool;
 
+use crate::apid_conn::ApidConnection;
 use crate::connect_thread;
 use crate::heartbeat;
 use crate::node_connect::resolve_port;
@@ -499,6 +500,17 @@ impl ApidShared {
 
   pub(crate) fn node(&self, node_id: u32) -> Option<&Arc<NodeShared>> {
     self.nodes.iter().find(|node| node.node_id == node_id)
+  }
+
+  /// The data nodes that have a link up and say they are started.
+  pub(crate) fn started_nodes(&self) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for node in &self.nodes {
+      if node.published.is_started() {
+        out.push(node.node_id);
+      }
+    }
+    out
   }
 
   fn any_connected(&self) -> bool {
@@ -987,13 +999,14 @@ impl ApidGlobal {
 
   /// The data nodes that have a link up and say they are started.
   pub fn started_nodes(&self) -> Vec<u32> {
-    let mut out: Vec<u32> = Vec::new();
-    for node in &self.shared.nodes {
-      if node.published.is_started() {
-        out.push(node.node_id);
-      }
-    }
-    out
+    self.shared.started_nodes()
+  }
+
+  /// A connection for one user thread: its own block number and inbox,
+  /// and the requests it waits for. One per thread; a thread keeps it
+  /// for as long as it talks to the cluster.
+  pub fn create_connection(&self) -> Result<ApidConnection, IcError> {
+    ApidConnection::new(Arc::clone(&self.shared))
   }
 
   /// Wait until every data node is connected and started, or `wait_ms`

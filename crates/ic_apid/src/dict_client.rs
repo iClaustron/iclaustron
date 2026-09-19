@@ -17,25 +17,23 @@
 //! while answering, or that did not answer in time. Up to a hundred
 //! attempts, 50 to 100 ms apart and spread a little so that many clients
 //! do not ask in step. The reference spreads them at random; here the
-//! request number stands in for chance. Each attempt goes to the next
-//! started node in turn.
+//! low bits of the clock stand in for chance. Each attempt goes to the
+//! next started node in turn.
 //!
-//! **Only for a thread with nothing else in flight.** The fetch waits on
-//! the thread's inbox, and anything else that arrives meanwhile is not
-//! for it and is dropped, with a trace. The per-thread connection object
-//! that comes next keeps such signals for whoever is waiting on them,
-//! by having every request say which replies it expects
-//! (doc/rust/02-architecture.md, "Expected replies").
+//! **Asked through the thread's connection.** The connection joins the
+//! fragments of a long answer and hands over the reply to this request
+//! alone, so the thread may have other requests waiting at the same
+//! time; their replies are kept for them. A reply to an earlier attempt
+//! that comes late is not taken for the answer to a later one: each
+//! attempt has a number of its own.
 //!
 //! A table placed by hash map also needs its hash map, which says which
 //! fragment a key hash belongs to: [`get_hash_map`] fetches it by the id
 //! the table names. The reference does both in one call.
 //!
 //! Verify: `NdbDictionaryImpl.cpp`, `NdbDictInterface::getTable` and
-//! `dictSignal`.
-
-use std::sync::atomic::AtomicU32;
-use std::sync::atomic::Ordering;
+//! `dictSignal`; `Dbdict.cpp`, `execLIST_TABLES_REQ`, which has no
+//! refusal to send.
 
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::dict_tab_info;
@@ -48,17 +46,14 @@ use ic_ndb_signals::get_tab_info::GetTabInfoReq;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header::SignalHeader;
 use ic_ndb_signals::list_tables;
-use ic_ndb_signals::list_tables::ListTablesConf;
 use ic_ndb_signals::list_tables::ListTablesReq;
 use ic_ndb_signals::list_tables::ListedObject;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
 
-use crate::apid_global::ApidGlobal;
-use crate::fragments::FragmentAssembler;
+use crate::apid_conn::ApidConnection;
 use crate::node_connect::ReceivedSignal;
-use crate::thread_conn::ThreadConnection;
 
 /// How long one attempt waits for its answer.
 pub const IC_DICT_WAIT_MS: u32 = 10_000;
@@ -67,9 +62,11 @@ pub const IC_DICT_ATTEMPTS: u32 = 100;
 /// The schema every table lives in, as far as the dictionary's names go.
 pub const IC_DICT_SCHEMA: &str = "def";
 
-/// Numbers requests, so that a late answer to an earlier attempt is
-/// recognised as such. Any number will do as long as it moves on.
-static NEXT_REQUEST: AtomicU32 = AtomicU32::new(1);
+/// What answers a request for a description.
+const IC_TABINFO_REPLIES: [u16; 2] =
+  [gsn::IC_GSN_GET_TABINFO_CONF, gsn::IC_GSN_GET_TABINFOREF];
+/// What answers a request for a list. The dictionary never refuses one.
+const IC_LIST_REPLIES: [u16; 1] = [gsn::IC_GSN_LIST_TABLES_CONF];
 
 /// What to ask the dictionary for.
 enum Asking<'a> {
@@ -83,7 +80,7 @@ enum Asking<'a> {
 
 /// How one attempt ended.
 enum Attempt {
-  /// The whole answer, fragments joined, not yet read.
+  /// The whole answer, not yet read.
   Done(ReceivedSignal),
   /// Worth asking again.
   Again(IcError),
@@ -97,17 +94,13 @@ pub fn internal_name(database: &str, table: &str) -> String {
 }
 
 /// Fetch a table's description.
-///
-/// `inbox` is the calling thread's own; see the module note on what
-/// happens to anything else that arrives in it meanwhile.
 pub fn get_table(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
+  conn: &mut ApidConnection,
   database: &str,
   table: &str,
 ) -> Result<TableInfo, IcError> {
   let name = internal_name(database, table);
-  let answer = fetch(global, inbox, Asking::ByName(&name))?;
+  let answer = fetch(conn, Asking::ByName(&name))?;
   // A description that cannot be read would read the same way again,
   // so it is not asked for again.
   dict_tab_info::parse_table_info(answer.section(0))
@@ -116,22 +109,20 @@ pub fn get_table(
 /// Fetch a table or an index by id. An index is described as a table of
 /// its own, whose `primary_table_id` names the table it indexes.
 pub fn get_table_by_id(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
+  conn: &mut ApidConnection,
   table_id: u32,
 ) -> Result<TableInfo, IcError> {
-  let answer = fetch(global, inbox, Asking::ById(table_id))?;
+  let answer = fetch(conn, Asking::ById(table_id))?;
   dict_tab_info::parse_table_info(answer.section(0))
 }
 
 /// The objects that depend on a table: its indexes, and others such as
 /// triggers and the tables holding its large objects.
 pub fn list_dependents(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
+  conn: &mut ApidConnection,
   table_id: u32,
 ) -> Result<Vec<ListedObject>, IcError> {
-  let answer = fetch(global, inbox, Asking::DependentsOf(table_id))?;
+  let answer = fetch(conn, Asking::DependentsOf(table_id))?;
   list_tables::parse_listed_objects(answer.section(0), answer.section(1))
 }
 
@@ -142,23 +133,21 @@ pub fn list_dependents(
 /// fetching the table; here it is its own request, since printing a
 /// table needs only its name.
 pub fn get_hash_map(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
+  conn: &mut ApidConnection,
   object_id: u32,
 ) -> Result<HashMapInfo, IcError> {
-  let answer = fetch(global, inbox, Asking::ById(object_id))?;
+  let answer = fetch(conn, Asking::ById(object_id))?;
   dict_tab_info::parse_hash_map_info(answer.section(0))
 }
 
 /// Ask until answered, or until asking again is pointless.
 fn fetch(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
+  conn: &mut ApidConnection,
   asking: Asking<'_>,
 ) -> Result<ReceivedSignal, IcError> {
   let mut attempt: u32 = 0;
   loop {
-    match fetch_once(global, inbox, &asking, attempt) {
+    match fetch_once(conn, &asking, attempt) {
       Attempt::Done(answer) => return Ok(answer),
       Attempt::Failed(e) => return Err(e),
       Attempt::Again(e) => {
@@ -166,7 +155,8 @@ fn fetch(
         if attempt >= IC_DICT_ATTEMPTS {
           return Err(e);
         }
-        let pause = retry_pause_ms(attempt);
+        let chance = (ic_port::time::gethrtime() / 1000) as u32;
+        let pause = retry_pause_ms(attempt, chance);
         ic_port::debug_print!(
           IC_NDB_MESSAGE_LEVEL,
           "Asking the dictionary again in {} ms: {}",
@@ -181,151 +171,99 @@ fn fetch(
 
 /// One question and the wait for its answer.
 fn fetch_once(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
+  conn: &mut ApidConnection,
   asking: &Asking<'_>,
   attempt: u32,
 ) -> Attempt {
-  let started = global.started_nodes();
+  let started = conn.started_nodes();
   if started.is_empty() {
     return Attempt::Again(IcError::new(err::IC_ERROR_NO_STARTED_DATA_NODE));
   }
   // The next node in turn, so that a node that keeps failing does not
   // take every attempt.
   let node_id = started[attempt as usize % started.len()];
-  let request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
-  let own_ref =
-    blocks::number_to_ref(inbox.block_number(), global.own_node_id());
+  let request_id = conn.next_request_id();
+  let own_ref = conn.block_ref();
   let mut gsn_value = gsn::IC_GSN_GET_TABINFOREQ;
   if let Asking::DependentsOf(_) = asking {
     gsn_value = gsn::IC_GSN_LIST_TABLES_REQ;
   }
   let header =
-    SignalHeader::new(gsn_value, inbox.block_number(), blocks::IC_BLOCK_DBDICT);
-  let sent = match asking {
+    SignalHeader::new(gsn_value, conn.block_number(), blocks::IC_BLOCK_DBDICT);
+  // A lost link, a timeout or a failed send all leave the question
+  // worth asking again, of another node if need be.
+  let answer = match asking {
     Asking::ByName(name) => {
       let request = GetTabInfoReq::by_name(request_id, own_ref, name);
       let section = get_tab_info::name_section(name);
       let sections: [&[u32]; 1] = [&section];
-      global.send(node_id, &header, &request.encode(), &sections)
+      conn.call(
+        node_id,
+        &header,
+        &request.encode(),
+        &sections,
+        &IC_TABINFO_REPLIES,
+        IC_DICT_WAIT_MS,
+      )
     }
     Asking::ById(object_id) => {
       let request = GetTabInfoReq::by_id(request_id, own_ref, *object_id);
-      global.send(node_id, &header, &request.encode(), &[])
+      conn.call(
+        node_id,
+        &header,
+        &request.encode(),
+        &[],
+        &IC_TABINFO_REPLIES,
+        IC_DICT_WAIT_MS,
+      )
     }
     Asking::DependentsOf(table_id) => {
       let request =
         ListTablesReq::dependents_of(request_id, own_ref, *table_id);
-      global.send(node_id, &header, &request.encode(), &[])
+      conn.call(
+        node_id,
+        &header,
+        &request.encode(),
+        &[],
+        &IC_LIST_REPLIES,
+        IC_DICT_WAIT_MS,
+      )
     }
   };
-  if let Err(e) = sent {
-    return Attempt::Again(e);
-  }
-  wait_for_answer(global, inbox, node_id, request_id)
-}
-
-fn wait_for_answer(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
-  node_id: u32,
-  request_id: u32,
-) -> Attempt {
-  let mut assembler = FragmentAssembler::new();
-  let start = ic_port::time::gethrtime();
-  loop {
-    let waited =
-      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
-    if waited >= IC_DICT_WAIT_MS as u64 {
-      return Attempt::Again(IcError::new(err::IC_ERROR_TIMEOUT));
-    }
-    if !node_is_up(global, node_id) {
-      // The node went away while answering; another one may do.
-      return Attempt::Again(IcError::new(err::IC_ERROR_LINK_LOST));
-    }
-    // Wake now and then to notice the node going, even if nothing comes.
-    let mut wait_ms = IC_DICT_WAIT_MS - waited as u32;
-    if wait_ms > 100 {
-      wait_ms = 100;
-    }
-    for signal in inbox.take(wait_ms) {
-      let outcome = take_answer(&mut assembler, signal, request_id);
-      if let Some(attempt) = outcome {
-        return attempt;
-      }
-    }
+  match answer {
+    Ok(whole) => answer_of(whole),
+    Err(e) => Attempt::Again(e),
   }
 }
 
-/// Look at one signal. `None` means keep waiting.
-fn take_answer(
-  assembler: &mut FragmentAssembler,
-  signal: ReceivedSignal,
-  request_id: u32,
-) -> Option<Attempt> {
-  if signal.gsn == gsn::IC_GSN_GET_TABINFO_CONF
-    || signal.gsn == gsn::IC_GSN_LIST_TABLES_CONF
-  {
-    let added = match assembler.add(signal) {
-      Ok(added) => added,
-      // A broken train of fragments; the whole answer is lost.
-      Err(e) => return Some(Attempt::Again(e)),
+/// What a whole answer amounts to. It is already known to answer this
+/// request: the connection matched it by its number.
+fn answer_of(whole: ReceivedSignal) -> Attempt {
+  if whole.gsn == gsn::IC_GSN_GET_TABINFO_CONF {
+    return description_of(whole);
+  }
+  if whole.gsn == gsn::IC_GSN_GET_TABINFOREF {
+    return match GetTabInfoRef::decode(&whole.data) {
+      Ok(refusal) => refused(&refusal),
+      Err(e) => Attempt::Again(e),
     };
-    // `None` while fragments are still to come: keep waiting.
-    let whole = added?;
-    if whole.gsn == gsn::IC_GSN_LIST_TABLES_CONF {
-      return list_of(whole, request_id);
-    }
-    return description_of(whole, request_id);
   }
-  if signal.gsn == gsn::IC_GSN_GET_TABINFOREF {
-    let refusal = match GetTabInfoRef::decode(&signal.data) {
-      Ok(refusal) => refusal,
-      Err(e) => return Some(Attempt::Again(e)),
-    };
-    if refusal.sender_data != request_id {
-      // A late answer to an earlier attempt.
-      return None;
-    }
-    return Some(refused(&refusal));
-  }
-  ic_port::debug_print!(
-    IC_NDB_MESSAGE_LEVEL,
-    "Dropped {} from node {} while waiting for the dictionary",
-    gsn::gsn_name(signal.gsn).unwrap_or("an unknown signal"),
-    signal.sender_node_id
-  );
-  None
+  // A list. Its count is not checked, since once joined it is the
+  // first piece's alone; see `list_tables`.
+  Attempt::Done(whole)
 }
 
-/// A whole description: check it is ours and complete.
-fn description_of(whole: ReceivedSignal, request_id: u32) -> Option<Attempt> {
+/// A whole description: check it is complete.
+fn description_of(whole: ReceivedSignal) -> Attempt {
   let conf = match GetTabInfoConf::decode(&whole.data) {
     Ok(conf) => conf,
-    Err(e) => return Some(Attempt::Again(e)),
+    Err(e) => return Attempt::Again(e),
   };
-  if conf.sender_data != request_id {
-    return None;
-  }
   if whole.section(0).len() != conf.total_len as usize {
     // Fragments went missing on the way.
-    let e = IcError::new(err::IC_ERROR_BAD_TABLE_DESCRIPTION);
-    return Some(Attempt::Again(e));
+    return Attempt::Again(IcError::new(err::IC_ERROR_BAD_TABLE_DESCRIPTION));
   }
-  Some(Attempt::Done(whole))
-}
-
-/// A whole list: check it is ours. Its count is not checked, since once
-/// joined it is the first piece's alone; see `list_tables`.
-fn list_of(whole: ReceivedSignal, request_id: u32) -> Option<Attempt> {
-  let conf = match ListTablesConf::decode(&whole.data) {
-    Ok(conf) => conf,
-    Err(e) => return Some(Attempt::Again(e)),
-  };
-  if conf.sender_data != request_id {
-    return None;
-  }
-  Some(Attempt::Done(whole))
+  Attempt::Done(whole)
 }
 
 /// What a refusal amounts to.
@@ -348,17 +286,10 @@ fn refused(refusal: &GetTabInfoRef) -> Attempt {
   Attempt::Failed(IcError::new(err::IC_ERROR_DICT_REFUSED))
 }
 
-fn node_is_up(global: &ApidGlobal, node_id: u32) -> bool {
-  match global.node(node_id) {
-    Some(node) => node.published.is_connected(),
-    None => false,
-  }
-}
-
 /// The pause before an attempt, as the reference: 50 ms and up to 40
 /// more, then up to 90 more after half the attempts, then from 100 ms
-/// after three quarters of them.
-fn retry_pause_ms(attempt: u32) -> u32 {
+/// after three quarters of them. `chance` picks within the spread.
+fn retry_pause_ms(attempt: u32, chance: u32) -> u32 {
   let mut base: u32 = 50;
   let mut spread: u32 = 5;
   if attempt >= IC_DICT_ATTEMPTS / 2 {
@@ -367,7 +298,6 @@ fn retry_pause_ms(attempt: u32) -> u32 {
   if attempt >= 3 * IC_DICT_ATTEMPTS / 4 {
     base = 100;
   }
-  let chance = NEXT_REQUEST.load(Ordering::Relaxed);
   base + 10 * (chance % spread)
 }
 
@@ -381,7 +311,6 @@ mod tests {
   use ic_ndb_signals::dict_tab_info::IC_DTI_NO_OF_ATTRIBUTES;
   use ic_ndb_signals::dict_tab_info::IC_DTI_TABLE_NAME;
   use ic_ndb_signals::dict_tab_info::IC_NDB_TYPE_INT;
-  use ic_ndb_signals::header::FragmentInfo;
   use ic_ndb_signals::simple_properties::PropertyWriter;
 
   fn description() -> Vec<u32> {
@@ -413,49 +342,11 @@ mod tests {
       sections: vec![words],
       ..ReceivedSignal::default()
     };
-    let mut assembler = FragmentAssembler::new();
-    match take_answer(&mut assembler, signal, 7) {
-      Some(Attempt::Done(answer)) => {
+    match answer_of(signal) {
+      Attempt::Done(answer) => {
         let words = answer.section(0);
         let info = dict_tab_info::parse_table_info(words).expect("table");
         assert_eq!(info.table_name(), "t1");
-      }
-      _ => panic!("expected the table"),
-    }
-  }
-
-  #[test]
-  fn an_answer_in_fragments_gives_the_table() {
-    // A description over 7400 words arrives in fragments; split this
-    // small one in two to take the same path.
-    let words = description();
-    let half = words.len() / 2;
-    let mut first_data = conf(7, words.len());
-    first_data.push(0);
-    first_data.push(33);
-    let mut last_data = conf(7, words.len());
-    last_data.push(0);
-    last_data.push(33);
-    let first = ReceivedSignal {
-      gsn: gsn::IC_GSN_GET_TABINFO_CONF,
-      fragment_info: FragmentInfo::First,
-      data: first_data,
-      sections: vec![words[..half].to_vec()],
-      ..ReceivedSignal::default()
-    };
-    let last = ReceivedSignal {
-      gsn: gsn::IC_GSN_GET_TABINFO_CONF,
-      fragment_info: FragmentInfo::Last,
-      data: last_data,
-      sections: vec![words[half..].to_vec()],
-      ..ReceivedSignal::default()
-    };
-    let mut assembler = FragmentAssembler::new();
-    assert!(take_answer(&mut assembler, first, 7).is_none());
-    match take_answer(&mut assembler, last, 7) {
-      Some(Attempt::Done(answer)) => {
-        let words = answer.section(0);
-        let info = dict_tab_info::parse_table_info(words).expect("table");
         assert_eq!(info.attributes.len(), 1);
       }
       _ => panic!("expected the table"),
@@ -463,16 +354,20 @@ mod tests {
   }
 
   #[test]
-  fn an_answer_to_an_earlier_attempt_is_passed_over() {
+  fn a_description_shorter_than_it_says_is_asked_for_again() {
     let words = description();
     let signal = ReceivedSignal {
       gsn: gsn::IC_GSN_GET_TABINFO_CONF,
-      data: conf(6, words.len()),
+      data: conf(7, words.len() + 5),
       sections: vec![words],
       ..ReceivedSignal::default()
     };
-    let mut assembler = FragmentAssembler::new();
-    assert!(take_answer(&mut assembler, signal, 7).is_none());
+    match answer_of(signal) {
+      Attempt::Again(e) => {
+        assert_eq!(e.code, err::IC_ERROR_BAD_TABLE_DESCRIPTION)
+      }
+      _ => panic!("expected another attempt"),
+    }
   }
 
   #[test]
@@ -484,9 +379,8 @@ mod tests {
       sections: vec![vec![0, 14, 3, 0, 15, 6]],
       ..ReceivedSignal::default()
     };
-    let mut assembler = FragmentAssembler::new();
-    match take_answer(&mut assembler, signal, 7) {
-      Some(Attempt::Done(answer)) => {
+    match answer_of(signal) {
+      Attempt::Done(answer) => {
         let objects = list_tables::parse_listed_objects(answer.section(0), &[])
           .expect("list");
         assert_eq!(objects.len(), 2);
@@ -494,6 +388,18 @@ mod tests {
       }
       _ => panic!("expected the list"),
     }
+  }
+
+  #[test]
+  fn a_refusal_signal_is_read_as_one() {
+    let code = get_tab_info::IC_GET_TABINFO_ERR_NOT_DEFINED;
+    let signal = ReceivedSignal {
+      gsn: gsn::IC_GSN_GET_TABINFOREF,
+      // A current refusal: the error code is its sixth word.
+      data: vec![7, 0, 0, 0, 0, code, 0],
+      ..ReceivedSignal::default()
+    };
+    assert!(matches!(answer_of(signal), Attempt::Failed(_)));
   }
 
   #[test]
@@ -519,8 +425,12 @@ mod tests {
   fn pauses_stay_in_the_reference_range() {
     let mut attempt: u32 = 1;
     while attempt < IC_DICT_ATTEMPTS {
-      let pause = retry_pause_ms(attempt);
-      assert!((50..=190).contains(&pause), "pause {}", pause);
+      let mut chance: u32 = 0;
+      while chance < 20 {
+        let pause = retry_pause_ms(attempt, chance);
+        assert!((50..=190).contains(&pause), "pause {}", pause);
+        chance += 1;
+      }
       attempt += 1;
     }
   }

@@ -19,9 +19,9 @@
 //!
 //! The command drives nothing itself. It starts the Data API's threads,
 //! which connect, read, route and keep heartbeats, and then only
-//! watches, and acts as one user thread for the seize: it sends under
-//! its own block number and waits on its own inbox. An application
-//! looks the same.
+//! watches, and acts as one user thread for the seize: it makes a
+//! connection, sends under that connection's block number and waits for
+//! the answers it expects. An application looks the same.
 //!
 //! ```text
 //!   ic_node_ping localhost:1186
@@ -34,10 +34,10 @@
 use std::collections::BTreeMap;
 
 use ic_apic::mgm_client;
+use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::apid_global::LinkStatus;
 use ic_apid::apid_global::NodeShared;
-use ic_apid::thread_conn::ThreadConnection;
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header::SignalHeader;
@@ -179,39 +179,40 @@ fn run() -> i32 {
 /// This is the first exchange made as a user thread makes it: sent
 /// under our own block number, with the answer addressed to that block.
 /// The receive thread never looks at the answer. It sorts it into our
-/// inbox by block number, and we wait there for it, which is the whole
-/// of the threading model seen from outside.
+/// inbox by block number, and our connection matches it to the request
+/// that expects it, which is the whole of the threading model seen from
+/// outside.
 fn seize_on_every_node(global: &ApidGlobal) {
-  let table = global.thread_table();
-  let inbox = match table.allocate() {
-    Ok(inbox) => inbox,
+  let mut conn = match global.create_connection() {
+    Ok(conn) => conn,
     Err(e) => {
-      report("Could not get an inbox", &e);
+      report("Could not make a connection", &e);
       return;
     }
   };
   println!(
     "As user thread {}, block {:#06x}:",
-    inbox.thread_id(),
-    inbox.block_number()
+    conn.thread_id(),
+    conn.block_number()
   );
   for node_id in global.started_nodes() {
-    seize_and_release(global, &inbox, node_id);
+    seize_and_release(&mut conn, node_id);
   }
-  table.release(&inbox);
+  if conn.unexpected() != 0 {
+    println!(
+      "{} signal(s) came that nothing waited for",
+      conn.unexpected()
+    );
+  }
+  let table = global.thread_table();
   if table.unroutable() != 0 {
     println!("{} signal(s) had no inbox to go to", table.unroutable());
   }
 }
 
-fn seize_and_release(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
-  node_id: u32,
-) {
-  let own_ref =
-    blocks::number_to_ref(inbox.block_number(), global.own_node_id());
-  // Our own name for the record. It comes back in every answer.
+fn seize_and_release(conn: &mut ApidConnection, node_id: u32) {
+  let own_ref = conn.block_ref();
+  // Our own name for the record. It comes back first in every answer.
   let our_ptr: u32 = 1000 + node_id;
   let seize = TcSeizeReq {
     api_connect_ptr: our_ptr,
@@ -220,16 +221,21 @@ fn seize_and_release(
   };
   let header = SignalHeader::new(
     gsn::IC_GSN_TCSEIZEREQ,
-    inbox.block_number(),
+    conn.block_number(),
     blocks::IC_BLOCK_DBTC,
   );
-  if let Err(e) = global.send(node_id, &header, &seize.encode(), &[]) {
-    println!("node {:<4} seize not sent: {}", node_id, e.message());
-    return;
-  }
-  let (answer, data) = wait_for_answer(inbox);
-  if answer == gsn::IC_GSN_TCSEIZEREF {
-    match TcSeizeRef::decode(&data) {
+  let replies = [gsn::IC_GSN_TCSEIZECONF, gsn::IC_GSN_TCSEIZEREF];
+  let answer =
+    conn.call(node_id, &header, &seize.encode(), &[], &replies, 5000);
+  let answer = match answer {
+    Ok(answer) => answer,
+    Err(e) => {
+      println!("node {:<4} seize not answered: {}", node_id, e.message());
+      return;
+    }
+  };
+  if answer.gsn == gsn::IC_GSN_TCSEIZEREF {
+    match TcSeizeRef::decode(&answer.data) {
       Ok(refusal) => println!(
         "node {:<4} would not give us a transaction record: NDB error {}",
         node_id, refusal.error_code
@@ -238,11 +244,7 @@ fn seize_and_release(
     }
     return;
   }
-  if answer != gsn::IC_GSN_TCSEIZECONF {
-    println!("node {:<4} did not answer the seize in time", node_id);
-    return;
-  }
-  let conf = match TcSeizeConf::decode(&data) {
+  let conf = match TcSeizeConf::decode(&answer.data) {
     Ok(conf) => conf,
     Err(e) => {
       println!("node {:<4} bad answer: {}", node_id, e.message());
@@ -253,56 +255,39 @@ fn seize_and_release(
   // have no need to take apart: it is only ever sent back.
   let tc_block = blocks::ref_to_block(conf.tc_block_ref);
   println!(
-    "node {:<4} gave us transaction record {} at coordinator {:#06x}{}",
-    node_id,
-    conf.tc_connect_ptr,
-    tc_block,
-    if conf.api_connect_ptr == our_ptr {
-      ""
-    } else {
-      " (but for a pointer that is not ours)"
-    }
+    "node {:<4} gave us transaction record {} at coordinator {:#06x}",
+    node_id, conf.tc_connect_ptr, tc_block
   );
+  // The release leads with the coordinator's record, not ours, so it is
+  // not a plain call: its answer echoes our pointer, the third word.
   let release = TcReleaseReq {
     tc_connect_ptr: conf.tc_connect_ptr,
     api_block_ref: own_ref,
     api_connect_ptr: our_ptr,
   };
   let header =
-    SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, inbox.block_number(), tc_block);
-  if let Err(e) = global.send(node_id, &header, &release.encode(), &[]) {
+    SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, conn.block_number(), tc_block);
+  let replies = [gsn::IC_GSN_TCRELEASECONF, gsn::IC_GSN_TCRELEASEREF];
+  let sent = conn.send_expecting(
+    node_id,
+    &header,
+    &release.encode(),
+    &[],
+    our_ptr,
+    &replies,
+  );
+  if let Err(e) = sent {
     println!("node {:<4} release not sent: {}", node_id, e.message());
     return;
   }
-  let (answer, _data) = wait_for_answer(inbox);
-  if answer == gsn::IC_GSN_TCRELEASECONF {
-    println!("node {:<4} took it back", node_id);
-  } else if answer == gsn::IC_GSN_TCRELEASEREF {
-    println!("node {:<4} would not take it back", node_id);
-  } else {
-    println!("node {:<4} did not answer the release in time", node_id);
-  }
-}
-
-/// Wait on our inbox for up to five seconds. Gives the signal number
-/// and data of the first signal found, or zero and nothing.
-///
-/// This is all a user thread does to receive: it sleeps on its inbox
-/// and a receive thread wakes it when something is put there.
-fn wait_for_answer(inbox: &ThreadConnection) -> (u16, Vec<u32>) {
-  let start = ic_port::time::gethrtime();
-  loop {
-    let waited =
-      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
-    if waited >= 5000 {
-      return (0, Vec::new());
+  match conn.wait_for(our_ptr, 5000) {
+    Ok(answer) if answer.gsn == gsn::IC_GSN_TCRELEASECONF => {
+      println!("node {:<4} took it back", node_id)
     }
-    let mut got = inbox.take(5000 - waited as u32);
-    if !got.is_empty() {
-      let first = got.remove(0);
-      return (first.gsn, first.data);
+    Ok(_) => println!("node {:<4} would not take it back", node_id),
+    Err(e) => {
+      println!("node {:<4} release not answered: {}", node_id, e.message())
     }
-    // Woken for nothing, or the wait ran out; go round.
   }
 }
 

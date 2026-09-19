@@ -172,10 +172,22 @@ impl FragmentAssembler {
     self.in_progress.len()
   }
 
-  /// Drop everything part way through, for instance when the node the
-  /// fragments came from has gone.
+  /// Drop everything part way through.
   pub fn clear(&mut self) {
     self.in_progress.clear();
+  }
+
+  /// Drop what was begun from one node, whose link has gone: the rest
+  /// of it can never arrive.
+  pub fn clear_node(&mut self, node_id: u32) {
+    let mut i: usize = 0;
+    while i < self.in_progress.len() {
+      if self.in_progress[i].sender_node_id == node_id {
+        self.in_progress.remove(i);
+      } else {
+        i += 1;
+      }
+    }
   }
 
   fn find(

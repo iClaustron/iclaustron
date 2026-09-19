@@ -9,9 +9,10 @@
 //!   ic_desc -c localhost:1186 -d ictest t1 t2 --debug-level 1024
 //! ```
 //!
-//! It starts the Data API, takes an inbox as one user thread, and asks
-//! a started data node for each table in turn. The table has to exist:
-//! the API never creates one, that is done through a MySQL server.
+//! It starts the Data API, makes one connection as a user thread does,
+//! and asks a started data node for each table in turn. The table has
+//! to exist: the API never creates one, that is done through a MySQL
+//! server.
 //!
 //! Character sets are shown by number. The names live in the MySQL
 //! server's tables, which this library does not carry.
@@ -20,9 +21,9 @@
 //! request, and the answer in fragments if the data node split it.
 
 use ic_apic::mgm_client;
+use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::dict_client;
-use ic_apid::thread_conn::ThreadConnection;
 use ic_ndb_signals::dict_tab_info;
 use ic_ndb_signals::dict_tab_info::AttributeInfo;
 use ic_ndb_signals::dict_tab_info::HashMapInfo;
@@ -129,21 +130,20 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
     println!("No data node is started, so there is nobody to ask");
     return 1;
   }
-  let table_list = global.thread_table();
-  let inbox = match table_list.allocate() {
-    Ok(inbox) => inbox,
+  let mut conn = match global.create_connection() {
+    Ok(conn) => conn,
     Err(e) => {
-      report("Could not get an inbox", &e);
+      report("Could not make a connection", &e);
       return 1;
     }
   };
   let mut code = 0;
   for table in tables {
-    match dict_client::get_table(global, &inbox, database, table) {
+    match dict_client::get_table(&mut conn, database, table) {
       Ok(info) => {
-        let map = hash_map_of(global, &inbox, &info);
+        let map = hash_map_of(&mut conn, &info);
         print_table(&info, map.as_ref());
-        print_indexes(global, &inbox, &info);
+        print_indexes(&mut conn, &info);
         print_own_lines(&info, map.as_ref());
       }
       Err(e) => {
@@ -154,21 +154,25 @@ fn describe_all(global: &ApidGlobal, database: &str, tables: &[String]) -> i32 {
     }
     println!();
   }
-  table_list.release(&inbox);
+  if conn.unexpected() > 0 {
+    println!(
+      "{} signal(s) came that nothing waited for",
+      conn.unexpected()
+    );
+  }
   code
 }
 
 /// The table's hash map, if it is placed by one. A map that cannot be
 /// fetched is reported and the table printed without it.
 fn hash_map_of(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
+  conn: &mut ApidConnection,
   table: &TableInfo,
 ) -> Option<HashMapInfo> {
   if table.hash_map_object_id == dict_tab_info::IC_RNIL {
     return None;
   }
-  match dict_client::get_hash_map(global, inbox, table.hash_map_object_id) {
+  match dict_client::get_hash_map(conn, table.hash_map_object_id) {
     Ok(map) => Some(map),
     Err(e) => {
       report("Could not fetch its hash map", &e);
@@ -181,7 +185,14 @@ fn print_table(table: &TableInfo, map: Option<&HashMapInfo>) {
   // The lines and their order are ndb_desc's, so that the two can be
   // compared line by line. Ours alone come at the end.
   println!("-- {} --", table.table_name());
-  println!("Version: {}", table.table_version);
+  // ndb_desc prints the whole word. Its two halves count different
+  // things, online changes above and offline changes below, so they
+  // are shown apart.
+  println!(
+    "Version: upper {}, lower {}",
+    table.version_upper(),
+    table.version_lower()
+  );
   println!("Fragment type: {}", fragment_type_name(table.fragment_type));
   println!("K Value: {}", table.kvalue);
   println!("Min load factor: {}", table.min_load_factor);
@@ -253,11 +264,7 @@ fn print_own_lines(table: &TableInfo, map: Option<&HashMapInfo>) {
 /// The indexes, as ndb_desc lists them: first the primary key, which
 /// is the table itself rather than an index of its own, then every
 /// index in id order, each with its columns.
-fn print_indexes(
-  global: &ApidGlobal,
-  inbox: &ThreadConnection,
-  table: &TableInfo,
-) {
+fn print_indexes(conn: &mut ApidConnection, table: &TableInfo) {
   // The reference prints the heading with a space at its end.
   println!("-- Indexes -- ");
   let mut key_names: Vec<&str> = Vec::new();
@@ -267,7 +274,7 @@ fn print_indexes(
     }
   }
   println!("PRIMARY KEY({}) - UniqueHashIndex", key_names.join(", "));
-  let listed = dict_client::list_dependents(global, inbox, table.table_id);
+  let listed = dict_client::list_dependents(conn, table.table_id);
   let mut objects = match listed {
     Ok(objects) => objects,
     Err(e) => {
@@ -282,7 +289,7 @@ fn print_indexes(
       // A trigger, a large-object table or another dependent.
       continue;
     }
-    let index = match dict_client::get_table_by_id(global, inbox, object.id) {
+    let index = match dict_client::get_table_by_id(conn, object.id) {
       Ok(index) => index,
       Err(e) => {
         report("Could not fetch an index", &e);

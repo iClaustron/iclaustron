@@ -250,6 +250,11 @@ somewhere testable against a live cluster:
    before anyone sees them** (both below). The first key
    lookup lands here, once a table can be fetched from the dictionary
    (phase 4), since an operation names its table's id and version.
+   First cut done (`apid_conn`, `ApidGlobal::create_connection`): the
+   inbox, `poll`, fragments joined, expected replies with one reply
+   each, and requests failed when their link goes. The dictionary fetch
+   and both tools run on it. Replies in several signals and the key
+   lookup are still to come.
 4. **The real send path.** The claim flag, user threads writing outside
    the mutex, the send thread pool taking overflow, adaptive send.
 5. **Several receive threads**, each given a share of the nodes at
@@ -282,14 +287,14 @@ What that means for step 3:
 - Expected replies (below) are matched against the whole signal. A
   reply that arrives in five fragments is still one reply.
 
-Today `ic_apid::fragments` does the reassembly, but `dict_client` calls
-it itself, because there is no connection object yet. That call moves
-into `poll` with step 3, and `dict_client` then sees whole signals like
-everything else.
+Built with step 3: `ApidConnection::poll` hands each signal to
+`ic_apid::fragments` first, and `dict_client` sees whole signals like
+everything else. A lost link drops that node's unfinished fragments.
 
-### Expected replies (decided, not yet built)
+### Expected replies (decided; single replies built)
 
-Asked for by the author (2026-09-19); to be implemented with step 3.
+Asked for by the author (2026-09-19); built with step 3 for requests
+answered by one signal.
 
 **When a user thread sends a signal, it says which signal numbers it
 expects back.** A `TCSEIZEREQ` expects `TCSEIZECONF` or `TCSEIZEREF`; a
@@ -304,22 +309,37 @@ What it gives, as seen from here:
 - **A signal nobody expects is visible.** A late reply to a request
   already answered or abandoned, or a signal of the wrong kind, is
   caught at the point it arrives and counted, rather than being handled
-  as if it belonged. Today `dict_client` can only drop, with a trace,
-  whatever arrives while it waits, because nothing says who else might
-  be waiting for it.
+  as if it belonged.
 - **Several requests can wait on one inbox.** A signal is handed to the
   expectation it matches, not to whichever code happens to be reading
-  the inbox, which is what the blocking fetch of today cannot do.
+  the inbox.
 - **A node failure fails exactly what was waiting on it.** The
   expectations recorded against the failed node are the requests to
   complete with a node-failure error, with no scan of every query.
 
-Open for when it is built: whether the check happens only in the user
-thread, where the expectation is created and consumed and needs no lock,
-or also in the receive thread, which would let it drop an unexpected
-signal before it reaches an inbox but would have to read another
-thread's expectations. The first keeps the receive thread a pure router,
-as the rest of this chapter wants.
+As built (`ic_apid::apid_conn`):
+
+- **The check is in the user thread only**, where the expectation is
+  created and consumed and needs no lock. The receive thread stays a
+  pure router, as the rest of this chapter wants; the question left
+  open here before was settled that way for the first cut.
+- A whole signal matches an expectation when its signal number is one
+  the request named, it comes from the node the request went to, and
+  its first data word is the request's number. Every reply used so far
+  echoes the number there. A request does not always carry it first:
+  `TCRELEASEREQ` leads with the coordinator's record and carries ours
+  third (`DbtcMain.cpp`, `execTCRELEASEREQ`), so the number is given
+  when sending, not read from the request.
+- The first matching reply completes the request. `TCKEYREQ`, answered
+  by several signals, needs the expectation to stay until the final
+  one; that is the next extension.
+- Each expectation records the link generation it was sent over. After
+  every `poll`, a request whose node's link is down, or is a newer link
+  than the one it went over, is completed with the node's error. Its
+  reply cannot come, and waiting would only run into the timeout.
+- `call` sends and waits in 100 ms slices, so a lost link is noticed
+  within one slice. A request that times out is forgotten; its reply,
+  if it comes later, is counted as unexpected.
 
 Mutex ordering levels (lock lower before higher, never the reverse):
 

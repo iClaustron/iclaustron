@@ -18,6 +18,8 @@
 //! Modules:
 //! - [`apid_global`]: the object every thread works from, and starting
 //!   and stopping the threads.
+//! - [`apid_conn`]: a user thread's connection: its inbox, and the
+//!   replies it waits for.
 //! - [`connect_thread`]: the thread per data node that dials it.
 //! - [`rec_thread`]: the receive thread, which reads and routes.
 //! - [`heartbeat`]: the heartbeat thread.
@@ -30,6 +32,7 @@
 //! - [`thread_conn`]: handing signals from a receive thread to the user
 //!   thread they are for.
 
+pub mod apid_conn;
 pub mod apid_global;
 pub mod connect_thread;
 pub mod dict_client;
