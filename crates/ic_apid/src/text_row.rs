@@ -76,8 +76,9 @@ pub fn takes_text(attr: &AttributeInfo) -> bool {
 }
 
 fn is_integer(attr: &AttributeInfo) -> bool {
-  attr.ext_type >= dict_tab_info::IC_NDB_TYPE_TINYINT
-    && attr.ext_type <= dict_tab_info::IC_NDB_TYPE_BIGUNSIGNED
+  let integers =
+    dict_tab_info::IC_NDB_TYPE_TINYINT..=dict_tab_info::IC_NDB_TYPE_BIGUNSIGNED;
+  integers.contains(&attr.ext_type)
 }
 
 fn is_signed(attr: &AttributeInfo) -> bool {

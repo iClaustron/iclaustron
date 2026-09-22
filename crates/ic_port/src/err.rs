@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7149;
+pub const IC_LAST_ERROR: i32 = 7151;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -338,6 +338,12 @@ pub const IC_ERROR_NO_NULL_BIT: i32 = 7147;
 pub const IC_ERROR_KEY_RECORD: i32 = 7148;
 /// A variable-sized value says it is longer than its field.
 pub const IC_ERROR_VALUE_TOO_LONG: i32 = 7149;
+/// The transaction, or the query, is not in a state for that: a query
+/// already defined or sent, a transaction already ending or ended, or
+/// one that is not done and cannot be closed.
+pub const IC_ERROR_TRANSACTION_ACTIVE: i32 = 7150;
+/// The query's transaction was rolled back, and the query with it.
+pub const IC_ERROR_TRANSACTION_ROLLED_BACK: i32 = 7151;
 
 /// An error: a code and, for operating system errors, nothing more.
 ///
@@ -709,6 +715,8 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_NO_NULL_BIT => "The field has no null bit in the record",
     IC_ERROR_KEY_RECORD => "The key record does not fit the operation",
     IC_ERROR_VALUE_TOO_LONG => "A value is longer than its field",
+    IC_ERROR_TRANSACTION_ACTIVE => "The transaction or query is busy",
+    IC_ERROR_TRANSACTION_ROLLED_BACK => "The transaction was rolled back",
     _ => "Unknown error code",
   }
 }

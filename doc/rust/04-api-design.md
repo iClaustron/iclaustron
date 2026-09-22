@@ -146,6 +146,32 @@ query.is_failed() ; query.error() ; query.reset()
 Arguments are passed in one `#[repr(C)]` struct per call (`ReadKeyArgs`,
 `WriteKeyArgs`) so the C ABI has a fixed signature and new options can be
 appended without breaking callers (the struct starts with its own size).
+
+As built (`ic_apid::query`, `ic_apid::transaction`; 2026-09-22), two
+departures from the sketch above, decided for memory safety and to be
+confirmed by the author:
+
+- **Queries and transactions live in the connection** and are handled
+  by id (`QueryId`, `TransId`, from the object map of chapter 02):
+  `conn.create_query(table, key_rec, attr_rec)`, `conn.query_mut(id)`,
+  `conn.start_transaction(hint, table)`, `conn.transaction(id)`,
+  `conn.close_transaction(id)`. A query is made on the connection that
+  uses it, not on the global. The ids map straight onto the C ABI's
+  opaque pointers.
+- **A query owns its rows**, sized by its records: the application
+  fills `key_row_mut()` and, for a write, `attr_row_mut()`, and reads
+  `attr_row()` when the query has completed. The argument structs carry
+  no row pointers, so nothing in the library points into the
+  application's memory while a query is sent, and no unsafe code is
+  needed. The C binding will copy or map the caller's rows onto these.
+
+Also as built: `send_queries()` sends everything defined, `flush(ms)`
+sends and polls, `get_next_executed_query()` hands out completed
+queries, which are idle again once taken. Callbacks are not built yet;
+nor are unique-key queries. Seen live (2026-09-22, `ic_trans` against
+RonDB 26.10): ten rows inserted in one transaction, read back in one
+batch of committed reads, their rows arriving from several nodes in
+whatever order they came, and deleted in one transaction.
 `define_field`/`define_pos`/`transfer_ownership` from the C header are
 superseded by records; `set_partition_id(s)` stays (scans, later).
 

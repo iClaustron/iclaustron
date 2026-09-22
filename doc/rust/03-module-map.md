@@ -169,9 +169,9 @@ functions; explicit shifts and masks, no bit-field macros.
 | `ic_apid_global.ic` | `global.rs` | 1:1 | `external_connect` (cluster server hand-off) Out |
 | `ic_apid_start.ic` | `program.rs` | 1:1 | option groups via `ic_port::options`; the iClaustron-cluster-server options Out |
 | `ic_apid_conn.ic` | `apid_conn.rs` | 1:1 + New | first cut built: inbox, `poll`, fragments joined, expected replies; `read_key`, `write_key`, transaction start/commit/rollback get real bodies; savepoint functions removed |
-| `ic_apid_op.ic` | `query.rs` | Redesign | record-based binding (04); fix the inverted alloc check |
+| `ic_apid_op.ic` | `query.rs` | Redesign | built: record-based binding (04), rows owned by the query, ids from the object map; conditions and assignments still to come |
 | `ic_apid_table.ic` | `dict_cache.rs`, `record.rs` | 1:1 + New | binding via the dictionary built in `dict_cache.rs` (`TableDef`, `IndexDef`, the shared cache, invalidation by `ALTER_TABLE_REP`); `Record` from a field spec and the default record built in `record.rs`; index key records still to come |
-| `ic_apid_trans.ic` (stubs) | `transaction.rs` | New | TC seize, ids, flags, completion accounting, commit/abort, node failure |
+| `ic_apid_trans.ic` (stubs) | `transaction.rs` | New | built: TC records, ids, start/execute/commit flags, completion accounting, commit and rollback, a lost coordinator link; still to come: `TCKEY_FAILCONF`/`REF`, callbacks |
 | `ic_apid_where.ic`, `ic_apid_cond_assign.ic` (stubs) | `where_cond.rs`, `cond_assign.rs`, `interp_gen.rs` | New | builder → RonDB 26.10 interpreter program |
 | — | `hash.rs` | New | distribution key, hash choice per table, hash map → partition → node, with the data nodes' dynamic primary rule; location domain and host proximity still to come. The digests themselves are `ic_util::md5` and `ic_util::xxh3`, written from the public algorithms |
 | — | `row_codec.rs` | New | `TRANSID_AI` ↔ record row; ATTRINFO/KEYINFO from record rows; first cut built: key, packed read request, packed row unpacked |

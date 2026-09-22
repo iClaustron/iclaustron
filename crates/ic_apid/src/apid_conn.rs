@@ -40,6 +40,7 @@
 //!   crate::apid_global::ApidGlobal::create_connection
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use ic_ndb_signals::blocks;
@@ -53,6 +54,7 @@ use ic_ndb_signals::tc_seize::IC_ANY_TC_INSTANCE;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
+use ic_util::ptr_array::PtrArray;
 
 use crate::apid_global::ApidShared;
 use crate::dict_cache;
@@ -61,7 +63,11 @@ use crate::dict_cache::TableDef;
 use crate::dict_client;
 use crate::fragments::FragmentAssembler;
 use crate::node_connect::ReceivedSignal;
+use crate::query::ApidQuery;
+use crate::query::QueryId;
+use crate::query::TransId;
 use crate::thread_conn::ThreadConnection;
+use crate::transaction::Transaction;
 
 /// How long seizing a transaction record waits for the coordinator.
 pub const IC_TC_SEIZE_WAIT_MS: u32 = 5_000;
@@ -254,7 +260,7 @@ pub struct TcRecord {
   /// The node whose coordinator holds it.
   pub node_id: u32,
   /// The link it was seized over.
-  generation: u32,
+  pub(crate) generation: u32,
   /// Our pointer for it, which `TCKEYCONF` names.
   pub api_ptr: u32,
   /// The coordinator's pointer for it.
@@ -265,12 +271,27 @@ pub struct TcRecord {
   busy: bool,
 }
 
+#[cfg(test)]
+impl TcRecord {
+  /// A record as a test needs one, seized nowhere.
+  pub(crate) fn for_test(node_id: u32) -> TcRecord {
+    TcRecord {
+      node_id,
+      generation: 1,
+      api_ptr: 1,
+      tc_ptr: 1,
+      tc_block: 0xF5,
+      busy: true,
+    }
+  }
+}
+
 /// A user thread's connection to the cluster.
 ///
 /// Not shared: one thread uses it, which is why nothing in it is
 /// locked. Dropping it gives its block number back.
 pub struct ApidConnection {
-  shared: Arc<ApidShared>,
+  pub(crate) shared: Arc<ApidShared>,
   inbox: Arc<ThreadConnection>,
   assembler: FragmentAssembler,
   expectations: Expectations,
@@ -286,6 +307,15 @@ pub struct ApidConnection {
   tc_records: Vec<TcRecord>,
   /// The low word of the next transaction id.
   trans_counter: u32,
+  /// The queries made on this connection, by the id a reply names.
+  pub(crate) queries: PtrArray<ApidQuery>,
+  /// The transactions started on this connection.
+  pub(crate) transactions: PtrArray<Transaction>,
+  /// Queries completed and not yet taken, oldest first.
+  pub(crate) executed: VecDeque<QueryId>,
+  /// The transactions not yet done, by the coordinator record pointer
+  /// their replies name.
+  pub(crate) active: Vec<(u32, TransId)>,
 }
 
 impl std::fmt::Debug for ApidConnection {
@@ -317,6 +347,10 @@ impl ApidConnection {
       indexes: HashMap::new(),
       tc_records: Vec::new(),
       trans_counter,
+      queries: PtrArray::new(),
+      transactions: PtrArray::new(),
+      executed: VecDeque::new(),
+      active: Vec::new(),
     })
   }
 
@@ -460,6 +494,7 @@ impl ApidConnection {
       self.receive(signal);
     }
     self.fail_lost_requests();
+    self.fail_lost_transactions();
     taken
   }
 
@@ -626,7 +661,7 @@ impl ApidConnection {
   }
 
   /// True if the link to `node_id` is up and is the one of `generation`.
-  fn link_is(&self, node_id: u32, generation: u32) -> bool {
+  pub(crate) fn link_is(&self, node_id: u32, generation: u32) -> bool {
     match self.shared.node(node_id) {
       Some(node) => {
         node.published.is_connected()
@@ -754,7 +789,13 @@ impl ApidConnection {
       // More fragments to come.
       None => return,
     };
-    if let Some(stray) = self.expectations.offer(whole) {
+    let unclaimed = match self.expectations.offer(whole) {
+      Some(unclaimed) => unclaimed,
+      None => return,
+    };
+    // Not a request's reply: a transaction's, or a query's, if the
+    // first word names one.
+    if let Some(stray) = self.route_reply(unclaimed) {
       self.unexpected += 1;
       ic_port::debug_print!(
         IC_NDB_MESSAGE_LEVEL,

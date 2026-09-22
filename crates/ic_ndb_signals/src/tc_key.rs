@@ -89,6 +89,9 @@ const IC_TCKEY_EXECUTE_SHIFT: u32 = 10;
 const IC_TCKEY_START_SHIFT: u32 = 11;
 const IC_TCKEY_ABORT_SHIFT: u32 = 12;
 const IC_TCKEY_ABORT_MASK: u32 = 3;
+const IC_TCKEY_NO_WAIT_SHIFT: u32 = 21;
+const IC_TCKEY_BATCH_SAFE_SHIFT: u32 = 22;
+const IC_TCKEY_BATCH_UNSAFE_SHIFT: u32 = 23;
 
 /// What a key request asks for, before it is made into the request
 /// information word.
@@ -112,6 +115,12 @@ pub struct TcKeyFlags {
   pub no_disk: bool,
   /// One of `IC_ABORT_ON_ERROR` or `IC_IGNORE_ERROR`.
   pub abort_option: u32,
+  /// RonDB: fail rather than wait for a lock another transaction holds.
+  pub no_wait: bool,
+  /// RonDB: the operation does not depend on earlier ones in its batch.
+  pub batch_safe: bool,
+  /// RonDB: the operation depends on earlier ones in its batch.
+  pub batch_unsafe: bool,
 }
 
 impl TcKeyFlags {
@@ -127,6 +136,9 @@ impl TcKeyFlags {
     info |= (self.execute as u32) << IC_TCKEY_EXECUTE_SHIFT;
     info |= (self.start as u32) << IC_TCKEY_START_SHIFT;
     info |= (self.abort_option & IC_TCKEY_ABORT_MASK) << IC_TCKEY_ABORT_SHIFT;
+    info |= (self.no_wait as u32) << IC_TCKEY_NO_WAIT_SHIFT;
+    info |= (self.batch_safe as u32) << IC_TCKEY_BATCH_SAFE_SHIFT;
+    info |= (self.batch_unsafe as u32) << IC_TCKEY_BATCH_UNSAFE_SHIFT;
     info
   }
 }
@@ -304,6 +316,120 @@ impl TcKeyRef {
   }
 }
 
+/// Words in a `TC_COMMITREQ` and a `TCROLLBACKREQ`: our pointer for the
+/// transaction and its id. Verify: `DbtcMain.cpp`, `execTC_COMMITREQ`
+/// and `execTCROLLBACKREQ`.
+pub const IC_TC_TRANS_REQ_LEN: usize = 3;
+
+/// Ask the coordinator to commit, or to roll back, a transaction with
+/// nothing left to send: the request names the transaction.
+pub fn tc_trans_req(
+  api_connect_ptr: u32,
+  trans_id1: u32,
+  trans_id2: u32,
+) -> [u32; IC_TC_TRANS_REQ_LEN] {
+  [api_connect_ptr, trans_id1, trans_id2]
+}
+
+/// Words in a `TC_COMMITCONF`.
+pub const IC_TC_COMMITCONF_LEN: usize = 5;
+
+/// The coordinator has committed a transaction asked to commit on its
+/// own. Verify: `TcCommit.hpp`; `DbtcMain.cpp`, where the pointer's low
+/// bit is set when a commit-ack marker was kept.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcCommitConf {
+  /// Our pointer for the transaction, its low bit cleared.
+  pub api_connect_ptr: u32,
+  /// True if the commit must be acknowledged with `TC_COMMIT_ACK`.
+  pub needs_commit_ack: bool,
+  /// The transaction id, low word.
+  pub trans_id1: u32,
+  /// The transaction id, high word.
+  pub trans_id2: u32,
+  /// The global checkpoint the commit went into.
+  pub gci: u64,
+}
+
+impl TcCommitConf {
+  /// Read a commit confirmation.
+  pub fn decode(data: &[u32]) -> Result<TcCommitConf, IcError> {
+    if data.len() < IC_TC_COMMITCONF_LEN {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    Ok(TcCommitConf {
+      api_connect_ptr: data[0] & !1,
+      needs_commit_ack: data[0] & 1 != 0,
+      trans_id1: data[1],
+      trans_id2: data[2],
+      gci: ((data[3] as u64) << 32) | data[4] as u64,
+    })
+  }
+}
+
+/// Words in a `TC_COMMITREF`, and the least in a `TCROLLBACKREF`, which
+/// has a fifth: the coordinator's state.
+pub const IC_TC_TRANS_REF_LEN: usize = 4;
+
+/// The coordinator refuses to commit, or to roll back. Verify:
+/// `TcCommit.hpp`, `TcCommitRef`; `DbtcMain.cpp`, where `TCROLLBACKREF`
+/// is sent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcTransRef {
+  /// Our pointer for the transaction.
+  pub api_connect_ptr: u32,
+  /// The transaction id, low word.
+  pub trans_id1: u32,
+  /// The transaction id, high word.
+  pub trans_id2: u32,
+  /// The NDB error code.
+  pub error_code: u32,
+}
+
+impl TcTransRef {
+  /// Read a refusal.
+  pub fn decode(data: &[u32]) -> Result<TcTransRef, IcError> {
+    if data.len() < IC_TC_TRANS_REF_LEN {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    Ok(TcTransRef {
+      api_connect_ptr: data[0],
+      trans_id1: data[1],
+      trans_id2: data[2],
+      error_code: data[3],
+    })
+  }
+}
+
+/// Words in a `TCROLLBACKCONF`: our pointer for the transaction and its
+/// id. Verify: `DbtcMain.cpp`, where it is sent with three words.
+pub const IC_TCROLLBACKCONF_LEN: usize = 3;
+
+/// The front of a `TCROLLBACKCONF`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcRollbackConf {
+  /// Our pointer for the transaction.
+  pub api_connect_ptr: u32,
+  /// The transaction id, low word.
+  pub trans_id1: u32,
+  /// The transaction id, high word.
+  pub trans_id2: u32,
+}
+
+impl TcRollbackConf {
+  /// Read a rollback confirmation.
+  pub fn decode(data: &[u32]) -> Result<TcRollbackConf, IcError> {
+    if data.len() < IC_TCROLLBACKCONF_LEN {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    Ok(TcRollbackConf {
+      api_connect_ptr: data[0],
+      trans_id1: data[1],
+      trans_id2: data[2],
+    })
+  }
+}
+
 /// Words in a `TCROLLBACKREP`.
 pub const IC_TCROLLBACKREP_LEN: usize = 5;
 
@@ -405,6 +531,7 @@ mod tests {
       dirty: true,
       no_disk: false,
       abort_option: IC_IGNORE_ERROR,
+      ..TcKeyFlags::default()
     };
     // Dirty 0, commit 4, simple 8, execute 10, start 11, abort 12-13.
     let expect = 1 | (1 << 4) | (1 << 8) | (1 << 10) | (1 << 11) | (2 << 12);
@@ -488,6 +615,32 @@ mod tests {
     assert_eq!(full.error_data, 9);
     let short = TcKeyRef::decode(&[22, 0x1000, 0x2000, 626]).expect("short");
     assert_eq!(short.error_data, 0);
+  }
+
+  #[test]
+  fn the_rondb_flags_take_their_bits() {
+    let flags = TcKeyFlags {
+      no_wait: true,
+      batch_safe: true,
+      ..TcKeyFlags::default()
+    };
+    assert_eq!(flags.request_info(), (1 << 21) | (1 << 22));
+  }
+
+  #[test]
+  fn a_commit_confirmation_says_whether_to_acknowledge() {
+    let conf = TcCommitConf::decode(&[8 | 1, 0x1000, 0x2000, 3, 4]);
+    let conf = conf.expect("read");
+    assert_eq!(conf.api_connect_ptr, 8);
+    assert!(conf.needs_commit_ack);
+    assert_eq!(conf.gci, (3 << 32) | 4);
+    let plain = TcCommitConf::decode(&[8, 0x1000, 0x2000, 0, 0]);
+    assert!(!plain.expect("read").needs_commit_ack);
+    assert_eq!(tc_trans_req(8, 0x1000, 0x2000), [8, 0x1000, 0x2000]);
+    let refused = TcTransRef::decode(&[8, 0x1000, 0x2000, 4350, 9]);
+    assert_eq!(refused.expect("read").error_code, 4350);
+    let rolled = TcRollbackConf::decode(&[8, 0x1000, 0x2000]);
+    assert_eq!(rolled.expect("read").api_connect_ptr, 8);
   }
 
   #[test]

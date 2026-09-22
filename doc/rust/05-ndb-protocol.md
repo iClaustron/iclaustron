@@ -749,7 +749,12 @@ commit flag. Verify: `include/ndbapi/NdbReceiver.hpp:400`,
 `TC_COMMITCONF` (GSN 17) `{connect ptr (bit 0 = ack expected), transId1,
 transId2, gci_hi, gci_lo}` or `TC_COMMITREF`. `TCROLLBACKREQ` (GSN 15) →
 `TCROLLBACKCONF` (13) or `TCROLLBACKREF` (14). `TCROLLBACKREP` (GSN 16) `{connect ptr, transId,
-returnCode, errorData}` is a TC-initiated abort. Node failure while a
+returnCode, errorData}` is a TC-initiated abort. As built
+(`ic_ndb_signals::tc_key`): the two requests are three words, our
+pointer and the transaction id; `TCROLLBACKCONF` is those three back;
+`TC_COMMITREF` adds the error code, and `TCROLLBACKREF` that and the
+coordinator's state. Verify: `DbtcMain.cpp`, `execTC_COMMITREQ`,
+`execTCROLLBACKREQ` and where each reply is sent. Node failure while a
 transaction is in flight: `TCKEY_FAILCONF` (8) / `TCKEY_FAILREF` (9).
 RonDB sends `TC_DEADLOCK_REP` before an abort caused by deadlock
 detection. Verify: `TcCommit.hpp:37-70`, `TcRollbackRep.hpp:33`,

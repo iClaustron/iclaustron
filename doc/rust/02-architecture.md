@@ -392,6 +392,15 @@ Debug builds check the ordering at every lock (`ic_port::sync`).
 7. User iterates `get_next_executed_query`, reads the row struct, resets
    the query.
 
+As built (`ic_apid::transaction`): the flow above, with the row owned
+by the query (chapter 04, as built). Replies are routed by their first
+word: the coordinator's, about the transaction, through the record
+pointer the transaction was seized on; the reading node's, about the
+operation, through the query's id in the object map, both checked
+against the transaction id. `poll` also fails every transaction whose
+coordinator's link has gone since it began, with the link's error; the
+takeover replies of a failed coordinator are still to come.
+
 ## Node failure flow
 
 1. **The link goes.** The node's socket closes, a send to it fails, or

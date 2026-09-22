@@ -128,6 +128,7 @@ pub fn read_committed(
     dirty: true,
     no_disk: false,
     abort_option: tc_key::IC_IGNORE_ERROR,
+    ..TcKeyFlags::default()
   };
   let node_id = node_for_key(conn, table, key_rec, key_row)?;
   let outcome = run_op(conn, table, node_id, &key, &attr_info, &flags)?;
@@ -185,6 +186,7 @@ pub fn read_partition(
     dirty: true,
     no_disk: false,
     abort_option: tc_key::IC_IGNORE_ERROR,
+    ..TcKeyFlags::default()
   };
   let table = key_rec.table();
   let node_id = node_for_key(conn, table, key_rec, key_row)?;
@@ -246,6 +248,7 @@ pub fn write_key(
     dirty: false,
     no_disk: false,
     abort_option: tc_key::IC_ABORT_ON_ERROR,
+    ..TcKeyFlags::default()
   };
   let node_id = node_for_key(conn, table, key_rec, key_row)?;
   let outcome = run_op(conn, table, node_id, &key, &attr_info, &flags)?;

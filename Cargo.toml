@@ -14,6 +14,7 @@ members = [
     "tools/ic_node_ping",
     "tools/ic_read",
     "tools/ic_write",
+    "tools/ic_trans",
     "xtask",
 ]
 

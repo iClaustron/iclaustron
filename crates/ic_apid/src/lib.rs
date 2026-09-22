@@ -29,6 +29,10 @@
 //! - [`row_codec`]: rows to and from the words of a key operation.
 //! - [`key_op`]: the first key operations, by primary key.
 //! - [`hash`]: where a key belongs, hashed as the data nodes hash it.
+//! - [`query`]: the query object, one key operation defined once and
+//!   used many times.
+//! - [`transaction`]: defining queries on a transaction, sending them,
+//!   and completing them as their replies come.
 //! - [`text_row`]: values as text, in and out of a row, for the tools.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
@@ -50,9 +54,11 @@ pub mod heartbeat;
 pub mod key_op;
 pub mod node_connect;
 pub mod node_state;
+pub mod query;
 pub mod rec_thread;
 pub mod record;
 pub mod row_codec;
 pub mod signal_reader;
 pub mod text_row;
 pub mod thread_conn;
+pub mod transaction;

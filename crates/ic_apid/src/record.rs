@@ -152,6 +152,7 @@ impl RecordField {
 /// Where a chosen set of a table's fields lie in a row. Fields are
 /// numbered by their position in the record, which is what a field
 /// mask counts.
+#[derive(Clone)]
 pub struct Record {
   table: Arc<TableDef>,
   fields: Vec<RecordField>,
