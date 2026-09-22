@@ -98,6 +98,7 @@ use crate::query::AbortOption;
 use crate::query::ApidQuery;
 use crate::query::BatchHint;
 use crate::query::Execution;
+use crate::query::QueryCallback;
 use crate::query::QueryId;
 use crate::query::QueryState;
 use crate::query::ReadKeyArgs;
@@ -432,7 +433,14 @@ impl ApidConnection {
       no_wait: args.kind == ReadKind::ExclusiveNoWait,
       ..TcKeyFlags::default()
     };
-    self.define(query_id, trans_id, flags, true, args.user_ref)
+    self.define(
+      query_id,
+      trans_id,
+      flags,
+      true,
+      args.user_ref,
+      args.callback,
+    )
   }
 
   /// Define a write by primary key on a transaction
@@ -462,7 +470,14 @@ impl ApidConnection {
       batch_unsafe: args.batch_hint == BatchHint::Unsafe,
       ..TcKeyFlags::default()
     };
-    self.define(query_id, trans_id, flags, false, args.user_ref)
+    self.define(
+      query_id,
+      trans_id,
+      flags,
+      false,
+      args.user_ref,
+      args.callback,
+    )
   }
 
   /// What read and write have in common: the sections from the rows,
@@ -474,6 +489,7 @@ impl ApidConnection {
     flags: TcKeyFlags,
     is_read: bool,
     user_ref: usize,
+    callback: Option<QueryCallback>,
   ) -> Result<(), IcError> {
     let (id, ended) = match self.transactions.get(trans_id.0) {
       Some(trans) => (trans.trans_id, trans.ended()),
@@ -526,6 +542,7 @@ impl ApidConnection {
         has_row: false,
       },
       user_ref,
+      callback,
     );
     if let Some(trans) = self.transactions.get_mut(trans_id.0) {
       trans.defined.push(query_id);
@@ -1117,18 +1134,41 @@ impl ApidConnection {
     self.finish_query(qid);
   }
 
-  /// A completed query off its transaction's list and onto the executed
-  /// list, and the transaction closed out if that was its last.
+  /// A completed query off its transaction's list, the transaction
+  /// closed out if that was its last, and then the query's callback
+  /// called, or the query put on the executed list if it has none.
+  /// The callback sees the transaction settled as far as this query
+  /// decides it, and runs with the poll marked, so that a poll from
+  /// inside it does nothing.
   fn finish_query(&mut self, qid: QueryId) {
-    let tid = match self.queries.get(qid.0) {
-      Some(query) => query.execution.trans,
-      None => None,
+    let (tid, callback, user_ref) = match self.queries.get(qid.0) {
+      Some(query) => {
+        (query.execution.trans, query.callback(), query.user_ref())
+      }
+      None => (None, None, 0),
     };
-    self.executed.push_back(qid);
-    let tid = match tid {
-      Some(tid) => tid,
-      None => return,
-    };
+    if callback.is_none() {
+      self.executed.push_back(qid);
+    }
+    if let Some(tid) = tid {
+      self.leave_transaction(qid, tid);
+    }
+    if let Some(callback) = callback {
+      self.in_callback += 1;
+      callback(self, qid, user_ref);
+      self.in_callback -= 1;
+      // Idle again, unless the callback defined it anew.
+      if let Some(query) = self.queries.get_mut(qid.0) {
+        if query.state() == QueryState::Completed {
+          query.set_state(QueryState::Idle);
+        }
+      }
+    }
+  }
+
+  /// The query off its transaction's lists, and the transaction closed
+  /// out if that was its last.
+  fn leave_transaction(&mut self, qid: QueryId, tid: TransId) {
     if let Some(trans) = self.transactions.get_mut(tid.0) {
       let mut i: usize = 0;
       while i < trans.sent.len() {

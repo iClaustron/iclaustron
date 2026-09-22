@@ -41,13 +41,17 @@
 //!
 //! `--force` makes each batch go at once rather than leaving it to the
 //! adaptive send algorithm, which is what an application gets by
-//! default; for one thread the two are the same. Measure a release
+//! default; for one thread the two are the same. `--callbacks` has
+//! each query report its completion through a callback, carrying its
+//! slot in `user_ref`, rather than through the executed list: the same
+//! work, and a live check of the callback path. Measure a release
 //! build: `cargo run --release -p ic_bench`.
 //!
 //! The table needs a primary key of one integer column; every other
 //! integer column gets ten times the key, and any other column must be
 //! nullable.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -80,7 +84,7 @@ const IC_BENCH_MAX_DEPTH: i64 = 16;
 /// The most user threads.
 const IC_BENCH_MAX_THREADS: i64 = 64;
 
-const OPTIONS: [OptionEntry; 13] = [
+const OPTIONS: [OptionEntry; 14] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -148,6 +152,12 @@ const OPTIONS: [OptionEntry; 13] = [
     help: "Write each batch at once, not by the adaptive send algorithm",
   },
   OptionEntry {
+    long_name: "callbacks",
+    short_name: 0,
+    kind: OptionKind::Flag,
+    help: "Complete queries through a callback, not the executed list",
+  },
+  OptionEntry {
     long_name: "node-id",
     short_name: 0,
     kind: OptionKind::Int,
@@ -172,6 +182,7 @@ struct Run {
   from: i64,
   prepare: bool,
   force: bool,
+  callbacks: bool,
 }
 
 fn main() {
@@ -237,6 +248,7 @@ fn run() -> i32 {
     from: parser.get_int_or("from", 1),
     prepare: !parser.get_flag("no-prepare"),
     force: parser.get_flag("force"),
+    callbacks: parser.get_flag("callbacks"),
   };
   let database = parser.get_string_or("database", "test");
   let connect_text =
@@ -486,6 +498,7 @@ fn run_thread(
           what,
           range,
           next_key,
+          i,
         );
         slots[i].sent = match defined {
           Ok(sent) => sent,
@@ -504,6 +517,24 @@ fn run_thread(
       break;
     }
     conn.poll(1);
+    if what.callbacks {
+      // The callbacks ran inside that poll and counted into this
+      // thread's table.
+      DONE_BY_CALLBACK.with(|done| {
+        let mut done = done.borrow_mut();
+        let mut slot: usize = 0;
+        while slot < done.len() && slot < slots.len() {
+          slots[slot].done += done[slot].0;
+          if done[slot].1 > 0 && errors == 0 {
+            println!("An operation failed");
+          }
+          errors += done[slot].1;
+          done[slot] = (0, 0);
+          slot += 1;
+        }
+      });
+      continue;
+    }
     while let Some(id) = conn.get_next_executed_query() {
       if let Some(query) = conn.query(id) {
         if let Some(e) = query.error() {
@@ -520,6 +551,33 @@ fn run_thread(
   }
   tally.unexpected = conn.unexpected();
   Ok(tally)
+}
+
+thread_local! {
+  /// For `--callbacks`: per slot, how many queries completed through
+  /// the callback since the loop last looked, and how many of them
+  /// failed. A callback is a plain function with the slot in its
+  /// `user_ref`, so its state lives in a table of the thread's own.
+  static DONE_BY_CALLBACK: RefCell<Vec<(usize, u64)>> =
+    const { RefCell::new(Vec::new()) };
+}
+
+/// The callback of `--callbacks`: count the query as done for its slot.
+fn note_done(conn: &mut ApidConnection, id: QueryId, slot: usize) {
+  let failed = match conn.query(id) {
+    Some(query) => query.is_failed(),
+    None => false,
+  };
+  DONE_BY_CALLBACK.with(|done| {
+    let mut done = done.borrow_mut();
+    if slot >= done.len() {
+      done.resize(slot + 1, (0, 0));
+    }
+    done[slot].0 += 1;
+    if failed {
+      done[slot].1 += 1;
+    }
+  });
 }
 
 /// A batch's worth of query objects on a connection.
@@ -766,8 +824,13 @@ fn define_batch(
   what: &Run,
   range: KeyRange,
   first_key: i64,
+  slot: usize,
 ) -> Result<Vec<TransId>, IcError> {
   let mut sent: Vec<TransId> = Vec::with_capacity(queries.len());
+  let mut callback: Option<ic_apid::query::QueryCallback> = None;
+  if what.callbacks {
+    callback = Some(note_done);
+  }
   let mut key = first_key;
   for id in queries {
     if key >= range.end {
@@ -778,12 +841,16 @@ fn define_batch(
     if what.write {
       let args = WriteKeyArgs {
         kind: WriteKind::Update,
+        user_ref: slot,
+        callback,
         ..WriteKeyArgs::default()
       };
       conn.write_key(*id, trans, &args)?;
     } else {
       let args = ReadKeyArgs {
         kind: ReadKind::Committed,
+        user_ref: slot,
+        callback,
         ..ReadKeyArgs::default()
       };
       conn.read_key(*id, trans, &args)?;

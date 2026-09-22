@@ -127,7 +127,9 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   have work while the thread packs and unpacks. `--depth 1` is the
   lock-step form, which the numbers below were measured with.
   `--threads` runs that many user threads on the one global, each with
-  its own connection and share of the keys. Reports operations per
+  its own connection and share of the keys; `--callbacks` completes
+  the queries through callbacks instead of the executed list, the same
+  work by the other path. Reports operations per
   second, per thread too, and the time from send to done of a batch,
   at the median, 99th percentile and worst. Measure a release build.
 
@@ -217,7 +219,9 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   in flight, took the nodes from 260% to 180% while the rate rose 20%,
   about 40% less data-node CPU per read. The nodes' cost is per round,
   not per operation, and operations per packet is the lever; the
-  tool's defaults are batch 200, depth 2.
+  tool's defaults are batch 200, depth 2. Updates at those defaults:
+  481 800 per second, 721 µs a batch, measured through callbacks
+  (`--callbacks`), which read the same as the executed list for reads.
 
   **Over threads, 2026-09-22**, at those defaults, 400 in flight per
   thread: one thread 1 730 000 reads per second, 160 µs a batch; two

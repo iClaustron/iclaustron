@@ -14,7 +14,7 @@ header is rewritten to match this chapter before implementation starts
 | Object | `struct ApidConnection` (fields private) | `IC_APID_CONNECTION*` opaque | `ic::Connection` RAII over the C pointer |
 | Method | `conn.read_key(&mut q, &mut t, &args)` | `ic_apid_conn_read_key(conn, q, t, &args)` | `conn.read_key(q, t, args)` |
 | Error | `Result<(), IcError>` | `int` code + `ic_apid_error_*` accessors | `ic::Error` value type |
-| Callback | `Option<fn(&mut ApidConnection, &mut ApidQuery, usize)>` + `user_ref: usize` | `IC_APID_CALLBACK_FUNC` + `void*` | same as C, lambdas via trampoline |
+| Callback | `Option<fn(&mut ApidConnection, QueryId, usize)>` + `user_ref: usize` | `IC_APID_CALLBACK_FUNC` + `void*` | same as C, lambdas via trampoline |
 | Enums | `#[repr(u32)] enum ReadKeyQueryType` | `IC_READ_KEY_QUERY_TYPE`, same values | `enum class`, same values |
 
 The Rust API is the implementation. The C ABI is a mechanical wrapper:
@@ -168,7 +168,19 @@ confirmed by the author:
 Also as built: `send_queries(force)` sends everything defined, one
 socket write per node, `flush(ms, force)` sends and polls, and
 `get_next_executed_query()` hands out completed
-queries, which are idle again once taken. Callbacks are not built yet.
+queries, which are idle again once taken. Callbacks as built
+(2026-09-22): `callback: Option<QueryCallback>` in the arguments,
+`fn(&mut ApidConnection, QueryId, usize)`, the query by id since it
+lives in the connection; it fires from inside `poll` on the polling
+thread when the query completes, after the query has left its
+transaction's lists, so the transaction's state inside it is settled
+as far as that query decides it. It may define queries and start,
+commit and send transactions; a `poll` from inside it does nothing.
+When it returns the query is idle unless it was defined anew, which is
+how a pipeline re-issues a query the moment it is done. A query with
+no callback goes on the executed list. Plain `fn` pointers, as in the
+C; `user_ref` carries the context, and a per-thread table reached
+through it is the safe way to hold state a callback updates.
 Unique-key queries are `create_unique_query(index, key_rec, attr_rec)`
 with records over the index's table, and take the same `read_key` and
 `write_key`; an insert through one is refused. Seen live (2026-09-22, `ic_trans` against

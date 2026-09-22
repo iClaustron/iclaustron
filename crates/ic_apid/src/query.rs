@@ -28,6 +28,7 @@ use ic_port::err;
 use ic_port::IcError;
 use ic_util::ptr_array::PtrId;
 
+use crate::apid_conn::ApidConnection;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::record::Record;
@@ -47,6 +48,18 @@ impl QueryId {
 /// A transaction's id in its connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransId(pub(crate) PtrId);
+
+/// What is called when a query completes (`IC_APID_CALLBACK_FUNC`):
+/// on the thread that polls, from inside the poll, with the connection,
+/// the query's id, and the `user_ref` the query was defined with. The
+/// query is by id since it lives in the connection, which the callback
+/// has. Inside the callback the query is completed, with its error or
+/// its row, and its transaction's state is settled as far as this
+/// query decides it; the callback may define queries, start, commit
+/// and send, but a poll inside it does nothing. When it returns the
+/// query is idle, unless the callback defined it anew. A query with no
+/// callback goes on the executed list instead.
+pub type QueryCallback = fn(&mut ApidConnection, QueryId, usize);
 
 /// How a read locks (`IC_READ_KEY_QUERY_TYPE`), in the header's order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -104,7 +117,7 @@ pub enum BatchHint {
 
 /// What a read asks for (`IC_READ_KEY_ARGS`, less the rows, which the
 /// query owns).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ReadKeyArgs {
   /// How to lock.
   pub kind: ReadKind,
@@ -113,10 +126,12 @@ pub struct ReadKeyArgs {
   pub abort_option: AbortOption,
   /// Anything, given back with the completed query.
   pub user_ref: usize,
+  /// Called when the query completes, in place of the executed list.
+  pub callback: Option<QueryCallback>,
 }
 
 /// What a write asks for (`IC_WRITE_KEY_ARGS`, less the rows).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct WriteKeyArgs {
   /// What to do.
   pub kind: WriteKind,
@@ -126,6 +141,8 @@ pub struct WriteKeyArgs {
   pub batch_hint: BatchHint,
   /// Anything, given back with the completed query.
   pub user_ref: usize,
+  /// Called when the query completes, in place of the executed list.
+  pub callback: Option<QueryCallback>,
 }
 
 /// Where a query is in its life.
@@ -185,6 +202,7 @@ pub struct ApidQuery {
   state: QueryState,
   error: Option<IcError>,
   user_ref: usize,
+  callback: Option<QueryCallback>,
   /// Bytes of row data the last read brought.
   result_len: u32,
   pub(crate) execution: Execution,
@@ -231,6 +249,7 @@ impl ApidQuery {
       state: QueryState::Idle,
       error: None,
       user_ref: 0,
+      callback: None,
       result_len: 0,
       execution: Execution::default(),
     })
@@ -262,6 +281,7 @@ impl ApidQuery {
       state: QueryState::Idle,
       error: None,
       user_ref: 0,
+      callback: None,
       result_len: 0,
       execution: Execution::default(),
     })
@@ -329,6 +349,11 @@ impl ApidQuery {
     self.user_ref
   }
 
+  /// The callback of the last execution, if it had one.
+  pub fn callback(&self) -> Option<QueryCallback> {
+    self.callback
+  }
+
   /// Bytes of row data the last read brought; zero for a row that was
   /// not there.
   pub fn result_len(&self) -> u32 {
@@ -344,13 +369,19 @@ impl ApidQuery {
     self.state = state;
   }
 
-  pub(crate) fn begin(&mut self, mut execution: Execution, user_ref: usize) {
+  pub(crate) fn begin(
+    &mut self,
+    mut execution: Execution,
+    user_ref: usize,
+    callback: Option<QueryCallback>,
+  ) {
     // The last execution's row buffer is kept for its allocation.
     let mut row = std::mem::take(&mut self.execution.row);
     row.clear();
     execution.row = row;
     self.execution = execution;
     self.user_ref = user_ref;
+    self.callback = callback;
     self.error = None;
     self.result_len = 0;
     self.state = QueryState::Defined;

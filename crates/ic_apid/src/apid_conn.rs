@@ -334,6 +334,9 @@ pub struct ApidConnection {
   /// Signals packed for a node and not yet handed to it, one entry per
   /// node this connection has sent to.
   outgoing: Vec<Outgoing>,
+  /// How many query callbacks are running, on this thread, inside the
+  /// poll that completed them. A poll from inside one does nothing.
+  pub(crate) in_callback: u32,
 }
 
 /// Signals packed for one node, in the order they were queued
@@ -379,6 +382,7 @@ impl ApidConnection {
       executed: VecDeque::new(),
       active: BTreeMap::new(),
       outgoing: Vec::new(),
+      in_callback: 0,
     })
   }
 
@@ -587,6 +591,10 @@ impl ApidConnection {
   /// and match it to the requests waiting for it. Returns how many
   /// signals were taken.
   pub fn poll(&mut self, wait_ms: u32) -> usize {
+    if self.in_callback > 0 {
+      // A query callback is running inside a poll already.
+      return 0;
+    }
     let signals = self.inbox.take(wait_ms);
     let taken = signals.len();
     for signal in signals {
