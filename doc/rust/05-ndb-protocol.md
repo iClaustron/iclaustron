@@ -535,7 +535,9 @@ against the reference:
 - The `FRAGMENT` pseudo column (0xFFFE), read with a header of size
   zero, answers with one word: the partition the row is in. `ic_read
   --partition` compares it with the computed one, which is how the
-  chain is checked live. Verify: `DbtupRoutines.cpp`, `read_pseudo`.
+  chain is checked live: seen to agree (2026-09-22) on a RonDB 26.10
+  table with an INT key, hashed by XXH3, over eight partitions. Verify:
+  `DbtupRoutines.cpp`, `read_pseudo`.
 
 ### 6.4 TCKEYREQ (GSN 12)
 
