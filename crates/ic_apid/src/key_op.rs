@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Hopsworks and/or its affiliates.
 // Licensed under the MIT License. See LICENSE in the repository root.
 
-//! The first key operation: a committed read of one row by its primary
-//! key, as one transaction of its own, waited for before returning.
+//! The first key operations: reading, inserting, updating and deleting
+//! one row by its primary key, each as one transaction of its own,
+//! waited for before returning.
 //!
 //! This is a stepping stone to the transactions of chapter 04, where a
 //! thread defines many operations, sends them together and collects
@@ -11,16 +12,23 @@
 //! the packed read of `row_codec`, and replies gathered by the
 //! connection from whichever node sends them.
 //!
-//! A committed read is sent with the start, commit and execute flags,
-//! as a simple and dirty read that ignores errors, which is the only
-//! abort option the reference allows it. What comes back:
+//! Every operation is sent with the start, commit and execute flags: it
+//! is the whole transaction. A committed read is besides simple and
+//! dirty, and ignores errors, which is the only abort option the
+//! reference allows it; a write aborts on error. What comes back:
 //!
 //! - `TCKEYCONF` from the coordinator, naming the transaction record,
 //!   with the operation marked as a dirty read and the node that reads
 //!   it. One `TRANSID_AI` then completes it.
 //! - `TRANSID_AI` from the reading node, naming the operation, with the
 //!   row packed.
-//! - Or `TCKEYREF`, naming the operation: 626 says there is no such row.
+//! - For a write, `TCKEYCONF` with no row to expect is the whole
+//!   outcome.
+//! - Or `TCKEYREF`, naming the operation: 626 says there is no such
+//!   row, 630 that one is already there.
+//! - Or `TCROLLBACKREP`, naming the transaction, when the coordinator
+//!   rolls it back: some failures are reported only this way, so the
+//!   transaction waits for it as well as for the confirmation.
 //!
 //! The two may come in either order, and either may come packed with
 //! others; the receive thread has taken those apart.
@@ -38,6 +46,7 @@ use ic_ndb_signals::tc_key::TcKeyConf;
 use ic_ndb_signals::tc_key::TcKeyFlags;
 use ic_ndb_signals::tc_key::TcKeyRef;
 use ic_ndb_signals::tc_key::TcKeyReq;
+use ic_ndb_signals::tc_key::TcRollbackRep;
 use ic_ndb_signals::tc_key::TransIdAi;
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
@@ -45,6 +54,7 @@ use ic_port::IcError;
 
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::TcRecord;
+use crate::dict_cache::TableDef;
 use crate::node_connect::ReceivedSignal;
 use crate::record::Record;
 use crate::row_codec;
@@ -55,6 +65,8 @@ pub const IC_KEY_OP_WAIT_MS: u32 = 10_000;
 const IC_KEY_OP_SLICE_MS: u32 = 100;
 /// The NDB error for a key with no row.
 pub const IC_NDB_ERROR_NO_SUCH_ROW: u32 = 626;
+/// The NDB error for a key that already has a row.
+pub const IC_NDB_ERROR_ROW_EXISTS: u32 = 630;
 
 /// What has come back for the operation so far.
 #[derive(Default)]
@@ -105,16 +117,6 @@ pub fn read_committed(
   }
   let key = row_codec::key_info(key_rec, key_row)?;
   let attr_info = row_codec::read_attr_info(attr_rec);
-  let started = conn.started_nodes();
-  if started.is_empty() {
-    return Err(IcError::new(err::IC_ERROR_NO_STARTED_DATA_NODE));
-  }
-  // Any started node's coordinator will do until keys are hashed to
-  // choose the node that holds the row; turn about meanwhile.
-  let pick = conn.next_request_id() as usize % started.len();
-  let rec = conn.tc_record(started[pick])?;
-  let op_id = conn.next_request_id();
-  let trans_id = conn.next_transaction_id();
   let flags = TcKeyFlags {
     operation: tc_key::IC_OP_READ,
     start: true,
@@ -125,6 +127,82 @@ pub fn read_committed(
     no_disk: false,
     abort_option: tc_key::IC_IGNORE_ERROR,
   };
+  let outcome = run_op(conn, table, &key, &attr_info, &flags)?;
+  if let Some(code) = outcome.refused {
+    if code == IC_NDB_ERROR_NO_SUCH_ROW {
+      return Ok(false);
+    }
+    return Err(IcError::new(code as i32));
+  }
+  row_codec::unpack_row(attr_rec, &outcome.row, attr_row)?;
+  Ok(true)
+}
+
+/// Insert, update, delete or write the row whose key is in `key_row`.
+/// `operation` is one of the `IC_OP_*` values of `tc_key`. Every field
+/// of the attribute record is written, except the key columns of an
+/// update, which may not change; a delete sends no values at all, and
+/// then `attr_row` is not read.
+///
+/// The NDB error comes back as it is: 626 for a row that is not there,
+/// 630 for one that already is.
+pub fn write_key(
+  conn: &mut ApidConnection,
+  operation: u32,
+  key_rec: &Record,
+  key_row: &[u8],
+  attr_rec: &Record,
+  attr_row: &[u8],
+) -> Result<(), IcError> {
+  let table = key_rec.table();
+  let same_table = table.table_id() == attr_rec.table().table_id()
+    && table.table_version() == attr_rec.table().table_version();
+  if !same_table || !key_rec.covers_primary_key() {
+    return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+  }
+  let key = row_codec::key_info(key_rec, key_row)?;
+  let mut attr_info: Vec<u32> = Vec::new();
+  if operation != tc_key::IC_OP_DELETE {
+    let skip_keys = operation == tc_key::IC_OP_UPDATE;
+    attr_info = row_codec::write_attr_info(attr_rec, attr_row, skip_keys)?;
+  }
+  let flags = TcKeyFlags {
+    operation,
+    start: true,
+    commit: true,
+    execute: true,
+    simple: false,
+    dirty: false,
+    no_disk: false,
+    abort_option: tc_key::IC_ABORT_ON_ERROR,
+  };
+  let outcome = run_op(conn, table, &key, &attr_info, &flags)?;
+  match outcome.refused {
+    Some(code) => Err(IcError::new(code as i32)),
+    None => Ok(()),
+  }
+}
+
+/// Send one operation as a whole transaction and wait for its outcome.
+/// A request with no values to send carries the key section alone, as
+/// a delete does.
+fn run_op(
+  conn: &mut ApidConnection,
+  table: &TableDef,
+  key: &[u32],
+  attr_info: &[u32],
+  flags: &TcKeyFlags,
+) -> Result<Outcome, IcError> {
+  let started = conn.started_nodes();
+  if started.is_empty() {
+    return Err(IcError::new(err::IC_ERROR_NO_STARTED_DATA_NODE));
+  }
+  // Any started node's coordinator will do until keys are hashed to
+  // choose the node that holds the row; turn about meanwhile.
+  let pick = conn.next_request_id() as usize % started.len();
+  let rec = conn.tc_record(started[pick])?;
+  let op_id = conn.next_request_id();
+  let trans_id = conn.next_transaction_id();
   let req = TcKeyReq {
     tc_connect_ptr: rec.tc_ptr,
     api_operation_ptr: op_id,
@@ -136,40 +214,32 @@ pub fn read_committed(
   };
   let op_replies = [gsn::IC_GSN_TCKEYREF, gsn::IC_GSN_TRANSID_AI];
   conn.expect_several(op_id, rec.node_id, &op_replies, true)?;
-  conn.expect_several(
-    rec.api_ptr,
-    rec.node_id,
-    &[gsn::IC_GSN_TCKEYCONF],
-    false,
-  )?;
+  let trans_replies = [gsn::IC_GSN_TCKEYCONF, gsn::IC_GSN_TCROLLBACKREP];
+  conn.expect_several(rec.api_ptr, rec.node_id, &trans_replies, false)?;
   let header =
     SignalHeader::new(gsn::IC_GSN_TCKEYREQ, conn.block_number(), rec.tc_block);
-  let sections: [&[u32]; 2] = [&key, &attr_info];
-  let result = match conn.send(rec.node_id, &header, &req.encode(), &sections) {
+  let both: [&[u32]; 2] = [key, attr_info];
+  let mut sections: &[&[u32]] = &both;
+  if attr_info.is_empty() {
+    sections = &both[..1];
+  }
+  let result = match conn.send(rec.node_id, &header, &req.encode(), sections) {
     Ok(()) => wait_for_outcome(conn, &rec, op_id, &req),
     Err(e) => Err(e),
   };
   conn.forget(op_id);
   conn.forget(rec.api_ptr);
-  let outcome = match result {
+  match result {
     Ok(outcome) => {
       conn.free_tc_record(&rec);
-      outcome
+      Ok(outcome)
     }
     Err(e) => {
       // The record's transaction may still be open at the coordinator.
       conn.lose_tc_record(&rec);
-      return Err(e);
+      Err(e)
     }
-  };
-  if let Some(code) = outcome.refused {
-    if code == IC_NDB_ERROR_NO_SUCH_ROW {
-      return Ok(false);
-    }
-    return Err(IcError::new(code as i32));
   }
-  row_codec::unpack_row(attr_rec, &outcome.row, attr_row)?;
-  Ok(true)
 }
 
 /// Poll until the operation is complete, or the link goes, or the wait
@@ -187,7 +257,7 @@ fn wait_for_outcome(
       take_op_reply(&mut outcome, &signal, req)?;
     }
     for signal in conn.take_replies(rec.api_ptr)? {
-      take_conf(conn, &mut outcome, &signal, op_id, req)?;
+      take_trans_reply(conn, &mut outcome, &signal, op_id, req)?;
     }
     if outcome.is_complete() {
       return Ok(outcome);
@@ -231,6 +301,25 @@ fn take_op_reply(
     .extend_from_slice(TransIdAi::row(&signal.data, section));
   outcome.has_row = true;
   Ok(())
+}
+
+/// What the coordinator says of the transaction: its confirmation, or
+/// its rollback.
+fn take_trans_reply(
+  conn: &mut ApidConnection,
+  outcome: &mut Outcome,
+  signal: &ReceivedSignal,
+  op_id: u32,
+  req: &TcKeyReq,
+) -> Result<(), IcError> {
+  if signal.gsn == gsn::IC_GSN_TCROLLBACKREP {
+    let rollback = TcRollbackRep::decode(&signal.data)?;
+    if same_transaction(req, rollback.trans_id1, rollback.trans_id2) {
+      outcome.refused = Some(rollback.error_code);
+    }
+    return Ok(());
+  }
+  take_conf(conn, outcome, signal, op_id, req)
 }
 
 /// The coordinator's confirmation: note what it says of the operation,

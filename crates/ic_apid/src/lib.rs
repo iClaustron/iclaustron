@@ -27,7 +27,8 @@
 //! - [`dict_cache`]: the descriptions every thread shares, and binding.
 //! - [`record`]: how a table's fields lie in a row the application owns.
 //! - [`row_codec`]: rows to and from the words of a key operation.
-//! - [`key_op`]: the first key operation, a committed read by key.
+//! - [`key_op`]: the first key operations, by primary key.
+//! - [`text_row`]: values as text, in and out of a row, for the tools.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
 //! - [`signal_reader`]: turning the byte stream back into signals.
@@ -51,4 +52,5 @@ pub mod rec_thread;
 pub mod record;
 pub mod row_codec;
 pub mod signal_reader;
+pub mod text_row;
 pub mod thread_conn;

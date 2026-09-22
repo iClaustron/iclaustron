@@ -304,6 +304,47 @@ impl TcKeyRef {
   }
 }
 
+/// Words in a `TCROLLBACKREP`.
+pub const IC_TCROLLBACKREP_LEN: usize = 5;
+
+/// The coordinator has rolled the transaction back. It names the
+/// transaction, not the operation, and carries the error that caused
+/// it. Verify: `TcRollbackRep.hpp`; `DbtcMain.cpp`, where it is sent
+/// with the transaction's return code.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcRollbackRep {
+  /// Our pointer for the transaction.
+  pub api_connect_ptr: u32,
+  /// The transaction id, low word.
+  pub trans_id1: u32,
+  /// The transaction id, high word.
+  pub trans_id2: u32,
+  /// The NDB error that rolled it back.
+  pub error_code: u32,
+  /// More about the error, for some codes.
+  pub error_data: u32,
+}
+
+impl TcRollbackRep {
+  /// Read a rollback report. The last word may be missing.
+  pub fn decode(data: &[u32]) -> Result<TcRollbackRep, IcError> {
+    if data.len() < IC_TCROLLBACKREP_LEN - 1 {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    let mut error_data: u32 = 0;
+    if data.len() >= IC_TCROLLBACKREP_LEN {
+      error_data = data[4];
+    }
+    Ok(TcRollbackRep {
+      api_connect_ptr: data[0],
+      trans_id1: data[1],
+      trans_id2: data[2],
+      error_code: data[3],
+      error_data,
+    })
+  }
+}
+
 /// Words in front of the row in a `TRANSID_AI`.
 pub const IC_TRANSID_AI_HEADER_LEN: usize = 3;
 
@@ -447,6 +488,16 @@ mod tests {
     assert_eq!(full.error_data, 9);
     let short = TcKeyRef::decode(&[22, 0x1000, 0x2000, 626]).expect("short");
     assert_eq!(short.error_data, 0);
+  }
+
+  #[test]
+  fn a_rollback_report_carries_the_error() {
+    let rep = TcRollbackRep::decode(&[7, 0x1000, 0x2000, 899, 0]);
+    let rep = rep.expect("read");
+    assert_eq!(rep.api_connect_ptr, 7);
+    assert_eq!(rep.error_code, 899);
+    let short = TcRollbackRep::decode(&[7, 0x1000, 0x2000, 899]);
+    assert_eq!(short.expect("read").error_data, 0);
   }
 
   #[test]

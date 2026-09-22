@@ -110,6 +110,51 @@ pub fn read_attr_info(rec: &Record) -> Vec<u32> {
   words
 }
 
+/// The attribute information of a write: for each field of the record
+/// its column's header, with the value's length in bytes, and the value
+/// padded to words. A length of zero means NULL, and no value follows.
+///
+/// With `skip_keys` the primary key columns are left out, as an update
+/// may not change the key. An insert sends them, and then the row must
+/// hold the same key as the key section does, as the reference makes
+/// sure of by taking them from the key row.
+pub fn write_attr_info(
+  rec: &Record,
+  row: &[u8],
+  skip_keys: bool,
+) -> Result<Vec<u32>, IcError> {
+  if row.len() < rec.row_size() as usize {
+    return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+  }
+  let mut words: Vec<u32> = Vec::new();
+  let mut position: u32 = 0;
+  while position < rec.num_fields() {
+    let (attr, field) = match field_at(rec, position) {
+      Some(found) => found,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    let is_null = rec.is_null(row, position);
+    position += 1;
+    if skip_keys && attr.primary_key {
+      continue;
+    }
+    let id = field.field_id();
+    if is_null {
+      words.push(attr_header::attr_header(id, 0));
+      continue;
+    }
+    let start = field.offset() as usize;
+    let len = value_len(attr, field, &row[start..])?;
+    words.push(attr_header::attr_header(id, len as u32));
+    let mut value = row[start..start + len].to_vec();
+    while value.len() % 4 != 0 {
+      value.push(0);
+    }
+    words.extend_from_slice(&words_of(&value));
+  }
+  Ok(words)
+}
+
 /// Put a packed row into `row` as the record lays it out, and set or
 /// clear each field's null bit. Returns how many words it took.
 pub fn unpack_row(
@@ -220,6 +265,16 @@ fn value_len(
     return Err(IcError::new(err::IC_ERROR_VALUE_TOO_LONG));
   }
   Ok(len)
+}
+
+/// The column and the record's field at a position.
+fn field_at(
+  rec: &Record,
+  position: u32,
+) -> Option<(&AttributeInfo, &RecordField)> {
+  let field = rec.field(position)?;
+  let attr = rec.table().field(field.field_id())?;
+  Some((attr, field))
 }
 
 /// The column, the record's field and its position for an attribute id.
@@ -417,6 +472,11 @@ mod tests {
     Arc::new(TableDef::new(info, None))
   }
 
+  /// An attribute header, as the words of a write carry it.
+  fn head(attr_id: u32, size: u32) -> u32 {
+    attr_header::attr_header(attr_id, size)
+  }
+
   /// Words from bytes, padding the last word with zeros.
   fn padded(bytes: &[u8]) -> Vec<u32> {
     let mut all = bytes.to_vec();
@@ -450,6 +510,47 @@ mod tests {
     let row = vec![0u8; rec.row_size() as usize];
     let e = key_info(&rec, &row).expect_err("refused");
     assert_eq!(e.code, err::IC_ERROR_KEY_RECORD);
+  }
+
+  #[test]
+  fn a_write_sends_a_header_and_value_for_each_column() {
+    let t = table();
+    let rec = Record::default_for(&t, None).expect("record");
+    let mut row = vec![0u8; rec.row_size() as usize];
+    let at = |p: u32| rec.field(p).expect("field").offset() as usize;
+    row[at(0)..at(0) + 4].copy_from_slice(&7u32.to_ne_bytes());
+    row[at(1)..at(1) + 3].copy_from_slice(&[2, b'h', b'i']);
+    rec.set_null(&mut row, 2, true).expect("t is NULL");
+    row[at(3)..at(3) + 8].copy_from_slice(&5u64.to_ne_bytes());
+    row[at(5)..at(5) + 4].copy_from_slice(&42u32.to_ne_bytes());
+    let words = write_attr_info(&rec, &row, false).expect("values");
+    let mut want: Vec<u32> = vec![head(0, 4)];
+    want.extend_from_slice(&padded(&7u32.to_ne_bytes()));
+    want.push(head(1, 3));
+    want.extend_from_slice(&padded(&[2, b'h', b'i']));
+    // A NULL column is a header of length zero, with no value.
+    want.push(head(2, 0));
+    want.push(head(3, 8));
+    want.extend_from_slice(&padded(&5u64.to_ne_bytes()));
+    want.push(head(4, 4));
+    want.extend_from_slice(&padded(&[0, 0, 0, 0]));
+    want.push(head(5, 4));
+    want.extend_from_slice(&padded(&42u32.to_ne_bytes()));
+    assert_eq!(words, want);
+  }
+
+  #[test]
+  fn an_update_leaves_the_key_columns_out() {
+    let t = table();
+    let rec = Record::default_for(&t, None).expect("record");
+    let mut row = vec![0u8; rec.row_size() as usize];
+    rec.set_null(&mut row, 2, true).expect("t is NULL");
+    rec.set_null(&mut row, 3, true).expect("big is NULL");
+    rec.set_null(&mut row, 4, true).expect("b is NULL");
+    let words = write_attr_info(&rec, &row, true).expect("values");
+    // t, big and b are NULL; n is a zero of four bytes.
+    let want = vec![head(2, 0), head(3, 0), head(4, 0), head(5, 4), 0];
+    assert_eq!(words, want);
   }
 
   #[test]

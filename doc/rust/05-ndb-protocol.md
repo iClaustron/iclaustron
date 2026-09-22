@@ -575,7 +575,16 @@ starts with its one or two length bytes. There is no packed form for
 writing: an update sends a header and value per column. Verify:
 `NdbOperationExec.cpp`, `buildSignalsNdbRecord`; `DbtupRoutines.cpp`,
 `read_packed` and `updateAttributes`; `NdbReceiver.cpp`,
-`unpackNdbRecord` and `pad_pos`. For a plain write: attribute header + value
+`unpackNdbRecord` and `pad_pos`.
+
+  For a write, the section is a header and value per column, the
+  value's length in bytes in the header and the value padded to words;
+  a length of zero means NULL and no value follows. A key column is
+  sent with the value the key section has, so that the two agree. A
+  request with nothing to send, such as a delete, carries the key
+  section alone. Verify: `NdbOperationExec.cpp`,
+  `buildSignalsNdbRecord`, its final update words, and `doSendKeyReq`,
+  which sends one section or two. For a plain write: attribute header + value
 words per column. For interpreted operations and all scans the section
 starts with five length words: (1) reads before the program, (2) the
 program, (3) updates after, (4) reads after, (5) subroutines; each part is
@@ -604,9 +613,29 @@ bits 0–14 byte length; length 0 means NULL. Pseudo-columns
 - `TCKEYREF` (GSN 11): connect ptr, transId1, transId2, errorCode,
   errorData. RonDB rate-limit errors 243 and 2203. Verify:
   `TcKeyRef.hpp:34-59`.
+
+  **A refusal is sent only for an operation that is allowed to fail**,
+  that is one sent with `IgnoreError`, as a committed read is. An
+  operation sent with `AbortOnError`, as a write is, gets none: the
+  coordinator aborts the transaction, and the error comes in
+  `TCROLLBACKREP` (GSN 16) instead, five words naming the transaction:
+  our pointer, the transaction id, the error and its data. A
+  transaction therefore waits for that report as well as for the
+  confirmation. Found live (2026-09-22): an insert of a key that was
+  already there waited for a refusal that never came. Verify:
+  `DbtcMain.cpp`, where a refusal is sent only when an error is allowed
+  and `TCKEY_abort` is taken otherwise, and where the rollback report is
+  sent with the transaction's return code; `TcRollbackRep.hpp`.
 - `TRANSID_AI` (GSN 5): row data (attribute header + data words) for one
   operation, first word = our operation object id; long form in section 0.
   May arrive **before or after** the matching `TCKEYCONF`.
+
+  Seen live (2026-09-21) with `ic_read` against RonDB 26.10: a
+  committed read of a row by its key, of a row with a NULL column, and
+  of a key with no row, each answered as this section says. With
+  `ic_write` (2026-09-22): an insert, an update and a delete of a row,
+  each confirmed, and a key already there refused with 630 through the
+  rollback report.
 - `KEYINFO20` (GSN 33): key of a scanned row when scan takeover was
   requested.
 - Commit-ack: when `TCKEYCONF` bit 17 is set, send `TC_COMMIT_ACK`

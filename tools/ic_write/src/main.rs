@@ -1,27 +1,29 @@
 // Copyright (c) 2026 Hopsworks and/or its affiliates.
 // Licensed under the MIT License. See LICENSE in the repository root.
 
-//! `ic_read`: read one row by its primary key, as a committed read.
+//! `ic_write`: insert, update, delete or write one row by its primary
+//! key, each as a transaction of its own.
 //!
 //! ```text
-//!   ic_read -c localhost:1186 -d ictest t9 1
-//!   ic_read -c localhost:1186 -d ictest t9 1 --debug-level 1024
+//!   ic_write -c localhost:1186 -d ictest t9 3 30
+//!   ic_write -c localhost:1186 -d ictest --op update t9 3 31
+//!   ic_write -c localhost:1186 -d ictest --op delete t9 3
 //! ```
 //!
-//! After the table come the key's values, one per primary key column
-//! in the table's column order. The table is bound through the
-//! dictionary cache, the default record is made over it, and the row is
-//! read into it and printed a column at a time.
+//! After the table come the row's values, one per column in the table's
+//! column order, the key columns among them. `NULL` writes no value. A
+//! delete takes the key columns only.
 //!
-//! Key columns may be integers, or character and binary strings. The
-//! row may hold any type a record can: numbers and strings are printed
-//! as such, anything else as its bytes in hexadecimal.
+//! An update writes every column but the key's, which it may not
+//! change; a write inserts the row or updates it if it is there.
 //!
-//! Integers are put in the key, and read from the row, in little-endian
-//! order: the data node's own, on the machines RonDB runs on.
+//! Values are given as text: integers, and character and binary
+//! strings. A column of another type can only be given as `NULL` here;
+//! an application writes such a column in the bytes the data node
+//! keeps it in.
 //!
-//! Debug level 1024 traces every signal, which shows the seize of a
-//! transaction record, the request, and the replies, packed or not.
+//! Debug level 1024 traces every signal, which shows the request with
+//! its key and values, and the confirmation or refusal.
 
 use std::sync::Arc;
 
@@ -31,12 +33,13 @@ use ic_apid::dict_cache::TableDef;
 use ic_apid::key_op;
 use ic_apid::record::Record;
 use ic_apid::text_row;
+use ic_ndb_signals::tc_key;
 use ic_port::options::OptionEntry;
 use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
 
-const OPTIONS: [OptionEntry; 4] = [
+const OPTIONS: [OptionEntry; 5] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -48,6 +51,12 @@ const OPTIONS: [OptionEntry; 4] = [
     short_name: b'd',
     kind: OptionKind::Str,
     help: "Database the table is in; the default is test",
+  },
+  OptionEntry {
+    long_name: "op",
+    short_name: b'o',
+    kind: OptionKind::Str,
+    help: "insert, update, delete or write; the default is insert",
   },
   OptionEntry {
     long_name: "node-id",
@@ -68,8 +77,10 @@ fn main() {
 }
 
 fn run() -> i32 {
-  let mut parser =
-    OptionParser::new("ic_read", "Read one row of a table by its key.");
+  let mut parser = OptionParser::new(
+    "ic_write",
+    "Insert, update or delete one row of a table by its key.",
+  );
   parser.add_entries(&OPTIONS);
   if let Err(e) = parser.parse_env_args() {
     if e.code == ic_port::err::IC_ERROR_HELP_REQUESTED {
@@ -81,9 +92,16 @@ fn run() -> i32 {
   ic_port::debug::set_screen(true);
   let args: Vec<String> = parser.positional().to_vec();
   if args.len() < 2 {
-    println!("Name a table and its key, for example: ic_read -d test t1 7");
+    println!("Name a table and a row, for example: ic_write -d test t1 7 70");
     return 1;
   }
+  let operation = match operation_of(&parser.get_string_or("op", "insert")) {
+    Some(operation) => operation,
+    None => {
+      println!("The operation is insert, update, delete or write");
+      return 1;
+    }
+  };
   let database = parser.get_string_or("database", "test");
   let connect_text =
     parser.get_string_or("ndb-connectstring", "localhost:1186");
@@ -99,7 +117,7 @@ fn run() -> i32 {
     connect_string.node_id = Some(wanted);
   }
   let fetched =
-    mgm_client::fetch_configuration(&connect_string, 30_000, Some("ic_read"));
+    mgm_client::fetch_configuration(&connect_string, 30_000, Some("ic_write"));
   let (config, mgm) = match fetched {
     Ok(pair) => pair,
     Err(e) => {
@@ -112,7 +130,7 @@ fn run() -> i32 {
     mgm,
     connect_string,
     30_000,
-    Some("ic_read"),
+    Some("ic_write"),
   ) {
     Ok(global) => global,
     Err(e) => {
@@ -120,16 +138,28 @@ fn run() -> i32 {
       return 1;
     }
   };
-  let code = read_row(&global, &database, &args[0], &args[1..]);
+  let code = write_row(&global, &database, operation, &args[0], &args[1..]);
   global.stop();
   code
 }
 
-fn read_row(
+/// The operation an option names.
+fn operation_of(text: &str) -> Option<u32> {
+  match text {
+    "insert" => Some(tc_key::IC_OP_INSERT),
+    "update" => Some(tc_key::IC_OP_UPDATE),
+    "delete" => Some(tc_key::IC_OP_DELETE),
+    "write" => Some(tc_key::IC_OP_WRITE),
+    _ => None,
+  }
+}
+
+fn write_row(
   global: &ApidGlobal,
   database: &str,
+  operation: u32,
   table: &str,
-  keys: &[String],
+  values: &[String],
 ) -> i32 {
   if global.wait_for_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
@@ -156,83 +186,80 @@ fn read_row(
       return 1;
     }
   };
-  let mut key_row = vec![0u8; rec.row_size() as usize];
-  if let Err(text) = put_key(&def, &rec, keys, &mut key_row) {
+  let mut row = vec![0u8; rec.row_size() as usize];
+  let keys_only = operation == tc_key::IC_OP_DELETE;
+  if let Err(text) = put_row(&def, &rec, values, keys_only, &mut row) {
     println!("{}", text);
     return 1;
   }
-  let mut row = vec![0u8; rec.row_size() as usize];
-  let code =
-    match key_op::read_committed(&mut conn, &rec, &key_row, &rec, &mut row) {
-      Ok(true) => {
-        print_row(&def, &rec, &row);
-        0
-      }
-      Ok(false) => {
-        println!("No row with that key");
-        1
-      }
-      Err(e) => {
-        report("Could not read the row", &e);
-        1
-      }
-    };
+  let done = key_op::write_key(&mut conn, operation, &rec, &row, &rec, &row);
   if conn.unexpected() > 0 {
     println!(
       "{} signal(s) came that nothing waited for",
       conn.unexpected()
     );
   }
-  code
+  match done {
+    Ok(()) => {
+      println!("{}", what_happened(operation));
+      0
+    }
+    Err(e) => {
+      if e.code == key_op::IC_NDB_ERROR_NO_SUCH_ROW as i32 {
+        println!("There is no row with that key");
+        return 1;
+      }
+      if e.code == key_op::IC_NDB_ERROR_ROW_EXISTS as i32 {
+        println!("There is already a row with that key");
+        return 1;
+      }
+      report("Could not write the row", &e);
+      1
+    }
+  }
 }
 
-/// Put the key's values into the key columns of `row`.
-fn put_key(
+fn what_happened(operation: u32) -> &'static str {
+  match operation {
+    tc_key::IC_OP_INSERT => "Inserted",
+    tc_key::IC_OP_UPDATE => "Updated",
+    tc_key::IC_OP_DELETE => "Deleted",
+    _ => "Written",
+  }
+}
+
+/// The values into the row: the key columns alone for a delete, every
+/// column otherwise, in the table's column order.
+fn put_row(
   def: &Arc<TableDef>,
   rec: &Record,
-  keys: &[String],
+  values: &[String],
+  keys_only: bool,
   row: &mut [u8],
 ) -> Result<(), String> {
   let mut used: usize = 0;
   for attr in &def.info().attributes {
-    if !attr.primary_key {
+    if keys_only && !attr.primary_key {
       continue;
-    }
-    if used >= keys.len() {
-      return Err(format!("The key needs a value for {}", attr.name));
     }
     let position = match rec.position_of(attr.attribute_id) {
       Some(position) => position,
       None => return Err(format!("No field for {}", attr.name)),
     };
-    text_row::put_value(rec, position, &keys[used], row)?;
+    if used >= values.len() {
+      return Err(format!("There is no value for {}", attr.name));
+    }
+    text_row::put_value(rec, position, &values[used], row)?;
     used += 1;
   }
-  if used != keys.len() {
+  if used != values.len() {
     return Err(format!(
-      "The key has {} column(s), not {}",
+      "The row takes {} value(s), not {}",
       used,
-      keys.len()
+      values.len()
     ));
   }
   Ok(())
-}
-
-/// Each column of the row, a line each.
-fn print_row(def: &Arc<TableDef>, rec: &Record, row: &[u8]) {
-  let mut position: u32 = 0;
-  while position < rec.num_fields() {
-    if let Some(field) = rec.field(position) {
-      if let Some(attr) = def.field(field.field_id()) {
-        println!(
-          "{}: {}",
-          attr.name,
-          text_row::value_text(rec, position, row)
-        );
-      }
-    }
-    position += 1;
-  }
 }
 
 fn report(what: &str, error: &IcError) {

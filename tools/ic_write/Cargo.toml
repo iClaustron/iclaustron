@@ -1,12 +1,12 @@
 [package]
-name = "ic_read"
+name = "ic_write"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Read one row of a RonDB table by its primary key"
+description = "Insert, update or delete one row of a RonDB table by its primary key"
 
 [lints]
 workspace = true
@@ -16,3 +16,4 @@ ic_port.workspace = true
 ic_util.workspace = true
 ic_apic.workspace = true
 ic_apid.workspace = true
+ic_ndb_signals.workspace = true

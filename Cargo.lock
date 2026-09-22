@@ -98,7 +98,6 @@ version = "0.1.0"
 dependencies = [
  "ic_apic",
  "ic_apid",
- "ic_ndb_signals",
  "ic_port",
  "ic_util",
 ]
@@ -108,6 +107,17 @@ name = "ic_util"
 version = "0.1.0"
 dependencies = [
  "ic_port",
+]
+
+[[package]]
+name = "ic_write"
+version = "0.1.0"
+dependencies = [
+ "ic_apic",
+ "ic_apid",
+ "ic_ndb_signals",
+ "ic_port",
+ "ic_util",
 ]
 
 [[package]]
