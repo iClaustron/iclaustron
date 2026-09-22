@@ -236,9 +236,20 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   malloc, free and memmove, phase 7's allocation removal; the vector
   of started nodes that every transaction start allocated was made a
   buffer the connection keeps.
+
+  **Against the C++ NDB API, 2026-09-22.** `flexAsynch` run like for
+  like on the same cluster, one read per transaction and the same
+  operations in flight, delivered slightly fewer reads per second than
+  `ic_bench` and used slightly less CPU doing it: the same work at the
+  same cost, within the noise of one machine. The phase-5 exit
+  criterion, within 2× of the C++ API on one thread, is met at parity.
+  Phase 7's 20% target is now a statement about CPU per operation, and
+  the sample says where ours goes: the quarter in allocation.
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
   asynchronous PK read benchmark is within 2× of the C++ NDB API (the
-  20 % target is Phase 7).
+  20 % target is Phase 7). The benchmark part is met, at parity, as of
+  2026-09-22; the integration groups are still to be written (chapter
+  08), and `failure` is what would exercise the takeover path live.
 
 ## Phase 6 — Interpreter (3 weeks)
 
