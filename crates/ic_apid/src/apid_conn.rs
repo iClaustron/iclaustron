@@ -39,6 +39,7 @@
 //! [`ApidGlobal::create_connection`]:
 //!   crate::apid_global::ApidGlobal::create_connection
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -268,8 +269,13 @@ pub struct TcRecord {
   pub tc_ptr: u32,
   /// The coordinator block to send to, its instance included.
   pub tc_block: u16,
+  /// Where the connection keeps it, which never changes.
+  pub(crate) index: u32,
   /// A transaction is using it.
   busy: bool,
+  /// Its state is unknown, or the coordinator has freed it: never
+  /// handed out again.
+  lost: bool,
 }
 
 #[cfg(test)]
@@ -282,7 +288,9 @@ impl TcRecord {
       api_ptr: 1,
       tc_ptr: 1,
       tc_block: 0xF5,
+      index: 0,
       busy: true,
+      lost: false,
     }
   }
 }
@@ -303,9 +311,12 @@ pub struct ApidConnection {
   tables: HashMap<String, Arc<TableDef>>,
   /// The indexes this thread has bound, by `database/table/index`.
   indexes: HashMap<String, Arc<IndexDef>>,
-  /// Transaction records seized at the coordinators, at most a few per
-  /// node.
+  /// Transaction records seized at the coordinators, as many per node
+  /// as this thread has had transactions in flight there, at positions
+  /// that never change.
   tc_records: Vec<TcRecord>,
+  /// By node id, the positions of the free ones.
+  free_tc: Vec<Vec<u32>>,
   /// The low word of the next transaction id.
   trans_counter: u32,
   /// The queries made on this connection, by the id a reply names.
@@ -316,7 +327,7 @@ pub struct ApidConnection {
   pub(crate) executed: VecDeque<QueryId>,
   /// The transactions not yet done, by the coordinator record pointer
   /// their replies name.
-  pub(crate) active: Vec<(u32, TransId)>,
+  pub(crate) active: BTreeMap<u32, TransId>,
   /// Signals packed for a node and not yet handed to it, one entry per
   /// node this connection has sent to.
   outgoing: Vec<Outgoing>,
@@ -357,11 +368,12 @@ impl ApidConnection {
       tables: HashMap::new(),
       indexes: HashMap::new(),
       tc_records: Vec::new(),
+      free_tc: Vec::new(),
       trans_counter,
       queries: PtrArray::new(),
       transactions: PtrArray::new(),
       executed: VecDeque::new(),
-      active: Vec::new(),
+      active: BTreeMap::new(),
       outgoing: Vec::new(),
     })
   }
@@ -660,18 +672,31 @@ impl ApidConnection {
   /// A transaction record at `node_id`'s coordinator for a transaction
   /// to use: a free one this thread holds, or a new one seized. Given
   /// back with [`free_tc_record`](Self::free_tc_record).
+  ///
+  /// A free record seized over a link that has since been replaced is
+  /// lost, as the coordinator freed it when the link went, and is
+  /// dropped as it comes up. One seized over the current link while
+  /// the link is down is handed out, and the send fails as any send
+  /// would. Nothing here looks at more than the record handed out: a
+  /// thread with hundreds of transactions in flight starts each in
+  /// constant time.
   pub fn tc_record(&mut self, node_id: u32) -> Result<TcRecord, IcError> {
-    self.drop_lost_tc_records();
-    for rec in &mut self.tc_records {
-      if rec.node_id == node_id && !rec.busy {
-        rec.busy = true;
-        return Ok(*rec);
-      }
-    }
     let generation = match self.shared.node(node_id) {
       Some(node) => node.published.generation(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
+    let slot = node_id as usize;
+    if slot >= self.free_tc.len() {
+      self.free_tc.resize_with(slot + 1, Vec::new);
+    }
+    while let Some(index) = self.free_tc[slot].pop() {
+      let rec = &mut self.tc_records[index as usize];
+      if rec.generation == generation {
+        rec.busy = true;
+        return Ok(*rec);
+      }
+      rec.lost = true;
+    }
     let api_ptr = self.next_request_id();
     let seize = TcSeizeReq {
       api_connect_ptr: api_ptr,
@@ -703,7 +728,9 @@ impl ApidConnection {
       api_ptr,
       tc_ptr: conf.tc_connect_ptr,
       tc_block: blocks::ref_to_block(conf.tc_block_ref),
+      index: self.tc_records.len() as u32,
       busy: true,
+      lost: false,
     };
     self.tc_records.push(rec);
     Ok(rec)
@@ -711,38 +738,28 @@ impl ApidConnection {
 
   /// Give a transaction record back once its transaction is over.
   pub fn free_tc_record(&mut self, rec: &TcRecord) {
-    for held in &mut self.tc_records {
-      if held.api_ptr == rec.api_ptr {
-        held.busy = false;
-      }
+    let held = match self.tc_records.get_mut(rec.index as usize) {
+      Some(held) => held,
+      None => return,
+    };
+    if held.api_ptr != rec.api_ptr || held.lost || !held.busy {
+      return;
     }
+    held.busy = false;
+    let slot = held.node_id as usize;
+    if slot >= self.free_tc.len() {
+      self.free_tc.resize_with(slot + 1, Vec::new);
+    }
+    self.free_tc[slot].push(rec.index);
   }
 
   /// Stop using a transaction record whose state is not known, such as
   /// one whose transaction timed out. The coordinator keeps it until the
   /// link goes.
   pub fn lose_tc_record(&mut self, rec: &TcRecord) {
-    let mut i: usize = 0;
-    while i < self.tc_records.len() {
-      if self.tc_records[i].api_ptr == rec.api_ptr {
-        self.tc_records.remove(i);
-      } else {
-        i += 1;
-      }
-    }
-  }
-
-  /// Forget the records seized over links that have gone: the data
-  /// node has freed them.
-  fn drop_lost_tc_records(&mut self) {
-    let mut i: usize = 0;
-    while i < self.tc_records.len() {
-      let rec = self.tc_records[i];
-      let alive = self.link_is(rec.node_id, rec.generation);
-      if alive {
-        i += 1;
-      } else {
-        self.tc_records.remove(i);
+    if let Some(held) = self.tc_records.get_mut(rec.index as usize) {
+      if held.api_ptr == rec.api_ptr {
+        held.lost = true;
       }
     }
   }

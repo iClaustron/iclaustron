@@ -120,11 +120,14 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   operations via `TCINDXREQ`.
 - Error table with classification and our own messages.
 - `tools/ic_bench` (PK read, PK write). As built (2026-09-22): one
-  thread, a batch of committed reads or updates in flight at a time,
-  each its own transaction hinted to the node holding its row; reports
-  operations per second and the batch time's median, 99th percentile
-  and worst. Plain on purpose: the pipeline drains between batches.
-  Measure a release build.
+  thread, `--depth` batches (two by default) of `--batch` (200 by
+  default) committed reads or updates in flight, each operation its own transaction
+  hinted to the node holding its row; a batch is defined again the
+  moment it is done, while the others are still out, so the data nodes
+  have work while the thread packs and unpacks. `--depth 1` is the
+  lock-step form, which the numbers below were measured with. Reports
+  operations per second and the time from send to done of a batch, at
+  the median, 99th percentile and worst. Measure a release build.
 
   **Baseline, 2026-09-22**, release build, one thread, a two-node
   RonDB 26.10 cluster on the same machine as the client, a table of
@@ -155,10 +158,64 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   write per node instead of one per operation. The data nodes felt it
   more: `top` showed `ndbmtd` at 400% during the read run before and
   135% after, which is 12.9 µs of data-node CPU per read down to 1.8,
-  seven times less per operation. Per thread the client rate is
+  seven times less per operation.
+
+  **With the pipeline, 2026-09-22**, `--depth` batches of 100 in
+  flight: depth 1 (lock step) 731 000 reads per second, a batch 97 µs
+  from send to done at the median; depth 2 970 000–981 000, 145 µs;
+  depth 4 859 000, 323 µs; updates at depth 2 288 700, 603 µs. Depth 2
+  is where one client thread saturates with this build: `ic_bench`
+  uses about the same CPU at depths 2 and 4, and depth 4 only
+  lengthens the queue. The data nodes are not the limit: at depth 4
+  `ndbmtd` carried half its depth-2 load for 90% of the work, and at
+  depth 1 the same load as at depth 4 for 85% of it, so the cost per
+  operation there depends on how the traffic bunches, and more in
+  flight per client is cheaper for them. Per thread the client rate is
   above the `flexAsynch` run's 713 000, which had ten reads per
   transaction. The like-for-like `flexAsynch` run (one thread, one read
-  per transaction, `-t 1 -p 100 -c 1 -o 1`) is still to be made.
+  per transaction, `-t 1 -p 100 -c 1 -o 1`) is still to be made, and
+  so is the split of the client's CPU between its user thread and its
+  receive thread, which decides whether more user threads scale before
+  step 5 of the thread plan (several receive threads).
+
+  **Where the client's time went, 2026-09-22** (`sample` over ten
+  seconds of the depth-2 read run, one sample a millisecond): the
+  receive thread was idle 73% of the time, in `kevent`, and the user
+  thread busy 92% of it. Of the user thread's time, 31% was in
+  `tc_record`, which scanned every coordinator record this thread
+  held, and checked every record's link, to find a free one; about
+  13% in freeing a transaction, which scanned the active list to take
+  it out, and in naming the transaction a reply is for, which scanned
+  it again; about 23% in malloc, free and memmove, mostly the vectors
+  a signal arrives in, allocated by the receive thread and freed by
+  the user thread, and the key, attribute and row vectors a query is
+  defined with; 5% in the socket writes; 3% unpacking rows. The three
+  scans were made constant time on the spot (free records kept per
+  node, the active list a map by coordinator record, the row buffer
+  kept across executions); the allocations are phase 7's "allocation
+  removal", whose largest part is giving signals pages of their own as
+  the C does (`IC_SOCK_BUF_PAGE`) rather than a vector each.
+
+  **With the scans gone, 2026-09-22**: at batch 100, depth 1 gained
+  10% and depth 2 5% for 5% and 20% less client CPU, and depth 4 went
+  from falling behind depth 2 to twice depth 1, the user thread no
+  longer the ceiling. The batch size then turned out to matter more
+  than the depth: `--batch 400 --depth 1` 1 407 800 reads per second,
+  182 µs a batch; `--batch 200 --depth 2` 1 746 440, 158 µs a batch,
+  from one thread, with the same 400 in flight as batch 100 at depth
+  4. A round costs both sides a fixed part, the write, the receive,
+  the execution round and the reply packets, and 200 operations a
+  packet amortise it far better than 50. That one thread is above the
+  whole two-thread `flexAsynch` run, which had ten reads a transaction
+  against our one, so the phase-5 exit criterion holds for one thread
+  pending the like-for-like run. Still to settle: the data nodes' CPU
+  per operation rose with the load at batch 100 (4× the CPU for 2× the
+  work at depth 4). The `ndbmtd` reading settled it: batch 200 at
+  depth 2, half the packets of batch 100 at depth 4 for the same 400
+  in flight, took the nodes from 260% to 180% while the rate rose 20%,
+  about 40% less data-node CPU per read. The nodes' cost is per round,
+  not per operation, and operations per packet is the lever; the
+  tool's defaults are batch 200, depth 2.
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
   asynchronous PK read benchmark is within 2× of the C++ NDB API (the
   20 % target is Phase 7).

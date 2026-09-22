@@ -344,7 +344,11 @@ impl ApidQuery {
     self.state = state;
   }
 
-  pub(crate) fn begin(&mut self, execution: Execution, user_ref: usize) {
+  pub(crate) fn begin(&mut self, mut execution: Execution, user_ref: usize) {
+    // The last execution's row buffer is kept for its allocation.
+    let mut row = std::mem::take(&mut self.execution.row);
+    row.clear();
+    execution.row = row;
     self.execution = execution;
     self.user_ref = user_ref;
     self.error = None;
@@ -363,9 +367,10 @@ impl ApidQuery {
 
   /// Put a read's packed row into the attribute row.
   pub(crate) fn take_row(&mut self) -> Result<(), IcError> {
-    let words = std::mem::take(&mut self.execution.row);
-    crate::row_codec::unpack_row(&self.attr_rec, &words, &mut self.attr_row)?;
+    let words = &self.execution.row;
+    crate::row_codec::unpack_row(&self.attr_rec, words, &mut self.attr_row)?;
     self.result_len = 4 * words.len() as u32;
+    self.execution.row.clear();
     Ok(())
   }
 }

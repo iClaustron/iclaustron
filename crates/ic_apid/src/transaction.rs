@@ -352,7 +352,7 @@ impl ApidConnection {
       gci: 0,
     };
     let id = TransId(self.transactions.insert(trans)?);
-    self.active.push((tc.api_ptr, id));
+    self.active.insert(tc.api_ptr, id);
     Ok(id)
   }
 
@@ -598,8 +598,8 @@ impl ApidConnection {
   }
 
   fn active_transactions(&self) -> Vec<TransId> {
-    let mut ids: Vec<TransId> = Vec::new();
-    for (_, id) in &self.active {
+    let mut ids: Vec<TransId> = Vec::with_capacity(self.active.len());
+    for id in self.active.values() {
       ids.push(*id);
     }
     ids
@@ -796,15 +796,11 @@ impl ApidConnection {
     trans_id1: u32,
     trans_id2: u32,
   ) -> Option<TransId> {
-    for (ptr, id) in &self.active {
-      if *ptr != api_ptr {
-        continue;
-      }
-      if let Some(trans) = self.transactions.get(id.0) {
-        let want = trans.trans_id;
-        if want as u32 == trans_id1 && (want >> 32) as u32 == trans_id2 {
-          return Some(*id);
-        }
+    let id = *self.active.get(&api_ptr)?;
+    if let Some(trans) = self.transactions.get(id.0) {
+      let want = trans.trans_id;
+      if want as u32 == trans_id1 && (want >> 32) as u32 == trans_id2 {
+        return Some(id);
       }
     }
     None
@@ -1186,14 +1182,7 @@ impl ApidConnection {
       }
       None => return,
     };
-    let mut i: usize = 0;
-    while i < self.active.len() {
-      if self.active[i].1 == tid {
-        self.active.remove(i);
-      } else {
-        i += 1;
-      }
-    }
+    self.active.remove(&tc.api_ptr);
     self.free_tc_record(&tc);
   }
 

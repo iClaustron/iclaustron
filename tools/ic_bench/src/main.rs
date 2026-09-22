@@ -2,32 +2,44 @@
 // Licensed under the MIT License. See LICENSE in the repository root.
 
 //! `ic_bench`: how many primary key reads, or updates, one thread gets
-//! through with a batch of them in flight at a time.
+//! through with a few batches of them in flight at a time.
 //!
 //! ```text
-//!   ic_bench -c localhost:1186 -d ictest t9 --keys 1000 --batch 100
+//!   ic_bench -c localhost:1186 -d ictest t9 --keys 1000 --batch 200
 //!   ic_bench -c localhost:1186 -d ictest t9 --mode write --seconds 30
+//!   ic_bench -c localhost:1186 -d ictest t9 --depth 1
 //! ```
 //!
 //! The rows with keys from `--from` up to the key count are written
 //! first, unless `--no-prepare`, so that every read finds its row. Then
-//! for `--seconds` the thread defines a batch of committed reads, or of
-//! updates, each a transaction of its own hinted to the node holding
-//! its row, sends them together, and polls until every one is done;
-//! then the next batch, going round the keys in order. It reports the
-//! operations per second and the time a batch takes.
+//! for `--seconds` the thread keeps `--depth` batches in flight, each
+//! of `--batch` committed reads, or updates, each a transaction of its
+//! own hinted to the node holding its row. A batch is defined and sent
+//! together, one socket write per node, and as soon as every one of
+//! its operations is done it is defined again on the next keys, going
+//! round them in order, while the other batches are still out. That
+//! keeps the data nodes busy while this thread handles replies and
+//! packs the next batch, and this thread busy while they execute. With
+//! `--depth 1` the pipeline drains between batches, which is the plain
+//! form and the lower number. It reports the operations per second and
+//! the time a batch takes from send to done.
 //!
-//! This is the plain form: one batch at a time, so the pipeline drains
-//! between batches, which costs throughput and is on the plan. A batch
-//! is one socket write per node; `--force` makes it go at once rather
-//! than leaving it to the adaptive send algorithm, which is what an
-//! application gets by default. Measure a release build:
-//! `cargo run --release -p ic_bench`.
+//! The batch size matters more than the depth: a round costs both
+//! sides a fixed part, the write, the receive, the execution round and
+//! the reply packets, so 200 operations a packet cost the data nodes
+//! far less per operation than 50, and the defaults are what measured
+//! best on one thread (doc/rust/06, phase 5).
+//!
+//! `--force` makes each batch go at once rather than leaving it to the
+//! adaptive send algorithm, which is what an application gets by
+//! default; for one thread the two are the same. Measure a release
+//! build: `cargo run --release -p ic_bench`.
 //!
 //! The table needs a primary key of one integer column; every other
 //! integer column gets ten times the key, and any other column must be
 //! nullable.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ic_apic::mgm_client;
@@ -51,11 +63,13 @@ use ic_port::options::OptionParser;
 use ic_port::IcError;
 
 /// How long one batch may take before it counts as stuck.
-const IC_BENCH_BATCH_WAIT_MS: u64 = 10_000;
-/// The most operations in flight at once.
+const IC_BENCH_BATCH_WAIT_NANOS: u64 = 10_000_000_000;
+/// The most operations in one batch.
 const IC_BENCH_MAX_BATCH: i64 = 1000;
+/// The most batches in flight at once.
+const IC_BENCH_MAX_DEPTH: i64 = 16;
 
-const OPTIONS: [OptionEntry; 11] = [
+const OPTIONS: [OptionEntry; 12] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -84,7 +98,13 @@ const OPTIONS: [OptionEntry; 11] = [
     long_name: "batch",
     short_name: b'b',
     kind: OptionKind::Int,
-    help: "Operations in flight at once; the default is 100",
+    help: "Operations in one batch; the default is 200",
+  },
+  OptionEntry {
+    long_name: "depth",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Batches in flight at once; the default is 2, 1 is lock step",
   },
   OptionEntry {
     long_name: "keys",
@@ -129,6 +149,7 @@ struct Run {
   write: bool,
   seconds: u64,
   batch: usize,
+  depth: usize,
   keys: i64,
   from: i64,
   prepare: bool,
@@ -169,13 +190,19 @@ fn run() -> i32 {
       return 1;
     }
   };
-  let batch = parser.get_int_or("batch", 100);
+  let batch = parser.get_int_or("batch", 200);
+  let depth = parser.get_int_or("depth", 2);
   let keys = parser.get_int_or("keys", 1000);
   let seconds = parser.get_int_or("seconds", 10);
-  if !(1..=IC_BENCH_MAX_BATCH).contains(&batch) || keys < 1 || seconds < 1 {
+  if !(1..=IC_BENCH_MAX_BATCH).contains(&batch)
+    || !(1..=IC_BENCH_MAX_DEPTH).contains(&depth)
+    || keys < 1
+    || seconds < 1
+  {
     println!(
-      "The batch is between 1 and {}, and keys and seconds at least 1",
-      IC_BENCH_MAX_BATCH
+      "The batch is between 1 and {}, the depth between 1 and {}, and \
+       keys and seconds at least 1",
+      IC_BENCH_MAX_BATCH, IC_BENCH_MAX_DEPTH
     );
     return 1;
   }
@@ -183,6 +210,7 @@ fn run() -> i32 {
     write,
     seconds: seconds as u64,
     batch: batch as usize,
+    depth: depth as usize,
     keys,
     from: parser.get_int_or("from", 1),
     prepare: !parser.get_flag("no-prepare"),
@@ -260,21 +288,32 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     println!("{}", text);
     return 1;
   }
-  let mut queries: Vec<QueryId> = Vec::with_capacity(what.batch);
-  let mut i: usize = 0;
-  while i < what.batch {
-    match conn.create_query(&def, &rec, &rec) {
-      Ok(id) => queries.push(id),
-      Err(e) => {
-        report("Could not make a query", &e);
-        return 1;
+  let mut slots: Vec<Slot> = Vec::with_capacity(what.depth);
+  let mut slot_of: HashMap<u32, usize> = HashMap::new();
+  while slots.len() < what.depth {
+    let mut queries: Vec<QueryId> = Vec::with_capacity(what.batch);
+    while queries.len() < what.batch {
+      match conn.create_query(&def, &rec, &rec) {
+        Ok(id) => {
+          slot_of.insert(id.as_u32(), slots.len());
+          queries.push(id);
+        }
+        Err(e) => {
+          report("Could not make a query", &e);
+          return 1;
+        }
       }
     }
-    i += 1;
+    slots.push(Slot {
+      queries,
+      sent: Vec::new(),
+      started: 0,
+      done: 0,
+    });
   }
   if what.prepare {
     let start = ic_port::time::gethrtime();
-    let written = write_rows(&mut conn, &def, &rec, &queries, what);
+    let written = write_rows(&mut conn, &def, &rec, &slots[0].queries, what);
     let ms = ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
     match written {
       Ok(()) => println!("Wrote {} row(s) in {} ms", what.keys, ms),
@@ -285,13 +324,15 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     }
   }
   println!(
-    "{} by primary key, {} in flight, {} key(s) from {}, {} data node(s), \
-     for {} s",
+    "{} by primary key, {} in flight as {} batch(es) of {}, {} key(s) \
+     from {}, {} data node(s), for {} s",
     if what.write {
       "Updates"
     } else {
       "Committed reads"
     },
+    what.batch * what.depth,
+    what.depth,
     what.batch,
     what.keys,
     what.from,
@@ -300,40 +341,90 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
   );
   let mut tally = Tally::default();
   let start = ic_port::time::gethrtime();
+  let end_at = start + what.seconds * 1_000_000_000;
   let mut next_key = what.from;
+  let mut running = true;
+  let mut idle = slots.len();
+  // Keep every slot in flight until the time is up, then let them
+  // drain. A slot is defined again the moment its batch is done, so
+  // the others are still out while this thread packs the next. The
+  // completed queries the connection hands out say which slot has
+  // its batch back; nothing in flight is looked at until then, so
+  // that the cost of a poll does not grow with the depth.
+  let mut errors: u64 = 0;
   loop {
-    let batch_start = ic_port::time::gethrtime();
-    let sent =
-      match define_batch(&mut conn, &def, &rec, &queries, what, next_key) {
-        Ok(sent) => sent,
-        Err(e) => {
-          report("Could not define a batch", &e);
-          return 1;
+    let now = ic_port::time::gethrtime();
+    if running && now >= end_at {
+      running = false;
+    }
+    let mut i: usize = 0;
+    while i < slots.len() {
+      if !slots[i].sent.is_empty() {
+        let back = slots[i].done == slots[i].sent.len()
+          && batch_done(&conn, &slots[i].sent);
+        if !back {
+          if now - slots[i].started >= IC_BENCH_BATCH_WAIT_NANOS {
+            let e = IcError::new(ic_port::err::IC_ERROR_TIMEOUT);
+            report("A batch did not finish", &e);
+            return 1;
+          }
+          i += 1;
+          continue;
         }
-      };
-    next_key += what.batch as i64;
-    if next_key >= what.from + what.keys {
-      next_key = what.from;
-    }
-    match finish_batch(&mut conn, &sent) {
-      Ok(failed) => {
-        tally.ops += sent.len() as u64 - failed;
+        let failed = close_batch(&mut conn, &slots[i].sent);
+        tally.ops += slots[i].sent.len() as u64 - failed;
         tally.failed += failed;
+        tally.note_batch(now - slots[i].started);
+        slots[i].sent.clear();
+        slots[i].done = 0;
+        idle += 1;
       }
-      Err(e) => {
-        report("A batch did not finish", &e);
-        return 1;
+      if running {
+        let defined = define_batch(
+          &mut conn,
+          &def,
+          &rec,
+          &slots[i].queries,
+          what,
+          next_key,
+        );
+        slots[i].sent = match defined {
+          Ok(sent) => sent,
+          Err(e) => {
+            report("Could not define a batch", &e);
+            return 1;
+          }
+        };
+        slots[i].started = ic_port::time::gethrtime();
+        idle -= 1;
+        next_key += what.batch as i64;
+        if next_key >= what.from + what.keys {
+          next_key = what.from;
+        }
       }
+      i += 1;
     }
-    let took = ic_port::time::gethrtime() - batch_start;
-    tally.note_batch(took);
-    let elapsed =
-      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
-    if elapsed >= what.seconds * 1000 {
-      tally.print(elapsed);
+    if !running && idle == slots.len() {
       break;
     }
+    conn.poll(1);
+    while let Some(id) = conn.get_next_executed_query() {
+      if let Some(query) = conn.query(id) {
+        if let Some(e) = query.error() {
+          if errors == 0 {
+            println!("An operation failed: {} ({})", e.message(), e.code);
+          }
+          errors += 1;
+        }
+      }
+      if let Some(slot) = slot_of.get(&id.as_u32()) {
+        slots[*slot].done += 1;
+      }
+    }
   }
+  let elapsed =
+    ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+  tally.print(elapsed);
   if conn.unexpected() > 0 {
     println!(
       "{} signal(s) came that nothing waited for",
@@ -344,6 +435,17 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     return 1;
   }
   0
+}
+
+/// One batch's worth of query objects, and its transactions while it
+/// is in flight.
+struct Slot {
+  queries: Vec<QueryId>,
+  sent: Vec<TransId>,
+  /// When the batch was sent.
+  started: u64,
+  /// How many of its queries have completed since.
+  done: usize,
 }
 
 /// What was measured.
@@ -383,8 +485,8 @@ impl Tally {
     let p99 = self.batch_nanos[(n * 99) / 100];
     let slowest = self.batch_nanos[n - 1];
     println!(
-      "A batch took {} us at the median, {} us at the 99th percentile, \
-       {} us at most",
+      "A batch took {} us from send to done at the median, {} us at the \
+       99th percentile, {} us at most",
       median / 1000,
       p99 / 1000,
       slowest / 1000
@@ -493,8 +595,27 @@ fn write_rows(
       i += 1;
     }
     conn.send_queries(true)?;
-    let failed = finish_batch(conn, &sent)?;
-    if failed > 0 {
+    let start = ic_port::time::gethrtime();
+    while !batch_done(conn, &sent) {
+      conn.poll(1);
+      if ic_port::time::gethrtime() - start >= IC_BENCH_BATCH_WAIT_NANOS {
+        return Err(IcError::new(ic_port::err::IC_ERROR_TIMEOUT));
+      }
+    }
+    let mut first_error: Option<IcError> = None;
+    while let Some(id) = conn.get_next_executed_query() {
+      if let Some(query) = conn.query(id) {
+        if let Some(e) = query.error() {
+          if first_error.is_none() {
+            first_error = Some(e);
+          }
+        }
+      }
+    }
+    if let Some(e) = first_error {
+      println!("An operation failed: {} ({})", e.message(), e.code);
+    }
+    if close_batch(conn, &sent) > 0 {
       return Err(IcError::new(ic_port::err::IC_ERROR_TRANSACTION_ROLLED_BACK));
     }
   }
@@ -554,32 +675,21 @@ fn define_batch(
   Ok(sent)
 }
 
-/// Poll until every transaction of the batch is done, then close them
-/// and take the queries. Returns how many operations failed.
-fn finish_batch(
-  conn: &mut ApidConnection,
-  sent: &[TransId],
-) -> Result<u64, IcError> {
-  let start = ic_port::time::gethrtime();
-  loop {
-    let mut open: usize = 0;
-    for trans in sent {
-      if let Some(t) = conn.transaction(*trans) {
-        if !t.is_done() {
-          open += 1;
-        }
+/// True once every transaction of the batch is done.
+fn batch_done(conn: &ApidConnection, sent: &[TransId]) -> bool {
+  for trans in sent {
+    if let Some(t) = conn.transaction(*trans) {
+      if !t.is_done() {
+        return false;
       }
     }
-    if open == 0 {
-      break;
-    }
-    conn.poll(1);
-    let waited =
-      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
-    if waited >= IC_BENCH_BATCH_WAIT_MS {
-      return Err(IcError::new(ic_port::err::IC_ERROR_TIMEOUT));
-    }
   }
+  true
+}
+
+/// Close a batch's transactions, once it is done. Returns how many did
+/// not commit.
+fn close_batch(conn: &mut ApidConnection, sent: &[TransId]) -> u64 {
   let mut failed: u64 = 0;
   for trans in sent {
     if let Some(t) = conn.transaction(*trans) {
@@ -589,20 +699,7 @@ fn finish_batch(
     }
     let _ = conn.close_transaction(*trans);
   }
-  let mut first_error: Option<IcError> = None;
-  while let Some(id) = conn.get_next_executed_query() {
-    if let Some(query) = conn.query(id) {
-      if let Some(e) = query.error() {
-        if first_error.is_none() {
-          first_error = Some(e);
-        }
-      }
-    }
-  }
-  if let Some(e) = first_error {
-    println!("An operation failed: {} ({})", e.message(), e.code);
-  }
-  Ok(failed)
+  failed
 }
 
 fn report(what: &str, error: &IcError) {
