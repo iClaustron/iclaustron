@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Hopsworks and/or its affiliates.
 // Licensed under the MIT License. See LICENSE in the repository root.
 
-//! `ic_bench`: how many primary key reads, or updates, one thread gets
-//! through with a few batches of them in flight at a time.
+//! `ic_bench`: how many primary key reads, or updates, a thread gets
+//! through with a few batches of them in flight at a time, and how
+//! that scales over threads.
 //!
 //! ```text
 //!   ic_bench -c localhost:1186 -d ictest t9 --keys 1000 --batch 200
 //!   ic_bench -c localhost:1186 -d ictest t9 --mode write --seconds 30
 //!   ic_bench -c localhost:1186 -d ictest t9 --depth 1
+//!   ic_bench -c localhost:1186 -d ictest t9 --threads 4 --keys 4000
 //! ```
 //!
 //! The rows with keys from `--from` up to the key count are written
@@ -29,6 +31,13 @@
 //! the reply packets, so 200 operations a packet cost the data nodes
 //! far less per operation than 50, and the defaults are what measured
 //! best on one thread (doc/rust/06, phase 5).
+//!
+//! With `--threads` there are that many user threads, each with a
+//! connection of its own on the one global and its own share of the
+//! keys, all running the same pipeline; the report is the total and
+//! the per-thread average. This is where the adaptive send algorithm
+//! and the send pool see contention, and where one receive thread's
+//! ceiling shows.
 //!
 //! `--force` makes each batch go at once rather than leaving it to the
 //! adaptive send algorithm, which is what an application gets by
@@ -68,8 +77,10 @@ const IC_BENCH_BATCH_WAIT_NANOS: u64 = 10_000_000_000;
 const IC_BENCH_MAX_BATCH: i64 = 1000;
 /// The most batches in flight at once.
 const IC_BENCH_MAX_DEPTH: i64 = 16;
+/// The most user threads.
+const IC_BENCH_MAX_THREADS: i64 = 64;
 
-const OPTIONS: [OptionEntry; 12] = [
+const OPTIONS: [OptionEntry; 13] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -105,6 +116,12 @@ const OPTIONS: [OptionEntry; 12] = [
     short_name: 0,
     kind: OptionKind::Int,
     help: "Batches in flight at once; the default is 2, 1 is lock step",
+  },
+  OptionEntry {
+    long_name: "threads",
+    short_name: b't',
+    kind: OptionKind::Int,
+    help: "User threads, each with its own share of the keys; default 1",
   },
   OptionEntry {
     long_name: "keys",
@@ -150,6 +167,7 @@ struct Run {
   seconds: u64,
   batch: usize,
   depth: usize,
+  threads: usize,
   keys: i64,
   from: i64,
   prepare: bool,
@@ -192,17 +210,20 @@ fn run() -> i32 {
   };
   let batch = parser.get_int_or("batch", 200);
   let depth = parser.get_int_or("depth", 2);
+  let threads = parser.get_int_or("threads", 1);
   let keys = parser.get_int_or("keys", 1000);
   let seconds = parser.get_int_or("seconds", 10);
   if !(1..=IC_BENCH_MAX_BATCH).contains(&batch)
     || !(1..=IC_BENCH_MAX_DEPTH).contains(&depth)
-    || keys < 1
+    || !(1..=IC_BENCH_MAX_THREADS).contains(&threads)
+    || keys < threads
     || seconds < 1
   {
     println!(
-      "The batch is between 1 and {}, the depth between 1 and {}, and \
-       keys and seconds at least 1",
-      IC_BENCH_MAX_BATCH, IC_BENCH_MAX_DEPTH
+      "The batch is between 1 and {}, the depth between 1 and {}, the \
+       threads between 1 and {}, keys at least the threads, and seconds \
+       at least 1",
+      IC_BENCH_MAX_BATCH, IC_BENCH_MAX_DEPTH, IC_BENCH_MAX_THREADS
     );
     return 1;
   }
@@ -211,6 +232,7 @@ fn run() -> i32 {
     seconds: seconds as u64,
     batch: batch as usize,
     depth: depth as usize,
+    threads: threads as usize,
     keys,
     from: parser.get_int_or("from", 1),
     prepare: !parser.get_flag("no-prepare"),
@@ -263,14 +285,17 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     return 1;
   }
   let started = global.started_nodes().len();
-  let mut conn = match global.create_connection() {
-    Ok(conn) => conn,
-    Err(e) => {
-      report("Could not make a connection", &e);
-      return 1;
+  let mut conns: Vec<ApidConnection> = Vec::with_capacity(what.threads);
+  while conns.len() < what.threads {
+    match global.create_connection() {
+      Ok(conn) => conns.push(conn),
+      Err(e) => {
+        report("Could not make a connection", &e);
+        return 1;
+      }
     }
-  };
-  let def = match conn.table_bind(database, table) {
+  }
+  let def = match conns[0].table_bind(database, table) {
     Ok(def) => def,
     Err(e) => {
       report("Could not bind the table", &e);
@@ -288,32 +313,16 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     println!("{}", text);
     return 1;
   }
-  let mut slots: Vec<Slot> = Vec::with_capacity(what.depth);
-  let mut slot_of: HashMap<u32, usize> = HashMap::new();
-  while slots.len() < what.depth {
-    let mut queries: Vec<QueryId> = Vec::with_capacity(what.batch);
-    while queries.len() < what.batch {
-      match conn.create_query(&def, &rec, &rec) {
-        Ok(id) => {
-          slot_of.insert(id.as_u32(), slots.len());
-          queries.push(id);
-        }
-        Err(e) => {
-          report("Could not make a query", &e);
-          return 1;
-        }
-      }
-    }
-    slots.push(Slot {
-      queries,
-      sent: Vec::new(),
-      started: 0,
-      done: 0,
-    });
-  }
   if what.prepare {
+    let queries = match make_queries(&mut conns[0], &def, &rec, what.batch) {
+      Ok(queries) => queries,
+      Err(e) => {
+        report("Could not make a query", &e);
+        return 1;
+      }
+    };
     let start = ic_port::time::gethrtime();
-    let written = write_rows(&mut conn, &def, &rec, &slots[0].queries, what);
+    let written = write_rows(&mut conns[0], &def, &rec, &queries, what);
     let ms = ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
     match written {
       Ok(()) => println!("Wrote {} row(s) in {} ms", what.keys, ms),
@@ -324,13 +333,14 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     }
   }
   println!(
-    "{} by primary key, {} in flight as {} batch(es) of {}, {} key(s) \
-     from {}, {} data node(s), for {} s",
+    "{} by primary key, {} thread(s) each with {} in flight as {} \
+     batch(es) of {}, {} key(s) from {}, {} data node(s), for {} s",
     if what.write {
       "Updates"
     } else {
       "Committed reads"
     },
+    what.threads,
     what.batch * what.depth,
     what.depth,
     what.batch,
@@ -339,10 +349,99 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     started,
     what.seconds
   );
+  // Each thread goes round its own share of the keys, the last taking
+  // the remainder.
+  let per_thread = what.keys / what.threads as i64;
+  let start = ic_port::time::gethrtime();
+  let outcomes: Vec<Result<Tally, String>> = std::thread::scope(|scope| {
+    let mut handles = Vec::with_capacity(what.threads);
+    for (position, conn) in conns.drain(..).enumerate() {
+      let index = position as i64;
+      let first = what.from + index * per_thread;
+      let mut span = per_thread;
+      if position + 1 == what.threads {
+        span = what.keys - index * per_thread;
+      }
+      let range = KeyRange {
+        start: first,
+        end: first + span,
+      };
+      let def = &def;
+      let rec = &rec;
+      handles
+        .push(scope.spawn(move || run_thread(conn, def, rec, what, range)));
+    }
+    let mut outcomes = Vec::with_capacity(handles.len());
+    for handle in handles {
+      outcomes.push(match handle.join() {
+        Ok(outcome) => outcome,
+        Err(_) => Err("A thread panicked".to_string()),
+      });
+    }
+    outcomes
+  });
+  let elapsed =
+    ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+  let mut tally = Tally::default();
+  let mut code = 0;
+  for outcome in outcomes {
+    match outcome {
+      Ok(one) => tally.merge(one),
+      Err(text) => {
+        println!("{}", text);
+        code = 1;
+      }
+    }
+  }
+  tally.print(elapsed, what.threads);
+  if tally.unexpected > 0 {
+    println!(
+      "{} signal(s) came that nothing waited for",
+      tally.unexpected
+    );
+  }
+  if tally.failed > 0 {
+    return 1;
+  }
+  code
+}
+
+/// The keys one thread goes round: from `start` up to `end`.
+#[derive(Clone, Copy)]
+struct KeyRange {
+  start: i64,
+  end: i64,
+}
+
+/// One thread's run: the pipeline over its keys until the time is up.
+fn run_thread(
+  mut conn: ApidConnection,
+  def: &Arc<TableDef>,
+  rec: &Record,
+  what: &Run,
+  range: KeyRange,
+) -> Result<Tally, String> {
+  let mut slots: Vec<Slot> = Vec::with_capacity(what.depth);
+  let mut slot_of: HashMap<u32, usize> = HashMap::new();
+  while slots.len() < what.depth {
+    let queries = match make_queries(&mut conn, def, rec, what.batch) {
+      Ok(queries) => queries,
+      Err(e) => return Err(describe("Could not make a query", &e)),
+    };
+    for id in &queries {
+      slot_of.insert(id.as_u32(), slots.len());
+    }
+    slots.push(Slot {
+      queries,
+      sent: Vec::new(),
+      started: 0,
+      done: 0,
+    });
+  }
   let mut tally = Tally::default();
   let start = ic_port::time::gethrtime();
   let end_at = start + what.seconds * 1_000_000_000;
-  let mut next_key = what.from;
+  let mut next_key = range.start;
   let mut running = true;
   let mut idle = slots.len();
   // Keep every slot in flight until the time is up, then let them
@@ -365,8 +464,7 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
         if !back {
           if now - slots[i].started >= IC_BENCH_BATCH_WAIT_NANOS {
             let e = IcError::new(ic_port::err::IC_ERROR_TIMEOUT);
-            report("A batch did not finish", &e);
-            return 1;
+            return Err(describe("A batch did not finish", &e));
           }
           i += 1;
           continue;
@@ -382,24 +480,22 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
       if running {
         let defined = define_batch(
           &mut conn,
-          &def,
-          &rec,
+          def,
+          rec,
           &slots[i].queries,
           what,
+          range,
           next_key,
         );
         slots[i].sent = match defined {
           Ok(sent) => sent,
-          Err(e) => {
-            report("Could not define a batch", &e);
-            return 1;
-          }
+          Err(e) => return Err(describe("Could not define a batch", &e)),
         };
         slots[i].started = ic_port::time::gethrtime();
         idle -= 1;
         next_key += what.batch as i64;
-        if next_key >= what.from + what.keys {
-          next_key = what.from;
+        if next_key >= range.end {
+          next_key = range.start;
         }
       }
       i += 1;
@@ -422,19 +518,22 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
       }
     }
   }
-  let elapsed =
-    ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
-  tally.print(elapsed);
-  if conn.unexpected() > 0 {
-    println!(
-      "{} signal(s) came that nothing waited for",
-      conn.unexpected()
-    );
+  tally.unexpected = conn.unexpected();
+  Ok(tally)
+}
+
+/// A batch's worth of query objects on a connection.
+fn make_queries(
+  conn: &mut ApidConnection,
+  def: &Arc<TableDef>,
+  rec: &Record,
+  count: usize,
+) -> Result<Vec<QueryId>, IcError> {
+  let mut queries: Vec<QueryId> = Vec::with_capacity(count);
+  while queries.len() < count {
+    queries.push(conn.create_query(def, rec, rec)?);
   }
-  if tally.failed > 0 {
-    return 1;
-  }
-  0
+  Ok(queries)
 }
 
 /// One batch's worth of query objects, and its transactions while it
@@ -448,7 +547,7 @@ struct Slot {
   done: usize,
 }
 
-/// What was measured.
+/// What was measured, by one thread or by all of them together.
 #[derive(Default)]
 struct Tally {
   ops: u64,
@@ -456,6 +555,8 @@ struct Tally {
   batches: u64,
   /// Nanoseconds each batch took, for the spread.
   batch_nanos: Vec<u64>,
+  /// Signals that came which nothing waited for.
+  unexpected: u64,
 }
 
 impl Tally {
@@ -464,15 +565,35 @@ impl Tally {
     self.batch_nanos.push(nanos);
   }
 
-  fn print(&mut self, elapsed_ms: u64) {
+  fn merge(&mut self, other: Tally) {
+    self.ops += other.ops;
+    self.failed += other.failed;
+    self.batches += other.batches;
+    self.batch_nanos.extend_from_slice(&other.batch_nanos);
+    self.unexpected += other.unexpected;
+  }
+
+  fn print(&mut self, elapsed_ms: u64, threads: usize) {
     if elapsed_ms == 0 {
       return;
     }
     let per_second = self.ops * 1000 / elapsed_ms;
-    println!(
-      "{} operation(s) in {} batch(es) over {} ms: {} per second",
-      self.ops, self.batches, elapsed_ms, per_second
-    );
+    if threads > 1 {
+      println!(
+        "{} operation(s) in {} batch(es) over {} ms: {} per second, {} \
+         per thread",
+        self.ops,
+        self.batches,
+        elapsed_ms,
+        per_second,
+        per_second / threads as u64
+      );
+    } else {
+      println!(
+        "{} operation(s) in {} batch(es) over {} ms: {} per second",
+        self.ops, self.batches, elapsed_ms, per_second
+      );
+    }
     if self.failed > 0 {
       println!("{} operation(s) failed", self.failed);
     }
@@ -643,14 +764,14 @@ fn define_batch(
   rec: &Record,
   queries: &[QueryId],
   what: &Run,
+  range: KeyRange,
   first_key: i64,
 ) -> Result<Vec<TransId>, IcError> {
   let mut sent: Vec<TransId> = Vec::with_capacity(queries.len());
   let mut key = first_key;
-  let end = what.from + what.keys;
   for id in queries {
-    if key >= end {
-      key = what.from;
+    if key >= range.end {
+      key = range.start;
     }
     fill_query(conn, def, rec, *id, key, what.write)?;
     let trans = start_for(conn, def, rec, *id)?;
@@ -702,8 +823,12 @@ fn close_batch(conn: &mut ApidConnection, sent: &[TransId]) -> u64 {
   failed
 }
 
+fn describe(what: &str, error: &IcError) -> String {
+  format!("{}: {} ({})", what, error.message(), error.code)
+}
+
 fn report(what: &str, error: &IcError) {
-  println!("{}: {} ({})", what, error.message(), error.code);
+  println!("{}", describe(what, error));
   if mgm_client::is_refusal(error.code) {
     println!("The management server said: {}", mgm_client::last_refusal());
   }

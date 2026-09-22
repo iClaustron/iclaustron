@@ -313,30 +313,13 @@ impl ApidConnection {
     hint: TransactionHint,
     table: Option<&TableDef>,
   ) -> Result<TransId, IcError> {
-    let started = self.started_nodes();
-    if started.is_empty() {
-      return Err(IcError::new(err::IC_ERROR_NO_STARTED_DATA_NODE));
-    }
-    let turn = self.next_request_id();
-    let mut node_id = started[turn as usize % started.len()];
-    match hint {
-      TransactionHint::Any => {}
-      TransactionHint::Node(node) => {
-        if !started.contains(&node) {
-          return Err(IcError::new(err::IC_ERROR_NODE_NOT_READY));
-        }
-        node_id = node;
-      }
-      TransactionHint::Partition(partition) => {
-        if let Some(table) = table {
-          if let Some(node) =
-            hash::choose_node(table, partition, &started, turn)
-          {
-            node_id = node;
-          }
-        }
-      }
-    }
+    // The buffer is the connection's, so that a thread starting
+    // thousands of transactions a second allocates nothing here.
+    let mut started = std::mem::take(&mut self.started_scratch);
+    self.shared.started_nodes_into(&mut started);
+    let chosen = self.choose_start_node(hint, table, &started);
+    self.started_scratch = started;
+    let node_id = chosen?;
     let tc = self.tc_record(node_id)?;
     let trans = Transaction {
       trans_id: self.next_transaction_id(),
@@ -354,6 +337,39 @@ impl ApidConnection {
     let id = TransId(self.transactions.insert(trans)?);
     self.active.insert(tc.api_ptr, id);
     Ok(id)
+  }
+
+  /// The node a transaction goes to: the hint's, or the started nodes
+  /// in turn.
+  fn choose_start_node(
+    &mut self,
+    hint: TransactionHint,
+    table: Option<&TableDef>,
+    started: &[u32],
+  ) -> Result<u32, IcError> {
+    if started.is_empty() {
+      return Err(IcError::new(err::IC_ERROR_NO_STARTED_DATA_NODE));
+    }
+    let turn = self.next_request_id();
+    let mut node_id = started[turn as usize % started.len()];
+    match hint {
+      TransactionHint::Any => {}
+      TransactionHint::Node(node) => {
+        if !started.contains(&node) {
+          return Err(IcError::new(err::IC_ERROR_NODE_NOT_READY));
+        }
+        node_id = node;
+      }
+      TransactionHint::Partition(partition) => {
+        if let Some(table) = table {
+          if let Some(node) = hash::choose_node(table, partition, started, turn)
+          {
+            node_id = node;
+          }
+        }
+      }
+    }
+    Ok(node_id)
   }
 
   /// A transaction, if the id names one.

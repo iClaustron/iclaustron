@@ -28,7 +28,10 @@
 //! One thread for now. It never holds the pool's mutex while it writes,
 //! and a node with more to write after one write is queued again
 //! behind the others rather than written until empty, so that one busy
-//! node cannot hold the rest.
+//! node cannot hold the rest. It says under the mutex when it is about
+//! to sleep, and is signalled only then, as a user thread's inbox does
+//! it (`thread_conn`): a wake-up is a system call, and a thread that is
+//! awake and about to look at the queue needs none.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -55,6 +58,9 @@ struct SendQueue {
   /// Nodes holding signals back for company, each with when it must
   /// write them.
   deferred: Vec<(u32, IcTimer)>,
+  /// True while the thread sleeps on the condition variable, so that
+  /// only then is it signalled.
+  sleeping: bool,
 }
 
 /// What user threads hand the pool. Held in [`ApidShared`] and by every
@@ -72,6 +78,7 @@ impl SendPool {
         SendQueue {
           ready: VecDeque::new(),
           deferred: Vec::new(),
+          sleeping: false,
         },
       ),
       cond: IcCond::new(),
@@ -86,8 +93,11 @@ impl SendPool {
     if !queue.ready.contains(&node_id) {
       queue.ready.push_back(node_id);
     }
+    let wake = queue.sleeping;
     drop(queue);
-    self.cond.signal();
+    if wake {
+      self.cond.signal();
+    }
   }
 
   /// Say that a node holds signals back until `deadline`, when the
@@ -101,10 +111,11 @@ impl SendPool {
     }
     let was_idle = queue.deferred.is_empty();
     queue.deferred.push((node_id, deadline));
-    drop(queue);
     // A deadline is always later than those already known, so a thread
     // sleeping towards one of them needs no waking.
-    if was_idle {
+    let wake = was_idle && queue.sleeping;
+    drop(queue);
+    if wake {
       self.cond.signal();
     }
   }
@@ -162,7 +173,9 @@ pub(crate) fn run_send_thread(shared: Arc<ApidShared>, state: &ThreadState) {
       Some(deadline) => (deadline - now) / 1000 + 1,
       None => IC_SEND_POOL_IDLE_MICROS,
     };
-    let _ = pool.cond.timed_wait(queue, wait_micros);
+    queue.sleeping = true;
+    let (mut queue, _) = pool.cond.timed_wait(queue, wait_micros);
+    queue.sleeping = false;
   }
   ic_port::debug_print!(IC_THREAD_LEVEL, "Send thread stopped");
 }

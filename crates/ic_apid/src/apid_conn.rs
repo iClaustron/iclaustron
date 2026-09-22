@@ -319,6 +319,9 @@ pub struct ApidConnection {
   free_tc: Vec<Vec<u32>>,
   /// The low word of the next transaction id.
   trans_counter: u32,
+  /// The started nodes as of the last transaction start, kept for its
+  /// allocation.
+  pub(crate) started_scratch: Vec<u32>,
   /// The queries made on this connection, by the id a reply names.
   pub(crate) queries: PtrArray<ApidQuery>,
   /// The transactions started on this connection.
@@ -370,6 +373,7 @@ impl ApidConnection {
       tc_records: Vec::new(),
       free_tc: Vec::new(),
       trans_counter,
+      started_scratch: Vec::new(),
       queries: PtrArray::new(),
       transactions: PtrArray::new(),
       executed: VecDeque::new(),

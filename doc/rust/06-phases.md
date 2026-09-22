@@ -125,9 +125,11 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   hinted to the node holding its row; a batch is defined again the
   moment it is done, while the others are still out, so the data nodes
   have work while the thread packs and unpacks. `--depth 1` is the
-  lock-step form, which the numbers below were measured with. Reports
-  operations per second and the time from send to done of a batch, at
-  the median, 99th percentile and worst. Measure a release build.
+  lock-step form, which the numbers below were measured with.
+  `--threads` runs that many user threads on the one global, each with
+  its own connection and share of the keys. Reports operations per
+  second, per thread too, and the time from send to done of a batch,
+  at the median, 99th percentile and worst. Measure a release build.
 
   **Baseline, 2026-09-22**, release build, one thread, a two-node
   RonDB 26.10 cluster on the same machine as the client, a table of
@@ -216,6 +218,24 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   about 40% less data-node CPU per read. The nodes' cost is per round,
   not per operation, and operations per packet is the lever; the
   tool's defaults are batch 200, depth 2.
+
+  **Over threads, 2026-09-22**, at those defaults, 400 in flight per
+  thread: one thread 1 730 000 reads per second, 160 µs a batch; two
+  threads 2 345 000, 1 172 000 each, 264 µs; four threads 2 816 000,
+  704 000 each, 491 µs. The batch time growing with the thread count
+  at the same depth says the rounds queue at something shared. The
+  four-thread sample said which: the receive thread was still 31%
+  idle, and the user threads 54% idle, waiting for replies, so nobody
+  on the client was saturated and the queue was at the data nodes,
+  which share this laptop's cores with the client. Step 5 of the
+  thread plan is not called for at this rate; the receive thread
+  would carry about 4 million reads a second before it is. The send
+  pool never ran: with four threads the sends to a node were still
+  about 120 µs apart, above the adaptive send's limit, so nothing was
+  held. Of the client's remaining CPU per operation, a quarter is
+  malloc, free and memmove, phase 7's allocation removal; the vector
+  of started nodes that every transaction start allocated was made a
+  buffer the connection keeps.
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
   asynchronous PK read benchmark is within 2× of the C++ NDB API (the
   20 % target is Phase 7).

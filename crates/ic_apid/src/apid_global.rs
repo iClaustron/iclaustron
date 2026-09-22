@@ -691,12 +691,19 @@ impl ApidShared {
   /// The data nodes that have a link up and say they are started.
   pub(crate) fn started_nodes(&self) -> Vec<u32> {
     let mut out: Vec<u32> = Vec::new();
+    self.started_nodes_into(&mut out);
+    out
+  }
+
+  /// The started nodes into a buffer the caller keeps, for the paths
+  /// that ask once per transaction.
+  pub(crate) fn started_nodes_into(&self, out: &mut Vec<u32>) {
+    out.clear();
     for node in &self.nodes {
       if node.published.is_started() {
         out.push(node.node_id);
       }
     }
-    out
   }
 
   fn any_connected(&self) -> bool {
