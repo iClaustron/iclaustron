@@ -7,6 +7,7 @@
 //!   ic_read -c localhost:1186 -d ictest t9 1
 //!   ic_read -c localhost:1186 -d ictest t9 1 --debug-level 1024
 //!   ic_read -c localhost:1186 -d ictest t9 1 --partition
+//!   ic_read -c localhost:1186 -d ictest t9 --index uk 10
 //! ```
 //!
 //! After the table come the key's values, one per primary key column
@@ -21,6 +22,12 @@
 //! Integers are put in the key, and read from the row, in little-endian
 //! order: the data node's own, on the machines RonDB runs on.
 //!
+//! `--index` reads through a unique index instead: the values are then
+//! the indexed columns', in the index's order. A unique key made by a
+//! MySQL server is two indexes, an ordered one under its own name and
+//! the hash one under the name with `$unique` after it; either name
+//! does here.
+//!
 //! `--partition` also works out which partition the key belongs to,
 //! hashing it as the data nodes do, and asks a data node which
 //! partition the row is really in, so that the two can be compared.
@@ -33,6 +40,7 @@ use std::sync::Arc;
 use ic_apic::mgm_client;
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
+use ic_apid::dict_cache::IndexDef;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::hash;
 use ic_apid::key_op;
@@ -43,7 +51,7 @@ use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
 
-const OPTIONS: [OptionEntry; 5] = [
+const OPTIONS: [OptionEntry; 6] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -74,6 +82,12 @@ const OPTIONS: [OptionEntry; 5] = [
     kind: OptionKind::Flag,
     help: "Also compare the key's computed partition with the row's",
   },
+  OptionEntry {
+    long_name: "index",
+    short_name: b'i',
+    kind: OptionKind::Str,
+    help: "Read through this unique index; the values are its columns'",
+  },
 ];
 
 fn main() {
@@ -90,8 +104,11 @@ fn run() -> i32 {
     }
     return 1;
   }
-  ic_port::debug::set_level(parser.get_int_or("debug-level", 0) as u32);
+  let debug_level = parser.get_int_or("debug-level", 0) as u32;
+  ic_port::debug::set_level(debug_level);
   ic_port::debug::set_screen(true);
+  // Seconds since the start on every line, so that a pause can be seen.
+  ic_port::debug::set_timestamp(debug_level != 0);
   let args: Vec<String> = parser.positional().to_vec();
   if args.len() < 2 {
     println!("Name a table and its key, for example: ic_read -d test t1 7");
@@ -134,7 +151,9 @@ fn run() -> i32 {
     }
   };
   let partition = parser.get_flag("partition");
-  let code = read_row(&global, &database, &args[0], &args[1..], partition);
+  let index = parser.get_string_or("index", "");
+  let code =
+    read_row(&global, &database, &args[0], &args[1..], partition, &index);
   global.stop();
   code
 }
@@ -145,8 +164,9 @@ fn read_row(
   table: &str,
   keys: &[String],
   partition: bool,
+  index_name: &str,
 ) -> i32 {
-  if global.wait_for_started(15_000) == 0 {
+  if global.wait_for_first_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
     return 1;
   }
@@ -171,28 +191,56 @@ fn read_row(
       return 1;
     }
   };
+  let mut index: Option<Arc<IndexDef>> = None;
+  let mut key_names: Vec<String> = Vec::new();
+  if index_name.is_empty() {
+    for attr in &def.info().attributes {
+      if attr.primary_key {
+        key_names.push(attr.name.clone());
+      }
+    }
+  } else {
+    let bound = match bind_unique(&mut conn, database, index_name, table) {
+      Ok(bound) => bound,
+      Err(e) => {
+        report("Could not bind the index", &e);
+        return 1;
+      }
+    };
+    for column in &bound.info().attributes {
+      if column.primary_key {
+        key_names.push(column.name.clone());
+      }
+    }
+    index = Some(bound);
+  }
   let mut key_row = vec![0u8; rec.row_size() as usize];
-  if let Err(text) = put_key(&def, &rec, keys, &mut key_row) {
+  if let Err(text) = put_key(&rec, &key_names, keys, &mut key_row) {
     println!("{}", text);
     return 1;
   }
   let mut row = vec![0u8; rec.row_size() as usize];
-  let mut code =
-    match key_op::read_committed(&mut conn, &rec, &key_row, &rec, &mut row) {
-      Ok(true) => {
-        print_row(&def, &rec, &row);
-        0
-      }
-      Ok(false) => {
-        println!("No row with that key");
-        1
-      }
-      Err(e) => {
-        report("Could not read the row", &e);
-        1
-      }
-    };
-  if partition && code == 0 {
+  let read = match &index {
+    Some(index) => key_op::read_unique_committed(
+      &mut conn, index, &rec, &key_row, &rec, &mut row,
+    ),
+    None => key_op::read_committed(&mut conn, &rec, &key_row, &rec, &mut row),
+  };
+  let mut code = match read {
+    Ok(true) => {
+      print_row(&def, &rec, &row);
+      0
+    }
+    Ok(false) => {
+      println!("No row with that key");
+      1
+    }
+    Err(e) => {
+      report("Could not read the row", &e);
+      1
+    }
+  };
+  if partition && code == 0 && index.is_none() {
     code = compare_partition(&mut conn, &def, &rec, &key_row);
   }
   if conn.unexpected() > 0 {
@@ -202,6 +250,27 @@ fn read_row(
     );
   }
   code
+}
+
+/// The unique hash index of the name given: the name itself if that is
+/// one, else the name with `$unique` after it, which is what a MySQL
+/// server calls the hash half of a unique key.
+fn bind_unique(
+  conn: &mut ApidConnection,
+  database: &str,
+  index_name: &str,
+  table: &str,
+) -> Result<Arc<IndexDef>, IcError> {
+  let bound = conn.index_bind(database, index_name, table)?;
+  if bound.is_unique() {
+    return Ok(bound);
+  }
+  let hash_name = format!("{}$unique", index_name);
+  let bound = conn.index_bind(database, &hash_name, table)?;
+  if !bound.is_unique() {
+    return Err(IcError::new(ic_port::err::IC_ERROR_NOT_SUPPORTED));
+  }
+  Ok(bound)
 }
 
 /// The partition the key hashes to here against the one the data node
@@ -252,24 +321,25 @@ fn compare_partition(
   }
 }
 
-/// Put the key's values into the key columns of `row`.
+/// Put the key's values into the named columns of `row`, in order.
 fn put_key(
-  def: &Arc<TableDef>,
   rec: &Record,
+  names: &[String],
   keys: &[String],
   row: &mut [u8],
 ) -> Result<(), String> {
   let mut used: usize = 0;
-  for attr in &def.info().attributes {
-    if !attr.primary_key {
-      continue;
-    }
+  for name in names {
     if used >= keys.len() {
-      return Err(format!("The key needs a value for {}", attr.name));
+      return Err(format!("The key needs a value for {}", name));
     }
-    let position = match rec.position_of(attr.attribute_id) {
+    let attr_id = match rec.table().field_id(name) {
+      Ok(attr_id) => attr_id,
+      Err(_) => return Err(format!("No column {}", name)),
+    };
+    let position = match rec.position_of(attr_id) {
       Some(position) => position,
-      None => return Err(format!("No field for {}", attr.name)),
+      None => return Err(format!("No field for {}", name)),
     };
     text_row::put_value(rec, position, &keys[used], row)?;
     used += 1;

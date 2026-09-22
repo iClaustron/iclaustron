@@ -198,6 +198,16 @@ impl std::fmt::Debug for IndexDef {
 }
 
 impl IndexDef {
+  /// An index over one version of its table, as the dictionary
+  /// described it.
+  pub(crate) fn new(info: TableInfo, table: Arc<TableDef>) -> IndexDef {
+    IndexDef {
+      info,
+      table,
+      valid: AtomicBool::new(true),
+    }
+  }
+
   /// Everything the dictionary said about the index, which it describes
   /// as a table of its own.
   pub fn info(&self) -> &TableInfo {
@@ -644,11 +654,7 @@ fn fetch_index(
   if !is_index || info.primary_table_id != table.table_id() {
     return Err(IcError::new(err::IC_ERROR_NO_SUCH_TABLE));
   }
-  Ok(IndexDef {
-    info,
-    table: Arc::clone(table),
-    valid: AtomicBool::new(true),
-  })
+  Ok(IndexDef::new(info, Arc::clone(table)))
 }
 
 #[cfg(test)]
@@ -762,11 +768,7 @@ mod tests {
     info.table_id = id;
     info.table_version = 1;
     info.table_type = dict_tab_info::IC_TABLE_TYPE_UNIQUE_HASH_INDEX;
-    IndexDef {
-      info,
-      table: Arc::clone(table),
-      valid: AtomicBool::new(true),
-    }
+    IndexDef::new(info, Arc::clone(table))
   }
 
   fn put_index(cache: &DictCache, def: IndexDef) -> Arc<IndexDef> {

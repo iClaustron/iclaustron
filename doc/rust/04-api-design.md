@@ -167,8 +167,10 @@ confirmed by the author:
 
 Also as built: `send_queries()` sends everything defined, `flush(ms)`
 sends and polls, `get_next_executed_query()` hands out completed
-queries, which are idle again once taken. Callbacks are not built yet;
-nor are unique-key queries. Seen live (2026-09-22, `ic_trans` against
+queries, which are idle again once taken. Callbacks are not built yet.
+Unique-key queries are `create_unique_query(index, key_rec, attr_rec)`
+with records over the index's table, and take the same `read_key` and
+`write_key`; an insert through one is refused. Seen live (2026-09-22, `ic_trans` against
 RonDB 26.10): ten rows inserted in one transaction, read back in one
 batch of committed reads, their rows arriving from several nodes in
 whatever order they came, and deleted in one transaction.

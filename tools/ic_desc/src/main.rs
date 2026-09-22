@@ -104,8 +104,11 @@ fn run() -> i32 {
     }
     return 1;
   }
-  ic_port::debug::set_level(parser.get_int_or("debug-level", 0) as u32);
+  let debug_level = parser.get_int_or("debug-level", 0) as u32;
+  ic_port::debug::set_level(debug_level);
   ic_port::debug::set_screen(true);
+  // Seconds since the start on every line, so that a pause can be seen.
+  ic_port::debug::set_timestamp(debug_level != 0);
   let tables: Vec<String> = parser.positional().to_vec();
   if tables.is_empty() {
     println!("Name at least one table, for example: ic_desc -d test t1");
@@ -162,7 +165,7 @@ fn describe_all(
   watch: u32,
   record: bool,
 ) -> i32 {
-  if global.wait_for_started(15_000) == 0 {
+  if global.wait_for_first_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
     return 1;
   }

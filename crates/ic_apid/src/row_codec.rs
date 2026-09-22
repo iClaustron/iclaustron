@@ -40,6 +40,7 @@ use ic_ndb_signals::dict_tab_info::AttributeInfo;
 use ic_port::err;
 use ic_port::IcError;
 
+use crate::dict_cache::IndexDef;
 use crate::node_connect::words_as_bytes;
 use crate::record::Record;
 use crate::record::RecordField;
@@ -66,6 +67,43 @@ pub fn key_info(key_rec: &Record, key_row: &[u8]) -> Result<Vec<u32>, IcError> {
     let field = match key_rec.position_of(attr.attribute_id) {
       Some(position) => match key_rec.field(position) {
         Some(field) => field,
+        None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+      },
+      None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+    };
+    let start = field.offset() as usize;
+    let len = value_len(attr, field, &key_row[start..])?;
+    bytes.extend_from_slice(&key_row[start..start + len]);
+    while bytes.len() % 4 != 0 {
+      bytes.push(0);
+    }
+  }
+  Ok(words_of(&bytes))
+}
+
+/// The key section of a request through a unique index: each key
+/// column of the index, in the index's order, taken from the base
+/// table's row by name and padded to words. The index describes itself
+/// as a table whose primary key is the indexed columns, with a hidden
+/// column after them. Verify: `NdbIndexOperation.cpp`, `indxInit`,
+/// where the operation's access table becomes the index's own.
+pub fn index_key_info(
+  index: &IndexDef,
+  key_rec: &Record,
+  key_row: &[u8],
+) -> Result<Vec<u32>, IcError> {
+  if key_row.len() < key_rec.row_size() as usize {
+    return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+  }
+  let mut bytes: Vec<u8> = Vec::new();
+  for column in &index.info().attributes {
+    if !column.primary_key {
+      continue;
+    }
+    let attr_id = key_rec.table().field_id(&column.name)?;
+    let (attr, field) = match key_rec.position_of(attr_id) {
+      Some(position) => match field_at(key_rec, position) {
+        Some(found) => found,
         None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
       },
       None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
@@ -503,6 +541,41 @@ mod tests {
     let key = key_info(&rec, &row).expect("key");
     // Four bytes of id, then four of name: the length and three bytes.
     assert_eq!(key, padded(&[7, 0, 0, 0, 3, b'a', b'b', b'c']));
+  }
+
+  #[test]
+  fn an_index_key_is_the_indexed_columns_in_index_order() {
+    let t = table();
+    // A unique index over name: the index's own table has name as its
+    // key and a hidden column after it.
+    let mut w = PropertyWriter::new();
+    w.add_string(IC_DTI_TABLE_NAME, "sys/def/1/uk$unique");
+    w.add_u32(IC_DTI_NO_OF_ATTRIBUTES, 2);
+    w.add_string(IC_DTI_ATTRIBUTE_NAME, "name");
+    w.add_u32(IC_DTI_ATTRIBUTE_ID, 0);
+    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, IC_NDB_TYPE_VARCHAR);
+    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 20);
+    w.add_u32(IC_DTI_ATTRIBUTE_KEY, 1);
+    w.add_u32(IC_DTI_ATTRIBUTE_EXT_PRECISION, 8 << 16);
+    w.add_u32(IC_DTI_ATTRIBUTE_ARRAY_TYPE, IC_ARRAY_TYPE_SHORT_VAR);
+    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+    w.add_string(IC_DTI_ATTRIBUTE_NAME, "NDB$PK");
+    w.add_u32(IC_DTI_ATTRIBUTE_ID, 1);
+    w.add_u32(IC_DTI_ATTRIBUTE_EXT_TYPE, IC_NDB_TYPE_BIGINT);
+    w.add_u32(IC_DTI_ATTRIBUTE_EXT_LENGTH, 1);
+    w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
+    let info = parse_table_info(w.words()).expect("parsed");
+    let index = IndexDef::new(info, Arc::clone(&t));
+    let rec = Record::default_for(&t, None).expect("record");
+    let mut row = vec![0u8; rec.row_size() as usize];
+    let at = rec.field(1).expect("name").offset() as usize;
+    row[at..at + 3].copy_from_slice(&[2, b'h', b'i']);
+    let key = index_key_info(&index, &rec, &row).expect("key");
+    assert_eq!(key, padded(&[2, b'h', b'i']));
+    // A record without the indexed column cannot key the index.
+    let without = Record::default_for(&t, Some(&[0])).expect("record");
+    let row = vec![0u8; without.row_size() as usize];
+    assert!(index_key_info(&index, &without, &row).is_err());
   }
 
   #[test]

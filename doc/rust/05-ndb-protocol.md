@@ -775,6 +775,29 @@ are the short-form trains (unused by us). Verify:
 `include/kernel/signaldata/TcIndx.hpp:34`,
 `src/ndbapi/NdbIndexOperation.cpp:35-178`.
 
+As built (`ic_apid::transaction`, a query made with
+`create_unique_query`): the request names the **index's own table**,
+its id and version, not the base table's; the key is the indexed
+columns in the index's order, which are the primary key of the index's
+own table, taken from a record over the base table by name; the
+attribute information is over the base table as for any read or write.
+The coordinator finds the row's primary key through the index and runs
+the operation on the table; `TCINDXCONF` and `TCINDXREF` come back in
+the key family's layouts (`TcIndxConf` is a typedef of `TcKeyConf`,
+the refusal is built as a `TcKeyRef`), and the row as `TRANSID_AI`.
+An insert cannot go through an index; the reference refuses one with
+4200. **A read through an index takes the shared lock, always**: the
+reference sends its committed and simple index reads as plain locked
+reads, and the coordinator asserts that an index request carries
+neither the dirty nor the simple flag. Found live (2026-09-22): a
+committed read sent through an index with both flags lost the link to
+the data node at once, which is what a failed assertion in a debug
+data node looks like from here. Verify: `NdbIndexOperation.cpp`,
+`indxInit`, where the access table becomes the index's own,
+`insertTuple`, `committedRead` and `simpleRead`; `DbtcMain.cpp`,
+`execTCINDXREQ`, and the assertions on the flags where the index read
+is built and where the base operation is.
+
 ## 7. Scans
 
 - `SCAN_TABREQ` (GSN 32), 11 fixed words: API connect ptr, attr/key

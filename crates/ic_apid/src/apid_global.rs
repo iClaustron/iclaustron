@@ -869,7 +869,8 @@ impl ApidGlobal {
   /// server logs against our node id.
   ///
   /// Returns at once. The data nodes are connected in the background;
-  /// [`wait_for_started`](Self::wait_for_started) waits for them.
+  /// [`wait_for_first_started`](Self::wait_for_first_started) and
+  /// [`wait_for_all_started`](Self::wait_for_all_started) wait for them.
   pub fn start(
     config: ClusterConfig,
     mgm: MgmClient,
@@ -1023,13 +1024,29 @@ impl ApidGlobal {
     ApidConnection::new(Arc::clone(&self.shared))
   }
 
-  /// Wait until every data node is connected and started, or `wait_ms`
-  /// has passed. Returns how many are started.
-  pub fn wait_for_started(&self, wait_ms: u32) -> u32 {
+  /// Wait until at least one data node is connected and started, or
+  /// `wait_ms` has passed (`ic_apid_global_wait_first_node_connect`).
+  /// Returns how many are started: zero means nobody to talk to. This
+  /// is the wait for a program that needs the cluster, not every node
+  /// of it.
+  pub fn wait_for_first_started(&self, wait_ms: u32) -> u32 {
+    self.wait_for_started_nodes(wait_ms, 1)
+  }
+
+  /// Wait until every data node in the configuration is connected and
+  /// started, or `wait_ms` has passed
+  /// (`ic_apid_global_wait_all_nodes_connect`). Returns how many are
+  /// started. With a node down this waits the whole time, so it is for
+  /// a program that wants every node, such as one exercising each.
+  pub fn wait_for_all_started(&self, wait_ms: u32) -> u32 {
+    self.wait_for_started_nodes(wait_ms, self.shared.nodes.len() as u32)
+  }
+
+  fn wait_for_started_nodes(&self, wait_ms: u32, wanted: u32) -> u32 {
     let start = ic_port::time::gethrtime();
     loop {
       let started = self.started_nodes().len() as u32;
-      if started as usize == self.shared.nodes.len() {
+      if started >= wanted {
         return started;
       }
       let waited =

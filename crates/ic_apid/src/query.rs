@@ -28,6 +28,7 @@ use ic_port::err;
 use ic_port::IcError;
 use ic_util::ptr_array::PtrId;
 
+use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::record::Record;
 
@@ -175,6 +176,8 @@ fn over_table(rec: &Record, table: &TableDef) -> bool {
 /// (`IC_APID_QUERY`).
 pub struct ApidQuery {
   table: Arc<TableDef>,
+  /// The unique index the key goes through, for a unique query.
+  index: Option<Arc<IndexDef>>,
   key_rec: Record,
   attr_rec: Record,
   key_row: Vec<u8>,
@@ -220,6 +223,38 @@ impl ApidQuery {
     }
     Ok(ApidQuery {
       table: Arc::clone(table),
+      index: None,
+      key_rec: key_rec.clone(),
+      attr_rec: attr_rec.clone(),
+      key_row: vec![0; key_rec.row_size() as usize],
+      attr_row: vec![0; attr_rec.row_size() as usize],
+      state: QueryState::Idle,
+      error: None,
+      user_ref: 0,
+      result_len: 0,
+      execution: Execution::default(),
+    })
+  }
+
+  /// A query through a unique index (`ic_apid_query_create_unique`).
+  /// The records are over the index's table; the key record must hold
+  /// every column the index is over, which is checked when the query is
+  /// defined. Only reads, updates and deletes go through an index.
+  pub fn new_unique(
+    index: &Arc<IndexDef>,
+    key_rec: &Record,
+    attr_rec: &Record,
+  ) -> Result<ApidQuery, IcError> {
+    if !index.is_unique() {
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+    let table = index.table();
+    if !over_table(key_rec, table) || !over_table(attr_rec, table) {
+      return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+    }
+    Ok(ApidQuery {
+      table: Arc::clone(table),
+      index: Some(Arc::clone(index)),
       key_rec: key_rec.clone(),
       attr_rec: attr_rec.clone(),
       key_row: vec![0; key_rec.row_size() as usize],
@@ -235,6 +270,11 @@ impl ApidQuery {
   /// The table the query is over.
   pub fn table(&self) -> &Arc<TableDef> {
     &self.table
+  }
+
+  /// The unique index the key goes through, for a unique query.
+  pub fn index(&self) -> Option<&Arc<IndexDef>> {
+    self.index.as_ref()
   }
 
   /// The record the key row is laid out by.

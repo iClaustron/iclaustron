@@ -53,13 +53,21 @@ use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
 use ic_port::err;
 use ic_port::IcError;
 
+use std::sync::Arc;
+
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::TcRecord;
+use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::hash;
 use crate::node_connect::ReceivedSignal;
+use crate::query::QueryId;
+use crate::query::ReadKeyArgs;
+use crate::query::ReadKind;
+use crate::query::TransId;
 use crate::record::Record;
 use crate::row_codec;
+use crate::transaction::TransactionHint;
 
 /// How long a key operation waits for its outcome.
 pub const IC_KEY_OP_WAIT_MS: u32 = 10_000;
@@ -162,6 +170,103 @@ fn node_for_key(
     }
   }
   Ok(started[turn as usize % started.len()])
+}
+
+/// Read the row a unique index key names, as a committed read through
+/// the index, into `attr_row`; `key_row` is laid out by `key_rec` over
+/// the index's table and holds the indexed columns. Returns false if
+/// there is no such row. This one is built on the transaction API,
+/// which the reads and writes above will move onto too.
+pub fn read_unique_committed(
+  conn: &mut ApidConnection,
+  index: &Arc<IndexDef>,
+  key_rec: &Record,
+  key_row: &[u8],
+  attr_rec: &Record,
+  attr_row: &mut [u8],
+) -> Result<bool, IcError> {
+  let key_len = key_rec.row_size() as usize;
+  let attr_len = attr_rec.row_size() as usize;
+  if key_row.len() < key_len || attr_row.len() < attr_len {
+    return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
+  }
+  let qid = conn.create_unique_query(index, key_rec, attr_rec)?;
+  let result = unique_read(conn, qid, &key_row[..key_len], attr_row);
+  let _ = conn.free_query(qid);
+  result
+}
+
+/// The transaction of one committed read, waited for.
+fn unique_read(
+  conn: &mut ApidConnection,
+  qid: QueryId,
+  key_row: &[u8],
+  attr_row: &mut [u8],
+) -> Result<bool, IcError> {
+  let tid = conn.start_transaction(TransactionHint::Any, None)?;
+  if let Some(query) = conn.query_mut(qid) {
+    query.key_row_mut().copy_from_slice(key_row);
+  }
+  let args = ReadKeyArgs {
+    kind: ReadKind::Committed,
+    ..ReadKeyArgs::default()
+  };
+  let result = match conn.read_key(qid, tid, &args) {
+    Ok(()) => match conn.commit_transaction(tid) {
+      Ok(()) => wait_for_transaction(conn, tid),
+      Err(e) => Err(e),
+    },
+    Err(e) => Err(e),
+  };
+  let _ = conn.close_transaction(tid);
+  result?;
+  // Ours is the only query on this connection's executed list here.
+  let mut found: Option<bool> = None;
+  while let Some(done) = conn.get_next_executed_query() {
+    if done != qid {
+      continue;
+    }
+    let query = match conn.query(qid) {
+      Some(query) => query,
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
+    match query.error() {
+      Some(e) if e.code == IC_NDB_ERROR_NO_SUCH_ROW as i32 => {
+        found = Some(false);
+      }
+      Some(e) => return Err(e),
+      None => {
+        let len = query.attr_row().len();
+        attr_row[..len].copy_from_slice(query.attr_row());
+        found = Some(true);
+      }
+    }
+  }
+  match found {
+    Some(found) => Ok(found),
+    None => Err(IcError::new(err::IC_ERROR_TIMEOUT)),
+  }
+}
+
+/// Send, then poll until the transaction is done or the wait runs out.
+fn wait_for_transaction(
+  conn: &mut ApidConnection,
+  tid: TransId,
+) -> Result<(), IcError> {
+  let start = ic_port::time::gethrtime();
+  loop {
+    conn.flush(IC_KEY_OP_SLICE_MS)?;
+    if let Some(trans) = conn.transaction(tid) {
+      if trans.is_done() {
+        return Ok(());
+      }
+    }
+    let waited =
+      ic_port::time::millis_elapsed(start, ic_port::time::gethrtime());
+    if waited >= IC_KEY_OP_WAIT_MS as u64 {
+      return Err(IcError::new(err::IC_ERROR_TIMEOUT));
+    }
+  }
 }
 
 /// The partition the row with this key is in, read from the data node

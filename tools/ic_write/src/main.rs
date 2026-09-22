@@ -88,8 +88,11 @@ fn run() -> i32 {
     }
     return 1;
   }
-  ic_port::debug::set_level(parser.get_int_or("debug-level", 0) as u32);
+  let debug_level = parser.get_int_or("debug-level", 0) as u32;
+  ic_port::debug::set_level(debug_level);
   ic_port::debug::set_screen(true);
+  // Seconds since the start on every line, so that a pause can be seen.
+  ic_port::debug::set_timestamp(debug_level != 0);
   let args: Vec<String> = parser.positional().to_vec();
   if args.len() < 2 {
     println!("Name a table and a row, for example: ic_write -d test t1 7 70");
@@ -161,7 +164,7 @@ fn write_row(
   table: &str,
   values: &[String],
 ) -> i32 {
-  if global.wait_for_started(15_000) == 0 {
+  if global.wait_for_first_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
     return 1;
   }

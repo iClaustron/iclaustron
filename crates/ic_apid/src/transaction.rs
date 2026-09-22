@@ -34,10 +34,25 @@
 //! operation sent is complete; its record then goes back to the pool
 //! and the transaction stays until the application closes it.
 //!
+//! **A unique query** goes through a unique hash index: the request is
+//! `TCINDXREQ`, naming the index's own table and carrying the index
+//! columns as its key, and the coordinator finds the row's primary key
+//! through the index and runs the operation on the table. Its replies
+//! are `TCINDXCONF` and `TCINDXREF`, laid out as the key family's, and
+//! the row comes as `TRANSID_AI` like any other. An insert cannot go
+//! through an index, and a read through one always takes the shared
+//! lock: the reference sends its committed and simple index reads that
+//! way, and the coordinator asserts that an index request carries
+//! neither the dirty nor the simple flag, which on a debug data node
+//! is fatal. Verify: `TcIndx.hpp`; `DbtcMain.cpp`, `execTCINDXREQ` and
+//! the assertions where the index read is made; `NdbIndexOperation.cpp`,
+//! `committedRead` and `simpleRead`.
+//!
 //! What is not here yet: callbacks, which chapter 04 wants beside the
 //! executed list; the takeover replies of a coordinator that failed,
 //! `TCKEY_FAILCONF` and `TCKEY_FAILREF`, on which a lost link now
-//! fails the transaction outright; and unique-key operations.
+//! fails the transaction outright; and placing a unique query by the
+//! index's own hash map, so it goes to a node holding the index.
 
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header::SignalHeader;
@@ -58,6 +73,7 @@ use ic_util::ptr_array::PtrId;
 
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::TcRecord;
+use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::hash;
 use crate::node_connect::ReceivedSignal;
@@ -198,6 +214,18 @@ impl ApidConnection {
     attr_rec: &Record,
   ) -> Result<QueryId, IcError> {
     let query = ApidQuery::new(table, key_rec, attr_rec)?;
+    Ok(QueryId(self.queries.insert(query)?))
+  }
+
+  /// A query through a unique index (`ic_apid_query_create_unique`),
+  /// with records over the index's table.
+  pub fn create_unique_query(
+    &mut self,
+    index: &std::sync::Arc<IndexDef>,
+    key_rec: &Record,
+    attr_rec: &Record,
+  ) -> Result<QueryId, IcError> {
+    let query = ApidQuery::new_unique(index, key_rec, attr_rec)?;
     Ok(QueryId(self.queries.insert(query)?))
   }
 
@@ -343,14 +371,21 @@ impl ApidConnection {
     };
     let exclusive = args.kind == ReadKind::Exclusive
       || args.kind == ReadKind::ExclusiveNoWait;
+    // A read through a unique index always takes the shared lock: the
+    // reference sends its committed and simple reads that way, and the
+    // coordinator asserts that an index request carries neither flag.
+    let through_index = match self.queries.get(query_id.0) {
+      Some(query) => query.index().is_some(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+    };
     let flags = TcKeyFlags {
       operation: if exclusive {
         tc_key::IC_OP_READ_EXCLUSIVE
       } else {
         tc_key::IC_OP_READ
       },
-      simple: args.kind == ReadKind::Simple || committed,
-      dirty: committed,
+      simple: (args.kind == ReadKind::Simple || committed) && !through_index,
+      dirty: committed && !through_index,
       abort_option,
       no_wait: args.kind == ReadKind::ExclusiveNoWait,
       ..TcKeyFlags::default()
@@ -413,7 +448,18 @@ impl ApidConnection {
     if state == QueryState::Defined || state == QueryState::Sent {
       return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
     }
-    let key = row_codec::key_info(query.key_record(), query.key_row())?;
+    let key = match query.index() {
+      Some(index) => {
+        // The reference refuses an insert through an index too.
+        let inserts = flags.operation == tc_key::IC_OP_INSERT
+          || flags.operation == tc_key::IC_OP_WRITE;
+        if inserts {
+          return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+        }
+        row_codec::index_key_info(index, query.key_record(), query.key_row())?
+      }
+      None => row_codec::key_info(query.key_record(), query.key_row())?,
+    };
     let mut attr_info: Vec<u32> = Vec::new();
     if is_read {
       attr_info = row_codec::read_attr_info(query.attr_record());
@@ -591,8 +637,20 @@ impl ApidConnection {
       Some(query) => query,
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
-    let table_id = query.table().table_id();
-    let table_version = query.table().table_version();
+    // A unique query names the index's own table and goes as a
+    // TCINDXREQ; the coordinator looks the row up through the index.
+    let (signal, table_id, table_version) = match query.index() {
+      Some(index) => (
+        gsn::IC_GSN_TCINDXREQ,
+        index.index_id(),
+        index.index_version(),
+      ),
+      None => (
+        gsn::IC_GSN_TCKEYREQ,
+        query.table().table_id(),
+        query.table().table_version(),
+      ),
+    };
     let mut flags = query.execution.flags;
     flags.start = start;
     flags.execute = execute;
@@ -609,8 +667,7 @@ impl ApidConnection {
       trans_id1: trans_id as u32,
       trans_id2: (trans_id >> 32) as u32,
     };
-    let header =
-      SignalHeader::new(gsn::IC_GSN_TCKEYREQ, self.block_number(), tc.tc_block);
+    let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
     let both: [&[u32]; 2] = [&key, &attr_info];
     let mut sections: &[&[u32]] = &both;
     if attr_info.is_empty() {
@@ -668,10 +725,15 @@ impl ApidConnection {
     &mut self,
     signal: ReceivedSignal,
   ) -> Option<ReceivedSignal> {
+    // The unique index family answers in the key family's layouts.
     let taken = match signal.gsn {
-      gsn::IC_GSN_TCKEYCONF => self.take_key_conf(&signal),
+      gsn::IC_GSN_TCKEYCONF | gsn::IC_GSN_TCINDXCONF => {
+        self.take_key_conf(&signal)
+      }
       gsn::IC_GSN_TRANSID_AI => self.take_row(&signal),
-      gsn::IC_GSN_TCKEYREF => self.take_key_ref(&signal),
+      gsn::IC_GSN_TCKEYREF | gsn::IC_GSN_TCINDXREF => {
+        self.take_key_ref(&signal)
+      }
       gsn::IC_GSN_TCROLLBACKREP => self.take_rollback_rep(&signal),
       gsn::IC_GSN_TC_COMMITCONF => self.take_commit_conf(&signal),
       gsn::IC_GSN_TC_COMMITREF => self.take_trans_ref(&signal),

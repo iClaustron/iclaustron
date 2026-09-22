@@ -94,8 +94,11 @@ fn run() -> i32 {
     }
     return 1;
   }
-  ic_port::debug::set_level(parser.get_int_or("debug-level", 0) as u32);
+  let debug_level = parser.get_int_or("debug-level", 0) as u32;
+  ic_port::debug::set_level(debug_level);
   ic_port::debug::set_screen(true);
+  // Seconds since the start on every line, so that a pause can be seen.
+  ic_port::debug::set_timestamp(debug_level != 0);
 
   let mut connect_text = parser.get_string_or("ndb-connectstring", "");
   if connect_text.is_empty() && !parser.positional().is_empty() {
@@ -151,7 +154,7 @@ fn run() -> i32 {
   };
 
   // The threads connect in the background; give them a moment.
-  global.wait_for_started(15_000);
+  global.wait_for_all_started(15_000);
   report_nodes(&global);
   if global.num_connected() == 0 {
     println!();
