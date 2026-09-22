@@ -72,7 +72,8 @@ is replaced here and nowhere else.
 
 | C | Rust module | Mode | Notes |
 |---|---|---|---|
-| `ic_err.c/h` (codes 7000–7123, message table, `ic_assert`, `ic_require`) | `err.rs` | 1:1 | `pub const IC_ERROR_*: i32`, `struct IcError`, `ic_assert!`, `ic_require!` |
+| `ic_err.c/h` (codes 7000–7123, message table, `ic_assert`, `ic_require`) | `err.rs` | 1:1 + New | `pub const IC_ERROR_*: i32`, `struct IcError`, `ic_assert!`, `ic_require!`; built: `ErrorCategory` and `ErrorSeverity` as the C header has them, on every code |
+| — | `ndb_err.rs` | New | built: the NDB codes the library meets, each with the class the reference gives it and a sentence of our own; a code not in the table is still reported, as "NDB error N" of unknown class |
 | `ic_debug.c/h` (`DEBUG_ENTRY`/`DEBUG_RETURN_*`, level bits, indent tracking) | `debug.rs` | Redesign | `debug_entry!("name")` returns a guard whose `Drop` does the return print; level bits unchanged; zero cost in release |
 | `ic_mc.c` memory container | `mc.rs` | 1:1 | Arena of chunks; `alloc`, `calloc`, `reset`, `free` semantics unchanged |
 | `ic_dyn_array.c` `IC_DYNAMIC_ARRAY` (+ ordered) | `dyn_array.rs` | 1:1 | growable byte buffer; the spill-to-disk variant is Out (config writer only) |

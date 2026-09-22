@@ -16,6 +16,8 @@
 //! Modules:
 //! - [`consts`]: sizes, limits, ports, NDB block numbers, versions.
 //! - [`err`]: error codes 7000.., [`IcError`], `ic_assert!`, `ic_require!`.
+//! - [`ndb_err`]: the codes the data nodes report, their kinds, and our
+//!   own words for them.
 //! - [`stop`]: the process-wide stop flag.
 //! - [`oserr`]: last OS error and its text.
 //! - [`endian`]: byte order detection and word swapping.
@@ -34,6 +36,7 @@ pub mod debug;
 pub mod endian;
 pub mod err;
 pub mod file;
+pub mod ndb_err;
 pub mod options;
 pub mod oserr;
 pub mod output;

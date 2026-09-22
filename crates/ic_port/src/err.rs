@@ -345,6 +345,41 @@ pub const IC_ERROR_TRANSACTION_ACTIVE: i32 = 7150;
 /// The query's transaction was rolled back, and the query with it.
 pub const IC_ERROR_TRANSACTION_ROLLED_BACK: i32 = 7151;
 
+/// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
+/// order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub enum ErrorCategory {
+  /// Nothing went wrong.
+  #[default]
+  NoError = 0,
+  /// The application asked for something wrong: no such row, a
+  /// duplicate key, a bad record.
+  User = 1,
+  /// A fault in the library or the cluster.
+  Internal = 2,
+  /// The world outside: a node failure, an overload, a timeout, a lost
+  /// link.
+  External = 3,
+}
+
+/// How bad it is (`IC_ERROR_SEVERITY_LEVEL`), in the header's order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub enum ErrorSeverity {
+  /// Nothing went wrong.
+  #[default]
+  NoError = 0,
+  /// Worth knowing, nothing failed.
+  Warning = 1,
+  /// Failed now; the same request may well succeed if tried again.
+  Temporary = 2,
+  /// Failed for good; the request has to change.
+  Error = 3,
+  /// The library can no longer be used.
+  Stop = 4,
+}
+
 /// An error: a code and, for operating system errors, nothing more.
 ///
 /// This is the value carried in `Err(...)` by every fallible function in
@@ -387,6 +422,32 @@ impl IcError {
     self.code >= IC_FIRST_ERROR && self.code <= IC_LAST_ERROR
   }
 
+  /// True for a code the data nodes report and this library knows.
+  pub fn is_ndb_error(&self) -> bool {
+    crate::ndb_err::is_known(self.code)
+  }
+
+  /// What kind of thing went wrong.
+  pub fn category(&self) -> ErrorCategory {
+    if self.is_ic_error() {
+      return ic_class(self.code).0;
+    }
+    crate::ndb_err::class_of(self.code).category()
+  }
+
+  /// How bad it is.
+  pub fn severity(&self) -> ErrorSeverity {
+    if self.is_ic_error() {
+      return ic_class(self.code).1;
+    }
+    crate::ndb_err::class_of(self.code).severity()
+  }
+
+  /// True if the same request may well succeed if tried again.
+  pub fn is_temporary(&self) -> bool {
+    self.severity() == ErrorSeverity::Temporary
+  }
+
   /// Text for the error: the iClaustron message for a code in our own
   /// range, otherwise whatever the C library calls it.
   ///
@@ -398,10 +459,49 @@ impl IcError {
     if self.is_ic_error() {
       return message(self.code).to_string();
     }
-    if self.code > 0 {
+    if let Some(text) = crate::ndb_err::text_of(self.code) {
+      return text.to_string();
+    }
+    if self.code > 0 && self.code <= IC_LAST_OS_ERROR {
       return crate::oserr::strerror(self.code);
     }
+    if self.code > 0 {
+      return format!("NDB error {}", self.code);
+    }
     message(self.code).to_string()
+  }
+}
+
+/// The largest number an operating system error takes. An NDB code
+/// this small that the table does not know is read as one.
+const IC_LAST_OS_ERROR: i32 = 200;
+
+/// The category and severity of an iClaustron code: the world outside
+/// for what a link or a node did, and temporary when the same request
+/// may succeed again; a fault inside for what should not happen; the
+/// application's for the rest.
+fn ic_class(code: i32) -> (ErrorCategory, ErrorSeverity) {
+  match code {
+    IC_ERROR_LINK_LOST
+    | IC_ERROR_NODE_DOWN
+    | IC_ERROR_NODE_NOT_READY
+    | IC_ERROR_HEARTBEAT_MISSED
+    | IC_ERROR_TIMEOUT
+    | IC_ERROR_NO_STARTED_DATA_NODE
+    | IC_ERROR_DICT_REFUSED
+    | IC_ERROR_TABLE_KEEPS_CHANGING
+    | IC_ERROR_TRANSACTION_ROLLED_BACK
+    | IC_ERROR_NODEID_IN_USE
+    | IC_ERROR_MGM_SERVER_REFUSED => {
+      (ErrorCategory::External, ErrorSeverity::Temporary)
+    }
+    IC_ERROR_INTERNAL_PANIC | IC_ERROR_MEM_ALLOC => {
+      (ErrorCategory::Internal, ErrorSeverity::Stop)
+    }
+    IC_ERROR_INCONSISTENT_DATA | IC_ERROR_BAD_TABLE_DESCRIPTION => {
+      (ErrorCategory::Internal, ErrorSeverity::Error)
+    }
+    _ => (ErrorCategory::User, ErrorSeverity::Error),
   }
 }
 
@@ -788,6 +888,25 @@ macro_rules! ic_require {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn kinds_of_error_are_told_apart() {
+    let lost = IcError::new(IC_ERROR_LINK_LOST);
+    assert_eq!(lost.category(), ErrorCategory::External);
+    assert!(lost.is_temporary());
+    let key = IcError::new(IC_ERROR_KEY_RECORD);
+    assert_eq!(key.category(), ErrorCategory::User);
+    assert_eq!(key.severity(), ErrorSeverity::Error);
+    let no_row = IcError::new(626);
+    assert!(no_row.is_ndb_error());
+    assert_eq!(no_row.message(), "There is no row with that key");
+    assert_eq!(no_row.category(), ErrorCategory::User);
+    let failed = IcError::new(4010);
+    assert!(failed.is_temporary());
+    let strange = IcError::new(12345);
+    assert_eq!(strange.message(), "NDB error 12345");
+    assert_eq!(strange.category(), ErrorCategory::Internal);
+  }
 
   #[test]
   fn every_code_has_a_message() {
