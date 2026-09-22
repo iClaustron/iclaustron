@@ -119,7 +119,22 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   ATTRINFO, `TRANSID_AI`) for every type; `query.rs`; unique key
   operations via `TCINDXREQ`.
 - Error table with classification and our own messages.
-- `tools/ic_bench` (PK read, PK write).
+- `tools/ic_bench` (PK read, PK write). As built (2026-09-22): one
+  thread, a batch of committed reads or updates in flight at a time,
+  each its own transaction hinted to the node holding its row; reports
+  operations per second and the batch time's median, 99th percentile
+  and worst. Plain on purpose: the pipeline drains between batches and
+  every operation is its own socket write until step 4 of the thread
+  plan gathers sends. Measure a release build.
+
+  **Baseline, 2026-09-22**, release build, one thread, a two-node
+  RonDB 26.10 cluster on the same machine as the client, a table of
+  two INT columns, 100 operations in flight: committed reads 311 000
+  per second, a batch taking 306 µs at the median and 534 µs at the
+  99th percentile; updates 84 500 per second, a batch 1.18 ms at the
+  median, 1.5 ms at the 99th and 11 ms at worst. About 3 µs per read
+  on the API side with one socket write each. The comparison with the
+  C++ NDB API on the same table and cluster is still to be made.
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
   asynchronous PK read benchmark is within 2× of the C++ NDB API (the
   20 % target is Phase 7).
