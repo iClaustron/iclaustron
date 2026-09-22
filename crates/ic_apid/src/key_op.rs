@@ -39,6 +39,7 @@
 //! `NdbTransaction.cpp`, `receiveTCKEYCONF`; `NdbReceiver.cpp`,
 //! `execTRANSID_AI`.
 
+use ic_ndb_signals::attr_header;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header::SignalHeader;
 use ic_ndb_signals::tc_key;
@@ -136,6 +137,50 @@ pub fn read_committed(
   }
   row_codec::unpack_row(attr_rec, &outcome.row, attr_row)?;
   Ok(true)
+}
+
+/// The partition the row with this key is in, read from the data node
+/// through the `FRAGMENT` pseudo column, or `None` if there is no such
+/// row. This is what `hash::partition_of` is checked against.
+pub fn read_partition(
+  conn: &mut ApidConnection,
+  key_rec: &Record,
+  key_row: &[u8],
+) -> Result<Option<u32>, IcError> {
+  if !key_rec.covers_primary_key() {
+    return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+  }
+  let key = row_codec::key_info(key_rec, key_row)?;
+  let attr_info = [attr_header::attr_header(row_codec::IC_ATTR_FRAGMENT, 0)];
+  let flags = TcKeyFlags {
+    operation: tc_key::IC_OP_READ,
+    start: true,
+    commit: true,
+    execute: true,
+    simple: true,
+    dirty: true,
+    no_disk: false,
+    abort_option: tc_key::IC_IGNORE_ERROR,
+  };
+  let outcome = run_op(conn, key_rec.table(), &key, &attr_info, &flags)?;
+  if let Some(code) = outcome.refused {
+    if code == IC_NDB_ERROR_NO_SUCH_ROW {
+      return Ok(None);
+    }
+    return Err(IcError::new(code as i32));
+  }
+  // A header naming the pseudo column, then the partition.
+  let bad = IcError::new(err::IC_ERROR_INCONSISTENT_DATA);
+  if outcome.row.len() < 2 {
+    return Err(bad);
+  }
+  let header = outcome.row[0];
+  if attr_header::attribute_id(header) != row_codec::IC_ATTR_FRAGMENT
+    || attr_header::byte_size(header) != 4
+  {
+    return Err(bad);
+  }
+  Ok(Some(outcome.row[1]))
 }
 
 /// Insert, update, delete or write the row whose key is in `key_row`.

@@ -513,6 +513,30 @@ in-tree (both are public algorithms). XXH3 has to match the xxHash
 library bit for bit, including its handling of short inputs; its test
 vectors are the check.
 
+As built (`ic_util::md5`, `ic_util::xxh3`, `ic_apid::hash`), checked
+against the reference:
+- The key buffer is each distribution key column in attribute order,
+  as the record holds it: a fixed-size value in full, a variable-sized
+  one behind its one or two length bytes with only the bytes it has,
+  each padded with zeros to a word. A character column is first put
+  through its collation's transform (`strnxfrm_hash`), which needs the
+  MySQL collation tables; such a key is refused for now with
+  `IC_ERROR_NOT_SUPPORTED`. Verify: `Ndb.cpp`, `computeHash` over an
+  `NdbRecord`.
+- Which word places the key: `values[1]`, the second word of the MD5
+  digest or the high half of XXH3, exactly as step 2 says. Verify:
+  `Ndb.cpp`, after `rondb_calc_hash`; `rondb_hash.cpp`.
+- XXH3 is pinned by 37 published values of the algorithm, one on each
+  side of every boundary between its paths, and MD5 by RFC 1321's own
+  examples and the block boundaries. The XXH3 secret is the algorithm's
+  standard 192 bytes.
+- Fanout tables (step 3) are refused for now; the fields to do them
+  (`PartitionHashBaseKeyCount`, `DetailKeyCount`, `Fanout`) are parsed.
+- The `FRAGMENT` pseudo column (0xFFFE), read with a header of size
+  zero, answers with one word: the partition the row is in. `ic_read
+  --partition` compares it with the computed one, which is how the
+  chain is checked live. Verify: `DbtupRoutines.cpp`, `read_pseudo`.
+
 ### 6.4 TCKEYREQ (GSN 12)
 
 Long form only (sections). Signal data, 8 fixed words: API connect ptr

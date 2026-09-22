@@ -49,6 +49,8 @@ pub const IC_ATTR_READ_ALL: u32 = 0xFFF0;
 /// Pseudo column: read the columns a bitmask names, or the packed row
 /// that comes back.
 pub const IC_ATTR_READ_PACKED: u32 = 0xFFF3;
+/// Pseudo column: the partition the row is in, as one word.
+pub const IC_ATTR_FRAGMENT: u32 = 0xFFFE;
 
 /// The key section of a request: each primary key column of the key
 /// record's row, in attribute order, padded to words.

@@ -22,11 +22,15 @@
 //!   Rust standard library.
 //! - [`threadpool`]: numbered threads with stop flags, the ones the Data
 //!   API's send, receive and heartbeat threads run in.
+//! - [`md5`] and [`xxh3`]: the two digests RonDB places a key by, written
+//!   here from the public algorithms.
 
 pub mod bitmap;
 pub mod connectstring;
 pub mod dyn_array;
 pub mod mc;
+pub mod md5;
 pub mod ptr_array;
 pub mod string;
 pub mod threadpool;
+pub mod xxh3;

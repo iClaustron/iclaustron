@@ -6,6 +6,7 @@
 //! ```text
 //!   ic_read -c localhost:1186 -d ictest t9 1
 //!   ic_read -c localhost:1186 -d ictest t9 1 --debug-level 1024
+//!   ic_read -c localhost:1186 -d ictest t9 1 --partition
 //! ```
 //!
 //! After the table come the key's values, one per primary key column
@@ -20,14 +21,20 @@
 //! Integers are put in the key, and read from the row, in little-endian
 //! order: the data node's own, on the machines RonDB runs on.
 //!
+//! `--partition` also works out which partition the key belongs to,
+//! hashing it as the data nodes do, and asks a data node which
+//! partition the row is really in, so that the two can be compared.
+//!
 //! Debug level 1024 traces every signal, which shows the seize of a
 //! transaction record, the request, and the replies, packed or not.
 
 use std::sync::Arc;
 
 use ic_apic::mgm_client;
+use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
 use ic_apid::dict_cache::TableDef;
+use ic_apid::hash;
 use ic_apid::key_op;
 use ic_apid::record::Record;
 use ic_apid::text_row;
@@ -36,7 +43,7 @@ use ic_port::options::OptionKind;
 use ic_port::options::OptionParser;
 use ic_port::IcError;
 
-const OPTIONS: [OptionEntry; 4] = [
+const OPTIONS: [OptionEntry; 5] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -60,6 +67,12 @@ const OPTIONS: [OptionEntry; 4] = [
     short_name: 0,
     kind: OptionKind::Int,
     help: "Debug level bits; 1024 traces every signal",
+  },
+  OptionEntry {
+    long_name: "partition",
+    short_name: b'p',
+    kind: OptionKind::Flag,
+    help: "Also compare the key's computed partition with the row's",
   },
 ];
 
@@ -120,7 +133,8 @@ fn run() -> i32 {
       return 1;
     }
   };
-  let code = read_row(&global, &database, &args[0], &args[1..]);
+  let partition = parser.get_flag("partition");
+  let code = read_row(&global, &database, &args[0], &args[1..], partition);
   global.stop();
   code
 }
@@ -130,6 +144,7 @@ fn read_row(
   database: &str,
   table: &str,
   keys: &[String],
+  partition: bool,
 ) -> i32 {
   if global.wait_for_started(15_000) == 0 {
     println!("No data node is started, so there is nobody to ask");
@@ -162,7 +177,7 @@ fn read_row(
     return 1;
   }
   let mut row = vec![0u8; rec.row_size() as usize];
-  let code =
+  let mut code =
     match key_op::read_committed(&mut conn, &rec, &key_row, &rec, &mut row) {
       Ok(true) => {
         print_row(&def, &rec, &row);
@@ -177,6 +192,9 @@ fn read_row(
         1
       }
     };
+  if partition && code == 0 {
+    code = compare_partition(&mut conn, &def, &rec, &key_row);
+  }
   if conn.unexpected() > 0 {
     println!(
       "{} signal(s) came that nothing waited for",
@@ -184,6 +202,49 @@ fn read_row(
     );
   }
   code
+}
+
+/// The partition the key hashes to here against the one the data node
+/// keeps the row in.
+fn compare_partition(
+  conn: &mut ApidConnection,
+  def: &Arc<TableDef>,
+  rec: &Record,
+  key_row: &[u8],
+) -> i32 {
+  let computed = match hash::partition_of(def, rec, key_row) {
+    Ok(partition) => partition,
+    Err(e) => {
+      report("Could not work out the partition", &e);
+      return 1;
+    }
+  };
+  let actual = match key_op::read_partition(conn, rec, key_row) {
+    Ok(Some(partition)) => partition,
+    Ok(None) => {
+      println!("The row went away before its partition was read");
+      return 1;
+    }
+    Err(e) => {
+      report("Could not read the row's partition", &e);
+      return 1;
+    }
+  };
+  println!(
+    "Partition: computed {}, the data node says {}{}",
+    computed,
+    actual,
+    if computed == actual {
+      ""
+    } else {
+      " -- THEY DIFFER"
+    }
+  );
+  if computed == actual {
+    0
+  } else {
+    1
+  }
 }
 
 /// Put the key's values into the key columns of `row`.

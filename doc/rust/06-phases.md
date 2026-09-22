@@ -148,6 +148,17 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   Q6.
 - Performance pass with the benchmark against the C++ NDB API: batching,
   adaptive send tuning, allocation removal, receive thread count.
+- **Measure the key hash against the C** (author, 2026-09-22), in a
+  release build, over the key sizes RonDB really hashes: 4, 8, 16 and 32
+  bytes, and one long key. Up to 240 bytes XXH3 runs no accumulator
+  loop, so both sides are the same few multiplies and rotates and ought
+  to come out level; above that the data nodes use a vector path
+  (`rondb_xxhash_avx2`, and the bundled xxHash's SSE2 or NEON) while
+  `ic_util::xxh3` is scalar, so long keys will be slower until a vector
+  path is added behind a target-feature check, with the scalar one as
+  fallback and the same test vectors pinning both. Watch for bounds
+  checks on the key buffer, and never measure a debug build: its
+  overflow checks and absent inlining make the comparison meaningless.
 - Documentation: user guide, `cargo doc`, per-crate `MODULE.md`.
 - Exit: the 0.1 success criteria in
   [01-goals-and-principles.md](01-goals-and-principles.md).

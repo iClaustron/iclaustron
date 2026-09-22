@@ -28,6 +28,7 @@
 //! - [`record`]: how a table's fields lie in a row the application owns.
 //! - [`row_codec`]: rows to and from the words of a key operation.
 //! - [`key_op`]: the first key operations, by primary key.
+//! - [`hash`]: where a key belongs, hashed as the data nodes hash it.
 //! - [`text_row`]: values as text, in and out of a row, for the tools.
 //! - [`fragments`]: putting a fragmented signal back together.
 //! - [`handshake`]: becoming a transporter connection to a data node.
@@ -44,6 +45,7 @@ pub mod dict_cache;
 pub mod dict_client;
 pub mod fragments;
 pub mod handshake;
+pub mod hash;
 pub mod heartbeat;
 pub mod key_op;
 pub mod node_connect;
