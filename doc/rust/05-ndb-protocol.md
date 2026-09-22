@@ -754,7 +754,26 @@ returnCode, errorData}` is a TC-initiated abort. As built
 pointer and the transaction id; `TCROLLBACKCONF` is those three back;
 `TC_COMMITREF` adds the error code, and `TCROLLBACKREF` that and the
 coordinator's state. Verify: `DbtcMain.cpp`, `execTC_COMMITREQ`,
-`execTCROLLBACKREQ` and where each reply is sent. Node failure while a
+`execTCROLLBACKREQ` and where each reply is sent.
+
+**The takeover replies, as built** (`ic_apid::transaction`): both are
+three words, our pointer for the transaction and its id, sent by the
+coordinator that took over from the failed one, so from another node
+than the request went to. `TCKEY_FAILCONF` has the commit-ack marker in
+its pointer's low bit, and is acknowledged with `TC_COMMIT_ACK` to its
+sender whatever became of the transaction here; it means committed
+when a commit had been asked for, and otherwise a commit nobody asked
+for, which the reference reports as 4115. `TCKEY_FAILREF` means
+aborted: the outcome wanted if a rollback had been asked for, and
+error 4031 otherwise. The reference does nothing to the transactions
+of a failed coordinator on `NODE_FAILREP`; on `NF_COMPLETEREP` it
+aborts those still open with 4010, since the takeover would have
+answered for any that committed. Verify: `TcKeyFailConf.hpp`;
+`DbtcMain.cpp`, `sendTCKEY_FAILCONF`; `Ndbif.cpp`, the two replies and
+`report_node_failure_completed`; `NdbTransaction.cpp`,
+`receiveTCKEY_FAILCONF` and `receiveTCKEY_FAILREF`. Not yet seen live:
+that needs a coordinator killed with a commit in flight, which is for
+the failure group of the integration tests. Node failure while a
 transaction is in flight: `TCKEY_FAILCONF` (8) / `TCKEY_FAILREF` (9).
 RonDB sends `TC_DEADLOCK_REP` before an abort caused by deadlock
 detection. Verify: `TcCommit.hpp:37-70`, `TcRollbackRep.hpp:33`,

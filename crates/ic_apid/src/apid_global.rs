@@ -283,6 +283,12 @@ impl NodeShared {
     self.failure_reported.store(false, Ordering::Release);
   }
 
+  /// True from a data node reporting this node failed until a new link
+  /// to it is up: the node itself went, not only our link to it.
+  pub(crate) fn failure_reported(&self) -> bool {
+    self.failure_reported.load(Ordering::Acquire)
+  }
+
   // ---- What is known about the node ----
 
   /// The last error seen on this node's link, if any.

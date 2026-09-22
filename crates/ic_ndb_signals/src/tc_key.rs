@@ -430,6 +430,66 @@ impl TcRollbackConf {
   }
 }
 
+/// Words in a `TCKEY_FAILCONF` and a `TCKEY_FAILREF`.
+pub const IC_TCKEY_FAIL_LEN: usize = 3;
+
+/// The coordinator that took over from a failed one has committed the
+/// transaction. Its low bit asks for `TC_COMMIT_ACK`, to the sender.
+/// Verify: `TcKeyFailConf.hpp`; `DbtcMain.cpp`, `sendTCKEY_FAILCONF`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcKeyFailConf {
+  /// Our pointer for the transaction, its low bit cleared.
+  pub api_connect_ptr: u32,
+  /// True if the commit must be acknowledged with `TC_COMMIT_ACK`.
+  pub needs_commit_ack: bool,
+  /// The transaction id, low word.
+  pub trans_id1: u32,
+  /// The transaction id, high word.
+  pub trans_id2: u32,
+}
+
+impl TcKeyFailConf {
+  /// Read a takeover commit confirmation.
+  pub fn decode(data: &[u32]) -> Result<TcKeyFailConf, IcError> {
+    if data.len() < IC_TCKEY_FAIL_LEN {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    Ok(TcKeyFailConf {
+      api_connect_ptr: data[0] & !1,
+      needs_commit_ack: data[0] & 1 != 0,
+      trans_id1: data[1],
+      trans_id2: data[2],
+    })
+  }
+}
+
+/// The coordinator that took over from a failed one has aborted the
+/// transaction: our pointer for it and its id. Verify: `DbtcMain.cpp`,
+/// where it is sent with three words.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcKeyFailRef {
+  /// Our pointer for the transaction.
+  pub api_connect_ptr: u32,
+  /// The transaction id, low word.
+  pub trans_id1: u32,
+  /// The transaction id, high word.
+  pub trans_id2: u32,
+}
+
+impl TcKeyFailRef {
+  /// Read a takeover abort.
+  pub fn decode(data: &[u32]) -> Result<TcKeyFailRef, IcError> {
+    if data.len() < IC_TCKEY_FAIL_LEN {
+      return Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA));
+    }
+    Ok(TcKeyFailRef {
+      api_connect_ptr: data[0],
+      trans_id1: data[1],
+      trans_id2: data[2],
+    })
+  }
+}
+
 /// Words in a `TCROLLBACKREP`.
 pub const IC_TCROLLBACKREP_LEN: usize = 5;
 
@@ -641,6 +701,16 @@ mod tests {
     assert_eq!(refused.expect("read").error_code, 4350);
     let rolled = TcRollbackConf::decode(&[8, 0x1000, 0x2000]);
     assert_eq!(rolled.expect("read").api_connect_ptr, 8);
+  }
+
+  #[test]
+  fn the_takeover_replies_name_the_transaction() {
+    let conf = TcKeyFailConf::decode(&[8 | 1, 0x1000, 0x2000]).expect("read");
+    assert_eq!(conf.api_connect_ptr, 8);
+    assert!(conf.needs_commit_ack);
+    let refused = TcKeyFailRef::decode(&[8, 0x1000, 0x2000]).expect("read");
+    assert_eq!(refused.trans_id2, 0x2000);
+    assert!(TcKeyFailRef::decode(&[8, 0x1000]).is_err());
   }
 
   #[test]

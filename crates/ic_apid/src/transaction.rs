@@ -48,17 +48,33 @@
 //! the assertions where the index read is made; `NdbIndexOperation.cpp`,
 //! `committedRead` and `simpleRead`.
 //!
+//! **When the coordinator's node fails**, as the reference does it:
+//! while a surviving data node has reported the failure and none has
+//! yet reported it handled, the transaction waits, because the
+//! coordinator that takes over may still answer for it: `TCKEY_FAILCONF`
+//! says it committed, `TCKEY_FAILREF` that it was aborted, which is the
+//! outcome wanted if a rollback had been asked for and an error
+//! otherwise. Once the failure is reported handled, whatever is still
+//! waiting was not found by the takeover and cannot have committed: it
+//! is rolled back with the reference's error for that, or counted done
+//! if a rollback was what was asked. A link that goes with no failure
+//! reported fails the transaction at once, with its outcome unknown:
+//! the coordinator aborts what an API node it lost had open. Verify:
+//! `Ndbif.cpp`, `report_node_failure_completed` and the two takeover
+//! replies; `NdbTransaction.cpp`, `receiveTCKEY_FAILCONF` and
+//! `receiveTCKEY_FAILREF`; `DbtcMain.cpp`, `sendTCKEY_FAILCONF`.
+//!
 //! What is not here yet: callbacks, which chapter 04 wants beside the
-//! executed list; the takeover replies of a coordinator that failed,
-//! `TCKEY_FAILCONF` and `TCKEY_FAILREF`, on which a lost link now
-//! fails the transaction outright; and placing a unique query by the
-//! index's own hash map, so it goes to a node holding the index.
+//! executed list, and placing a unique query by the index's own hash
+//! map, so it goes to a node holding the index.
 
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header::SignalHeader;
 use ic_ndb_signals::tc_key;
 use ic_ndb_signals::tc_key::TcCommitConf;
 use ic_ndb_signals::tc_key::TcKeyConf;
+use ic_ndb_signals::tc_key::TcKeyFailConf;
+use ic_ndb_signals::tc_key::TcKeyFailRef;
 use ic_ndb_signals::tc_key::TcKeyFlags;
 use ic_ndb_signals::tc_key::TcKeyRef;
 use ic_ndb_signals::tc_key::TcKeyReq;
@@ -73,6 +89,7 @@ use ic_util::ptr_array::PtrId;
 
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::TcRecord;
+use crate::apid_global::LinkStatus;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::hash;
@@ -90,6 +107,15 @@ use crate::query::WriteKeyArgs;
 use crate::query::WriteKind;
 use crate::record::Record;
 use crate::row_codec;
+
+/// NDB's error for a transaction its coordinator's failure aborted,
+/// reported once the failure is handled.
+pub const IC_NDB_ERROR_NODE_FAILURE_ABORT: i32 = 4010;
+/// NDB's error for a transaction the takeover coordinator aborted.
+pub const IC_NDB_ERROR_TAKEOVER_ABORT: i32 = 4031;
+/// NDB's error for a takeover commit of a transaction that had not
+/// asked to commit: it committed, but what it read is lost.
+pub const IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED: i32 = 4115;
 
 /// Which node should coordinate a transaction (`IC_TRANSACTION_HINT`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -739,6 +765,8 @@ impl ApidConnection {
       gsn::IC_GSN_TC_COMMITREF => self.take_trans_ref(&signal),
       gsn::IC_GSN_TCROLLBACKCONF => self.take_rollback_conf(&signal),
       gsn::IC_GSN_TCROLLBACKREF => self.take_trans_ref(&signal),
+      gsn::IC_GSN_TCKEY_FAILCONF => self.take_fail_conf(&signal),
+      gsn::IC_GSN_TCKEY_FAILREF => self.take_fail_ref(&signal),
       _ => false,
     };
     if taken {
@@ -933,6 +961,64 @@ impl ApidConnection {
     true
   }
 
+  /// The coordinator that took over committed the transaction. One that
+  /// had not asked to commit has committed all the same, and is told so
+  /// as the reference tells it, with what it read lost.
+  fn take_fail_conf(&mut self, signal: &ReceivedSignal) -> bool {
+    let conf = match TcKeyFailConf::decode(&signal.data) {
+      Ok(conf) => conf,
+      Err(_) => return false,
+    };
+    let tid =
+      self.trans_named(conf.api_connect_ptr, conf.trans_id1, conf.trans_id2);
+    if conf.needs_commit_ack {
+      // Acknowledged whatever became of the transaction here.
+      self.send_commit_ack(signal, conf.trans_id1, conf.trans_id2);
+    }
+    let tid = match tid {
+      Some(tid) => tid,
+      None => return false,
+    };
+    let asked = match self.transactions.get(tid.0) {
+      Some(trans) => trans.state == CommitState::CommitRequested,
+      None => return false,
+    };
+    if asked {
+      self.end_transaction(tid, CommitState::Committed, None, 0);
+    } else {
+      let error = IcError::new(IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED);
+      self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
+    }
+    true
+  }
+
+  /// The coordinator that took over aborted the transaction: what was
+  /// wanted, if a rollback had been asked for.
+  fn take_fail_ref(&mut self, signal: &ReceivedSignal) -> bool {
+    let refusal = match TcKeyFailRef::decode(&signal.data) {
+      Ok(refusal) => refusal,
+      Err(_) => return false,
+    };
+    let tid = match self.trans_named(
+      refusal.api_connect_ptr,
+      refusal.trans_id1,
+      refusal.trans_id2,
+    ) {
+      Some(tid) => tid,
+      None => return false,
+    };
+    let wanted = match self.transactions.get(tid.0) {
+      Some(trans) => trans.state == CommitState::RollbackRequested,
+      None => return false,
+    };
+    let mut error: Option<IcError> = None;
+    if !wanted {
+      error = Some(IcError::new(IC_NDB_ERROR_TAKEOVER_ABORT));
+    }
+    self.end_transaction(tid, CommitState::RolledBack, error, 0);
+    true
+  }
+
   fn send_commit_ack(&mut self, signal: &ReceivedSignal, id1: u32, id2: u32) {
     let ack = tc_key::tc_commit_ack(id1, id2);
     let header = SignalHeader::new(
@@ -1096,38 +1182,62 @@ impl ApidConnection {
     self.free_tc_record(&tc);
   }
 
-  /// Fail the transactions whose coordinator's link has gone, or been
-  /// replaced, since they began: their outcome cannot be known here.
+  /// End the transactions whose coordinator's link has gone, or been
+  /// replaced, since they began; see the module note. While the node's
+  /// failure is reported and not yet handled, the transaction waits for
+  /// the coordinator that takes over.
   pub(crate) fn fail_lost_transactions(&mut self) {
     let ids = self.active_transactions();
     for tid in ids {
-      let (node_id, generation) = match self.transactions.get(tid.0) {
-        Some(trans) => (trans.tc.node_id, trans.tc.generation),
+      let (node_id, generation, tc, state) = match self.transactions.get(tid.0)
+      {
+        Some(trans) => {
+          (trans.tc.node_id, trans.tc.generation, trans.tc, trans.state)
+        }
         None => continue,
       };
       if self.link_is(node_id, generation) {
         continue;
       }
-      let error = match self.shared.node(node_id) {
-        Some(node) => node.not_connected_error(),
-        None => IcError::new(err::IC_ERROR_LINK_LOST),
-      };
-      // The record went with the link.
-      let tc = match self.transactions.get(tid.0) {
-        Some(trans) => trans.tc,
-        None => continue,
-      };
+      let (awaiting_takeover, failed, link_error) =
+        match self.shared.node(node_id) {
+          Some(node) => (
+            node.membership() == LinkStatus::AwaitingTakeover,
+            node.failure_reported(),
+            node.not_connected_error(),
+          ),
+          None => (false, false, IcError::new(err::IC_ERROR_LINK_LOST)),
+        };
+      if awaiting_takeover {
+        // The takeover may still answer for it.
+        continue;
+      }
+      // The record went with the link, whatever became of the node.
       self.lose_tc_record(&tc);
+      let rollback_wanted = state == CommitState::RollbackRequested;
+      let mut error: Option<IcError> = Some(link_error);
+      if failed {
+        // Not found by the takeover, so not committed: aborted by the
+        // failure, which is what was asked if a rollback was.
+        error = None;
+        if !rollback_wanted {
+          error = Some(IcError::new(IC_NDB_ERROR_NODE_FAILURE_ABORT));
+        }
+      }
+      let why = match error {
+        Some(e) => e,
+        None => IcError::new(err::IC_ERROR_TRANSACTION_ROLLED_BACK),
+      };
       if let Some(trans) = self.transactions.get_mut(tid.0) {
         let defined = std::mem::take(&mut trans.defined);
         for qid in defined {
           if let Some(query) = self.queries.get_mut(qid.0) {
-            query.fail(error);
+            query.fail(why);
           }
           self.executed.push_back(qid);
         }
       }
-      self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
+      self.end_transaction(tid, CommitState::RolledBack, error, 0);
     }
   }
 }

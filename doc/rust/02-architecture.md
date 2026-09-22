@@ -423,7 +423,13 @@ takeover replies of a failed coordinator are still to come.
 3. Each user thread, on its next `poll`, fails every sent query whose TC
    node is the dead node with a temporary node-failure error and completes
    the transaction as aborted, or as committed if `TCKEY_FAILCONF` says
-   the commit happened.
+   the commit happened. As built: not on this step but on step 4. While
+   the node awaits takeover, the transaction waits too, since the
+   coordinator that takes over may still answer for it with
+   `TCKEY_FAILCONF` or `TCKEY_FAILREF`; once the failure is reported
+   handled, whatever is still open is rolled back with 4010, or counted
+   done if a rollback was what was asked. A link lost with no failure
+   reported ends the transaction at once, its outcome unknown.
 4. **A node reported failed is not dialled until its failure is
    reported handled.** Every surviving data node sends `NF_COMPLETEREP`
    to every registered API node once all its blocks have finished
