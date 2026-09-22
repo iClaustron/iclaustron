@@ -105,6 +105,16 @@ pub const IC_DTI_MYSQL_DICT_METADATA: u16 = 30;
 pub const IC_DTI_PARTITION_BALANCE: u16 = 127;
 /// How many fragments the table has.
 pub const IC_DTI_FRAGMENT_COUNT: u16 = 128;
+/// Bytes of replica data that follow.
+pub const IC_DTI_REPLICA_DATA_LEN: u16 = 137;
+/// Which nodes hold each fragment: 16-bit values, big-endian, the
+/// replica count and the fragment count, then per fragment its log
+/// part and the node of each replica. Sent only in answer to
+/// `GET_TABINFOREQ`, where the dictionary asks the distribution handler
+/// for it. Verify: `Dbdict.cpp`, `packTableIntoPages`, the branch run
+/// for a request; `NdbDictionaryImpl.cpp`, where it is read and the log
+/// part passed over.
+pub const IC_DTI_REPLICA_DATA: u16 = 138;
 /// The low word of the most rows the table is sized for.
 pub const IC_DTI_MAX_ROWS_LOW: u16 = 139;
 /// The high word of the most rows the table is sized for.
@@ -602,6 +612,14 @@ pub struct TableInfo {
   pub partition_hash_fanout: u32,
   /// RonDB: a ring buffer table's size, or [`IC_RNIL`].
   pub ring_buffer_size: u32,
+  /// How many replicas each fragment has, or zero when no replica data
+  /// was sent.
+  pub replica_count: u32,
+  /// The node of each replica of each fragment, `replica_count` per
+  /// fragment in fragment order, the first of each the one the
+  /// distribution handler placed as primary. See
+  /// [`nodes_of_fragment`](Self::nodes_of_fragment).
+  pub fragment_nodes: Vec<u16>,
   /// The columns, in id order as sent.
   pub attributes: Vec<AttributeInfo>,
 }
@@ -653,8 +671,67 @@ impl TableInfo {
       partition_hash_detail_key_count: 0,
       partition_hash_fanout: 1,
       ring_buffer_size: IC_RNIL,
+      replica_count: 0,
+      fragment_nodes: Vec::new(),
       attributes: Vec::new(),
     }
+  }
+
+  /// The nodes holding a fragment, or nothing for a fragment the data
+  /// does not cover.
+  pub fn nodes_of_fragment(&self, fragment: u32) -> &[u16] {
+    let per = self.replica_count as usize;
+    let start = fragment as usize * per;
+    if per == 0 || start + per > self.fragment_nodes.len() {
+      return &[];
+    }
+    &self.fragment_nodes[start..start + per]
+  }
+
+  /// How many fragments the replica data covers.
+  pub fn fragments_with_nodes(&self) -> u32 {
+    if self.replica_count == 0 {
+      return 0;
+    }
+    (self.fragment_nodes.len() / self.replica_count as usize) as u32
+  }
+
+  /// Read the replica data. Data that is too short for what its counts
+  /// say is left out, as if none had come.
+  fn set_replica_data(&mut self, property: &Property) {
+    let bytes = match &property.value {
+      PropertyValue::Binary(bytes) => bytes,
+      _ => return,
+    };
+    let replicas = match be_word(bytes, 0) {
+      Some(count) => count as usize,
+      None => return,
+    };
+    let fragments = match be_word(bytes, 1) {
+      Some(count) => count as usize,
+      None => return,
+    };
+    // Per fragment its log part, which is not wanted, and its nodes.
+    if replicas == 0 || bytes.len() < 2 * (2 + fragments * (1 + replicas)) {
+      return;
+    }
+    let mut nodes: Vec<u16> = Vec::with_capacity(fragments * replicas);
+    let mut i: usize = 2;
+    let mut f: usize = 0;
+    while f < fragments {
+      i += 1;
+      let mut r: usize = 0;
+      while r < replicas {
+        if let Some(node) = be_word(bytes, i) {
+          nodes.push(node);
+        }
+        i += 1;
+        r += 1;
+      }
+      f += 1;
+    }
+    self.replica_count = replicas as u32;
+    self.fragment_nodes = nodes;
   }
 
   fn apply(&mut self, property: &Property) {
@@ -720,6 +797,7 @@ impl TableInfo {
       }
       IC_DTI_PARTITION_HASH_FANOUT => self.partition_hash_fanout = value,
       IC_DTI_RING_BUFFER_SIZE => self.ring_buffer_size = value,
+      IC_DTI_REPLICA_DATA => self.set_replica_data(property),
       // Anything else is not needed, or not known: pass it over.
       _ => {}
     }
@@ -886,6 +964,14 @@ pub fn parse_table_info(words: &[u32]) -> Result<TableInfo, IcError> {
   Ok(table)
 }
 
+/// The `i`th big-endian 16-bit value of `bytes`, if there is one.
+fn be_word(bytes: &[u8], i: usize) -> Option<u16> {
+  if 2 * i + 1 < bytes.len() {
+    return Some(u16::from_be_bytes([bytes[2 * i], bytes[2 * i + 1]]));
+  }
+  None
+}
+
 /// When no column is marked as part of the distribution key, every
 /// primary key column is: the table was created without saying, and the
 /// whole key decides where a row goes. The reference calls it "none is
@@ -1040,6 +1126,42 @@ mod tests {
     w.add_u32(IC_DTI_ATTRIBUTE_END, 0);
     w.add_u32(999, 0);
     w.words().to_vec()
+  }
+
+  #[test]
+  fn the_replica_data_says_which_nodes_hold_each_fragment() {
+    // Two replicas, two fragments: log part 0 with nodes 1 and 2, log
+    // part 1 with nodes 2 and 1, all big-endian.
+    let values: [u16; 8] = [2, 2, 0, 1, 2, 1, 2, 1];
+    let mut bytes: Vec<u8> = Vec::new();
+    for value in values {
+      bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    let mut w = PropertyWriter::new();
+    w.add_string(IC_DTI_TABLE_NAME, "ictest/def/t1");
+    w.add_u32(IC_DTI_REPLICA_DATA_LEN, bytes.len() as u32);
+    w.add_binary(IC_DTI_REPLICA_DATA, &bytes);
+    let table = parse_table_info(w.words()).expect("parsed");
+    assert_eq!(table.replica_count, 2);
+    assert_eq!(table.fragments_with_nodes(), 2);
+    assert_eq!(table.nodes_of_fragment(0), &[1, 2]);
+    assert_eq!(table.nodes_of_fragment(1), &[2, 1]);
+    assert!(table.nodes_of_fragment(2).is_empty());
+  }
+
+  #[test]
+  fn replica_data_too_short_for_its_counts_is_left_out() {
+    let values: [u16; 5] = [2, 2, 0, 1, 2];
+    let mut bytes: Vec<u8> = Vec::new();
+    for value in values {
+      bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    let mut w = PropertyWriter::new();
+    w.add_string(IC_DTI_TABLE_NAME, "ictest/def/t1");
+    w.add_binary(IC_DTI_REPLICA_DATA, &bytes);
+    let table = parse_table_info(w.words()).expect("parsed");
+    assert_eq!(table.replica_count, 0);
+    assert!(table.nodes_of_fragment(0).is_empty());
   }
 
   #[test]

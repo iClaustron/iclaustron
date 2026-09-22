@@ -26,10 +26,27 @@
 //! `FRAGMENT` pseudo column reads back the partition a row landed in,
 //! which is how this was checked.
 //!
+//! **The node** comes from the table's replica data: the nodes holding
+//! each fragment. A read-backup table, which every table made by a
+//! RonDB server is, may be read at any replica, so the started ones are
+//! taken in turn; a fully replicated one at any node holding any
+//! fragment. Otherwise the primary replica is wanted, and which replica
+//! is primary is not fixed: with several replicas alive the data nodes
+//! spread the primaries of a node group's fragments over its alive
+//! nodes in order, in batches of the fragment count divided by the
+//! alive count rounded up, and the reference works the same rule out
+//! for itself, so this does too. The reference also prefers a node in
+//! its own location domain or on its own host; that is not done here
+//! yet. A wrong choice costs a hop inside the cluster, never a wrong
+//! answer: the coordinator forwards to wherever the row is.
+//!
 //! Verify: `Ndb.cpp`, `computeHash` with an `NdbRecord`, where the key
-//! is built and the second hash word taken; `rondb_hash.cpp`,
+//! is built and the second hash word taken, and `startTransaction` with
+//! a key, which goes on to `NdbImpl::select_node`; `rondb_hash.cpp`,
 //! `rondb_calc_hash`; `NdbDictionary.cpp`, where the hash map is looked
-//! up; `DbtupRoutines.cpp`, `read_pseudo`, `FRAGMENT`.
+//! up; `NdbDictionaryImpl.cpp`, `get_nodes` and
+//! `calculate_primary_replicas`; `ndb_cluster_connection.cpp`,
+//! `select_node`; `DbtupRoutines.cpp`, `read_pseudo`, `FRAGMENT`.
 
 use ic_ndb_signals::dict_tab_info;
 use ic_port::err;
@@ -113,6 +130,110 @@ pub fn partition_of(
   Ok(map.fragment_of(partition_hash(table, &key)))
 }
 
+/// The node to send an operation on `partition` to, given the nodes
+/// that are started, or `None` if no node holding it is. `turn` spreads
+/// the choice where any replica will do; any changing number serves.
+pub fn choose_node(
+  table: &TableDef,
+  partition: u32,
+  started: &[u32],
+  turn: u32,
+) -> Option<u32> {
+  let info = table.info();
+  if info.fully_replicated {
+    // Any node holding any fragment.
+    let mut nodes: Vec<u32> = Vec::new();
+    for node in &info.fragment_nodes {
+      let node = *node as u32;
+      if started.contains(&node) && !nodes.contains(&node) {
+        nodes.push(node);
+      }
+    }
+    return pick_in_turn(&nodes, turn);
+  }
+  let replicas = info.nodes_of_fragment(partition);
+  let mut alive: Vec<u32> = Vec::new();
+  for node in replicas {
+    if started.contains(&(*node as u32)) {
+      alive.push(*node as u32);
+    }
+  }
+  if info.read_backup {
+    return pick_in_turn(&alive, turn);
+  }
+  if let Some(primary) = primary_of(table, partition, started) {
+    return Some(primary);
+  }
+  alive.first().copied()
+}
+
+fn pick_in_turn(nodes: &[u32], turn: u32) -> Option<u32> {
+  if nodes.is_empty() {
+    return None;
+  }
+  Some(nodes[turn as usize % nodes.len()])
+}
+
+/// The primary replica of a partition among the nodes that are
+/// started, as the data nodes assign primaries: with one replica, or
+/// only one of them alive, that one; otherwise the fragments of each
+/// node group, in order, are dealt to the group's alive nodes in node
+/// id order, so many fragments to each that every alive node gets an
+/// equal share. `None` if no replica is alive or the table has no
+/// replica data.
+pub fn primary_of(
+  table: &TableDef,
+  partition: u32,
+  started: &[u32],
+) -> Option<u32> {
+  let info = table.info();
+  let replicas = info.nodes_of_fragment(partition);
+  if replicas.is_empty() {
+    return None;
+  }
+  if replicas.len() == 1 {
+    let node = replicas[0] as u32;
+    if started.contains(&node) {
+      return Some(node);
+    }
+    return None;
+  }
+  // The group is the fragment's nodes; its alive nodes, in id order.
+  let mut alive: Vec<u32> = Vec::new();
+  for node in replicas {
+    let node = *node as u32;
+    if started.contains(&node) {
+      alive.push(node);
+    }
+  }
+  alive.sort_unstable();
+  if alive.is_empty() {
+    return None;
+  }
+  if alive.len() == 1 {
+    return Some(alive[0]);
+  }
+  // Which of the group's fragments this is, and how many the group has:
+  // a fragment is in the group when its first node is one of ours.
+  let first = replicas[0];
+  let mut place: u32 = 0;
+  let mut count: u32 = 0;
+  let mut f: u32 = 0;
+  while f < info.fragments_with_nodes() {
+    let nodes = info.nodes_of_fragment(f);
+    if nodes.contains(&first) {
+      if f == partition {
+        place = count;
+      }
+      count += 1;
+    }
+    f += 1;
+  }
+  let per_batch = count.div_ceil(alive.len() as u32);
+  let batch = (place / per_batch) as usize;
+  Some(alive[batch.min(alive.len() - 1)])
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -191,6 +312,80 @@ mod tests {
     row[at] = b.len() as u8;
     row[at + 1..at + 1 + b.len()].copy_from_slice(b);
     row
+  }
+
+  /// A table over the fragments given, each held by the nodes listed,
+  /// with the flags asked for.
+  fn placed(
+    fragments: &[&[u16]],
+    read_backup: bool,
+    fully_replicated: bool,
+  ) -> Arc<TableDef> {
+    let t = table(false, true, 0);
+    let mut info = t.info().clone();
+    info.read_backup = read_backup;
+    info.fully_replicated = fully_replicated;
+    info.replica_count = fragments[0].len() as u32;
+    info.fragment_nodes = Vec::new();
+    for nodes in fragments {
+      info.fragment_nodes.extend_from_slice(nodes);
+    }
+    Arc::new(TableDef::new(info, None))
+  }
+
+  #[test]
+  fn the_primary_is_dealt_in_batches_over_the_alive_nodes() {
+    // One node group of nodes 1 and 2 holding four fragments, the
+    // distribution handler's primaries alternating.
+    let group: [&[u16]; 4] = [&[1, 2], &[2, 1], &[1, 2], &[2, 1]];
+    let t = placed(&group, false, false);
+    // Both alive: two fragments each, in fragment order.
+    let both = [1, 2];
+    assert_eq!(primary_of(&t, 0, &both), Some(1));
+    assert_eq!(primary_of(&t, 1, &both), Some(1));
+    assert_eq!(primary_of(&t, 2, &both), Some(2));
+    assert_eq!(primary_of(&t, 3, &both), Some(2));
+    // Only node 2 alive: it has them all.
+    assert_eq!(primary_of(&t, 1, &[2]), Some(2));
+    assert_eq!(primary_of(&t, 1, &[]), None);
+  }
+
+  #[test]
+  fn two_node_groups_are_dealt_apart() {
+    let groups: [&[u16]; 4] = [&[1, 2], &[3, 4], &[2, 1], &[4, 3]];
+    let t = placed(&groups, false, false);
+    let all = [1, 2, 3, 4];
+    assert_eq!(primary_of(&t, 0, &all), Some(1));
+    assert_eq!(primary_of(&t, 1, &all), Some(3));
+    assert_eq!(primary_of(&t, 2, &all), Some(2));
+    assert_eq!(primary_of(&t, 3, &all), Some(4));
+  }
+
+  #[test]
+  fn a_read_backup_table_takes_its_replicas_in_turn() {
+    let group: [&[u16]; 2] = [&[1, 2], &[2, 1]];
+    let t = placed(&group, true, false);
+    assert_eq!(choose_node(&t, 0, &[1, 2], 0), Some(1));
+    assert_eq!(choose_node(&t, 0, &[1, 2], 1), Some(2));
+    // A replica that is down is passed over.
+    assert_eq!(choose_node(&t, 0, &[2], 0), Some(2));
+    assert_eq!(choose_node(&t, 0, &[3], 0), None);
+  }
+
+  #[test]
+  fn a_plain_table_goes_to_its_primary() {
+    let group: [&[u16]; 2] = [&[1, 2], &[2, 1]];
+    let t = placed(&group, false, false);
+    assert_eq!(choose_node(&t, 0, &[1, 2], 5), Some(1));
+    assert_eq!(choose_node(&t, 1, &[1, 2], 5), Some(2));
+  }
+
+  #[test]
+  fn a_fully_replicated_table_goes_anywhere_it_is_held() {
+    let groups: [&[u16]; 2] = [&[1, 2], &[3, 4]];
+    let t = placed(&groups, true, true);
+    assert_eq!(choose_node(&t, 0, &[1, 2, 3, 4], 2), Some(3));
+    assert_eq!(choose_node(&t, 0, &[4], 0), Some(4));
   }
 
   #[test]

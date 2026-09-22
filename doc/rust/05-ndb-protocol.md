@@ -532,6 +532,34 @@ against the reference:
   standard 192 bytes.
 - Fanout tables (step 3) are refused for now; the fields to do them
   (`PartitionHashBaseKeyCount`, `DetailKeyCount`, `Fanout`) are parsed.
+- **Which nodes hold a fragment** comes with the description, in
+  `ReplicaData` (key 138): 16-bit values, big-endian, the replica
+  count and the fragment count, then per fragment its log part and the
+  node of each replica, primary first as the distribution handler
+  placed it. The dictionary asks the distribution handler for it only
+  when answering `GET_TABINFOREQ`. Verify: `Dbdict.cpp`,
+  `packTableIntoPages`; `DbdihMain.cpp`, `execCREATE_FRAGMENTATION_REQ`;
+  `NdbDictionaryImpl.cpp`, where the log part is passed over.
+- **Which replica is primary is not fixed** (steps 5 and 6 above). With
+  dynamic primary replicas, which RonDB 26.10 has, and more than one
+  replica alive, the data nodes deal the primaries of a node group's
+  fragments over the group's alive nodes in node id order, in fragment
+  order, so many fragments to each that every alive node gets an equal
+  share (the fragment count divided by the alive count, rounded up);
+  with one replica, or one alive, that one. The reference computes the
+  same rule for itself, and so does `ic_apid::hash::primary_of`.
+  Verify: `NdbDictionaryImpl.cpp`, `get_nodes` and
+  `calculate_primary_replicas`.
+- **Node choice as built** (`hash::choose_node`): a fully replicated
+  table goes to any started node holding any fragment; a read-backup
+  table, which every table a RonDB server makes is, to any started
+  replica of the partition, taken in turn; any other table to its
+  primary, or to a started replica if the primary is down. The
+  reference first prefers a node in its own location domain, then one
+  on its own host, and balances by a per-node count; none of that is
+  done yet. A wrong choice only costs a hop: the coordinator forwards
+  the operation to wherever the row is. Verify: `NdbImpl::select_node`;
+  `ndb_cluster_connection.cpp`, `select_node`.
 - The `FRAGMENT` pseudo column (0xFFFE), read with a header of size
   zero, answers with one word: the partition the row is in. `ic_read
   --partition` compares it with the computed one, which is how the

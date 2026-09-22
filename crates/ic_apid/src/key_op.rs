@@ -56,6 +56,7 @@ use ic_port::IcError;
 use crate::apid_conn::ApidConnection;
 use crate::apid_conn::TcRecord;
 use crate::dict_cache::TableDef;
+use crate::hash;
 use crate::node_connect::ReceivedSignal;
 use crate::record::Record;
 use crate::row_codec;
@@ -128,7 +129,8 @@ pub fn read_committed(
     no_disk: false,
     abort_option: tc_key::IC_IGNORE_ERROR,
   };
-  let outcome = run_op(conn, table, &key, &attr_info, &flags)?;
+  let node_id = node_for_key(conn, table, key_rec, key_row)?;
+  let outcome = run_op(conn, table, node_id, &key, &attr_info, &flags)?;
   if let Some(code) = outcome.refused {
     if code == IC_NDB_ERROR_NO_SUCH_ROW {
       return Ok(false);
@@ -137,6 +139,28 @@ pub fn read_committed(
   }
   row_codec::unpack_row(attr_rec, &outcome.row, attr_row)?;
   Ok(true)
+}
+
+/// The node to send an operation on this key to: one holding the row
+/// when the key's partition can be worked out and a node holding it is
+/// started, otherwise the next started node in turn.
+fn node_for_key(
+  conn: &mut ApidConnection,
+  table: &TableDef,
+  key_rec: &Record,
+  key_row: &[u8],
+) -> Result<u32, IcError> {
+  let started = conn.started_nodes();
+  if started.is_empty() {
+    return Err(IcError::new(err::IC_ERROR_NO_STARTED_DATA_NODE));
+  }
+  let turn = conn.next_request_id();
+  if let Ok(partition) = hash::partition_of(table, key_rec, key_row) {
+    if let Some(node) = hash::choose_node(table, partition, &started, turn) {
+      return Ok(node);
+    }
+  }
+  Ok(started[turn as usize % started.len()])
 }
 
 /// The partition the row with this key is in, read from the data node
@@ -162,7 +186,9 @@ pub fn read_partition(
     no_disk: false,
     abort_option: tc_key::IC_IGNORE_ERROR,
   };
-  let outcome = run_op(conn, key_rec.table(), &key, &attr_info, &flags)?;
+  let table = key_rec.table();
+  let node_id = node_for_key(conn, table, key_rec, key_row)?;
+  let outcome = run_op(conn, table, node_id, &key, &attr_info, &flags)?;
   if let Some(code) = outcome.refused {
     if code == IC_NDB_ERROR_NO_SUCH_ROW {
       return Ok(None);
@@ -221,31 +247,26 @@ pub fn write_key(
     no_disk: false,
     abort_option: tc_key::IC_ABORT_ON_ERROR,
   };
-  let outcome = run_op(conn, table, &key, &attr_info, &flags)?;
+  let node_id = node_for_key(conn, table, key_rec, key_row)?;
+  let outcome = run_op(conn, table, node_id, &key, &attr_info, &flags)?;
   match outcome.refused {
     Some(code) => Err(IcError::new(code as i32)),
     None => Ok(()),
   }
 }
 
-/// Send one operation as a whole transaction and wait for its outcome.
-/// A request with no values to send carries the key section alone, as
-/// a delete does.
+/// Send one operation as a whole transaction to `node_id`'s
+/// coordinator and wait for its outcome. A request with no values to
+/// send carries the key section alone, as a delete does.
 fn run_op(
   conn: &mut ApidConnection,
   table: &TableDef,
+  node_id: u32,
   key: &[u32],
   attr_info: &[u32],
   flags: &TcKeyFlags,
 ) -> Result<Outcome, IcError> {
-  let started = conn.started_nodes();
-  if started.is_empty() {
-    return Err(IcError::new(err::IC_ERROR_NO_STARTED_DATA_NODE));
-  }
-  // Any started node's coordinator will do until keys are hashed to
-  // choose the node that holds the row; turn about meanwhile.
-  let pick = conn.next_request_id() as usize % started.len();
-  let rec = conn.tc_record(started[pick])?;
+  let rec = conn.tc_record(node_id)?;
   let op_id = conn.next_request_id();
   let trans_id = conn.next_transaction_id();
   let req = TcKeyReq {

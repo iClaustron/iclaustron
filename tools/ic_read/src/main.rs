@@ -230,9 +230,14 @@ fn compare_partition(
       return 1;
     }
   };
+  let mut held: Vec<String> = Vec::new();
+  for node in def.info().nodes_of_fragment(computed) {
+    held.push(node.to_string());
+  }
   println!(
-    "Partition: computed {}, the data node says {}{}",
+    "Partition: computed {} (held by node(s) {}), the data node says {}{}",
     computed,
+    held.join(", "),
     actual,
     if computed == actual {
       ""
