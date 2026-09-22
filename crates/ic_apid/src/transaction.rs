@@ -559,8 +559,15 @@ impl ApidConnection {
   }
 
   /// Send every query defined on this connection, and every commit or
-  /// rollback asked for (`ic_apid_conn_send`).
-  pub fn send_queries(&mut self) -> Result<(), IcError> {
+  /// rollback asked for (`ic_apid_conn_send`, `ic_send`): the signals
+  /// are packed per node and each node gets one write. With `force`
+  /// the writes happen now; without it the adaptive send algorithm may
+  /// hold a node's write back for a moment to go with other threads'
+  /// signals, never for longer than its bound. A thread that goes on
+  /// to poll for the replies loses nothing by leaving `force` off: a
+  /// send held back goes when its time is up, and the algorithm learns
+  /// from a thread that sends alone not to hold its sends at all.
+  pub fn send_queries(&mut self, force: bool) -> Result<(), IcError> {
     let ids: Vec<TransId> = self.active_transactions();
     let mut first_error: Option<IcError> = None;
     for id in ids {
@@ -570,16 +577,23 @@ impl ApidConnection {
         }
       }
     }
+    // A node whose link is down fails its write here; the transactions
+    // sent to it are failed by the next poll, as their link is gone.
+    if let Err(e) = self.send_queued(force) {
+      if first_error.is_none() {
+        first_error = Some(e);
+      }
+    }
     match first_error {
       Some(e) => Err(e),
       None => Ok(()),
     }
   }
 
-  /// Send, then poll (`ic_apid_conn_flush`). Returns how many signals
-  /// the poll took.
-  pub fn flush(&mut self, wait_ms: u32) -> Result<usize, IcError> {
-    self.send_queries()?;
+  /// Send, then poll (`ic_apid_conn_flush`, `ic_flush`). Returns how
+  /// many signals the poll took.
+  pub fn flush(&mut self, wait_ms: u32, force: bool) -> Result<usize, IcError> {
+    self.send_queries(force)?;
     Ok(self.poll(wait_ms))
   }
 
@@ -699,7 +713,7 @@ impl ApidConnection {
     if attr_info.is_empty() {
       sections = &both[..1];
     }
-    self.send(tc.node_id, &header, &request.encode(), sections)?;
+    self.queue_signal(tc.node_id, &header, &request.encode(), sections)?;
     if let Some(query) = self.queries.get_mut(qid.0) {
       query.set_state(QueryState::Sent);
     }
@@ -734,7 +748,7 @@ impl ApidConnection {
       (trans_id >> 32) as u32,
     );
     let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
-    self.send(tc.node_id, &header, &data, &[])?;
+    self.queue_signal(tc.node_id, &header, &data, &[])?;
     if let Some(trans) = self.transactions.get_mut(id.0) {
       trans.state = how;
       trans.end_wanted = None;
@@ -1026,10 +1040,11 @@ impl ApidConnection {
       self.block_number(),
       signal.sender_block,
     );
-    if let Err(e) = self.send(signal.sender_node_id, &header, &ack, &[]) {
+    let queued = self.queue_signal(signal.sender_node_id, &header, &ack, &[]);
+    if let Err(e) = queued {
       ic_port::debug_print!(
         IC_NDB_MESSAGE_LEVEL,
-        "TC_COMMIT_ACK to node {} not sent: {}",
+        "TC_COMMIT_ACK to node {} not queued: {}",
         signal.sender_node_id,
         e.message()
       );

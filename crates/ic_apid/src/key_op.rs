@@ -255,7 +255,7 @@ fn wait_for_transaction(
 ) -> Result<(), IcError> {
   let start = ic_port::time::gethrtime();
   loop {
-    conn.flush(IC_KEY_OP_SLICE_MS)?;
+    conn.flush(IC_KEY_OP_SLICE_MS, true)?;
     if let Some(trans) = conn.transaction(tid) {
       if trans.is_done() {
         return Ok(());
@@ -516,10 +516,11 @@ fn take_conf(
       conn.block_number(),
       signal.sender_block,
     );
-    if let Err(e) = conn.send(signal.sender_node_id, &header, &ack, &[]) {
+    let queued = conn.queue_signal(signal.sender_node_id, &header, &ack, &[]);
+    if let Err(e) = queued {
       ic_port::debug_print!(
         IC_NDB_MESSAGE_LEVEL,
-        "TC_COMMIT_ACK to node {} not sent: {}",
+        "TC_COMMIT_ACK to node {} not queued: {}",
         signal.sender_node_id,
         e.message()
       );

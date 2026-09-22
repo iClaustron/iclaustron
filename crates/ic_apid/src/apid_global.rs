@@ -37,8 +37,10 @@
 //!   evidence of a failure can arrive on any link; every change is a
 //!   compare-and-swap, so the first evidence wins and the rest do
 //!   nothing;
-//! - the sending half of the link, behind the node's mutex, which every
-//!   sender takes for the length of one write;
+//! - the sending half of the link, the send chain, behind the node's
+//!   mutex: signals queued for the node, the claim of the thread now
+//!   writing them, and the adaptive send state. The mutex is held to
+//!   queue and to claim, never for the write itself;
 //! - the handover slot a connect thread leaves a new link in.
 //!
 //! Once, for the whole API node, the identity: our node id, the
@@ -76,11 +78,14 @@ use ic_port::err;
 use ic_port::sync::IcMutex;
 use ic_port::sync::IC_MUTEX_LEVEL_GLOBAL;
 use ic_port::sync::IC_MUTEX_LEVEL_NODE_CONN;
+use ic_port::time;
 use ic_port::time::IcTimer;
 use ic_port::IcError;
 use ic_util::connectstring::ConnectString;
 use ic_util::threadpool::ThreadPool;
 
+use crate::adaptive_send::AdaptiveSend;
+use crate::adaptive_send::IC_DEFAULT_MAX_SEND_WAIT_NANOS;
 use crate::apid_conn::ApidConnection;
 use crate::connect_thread;
 use crate::dict_cache::DictCache;
@@ -89,6 +94,8 @@ use crate::node_connect::resolve_port;
 use crate::node_connect::words_as_bytes;
 use crate::node_state::PublishedNodeState;
 use crate::rec_thread;
+use crate::send_pool;
+use crate::send_pool::SendPool;
 use crate::signal_reader::SignalReader;
 use crate::thread_conn::ThreadTable;
 
@@ -173,12 +180,31 @@ pub(crate) struct PendingLink {
   pub(crate) use_checksum: bool,
 }
 
-/// The writing half of a link.
+/// The writing half of a link: the send chain (the pages, `send_active`
+/// and the adaptive send state of `IC_SEND_NODE_CONNECTION`).
 struct Sender {
   conn: Option<Arc<Connection>>,
   use_checksum: bool,
-  /// Kept between sends so that its allocation is reused.
-  send_buf: Vec<u32>,
+  /// Signals queued and not yet written, in the order they were queued.
+  waiting: Vec<u32>,
+  /// The other buffer, kept for its allocation: the write under way
+  /// goes from it, or it is spare.
+  spare: Vec<u32>,
+  /// True while a thread writes outside the mutex, or the send pool
+  /// has been asked to (`send_active`). Whoever queues meanwhile leaves
+  /// its signals to that thread.
+  send_active: bool,
+  /// True while the waiting signals are held back for company and the
+  /// pool knows when the wait ends.
+  deferred: bool,
+  adaptive: AdaptiveSend,
+}
+
+/// Take what waits, leaving the spare buffer in its place.
+fn take_waiting(sender: &mut Sender) -> Vec<u32> {
+  let mut buf = std::mem::take(&mut sender.spare);
+  std::mem::swap(&mut buf, &mut sender.waiting);
+  buf
 }
 
 /// One data node, as every thread sees it (`IC_SEND_NODE_CONNECTION`).
@@ -206,6 +232,12 @@ pub struct NodeShared {
   pending_ready: AtomicBool,
   pending: IcMutex<Option<PendingLink>>,
   sender: IcMutex<Sender>,
+  /// Whether signals on the link carry a checksum, as the sender knows
+  /// it, readable without the mutex by a thread packing signals to
+  /// send later.
+  use_checksum: AtomicBool,
+  /// Who writes what a sender leaves behind.
+  pool: Arc<SendPool>,
   /// The whole of the last node state, for reporting only. Decisions go
   /// by `published`, which a sixteen-word structure could not be.
   state_copy: IcMutex<Option<NodeState>>,
@@ -224,7 +256,11 @@ impl std::fmt::Debug for NodeShared {
 }
 
 impl NodeShared {
-  fn new(node_id: u32, heartbeat_interval_ms: u32) -> NodeShared {
+  fn new(
+    node_id: u32,
+    heartbeat_interval_ms: u32,
+    pool: Arc<SendPool>,
+  ) -> NodeShared {
     NodeShared {
       node_id,
       published: PublishedNodeState::new(),
@@ -240,9 +276,15 @@ impl NodeShared {
         Sender {
           conn: None,
           use_checksum: false,
-          send_buf: Vec::new(),
+          waiting: Vec::new(),
+          spare: Vec::new(),
+          send_active: false,
+          deferred: false,
+          adaptive: AdaptiveSend::new(IC_DEFAULT_MAX_SEND_WAIT_NANOS),
         },
       ),
+      use_checksum: AtomicBool::new(false),
+      pool,
       state_copy: IcMutex::new(IC_MUTEX_LEVEL_NODE_CONN, None),
     }
   }
@@ -398,17 +440,29 @@ impl NodeShared {
     let mut sender = self.sender.lock();
     sender.conn = Some(conn);
     sender.use_checksum = checksum;
-    sender.send_buf.clear();
+    // What waited was for the link that went.
+    sender.waiting.clear();
+    sender.send_active = false;
+    sender.deferred = false;
+    sender.adaptive = AdaptiveSend::new(IC_DEFAULT_MAX_SEND_WAIT_NANOS);
+    self.use_checksum.store(checksum, Ordering::Release);
   }
 
   pub(crate) fn clear_sender(&self) {
-    self.sender.lock().conn = None;
+    let mut sender = self.sender.lock();
+    sender.conn = None;
+    sender.waiting.clear();
+    sender.send_active = false;
+    sender.deferred = false;
   }
 
-  /// Send a signal to this node.
-  ///
-  /// Any thread may send. The node's mutex is held for the length of the
-  /// write, so that two signals never interleave on the socket. A write
+  /// True if signals on this link carry a checksum: what to pack a
+  /// signal with, to send later with [`send_words`](Self::send_words).
+  pub fn uses_checksum(&self) -> bool {
+    self.use_checksum.load(Ordering::Acquire)
+  }
+
+  /// Send one signal to this node now. Any thread may send. A write
   /// that fails asks the receive thread to drop the link.
   pub fn send(
     &self,
@@ -416,17 +470,8 @@ impl NodeShared {
     data: &[u32],
     sections: &[&[u32]],
   ) -> Result<(), IcError> {
-    let mut sender = self.sender.lock();
-    let conn = match sender.conn.as_ref() {
-      Some(conn) => Arc::clone(conn),
-      None => {
-        drop(sender);
-        return Err(self.not_connected_error());
-      }
-    };
-    let use_checksum = sender.use_checksum;
-    sender.send_buf.clear();
-    header::encode(header, data, sections, use_checksum, &mut sender.send_buf)?;
+    let mut buf: Vec<u32> = Vec::new();
+    header::encode(header, data, sections, self.uses_checksum(), &mut buf)?;
     ic_port::debug_print!(
       IC_NDB_MESSAGE_LEVEL,
       "-> node {} {} ({} words, {} sections)",
@@ -435,13 +480,143 @@ impl NodeShared {
       data.len(),
       sections.len()
     );
-    let result = conn.write(words_as_bytes(&sender.send_buf));
-    drop(sender);
-    if let Err(e) = result {
-      self.request_drop(e);
-      return Err(e);
+    self.send_words(&buf, true)
+  }
+
+  /// Queue packed signals for this node and see them written
+  /// (`ndb_send`).
+  ///
+  /// The signals are appended to what waits under the node's mutex,
+  /// and then one of three things happens. If a thread is writing,
+  /// nothing more: that thread, or the pool after it, takes them when
+  /// its write is done. Else, if `force` is off and the adaptive send
+  /// algorithm says to wait for company, nothing more either, except
+  /// that the pool is told when the wait must end. Else this thread
+  /// claims the chain and writes everything that waits, outside the
+  /// mutex, so that a slow socket holds up no one queuing. What was
+  /// queued during the write is left to the pool.
+  ///
+  /// A write that fails asks the receive thread to drop the link and
+  /// is reported to the writer only; anyone whose signals it took
+  /// learns of it as the link goes.
+  pub fn send_words(&self, words: &[u32], force: bool) -> Result<(), IcError> {
+    let mut sender = self.sender.lock();
+    let conn = match sender.conn.as_ref() {
+      Some(conn) => Arc::clone(conn),
+      None => {
+        drop(sender);
+        return Err(self.not_connected_error());
+      }
+    };
+    sender.waiting.extend_from_slice(words);
+    let now = time::gethrtime();
+    let mut write_now = false;
+    let mut defer_until: Option<IcTimer> = None;
+    if !sender.send_active {
+      write_now = force || !sender.adaptive.decide(now);
+      if write_now {
+        sender.send_active = true;
+        sender.deferred = false;
+      } else if !sender.deferred {
+        sender.deferred = true;
+        defer_until = Some(sender.adaptive.deadline());
+      }
     }
-    Ok(())
+    sender.adaptive.record_send(now);
+    if !write_now {
+      drop(sender);
+      if let Some(deadline) = defer_until {
+        self.pool.defer(self.node_id, deadline);
+      }
+      return Ok(());
+    }
+    let buf = take_waiting(&mut sender);
+    drop(sender);
+    self.write_out(&conn, buf)
+  }
+
+  /// The pool's write: what waits, if anything still does. With `due`
+  /// the wait for company is over, and the chain is claimed here; else
+  /// it was left claimed by the writer that asked.
+  pub(crate) fn send_for_pool(&self, due: bool) {
+    let mut sender = self.sender.lock();
+    if due {
+      sender.deferred = false;
+      if sender.send_active {
+        // Someone is writing, and takes what waits.
+        return;
+      }
+      sender.adaptive.wait_ended();
+    }
+    let conn = match sender.conn.as_ref() {
+      Some(conn) => Arc::clone(conn),
+      None => {
+        sender.waiting.clear();
+        sender.send_active = false;
+        return;
+      }
+    };
+    if sender.waiting.is_empty() {
+      sender.send_active = false;
+      return;
+    }
+    sender.send_active = true;
+    sender.deferred = false;
+    let buf = take_waiting(&mut sender);
+    drop(sender);
+    // A failed write has asked for the link to be dropped already.
+    let _ = self.write_out(&conn, buf);
+  }
+
+  /// Write `buf` to the link outside the mutex, give the buffer back,
+  /// and let go of the chain, or hand it to the pool if more came
+  /// meanwhile (`real_send_handling`, `send_done_handling`).
+  fn write_out(
+    &self,
+    conn: &Arc<Connection>,
+    mut buf: Vec<u32>,
+  ) -> Result<(), IcError> {
+    ic_port::debug_print!(
+      IC_COMM_LEVEL,
+      "-> node {}: one write of {} words",
+      self.node_id,
+      buf.len()
+    );
+    let result = conn.write(words_as_bytes(&buf));
+    buf.clear();
+    let mut sender = self.sender.lock();
+    let same_link = match sender.conn.as_ref() {
+      Some(current) => Arc::ptr_eq(current, conn),
+      None => false,
+    };
+    if !same_link {
+      // The link was replaced while we wrote: its chain is not ours.
+      drop(sender);
+      return result;
+    }
+    sender.spare = buf;
+    match result {
+      Err(e) => {
+        sender.waiting.clear();
+        sender.send_active = false;
+        sender.deferred = false;
+        drop(sender);
+        self.request_drop(e);
+        Err(e)
+      }
+      Ok(()) => {
+        if sender.waiting.is_empty() {
+          sender.send_active = false;
+          drop(sender);
+        } else {
+          // More was queued while we wrote: the pool takes it, and the
+          // chain stays claimed for it.
+          drop(sender);
+          self.pool.ask(self.node_id);
+        }
+        Ok(())
+      }
+    }
   }
 
   /// Say what is known and no more: a node the cluster reported failed
@@ -500,6 +675,8 @@ pub(crate) struct ApidShared {
   pub(crate) thread_table: Arc<ThreadTable>,
   /// Table and index descriptions, shared by every user thread.
   pub(crate) dict_cache: DictCache,
+  /// The send thread pool's queue.
+  pub(crate) send_pool: Arc<SendPool>,
 }
 
 impl ApidShared {
@@ -884,13 +1061,18 @@ impl ApidGlobal {
     mgm_timeout_ms: u32,
     node_name: Option<&str>,
   ) -> Result<ApidGlobal, IcError> {
+    let send_pool = Arc::new(SendPool::new());
     let mut nodes: Vec<Arc<NodeShared>> = Vec::new();
     for node_id in config.connectable_data_nodes() {
       let interval = match config.data_node(node_id) {
         Some(node) => node.api_heartbeat_interval_ms,
         None => 0,
       };
-      nodes.push(Arc::new(NodeShared::new(node_id, interval)));
+      nodes.push(Arc::new(NodeShared::new(
+        node_id,
+        interval,
+        Arc::clone(&send_pool),
+      )));
     }
     let own_node_id = config.api.node_id;
     let node_id_is_dynamic = connect_string.node_id.is_none();
@@ -920,10 +1102,11 @@ impl ApidGlobal {
       nodes,
       thread_table: Arc::new(ThreadTable::new()),
       dict_cache: DictCache::new(),
+      send_pool,
     });
 
     let num_nodes = shared.nodes.len();
-    let mut pool = ThreadPool::new(num_nodes as u32 + 4, "apid");
+    let mut pool = ThreadPool::new(num_nodes as u32 + 5, "apid");
     // If a start fails, returning drops the pool, which stops and joins
     // every thread already started.
 
@@ -950,6 +1133,15 @@ impl ApidGlobal {
         heartbeat::run_heartbeat_thread(hb_shared, state);
       }),
       IC_HEARTBEAT_THREAD_STACK,
+      false,
+    )?;
+
+    let send_shared = Arc::clone(&shared);
+    pool.start_thread(
+      Box::new(move |state| {
+        send_pool::run_send_thread(send_shared, state);
+      }),
+      send_pool::IC_SEND_THREAD_STACK,
       false,
     )?;
 
@@ -1095,6 +1287,11 @@ pub(crate) fn period_nanos(ms: u32) -> IcTimer {
 mod tests {
   use super::*;
 
+  /// A node with a pool of its own, for tests of what needs no thread.
+  fn test_node(node_id: u32, heartbeat_interval_ms: u32) -> NodeShared {
+    NodeShared::new(node_id, heartbeat_interval_ms, Arc::new(SendPool::new()))
+  }
+
   #[test]
   fn the_retry_delay_grows_and_stops_growing() {
     assert_eq!(retry_delay_ms(0), IC_FIRST_RETRY_MS);
@@ -1109,14 +1306,14 @@ mod tests {
 
   #[test]
   fn heartbeats_go_out_at_least_three_times_per_check_interval() {
-    let node = NodeShared::new(2, 30000);
+    let node = test_node(2, 30000);
     assert_eq!(node.check_interval_ms(), 30000);
     assert_eq!(node.heartbeat_period_ms(), 10000);
-    let fast = NodeShared::new(2, 1500);
+    let fast = test_node(2, 1500);
     assert_eq!(fast.heartbeat_period_ms(), 500);
     // An interval that does not divide evenly rounds the period down,
     // so three sends still fit inside it.
-    let odd = NodeShared::new(2, 1000);
+    let odd = test_node(2, 1000);
     assert_eq!(odd.heartbeat_period_ms(), 333);
     assert!(odd.heartbeat_period_ms() * 3 <= odd.check_interval_ms());
   }
@@ -1125,14 +1322,14 @@ mod tests {
   fn a_tiny_or_missing_interval_is_raised_to_the_floor() {
     // Without the floor a node reporting nothing would be sent a
     // heartbeat on every round, and declared lost in no time at all.
-    let unset = NodeShared::new(2, 0);
+    let unset = test_node(2, 0);
     assert_eq!(unset.check_interval_ms(), IC_MIN_HEARTBEAT_INTERVAL_MS);
     assert_eq!(unset.heartbeat_period_ms(), 33);
   }
 
   #[test]
   fn a_new_node_is_ready_to_be_dialled() {
-    let node = NodeShared::new(2, 30000);
+    let node = test_node(2, 30000);
     assert_eq!(node.membership(), LinkStatus::Disconnected);
     assert!(!node.published.is_connected());
     assert!(node.last_error().is_none());
@@ -1143,7 +1340,7 @@ mod tests {
   fn membership_changes_only_from_what_it_was() {
     // The first evidence wins and later evidence of the same thing does
     // nothing, which is what compare-and-swap gives.
-    let node = NodeShared::new(2, 30000);
+    let node = test_node(2, 30000);
     let down = LinkStatus::Disconnected;
     let up = LinkStatus::Connected;
     let failed = LinkStatus::AwaitingTakeover;
@@ -1158,7 +1355,7 @@ mod tests {
 
   #[test]
   fn the_first_reason_to_drop_a_link_is_the_one_kept() {
-    let node = NodeShared::new(2, 30000);
+    let node = test_node(2, 30000);
     assert!(node.take_drop_request().is_none());
     node.request_drop(IcError::new(err::IC_ERROR_HEARTBEAT_MISSED));
     node.request_drop(IcError::new(err::IC_ERROR_LINK_LOST));
@@ -1170,7 +1367,7 @@ mod tests {
 
   #[test]
   fn a_failure_is_noted_once_per_link() {
-    let node = NodeShared::new(2, 30000);
+    let node = test_node(2, 30000);
     assert!(!node.mark_failure_reported());
     assert!(node.mark_failure_reported());
     node.clear_failure_reported();
@@ -1179,7 +1376,7 @@ mod tests {
 
   #[test]
   fn sending_without_a_link_says_what_is_known() {
-    let node = NodeShared::new(2, 30000);
+    let node = test_node(2, 30000);
     let header = SignalHeader::new(gsn::IC_GSN_API_REGREQ, 0x0FA2, 0xFC);
     let e = node.send(&header, &[1, 2, 3], &[]).expect_err("no link");
     assert_eq!(e.code, err::IC_ERROR_LINK_LOST);

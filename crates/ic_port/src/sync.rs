@@ -47,6 +47,9 @@ pub const IC_MUTEX_LEVEL_NODE_CONN: u32 = 6;
 // Level 7 is deliberately unused. In the C it is the heartbeat mutex,
 // which protects the heartbeat thread's linked list of nodes. Here the
 // heartbeat thread walks the fixed node table and keeps no list.
+/// The send thread pool's queue of nodes to write for. Taken after a
+/// node's send chain has been let go of, never under it.
+pub const IC_MUTEX_LEVEL_SEND_POOL: u32 = 8;
 
 thread_local! {
     static HELD_LEVELS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };

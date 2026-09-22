@@ -18,10 +18,11 @@
 //! operations per second and the time a batch takes.
 //!
 //! This is the plain form: one batch at a time, so the pipeline drains
-//! between batches, and every operation is its own socket write, since
-//! the send path does not yet gather signals (doc/rust/02, step 4).
-//! Both cost throughput and both are on the plan. Measure a release
-//! build: `cargo run --release -p ic_bench`.
+//! between batches, which costs throughput and is on the plan. A batch
+//! is one socket write per node; `--force` makes it go at once rather
+//! than leaving it to the adaptive send algorithm, which is what an
+//! application gets by default. Measure a release build:
+//! `cargo run --release -p ic_bench`.
 //!
 //! The table needs a primary key of one integer column; every other
 //! integer column gets ten times the key, and any other column must be
@@ -54,7 +55,7 @@ const IC_BENCH_BATCH_WAIT_MS: u64 = 10_000;
 /// The most operations in flight at once.
 const IC_BENCH_MAX_BATCH: i64 = 1000;
 
-const OPTIONS: [OptionEntry; 10] = [
+const OPTIONS: [OptionEntry; 11] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -104,6 +105,12 @@ const OPTIONS: [OptionEntry; 10] = [
     help: "Do not write the rows first; they are there already",
   },
   OptionEntry {
+    long_name: "force",
+    short_name: 0,
+    kind: OptionKind::Flag,
+    help: "Write each batch at once, not by the adaptive send algorithm",
+  },
+  OptionEntry {
     long_name: "node-id",
     short_name: 0,
     kind: OptionKind::Int,
@@ -125,6 +132,7 @@ struct Run {
   keys: i64,
   from: i64,
   prepare: bool,
+  force: bool,
 }
 
 fn main() {
@@ -178,6 +186,7 @@ fn run() -> i32 {
     keys,
     from: parser.get_int_or("from", 1),
     prepare: !parser.get_flag("no-prepare"),
+    force: parser.get_flag("force"),
   };
   let database = parser.get_string_or("database", "test");
   let connect_text =
@@ -483,7 +492,7 @@ fn write_rows(
       key += 1;
       i += 1;
     }
-    conn.send_queries()?;
+    conn.send_queries(true)?;
     let failed = finish_batch(conn, &sent)?;
     if failed > 0 {
       return Err(IcError::new(ic_port::err::IC_ERROR_TRANSACTION_ROLLED_BACK));
@@ -541,7 +550,7 @@ fn define_batch(
     sent.push(trans);
     key += 1;
   }
-  conn.send_queries()?;
+  conn.send_queries(what.force)?;
   Ok(sent)
 }
 

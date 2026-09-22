@@ -427,7 +427,7 @@ fn wait_for(
 ) -> Option<CommitState> {
   let start = ic_port::time::gethrtime();
   loop {
-    if let Err(e) = conn.flush(100) {
+    if let Err(e) = conn.flush(100, false) {
       report("Could not send", &e);
     }
     if let Some(t) = conn.transaction(trans) {

@@ -123,9 +123,8 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   thread, a batch of committed reads or updates in flight at a time,
   each its own transaction hinted to the node holding its row; reports
   operations per second and the batch time's median, 99th percentile
-  and worst. Plain on purpose: the pipeline drains between batches and
-  every operation is its own socket write until step 4 of the thread
-  plan gathers sends. Measure a release build.
+  and worst. Plain on purpose: the pipeline drains between batches.
+  Measure a release build.
 
   **Baseline, 2026-09-22**, release build, one thread, a two-node
   RonDB 26.10 cluster on the same machine as the client, a table of
@@ -133,8 +132,33 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   per second, a batch taking 306 µs at the median and 534 µs at the
   99th percentile; updates 84 500 per second, a batch 1.18 ms at the
   median, 1.5 ms at the 99th and 11 ms at worst. About 3 µs per read
-  on the API side with one socket write each. The comparison with the
-  C++ NDB API on the same table and cluster is still to be made.
+  on the API side, with one socket write per operation, which was the
+  send path before step 4 of the thread plan.
+
+  **What that cost, 2026-09-22.** `flexAsynch` (the NDB API's own
+  tool) on the same cluster, two threads, 100 transactions in flight
+  per thread and ten reads in each, did 1 425 000 reads per second,
+  and the author saw the data nodes use about four times the CPU for
+  `ic_bench` at a quarter of the rate. One packet per operation is the
+  reason: each packet costs a data node a receive, an execution round
+  of one signal, and a reply packet, where a hundred operations in one
+  packet cost it one of each. Step 4 gathers a batch into one write
+  per node.
+
+  **After step 4, 2026-09-22**, same cluster, table and settings:
+  committed reads 734 650 per second, a batch of 100 taking 133 µs at
+  the median, 176 µs at the 99th percentile and 291 µs at most;
+  updates 179 940 per second, a batch 547 µs at the median, 750 µs at
+  the 99th and 11.7 ms at worst. The adaptive send and `--force` give
+  the same figures, as a thread sending alone in lock step never has
+  its sends held. That is 2.4× the reads and 2.1× the updates from one
+  write per node instead of one per operation. The data nodes felt it
+  more: `top` showed `ndbmtd` at 400% during the read run before and
+  135% after, which is 12.9 µs of data-node CPU per read down to 1.8,
+  seven times less per operation. Per thread the client rate is
+  above the `flexAsynch` run's 713 000, which had ten reads per
+  transaction. The like-for-like `flexAsynch` run (one thread, one read
+  per transaction, `-t 1 -p 100 -c 1 -o 1`) is still to be made.
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
   asynchronous PK read benchmark is within 2× of the C++ NDB API (the
   20 % target is Phase 7).

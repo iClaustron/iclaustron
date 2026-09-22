@@ -45,6 +45,7 @@ use std::sync::Arc;
 
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
+use ic_ndb_signals::header;
 use ic_ndb_signals::header::SignalHeader;
 use ic_ndb_signals::tc_seize::TcReleaseReq;
 use ic_ndb_signals::tc_seize::TcSeizeConf;
@@ -316,6 +317,16 @@ pub struct ApidConnection {
   /// The transactions not yet done, by the coordinator record pointer
   /// their replies name.
   pub(crate) active: Vec<(u32, TransId)>,
+  /// Signals packed for a node and not yet handed to it, one entry per
+  /// node this connection has sent to.
+  outgoing: Vec<Outgoing>,
+}
+
+/// Signals packed for one node, in the order they were queued
+/// (the C's `IC_SEND_CLUSTER_NODE` and its pages).
+struct Outgoing {
+  node_id: u32,
+  words: Vec<u32>,
 }
 
 impl std::fmt::Debug for ApidConnection {
@@ -351,6 +362,7 @@ impl ApidConnection {
       transactions: PtrArray::new(),
       executed: VecDeque::new(),
       active: Vec::new(),
+      outgoing: Vec::new(),
     })
   }
 
@@ -393,7 +405,80 @@ impl ApidConnection {
     self.expectations.waiting()
   }
 
-  /// Send a signal that no reply is expected to.
+  /// Pack a signal for a node, to go with the next
+  /// [`send_queued`](Self::send_queued). This is how a batch of
+  /// operations becomes one socket write per node.
+  pub fn queue_signal(
+    &mut self,
+    node_id: u32,
+    header: &SignalHeader,
+    data: &[u32],
+    sections: &[&[u32]],
+  ) -> Result<(), IcError> {
+    let use_checksum = match self.shared.node(node_id) {
+      Some(node) => node.uses_checksum(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    let mut index: usize = 0;
+    while index < self.outgoing.len() {
+      if self.outgoing[index].node_id == node_id {
+        break;
+      }
+      index += 1;
+    }
+    if index == self.outgoing.len() {
+      self.outgoing.push(Outgoing {
+        node_id,
+        words: Vec::new(),
+      });
+    }
+    let out = &mut self.outgoing[index].words;
+    header::encode(header, data, sections, use_checksum, out)?;
+    ic_port::debug_print!(
+      IC_NDB_MESSAGE_LEVEL,
+      "-> node {} {} ({} words, {} sections) queued",
+      node_id,
+      gsn::gsn_name(header.gsn()).unwrap_or("unknown"),
+      data.len(),
+      sections.len()
+    );
+    Ok(())
+  }
+
+  /// Hand every node what has been packed for it, one write each
+  /// (`ic_send_messages`). With `force` the writes happen now; without
+  /// it a node's write may be held back for a moment to go with other
+  /// threads' signals, by the adaptive send algorithm
+  /// ([`adaptive_send`](crate::adaptive_send)). Returns the first
+  /// error, after every node has been given its signals.
+  pub fn send_queued(&mut self, force: bool) -> Result<(), IcError> {
+    let mut first_error: Option<IcError> = None;
+    let mut index: usize = 0;
+    while index < self.outgoing.len() {
+      if !self.outgoing[index].words.is_empty() {
+        let node_id = self.outgoing[index].node_id;
+        let result = match self.shared.node(node_id) {
+          Some(node) => node.send_words(&self.outgoing[index].words, force),
+          None => Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+        };
+        self.outgoing[index].words.clear();
+        if let Err(e) = result {
+          if first_error.is_none() {
+            first_error = Some(e);
+          }
+        }
+      }
+      index += 1;
+    }
+    match first_error {
+      Some(e) => Err(e),
+      None => Ok(()),
+    }
+  }
+
+  /// Send a signal now, with whatever else is packed for its node. For
+  /// a request that will be waited for, and for what no reply is
+  /// expected to.
   pub fn send(
     &mut self,
     node_id: u32,
@@ -401,10 +486,8 @@ impl ApidConnection {
     data: &[u32],
     sections: &[&[u32]],
   ) -> Result<(), IcError> {
-    match self.shared.node(node_id) {
-      Some(node) => node.send(header, data, sections),
-      None => Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
-    }
+    self.queue_signal(node_id, header, data, sections)?;
+    self.send_queued(true)
   }
 
   /// Send a request, and say which signals answer it: `gsns`, echoing
@@ -426,7 +509,7 @@ impl ApidConnection {
     // Read before sending, so that a link replaced while the request is
     // on its way is seen as a different one.
     let generation = node.published.generation();
-    node.send(header, data, sections)?;
+    self.send(node_id, header, data, sections)?;
     // Nothing is read from the inbox but by this thread, so the reply
     // cannot be taken before this is recorded.
     self
@@ -495,6 +578,10 @@ impl ApidConnection {
     }
     self.fail_lost_requests();
     self.fail_lost_transactions();
+    // What the replies called for, such as commit acknowledgements,
+    // goes out together. A failed write has asked for its link to be
+    // dropped, which is where its loss is reported.
+    let _ = self.send_queued(false);
     taken
   }
 

@@ -158,9 +158,9 @@ functions; explicit shifts and masks, no bit-field macros.
 | `ic_apid_int.h`, `ic_apid_impl.h` | `int_types.rs` | 1:1 | Rust privacy replaces the public/hidden/internal cast tiers; inline accessors become `#[inline]` methods |
 | `ic_apid_static.ic`, `ic_apid_common.ic` | `refs.rs` | 1:1 | block reference math (`0x8000 + thread_id`) |
 | `ic_apid_error.ic` | `error.rs` | 1:1 | |
-| `ic_apid_send_message.ic` | `send_message.rs` | 1:1 | header codec moves to `ic_ndb_signals::header` |
-| `ic_apid_send_thread.ic` | `send_thread.rs`, `handshake.rs` | 1:1 + change | 4-integer hello, TLS-capable auth line; the listen (server-side) thread is Out: API nodes only connect |
-| `ic_apid_adaptive_send.ic` | `adaptive_send.rs` | 1:1 | |
+| `ic_apid_send_message.ic` | `apid_global.rs` (`NodeShared::send_words`, the send chain), `apid_conn.rs` (`queue_signal`, `send_queued`) | 1:1 | header codec moves to `ic_ndb_signals::header`; the chain is one buffer per node rather than pages |
+| `ic_apid_send_thread.ic` | `send_pool.rs`, `connect_thread.rs`, `handshake.rs` | 1:1 + change | one pool thread rather than a thread per node, and it ends the adaptive-send waits; 4-integer hello, TLS-capable auth line; the listen (server-side) thread is Out: API nodes only connect |
+| `ic_apid_adaptive_send.ic` | `adaptive_send.rs` | 1:1 | adjusted on the send path once an interval, not from the receive thread |
 | `ic_apid_rec_thread.ic` | `rec_thread.rs` | 1:1 | receive + route only; fix the close-down TODO and the `abort()` at disconnect |
 | `ic_apid_exec_message.ic` | `exec_message.rs` | 1:1 | runs in the user thread; unknown GSN → log and drop; no endian swap |
 | `ic_apid_handle_message_array.ic` | `dispatch.rs` | 1:1 | single protocol version (26.10) |

@@ -42,6 +42,7 @@
 //! - [`thread_conn`]: handing signals from a receive thread to the user
 //!   thread they are for.
 
+pub mod adaptive_send;
 pub mod apid_conn;
 pub mod apid_global;
 pub mod connect_thread;
@@ -58,6 +59,7 @@ pub mod query;
 pub mod rec_thread;
 pub mod record;
 pub mod row_codec;
+pub mod send_pool;
 pub mod signal_reader;
 pub mod text_row;
 pub mod thread_conn;

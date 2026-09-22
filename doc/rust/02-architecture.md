@@ -97,8 +97,8 @@ route; user threads execute.**
   number, map block number to user thread (block − 0x8000), append the
   descriptor to that thread's queue and signal its condvar. They do
   nothing else with the signal content, with one deliberate exception
-  below. They also run the adaptive-send timers so a buffered send never
-  waits on an idle user thread.
+  below. (The plan had them run the adaptive-send timers too; as built
+  the send pool does that, see there.)
 
   **The exception: a receive thread executes `API_REGCONF` and
   `API_REGREF` for the nodes it owns**, rather than routing them. This
@@ -127,7 +127,15 @@ route; user threads execute.**
   mutex, and on finishing hands the remainder to the pool if more
   buffers arrived meanwhile. A pool rather than the C's thread per node
   keeps the thread count off the node count, which matters at 144 data
-  nodes.
+  nodes. As built (step 4, 2026-09-22; `send_pool.rs`, one thread):
+  the pool also ends the adaptive-send waits. A user thread whose send
+  is held back for company tells the pool when the wait must end, and
+  the pool sleeps until the earliest such deadline and writes what
+  still waits then. The C lets the receive thread's wake-ups do this;
+  our receive thread sleeps for milliseconds when nothing arrives,
+  where a wait is bounded in microseconds, and a thread that sleeps
+  until the deadline ends the wait when it is due rather than when the
+  next signal happens to come in.
 - **Heartbeat thread** (one): walks the node table on its schedule and
   sends `API_REGREQ` to every node that is up. It reads node state and
   never writes it. It times a node out when the last `API_REGCONF`
@@ -262,6 +270,17 @@ somewhere testable against a live cluster:
    lookup are still to come.
 4. **The real send path.** The claim flag, user threads writing outside
    the mutex, the send thread pool taking overflow, adaptive send.
+   Done (2026-09-22): a user thread packs a batch per node in its
+   connection (`ApidConnection::queue_signal`) and hands each node one
+   buffer (`NodeShared::send_words`); the node's chain is a buffer the
+   queued signals append to under the mutex and a claim flag; the
+   claiming thread writes outside the mutex and, if more came
+   meanwhile, hands the node to the pool; commit acknowledgements are
+   queued and go with the poll's end. The adaptive send algorithm is
+   the C's (`adaptive_send.rs`), adjusted on the send path once a
+   millisecond. Still open: the bound is a constant until the link
+   configuration's `socket_max_wait_in_nanos` is read, and the pool has
+   one thread.
 5. **Several receive threads**, each given a share of the nodes at
    start. Everything shared is already per node, so this is assignment.
 6. **Later.** Wake-up threads for rounds that wake hundreds of user

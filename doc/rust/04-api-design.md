@@ -165,8 +165,9 @@ confirmed by the author:
   application's memory while a query is sent, and no unsafe code is
   needed. The C binding will copy or map the caller's rows onto these.
 
-Also as built: `send_queries()` sends everything defined, `flush(ms)`
-sends and polls, `get_next_executed_query()` hands out completed
+Also as built: `send_queries(force)` sends everything defined, one
+socket write per node, `flush(ms, force)` sends and polls, and
+`get_next_executed_query()` hands out completed
 queries, which are idle again once taken. Callbacks are not built yet.
 Unique-key queries are `create_unique_query(index, key_rec, attr_rec)`
 with records over the index's table, and take the same `read_key` and
