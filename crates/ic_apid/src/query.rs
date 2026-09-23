@@ -173,6 +173,8 @@ pub(crate) struct Execution {
   pub staged: crate::apid_conn::Staged,
   /// True for a read, whose row is to be put into the attribute row.
   pub is_read: bool,
+  /// When a read was sent, for detecting a replaced reading-node link.
+  pub sent_at: ic_port::time::IcTimer,
   /// What the coordinator said the operation would bring, once it has.
   pub confirmed: Option<tc_key::OperationConf>,
   /// The row, as it has come so far.

@@ -781,6 +781,7 @@ impl ApidConnection {
     self.pages = pages;
     self.fail_lost_requests();
     self.fail_lost_transactions();
+    self.fail_lost_readers();
     // What the replies called for, such as commit acknowledgements,
     // goes with the next send, in the same write as its requests. It is
     // written here only once it has waited long enough, or when nothing

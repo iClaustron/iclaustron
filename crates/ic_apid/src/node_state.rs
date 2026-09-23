@@ -68,6 +68,8 @@ pub struct PublishedNodeState {
   /// Counts up on every connect, so a reader can tell one connection
   /// from the next and discard an answer meant for an older one.
   generation: AtomicU32,
+  /// When the current link was installed, kept across heartbeat updates.
+  connected_at: AtomicU64,
   /// When the last `API_REGCONF` arrived, in the timer's nanoseconds.
   /// Zero until the first one does.
   last_regconf: AtomicU64,
@@ -156,6 +158,15 @@ impl PublishedNodeState {
     self.generation.load(Ordering::Relaxed)
   }
 
+  /// When the current link was installed, or zero while disconnected.
+  /// A link installed after a read was sent cannot carry its old reply.
+  pub(crate) fn connected_since(&self) -> IcTimer {
+    if !self.is_connected() {
+      return 0;
+    }
+    self.connected_at.load(Ordering::Relaxed)
+  }
+
   /// When the last `API_REGCONF` arrived, or zero if none has.
   pub fn last_regconf(&self) -> IcTimer {
     self.last_regconf.load(Ordering::Relaxed)
@@ -181,6 +192,7 @@ impl PublishedNodeState {
   /// one.
   pub fn publish_connected(&self, state: &NodeState, now: IcTimer) {
     self.generation.fetch_add(1, Ordering::Relaxed);
+    self.connected_at.store(now, Ordering::Relaxed);
     self.write_state(state, now);
   }
 

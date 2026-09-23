@@ -117,6 +117,8 @@ pub const IC_NDB_ERROR_NODE_FAILURE_ABORT: i32 = 4010;
 pub const IC_NDB_ERROR_TAKEOVER_ABORT: i32 = 4031;
 /// NDB's error for read results lost when a takeover committed the transaction.
 pub const IC_NDB_ERROR_TAKEOVER_READ_LOST: i32 = 4115;
+/// NDB's error for a simple or dirty read whose reading node failed.
+pub const IC_NDB_ERROR_READ_NODE_FAILURE: i32 = 4119;
 /// Previous name for the lost-read error, retained for compatibility.
 pub const IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED: i32 =
   IC_NDB_ERROR_TAKEOVER_READ_LOST;
@@ -570,6 +572,7 @@ impl ApidConnection {
           flags,
           staged,
           is_read,
+          sent_at: 0,
           confirmed: None,
           row: Vec::new(),
           has_row: false,
@@ -765,6 +768,9 @@ impl ApidConnection {
     self.patch_staged(&staged, IC_TCKEYREQ_REQUEST_INFO, flags.request_info());
     if let Some(query) = self.queries.get_mut(qid.0) {
       query.execution.staged = Staged::default();
+      if query.execution.is_read {
+        query.execution.sent_at = ic_port::time::gethrtime();
+      }
       query.set_state(QueryState::Sent);
     }
     Ok(())
@@ -1293,6 +1299,50 @@ impl ApidConnection {
     }
     self.active.remove(&tc.api_ptr);
     self.free_tc_record(&tc);
+  }
+
+  /// Fail confirmed dirty reads whose row cannot arrive from the named
+  /// reading node. Run after draining the inbox so an arrived row wins.
+  pub(crate) fn fail_lost_readers(&mut self) {
+    let mut lost = Vec::new();
+    for tid in self.active.values() {
+      let trans = match self.transactions.get(tid.0) {
+        Some(trans) => trans,
+        None => continue,
+      };
+      for qid in &trans.sent {
+        let query = match self.queries.get(qid.0) {
+          Some(query) => query,
+          None => continue,
+        };
+        let exec = &query.execution;
+        if query.state() != QueryState::Sent
+          || exec.has_row
+          || exec.sent_at == 0
+        {
+          continue;
+        }
+        let conf = match exec.confirmed {
+          Some(conf) if conf.is_dirty_read() => conf,
+          _ => continue,
+        };
+        let gone = match self.shared.node(conf.reading_node()) {
+          Some(node) => {
+            let since = node.published.connected_since();
+            node.failure_reported() || since == 0 || since >= exec.sent_at
+          }
+          None => true,
+        };
+        if gone {
+          lost.push(*qid);
+        }
+      }
+    }
+    // Dispatch after walking the lists: callbacks may change them.
+    let error = IcError::new(IC_NDB_ERROR_READ_NODE_FAILURE);
+    for qid in lost {
+      self.fail_query(qid, error);
+    }
   }
 
   /// End the transactions whose coordinator's link has gone, or been
