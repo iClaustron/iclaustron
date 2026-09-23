@@ -183,9 +183,10 @@ impl TcKeyReq {
 
 /// Words in a `TCKEYCONF` before the operations.
 pub const IC_TCKEYCONF_LEN: usize = 5;
-/// The most operations a `TCKEYCONF` can carry: a packed part of at
-/// most 34 words less the five fixed ones, two words each.
-pub const IC_TCKEYCONF_MAX_OPERATIONS: usize = 16;
+/// Operations a `TCKEYCONF` decodes without allocating. The coordinator
+/// sends at most three; a confirmation with more than this still
+/// decodes, into a vector.
+pub const IC_TCKEYCONF_INLINE_OPERATIONS: usize = 16;
 /// In an operation's row length: a dirty read, the low bits naming the
 /// node that reads it.
 pub const IC_TCKEYCONF_DIRTY_READ_BIT: u32 = 1 << 31;
@@ -229,11 +230,13 @@ pub struct TcKeyConf {
   /// The operations confirmed, the first `num_operations` of them; see
   /// [`operations`](Self::operations). Kept inline, so that decoding a
   /// confirmation allocates nothing: the coordinator puts at most three
-  /// in one (`Dbtc`, `ZTCOPCONF_SIZE`), and no signal has room for more
-  /// than this.
-  pub ops: [OperationConf; IC_TCKEYCONF_MAX_OPERATIONS],
-  /// How many of `ops` are there.
+  /// in one (`Dbtc`, `ZTCOPCONF_SIZE`).
+  pub ops: [OperationConf; IC_TCKEYCONF_INLINE_OPERATIONS],
+  /// How many operations the confirmation carries.
   pub num_operations: usize,
+  /// All the operations instead, for a confirmation with more than fit
+  /// inline; empty, and so no allocation, otherwise.
+  pub more_ops: Vec<OperationConf>,
   /// The global checkpoint the commit went into; 0 when there was none,
   /// as for a transaction of dirty reads only.
   pub gci: u64,
@@ -252,16 +255,22 @@ impl TcKeyConf {
     if data.len() < end {
       return Err(bad);
     }
-    if count > IC_TCKEYCONF_MAX_OPERATIONS {
-      return Err(bad);
+    let mut ops = [OperationConf::default(); IC_TCKEYCONF_INLINE_OPERATIONS];
+    let mut more_ops: Vec<OperationConf> = Vec::new();
+    if count > IC_TCKEYCONF_INLINE_OPERATIONS {
+      more_ops.reserve_exact(count);
     }
-    let mut ops = [OperationConf::default(); IC_TCKEYCONF_MAX_OPERATIONS];
     let mut i: usize = 0;
     while i < count {
-      ops[i] = OperationConf {
+      let op = OperationConf {
         api_operation_ptr: data[IC_TCKEYCONF_LEN + 2 * i],
         row_len: data[IC_TCKEYCONF_LEN + 2 * i + 1],
       };
+      if count > IC_TCKEYCONF_INLINE_OPERATIONS {
+        more_ops.push(op);
+      } else {
+        ops[i] = op;
+      }
       i += 1;
     }
     let mut gci_lo: u32 = 0;
@@ -275,12 +284,16 @@ impl TcKeyConf {
       trans_id2: data[4],
       ops,
       num_operations: count,
+      more_ops,
       gci: ((data[1] as u64) << 32) | gci_lo as u64,
     })
   }
 
   /// The operations confirmed.
   pub fn operations(&self) -> &[OperationConf] {
+    if !self.more_ops.is_empty() {
+      return &self.more_ops;
+    }
     &self.ops[..self.num_operations]
   }
 
@@ -657,6 +670,24 @@ mod tests {
     assert_eq!(conf.operations()[0].api_operation_ptr, 22);
     assert_eq!(conf.operations()[0].row_len, 4);
     assert_eq!(conf.gci, (0x10 << 32) | 0x20);
+  }
+
+  #[test]
+  fn a_confirmation_with_many_operations_still_decodes() {
+    let count: u32 = IC_TCKEYCONF_INLINE_OPERATIONS as u32 + 3;
+    let mut data: Vec<u32> = vec![7, 0, count, 0x10, 0x20];
+    let mut i: u32 = 0;
+    while i < count {
+      data.push(100 + i);
+      data.push(i);
+      i += 1;
+    }
+    let conf = TcKeyConf::decode(&data).expect("decoded");
+    assert_eq!(conf.operations().len(), count as usize);
+    assert_eq!(conf.operations()[0].api_operation_ptr, 100);
+    let last = conf.operations()[count as usize - 1];
+    assert_eq!(last.api_operation_ptr, 100 + count - 1);
+    assert_eq!(last.row_len, count - 1);
   }
 
   #[test]
