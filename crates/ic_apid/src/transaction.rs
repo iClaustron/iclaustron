@@ -1256,6 +1256,12 @@ impl ApidConnection {
       }
       None => return,
     };
+    // Completing the last query may already have released this record,
+    // and its callback may have started another transaction using it.
+    // Release only while the active mapping still belongs to us.
+    if self.active.get(&tc.api_ptr) != Some(&tid) {
+      return;
+    }
     self.active.remove(&tc.api_ptr);
     self.free_tc_record(&tc);
   }
