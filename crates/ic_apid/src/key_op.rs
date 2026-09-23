@@ -220,31 +220,20 @@ fn unique_read(
   };
   let _ = conn.close_transaction(tid);
   result?;
-  // Ours is the only query on this connection's executed list here.
-  let mut found: Option<bool> = None;
-  while let Some(done) = conn.get_next_executed_query() {
-    if done != qid {
-      continue;
+  // Read only our result. The caller's free_query removes its completion
+  // entry, leaving unrelated completions in their original order.
+  let query = match conn.query(qid) {
+    Some(query) => query,
+    None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
+  };
+  match query.error() {
+    Some(e) if e.code == IC_NDB_ERROR_NO_SUCH_ROW as i32 => Ok(false),
+    Some(e) => Err(e),
+    None => {
+      let len = query.attr_row().len();
+      attr_row[..len].copy_from_slice(query.attr_row());
+      Ok(true)
     }
-    let query = match conn.query(qid) {
-      Some(query) => query,
-      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
-    };
-    match query.error() {
-      Some(e) if e.code == IC_NDB_ERROR_NO_SUCH_ROW as i32 => {
-        found = Some(false);
-      }
-      Some(e) => return Err(e),
-      None => {
-        let len = query.attr_row().len();
-        attr_row[..len].copy_from_slice(query.attr_row());
-        found = Some(true);
-      }
-    }
-  }
-  match found {
-    Some(found) => Ok(found),
-    None => Err(IcError::new(err::IC_ERROR_TIMEOUT)),
   }
 }
 
