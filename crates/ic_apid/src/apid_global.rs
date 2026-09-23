@@ -652,6 +652,23 @@ pub fn send_stats() -> (u64, u64) {
   )
 }
 
+/// Choices made when the Data API starts and fixed for its life
+/// (doc/rust/02, "Receive threads").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlobalOptions {
+  /// How many receive threads read the data nodes' links, each owning a
+  /// share of the nodes dealt in turn. One is enough on a small
+  /// machine; with many user threads and many cores, one thread reading
+  /// every link becomes the limit. Capped at the number of data nodes.
+  pub receive_threads: u32,
+}
+
+impl Default for GlobalOptions {
+  fn default() -> GlobalOptions {
+    GlobalOptions { receive_threads: 1 }
+  }
+}
+
 /// Our identity in the cluster, and what goes with it.
 struct Identity {
   /// The configuration as our node id sees it.
@@ -1098,6 +1115,26 @@ impl ApidGlobal {
     mgm_timeout_ms: u32,
     node_name: Option<&str>,
   ) -> Result<ApidGlobal, IcError> {
+    ApidGlobal::start_with_options(
+      config,
+      mgm,
+      connect_string,
+      mgm_timeout_ms,
+      node_name,
+      &GlobalOptions::default(),
+    )
+  }
+
+  /// As [`start`](Self::start), with the choices [`GlobalOptions`]
+  /// holds, fixed for the life of the global.
+  pub fn start_with_options(
+    config: ClusterConfig,
+    mgm: MgmClient,
+    connect_string: ConnectString,
+    mgm_timeout_ms: u32,
+    node_name: Option<&str>,
+    options: &GlobalOptions,
+  ) -> Result<ApidGlobal, IcError> {
     let send_pool = Arc::new(SendPool::new());
     let mut nodes: Vec<Arc<NodeShared>> = Vec::new();
     for node_id in config.connectable_data_nodes() {
@@ -1145,26 +1182,39 @@ impl ApidGlobal {
     });
 
     let num_nodes = shared.nodes.len();
-    let mut pool = ThreadPool::new(num_nodes as u32 + 5, "apid");
+    // No more receive threads than nodes, since a thread with no node
+    // would have nothing to read; at least one.
+    let mut receive_threads = options.receive_threads.max(1) as usize;
+    if receive_threads > num_nodes.max(1) {
+      receive_threads = num_nodes.max(1);
+    }
+    let mut pool =
+      ThreadPool::new((num_nodes + receive_threads) as u32 + 4, "apid");
     // If a start fails, returning drops the pool, which stops and joins
     // every thread already started.
 
-    // One receive thread for every node, for now. More receive threads
-    // each take a share of the nodes, assigned here and kept.
-    let mut all_nodes: Vec<usize> = Vec::new();
+    // Each receive thread takes a share of the nodes, dealt in turn,
+    // and keeps it: a node's link, reader and published state have one
+    // owner, so nothing about a node is shared between receive threads.
+    let mut shares: Vec<Vec<usize>> = Vec::with_capacity(receive_threads);
+    while shares.len() < receive_threads {
+      shares.push(Vec::new());
+    }
     let mut index: usize = 0;
     while index < num_nodes {
-      all_nodes.push(index);
+      shares[index % receive_threads].push(index);
       index += 1;
     }
-    let rec_shared = Arc::clone(&shared);
-    pool.start_thread(
-      Box::new(move |state| {
-        rec_thread::run_receive_thread(rec_shared, all_nodes, state);
-      }),
-      IC_RECEIVE_THREAD_STACK,
-      false,
-    )?;
+    for share in shares {
+      let rec_shared = Arc::clone(&shared);
+      pool.start_thread(
+        Box::new(move |state| {
+          rec_thread::run_receive_thread(rec_shared, share, state);
+        }),
+        IC_RECEIVE_THREAD_STACK,
+        false,
+      )?;
+    }
 
     let hb_shared = Arc::clone(&shared);
     pool.start_thread(

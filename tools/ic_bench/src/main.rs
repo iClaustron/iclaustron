@@ -75,6 +75,7 @@ use std::sync::Arc;
 use ic_apic::mgm_client;
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
+use ic_apid::apid_global::GlobalOptions;
 use ic_apid::apid_global::IC_EXTRA_READS;
 use ic_apid::apid_global::IC_LARGE_SIGNAL_WORDS;
 use ic_apid::dict_cache::TableDef;
@@ -117,7 +118,7 @@ static DONE_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
 static FAILED_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
   [const { AtomicUsize::new(0) }; IC_BENCH_MAX_SLOTS];
 
-const OPTIONS: [OptionEntry; 17] = [
+const OPTIONS: [OptionEntry; 18] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -191,6 +192,12 @@ const OPTIONS: [OptionEntry; 17] = [
     help: "Times the receive thread reads a socket again before waiting",
   },
   OptionEntry {
+    long_name: "receive-threads",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Receive threads, each reading a share of the data nodes",
+  },
+  OptionEntry {
     long_name: "no-prepare",
     short_name: 0,
     kind: OptionKind::Flag,
@@ -235,6 +242,7 @@ struct Run {
   bytes: usize,
   large_words: u32,
   extra_reads: u32,
+  receive_threads: u32,
   force: bool,
   callbacks: bool,
 }
@@ -302,6 +310,7 @@ fn run() -> i32 {
     from: parser.get_int_or("from", 1),
     prepare: !parser.get_flag("no-prepare"),
     bytes: parser.get_int_or("bytes", 0).max(0) as usize,
+    receive_threads: parser.get_int_or("receive-threads", 1).max(1) as u32,
     extra_reads: parser
       .get_int_or("extra-reads", IC_EXTRA_READS as i64)
       .max(0) as u32,
@@ -334,12 +343,16 @@ fn run() -> i32 {
       return 1;
     }
   };
-  let mut global = match ApidGlobal::start(
+  let options = GlobalOptions {
+    receive_threads: what.receive_threads,
+  };
+  let mut global = match ApidGlobal::start_with_options(
     config,
     mgm,
     connect_string,
     30_000,
     Some("ic_bench"),
+    &options,
   ) {
     Ok(global) => global,
     Err(e) => {
@@ -426,8 +439,8 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
   );
   println!(
     "{} byte(s) in each binary or character column; signals of {} word(s) \
-     or more not copied",
-    what.bytes, what.large_words
+     or more not copied; {} receive thread(s)",
+    what.bytes, what.large_words, what.receive_threads
   );
   // Each thread goes round its own share of the keys, the last taking
   // the remainder.

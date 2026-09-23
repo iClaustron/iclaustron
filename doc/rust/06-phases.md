@@ -376,6 +376,19 @@ rows. The code went back to the version measured at 1.73 million.
   share this machine's cores. The poll set keeps its event buffer
   between checks.
 
+  **Several receive threads, 2026-09-23.** Built as step 5 of the
+  thread plan (`GlobalOptions::receive_threads`), one by default. With
+  two data nodes on this machine, two receive threads, one per node,
+  against one: at 1, 4 and 8 user threads the rate was the same or a
+  little lower and client CPU 10 to 14% higher (1: 730 against 660
+  ns; 4: 770 to 810 against 711 to 717; 8: 864 to 874 against 757 to
+  759), each user thread now getting a post from each receive thread,
+  with the locks and wake-ups that go with them. One receive thread
+  carried 6 110 000 to 6 180 000 committed reads a second from eight
+  user threads without being the limit. Several are for machines with
+  many data nodes and cores, measured the same way
+  (`ic_bench --receive-threads`).
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given

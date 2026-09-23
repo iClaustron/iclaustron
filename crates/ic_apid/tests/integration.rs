@@ -18,6 +18,9 @@
 //! - `IC_TEST_NDB_MGM`: an `ndb_mgm` command with its connect string,
 //!   such as `ndb_mgm -c localhost:1186`, for the `failure` group,
 //!   which stops a data node and starts it again.
+//! - `IC_TEST_RECEIVE_THREADS`: how many receive threads to start, one
+//!   if not set, so that the suite can run with the nodes' links shared
+//!   out over several.
 //!
 //! The groups are the phase-5 ones: `connect`, `dict`, `pk`, `uk`,
 //! `types`, `failure`. Each test is its own program against the
@@ -35,6 +38,7 @@ use std::sync::Arc;
 use ic_apic::mgm_client;
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
+use ic_apid::apid_global::GlobalOptions;
 use ic_apid::dict_cache::IndexDef;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::key_op;
@@ -105,8 +109,18 @@ fn cluster() -> Option<Cluster> {
         continue;
       }
     };
-    let started =
-      ApidGlobal::start(config, mgm, connect_string, 30_000, Some("ic_it"));
+    let mut options = GlobalOptions::default();
+    if let Ok(text) = std::env::var("IC_TEST_RECEIVE_THREADS") {
+      options.receive_threads = text.parse().unwrap_or(1);
+    }
+    let started = ApidGlobal::start_with_options(
+      config,
+      mgm,
+      connect_string,
+      30_000,
+      Some("ic_it"),
+      &options,
+    );
     let mut global = match started {
       Ok(global) => global,
       Err(e) => {

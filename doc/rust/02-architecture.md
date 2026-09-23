@@ -299,6 +299,14 @@ somewhere testable against a live cluster:
    one thread.
 5. **Several receive threads**, each given a share of the nodes at
    start. Everything shared is already per node, so this is assignment.
+   Done (2026-09-23): `GlobalOptions::receive_threads`, given to
+   `ApidGlobal::start_with_options`, one by default and no more than
+   there are data nodes; the nodes are dealt to the threads in turn and
+   kept. A user thread's inbox takes pages from every receive thread,
+   each posting under the inbox's lock as one did before; the loss of
+   every link is seen through the nodes' atomics, whichever thread lost
+   the last. `IC_TEST_RECEIVE_THREADS` runs the integration suite with
+   several, and `ic_bench --receive-threads` measures.
 6. **Later.** Wake-up threads for rounds that wake hundreds of user
    threads, and load-based placement of nodes on receive threads.
 
