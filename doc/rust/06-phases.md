@@ -351,6 +351,21 @@ rows. The code went back to the version measured at 1.73 million.
   against 4 705 and 5 115. The default is four
   (`ApidGlobal::set_extra_reads`, `--extra-reads`).
 
+  **Commit acknowledgements go with the next send, 2026-09-23.** An
+  update cost about 1 150 ns of client CPU against 670 for a read, half
+  of it system time. A profile of updates showed the client waiting
+  most of the time, the user thread 65% idle and the receive thread
+  91%, and of the user thread's work 27% in `sendto`, four fifths of
+  it at the end of `poll`: every committed write whose confirmation
+  carries a marker is acknowledged, and each poll wrote its
+  acknowledgements as it made them. They now wait in the node's
+  outgoing buffer and go with the next send's requests, in one write; a
+  poll writes them itself once they have waited 1 ms or when nothing is
+  in flight, and closing a connection writes what waits. Writes per
+  1 000 updates fell from 44 to 13, a little over one per node per
+  batch, and client CPU per update from 1 150 to 1 007 and 1 089 ns;
+  the rate, set by the data nodes' commit, stayed at about 460 000.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given

@@ -434,6 +434,7 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
   let per_thread = what.keys / what.threads as i64;
   let usage_before = ic_port::time::process_usage();
   let reader_before = ic_apid::signal_reader::reader_stats();
+  let send_before = ic_apid::apid_global::send_stats();
   let start = ic_port::time::gethrtime();
   let outcomes: Vec<Result<Tally, String>> = std::thread::scope(|scope| {
     let mut handles = Vec::with_capacity(what.threads);
@@ -479,6 +480,17 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
   tally.print(elapsed, what.threads);
   print_usage(usage_before, ic_port::time::process_usage(), tally.ops);
   print_reader(reader_before, ic_apid::signal_reader::reader_stats());
+  let (writes, bytes) = ic_apid::apid_global::send_stats();
+  let writes = writes - send_before.0;
+  if writes > 0 && tally.ops > 0 {
+    println!(
+      "Send: {} writes of {} bytes on average, {} writes per 1000 \
+       operations",
+      writes,
+      (bytes - send_before.1) / writes,
+      writes * 1000 / tally.ops
+    );
+  }
   if tally.unexpected > 0 {
     println!(
       "{} signal(s) came that nothing waited for",

@@ -60,6 +60,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -591,6 +592,8 @@ impl NodeShared {
       buf.len()
     );
     let result = conn.write(words_as_bytes(&buf));
+    IC_WRITES.fetch_add(1, Ordering::Relaxed);
+    IC_WRITE_BYTES.fetch_add(4 * buf.len() as u64, Ordering::Relaxed);
     buf.clear();
     let mut sender = self.sender.lock();
     let same_link = match sender.conn.as_ref() {
@@ -635,6 +638,18 @@ impl NodeShared {
     }
     IcError::new(err::IC_ERROR_LINK_LOST)
   }
+}
+
+static IC_WRITES: AtomicU64 = AtomicU64::new(0);
+static IC_WRITE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Writes to the data nodes' sockets so far, and their bytes, by every
+/// thread in the process: for measuring.
+pub fn send_stats() -> (u64, u64) {
+  (
+    IC_WRITES.load(Ordering::Relaxed),
+    IC_WRITE_BYTES.load(Ordering::Relaxed),
+  )
 }
 
 /// Our identity in the cluster, and what goes with it.

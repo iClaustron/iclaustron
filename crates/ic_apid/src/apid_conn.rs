@@ -77,6 +77,14 @@ use crate::transaction::Transaction;
 /// How long seizing a transaction record waits for the coordinator.
 pub const IC_TC_SEIZE_WAIT_MS: u32 = 5_000;
 
+/// How long a poll leaves what the replies called for, such as commit
+/// acknowledgements, to go with the next send rather than write it
+/// itself, in nanoseconds. An acknowledgement only lets a coordinator
+/// drop what it keeps against a node failure; writing each poll's as it
+/// came cost a system call a poll, most of the user thread's writing on
+/// updates (measured 2026-09-23).
+pub const IC_REPLY_SEND_DELAY_NANOS: u64 = 1_000_000;
+
 /// How long [`ApidConnection::wait_for`] sleeps on its inbox at a time,
 /// so that a link lost meanwhile is noticed without waiting for the
 /// timeout.
@@ -141,8 +149,6 @@ impl Expectations {
     });
   }
 
-  /// Give a whole signal to the request it answers. Hands the signal
-  /// back if no request is waiting for it.
   /// True if a request waits for this signal, so that it has to be
   /// kept: what [`offer`](Self::offer) would take.
   fn claims(&self, signal: &SignalView<'_>) -> bool {
@@ -163,6 +169,8 @@ impl Expectations {
     false
   }
 
+  /// Give a whole signal to the request it answers. Hands the signal
+  /// back if no request is waiting for it.
   fn offer(&mut self, signal: ReceivedSignal) -> Option<ReceivedSignal> {
     let first = match signal.data.first() {
       Some(first) => *first,
@@ -362,6 +370,8 @@ pub struct ApidConnection {
   pub(crate) in_callback: u32,
   /// Where a request's key and attribute sections are built before
   /// they are packed: two buffers for every query, warm in the cache.
+  /// When what waits in the outgoing buffers began to wait, or zero.
+  queued_since: u64,
   pub(crate) key_scratch: Vec<u32>,
   pub(crate) attr_scratch: Vec<u32>,
   /// Pages of signals taken from the inbox, read, and given back on the
@@ -432,6 +442,7 @@ impl ApidConnection {
       outgoing: Vec::new(),
       in_callback: 0,
       pages: Vec::new(),
+      queued_since: 0,
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
     })
@@ -502,6 +513,16 @@ impl ApidConnection {
       sections.len()
     );
     Ok(())
+  }
+
+  /// True if anything waits to be written, staged requests apart.
+  fn outgoing_waiting(&self) -> bool {
+    for out in &self.outgoing {
+      if !out.words.is_empty() {
+        return true;
+      }
+    }
+    false
   }
 
   fn outgoing_index(&mut self, node_id: u32) -> usize {
@@ -620,6 +641,7 @@ impl ApidConnection {
   /// ([`adaptive_send`](crate::adaptive_send)). Returns the first
   /// error, after every node has been given its signals.
   pub fn send_queued(&mut self, force: bool) -> Result<(), IcError> {
+    self.queued_since = 0;
     let mut first_error: Option<IcError> = None;
     let mut index: usize = 0;
     while index < self.outgoing.len() {
@@ -759,9 +781,21 @@ impl ApidConnection {
     self.fail_lost_requests();
     self.fail_lost_transactions();
     // What the replies called for, such as commit acknowledgements,
-    // goes out together. A failed write has asked for its link to be
-    // dropped, which is where its loss is reported.
-    let _ = self.send_queued(false);
+    // goes with the next send, in the same write as its requests. It is
+    // written here only once it has waited long enough, or when nothing
+    // is in flight, so that no send can be counted on. A failed write
+    // has asked for its link to be dropped, which is where its loss is
+    // reported.
+    if self.outgoing_waiting() {
+      let now = ic_port::time::gethrtime();
+      if self.queued_since == 0 {
+        self.queued_since = now;
+      }
+      let waited = now - self.queued_since;
+      if self.active.is_empty() || waited >= IC_REPLY_SEND_DELAY_NANOS {
+        let _ = self.send_queued(false);
+      }
+    }
     taken
   }
 
@@ -1122,6 +1156,8 @@ impl ApidConnection {
 
 impl Drop for ApidConnection {
   fn drop(&mut self) {
+    // Acknowledgements left to go with a send that will not come.
+    let _ = self.send_queued(true);
     self.release_tc_records();
     self
       .shared
