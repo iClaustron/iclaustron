@@ -115,9 +115,11 @@ use crate::row_codec;
 pub const IC_NDB_ERROR_NODE_FAILURE_ABORT: i32 = 4010;
 /// NDB's error for a transaction the takeover coordinator aborted.
 pub const IC_NDB_ERROR_TAKEOVER_ABORT: i32 = 4031;
-/// NDB's error for a takeover commit of a transaction that had not
-/// asked to commit: it committed, but what it read is lost.
-pub const IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED: i32 = 4115;
+/// NDB's error for read results lost when a takeover committed the transaction.
+pub const IC_NDB_ERROR_TAKEOVER_READ_LOST: i32 = 4115;
+/// Previous name for the lost-read error, retained for compatibility.
+pub const IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED: i32 =
+  IC_NDB_ERROR_TAKEOVER_READ_LOST;
 
 /// Which node should coordinate a transaction (`IC_TRANSACTION_HINT`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -200,7 +202,8 @@ impl Transaction {
     self.state
   }
 
-  /// Why it was rolled back, if the coordinator or a lost link did it.
+  /// Why it failed, including lost read results after a takeover commit.
+  /// Check `commit_state()` separately: an error need not mean rollback.
   pub fn error(&self) -> Option<IcError> {
     self.error
   }
@@ -1022,9 +1025,9 @@ impl ApidConnection {
     true
   }
 
-  /// The coordinator that took over committed the transaction. One that
-  /// had not asked to commit has committed all the same, and is told so
-  /// as the reference tells it, with what it read lost.
+  /// The takeover committed the transaction. Ordinary replies may have
+  /// been lost: complete outstanding writes and fail outstanding reads,
+  /// while keeping the transaction's outcome committed.
   fn take_fail_conf(&mut self, signal: &SignalView<'_>) -> bool {
     let conf = match TcKeyFailConf::decode(signal.data) {
       Ok(conf) => conf,
@@ -1040,16 +1043,42 @@ impl ApidConnection {
       Some(tid) => tid,
       None => return false,
     };
-    let asked = match self.transactions.get(tid.0) {
-      Some(trans) => trans.state == CommitState::CommitRequested,
+    let (tc, sent) = match self.transactions.get(tid.0) {
+      Some(trans) => (trans.tc, trans.sent.clone()),
       None => return false,
     };
-    if asked {
-      self.end_transaction(tid, CommitState::Committed, None, 0);
-    } else {
-      let error = IcError::new(IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED);
-      self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
+    let lost_read = IcError::new(IC_NDB_ERROR_TAKEOVER_READ_LOST);
+    let mut error = None;
+    for qid in &sent {
+      if let Some(query) = self.queries.get(qid.0) {
+        if query.execution.is_read {
+          error = Some(lost_read);
+        }
+      }
     }
+    // Set the outcome before any callback runs, including when an earlier
+    // confirmation already marked it committed but rows were still pending.
+    if let Some(trans) = self.transactions.get_mut(tid.0) {
+      trans.state = CommitState::Committed;
+      trans.end_wanted = None;
+      trans.error = error;
+    }
+    // The failed coordinator's record must never go back into the pool.
+    self.lose_tc_record(&tc);
+    for qid in sent {
+      let query = match self.queries.get_mut(qid.0) {
+        Some(query) => query,
+        None => continue,
+      };
+      query.set_result_len(0);
+      if query.execution.is_read {
+        query.fail(lost_read);
+      } else {
+        query.set_state(QueryState::Completed);
+      }
+      self.finish_query(qid);
+    }
+    self.release_if_done(tid);
     true
   }
 
