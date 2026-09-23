@@ -224,6 +224,11 @@ impl Transaction {
     ended && self.sent.is_empty() && self.defined.is_empty()
   }
 
+  /// Accept new work only before commit or rollback has been requested.
+  fn is_open(&self) -> bool {
+    self.state == CommitState::Started && self.end_wanted.is_none()
+  }
+
   fn ended(&self) -> bool {
     self.state == CommitState::Committed
       || self.state == CommitState::RolledBack
@@ -500,13 +505,10 @@ impl ApidConnection {
     user_ref: usize,
     callback: Option<QueryCallback>,
   ) -> Result<(), IcError> {
-    let (id, ended, tc) = match self.transactions.get(trans_id.0) {
-      Some(trans) => (trans.trans_id, trans.ended(), trans.tc),
-      None => return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE)),
+    let (id, tc) = match self.transactions.get(trans_id.0) {
+      Some(trans) if trans.is_open() => (trans.trans_id, trans.tc),
+      _ => return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE)),
     };
-    if ended {
-      return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
-    }
     let query = match self.queries.get(query_id.0) {
       Some(query) => query,
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
@@ -611,14 +613,16 @@ impl ApidConnection {
 
   /// Ask for the transaction to commit (`ic_apid_conn_commit_transaction`).
   /// The commit goes with the next send: on the last query defined and
-  /// not yet sent, or as a request of its own.
+  /// not yet sent, or as a request of its own. No further queries may
+  /// be defined once commit is requested.
   pub fn commit_transaction(&mut self, id: TransId) -> Result<(), IcError> {
     self.ask_to_end(id, CommitState::CommitRequested)
   }
 
   /// Ask for the transaction to roll back
   /// (`ic_apid_conn_rollback_transaction`). Queries defined and not yet
-  /// sent are dropped.
+  /// sent are dropped. No further queries may be defined once rollback
+  /// is requested.
   pub fn rollback_transaction(&mut self, id: TransId) -> Result<(), IcError> {
     self.ask_to_end(id, CommitState::RollbackRequested)
   }
@@ -631,7 +635,7 @@ impl ApidConnection {
     let mut dropped: Vec<QueryId> = Vec::new();
     match self.transactions.get_mut(id.0) {
       Some(trans) => {
-        if trans.ended() || trans.end_wanted.is_some() {
+        if !trans.is_open() {
           return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
         }
         trans.end_wanted = Some(how);
