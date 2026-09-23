@@ -263,13 +263,20 @@ pub fn unpack_row(
   let mut bit: usize = 0;
   let mut attr_id: u32 = 0;
   while bit < total_bits {
-    let read = mask_bit(mask, bit);
-    bit += 1;
-    let this_id = attr_id;
-    attr_id += 1;
-    if !read {
+    // A column not read takes one bit, so a run of zero bits is as many
+    // columns skipped: jump over the run within its word at once rather
+    // than bit by bit.
+    let rest = mask[bit / 32] >> (bit % 32);
+    if rest == 0 {
+      let skip = 32 - bit % 32;
+      bit += skip;
+      attr_id += skip as u32;
       continue;
     }
+    let zeros = rest.trailing_zeros() as usize;
+    bit += zeros + 1;
+    let this_id = attr_id + zeros as u32;
+    attr_id = this_id + 1;
     let (attr, field, position) = match field_of(rec, this_id) {
       Some(found) => found,
       None => return Err(bad),

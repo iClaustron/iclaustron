@@ -88,6 +88,23 @@ pub struct TableDef {
   info: TableInfo,
   hash_map: Option<Arc<HashMapInfo>>,
   valid: AtomicBool,
+  /// By column id, the column's place in `info.attributes`, or
+  /// `u32::MAX`: a column is found by index, not by a search, on paths
+  /// taken for every column of every row.
+  attr_index: Vec<u32>,
+}
+
+/// The place of each column in `attributes`, by column id.
+fn index_attributes(info: &TableInfo) -> Vec<u32> {
+  let mut index: Vec<u32> = Vec::new();
+  for (place, attr) in info.attributes.iter().enumerate() {
+    let id = attr.attribute_id as usize;
+    if id >= index.len() {
+      index.resize(id + 1, u32::MAX);
+    }
+    index[id] = place as u32;
+  }
+  index
 }
 
 impl std::fmt::Debug for TableDef {
@@ -108,10 +125,12 @@ impl TableDef {
     info: TableInfo,
     hash_map: Option<Arc<HashMapInfo>>,
   ) -> TableDef {
+    let attr_index = index_attributes(&info);
     TableDef {
       info,
       hash_map,
       valid: AtomicBool::new(true),
+      attr_index,
     }
   }
 
@@ -151,11 +170,8 @@ impl TableDef {
 
   /// A field, by its id.
   pub fn field(&self, field_id: u32) -> Option<&AttributeInfo> {
-    self
-      .info
-      .attributes
-      .iter()
-      .find(|attr| attr.attribute_id == field_id)
+    let place = *self.attr_index.get(field_id as usize)?;
+    self.info.attributes.get(place as usize)
   }
 
   /// Which fragment each key hash goes to, if the table is placed by a

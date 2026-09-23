@@ -441,6 +441,16 @@ rows. The code went back to the version measured at 1.73 million.
   between depths one and four, and a single thread now does 2.6
   million reads a second.
 
+  **Unpacking a row by its present columns, 2026-09-24.** The same
+  profile put `unpack_row` at 6.5%: it stepped through every bit of the
+  packed row's mask, and found each present column by two searches,
+  one over the record's fields and one over the table's columns. It now
+  jumps over runs of absent columns with `trailing_zeros`, an absent
+  column taking one bit, and the record and the table description each
+  keep a table from column id to place, built when they are made, which
+  also serves packing, the key codec and the text codec. `t9`'s two
+  columns gain little from it; wide tables gain most.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given

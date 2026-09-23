@@ -157,6 +157,22 @@ pub struct Record {
   table: Arc<TableDef>,
   fields: Vec<RecordField>,
   row_size: u32,
+  /// By column id, the column's position in `fields`, or `u32::MAX`:
+  /// found by index when a row is packed or unpacked.
+  position_by_id: Vec<u32>,
+}
+
+/// The position of each field, by its column id.
+fn index_positions(fields: &[RecordField]) -> Vec<u32> {
+  let mut index: Vec<u32> = Vec::new();
+  for (position, field) in fields.iter().enumerate() {
+    let id = field.field_id as usize;
+    if id >= index.len() {
+      index.resize(id + 1, u32::MAX);
+    }
+    index[id] = position as u32;
+  }
+  index
 }
 
 impl std::fmt::Debug for Record {
@@ -218,10 +234,12 @@ impl Record {
       });
     }
     check_layout(&fields, row_size)?;
+    let position_by_id = index_positions(&fields);
     Ok(Record {
       table: Arc::clone(table),
       fields,
       row_size,
+      position_by_id,
     })
   }
 
@@ -297,14 +315,11 @@ impl Record {
   /// The position of a field, by the id the table gives it
   /// (`ic_record_get_position`).
   pub fn position_of(&self, field_id: u32) -> Option<u32> {
-    let mut position: usize = 0;
-    while position < self.fields.len() {
-      if self.fields[position].field_id == field_id {
-        return Some(position as u32);
-      }
-      position += 1;
+    let position = *self.position_by_id.get(field_id as usize)?;
+    if position == u32::MAX {
+      return None;
     }
-    None
+    Some(position)
   }
 
   /// True if every primary key field is in the record, as a key record
