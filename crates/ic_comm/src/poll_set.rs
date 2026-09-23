@@ -185,6 +185,8 @@ mod backend_impl {
   /// set for us.
   pub struct Backend {
     epoll_fd: i32,
+    /// What the kernel reports, kept between waits for its allocation.
+    events: Vec<libc::epoll_event>,
   }
 
   impl Backend {
@@ -194,7 +196,10 @@ mod backend_impl {
       if fd < 0 {
         return Err(IcError::last_os_error());
       }
-      Ok(Backend { epoll_fd: fd })
+      Ok(Backend {
+        epoll_fd: fd,
+        events: Vec::new(),
+      })
     }
 
     pub fn add(&mut self, fd: i32) -> Result<(), IcError> {
@@ -232,7 +237,9 @@ mod backend_impl {
       max_events: usize,
       out: &mut Vec<ReadyEvent>,
     ) -> Result<(), IcError> {
-      let mut events: Vec<libc::epoll_event> = Vec::with_capacity(max_events);
+      let events = &mut self.events;
+      events.clear();
+      events.reserve(max_events);
       // SAFETY: epoll_wait fills up to max_events entries of the buffer
       // just reserved; the length is set from its return value.
       let count = unsafe {
@@ -257,9 +264,9 @@ mod backend_impl {
         let event = events[i];
         let mut ret_code: i32 = 0;
         let flags = event.events;
-        if (flags & (libc::EPOLLERR as u32)) != 0 {
-          ret_code = libc::ECONNRESET;
-        } else if (flags & (libc::EPOLLHUP as u32)) != 0 {
+        // An error or a hang-up both mean the link is gone.
+        let gone = (libc::EPOLLERR | libc::EPOLLHUP) as u32;
+        if (flags & gone) != 0 {
           ret_code = libc::ECONNRESET;
         }
         out.push(ReadyEvent {
@@ -287,6 +294,8 @@ mod backend_impl {
   /// The `kqueue` descriptor. Like `epoll`, the kernel holds the set.
   pub struct Backend {
     kqueue_fd: i32,
+    /// What the kernel reports, kept between waits for its allocation.
+    events: Vec<libc::kevent>,
   }
 
   fn make_event(fd: i32, flags: u16) -> libc::kevent {
@@ -311,7 +320,10 @@ mod backend_impl {
       unsafe {
         libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
       }
-      Ok(Backend { kqueue_fd: fd })
+      Ok(Backend {
+        kqueue_fd: fd,
+        events: Vec::new(),
+      })
     }
 
     fn change(&mut self, event: libc::kevent) -> Result<(), IcError> {
@@ -357,7 +369,9 @@ mod backend_impl {
       } else {
         &timeout
       };
-      let mut events: Vec<libc::kevent> = Vec::with_capacity(max_events);
+      let events = &mut self.events;
+      events.clear();
+      events.reserve(max_events);
       // SAFETY: kevent fills up to max_events entries of the buffer just
       // reserved; the length is set from its return value.
       let count = unsafe {
