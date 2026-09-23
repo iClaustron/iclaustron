@@ -86,7 +86,6 @@ use ic_apid::query::TransId;
 use ic_apid::query::WriteKeyArgs;
 use ic_apid::query::WriteKind;
 use ic_apid::record::Record;
-use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
 use ic_ndb_signals::dict_tab_info;
@@ -787,6 +786,19 @@ fn check_columns(def: &Arc<TableDef>) -> Result<(), String> {
   Ok(())
 }
 
+/// An integer into its field of the row, as little-endian bytes of the
+/// column's size, and the field marked not null.
+fn put_integer(rec: &Record, position: u32, value: i64, row: &mut [u8]) {
+  if let Some(field) = rec.field(position) {
+    let at = field.offset() as usize;
+    let size = (field.size() as usize).min(8);
+    row[at..at + size].copy_from_slice(&value.to_le_bytes()[..size]);
+    if field.is_nullable() {
+      let _ = rec.set_null(row, position, false);
+    }
+  }
+}
+
 /// A binary or character column, which takes `--bytes` bytes.
 fn is_bytes(attr: &dict_tab_info::AttributeInfo) -> bool {
   matches!(
@@ -880,25 +892,17 @@ fn fill_query(
       put_bytes(rec, attr, position, bytes, query.attr_row_mut())?;
       continue;
     }
-    let text = if attr.primary_key {
-      key.to_string()
+    // Integers go in as their bytes, so that the tool spends nothing on
+    // text: formatting and parsing each key cost 5% of what it measured.
+    if attr.primary_key {
+      put_integer(rec, position, key, query.key_row_mut());
+      put_integer(rec, position, key, query.attr_row_mut());
     } else if !values_too {
       continue;
     } else if is_integer(attr.ext_type) {
-      (key * 10).to_string()
+      put_integer(rec, position, key * 10, query.attr_row_mut());
     } else {
-      text_row::IC_NULL_TEXT.to_string()
-    };
-    let bad = IcError::new(ic_port::err::IC_ERROR_VALUE_TOO_LONG);
-    if attr.primary_key {
-      let put = text_row::put_value(rec, position, &text, query.key_row_mut());
-      if put.is_err() {
-        return Err(bad);
-      }
-    }
-    let put = text_row::put_value(rec, position, &text, query.attr_row_mut());
-    if put.is_err() {
-      return Err(bad);
+      rec.set_null(query.attr_row_mut(), position, true)?;
     }
   }
   Ok(())
