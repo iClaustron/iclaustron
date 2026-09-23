@@ -1401,20 +1401,8 @@ impl ApidConnection {
           error = Some(IcError::new(IC_NDB_ERROR_NODE_FAILURE_ABORT));
         }
       }
-      let why = match error {
-        Some(e) => e,
-        None => IcError::new(err::IC_ERROR_TRANSACTION_ROLLED_BACK),
-      };
-      if let Some(trans) = self.transactions.get_mut(tid.0) {
-        let defined = std::mem::take(&mut trans.defined);
-        for qid in defined {
-          self.unstage_query(qid);
-          if let Some(query) = self.queries.get_mut(qid.0) {
-            query.fail(why);
-          }
-          self.executed.push_back(qid);
-        }
-      }
+      // Use the common rollback path for both sent and defined queries,
+      // including cancellation of staged requests and callback delivery.
       self.end_transaction(tid, CommitState::RolledBack, error, 0);
     }
   }
