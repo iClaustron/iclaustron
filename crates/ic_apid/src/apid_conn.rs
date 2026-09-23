@@ -1068,13 +1068,14 @@ impl ApidConnection {
     }
   }
 
-  /// Give back every free record whose link still stands, without
-  /// waiting for the answers: the connection is going.
+  /// Give back every record whose link still stands, without waiting
+  /// for the answers: the connection is going. TCRELEASEREQ also makes
+  /// the coordinator clean up unfinished work before freeing the record.
   fn release_tc_records(&mut self) {
     let own_ref = self.block_ref();
     let block = self.block_number();
     for rec in &self.tc_records {
-      if rec.busy || !self.link_is(rec.node_id, rec.generation) {
+      if !self.link_is(rec.node_id, rec.generation) {
         continue;
       }
       let release = TcReleaseReq {
