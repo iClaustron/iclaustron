@@ -685,6 +685,7 @@ impl ApidConnection {
   fn send_transaction(&mut self, id: TransId) -> Result<(), IcError> {
     let (defined, end_wanted, begun, tc, trans_id) =
       match self.transactions.get_mut(id.0) {
+        Some(trans) if trans.ended() => return Ok(()),
         Some(trans) => (
           std::mem::take(&mut trans.defined),
           trans.end_wanted,
@@ -1244,8 +1245,8 @@ impl ApidConnection {
     self.release_if_done(tid);
   }
 
-  /// The coordinator's last word on a transaction. A rollback fails
-  /// every query still out, with the error that caused it.
+  /// The coordinator's last word on a transaction. A rollback cancels
+  /// staged requests and fails every sent or defined query with its error.
   fn end_transaction(
     &mut self,
     tid: TransId,
@@ -1253,6 +1254,7 @@ impl ApidConnection {
     error: Option<IcError>,
     gci: u64,
   ) {
+    let mut defined: Vec<QueryId> = Vec::new();
     let sent: Vec<QueryId> = match self.transactions.get_mut(tid.0) {
       Some(trans) => {
         if trans.ended() {
@@ -1263,6 +1265,7 @@ impl ApidConnection {
         trans.error = error;
         trans.gci = gci;
         if ended == CommitState::RolledBack {
+          defined = trans.defined.clone();
           trans.sent.clone()
         } else {
           Vec::new()
@@ -1274,7 +1277,16 @@ impl ApidConnection {
       Some(e) => e,
       None => IcError::new(err::IC_ERROR_TRANSACTION_ROLLED_BACK),
     };
+    // Cancel every staged request before invoking any callback: a
+    // callback may send work. Keep the queries on the transaction's
+    // lists until each completion removes it, so is_done stays accurate.
+    for qid in &defined {
+      self.unstage_query(*qid);
+    }
     for qid in sent {
+      self.fail_query(qid, why);
+    }
+    for qid in defined {
       self.fail_query(qid, why);
     }
     self.release_if_done(tid);
