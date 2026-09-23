@@ -531,6 +531,27 @@ rows. The code went back to the version measured at 1.73 million.
   fallback and the same test vectors pinning both. Watch for bounds
   checks on the key buffer, and never measure a debug build: its
   overflow checks and absent inlining make the comparison meaningless.
+- **Send long signals in fragments** (found 2026-09-24, not yet fixed).
+  `header::encode` refuses a message above 32 KB
+  (`IC_ERROR_RECORD_SIZE_TOO_BIG`) and nothing splits a signal on the
+  send side, while RonDB takes rows of up to 72 000 bytes
+  (`MAX_TUPLE_SIZE_IN_WORDS` 18 000, `ndb_limits.h`): a `TCKEYREQ`
+  writing a row above about 32 KB, or a long key with a large row,
+  cannot be sent today. Receiving such a row works, fragments being
+  joined in `fragments.rs`; the send side needs the counterpart, a
+  signal whose sections pass `MAX_SIZE_SINGLE_SIGNAL` (7 400 words)
+  split into fragments as the protocol defines. Verify the threshold
+  and the fragment layout in RonDB's sending code first. Exit: an
+  integration test that writes a row of about 60 KB and reads it back.
+- **Raise the user threads per process from 256** (found 2026-09-24,
+  not yet fixed). `IC_MAX_THREAD_CONNECTIONS` is 256, and the next
+  `create_connection` gets `IC_ERROR_TOO_MANY_USER_THREADS`, where the
+  NDB API allows 4 711 (`IC_MAX_API_THREADS`): a server with a thread
+  per client connection would hit it. Raising it costs each receive
+  thread's router one empty page per possible user thread, about 48
+  bytes, and the thread table a slot; the pages can be made on first
+  use instead. The limit of four management servers in a connect
+  string (`IC_MAX_CLUSTER_SERVERS`) can go at the same time.
 - Documentation: user guide, `cargo doc`, per-crate `MODULE.md`.
 - Exit: the 0.1 success criteria in
   [01-goals-and-principles.md](01-goals-and-principles.md).

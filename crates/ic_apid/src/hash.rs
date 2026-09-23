@@ -174,6 +174,56 @@ pub fn partition_of(
   Ok(map.fragment_of(partition_hash(table, &key)))
 }
 
+/// Node ids a node choice collects, kept inline up to this many: a
+/// partition has at most four replicas. More, which only a fully
+/// replicated table in a large cluster lists, go to the heap.
+const IC_INLINE_NODES: usize = 8;
+
+/// A short list of node ids that allocates nothing until it outgrows
+/// [`IC_INLINE_NODES`], when it moves to a vector rather than refusing:
+/// choosing a node is done for every transaction.
+struct NodeList {
+  inline: [u32; IC_INLINE_NODES],
+  len: usize,
+  more: Vec<u32>,
+}
+
+impl NodeList {
+  fn new() -> NodeList {
+    NodeList {
+      inline: [0; IC_INLINE_NODES],
+      len: 0,
+      more: Vec::new(),
+    }
+  }
+
+  fn push(&mut self, node: u32) {
+    if self.more.is_empty() && self.len < IC_INLINE_NODES {
+      self.inline[self.len] = node;
+      self.len += 1;
+      return;
+    }
+    if self.more.is_empty() {
+      self.more.extend_from_slice(&self.inline[..self.len]);
+    }
+    self.more.push(node);
+  }
+
+  fn as_slice(&self) -> &[u32] {
+    if !self.more.is_empty() {
+      return &self.more;
+    }
+    &self.inline[..self.len]
+  }
+
+  fn as_mut_slice(&mut self) -> &mut [u32] {
+    if !self.more.is_empty() {
+      return &mut self.more;
+    }
+    &mut self.inline[..self.len]
+  }
+}
+
 /// The node to send an operation on `partition` to, given the nodes
 /// that are started, or `None` if no node holding it is. `turn` spreads
 /// the choice where any replica will do; any changing number serves.
@@ -186,29 +236,29 @@ pub fn choose_node(
   let info = table.info();
   if info.fully_replicated {
     // Any node holding any fragment.
-    let mut nodes: Vec<u32> = Vec::new();
+    let mut nodes = NodeList::new();
     for node in &info.fragment_nodes {
       let node = *node as u32;
-      if started.contains(&node) && !nodes.contains(&node) {
+      if started.contains(&node) && !nodes.as_slice().contains(&node) {
         nodes.push(node);
       }
     }
-    return pick_in_turn(&nodes, turn);
+    return pick_in_turn(nodes.as_slice(), turn);
   }
   let replicas = info.nodes_of_fragment(partition);
-  let mut alive: Vec<u32> = Vec::new();
+  let mut alive = NodeList::new();
   for node in replicas {
     if started.contains(&(*node as u32)) {
       alive.push(*node as u32);
     }
   }
   if info.read_backup {
-    return pick_in_turn(&alive, turn);
+    return pick_in_turn(alive.as_slice(), turn);
   }
   if let Some(primary) = primary_of(table, partition, started) {
     return Some(primary);
   }
-  alive.first().copied()
+  alive.as_slice().first().copied()
 }
 
 fn pick_in_turn(nodes: &[u32], turn: u32) -> Option<u32> {
@@ -243,14 +293,15 @@ pub fn primary_of(
     return None;
   }
   // The group is the fragment's nodes; its alive nodes, in id order.
-  let mut alive: Vec<u32> = Vec::new();
+  let mut group = NodeList::new();
   for node in replicas {
     let node = *node as u32;
     if started.contains(&node) {
-      alive.push(node);
+      group.push(node);
     }
   }
-  alive.sort_unstable();
+  group.as_mut_slice().sort_unstable();
+  let alive = group.as_slice();
   if alive.is_empty() {
     return None;
   }
@@ -450,6 +501,25 @@ mod tests {
     let row = row_of(&rec, 7, b"hi");
     let key = distribution_key(&rec, &row).expect("key");
     assert_eq!(key, [7, 0, 0, 0, 2, b'h', b'i', 0]);
+  }
+
+  #[test]
+  fn a_node_list_moves_to_the_heap_past_its_inline_room() {
+    let mut list = NodeList::new();
+    let mut i: u32 = 0;
+    while i < IC_INLINE_NODES as u32 {
+      list.push(i + 1);
+      i += 1;
+    }
+    assert!(list.more.is_empty(), "still inline");
+    list.push(100);
+    list.push(50);
+    assert_eq!(list.as_slice().len(), IC_INLINE_NODES + 2);
+    assert_eq!(list.as_slice()[0], 1);
+    assert_eq!(list.as_slice()[IC_INLINE_NODES], 100);
+    list.as_mut_slice().sort_unstable();
+    assert_eq!(list.as_slice()[IC_INLINE_NODES], 50);
+    assert_eq!(list.as_slice()[IC_INLINE_NODES + 1], 100);
   }
 
   #[test]
