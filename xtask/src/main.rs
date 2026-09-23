@@ -287,6 +287,7 @@ fn run_test_integration(rest: &[String]) -> i32 {
     "integration",
     "--",
     "--test-threads=1",
+    "--nocapture",
   ];
   if rest.len() > 1 {
     args.push(rest[1].as_str());

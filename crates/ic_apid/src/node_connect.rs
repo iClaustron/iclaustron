@@ -163,6 +163,83 @@ impl ReceivedSignal {
       None => &[],
     }
   }
+
+  /// The signal seen as a view, for code that reads signals where they
+  /// lie.
+  pub fn view(&self) -> SignalView<'_> {
+    let mut sections: [&[u32]; header::IC_MAX_SECTIONS] =
+      [&[]; header::IC_MAX_SECTIONS];
+    let mut i: usize = 0;
+    while i < self.sections.len() && i < header::IC_MAX_SECTIONS {
+      sections[i] = &self.sections[i];
+      i += 1;
+    }
+    SignalView {
+      gsn: self.gsn,
+      receiver_block: self.receiver_block,
+      sender_block: self.sender_block,
+      sender_node_id: self.sender_node_id,
+      fragment_info: self.fragment_info,
+      data: &self.data,
+      sections,
+      num_sections: i,
+    }
+  }
+}
+
+/// A signal read where it lies, in a receive buffer or in a page a
+/// receive thread handed over ([`signal_page`](crate::signal_page)):
+/// the same fields as a [`ReceivedSignal`], with the words borrowed.
+/// This is what the hot path reads; a signal that has to be kept, a
+/// fragment waiting for the rest of its train or a reply a request
+/// waits for, is copied out with [`to_owned`](Self::to_owned).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SignalView<'a> {
+  /// Which signal it is.
+  pub gsn: u16,
+  /// The block it is addressed to.
+  pub receiver_block: u16,
+  /// The block that sent it, for replying.
+  pub sender_block: u16,
+  /// The node that sent it.
+  pub sender_node_id: u32,
+  /// Where it stands in a train of fragments.
+  pub fragment_info: FragmentInfo,
+  /// The signal data words.
+  pub data: &'a [u32],
+  /// The sections, the first `num_sections` of them present.
+  pub sections: [&'a [u32]; header::IC_MAX_SECTIONS],
+  /// How many sections the signal carried.
+  pub num_sections: usize,
+}
+
+impl SignalView<'_> {
+  /// One section, or an empty slice when the signal did not carry it.
+  pub fn section(&self, index: usize) -> &[u32] {
+    if index >= self.num_sections {
+      return &[];
+    }
+    self.sections[index]
+  }
+
+  /// A copy that owns its words.
+  pub fn to_owned(&self) -> ReceivedSignal {
+    let mut sections: Vec<Vec<u32>> = Vec::with_capacity(self.num_sections);
+    let mut i: usize = 0;
+    while i < self.num_sections {
+      sections.push(self.sections[i].to_vec());
+      i += 1;
+    }
+    ReceivedSignal {
+      gsn: self.gsn,
+      receiver_block: self.receiver_block,
+      sender_block: self.sender_block,
+      sender_node_id: self.sender_node_id,
+      fragment_info: self.fragment_info,
+      data: self.data.to_vec(),
+      sections,
+    }
+  }
 }
 
 impl NodeConnection {
@@ -226,7 +303,7 @@ impl NodeConnection {
     let transporter =
       handshake::connect_to_data_node(&connect_config, own_node_id, node_id)?;
     let mut reader = SignalReader::new();
-    reader.push_bytes(&transporter.leftover);
+    reader.push_bytes(&transporter.leftover)?;
     let heartbeat = match config.data_node(node_id) {
       Some(node) => node.api_heartbeat_interval_ms,
       None => 0,

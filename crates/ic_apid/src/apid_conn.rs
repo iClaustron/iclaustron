@@ -47,6 +47,7 @@ use std::sync::Arc;
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
 use ic_ndb_signals::header;
+use ic_ndb_signals::header::FragmentInfo;
 use ic_ndb_signals::header::SignalHeader;
 use ic_ndb_signals::tc_seize::TcReleaseReq;
 use ic_ndb_signals::tc_seize::TcSeizeConf;
@@ -65,9 +66,11 @@ use crate::dict_cache::TableDef;
 use crate::dict_client;
 use crate::fragments::FragmentAssembler;
 use crate::node_connect::ReceivedSignal;
+use crate::node_connect::SignalView;
 use crate::query::ApidQuery;
 use crate::query::QueryId;
 use crate::query::TransId;
+use crate::signal_page;
 use crate::thread_conn::ThreadConnection;
 use crate::transaction::Transaction;
 
@@ -140,6 +143,26 @@ impl Expectations {
 
   /// Give a whole signal to the request it answers. Hands the signal
   /// back if no request is waiting for it.
+  /// True if a request waits for this signal, so that it has to be
+  /// kept: what [`offer`](Self::offer) would take.
+  fn claims(&self, signal: &SignalView<'_>) -> bool {
+    let first = match signal.data.first() {
+      Some(first) => *first,
+      None => return false,
+    };
+    for exp in &self.list {
+      let from_node = exp.any_node || exp.node_id == signal.sender_node_id;
+      if exp.open()
+        && exp.request_id == first
+        && from_node
+        && exp.gsns.contains(&signal.gsn)
+      {
+        return true;
+      }
+    }
+    false
+  }
+
   fn offer(&mut self, signal: ReceivedSignal) -> Option<ReceivedSignal> {
     let first = match signal.data.first() {
       Some(first) => *first,
@@ -337,6 +360,9 @@ pub struct ApidConnection {
   /// How many query callbacks are running, on this thread, inside the
   /// poll that completed them. A poll from inside one does nothing.
   pub(crate) in_callback: u32,
+  /// Pages of signals taken from the inbox, read, and given back on the
+  /// next poll.
+  pages: Vec<signal_page::SignalPage>,
 }
 
 /// Signals packed for one node, in the order they were queued
@@ -383,6 +409,7 @@ impl ApidConnection {
       active: BTreeMap::new(),
       outgoing: Vec::new(),
       in_callback: 0,
+      pages: Vec::new(),
     })
   }
 
@@ -595,11 +622,19 @@ impl ApidConnection {
       // A query callback is running inside a poll already.
       return 0;
     }
-    let signals = self.inbox.take(wait_ms);
-    let taken = signals.len();
-    for signal in signals {
-      self.receive(signal);
+    // The pages read last time go back to the inbox, and the pages
+    // posted since come out; the signals are read where they lie.
+    let mut pages = std::mem::take(&mut self.pages);
+    self.inbox.exchange(wait_ms, &mut pages);
+    let mut taken: usize = 0;
+    for page in &pages {
+      let mut at: usize = 0;
+      while let Some(signal) = signal_page::next(page, &mut at) {
+        taken += 1;
+        self.receive_view(&signal);
+      }
     }
+    self.pages = pages;
     self.fail_lost_requests();
     self.fail_lost_transactions();
     // What the replies called for, such as commit acknowledgements,
@@ -885,6 +920,32 @@ impl ApidConnection {
   }
 
   /// One signal from the inbox: joined, then matched.
+  /// A signal read where it lies. Only what has to be kept is copied:
+  /// a fragment, which waits for the rest of its train, and a reply a
+  /// request waits for. The rest, which is nearly everything, is
+  /// executed in place.
+  fn receive_view(&mut self, signal: &SignalView<'_>) {
+    let whole = signal.fragment_info == FragmentInfo::Whole;
+    if !whole || self.expectations.claims(signal) {
+      self.receive(signal.to_owned());
+      return;
+    }
+    if !self.route_reply(signal) {
+      self.note_stray(signal);
+    }
+  }
+
+  fn note_stray(&mut self, signal: &SignalView<'_>) {
+    self.unexpected += 1;
+    ic_port::debug_print!(
+      IC_NDB_MESSAGE_LEVEL,
+      "No request expects {} from node {} to block {:#06x}",
+      gsn::gsn_name(signal.gsn).unwrap_or("an unknown signal"),
+      signal.sender_node_id,
+      signal.receiver_block
+    );
+  }
+
   fn receive(&mut self, signal: ReceivedSignal) {
     let sender = signal.sender_node_id;
     let added = match self.assembler.add(signal) {
@@ -911,15 +972,9 @@ impl ApidConnection {
     };
     // Not a request's reply: a transaction's, or a query's, if the
     // first word names one.
-    if let Some(stray) = self.route_reply(unclaimed) {
-      self.unexpected += 1;
-      ic_port::debug_print!(
-        IC_NDB_MESSAGE_LEVEL,
-        "No request expects {} from node {} to block {:#06x}",
-        gsn::gsn_name(stray.gsn).unwrap_or("an unknown signal"),
-        stray.sender_node_id,
-        stray.receiver_block
-      );
+    let view = unclaimed.view();
+    if !self.route_reply(&view) {
+      self.note_stray(&view);
     }
   }
 

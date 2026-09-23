@@ -133,6 +133,11 @@ pub const IC_MAX_MISSED_HEARTBEATS: u32 = 4;
 pub const IC_CONNECT_THREAD_STACK: usize = 128 * 1024;
 /// Stack for the receive thread, the C's medium size.
 pub const IC_RECEIVE_THREAD_STACK: usize = 256 * 1024;
+/// Signals of at least this many words are handed to a user thread
+/// where they lie in the receive page, not copied; see
+/// [`signal_page`](crate::signal_page). A first guess, 1 KB, to be set
+/// by measuring.
+pub const IC_LARGE_SIGNAL_WORDS: u32 = 256;
 /// Stack for the heartbeat thread, which does very little.
 pub const IC_HEARTBEAT_THREAD_STACK: usize = 128 * 1024;
 /// How long the receive thread waits in its poll set before looking at
@@ -677,6 +682,9 @@ pub(crate) struct ApidShared {
   pub(crate) dict_cache: DictCache,
   /// The send thread pool's queue.
   pub(crate) send_pool: Arc<SendPool>,
+  /// Signals of at least this many words go by reference; zero copies
+  /// every signal.
+  pub(crate) large_signal_words: AtomicU32,
 }
 
 impl ApidShared {
@@ -1110,6 +1118,7 @@ impl ApidGlobal {
       thread_table: Arc::new(ThreadTable::new()),
       dict_cache: DictCache::new(),
       send_pool,
+      large_signal_words: AtomicU32::new(IC_LARGE_SIGNAL_WORDS),
     });
 
     let num_nodes = shared.nodes.len();
@@ -1220,6 +1229,17 @@ impl ApidGlobal {
   /// The data nodes that have a link up and say they are started.
   pub fn started_nodes(&self) -> Vec<u32> {
     self.shared.started_nodes()
+  }
+
+  /// From how many words on a signal is handed to its user thread
+  /// where it lies rather than copied; [`IC_LARGE_SIGNAL_WORDS`] unless
+  /// set, and zero copies every signal. Takes effect from the receive
+  /// threads' next read.
+  pub fn set_large_signal_words(&self, words: u32) {
+    self
+      .shared
+      .large_signal_words
+      .store(words, Ordering::Release);
   }
 
   /// A connection for one user thread: its own block number and inbox,

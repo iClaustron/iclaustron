@@ -78,6 +78,22 @@ $BIN/mysql -uroot -S /tmp/rondb-dev.sock -e "CREATE DATABASE IF NOT EXISTS test"
 `--initial` only on the first start. Stop with `$BIN/ndb_mgm -e shutdown`
 and `mysqladmin -uroot -S /tmp/rondb-dev.sock shutdown`.
 
+### A.2 Running the integration tests against it
+
+```
+export IC_TEST_CONNECTSTRING=localhost:1186
+export IC_TEST_MYSQL="$BIN/mysql -uroot -S /tmp/rondb-dev.sock"
+export IC_TEST_NDB_MGM="$BIN/ndb_mgm -c localhost:1186"
+cargo xtask test-integration
+cargo xtask test-integration localhost:1186 pk_    # one group
+```
+
+The tests make their tables in the database `ic_it`. Without
+`IC_TEST_MYSQL` only the `connect` group runs; without
+`IC_TEST_NDB_MGM` the `failure` group returns without stopping
+anything. The `failure` group stops the second started data node and
+starts it again, which takes as long as the node takes to come back.
+
 The connectstring for iClaustron is then `localhost:1186`:
 
 ```

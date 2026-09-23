@@ -249,11 +249,74 @@ its `MODULE.md` with the "Rust notes for C readers" section.
   criterion, within 2× of the C++ API on one thread, is met at parity.
   Phase 7's 20% target is now a statement about CPU per operation, and
   the sample says where ours goes: the quarter in allocation.
+
+  **Allocation removal, first try, 2026-09-23, rolled back.** Taking
+the send side's allocations away (the sections into buffers kept per
+query, then per connection; the distribution key on the stack; a
+transaction's queries inline) cut the client's CPU and still lost:
+1.60 to 1.64 million reads a second against 1.73, the batch 194 µs
+against 166, at the same rate with `--force`. Spinning before sleeping
+in the user and receive threads, the data nodes' answer to a thread
+that goes idle sooner, won part of it back. What stayed unexplained is
+likely cache: 400 query objects' buffers are colder than the
+allocator's just-freed blocks, and the transaction grew a cache line.
+The 1 000-row benchmark magnifies every client microsecond, as the
+data nodes serve it from cache; the next try measures on a million
+rows. The code went back to the version measured at 1.73 million.
+
+  **Signals in pages, 2026-09-23.** The measured costs were on the
+  receive side: the read buffer moved its whole remainder to the front
+  once per signal consumed, and every signal became a 64-byte structure
+  with its words in an allocation of their own, made on the receive
+  thread and freed on the user thread. Now the reader consumes by
+  offset and compacts once per read; the receive thread copies a small
+  signal straight from the read buffer into the user thread's page for
+  the round, which goes through the inbox whole and comes back emptied;
+  the user thread reads every signal in place (chapter 02, "Signals in
+  pages"). On `t9` at the defaults, a million rows: 1 757 000 reads a
+  second at 665 ns of client CPU per read, against 1 730 000 at 753 ns
+  before, 12% less. A step before, taking the transaction's two query
+  lists off the heap into the queries (the C's intrusive list) measured
+  within the noise, 626 to 782 ns against 657 to 756 ns across depths,
+  and was rolled back: the send side's small, same-thread allocations
+  are cheap, and the object that grows by their removal costs more.
+
+  Large signals stay in the receive page and are read there, the page
+  counted by an `Arc` (the C page's atomic) and sealed while held.
+  Reading a table with a `VARBINARY(29000)` column filled to a given
+  size, 10 000 rows, by reference against copying, client CPU per read:
+  equal to 1 KB, 2 to 7% less from 2 to 16 KB, and at 29 KB within
+  the noise: two runs each gave 5 077 and 5 529 ns copying, 5 546 and
+  5 239 by reference, where single runs had seemed to show by
+  reference 7% behind. Single five-second runs at these sizes spread
+  by 5%, so a comparison takes two or more. Counters on the readers
+  (`signal_reader::reader_stats`, printed by the bench with the page
+  faults) show the trade: by reference saves the receive thread's copy
+  of each row, and pays with the part of a row a read ends in, copied
+  into the next page since a page someone holds is not written (13% of
+  the bytes, 2.2 KB a read at 16 KB rows), and with `recv` writing into
+  whichever page is free rather than into one page that stays in cache
+  (150 ns more system time at 16 KB). No page is allocated after the
+  first few dozen, and page faults are nil in both modes; reads average
+  100 KB in both. Pages of 64 KB instead of 128 made both modes slower,
+  twice the reads for large rows. The first release kept too few free
+  pages and let them all go at once, which doubled system time at 29
+  KB until fixed; free pages are now taken most recently sealed first.
+  Signals of 256 words and up go by reference
+  (`set_large_signal_words`).
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
   asynchronous PK read benchmark is within 2× of the C++ NDB API (the
-  20 % target is Phase 7). The benchmark part is met, at parity, as of
-  2026-09-22; the integration groups are still to be written (chapter
-  08), and `failure` is what would exercise the takeover path live.
+  20 % target is Phase 7). Met as of 2026-09-23: the benchmark at
+  parity on 2026-09-22, and the integration groups `connect`, `dict`,
+  `pk`, `uk`, `types` and `failure` passing against the two-node
+  cluster (chapter 08). Writing them found one protocol fault the
+  tools had never reached: `TC_COMMITREQ` and `TCROLLBACKREQ` carried
+  our pointer for the transaction where the coordinator wants its own,
+  so a commit or rollback with nothing left to send got no reply; every
+  commit until then had ridden on a query's commit flag. The `failure`
+  group is the takeover path seen live: a pending transaction at a
+  restarted coordinator ended rolled back with 4010 and its retry at
+  the survivor committed.
 
 ## Phase 6 — Interpreter (3 weeks)
 

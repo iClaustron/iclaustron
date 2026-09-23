@@ -292,6 +292,11 @@ pub struct Message<'a> {
   pub sections: [&'a [u32]; IC_MAX_SECTIONS],
   /// How many words the whole message occupied.
   pub total_words: usize,
+  /// Where the data begins, in words from the start of the message:
+  /// for a reader that hands the signal on where it lies.
+  pub data_start: usize,
+  /// Where each section begins, likewise.
+  pub section_starts: [usize; IC_MAX_SECTIONS],
 }
 
 impl Message<'_> {
@@ -378,6 +383,8 @@ pub fn decode(words: &[u32]) -> Result<Message<'_>, IcError> {
     data: &[],
     sections: [&[], &[], &[]],
     total_words: total,
+    data_start: 0,
+    section_starts: [0; IC_MAX_SECTIONS],
   };
   if use_signal_id {
     if at >= total {
@@ -390,6 +397,7 @@ pub fn decode(words: &[u32]) -> Result<Message<'_>, IcError> {
     return Err(bad);
   }
   message.data = &words[at..at + data_len];
+  message.data_start = at;
   at += data_len;
 
   // The section lengths come together, then the sections themselves.
@@ -409,6 +417,7 @@ pub fn decode(words: &[u32]) -> Result<Message<'_>, IcError> {
       return Err(bad);
     }
     message.sections[i] = &words[at..at + lens[i]];
+    message.section_starts[i] = at;
     at += lens[i];
     i += 1;
   }

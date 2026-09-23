@@ -316,19 +316,24 @@ impl TcKeyRef {
   }
 }
 
-/// Words in a `TC_COMMITREQ` and a `TCROLLBACKREQ`: our pointer for the
-/// transaction and its id. Verify: `DbtcMain.cpp`, `execTC_COMMITREQ`
-/// and `execTCROLLBACKREQ`.
+/// Words in a `TC_COMMITREQ` and a `TCROLLBACKREQ`: the coordinator's
+/// own pointer for the transaction record, as `TCSEIZECONF` gave it,
+/// and the transaction id. The coordinator indexes its records by the
+/// first word and checks the id against the record; a wrong pointer
+/// gets no reply at all. Verify: `DbtcMain.cpp`, `execTC_COMMITREQ` and
+/// `execTCROLLBACKREQ`; `NdbTransaction.cpp`, `sendCOMMIT` and
+/// `sendROLLBACK`, which put `theTCConPtr` first.
 pub const IC_TC_TRANS_REQ_LEN: usize = 3;
 
 /// Ask the coordinator to commit, or to roll back, a transaction with
-/// nothing left to send: the request names the transaction.
+/// nothing left to send: the request names the transaction by the
+/// coordinator's pointer.
 pub fn tc_trans_req(
-  api_connect_ptr: u32,
+  tc_connect_ptr: u32,
   trans_id1: u32,
   trans_id2: u32,
 ) -> [u32; IC_TC_TRANS_REQ_LEN] {
-  [api_connect_ptr, trans_id1, trans_id2]
+  [tc_connect_ptr, trans_id1, trans_id2]
 }
 
 /// Words in a `TC_COMMITCONF`.

@@ -15,6 +15,10 @@
 //! read into directly, rather than a vector of bytes that would have to
 //! be converted.
 
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
 use ic_comm::connection::Connection;
 use ic_ndb_signals::header;
 use ic_port::err;
@@ -22,33 +26,101 @@ use ic_port::IcError;
 
 /// Words the buffer starts with, enough for several largest-sized
 /// messages before it has to grow.
-const IC_INITIAL_BUFFER_WORDS: usize = 4 * header::IC_MAX_MESSAGE_WORDS;
+/// Words in a receive page: room for four of the largest messages, so
+/// that a signal always fits in one page and a read can be large. Two
+/// was tried: twice the reads for large rows cost more than the smaller
+/// pages saved, in both modes (measured 2026-09-23).
+pub const IC_RECEIVE_PAGE_WORDS: usize = 4 * header::IC_MAX_MESSAGE_WORDS;
+/// Free pages a reader keeps for its next reads, beyond those others
+/// are still reading, which it always keeps. Past this, free pages are
+/// let go one at a time: letting them all go at once meant allocating
+/// new ones at once, zeroed by the kernel, which with rows of 29 KB in
+/// flight doubled the system time (measured 2026-09-23).
+const IC_MAX_FREE_PAGES: usize = 64;
 
-/// Holds what has arrived on one connection and hands out the signals
-/// in it.
+/// What every reader in the process has done, for measuring: reads and
+/// their bytes, page switches, pages allocated, and the bytes of
+/// unfinished signals copied across a switch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReaderStats {
+  /// Reads from a socket.
+  pub reads: u64,
+  /// Bytes they brought.
+  pub bytes_read: u64,
+  /// Times a reader went on in another page.
+  pub page_switches: u64,
+  /// Pages allocated, not taken from those retired.
+  pub pages_allocated: u64,
+  /// Bytes of signals not yet complete copied into the next page.
+  pub tail_bytes_copied: u64,
+}
+
+static IC_READS: AtomicU64 = AtomicU64::new(0);
+static IC_BYTES_READ: AtomicU64 = AtomicU64::new(0);
+static IC_PAGE_SWITCHES: AtomicU64 = AtomicU64::new(0);
+static IC_PAGES_ALLOCATED: AtomicU64 = AtomicU64::new(0);
+static IC_TAIL_BYTES_COPIED: AtomicU64 = AtomicU64::new(0);
+
+/// What the readers have done so far.
+pub fn reader_stats() -> ReaderStats {
+  ReaderStats {
+    reads: IC_READS.load(Ordering::Relaxed),
+    bytes_read: IC_BYTES_READ.load(Ordering::Relaxed),
+    page_switches: IC_PAGE_SWITCHES.load(Ordering::Relaxed),
+    pages_allocated: IC_PAGES_ALLOCATED.load(Ordering::Relaxed),
+    tail_bytes_copied: IC_TAIL_BYTES_COPIED.load(Ordering::Relaxed),
+  }
+}
+
+/// A receive page: words read off the socket, shared with the user
+/// threads a large signal in it was handed to. The count of the `Arc`
+/// is the page's reference count, as the atomic on the C's page is.
+pub type ReceivePage = Arc<Vec<u32>>;
+
+/// The bytes read from one link, in pages (`IC_SOCK_BUF_PAGE`).
+///
+/// The reader writes into its page only while it holds the only
+/// reference. A large signal handed on where it lies takes a reference
+/// ([`page`](Self::page)); from then on the page is sealed, and the
+/// next read goes into another page, the few bytes of a signal not yet
+/// complete copied across. A sealed page is kept among the retired
+/// ones and taken again once nobody else holds it, so that a page is
+/// allocated and freed only by the thread that reads, however many
+/// threads it went to.
 pub struct SignalReader {
-  words: Vec<u32>,
-  /// How many bytes of `words` hold data. A signal may be split across
+  page: ReceivePage,
+  /// Where the first signal not yet consumed begins, in bytes; always
+  /// a whole number of words. Consuming a signal moves this instead of
+  /// moving what follows; what is left is moved once, before the next
+  /// read.
+  start_bytes: usize,
+  /// How many bytes of the page hold data. A signal may be split across
   /// reads at any byte, not only at a word boundary.
   filled_bytes: usize,
+  /// Pages sealed while others still read them.
+  retired: Vec<ReceivePage>,
 }
 
 impl SignalReader {
-  /// A reader with room for a few large messages.
+  /// A reader with one page.
   pub fn new() -> SignalReader {
     SignalReader {
-      words: vec![0u32; IC_INITIAL_BUFFER_WORDS],
+      page: Arc::new(vec![0u32; IC_RECEIVE_PAGE_WORDS]),
+      start_bytes: 0,
       filled_bytes: 0,
+      retired: Vec::new(),
     }
   }
 
   /// Add bytes that were read elsewhere, such as the tail of a
   /// handshake.
-  pub fn push_bytes(&mut self, bytes: &[u8]) {
+  pub fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), IcError> {
     self.make_room(bytes.len());
     let at = self.filled_bytes;
-    self.bytes_mut()[at..at + bytes.len()].copy_from_slice(bytes);
+    let buffer = self.bytes_mut()?;
+    buffer[at..at + bytes.len()].copy_from_slice(bytes);
     self.filled_bytes += bytes.len();
+    Ok(())
   }
 
   /// Read whatever the connection has, and return how many bytes that
@@ -57,22 +129,35 @@ impl SignalReader {
     self.make_room(header::IC_MAX_MESSAGE_BYTES);
     let at = self.filled_bytes;
     let size = {
-      let buffer = self.bytes_mut();
+      let buffer = self.bytes_mut()?;
       conn.read(&mut buffer[at..])?
     };
     self.filled_bytes += size;
+    IC_READS.fetch_add(1, Ordering::Relaxed);
+    IC_BYTES_READ.fetch_add(size as u64, Ordering::Relaxed);
     Ok(size)
   }
 
   /// The whole words that have arrived, which is where a signal is
   /// looked for.
   pub fn complete_words(&self) -> &[u32] {
-    &self.words[..self.filled_bytes / 4]
+    &self.page[self.start_bytes / 4..self.filled_bytes / 4]
+  }
+
+  /// The page the complete words lie in, to take a reference to.
+  pub fn page(&self) -> &ReceivePage {
+    &self.page
+  }
+
+  /// Where [`complete_words`](Self::complete_words) begins in the page,
+  /// in words.
+  pub fn start_words(&self) -> usize {
+    self.start_bytes / 4
   }
 
   /// How many bytes are held but not yet consumed.
   pub fn buffered_bytes(&self) -> usize {
-    self.filled_bytes
+    self.filled_bytes - self.start_bytes
   }
 
   /// The length of the signal at the front, if its first word has
@@ -89,47 +174,165 @@ impl SignalReader {
     }
   }
 
-  /// Drop the first `words` words, moving what is left to the front.
+  /// Drop the first `words` words.
   pub fn consume(&mut self, words: usize) {
-    let bytes = words * 4;
-    if bytes >= self.filled_bytes {
+    self.start_bytes += words * 4;
+    if self.start_bytes >= self.filled_bytes {
+      self.start_bytes = 0;
       self.filled_bytes = 0;
-      return;
     }
-    let remaining = self.filled_bytes - bytes;
-    let buffer = self.bytes_mut();
-    buffer.copy_within(bytes..bytes + remaining, 0);
-    self.filled_bytes = remaining;
   }
 
   /// Forget everything buffered, for a connection being dropped.
   pub fn reset(&mut self) {
+    self.start_bytes = 0;
     self.filled_bytes = 0;
   }
 
-  fn make_room(&mut self, extra_bytes: usize) {
-    let needed = self.filled_bytes + extra_bytes;
-    if needed <= self.words.len() * 4 {
-      return;
+  /// How many pages are sealed and still read by someone.
+  pub fn pages_in_use(&self) -> usize {
+    let mut n: usize = 0;
+    for page in &self.retired {
+      if Arc::strong_count(page) > 1 {
+        n += 1;
+      }
     }
-    let new_words = needed.div_ceil(4).next_power_of_two();
-    self.words.resize(new_words, 0);
+    n
   }
 
-  /// The buffer seen as bytes.
-  ///
-  /// A signal may begin at any byte of the stream, so bytes are read
-  /// straight into the word buffer rather than into a separate byte
-  /// buffer that would then have to be copied word by word.
-  fn bytes_mut(&mut self) -> &mut [u8] {
-    let len = self.words.len() * 4;
-    let ptr = self.words.as_mut_ptr() as *mut u8;
-    // SAFETY: the pointer comes from a live Vec<u32> of that many
-    // words, so the range covers exactly its storage. A Vec<u32> is
-    // aligned for u32, which is more than u8 needs, and u8 has no
-    // invalid values, so every byte of it is readable and writable.
-    unsafe { std::slice::from_raw_parts_mut(ptr, len) }
+  /// Make sure `extra_bytes` more fit after what is held, in a page
+  /// nobody else reads, with what is not yet consumed at its front.
+  fn make_room(&mut self, extra_bytes: usize) {
+    let remaining = self.filled_bytes - self.start_bytes;
+    let needed = remaining + extra_bytes;
+    let shared = Arc::strong_count(&self.page) > 1;
+    if !shared && needed <= self.page.len() * 4 {
+      self.compact();
+      return;
+    }
+    self.switch_page(needed);
   }
+
+  /// Move what is not yet consumed to the front: usually a few bytes of
+  /// a signal whose rest has not arrived, or nothing.
+  fn compact(&mut self) {
+    if self.start_bytes == 0 {
+      return;
+    }
+    let start = self.start_bytes;
+    let remaining = self.filled_bytes - start;
+    if let Ok(buffer) = self.bytes_mut() {
+      buffer.copy_within(start..start + remaining, 0);
+    }
+    self.start_bytes = 0;
+    self.filled_bytes = remaining;
+  }
+
+  /// Go on in another page: a retired one nobody reads any more, or a
+  /// new one. What is not yet consumed is copied across.
+  ///
+  /// The retired pages are in the order they were sealed, and the free
+  /// one taken is the one sealed last: the one used most recently, most
+  /// likely still in cache. Taking any free one spread the reads over
+  /// every page kept, more memory than the caches hold, and `recv` then
+  /// wrote to memory that had to be fetched first.
+  fn switch_page(&mut self, needed_bytes: usize) {
+    let needed_words = needed_bytes.div_ceil(4);
+    let mut next: Option<ReceivePage> = None;
+    let mut i: usize = self.retired.len();
+    while i > 0 {
+      i -= 1;
+      let free = Arc::strong_count(&self.retired[i]) == 1;
+      if free && self.retired[i].len() >= needed_words {
+        next = Some(self.retired.remove(i));
+        break;
+      }
+    }
+    let mut next = match next {
+      Some(page) => page,
+      None => {
+        let mut words = IC_RECEIVE_PAGE_WORDS;
+        if needed_words > words {
+          words = needed_words.next_power_of_two();
+        }
+        IC_PAGES_ALLOCATED.fetch_add(1, Ordering::Relaxed);
+        Arc::new(vec![0u32; words])
+      }
+    };
+    IC_PAGE_SWITCHES.fetch_add(1, Ordering::Relaxed);
+    let start = self.start_bytes;
+    let remaining = self.filled_bytes - start;
+    if remaining > 0 {
+      IC_TAIL_BYTES_COPIED.fetch_add(remaining as u64, Ordering::Relaxed);
+      if let Some(words) = Arc::get_mut(&mut next) {
+        let from = bytes_of(&self.page[..]);
+        bytes_of_mut(words)[..remaining]
+          .copy_from_slice(&from[start..start + remaining]);
+      }
+    }
+    let old = std::mem::replace(&mut self.page, next);
+    if Arc::strong_count(&old) > 1 || old.len() == IC_RECEIVE_PAGE_WORDS {
+      self.retire(old);
+    }
+    self.start_bytes = 0;
+    self.filled_bytes = remaining;
+  }
+
+  /// Keep a sealed page for later, and let go of free pages beyond
+  /// [`IC_MAX_FREE_PAGES`].
+  fn retire(&mut self, page: ReceivePage) {
+    self.retired.push(page);
+    let mut free: usize = 0;
+    for held in &self.retired {
+      if Arc::strong_count(held) == 1 {
+        free += 1;
+      }
+    }
+    // The oldest free pages go first; the order of the rest is kept.
+    let mut i: usize = 0;
+    while free > IC_MAX_FREE_PAGES && i < self.retired.len() {
+      if Arc::strong_count(&self.retired[i]) == 1 {
+        self.retired.remove(i);
+        free -= 1;
+      } else {
+        i += 1;
+      }
+    }
+  }
+
+  /// The page seen as bytes, to read into. Only while nobody else holds
+  /// the page, which [`make_room`](Self::make_room) sees to.
+  fn bytes_mut(&mut self) -> Result<&mut [u8], IcError> {
+    match Arc::get_mut(&mut self.page) {
+      Some(words) => Ok(bytes_of_mut(words)),
+      None => Err(IcError::new(err::IC_ERROR_INCONSISTENT_DATA)),
+    }
+  }
+}
+
+/// Words seen as bytes.
+fn bytes_of(words: &[u32]) -> &[u8] {
+  let len = words.len() * 4;
+  let ptr = words.as_ptr() as *const u8;
+  // SAFETY: the pointer comes from a live slice of that many words, so
+  // the range covers exactly its storage, and u8 has no alignment need
+  // and no invalid values.
+  unsafe { std::slice::from_raw_parts(ptr, len) }
+}
+
+/// Words seen as bytes, to write into.
+///
+/// A signal may begin at any byte of the stream, so bytes are read
+/// straight into the words rather than into a separate byte buffer that
+/// would then have to be copied word by word.
+fn bytes_of_mut(words: &mut [u32]) -> &mut [u8] {
+  let len = words.len() * 4;
+  let ptr = words.as_mut_ptr() as *mut u8;
+  // SAFETY: the pointer comes from a live, exclusively borrowed slice
+  // of that many words, so the range covers exactly its storage. u32 is
+  // aligned more strictly than u8 needs, and u8 has no invalid values,
+  // so every byte is readable and writable.
+  unsafe { std::slice::from_raw_parts_mut(ptr, len) }
 }
 
 impl Default for SignalReader {
@@ -142,9 +345,9 @@ impl std::fmt::Debug for SignalReader {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(
       f,
-      "SignalReader({} bytes buffered, capacity {} words)",
-      self.filled_bytes,
-      self.words.len()
+      "SignalReader({} bytes buffered, page of {} words)",
+      self.buffered_bytes(),
+      self.page.len()
     )
   }
 }
@@ -188,7 +391,7 @@ mod tests {
     let signal = a_signal(1, &[10, 20, 30]);
     let mut reader = SignalReader::new();
     assert!(!reader.has_message());
-    reader.push_bytes(&as_bytes(&signal));
+    reader.push_bytes(&as_bytes(&signal)).expect("push");
     assert!(reader.has_message());
     assert_eq!(reader.peek_len(), Some(signal.len()));
     let message = header::decode(reader.complete_words()).expect("decode");
@@ -208,9 +411,9 @@ mod tests {
     let mut split: usize = 1;
     while split < bytes.len() {
       let mut reader = SignalReader::new();
-      reader.push_bytes(&bytes[..split]);
+      reader.push_bytes(&bytes[..split]).expect("push");
       assert!(!reader.has_message(), "split at {}", split);
-      reader.push_bytes(&bytes[split..]);
+      reader.push_bytes(&bytes[split..]).expect("push");
       assert!(reader.has_message(), "split at {}", split);
       let message = header::decode(reader.complete_words()).expect("decode");
       assert_eq!(message.data, &[1, 2, 3, 4, 5]);
@@ -227,7 +430,7 @@ mod tests {
       i += 1;
     }
     let mut reader = SignalReader::new();
-    reader.push_bytes(&as_bytes(&stream));
+    reader.push_bytes(&as_bytes(&stream)).expect("push");
     let mut seen: u32 = 0;
     while reader.has_message() {
       let len = {
@@ -251,7 +454,7 @@ mod tests {
     let second_bytes = as_bytes(&second);
     bytes.extend_from_slice(&second_bytes[..5]);
     let mut reader = SignalReader::new();
-    reader.push_bytes(&bytes);
+    reader.push_bytes(&bytes).expect("push");
     // The first is complete, the second is not.
     assert!(reader.has_message());
     let len = {
@@ -263,7 +466,7 @@ mod tests {
     assert!(!reader.has_message());
     assert_eq!(reader.buffered_bytes(), 5);
     // The rest arrives and completes it.
-    reader.push_bytes(&second_bytes[5..]);
+    reader.push_bytes(&second_bytes[5..]).expect("push");
     assert!(reader.has_message());
     let message = header::decode(reader.complete_words()).expect("dec");
     assert_eq!(message.header.gsn(), 2);
@@ -274,17 +477,78 @@ mod tests {
   fn the_buffer_grows_for_a_large_signal() {
     let mut reader = SignalReader::new();
     let big = vec![0xABu8; 300_000];
-    reader.push_bytes(&big);
+    reader.push_bytes(&big).expect("push");
     assert_eq!(reader.buffered_bytes(), 300_000);
     reader.reset();
     assert_eq!(reader.buffered_bytes(), 0);
   }
 
   #[test]
+  fn a_page_someone_holds_is_left_alone_and_taken_again_later() {
+    let first = a_signal(1, &[1, 2]);
+    let second = a_signal(1, &[3, 4]);
+    let mut reader = SignalReader::new();
+    reader.push_bytes(&as_bytes(&first)).expect("push");
+    // A large signal handed on where it lies: its page is shared.
+    let held = Arc::clone(reader.page());
+    let at = reader.start_words();
+    let len = header::decode(reader.complete_words())
+      .expect("one")
+      .total_words;
+    reader.consume(len);
+    // Half a signal arrives: it goes into another page, and the held
+    // page is not written.
+    let bytes = as_bytes(&second);
+    reader.push_bytes(&bytes[..6]).expect("push");
+    assert!(!Arc::ptr_eq(&held, reader.page()));
+    assert_eq!(reader.pages_in_use(), 1);
+    let message = header::decode(&held[at..]).expect("still there");
+    assert_eq!(message.data, &[1, 2]);
+    // The rest arrives in the same new page.
+    reader.push_bytes(&bytes[6..]).expect("push");
+    let message = header::decode(reader.complete_words()).expect("two");
+    assert_eq!(message.data, &[3, 4]);
+    let len = message.total_words;
+    reader.consume(len);
+    // Once let go, the old page is free to be read into again.
+    let old = Arc::as_ptr(&held);
+    drop(held);
+    assert_eq!(reader.pages_in_use(), 0);
+    let second_page = Arc::clone(reader.page());
+    let again = a_signal(1, &[5]);
+    reader.push_bytes(&as_bytes(&again)).expect("push");
+    assert_eq!(Arc::as_ptr(reader.page()), old);
+    drop(second_page);
+    assert_eq!(reader.pages_in_use(), 0);
+  }
+
+  #[test]
+  fn the_free_page_sealed_last_is_taken_first() {
+    let bytes = as_bytes(&a_signal(1, &[1]));
+    let mut reader = SignalReader::new();
+    reader.push_bytes(&bytes).expect("push");
+    // Seal the first page, then the second.
+    let first = Arc::clone(reader.page());
+    reader.push_bytes(&bytes).expect("push");
+    let second = Arc::clone(reader.page());
+    reader.push_bytes(&bytes).expect("push");
+    assert!(!Arc::ptr_eq(&first, &second));
+    let second_at = Arc::as_ptr(&second);
+    // Both are let go; the third page is sealed in turn.
+    drop(first);
+    drop(second);
+    let third = Arc::clone(reader.page());
+    reader.push_bytes(&bytes).expect("push");
+    // The page sealed last among the free ones is the one read into.
+    assert_eq!(Arc::as_ptr(reader.page()), second_at);
+    drop(third);
+  }
+
+  #[test]
   fn a_signal_for_another_block_is_noticed() {
     let signal = a_signal(1, &[1]);
     let mut reader = SignalReader::new();
-    reader.push_bytes(&as_bytes(&signal));
+    reader.push_bytes(&as_bytes(&signal)).expect("push");
     let message = header::decode(reader.complete_words()).expect("decode");
     assert!(check_receiver(&message, IC_BLOCK_API_CLUSTERMGR).is_ok());
     assert!(check_receiver(&message, api_block_of_thread(0)).is_err());

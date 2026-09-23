@@ -32,6 +32,14 @@
 //! short lock. A user thread receiving a hundred signals in a round
 //! costs the receive thread one lock, not a hundred.
 //!
+//! **Signals travel in pages, and the pages go round.** A receive
+//! thread packs the signals for a user thread into a page of words
+//! ([`signal_page`](crate::signal_page)), the inbox hands the page
+//! over, and the user thread reads the signals where they lie and gives
+//! the page back on its next take, for the receive thread to fill
+//! again. Nothing is allocated per signal and nothing allocated by one
+//! thread is freed by the other.
+//!
 //! **The wake-up is sent after the lock is released.** Waking a thread
 //! that then immediately blocks on the mutex we still hold would cost a
 //! needless context switch. The price is that the user thread may wake,
@@ -81,6 +89,11 @@ use ic_port::sync::IC_MUTEX_LEVEL_THREAD_CONN;
 use ic_port::IcError;
 
 use crate::node_connect::ReceivedSignal;
+use crate::node_connect::SignalView;
+use crate::signal_page;
+use crate::signal_page::Placement;
+use crate::signal_page::SignalPage;
+use crate::signal_reader::ReceivePage;
 
 // A user thread's block number is the first API block number plus its
 // thread id, so the ids have to fit in what is left of sixteen bits.
@@ -88,10 +101,16 @@ const _: () = assert!(
   IC_MAX_THREAD_CONNECTIONS <= (0x10000 - blocks::IC_MIN_API_BLOCK_NO as u32)
 );
 
+/// Emptied pages an inbox keeps for its receive threads to fill; one
+/// given back beyond this is let go.
+const IC_SPARE_PAGES: usize = 8;
+
 /// What the inbox mutex protects.
 struct Inbox {
-  /// Signals posted and not yet taken, oldest first.
-  signals: Vec<ReceivedSignal>,
+  /// Pages of signals posted and not yet taken, oldest first.
+  pages: Vec<SignalPage>,
+  /// Emptied pages given back by the user thread, for the next posts.
+  spare: Vec<SignalPage>,
   /// True while the user thread is asleep waiting for signals
   /// (`thread_wait_cond`). It tells a poster whether a wake-up is
   /// needed, so that posting to a busy thread costs no system call.
@@ -126,7 +145,8 @@ impl ThreadConnection {
       inbox: IcMutex::new(
         IC_MUTEX_LEVEL_THREAD_CONN,
         Inbox {
-          signals: Vec::new(),
+          pages: Vec::new(),
+          spare: Vec::new(),
           waiting: false,
           closed: false,
         },
@@ -145,21 +165,24 @@ impl ThreadConnection {
     blocks::api_block_of_thread(self.thread_id)
   }
 
-  /// Put a round's worth of signals in the inbox and wake the thread if
+  /// Put a round's page of signals in the inbox and wake the thread if
   /// it is asleep (`post_ndb_messages`, the part inside the loop).
   ///
-  /// `batch` is left empty, keeping its allocation for the next round.
-  /// Returns false if the thread has gone and the signals were dropped.
-  pub fn post(&self, batch: &mut Vec<ReceivedSignal>) -> bool {
-    if batch.is_empty() {
+  /// `page` is replaced by an emptied page the user thread gave back,
+  /// or by a new one. Returns false if the thread has gone and the
+  /// signals were dropped.
+  pub fn post(&self, page: &mut SignalPage) -> bool {
+    if page.is_empty() {
       return true;
     }
     let mut inbox = self.inbox.lock();
     if inbox.closed {
-      batch.clear();
+      page.clear();
       return false;
     }
-    inbox.signals.append(batch);
+    let fresh = inbox.spare.pop().unwrap_or_default();
+    let full = std::mem::replace(page, fresh);
+    inbox.pages.push(full);
     let wake = inbox.waiting;
     inbox.waiting = false;
     // Unlock, and only then wake; see the note at the top of the file.
@@ -170,15 +193,23 @@ impl ThreadConnection {
     true
   }
 
-  /// Take everything in the inbox, waiting up to `wait_ms` for
-  /// something to arrive if it is empty (`get_thread_messages`).
+  /// Give back the pages read since the last call, and take every page
+  /// in the inbox into `pages`, waiting up to `wait_ms` for something
+  /// to arrive if it is empty (`get_thread_messages`). The signals are
+  /// read where they lie with [`signal_page::next`].
   ///
-  /// An empty result means the wait ran out, or the thread was woken
-  /// for signals it had already taken, which the design allows. Either
-  /// way the caller goes round again.
-  pub fn take(&self, wait_ms: u32) -> Vec<ReceivedSignal> {
+  /// No pages means the wait ran out, or the thread was woken for
+  /// signals it had already taken, which the design allows. Either way
+  /// the caller goes round again.
+  pub fn exchange(&self, wait_ms: u32, pages: &mut Vec<SignalPage>) {
     let mut inbox = self.inbox.lock();
-    if inbox.signals.is_empty() && wait_ms != 0 {
+    for mut page in pages.drain(..) {
+      if inbox.spare.len() < IC_SPARE_PAGES {
+        page.clear();
+        inbox.spare.push(page);
+      }
+    }
+    if inbox.pages.is_empty() && wait_ms != 0 {
       inbox.waiting = true;
       let micros = (wait_ms as u64) * 1000;
       let (woken, _timed_out) = self.cond.timed_wait(inbox, micros);
@@ -188,12 +219,33 @@ impl ThreadConnection {
       // sent to a thread that is not asleep.
       inbox.waiting = false;
     }
-    std::mem::take(&mut inbox.signals)
+    std::mem::swap(&mut inbox.pages, pages);
+  }
+
+  /// Take every signal in the inbox as owned copies, waiting as
+  /// [`exchange`](Self::exchange) does; for tests.
+  #[cfg(test)]
+  pub(crate) fn take(&self, wait_ms: u32) -> Vec<ReceivedSignal> {
+    let mut pages: Vec<SignalPage> = Vec::new();
+    self.exchange(wait_ms, &mut pages);
+    let mut out: Vec<ReceivedSignal> = Vec::new();
+    for page in &pages {
+      let mut at: usize = 0;
+      while let Some(signal) = signal_page::next(page, &mut at) {
+        out.push(signal.to_owned());
+      }
+    }
+    out
   }
 
   /// How many signals are waiting to be taken.
   pub fn pending(&self) -> usize {
-    self.inbox.lock().signals.len()
+    let inbox = self.inbox.lock();
+    let mut n: usize = 0;
+    for page in &inbox.pages {
+      n += signal_page::count(page);
+    }
+    n
   }
 
   /// Refuse anything more and drop what is there. Called when the user
@@ -201,7 +253,8 @@ impl ThreadConnection {
   fn close(&self) {
     let mut inbox = self.inbox.lock();
     inbox.closed = true;
-    inbox.signals.clear();
+    inbox.pages.clear();
+    inbox.spare.clear();
   }
 }
 
@@ -357,7 +410,7 @@ pub struct Router {
   copy: Vec<Option<Arc<ThreadConnection>>>,
   copy_changes: u32,
   /// This round's signals, per thread id.
-  batches: Vec<Vec<ReceivedSignal>>,
+  batches: Vec<SignalPage>,
   /// The thread ids that have signals this round, so that posting does
   /// not have to look at every slot.
   touched: Vec<u32>,
@@ -372,10 +425,10 @@ impl std::fmt::Debug for Router {
 impl Router {
   /// A router for one receive thread.
   pub fn new(table: Arc<ThreadTable>) -> Router {
-    let mut batches: Vec<Vec<ReceivedSignal>> = Vec::new();
+    let mut batches: Vec<SignalPage> = Vec::new();
     let mut i: u32 = 0;
     while i < IC_MAX_THREAD_CONNECTIONS {
-      batches.push(Vec::new());
+      batches.push(SignalPage::default());
       i += 1;
     }
     let mut router = Router {
@@ -397,10 +450,59 @@ impl Router {
   /// itself: `API_REGCONF` and its kind, which describe the node they
   /// came from, belong to the receive thread that owns that node.
   pub fn route(&mut self, signal: ReceivedSignal) -> Option<ReceivedSignal> {
-    let thread_id = match blocks::thread_of_api_block(signal.receiver_block) {
-      Some(thread_id) => thread_id as usize,
-      None => return Some(signal),
+    if self.route_view(&signal.view()) {
+      return None;
+    }
+    Some(signal)
+  }
+
+  /// As [`route`](Self::route), for a signal read where it lies: it is
+  /// copied into the page for its user thread. Returns false for a
+  /// signal addressed to one of our fixed blocks, which the caller
+  /// executes.
+  pub fn route_view(&mut self, signal: &SignalView<'_>) -> bool {
+    let thread_id = match self.thread_for(signal) {
+      Some(Some(thread_id)) => thread_id,
+      Some(None) => return true,
+      None => return false,
     };
+    signal_page::push(self.page_for(thread_id), signal);
+    true
+  }
+
+  /// As [`route_view`](Self::route_view), for a large signal left where
+  /// it lies in `receive_page`: the thread's page takes a hold on the
+  /// receive page and notes where the signal is in it.
+  pub fn route_by_reference(
+    &mut self,
+    signal: &SignalView<'_>,
+    receive_page: &ReceivePage,
+    placed: &Placement,
+  ) -> bool {
+    let thread_id = match self.thread_for(signal) {
+      Some(Some(thread_id)) => thread_id,
+      Some(None) => return true,
+      None => return false,
+    };
+    let page = self.page_for(thread_id);
+    signal_page::push_by_reference(page, signal, receive_page, placed);
+    true
+  }
+
+  /// The page this round's signals for `thread_id` go into.
+  fn page_for(&mut self, thread_id: usize) -> &mut SignalPage {
+    if self.batches[thread_id].is_empty() {
+      self.touched.push(thread_id as u32);
+    }
+    &mut self.batches[thread_id]
+  }
+
+  /// The user thread a signal is for: `None` if it is for one of our
+  /// fixed blocks, `Some(None)` if for a user thread nobody owns, in
+  /// which case it is counted as dropped.
+  fn thread_for(&mut self, signal: &SignalView<'_>) -> Option<Option<usize>> {
+    let thread_id =
+      blocks::thread_of_api_block(signal.receiver_block)? as usize;
     let mut owned =
       thread_id < self.copy.len() && self.copy[thread_id].is_some();
     if !owned && self.table.changes() != self.copy_changes {
@@ -423,13 +525,9 @@ impl Router {
         signal.sender_node_id,
         signal.receiver_block
       );
-      return None;
+      return Some(None);
     }
-    if self.batches[thread_id].is_empty() {
-      self.touched.push(thread_id as u32);
-    }
-    self.batches[thread_id].push(signal);
-    None
+    Some(Some(thread_id))
   }
 
   /// Post every batch of this round to its inbox (`post_ndb_messages`),

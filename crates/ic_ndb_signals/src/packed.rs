@@ -44,6 +44,16 @@ pub struct PackedPart {
 /// end is an error: the rest cannot be trusted.
 pub fn unpack(data: &[u32]) -> Result<Vec<PackedPart>, IcError> {
   let mut parts: Vec<PackedPart> = Vec::new();
+  unpack_into(data, &mut parts)?;
+  Ok(parts)
+}
+
+/// As [`unpack`], into a list the caller keeps, cleared first.
+pub fn unpack_into(
+  data: &[u32],
+  parts: &mut Vec<PackedPart>,
+) -> Result<(), IcError> {
+  parts.clear();
   let mut pos: usize = 0;
   while pos < data.len() {
     let header = data[pos];
@@ -59,7 +69,7 @@ pub fn unpack(data: &[u32]) -> Result<Vec<PackedPart>, IcError> {
     });
     pos += len;
   }
-  Ok(parts)
+  Ok(())
 }
 
 #[cfg(test)]

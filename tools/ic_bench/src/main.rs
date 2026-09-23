@@ -48,16 +48,34 @@
 //! build: `cargo run --release -p ic_bench`.
 //!
 //! The table needs a primary key of one integer column; every other
-//! integer column gets ten times the key, and any other column must be
-//! nullable.
+//! integer column gets ten times the key, a binary or character column
+//! gets `--bytes` bytes, and any other column must be nullable.
+//!
+//! **Large rows.** To find from what size a signal is better handed to
+//! the user thread where it lies than copied (`--large-words`, see
+//! `ic_apid::signal_page`), use a table with a wide column and vary
+//! `--bytes`:
+//!
+//! ```text
+//!   CREATE TABLE ictest.tbig (id INT NOT NULL PRIMARY KEY, v INT,
+//!                             data VARBINARY(29000)) ENGINE=NDB;
+//!   ic_bench -d ictest tbig --keys 10000 --bytes 4000
+//!   ic_bench -d ictest tbig --keys 10000 --no-prepare --large-words 0
+//! ```
+//!
+//! The rows are written with `--bytes` bytes, so that the reads that
+//! follow bring that much back; mind the data memory, which is keys
+//! times bytes.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use ic_apic::mgm_client;
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
+use ic_apid::apid_global::IC_LARGE_SIGNAL_WORDS;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::query::QueryId;
 use ic_apid::query::ReadKeyArgs;
@@ -83,8 +101,22 @@ const IC_BENCH_MAX_BATCH: i64 = 1000;
 const IC_BENCH_MAX_DEPTH: i64 = 16;
 /// The most user threads.
 const IC_BENCH_MAX_THREADS: i64 = 64;
+/// One counter per slot of every thread, for `--callbacks`.
+const IC_BENCH_MAX_SLOTS: usize =
+  (IC_BENCH_MAX_THREADS * IC_BENCH_MAX_DEPTH) as usize;
 
-const OPTIONS: [OptionEntry; 14] = [
+/// For `--callbacks`: per slot of every thread, how many queries have
+/// completed through the callback since the loop last looked, and how
+/// many of them failed. A callback is a plain function with only its
+/// `user_ref` for context, so the table is static and the reference
+/// is the slot's number across all threads; each entry is used by one
+/// thread, so the atomics are never contended.
+static DONE_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
+  [const { AtomicUsize::new(0) }; IC_BENCH_MAX_SLOTS];
+static FAILED_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
+  [const { AtomicUsize::new(0) }; IC_BENCH_MAX_SLOTS];
+
+const OPTIONS: [OptionEntry; 16] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -140,6 +172,18 @@ const OPTIONS: [OptionEntry; 14] = [
     help: "The first key; the default is 1",
   },
   OptionEntry {
+    long_name: "bytes",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Bytes written into each binary or character column; default 0",
+  },
+  OptionEntry {
+    long_name: "large-words",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Signals of this many words or more are not copied; 0 copies all",
+  },
+  OptionEntry {
     long_name: "no-prepare",
     short_name: 0,
     kind: OptionKind::Flag,
@@ -181,6 +225,8 @@ struct Run {
   keys: i64,
   from: i64,
   prepare: bool,
+  bytes: usize,
+  large_words: u32,
   force: bool,
   callbacks: bool,
 }
@@ -247,6 +293,10 @@ fn run() -> i32 {
     keys,
     from: parser.get_int_or("from", 1),
     prepare: !parser.get_flag("no-prepare"),
+    bytes: parser.get_int_or("bytes", 0).max(0) as usize,
+    large_words: parser
+      .get_int_or("large-words", IC_LARGE_SIGNAL_WORDS as i64)
+      .max(0) as u32,
     force: parser.get_flag("force"),
     callbacks: parser.get_flag("callbacks"),
   };
@@ -297,6 +347,7 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     return 1;
   }
   let started = global.started_nodes().len();
+  global.set_large_signal_words(what.large_words);
   let mut conns: Vec<ApidConnection> = Vec::with_capacity(what.threads);
   while conns.len() < what.threads {
     match global.create_connection() {
@@ -361,9 +412,16 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     started,
     what.seconds
   );
+  println!(
+    "{} byte(s) in each binary or character column; signals of {} word(s) \
+     or more not copied",
+    what.bytes, what.large_words
+  );
   // Each thread goes round its own share of the keys, the last taking
   // the remainder.
   let per_thread = what.keys / what.threads as i64;
+  let usage_before = ic_port::time::process_usage();
+  let reader_before = ic_apid::signal_reader::reader_stats();
   let start = ic_port::time::gethrtime();
   let outcomes: Vec<Result<Tally, String>> = std::thread::scope(|scope| {
     let mut handles = Vec::with_capacity(what.threads);
@@ -380,8 +438,9 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
       };
       let def = &def;
       let rec = &rec;
-      handles
-        .push(scope.spawn(move || run_thread(conn, def, rec, what, range)));
+      handles.push(
+        scope.spawn(move || run_thread(conn, def, rec, what, range, position)),
+      );
     }
     let mut outcomes = Vec::with_capacity(handles.len());
     for handle in handles {
@@ -406,6 +465,8 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
     }
   }
   tally.print(elapsed, what.threads);
+  print_usage(usage_before, ic_port::time::process_usage(), tally.ops);
+  print_reader(reader_before, ic_apid::signal_reader::reader_stats());
   if tally.unexpected > 0 {
     println!(
       "{} signal(s) came that nothing waited for",
@@ -432,7 +493,10 @@ fn run_thread(
   rec: &Record,
   what: &Run,
   range: KeyRange,
+  thread_index: usize,
 ) -> Result<Tally, String> {
+  // This thread's slots in the callback table.
+  let first_slot = thread_index * IC_BENCH_MAX_DEPTH as usize;
   let mut slots: Vec<Slot> = Vec::with_capacity(what.depth);
   let mut slot_of: HashMap<u32, usize> = HashMap::new();
   while slots.len() < what.depth {
@@ -498,7 +562,7 @@ fn run_thread(
           what,
           range,
           next_key,
-          i,
+          first_slot + i,
         );
         slots[i].sent = match defined {
           Ok(sent) => sent,
@@ -519,20 +583,18 @@ fn run_thread(
     conn.poll(1);
     if what.callbacks {
       // The callbacks ran inside that poll and counted into this
-      // thread's table.
-      DONE_BY_CALLBACK.with(|done| {
-        let mut done = done.borrow_mut();
-        let mut slot: usize = 0;
-        while slot < done.len() && slot < slots.len() {
-          slots[slot].done += done[slot].0;
-          if done[slot].1 > 0 && errors == 0 {
-            println!("An operation failed");
-          }
-          errors += done[slot].1;
-          done[slot] = (0, 0);
-          slot += 1;
+      // thread's entries of the table.
+      let mut slot: usize = 0;
+      while slot < slots.len() {
+        let entry = first_slot + slot;
+        slots[slot].done += DONE_BY_CALLBACK[entry].swap(0, Ordering::Relaxed);
+        let failed = FAILED_BY_CALLBACK[entry].swap(0, Ordering::Relaxed);
+        if failed > 0 && errors == 0 {
+          println!("An operation failed");
         }
-      });
+        errors += failed as u64;
+        slot += 1;
+      }
       continue;
     }
     while let Some(id) = conn.get_next_executed_query() {
@@ -553,31 +615,20 @@ fn run_thread(
   Ok(tally)
 }
 
-thread_local! {
-  /// For `--callbacks`: per slot, how many queries completed through
-  /// the callback since the loop last looked, and how many of them
-  /// failed. A callback is a plain function with the slot in its
-  /// `user_ref`, so its state lives in a table of the thread's own.
-  static DONE_BY_CALLBACK: RefCell<Vec<(usize, u64)>> =
-    const { RefCell::new(Vec::new()) };
-}
-
-/// The callback of `--callbacks`: count the query as done for its slot.
+/// The callback of `--callbacks`: count the query as done for its
+/// slot, whose number across all threads is the `user_ref`.
 fn note_done(conn: &mut ApidConnection, id: QueryId, slot: usize) {
   let failed = match conn.query(id) {
     Some(query) => query.is_failed(),
     None => false,
   };
-  DONE_BY_CALLBACK.with(|done| {
-    let mut done = done.borrow_mut();
-    if slot >= done.len() {
-      done.resize(slot + 1, (0, 0));
-    }
-    done[slot].0 += 1;
-    if failed {
-      done[slot].1 += 1;
-    }
-  });
+  if slot >= IC_BENCH_MAX_SLOTS {
+    return;
+  }
+  DONE_BY_CALLBACK[slot].fetch_add(1, Ordering::Relaxed);
+  if failed {
+    FAILED_BY_CALLBACK[slot].fetch_add(1, Ordering::Relaxed);
+  }
 }
 
 /// A batch's worth of query objects on a connection.
@@ -685,7 +736,7 @@ fn check_columns(def: &Arc<TableDef>) -> Result<(), String> {
       }
       continue;
     }
-    if attr.nullable || is_integer(attr.ext_type) {
+    if attr.nullable || is_integer(attr.ext_type) || is_bytes(attr) {
       continue;
     }
     return Err(format!(
@@ -696,6 +747,70 @@ fn check_columns(def: &Arc<TableDef>) -> Result<(), String> {
   if key_columns != 1 {
     return Err("The primary key must be one column".to_string());
   }
+  Ok(())
+}
+
+/// A binary or character column, which takes `--bytes` bytes.
+fn is_bytes(attr: &dict_tab_info::AttributeInfo) -> bool {
+  matches!(
+    attr.ext_type,
+    dict_tab_info::IC_NDB_TYPE_CHAR
+      | dict_tab_info::IC_NDB_TYPE_BINARY
+      | dict_tab_info::IC_NDB_TYPE_VARCHAR
+      | dict_tab_info::IC_NDB_TYPE_VARBINARY
+      | dict_tab_info::IC_NDB_TYPE_LONGVARCHAR
+      | dict_tab_info::IC_NDB_TYPE_LONGVARBINARY
+  )
+}
+
+/// `bytes` bytes into a binary or character field of a row, with the
+/// length in front for a variable-length one. The bytes are written
+/// only when the length changes, so that a row used again and again is
+/// filled once.
+fn put_bytes(
+  rec: &Record,
+  attr: &dict_tab_info::AttributeInfo,
+  position: u32,
+  bytes: usize,
+  row: &mut [u8],
+) -> Result<(), IcError> {
+  let field = match rec.field(position) {
+    Some(field) => field,
+    None => return Err(IcError::new(ic_port::err::IC_ERROR_NO_SUCH_FIELD)),
+  };
+  let at = field.offset() as usize;
+  let size = field.size() as usize;
+  let head = match attr.array_type {
+    dict_tab_info::IC_ARRAY_TYPE_SHORT_VAR => 1,
+    dict_tab_info::IC_ARRAY_TYPE_MEDIUM_VAR => 2,
+    _ => 0,
+  };
+  if head + bytes > size {
+    return Err(IcError::new(ic_port::err::IC_ERROR_VALUE_TOO_LONG));
+  }
+  if field.is_nullable() {
+    rec.set_null(row, position, false)?;
+  }
+  if head == 0 {
+    // A fixed-size column is filled whole.
+    if row[at] != b'x' {
+      row[at..at + size].fill(b'x');
+    }
+    return Ok(());
+  }
+  let current = if head == 1 {
+    row[at] as usize
+  } else {
+    row[at] as usize | (row[at + 1] as usize) << 8
+  };
+  if current == bytes && (bytes == 0 || row[at + head] == b'x') {
+    return Ok(());
+  }
+  row[at] = bytes as u8;
+  if head == 2 {
+    row[at + 1] = (bytes >> 8) as u8;
+  }
+  row[at + head..at + head + bytes].fill(b'x');
   Ok(())
 }
 
@@ -713,6 +828,7 @@ fn fill_query(
   id: QueryId,
   key: i64,
   values_too: bool,
+  bytes: usize,
 ) -> Result<(), IcError> {
   let query = match conn.query_mut(id) {
     Some(query) => query,
@@ -723,6 +839,10 @@ fn fill_query(
       Some(position) => position,
       None => continue,
     };
+    if values_too && !attr.primary_key && is_bytes(attr) {
+      put_bytes(rec, attr, position, bytes, query.attr_row_mut())?;
+      continue;
+    }
     let text = if attr.primary_key {
       key.to_string()
     } else if !values_too {
@@ -761,7 +881,7 @@ fn write_rows(
     let mut sent: Vec<TransId> = Vec::new();
     let mut i: usize = 0;
     while i < queries.len() && key < end {
-      fill_query(conn, def, rec, queries[i], key, true)?;
+      fill_query(conn, def, rec, queries[i], key, true, what.bytes)?;
       let trans = start_for(conn, def, rec, queries[i])?;
       let args = WriteKeyArgs {
         kind: WriteKind::Write,
@@ -836,7 +956,7 @@ fn define_batch(
     if key >= range.end {
       key = range.start;
     }
-    fill_query(conn, def, rec, *id, key, what.write)?;
+    fill_query(conn, def, rec, *id, key, what.write, what.bytes)?;
     let trans = start_for(conn, def, rec, *id)?;
     if what.write {
       let args = WriteKeyArgs {
@@ -888,6 +1008,58 @@ fn close_batch(conn: &mut ApidConnection, sent: &[TransId]) -> u64 {
     let _ = conn.close_transaction(*trans);
   }
   failed
+}
+
+/// The client's CPU per operation and its sleeps over the run: what
+/// taking work off the client should lower, whatever the rate does.
+fn print_usage(
+  before: ic_port::time::ProcessUsage,
+  after: ic_port::time::ProcessUsage,
+  ops: u64,
+) {
+  if ops == 0 {
+    return;
+  }
+  let user = after.user_micros - before.user_micros;
+  let system = after.system_micros - before.system_micros;
+  let voluntary = after.voluntary_switches - before.voluntary_switches;
+  let involuntary = after.involuntary_switches - before.involuntary_switches;
+  let faults = after.minor_faults - before.minor_faults;
+  println!(
+    "Client CPU {} ns per operation ({} ns user, {} ns system); {} \
+     sleeps and {} preemptions, {} sleeps per 1000 operations; {} page \
+     faults, {} per 1000 operations",
+    (user + system) * 1000 / ops,
+    user * 1000 / ops,
+    system * 1000 / ops,
+    voluntary,
+    involuntary,
+    voluntary * 1000 / ops,
+    faults,
+    faults * 1000 / ops
+  );
+}
+
+/// What the receive side did over the run: how large a read was, and
+/// how often a reader went on in another page.
+fn print_reader(
+  before: ic_apid::signal_reader::ReaderStats,
+  after: ic_apid::signal_reader::ReaderStats,
+) {
+  let reads = after.reads - before.reads;
+  if reads == 0 {
+    return;
+  }
+  let bytes = after.bytes_read - before.bytes_read;
+  println!(
+    "Receive: {} reads of {} bytes on average; {} page switches, {} \
+     pages allocated, {} KB of tails copied",
+    reads,
+    bytes / reads,
+    after.page_switches - before.page_switches,
+    after.pages_allocated - before.pages_allocated,
+    (after.tail_bytes_copied - before.tail_bytes_copied) / 1024
+  );
 }
 
 fn describe(what: &str, error: &IcError) -> String {

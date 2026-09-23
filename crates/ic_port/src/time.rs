@@ -58,9 +58,66 @@ pub fn microsleep(microseconds_to_sleep: u32) {
   std::thread::sleep(Duration::from_micros(microseconds_to_sleep as u64));
 }
 
+/// What the process has used so far (`getrusage`): CPU time in user
+/// and system mode, and how often a thread gave up the CPU because it
+/// waited (voluntary switches, each a sleep that took a wake-up) or was
+/// made to (involuntary). For measuring what a benchmark costs rather
+/// than only how fast it went.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProcessUsage {
+  /// CPU time in user mode, in microseconds.
+  pub user_micros: u64,
+  /// CPU time in the kernel, in microseconds.
+  pub system_micros: u64,
+  /// Times a thread gave up the CPU to wait.
+  pub voluntary_switches: u64,
+  /// Times a thread was made to give up the CPU.
+  pub involuntary_switches: u64,
+  /// Page faults served without I/O: memory mapped in on first touch.
+  pub minor_faults: u64,
+}
+
+/// The process's usage so far; all zero if the system will not say.
+pub fn process_usage() -> ProcessUsage {
+  let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+  // SAFETY: getrusage writes the whole structure it is given, which is
+  // zeroed to begin with, so it is initialised whether or not it fails.
+  let (ret, usage) = unsafe {
+    let ret = libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr());
+    (ret, usage.assume_init())
+  };
+  if ret != 0 {
+    return ProcessUsage::default();
+  }
+  let micros = |tv: libc::timeval| -> u64 {
+    tv.tv_sec as u64 * 1_000_000 + tv.tv_usec as u64
+  };
+  ProcessUsage {
+    user_micros: micros(usage.ru_utime),
+    system_micros: micros(usage.ru_stime),
+    voluntary_switches: usage.ru_nvcsw as u64,
+    involuntary_switches: usage.ru_nivcsw as u64,
+    minor_faults: usage.ru_minflt as u64,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn usage_grows_with_work() {
+    let before = process_usage();
+    let mut x: u64 = 0;
+    let start = gethrtime();
+    while millis_elapsed(start, gethrtime()) < 20 {
+      x = x.wrapping_mul(31).wrapping_add(1);
+    }
+    let after = process_usage();
+    assert!(x != 1);
+    let cpu = |u: ProcessUsage| u.user_micros + u.system_micros;
+    assert!(cpu(after) > cpu(before));
+  }
 
   #[test]
   fn elapsed_is_monotonic() {

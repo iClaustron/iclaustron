@@ -70,6 +70,33 @@ Tests are ordinary `#[test]` functions gated by an env var
 are created via MySQL (`mysql` client over TCP) so the tests exercise
 exactly what `mysqld`-created tables look like, which is what users have.
 
+As built (2026-09-22, `crates/ic_apid/tests/integration.rs`): three
+variables, and a test that lacks what it needs says so on stderr and
+returns. `IC_TEST_CONNECTSTRING` names the management server;
+`IC_TEST_MYSQL` is a `mysql` client command with its connection
+options, run through `sh -c`, through which the tests make their
+tables in the database `ic_it` and check what they wrote;
+`IC_TEST_NDB_MGM` is an `ndb_mgm` command for the `failure` group,
+which stops a data node and starts it again. Each test is its own
+program against the cluster, taking an API node id and letting it go,
+with a retry on the id since the one the last test released may not be
+free at once. The groups built are the phase-5 ones: `connect`,
+`dict` (columns and key, index columns in key order, the cache letting
+go after `ALTER TABLE`), `pk` (all five operations checked through
+MySQL, 626 and 630, commit and rollback visibility), `uk` (read, update
+and delete through `uk_code$unique`, the name a MySQL server gives a
+unique hash index), `types` (the integer family at its edges, char,
+varchar, binary, varbinary, and the long forms, written through the API
+and read back both ways; float and double read from what MySQL wrote;
+a row of NULLs; the date, time, decimal and bit types wait for the text
+codec to format them) and `failure` (an update confirmed at a
+coordinator that is then restarted: the commit fails with a temporary
+error, the retry at the survivor commits, and the node is waited for
+until it is started again, so that the next test finds the cluster
+whole). Seen live 2026-09-22: the pending transaction ended rolled
+back with 4010, the branch built for a coordinator that fails before
+the commit is asked for. The `ndb_mgmd` restart is not yet covered.
+
 Test groups, mirroring the phases:
 
 | Group | Proves |

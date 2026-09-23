@@ -109,6 +109,22 @@ route; user threads execute.**
   thread: `NODE_FAILREP`, `NF_COMPLETEREP`, and `ALTER_TABLE_REP`, the
   dictionary's notice that a table changed, which lets go of the cached
   description under the dictionary cache's lock, holding no other.
+  **Signals in pages (decided with the author, 2026-09-23; as built,
+  `signal_reader`, `signal_page`).** A receive thread reads each link
+  into receive pages from its own pool, `Arc`-counted: the count is the
+  C page's atomic. What it routes to a user thread goes into that
+  thread's page for the round, which the inbox hands over whole and the
+  user thread gives back emptied on its next take. A small signal
+  (`TCKEYCONF`, the parts of `API_PACKED`, a small `TRANSID_AI`) is
+  copied into the thread's page, which keeps its release on one thread;
+  a large one, from `ApidGlobal::set_large_signal_words` on (1 KB until
+  measured), stays where it lies, and the thread's page holds its
+  receive page until the user thread is done. A receive page someone
+  holds is sealed: the next read goes into another, and the sealed one
+  is taken again once its count is back to one, so that pages are
+  allocated and freed only on the receive thread. The user thread reads
+  every signal in place through a `SignalView`, and copies out only a
+  fragment waiting for its train and a reply a request waits for.
 - **Connect thread per node** (minimum stack size): resolves the port
   from the management server, connects, performs the transporter
   handshake and the node-id hello, then hands the connected socket to

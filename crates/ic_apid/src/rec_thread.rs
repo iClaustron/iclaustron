@@ -34,6 +34,7 @@
 //! promptly. A self-pipe in the poll set would remove the delay and the
 //! idle wake-ups, and is the obvious next step.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use ic_comm::connection::Connection;
@@ -41,6 +42,7 @@ use ic_comm::poll_set::PollSet;
 use ic_ndb_signals::alter_table_rep::AlterTableRep;
 use ic_ndb_signals::blocks;
 use ic_ndb_signals::gsn;
+use ic_ndb_signals::header;
 use ic_ndb_signals::header::FragmentInfo;
 use ic_ndb_signals::packed;
 use ic_ndb_signals::qmgr::ApiRegConf;
@@ -58,8 +60,9 @@ use crate::apid_global::LinkStatus;
 use crate::apid_global::NodeShared;
 use crate::apid_global::PendingLink;
 use crate::apid_global::IC_RECEIVE_POLL_MS;
-use crate::node_connect::take_signals;
 use crate::node_connect::ReceivedSignal;
+use crate::node_connect::SignalView;
+use crate::signal_page::Placement;
 use crate::signal_reader::SignalReader;
 use crate::thread_conn::Router;
 
@@ -83,7 +86,10 @@ struct Receiver {
   router: Router,
   /// Kept between rounds so that their allocations are reused.
   ready: Vec<usize>,
+  /// The signals of a read that are ours to execute.
   signals: Vec<ReceivedSignal>,
+  /// The parts of a packed signal.
+  parts: Vec<packed::PackedPart>,
 }
 
 /// The body of a receive thread, serving the nodes at `node_indexes`.
@@ -119,6 +125,7 @@ pub(crate) fn run_receive_thread(
     router,
     ready: Vec::new(),
     signals: Vec::new(),
+    parts: Vec::new(),
   };
   while !state.stop_flag() {
     receiver.round(state);
@@ -309,67 +316,36 @@ impl Receiver {
     self.drain(index);
   }
 
-  /// Route every complete signal the node's reader holds.
+  /// Route every complete signal the node's reader holds: a signal for
+  /// a user thread is copied from the read buffer straight into the page
+  /// for that thread, and one for our own blocks is kept to be executed
+  /// once the buffer is done with.
   fn drain(&mut self, index: usize) {
     let node_id = self.nodes[index].node.node_id;
-    let mut signals = std::mem::take(&mut self.signals);
-    signals.clear();
-    let reader = &mut self.nodes[index].reader;
-    let result = take_signals(reader, node_id, &mut signals);
+    let mut own = std::mem::take(&mut self.signals);
+    own.clear();
+    let large_words =
+      self.shared.large_signal_words.load(Ordering::Acquire) as usize;
+    let result = route_signals(
+      &mut self.nodes[index].reader,
+      node_id,
+      large_words,
+      &mut self.router,
+      &mut self.parts,
+      &mut own,
+    );
     if let Err(e) = result {
       // A signal that cannot be read means the stream is out of step,
       // and nothing after it can be trusted.
-      self.signals = signals;
+      self.signals = own;
       self.link_lost(index, e);
       return;
     }
-    for signal in signals.drain(..) {
-      if signal.receiver_block == blocks::IC_BLOCK_API_PACKED {
-        self.route_packed(index, signal);
-        continue;
-      }
-      // What is for a user thread goes to its inbox unread. What comes
-      // back is for one of our own fixed blocks and is about the node
-      // that sent it, which is ours to execute.
-      if let Some(own) = self.router.route(signal) {
-        self.execute(index, &own);
-      }
+    for signal in &own {
+      self.execute(index, signal);
     }
-    self.signals = signals;
-  }
-
-  /// Take a packed signal apart and route each part as if it had come
-  /// alone. Every part has the packed signal's number and sender, and
-  /// the block its own header names. See `ic_ndb_signals::packed`.
-  fn route_packed(&mut self, index: usize, packed_signal: ReceivedSignal) {
-    let parts = match packed::unpack(&packed_signal.data) {
-      Ok(parts) => parts,
-      Err(e) => {
-        ic_port::debug_print!(
-          IC_NDB_MESSAGE_LEVEL,
-          "Unreadable packed {} from node {}: {}",
-          gsn::gsn_name(packed_signal.gsn).unwrap_or("signal"),
-          packed_signal.sender_node_id,
-          e.message()
-        );
-        return;
-      }
-    };
-    for part in parts {
-      let end = part.start + part.len;
-      let signal = ReceivedSignal {
-        gsn: packed_signal.gsn,
-        receiver_block: part.receiver_block,
-        sender_block: packed_signal.sender_block,
-        sender_node_id: packed_signal.sender_node_id,
-        fragment_info: FragmentInfo::Whole,
-        data: packed_signal.data[part.start..end].to_vec(),
-        sections: Vec::new(),
-      };
-      if let Some(own) = self.router.route(signal) {
-        self.execute(index, &own);
-      }
-    }
+    own.clear();
+    self.signals = own;
   }
 
   // ---- The signals this thread executes ----
@@ -491,4 +467,101 @@ impl Receiver {
       .published
       .publish_regconf(&conf.node_state, ic_port::time::gethrtime());
   }
+}
+
+/// Route every complete signal in `reader` from where it lies: a signal
+/// for a user thread goes into that thread's page, copied if it is
+/// small and by reference to the receive page if it has `large_words`
+/// words or more; a packed one is taken apart and each part routed as
+/// if it had come alone, and one for our own blocks is copied out into
+/// `own`. The reader is compacted once, before its next read, not once
+/// per signal.
+fn route_signals(
+  reader: &mut SignalReader,
+  node_id: u32,
+  large_words: usize,
+  router: &mut Router,
+  parts: &mut Vec<packed::PackedPart>,
+  own: &mut Vec<ReceivedSignal>,
+) -> Result<(), IcError> {
+  while reader.has_message() {
+    let len = {
+      let words = reader.complete_words();
+      let message = header::decode(words)?;
+      let head = message.header;
+      ic_port::debug_print!(
+        IC_NDB_MESSAGE_LEVEL,
+        "<- node {} {} ({} words, {} section(s))",
+        node_id,
+        gsn::gsn_name(head.gsn()).unwrap_or("unknown"),
+        message.data.len(),
+        head.num_sections
+      );
+      if head.receiver_block == blocks::IC_BLOCK_API_PACKED {
+        // Every part has the packed signal's number and sender, and the
+        // block its own header names. See `ic_ndb_signals::packed`.
+        match packed::unpack_into(message.data, parts) {
+          Ok(()) => {
+            for part in parts.iter() {
+              let signal = SignalView {
+                gsn: head.gsn(),
+                receiver_block: part.receiver_block,
+                sender_block: head.sender_block,
+                sender_node_id: node_id,
+                fragment_info: FragmentInfo::Whole,
+                data: &message.data[part.start..part.start + part.len],
+                ..SignalView::default()
+              };
+              if !router.route_view(&signal) {
+                own.push(signal.to_owned());
+              }
+            }
+          }
+          Err(e) => {
+            ic_port::debug_print!(
+              IC_NDB_MESSAGE_LEVEL,
+              "Unreadable packed signal from node {}: {}",
+              node_id,
+              e.message()
+            );
+          }
+        }
+      } else {
+        let signal = SignalView {
+          gsn: head.gsn(),
+          receiver_block: head.receiver_block,
+          sender_block: head.sender_block,
+          sender_node_id: node_id,
+          fragment_info: head.fragment_info,
+          data: message.data,
+          sections: message.sections,
+          num_sections: head.num_sections as usize,
+        };
+        let by_reference = large_words > 0
+          && message.total_words >= large_words
+          && head.fragment_info == FragmentInfo::Whole;
+        let routed = if by_reference {
+          let base = reader.start_words();
+          let mut placed = Placement {
+            data_at: base + message.data_start,
+            ..Placement::default()
+          };
+          let mut i: usize = 0;
+          while i < signal.num_sections {
+            placed.section_at[i] = base + message.section_starts[i];
+            i += 1;
+          }
+          router.route_by_reference(&signal, reader.page(), &placed)
+        } else {
+          router.route_view(&signal)
+        };
+        if !routed {
+          own.push(signal.to_owned());
+        }
+      }
+      message.total_words
+    };
+    reader.consume(len);
+  }
+  Ok(())
 }

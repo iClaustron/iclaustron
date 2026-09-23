@@ -93,7 +93,7 @@ use crate::apid_global::LinkStatus;
 use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
 use crate::hash;
-use crate::node_connect::ReceivedSignal;
+use crate::node_connect::SignalView;
 use crate::query::AbortOption;
 use crate::query::ApidQuery;
 use crate::query::BatchHint;
@@ -775,11 +775,10 @@ impl ApidConnection {
       CommitState::CommitRequested => gsn::IC_GSN_TC_COMMITREQ,
       _ => gsn::IC_GSN_TCROLLBACKREQ,
     };
-    let data = tc_key::tc_trans_req(
-      tc.api_ptr,
-      trans_id as u32,
-      (trans_id >> 32) as u32,
-    );
+    // The coordinator finds the transaction by its own pointer for it;
+    // the reply carries ours.
+    let data =
+      tc_key::tc_trans_req(tc.tc_ptr, trans_id as u32, (trans_id >> 32) as u32);
     let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
     self.queue_signal(tc.node_id, &header, &data, &[])?;
     if let Some(trans) = self.transactions.get_mut(id.0) {
@@ -793,33 +792,24 @@ impl ApidConnection {
 
   /// A whole signal no request was waiting for: a reply to a
   /// transaction or one of its queries, if its first word names one.
-  /// Hands the signal back otherwise.
-  pub(crate) fn route_reply(
-    &mut self,
-    signal: ReceivedSignal,
-  ) -> Option<ReceivedSignal> {
+  /// False if it is neither.
+  pub(crate) fn route_reply(&mut self, signal: &SignalView<'_>) -> bool {
     // The unique index family answers in the key family's layouts.
-    let taken = match signal.gsn {
+    match signal.gsn {
       gsn::IC_GSN_TCKEYCONF | gsn::IC_GSN_TCINDXCONF => {
-        self.take_key_conf(&signal)
+        self.take_key_conf(signal)
       }
-      gsn::IC_GSN_TRANSID_AI => self.take_row(&signal),
-      gsn::IC_GSN_TCKEYREF | gsn::IC_GSN_TCINDXREF => {
-        self.take_key_ref(&signal)
-      }
-      gsn::IC_GSN_TCROLLBACKREP => self.take_rollback_rep(&signal),
-      gsn::IC_GSN_TC_COMMITCONF => self.take_commit_conf(&signal),
-      gsn::IC_GSN_TC_COMMITREF => self.take_trans_ref(&signal),
-      gsn::IC_GSN_TCROLLBACKCONF => self.take_rollback_conf(&signal),
-      gsn::IC_GSN_TCROLLBACKREF => self.take_trans_ref(&signal),
-      gsn::IC_GSN_TCKEY_FAILCONF => self.take_fail_conf(&signal),
-      gsn::IC_GSN_TCKEY_FAILREF => self.take_fail_ref(&signal),
+      gsn::IC_GSN_TRANSID_AI => self.take_row(signal),
+      gsn::IC_GSN_TCKEYREF | gsn::IC_GSN_TCINDXREF => self.take_key_ref(signal),
+      gsn::IC_GSN_TCROLLBACKREP => self.take_rollback_rep(signal),
+      gsn::IC_GSN_TC_COMMITCONF => self.take_commit_conf(signal),
+      gsn::IC_GSN_TC_COMMITREF => self.take_trans_ref(signal),
+      gsn::IC_GSN_TCROLLBACKCONF => self.take_rollback_conf(signal),
+      gsn::IC_GSN_TCROLLBACKREF => self.take_trans_ref(signal),
+      gsn::IC_GSN_TCKEY_FAILCONF => self.take_fail_conf(signal),
+      gsn::IC_GSN_TCKEY_FAILREF => self.take_fail_ref(signal),
       _ => false,
-    };
-    if taken {
-      return None;
     }
-    Some(signal)
   }
 
   /// The transaction a coordinator's reply names, if the id is right.
@@ -839,8 +829,8 @@ impl ApidConnection {
     None
   }
 
-  fn take_key_conf(&mut self, signal: &ReceivedSignal) -> bool {
-    let conf = match TcKeyConf::decode(&signal.data) {
+  fn take_key_conf(&mut self, signal: &SignalView<'_>) -> bool {
+    let conf = match TcKeyConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
@@ -885,8 +875,8 @@ impl ApidConnection {
     true
   }
 
-  fn take_row(&mut self, signal: &ReceivedSignal) -> bool {
-    let front = match TransIdAi::decode(&signal.data) {
+  fn take_row(&mut self, signal: &SignalView<'_>) -> bool {
+    let front = match TransIdAi::decode(signal.data) {
       Ok(front) => front,
       Err(_) => return false,
     };
@@ -901,18 +891,18 @@ impl ApidConnection {
       return false;
     }
     let mut section: Option<&[u32]> = None;
-    if !signal.sections.is_empty() {
+    if signal.num_sections > 0 {
       section = Some(signal.section(0));
     }
-    let row = TransIdAi::row(&signal.data, section);
+    let row = TransIdAi::row(signal.data, section);
     query.execution.row.extend_from_slice(row);
     query.execution.has_row = true;
     self.complete_if_done(qid);
     true
   }
 
-  fn take_key_ref(&mut self, signal: &ReceivedSignal) -> bool {
-    let refusal = match TcKeyRef::decode(&signal.data) {
+  fn take_key_ref(&mut self, signal: &SignalView<'_>) -> bool {
+    let refusal = match TcKeyRef::decode(signal.data) {
       Ok(refusal) => refusal,
       Err(_) => return false,
     };
@@ -931,8 +921,8 @@ impl ApidConnection {
     true
   }
 
-  fn take_rollback_rep(&mut self, signal: &ReceivedSignal) -> bool {
-    let rep = match TcRollbackRep::decode(&signal.data) {
+  fn take_rollback_rep(&mut self, signal: &SignalView<'_>) -> bool {
+    let rep = match TcRollbackRep::decode(signal.data) {
       Ok(rep) => rep,
       Err(_) => return false,
     };
@@ -947,8 +937,8 @@ impl ApidConnection {
     true
   }
 
-  fn take_commit_conf(&mut self, signal: &ReceivedSignal) -> bool {
-    let conf = match TcCommitConf::decode(&signal.data) {
+  fn take_commit_conf(&mut self, signal: &SignalView<'_>) -> bool {
+    let conf = match TcCommitConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
@@ -967,8 +957,8 @@ impl ApidConnection {
     true
   }
 
-  fn take_rollback_conf(&mut self, signal: &ReceivedSignal) -> bool {
-    let conf = match TcRollbackConf::decode(&signal.data) {
+  fn take_rollback_conf(&mut self, signal: &SignalView<'_>) -> bool {
+    let conf = match TcRollbackConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
@@ -986,8 +976,8 @@ impl ApidConnection {
 
   /// A refused commit, or a refused rollback: either way the
   /// transaction is over at the coordinator, and the error says why.
-  fn take_trans_ref(&mut self, signal: &ReceivedSignal) -> bool {
-    let refusal = match TcTransRef::decode(&signal.data) {
+  fn take_trans_ref(&mut self, signal: &SignalView<'_>) -> bool {
+    let refusal = match TcTransRef::decode(signal.data) {
       Ok(refusal) => refusal,
       Err(_) => return false,
     };
@@ -1007,8 +997,8 @@ impl ApidConnection {
   /// The coordinator that took over committed the transaction. One that
   /// had not asked to commit has committed all the same, and is told so
   /// as the reference tells it, with what it read lost.
-  fn take_fail_conf(&mut self, signal: &ReceivedSignal) -> bool {
-    let conf = match TcKeyFailConf::decode(&signal.data) {
+  fn take_fail_conf(&mut self, signal: &SignalView<'_>) -> bool {
+    let conf = match TcKeyFailConf::decode(signal.data) {
       Ok(conf) => conf,
       Err(_) => return false,
     };
@@ -1037,8 +1027,8 @@ impl ApidConnection {
 
   /// The coordinator that took over aborted the transaction: what was
   /// wanted, if a rollback had been asked for.
-  fn take_fail_ref(&mut self, signal: &ReceivedSignal) -> bool {
-    let refusal = match TcKeyFailRef::decode(&signal.data) {
+  fn take_fail_ref(&mut self, signal: &SignalView<'_>) -> bool {
+    let refusal = match TcKeyFailRef::decode(signal.data) {
       Ok(refusal) => refusal,
       Err(_) => return false,
     };
@@ -1062,7 +1052,7 @@ impl ApidConnection {
     true
   }
 
-  fn send_commit_ack(&mut self, signal: &ReceivedSignal, id1: u32, id2: u32) {
+  fn send_commit_ack(&mut self, signal: &SignalView<'_>, id1: u32, id2: u32) {
     let ack = tc_key::tc_commit_ack(id1, id2);
     let header = SignalHeader::new(
       gsn::IC_GSN_TC_COMMIT_ACK,

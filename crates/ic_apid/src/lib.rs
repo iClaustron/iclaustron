@@ -60,6 +60,7 @@ pub mod rec_thread;
 pub mod record;
 pub mod row_codec;
 pub mod send_pool;
+pub mod signal_page;
 pub mod signal_reader;
 pub mod text_row;
 pub mod thread_conn;
