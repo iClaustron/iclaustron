@@ -53,6 +53,10 @@ pub struct ReaderStats {
   pub pages_allocated: u64,
   /// Bytes of signals not yet complete copied into the next page.
   pub tail_bytes_copied: u64,
+  /// Reads made again right after one, before waiting for the socket.
+  pub extra_reads: u64,
+  /// Of those, the ones that found nothing: a system call for nothing.
+  pub empty_reads: u64,
 }
 
 static IC_READS: AtomicU64 = AtomicU64::new(0);
@@ -60,6 +64,8 @@ static IC_BYTES_READ: AtomicU64 = AtomicU64::new(0);
 static IC_PAGE_SWITCHES: AtomicU64 = AtomicU64::new(0);
 static IC_PAGES_ALLOCATED: AtomicU64 = AtomicU64::new(0);
 static IC_TAIL_BYTES_COPIED: AtomicU64 = AtomicU64::new(0);
+static IC_EXTRA_READS: AtomicU64 = AtomicU64::new(0);
+static IC_EMPTY_READS: AtomicU64 = AtomicU64::new(0);
 
 /// What the readers have done so far.
 pub fn reader_stats() -> ReaderStats {
@@ -69,6 +75,8 @@ pub fn reader_stats() -> ReaderStats {
     page_switches: IC_PAGE_SWITCHES.load(Ordering::Relaxed),
     pages_allocated: IC_PAGES_ALLOCATED.load(Ordering::Relaxed),
     tail_bytes_copied: IC_TAIL_BYTES_COPIED.load(Ordering::Relaxed),
+    extra_reads: IC_EXTRA_READS.load(Ordering::Relaxed),
+    empty_reads: IC_EMPTY_READS.load(Ordering::Relaxed),
   }
 }
 
@@ -99,6 +107,9 @@ pub struct SignalReader {
   filled_bytes: usize,
   /// Pages sealed while others still read them.
   retired: Vec<ReceivePage>,
+  /// True if the last read filled all the room it was given, so that
+  /// more is likely waiting in the socket.
+  last_read_full: bool,
 }
 
 impl SignalReader {
@@ -109,6 +120,7 @@ impl SignalReader {
       start_bytes: 0,
       filled_bytes: 0,
       retired: Vec::new(),
+      last_read_full: false,
     }
   }
 
@@ -128,14 +140,53 @@ impl SignalReader {
   pub fn read_from(&mut self, conn: &Connection) -> Result<usize, IcError> {
     self.make_room(header::IC_MAX_MESSAGE_BYTES);
     let at = self.filled_bytes;
-    let size = {
+    let (size, room) = {
       let buffer = self.bytes_mut()?;
-      conn.read(&mut buffer[at..])?
+      let room = buffer.len() - at;
+      (conn.read(&mut buffer[at..])?, room)
     };
     self.filled_bytes += size;
+    self.last_read_full = size == room;
     IC_READS.fetch_add(1, Ordering::Relaxed);
     IC_BYTES_READ.fetch_add(size as u64, Ordering::Relaxed);
     Ok(size)
+  }
+
+  /// Read again whatever has arrived since, without waiting: `None` if
+  /// nothing has. For reading a socket until it is empty before waiting
+  /// for it again.
+  pub fn read_again(
+    &mut self,
+    conn: &Connection,
+  ) -> Result<Option<usize>, IcError> {
+    self.make_room(header::IC_MAX_MESSAGE_BYTES);
+    let at = self.filled_bytes;
+    let (got, room) = {
+      let buffer = self.bytes_mut()?;
+      let room = buffer.len() - at;
+      (conn.read_nowait(&mut buffer[at..])?, room)
+    };
+    IC_EXTRA_READS.fetch_add(1, Ordering::Relaxed);
+    self.last_read_full = false;
+    match got {
+      Some(size) => {
+        self.filled_bytes += size;
+        self.last_read_full = size == room;
+        IC_READS.fetch_add(1, Ordering::Relaxed);
+        IC_BYTES_READ.fetch_add(size as u64, Ordering::Relaxed);
+      }
+      None => {
+        IC_EMPTY_READS.fetch_add(1, Ordering::Relaxed);
+      }
+    }
+    Ok(got)
+  }
+
+  /// True if the last read filled all the room it was given: the
+  /// socket likely holds more, and reading again is worth a system
+  /// call.
+  pub fn last_read_full(&self) -> bool {
+    self.last_read_full
   }
 
   /// The whole words that have arrived, which is where a signal is

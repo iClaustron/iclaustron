@@ -336,6 +336,21 @@ rows. The code went back to the version measured at 1.73 million.
   not the client; the effect on `t9`'s small rows was not measured
   apart.
 
+  **Reading a socket again, 2026-09-23.** After a read, the receive
+  thread reads the same socket again without waiting (`recv` with
+  `MSG_DONTWAIT`, the socket left blocking for the writes), up to four
+  times, but only while a read fills all the room it was given, the
+  author's rule: a read that comes short took all there was. Reading
+  again after every read found nothing nine times in ten and saved
+  nothing, `kevent` already waking the thread as data came. With the
+  rule, on `t9` no read ever filled its room, so nothing changes and
+  nothing is paid (732 to 738 ns at four threads either way); on 29 KB
+  rows the reads made again found data all but once or twice in a
+  hundred thousand, user time fell 12% (1 800 against 2 040 ns), the
+  preemptions by a third, and CPU per read to 4 595 and 4 655 ns
+  against 4 705 and 5 115. The default is four
+  (`ApidGlobal::set_extra_reads`, `--extra-reads`).
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given

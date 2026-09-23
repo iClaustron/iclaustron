@@ -138,6 +138,9 @@ pub const IC_RECEIVE_THREAD_STACK: usize = 256 * 1024;
 /// [`signal_page`](crate::signal_page). A first guess, 1 KB, to be set
 /// by measuring.
 pub const IC_LARGE_SIGNAL_WORDS: u32 = 256;
+/// How many times the receive thread reads a socket again while each
+/// read fills all its room; see `ApidGlobal::set_extra_reads`.
+pub const IC_EXTRA_READS: u32 = 4;
 /// Stack for the heartbeat thread, which does very little.
 pub const IC_HEARTBEAT_THREAD_STACK: usize = 128 * 1024;
 /// How long the receive thread waits in its poll set before looking at
@@ -685,6 +688,10 @@ pub(crate) struct ApidShared {
   /// Signals of at least this many words go by reference; zero copies
   /// every signal.
   pub(crate) large_signal_words: AtomicU32,
+  /// How many times the receive thread reads a socket again right away
+  /// after a read, until it finds it empty, before waiting in the poll
+  /// set; zero reads once.
+  pub(crate) extra_reads: AtomicU32,
 }
 
 impl ApidShared {
@@ -1119,6 +1126,7 @@ impl ApidGlobal {
       dict_cache: DictCache::new(),
       send_pool,
       large_signal_words: AtomicU32::new(IC_LARGE_SIGNAL_WORDS),
+      extra_reads: AtomicU32::new(IC_EXTRA_READS),
     });
 
     let num_nodes = shared.nodes.len();
@@ -1240,6 +1248,18 @@ impl ApidGlobal {
       .shared
       .large_signal_words
       .store(words, Ordering::Release);
+  }
+
+  /// How many times the receive thread reads a socket again right away,
+  /// while each read fills all the room it was given, before it waits
+  /// in the poll set again; [`IC_EXTRA_READS`] unless set, and zero
+  /// reads once. A read that comes short took all there was, so this
+  /// costs nothing while reads are small. Reading again after every
+  /// read found the socket empty nine times in ten; after a full read,
+  /// it found data all but once in fifty thousand (measured
+  /// 2026-09-23).
+  pub fn set_extra_reads(&self, reads: u32) {
+    self.shared.extra_reads.store(reads, Ordering::Release);
   }
 
   /// A connection for one user thread: its own block number and inbox,

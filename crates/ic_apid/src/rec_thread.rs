@@ -314,6 +314,34 @@ impl Receiver {
       }
     }
     self.drain(index);
+    // Read again, up to a number of times, while a read fills all the
+    // room it was given, since the socket then likely holds more; a
+    // read that came short took all there was, and the poll set says
+    // when more comes.
+    let extra = self.shared.extra_reads.load(Ordering::Acquire);
+    let mut done: u32 = 0;
+    while done < extra && self.nodes[index].reader.last_read_full() {
+      done += 1;
+      let again = {
+        let rec = &mut self.nodes[index];
+        match rec.conn.as_ref() {
+          Some(conn) => rec.reader.read_again(conn),
+          None => return,
+        }
+      };
+      match again {
+        Ok(None) => return,
+        Ok(Some(0)) => {
+          self.link_lost(index, IcError::new(err::IC_ERROR_LINK_LOST));
+          return;
+        }
+        Ok(Some(_)) => self.drain(index),
+        Err(e) => {
+          self.link_lost(index, e);
+          return;
+        }
+      }
+    }
   }
 
   /// Route every complete signal the node's reader holds: a signal for

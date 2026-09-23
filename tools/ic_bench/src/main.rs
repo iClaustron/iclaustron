@@ -75,6 +75,7 @@ use std::sync::Arc;
 use ic_apic::mgm_client;
 use ic_apid::apid_conn::ApidConnection;
 use ic_apid::apid_global::ApidGlobal;
+use ic_apid::apid_global::IC_EXTRA_READS;
 use ic_apid::apid_global::IC_LARGE_SIGNAL_WORDS;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::query::QueryId;
@@ -116,7 +117,7 @@ static DONE_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
 static FAILED_BY_CALLBACK: [AtomicUsize; IC_BENCH_MAX_SLOTS] =
   [const { AtomicUsize::new(0) }; IC_BENCH_MAX_SLOTS];
 
-const OPTIONS: [OptionEntry; 16] = [
+const OPTIONS: [OptionEntry; 17] = [
   OptionEntry {
     long_name: "ndb-connectstring",
     short_name: b'c',
@@ -184,6 +185,12 @@ const OPTIONS: [OptionEntry; 16] = [
     help: "Signals of this many words or more are not copied; 0 copies all",
   },
   OptionEntry {
+    long_name: "extra-reads",
+    short_name: 0,
+    kind: OptionKind::Int,
+    help: "Times the receive thread reads a socket again before waiting",
+  },
+  OptionEntry {
     long_name: "no-prepare",
     short_name: 0,
     kind: OptionKind::Flag,
@@ -227,6 +234,7 @@ struct Run {
   prepare: bool,
   bytes: usize,
   large_words: u32,
+  extra_reads: u32,
   force: bool,
   callbacks: bool,
 }
@@ -294,6 +302,9 @@ fn run() -> i32 {
     from: parser.get_int_or("from", 1),
     prepare: !parser.get_flag("no-prepare"),
     bytes: parser.get_int_or("bytes", 0).max(0) as usize,
+    extra_reads: parser
+      .get_int_or("extra-reads", IC_EXTRA_READS as i64)
+      .max(0) as u32,
     large_words: parser
       .get_int_or("large-words", IC_LARGE_SIGNAL_WORDS as i64)
       .max(0) as u32,
@@ -348,6 +359,7 @@ fn bench(global: &ApidGlobal, database: &str, table: &str, what: &Run) -> i32 {
   }
   let started = global.started_nodes().len();
   global.set_large_signal_words(what.large_words);
+  global.set_extra_reads(what.extra_reads);
   let mut conns: Vec<ApidConnection> = Vec::with_capacity(what.threads);
   while conns.len() < what.threads {
     match global.create_connection() {
@@ -1072,12 +1084,15 @@ fn print_reader(
   let bytes = after.bytes_read - before.bytes_read;
   println!(
     "Receive: {} reads of {} bytes on average; {} page switches, {} \
-     pages allocated, {} KB of tails copied",
+     pages allocated, {} KB of tails copied; {} reads again, {} of them \
+     empty",
     reads,
     bytes / reads,
     after.page_switches - before.page_switches,
     after.pages_allocated - before.pages_allocated,
-    (after.tail_bytes_copied - before.tail_bytes_copied) / 1024
+    (after.tail_bytes_copied - before.tail_bytes_copied) / 1024,
+    after.extra_reads - before.extra_reads,
+    after.empty_reads - before.empty_reads
   );
 }
 

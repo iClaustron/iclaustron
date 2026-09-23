@@ -483,6 +483,50 @@ impl Connection {
     }
   }
 
+  /// Read whatever has arrived without waiting for more: `None` if
+  /// nothing has, otherwise as [`read`](Self::read). Only this call is
+  /// made not to wait; the socket stays as it is, so that a write to it
+  /// still waits for room rather than failing.
+  pub fn read_nowait(&self, buf: &mut [u8]) -> Result<Option<usize>, IcError> {
+    loop {
+      // SAFETY: `buf` is a live buffer borrowed exclusively for this
+      // call, and recv writes at most `buf.len()` bytes into it.
+      let ret = unsafe {
+        libc::recv(
+          self.fd(),
+          buf.as_mut_ptr() as *mut libc::c_void,
+          buf.len(),
+          libc::MSG_DONTWAIT,
+        )
+      };
+      if ret > 0 {
+        let size = ret as usize;
+        self.stat.num_rec_buffers.fetch_add(1, Ordering::Relaxed);
+        self
+          .stat
+          .num_rec_bytes
+          .fetch_add(size as u64, Ordering::Relaxed);
+        let range = size_range(size as u64);
+        self.stat.num_rec_buf_range[range].fetch_add(1, Ordering::Relaxed);
+        return Ok(Some(size));
+      }
+      if ret == 0 {
+        self.connected.store(false, Ordering::Release);
+        return Ok(Some(0));
+      }
+      let e = std::io::Error::last_os_error();
+      match e.kind() {
+        std::io::ErrorKind::Interrupted => continue,
+        std::io::ErrorKind::WouldBlock => return Ok(None),
+        _ => {
+          self.stat.num_rec_errors.fetch_add(1, Ordering::Relaxed);
+          self.connected.store(false, Ordering::Release);
+          return Err(IcError::from_io(&e));
+        }
+      }
+    }
+  }
+
   /// Write the whole buffer (`ic_write_connection`).
   pub fn write(&self, buf: &[u8]) -> Result<(), IcError> {
     let mut stream = &self.stream;
