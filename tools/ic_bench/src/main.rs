@@ -545,7 +545,7 @@ fn run_thread(
           i += 1;
           continue;
         }
-        let failed = close_batch(&mut conn, &slots[i].sent);
+        let failed = close_batch(&mut conn, &slots[i].sent, &slots[i].queries);
         tally.ops += slots[i].sent.len() as u64 - failed;
         tally.failed += failed;
         tally.note_batch(now - slots[i].started);
@@ -914,7 +914,7 @@ fn write_rows(
     if let Some(e) = first_error {
       println!("An operation failed: {} ({})", e.message(), e.code);
     }
-    if close_batch(conn, &sent) > 0 {
+    if close_batch(conn, &sent, queries) > 0 {
       return Err(IcError::new(ic_port::err::IC_ERROR_TRANSACTION_ROLLED_BACK));
     }
   }
@@ -997,15 +997,34 @@ fn batch_done(conn: &ApidConnection, sent: &[TransId]) -> bool {
 
 /// Close a batch's transactions, once it is done. Returns how many did
 /// not commit.
-fn close_batch(conn: &mut ApidConnection, sent: &[TransId]) -> u64 {
+///
+/// An operation failed if its transaction did not commit, or if its
+/// query failed in a transaction that did: a committed read of a row
+/// that is not there fails its query and commits its transaction, and
+/// counting transactions alone let a run of reads of missing rows pass
+/// for a run of reads. `queries[i]` is the query of `sent[i]`.
+fn close_batch(
+  conn: &mut ApidConnection,
+  sent: &[TransId],
+  queries: &[QueryId],
+) -> u64 {
   let mut failed: u64 = 0;
-  for trans in sent {
-    if let Some(t) = conn.transaction(*trans) {
-      if t.commit_state() != CommitState::Committed {
-        failed += 1;
+  let mut i: usize = 0;
+  while i < sent.len() {
+    let mut ok = match conn.transaction(sent[i]) {
+      Some(t) => t.commit_state() == CommitState::Committed,
+      None => true,
+    };
+    if let Some(query) = queries.get(i).and_then(|id| conn.query(*id)) {
+      if query.is_failed() {
+        ok = false;
       }
     }
-    let _ = conn.close_transaction(*trans);
+    if !ok {
+      failed += 1;
+    }
+    let _ = conn.close_transaction(sent[i]);
+    i += 1;
   }
   failed
 }

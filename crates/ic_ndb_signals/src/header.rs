@@ -224,13 +224,16 @@ pub fn encode(
   if sections.len() > IC_MAX_SECTIONS {
     return Err(bad);
   }
-  let mut section_lens: Vec<usize> = Vec::with_capacity(sections.len());
-  for section in sections {
-    section_lens.push(section.len());
+  let mut lens: [usize; IC_MAX_SECTIONS] = [0; IC_MAX_SECTIONS];
+  let mut i: usize = 0;
+  while i < sections.len() {
+    lens[i] = sections[i].len();
+    i += 1;
   }
+  let section_lens = &lens[..sections.len()];
   let use_signal_id = header.signal_id.is_some();
   let total =
-    message_len_words(data.len(), &section_lens, use_signal_id, use_checksum);
+    message_len_words(data.len(), section_lens, use_signal_id, use_checksum);
   if total > IC_MAX_MESSAGE_WORDS {
     return Err(IcError::new(err::IC_ERROR_RECORD_SIZE_TOO_BIG));
   }
@@ -267,7 +270,7 @@ pub fn encode(
     out.push(id);
   }
   out.extend_from_slice(data);
-  for len in &section_lens {
+  for len in section_lens {
     out.push(*len as u32);
   }
   for section in sections {

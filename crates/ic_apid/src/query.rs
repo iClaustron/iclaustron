@@ -169,10 +169,8 @@ pub(crate) struct Execution {
   /// The flags apart from start, execute and commit, which are set when
   /// it is sent.
   pub flags: tc_key::TcKeyFlags,
-  /// The key section.
-  pub key: Vec<u32>,
-  /// The attribute section, empty for a delete.
-  pub attr_info: Vec<u32>,
+  /// Where its request lies, packed when it was defined, until sent.
+  pub staged: crate::apid_conn::Staged,
   /// True for a read, whose row is to be put into the attribute row.
   pub is_read: bool,
   /// What the coordinator said the operation would bring, once it has.

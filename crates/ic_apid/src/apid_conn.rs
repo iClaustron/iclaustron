@@ -360,6 +360,10 @@ pub struct ApidConnection {
   /// How many query callbacks are running, on this thread, inside the
   /// poll that completed them. A poll from inside one does nothing.
   pub(crate) in_callback: u32,
+  /// Where a request's key and attribute sections are built before
+  /// they are packed: two buffers for every query, warm in the cache.
+  pub(crate) key_scratch: Vec<u32>,
+  pub(crate) attr_scratch: Vec<u32>,
   /// Pages of signals taken from the inbox, read, and given back on the
   /// next poll.
   pages: Vec<signal_page::SignalPage>,
@@ -370,6 +374,24 @@ pub struct ApidConnection {
 struct Outgoing {
   node_id: u32,
   words: Vec<u32>,
+  /// Requests packed when their queries were defined, waiting for the
+  /// next send to set their place in the batch: kept apart from
+  /// `words`, which a poll sends with what the replies called for.
+  staged: Vec<u32>,
+  /// Requests in `staged` that will not go after all, as (where, how
+  /// many words): a transaction rolled back or lost before its send.
+  cancelled: Vec<(u32, u32)>,
+}
+
+/// Where a request packed at define time lies, until it is sent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Staged {
+  /// The node it goes to.
+  pub node_id: u32,
+  /// Where it begins in that node's staged buffer, in words.
+  pub at: u32,
+  /// Its length in words; zero for nothing staged.
+  pub len: u32,
 }
 
 impl std::fmt::Debug for ApidConnection {
@@ -410,6 +432,8 @@ impl ApidConnection {
       outgoing: Vec::new(),
       in_callback: 0,
       pages: Vec::new(),
+      key_scratch: Vec::new(),
+      attr_scratch: Vec::new(),
     })
   }
 
@@ -466,19 +490,7 @@ impl ApidConnection {
       Some(node) => node.uses_checksum(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
-    let mut index: usize = 0;
-    while index < self.outgoing.len() {
-      if self.outgoing[index].node_id == node_id {
-        break;
-      }
-      index += 1;
-    }
-    if index == self.outgoing.len() {
-      self.outgoing.push(Outgoing {
-        node_id,
-        words: Vec::new(),
-      });
-    }
+    let index = self.outgoing_index(node_id);
     let out = &mut self.outgoing[index].words;
     header::encode(header, data, sections, use_checksum, out)?;
     ic_port::debug_print!(
@@ -490,6 +502,115 @@ impl ApidConnection {
       sections.len()
     );
     Ok(())
+  }
+
+  fn outgoing_index(&mut self, node_id: u32) -> usize {
+    let mut index: usize = 0;
+    while index < self.outgoing.len() {
+      if self.outgoing[index].node_id == node_id {
+        return index;
+      }
+      index += 1;
+    }
+    self.outgoing.push(Outgoing {
+      node_id,
+      words: Vec::new(),
+      staged: Vec::new(),
+      cancelled: Vec::new(),
+    });
+    index
+  }
+
+  /// Pack a request for a node when its query is defined, to be sent
+  /// by the next [`send_staged`](Self::send_staged) once its flags are
+  /// set with [`patch_staged`](Self::patch_staged).
+  pub(crate) fn stage_signal(
+    &mut self,
+    node_id: u32,
+    header: &SignalHeader,
+    data: &[u32],
+    sections: &[&[u32]],
+  ) -> Result<Staged, IcError> {
+    let use_checksum = match self.shared.node(node_id) {
+      Some(node) => node.uses_checksum(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    let index = self.outgoing_index(node_id);
+    let out = &mut self.outgoing[index].staged;
+    let at = out.len();
+    let len = header::encode(header, data, sections, use_checksum, out)?;
+    Ok(Staged {
+      node_id,
+      at: at as u32,
+      len: len as u32,
+    })
+  }
+
+  /// Set one word of a staged request, its data word `data_word`, and
+  /// its checksum again if the link carries them.
+  pub(crate) fn patch_staged(
+    &mut self,
+    staged: &Staged,
+    data_word: usize,
+    value: u32,
+  ) {
+    let use_checksum = match self.shared.node(staged.node_id) {
+      Some(node) => node.uses_checksum(),
+      None => false,
+    };
+    let index = self.outgoing_index(staged.node_id);
+    let out = &mut self.outgoing[index].staged;
+    let at = staged.at as usize;
+    let len = staged.len as usize;
+    let word = at + header::IC_SIGNAL_HEADER_WORDS + data_word;
+    if len == 0 || at + len > out.len() || word >= at + len {
+      return;
+    }
+    out[word] = value;
+    if use_checksum {
+      out[at + len - 1] = header::compute_checksum(&out[at..at + len - 1]);
+    }
+  }
+
+  /// A staged request that is not to go after all.
+  pub(crate) fn unstage(&mut self, staged: &Staged) {
+    if staged.len == 0 {
+      return;
+    }
+    let index = self.outgoing_index(staged.node_id);
+    self.outgoing[index].cancelled.push((staged.at, staged.len));
+  }
+
+  /// Move every staged request, less the cancelled ones, to be written
+  /// with the next [`send_queued`](Self::send_queued). Every staged
+  /// request must have had its flags set by then.
+  pub(crate) fn send_staged(&mut self) {
+    for out in &mut self.outgoing {
+      if !out.cancelled.is_empty() {
+        out.cancelled.sort_unstable();
+        let mut kept: usize = 0;
+        let mut from: usize = 0;
+        for (at, len) in out.cancelled.drain(..) {
+          let (at, len) = (at as usize, len as usize);
+          out.staged.copy_within(from..at, kept);
+          kept += at - from;
+          from = at + len;
+        }
+        let end = out.staged.len();
+        out.staged.copy_within(from..end, kept);
+        kept += end - from;
+        out.staged.truncate(kept);
+      }
+      if out.staged.is_empty() {
+        continue;
+      }
+      if out.words.is_empty() {
+        std::mem::swap(&mut out.words, &mut out.staged);
+      } else {
+        out.words.extend_from_slice(&out.staged);
+        out.staged.clear();
+      }
+    }
   }
 
   /// Hand every node what has been packed for it, one write each

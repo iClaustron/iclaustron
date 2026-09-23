@@ -680,6 +680,62 @@ fn pk_commit_and_rollback_are_what_mysql_sees() {
   conn.close_transaction(tid).expect("close");
 }
 
+#[test]
+fn pk_a_rollback_before_the_send_sends_nothing() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "pk");
+  let first = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let second = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let insert = WriteKeyArgs {
+    kind: WriteKind::Insert,
+    ..WriteKeyArgs::default()
+  };
+
+  // An insert defined, its request packed, and the transaction rolled
+  // back before anything is sent.
+  let mut row = t.row();
+  t.put(&mut row, "id", "11");
+  t.put(&mut row, "val", "110");
+  t.put(&mut row, "name", "eleven");
+  let dropped = start_for(&mut conn, &t, &row);
+  let query = conn.query_mut(first).expect("the query");
+  query.key_row_mut().copy_from_slice(&row);
+  query.attr_row_mut().copy_from_slice(&row);
+  conn.write_key(first, dropped, &insert).expect("define");
+  conn
+    .rollback_transaction(dropped)
+    .expect("ask to roll back");
+
+  // Another insert, defined after it on the same connection, packed
+  // behind it and committed in the same send.
+  t.put(&mut row, "id", "12");
+  t.put(&mut row, "val", "120");
+  t.put(&mut row, "name", "twelve");
+  let kept = start_for(&mut conn, &t, &row);
+  let query = conn.query_mut(second).expect("the query");
+  query.key_row_mut().copy_from_slice(&row);
+  query.attr_row_mut().copy_from_slice(&row);
+  conn.write_key(second, kept, &insert).expect("define");
+  conn.commit_transaction(kept).expect("ask to commit");
+
+  assert_eq!(finish(&mut conn, dropped), CommitState::RolledBack);
+  assert_eq!(finish(&mut conn, kept), CommitState::Committed);
+  conn.close_transaction(dropped).expect("close");
+  conn.close_transaction(kept).expect("close");
+  assert!(read_by_id(&mut conn, &t, 11).is_none(), "never sent");
+  let row = read_by_id(&mut conn, &t, 12).expect("sent whole");
+  assert_eq!(t.get(&row, "val"), "120");
+  let seen = mysql(&format!("SELECT id, val FROM {}.pk ORDER BY id", IC_IT_DB));
+  assert_eq!(seen, Some("12\t120".to_string()));
+}
+
 // ---- uk ----
 
 #[test]

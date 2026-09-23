@@ -56,10 +56,21 @@ pub const IC_ATTR_FRAGMENT: u32 = 0xFFFE;
 /// The key section of a request: each primary key column of the key
 /// record's row, in attribute order, padded to words.
 pub fn key_info(key_rec: &Record, key_row: &[u8]) -> Result<Vec<u32>, IcError> {
+  let mut out: Vec<u32> = Vec::new();
+  key_info_into(key_rec, key_row, &mut out)?;
+  Ok(out)
+}
+
+/// As [`key_info`], into a buffer the caller keeps, cleared first.
+pub fn key_info_into(
+  key_rec: &Record,
+  key_row: &[u8],
+  out: &mut Vec<u32>,
+) -> Result<(), IcError> {
+  out.clear();
   if key_row.len() < key_rec.row_size() as usize {
     return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
   }
-  let mut bytes: Vec<u8> = Vec::new();
   for attr in &key_rec.table().info().attributes {
     if !attr.primary_key {
       continue;
@@ -73,12 +84,9 @@ pub fn key_info(key_rec: &Record, key_row: &[u8]) -> Result<Vec<u32>, IcError> {
     };
     let start = field.offset() as usize;
     let len = value_len(attr, field, &key_row[start..])?;
-    bytes.extend_from_slice(&key_row[start..start + len]);
-    while bytes.len() % 4 != 0 {
-      bytes.push(0);
-    }
+    push_padded(out, &key_row[start..start + len]);
   }
-  Ok(words_of(&bytes))
+  Ok(())
 }
 
 /// The key section of a request through a unique index: each key
@@ -92,10 +100,22 @@ pub fn index_key_info(
   key_rec: &Record,
   key_row: &[u8],
 ) -> Result<Vec<u32>, IcError> {
+  let mut out: Vec<u32> = Vec::new();
+  index_key_info_into(index, key_rec, key_row, &mut out)?;
+  Ok(out)
+}
+
+/// As [`index_key_info`], into a buffer the caller keeps, cleared first.
+pub fn index_key_info_into(
+  index: &IndexDef,
+  key_rec: &Record,
+  key_row: &[u8],
+  out: &mut Vec<u32>,
+) -> Result<(), IcError> {
+  out.clear();
   if key_row.len() < key_rec.row_size() as usize {
     return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
   }
-  let mut bytes: Vec<u8> = Vec::new();
   for column in &index.info().attributes {
     if !column.primary_key {
       continue;
@@ -110,20 +130,26 @@ pub fn index_key_info(
     };
     let start = field.offset() as usize;
     let len = value_len(attr, field, &key_row[start..])?;
-    bytes.extend_from_slice(&key_row[start..start + len]);
-    while bytes.len() % 4 != 0 {
-      bytes.push(0);
-    }
+    push_padded(out, &key_row[start..start + len]);
   }
-  Ok(words_of(&bytes))
+  Ok(())
 }
 
 /// The attribute information of a read of every column the record has.
 pub fn read_attr_info(rec: &Record) -> Vec<u32> {
+  let mut out: Vec<u32> = Vec::new();
+  read_attr_info_into(rec, &mut out);
+  out
+}
+
+/// As [`read_attr_info`], into a buffer the caller keeps, cleared first.
+pub fn read_attr_info_into(rec: &Record, out: &mut Vec<u32>) {
+  out.clear();
   let table = rec.table();
   let count = rec.num_fields();
   if count == table.num_fields() {
-    return vec![attr_header::attr_header(IC_ATTR_READ_ALL, count)];
+    out.push(attr_header::attr_header(IC_ATTR_READ_ALL, count));
+    return;
   }
   let mut max_id: u32 = 0;
   let mut position: u32 = 0;
@@ -136,18 +162,19 @@ pub fn read_attr_info(rec: &Record) -> Vec<u32> {
     position += 1;
   }
   let mask_words = (max_id / 32 + 1) as usize;
-  let mut words: Vec<u32> = vec![0; 1 + mask_words];
-  words[0] =
-    attr_header::attr_header(IC_ATTR_READ_PACKED, 4 * mask_words as u32);
+  out.push(attr_header::attr_header(
+    IC_ATTR_READ_PACKED,
+    4 * mask_words as u32,
+  ));
+  out.resize(1 + mask_words, 0);
   position = 0;
   while position < count {
     if let Some(field) = rec.field(position) {
       let id = field.field_id() as usize;
-      words[1 + id / 32] |= 1 << (id % 32);
+      out[1 + id / 32] |= 1 << (id % 32);
     }
     position += 1;
   }
-  words
 }
 
 /// The attribute information of a write: for each field of the record
@@ -163,10 +190,23 @@ pub fn write_attr_info(
   row: &[u8],
   skip_keys: bool,
 ) -> Result<Vec<u32>, IcError> {
+  let mut out: Vec<u32> = Vec::new();
+  write_attr_info_into(rec, row, skip_keys, &mut out)?;
+  Ok(out)
+}
+
+/// As [`write_attr_info`], into a buffer the caller keeps, cleared
+/// first.
+pub fn write_attr_info_into(
+  rec: &Record,
+  row: &[u8],
+  skip_keys: bool,
+  out: &mut Vec<u32>,
+) -> Result<(), IcError> {
+  out.clear();
   if row.len() < rec.row_size() as usize {
     return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
   }
-  let mut words: Vec<u32> = Vec::new();
   let mut position: u32 = 0;
   while position < rec.num_fields() {
     let (attr, field) = match field_at(rec, position) {
@@ -180,19 +220,15 @@ pub fn write_attr_info(
     }
     let id = field.field_id();
     if is_null {
-      words.push(attr_header::attr_header(id, 0));
+      out.push(attr_header::attr_header(id, 0));
       continue;
     }
     let start = field.offset() as usize;
     let len = value_len(attr, field, &row[start..])?;
-    words.push(attr_header::attr_header(id, len as u32));
-    let mut value = row[start..start + len].to_vec();
-    while value.len() % 4 != 0 {
-      value.push(0);
-    }
-    words.extend_from_slice(&words_of(&value));
+    out.push(attr_header::attr_header(id, len as u32));
+    push_padded(out, &row[start..start + len]);
   }
-  Ok(words)
+  Ok(())
 }
 
 /// Put a packed row into `row` as the record lays it out, and set or
@@ -378,19 +414,17 @@ fn copy_bits(
 }
 
 /// Bytes, padded to whole words, as words in native order.
-fn words_of(bytes: &[u8]) -> Vec<u32> {
-  let mut words: Vec<u32> = Vec::with_capacity(bytes.len() / 4);
+/// Append `bytes` to `out` packed into words as they lie in memory, the
+/// last word padded with zeros.
+fn push_padded(out: &mut Vec<u32>, bytes: &[u8]) {
   let mut i: usize = 0;
-  while i + 4 <= bytes.len() {
-    words.push(u32::from_ne_bytes([
-      bytes[i],
-      bytes[i + 1],
-      bytes[i + 2],
-      bytes[i + 3],
-    ]));
+  while i < bytes.len() {
+    let mut word = [0u8; 4];
+    let take = (bytes.len() - i).min(4);
+    word[..take].copy_from_slice(&bytes[i..i + take]);
+    out.push(u32::from_ne_bytes(word));
     i += 4;
   }
-  words
 }
 
 #[cfg(test)]
@@ -519,11 +553,9 @@ mod tests {
 
   /// Words from bytes, padding the last word with zeros.
   fn padded(bytes: &[u8]) -> Vec<u32> {
-    let mut all = bytes.to_vec();
-    while all.len() % 4 != 0 {
-      all.push(0);
-    }
-    words_of(&all)
+    let mut out: Vec<u32> = Vec::new();
+    push_padded(&mut out, bytes);
+    out
   }
 
   #[test]

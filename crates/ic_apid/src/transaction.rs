@@ -88,6 +88,7 @@ use ic_port::IcError;
 use ic_util::ptr_array::PtrId;
 
 use crate::apid_conn::ApidConnection;
+use crate::apid_conn::Staged;
 use crate::apid_conn::TcRecord;
 use crate::apid_global::LinkStatus;
 use crate::dict_cache::IndexDef;
@@ -491,14 +492,14 @@ impl ApidConnection {
     user_ref: usize,
     callback: Option<QueryCallback>,
   ) -> Result<(), IcError> {
-    let (id, ended) = match self.transactions.get(trans_id.0) {
-      Some(trans) => (trans.trans_id, trans.ended()),
+    let (id, ended, tc) = match self.transactions.get(trans_id.0) {
+      Some(trans) => (trans.trans_id, trans.ended(), trans.tc),
       None => return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE)),
     };
     if ended {
       return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
     }
-    let query = match self.queries.get_mut(query_id.0) {
+    let query = match self.queries.get(query_id.0) {
       Some(query) => query,
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
@@ -506,7 +507,9 @@ impl ApidConnection {
     if state == QueryState::Defined || state == QueryState::Sent {
       return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
     }
-    let key = match query.index() {
+    // A unique query names the index's own table and goes as a
+    // TCINDXREQ; the coordinator looks the row up through the index.
+    let (signal, table_id, table_version) = match query.index() {
       Some(index) => {
         // The reference refuses an insert through an index too.
         let inserts = flags.operation == tc_key::IC_OP_INSERT
@@ -514,36 +517,64 @@ impl ApidConnection {
         if inserts {
           return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
         }
-        row_codec::index_key_info(index, query.key_record(), query.key_row())?
+        (
+          gsn::IC_GSN_TCINDXREQ,
+          index.index_id(),
+          index.index_version(),
+        )
       }
-      None => row_codec::key_info(query.key_record(), query.key_row())?,
+      None => (
+        gsn::IC_GSN_TCKEYREQ,
+        query.table().table_id(),
+        query.table().table_version(),
+      ),
     };
-    let mut attr_info: Vec<u32> = Vec::new();
-    if is_read {
-      attr_info = row_codec::read_attr_info(query.attr_record());
-    } else if flags.operation != tc_key::IC_OP_DELETE {
-      let skip_keys = flags.operation == tc_key::IC_OP_UPDATE;
-      attr_info = row_codec::write_attr_info(
-        query.attr_record(),
-        query.attr_row(),
-        skip_keys,
-      )?;
+    // The request is packed now, into the node's staged buffer, with
+    // its sections built from the rows into the connection's scratch
+    // buffers; the send sets its place in the batch.
+    let request = TcKeyReq {
+      tc_connect_ptr: tc.tc_ptr,
+      api_operation_ptr: query_id.as_u32(),
+      table_id,
+      request_info: flags.request_info(),
+      table_version,
+      trans_id1: id as u32,
+      trans_id2: (id >> 32) as u32,
+    };
+    let mut key = std::mem::take(&mut self.key_scratch);
+    let mut attr = std::mem::take(&mut self.attr_scratch);
+    let built = build_sections(query, &flags, is_read, &mut key, &mut attr);
+    let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
+    let staged = match built {
+      Ok(()) => {
+        let both: [&[u32]; 2] = [&key, &attr];
+        let mut sections: &[&[u32]] = &both;
+        if attr.is_empty() {
+          sections = &both[..1];
+        }
+        self.stage_signal(tc.node_id, &header, &request.encode(), sections)
+      }
+      Err(e) => Err(e),
+    };
+    self.key_scratch = key;
+    self.attr_scratch = attr;
+    let staged = staged?;
+    if let Some(query) = self.queries.get_mut(query_id.0) {
+      query.begin(
+        Execution {
+          trans: Some(trans_id),
+          trans_id: id,
+          flags,
+          staged,
+          is_read,
+          confirmed: None,
+          row: Vec::new(),
+          has_row: false,
+        },
+        user_ref,
+        callback,
+      );
     }
-    query.begin(
-      Execution {
-        trans: Some(trans_id),
-        trans_id: id,
-        flags,
-        key,
-        attr_info,
-        is_read,
-        confirmed: None,
-        row: Vec::new(),
-        has_row: false,
-      },
-      user_ref,
-      callback,
-    );
     if let Some(trans) = self.transactions.get_mut(trans_id.0) {
       trans.defined.push(query_id);
     }
@@ -584,6 +615,7 @@ impl ApidConnection {
       None => return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE)),
     }
     for qid in dropped {
+      self.unstage_query(qid);
       if let Some(query) = self.queries.get_mut(qid.0) {
         query.set_state(QueryState::Idle);
       }
@@ -610,8 +642,10 @@ impl ApidConnection {
         }
       }
     }
-    // A node whose link is down fails its write here; the transactions
-    // sent to it are failed by the next poll, as their link is gone.
+    // What was staged goes with this send, its flags now set. A node
+    // whose link is down fails its write here; the transactions sent to
+    // it are failed by the next poll, as their link is gone.
+    self.send_staged();
     if let Err(e) = self.send_queued(force) {
       if first_error.is_none() {
         first_error = Some(e);
@@ -658,8 +692,7 @@ impl ApidConnection {
     while i < defined.len() {
       let qid = defined[i];
       let last = i + 1 == defined.len();
-      let sent =
-        self.send_query(qid, &tc, trans_id, !begun, last, last && commit_now);
+      let sent = self.send_query(qid, !begun, last, last && commit_now);
       i += 1;
       match sent {
         Ok(()) => {
@@ -676,9 +709,11 @@ impl ApidConnection {
         }
         Err(e) => {
           // The rest of the batch is not sent; the queries fail here.
+          self.unstage_query(qid);
           self.fail_query(qid, e);
           let mut j = i;
           while j < defined.len() {
+            self.unstage_query(defined[j]);
             self.fail_query(defined[j], e);
             j += 1;
           }
@@ -696,58 +731,35 @@ impl ApidConnection {
     Ok(())
   }
 
+  /// A query's staged request is not to go.
+  fn unstage_query(&mut self, qid: QueryId) {
+    let staged = match self.queries.get_mut(qid.0) {
+      Some(query) => std::mem::take(&mut query.execution.staged),
+      None => return,
+    };
+    self.unstage(&staged);
+  }
+
   /// One query's request.
   fn send_query(
     &mut self,
     qid: QueryId,
-    tc: &TcRecord,
-    trans_id: u64,
     start: bool,
     execute: bool,
     commit: bool,
   ) -> Result<(), IcError> {
-    let query = match self.queries.get_mut(qid.0) {
-      Some(query) => query,
+    let (mut flags, staged) = match self.queries.get(qid.0) {
+      Some(query) => (query.execution.flags, query.execution.staged),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
-    // A unique query names the index's own table and goes as a
-    // TCINDXREQ; the coordinator looks the row up through the index.
-    let (signal, table_id, table_version) = match query.index() {
-      Some(index) => (
-        gsn::IC_GSN_TCINDXREQ,
-        index.index_id(),
-        index.index_version(),
-      ),
-      None => (
-        gsn::IC_GSN_TCKEYREQ,
-        query.table().table_id(),
-        query.table().table_version(),
-      ),
-    };
-    let mut flags = query.execution.flags;
+    // The request was packed when the query was defined; only its
+    // place in the batch is set now.
     flags.start = start;
     flags.execute = execute;
     flags.commit = commit;
-    let req = flags.request_info();
-    let key = std::mem::take(&mut query.execution.key);
-    let attr_info = std::mem::take(&mut query.execution.attr_info);
-    let request = TcKeyReq {
-      tc_connect_ptr: tc.tc_ptr,
-      api_operation_ptr: qid.as_u32(),
-      table_id,
-      request_info: req,
-      table_version,
-      trans_id1: trans_id as u32,
-      trans_id2: (trans_id >> 32) as u32,
-    };
-    let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
-    let both: [&[u32]; 2] = [&key, &attr_info];
-    let mut sections: &[&[u32]] = &both;
-    if attr_info.is_empty() {
-      sections = &both[..1];
-    }
-    self.queue_signal(tc.node_id, &header, &request.encode(), sections)?;
+    self.patch_staged(&staged, IC_TCKEYREQ_REQUEST_INFO, flags.request_info());
     if let Some(query) = self.queries.get_mut(qid.0) {
+      query.execution.staged = Staged::default();
       query.set_state(QueryState::Sent);
     }
     Ok(())
@@ -1281,6 +1293,7 @@ impl ApidConnection {
       if let Some(trans) = self.transactions.get_mut(tid.0) {
         let defined = std::mem::take(&mut trans.defined);
         for qid in defined {
+          self.unstage_query(qid);
           if let Some(query) = self.queries.get_mut(qid.0) {
             query.fail(why);
           }
@@ -1290,6 +1303,44 @@ impl ApidConnection {
       self.end_transaction(tid, CommitState::RolledBack, error, 0);
     }
   }
+}
+
+/// The request word of a `TCKEYREQ` or `TCINDXREQ` that holds the
+/// flags, among its data words (`TcKeyReq::encode`).
+const IC_TCKEYREQ_REQUEST_INFO: usize = 4;
+
+/// A query's key and attribute sections from its rows, into buffers
+/// the caller keeps, cleared first: the key, then for a read what to
+/// read, for a write the values, and for a delete nothing.
+fn build_sections(
+  query: &ApidQuery,
+  flags: &TcKeyFlags,
+  is_read: bool,
+  key: &mut Vec<u32>,
+  attr_info: &mut Vec<u32>,
+) -> Result<(), IcError> {
+  match query.index() {
+    Some(index) => row_codec::index_key_info_into(
+      index,
+      query.key_record(),
+      query.key_row(),
+      key,
+    )?,
+    None => row_codec::key_info_into(query.key_record(), query.key_row(), key)?,
+  }
+  attr_info.clear();
+  if is_read {
+    row_codec::read_attr_info_into(query.attr_record(), attr_info);
+  } else if flags.operation != tc_key::IC_OP_DELETE {
+    let skip_keys = flags.operation == tc_key::IC_OP_UPDATE;
+    row_codec::write_attr_info_into(
+      query.attr_record(),
+      query.attr_row(),
+      skip_keys,
+      attr_info,
+    )?;
+  }
+  Ok(())
 }
 
 #[cfg(test)]

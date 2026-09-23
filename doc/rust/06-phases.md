@@ -281,6 +281,34 @@ rows. The code went back to the version measured at 1.73 million.
   and was rolled back: the send side's small, same-thread allocations
   are cheap, and the object that grows by their removal costs more.
 
+  **A correction, 2026-09-23.** The million-key runs of `t9` above,
+  E's 1 757 000 at 665 ns among them, read rows that were never
+  written: the table had been prepared with a thousand keys. A committed
+  read of a missing row fails its query and commits its transaction,
+  and the bench counted transactions, so the runs passed; updates
+  failing to a man gave it away. The bench now counts a failed query
+  as a failed operation. The comparisons between builds hold, each
+  having done the same work, but the workload was not the one meant.
+
+  **Requests packed at define, 2026-09-23.** A request is encoded whole
+  when its query is defined, into a staged buffer per node the
+  connection keeps, its sections built in two scratch buffers the
+  connection keeps; the send only sets the start, execute and commit
+  bits in its flags word and hands the staged buffer over as the
+  outgoing one, without a copy. A query's execution state shrinks by
+  36 bytes, the two section allocations and the encoder's are gone, and
+  the send loop touches one word a query. A request that does not go
+  after all, rolled back or lost before the send, is cut out when the
+  send happens. On a million real rows, four threads, against the same
+  build without it: 4 336 000 reads a second at 754 ns per read against
+  4 318 000 at 785 ns; one thread with it, 1 770 000 and 1 789 000 at
+  676 and 670 ns. Reads of missing rows, one thread, the same
+  comparison: 638 ns against 665. About 4% less client CPU either way,
+  and the first change to
+  the send side that measured better: it keeps the layout that had
+  won, the sections built together at define and read in order, and
+  removes a pass over them.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given
@@ -303,7 +331,15 @@ rows. The code went back to the version measured at 1.73 million.
   pages and let them all go at once, which doubled system time at 29
   KB until fixed; free pages are now taken most recently sealed first.
   Signals of 256 words and up go by reference
-  (`set_large_signal_words`).
+  (`set_large_signal_words`). The limit, measured, 2026-09-23: at
+  512-byte rows, a `TRANSID_AI` of about 138 words, copying and not
+  copying gave the same at one thread and at four; at 1 KB rows, about
+  266 words, not copying was ahead, 821 against 833 ns at one thread
+  (every run), and at four threads 0.5% less CPU, 2% more rate and
+  fewer page faults, the user threads' pages not growing to hold the
+  rows. The best limit lies between those, and 256 is at its top; the
+  spread of a page's release over threads that copying small signals
+  avoids did not show at four threads at either size.
 - Exit: integration groups `pk`, `uk`, `types`, `failure` pass; a 1-thread
   asynchronous PK read benchmark is within 2× of the C++ NDB API (the
   20 % target is Phase 7). Met as of 2026-09-23: the benchmark at
