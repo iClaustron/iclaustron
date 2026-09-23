@@ -61,10 +61,53 @@ pub fn distribution_key(
   key_rec: &Record,
   key_row: &[u8],
 ) -> Result<Vec<u8>, IcError> {
+  let mut bytes: Vec<u8> = Vec::new();
+  distribution_fields(key_rec, key_row, &mut |value: &[u8]| {
+    bytes.extend_from_slice(value);
+    while bytes.len() % 4 != 0 {
+      bytes.push(0);
+    }
+  })?;
+  Ok(bytes)
+}
+
+/// A distribution key that fits here is hashed from the stack: a key
+/// of a few integers, which is most of them, costs no allocation.
+const IC_KEY_ON_STACK: usize = 128;
+
+/// The distribution key into `out` if it fits, and how many bytes it
+/// took; `None` if it does not fit, for the caller to allocate.
+fn distribution_key_into(
+  key_rec: &Record,
+  key_row: &[u8],
+  out: &mut [u8],
+) -> Result<Option<usize>, IcError> {
+  let mut at: usize = 0;
+  distribution_fields(key_rec, key_row, &mut |value: &[u8]| {
+    let padded = (value.len() + 3) & !3;
+    if at + padded <= out.len() {
+      out[at..at + value.len()].copy_from_slice(value);
+      out[at + value.len()..at + padded].fill(0);
+    }
+    at += padded;
+  })?;
+  if at > out.len() {
+    return Ok(None);
+  }
+  Ok(Some(at))
+}
+
+/// Each distribution key value, in attribute order, given to `take`:
+/// the value's bytes as they lie in the row, a variable-length one with
+/// its length in front, as the reference feeds them to the hash.
+fn distribution_fields(
+  key_rec: &Record,
+  key_row: &[u8],
+  take: &mut dyn FnMut(&[u8]),
+) -> Result<(), IcError> {
   if key_row.len() < key_rec.row_size() as usize {
     return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
   }
-  let mut bytes: Vec<u8> = Vec::new();
   for attr in &key_rec.table().info().attributes {
     if !attr.distribution_key {
       continue;
@@ -93,12 +136,9 @@ pub fn distribution_key(
     if len > size {
       return Err(IcError::new(err::IC_ERROR_VALUE_TOO_LONG));
     }
-    bytes.extend_from_slice(&value[..len]);
-    while bytes.len() % 4 != 0 {
-      bytes.push(0);
-    }
+    take(&value[..len]);
   }
-  Ok(bytes)
+  Ok(())
 }
 
 /// The word that places a key: the second of the MD5 digest, or the
@@ -126,6 +166,10 @@ pub fn partition_of(
     Some(map) => map,
     None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
   };
+  let mut buf = [0u8; IC_KEY_ON_STACK];
+  if let Some(len) = distribution_key_into(key_rec, key_row, &mut buf)? {
+    return Ok(map.fragment_of(partition_hash(table, &buf[..len])));
+  }
   let key = distribution_key(key_rec, key_row)?;
   Ok(map.fragment_of(partition_hash(table, &key)))
 }
@@ -406,6 +450,22 @@ mod tests {
     let row = row_of(&rec, 7, b"hi");
     let key = distribution_key(&rec, &row).expect("key");
     assert_eq!(key, [7, 0, 0, 0, 2, b'h', b'i', 0]);
+  }
+
+  #[test]
+  fn the_key_on_the_stack_is_the_key_on_the_heap() {
+    let t = table(true, true, 0);
+    let rec = Record::default_for(&t, None).expect("record");
+    let row = row_of(&rec, 7, b"hi");
+    let mut buf = [0xFFu8; IC_KEY_ON_STACK];
+    let len = distribution_key_into(&rec, &row, &mut buf)
+      .expect("key")
+      .expect("fits");
+    assert_eq!(&buf[..len], &distribution_key(&rec, &row).expect("key")[..]);
+    // A key that does not fit is left to the heap.
+    let mut small = [0u8; 4];
+    let got = distribution_key_into(&rec, &row, &mut small).expect("key");
+    assert_eq!(got, None);
   }
 
   #[test]

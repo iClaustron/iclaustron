@@ -309,6 +309,18 @@ rows. The code went back to the version measured at 1.73 million.
   won, the sections built together at define and read in order, and
   removes a pass over them.
 
+  **The hint's key on the stack, 2026-09-23.** `hint_for_key` builds
+  the distribution key in a 128-byte array on the stack, falling back
+  to the heap for a longer key, instead of in a vector per transaction.
+  The hint comes before the transaction and its request, so the key
+  section packed at define cannot serve it; the bytes and the rules
+  are the same. One allocation less a transaction, kept by the author
+  after measuring; its share is below what two runs resolve. With it,
+  the order set for the allocation work is done: the intrusive query
+  lists (D) measured no better and were rolled back, the arena (A) is
+  what packing at define (B) became, and signals in pages (E, E2) and
+  packing at define (B) are the ones that paid.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given
