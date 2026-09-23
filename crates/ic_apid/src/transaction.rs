@@ -884,6 +884,11 @@ impl ApidConnection {
     if conf.needs_commit_ack() {
       self.send_commit_ack(signal, conf.trans_id1, conf.trans_id2);
     }
+    // Record the commit and GCI before completing queries: the last
+    // query's callback may close the transaction and start another.
+    if conf.is_committed() {
+      self.end_transaction(tid, CommitState::Committed, None, conf.gci);
+    }
     for op in &conf.operations {
       let qid = QueryId(PtrId::from_u32(op.api_operation_ptr));
       if let Some(query) = self.queries.get_mut(qid.0) {
@@ -892,9 +897,6 @@ impl ApidConnection {
         }
       }
       self.complete_if_done(qid);
-    }
-    if conf.is_committed() {
-      self.end_transaction(tid, CommitState::Committed, None, conf.gci);
     }
     true
   }
