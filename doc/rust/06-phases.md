@@ -389,6 +389,34 @@ rows. The code went back to the version measured at 1.73 million.
   many data nodes and cores, measured the same way
   (`ic_bench --receive-threads`).
 
+  On Linux, 32 CPUs, the same two data nodes, it is otherwise: one
+  receive thread becomes the limit between four and eight user
+  threads. One user thread: two receive threads cost 10% more CPU for
+  the same rate, as on the Mac. Four: 5 050 000 and 5 560 000 reads a
+  second against 4 750 000 and 4 930 000, CPU per read the same. Eight:
+  with one receive thread the rate stopped at 5 320 000 to 5 480 000,
+  the batch time doubled to 485 µs and each user thread fell to 670 000
+  a second, the rounds queuing at the receive thread; with two, 7 120
+  000 in one run and 5 620 000 in the other, where thread placement on
+  32 cores, shared with the data nodes, likely made the spread. The
+  Mac's faster cores were all busy, so its client never outran one
+  receive thread. Linux counts voluntary switches: 20 to 45 sleeps per
+  1 000 reads. With two data nodes, two receive threads is the most.
+
+  The i9-13900K is hybrid: CPUs 0 to 15 are eight performance cores
+  with two threads each, 16 to 31 sixteen efficiency cores. Pinned,
+  the side on the efficiency cores sets the ceiling. The client on
+  them, the data nodes on the performance cores: about 3.5 million
+  reads a second, a single read costing 1 010 ns of client CPU against
+  690. The other way round: 2.2 million whatever the user and receive
+  threads, the batch time doubling with the user threads, and each data
+  node with four threads busy, its receive thread at 93 to 100% and the
+  others at 60%, the 270% `top` showed in total. The data nodes had
+  sized their threads for a small machine when they started; more
+  receive threads per data node, and the performance cores for them,
+  are the fix on that side. Unpinned, the client taking whatever was
+  free, did best, 5.3 to 7.1 million with eight user threads.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given
