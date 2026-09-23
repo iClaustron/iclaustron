@@ -365,8 +365,7 @@ pub struct ApidConnection {
   /// The transactions not yet done, by the coordinator record pointer
   /// their replies name.
   pub(crate) active: BTreeMap<u32, TransId>,
-  /// Signals packed for a node and not yet handed to it, one entry per
-  /// node this connection has sent to.
+  /// Signals packed for a node and link generation, not yet handed to it.
   outgoing: Vec<Outgoing>,
   /// How many query callbacks are running, on this thread, inside the
   /// poll that completed them. A poll from inside one does nothing.
@@ -386,6 +385,7 @@ pub struct ApidConnection {
 /// (the C's `IC_SEND_CLUSTER_NODE` and its pages).
 struct Outgoing {
   node_id: u32,
+  generation: u32,
   words: Vec<u32>,
   /// Requests packed when their queries were defined, waiting for the
   /// next send to set their place in the batch: kept apart from
@@ -401,6 +401,8 @@ struct Outgoing {
 pub(crate) struct Staged {
   /// The node it goes to.
   pub node_id: u32,
+  /// The link whose coordinator record the request uses.
+  pub generation: u32,
   /// Where it begins in that node's staged buffer, in words.
   pub at: u32,
   /// Its length in words; zero for nothing staged.
@@ -501,11 +503,27 @@ impl ApidConnection {
     data: &[u32],
     sections: &[&[u32]],
   ) -> Result<(), IcError> {
+    let generation = match self.shared.node(node_id) {
+      Some(node) => node.published.generation(),
+      None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
+    };
+    self.queue_signal_for_generation(node_id, generation, header, data, sections)
+  }
+
+  /// Keep requests for different links in separate batches.
+  pub(crate) fn queue_signal_for_generation(
+    &mut self,
+    node_id: u32,
+    generation: u32,
+    header: &SignalHeader,
+    data: &[u32],
+    sections: &[&[u32]],
+  ) -> Result<(), IcError> {
     let use_checksum = match self.shared.node(node_id) {
       Some(node) => node.uses_checksum(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
-    let index = self.outgoing_index(node_id);
+    let index = self.outgoing_index(node_id, generation);
     let out = &mut self.outgoing[index].words;
     header::encode(header, data, sections, use_checksum, out)?;
     ic_port::debug_print!(
@@ -529,16 +547,28 @@ impl ApidConnection {
     false
   }
 
-  fn outgoing_index(&mut self, node_id: u32) -> usize {
+  fn outgoing_index(&mut self, node_id: u32, generation: u32) -> usize {
     let mut index: usize = 0;
     while index < self.outgoing.len() {
-      if self.outgoing[index].node_id == node_id {
+      if self.outgoing[index].node_id == node_id
+        && self.outgoing[index].generation == generation
+      {
         return index;
       }
       index += 1;
     }
+    // Reuse an empty batch after a reconnect without invalidating any
+    // offsets still held by staged queries.
+    if let Some(index) = self.outgoing.iter().position(|out| {
+      out.node_id == node_id && out.words.is_empty()
+        && out.staged.is_empty() && out.cancelled.is_empty()
+    }) {
+      self.outgoing[index].generation = generation;
+      return index;
+    }
     self.outgoing.push(Outgoing {
       node_id,
+      generation,
       words: Vec::new(),
       staged: Vec::new(),
       cancelled: Vec::new(),
@@ -552,6 +582,7 @@ impl ApidConnection {
   pub(crate) fn stage_signal(
     &mut self,
     node_id: u32,
+    generation: u32,
     header: &SignalHeader,
     data: &[u32],
     sections: &[&[u32]],
@@ -560,12 +591,13 @@ impl ApidConnection {
       Some(node) => node.uses_checksum(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
-    let index = self.outgoing_index(node_id);
+    let index = self.outgoing_index(node_id, generation);
     let out = &mut self.outgoing[index].staged;
     let at = out.len();
     let len = header::encode(header, data, sections, use_checksum, out)?;
     Ok(Staged {
       node_id,
+      generation,
       at: at as u32,
       len: len as u32,
     })
@@ -583,7 +615,7 @@ impl ApidConnection {
       Some(node) => node.uses_checksum(),
       None => false,
     };
-    let index = self.outgoing_index(staged.node_id);
+    let index = self.outgoing_index(staged.node_id, staged.generation);
     let out = &mut self.outgoing[index].staged;
     let at = staged.at as usize;
     let len = staged.len as usize;
@@ -602,7 +634,7 @@ impl ApidConnection {
     if staged.len == 0 {
       return;
     }
-    let index = self.outgoing_index(staged.node_id);
+    let index = self.outgoing_index(staged.node_id, staged.generation);
     self.outgoing[index].cancelled.push((staged.at, staged.len));
   }
 
@@ -652,7 +684,11 @@ impl ApidConnection {
       if !self.outgoing[index].words.is_empty() {
         let node_id = self.outgoing[index].node_id;
         let result = match self.shared.node(node_id) {
-          Some(node) => node.send_words(&self.outgoing[index].words, force),
+          Some(node) => node.send_words_for_generation(
+            &self.outgoing[index].words,
+            force,
+            self.outgoing[index].generation,
+          ),
           None => Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
         };
         self.outgoing[index].words.clear();
@@ -703,7 +739,8 @@ impl ApidConnection {
     // Read before sending, so that a link replaced while the request is
     // on its way is seen as a different one.
     let generation = node.published.generation();
-    self.send(node_id, header, data, sections)?;
+    self.queue_signal_for_generation(node_id, generation, header, data, sections)?;
+    self.send_queued(true)?;
     // Nothing is read from the inbox but by this thread, so the reply
     // cannot be taken before this is recorded.
     self
@@ -1048,7 +1085,9 @@ impl ApidConnection {
       let header =
         SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, block, rec.tc_block);
       if let Some(node) = self.shared.node(rec.node_id) {
-        let _ = node.send(&header, &release.encode(), &[]);
+        let _ = node.send_for_generation(
+          rec.generation, &header, &release.encode(), &[],
+        );
       }
     }
   }

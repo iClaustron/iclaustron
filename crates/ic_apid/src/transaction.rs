@@ -557,7 +557,9 @@ impl ApidConnection {
         if attr.is_empty() {
           sections = &both[..1];
         }
-        self.stage_signal(tc.node_id, &header, &request.encode(), sections)
+        self.stage_signal(
+          tc.node_id, tc.generation, &header, &request.encode(), sections,
+        )
       }
       Err(e) => Err(e),
     };
@@ -804,7 +806,9 @@ impl ApidConnection {
     let data =
       tc_key::tc_trans_req(tc.tc_ptr, trans_id as u32, (trans_id >> 32) as u32);
     let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
-    self.queue_signal(tc.node_id, &header, &data, &[])?;
+    self.queue_signal_for_generation(
+      tc.node_id, tc.generation, &header, &data, &[],
+    )?;
     if let Some(trans) = self.transactions.get_mut(id.0) {
       trans.state = how;
       trans.end_wanted = None;

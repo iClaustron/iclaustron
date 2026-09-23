@@ -193,6 +193,8 @@ pub(crate) struct PendingLink {
 /// and the adaptive send state of `IC_SEND_NODE_CONNECTION`).
 struct Sender {
   conn: Option<Arc<Connection>>,
+  /// The generation of this socket, checked under the sender mutex.
+  generation: u32,
   use_checksum: bool,
   /// Signals queued and not yet written, in the order they were queued.
   waiting: Vec<u32>,
@@ -284,6 +286,7 @@ impl NodeShared {
         IC_MUTEX_LEVEL_NODE_CONN,
         Sender {
           conn: None,
+          generation: 0,
           use_checksum: false,
           waiting: Vec::new(),
           spare: Vec::new(),
@@ -448,6 +451,8 @@ impl NodeShared {
   pub(crate) fn install_sender(&self, conn: Arc<Connection>, checksum: bool) {
     let mut sender = self.sender.lock();
     sender.conn = Some(conn);
+    // The owning receive thread publishes this generation after installation.
+    sender.generation = self.published.generation().wrapping_add(1);
     sender.use_checksum = checksum;
     // What waited was for the link that went.
     sender.waiting.clear();
@@ -479,6 +484,19 @@ impl NodeShared {
     data: &[u32],
     sections: &[&[u32]],
   ) -> Result<(), IcError> {
+    self.send_for_generation(
+      self.published.generation(), header, data, sections,
+    )
+  }
+
+  /// Send only over the link that owns the request's records.
+  pub(crate) fn send_for_generation(
+    &self,
+    generation: u32,
+    header: &SignalHeader,
+    data: &[u32],
+    sections: &[&[u32]],
+  ) -> Result<(), IcError> {
     let mut buf: Vec<u32> = Vec::new();
     header::encode(header, data, sections, self.uses_checksum(), &mut buf)?;
     ic_port::debug_print!(
@@ -489,7 +507,7 @@ impl NodeShared {
       data.len(),
       sections.len()
     );
-    self.send_words(&buf, true)
+    self.send_words_for_generation(&buf, true, generation)
   }
 
   /// Queue packed signals for this node and see them written
@@ -509,6 +527,17 @@ impl NodeShared {
   /// is reported to the writer only; anyone whose signals it took
   /// learns of it as the link goes.
   pub fn send_words(&self, words: &[u32], force: bool) -> Result<(), IcError> {
+    self.send_words_for_generation(words, force, self.published.generation())
+  }
+
+  /// Check the generation while holding the socket's mutex, so a
+  /// reconnect cannot put an old request onto the replacement link.
+  pub(crate) fn send_words_for_generation(
+    &self,
+    words: &[u32],
+    force: bool,
+    generation: u32,
+  ) -> Result<(), IcError> {
     let mut sender = self.sender.lock();
     let conn = match sender.conn.as_ref() {
       Some(conn) => Arc::clone(conn),
@@ -517,6 +546,9 @@ impl NodeShared {
         return Err(self.not_connected_error());
       }
     };
+    if sender.generation != generation {
+      return Err(IcError::new(err::IC_ERROR_LINK_LOST));
+    }
     sender.waiting.extend_from_slice(words);
     let now = time::gethrtime();
     let mut write_now = false;
