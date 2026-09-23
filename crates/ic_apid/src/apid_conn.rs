@@ -336,6 +336,8 @@ pub struct ApidConnection {
   inbox: Arc<ThreadConnection>,
   assembler: FragmentAssembler,
   expectations: Expectations,
+  /// Signals set aside while a callback waits for its own request.
+  deferred: VecDeque<ReceivedSignal>,
   next_request_id: u32,
   /// Signals that arrived and that no request was waiting for.
   unexpected: u64,
@@ -428,6 +430,7 @@ impl ApidConnection {
       inbox,
       assembler: FragmentAssembler::new(),
       expectations: Expectations::default(),
+      deferred: VecDeque::new(),
       next_request_id: 1,
       unexpected: 0,
       tables: HashMap::new(),
@@ -766,11 +769,14 @@ impl ApidConnection {
       // A query callback is running inside a poll already.
       return 0;
     }
+    // A callback in the previous poll's failure handling may have
+    // deferred signals. They precede anything still in the inbox.
+    let mut taken = self.receive_deferred();
+    let wait_ms = if taken == 0 { wait_ms } else { 0 };
     // The pages read last time go back to the inbox, and the pages
     // posted since come out; the signals are read where they lie.
     let mut pages = std::mem::take(&mut self.pages);
     self.inbox.exchange(wait_ms, &mut pages);
-    let mut taken: usize = 0;
     for page in &pages {
       let mut at: usize = 0;
       while let Some(signal) = signal_page::next(page, &mut at) {
@@ -779,6 +785,9 @@ impl ApidConnection {
       }
     }
     self.pages = pages;
+    // A callback's wait read newer signals than the pages just processed.
+    // Replay them now, preserving their order and fragment order.
+    taken += self.receive_deferred();
     self.fail_lost_requests();
     self.fail_lost_transactions();
     self.fail_lost_readers();
@@ -832,7 +841,8 @@ impl ApidConnection {
   }
 
   /// Wait for the reply to a request already sent, for up to `wait_ms`.
-  /// A request not answered in time is forgotten.
+  /// A request not answered in time is forgotten. A request made inside
+  /// a callback can receive its reply without invoking other callbacks.
   pub fn wait_for(
     &mut self,
     request_id: u32,
@@ -853,8 +863,42 @@ impl ApidConnection {
       if slice > IC_CALL_SLICE_MS {
         slice = IC_CALL_SLICE_MS;
       }
-      self.poll(slice);
+      if self.in_callback > 0 {
+        self.poll_for_reply(request_id, slice);
+      } else {
+        self.poll(slice);
+      }
     }
+  }
+
+  /// Receive only the reply to a request made by the running callback.
+  /// Everything else, including fragments, waits for the outer poll.
+  fn poll_for_reply(&mut self, request_id: u32, wait_ms: u32) {
+    let mut pages = Vec::new();
+    self.inbox.exchange(wait_ms, &mut pages);
+    for page in &pages {
+      let mut at: usize = 0;
+      while let Some(signal) = signal_page::next(page, &mut at) {
+        let wanted = signal.data.first() == Some(&request_id)
+          && self.expectations.claims(&signal);
+        if wanted {
+          self.receive(signal.to_owned());
+        } else {
+          self.deferred.push_back(signal.to_owned());
+        }
+      }
+    }
+    self.fail_lost_requests();
+  }
+
+  /// Replay signals set aside by a callback's wait, in arrival order.
+  fn receive_deferred(&mut self) -> usize {
+    let mut taken: usize = 0;
+    while let Some(signal) = self.deferred.pop_front() {
+      taken += 1;
+      self.receive(signal);
+    }
+    taken
   }
 
   // ---- Transactions ----
