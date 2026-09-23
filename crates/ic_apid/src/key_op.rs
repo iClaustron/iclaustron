@@ -515,7 +515,7 @@ fn take_conf(
       );
     }
   }
-  for op in &conf.operations {
+  for op in conf.operations() {
     if op.api_operation_ptr == op_id {
       outcome.confirmed = Some(*op);
     }

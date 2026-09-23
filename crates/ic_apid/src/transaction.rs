@@ -345,8 +345,8 @@ impl ApidConnection {
       tc,
       state: CommitState::Started,
       begun: false,
-      defined: Vec::new(),
-      sent: Vec::new(),
+      defined: self.spare_lists.pop().unwrap_or_default(),
+      sent: self.spare_lists.pop().unwrap_or_default(),
       ops_sent: 0,
       ops_completed: 0,
       end_wanted: None,
@@ -406,7 +406,16 @@ impl ApidConnection {
     if !done {
       return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
     }
-    self.transactions.remove(id.0);
+    // Its two lists are kept, emptied, for the next transaction, rather
+    // than freed and allocated again.
+    if let Some(mut trans) = self.transactions.remove(id.0) {
+      if self.spare_lists.len() < IC_SPARE_QUERY_LISTS {
+        trans.defined.clear();
+        trans.sent.clear();
+        self.spare_lists.push(std::mem::take(&mut trans.defined));
+        self.spare_lists.push(std::mem::take(&mut trans.sent));
+      }
+    }
     Ok(())
   }
 
@@ -773,8 +782,17 @@ impl ApidConnection {
         }
       }
     }
-    let end = match self.transactions.get(id.0) {
-      Some(trans) => trans.end_wanted,
+    // The list goes back, emptied, for the next queries defined, rather
+    // than being dropped and allocated again.
+    let mut defined = defined;
+    defined.clear();
+    let end = match self.transactions.get_mut(id.0) {
+      Some(trans) => {
+        if trans.defined.is_empty() && trans.defined.capacity() == 0 {
+          trans.defined = defined;
+        }
+        trans.end_wanted
+      }
       None => None,
     };
     if let Some(how) = end {
@@ -912,7 +930,7 @@ impl ApidConnection {
     // operation, as the reference does.
     let mut api_ptr = conf.api_connect_ptr;
     if api_ptr == tc_key::IC_TCKEYCONF_NO_TRANSACTION {
-      let first = match conf.operations.first() {
+      let first = match conf.operations().first() {
         Some(op) => QueryId(PtrId::from_u32(op.api_operation_ptr)),
         None => return false,
       };
@@ -939,7 +957,7 @@ impl ApidConnection {
     if conf.is_committed() {
       self.end_transaction(tid, CommitState::Committed, None, conf.gci);
     }
-    for op in &conf.operations {
+    for op in conf.operations() {
       let qid = QueryId(PtrId::from_u32(op.api_operation_ptr));
       if let Some(query) = self.queries.get_mut(qid.0) {
         if same_trans(query, conf.trans_id1, conf.trans_id2) {
@@ -1470,6 +1488,10 @@ impl ApidConnection {
     }
   }
 }
+
+/// Emptied query lists a connection keeps for its next transactions;
+/// enough for a few thousand in flight, beyond which they are freed.
+const IC_SPARE_QUERY_LISTS: usize = 8192;
 
 /// The request word of a `TCKEYREQ` or `TCINDXREQ` that holds the
 /// flags, among its data words (`TcKeyReq::encode`).

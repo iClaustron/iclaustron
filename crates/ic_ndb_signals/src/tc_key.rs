@@ -183,6 +183,9 @@ impl TcKeyReq {
 
 /// Words in a `TCKEYCONF` before the operations.
 pub const IC_TCKEYCONF_LEN: usize = 5;
+/// The most operations a `TCKEYCONF` can carry: a packed part of at
+/// most 34 words less the five fixed ones, two words each.
+pub const IC_TCKEYCONF_MAX_OPERATIONS: usize = 16;
 /// In an operation's row length: a dirty read, the low bits naming the
 /// node that reads it.
 pub const IC_TCKEYCONF_DIRTY_READ_BIT: u32 = 1 << 31;
@@ -223,8 +226,14 @@ pub struct TcKeyConf {
   pub trans_id1: u32,
   /// The transaction id, high word.
   pub trans_id2: u32,
-  /// The operations confirmed.
-  pub operations: Vec<OperationConf>,
+  /// The operations confirmed, the first `num_operations` of them; see
+  /// [`operations`](Self::operations). Kept inline, so that decoding a
+  /// confirmation allocates nothing: the coordinator puts at most three
+  /// in one (`Dbtc`, `ZTCOPCONF_SIZE`), and no signal has room for more
+  /// than this.
+  pub ops: [OperationConf; IC_TCKEYCONF_MAX_OPERATIONS],
+  /// How many of `ops` are there.
+  pub num_operations: usize,
   /// The global checkpoint the commit went into; 0 when there was none,
   /// as for a transaction of dirty reads only.
   pub gci: u64,
@@ -243,13 +252,16 @@ impl TcKeyConf {
     if data.len() < end {
       return Err(bad);
     }
-    let mut operations: Vec<OperationConf> = Vec::with_capacity(count);
+    if count > IC_TCKEYCONF_MAX_OPERATIONS {
+      return Err(bad);
+    }
+    let mut ops = [OperationConf::default(); IC_TCKEYCONF_MAX_OPERATIONS];
     let mut i: usize = 0;
     while i < count {
-      operations.push(OperationConf {
+      ops[i] = OperationConf {
         api_operation_ptr: data[IC_TCKEYCONF_LEN + 2 * i],
         row_len: data[IC_TCKEYCONF_LEN + 2 * i + 1],
-      });
+      };
       i += 1;
     }
     let mut gci_lo: u32 = 0;
@@ -261,9 +273,15 @@ impl TcKeyConf {
       conf_info,
       trans_id1: data[3],
       trans_id2: data[4],
-      operations,
+      ops,
+      num_operations: count,
       gci: ((data[1] as u64) << 32) | gci_lo as u64,
     })
+  }
+
+  /// The operations confirmed.
+  pub fn operations(&self) -> &[OperationConf] {
+    &self.ops[..self.num_operations]
   }
 
   /// True if the transaction committed.
@@ -635,9 +653,9 @@ mod tests {
     assert_eq!(conf.api_connect_ptr, 7);
     assert!(conf.is_committed());
     assert!(conf.needs_commit_ack());
-    assert_eq!(conf.operations.len(), 2);
-    assert_eq!(conf.operations[0].api_operation_ptr, 22);
-    assert_eq!(conf.operations[0].row_len, 4);
+    assert_eq!(conf.operations().len(), 2);
+    assert_eq!(conf.operations()[0].api_operation_ptr, 22);
+    assert_eq!(conf.operations()[0].row_len, 4);
     assert_eq!(conf.gci, (0x10 << 32) | 0x20);
   }
 

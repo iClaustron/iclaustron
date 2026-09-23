@@ -403,6 +403,8 @@ pub struct ApidConnection {
   /// an end asked for. The send takes these, not every transaction in
   /// flight.
   pub(crate) to_send: Vec<TransId>,
+  /// Query lists of transactions closed, emptied, for the next ones.
+  pub(crate) spare_lists: Vec<Vec<QueryId>>,
   /// When what waits in the outgoing buffers began to wait, or zero.
   queued_since: u64,
   pub(crate) key_scratch: Vec<u32>,
@@ -482,6 +484,7 @@ impl ApidConnection {
       pages: Vec::new(),
       seen_link_events: u64::MAX,
       to_send: Vec::new(),
+      spare_lists: Vec::new(),
       queued_since: 0,
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
