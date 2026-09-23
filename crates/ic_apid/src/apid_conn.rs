@@ -295,6 +295,7 @@ pub struct TcRecord {
   /// The link it was seized over.
   pub(crate) generation: u32,
   /// Our pointer for it, which `TCKEYCONF` names.
+  /// Always even: commit and takeover confirmations reserve bit 0 for an ack.
   pub api_ptr: u32,
   /// The coordinator's pointer for it.
   pub tc_ptr: u32,
@@ -316,7 +317,7 @@ impl TcRecord {
     TcRecord {
       node_id,
       generation: 1,
-      api_ptr: 1,
+      api_ptr: 2,
       tc_ptr: 1,
       tc_block: 0xF5,
       index: 0,
@@ -899,7 +900,12 @@ impl ApidConnection {
       }
       rec.lost = true;
     }
-    let api_ptr = self.next_request_id();
+    // Commit and takeover confirmations use bit 0 as the ack flag.
+    // Consume another id if necessary; masking could reuse an earlier id.
+    let mut api_ptr = self.next_request_id();
+    if api_ptr & 1 != 0 {
+      api_ptr = self.next_request_id();
+    }
     let seize = TcSeizeReq {
       api_connect_ptr: api_ptr,
       api_block_ref: self.block_ref(),
