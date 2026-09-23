@@ -570,6 +570,8 @@ impl ApidConnection {
           confirmed: None,
           row: Vec::new(),
           has_row: false,
+          row_words: 0,
+          unpacked: false,
         },
         user_ref,
         callback,
@@ -907,8 +909,22 @@ impl ApidConnection {
       section = Some(signal.section(0));
     }
     let row = TransIdAi::row(signal.data, section);
-    query.execution.row.extend_from_slice(row);
+    // A row that comes whole is unpacked from the signal straight into
+    // the attribute row, where it lies in the page the receive thread
+    // handed over: a committed read's row always comes in one signal,
+    // and another's does when the confirmation has already said this
+    // is all of it. Anything else is kept until the rest has come.
+    let exec = &query.execution;
+    let whole = exec.row_words == 0
+      && (exec.flags.dirty
+        || matches!(exec.confirmed,
+          Some(conf) if !conf.is_dirty_read()
+            && conf.row_len as usize == row.len()));
+    query.execution.row_words += row.len() as u32;
     query.execution.has_row = true;
+    if !(whole && query.unpack_direct(row)) {
+      query.execution.row.extend_from_slice(row);
+    }
     self.complete_if_done(qid);
     true
   }
@@ -1098,7 +1114,7 @@ impl ApidConnection {
             if conf.is_dirty_read() {
               exec.has_row
             } else {
-              exec.row.len() as u32 >= conf.row_len
+              exec.row_words >= conf.row_len
             }
           }
           None => false,

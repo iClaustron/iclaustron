@@ -321,6 +321,21 @@ rows. The code went back to the version measured at 1.73 million.
   what packing at define (B) became, and signals in pages (E, E2) and
   packing at define (B) are the ones that paid.
 
+  **A whole row unpacked from its signal, 2026-09-23.** A read's row
+  went from its signal into a buffer each query keeps, then into the
+  attribute row. When it comes whole, as a committed read's always does
+  and another's does when the confirmation has already given its
+  length, it is unpacked straight from the page into the attribute row;
+  a large row is then copied once after `recv`, into its final place.
+  On the wide table, by reference at the default limit: 16 KB rows 2 426
+  and 2 428 ns per read against 2 718 and 2 724, user time 1 320 against
+  1 660; 29 KB rows 4 821 and 5 166 against 5 239 and 5 546, user time
+  2 060 against 2 580, the difference a row's copy at about 20 GB/s.
+  The rate at 16 KB came out lower than on the earlier day, 566 000
+  against 620 000, with the client using less, so the limit there is
+  not the client; the effect on `t9`'s small rows was not measured
+  apart.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given

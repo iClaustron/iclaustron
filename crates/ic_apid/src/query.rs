@@ -179,6 +179,11 @@ pub(crate) struct Execution {
   pub row: Vec<u32>,
   /// True once any of the row has come.
   pub has_row: bool,
+  /// Words of row that have come, whether kept in `row` or unpacked.
+  pub row_words: u32,
+  /// True once the row has been unpacked into the attribute row
+  /// straight from the signal it came in.
+  pub unpacked: bool,
 }
 
 /// True if the record is over this version of the table.
@@ -395,7 +400,24 @@ impl ApidQuery {
   }
 
   /// Put a read's packed row into the attribute row.
+  /// Unpack a whole row straight from the signal it came in into the
+  /// attribute row. False if it would not unpack, for the caller to
+  /// keep it and let the completion report why.
+  pub(crate) fn unpack_direct(&mut self, words: &[u32]) -> bool {
+    let unpacked =
+      crate::row_codec::unpack_row(&self.attr_rec, words, &mut self.attr_row);
+    if unpacked.is_err() {
+      return false;
+    }
+    self.result_len = 4 * words.len() as u32;
+    self.execution.unpacked = true;
+    true
+  }
+
   pub(crate) fn take_row(&mut self) -> Result<(), IcError> {
+    if self.execution.unpacked {
+      return Ok(());
+    }
     let words = &self.execution.row;
     crate::row_codec::unpack_row(&self.attr_rec, words, &mut self.attr_row)?;
     self.result_len = 4 * words.len() as u32;
