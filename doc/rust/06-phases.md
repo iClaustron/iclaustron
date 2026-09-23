@@ -366,6 +366,16 @@ rows. The code went back to the version measured at 1.73 million.
   batch, and client CPU per update from 1 150 to 1 007 and 1 089 ns;
   the rate, set by the data nodes' commit, stayed at about 460 000.
 
+  **Spinning in the receive thread, 2026-09-23, not kept.** Checking
+  the sockets without waiting for up to 10, 50 or 200 µs after a
+  round, before blocking in `kevent`, as the data nodes spin before
+  they sleep, lowered performance in the author's runs, and was taken
+  out again. Likely because, with the reads made again after a full
+  read, the receive thread already takes what has arrived before it
+  blocks, and a spin then only takes CPU from the data nodes, which
+  share this machine's cores. The poll set keeps its event buffer
+  between checks.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given

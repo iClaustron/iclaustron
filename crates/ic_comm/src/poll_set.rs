@@ -60,6 +60,9 @@ pub struct PollSet {
   /// Position in `ready` for [`next_connection`](PollSet::next_connection).
   next_ready: usize,
   max_size: usize,
+  /// What the backend reported last, kept for its allocation: a thread
+  /// spinning on checks that do not wait makes many of them.
+  events: Vec<ReadyEvent>,
 }
 
 impl PollSet {
@@ -77,6 +80,7 @@ impl PollSet {
       ready: Vec::with_capacity(max_size),
       next_ready: 0,
       max_size,
+      events: Vec::with_capacity(max_size),
     })
   }
 
@@ -139,9 +143,11 @@ impl PollSet {
   pub fn check(&mut self, ms_time: i32) -> Result<usize, IcError> {
     self.ready.clear();
     self.next_ready = 0;
-    let mut events: Vec<ReadyEvent> = Vec::new();
-    self.backend.wait(ms_time, self.max_size, &mut events)?;
-    for event in &events {
+    self.events.clear();
+    self
+      .backend
+      .wait(ms_time, self.max_size, &mut self.events)?;
+    for event in &self.events {
       if let Some(conn) = self.connections.get(&event.fd) {
         let mut ready = *conn;
         ready.ret_code = event.ret_code;
