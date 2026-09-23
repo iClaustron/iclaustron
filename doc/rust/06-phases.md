@@ -429,11 +429,17 @@ rows. The code went back to the version measured at 1.73 million.
   for a coordinator's record encodes the record's place, its top bit
   marking it and bit 0 left for the acknowledgement flag, so that
   `active` is a vector indexed by it and a reply finds its transaction
-  in one load. Measured the same day on the same machine, which ran at
-  less than half its morning's rate for reasons outside the client
-  (system time up for every build alike): user time per read at depth
-  two 591 ns before the other session's failure-handling commits, 696
-  after them, 419 with these changes.
+  in one load. Measured against data nodes that turned out to be a
+  debug build, which halved every build's rate and doubled its system
+  time alike; the client's user time does not depend on them: per read
+  at depth two, 591 ns before the other session's failure-handling
+  commits, 696 after them, 419 with these changes. Against release data
+  nodes, one user thread: depth one 1 168 000 and 1 352 000 reads a
+  second at 574 and 501 ns per read, depth two 1 788 000 at 548, depth
+  four 2 613 000 and 2 548 000 at 544 and 550. Client CPU no longer
+  grows with what is in flight, where it had gone from 682 to 776 ns
+  between depths one and four, and a single thread now does 2.6
+  million reads a second.
 
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
