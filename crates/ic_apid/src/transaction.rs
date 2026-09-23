@@ -281,12 +281,17 @@ impl ApidConnection {
 
   /// Free a query that is idle or completed (`ic_apid_query_free`).
   pub fn free_query(&mut self, id: QueryId) -> Result<(), IcError> {
-    let state = match self.queries.get(id.0) {
-      Some(query) => query.state(),
+    let query = match self.queries.get(id.0) {
+      Some(query) => query,
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
     };
+    let state = query.state();
     if state == QueryState::Defined || state == QueryState::Sent {
       return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
+    }
+    if state == QueryState::Completed && query.callback().is_none() {
+      // Do not leave a completion naming a freed query.
+      self.executed.retain(|done| *done != id);
     }
     self.queries.remove(id.0);
     Ok(())
@@ -576,6 +581,11 @@ impl ApidConnection {
     self.attr_scratch = attr;
     let staged = staged?;
     if let Some(query) = self.queries.get_mut(query_id.0) {
+      if query.state() == QueryState::Completed && query.callback().is_none() {
+        // Successful reuse consumes the previous completion. Keep it if
+        // defining the new operation failed, and never scan for callbacks.
+        self.executed.retain(|done| *done != query_id);
+      }
       query.begin(
         Execution {
           trans: Some(trans_id),
