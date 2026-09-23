@@ -378,7 +378,7 @@ impl Receiver {
 
   // ---- The signals this thread executes ----
 
-  fn execute(&self, index: usize, signal: &ReceivedSignal) {
+  fn execute(&mut self, index: usize, signal: &ReceivedSignal) {
     let node_id = self.nodes[index].node.node_id;
     if signal.gsn == gsn::IC_GSN_API_REGCONF {
       self.registration_confirmed(index, signal);
@@ -418,6 +418,10 @@ impl Receiver {
       // The block field carries the sender's reference, not zero, and is
       // ignored; the failed node id is what counts.
       if let Ok(report) = NfCompleteRep::decode(&signal.data) {
+        // Publish preceding takeover replies before making their absence
+        // grounds for aborting a transaction. Poll snapshots that state
+        // before taking its inbox, so those replies will be processed first.
+        self.router.post_all();
         self
           .shared
           .takeover_reported(node_id, report.failed_node_id);

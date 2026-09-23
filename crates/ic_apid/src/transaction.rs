@@ -1359,18 +1359,15 @@ impl ApidConnection {
     }
   }
 
-  /// End the transactions whose coordinator's link has gone, or been
-  /// replaced, since they began; see the module note. While the node's
-  /// failure is reported and not yet handled, the transaction waits for
-  /// the coordinator that takes over.
-  pub(crate) fn fail_lost_transactions(&mut self) {
+  /// Snapshot failures before taking the inbox. Each entry holds the
+  /// transaction id, whether the node failed, and the link error. While
+  /// takeover is pending, leave the transaction waiting for its reply.
+  pub(crate) fn lost_transactions(&self) -> Vec<(TransId, bool, IcError)> {
+    let mut lost = Vec::new();
     let ids = self.active_transactions();
     for tid in ids {
-      let (node_id, generation, tc, state) = match self.transactions.get(tid.0)
-      {
-        Some(trans) => {
-          (trans.tc.node_id, trans.tc.generation, trans.tc, trans.state)
-        }
+      let (node_id, generation) = match self.transactions.get(tid.0) {
+        Some(trans) => (trans.tc.node_id, trans.tc.generation),
         None => continue,
       };
       if self.link_is(node_id, generation) {
@@ -1389,6 +1386,22 @@ impl ApidConnection {
         // The takeover may still answer for it.
         continue;
       }
+      lost.push((tid, failed, link_error));
+    }
+    lost
+  }
+
+  /// Apply the snapshot after receiving replies, which take precedence.
+  pub(crate) fn fail_lost_transactions(
+    &mut self,
+    lost: Vec<(TransId, bool, IcError)>,
+  ) {
+    for (tid, failed, link_error) in lost {
+      let (tc, state) = match self.transactions.get(tid.0) {
+        Some(trans) if !trans.ended() => (trans.tc, trans.state),
+        // A reply ended it, or a callback has already closed it.
+        _ => continue,
+      };
       // The record went with the link, whatever became of the node.
       self.lose_tc_record(&tc);
       let rollback_wanted = state == CommitState::RollbackRequested;

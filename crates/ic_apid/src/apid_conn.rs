@@ -775,6 +775,9 @@ impl ApidConnection {
     let wait_ms = if taken == 0 { wait_ms } else { 0 };
     // The pages read last time go back to the inbox, and the pages
     // posted since come out; the signals are read where they lie.
+    // Decide which failures to handle before taking replies. A takeover
+    // completed after this snapshot must wait for the next poll.
+    let lost = self.lost_transactions();
     let mut pages = std::mem::take(&mut self.pages);
     self.inbox.exchange(wait_ms, &mut pages);
     for page in &pages {
@@ -789,7 +792,7 @@ impl ApidConnection {
     // Replay them now, preserving their order and fragment order.
     taken += self.receive_deferred();
     self.fail_lost_requests();
-    self.fail_lost_transactions();
+    self.fail_lost_transactions(lost);
     self.fail_lost_readers();
     // What the replies called for, such as commit acknowledgements,
     // goes with the next send, in the same write as its requests. It is
