@@ -39,7 +39,6 @@
 //! [`ApidGlobal::create_connection`]:
 //!   crate::apid_global::ApidGlobal::create_connection
 
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -49,6 +48,7 @@ use ic_ndb_signals::gsn;
 use ic_ndb_signals::header;
 use ic_ndb_signals::header::FragmentInfo;
 use ic_ndb_signals::header::SignalHeader;
+use ic_ndb_signals::tc_key::IC_TCKEYCONF_NO_TRANSACTION;
 use ic_ndb_signals::tc_seize::TcReleaseReq;
 use ic_ndb_signals::tc_seize::TcSeizeConf;
 use ic_ndb_signals::tc_seize::TcSeizeRef;
@@ -73,6 +73,27 @@ use crate::query::TransId;
 use crate::signal_page;
 use crate::thread_conn::ThreadConnection;
 use crate::transaction::Transaction;
+
+/// Marks our pointer for a coordinator's transaction record: the rest
+/// of the pointer is the record's place in the connection's list, times
+/// two, bit 0 being what commit and takeover confirmations set as their
+/// acknowledgement flag. A reply's pointer then leads to its record and
+/// transaction by index, not by a search. Request numbers never carry
+/// this bit, so a record's pointer is never taken for one.
+const IC_TC_PTR_TAG: u32 = 0x8000_0000;
+
+/// Our pointer for the record at `index`.
+fn tc_ptr_of(index: usize) -> u32 {
+  IC_TC_PTR_TAG | ((index as u32) << 1)
+}
+
+/// The place of the record a pointer names, if it names one.
+pub(crate) fn tc_index_of(api_ptr: u32) -> Option<usize> {
+  if api_ptr & IC_TC_PTR_TAG == 0 || api_ptr == IC_TCKEYCONF_NO_TRANSACTION {
+    return None;
+  }
+  Some(((api_ptr & !IC_TC_PTR_TAG) >> 1) as usize)
+}
 
 /// How long seizing a transaction record waits for the coordinator.
 pub const IC_TC_SEIZE_WAIT_MS: u32 = 5_000;
@@ -317,7 +338,7 @@ impl TcRecord {
     TcRecord {
       node_id,
       generation: 1,
-      api_ptr: 2,
+      api_ptr: tc_ptr_of(0),
       tc_ptr: 1,
       tc_block: 0xF5,
       index: 0,
@@ -364,7 +385,10 @@ pub struct ApidConnection {
   pub(crate) executed: VecDeque<QueryId>,
   /// The transactions not yet done, by the coordinator record pointer
   /// their replies name.
-  pub(crate) active: BTreeMap<u32, TransId>,
+  /// By the place of the record it uses, each transaction in flight: a
+  /// reply's pointer leads here by index (`tc_index_of`).
+  active: Vec<Option<TransId>>,
+  active_count: usize,
   /// Signals packed for a node and link generation, not yet handed to it.
   outgoing: Vec<Outgoing>,
   /// How many query callbacks are running, on this thread, inside the
@@ -372,6 +396,13 @@ pub struct ApidConnection {
   pub(crate) in_callback: u32,
   /// Where a request's key and attribute sections are built before
   /// they are packed: two buffers for every query, warm in the cache.
+  /// The count of link and node changes as of the last failure checks;
+  /// see `apid_global::link_events`.
+  seen_link_events: u64,
+  /// Transactions with something for the next send: queries defined or
+  /// an end asked for. The send takes these, not every transaction in
+  /// flight.
+  pub(crate) to_send: Vec<TransId>,
   /// When what waits in the outgoing buffers began to wait, or zero.
   queued_since: u64,
   pub(crate) key_scratch: Vec<u32>,
@@ -444,10 +475,13 @@ impl ApidConnection {
       queries: PtrArray::new(),
       transactions: PtrArray::new(),
       executed: VecDeque::new(),
-      active: BTreeMap::new(),
+      active: Vec::new(),
+      active_count: 0,
       outgoing: Vec::new(),
       in_callback: 0,
       pages: Vec::new(),
+      seen_link_events: u64::MAX,
+      to_send: Vec::new(),
       queued_since: 0,
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
@@ -474,7 +508,12 @@ impl ApidConnection {
   /// A number for a new request, for the reply to echo.
   pub fn next_request_id(&mut self) -> u32 {
     let id = self.next_request_id;
-    self.next_request_id = self.next_request_id.wrapping_add(1);
+    // Kept clear of the bit that marks a record's pointer, and of zero.
+    let mut next = self.next_request_id.wrapping_add(1) & !IC_TC_PTR_TAG;
+    if next == 0 {
+      next = 1;
+    }
+    self.next_request_id = next;
     id
   }
 
@@ -507,7 +546,8 @@ impl ApidConnection {
       Some(node) => node.published.generation(),
       None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_NODE)),
     };
-    self.queue_signal_for_generation(node_id, generation, header, data, sections)
+    self
+      .queue_signal_for_generation(node_id, generation, header, data, sections)
   }
 
   /// Keep requests for different links in separate batches.
@@ -560,8 +600,10 @@ impl ApidConnection {
     // Reuse an empty batch after a reconnect without invalidating any
     // offsets still held by staged queries.
     if let Some(index) = self.outgoing.iter().position(|out| {
-      out.node_id == node_id && out.words.is_empty()
-        && out.staged.is_empty() && out.cancelled.is_empty()
+      out.node_id == node_id
+        && out.words.is_empty()
+        && out.staged.is_empty()
+        && out.cancelled.is_empty()
     }) {
       self.outgoing[index].generation = generation;
       return index;
@@ -739,7 +781,9 @@ impl ApidConnection {
     // Read before sending, so that a link replaced while the request is
     // on its way is seen as a different one.
     let generation = node.published.generation();
-    self.queue_signal_for_generation(node_id, generation, header, data, sections)?;
+    self.queue_signal_for_generation(
+      node_id, generation, header, data, sections,
+    )?;
     self.send_queued(true)?;
     // Nothing is read from the inbox but by this thread, so the reply
     // cannot be taken before this is recorded.
@@ -813,8 +857,16 @@ impl ApidConnection {
     // The pages read last time go back to the inbox, and the pages
     // posted since come out; the signals are read where they lie.
     // Decide which failures to handle before taking replies. A takeover
-    // completed after this snapshot must wait for the next poll.
-    let lost = self.lost_transactions();
+    // completed after this snapshot must wait for the next poll. The
+    // checks run only if a link or node has changed since they last
+    // did; the count is read before the snapshot, so that a change
+    // during this poll is seen by the next.
+    let events = crate::apid_global::link_events();
+    let check_links = events != self.seen_link_events;
+    let mut lost = Vec::new();
+    if check_links {
+      lost = self.lost_transactions();
+    }
     let mut pages = std::mem::take(&mut self.pages);
     self.inbox.exchange(wait_ms, &mut pages);
     for page in &pages {
@@ -828,9 +880,12 @@ impl ApidConnection {
     // A callback's wait read newer signals than the pages just processed.
     // Replay them now, preserving their order and fragment order.
     taken += self.receive_deferred();
-    self.fail_lost_requests();
-    self.fail_lost_transactions(lost);
-    self.fail_lost_readers();
+    if check_links {
+      self.fail_lost_requests();
+      self.fail_lost_transactions(lost);
+      self.fail_lost_readers();
+      self.seen_link_events = events;
+    }
     // What the replies called for, such as commit acknowledgements,
     // goes with the next send, in the same write as its requests. It is
     // written here only once it has waited long enough, or when nothing
@@ -843,7 +898,7 @@ impl ApidConnection {
         self.queued_since = now;
       }
       let waited = now - self.queued_since;
-      if self.active.is_empty() || waited >= IC_REPLY_SEND_DELAY_NANOS {
+      if self.active_count == 0 || waited >= IC_REPLY_SEND_DELAY_NANOS {
         let _ = self.send_queued(false);
       }
     }
@@ -985,12 +1040,22 @@ impl ApidConnection {
       }
       rec.lost = true;
     }
-    // Commit and takeover confirmations use bit 0 as the ack flag.
-    // Consume another id if necessary; masking could reuse an earlier id.
-    let mut api_ptr = self.next_request_id();
-    if api_ptr & 1 != 0 {
-      api_ptr = self.next_request_id();
-    }
+    // The record's place is taken now, before the request goes, so that
+    // a seize started meanwhile, by a callback run while this one waits,
+    // cannot take it too. It stays lost, never handed out, unless the
+    // coordinator confirms it.
+    let index = self.tc_records.len();
+    let api_ptr = tc_ptr_of(index);
+    self.tc_records.push(TcRecord {
+      node_id,
+      generation,
+      api_ptr,
+      tc_ptr: 0,
+      tc_block: 0,
+      index: index as u32,
+      busy: true,
+      lost: true,
+    });
     let seize = TcSeizeReq {
       api_connect_ptr: api_ptr,
       api_block_ref: self.block_ref(),
@@ -1015,18 +1080,44 @@ impl ApidConnection {
       return Err(IcError::new(refusal.error_code as i32));
     }
     let conf = TcSeizeConf::decode(&reply.data)?;
-    let rec = TcRecord {
-      node_id,
-      generation,
-      api_ptr,
-      tc_ptr: conf.tc_connect_ptr,
-      tc_block: blocks::ref_to_block(conf.tc_block_ref),
-      index: self.tc_records.len() as u32,
-      busy: true,
-      lost: false,
-    };
-    self.tc_records.push(rec);
-    Ok(rec)
+    let rec = &mut self.tc_records[index];
+    rec.tc_ptr = conf.tc_connect_ptr;
+    rec.tc_block = blocks::ref_to_block(conf.tc_block_ref);
+    rec.lost = false;
+    Ok(*rec)
+  }
+
+  // ---- Transactions in flight, by their record's place ----
+
+  /// Note the transaction using the record at `index`.
+  pub(crate) fn active_insert(&mut self, index: u32, id: TransId) {
+    let index = index as usize;
+    if index >= self.active.len() {
+      self.active.resize(index + 1, None);
+    }
+    if self.active[index].is_none() {
+      self.active_count += 1;
+    }
+    self.active[index] = Some(id);
+  }
+
+  /// The transaction using the record at `index`, if any.
+  pub(crate) fn active_get(&self, index: u32) -> Option<TransId> {
+    *self.active.get(index as usize)?
+  }
+
+  /// The record at `index` is no longer used by a transaction.
+  pub(crate) fn active_remove(&mut self, index: u32) {
+    if let Some(slot) = self.active.get_mut(index as usize) {
+      if slot.take().is_some() {
+        self.active_count -= 1;
+      }
+    }
+  }
+
+  /// Every transaction in flight.
+  pub(crate) fn active_ids(&self) -> impl Iterator<Item = TransId> + '_ {
+    self.active.iter().filter_map(|slot| *slot)
   }
 
   /// Give a transaction record back once its transaction is over.
@@ -1087,7 +1178,10 @@ impl ApidConnection {
         SignalHeader::new(gsn::IC_GSN_TCRELEASEREQ, block, rec.tc_block);
       if let Some(node) = self.shared.node(rec.node_id) {
         let _ = node.send_for_generation(
-          rec.generation, &header, &release.encode(), &[],
+          rec.generation,
+          &header,
+          &release.encode(),
+          &[],
         );
       }
     }
@@ -1264,6 +1358,20 @@ impl Drop for ApidConnection {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_record_pointer_leads_back_to_its_place() {
+    for index in [0usize, 1, 7, 800, 1 << 20] {
+      let ptr = tc_ptr_of(index);
+      assert_eq!(ptr & 1, 0, "bit 0 is the acknowledgement flag");
+      assert_eq!(tc_index_of(ptr), Some(index));
+      // A confirmation with the flag set names the same record.
+      assert_eq!(tc_index_of(ptr | 1), Some(index));
+    }
+    // Neither a request number nor "no transaction" names a record.
+    assert_eq!(tc_index_of(12345), None);
+    assert_eq!(tc_index_of(IC_TCKEYCONF_NO_TRANSACTION), None);
+  }
 
   const CONF: u16 = 190;
   const REF: u16 = 23;

@@ -172,6 +172,8 @@ pub struct Transaction {
   end_wanted: Option<CommitState>,
   error: Option<IcError>,
   gci: u64,
+  /// True while it is on the connection's list for the next send.
+  pub(crate) queued_for_send: bool,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -340,9 +342,10 @@ impl ApidConnection {
       end_wanted: None,
       error: None,
       gci: 0,
+      queued_for_send: false,
     };
     let id = TransId(self.transactions.insert(trans)?);
-    self.active.insert(tc.api_ptr, id);
+    self.active_insert(tc.index, id);
     Ok(id)
   }
 
@@ -558,7 +561,11 @@ impl ApidConnection {
           sections = &both[..1];
         }
         self.stage_signal(
-          tc.node_id, tc.generation, &header, &request.encode(), sections,
+          tc.node_id,
+          tc.generation,
+          &header,
+          &request.encode(),
+          sections,
         )
       }
       Err(e) => Err(e),
@@ -588,7 +595,18 @@ impl ApidConnection {
     if let Some(trans) = self.transactions.get_mut(trans_id.0) {
       trans.defined.push(query_id);
     }
+    self.queue_for_send(trans_id);
     Ok(())
+  }
+
+  /// Put a transaction on the list for the next send, once.
+  fn queue_for_send(&mut self, id: TransId) {
+    if let Some(trans) = self.transactions.get_mut(id.0) {
+      if !trans.queued_for_send {
+        trans.queued_for_send = true;
+        self.to_send.push(id);
+      }
+    }
   }
 
   /// Ask for the transaction to commit (`ic_apid_conn_commit_transaction`).
@@ -617,6 +635,10 @@ impl ApidConnection {
           return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
         }
         trans.end_wanted = Some(how);
+        if !trans.queued_for_send {
+          trans.queued_for_send = true;
+          self.to_send.push(id);
+        }
         if how == CommitState::RollbackRequested {
           // Nothing defined and unsent is worth sending now.
           dropped = std::mem::take(&mut trans.defined);
@@ -643,14 +665,23 @@ impl ApidConnection {
   /// send held back goes when its time is up, and the algorithm learns
   /// from a thread that sends alone not to hold its sends at all.
   pub fn send_queries(&mut self, force: bool) -> Result<(), IcError> {
-    let ids: Vec<TransId> = self.active_transactions();
+    // Only the transactions with something to send, not every one in
+    // flight; the list is kept for its allocation.
+    let mut ids = std::mem::take(&mut self.to_send);
     let mut first_error: Option<IcError> = None;
-    for id in ids {
-      if let Err(e) = self.send_transaction(id) {
+    for id in &ids {
+      if let Some(trans) = self.transactions.get_mut(id.0) {
+        trans.queued_for_send = false;
+      }
+      if let Err(e) = self.send_transaction(*id) {
         if first_error.is_none() {
           first_error = Some(e);
         }
       }
+    }
+    ids.clear();
+    if self.to_send.is_empty() {
+      self.to_send = ids;
     }
     // What was staged goes with this send, its flags now set. A node
     // whose link is down fails its write here; the transactions sent to
@@ -675,11 +706,7 @@ impl ApidConnection {
   }
 
   fn active_transactions(&self) -> Vec<TransId> {
-    let mut ids: Vec<TransId> = Vec::with_capacity(self.active.len());
-    for id in self.active.values() {
-      ids.push(*id);
-    }
-    ids
+    self.active_ids().collect()
   }
 
   /// The queries of one transaction, with the flags of their place in
@@ -807,7 +834,11 @@ impl ApidConnection {
       tc_key::tc_trans_req(tc.tc_ptr, trans_id as u32, (trans_id >> 32) as u32);
     let header = SignalHeader::new(signal, self.block_number(), tc.tc_block);
     self.queue_signal_for_generation(
-      tc.node_id, tc.generation, &header, &data, &[],
+      tc.node_id,
+      tc.generation,
+      &header,
+      &data,
+      &[],
     )?;
     if let Some(trans) = self.transactions.get_mut(id.0) {
       trans.state = how;
@@ -847,7 +878,8 @@ impl ApidConnection {
     trans_id1: u32,
     trans_id2: u32,
   ) -> Option<TransId> {
-    let id = *self.active.get(&api_ptr)?;
+    let index = crate::apid_conn::tc_index_of(api_ptr)?;
+    let id = self.active_get(index as u32)?;
     if let Some(trans) = self.transactions.get(id.0) {
       let want = trans.trans_id;
       if want as u32 == trans_id1 && (want >> 32) as u32 == trans_id2 {
@@ -1312,10 +1344,10 @@ impl ApidConnection {
     // Completing the last query may already have released this record,
     // and its callback may have started another transaction using it.
     // Release only while the active mapping still belongs to us.
-    if self.active.get(&tc.api_ptr) != Some(&tid) {
+    if self.active_get(tc.index) != Some(tid) {
       return;
     }
-    self.active.remove(&tc.api_ptr);
+    self.active_remove(tc.index);
     self.free_tc_record(&tc);
   }
 
@@ -1323,7 +1355,7 @@ impl ApidConnection {
   /// reading node. Run after draining the inbox so an arrived row wins.
   pub(crate) fn fail_lost_readers(&mut self) {
     let mut lost = Vec::new();
-    for tid in self.active.values() {
+    for tid in self.active_ids() {
       let trans = match self.transactions.get(tid.0) {
         Some(trans) => trans,
         None => continue,
@@ -1481,6 +1513,7 @@ mod tests {
       end_wanted: None,
       error: None,
       gci: 0,
+      queued_for_send: false,
     };
     assert!(!trans.is_done());
     trans.state = CommitState::Committed;

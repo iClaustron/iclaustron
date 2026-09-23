@@ -215,6 +215,7 @@ impl Receiver {
     node
       .published
       .publish_connected(&link.state, ic_port::time::gethrtime());
+    crate::apid_global::note_link_event();
     self.shared.note_link_up();
     ic_port::debug_print!(IC_COMM_LEVEL, "Connected to node {}", node.node_id);
     // Bytes that arrived past the registration are already in the
@@ -267,6 +268,7 @@ impl Receiver {
     let node = Arc::clone(&rec.node);
     // First, so that no one starts a send into a link going away.
     node.published.publish_down();
+    crate::apid_global::note_link_event();
     // Before taking the node's mutex: shutting the socket makes a
     // writer blocked on it return, and so let go of the mutex.
     conn.close();

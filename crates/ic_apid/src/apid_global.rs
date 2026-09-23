@@ -310,6 +310,7 @@ impl NodeShared {
 
   pub(crate) fn set_membership(&self, to: LinkStatus) {
     self.membership.store(to as u32, Ordering::Release);
+    note_link_event();
   }
 
   /// Change the membership only if it is still `from`. True if it was.
@@ -324,17 +325,25 @@ impl NodeShared {
       Ordering::AcqRel,
       Ordering::Acquire,
     );
+    if result.is_ok() {
+      note_link_event();
+    }
     result.is_ok()
   }
 
   /// Note that a data node reported this node failed. True if that had
   /// already been noted for the current link.
   pub(crate) fn mark_failure_reported(&self) -> bool {
-    self.failure_reported.swap(true, Ordering::AcqRel)
+    let already = self.failure_reported.swap(true, Ordering::AcqRel);
+    if !already {
+      note_link_event();
+    }
+    already
   }
 
   pub(crate) fn clear_failure_reported(&self) {
     self.failure_reported.store(false, Ordering::Release);
+    note_link_event();
   }
 
   /// True from a data node reporting this node failed until a new link
@@ -485,7 +494,10 @@ impl NodeShared {
     sections: &[&[u32]],
   ) -> Result<(), IcError> {
     self.send_for_generation(
-      self.published.generation(), header, data, sections,
+      self.published.generation(),
+      header,
+      data,
+      sections,
     )
   }
 
@@ -672,6 +684,27 @@ impl NodeShared {
   }
 }
 
+/// Counts every change a connection's failure checks look at: a link
+/// made or lost, a node's membership changed, a node's failure reported
+/// or cleared. A connection runs those checks only when this has moved
+/// since it last did, so that a poll does not look through every
+/// transaction in flight to learn that no link has gone. One word for
+/// the process, written a few times a day and read once a poll: it
+/// stays in every core's cache. Several globals in one process only
+/// make each other's connections check once too often.
+static IC_LINK_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+/// Note a change the failure checks look at; called after the change
+/// is published, so that a reader of the new count sees it.
+pub(crate) fn note_link_event() {
+  IC_LINK_EVENTS.fetch_add(1, Ordering::Release);
+}
+
+/// The count of such changes so far.
+pub(crate) fn link_events() -> u64 {
+  IC_LINK_EVENTS.load(Ordering::Acquire)
+}
+
 static IC_WRITES: AtomicU64 = AtomicU64::new(0);
 static IC_WRITE_BYTES: AtomicU64 = AtomicU64::new(0);
 
@@ -744,6 +777,10 @@ pub(crate) struct ApidShared {
   alone: AtomicBool,
   /// One per data node, fixed at start.
   pub(crate) nodes: Vec<Arc<NodeShared>>,
+  /// By node id, one more than the node's place in `nodes`, or zero: a
+  /// lookup is one index rather than a search, on paths taken per
+  /// transaction and per query.
+  node_index: Vec<u16>,
   pub(crate) thread_table: Arc<ThreadTable>,
   /// Table and index descriptions, shared by every user thread.
   pub(crate) dict_cache: DictCache,
@@ -764,7 +801,11 @@ impl ApidShared {
   }
 
   pub(crate) fn node(&self, node_id: u32) -> Option<&Arc<NodeShared>> {
-    self.nodes.iter().find(|node| node.node_id == node_id)
+    let place = *self.node_index.get(node_id as usize)? as usize;
+    if place == 0 {
+      return None;
+    }
+    self.nodes.get(place - 1)
   }
 
   /// The data nodes that have a link up and say they are started.
@@ -1186,6 +1227,14 @@ impl ApidGlobal {
     if let Some(name) = node_name {
       owned_name = Some(name.to_string());
     }
+    let mut node_index: Vec<u16> = Vec::new();
+    for (place, node) in nodes.iter().enumerate() {
+      let id = node.node_id as usize;
+      if id >= node_index.len() {
+        node_index.resize(id + 1, 0);
+      }
+      node_index[id] = (place + 1) as u16;
+    }
     let shared = Arc::new(ApidShared {
       identity: IcMutex::new(
         IC_MUTEX_LEVEL_GLOBAL,
@@ -1205,6 +1254,7 @@ impl ApidGlobal {
       own_node_id: AtomicU32::new(own_node_id),
       reclaim_pending: AtomicBool::new(false),
       alone: AtomicBool::new(false),
+      node_index,
       nodes,
       thread_table: Arc::new(ThreadTable::new()),
       dict_cache: DictCache::new(),

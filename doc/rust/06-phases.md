@@ -417,6 +417,24 @@ rows. The code went back to the version measured at 1.73 million.
   are the fix on that side. Unpinned, the client taking whatever was
   free, did best, 5.3 to 7.1 million with eight user threads.
 
+  **Checks by event, lists by work, lookups by index, 2026-09-23.** A
+  Linux profile showed every poll walking all transactions in flight
+  for lost links (7.5%), the send walking them all to find those with
+  work, and the map from a coordinator's pointer to its transaction, a
+  B-tree, costing 9 to 10% in searches, inserts and splits. Now a count
+  of link and node changes, raised after each is published, lets a
+  poll skip the failure checks when nothing has changed since it last
+  ran them; a transaction with something to send is put on a list the
+  send takes; a node is found by id through a table; and our pointer
+  for a coordinator's record encodes the record's place, its top bit
+  marking it and bit 0 left for the acknowledgement flag, so that
+  `active` is a vector indexed by it and a reply finds its transaction
+  in one load. Measured the same day on the same machine, which ran at
+  less than half its morning's rate for reasons outside the client
+  (system time up for every build alike): user time per read at depth
+  two 591 ns before the other session's failure-handling commits, 696
+  after them, 419 with these changes.
+
   Large signals stay in the receive page and are read there, the page
   counted by an `Arc` (the C page's atomic) and sealed while held.
   Reading a table with a `VARBINARY(29000)` column filled to a given
