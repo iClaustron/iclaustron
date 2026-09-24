@@ -21,6 +21,7 @@ Read in order the first time; afterwards each chapter stands alone.
 | [09 Licensing](09-licensing.md) | Relicensing to MIT, clean room against RonDB, dependency policy |
 | [10 Open questions](10-open-questions.md) | Decisions taken and the thirteen still open |
 | [11 C to Rust mappings](11-c-to-rust-mappings.md) | Construct-by-construct translation table with explanations and worked examples |
+| [12 Performance model](12-performance-model.md) | Operational laws and the `ic_model` simulation for what-if analysis of latency and throughput; its calibration |
 
 ## State of the C code this plan starts from
 

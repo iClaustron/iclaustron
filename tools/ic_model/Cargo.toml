@@ -1,0 +1,14 @@
+[package]
+name = "ic_model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A discrete-event model of the client and the data nodes, for what-if analysis of latency and throughput"
+
+[lints]
+workspace = true
+
+[dependencies]

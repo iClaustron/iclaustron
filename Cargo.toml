@@ -16,6 +16,7 @@ members = [
     "tools/ic_write",
     "tools/ic_trans",
     "tools/ic_bench",
+    "tools/ic_model",
     "xtask",
 ]
 
