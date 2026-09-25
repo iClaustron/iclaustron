@@ -1,0 +1,13 @@
+<section id="measured" data-transition="fade" style="background:#F5F7F8; color:#17232B; font-family:'IBM Plex Sans', Arial, sans-serif; padding:128px 128px 160px; display:flex; flex-direction:column; gap:40px">
+<div style="display:flex; flex-direction:column; gap:12px"><p style="font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; letter-spacing:2px; text-transform:uppercase; color:#0D5C66">Threading · measured</p><h2 style="font-family:'Source Serif 4', Georgia, serif; font-size:64px; font-weight:600; line-height:1.1; color:#17232B">What it does today</h2></div>
+<table style="font-family:'IBM Plex Sans', Arial, sans-serif; font-size:30px; color:#17232B; background:#FFFFFF">
+<tr><th style="width:40%">Setup (primary key reads)</th><th style="width:18%; text-align:right">Reads / s</th><th style="width:42%">Limited by</th></tr>
+<tr><td>Mac, 1 user thread, depth 4</td><td style="text-align:right">2.6 M</td><td>The user thread: ~350 ns user time per read</td></tr>
+<tr><td>Mac, 4 user threads, batch 300</td><td style="text-align:right">5.8 M</td><td>Cores shared with the data nodes</td></tr>
+<tr><td>Mac, 8 user threads, batch 300</td><td style="text-align:right">7.0–8.9 M</td><td>One data node TC thread at 96%</td></tr>
+<tr><td>Linux, 8 user threads, 2 receive threads</td><td style="text-align:right">7.1 M</td><td>The data node's receive thread</td></tr>
+</table>
+<p style="font-size:32px; line-height:1.45; color:#4A5A64; width:1500px">Client CPU stays near <b style="color:#17232B">500–550 ns per read</b> from depth 1 to 4 and from 1 to 16 threads. The limits are now in the data nodes and in shared cores. <span style="font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:28px">tools/ic_model</span> reproduces these to within 14%.</p>
+<p style="position:absolute; left:128px; bottom:64px; width:900px; font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; color:#4A5A64">iClaustron · Rust NDB API for RonDB 26.10</p><p style="position:absolute; right:128px; bottom:64px; width:200px; text-align:right; font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; color:#4A5A64">05</p>
+<aside>Numbers from ic_bench against two release data nodes. The eight-thread limit on the Mac is a TC thread at 96 percent, because the data node's TC proxy, DbtcProxy, spreads the transaction records over its three TC threads in a 2 to 1 to 0 ratio with this configuration. That choice is the data node's, not the API's.</aside>
+</section>

@@ -1,0 +1,9 @@
+<section id="rule" data-section="Threading: today and next" data-transition="fade" style="background:#17232B; color:#DCE6EA; font-family:'IBM Plex Sans', Arial, sans-serif; padding:128px 128px 160px; display:flex; flex-direction:column; gap:40px">
+<div style="display:flex; flex-direction:column; gap:12px"><p style="font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; letter-spacing:2px; text-transform:uppercase; color:#5FC1CC">Threading</p><h2 style="font-family:'Source Serif 4', Georgia, serif; font-size:64px; font-weight:600; line-height:1.1; color:#DCE6EA">One rule shapes everything</h2></div>
+<div style="flex:1"></div>
+<p style="font-family:'Source Serif 4', Georgia, serif; font-size:88px; font-weight:600; line-height:1.15; color:#DCE6EA; width:1600px">Receive threads <span style="color:#5FC1CC">receive and route.</span><br>User threads <span style="color:#5FC1CC">execute.</span></p>
+<div style="flex:1"></div>
+<p style="font-size:32px; line-height:1.45; color:#AFC3CA; width:1500px">The C++ NDB API decodes every signal on its receive thread, which becomes the bottleneck with many threads. Here a receive thread does one lookup and one copy per signal; decoding, state and callbacks run on the thread that owns the query.</p>
+<p style="position:absolute; left:128px; bottom:64px; width:900px; font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; color:#AFC3CA">iClaustron · Rust NDB API for RonDB 26.10</p><p style="position:absolute; right:128px; bottom:64px; width:200px; text-align:right; font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; color:#AFC3CA">02</p>
+<aside>The deliberate difference from the C++ NDB API. Their receive thread executes the signal then wakes the user thread. Ours only looks at the block number and copies the signal into that thread's page. All real work scales with the application's own threads.</aside>
+</section>

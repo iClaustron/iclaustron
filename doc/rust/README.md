@@ -22,6 +22,8 @@ Read in order the first time; afterwards each chapter stands alone.
 | [10 Open questions](10-open-questions.md) | Decisions taken and the thirteen still open |
 | [11 C to Rust mappings](11-c-to-rust-mappings.md) | Construct-by-construct translation table with explanations and worked examples |
 | [12 Performance model](12-performance-model.md) | Operational laws and the `ic_model` simulation for what-if analysis of latency and throughput; its calibration |
+| [Architecture overview](architecture.html) | Threading and how it can evolve, the data model, the asynchronous executor and the synchronous models, as one page to read in a browser |
+| [Architecture slides](architecture-slides/README.md) | The overview as a 13-slide deck with speaker notes, about eight minutes |
 
 ## State of the C code this plan starts from
 

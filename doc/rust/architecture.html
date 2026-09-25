@@ -1,0 +1,870 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iClaustron Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,650&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f5f7f8;
+  --paper: #ffffff;
+  --ink: #17232b;
+  --ink-soft: #4a5a64;
+  --rule: #d5dde1;
+  --tint: #e8eff1;
+  --accent: #0d5c66;
+  --accent-soft: #d6ebed;
+  --wire: #a8641a;
+  --wire-soft: #f6e8d6;
+  --built: #2e6b3a;
+  --built-soft: #dff0e2;
+  --planned: #7a5a12;
+  --planned-soft: #f5ecd3;
+  --proposed: #5a3f86;
+  --proposed-soft: #ebe4f5;
+  --code-bg: #eef2f4;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f1519;
+    --paper: #151d22;
+    --ink: #dce6ea;
+    --ink-soft: #9aacb4;
+    --rule: #2b3840;
+    --tint: #1b262c;
+    --accent: #5fc1cc;
+    --accent-soft: #173b40;
+    --wire: #e0a45a;
+    --wire-soft: #3a2a17;
+    --built: #7fcf8c;
+    --built-soft: #1c3322;
+    --planned: #e2c064;
+    --planned-soft: #362d15;
+    --proposed: #b9a0e6;
+    --proposed-soft: #2b2340;
+    --code-bg: #1b252b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1519;
+  --paper: #151d22;
+  --ink: #dce6ea;
+  --ink-soft: #9aacb4;
+  --rule: #2b3840;
+  --tint: #1b262c;
+  --accent: #5fc1cc;
+  --accent-soft: #173b40;
+  --wire: #e0a45a;
+  --wire-soft: #3a2a17;
+  --built: #7fcf8c;
+  --built-soft: #1c3322;
+  --planned: #e2c064;
+  --planned-soft: #362d15;
+  --proposed: #b9a0e6;
+  --proposed-soft: #2b2340;
+  --code-bg: #1b252b;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  padding-inline: 16px;
+  padding-block: 0 64px;
+}
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 48px;
+}
+@media (max-width: 900px) {
+  .page { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  nav.toc { display: none; }
+}
+
+header.masthead {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-block: 48px 32px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 40px;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 12px;
+}
+h1, h2, h3 {
+  font-family: var(--serif);
+  font-weight: 650;
+  text-wrap: balance;
+  line-height: 1.2;
+  color: var(--ink);
+}
+h1 { font-size: clamp(32px, 5vw, 46px); margin: 0 0 16px; letter-spacing: -0.01em; }
+h2 {
+  font-size: 30px;
+  margin: 64px 0 8px;
+  padding-top: 16px;
+  border-top: 2px solid var(--ink);
+}
+h2 .num { font-family: var(--mono); font-size: 15px; color: var(--accent); font-weight: 500; display: block; margin-bottom: 6px; letter-spacing: 0.04em; }
+h3 { font-size: 21px; margin: 40px 0 8px; font-weight: 500; }
+p, ul, ol { max-width: 68ch; }
+p { margin: 0 0 14px; }
+.lede { font-size: 18.5px; color: var(--ink-soft); max-width: 62ch; margin: 0 0 20px; }
+.meta { font-family: var(--mono); font-size: 13px; color: var(--ink-soft); display: flex; flex-wrap: wrap; gap: 6px 22px; }
+.meta b { color: var(--ink); font-weight: 500; }
+a { color: var(--accent); }
+strong { font-weight: 600; }
+code {
+  font-family: var(--mono);
+  font-size: 0.87em;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+pre {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 0 0 18px;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+.c { color: var(--ink-soft); }
+
+nav.toc {
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + 24px);
+  align-self: start;
+  font-size: 14px;
+  padding-top: 8px;
+}
+nav.toc p { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 10px; }
+nav.toc ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+nav.toc ol ol { padding-left: 14px; margin-top: 4px; font-size: 13.5px; }
+nav.toc a { color: var(--ink-soft); text-decoration: none; display: block; padding: 2px 0; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.status { display: inline-block; font-family: var(--mono); font-size: 11.5px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 7px; border-radius: 3px; vertical-align: 2px; white-space: nowrap; }
+.built { color: var(--built); background: var(--built-soft); }
+.planned { color: var(--planned); background: var(--planned-soft); }
+.proposed { color: var(--proposed); background: var(--proposed-soft); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 14px; color: var(--ink-soft); margin: 18px 0 0; }
+
+.figure {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 16px;
+  margin: 20px 0 24px;
+  overflow-x: auto;
+}
+.figure svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.caption { font-size: 14px; color: var(--ink-soft); margin: 10px 0 0; max-width: 80ch; }
+
+svg text { font-family: var(--sans); fill: var(--ink); }
+svg .t-small { font-size: 12px; fill: var(--ink-soft); }
+svg .t-mono { font-family: var(--mono); font-size: 11.5px; fill: var(--ink-soft); }
+svg .t-head { font-size: 14px; font-weight: 600; }
+svg .t-wire { font-size: 11.5px; fill: var(--wire); font-family: var(--mono); }
+svg .box { fill: var(--paper); stroke: var(--ink-soft); stroke-width: 1.2; }
+svg .box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+svg .box-tint { fill: var(--tint); stroke: var(--rule); stroke-width: 1; }
+svg .box-proposed { fill: var(--proposed-soft); stroke: var(--proposed); stroke-width: 1.4; stroke-dasharray: 5 4; }
+svg .wire { fill: none; stroke: var(--wire); stroke-width: 1.8; }
+svg .link { fill: none; stroke: var(--ink-soft); stroke-width: 1.3; }
+svg .arrowhead { fill: var(--wire); }
+svg .arrowhead-ink { fill: var(--ink-soft); }
+
+.table-wrap { overflow-x: auto; margin: 16px 0 22px; max-width: 100%; }
+table { border-collapse: collapse; font-size: 14.5px; width: 100%; min-width: 560px; background: var(--paper); }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--rule); }
+th { font-family: var(--mono); font-size: 12px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); background: var(--tint); }
+td:first-child { font-weight: 500; }
+td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+.steps { list-style: none; padding: 0; margin: 20px 0; display: grid; gap: 14px; max-width: none; }
+.steps li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; }
+.steps .n { font-family: var(--mono); font-size: 22px; color: var(--accent); line-height: 1.1; }
+.flow { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); gap: 10px; align-items: stretch; margin: 20px 0 24px; }
+.flow .stage { background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
+.flow .stage.node { background: var(--tint); }
+.flow .stage.found { background: var(--accent-soft); border-color: var(--accent); }
+.flow .tag { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); margin: 0 0 4px; }
+.flow .what { font-weight: 600; margin: 0 0 2px; }
+.flow .how { font-size: 14px; color: var(--ink-soft); margin: 0; }
+.flow .arrow { align-self: center; color: var(--wire); font-size: 20px; }
+@media (max-width: 640px) {
+  .flow { grid-template-columns: minmax(0,1fr); }
+  .flow .arrow { transform: rotate(90deg); justify-self: center; }
+}
+.steps h4 { font-family: var(--sans); font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+.steps p { margin: 0; font-size: 15px; color: var(--ink-soft); max-width: 72ch; }
+.steps p + p { margin-top: 6px; }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 18px 0 24px; }
+.panel { background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; }
+.panel h4 { font-family: var(--sans); font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.panel p, .panel li { font-size: 14.5px; color: var(--ink-soft); }
+.panel ul { padding-left: 18px; margin: 0; }
+.panel p:last-child { margin-bottom: 0; }
+
+.callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; margin: 20px 0; max-width: 72ch; border-radius: 0 4px 4px 0; }
+.callout p { margin: 0; }
+.callout p + p { margin-top: 8px; }
+
+.layout { font-family: var(--mono); font-size: 12.5px; display: grid; grid-template-columns: repeat(32, minmax(0, 1fr)); border: 1px solid var(--ink-soft); border-radius: 3px; overflow: hidden; margin: 8px 0 4px; min-width: 520px; }
+.layout div { padding: 6px 4px; text-align: center; border-right: 1px solid var(--ink-soft); background: var(--paper); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layout div:last-child { border-right: none; }
+.layout .hi { background: var(--accent-soft); }
+.layout .lo { background: var(--wire-soft); }
+.bits { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--ink-soft); min-width: 520px; }
+.layout-wrap { overflow-x: auto; margin: 10px 0 18px; }
+
+footer { max-width: 1180px; margin: 64px auto 0; border-top: 1px solid var(--rule); padding-top: 16px; font-size: 13.5px; color: var(--ink-soft); }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow">iClaustron · Rust NDB API for RonDB 26.10</p>
+  <h1>Architecture of the Rust NDB API</h1>
+  <p class="lede">How the client's threads divide the work, how transactions, operations and signals are laid out as they pass between threads, and the two programming models, asynchronous and synchronous, that applications build on.</p>
+  <div class="meta">
+    <span>Branch <b>RUST-iclaustron</b></span>
+    <span>As of <b>3489351</b>, 25 Sep 2026</span>
+    <span>Crate <b>ic_apid</b></span>
+    <span>Plan <b>doc/rust</b>, chapters 02, 04, 06, 12</span>
+  </div>
+  <div class="legend">
+    <span><span class="status built">Built</span> in the code today</span>
+    <span><span class="status planned">Planned</span> in the plan, not yet built</span>
+    <span><span class="status proposed">Proposed</span> in this document</span>
+  </div>
+</header>
+
+<div class="page">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#threads">1 · Threading</a>
+      <ol>
+        <li><a href="#threads-today">The threads today</a></li>
+        <li><a href="#threads-rules">Rules that keep it fast</a></li>
+        <li><a href="#threads-measured">What it does</a></li>
+        <li><a href="#threads-next">Next steps</a></li>
+      </ol>
+    </li>
+    <li><a href="#data">2 · Data model</a>
+      <ol>
+        <li><a href="#data-objects">Objects and owners</a></li>
+        <li><a href="#data-ids">How replies find objects</a></li>
+        <li><a href="#data-send">The send path</a></li>
+        <li><a href="#data-receive">The receive path</a></li>
+        <li><a href="#data-memory">Memory rules</a></li>
+      </ol>
+    </li>
+    <li><a href="#async">3 · Asynchronous model</a>
+      <ol>
+        <li><a href="#async-today">Pipelines today</a></li>
+        <li><a href="#async-executor">An executor with two inputs</a></li>
+        <li><a href="#async-wait">One wait point</a></li>
+        <li><a href="#async-loop">The loop</a></li>
+        <li><a href="#async-edges">Back-pressure and failure</a></li>
+      </ol>
+    </li>
+    <li><a href="#sync">4 · Synchronous model</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ============================================================ -->
+<section id="threads">
+<h2><span class="num">1</span>Threading architecture</h2>
+<p>One rule shapes the design: <strong>receive threads only receive and route; user threads execute.</strong> The C++ NDB API has its receive thread decode each signal and update the transaction, then wake the user thread, so once there are many user threads the receive thread becomes the bottleneck. Here a receive thread's work per signal is a table lookup and a copy into a page. Decoding rows, updating transaction state and running callbacks all happen on the user thread that owns the query, so that work grows with the application's threads rather than with a fixed pool.</p>
+
+<h3 id="threads-today">The threads today <span class="status built">Built</span></h3>
+
+<div class="figure">
+<svg viewBox="0 0 900 450" role="img" aria-labelledby="fig1-title">
+  <title id="fig1-title">Threads of the client and how signals flow between them and the data nodes</title>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
+    <marker id="ahi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead-ink"/></marker>
+  </defs>
+
+  <text x="20" y="22" class="t-mono">APPLICATION = USER THREADS</text>
+  <text x="360" y="22" class="t-mono">SHARED BY ALL THREADS</text>
+  <text x="690" y="22" class="t-mono">RONDB</text>
+
+  <rect x="20" y="36" width="260" height="62" rx="4" class="box-accent"/>
+  <text x="34" y="60" class="t-head">User thread · ApidConnection</text>
+  <text x="34" y="80" class="t-mono">block 0x8000+0 · inbox · queries</text>
+
+  <rect x="20" y="110" width="260" height="62" rx="4" class="box-accent"/>
+  <text x="34" y="134" class="t-head">User thread · ApidConnection</text>
+  <text x="34" y="154" class="t-mono">block 0x8000+1 · inbox · queries</text>
+
+  <text x="34" y="196" class="t-small">… up to 256 user threads, each its own block</text>
+
+  <rect x="360" y="36" width="250" height="62" rx="4" class="box"/>
+  <text x="374" y="60" class="t-head">NodeShared · one per data node</text>
+  <text x="374" y="80" class="t-mono">send buffer: mutex + writer flag</text>
+
+  <rect x="360" y="122" width="250" height="44" rx="4" class="box"/>
+  <text x="374" y="149" class="t-head">Send pool · 1 thread</text>
+
+  <rect x="360" y="232" width="250" height="66" rx="4" class="box"/>
+  <text x="374" y="256" class="t-head">Receive thread × R</text>
+  <text x="374" y="276" class="t-mono">poll set over its share of nodes</text>
+  <text x="374" y="291" class="t-mono">router · executes API_REGCONF</text>
+
+  <rect x="360" y="322" width="250" height="44" rx="4" class="box"/>
+  <text x="374" y="349" class="t-head">Heartbeat thread · 1</text>
+
+  <rect x="360" y="382" width="250" height="44" rx="4" class="box"/>
+  <text x="374" y="409" class="t-head">Connect thread · one per node</text>
+
+  <rect x="690" y="36" width="190" height="390" rx="4" class="box-tint"/>
+  <text x="706" y="62" class="t-head">Data nodes (ndbmtd)</text>
+  <text x="706" y="84" class="t-small">each: recv, tc, ldm, send,</text>
+  <text x="706" y="100" class="t-small">main, rep threads</text>
+  <text x="706" y="128" class="t-mono">TCKEYREQ → tc → ldm</text>
+  <text x="706" y="146" class="t-mono">TCKEYCONF ← tc</text>
+  <text x="706" y="164" class="t-mono">TRANSID_AI ← ldm</text>
+
+  <!-- user -> NodeShared -->
+  <path d="M280,62 L356,62" class="wire" marker-end="url(#ah)"/>
+  <text x="286" y="54" class="t-wire">send</text>
+  <!-- NodeShared -> data nodes -->
+  <path d="M610,62 L686,62" class="wire" marker-end="url(#ah)"/>
+  <text x="618" y="54" class="t-wire">one write</text>
+  <!-- NodeShared -> pool -->
+  <path d="M485,98 L485,118" class="link" marker-end="url(#ahi)"/>
+  <text x="492" y="113" class="t-small">what came meanwhile</text>
+  <!-- pool -> data nodes -->
+  <path d="M610,144 L686,144" class="wire" marker-end="url(#ah)"/>
+  <!-- data nodes -> receive -->
+  <path d="M690,262 L614,262" class="wire" marker-end="url(#ah)"/>
+  <text x="620" y="254" class="t-wire">replies</text>
+  <!-- receive -> user inboxes -->
+  <path d="M360,265 L150,265 L150,176" class="wire" marker-end="url(#ah)"/>
+  <text x="172" y="258" class="t-wire">one page per thread per round</text>
+  <!-- heartbeat -->
+  <path d="M610,344 L686,344" class="link" marker-end="url(#ahi)"/>
+  <text x="620" y="336" class="t-small">API_REGREQ</text>
+  <!-- connect -->
+  <path d="M610,404 L686,404" class="link" marker-end="url(#ahi)"/>
+  <text x="620" y="396" class="t-small">dial, handshake</text>
+  <!-- connect hands socket to receive -->
+  <path d="M430,382 L430,302" class="link" marker-end="url(#ahi)"/>
+  <text x="200" y="352" class="t-small">connected socket handed</text>
+  <text x="200" y="368" class="t-small">to the node's receive thread</text>
+  <path d="M345,356 L426,356" class="link"/>
+</svg>
+<p class="caption">Orange lines carry transaction signals. A user thread writes its own requests to the socket; the send pool writes only what arrives while another thread is writing, and requests held back by adaptive send. Replies reach a user thread only through its inbox.</p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Thread</th><th class="num">How many</th><th>What it does</th><th>What it touches</th></tr></thead>
+  <tbody>
+    <tr><td>User thread</td><td class="num">1 – 256</td><td>Defines queries, packs requests, sends, polls its inbox, decodes replies into rows, runs callbacks.</td><td>Its own <code>ApidConnection</code>, with no lock. A node's send buffer, under that node's mutex, held only to append.</td></tr>
+    <tr><td>Receive thread</td><td class="num">1 – #nodes</td><td>Reads its nodes' sockets into receive pages, splits signals, unpacks <code>API_PACKED</code>, routes by block number. Executes signals about the link itself: <code>API_REGCONF</code>, <code>NODE_FAILREP</code>, <code>NF_COMPLETEREP</code>, <code>ALTER_TABLE_REP</code>.</td><td>The sockets of its own nodes. Each inbox's mutex, taken once per round. The published node state, of which it is the only writer.</td></tr>
+    <tr><td>Send pool</td><td class="num">1</td><td>Writes what was queued while another thread was writing to the node, and ends adaptive-send waits at their deadline.</td><td>Node send buffers.</td></tr>
+    <tr><td>Heartbeat</td><td class="num">1</td><td>Sends <code>API_REGREQ</code> to every node that is up. It asks a node's receive thread to drop a link whose heartbeats stopped.</td><td>Reads node state through atomics and never writes it.</td></tr>
+    <tr><td>Connect</td><td class="num">1 per node</td><td>Resolves the port, dials, runs the transporter handshake, hands the socket over. Waits for <code>NF_COMPLETEREP</code> before dialling a failed node again.</td><td>Membership word, changed by compare-and-swap.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="threads-rules">The rules that keep it fast</h3>
+<div class="two">
+  <div class="panel">
+    <h4>A node's state has one writer</h4>
+    <p>Each node is assigned to one receive thread when the threads start, and stays there. That thread sees its socket close and executes its <code>API_REGCONF</code>, so it is the only writer of the node's published state. Everyone else reads atomics, and the state needs no mutex. Membership, which any receive thread may learn about from another node's <code>NODE_FAILREP</code>, is a separate word changed by compare-and-swap.</p>
+  </div>
+  <div class="panel">
+    <h4>One lock per inbox per round</h4>
+    <p>The router sorts a round's signals per user thread with no lock held, then posts each page under one short lock. A thread that gets a hundred signals in a round costs the receive thread one lock, not a hundred.</p>
+  </div>
+  <div class="panel">
+    <h4>A thread is woken only when it sleeps</h4>
+    <p>An inbox has a <code>waiting</code> flag that the user thread sets under the mutex before it sleeps. A post to a busy thread makes no system call. The wake-up is sent after the lock is released, so the thread never wakes into a mutex that is still held.</p>
+  </div>
+  <div class="panel">
+    <h4>The thread that sends does the write</h4>
+    <p>Each data node has one send buffer: the signals waiting to be written to its socket. A user thread appends its signals to it under the node's mutex. If no other thread is writing to that node, it marks itself as the writer, takes the buffer (swapping in an empty spare), releases the mutex and writes to the socket. Signals appended during that write are left for the send pool, so no thread keeps writing on other threads' behalf.</p>
+  </div>
+  <div class="panel">
+    <h4>Failure checks cost one load</h4>
+    <p>A process-wide link-event counter is raised whenever a link or a node's membership changes. <code>poll</code> runs the lost-link checks only when the counter has moved since it last looked.</p>
+  </div>
+  <div class="panel">
+    <h4>Mutex levels, checked in debug builds</h4>
+    <p>Dictionary (1), global (2), a thread's inbox (3), page pool (5), a node's send buffer (6). Locks are taken in rising order only. Levels 4 and 7 are empty because the C's receive-state and heartbeat mutexes are gone.</p>
+  </div>
+</div>
+
+<h3 id="threads-measured">What it does, measured</h3>
+<p>Primary key reads of <code>t9</code> by <code>ic_bench</code>, with two release data nodes on the same machine, batches of 200 or 300, and two batches in flight per thread unless stated otherwise.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Setup</th><th class="num">Reads per second</th><th class="num">Client CPU per read</th><th>What limits it</th></tr></thead>
+  <tbody>
+    <tr><td>Mac, 1 user thread, depth 4</td><td class="num">2.6 M</td><td class="num">545 ns</td><td>The user thread itself: about 350 ns of user time per read.</td></tr>
+    <tr><td>Mac, 4 user threads, batch 300</td><td class="num">5.8 M</td><td class="num">495 ns</td><td>Cores shared with the data nodes' threads.</td></tr>
+    <tr><td>Mac, 8 user threads, batch 300</td><td class="num">7.0 – 8.9 M</td><td class="num">512 – 565 ns</td><td>One data node TC thread at 96%. The data node's TC proxy (<code>DbtcProxy</code>) chooses the TC thread for each record, and with this configuration spreads them 2 : 1 : 0 over three TC threads.</td></tr>
+    <tr><td>Linux (32 CPUs), 8 user threads, 2 receive threads</td><td class="num">up to 7.1 M</td><td class="num">—</td><td>The data node's receive thread.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Client CPU per read stays flat from depth 1 to depth 4 and grows only slowly with threads. The present limits are on the data node side and in the cores the two sides share. <code>tools/ic_model</code> (chapter 12) reproduces these curves to within 14% and is the place to try a change before building it.</p>
+
+<h3 id="threads-next">How it can evolve</h3>
+<p>These steps are listed in the order that would pay off first. Each one keeps the rule that receive threads only route.</p>
+<ol class="steps">
+  <li><span class="n">1</span><div>
+    <h4>A wake-up descriptor in the poll set <span class="status planned">Planned</span></h4>
+    <p>A receive thread now waits in its poll set for up to 20 ms, so a newly connected link can go unwatched for that long. A self-pipe or eventfd would let a connect thread, or anyone else, wake it at once, and would remove the idle wake-ups.</p>
+  </div></li>
+  <li><span class="n">2</span><div>
+    <h4>Executor threads that serve application threads <span class="status proposed">Proposed</span></h4>
+    <p>Today every application thread that talks to RonDB is a user thread with its own block, capped at 256. An executor is a user thread that takes requests from any number of application threads through its inbox and pipelines them together. Section 3 describes it. It needs no new thread type in the library, only a second list in the inbox.</p>
+  </div></li>
+  <li><span class="n">3</span><div>
+    <h4>More user threads <span class="status planned">Planned</span></h4>
+    <p>Phase 7 raises the user-thread limit from 256 to 4711, which widens the block-number space and the thread table. The limit of four management servers in a connect string stays. It matters for the synchronous model's first form (section 4), where every application thread holds its own connection.</p>
+  </div></li>
+  <li><span class="n">4</span><div>
+    <h4>Wake-up helpers and more send threads <span class="status planned">Planned</span></h4>
+    <p>When one round wakes hundreds of sleeping user threads, the wake-ups themselves become the receive thread's cost. Helper threads could take over the wake-ups while the receive thread stays on the sockets. The send pool can likewise grow beyond one thread, taking nodes from a shared queue as it does now.</p>
+  </div></li>
+  <li><span class="n">5</span><div>
+    <h4>Placing nodes on receive threads by load <span class="status planned">Planned</span></h4>
+    <p>Nodes are dealt to receive threads in turn when the threads start. With many data nodes and uneven traffic, placing them by measured load would balance the threads. Moving a node from one receive thread to another would need a hand-over that keeps the one-writer rule: stop the old owner reading, then install the link at the new owner.</p>
+  </div></li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="data">
+<h2><span class="num">2</span>The data model</h2>
+<p>Everything a transaction needs while it runs lives in one user thread's <code>ApidConnection</code> and is never shared. Two kinds of data cross threads: requests appended to a node's send buffer, and replies coming back in a signal page. Neither goes through an allocation per signal or per transaction once the thread is warm.</p>
+
+<h3 id="data-objects">Objects and who owns them <span class="status built">Built</span></h3>
+<div class="two">
+  <div class="panel">
+    <h4>Shared: <code>ApidGlobal</code> → <code>ApidShared</code></h4>
+    <ul>
+      <li><code>NodeShared</code> per data node: published link state (atomics), membership word (compare-and-swap), link-drop request word, and the <code>Sender</code>. The <code>Sender</code> holds the waiting buffer, a spare buffer, the writer flag <code>send_active</code>, the <code>deferred</code> flag and the adaptive-send state, all behind one mutex.</li>
+      <li><code>ThreadTable</code>: block number → inbox, with a change counter so that receive threads keep their own copy.</li>
+      <li>The send pool, the dictionary cache (<code>TableDef</code>s by name, as <code>Arc</code>, dropped on <code>ALTER_TABLE_REP</code>), the configuration.</li>
+    </ul>
+  </div>
+  <div class="panel">
+    <h4>Per user thread: <code>ApidConnection</code></h4>
+    <ul>
+      <li><code>inbox</code>: an <code>Arc&lt;ThreadConnection&gt;</code>, with the pages it gives back.</li>
+      <li><code>queries</code>, <code>transactions</code>: generational object maps (<code>PtrArray</code>), handled by <code>QueryId</code> and <code>TransId</code>.</li>
+      <li><code>tc_records</code> with a free list per node; <code>active</code>, a vector indexed by a record's place and holding the transaction that uses it.</li>
+      <li><code>outgoing</code> per node: <code>words</code>, <code>staged</code> and <code>cancelled</code>; <code>to_send</code>, the transactions with something staged.</li>
+      <li><code>executed</code> queue, spare query lists, fragment assembler, expected replies.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="two">
+  <div class="panel">
+    <h4><code>ApidQuery</code>: one key operation, reused</h4>
+    <p>Holds a table, a key record and an attribute record, and <strong>owns the rows they lay out</strong>: the application fills <code>key_row_mut()</code> and reads <code>attr_row()</code>, and nothing in the library points into the application's memory. Its per-run state, <code>Execution</code>, holds the transaction id every reply must carry, where its packed request lies (<code>Staged</code>), what the coordinator confirmed, and how much row has come.</p>
+    <p><code>Idle → Defined → Sent → Completed → Idle</code>. A completed query goes to <code>executed</code>, or its callback runs and may define it again at once.</p>
+  </div>
+  <div class="panel">
+    <h4><code>Transaction</code>: local until its first send</h4>
+    <p>Holds the transaction id, the <code>TcRecord</code> seized at the coordinator the hint chose, and the <code>defined</code> and <code>sent</code> query lists with their counts. It also holds the end wanted (commit or rollback), the error and the GCI.</p>
+    <p>The data node knows nothing about it until the first operation goes with the start flag. It is done when it has committed or rolled back and every sent operation is complete. Its record then returns to the free list, and its query lists are kept for the next transaction.</p>
+  </div>
+</div>
+
+<h3 id="data-ids">How a reply finds its transaction</h3>
+<p>Each request carries <strong>a number we choose</strong>, and the data node sends it back in every reply about that transaction. We choose it to be the transaction's <strong>place in our own table</strong>, so finding the transaction is one array index: no search, no hash, no lock.</p>
+<div class="flow" role="list" aria-label="How a reply finds its transaction">
+  <div class="stage" role="listitem"><p class="tag">1 · We send</p><p class="what"><code>TCKEYREQ</code></p><p class="how">carries our number: place 3</p></div>
+  <span class="arrow" aria-hidden="true">→</span>
+  <div class="stage node" role="listitem"><p class="tag">2 · Data node</p><p class="what">Keeps it</p><p class="how">with its own record of the transaction</p></div>
+  <span class="arrow" aria-hidden="true">→</span>
+  <div class="stage" role="listitem"><p class="tag">3 · Reply</p><p class="what"><code>TCKEYCONF</code></p><p class="how">first data word: place 3</p></div>
+  <span class="arrow" aria-hidden="true">→</span>
+  <div class="stage found" role="listitem"><p class="tag">4 · One lookup</p><p class="what"><code>active[3]</code></p><p class="how">is our transaction</p></div>
+</div>
+<div class="two">
+  <div class="panel">
+    <h4>Rows work the same way</h4>
+    <p>A row (<code>TRANSID_AI</code>) and a single operation's refusal (<code>TCKEYREF</code>) come from the node that read the row. They carry the query's id instead, and find the query the same way.</p>
+  </div>
+  <div class="panel">
+    <h4>Late replies are caught</h4>
+    <p>Every reply also carries the transaction id. A reply left over from an earlier use of place 3 has a different id, does not match, and is dropped.</p>
+  </div>
+</div>
+<p>The block number in the signal header (0x8000 + thread id) is what picks the user thread in the first place. Within that thread, the details are as follows.</p>
+
+<p><strong>Our pointer for a coordinator record</strong> (<code>api_connect_ptr</code>, echoed by <code>TCKEYCONF</code>, <code>TC_COMMITCONF</code>, <code>TCROLLBACKCONF</code>):</p>
+<div class="layout-wrap">
+  <div class="layout" aria-label="Bit layout of the coordinator record pointer">
+    <div class="hi" style="grid-column: span 1">1</div>
+    <div class="lo" style="grid-column: span 30">place in tc_records / active (index)</div>
+    <div style="grid-column: span 1">ack</div>
+  </div>
+  <div class="bits"><span>bit 31</span><span>bits 30 … 1</span><span>bit 0</span></div>
+</div>
+<p>The top bit marks it as ours. Bit 0 is left free for the acknowledgement flag the protocol puts there. <code>active[index]</code> gives the transaction in one load. The place is reserved before the seize request goes, so a callback that runs during the wait cannot take the same place.</p>
+
+<p><strong>Transaction id</strong> (64 bits, carried by every reply and checked against the object it names):</p>
+<div class="layout-wrap">
+  <div class="layout" aria-label="Bit layout of the transaction id">
+    <div class="hi" style="grid-column: span 6">block (12)</div>
+    <div class="lo" style="grid-column: span 6">node id (12)</div>
+    <div style="grid-column: span 4">0 (8)</div>
+    <div style="grid-column: span 16">per-connection counter (32)</div>
+  </div>
+  <div class="bits"><span>bit 63</span><span>bits 51 · 39 · 31</span><span>bit 0</span></div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Reply</th><th>From</th><th>Finds its object by</th></tr></thead>
+  <tbody>
+    <tr><td><code>TCKEYCONF</code>, <code>TC_COMMITCONF</code>, <code>TCROLLBACKCONF</code>, their refusals, <code>TCROLLBACKREP</code></td><td>Coordinator (TC)</td><td>Record pointer → <code>active[index]</code> → <code>TransId</code></td></tr>
+    <tr><td><code>TRANSID_AI</code>, <code>TCKEYREF</code></td><td>The node that read the row (LDM)</td><td><code>QueryId</code> in the object map, with its generation checked</td></tr>
+    <tr><td><code>TCSEIZECONF</code>, <code>GET_TABINFO_CONF</code>, other single replies</td><td>Any</td><td>Expected-reply table: signal number, node and request number must all match</td></tr>
+    <tr><td>Anything else addressed to us</td><td>—</td><td>Counted as unexpected and dropped with a trace</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The block number (0x8000 + thread id) chooses the user thread. The receive thread reads nothing else. Block numbers are handed out in rotation, so that a late reply to a thread that has exited rarely reaches the thread that took its number. When one does, the id checks above reject it.</p>
+
+<h3 id="data-send">The send path: pack at define, patch at send <span class="status built">Built</span></h3>
+<ol class="steps">
+  <li><span class="n">a</span><div>
+    <h4>Define</h4>
+    <p><code>read_key</code> or <code>write_key</code> hashes the key when the transaction has no coordinator yet, picks the node and takes a free TC record for it (seizing one only if none is free). It then packs <code>TCKEYREQ</code> with its key and attribute info straight into that node's <code>staged</code> buffer. The query remembers where its request lies (<code>Staged { node_id, generation, at, len }</code>).</p>
+  </div></li>
+  <li><span class="n">b</span><div>
+    <h4>Send</h4>
+    <p><code>send_queries</code> walks <code>to_send</code> and sets the start, execute and commit flags in place: the last request of each transaction's batch gets execute, and gets commit too if the batch commits. It then moves each node's <code>staged</code> buffer to <code>words</code>, behind any commit acknowledgements waiting there. A request cancelled by a rollback before the send is cut out using <code>cancelled</code>.</p>
+  </div></li>
+  <li><span class="n">c</span><div>
+    <h4>Write</h4>
+    <p><code>NodeShared::send_words</code> appends the node's words to the <code>Sender</code> under its mutex. If no other thread is writing to that node, this thread marks itself as the writer, swaps the waiting buffer with the spare, and writes outside the mutex. The result is one socket write per node per send, carrying every transaction's requests. Adaptive send may hold a small write back for company, and the send pool ends that wait when it is due.</p>
+  </div></li>
+</ol>
+
+<h3 id="data-receive">The receive path: pages that go round <span class="status built">Built</span></h3>
+<div class="figure">
+<svg viewBox="0 0 900 250" role="img" aria-labelledby="fig2-title">
+  <title id="fig2-title">Receive pages, signal pages and signal views</title>
+  <defs>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
+    <marker id="ahi2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrowhead-ink"/></marker>
+  </defs>
+  <text x="20" y="22" class="t-mono">RECEIVE THREAD</text>
+  <text x="340" y="22" class="t-mono">INBOX (MUTEX)</text>
+  <text x="640" y="22" class="t-mono">USER THREAD</text>
+
+  <rect x="20" y="36" width="250" height="86" rx="4" class="box"/>
+  <text x="34" y="60" class="t-head">Receive page · 128 KB</text>
+  <text x="34" y="80" class="t-mono">Arc-counted · 4 × largest message</text>
+  <text x="34" y="98" class="t-mono">sealed while held · LIFO reuse</text>
+  <text x="34" y="114" class="t-mono">up to 64 kept free</text>
+
+  <rect x="20" y="148" width="250" height="68" rx="4" class="box"/>
+  <text x="34" y="172" class="t-head">Router</text>
+  <text x="34" y="192" class="t-mono">split · unpack API_PACKED ·</text>
+  <text x="34" y="208" class="t-mono">sort by block number</text>
+
+  <rect x="340" y="36" width="230" height="180" rx="4" class="box-accent"/>
+  <text x="354" y="60" class="t-head">SignalPage per user thread</text>
+  <text x="354" y="84" class="t-mono">&lt; 256 words: copied in</text>
+  <text x="354" y="102" class="t-mono">≥ 256 words: by reference,</text>
+  <text x="354" y="118" class="t-mono">  holds the receive page</text>
+  <text x="354" y="146" class="t-mono">entry: gsn · blocks · node ·</text>
+  <text x="354" y="162" class="t-mono">  length · sections · data</text>
+  <text x="354" y="190" class="t-small">up to 8 emptied pages kept spare</text>
+
+  <rect x="640" y="36" width="240" height="180" rx="4" class="box"/>
+  <text x="654" y="60" class="t-head">poll()</text>
+  <text x="654" y="84" class="t-mono">exchange: emptied pages in,</text>
+  <text x="654" y="100" class="t-mono">  posted pages out</text>
+  <text x="654" y="124" class="t-mono">SignalView: read in place</text>
+  <text x="654" y="148" class="t-mono">fragments joined first</text>
+  <text x="654" y="172" class="t-mono">rows unpacked into attr_row</text>
+  <text x="654" y="196" class="t-mono">callbacks · executed list</text>
+
+  <path d="M145,122 L145,144" class="link" marker-end="url(#ahi2)"/>
+  <path d="M270,182 L336,182" class="wire" marker-end="url(#ah2)"/>
+  <text x="280" y="174" class="t-wire">post</text>
+  <path d="M570,110 L636,110" class="wire" marker-end="url(#ah2)"/>
+  <text x="578" y="102" class="t-wire">take</text>
+  <path d="M636,150 L574,150" class="link" marker-end="url(#ahi2)"/>
+  <text x="580" y="166" class="t-small">give back</text>
+</svg>
+<p class="caption">A small signal is copied into the user thread's page, so the page is released on one thread. A large <code>TRANSID_AI</code> stays in its receive page, which stays sealed until the user thread gives its signal page back. Every page is allocated and freed on the thread that owns it.</p>
+</div>
+<p>The receive thread reads a socket again, up to four times, while each read fills all the room it had, then moves on. Commit acknowledgements the replies call for are queued in <code>outgoing</code> and leave with the next send. They are written on their own only after waiting 1 ms, or when nothing is in flight.</p>
+
+<h3 id="data-memory">Memory rules</h3>
+<ul>
+  <li><strong>No allocation per transaction or per signal once warm.</strong> Query lists of closed transactions are kept (up to 8192 spare), TC records are reused through free lists, send buffers are swapped rather than reallocated, and signal pages keep their largest size.</li>
+  <li><strong>Inline buffers spill; they never refuse.</strong> A <code>TCKEYCONF</code> with more than 16 operations goes on into a vector beside the inline array, and node lists hold eight inline. A protocol limit read from the data node's code is not a guarantee.</li>
+  <li><strong>No <code>unsafe</code> on the row path.</strong> Queries own their rows, so the library never holds a pointer into the application's memory between send and completion. The C binding copies or maps the caller's rows onto them.</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="async">
+<h2><span class="num">3</span>The asynchronous programming model</h2>
+<p>Asynchronous is the primary model. A thread defines work, sends it, does something else, and collects results as they arrive. Throughput comes from having many operations in flight per thread. Latency matters less once the pipeline is full.</p>
+
+<h3 id="async-today">Pipelines on one thread <span class="status built">Built</span></h3>
+<pre><code><span class="c">// once</span>
+let q = conn.create_query(&amp;table, &amp;key_rec, &amp;attr_rec)?;
+<span class="c">// per batch: define many, send once per node</span>
+let t = conn.start_transaction(hint, &amp;table)?;
+conn.read_key(q, t, &amp;ReadKeyArgs { callback: Some(on_row), user_ref, .. })?;
+<span class="c">// … more read_key / write_key, on this and other transactions</span>
+conn.commit_transaction(t)?;
+conn.send_queries(false)?;
+loop {
+    conn.poll(10);          <span class="c">// callbacks run here; each may define the next batch</span>
+    while let Some(id) = conn.get_next_executed_query() { /* queries without a callback */ }
+}</code></pre>
+<p>A callback runs inside <code>poll</code> on the polling thread, after the query has left its transaction's lists. It may define queries, start and commit transactions and send, which is how a pipeline keeps <em>depth</em> batches in flight. <code>ic_bench</code> works this way. The limitation is that <strong>new work can only come from this thread</strong>: from its own loop, or from a callback reacting to a reply. An application whose requests arrive on other threads, such as a network server's handlers, has to hand them to this thread somehow, and <code>poll</code> knows nothing about such hand-offs.</p>
+
+<h3 id="async-executor">An executor with two inputs <span class="status proposed">Proposed</span></h3>
+<p>An <strong>executor</strong> is a user thread that runs RonDB work for other threads. It must accept new queries while earlier ones are still in flight, so it listens to two interfaces:</p>
+<div class="two">
+  <div class="panel">
+    <h4>From the data nodes, through a receive thread</h4>
+    <p>Replies routed by block number into signal pages, as today. They complete operations, free coordinator records and make room in the pipeline.</p>
+  </div>
+  <div class="panel">
+    <h4>From application threads</h4>
+    <p>Requests such as "read this key", "run this transaction" or "write these rows", each with a way to deliver its result back. They fill the pipeline.</p>
+  </div>
+</div>
+
+<div class="figure">
+<svg viewBox="0 0 900 360" role="img" aria-labelledby="fig3-title">
+  <title id="fig3-title">An executor thread served by one inbox with two lists</title>
+  <defs>
+    <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
+    <marker id="ahi3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrowhead-ink"/></marker>
+  </defs>
+  <text x="20" y="62" class="t-mono">APPLICATION THREADS</text>
+  <rect x="20" y="74" width="200" height="40" rx="4" class="box"/>
+  <text x="34" y="99" class="t-head">HTTP handler</text>
+  <rect x="20" y="124" width="200" height="40" rx="4" class="box"/>
+  <text x="34" y="149" class="t-head">gRPC worker</text>
+  <rect x="20" y="174" width="200" height="40" rx="4" class="box"/>
+  <text x="34" y="199" class="t-head">… any number</text>
+
+  <text x="300" y="62" class="t-mono">INBOX · ONE MUTEX · ONE CONDITION</text>
+  <rect x="300" y="74" width="270" height="200" rx="4" class="box-proposed"/>
+  <rect x="316" y="90" width="238" height="64" rx="3" class="box"/>
+  <text x="330" y="114" class="t-head">requests</text>
+  <text x="330" y="136" class="t-mono">new list · bounded · FIFO</text>
+  <rect x="316" y="166" width="238" height="64" rx="3" class="box"/>
+  <text x="330" y="190" class="t-head">signal pages</text>
+  <text x="330" y="212" class="t-mono">as today</text>
+  <text x="316" y="258" class="t-mono">waiting flag covers both</text>
+
+  <rect x="300" y="300" width="270" height="44" rx="4" class="box"/>
+  <text x="314" y="327" class="t-head">Receive thread(s)</text>
+
+  <text x="640" y="62" class="t-mono">EXECUTOR (A USER THREAD)</text>
+  <rect x="640" y="74" width="240" height="200" rx="4" class="box-accent"/>
+  <text x="654" y="98" class="t-head">ApidConnection</text>
+  <text x="654" y="124" class="t-mono">1 take both lists, one lock</text>
+  <text x="654" y="146" class="t-mono">2 execute replies</text>
+  <text x="654" y="168" class="t-mono">3 deliver completions</text>
+  <text x="654" y="190" class="t-mono">4 admit requests up to</text>
+  <text x="654" y="206" class="t-mono">  the in-flight limit</text>
+  <text x="654" y="228" class="t-mono">5 one send per node</text>
+  <text x="654" y="250" class="t-mono">6 sleep only if all empty</text>
+
+  <path d="M220,94 L312,112" class="wire" marker-end="url(#ah3)"/>
+  <path d="M220,144 L312,122" class="wire" marker-end="url(#ah3)"/>
+  <path d="M220,194 L312,132" class="wire" marker-end="url(#ah3)"/>
+  <text x="232" y="232" class="t-wire">submit</text>
+  <path d="M435,300 L435,234" class="wire" marker-end="url(#ah3)"/>
+  <text x="444" y="284" class="t-wire">post</text>
+  <path d="M570,174 L636,174" class="wire" marker-end="url(#ah3)"/>
+  <text x="578" y="166" class="t-wire">take</text>
+  <path d="M760,74 C760,30 120,30 120,70" class="link" marker-end="url(#ahi3)"/>
+  <text x="330" y="26" class="t-small">completion: result slot + wake, callback, or a Future's waker</text>
+</svg>
+<p class="caption">Both inputs arrive in the same inbox, under the same mutex, with the same <code>waiting</code> flag. The executor waits in one place and wakes for whichever comes first.</p>
+</div>
+
+<h3 id="async-wait">Why both inputs must share one wait point</h3>
+<p>A thread that sleeps can sleep on only one thing. If replies arrive on a condition variable and requests on a channel, the executor must either poll one while sleeping on the other, which adds latency or spins, or run a second thread that forwards one into the other, which adds a wake-up to every request. The inbox already has what is needed: a mutex, a condition and a flag saying the owner is asleep. Adding a second list lets either producer wake the executor with the rule that exists today, <em>wake only if waiting, after releasing the lock</em>:</p>
+<pre><code>struct Inbox {
+    pages:    Vec&lt;SignalPage&gt;,   <span class="c">// from receive threads (today)</span>
+    spare:    Vec&lt;SignalPage&gt;,
+    requests: Vec&lt;Request&gt;,      <span class="c">// from application threads (new)</span>
+    waiting:  bool,              <span class="c">// the executor sleeps on `cond`</span>
+    closed:   bool,
+}
+
+<span class="c">// application side, any thread; a Submitter is a cloneable handle on the inbox</span>
+fn submit(&amp;self, r: Request) -&gt; Result&lt;(), Busy&gt; {
+    let wake = {
+        let mut ib = self.inbox.lock();
+        if ib.requests.len() &gt;= self.limit { return Err(Busy); }
+        ib.requests.push(r);
+        std::mem::take(&amp;mut ib.waiting)
+    };
+    if wake { self.cond.signal(); }
+    Ok(())
+}</code></pre>
+<p>The receive thread's post and <code>submit</code> are the same shape: append under a short lock, then wake the executor only if it was asleep. <code>exchange</code>, which already swaps emptied pages for posted ones, would also swap the request vector with an empty one, so the executor takes everything in one lock.</p>
+
+<h3 id="async-loop">The executor's loop</h3>
+<pre><code>loop {
+    <span class="c">// 1. one lock: posted pages out, emptied pages back, requests out.</span>
+    <span class="c">//    Sleeps only if nothing is posted, no request waits,</span>
+    <span class="c">//    and nothing held back needs sending.</span>
+    let got = inbox.exchange(wait, &amp;mut pages, &amp;mut requests);
+
+    <span class="c">// 2. replies first: they complete operations and free records</span>
+    for signal in pages { conn.receive_view(&amp;signal); }
+
+    <span class="c">// 3. completions go back to their application threads</span>
+    while let Some(done) = conn.next_completed() { done.deliver(); }
+
+    <span class="c">// 4. admit new work while the pipeline has room</span>
+    while conn.in_flight() &lt; limit {
+        let Some(r) = requests.pop_front() else { break };
+        r.define_on(&amp;mut conn);   <span class="c">// start, read_key/write_key, commit</span>
+    }
+
+    <span class="c">// 5. everything admitted this pass: one write per node</span>
+    conn.send_queries(false)?;
+}</code></pre>
+<p>Replies are handled before requests are admitted. That frees coordinator records and pipeline room first, and a completion is delivered as early as possible. All requests admitted in one pass share one socket write per node, so the per-batch costs in chapter 12's model (a write, a read and a round per node) are spread over every application thread that submitted in that interval. Under load, batching comes on its own. Under light load a request goes out alone, as it should.</p>
+
+<h3 id="async-edges">Back-pressure, delivery and failure</h3>
+<div class="two">
+  <div class="panel">
+    <h4>Back-pressure in two places</h4>
+    <p>The request list is bounded: <code>submit</code> returns <code>Busy</code>, or blocks in a blocking variant, when it is full. Admission is bounded by the executor's in-flight limit. A request not admitted stays in the executor's local queue, in order, so a burst is absorbed without holding the inbox lock.</p>
+  </div>
+  <div class="panel">
+    <h4>Delivering the result</h4>
+    <p>Each request carries its completion: a slot plus a wake-up for a blocking caller, a callback run on the executor, or, in a Rust async layer, a <code>Waker</code>. The result is copied out of the query's attribute row into the slot, so the query is free for the next request at once.</p>
+  </div>
+  <div class="panel">
+    <h4>Failure and timeouts</h4>
+    <p>A node failure fails the transactions it affects, as today, and their requests complete with that error. Nothing is lost silently. A request can carry a deadline. The executor checks it when admitting, and fails a request that is still waiting after its deadline without sending it.</p>
+  </div>
+  <div class="panel">
+    <h4>How many executors</h4>
+    <p>One executor per core the application gives to RonDB work, each with its own block and TC records. Application threads pick one by key hash or round-robin. Executors share nothing but the nodes' send buffers, so they scale as user threads do today.</p>
+  </div>
+</div>
+<div class="callout">
+  <p><strong>What the hand-off costs.</strong> With the Mac calibration of chapter 12, waking a sleeping thread costs about 8 µs of latency and 3 µs of CPU. An application thread that submits to a busy executor pays no wake-up. One that blocks for its result pays one wake-up when the result comes back. At a few hundred operations per batch that cost is a small share of each operation. For a single operation on an idle system it is comparable to the round trip itself.</p>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="sync">
+<h2><span class="num">4</span>The synchronous programming model</h2>
+<p>Many applications want to write <code>let row = read(key)?</code> and carry on. Two forms can give them that, and they suit different workloads.</p>
+
+<div class="two">
+  <div class="panel">
+    <h4>A · Each thread owns a connection <span class="status built">Built</span></h4>
+    <p>The application thread is a user thread. A synchronous call is define, send, then wait for that one reply. <code>flush(ms, force)</code> and <code>call</code>/<code>wait_for</code> already do this, and other requests the thread has in flight are served while it waits.</p>
+<pre><code>let t = conn.start_transaction(hint, &amp;table)?;
+conn.read_key(q, t, &amp;args)?;
+conn.commit_transaction(t)?;
+conn.flush(1000, true)?;      <span class="c">// returns when done</span>
+let row = conn.query(q).attr_row();</code></pre>
+    <ul>
+      <li>Nothing between the caller and the socket: the lowest latency for one operation.</li>
+      <li>Throughput per thread is 1 / round trip. It scales only with threads, and each thread is a block (256 today, 4711 planned) with its own TC records.</li>
+      <li>Replies still go through the receive thread and the inbox, so each call costs one wake-up.</li>
+    </ul>
+  </div>
+  <div class="panel">
+    <h4>B · A blocking façade over executors <span class="status proposed">Proposed</span></h4>
+    <p>The application thread holds only a <code>Submitter</code>. A synchronous call submits a request to an executor (section 3) and sleeps on its own completion slot until the executor delivers the result.</p>
+<pre><code>let row = rondb.read(&amp;table, key)?;   <span class="c">// submit + wait</span>
+
+<span class="c">// inside: submit, then</span>
+let mut s = slot.lock();
+while !s.done { s = slot.cond.wait(s); }</code></pre>
+    <ul>
+      <li>Any number of application threads, with no block number each. Thousands of blocking callers share a few executors.</li>
+      <li>Requests from different callers are batched together, so under load the cost per operation falls to that of the pipelined model.</li>
+      <li>Costs one extra hand-off, application thread → executor, and back.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>A · connection per thread</th><th>B · façade over executors</th><th>Asynchronous (section 3)</th></tr></thead>
+  <tbody>
+    <tr><td>Caller writes</td><td>Blocking calls</td><td>Blocking calls</td><td>Define, send, poll or callbacks</td></tr>
+    <tr><td>Threads talking to RonDB</td><td>≤ user-thread limit</td><td>Unlimited callers, few executors</td><td>Few user threads</td></tr>
+    <tr><td>Operations in flight</td><td>1 per thread</td><td>Many per executor</td><td>Many per thread</td></tr>
+    <tr><td>Batching</td><td>Within one caller's transaction</td><td>Across callers, automatic</td><td>Chosen by the application</td></tr>
+    <tr><td>Latency at light load</td><td>Lowest</td><td>+1 hand-off each way</td><td>Lowest</td></tr>
+    <tr><td>CPU per operation at load</td><td>Highest: per-batch costs on every call</td><td>Near the pipelined figure</td><td>Lowest, about 500 ns client CPU</td></tr>
+    <tr><td>Fits</td><td>Tools, tests, low-rate services</td><td>Servers with a thread per request</td><td>Benchmarks, data loaders, REST/gRPC servers built for it</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>All three rest on the same core: an <code>ApidConnection</code> polled by the thread that owns it, with receive threads that only route. Form A exists today. Form B and the asynchronous executor need the same addition: a second list in the inbox, under the same lock and wake rule as the first. Once that is built, the C ABI can offer blocking calls to languages whose threads are cheap to block (C, C++, Java, Go through cgo), and a Rust async layer can hand out Futures from the same executors.</p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  Sources: <code>crates/ic_apid</code> (<code>apid_conn.rs</code>, <code>thread_conn.rs</code>, <code>signal_page.rs</code>, <code>rec_thread.rs</code>, <code>send_pool.rs</code>, <code>transaction.rs</code>, <code>query.rs</code>, <code>apid_global.rs</code>) and <code>doc/rust</code> chapters 02, 04, 06 and 12. The TC imbalance was measured through <code>ndbinfo.cpustat</code> on 24 Sep 2026.
+</footer>
+
+</body>
+</html>

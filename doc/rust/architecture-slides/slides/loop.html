@@ -1,0 +1,16 @@
+<section id="loop" data-transition="fade" style="background:#F5F7F8; color:#17232B; font-family:'IBM Plex Sans', Arial, sans-serif; padding:128px 128px 160px; display:flex; flex-direction:column; gap:40px">
+<div style="display:flex; flex-direction:column; gap:12px"><p style="font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; letter-spacing:2px; text-transform:uppercase; color:#0D5C66">Asynchronous model · proposed</p><h2 style="font-family:'Source Serif 4', Georgia, serif; font-size:64px; font-weight:600; line-height:1.1; color:#17232B">One wait point, one loop</h2></div>
+<div style="display:flex; gap:56px; flex:1; align-items:start">
+<div style="flex:1; background:#17232B; border-radius:12px; padding:40px">
+<p style="font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:26px; color:#DCE6EA; line-height:1.5">fn submit(&amp;self, r: Request) {<br>&#160;&#160;let wake = {<br>&#160;&#160;&#160;&#160;let mut ib = self.inbox.lock();<br>&#160;&#160;&#160;&#160;ib.requests.push(r);<br>&#160;&#160;&#160;&#160;take(&amp;mut ib.waiting)<br>&#160;&#160;};<br>&#160;&#160;if wake { self.cond.signal(); }<br>}</p>
+</div>
+<div style="flex:1; display:flex; flex-direction:column; gap:22px">
+<p style="font-size:30px; line-height:1.45"><b>Same shape as a receive thread's post:</b> append under a short lock, wake only if asleep.</p>
+<p style="font-size:30px; line-height:1.45"><b>Replies before requests:</b> they free records and room in the pipeline.</p>
+<p style="font-size:30px; line-height:1.45"><b>Batching comes on its own:</b> all requests admitted in one pass share one write per node.</p>
+<p style="font-size:30px; line-height:1.45"><b>Back-pressure twice:</b> a bounded request list, and an in-flight limit.</p>
+</div>
+</div>
+<p style="position:absolute; left:128px; bottom:64px; width:900px; font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; color:#4A5A64">iClaustron · Rust NDB API for RonDB 26.10</p><p style="position:absolute; right:128px; bottom:64px; width:200px; text-align:right; font-family:'IBM Plex Mono', 'Courier New', monospace; font-size:24px; color:#4A5A64">11</p>
+<aside>Submit is the same code shape as a receive thread's post. Exchange, which already swaps emptied pages for posted ones, would also swap out the request list, so one lock takes everything. Under light load a request goes out alone. Under heavy load many callers' requests share each socket write, and the per-batch costs spread. Node failures fail the affected requests with their error. A deadline can be checked at admission.</aside>
+</section>

@@ -1,0 +1,61 @@
+{
+ "v": 4,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-09-25T09:39:06Z"
+ },
+ "title": "iClaustron Architecture Deck",
+ "order": [
+  "cover",
+  "rule",
+  "threads",
+  "fast",
+  "measured",
+  "evolve",
+  "objects",
+  "ids",
+  "paths",
+  "executor",
+  "loop",
+  "sync",
+  "summary"
+ ],
+ "cover": "cover",
+ "sections": {
+  "s1": {
+   "description": "What we built and why",
+   "start": "cover"
+  },
+  "s2": {
+   "description": "Threading: today and next",
+   "start": "rule"
+  },
+  "s3": {
+   "description": "Data model: objects, ids, signals",
+   "start": "objects"
+  },
+  "s4": {
+   "description": "Asynchronous model and the executor",
+   "start": "executor"
+  },
+  "s5": {
+   "description": "Synchronous model and summary",
+   "start": "sync"
+  }
+ },
+ "faces": {
+  "source-serif-4": {
+   "family": "Source Serif 4",
+   "href": "https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600&display=swap"
+  },
+  "ibm-plex-sans": {
+   "family": "IBM Plex Sans",
+   "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap"
+  },
+  "ibm-plex-mono": {
+   "family": "IBM Plex Mono",
+   "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+  }
+ },
+ "designSystems": []
+}
