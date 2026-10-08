@@ -15,13 +15,20 @@ release is at the end of Phase 7.
 | 3 | Transport, threads, membership, node failure | 4 | 12 |
 | 4 | Dictionary and records | 3 | 15 |
 | 5 | Transactions and key operations | 4–5 | 20 |
-| 6 | Interpreter: WHERE conditions and assignments | 3 | 23 |
-| 7 | C ABI, C++ header, examples, benchmark, release 0.1 | 3 | 26 |
-| 8 | 0.2: scans, ranges, takeover | 4–5 | 31 |
-| 9 | 0.3: events, DDL, autoincrement, TLS | 6–7 | 38 |
-| 10 | Later: BLOBs, SPJ, aggregation pushdown, ring buffers, TTL options | open | |
+| 6 | Our own names; key operations completed: tables with BLOB columns, the reply timeout, unique keys, every row size | 4–5 | 25 |
+| 7 | C API, documentation, examples in Rust and C, release 0.1 | 3–4 | 29 |
+| 8 | 0.2: the executor, scans (asynchronous, synchronous, through the executor), latin1 | 8–9 | 38 |
+| 9 | 0.3: basic interpreter, AUTO_INCREMENT, tables without a primary key | 4–5 | 43 |
+| 10 | Later: TLS, location domains, BLOBs, UTF-8, the C++ header, events, DDL, SPJ, … | open | |
 
-Roughly: 0.1 in 6 months, scans at 7–8 months, the rest within a year.
+**Replanned 2026-10-08** by the author. 0.1 is now the key operations
+made complete and the C API with its documentation and examples; the
+interpreter moves from before 0.1 to 0.3, after scans, and starts basic;
+AUTO_INCREMENT comes with it; TLS and location domains are not in these
+phases. Later the same day the author moved latin1 from phase 6 to phase
+8, before the ordered range scans that first need it. Phases 0–5, sized at 20 weeks, were built between 2026-09-18 and
+2026-09-25; the sizes of phases 6–9 keep the original unit so that the
+phases compare with each other, not as a calendar.
 
 ## Phase 0 — Bootstrap and header rewrite (1–2 weeks)
 
@@ -496,93 +503,576 @@ rows. The code went back to the version measured at 1.73 million.
   restarted coordinator ended rolled back with 4010 and its retry at
   the survivor committed.
 
-## Phase 6 — Interpreter (3 weeks)
+## Phase 6 — Our own names, and key operations completed (5–6 weeks)
 
-- Record the RonDB 26.10 interpreter instruction encoding into 05 §9 from
-  reading the sources (clean room); implement `interp.rs` with the full
-  instruction set.
-- `where_cond.rs` + `interp_gen.rs`: builder → program; register
-  allocation over the 8 registers, `IC_ERROR_CONDITION_TOO_COMPLEX` when
-  more are live (spill strategy deferred); short-circuit AND/OR/XOR; LIKE;
-  API-side regexp.
-- `cond_assign.rs`: arithmetic and conditional assignments on
-  `write_key`.
-- Exit: integration groups `where`, `assign` pass on generated data
-  compared with MySQL.
+Replanned 2026-10-08. What a key-operation user needs before the C API
+fixes the surface, with the rename first: the code is 25 000 lines
+today, and nothing has been published under the old names.
 
-## Phase 7 — C ABI, C++ header, examples, release 0.1 (3 weeks)
+### 6.1 Our own names (1 week)
 
-- `ic_capi` with every public method; cbindgen header checked in and
-  diffed against the Phase 0 hand-written header; `pkg-config` file;
-  `cargo xtask install`.
-- `cpp/include/iclaustron.hpp`.
-- Examples in Rust, C and C++; smoke bindings in the languages chosen in
-  Q6.
-- Performance pass with the benchmark against the C++ NDB API: batching,
-  adaptive send tuning, allocation removal, receive thread count.
-- **Measure the key hash against the C** (author, 2026-09-22), in a
-  release build, over the key sizes RonDB really hashes: 4, 8, 16 and 32
-  bytes, and one long key. Up to 240 bytes XXH3 runs no accumulator
-  loop, so both sides are the same few multiplies and rotates and ought
-  to come out level; above that the data nodes use a vector path
-  (`rondb_xxhash_avx2`, and the bundled xxHash's SSE2 or NEON) while
-  `ic_util::xxh3` is scalar, so long keys will be slower until a vector
-  path is added behind a target-feature check, with the scalar one as
-  fallback and the same test vectors pinning both. Watch for bounds
-  checks on the key buffer, and never measure a debug build: its
-  overflow checks and absent inlining make the comparison meaningless.
-- **Send long signals in fragments** (found 2026-09-24, not yet fixed).
-  `header::encode` refuses a message above 32 KB
-  (`IC_ERROR_RECORD_SIZE_TOO_BIG`) and nothing splits a signal on the
-  send side, while RonDB takes rows of up to 72 000 bytes
-  (`MAX_TUPLE_SIZE_IN_WORDS` 18 000, `ndb_limits.h`): a `TCKEYREQ`
-  writing a row above about 32 KB, or a long key with a large row,
-  cannot be sent today. Receiving such a row works, fragments being
-  joined in `fragments.rs`; the send side needs the counterpart, a
-  signal whose sections pass `MAX_SIZE_SINGLE_SIGNAL` (7 400 words)
-  split into fragments as the protocol defines. Verify the threshold
-  and the fragment layout in RonDB's sending code first. Exit: an
-  integration test that writes a row of about 60 KB and reads it back.
-- **Raise the user threads per process from 256** (found 2026-09-24,
-  not yet fixed). `IC_MAX_THREAD_CONNECTIONS` is 256, and the next
-  `create_connection` gets `IC_ERROR_TOO_MANY_USER_THREADS`, where the
-  NDB API allows 4 711 (`IC_MAX_API_THREADS`): a server with a thread
-  per client connection would hit it. Raising it costs each receive
-  thread's router one empty page per possible user thread, about 48
-  bytes, and the thread table a slot; the pages can be made on first
-  use instead. The limit of four management servers in a connect
-  string (`IC_MAX_CLUSTER_SERVERS`) can go at the same time.
-- Documentation: user guide, `cargo doc`, per-crate `MODULE.md`.
-- Exit: the 0.1 success criteria in
-  [01-goals-and-principles.md](01-goals-and-principles.md).
+The rule (author, 2026-10-08; chapter 09): nothing is taken from RonDB,
+names included. The wire stays identical: signal numbers, block
+numbers, word layouts and error codes are the interface and do not
+change. Every name we give a signal, a block, a signal's fields, a
+dictionary property key, a pseudo-column or a module is our own and
+says what the thing does. RonDB names appear nowhere in code or docs:
+chapter 05 cites RonDB by bare file:line and refers to signals by
+number, and code comments cite chapter 05's sections, not RonDB.
 
-## Phase 8 — 0.2: scans (4–5 weeks)
+The style (author): new stems with the suffixes `_REQ` (request),
+`_CONF` (confirm), `_REF` (refuse) and `_REP` (report); a signal that
+would have no suffix gets `_ORD` for an order, to which nothing comes
+back, or `_REP` for a report. Constants are `IC_SIG_<NAME>`, Rust types
+CamelCase (`KeyOpReq`), blocks `IC_BLOCK_<NAME>`.
 
-`scan.rs` codecs, `scan_handlers.rs`, receiver ids per fragment, batch
-sizing from config, `SCAN_NEXTREQ`, `scan_next_row`, `scan_close`;
-`range.rs` (`RangeCondition` → bound sections, multi-range); takeover
-updates/deletes; interpreter filters on scans. Exit: scan of 1 M rows with
-parallelism = fragments counts match MySQL; range scans with every bound
-type.
+First draft of the names, by number, for the author's review before the
+rename (open question Q11):
 
-## Phase 9 — 0.3 (6–7 weeks)
+| Group | Number → our name |
+|---|---|
+| Membership | 3 `HEARTBEAT_REQ`, 1 `HEARTBEAT_CONF`, 2 `HEARTBEAT_REF`, 26 `NODE_LOST_REP`, 27 `NODE_LOST_DONE_REP`, 163 `NODE_JOINED_REP` |
+| Coordinator records | 39, 37, 38 `COORD_ALLOC_REQ`/`_CONF`/`_REF`; 36, 34, 35 `COORD_FREE_REQ`/`_CONF`/`_REF` |
+| Key operations | 12, 10, 11 `KEY_OP_REQ`/`_CONF`/`_REF`; 519, 520, 521 `UNIQUE_OP_REQ`/`_CONF`/`_REF`; 5 `ROW_DATA_REP`; 6 `KEY_DATA_ORD`; 4 `COLUMN_DATA_ORD` |
+| Ending a transaction | 19, 17, 18 `COMMIT_REQ`/`_CONF`/`_REF`; 15, 13, 14 `ROLLBACK_REQ`/`_CONF`/`_REF`; 16 `TRANS_ABORTED_REP`; 469 `COMMIT_MARKER_FREE_ORD`; 8, 9 `TAKEOVER_CONF`/`_REF`; 980 `DEADLOCK_FOUND_REP` |
+| Scans | 32 `SCAN_REQ`, 29 `SCAN_CONF`, 31 `SCAN_REF`, 28 `SCAN_MORE_REQ`, 33 `SCAN_ROW_KEY_REP` |
+| Dictionary | 24, 190, 23 `TABLE_DESC_REQ`/`_CONF`/`_REF`; 193, 194 `LIST_OBJECTS_REQ`/`_CONF`; 606 `TABLE_CHANGED_REP` |
+| Blocks (hex) | F5 `COORDINATOR`, F7 `LOCAL_OPS`, F9 `ROW_STORE`, F8 `HASH_INDEX`, 102 `ORDERED_INDEX`, F6 `DISTRIBUTION`, FA `DICTIONARY`, FB `START_CONTROL`, FC `MEMBERSHIP`, FD `FILE_IO`, FE `NODE_ADMIN`, FF `INDEX_BUILD`, 100 `UTILITY`, 101 `CHANGE_FEED`, 109 `JOIN`, 10A `LINK_ADMIN`, F4 `ARCHIVE`, 10B–111 `READ_WORKER_FIRST`…`_LAST`, 7FF `BUNDLE`, FA2 `NODE_WATCH`, FA3 `CONFIG_SERVICE`; 8000 is `IC_FIRST_USER_THREAD_BLOCK` |
+| Configuration (parameter id) | 129 `TimeoutCheckPeriod`, 130 `IdleTransactionLimit`, 131 `LockWaitLimit`, 800 `ScanBatchBytesTotal`, 801 `ScanBatchBytes`, 802 `ScanBatchRows`; the other parameters `ic_apic` decodes likewise |
 
-Event API with fragmented signal reassembly and epochs; DDL through `MetadataTransaction` (carry over the C
-schema-transaction code); autoincrement (`SYSTAB_0`); TLS to data nodes and
-`ndb_mgmd` behind the `tls` feature.
+Beyond signals and blocks, the same for a signal's fields (by meaning:
+the coordinator's record, our query's id, the flags word, the two halves
+of the transaction id), the dictionary's property keys (`IC_DTI_*`
+today) under a prefix of ours, the property stream, the signal header,
+the column header and the three pseudo-columns (read every column, read
+by mask, the partition), and the modules of `ic_ndb_signals`
+(`tc_key.rs` becomes `key_ops.rs`, `tc_seize.rs` `coord_records.rs`,
+`qmgr.rs` `membership.rs`, `get_tab_info.rs` `table_desc.rs`,
+`dict_tab_info.rs` `table_props.rs`, `gsn.rs` `numbers.rs`, and so on),
+with the crate becoming `ic_signals`. In `ic_apid`, `TcRecord` becomes
+`CoordRecord` and its kin likewise.
+
+What stays is what travels on the wire (author, 2026-10-08): numbers,
+word layouts, error codes, configuration parameter ids and section
+types, the management protocol's text, and the stored names we look up
+(the counter table `sys/def/SYSTAB_0`, the hidden key column `$PK`).
+Configuration parameter names do not travel, only their ids, so they
+are ours like signal and block names. SQL names an application writes
+(collations, `AUTO_INCREMENT`) are MySQL's language and are used as
+they are. "RonDB" and "NDB" name what we interoperate with. `legacy-c/`
+is not touched: it is iClaustron's old code, reference only, never
+built.
+
+The work:
+- `ic_ndb_signals` and every user of it: about 170 lines with signal
+  numbers, 56 with block numbers, 300 with signal structures, 314 with
+  dictionary keys, ten module files.
+- `ic_apic`'s parameter table: the 41 display names and the `IC_CFG_*`
+  constants, whose names follow RonDB's today; `ic_config_dump` prints
+  ours, and chapter 05 maps them by parameter id.
+- The 191 `Verify:` lines in 32 code files: each fact is put into
+  chapter 05 where it is not there yet, with a bare file:line, and the
+  comment then cites the chapter 05 section.
+- Chapter 05: every RonDB function, class, constant and signal name
+  replaced by ours or by a description; citations bare file:line; the
+  table above kept there as the cross-reference by number.
+- Chapters 02, 04, 06 (phases 0–5 included), 08, 12, the architecture
+  page and the slides, with the PDF built again: the record model is
+  described in our own words rather than likened to the reference's
+  class, and tools we compared against are described, not named.
+- `cargo xtask names`: reads signal and block names from a RonDB tree
+  given by `IC_RONDB_TREE` at check time and finds none of them in
+  `crates/`, `tools/`, `include/` or `doc/`. The list is never stored
+  in this repository.
+- Exit: `cargo xtask names` is clean; every unit test and integration
+  group passes unchanged; a traffic capture taken before the rename
+  replays byte for byte after it.
+
+### 6.2 Tables with BLOB columns (2 days)
+
+- BLOB, TEXT, JSON and GEOMETRY are all blob columns in the dictionary:
+  the row holds a head and the first bytes, and the rest lives in rows
+  of a parts table that the client keeps, not the data node. A delete
+  by our client would remove the row and leave its parts behind for
+  good.
+- Until BLOBs are built (phase 10), a delete by primary or unique key
+  on a table with any blob column is refused before it is sent
+  (`IC_ERROR_NOT_SUPPORTED`, with a text of its own saying why). Reads,
+  inserts, updates and writes that leave the blob columns out stay
+  allowed: a new row's blob is NULL, and an update leaves an existing
+  one as it was.
+- Exit: integration group `blob_guard` on a table with a TEXT column:
+  the delete is refused; insert, update and read work, and MySQL reads
+  the rows; a write over a row whose TEXT holds parts leaves the TEXT
+  readable through MySQL.
+
+### 6.3 A reply that never comes: 4012 (3 days)
+
+- Today a transaction whose reply never comes while its link stays up
+  waits forever and keeps its coordinator record. The reference gives
+  up after a time and reports 4012, outcome unknown; so will we.
+- The time is the larger of 120 s and, over the data nodes in the
+  configuration, the largest `TimeoutCheckPeriod` (parameter 129) +
+  `LockWaitLimit` (131) (chapter 05 §16.6). `ic_apic`
+  decodes both parameters; `GlobalOptions` may override (tests use a
+  second).
+- A transaction notes when it last sent with replies outstanding.
+  `poll` reads the clock once and walks the transactions with replies
+  outstanding at most once a second.
+- On expiry the transaction fails with 4012, class unknown result; each
+  of its sent queries not yet complete completes with 4012, through its
+  callback or the executed list; its coordinator record is lost, never
+  reused, and freed with `COORD_FREE_REQ`, which also makes the
+  coordinator clean up; a reply that comes late is dropped by the
+  transaction id check, as today. Synchronous waits already time out.
+- The same timer catches a request train the coordinator dropped for
+  lack of room, to which it sends no reply (6.6), and later a scan
+  (phase 8).
+- Exit: a unit test with an injected clock; integration group
+  `timeout`: a data node stopped with SIGSTOP, its link up, a timeout
+  of one second, the transaction ends with 4012 before the heartbeats
+  fail the node; after SIGCONT the next transaction works.
+
+### 6.4 latin1: moved to phase 8
+
+Moved by the author, 2026-10-08: character sets wait until later in the
+process, and are now step 8.6, before the ordered range scans whose
+merge first needs them. Until then a key with a character column works
+in any character set and is placed round robin, which costs a hop, not
+a wrong answer.
+
+### 6.5 Unique keys done properly (1.5 weeks)
+
+From reading the reference (chapter 05 §16.3), most important first:
+1. **NULL in a unique key (a bug).** A row with NULL in an indexed
+   column is not in the index, so a lookup with NULL finds nothing.
+   Today we send whatever bytes lie under the NULL and can find the row
+   whose value happens to equal them. Refused before sending (the
+   reference's code is 4316).
+2. **Placement.** A transaction whose first operation goes through a
+   unique index is placed by the index's own table: its columns hashed
+   in the index's order, as the coordinator does, through the index's
+   hash map and replica data (the index inherits read backup and full
+   replication from its table; a character column falls back to round
+   robin until 8.6). `IndexDef` gets them at bind, the hint
+   takes an index, and `key_op` stops starting such transactions
+   anywhere.
+3. A committed read through an index sets the request's "read
+   committed base" bit (bit 20), which lets the index read and the row
+   read go to a backup replica of a read-backup table; the lock is
+   still held to commit, as now.
+4. A simple read through an index holds its shared lock to commit, the
+   coordinator not allowing the simple flag on one: documented on
+   `ReadKind::Simple`.
+5. The refusal's error data is kept: for 893, a duplicate key, it names
+   the index. Today it is dropped.
+6. The index's state is checked at bind: an index that is not online is
+   refused. The reference does not check, and a lookup through an
+   offline index silently finds nothing.
+7. A 241 or 284 on an index operation invalidates the index in the
+   cache, as one on a table does.
+8. Our rules, unless the author objects (Q12): an update through an
+   index whose attribute record holds an indexed column is refused (the
+   reference takes indexed columns from the key row, so it cannot change
+   them either); a write through an index stays refused (the reference
+   lets it act as an update; not seen live).
+9. Chapter 05 §6.8 corrected: the coordinator never sends
+   `UNIQUE_OP_CONF`; the confirmation comes as `KEY_OP_CONF`.
+- Exit: the `uk` group grown to cover a nullable unique key and a NULL
+  lookup; a key of several columns in an order other than the table's;
+  CHAR and VARCHAR keys, placed round robin until 8.6; 893 on an insert by primary key and on
+  an update through the index; locked, exclusive and no-wait reads
+  through an index against a conflicting lock; primary and unique key
+  operations in one transaction, and 500 unique key operations in one
+  batch; 626 with abort on error; an index dropped and made again while
+  bound; the refusals; placement, seen as the node the index read ran on.
+
+The deferred unique check (bit 17) waits for an application that asks
+for it.
+
+### 6.6 Every row size can be written (1.5 weeks)
+
+Today nothing above one 32 KB message can be sent (`header.rs`), while
+a row may be 72 000 bytes. From reading (chapter 05 §16.1):
+- A request is split when its sections together exceed 8 040 words,
+  and each fragment then carries up to 8 040 words, the most a 32 KB
+  message holds with room for its header. A fragment carries whole
+  sections and may begin the next.
+- The cut granularity is not the fragment size. A 26.10 data node keeps
+  a section in segments of 60 words and checks that every piece of a
+  section but the last ends on a segment boundary; a release data node
+  that gets a ragged piece keeps a corrupt section without a word. So a
+  section that begins part-way into a fragment is cut after a multiple
+  of 60 words (at least 60). The encoder takes the segment size from
+  one constant: any multiple of 60 satisfies 26.10, and a RonDB with
+  larger segments is a change of that constant.
+- Fragments before the last carry only their section numbers and the
+  fragment id; the last carries the signal's data, its section numbers
+  and the fragment id. A data node takes data words plus sections up to
+  25 in one signal.
+- Fragment ids count per sender block, from 1, skipping 0; a train
+  stays together on its link, which staging already gives.
+- A row is at most 18 000 words, of which the fixed in-memory part
+  4 070, the variable part 8 008 and the disk part 7 770: about 48 KB
+  without disk columns. A key is at most 1 023 words, column data under
+  32 768 words.
+- A coordinator without room to put a train together drops it and
+  answers nothing, which 6.3's timer catches.
+- Disk columns are in scope (author, 2026-10-08): the development
+  cluster gets a log file group and a tablespace (`doc/dev-cluster.md`),
+  and the `types` group a table with disk columns, read and written by
+  primary and by unique key.
+
+Changes:
+- `header.rs`: an encoder that splits as above, returning the train's
+  length and where its last fragment lies, `out` cut back on error;
+  the 32 KB check per message and the 25-word check.
+- `apid_conn.rs`: `Staged` knows its last fragment, the send writes the
+  flags into the last fragment and recomputes only its checksum when
+  checksums are on, `stage_signal` and the queued path use the encoder,
+  and the connection counts fragment ids.
+- `build_sections` refuses a key above 1 023 words and column data of
+  32 768 words or more before sending, so that no data node ever sees a
+  request it takes for a malformed one.
+- `fragments.rs`: the signal's data taken from the last fragment, where
+  we put it (the data nodes put it in every fragment), so that our own
+  sender's trains reassemble in a loopback test.
+- Exit: unit tests at each boundary: one signal at 8 040 words of
+  sections; two fragments; two against three at 16 020 and 16 021 words
+  with a one-word key, and at 15 000 and 15 001 with a 1 023-word key;
+  a head piece that is not a multiple of 60; with checksums and signal
+  ids on. Integration group `big_rows`: the largest in-memory row, and
+  on a table with disk columns a row near 72 000 bytes, written and
+  read back by primary and by unique key and checked through MySQL; a
+  fragmented request between plain ones in one batch, two in one
+  batch, one rolled back before it was sent.
+
+Exit for the phase: the groups `connect`, `dict`, `pk`, `uk`, `types`,
+`failure`, `blob_guard`, `timeout` and `big_rows` pass, and
+`cargo xtask names` is clean.
+
+## Phase 7 — C API, documentation, examples, release 0.1 (3–4 weeks)
+
+- **The header from what was built.** Chapter 04 first. The Phase 0
+  header (`include/iclaustron/ic_apid.h`) was written before the code
+  and differs from it: queries and transactions live in the connection
+  and are named by id, a query owns its rows, hints are values, and
+  neither the interpreter nor scans are in 0.1. Rows in C (Q10,
+  recommended): the query owns its rows and C gets pointers to them,
+  `ic_apid_query_key_row(query, &len)` and
+  `ic_apid_query_attr_row(query, &len)`, valid until the query is
+  freed; no copy, and no pointer into the caller's memory. That replaces
+  chapter 04's "row buffers are the caller's memory".
+- **`ic_capi`**: one exported function per public method; opaque
+  handles; `catch_unwind` on every entry (`IC_ERROR_INTERNAL_PANIC`, the
+  connection then unusable); errors as an `int` and the error object
+  (code, category, our text); a C callback, a function pointer and a
+  `void*`, through one trampoline beside the Rust callback; the header
+  generated by cbindgen and checked in, `cargo xtask header` diffing it;
+  shared and static libraries, a `pkg-config` file, `cargo xtask
+  install`.
+- **Documentation**: every C function documented in the header: what it
+  does, who owns what, how long a returned pointer lives, which thread
+  may call it, its errors. `cargo doc` for the Rust crates with a guide
+  at the crate level. A user guide, `doc/user-guide.md`: connecting,
+  records, queries and transactions, the asynchronous and synchronous
+  styles, callbacks, errors and when to retry (temporary errors, 4012's
+  unknown outcome), node failure, and the limits of 0.1 (keys with
+  character columns placed round robin,
+  deletes refused on tables with blob columns, no TLS, the user-thread
+  limit). Per-crate `MODULE.md`.
+- **Examples in Rust and in C**, the same programs in both: describe a
+  table; read, insert, update and delete by primary key, synchronously;
+  an asynchronous pipeline with callbacks; read and update by unique
+  key; a transaction retried after a temporary error. Rust in
+  `examples/rust` as cargo examples, C in `examples/c` with a Makefile
+  and the one-line `cc` command; each runs against the development
+  cluster (`doc/dev-cluster.md`).
+- Kept from the earlier phase 7: the performance pass (allocation,
+  adaptive send, receive thread count); measuring the key hash against
+  the C; raising the user threads per process from 256 to 4 711, which
+  the synchronous style with a connection per thread needs, and lifting
+  the limit of four management servers with it.
+- Moved to phase 10: the C++ header and the smoke bindings in other
+  languages (Q6), which were in this phase before.
+- Exit: the 0.1 success criteria of chapter 01, as revised 2026-10-08.
+
+## Phase 8 — 0.2: the executor, scans and latin1 (8–9 weeks)
+
+### 8.1 The executor (2 weeks)
+
+The architecture page (sections 3 and 4) proposes it. A scan can only
+be shown to fit it once it exists, so it comes first:
+- the inbox's second list, for requests from application threads, under
+  the mutex, condition and waiting flag the signal pages use; a
+  `Submitter`, a handle that can be cloned; `submit` bounded, answering
+  busy or blocking;
+- the loop: replies first, completions delivered (a slot and a wake-up,
+  a callback on the executor, later a Rust waker), requests admitted up
+  to the in-flight limit, one send per node;
+- deadlines checked at admission; node failure completes requests with
+  their error;
+- the blocking façade (form B) for key operations, and its C ABI;
+- measured with `ic_bench` through executors against threads with
+  connections of their own, and against `ic_model`'s prediction
+  (chapter 12).
+
+### 8.2 The protocol, read and written down (1 week)
+
+Chapter 05 §7 rewritten from reading; §16.4 holds what was gathered and
+what in §7 is wrong: `SCAN_REQ` (32), its flags and sections;
+`SCAN_CONF` (29), per receiver; `SCAN_REF` (31), and when a close is
+still owed; `SCAN_MORE_REQ` (28), per receiver and to close;
+`SCAN_ROW_KEY_REP` (33) for takeover; batch sizes, timeouts, node
+failure.
+
+### 8.3 The scan core, on a connection (2 weeks)
+
+- A scan runs on a coordinator record of its own, on the node and
+  coordinator instance of its transaction's record, naming that record.
+  Records for scans are pooled per node and instance and taken ahead,
+  so that nothing waits for one, an executor least of all.
+- Receivers, one per fragment scanned in parallel, get ids in the
+  object map that the routing of `ROW_DATA_REP` and `SCAN_ROW_KEY_REP`
+  tells apart from queries; the transaction id and the generation are
+  checked as for queries.
+- Batch sizes from the API's configuration (`ScanBatchRows` 802,
+  `ScanBatchBytes` 801, `ScanBatchBytesTotal` 800) or the scan's own; at most 992
+  rows a batch when locking, for takeover, and 4 000 for committed
+  reads.
+- The consumer sets the pace: a receiver is asked for more only when
+  room for its next batch is reserved, each receiver on its own. Rows
+  are copied out of the receive pages into the scan's batch buffers, so
+  a parked scan holds no page. A batch is complete when its `SCAN_CONF`
+  has come and as many words as it says.
+- Close at any time; a `SCAN_REF` that owes a close gets one; the
+  record is kept until the close is confirmed; rows that come late are
+  dropped by generation.
+- Errors: 296 when a parked scan passes `IdleTransactionLimit` (130);
+  274 and 266 for locks; 270 when a reading node fails (temporary: the
+  scan starts again and rows come again); 4028 when the coordinator's
+  node fails; a deadline of the client's closes the scan.
+- Full table scans in every lock mode; a scan pruned to one partition
+  by its distribution key (with 8.6's latin1 hash) or by partition id.
+
+### 8.4 Three ways to consume a scan (1 week)
+
+- **Asynchronous**, on a connection: batches complete in `poll`,
+  through a callback per batch or a ready list, as queries do; the
+  application reads a batch's rows and hands the batch back, which lets
+  that receiver go on.
+- **Synchronous**: `next_row` and `next_batch` with a wait, built on
+  `poll`; a thread may have scans and queries in flight together.
+- **Through an executor**: a scan request carries a consumer with a
+  bounded number of batch buffers, and the executor asks for more only
+  for buffers the consumer has handed back (credit). A slow consumer
+  parks only its own scan, never the executor's loop. The application
+  thread's synchronous `next_row` waits on its consumer's slot; a Rust
+  stream comes later over the same.
+- Chapter 04 gets the scan API's design first, for the author's review.
+
+### 8.5 Updating and deleting what a scan locked (3 days)
+
+Takeover: rows with their keys (`SCAN_ROW_KEY_REP`), and a `KEY_OP_REQ`
+on the owning transaction carrying the takeover words, sent before that
+receiver is asked for more.
+
+### 8.6 latin1 (1 week, and the author's module)
+
+- Where the character set matters: hashing a distribution key with a
+  character column, for exact placement, and merging rows from several
+  fragments in order in an ordered index scan (8.7). Values pass as
+  bytes: the coordinator transforms and hashes a key itself, so a key
+  operation is right with any character set; only our choice of node
+  depends on our hash.
+- The encoding is public: MySQL's latin1 is CP1252, the Windows West
+  European code page, as Unicode publishes it, with the five positions
+  CP1252 leaves unassigned passed through as the same code points. That
+  serves text conversion. The collations are not public: their weight
+  bytes and order are MySQL's own and published nowhere else, apart
+  from latin1_bin, whose weights are the bytes. The hash needs the
+  exact weights, the merge the exact order.
+- So the author writes the collation module, `crates/ic_util/src/latin1.rs`,
+  to the assignment below. Everything that uses it, and its tests, are
+  written from its contract alone.
+
+The assignment. The eight collations are all that RonDB 26.10 has for
+latin1; the numbers are what the dictionary gives a column as its
+character set:
+
+```rust
+// crates/ic_util/src/latin1.rs
+use std::cmp::Ordering;
+
+use ic_port::IcError;
+
+/// A latin1 collation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Latin1Collation {
+  German1Ci, //  5  latin1_german1_ci
+  SwedishCi, //  8  latin1_swedish_ci, latin1's default
+  DanishCi,  // 15  latin1_danish_ci
+  German2Ci, // 31  latin1_german2_ci
+  Bin,       // 47  latin1_bin
+  GeneralCi, // 48  latin1_general_ci
+  GeneralCs, // 49  latin1_general_cs
+  SpanishCi, // 94  latin1_spanish_ci
+}
+
+impl Latin1Collation {
+  /// The collation a column's character set number names; `None` if
+  /// it is not one of the eight.
+  pub fn from_number(number: u32) -> Option<Latin1Collation>;
+
+  /// The character set number; the inverse of `from_number`.
+  pub fn number(self) -> u32;
+
+  /// The most weight bytes one character becomes: 2 for `German2Ci`,
+  /// which expands ä, ö, ü, ß, Ä, Ö and Ü to two letters, 1 for the
+  /// others.
+  pub fn max_weights_per_char(self) -> u32;
+
+  /// The bytes a key column is hashed by. `value` is the column's data:
+  /// a CHAR's whole field as stored, trailing spaces included, or a
+  /// VARCHAR's bytes after its length bytes. `out` is exactly
+  /// `max_weights_per_char() * L` bytes, L being the column's largest
+  /// data length in bytes. Writes the weights of `value` in order from
+  /// `out[0]`, then fills the rest of `out` with 0x20.
+  /// `IC_ERROR_VALUE_TOO_LONG` if the weights do not fit.
+  pub fn hash_weights(self, value: &[u8], out: &mut [u8]) -> Result<(), IcError>;
+
+  /// Order two values as the data nodes' ordered indexes do. Trailing
+  /// spaces do not count: the shorter value compares as if padded with
+  /// spaces.
+  pub fn compare(self, a: &[u8], b: &[u8]) -> Ordering;
+}
+```
+
+What the functions must meet (chapter 05 §16.2):
+- Every latin1 collation pads with spaces (none is "no pad"), and every
+  one gives the space the weight 0x20, the byte the padding uses; so
+  `"a"` and `"a  "` hash alike.
+- `Bin` gives each byte itself as its weight.
+- For every collation, `compare(a, b)` is `Equal` exactly when
+  `hash_weights` writes the same bytes for `a` and for `b` into an
+  `out` of the same length.
+
+Written around it, from the contract:
+- Tests: the numbers round trip and nothing else maps; `Bin` is the
+  identity; `compare` is reflexive, antisymmetric and transitive over
+  all bytes; `Equal` exactly when the weights are equal, over all byte
+  pairs; trailing spaces never count; the `_ci` collations take ASCII
+  letters in either case as equal, `GeneralCs` and `Bin` do not;
+  `German2Ci` takes "ä" as "ae". And the end-to-end check: for each
+  collation, CHAR and VARCHAR keys covering all 256 byte values, case
+  variants and trailing spaces, inserted through MySQL into a table of
+  many partitions: our hash's partition equals the one the data node
+  reports for each row (`key_op::read_partition`, which nothing calls
+  yet), and keys the collation calls equal land together.
+- `hash.rs`: a latin1 column in a distribution key, of a table or of a
+  unique index, is hashed through `hash_weights`. The key buffer on the
+  stack spills to the heap past 128 bytes (a VARCHAR(255) under german2
+  takes 510). Any other character set keeps falling back to round
+  robin, which costs a hop inside the cluster, not a wrong answer.
+- `text_row.rs`, for the tools: latin1 text in and out through the
+  CP1252 table; a character latin1 cannot hold is refused; trailing
+  spaces trimmed from CHAR only (today from VARCHAR too); utf8mb3 and
+  utf8mb4 shown as text, other character sets as hex.
+- Exit: integration group `latin1` passes for all eight collations; a
+  latin1 CHAR or VARCHAR distribution key gets a partition hint.
+
+### 8.7 Ordered index range scans (1.5 weeks)
+
+Bounds of every type, several ranges with their numbers; every fragment
+scanned in parallel and the rows merged in order in the client, which
+needs a row or the end from every fragment before it returns one;
+descending order; latin1 columns compared with the author's `compare`
+(8.6), other types by type; a range pruned to one partition when it
+fixes the distribution key.
+
+### 8.8 C ABI and examples (3 days)
+
+Scans in `ic_capi`, documented as in phase 7; examples in Rust and C: a
+full scan, a range scan, a scan that updates, a scan through an
+executor.
+
+Exit: a scan of a million rows, parallel over every fragment, counts
+what MySQL counts; range scans with every bound type return what MySQL
+returns, and in MySQL's `ORDER BY` order for latin1 columns in each
+collation; updates and deletes by takeover; a scan through an executor
+serving 1 000 application threads; a data node killed during a scan
+gives a temporary error, and the scan started again completes.
+
+## Phase 9 — 0.3: basic interpreter, AUTO_INCREMENT (4–5 weeks)
+
+### 9.1 A basic interpreter (3 weeks)
+
+- The encoding read from the sources and written into chapter 05 §9 in
+  our words, with names of our own for the instructions.
+- Basic first (author, 2026-10-08): conditions comparing a column with
+  a constant or with another column (=, <>, <, <=, >, >=; latin1
+  strings by their collation), IS NULL and IS NOT NULL, AND, OR, NOT;
+  on key reads, updates and deletes, and as scan filters. Assignments:
+  a column set to a constant, or to itself plus or minus a constant. A
+  conditional update or delete. A column's value read after an update,
+  which AUTO_INCREMENT uses.
+- Registers allocated over the eight there are, and
+  `IC_ERROR_CONDITION_TOO_COMPLEX` beyond them, as decided.
+- Later (phase 10): LIKE, regular expressions, the memory regions for
+  spilling, and the rest of the builder in `ic_apid.h`.
+- Exit: integration groups `where` and `assign` match MySQL on
+  generated data, on key operations and on scans.
+
+### 9.2 AUTO_INCREMENT and tables without a primary key (1.5 weeks)
+
+From reading (chapter 05 §16.5):
+- The counter is one row per table in the counter table, looked up by
+  its stored name (`sys/def/SYSTAB_0`), keyed by the table id and
+  holding the next value not handed out. The client that creates a
+  table writes its row; MySQL servers do.
+- Values are taken by one interpreted update that adds n × step and
+  reads the new value back, in a transaction of its own placed by the
+  counter row's key: one round trip, the lock held only inside the data
+  node. They are handed out from a range the client keeps per table;
+  the prefetch is ours to choose (Q13), step and offset follow MySQL's
+  `auto_increment_increment` and `auto_increment_offset`. Values are
+  unique across API nodes, not ordered, and unused ones are gaps.
+- An explicit value above the counter moves the counter past it, only
+  ever upwards, by an interpreted update that writes only if larger; a
+  value inside our own cached range moves only the cache. The counter
+  can be read without reserving.
+- A table without a primary key has a hidden key column, last, stored
+  as `$PK`, BIGUNSIGNED, taking values from the same counter. Inserts
+  need only that. Reads, updates and deletes need the key, which only a
+  scan returns (phase 8).
+- Temporary errors are retried, as MySQL servers do.
+- Exit: inserts from `ic_trans` and from a MySQL server, interleaved
+  into one AUTO_INCREMENT table, give no duplicate; an explicit value
+  moves the counter for both; on a table without a primary key, inserts,
+  then a scan with updates and deletes by takeover.
 
 ## Phase 10 — Later
 
-BLOB/TEXT through the parts table (skipped for now; tables with BLOB
-columns can be used as long as those columns are not touched), SPJ
-pushdown joins, aggregation pushdown, ring buffer tables, TTL options,
-rate-limit/user-id flags, location-domain node selection.
+TLS to the data nodes and the management server; choosing nodes by
+location domain; BLOB, TEXT and JSON through the parts table, and with
+them deletes on such tables; UTF-8 (utf8mb4) collations for hashing and
+merging; the C++ header and bindings for other languages; events; DDL
+(a client creating a table with an AUTO_INCREMENT column writes its
+counter row); the full interpreter; SPJ pushdown joins; aggregation
+pushdown; ring buffer tables; TTL options; rate-limit and user-id flags;
+the deferred unique check; scans with four receivers per fragment for
+committed reads, which suit an executor.
 
 ## Working method per module (all phases)
 
 1. Read the C header and source; copy the header prose into Rust doc
    comments (it is our text). Check every protocol constant against 26.10.
-2. Write the Rust module with the same file name and function names.
+   Each protocol fact goes into chapter 05 in our words, with a bare
+   RonDB file:line, before the code that uses it; code comments cite the
+   chapter 05 section.
+2. Write the Rust module with the same file name and function names as
+   the C, and give anything the C does not have a name of our own that
+   says what it does, never a RonDB name (chapter 09).
 3. Port or write unit tests; for protocol code add a golden vector from a
    capture.
 4. Write the crate `MODULE.md`: source files, deviations, glib
@@ -595,9 +1085,14 @@ rate-limit/user-id flags, location-domain node selection.
 
 | Risk | Mitigation |
 |---|---|
-| iClaustron's protocol knowledge is NDB 7.2.9; anything not re-verified against 26.10 is suspect | every constant in `ic_ndb_signals` carries a 26.10 verification pointer; Phase 3 signal tracing shows mismatches immediately |
+| iClaustron's protocol knowledge is NDB 7.2.9; anything not re-verified against 26.10 is suspect | every protocol constant is backed by a chapter 05 section with a 26.10 file:line; Phase 3 signal tracing shows mismatches immediately |
 | Legacy vs TLS-capable socket auth (Q2) | test both on day one of Phase 3 |
-| Interpreter encoding is large | Phase 6 starts by writing the spec section; key-lookup use only in 0.1; register-only programs, spill strategy decided later |
+| The rename (6.1) changes something on the wire | a pure rename: a capture taken before replays byte for byte after; every test passes unchanged |
+| A RonDB name creeps back in | `cargo xtask names` reads the names from a RonDB tree at check time; review checklist item |
+| latin1 weights wrong | the end-to-end check against the partitions the data nodes report (8.6); a wrong weight costs a hop, never a wrong answer, until the ordered merge of phase 8, whose exit compares with MySQL's `ORDER BY` |
+| A fragment train the coordinator drops gets no reply | the 4012 timer of 6.3 comes before the fragmenting sender of 6.6 |
+| Scan flow control starves an executor | credit per receiver, rows copied out of receive pages (8.3, 8.4); measured with many consumers |
+| Interpreter encoding is large | phase 9 starts by writing chapter 05 §9; basic first; register-only programs, spill strategy decided later |
 | Performance below target with dedicated receive threads | benchmark at Phase 5 and 7; tune receive thread count, batching, page sizes; the model itself is fixed |
-| Clean-room slips | review checklist item; `MODULE.md` cites, never quotes |
+| Clean-room slips | review checklist item; `MODULE.md` cites, never quotes; RonDB is cited only in chapter 05, by file:line |
 | Scope creep into RonDB-only features | Phase 10 by decision |

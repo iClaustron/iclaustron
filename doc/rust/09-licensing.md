@@ -30,16 +30,60 @@ qualifies; anything GPL/LGPL is rejected by the tool.
 
 1. **Read** the RonDB source to understand a signal or format.
 2. **Write a specification note** in [05-ndb-protocol.md](05-ndb-protocol.md)
-   in our own words: field names, word offsets, bit widths, semantics,
-   with a *file:line pointer* into RonDB for later verification. The
-   pointer is a citation, not a copy.
-3. **Implement** from the note, not from the RonDB source window.
+   in our own words: field names of our own, word offsets, bit widths,
+   semantics, with a bare *file:line pointer* into RonDB for later
+   verification. The pointer is a citation, not a copy, and names no
+   RonDB function, class, constant or signal.
+3. **Implement** from the note, not from the RonDB source window. Code
+   comments cite the chapter 05 section, never RonDB.
 4. **Verify** against a live RonDB cluster (or captured traffic), never by
    diffing against RonDB code.
 
-Where RonDB constants have official names (e.g. `GSN_TCKEYREQ`, block
-`DBTC = 245`), we use the same names: they are the interface vocabulary and
-appear in RonDB's logs and documentation. Using the vocabulary is not
+## Names (decided by the author, 2026-10-08)
+
+Nothing may be copied or taken from the RonDB source tree, and that
+includes names. iClaustron is a new API, written from the ideas of
+iClaustron, with a new implementation. The protocol stays the same on
+the wire; the names are ours. This replaces the earlier rule here that
+we used RonDB's names for signals and blocks as interface vocabulary.
+
+- **Ours:** every name of a signal, a block, a signal's field, a
+  dictionary property key, a pseudo-column, a type, a function and a
+  module. A name says what the thing does. Signals take new stems with
+  the suffixes `_REQ` (request), `_CONF` (confirm), `_REF` (refuse) and
+  `_REP` (report); a signal that would have no suffix takes `_ORD` for
+  an order, to which nothing comes back, or `_REP` for a report.
+  Constants are `IC_SIG_<NAME>` and `IC_BLOCK_<NAME>`, Rust types
+  CamelCase (`KeyOpReq`). The table by number is in chapter 05; the
+  first draft is in chapter 06 §6.1.
+- **RonDB names appear nowhere** in code or docs. Chapter 05 cites RonDB
+  by bare file:line and refers to signals by number; code comments cite
+  chapter 05. `cargo xtask names` checks this against a RonDB tree given
+  at check time, so that the list of RonDB names is never stored here.
+- **The wire is the boundary** (author, 2026-10-08): whatever travels
+  on it stays exactly as it is: numbers, word layouts, error codes,
+  configuration parameter ids and section types, the management
+  protocol's text, and the stored names we look up (the counter table
+  `sys/def/SYSTAB_0`, the hidden key column `$PK`). Whatever does not
+  travel is named by us: signal names, block names, and configuration
+  parameter names too, since only their ids are on the wire. SQL names
+  an application writes (collations, `AUTO_INCREMENT`) are MySQL's
+  language and are used as they are. "RonDB" and "NDB" name what we
+  interoperate with.
+- `legacy-c/` is iClaustron's old code, reference only, and is not
+  changed.
+
+## Collation data
+
+The latin1 character set is public: MySQL's latin1 is the CP1252 code
+page as Unicode publishes it, which serves text conversion. Its
+collations are not: their weights and order are MySQL's own and
+published nowhere else, apart from latin1_bin, whose weights are the
+bytes. No weight table is taken from MySQL or RonDB, from their source
+or from a running server. The author writes the latin1 collation module
+himself (chapter 06 §8.6); everything else is written from its contract
+and checked against the partitions the data nodes report and the order
+MySQL returns, which is verification against a live cluster, not
 copying.
 
 ## Error messages
@@ -55,7 +99,9 @@ iClaustron's `ic_apic_conf_param.ic` is iClaustron code and can be
 relicensed, but it describes NDB 7.2.9. The new, much smaller API-node
 parameter table is written against RonDB 26.10's
 `mgmapi_config_parameters.h` following the clean-room procedure above
-(parameter names and ids are interface data; description prose is not).
+(parameter ids and section types are interface data and travel on the
+wire; parameter names and description prose do not, and ours are our
+own, mapped to the ids in chapter 05).
 
 ## Repository
 

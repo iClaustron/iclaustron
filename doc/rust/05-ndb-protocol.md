@@ -1220,3 +1220,368 @@ be treated as a hypothesis. Known differences the port must apply:
 | Interpreter | 7.2 instruction set (registers, branches, LIKE) | plus memory regions, searches, sorting, conversions, interpreter I/O, partial column writes |
 | Transporters | TCP, SHM, SCI | TCP, SHM, RDMA; multi-transporters (DB↔DB only); API uses TCP only |
 | Version words | `IC_NDB_VERSION 0x080014` in `ic_base_header.h` | `0x1A0A00` |
+
+## 16. Gathered for phases 6–9 (2026-10-08, read, not yet seen live)
+
+Read from the 26.10 sources for the replanned phases 6–9 (chapter 06).
+Each step folds its part into the proper section above when it starts,
+verifies it on a live cluster, and then removes it from here. Signals
+are named as in chapter 06 §6.1, and RonDB is cited by bare file:line
+(rule of 2026-10-08, chapter 09). Paths are relative to `storage/ndb`;
+those starting with `/` are relative to the tree's root.
+
+Configuration parameters are named by id, with our names from chapter
+06 §6.1: 129 `TimeoutCheckPeriod`, 130 `IdleTransactionLimit`, 131
+`LockWaitLimit`, 800 `ScanBatchBytesTotal`, 801 `ScanBatchBytes`, 802
+`ScanBatchRows`.
+
+### 16.1 Sending a request in fragments (phase 6.6)
+
+- The reference sends a key operation whole when its sections together
+  are at most 8 040 words; above that it splits it. The signal's own
+  data words do not count. `src/ndbapi/NdbOperationExec.cpp:219-230`,
+  `src/ndbapi/TransporterFacade.cpp:2272-2274, 2312-2318`.
+- The fragment state is two bits of header word 1, the value's high bit
+  at bit 1 and its low bit at bit 25: 1 first, 2 middle, 3 last.
+  `src/common/transporter/TransporterInternalDefinitions.hpp:247-262`.
+  Our decoder agrees (`header.rs`).
+- Layout as an API node sends it, `src/ndbapi/TransporterFacade.cpp:2302-2470`:
+  sections go in order, a fragment carries whole sections and may begin
+  the next one; a piece of a section that begins part-way into a
+  fragment is a multiple of 60 words and at least 60 (:2359-2391); a
+  fragment that begins with a section takes 8 040 words; only a
+  section's last piece may be of any length. Fragments before the last
+  carry as data only their section numbers and the fragment id (n + 1
+  words for n sections, :2405-2408); the last carries the signal's data,
+  then its section numbers, then the fragment id (:2445-2454).
+- The receiver joins pieces in 60-word segments and requires the rule
+  above; a debug data node stops, a release one logs and keeps a
+  corrupt section. `src/kernel/vm/SimulatedBlock.cpp:488-512`.
+- Data nodes, when they send, put the data in every fragment and the
+  highest section first (`SimulatedBlock.cpp:3810-3848`); the receiver
+  reads only the trailing words of the first fragments, so both layouts
+  are accepted (:3046-3053), and on the last fragment keeps that
+  fragment's data (:3196-3207).
+- The fragment id: one counter per API connection in the reference,
+  from 0 (`TransporterFacade.cpp:1531, 2335`); the data nodes' own
+  counter skips 0 (`SimulatedBlock.cpp:3757-3762`). A train is known by
+  the sender's full reference and the id
+  (`src/kernel/vm/SimulatedBlock.hpp:1113-1129`). A section number of 3
+  or more is reported as malicious.
+- Room to assemble trains at the coordinator is sized for one train per
+  API node at a time, never interleaved
+  (`src/kernel/blocks/dbtc/DbtcInit.cpp:486-498`); when it is full the
+  train is dropped and no reply is sent (`SimulatedBlock.cpp:3069-3095,
+  3255-3267`). The key, unique and scan requests are all put together
+  before they run (`src/kernel/blocks/dbtc/DbtcMain.cpp:3743, 24119,
+  16794`).
+- A message is at most 32 768 bytes both ways
+  (`src/common/transporter/TransporterDefinitions.hpp:85-86`); a larger
+  one is refused on send (`TransporterRegistry.cpp:1239-1241`) and is a
+  link error on receive (`Packer.cpp:171-176`). A data node drops a
+  signal whose data words plus sections exceed 25
+  (`src/kernel/vm/TransporterCallback.cpp:289`).
+- Limits: a row at most 18 000 words, a key at most 1 023
+  (`include/kernel/ndb_limits.h:125, 129`); the fixed in-memory part at
+  most 4 070 words, the variable part 8 008, the disk part 7 770
+  (`ndb_limits.h:126-128`, enforced at
+  `src/kernel/blocks/dbdict/Dbdict.cpp:7060-7087`), so about 48 KB
+  without disk columns. The coordinator takes a key above 1 023 words
+  or column data above 0x3FFFF words as malicious
+  (`DbtcMain.cpp:3767-3790`); the blocks that run the operation refuse
+  column data of 32 768 words or more
+  (`src/kernel/blocks/dblqh/DblqhMain.cpp:10186`,
+  `src/kernel/blocks/dbtup/DbtupExecQuery.cpp:951`).
+- Correction to §2: "a single section is at most 7 400 words" is where
+  data nodes split what they send, not a limit on what they receive.
+
+### 16.2 Hashing a latin1 key (phase 8.6)
+
+- For each distribution key column with a character set, the client
+  hashes the column's data: a CHAR's whole field, a VARCHAR's bytes
+  after its one or two length bytes, which are not hashed. The data is
+  turned into weights by the collation and padded with 0x20 up to
+  m × the column's largest data length, m being 2 for latin1_german2_ci
+  and 1 otherwise; the result is zero-padded to a word.
+  `src/ndbapi/Ndb.cpp:654-717`, `src/common/util/NdbSqlUtil.cpp:845-932`,
+  `/strings/ctype-simple.cc:1502`.
+- The coordinator does the same before hashing
+  (`src/kernel/vm/SimulatedBlock.cpp:4794-4851`,
+  `DbtcMain.cpp:3326-3384`).
+- A "no pad" collation would be hashed another way
+  (`NdbSqlUtil.cpp:892`); no latin1 collation is one.
+- The latin1 collations and their numbers: 5 latin1_german1_ci, 8
+  latin1_swedish_ci (latin1's default), 15 latin1_danish_ci, 31
+  latin1_german2_ci, 47 latin1_bin, 48 latin1_general_ci, 49
+  latin1_general_cs, 94 latin1_spanish_ci; no others.
+  `/strings/ctype-latin1.cc:366, 637, 672`,
+  `/strings/ctype-extra.cc:6571, 6809, 7523, 7557, 8509`. 31 expands
+  seven characters to two weights; 47 takes each byte as its weight;
+  the others give one weight per byte. Every one gives the space the
+  weight 0x20.
+- A binary string column has no character set in the dictionary
+  (`plugin/ha_ndbcluster.cc:8844-8864`).
+- Neither side counts characters. The row store checks on a write that
+  a character column is well formed (744,
+  `src/kernel/blocks/dbtup/DbtupRoutines.cpp:2402`), which every latin1
+  byte string is; a key the coordinator cannot transform fails with 290.
+- The client does not pad a CHAR with spaces; the application must, as
+  a key padded with zeros is another key.
+- A unique index's columns keep their character set and are all
+  distribution key columns of the index's table, hashed with the same
+  transform (`Dbdict.cpp:13741, 7948-7955`).
+- MySQL's latin1 is the CP1252 code page as Unicode publishes it, with
+  0x81, 0x8D, 0x8F, 0x90 and 0x9D, which CP1252 leaves unassigned,
+  passed through as U+0081, U+008D, U+008F, U+0090 and U+009D.
+
+### 16.3 Unique keys (phase 6.5)
+
+- Placement: the reference hashes the index key over the index's own
+  table and places the transaction by that table's partition
+  (`src/ndbapi/Ndb.cpp:764-773, 882-905`); the coordinator hashes the
+  index columns in the index's order (`DbtcMain.cpp:3341-3370`). The
+  index's table inherits read backup, the hash function and full
+  replication from its table, and, when the fragment types match, its
+  hash map and fragment count (`Dbdict.cpp:13644-13680`); fetching the
+  index's description returns its own replica data and hash map
+  (`Dbdict.cpp:1283-1317`); every index column is a distribution key
+  (`src/ndbapi/NdbDictionaryImpl.cpp:5803-5810`).
+- The index's state is checked neither by the coordinator nor by the
+  reference's client (`DbtcMain.cpp:25099-25106, 9579`): a lookup
+  through an offline index finds nothing. A missing index gives 284, a
+  wrong version 241. A dropped index is reported by
+  `TABLE_CHANGED_REP` to API nodes of a new enough version
+  (`Dbdict.cpp:9470-9494`).
+- NULL: the reference's client refuses a NULL key column with 4316
+  (`src/ndbapi/NdbOperationExec.cpp:893-900`); a row with NULL in any
+  indexed column is never put in the index (`DbtcMain.cpp:27375,
+  27508`).
+- Locks: a committed read through an index is sent as a shared read
+  with bit 20 of the flags word set (`src/ndbapi/NdbTransaction.cpp:3191-3207`),
+  which lets both reads use a backup replica of a read-backup table or
+  any node of a fully replicated one (`DbtcMain.cpp:5446, 5139-5144`);
+  the lock is held to commit. A debug coordinator asserts that an index
+  request has no simple flag (`DbtcMain.cpp:25144-25145, 25297-25298`).
+  The index read is shared for a read and exclusive otherwise
+  (`DbtcMain.cpp:25125-25126`). Nothing releases the lock early.
+- A duplicate value gives 893 with the index id as error data
+  (`DbtcMain.cpp:9562-9571`). A deferred check is bit 17 of the flags
+  word, honoured on unique requests too (`DbtcMain.cpp:24357,
+  7088-7091`), checked at commit
+  (`src/kernel/blocks/dbtup/DbtupTrigger.cpp:902-935`).
+- Replies: `UNIQUE_OP_CONF` is never sent; the operation is confirmed
+  by `KEY_OP_CONF` (`DbtcMain.cpp:7252-7270`). `UNIQUE_OP_REF` is laid
+  out as `KEY_OP_REF`, with error data 0 (`DbtcMain.cpp:24855-24866`).
+  Out of index operation records: 288 (`DbtcMain.cpp:24305`).
+- In the reference, an update through an index takes the indexed
+  columns from the key row (`NdbOperationExec.cpp:~1180-1230`), so it
+  cannot change them.
+
+### 16.4 Scans (phase 8)
+
+Paths: ST = `include/kernel/signaldata/ScanTab.hpp`, TC = `DbtcMain.cpp`,
+LQH = `DblqhMain.cpp`, NSO = `src/ndbapi/NdbScanOperation.cpp`, NR =
+`src/ndbapi/NdbReceiver.cpp`, NTS = `src/ndbapi/NdbTransactionScan.cpp`,
+IF = `src/ndbapi/Ndbif.cpp`.
+
+- `SCAN_REQ` (32): eleven fixed words: the scan's coordinator record,
+  a spare, the flags word, the table (the index for a range scan), its
+  version, a word whose low 16 bits are 0xFFFF and whose high bits say
+  fragments per worker (16–17), partition id given (30) and hash
+  interval (31), the transaction id's two halves, the owning
+  transaction's coordinator record, the batch byte size and the first
+  batch's rows; then optionally the distribution key (11), a TTL window
+  (12), a user id and its version (13–14). ST:85-132, NSO:3068-3078.
+- Flags: 8 exclusive lock, 9 no disk, 10 hold lock, 11 read committed,
+  12 return each row's key, 13 storage order, 14 descending, 15 range,
+  16–25 batch rows (0: use the first batch's word, TC:17499-17504), 26
+  distribution key given, 27 join, 28 pass every confirmation, 29
+  extended confirmation, 30 read committed base, 31 several fragments
+  per receiver (joins only, else 4003, TC:16936); bits 0–7 RonDB's
+  extensions. ST:251-318 (trust the constants, not the drawing beside
+  them). A committed read sets 11; shared and simple reads set hold
+  lock; an exclusive read sets 8, hold lock and 12 (NSO:1865-1897). The
+  reference always sets 13 for a table scan (NSO:1569).
+- Sections: 0 the receiver ids, whose count is the parallelism
+  (TC:16842-16856); 1 the column section, required (empty: 269),
+  beginning with five size words (NSO:3187-3196); 2 the bounds. A large
+  request is sent in fragments (NSO:3257).
+- A scan has a coordinator record of its own, seized on the node and
+  coordinator instance of its transaction's record, with the same
+  transaction id, and names that record (`src/ndbapi/Ndb.cpp:1005-1035`,
+  NSO:166-177); the coordinator requires the named record to be a valid
+  one of its own instance (TC:18035-18039). One scan per record, a
+  second gives 202 (TC:16910-16924).
+- Receiver i serves fragment record i (TC:17624), and min(receivers,
+  fragments) are used (TC:17932). The receiver id is word 0 of
+  `ROW_DATA_REP` and of `SCAN_ROW_KEY_REP`, and is named per receiver in
+  `SCAN_CONF` (IF:580-660, 842-866; NTS:146-151).
+- `SCAN_CONF` (29): the scan's record, a word with the receiver count
+  and bit 31 end of data, the transaction id; then per receiver its id,
+  the coordinator's pointer for it (0xFFFFFF00, the null record
+  pointer, `include/kernel/ndb_limits.h:33`: that receiver is done) and
+  len << 10 | rows, where rows 1023 means a fourth word holds the
+  count; with the extended confirmation, rows and length apart and an
+  active mask. Inline up to 25 words, else in section 0. TC:20776-20845,
+  NTS:210-229. len counts row words and key words (LQH:26966-26969).
+- A receiver's batch is complete when its confirmation has come and the
+  words received equal len; rows and confirmation come from different
+  nodes in either order (NR:1719-1745). len 0 with rows means an empty
+  projection.
+- The last confirmation carries end of data with the counts, and the
+  record is then free again (TC:20888-20902, 18480-18483); a
+  confirmation that is exactly end of data confirms a close
+  (TC:20037-20050). A fragment that ends with no rows while others
+  remain is not reported: the coordinator starts the next fragment on
+  the same receiver (TC:19278-19305, 19720-19750).
+- `SCAN_ROW_KEY_REP` (33), one per row when keys are asked for: the
+  receiver id, the key length, a word of operation number << 8 | scan
+  number | fragment << 20, the transaction id, then the key, inline up
+  to 20 words, else in section 0 (LQH:28318-28356;
+  `include/kernel/signaldata/ScanFrag.hpp:552`).
+- `SCAN_REF` (31): the record, the transaction id, the error, and
+  whether a close is owed: 0 for errors at the start (TC:17400-17418),
+  1 from errors during the scan (TC:19064-19127).
+- `SCAN_MORE_REQ` (28): the record, a stop word, the transaction id,
+  the coordinator's pointers of the receivers to go on (inline up to
+  21, else section 0); each named fragment goes on by itself, one not
+  named waits (TC:19682-19765). Stop set: the coordinator closes at
+  once, ignoring the list, closes the fragments, and sends the bare end
+  of data confirmation (TC:19646, 19785-20050).
+- A batch ends at the row count or the byte count, checked after a row
+  is added, so one row may overshoot (LQH:46539-46545). The reference
+  asks for bytes = min(parameter 801, parameter 800 / parallelism) and
+  rows = min(parameter 802 or the scan's own, 992 with
+  locks or 4 000 committed, bytes) (NR:510-534, NSO:3083-3162);
+  defaults 384 rows, 32 KB, 512 KB (`src/mgmsrv/ConfigInfo.cpp:1908-1919`,
+  `ndb_limits.h:231-254`). The 992 comes from the ten-bit operation
+  number used by takeover. The reference asks for more only when
+  every cached row is consumed (NSO:2168-2247): its policy, not the
+  protocol's.
+- Timeouts: the coordinator's inactivity timer runs only while no
+  fragment is running (TC:20905-20914); past
+  parameter 130 (our `IdleTransactionLimit`) the scan fails with 296 and a close owed
+  (TC:11991-12009; the default in this tree is 3 600 000 ms,
+  `ConfigInfo.cpp:1154`). A fragment stalled past the deadlock timeout
+  gives 274 (TC:12546-12668); RonDB's deadlock detection may end a scan
+  with 296 (TC:11670-11689). The reference's client gives up with 4008
+  after three times the check interval plus the deadlock timeout
+  (`src/ndbapi/ndb_cluster_connection.cpp:1285`, NSO:2261, 2318).
+- Takeover: a `KEY_OP_REQ` on the owning transaction whose key is the
+  row's key from `SCAN_ROW_KEY_REP`, with flags bit 14 (scan takeover)
+  and bit 2 (distribution key given), and optional words after the user
+  id: 1 | (the row word & 0x3FFFF) << 1 | fragment << 20, then the
+  fragment as distribution key (`include/kernel/signaldata/TcKeyReq.hpp:430-503`,
+  NSO:3385-3570, `NdbOperationExec.cpp:1505-1528`). The reference
+  sends it before asking that receiver for more.
+- Node failure: a reading node lost gives `SCAN_REF` 270, temporary,
+  with a close owed (TC:13133-13224); the coordinator's node lost: the
+  reference reports 4028, no close is sent, the record is gone
+  (IF:280-294; NSO:2326, 5050); our API node lost: the coordinator
+  closes the scan (TC:2085-2100). Nothing resumes a scan; it starts
+  again and rows come again.
+- Range scans: per bound column a word of bound type (0 ≤, 1 <, 2 ≥,
+  3 >, 4 =; low bounds use 0 and 1, high bounds 2 and 3), a column
+  header (index column id, byte length) and the value padded to words;
+  each range's first word also holds len << 16 | range number << 4,
+  range numbers up to 0xFFF and rising strictly in an ordered scan with
+  several ranges; an open range is type 0 with a header of (0, 0)
+  (NSO:1102-1251, 4111-4196, 1145; LQH:26196). An ordered scan runs
+  every fragment in parallel, and the client needs a row or the end
+  from each before returning one, refilling one receiver at a time;
+  descending reverses each fragment's order and the comparison
+  (NSO:1615, 4262-4285, 4367-4420, 4860-4930).
+- Pruning: bit 26 and word 11; the coordinator maps a hash through the
+  hash map, or takes a fragment id when the partition is given
+  (TC:17890-17920, 18529-18543); on a fanout table a hash-pruned scan
+  is refused with 2203 unless the interval bit is set (TC:17306-17322).
+  The reference prunes a range scan only when both bounds fix every
+  distribution key column (NSO:1268-1300).
+- Corrections to §7: the three-word confirmation is the default, not
+  the four-word one; the optional parallelism word belongs to joins
+  only; §7 lacks the scan's own coordinator record, the row key report,
+  the takeover words, and closing and timeouts.
+
+### 16.5 AUTO_INCREMENT and the hidden key (phase 9.2)
+
+- The counter table is stored as `sys/def/SYSTAB_0`, logged, with two
+  columns: id 0, 32-bit unsigned, the key; id 1, 64-bit unsigned, not
+  NULL, the next value not yet handed out
+  (`src/kernel/blocks/ndbcntr/NdbcntrSysTable.cpp:34-46`). The data
+  nodes create it at initial start and put no rows in it
+  (`NdbcntrMain.cpp:4667-4740`).
+- The key is the table id (`src/ndbapi/Ndb.cpp:1725`); the backup's
+  sequence uses 0x1F000000 (`include/ndb_constants.h:120-122`). The
+  client that creates a table with an auto-increment column writes the
+  row, as a write of the initial value
+  (`NdbDictionaryImpl.cpp:4247-4259, 4292-4305`; `Ndb.cpp:1736-1745`).
+  A table may have one auto-increment column (4335). Dropping a table
+  leaves its row; the next table with that id overwrites it.
+- Each counter operation is a transaction of its own, placed by the
+  counter row's key and committed with its operation
+  (`Ndb.cpp:1697-1806`, hint at :1713-1715):
+  - taking n values: an interpreted update adding n to the counter,
+    then reading it back; exclusive lock, abort on error; the values
+    are new − n to new − 1 (:1722-1736);
+  - setting: a write, used at create;
+  - moving up only: an interpreted update that writes the value only
+    if it is larger, then reads the counter back (:1747-1768);
+  - peeking: a shared read.
+  The reference's client never retries; MySQL servers retry temporary
+  errors up to 100 times with a 30–36 ms pause
+  (`plugin/ha_ndbcluster.cc:476, 12333-12350`).
+- The client keeps a range per table: the last value handed out, the
+  last reserved, the highest seen (`include/ndbapi/Ndb.hpp:1933-1943`).
+  A refill reserves cache size × step (`Ndb.cpp:1446`); the next value
+  is the least k × step + offset above the last handed out
+  (:1405-1456; an offset above the step counts as 1). MySQL servers pass
+  `auto_increment_increment` and `auto_increment_offset`, and a cache
+  size of `ndb_autoincrement_prefetch_sz` (default 512)
+  (`plugin/ha_ndbcluster.cc:184-194, 12338-12340`).
+- After an insert with an explicit value, MySQL servers move the
+  counter past it, upwards only, unless their cache or highest seen is
+  already above (`Ndb.cpp:1609-1695`;
+  `plugin/ha_ndbcluster.cc:5299-5303`). Other nodes' cached ranges are
+  not told.
+- The interpreted update is a `KEY_OP_REQ` with flags bit 15 and an
+  update; its column section begins with five size words (initial read,
+  program, final update, final read, subroutines), here 0, 7, 0, 1, 0:
+  read the counter into a register, load the 64-bit constant, add,
+  write the counter from the sum, exit with success; the final read
+  names the counter column
+  (`src/ndbapi/NdbOperationExec.cpp:817-826`,
+  `src/ndbapi/NdbOperationInt.cpp:48-70, 387-410`,
+  `include/kernel/Interpreter.hpp:110-163`;
+  run by `DbtupExecQuery.cpp:5998-6340, 9296-9347`). The conditional
+  branch compares its operands in the order the row store reads them,
+  not the order the reference's builder takes them
+  (`Interpreter.hpp:1363`, `DbtupExecQuery.cpp:7302-7318, 11202`).
+- Without the interpreter the same is an exclusive read and an update
+  in one transaction: two round trips, the row locked across the
+  client's round trip.
+- The dictionary has only the column's auto-increment flag; the start
+  value is not stored there (`NdbDictionaryImpl.cpp:4129-4130, 4292`).
+- A table without a primary key gets a last column stored as `$PK`:
+  64-bit unsigned, NOT NULL, primary key, auto-increment, no default
+  (`plugin/ha_ndbcluster.cc:10806-10822`); its first value is 1
+  (`NdbDictionaryImpl.cpp:386`); MySQL servers take its values from the
+  same counter, 1 000 at a time (`plugin/ha_ndbcluster.cc:5043-5062`),
+  and learn a row's key by scanning (:4298-4310).
+- TRUNCATE drops and creates the table, so its counter starts again
+  (`plugin/ha_ndbcluster.cc:11303-11316`); an in-place
+  `ALTER TABLE … AUTO_INCREMENT=n` only moves it up (:17902-17946).
+- Correction to §12: its citation points at the initialisation, not the
+  operations; it lacks the creating client's write, moving up only,
+  peeking, and the hidden key.
+
+### 16.6 When the reference gives up waiting (phase 6.3)
+
+- The reference's client fails a transaction that has waited longer
+  than its wait limit for replies with 4012, the outcome unknown, and
+  never reuses its coordinator record (`src/ndbapi/Ndbif.cpp:1679-1720`;
+  in its synchronous path it also tries a rollback,
+  `src/ndbapi/NdbTransaction.cpp:1190-1210`).
+- The wait limit is the larger of 120 000 ms and, over every node
+  section of the configuration, parameter 129 + parameter 131 (our
+  `TimeoutCheckPeriod` + `LockWaitLimit`)
+  (`src/ndbapi/ndb_cluster_connection.cpp:1262-1296`).

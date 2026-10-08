@@ -15,11 +15,11 @@ Read in order the first time; afterwards each chapter stands alone.
 | [03 Module map](03-module-map.md) | Every surviving C file → Rust module with mode (1:1 / redesign / new / out) |
 | [04 API design](04-api-design.md) | Rust, C and C++ surfaces; record-style rows; transactions; queries; what changes in `ic_apid.h` |
 | [05 NDB protocol](05-ndb-protocol.md) | Clean-room protocol spec for 26.10 with verification pointers; delta from the 7.2.9 baseline |
-| [06 Phases](06-phases.md) | Eleven phases with exit criteria, proof commands, estimates (0.1 in about 6 months) |
+| [06 Phases](06-phases.md) | Phases 0–10 with exit criteria and proof commands; replanned 2026-10-08: our own names, key operations completed, C API and 0.1, then the executor and scans, then a basic interpreter and AUTO_INCREMENT |
 | [07 Style guide](07-style-guide.md) | Allowed and forbidden Rust; naming; memory; errors |
 | [08 Testing and tooling](08-testing-and-tooling.md) | Toolchain, developer-run test pyramid, captured vectors, integration cluster, benchmark |
-| [09 Licensing](09-licensing.md) | Relicensing to MIT, clean room against RonDB, dependency policy |
-| [10 Open questions](10-open-questions.md) | Decisions taken and the thirteen still open |
+| [09 Licensing](09-licensing.md) | Relicensing to MIT, clean room against RonDB, names of our own, collation data, dependency policy |
+| [10 Open questions](10-open-questions.md) | Decisions taken and those still open |
 | [11 C to Rust mappings](11-c-to-rust-mappings.md) | Construct-by-construct translation table with explanations and worked examples |
 | [12 Performance model](12-performance-model.md) | Operational laws and the `ic_model` simulation for what-if analysis of latency and throughput; its calibration |
 | [Architecture overview](architecture.html) | Threading and how it can evolve, the data model, the asynchronous executor and the synchronous models, as one page to read in a browser |

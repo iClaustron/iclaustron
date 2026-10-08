@@ -21,22 +21,29 @@ never writes configuration, and it never acts as a management server.
 - Connect to a RonDB 26.10 cluster through a stock connectstring, allocate
   a node id, fetch and decode the configuration.
 - Connect to every data node, heartbeat, track node state, handle node
-  failure and recovery protocols (`NODE_FAILREP`, `NF_COMPLETEREP`,
+  failure and recovery protocols (`NODE_LOST_REP`, `NODE_LOST_DONE_REP`,
   reconnect), and report node failure to affected transactions correctly.
 - Read table metadata for any table created through MySQL.
 - Transactions with primary key and unique key operations: read (all
   lock modes), insert, update, delete, write; commit and rollback;
   asynchronous `send`/`poll`/`flush` model with callbacks.
-- Record-style row binding (NdbRecord-like) that a C programmer uses with
-  plain structs.
-- Full RonDB 26.10 interpreter available for conditional operations on
-  key lookups (WHERE conditions and conditional assignments).
-- C ABI, C++ header, examples in Rust, C and C++.
+- Record-style row binding that a C programmer uses with plain structs.
+- Keys with character columns work in any character set; they are
+  placed round robin until latin1 placement comes in 0.2.
+- Every row size the data nodes accept can be written.
+- A transaction whose reply never comes ends with 4012, outcome
+  unknown, instead of waiting forever.
+- Tables with BLOB columns: the other columns can be used; deletes are
+  refused, since the BLOB parts would be left behind.
+- C ABI with every function documented, a user guide, and the same
+  examples in Rust and in C.
 
-Later releases: scans and ordered index ranges, events, DDL, TLS, then
-SPJ pushdown joins and aggregation pushdown. BLOBs are skipped for the
-moment: tables with BLOB columns work as long as those columns are not
-touched.
+Later releases (replanned 2026-10-08, chapter 06): 0.2 the executor and
+scans, ordered index ranges included, and latin1 placement and
+ordering; 0.3 a basic interpreter,
+AUTO_INCREMENT and tables without a primary key; then TLS, location
+domains, BLOBs, UTF-8, the C++ header, events, DDL, SPJ pushdown joins
+and aggregation pushdown.
 
 ## Out of scope for this project
 
@@ -71,8 +78,10 @@ touched.
    match before the code.
 
 4. **Clean room against RonDB.** RonDB is GPLv2. We read its sources for
-   protocol facts, write our own code, comments and error texts. See
-   [09-licensing.md](09-licensing.md).
+   protocol facts, write our own code, comments and error texts, and
+   give everything names of our own: no RonDB name of a signal, block,
+   field, function or class appears in our code or docs; the wire stays
+   identical (decided 2026-10-08). See [09-licensing.md](09-licensing.md).
 
 5. **Asynchronous first.** Define queries, `send`, do other work, `poll`,
    iterate completed queries. `flush` is a convenience on top.
@@ -115,14 +124,18 @@ touched.
   id, stays connected through heartbeats, survives a data node restart
   and a management server restart.
 - Describes any MySQL-created table (all column types, unique and ordered
-  indexes) identically to `ndb_desc`.
+  indexes) as the reference's own table description tool does.
 - Primary key and unique key read/insert/update/delete/write with commit
   and rollback from Rust and from C; results verified through MySQL.
 - A node killed mid-transaction yields the right temporary error class and
   the transaction can be retried on another node.
-- Conditional update through the interpreter matches MySQL arithmetic.
+- A row of every size the data nodes accept is
+  written and read back; a lost reply ends its transaction with 4012; a
+  delete on a table with BLOB columns is refused; unique keys refuse
+  NULL and are placed by the index (chapter 06 §6.5).
+- `cargo xtask names` finds no RonDB name in the repository.
 - Primary key read throughput within 20 % of the C++ NDB API using the
   asynchronous interface, one connection object per thread, 8 threads.
-- Ships `libiclaustron.{so,dylib,a}`, `include/iclaustron/ic_apid.h`,
-  `iclaustron.hpp`, and a C and a C++ example that build with a plain
-  compiler invocation.
+- Ships `libiclaustron.{so,dylib,a}` and `include/iclaustron/ic_apid.h`
+  with every function documented, a user guide, and the same examples in
+  Rust and in C, the C ones building with a plain compiler invocation.
