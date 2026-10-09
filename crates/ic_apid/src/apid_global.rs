@@ -726,11 +726,19 @@ pub struct GlobalOptions {
   /// machine; with many user threads and many cores, one thread reading
   /// every link becomes the limit. Capped at the number of data nodes.
   pub receive_threads: u32,
+  /// How long a transaction waits for its replies, in milliseconds,
+  /// before it ends with 4012, its outcome unknown (chapter 06 §6.3).
+  /// Zero takes it from the configuration: at least two minutes, longer
+  /// if the data nodes' timeouts call for it. Tests set a second.
+  pub reply_wait_ms: u32,
 }
 
 impl Default for GlobalOptions {
   fn default() -> GlobalOptions {
-    GlobalOptions { receive_threads: 1 }
+    GlobalOptions {
+      receive_threads: 1,
+      reply_wait_ms: 0,
+    }
   }
 }
 
@@ -793,6 +801,9 @@ pub(crate) struct ApidShared {
   /// after a read, until it finds it empty, before waiting in the poll
   /// set; zero reads once.
   pub(crate) extra_reads: AtomicU32,
+  /// How long a transaction waits for its replies, in milliseconds,
+  /// fixed at start; see [`GlobalOptions::reply_wait_ms`].
+  pub(crate) reply_wait_ms: u32,
 }
 
 impl ApidShared {
@@ -1222,6 +1233,11 @@ impl ApidGlobal {
       )));
     }
     let own_node_id = config.api.node_id;
+    let reply_wait_ms = if options.reply_wait_ms > 0 {
+      options.reply_wait_ms
+    } else {
+      config.reply_wait_ms()
+    };
     let node_id_is_dynamic = connect_string.node_id.is_none();
     let mut owned_name: Option<String> = None;
     if let Some(name) = node_name {
@@ -1261,6 +1277,7 @@ impl ApidGlobal {
       send_pool,
       large_signal_words: AtomicU32::new(IC_LARGE_SIGNAL_WORDS),
       extra_reads: AtomicU32::new(IC_EXTRA_READS),
+      reply_wait_ms,
     });
 
     let num_nodes = shared.nodes.len();
@@ -1336,6 +1353,19 @@ impl ApidGlobal {
   /// any id will do.
   pub fn own_node_id(&self) -> u32 {
     self.shared.own_node_id()
+  }
+
+  /// The configuration as our node id sees it. It is fetched again when
+  /// the node id is claimed anew, so what a caller keeps is the version
+  /// of its call.
+  pub fn config(&self) -> Arc<ClusterConfig> {
+    Arc::clone(&self.shared.identity.lock().config)
+  }
+
+  /// How long a transaction waits for its replies before it ends with
+  /// 4012, in milliseconds; see [`GlobalOptions::reply_wait_ms`].
+  pub fn reply_wait_ms(&self) -> u32 {
+    self.shared.reply_wait_ms
   }
 
   /// The table user threads take their inboxes from. A signal a data

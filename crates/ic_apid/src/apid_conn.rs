@@ -96,6 +96,17 @@ pub(crate) fn coord_index_of(api_ptr: u32) -> Option<usize> {
   Some(((api_ptr & !IC_COORD_PTR_TAG) >> 1) as usize)
 }
 
+/// True, and the next check set a second on, if a poll at `now` is due
+/// to look for transactions that have waited too long for their
+/// replies. The first poll is due at once.
+fn reply_check_due(next: &mut u64, now: u64) -> bool {
+  if now < *next {
+    return false;
+  }
+  *next = now + IC_REPLY_WAIT_CHECK_NANOS;
+  true
+}
+
 /// How long allocating a transaction record waits for the coordinator.
 pub const IC_COORD_ALLOC_WAIT_MS: u32 = 5_000;
 
@@ -106,6 +117,10 @@ pub const IC_COORD_ALLOC_WAIT_MS: u32 = 5_000;
 /// came cost a system call a poll, most of the user thread's writing on
 /// updates (measured 2026-09-23).
 pub const IC_REPLY_SEND_DELAY_NANOS: u64 = 1_000_000;
+/// How often a poll looks for transactions that have waited too long
+/// for their replies (chapter 06 §6.3): a walk over the transactions in
+/// flight, so not on every poll.
+pub const IC_REPLY_WAIT_CHECK_NANOS: u64 = 1_000_000_000;
 
 /// How long [`ApidConnection::wait_for`] sleeps on its inbox at a time,
 /// so that a link lost meanwhile is noticed without waiting for the
@@ -330,6 +345,9 @@ pub struct CoordRecord {
   /// Its state is unknown, or the coordinator has freed it: never
   /// handed out again.
   lost: bool,
+  /// Given back with COORD_FREE_REQ: never named to the coordinator
+  /// again, since it may have handed the record on.
+  freed: bool,
 }
 
 #[cfg(test)]
@@ -345,8 +363,23 @@ impl CoordRecord {
       index: 0,
       busy: true,
       lost: false,
+      freed: false,
     }
   }
+}
+
+/// Mark `held`, the record `rec` names, as given back, if it may be:
+/// the coordinator confirmed it and it has not been given back before.
+/// The coordinator may hand a freed record to another transaction,
+/// another node's or ours, so a second COORD_FREE_REQ would name that
+/// one; a debug data node stops on it. Verify: chapter 05 §17.10.
+fn mark_freed(held: &mut CoordRecord, rec: &CoordRecord) -> bool {
+  // Only a confirmed allocation has the coordinator's block.
+  if held.api_ptr != rec.api_ptr || held.freed || held.coord_block == 0 {
+    return false;
+  }
+  held.freed = true;
+  true
 }
 
 /// A user thread's connection to the cluster.
@@ -408,6 +441,11 @@ pub struct ApidConnection {
   pub(crate) spare_lists: Vec<Vec<QueryId>>,
   /// When what waits in the outgoing buffers began to wait, or zero.
   queued_since: u64,
+  /// How long a transaction waits for its replies before it ends with
+  /// 4012, in nanoseconds.
+  pub(crate) reply_wait_nanos: u64,
+  /// When a poll next looks for transactions that have waited too long.
+  pub(crate) next_reply_check: u64,
   pub(crate) key_scratch: Vec<u32>,
   pub(crate) attr_scratch: Vec<u32>,
   /// Pages of signals taken from the inbox, read, and given back on the
@@ -461,6 +499,7 @@ impl ApidConnection {
   ) -> Result<ApidConnection, IcError> {
     let inbox = shared.thread_table.allocate()?;
     let trans_counter = shared.thread_table.trans_counter(inbox.thread_id());
+    let reply_wait_nanos = shared.reply_wait_ms as u64 * 1_000_000;
     Ok(ApidConnection {
       shared,
       inbox,
@@ -487,6 +526,8 @@ impl ApidConnection {
       to_send: Vec::new(),
       spare_lists: Vec::new(),
       queued_since: 0,
+      reply_wait_nanos,
+      next_reply_check: 0,
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
     })
@@ -890,6 +931,12 @@ impl ApidConnection {
       self.fail_lost_readers();
       self.seen_link_events = events;
     }
+    // Transactions whose replies never came while their link stayed up
+    // end with 4012, after the replies just taken have had their say.
+    let now = ic_port::time::gethrtime();
+    if reply_check_due(&mut self.next_reply_check, now) {
+      self.expire_transactions(now);
+    }
     // What the replies called for, such as commit acknowledgements,
     // goes with the next send, in the same write as its requests. It is
     // written here only once it has waited long enough, or when nothing
@@ -897,7 +944,6 @@ impl ApidConnection {
     // has asked for its link to be dropped, which is where its loss is
     // reported.
     if self.outgoing_waiting() {
-      let now = ic_port::time::gethrtime();
       if self.queued_since == 0 {
         self.queued_since = now;
       }
@@ -1059,6 +1105,7 @@ impl ApidConnection {
       index: index as u32,
       busy: true,
       lost: true,
+      freed: false,
     });
     let allocate = CoordAllocReq {
       client_ptr: api_ptr,
@@ -1166,34 +1213,66 @@ impl ApidConnection {
     }
   }
 
-  /// Give back every record whose link still stands, without waiting
-  /// for the answers: the connection is going. COORD_FREE_REQ also makes
-  /// the coordinator clean up unfinished work before freeing the record.
+  /// Give back every record whose link still stands and that is not
+  /// given back already, without waiting for the answers: the
+  /// connection is going.
   fn release_coord_records(&mut self) {
-    let own_ref = self.block_ref();
-    let block = self.block_number();
-    for rec in &self.coord_records {
-      if !self.link_is(rec.node_id, rec.generation) {
-        continue;
+    let mut index: usize = 0;
+    while index < self.coord_records.len() {
+      let rec = self.coord_records[index];
+      self.send_coord_free(&rec);
+      index += 1;
+    }
+  }
+
+  /// Ask the coordinator to free a record, over the link it was
+  /// allocated on if that still stands, without waiting for the answer;
+  /// once at most, and only one it confirmed (see `mark_freed`).
+  /// COORD_FREE_REQ also makes the coordinator conclude or abort the
+  /// record's transaction before it frees the record.
+  /// Verify: chapter 05 §17.10.
+  pub(crate) fn send_coord_free(&mut self, rec: &CoordRecord) {
+    if !self.link_is(rec.node_id, rec.generation) {
+      return;
+    }
+    match self.coord_records.get_mut(rec.index as usize) {
+      Some(held) => {
+        if !mark_freed(held, rec) {
+          return;
+        }
       }
-      let release = CoordFreeReq {
-        coord_ptr: rec.coord_ptr,
-        client_block_ref: own_ref,
-        client_ptr: rec.api_ptr,
-      };
-      let header = SignalHeader::new(
-        numbers::IC_SIG_COORD_FREE_REQ,
-        block,
-        rec.coord_block,
+      None => return,
+    }
+    let release = CoordFreeReq {
+      coord_ptr: rec.coord_ptr,
+      client_block_ref: self.block_ref(),
+      client_ptr: rec.api_ptr,
+    };
+    let header = SignalHeader::new(
+      numbers::IC_SIG_COORD_FREE_REQ,
+      self.block_number(),
+      rec.coord_block,
+    );
+    if let Some(node) = self.shared.node(rec.node_id) {
+      let _ = node.send_for_generation(
+        rec.generation,
+        &header,
+        &release.encode(),
+        &[],
       );
-      if let Some(node) = self.shared.node(rec.node_id) {
-        let _ = node.send_for_generation(
-          rec.generation,
-          &header,
-          &release.encode(),
-          &[],
-        );
-      }
+    }
+  }
+
+  /// True if `client_ptr` names a record of ours that is out of use: an
+  /// answer to the COORD_FREE_REQ that gave it up.
+  pub(crate) fn names_lost_record(&self, client_ptr: u32) -> bool {
+    let index = match coord_index_of(client_ptr) {
+      Some(index) => index,
+      None => return false,
+    };
+    match self.coord_records.get(index) {
+      Some(rec) => rec.api_ptr == client_ptr && rec.lost,
+      None => false,
     }
   }
 
@@ -1369,6 +1448,42 @@ impl Drop for ApidConnection {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_record_is_given_back_once_and_only_if_confirmed() {
+    let rec = CoordRecord::for_test(1);
+    let mut held = rec;
+    assert!(mark_freed(&mut held, &rec), "the first free goes");
+    assert!(!mark_freed(&mut held, &rec), "a second would name another");
+    // Another allocation in the same place is not this one.
+    let mut other = rec;
+    other.api_ptr = coord_ptr_of(1);
+    assert!(!mark_freed(&mut other, &rec));
+    // Never confirmed: the coordinator's pointer is not known.
+    let mut unconfirmed = rec;
+    unconfirmed.coord_block = 0;
+    assert!(!mark_freed(&mut unconfirmed, &rec));
+  }
+
+  #[test]
+  fn the_reply_wait_check_runs_at_most_once_a_second() {
+    let mut next: u64 = 0;
+    let start: u64 = 5_000_000_000;
+    assert!(reply_check_due(&mut next, start), "the first poll checks");
+    assert!(!reply_check_due(&mut next, start + 1));
+    assert!(!reply_check_due(
+      &mut next,
+      start + IC_REPLY_WAIT_CHECK_NANOS - 1
+    ));
+    assert!(reply_check_due(
+      &mut next,
+      start + IC_REPLY_WAIT_CHECK_NANOS
+    ));
+    // A poll after a long sleep checks once, then waits a second again.
+    let later = start + 10 * IC_REPLY_WAIT_CHECK_NANOS;
+    assert!(reply_check_due(&mut next, later));
+    assert!(!reply_check_due(&mut next, later + 1));
+  }
 
   #[test]
   fn a_record_pointer_leads_back_to_its_place() {

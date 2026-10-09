@@ -114,6 +114,10 @@ pub const IC_NDB_ERROR_TAKEOVER_ABORT: i32 = 4031;
 pub const IC_NDB_ERROR_TAKEOVER_READ_LOST: i32 = 4115;
 /// NDB's error for a simple or dirty read whose reading node failed.
 pub const IC_NDB_ERROR_READ_NODE_FAILURE: i32 = 4119;
+/// NDB's error for a transaction whose replies never came while its
+/// link stayed up: the data node did not answer in time, and the
+/// outcome is unknown (chapter 06 §6.3).
+pub const IC_NDB_ERROR_NO_REPLY: i32 = 4012;
 /// Previous name for the lost-read error, retained for compatibility.
 pub const IC_NDB_ERROR_TAKEOVER_COMMIT_UNASKED: i32 =
   IC_NDB_ERROR_TAKEOVER_READ_LOST;
@@ -169,6 +173,9 @@ pub struct Transaction {
   gci: u64,
   /// True while it is on the connection's list for the next send.
   pub(crate) queued_for_send: bool,
+  /// When it last sent, by the high-resolution clock, or zero if it
+  /// never has: the wait for its replies runs from here.
+  last_sent: u64,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -227,6 +234,20 @@ impl Transaction {
   fn ended(&self) -> bool {
     self.state == CommitState::Committed
       || self.state == CommitState::RolledBack
+  }
+
+  /// True if it waits for a reply, and has since it last sent at least
+  /// `limit` nanoseconds before `now`: a query sent and not complete,
+  /// or a commit or rollback asked of the coordinator and not answered.
+  /// One that is open and waits for nothing, while the application
+  /// prepares its next queries, is not waiting.
+  fn waited_too_long(&self, now: u64, limit: u64) -> bool {
+    let waiting = !self.sent.is_empty()
+      || self.state == CommitState::CommitRequested
+      || self.state == CommitState::RollbackRequested;
+    waiting
+      && self.last_sent != 0
+      && now.saturating_sub(self.last_sent) >= limit
   }
 }
 
@@ -348,6 +369,7 @@ impl ApidConnection {
       error: None,
       gci: 0,
       queued_for_send: false,
+      last_sent: 0,
     };
     let id = TransId(self.transactions.insert(trans)?);
     self.active_insert(coord.index, id);
@@ -698,9 +720,16 @@ impl ApidConnection {
     // flight; the list is kept for its allocation.
     let mut ids = std::mem::take(&mut self.to_send);
     let mut first_error: Option<IcError> = None;
+    // The wait for the replies to what goes now starts now; the clock is
+    // read once for every transaction in the send.
+    let mut now: u64 = 0;
+    if !ids.is_empty() {
+      now = ic_port::time::gethrtime();
+    }
     for id in &ids {
       if let Some(trans) = self.transactions.get_mut(id.0) {
         trans.queued_for_send = false;
+        trans.last_sent = now;
       }
       if let Err(e) = self.send_transaction(*id) {
         if first_error.is_none() {
@@ -911,7 +940,20 @@ impl ApidConnection {
       numbers::IC_SIG_ROLLBACK_REF => self.take_trans_ref(signal),
       numbers::IC_SIG_TAKEOVER_CONF => self.take_fail_conf(signal),
       numbers::IC_SIG_TAKEOVER_REF => self.take_fail_ref(signal),
+      numbers::IC_SIG_COORD_FREE_CONF | numbers::IC_SIG_COORD_FREE_REF => {
+        self.take_free_reply(signal)
+      }
       _ => false,
+    }
+  }
+
+  /// The coordinator's answer to the COORD_FREE_REQ that gave up a
+  /// timed-out transaction's record: nothing more to do. Both answers
+  /// lead with our pointer for the record.
+  fn take_free_reply(&mut self, signal: &SignalView<'_>) -> bool {
+    match signal.data.first() {
+      Some(&client_ptr) => self.names_lost_record(client_ptr),
+      None => false,
     }
   }
 
@@ -1502,6 +1544,55 @@ impl ApidConnection {
       self.end_transaction(tid, CommitState::RolledBack, error, 0);
     }
   }
+
+  /// End every transaction that has waited too long for its replies
+  /// while its link stayed up, as of `now` (chapter 06 §6.3). Run by a
+  /// poll at most once a second, after it has taken the replies that
+  /// came.
+  ///
+  /// Such a transaction ends rolled back with 4012, whose class says
+  /// the outcome is unknown: the coordinator may yet commit it. Each of
+  /// its queries not complete fails with 4012. Its record is never used
+  /// again, and is freed with COORD_FREE_REQ, which also makes the
+  /// coordinator clean up whatever it still holds of the transaction; a
+  /// reply that comes later finds no transaction of that id and is
+  /// dropped. A transaction that has ended, and waits only for rows of
+  /// its reads, fails those queries alone.
+  pub(crate) fn expire_transactions(&mut self, now: u64) {
+    let limit = self.reply_wait_nanos;
+    let mut expired: Vec<TransId> = Vec::new();
+    for tid in self.active_ids() {
+      if let Some(trans) = self.transactions.get(tid.0) {
+        if trans.waited_too_long(now, limit) {
+          expired.push(tid);
+        }
+      }
+    }
+    // Dispatch after walking the list: callbacks may change it.
+    let error = IcError::new(IC_NDB_ERROR_NO_REPLY);
+    for tid in expired {
+      let (coord, ended, sent) = match self.transactions.get(tid.0) {
+        Some(trans) => (trans.coord, trans.ended(), trans.sent.clone()),
+        // A callback has already closed it.
+        None => continue,
+      };
+      if ended {
+        for qid in sent {
+          self.fail_query(qid, error);
+        }
+        continue;
+      }
+      ic_port::debug_print!(
+        IC_NDB_MESSAGE_LEVEL,
+        "Node {} did not answer transaction {:?} in time",
+        coord.node_id,
+        tid
+      );
+      self.lose_coord_record(&coord);
+      self.send_coord_free(&coord);
+      self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
+    }
+  }
 }
 
 /// Emptied query lists a connection keeps for its next transactions;
@@ -1565,11 +1656,64 @@ mod tests {
       error: None,
       gci: 0,
       queued_for_send: false,
+      last_sent: 0,
     };
     assert!(!trans.is_done());
     trans.state = CommitState::Committed;
     assert!(!trans.is_done());
     trans.sent.clear();
     assert!(trans.is_done());
+  }
+
+  /// A transaction begun at the coordinator, open, that last sent at
+  /// `last_sent` and waits for nothing.
+  fn sent_at(last_sent: u64) -> Transaction {
+    Transaction {
+      trans_id: 5,
+      coord: CoordRecord::for_test(1),
+      state: CommitState::Started,
+      begun: true,
+      defined: Vec::new(),
+      sent: Vec::new(),
+      ops_sent: 1,
+      ops_completed: 1,
+      end_wanted: None,
+      error: None,
+      gci: 0,
+      queued_for_send: false,
+      last_sent,
+    }
+  }
+
+  #[test]
+  fn a_transaction_waits_too_long_only_for_a_reply() {
+    const LIMIT: u64 = 1_000;
+    const AT: u64 = 50_000;
+    let mut trans = sent_at(AT);
+    // Open with every reply in: the application's turn, however long.
+    assert!(!trans.waited_too_long(AT + 10 * LIMIT, LIMIT));
+    // A query sent and not complete.
+    trans.sent.push(QueryId(PtrId::from_u32(1)));
+    assert!(!trans.waited_too_long(AT + LIMIT - 1, LIMIT));
+    assert!(trans.waited_too_long(AT + LIMIT, LIMIT));
+    // A clock that reads earlier than the send is not a wait.
+    assert!(!trans.waited_too_long(AT - 1, LIMIT));
+    // A commit asked of the coordinator, every query complete.
+    trans.sent.clear();
+    trans.state = CommitState::CommitRequested;
+    assert!(!trans.waited_too_long(AT + LIMIT - 1, LIMIT));
+    assert!(trans.waited_too_long(AT + LIMIT, LIMIT));
+    trans.state = CommitState::RollbackRequested;
+    assert!(trans.waited_too_long(AT + LIMIT, LIMIT));
+    // Ended with every reply in.
+    trans.state = CommitState::Committed;
+    assert!(!trans.waited_too_long(AT + 10 * LIMIT, LIMIT));
+    // Ended, with a read's row still to come.
+    trans.sent.push(QueryId(PtrId::from_u32(2)));
+    assert!(trans.waited_too_long(AT + LIMIT, LIMIT));
+    // Never sent: nothing to wait for.
+    let mut idle = sent_at(0);
+    idle.state = CommitState::CommitRequested;
+    assert!(!idle.waited_too_long(AT + 10 * LIMIT, LIMIT));
   }
 }

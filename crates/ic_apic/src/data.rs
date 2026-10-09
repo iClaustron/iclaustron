@@ -32,6 +32,10 @@ pub const IC_DEFAULT_BATCH_BYTE_SIZE: u32 = 16384;
 pub const IC_DEFAULT_MAX_SCAN_BATCH_SIZE: u32 = 262144;
 /// Milliseconds between heartbeats to a data node when unstated.
 pub const IC_DEFAULT_API_HEARTBEAT_INTERVAL: u32 = 1500;
+/// The shortest time a transaction waits for its replies before it is
+/// given up with its outcome unknown, in milliseconds; see
+/// [`ClusterConfig::reply_wait_ms`]. Verify: chapter 05 §17.3.
+pub const IC_MIN_REPLY_WAIT_MS: u32 = 120_000;
 /// Hash map buckets for a new table when unstated.
 pub const IC_DEFAULT_HASHMAP_SIZE: u32 = 240;
 
@@ -70,6 +74,12 @@ pub struct DataNodeConfig {
   /// How often it expects to hear from us, in milliseconds. Falling
   /// silent for long enough makes it declare us dead.
   pub api_heartbeat_ms: u32,
+  /// How often it checks its transactions for ones that have waited
+  /// too long, in milliseconds; 0 if the configuration does not say.
+  pub timeout_check_period_ms: u32,
+  /// How long it lets an operation wait for a lock, in milliseconds; 0
+  /// if the configuration does not say.
+  pub lock_wait_limit_ms: u32,
 }
 
 /// A management server we may ask for the configuration.
@@ -262,6 +272,18 @@ impl ClusterConfig {
           IC_PARAM_API_HEARTBEAT_MS,
           IC_DEFAULT_API_HEARTBEAT_INTERVAL,
         ),
+        timeout_check_period_ms: value_u32_or(
+          &blob,
+          section,
+          IC_PARAM_TIMEOUT_CHECK_PERIOD,
+          0,
+        ),
+        lock_wait_limit_ms: value_u32_or(
+          &blob,
+          section,
+          IC_PARAM_LOCK_WAIT_LIMIT,
+          0,
+        ),
       });
     }
     for section in blob.nodes_of_type(SectionType::MgmNode) {
@@ -404,6 +426,24 @@ impl ClusterConfig {
     }
     shortest
   }
+
+  /// How long a transaction waits for its replies before it is given
+  /// up with its outcome unknown, in milliseconds: at least
+  /// [`IC_MIN_REPLY_WAIT_MS`], and longer if a data node's check period
+  /// and lock wait limit together come to more, since a reply may
+  /// rightly take that long. Verify: chapter 05 §17.3.
+  pub fn reply_wait_ms(&self) -> u32 {
+    let mut longest = IC_MIN_REPLY_WAIT_MS;
+    for node in &self.data_nodes {
+      let wait = node
+        .timeout_check_period_ms
+        .saturating_add(node.lock_wait_limit_ms);
+      if wait > longest {
+        longest = wait;
+      }
+    }
+    longest
+  }
 }
 
 #[cfg(test)]
@@ -457,6 +497,8 @@ mod tests {
         ),
         (IC_PARAM_NODE_GROUP, ConfigValue::Int(1)),
         (IC_PARAM_API_HEARTBEAT_MS, ConfigValue::Int(800)),
+        (IC_PARAM_TIMEOUT_CHECK_PERIOD, ConfigValue::Int(1000)),
+        (IC_PARAM_LOCK_WAIT_LIMIT, ConfigValue::Int(300_000)),
       ],
     );
     b.typed_section(
@@ -548,9 +590,32 @@ mod tests {
     assert_eq!(two.api_heartbeat_ms, 800);
     /* The period we must keep is the shortest anyone asks for. */
     assert_eq!(config.heartbeat_interval_ms(), 800);
+    /* Node 1 says nothing of its timeouts; node 2's add up to more
+     * than the shortest wait. */
+    assert_eq!(
+      (one.timeout_check_period_ms, one.lock_wait_limit_ms),
+      (0, 0)
+    );
+    assert_eq!(two.timeout_check_period_ms, 1000);
+    assert_eq!(two.lock_wait_limit_ms, 300_000);
+    assert_eq!(config.reply_wait_ms(), 301_000);
     assert!(config.data_node(99).is_none());
     assert_eq!(config.mgm_nodes.len(), 1);
     assert_eq!(config.mgm_nodes[0].host, "mgm.example");
+  }
+
+  #[test]
+  fn the_reply_wait_is_at_least_two_minutes() {
+    let mut config = ClusterConfig::default();
+    assert_eq!(config.reply_wait_ms(), IC_MIN_REPLY_WAIT_MS);
+    config.data_nodes.push(DataNodeConfig {
+      timeout_check_period_ms: 1000,
+      lock_wait_limit_ms: 1200,
+      ..DataNodeConfig::default()
+    });
+    assert_eq!(config.reply_wait_ms(), IC_MIN_REPLY_WAIT_MS);
+    config.data_nodes[0].lock_wait_limit_ms = u32::MAX;
+    assert_eq!(config.reply_wait_ms(), u32::MAX);
   }
 
   #[test]

@@ -940,6 +940,42 @@ becomes the index's own, `:95-98` (insert), `:124-128` and `:112-116`
 and the assertions on the flags where the index read is built and where
 the base operation is, `:25144-25145, 25297-25298`.
 
+### 6.9 A reply that never comes (4012)
+
+A transaction can wait for ever while its link stays up: a data node
+that has stopped, or a coordinator that dropped a request train for
+lack of room (16.1), sends nothing, and the heartbeats take minutes to
+fail the node, if they fail it at all.
+
+- **How long the client waits.** The larger of 120 000 ms and, over
+  the node sections of the configuration, parameter 129 plus parameter
+  131 (our `timeout_check_period` and `lock_wait_limit`), a section
+  without them counting as 0. Verify:
+  `src/ndbapi/ndb_cluster_connection.cpp:1262-1296`.
+- **What the reference does then.** It fails the transaction with 4012,
+  whose class is unknown result, and never uses its coordinator record
+  again; in its synchronous path it also tries a rollback. Verify:
+  `src/ndbapi/Ndbif.cpp:1679-1720`, `src/ndbapi/NdbTransaction.cpp:1190-1210`.
+- **What we do** (step 6.3, `ApidConnection::expire_transactions`). A
+  transaction waits when it has a query sent and not complete, or a
+  commit or rollback asked of the coordinator and not answered; the
+  wait runs from its last send. A poll looks at most once a second.
+  The transaction ends rolled back with 4012 and its unfinished queries
+  fail with 4012. Its record is never handed out again and is freed
+  with `COORD_FREE_REQ`, which makes the coordinator abort the
+  transaction or conclude it without telling us, and free the record;
+  a record is freed once at most (17.10). A reply that comes later
+  finds no transaction of that id and is dropped.
+- **Seen live (2026-10-09, RonDB 26.10 debug build, the integration
+  group `timeout`).** With a wait of one second, a data node stopped
+  with SIGSTOP after the transaction's record was allocated and before
+  its insert and commit were sent: the transaction ended with 4012
+  within the test's bounds of one to four seconds, the node still
+  counted as started, and after SIGCONT the next transaction at the
+  same node committed. The first version freed the record a second
+  time when the connection let go of its records, and the node stopped
+  with error 2343 (17.10).
+
 ## 7. Scans
 
 - `SCAN_REQ` (signal 32), 11 fixed words: the coordinator's record, a
@@ -1886,15 +1922,7 @@ NTS = `src/ndbapi/NdbTransactionScan.cpp`, IF = `src/ndbapi/Ndbif.cpp`.
 
 ### 16.6 When the reference gives up waiting (phase 6.3)
 
-- The reference's client fails a transaction that has waited longer
-  than its wait limit for replies with 4012, the outcome unknown, and
-  never reuses its coordinator record (`src/ndbapi/Ndbif.cpp:1679-1720`;
-  in its synchronous path it also tries a rollback,
-  `src/ndbapi/NdbTransaction.cpp:1190-1210`).
-- The wait limit is the larger of 120 000 ms and, over every node
-  section of the configuration, parameter 129 + parameter 131 (our
-  `timeout_check_period` + `lock_wait_limit`)
-  (`src/ndbapi/ndb_cluster_connection.cpp:1262-1296`).
+Folded into 6.9, seen live, 2026-10-09.
 
 ## 17. Where the code's facts are checked (2026-10-08)
 
@@ -1974,6 +2002,9 @@ the fuller account; this one is the index the code points into.
 - Parameter 101, replica_count, is the number of replicas per fragment. `include/mgmapi/mgmapi_config_parameters.h:53`
 - Parameter 119, api_heartbeat_ms, is how often a data node expects to hear from an API node, in milliseconds. `include/mgmapi/mgmapi_config_parameters.h:74`
 - Parameter 185, node_group, is the node group of a data node. `include/mgmapi/mgmapi_config_parameters.h:156`
+- Parameter 129, timeout_check_period, is how often a data node checks its transactions for ones that have waited too long, in milliseconds. `include/mgmapi/mgmapi_config_parameters.h:89`
+- Parameter 131, lock_wait_limit, is how long a data node lets an operation wait for a lock before it aborts the transaction, in milliseconds. `include/mgmapi/mgmapi_config_parameters.h:91`
+- The reference's client waits for a transaction's replies for the larger of 120 000 ms and, over the node sections of the configuration, parameter 129 plus parameter 131, a section without them counting as 0; then it gives the transaction up with 4012. `src/ndbapi/ndb_cluster_connection.cpp:1262-1296`
 - The parameters of an API node itself are 800 to 809, with RonDB's own additions at 898 and 899. `include/mgmapi/mgmapi_config_parameters.h:432-448`
 - Parameter 800, scan_batch_bytes_total, is the largest total size of a scan batch in bytes. `include/mgmapi/mgmapi_config_parameters.h:436`
 - Parameter 801, scan_batch_bytes, is the most bytes of one scan's batch. `include/mgmapi/mgmapi_config_parameters.h:437`
@@ -2171,6 +2202,9 @@ the fuller account; this one is the index the code points into.
 - COORD_FREE_REQ puts the coordinator's pointer first, then our block reference, then our pointer. `src/ndbapi/Ndblist.cpp:418-421`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2471-2473`
 - COORD_FREE_CONF (34) is one word, our pointer. `src/kernel/blocks/dbtc/DbtcMain.cpp:2488-2489`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2518-2519`
 - COORD_FREE_REF (35) is our pointer, an error code and the source line, three words, or five when the sender's reference does not match the record's. `src/kernel/blocks/dbtc/DbtcMain.cpp:2479-2482`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2523-2528`
+- COORD_FREE_REQ for a record whose transaction is still in progress makes the coordinator abort it, or conclude it without telling the client, and then free the record and answer COORD_FREE_CONF; replies of that transaction may still reach the client, which must check them against the transaction id. `src/kernel/blocks/dbtc/DbtcMain.cpp:2490-2519`
+- A record is freed once. A COORD_FREE_REQ that names a record no longer allocated, or allocated to another block, is refused with COORD_FREE_REF, and a debug data node stops on it first (error 2343, a failed assertion). Since the coordinator may hand a freed record to another transaction, of any API node, a second free must never be sent. `src/kernel/blocks/dbtc/DbtcMain.cpp:2474-2482`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2520-2528`
+- Seen live (2026-10-09, debug build): the first version of step 6.3 freed a timed-out transaction's record, and freed it again when the connection let go of its records; each time the data node that held it stopped with error 2343 at `DbtcMain.cpp:2478`, the check above, about 0.3 s after our node disconnected.
 
 ### 17.11 Key operations and column headers (`ic_signals::key_ops`, `ic_signals::column_header`)
 

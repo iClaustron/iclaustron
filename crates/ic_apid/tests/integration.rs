@@ -17,7 +17,9 @@
 //!   makes, and they check what they wrote through it too.
 //! - `IC_TEST_NDB_MGM`: the command that runs the management client,
 //!   with its connect string (`-c localhost:1186`), for the `failure`
-//!   group, which stops a data node and starts it again.
+//!   group, which stops a data node and starts it again. Set, it also
+//!   lets the `timeout` group stop a data node's process for a few
+//!   seconds with SIGSTOP, which needs `lsof` and the node's fixed port.
 //! - `IC_TEST_RECEIVE_THREADS`: how many receive threads to start, one
 //!   if not set, so that the suite can run with the nodes' links shared
 //!   out over several.
@@ -25,9 +27,10 @@
 //! The groups are the phase-5 ones: `connect`, `dict`, `pk`, `uk`,
 //! `types`, `failure`; `blob_guard`, which checks that rows of a table
 //! with a blob column are not deleted and that writes leave the blobs
-//! alone (chapter 06 §6.2); and `collation`, which asks the data nodes
-//! what a collation is and for its weights (RonDB 26.04 main and
-//! later).
+//! alone (chapter 06 §6.2); `timeout`, which checks that a transaction
+//! whose node stops answering ends with 4012 (chapter 06 §6.3); and
+//! `collation`, which asks the data nodes what a collation is and for
+//! its weights (RonDB 26.04 main and later).
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
 //! through the public API and lets go.
@@ -60,6 +63,7 @@ use ic_apid::record::Record;
 use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
+use ic_apid::transaction::IC_NDB_ERROR_NO_REPLY;
 use ic_port::err;
 use ic_port::time;
 use ic_port::IcError;
@@ -79,6 +83,9 @@ const IC_IT_RESTART_WAIT_MS: u64 = 240_000;
 /// How many times to try for an API node id, a second apart: the one
 /// the last test let go of may not be free again at once.
 const IC_IT_START_TRIES: u32 = 10;
+/// How long the `timeout` group lets a transaction wait for its
+/// replies.
+const IC_IT_REPLY_WAIT_MS: u32 = 1_000;
 
 // ---- The cluster, the MySQL server and the management client ----
 
@@ -95,6 +102,12 @@ impl Drop for Cluster {
 
 /// Connect to the cluster, or say why not and return `None`.
 fn cluster() -> Option<Cluster> {
+  cluster_with_reply_wait(0)
+}
+
+/// As [`cluster`], with transactions that give up waiting for their
+/// replies after `reply_wait_ms`, or when the configuration says if 0.
+fn cluster_with_reply_wait(reply_wait_ms: u32) -> Option<Cluster> {
   let text = match std::env::var("IC_TEST_CONNECTSTRING") {
     Ok(text) => text,
     Err(_) => {
@@ -118,7 +131,10 @@ fn cluster() -> Option<Cluster> {
         continue;
       }
     };
-    let mut options = GlobalOptions::default();
+    let mut options = GlobalOptions {
+      reply_wait_ms,
+      ..GlobalOptions::default()
+    };
     if let Ok(text) = std::env::var("IC_TEST_RECEIVE_THREADS") {
       options.receive_threads = text.parse().unwrap_or(1);
     }
@@ -1330,6 +1346,161 @@ fn blob_guard_leaves_the_text_alone_on_insert_update_and_write() {
   // MySQL deletes the rows, parts and all.
   mysql(&format!("DELETE FROM {}.bt", IC_IT_DB));
   assert!(read_by_id(&mut conn, &t, 20).is_none());
+}
+
+// ---- timeout ----
+
+/// A data node's process, stopped with SIGSTOP. Dropping this continues
+/// it with SIGCONT, so that a failing test leaves the cluster running.
+struct Stopped {
+  pid: String,
+}
+
+impl Stopped {
+  fn stop(pid: &str) -> Stopped {
+    let status = Command::new("kill")
+      .arg("-STOP")
+      .arg(pid)
+      .status()
+      .expect("run kill");
+    assert!(status.success(), "could not stop process {}", pid);
+    Stopped {
+      pid: pid.to_string(),
+    }
+  }
+}
+
+impl Drop for Stopped {
+  fn drop(&mut self) {
+    let _ = Command::new("kill").arg("-CONT").arg(&self.pid).status();
+  }
+}
+
+/// The process that listens on a TCP port of this machine, by `lsof`,
+/// or `None` if there is none, or no `lsof`.
+fn listener_pid(port: u16) -> Option<String> {
+  let out = Command::new("lsof")
+    .arg("-t")
+    .arg("-nP")
+    .arg(format!("-iTCP:{}", port))
+    .arg("-sTCP:LISTEN")
+    .output()
+    .ok()?;
+  let text = String::from_utf8_lossy(&out.stdout);
+  let pid = text.lines().next()?.trim().to_string();
+  if pid.is_empty() {
+    return None;
+  }
+  Some(pid)
+}
+
+/// Insert a row of the `pk` table in a transaction at `node_id`,
+/// defined and asked to commit; the caller sends it.
+fn insert_at(
+  conn: &mut ApidConnection,
+  t: &Table,
+  qid: QueryId,
+  node_id: u32,
+  id: &str,
+  val: &str,
+) -> TransId {
+  let mut row = t.row();
+  t.put(&mut row, "id", id);
+  t.put(&mut row, "val", val);
+  t.put(&mut row, "name", "timeout");
+  let tid = conn
+    .start_transaction(TransactionHint::Node(node_id), Some(&t.def))
+    .expect("a transaction");
+  let query = conn.query_mut(qid).expect("the query");
+  query.key_row_mut().copy_from_slice(&row);
+  query.attr_row_mut().copy_from_slice(&row);
+  let insert = WriteKeyArgs {
+    kind: WriteKind::Insert,
+    ..WriteKeyArgs::default()
+  };
+  conn
+    .write_key(qid, tid, &insert)
+    .expect("define the insert");
+  conn.commit_transaction(tid).expect("ask to commit");
+  tid
+}
+
+#[test]
+fn timeout_a_transaction_whose_node_stops_answering_ends_with_4012() {
+  if std::env::var("IC_TEST_NDB_MGM").is_err() {
+    eprintln!("skipped: IC_TEST_NDB_MGM is not set, and this stops a node");
+    return;
+  }
+  let cluster = match cluster_with_reply_wait(IC_IT_REPLY_WAIT_MS) {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  assert_eq!(cluster.global.reply_wait_ms(), IC_IT_REPLY_WAIT_MS);
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "pk");
+  let victim = *conn.started_nodes().last().expect("a started node");
+  let port = match cluster.global.config().link_to(victim) {
+    Some(link) => link.server_port,
+    None => 0,
+  };
+  if port == 0 {
+    eprintln!("skipped: data node {} has no fixed port", victim);
+    return;
+  }
+  let pid = match listener_pid(port) {
+    Some(pid) => pid,
+    None => {
+      eprintln!("skipped: no process found listening on port {}", port);
+      return;
+    }
+  };
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+
+  // The transaction's record is allocated while the node answers; its
+  // insert and commit go once the node has stopped, its link still up.
+  let tid = insert_at(&mut conn, &t, qid, victim, "21", "210");
+  let stopped = Stopped::stop(&pid);
+  let start = time::gethrtime();
+  assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+  let waited = time::millis_elapsed(start, time::gethrtime());
+  let trans = conn.transaction(tid).expect("the transaction");
+  assert_eq!(trans.error().map(|e| e.code), Some(IC_NDB_ERROR_NO_REPLY));
+  let query = conn.query(qid).expect("the query");
+  assert_eq!(query.error().map(|e| e.code), Some(IC_NDB_ERROR_NO_REPLY));
+  // After the wait, within the second between checks, and long before
+  // the heartbeats would have failed the node.
+  let limit = IC_IT_REPLY_WAIT_MS as u64;
+  assert!(waited >= limit, "ended after {} ms", waited);
+  assert!(waited < limit + 3_000, "ended after {} ms", waited);
+  assert!(
+    conn.started_nodes().contains(&victim),
+    "node {} was taken for failed",
+    victim
+  );
+  conn.close_transaction(tid).expect("close");
+  drop(stopped);
+
+  // The node goes on, its backlog with it; whether the first insert
+  // committed is not known. The next transaction there works.
+  let tid = insert_at(&mut conn, &t, qid, victim, "22", "220");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  conn.close_transaction(tid).expect("close");
+  let row = read_by_id(&mut conn, &t, 22).expect("row 22");
+  assert_eq!(t.get(&row, "val"), "220");
+
+  // Letting go of the connection gives back every record still held,
+  // each once: the one given up above is freed already, and freeing it
+  // again would stop a debug data node (chapter 05 §17.10).
+  drop(conn);
+  std::thread::sleep(std::time::Duration::from_secs(2));
+  assert!(
+    cluster.global.started_nodes().contains(&victim),
+    "node {} stopped after the connection let go of its records",
+    victim
+  );
 }
 
 // ---- collation ----

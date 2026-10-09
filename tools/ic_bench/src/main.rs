@@ -344,6 +344,7 @@ fn run() -> i32 {
   };
   let options = GlobalOptions {
     receive_threads: what.receive_threads,
+    ..GlobalOptions::default()
   };
   let mut global = match ApidGlobal::start_with_options(
     config,

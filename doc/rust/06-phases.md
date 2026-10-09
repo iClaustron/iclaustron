@@ -654,7 +654,7 @@ the TEXT as MySQL wrote it.
   up after a time and reports 4012, outcome unknown; so will we.
 - The time is the larger of 120 s and, over the data nodes in the
   configuration, the largest `timeout_check_period` (parameter 129) +
-  `lock_wait_limit` (131) (chapter 05 §16.6). `ic_apic`
+  `lock_wait_limit` (131) (chapter 05 §6.9). `ic_apic`
   decodes both parameters; `GlobalOptions` may override (tests use a
   second).
 - A transaction notes when it last sent with replies outstanding.
@@ -673,6 +673,31 @@ the TEXT as MySQL wrote it.
   `timeout`: a data node stopped with SIGSTOP, its link up, a timeout
   of one second, the transaction ends with 4012 before the heartbeats
   fail the node; after SIGCONT the next transaction works.
+
+As built (2026-10-09; `timeout` and the whole suite pass): `ic_apic` decodes parameters
+129 and 131 into `DataNodeConfig`, and `ClusterConfig::reply_wait_ms`
+gives the wait; `GlobalOptions::reply_wait_ms` overrides it when not
+zero, and `ApidGlobal::reply_wait_ms` says which applies. A send reads
+the clock once and notes it on every transaction it sends for. A poll
+reads the clock once, after the replies it took, and at most once a
+second walks the transactions in flight
+(`ApidConnection::expire_transactions`). One that waits for a reply (a
+query sent and not complete, or a commit or rollback asked) longer than
+the wait since it last sent ends rolled back with 4012, its class
+unknown result, as a lost link's transaction ends rolled back with the
+link's error; its queries fail with 4012; its record is lost and freed
+with `COORD_FREE_REQ`, whose answer is taken quietly. A record is freed
+once at most, and only one the coordinator confirmed: the first run
+freed the timed-out record again when the connection let go of its
+records, and the debug data node holding it stopped with error 2343
+(chapter 05 §17.10), so the group now checks that the node outlives
+the connection. One already ended
+that waits only for its reads' rows fails those queries alone. The
+one-shot calls of `key_op` keep their own ten-second wait. Unit tests:
+the wait from the configuration, the once-a-second pacing, and which
+transactions count as waiting, with the clock given. The group
+`timeout` finds the node's process by the port it listens on (`lsof`)
+and needs `IC_TEST_NDB_MGM` set, as the `failure` group does.
 
 ### 6.4 latin1: moved to phase 8
 

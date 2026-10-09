@@ -59,6 +59,12 @@ pub const IC_PARAM_REPLICA_COUNT: u32 = 101;
 /// How often a data node expects to hear from us, in milliseconds.
 /// This sets our heartbeat period. Verify: chapter 05 §17.3.
 pub const IC_PARAM_API_HEARTBEAT_MS: u32 = 119;
+/// How often a data node checks its transactions for ones that have
+/// waited too long, in milliseconds. Verify: chapter 05 §17.3.
+pub const IC_PARAM_TIMEOUT_CHECK_PERIOD: u32 = 129;
+/// How long a data node lets an operation wait for a lock before it
+/// aborts the transaction, in milliseconds. Verify: chapter 05 §17.3.
+pub const IC_PARAM_LOCK_WAIT_LIMIT: u32 = 131;
 /// The node group a data node belongs to. Verify: chapter 05 §17.3.
 pub const IC_PARAM_NODE_GROUP: u32 = 185;
 
@@ -179,6 +185,8 @@ fn node_parameter_name(id: u32) -> Option<&'static str> {
     IC_PARAM_NODE_DEDICATED => Some("dedicated"),
     IC_PARAM_REPLICA_COUNT => Some("replica_count"),
     IC_PARAM_API_HEARTBEAT_MS => Some("api_heartbeat_ms"),
+    IC_PARAM_TIMEOUT_CHECK_PERIOD => Some("timeout_check_period"),
+    IC_PARAM_LOCK_WAIT_LIMIT => Some("lock_wait_limit"),
     IC_PARAM_NODE_GROUP => Some("node_group"),
     IC_PARAM_SCAN_BATCH_BYTES_TOTAL => Some("scan_batch_bytes_total"),
     IC_PARAM_SCAN_BATCH_BYTES => Some("scan_batch_bytes"),
@@ -232,6 +240,8 @@ mod tests {
       IC_PARAM_SEND_BUFFER_TOTAL,
       IC_PARAM_REPLICA_COUNT,
       IC_PARAM_API_HEARTBEAT_MS,
+      IC_PARAM_TIMEOUT_CHECK_PERIOD,
+      IC_PARAM_LOCK_WAIT_LIMIT,
       IC_PARAM_NODE_GROUP,
       IC_PARAM_SCAN_BATCH_BYTES_TOTAL,
       IC_PARAM_SCAN_BATCH_BYTES,
