@@ -64,14 +64,19 @@ pub type QueryCallback = fn(&mut ApidConnection, QueryId, usize);
 /// How a read locks (`IC_READ_KEY_QUERY_TYPE`), in the header's order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ReadKind {
-  /// A shared lock taken and let go of in the read itself.
+  /// A shared lock taken and let go of in the read itself. Through a
+  /// unique index the lock is held until the transaction ends, as for
+  /// `Locked`: the coordinator takes no simple read through an index.
+  /// Verify: chapter 05 §6.8.
   #[default]
   Simple = 0,
   /// A shared lock held until the transaction ends.
   Locked = 1,
   /// An exclusive lock held until the transaction ends.
   Exclusive = 2,
-  /// The last committed value, with no lock at all.
+  /// The last committed value, with no lock at all. Through a unique
+  /// index a shared lock is taken and held until the transaction ends,
+  /// and a backup replica may serve the read. Verify: chapter 05 §6.8.
   Committed = 3,
   /// As exclusive, but failing rather than waiting for another's lock.
   ExclusiveNoWait = 4,
@@ -206,6 +211,8 @@ pub struct ApidQuery {
   attr_row: Vec<u8>,
   state: QueryState,
   error: Option<IcError>,
+  /// What the refusal said beyond its code, or zero.
+  error_data: u32,
   user_ref: usize,
   callback: Option<QueryCallback>,
   /// Bytes of row data the last read brought.
@@ -253,6 +260,7 @@ impl ApidQuery {
       attr_row: vec![0; attr_rec.row_size() as usize],
       state: QueryState::Idle,
       error: None,
+      error_data: 0,
       user_ref: 0,
       callback: None,
       result_len: 0,
@@ -285,6 +293,7 @@ impl ApidQuery {
       attr_row: vec![0; attr_rec.row_size() as usize],
       state: QueryState::Idle,
       error: None,
+      error_data: 0,
       user_ref: 0,
       callback: None,
       result_len: 0,
@@ -349,6 +358,13 @@ impl ApidQuery {
     self.error
   }
 
+  /// What the data node said about the last execution's refusal beyond
+  /// its code, or zero: for 893, a duplicate key, the id of the unique
+  /// index whose value was taken. Verify: chapter 05 §6.8.
+  pub fn error_data(&self) -> u32 {
+    self.error_data
+  }
+
   /// What was given with the arguments of the last execution.
   pub fn user_ref(&self) -> usize {
     self.user_ref
@@ -388,6 +404,7 @@ impl ApidQuery {
     self.user_ref = user_ref;
     self.callback = callback;
     self.error = None;
+    self.error_data = 0;
     self.result_len = 0;
     self.state = QueryState::Defined;
   }
@@ -395,6 +412,12 @@ impl ApidQuery {
   pub(crate) fn fail(&mut self, error: IcError) {
     self.error = Some(error);
     self.state = QueryState::Completed;
+  }
+
+  /// As [`fail`](Self::fail), for a refusal that says more than its code.
+  pub(crate) fn refuse(&mut self, error: IcError, error_data: u32) {
+    self.fail(error);
+    self.error_data = error_data;
   }
 
   pub(crate) fn set_result_len(&mut self, len: u32) {

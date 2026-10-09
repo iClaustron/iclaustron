@@ -41,6 +41,8 @@
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::hash::BuildHasher;
+use std::hash::Hasher;
 use std::sync::Arc;
 
 use ic_port::debug::IC_NDB_MESSAGE_LEVEL;
@@ -348,6 +350,9 @@ pub struct CoordRecord {
   /// Given back with COORD_FREE_REQ: never named to the coordinator
   /// again, since it may have handed the record on.
   freed: bool,
+  /// The release id it was allocated with, which only its own free
+  /// carries. Verify: chapter 05 §17.10.
+  release_id: u32,
 }
 
 #[cfg(test)]
@@ -364,6 +369,23 @@ impl CoordRecord {
       busy: true,
       lost: false,
       freed: false,
+      release_id: 1,
+    }
+  }
+}
+
+/// The next release id from `seed`, which it moves on: a 64-bit mix of
+/// a counter, its high half, never zero, which the coordinator takes as
+/// a free without one.
+fn release_id_after(seed: &mut u64) -> u32 {
+  loop {
+    *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *seed;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    let id = ((z ^ (z >> 31)) >> 32) as u32;
+    if id != 0 {
+      return id;
     }
   }
 }
@@ -446,6 +468,8 @@ pub struct ApidConnection {
   pub(crate) reply_wait_nanos: u64,
   /// When a poll next looks for transactions that have waited too long.
   pub(crate) next_reply_check: u64,
+  /// Where the next release id comes from.
+  release_seed: u64,
   pub(crate) key_scratch: Vec<u32>,
   pub(crate) attr_scratch: Vec<u32>,
   /// Pages of signals taken from the inbox, read, and given back on the
@@ -500,6 +524,11 @@ impl ApidConnection {
     let inbox = shared.thread_table.allocate()?;
     let trans_counter = shared.thread_table.trans_counter(inbox.thread_id());
     let reply_wait_nanos = shared.reply_wait_ms as u64 * 1_000_000;
+    // Seeded from the keys the standard library draws at random for its
+    // hash maps, which differ from process to process and call to call.
+    let release_seed = std::collections::hash_map::RandomState::new()
+      .build_hasher()
+      .finish();
     Ok(ApidConnection {
       shared,
       inbox,
@@ -528,6 +557,7 @@ impl ApidConnection {
       queued_since: 0,
       reply_wait_nanos,
       next_reply_check: 0,
+      release_seed,
       key_scratch: Vec::new(),
       attr_scratch: Vec::new(),
     })
@@ -1062,6 +1092,15 @@ impl ApidConnection {
     (block << 52) | (node << 40) | low as u64
   }
 
+  /// A release id for a transaction record about to be allocated: a
+  /// random number, never zero, sent in COORD_ALLOC_REQ and again in
+  /// the record's COORD_FREE_REQ, so that a free that comes late or
+  /// twice cannot free a record the coordinator has since handed on.
+  /// Verify: chapter 05 §17.10.
+  pub fn next_release_id(&mut self) -> u32 {
+    release_id_after(&mut self.release_seed)
+  }
+
   /// A transaction record at `node_id`'s coordinator for a transaction
   /// to use: a free one this thread holds, or a new one allocated. Given
   /// back with [`free_coord_record`](Self::free_coord_record).
@@ -1096,6 +1135,7 @@ impl ApidConnection {
     // coordinator confirms it.
     let index = self.coord_records.len();
     let api_ptr = coord_ptr_of(index);
+    let release_id = self.next_release_id();
     self.coord_records.push(CoordRecord {
       node_id,
       generation,
@@ -1106,11 +1146,13 @@ impl ApidConnection {
       busy: true,
       lost: true,
       freed: false,
+      release_id,
     });
     let allocate = CoordAllocReq {
       client_ptr: api_ptr,
       client_block_ref: self.block_ref(),
       instance: IC_ANY_COORD_INSTANCE,
+      release_id,
     };
     let header = SignalHeader::new(
       numbers::IC_SIG_COORD_ALLOC_REQ,
@@ -1247,6 +1289,7 @@ impl ApidConnection {
       coord_ptr: rec.coord_ptr,
       client_block_ref: self.block_ref(),
       client_ptr: rec.api_ptr,
+      release_id: rec.release_id,
     };
     let header = SignalHeader::new(
       numbers::IC_SIG_COORD_FREE_REQ,
@@ -1352,6 +1395,16 @@ impl ApidConnection {
     self.table_unbind(table);
   }
 
+  /// Say that an operation through an index failed because the index
+  /// has changed or gone since it was bound. Every thread's next bind
+  /// fetches it again.
+  pub fn index_changed(&mut self, index: &IndexDef) {
+    self.shared.dict_cache.forget_index(index);
+    self
+      .indexes
+      .retain(|_, held| !std::ptr::eq(Arc::as_ptr(held), index));
+  }
+
   /// One signal from the inbox: joined, then matched.
   /// A signal read where it lies. Only what has to be kept is copied:
   /// a fragment, which waits for the rest of its train, and a reply a
@@ -1448,6 +1501,18 @@ impl Drop for ApidConnection {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn release_ids_are_never_zero_and_do_not_repeat_soon() {
+    let mut seed: u64 = 0;
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..10_000 {
+      let id = release_id_after(&mut seed);
+      assert_ne!(id, 0);
+      seen.insert(id);
+    }
+    assert_eq!(seen.len(), 10_000, "ten thousand ids, all different");
+  }
 
   #[test]
   fn a_record_is_given_back_once_and_only_if_confirmed() {

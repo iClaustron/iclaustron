@@ -529,10 +529,10 @@ The words, as `ic_signals::coord_alloc` has them, none with sections:
 
 | Signal | Number | Words |
 |---|---|---|
-| `COORD_ALLOC_REQ` | 39 | our pointer, our block reference, instance wanted (0 for any) |
+| `COORD_ALLOC_REQ` | 39 | our pointer, our block reference, instance wanted (0 for any), release id |
 | `COORD_ALLOC_CONF` | 37 | our pointer, the coordinator's pointer, the coordinator's block reference |
 | `COORD_ALLOC_REF` | 38 | our pointer, NDB error code |
-| `COORD_FREE_REQ` | 36 | **the coordinator's pointer**, our block reference, our pointer |
+| `COORD_FREE_REQ` | 36 | **the coordinator's pointer**, our block reference, our pointer, release id |
 | `COORD_FREE_CONF` | 34 | our pointer |
 | `COORD_FREE_REF` | 35 | our pointer, NDB error code, source line of the refusal |
 
@@ -541,6 +541,21 @@ first, because it is the coordinator that has to find the record. An
 allocation is refused when the node is not started or is shutting down, or
 has no record free. Verify: `src/kernel/blocks/dbtc/DbtcMain.cpp:2366-2531`,
 `src/ndbapi/NdbApiSignal.cpp:134-138`.
+
+**The release id** (RonDB 26.10, added by the author on 2026-10-09 after
+a doubled free stopped a debug data node, 17.10). The allocate's fourth
+word is a random number the API node picks, never zero, which the
+coordinator keeps with the record; the free carries it again as its
+fourth word. A free with the record's id frees it as before. A free
+for a record already freed, or being freed, is refused with
+`COORD_FREE_REF`. A free with another id is ignored while a new
+transaction uses the record, and refused otherwise (the author). A
+request without the word, or with 0, is handled as before, so a
+coordinator without release ids, which reads three words, takes ours
+too. As built: each record gets its id when it is allocated
+(`ApidConnection::next_release_id`), and is freed with it once at most.
+Verify: `src/kernel/blocks/dbtc/DbtcMain.cpp:2374, 2450, 2468-2522`,
+`include/ndb_version.h.in:1604`.
 
 **The coordinator's block reference is echoed, never decoded.** Its
 upper sixteen bits hold the block and the instance, and RonDB packs up
@@ -922,10 +937,12 @@ columns in the index's order, which are the primary key of the index's
 own table, taken from a record over the base table by name; the
 column data is over the base table as for any read or write.
 The coordinator finds the row's primary key through the index and runs
-the operation on the table; `UNIQUE_OP_CONF` and `UNIQUE_OP_REF` come back in
-the key family's layouts (the reference defines the confirmation as the
-key confirmation and builds the refusal as a key refusal), and the row
-as `ROW_DATA_REP`.
+the operation on the table. It never sends `UNIQUE_OP_CONF`: an
+operation through an index is confirmed by `KEY_OP_CONF` like any
+other, and refused by `UNIQUE_OP_REF` in the key refusal's layout with
+error data 0; the row comes as `ROW_DATA_REP`. (An earlier revision
+said both answers came as the unique family's signals.) Verify:
+`src/kernel/blocks/dbtc/DbtcMain.cpp:7252-7270`, `:24855-24866`.
 An insert cannot go through an index; the reference refuses one with
 4200. **A read through an index takes the shared lock, always**: the
 reference sends its committed and simple index reads as plain locked
@@ -939,6 +956,72 @@ becomes the index's own, `:95-98` (insert), `:124-128` and `:112-116`
 (committed and simple reads); `src/kernel/blocks/dbtc/DbtcMain.cpp:24117-24419`,
 and the assertions on the flags where the index read is built and where
 the base operation is, `:25144-25145, 25297-25298`.
+
+**Unique keys done properly** (step 6.5, 2026-10-09; what was gathered
+in 16.3, folded in here). Seen live, RonDB 26.10 debug build, the
+integration group `uk`, unless marked otherwise:
+
+- **NULL.** A row with NULL in an indexed column is never put in the
+  index, so a lookup by NULL can find nothing; the bytes under a NULL
+  would name some other row. The reference's client refuses a NULL key
+  column with 4316, and so do we, before sending. Verify:
+  `src/ndbapi/NdbOperationExec.cpp:893-900`,
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:27375, 27508`.
+- **Placement.** The coordinator hashes the index columns in the
+  index's order over the index's own table, which inherits read backup,
+  the hash function and full replication from its table, and when the
+  fragment types match its hash map and fragment count; the index's
+  description carries its own replica data and hash map, and every
+  index column is a distribution key. We hash the key a unique request
+  carries, the indexed columns padded to words, with the index's own
+  hash map and replicas. Seen live: for twenty keys the partition we
+  worked out was the one the data nodes report for the index's row,
+  read back with the partition pseudo column from the index's own table
+  by its key (the coordinator lets a client read an index's table
+  directly), and a transaction so hinted started at a node holding it.
+  An index over a character column is placed in turn until its
+  collation's transform is known (chapter 06 §8.6). Verify:
+  `src/ndbapi/Ndb.cpp:764-773, 882-905`,
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:3341-3370`,
+  `src/kernel/blocks/dbdict/Dbdict.cpp:13643-13678, 1283-1317`,
+  `src/ndbapi/NdbDictionaryImpl.cpp:5803-5810`.
+- **Locks.** A committed read through an index is sent as a shared read
+  with bit 20 of the flags word set, which lets both reads use a backup
+  replica of a read-backup table, or any node of a fully replicated
+  one; the lock is held to commit, and nothing releases it early. The
+  index read is shared for a read and exclusive otherwise. Seen live: a
+  locked and an exclusive read through an index wait for an update's
+  lock and see what it committed; a no-wait read is refused at once
+  with 635; 500 committed reads through an index in one batch all
+  completed. Verify: `src/ndbapi/NdbTransaction.cpp:3191-3207`,
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:5137-5146, 5446, 25125-25126`.
+- **Duplicates.** A value taken already gives 893 with the index id as
+  its error data. Seen live: an operation that aborts on error, as a
+  write does, gets it in `TRANS_ABORTED_REP`, not in a refusal (6.4), and
+  the data names the index: by primary key, the index whose value an
+  insert duplicated; through one index, the other index whose column an
+  update set to a value taken. A deferred check is bit 17 of the flags
+  word, honoured on unique requests too and checked at commit; we do not
+  ask for it. Verify: `src/kernel/blocks/dbtc/DbtcMain.cpp:9562-9571,
+  24357, 7088-7091`, `src/kernel/blocks/dbtup/DbtupTrigger.cpp:902-935`.
+- **The index's state.** Neither the coordinator nor the reference's
+  client checks it, and a lookup through an index still being built
+  finds nothing; we refuse one that is not online at bind. Seen live:
+  an online index's description carries state 4, a table's carries none.
+  Verify: `src/kernel/blocks/dbtc/DbtcMain.cpp:25099-25106, 9579`,
+  `include/kernel/signaldata/DictTabInfo.hpp:320-325`.
+- **A dropped index.** An operation through it is refused with 284, or
+  241 for a wrong version, and `TABLE_CHANGED_REP` tells API nodes of a
+  new enough version. Seen live: an index dropped and made again by a
+  MySQL server while bound was refused with one of the two, let go of,
+  and bound afresh under its new id. Verify:
+  `src/kernel/blocks/dbdict/Dbdict.cpp:9470-9494`.
+- **Updates.** The reference takes the indexed columns of an update
+  through an index from the key row, so it cannot change them; we refuse
+  such an update outright, and an insert or write through an index as
+  before. Verify: `src/ndbapi/NdbOperationExec.cpp:1192-1234`.
+- Out of index operation records gives 288 (not seen live). Verify:
+  `src/kernel/blocks/dbtc/DbtcMain.cpp:24305`.
 
 ### 6.9 A reply that never comes (4012)
 
@@ -1664,57 +1747,7 @@ Configuration parameters are named by id, with our names: 129
 
 ### 16.3 Unique keys (phase 6.5)
 
-- Placement: the reference hashes the index key over the index's own
-  table and places the transaction by that table's partition
-  (`src/ndbapi/Ndb.cpp:764-773, 882-905`); the coordinator hashes the
-  index columns in the index's order
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:3341-3370`). The
-  index's table inherits read backup, the hash function and full
-  replication from its table, and, when the fragment types match, its
-  hash map and fragment count
-  (`src/kernel/blocks/dbdict/Dbdict.cpp:13643-13678`); fetching the
-  index's description returns its own replica data and hash map
-  (`src/kernel/blocks/dbdict/Dbdict.cpp:1283-1317`); every index column is a
-  distribution key
-  (`src/ndbapi/NdbDictionaryImpl.cpp:5803-5810`).
-- The index's state is checked neither by the coordinator nor by the
-  reference's client
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:25099-25106, 9579`): a lookup
-  through an offline index finds nothing. A missing index gives 284, a
-  wrong version 241. A dropped index is reported by
-  `TABLE_CHANGED_REP` to API nodes of a new enough version
-  (`src/kernel/blocks/dbdict/Dbdict.cpp:9470-9494`).
-- NULL: the reference's client refuses a NULL key column with 4316
-  (`src/ndbapi/NdbOperationExec.cpp:893-900`); a row with NULL in any
-  indexed column is never put in the index
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:27375,
-  27508`).
-- Locks: a committed read through an index is sent as a shared read
-  with bit 20 of the flags word set (`src/ndbapi/NdbTransaction.cpp:3191-3207`),
-  which lets both reads use a backup replica of a read-backup table or
-  any node of a fully replicated one
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:5446, 5137-5146`);
-  the lock is held to commit. A debug coordinator asserts that an index
-  request has no simple flag
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:25144-25145, 25297-25298`).
-  The index read is shared for a read and exclusive otherwise
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:25125-25126`). Nothing releases the
-  lock early.
-- A duplicate value gives 893 with the index id as error data
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:9562-9571`). A deferred check is bit
-  17 of the flags
-  word, honoured on unique requests too (`src/kernel/blocks/dbtc/DbtcMain.cpp:24357,
-  7088-7091`), checked at commit
-  (`src/kernel/blocks/dbtup/DbtupTrigger.cpp:902-935`).
-- Replies: `UNIQUE_OP_CONF` is never sent; the operation is confirmed
-  by `KEY_OP_CONF` (`src/kernel/blocks/dbtc/DbtcMain.cpp:7252-7270`).
-  `UNIQUE_OP_REF` is laid
-  out as `KEY_OP_REF`, with error data 0
-  (`src/kernel/blocks/dbtc/DbtcMain.cpp:24855-24866`).
-  Out of index operation records: 288 (`src/kernel/blocks/dbtc/DbtcMain.cpp:24305`).
-- In the reference, an update through an index takes the indexed
-  columns from the key row (`src/ndbapi/NdbOperationExec.cpp:1192-1234`), so it
-  cannot change them.
+Folded into 6.8, seen live, 2026-10-09.
 
 ### 16.4 Scans (phase 8)
 
@@ -2196,15 +2229,15 @@ the fuller account; this one is the index the code points into.
 
 - The six signal numbers: COORD_FREE_CONF 34, COORD_FREE_REF 35, COORD_FREE_REQ 36, COORD_ALLOC_CONF 37, COORD_ALLOC_REF 38, COORD_ALLOC_REQ 39. `include/kernel/GlobalSignalNumbers.h:101-107`
 - The reference sends COORD_ALLOC_REQ (39) and COORD_FREE_REQ (36) as three plain words each, with no sections. `src/ndbapi/NdbApiSignal.cpp:134-155`
-- COORD_ALLOC_REQ carries our pointer, our block reference and the coordinator instance wanted. `src/ndbapi/Ndb.cpp:160-170`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2371-2376`
+- COORD_ALLOC_REQ carries our pointer, our block reference and the coordinator instance wanted, and from RonDB 26.10 a fourth word, the release id: random, never zero, kept by the coordinator with the record. `src/ndbapi/Ndb.cpp:160-170`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2371-2376, 2450`
 - COORD_ALLOC_CONF (37) is three words: our pointer, the coordinator's pointer, the coordinator's reference. `src/kernel/blocks/dbtc/DbtcMain.cpp:2446-2451`
 - COORD_ALLOC_REF (38) is two words, our pointer and an error code, sent when the node is not started, is shutting down, or has no record free. `src/kernel/blocks/dbtc/DbtcMain.cpp:2393-2427`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2456-2459`
-- COORD_FREE_REQ puts the coordinator's pointer first, then our block reference, then our pointer. `src/ndbapi/Ndblist.cpp:418-421`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2471-2473`
+- COORD_FREE_REQ puts the coordinator's pointer first, then our block reference, then our pointer, and from RonDB 26.10 the record's release id fourth. `src/ndbapi/Ndblist.cpp:418-421`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2484-2487`
 - COORD_FREE_CONF (34) is one word, our pointer. `src/kernel/blocks/dbtc/DbtcMain.cpp:2488-2489`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2518-2519`
 - COORD_FREE_REF (35) is our pointer, an error code and the source line, three words, or five when the sender's reference does not match the record's. `src/kernel/blocks/dbtc/DbtcMain.cpp:2479-2482`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2523-2528`
 - COORD_FREE_REQ for a record whose transaction is still in progress makes the coordinator abort it, or conclude it without telling the client, and then free the record and answer COORD_FREE_CONF; replies of that transaction may still reach the client, which must check them against the transaction id. `src/kernel/blocks/dbtc/DbtcMain.cpp:2490-2519`
-- A record is freed once. A COORD_FREE_REQ that names a record no longer allocated, or allocated to another block, is refused with COORD_FREE_REF, and a debug data node stops on it first (error 2343, a failed assertion). Since the coordinator may hand a freed record to another transaction, of any API node, a second free must never be sent. `src/kernel/blocks/dbtc/DbtcMain.cpp:2474-2482`, `src/kernel/blocks/dbtc/DbtcMain.cpp:2520-2528`
-- Seen live (2026-10-09, debug build): the first version of step 6.3 freed a timed-out transaction's record, and freed it again when the connection let go of its records; each time the data node that held it stopped with error 2343 at `DbtcMain.cpp:2478`, the check above, about 0.3 s after our node disconnected.
+- A record is freed once. A COORD_FREE_REQ that names a record no longer allocated, or allocated to another block, is refused with COORD_FREE_REF, and a debug data node stops on it first (error 2343, a failed assertion). Since the coordinator may hand a freed record to another transaction, of any API node, a second free must never be sent. With release ids (RonDB 26.10, 6.1) a free for a record already freed is refused, and one with another record's id is ignored while a transaction uses that record and refused otherwise, so a stale free no longer frees a record handed on. `src/kernel/blocks/dbtc/DbtcMain.cpp:2468-2522`
+- Seen live (2026-10-09, debug build): the first version of step 6.3 freed a timed-out transaction's record, and freed it again when the connection let go of its records; each time the data node that held it stopped with error 2343 at `DbtcMain.cpp:2478`, the check above, about 0.3 s after our node disconnected. The author added release ids the same day.
 
 ### 17.11 Key operations and column headers (`ic_signals::key_ops`, `ic_signals::column_header`)
 
@@ -2220,7 +2253,7 @@ the fuller account; this one is the index the code points into.
 - COMMIT_MARKER_FREE_ORD (469) is the two words of the transaction id, sent to the block that sent the KEY_OP_CONF, even when the confirmation is otherwise rejected. `src/ndbapi/Ndbif.cpp:2052-2068`, `src/ndbapi/Ndbif.cpp:559-576`
 - Operation types: read 0, update 1, insert 2, delete 3, write 4, exclusive read 5. `include/kernel/kernel_types.h:40-46`
 - Abort options: abort on error 0, ignore error 2. `include/kernel/signaldata/TcKeyReq.hpp:100-105`
-- Request flag bits: dirty 0, no disk 1, commit 4, operation 5-7, simple 8, execute 10, start 11, abort option 12-13, no wait 21, batch safe 22, batch unsafe 23. `include/kernel/signaldata/TcKeyReq.hpp:423-457`
+- Request flag bits: dirty 0, no disk 1, commit 4, operation 5-7, simple 8, execute 10, start 11, abort option 12-13, read committed base 20, no wait 21, batch safe 22, batch unsafe 23. `include/kernel/signaldata/TcKeyReq.hpp:423-457`
 - In the long form the third word, the column data length, is zero. `include/kernel/signaldata/TcKeyReq.hpp:121-134`, `src/ndbapi/NdbOperationExec.cpp:1483-1486`
 - The coordinator puts at most three operations in one KEY_OP_CONF: six words. `src/kernel/blocks/dbtc/Dbtc.hpp:156`
 - KEY_OP_REF is five words: our operation pointer, the transaction id, the error code, more about the error. `include/kernel/signaldata/TcKeyRef.hpp:57-68`
@@ -2300,7 +2333,7 @@ the fuller account; this one is the index the code points into.
 - `UNIQUE_OP_REQ` (signal 519) is laid out as `KEY_OP_REQ` (signal 12), and `UNIQUE_OP_CONF` (signal 520) as `KEY_OP_CONF` (signal 10). `include/kernel/signaldata/TcIndx.hpp:30-35`, `src/kernel/blocks/dbtc/DbtcMain.cpp:24124-24127`
 - The coordinator reads the index's own table with the key the request carries, asking for the stored primary key, then runs the operation on the base table with that key. `src/kernel/blocks/dbtc/DbtcMain.cpp:25120-25192`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25222-25299`
 - Both the read of the index and the operation on the table assert that the request carries neither the dirty nor the simple flag. `src/kernel/blocks/dbtc/DbtcMain.cpp:25089`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25144-25145`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25226`, `src/kernel/blocks/dbtc/DbtcMain.cpp:25297-25298`
-- The reference's client sends a committed or simple read through an index as an ordinary shared-lock read, and refuses an insert through one with error 4200. `src/ndbapi/NdbIndexOperation.cpp:76-128`
+- The reference's client sends a committed or simple read through an index as a shared-lock read, the committed one with bit 20 of the flags word set, which lets a backup replica of a read-backup table serve both reads; the lock is held to commit. It refuses an insert through an index with error 4200. `src/ndbapi/NdbIndexOperation.cpp:76-128`, `src/ndbapi/NdbTransaction.cpp:3191-3207`, `src/kernel/blocks/dbtc/DbtcMain.cpp:5137-5146, 5446`
 - When a node's failure is reported handled, a transaction coordinated there that was sending operations or a commit fails with error 4010, and one that was rolling back counts as a success. `src/ndbapi/Ndbif.cpp:297-356`
 - `TAKEOVER_CONF` (signal 8) is taken by a transaction sending operations or a commit, and `TAKEOVER_REF` (signal 9) by one sending operations or a rollback. `src/ndbapi/Ndbif.cpp:1134-1222`
 - `TAKEOVER_CONF` says the transaction committed; one that had reads fails with error 4115, as their rows may be lost. `src/ndbapi/NdbTransaction.cpp:2888-2941`

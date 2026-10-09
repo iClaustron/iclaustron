@@ -46,8 +46,11 @@ use ic_port::err;
 use ic_port::IcError;
 use ic_signals::table_props;
 
+use crate::dict_cache::IndexDef;
 use crate::dict_cache::TableDef;
+use crate::node_connect::words_as_bytes;
 use crate::record::Record;
+use crate::row_codec;
 
 /// The distribution key of the row `key_rec` lays out, as the bytes to
 /// hash.
@@ -166,6 +169,39 @@ pub fn partition_of(
   }
   let key = distribution_key(key_rec, key_row)?;
   Ok(map.fragment_of(partition_hash(table, &key)))
+}
+
+/// The partition of the index's own table that a unique key is in, or
+/// why it cannot be known: as for a table, and for an index over a
+/// character column, whose collation's transform is needed first.
+/// `key_row` is laid out by `key_rec` over the indexed table. The bytes
+/// hashed are the key a unique request carries, the indexed columns in
+/// the index's order each padded to a word, built in `scratch`, which
+/// is what the coordinator hashes over the index's table. Verify:
+/// chapter 05 §6.8.
+pub fn index_partition_of(
+  index: &IndexDef,
+  key_rec: &Record,
+  key_row: &[u8],
+  scratch: &mut Vec<u32>,
+) -> Result<u32, IcError> {
+  let own = index.as_table();
+  let info = own.info();
+  if info.fanout > 1 {
+    return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+  }
+  let map = match own.hash_map() {
+    Some(map) => map,
+    None => return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED)),
+  };
+  for column in &info.attributes {
+    if column.primary_key && column.is_char_type() {
+      // Its collation's transform is needed first.
+      return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+    }
+  }
+  row_codec::index_key_info_into(index, key_rec, key_row, scratch)?;
+  Ok(map.fragment_of(partition_hash(own, words_as_bytes(scratch))))
 }
 
 /// Node ids a node choice collects, kept inline up to this many: a
@@ -391,6 +427,73 @@ mod tests {
       fragments: vec![0, 1, 2, 3, 4, 5, 6, 7],
     };
     Arc::new(TableDef::new(info, Some(Arc::new(map))))
+  }
+
+  /// A unique index over the given columns of `table`, its own table
+  /// placed by an eight-fragment map, or by none.
+  fn index_over(
+    t: &Arc<TableDef>,
+    columns: &[(&str, u32, u32)],
+    with_map: bool,
+  ) -> IndexDef {
+    let mut w = PropertyWriter::new();
+    w.add_string(IC_TP_TABLE_NAME, "sys/def/1/u$unique");
+    w.add_u32(IC_TP_COLUMN_COUNT, columns.len() as u32 + 1);
+    w.add_u32(IC_TP_HASH_FUNCTION, 1);
+    let mut id: u32 = 0;
+    for (name, type_code, length) in columns {
+      w.add_string(IC_TP_COLUMN_NAME, name);
+      w.add_u32(IC_TP_COLUMN_ID, id);
+      w.add_u32(IC_TP_COLUMN_TYPE, *type_code);
+      w.add_u32(IC_TP_COLUMN_LENGTH, *length);
+      if *type_code != IC_TYPE_INT {
+        w.add_u32(IC_TP_COLUMN_PRECISION, 8 << 16);
+        w.add_u32(IC_TP_COLUMN_ARRAY_KIND, IC_ARRAY_KIND_SHORT_VARSIZE);
+      }
+      w.add_u32(IC_TP_COLUMN_IN_KEY, 1);
+      w.add_u32(IC_TP_COLUMN_END, 0);
+      id += 1;
+    }
+    w.add_string(IC_TP_COLUMN_NAME, "NDB$PK");
+    w.add_u32(IC_TP_COLUMN_ID, id);
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_INT);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 2);
+    w.add_u32(IC_TP_COLUMN_END, 0);
+    let info = parse_table_info(w.words()).expect("parsed");
+    let mut map: Option<Arc<HashMapProps>> = None;
+    if with_map {
+      map = Some(Arc::new(HashMapProps {
+        name: "index map".to_string(),
+        object_id: 2,
+        version: 1,
+        fragments: vec![7, 6, 5, 4, 3, 2, 1, 0],
+      }));
+    }
+    IndexDef::new(info, Arc::clone(t), map)
+  }
+
+  #[test]
+  fn a_unique_key_is_placed_by_the_index_table() {
+    let t = table(true, true, 0);
+    let rec = Record::default_for(&t, None).expect("record");
+    let row = row_of(&rec, 0x0102_0304, b"xy");
+    let mut scratch: Vec<u32> = Vec::new();
+    // The index's key is c and a, in that order, not the table's.
+    let index =
+      index_over(&t, &[("c", IC_TYPE_INT, 1), ("a", IC_TYPE_INT, 1)], true);
+    let placed =
+      index_partition_of(&index, &rec, &row, &mut scratch).expect("placed");
+    let at_c = rec.field(2).expect("c").offset() as usize;
+    let mut key: Vec<u8> = row[at_c..at_c + 4].to_vec();
+    key.extend_from_slice(&0x0102_0304u32.to_le_bytes());
+    let map = index.as_table().hash_map().expect("map");
+    let want = map.fragment_of(partition_hash(index.as_table(), &key));
+    assert_eq!(placed, want);
+    // A character column waits for collations; no map, no placement.
+    let by_name = index_over(&t, &[("b", IC_TYPE_VARCHAR, 8)], true);
+    assert!(index_partition_of(&by_name, &rec, &row, &mut scratch).is_err());
+    let unmapped = index_over(&t, &[("a", IC_TYPE_INT, 1)], false);
+    assert!(index_partition_of(&unmapped, &rec, &row, &mut scratch).is_err());
   }
 
   fn row_of(rec: &Record, a: u32, b: &[u8]) -> Vec<u8> {

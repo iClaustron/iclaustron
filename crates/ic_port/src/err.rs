@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7153;
+pub const IC_LAST_ERROR: i32 = 7155;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -350,6 +350,13 @@ pub const IC_ERROR_NO_SUCH_COLLATION: i32 = 7152;
 /// in another table that the client looks after, would be left behind.
 /// Refused until blobs are supported.
 pub const IC_ERROR_DELETE_WITH_BLOBS: i32 = 7153;
+/// The index is not online: still being built, being dropped, or
+/// broken. A lookup through it would find nothing.
+pub const IC_ERROR_INDEX_NOT_ONLINE: i32 = 7154;
+/// An update through a unique index with an indexed column among the
+/// values: the row is found by those columns, which such an update
+/// cannot change. Update by primary key to change them.
+pub const IC_ERROR_INDEXED_COLUMN_UPDATE: i32 = 7155;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -826,6 +833,10 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_NO_SUCH_COLLATION => "No such collation or character set",
     IC_ERROR_DELETE_WITH_BLOBS => {
       "Deleting rows of a table with BLOB or TEXT columns is not supported yet"
+    }
+    IC_ERROR_INDEX_NOT_ONLINE => "The index is not online",
+    IC_ERROR_INDEXED_COLUMN_UPDATE => {
+      "An update through an index cannot change the indexed columns"
     }
     _ => "Unknown error code",
   }

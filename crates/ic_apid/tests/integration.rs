@@ -52,6 +52,7 @@ use ic_apid::collation_client::Collation;
 use ic_apid::dict_cache::IndexDef;
 use ic_apid::dict_cache::TableDef;
 use ic_apid::key_op;
+use ic_apid::query::AbortOption;
 use ic_apid::query::QueryId;
 use ic_apid::query::QueryState;
 use ic_apid::query::ReadKeyArgs;
@@ -60,6 +61,7 @@ use ic_apid::query::TransId;
 use ic_apid::query::WriteKeyArgs;
 use ic_apid::query::WriteKind;
 use ic_apid::record::Record;
+use ic_apid::row_codec::IC_NDB_ERROR_NULL_KEY;
 use ic_apid::text_row;
 use ic_apid::transaction::CommitState;
 use ic_apid::transaction::TransactionHint;
@@ -883,6 +885,610 @@ fn uk_read_update_delete_through_the_index() {
     IC_IT_DB
   ));
   assert_eq!(seen, Some("1\t100\t5".to_string()));
+}
+
+/// The `uk2` table, made afresh, with three rows: its unique keys are
+/// two columns in an order other than the table's, a nullable column, a
+/// CHAR column and a VARCHAR column.
+fn setup_uk2() -> Option<()> {
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.uk2;
+     CREATE TABLE {db}.uk2 (
+       id INT NOT NULL PRIMARY KEY,
+       a INT NOT NULL,
+       b INT NOT NULL,
+       n INT,
+       c CHAR(8) NOT NULL,
+       v VARCHAR(20) NOT NULL,
+       val INT,
+       UNIQUE KEY uk2_ba (b, a),
+       UNIQUE KEY uk2_n (n),
+       UNIQUE KEY uk2_c (c),
+       UNIQUE KEY uk2_v (v)
+     ) ENGINE=NDB;
+     INSERT INTO {db}.uk2 VALUES
+       (1, 10, 100, NULL, 'one', 'uno', 1),
+       (2, 20, 200, 0, 'two', 'dos', 2),
+       (3, 30, 300, 3, 'three', 'tres', 3);",
+    db = IC_IT_DB
+  );
+  mysql(&sql)?;
+  Some(())
+}
+
+/// Read through a unique index, as a committed read, the row whose
+/// indexed columns have the values given; `None` if there is none.
+fn read_through(
+  conn: &mut ApidConnection,
+  t: &Table,
+  index: &Arc<IndexDef>,
+  values: &[(&str, &str)],
+) -> Result<Option<Vec<u8>>, IcError> {
+  let columns: Vec<&str> = values.iter().map(|(column, _)| *column).collect();
+  let key_rec = record_over(t, &columns);
+  let mut key = vec![0; key_rec.row_size() as usize];
+  for (column, value) in values {
+    put_into(t, &key_rec, &mut key, column, value);
+  }
+  let mut out = t.row();
+  let found = key_op::read_unique_committed(
+    conn, index, &key_rec, &key, &t.rec, &mut out,
+  )?;
+  if found {
+    return Ok(Some(out));
+  }
+  Ok(None)
+}
+
+/// Update a row of the `uk` table by its primary key, sent and not
+/// committed, so that its transaction holds the row's exclusive lock.
+fn hold_row(
+  conn: &mut ApidConnection,
+  t: &Table,
+  qid: QueryId,
+  id: &str,
+  code: &str,
+  val: &str,
+) -> TransId {
+  let mut row = t.row();
+  t.put(&mut row, "id", id);
+  t.put(&mut row, "code", code);
+  t.put(&mut row, "val", val);
+  let tid = start_for(conn, t, &row);
+  let query = conn.query_mut(qid).expect("the query");
+  query.key_row_mut().copy_from_slice(&row);
+  query.attr_row_mut().copy_from_slice(&row);
+  let update = WriteKeyArgs {
+    kind: WriteKind::Update,
+    ..WriteKeyArgs::default()
+  };
+  conn
+    .write_key(qid, tid, &update)
+    .expect("define the update");
+  complete(conn, qid);
+  tid
+}
+
+#[test]
+fn uk_keys_of_several_columns_null_and_characters() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_uk2().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk2");
+
+  // Two columns, b then a: the key is taken by name, in the index's
+  // order, whatever the record's.
+  let ba = bind_unique_index(&mut conn, "uk2_ba", "uk2");
+  let row = read_through(&mut conn, &t, &ba, &[("a", "20"), ("b", "200")])
+    .expect("read through uk2_ba")
+    .expect("row 2");
+  assert_eq!(t.get(&row, "id"), "2");
+  let swapped = read_through(&mut conn, &t, &ba, &[("a", "200"), ("b", "20")])
+    .expect("read through uk2_ba");
+  assert!(swapped.is_none(), "swapped values name no row");
+
+  // NULL is refused before anything is sent: a row with NULL there is
+  // not in the index, and the bytes under the NULL could name row 2.
+  let n = bind_unique_index(&mut conn, "uk2_n", "uk2");
+  let key_rec = record_over(&t, &["n"]);
+  let mut key = vec![0; key_rec.row_size() as usize];
+  key_rec.set_null(&mut key, 0, true).expect("set NULL");
+  let mut out = t.row();
+  let e = key_op::read_unique_committed(
+    &mut conn, &n, &key_rec, &key, &t.rec, &mut out,
+  )
+  .expect_err("a NULL key is refused");
+  assert_eq!(e.code, IC_NDB_ERROR_NULL_KEY);
+  let row = read_through(&mut conn, &t, &n, &[("n", "0")])
+    .expect("read through uk2_n")
+    .expect("row 2");
+  assert_eq!(t.get(&row, "id"), "2");
+
+  // CHAR and VARCHAR keys are found, and placed in turn until the
+  // collations are known (chapter 06 §8.6).
+  let c = bind_unique_index(&mut conn, "uk2_c", "uk2");
+  let row = read_through(&mut conn, &t, &c, &[("c", "three")])
+    .expect("read through uk2_c")
+    .expect("row 3");
+  assert_eq!(t.get(&row, "id"), "3");
+  let v = bind_unique_index(&mut conn, "uk2_v", "uk2");
+  let row = read_through(&mut conn, &t, &v, &[("v", "uno")])
+    .expect("read through uk2_v")
+    .expect("row 1");
+  assert_eq!(t.get(&row, "id"), "1");
+  let key_rec = record_over(&t, &["v"]);
+  let mut key = vec![0; key_rec.row_size() as usize];
+  put_into(&t, &key_rec, &mut key, "v", "uno");
+  assert_eq!(
+    conn.hint_for_unique_key(&v, &key_rec, &key),
+    TransactionHint::Any
+  );
+}
+
+#[test]
+fn uk_duplicates_are_refused_with_893_naming_the_index() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() || setup_uk2().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+
+  // By primary key: an insert whose code another row has.
+  let t = bind(&mut conn, "uk");
+  let index = bind_uk_index(&mut conn);
+  mysql(&format!("INSERT INTO {}.uk VALUES (1, 100, 1)", IC_IT_DB));
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let mut row = t.row();
+  t.put(&mut row, "id", "2");
+  t.put(&mut row, "code", "100");
+  t.put(&mut row, "val", "2");
+  let tid = start_for(&mut conn, &t, &row);
+  let query = conn.query_mut(qid).expect("the query");
+  query.key_row_mut().copy_from_slice(&row);
+  query.attr_row_mut().copy_from_slice(&row);
+  let insert = WriteKeyArgs {
+    kind: WriteKind::Insert,
+    ..WriteKeyArgs::default()
+  };
+  conn
+    .write_key(qid, tid, &insert)
+    .expect("define the insert");
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+  let query = conn.query(qid).expect("the query");
+  assert_eq!(query.error().map(|e| e.code), Some(893));
+  assert_eq!(query.error_data(), index.index_id(), "names uk_code");
+  let trans = conn.transaction(tid).expect("the transaction");
+  assert_eq!(trans.error_data(), index.index_id());
+  conn.close_transaction(tid).expect("close");
+
+  // Through one index, giving another index's column a taken value.
+  let t2 = bind(&mut conn, "uk2");
+  let ba = bind_unique_index(&mut conn, "uk2_ba", "uk2");
+  let n = bind_unique_index(&mut conn, "uk2_n", "uk2");
+  let key_rec = record_over(&t2, &["b", "a"]);
+  let val_rec = record_over(&t2, &["n"]);
+  let uq = conn
+    .create_unique_query(&ba, &key_rec, &val_rec)
+    .expect("a unique query");
+  let mut key = vec![0; key_rec.row_size() as usize];
+  put_into(&t2, &key_rec, &mut key, "b", "300");
+  put_into(&t2, &key_rec, &mut key, "a", "30");
+  let mut vals = vec![0; val_rec.row_size() as usize];
+  put_into(&t2, &val_rec, &mut vals, "n", "0");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t2.def))
+    .expect("a transaction");
+  let query = conn.query_mut(uq).expect("the query");
+  query.key_row_mut().copy_from_slice(&key);
+  query.attr_row_mut().copy_from_slice(&vals);
+  let update = WriteKeyArgs {
+    kind: WriteKind::Update,
+    ..WriteKeyArgs::default()
+  };
+  conn.write_key(uq, tid, &update).expect("define the update");
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+  let query = conn.query(uq).expect("the query");
+  assert_eq!(query.error().map(|e| e.code), Some(893));
+  assert_eq!(query.error_data(), n.index_id(), "names uk2_n");
+  conn.close_transaction(tid).expect("close");
+}
+
+#[test]
+fn uk_refusals_before_sending() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk");
+  let index = bind_uk_index(&mut conn);
+  let key_rec = record_over(&t, &["code"]);
+
+  // An update through the index cannot change the indexed column.
+  let with_code = record_over(&t, &["code", "val"]);
+  let uq = conn
+    .create_unique_query(&index, &key_rec, &with_code)
+    .expect("a unique query");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  for (kind, code) in [
+    (WriteKind::Update, err::IC_ERROR_INDEXED_COLUMN_UPDATE),
+    (WriteKind::Insert, err::IC_ERROR_NOT_SUPPORTED),
+    (WriteKind::Write, err::IC_ERROR_NOT_SUPPORTED),
+  ] {
+    let args = WriteKeyArgs {
+      kind,
+      ..WriteKeyArgs::default()
+    };
+    let e = conn.write_key(uq, tid, &args).expect_err("refused");
+    assert_eq!(e.code, code, "{:?}", kind);
+  }
+  conn.rollback_transaction(tid).expect("ask to roll back");
+  assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+  conn.close_transaction(tid).expect("close");
+}
+
+#[test]
+fn uk_index_reads_wait_for_a_conflicting_lock() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk");
+  let index = bind_uk_index(&mut conn);
+  mysql(&format!("INSERT INTO {}.uk VALUES (1, 100, 1)", IC_IT_DB));
+  let hq = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let key_rec = record_over(&t, &["code"]);
+  let rq = conn
+    .create_unique_query(&index, &key_rec, &t.rec)
+    .expect("a unique query");
+  let mut key = vec![0; key_rec.row_size() as usize];
+  put_into(&t, &key_rec, &mut key, "code", "100");
+
+  // A locked and an exclusive read wait for the update's lock, and see
+  // what it committed.
+  for (kind, val) in [(ReadKind::Locked, "2"), (ReadKind::Exclusive, "3")] {
+    let holder = hold_row(&mut conn, &t, hq, "1", "100", val);
+    let tid = conn
+      .start_transaction(TransactionHint::Any, Some(&t.def))
+      .expect("a transaction");
+    conn
+      .query_mut(rq)
+      .expect("the query")
+      .key_row_mut()
+      .copy_from_slice(&key);
+    let args = ReadKeyArgs {
+      kind,
+      ..ReadKeyArgs::default()
+    };
+    conn.read_key(rq, tid, &args).expect("define the read");
+    let start = time::gethrtime();
+    while time::millis_elapsed(start, time::gethrtime()) < 500 {
+      let _ = conn.flush(50, true);
+    }
+    let state = conn.query(rq).expect("the query").state();
+    assert_eq!(state, QueryState::Sent, "{:?} waits for the lock", kind);
+    conn.commit_transaction(holder).expect("commit the holder");
+    assert_eq!(finish(&mut conn, holder), CommitState::Committed);
+    conn.close_transaction(holder).expect("close");
+    conn.commit_transaction(tid).expect("commit the reader");
+    assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+    let query = conn.query(rq).expect("the query");
+    assert!(query.error().is_none(), "{:?}: {:?}", kind, query.error());
+    assert_eq!(t.get(query.attr_row(), "val"), val, "{:?}", kind);
+    conn.close_transaction(tid).expect("close");
+  }
+
+  // A no-wait read is refused at once rather than waiting.
+  let holder = hold_row(&mut conn, &t, hq, "1", "100", "4");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  conn
+    .query_mut(rq)
+    .expect("the query")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  let args = ReadKeyArgs {
+    kind: ReadKind::ExclusiveNoWait,
+    ..ReadKeyArgs::default()
+  };
+  conn.read_key(rq, tid, &args).expect("define the read");
+  let start = time::gethrtime();
+  complete(&mut conn, rq);
+  let waited = time::millis_elapsed(start, time::gethrtime());
+  let error = conn.query(rq).expect("the query").error();
+  assert_eq!(error.map(|e| e.code), Some(635), "refused as locked");
+  assert!(waited < 1_000, "refused after {} ms", waited);
+  conn
+    .rollback_transaction(tid)
+    .expect("roll the reader back");
+  let _ = finish(&mut conn, tid);
+  conn.close_transaction(tid).expect("close");
+  conn
+    .rollback_transaction(holder)
+    .expect("roll the holder back");
+  assert_eq!(finish(&mut conn, holder), CommitState::RolledBack);
+  conn.close_transaction(holder).expect("close");
+}
+
+#[test]
+fn uk_with_pk_in_one_transaction_and_500_in_a_batch() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk");
+  let index = bind_uk_index(&mut conn);
+  let mut values: Vec<String> = Vec::new();
+  for i in 1..=500 {
+    values.push(format!("({}, {}, {})", i, 1000 + i, i));
+  }
+  mysql(&format!(
+    "INSERT INTO {}.uk VALUES {}",
+    IC_IT_DB,
+    values.join(", ")
+  ));
+  let key_rec = record_over(&t, &["code"]);
+
+  // An update by primary key and a read through the index, together.
+  let pq = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let mut row = t.row();
+  t.put(&mut row, "id", "1");
+  t.put(&mut row, "code", "1001");
+  t.put(&mut row, "val", "7");
+  let tid = start_for(&mut conn, &t, &row);
+  let query = conn.query_mut(pq).expect("the query");
+  query.key_row_mut().copy_from_slice(&row);
+  query.attr_row_mut().copy_from_slice(&row);
+  let update = WriteKeyArgs {
+    kind: WriteKind::Update,
+    ..WriteKeyArgs::default()
+  };
+  conn.write_key(pq, tid, &update).expect("define the update");
+  let uq = conn
+    .create_unique_query(&index, &key_rec, &t.rec)
+    .expect("a unique query");
+  let mut key = vec![0; key_rec.row_size() as usize];
+  put_into(&t, &key_rec, &mut key, "code", "1002");
+  conn
+    .query_mut(uq)
+    .expect("the query")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  let locked = ReadKeyArgs {
+    kind: ReadKind::Locked,
+    ..ReadKeyArgs::default()
+  };
+  conn.read_key(uq, tid, &locked).expect("define the read");
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  assert_eq!(t.get(conn.query(uq).expect("q").attr_row(), "id"), "2");
+  conn.close_transaction(tid).expect("close");
+  let seen = mysql(&format!("SELECT val FROM {}.uk WHERE id = 1", IC_IT_DB));
+  assert_eq!(seen, Some("7".to_string()));
+
+  // Five hundred committed reads through the index, sent together.
+  let mut queries: Vec<QueryId> = Vec::new();
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  let committed = ReadKeyArgs {
+    kind: ReadKind::Committed,
+    ..ReadKeyArgs::default()
+  };
+  for i in 1..=500 {
+    let q = conn
+      .create_unique_query(&index, &key_rec, &t.rec)
+      .expect("a unique query");
+    put_into(&t, &key_rec, &mut key, "code", &(1000 + i).to_string());
+    conn
+      .query_mut(q)
+      .expect("the query")
+      .key_row_mut()
+      .copy_from_slice(&key);
+    conn.read_key(q, tid, &committed).expect("define the read");
+    queries.push(q);
+  }
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::Committed);
+  for (i, q) in queries.iter().enumerate() {
+    let query = conn.query(*q).expect("the query");
+    assert!(
+      query.error().is_none(),
+      "read {}: {:?}",
+      i + 1,
+      query.error()
+    );
+    assert_eq!(t.get(query.attr_row(), "id"), (i + 1).to_string());
+  }
+  conn.close_transaction(tid).expect("close");
+  for q in queries {
+    conn.free_query(q).expect("free");
+  }
+}
+
+#[test]
+fn uk_a_missing_key_with_abort_on_error_rolls_back_with_626() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk");
+  let index = bind_uk_index(&mut conn);
+  mysql(&format!("INSERT INTO {}.uk VALUES (1, 100, 1)", IC_IT_DB));
+
+  // An update of row 1, then a read through the index of a code no
+  // row has, which aborts the whole transaction.
+  let pq = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let mut row = t.row();
+  t.put(&mut row, "id", "1");
+  t.put(&mut row, "code", "100");
+  t.put(&mut row, "val", "9");
+  let tid = start_for(&mut conn, &t, &row);
+  let query = conn.query_mut(pq).expect("the query");
+  query.key_row_mut().copy_from_slice(&row);
+  query.attr_row_mut().copy_from_slice(&row);
+  let update = WriteKeyArgs {
+    kind: WriteKind::Update,
+    ..WriteKeyArgs::default()
+  };
+  conn.write_key(pq, tid, &update).expect("define the update");
+  let key_rec = record_over(&t, &["code"]);
+  let uq = conn
+    .create_unique_query(&index, &key_rec, &t.rec)
+    .expect("a unique query");
+  let mut key = vec![0; key_rec.row_size() as usize];
+  put_into(&t, &key_rec, &mut key, "code", "999");
+  conn
+    .query_mut(uq)
+    .expect("the query")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  let args = ReadKeyArgs {
+    kind: ReadKind::Locked,
+    abort_option: AbortOption::AbortOnError,
+    ..ReadKeyArgs::default()
+  };
+  conn.read_key(uq, tid, &args).expect("define the read");
+  conn.commit_transaction(tid).expect("ask to commit");
+  assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+  let query = conn.query(uq).expect("the query");
+  assert_eq!(query.error().map(|e| e.code), Some(626));
+  conn.close_transaction(tid).expect("close");
+  let seen = mysql(&format!("SELECT val FROM {}.uk WHERE id = 1", IC_IT_DB));
+  assert_eq!(seen, Some("1".to_string()), "the update went with it");
+}
+
+#[test]
+fn uk_an_index_made_again_while_bound_is_fetched_again() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk");
+  let old = bind_uk_index(&mut conn);
+  mysql(&format!("INSERT INTO {}.uk VALUES (1, 100, 1)", IC_IT_DB));
+  let row = read_through(&mut conn, &t, &old, &[("code", "100")])
+    .expect("read through the index")
+    .expect("row 1");
+  assert_eq!(t.get(&row, "id"), "1");
+
+  mysql(&format!(
+    "ALTER TABLE {db}.uk DROP INDEX uk_code;
+     ALTER TABLE {db}.uk ADD UNIQUE KEY uk_code (code);",
+    db = IC_IT_DB
+  ));
+  // The index bound before is gone: a read through it, with records
+  // over the table it was bound for, is refused by the coordinator, and
+  // it is let go of, by the dictionary's notice or by the refusal.
+  let e = read_through(&mut conn, &t, &old, &[("code", "100")])
+    .expect_err("the old index is refused");
+  assert!(e.code == 241 || e.code == 284, "refused with {}", e.code);
+  assert!(!old.is_valid(), "the old index is let go of");
+  let t = bind(&mut conn, "uk");
+  let new = bind_uk_index(&mut conn);
+  assert_ne!(
+    (new.index_id(), new.index_version()),
+    (old.index_id(), old.index_version())
+  );
+  let row = read_through(&mut conn, &t, &new, &[("code", "100")])
+    .expect("read through the new index")
+    .expect("row 1");
+  assert_eq!(t.get(&row, "id"), "1");
+}
+
+#[test]
+fn uk_transactions_start_where_the_index_row_is() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "uk");
+  let index = bind_uk_index(&mut conn);
+  let mut values: Vec<String> = Vec::new();
+  for i in 1..=20 {
+    values.push(format!("({}, {}, {})", i, 100 + i, i));
+  }
+  mysql(&format!(
+    "INSERT INTO {}.uk VALUES {}",
+    IC_IT_DB,
+    values.join(", ")
+  ));
+  let key_rec = record_over(&t, &["code"]);
+  // A record over the index's own table, whose key is the code, to
+  // read back where the data nodes put each index row.
+  let own = index.as_table();
+  let code_in_own = own.field_id("code").expect("code in the index");
+  let own_rec = Record::default_for(own, Some(&[code_in_own]))
+    .expect("a record over the index's table");
+  for i in 1..=20 {
+    let code = (100 + i).to_string();
+    let mut key = vec![0; key_rec.row_size() as usize];
+    put_into(&t, &key_rec, &mut key, "code", &code);
+    let partition = match conn.hint_for_unique_key(&index, &key_rec, &key) {
+      TransactionHint::Partition(partition) => partition,
+      other => panic!("code {} not placed: {:?}", code, other),
+    };
+    let mut own_key = vec![0; own_rec.row_size() as usize];
+    text_row::put_value(&own_rec, 0, &code, &mut own_key)
+      .expect("put the code");
+    let found = key_op::read_partition(&mut conn, &own_rec, &own_key)
+      .expect("read the index row's partition");
+    assert_eq!(found, Some(partition), "code {}", code);
+    let tid = conn
+      .start_transaction(TransactionHint::Partition(partition), Some(own))
+      .expect("a transaction");
+    let node = conn.transaction(tid).expect("the transaction").node_id();
+    assert!(
+      own
+        .info()
+        .nodes_of_fragment(partition)
+        .contains(&(node as u16)),
+      "code {}: node {} does not hold partition {}",
+      code,
+      node,
+      partition
+    );
+    conn.rollback_transaction(tid).expect("ask to roll back");
+    assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+    conn.close_transaction(tid).expect("close");
+  }
 }
 
 // ---- types ----

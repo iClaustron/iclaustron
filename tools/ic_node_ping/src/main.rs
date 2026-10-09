@@ -217,10 +217,14 @@ fn alloc_and_release(conn: &mut ApidConnection, node_id: u32) {
   let own_ref = conn.block_ref();
   // Our own name for the record. It comes back first in every answer.
   let our_ptr: u32 = 1000 + node_id;
+  // Sent again to free the record, which the coordinator frees only for
+  // the id it was allocated with.
+  let release_id = conn.next_release_id();
   let allocate = CoordAllocReq {
     client_ptr: our_ptr,
     client_block_ref: own_ref,
     instance: IC_ANY_COORD_INSTANCE,
+    release_id,
   };
   let header = SignalHeader::new(
     numbers::IC_SIG_COORD_ALLOC_REQ,
@@ -270,6 +274,7 @@ fn alloc_and_release(conn: &mut ApidConnection, node_id: u32) {
     coord_ptr: conf.coord_ptr,
     client_block_ref: own_ref,
     client_ptr: our_ptr,
+    release_id,
   };
   let header = SignalHeader::new(
     numbers::IC_SIG_COORD_FREE_REQ,

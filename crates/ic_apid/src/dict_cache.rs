@@ -201,7 +201,10 @@ impl TableDef {
 /// An index's description, for one version of its table, which it
 /// holds.
 pub struct IndexDef {
-  info: TableProps,
+  /// The index's own table, as the data nodes keep it: its key is the
+  /// indexed columns in the index's order, and its own replicas and
+  /// hash map place its rows.
+  own: Arc<TableDef>,
   table: Arc<TableDef>,
   valid: AtomicBool,
 }
@@ -211,8 +214,8 @@ impl std::fmt::Debug for IndexDef {
     write!(
       f,
       "IndexDef({}, id {}, for table {} version {:#x}{})",
-      self.info.name,
-      self.info.table_id,
+      self.own.name(),
+      self.own.table_id(),
       self.table.table_id(),
       self.table.table_version(),
       if self.is_valid() { "" } else { ", invalid" }
@@ -222,10 +225,14 @@ impl std::fmt::Debug for IndexDef {
 
 impl IndexDef {
   /// An index over one version of its table, as the dictionary
-  /// described it.
-  pub(crate) fn new(info: TableProps, table: Arc<TableDef>) -> IndexDef {
+  /// described it, with the hash map that places its own rows.
+  pub(crate) fn new(
+    info: TableProps,
+    table: Arc<TableDef>,
+    hash_map: Option<Arc<HashMapProps>>,
+  ) -> IndexDef {
     IndexDef {
-      info,
+      own: Arc::new(TableDef::new(info, hash_map)),
       table,
       valid: AtomicBool::new(true),
     }
@@ -234,22 +241,29 @@ impl IndexDef {
   /// Everything the dictionary said about the index, which it describes
   /// as a table of its own.
   pub fn info(&self) -> &TableProps {
-    &self.info
+    self.own.info()
+  }
+
+  /// The index's own table, which a transaction whose first operation
+  /// goes through the index is placed by (see
+  /// [`ApidConnection::hint_for_unique_key`]).
+  pub fn as_table(&self) -> &Arc<TableDef> {
+    &self.own
   }
 
   /// The internal name, `sys/def/<table id>/<index>`.
   pub fn name(&self) -> &str {
-    &self.info.name
+    self.own.name()
   }
 
   /// The index's own id.
   pub fn index_id(&self) -> u32 {
-    self.info.table_id
+    self.own.table_id()
   }
 
   /// The index's own version.
   pub fn index_version(&self) -> u32 {
-    self.info.table_version
+    self.own.table_version()
   }
 
   /// The table it indexes, at the version it was bound for, whether or
@@ -270,12 +284,12 @@ impl IndexDef {
 
   /// A unique hash index, which a key operation can go through.
   pub fn is_unique(&self) -> bool {
-    self.info.table_kind == table_props::IC_OBJECT_KIND_UNIQUE_INDEX
+    self.info().table_kind == table_props::IC_OBJECT_KIND_UNIQUE_INDEX
   }
 
   /// An ordered index, for range scans.
   pub fn is_ordered(&self) -> bool {
-    self.info.table_kind == table_props::IC_OBJECT_KIND_ORDERED_INDEX
+    self.info().table_kind == table_props::IC_OBJECT_KIND_ORDERED_INDEX
   }
 
   /// False once the cache has let go of this object.
@@ -589,18 +603,26 @@ fn fetch_table(
   name: &str,
 ) -> Result<TableDef, IcError> {
   let info = dict_client::get_table_named(conn, name)?;
-  let mut hash_map: Option<Arc<HashMapProps>> = None;
-  if info.hash_map_id != table_props::IC_NULL_PTR {
-    let id = info.hash_map_id;
-    hash_map = match cache.hash_map(id, info.hash_map_version) {
-      Some(map) => Some(map),
-      None => {
-        let map = dict_client::get_hash_map(conn, id)?;
-        Some(cache.add_hash_map(map))
-      }
-    };
-  }
+  let hash_map = hash_map_of(cache, conn, &info)?;
   Ok(TableDef::new(info, hash_map))
+}
+
+/// The hash map a table or index is placed by, from the cache or the
+/// dictionary, if it has one.
+fn hash_map_of(
+  cache: &DictCache,
+  conn: &mut ApidConnection,
+  info: &TableProps,
+) -> Result<Option<Arc<HashMapProps>>, IcError> {
+  if info.hash_map_id == table_props::IC_NULL_PTR {
+    return Ok(None);
+  }
+  let id = info.hash_map_id;
+  if let Some(map) = cache.hash_map(id, info.hash_map_version) {
+    return Ok(Some(map));
+  }
+  let map = dict_client::get_hash_map(conn, id)?;
+  Ok(Some(cache.add_hash_map(map)))
 }
 
 /// Bind an index of a table already bound: by its current name, or by
@@ -650,7 +672,7 @@ fn bind_index_named(
         return Err(IcError::new(err::IC_ERROR_NO_SUCH_TABLE))
       }
       Lookup::Fetch => {
-        let def = match fetch_index(conn, name, table) {
+        let def = match fetch_index(cache, conn, name, table) {
           Ok(def) => Arc::new(def),
           Err(e) => {
             cache.fetch_failed(name);
@@ -670,6 +692,7 @@ fn bind_index_named(
 }
 
 fn fetch_index(
+  cache: &DictCache,
   conn: &mut ApidConnection,
   name: &str,
   table: &Arc<TableDef>,
@@ -680,7 +703,23 @@ fn fetch_index(
   if !is_index || info.base_table_id != table.table_id() {
     return Err(IcError::new(err::IC_ERROR_NO_SUCH_TABLE));
   }
-  Ok(IndexDef::new(info, Arc::clone(table)))
+  index_is_online(&info)?;
+  // The index's own replicas and hash map, which it inherits from its
+  // table or has of its own, place a transaction that goes through it.
+  let hash_map = hash_map_of(cache, conn, &info)?;
+  Ok(IndexDef::new(info, Arc::clone(table), hash_map))
+}
+
+/// Refuse an index that is not online. The coordinator does not check,
+/// and a lookup through an index still being built finds nothing. A
+/// description that does not say, the field left at all ones, is taken
+/// as online, as the reference takes every index.
+fn index_is_online(info: &TableProps) -> Result<(), IcError> {
+  let state = info.index_state;
+  if state != !0 && state != table_props::IC_INDEX_STATE_ONLINE {
+    return Err(IcError::new(err::IC_ERROR_INDEX_NOT_ONLINE));
+  }
+  Ok(())
 }
 
 #[cfg(test)]
@@ -709,6 +748,21 @@ mod tests {
     let def = Arc::new(def);
     assert!(cache.fetched(&name, Entry::Table(Arc::clone(&def))));
     def
+  }
+
+  #[test]
+  fn only_an_online_index_is_used() {
+    let mut info = test_info();
+    assert!(index_is_online(&info).is_ok(), "a state not given");
+    info.index_state = table_props::IC_INDEX_STATE_ONLINE;
+    assert!(index_is_online(&info).is_ok());
+    for building_or_dropping in [1, 2, 3, 9] {
+      info.index_state = building_or_dropping;
+      assert_eq!(
+        index_is_online(&info).expect_err("refused").code,
+        err::IC_ERROR_INDEX_NOT_ONLINE
+      );
+    }
   }
 
   #[test]
@@ -799,7 +853,7 @@ mod tests {
     info.table_id = id;
     info.table_version = 1;
     info.table_kind = table_props::IC_OBJECT_KIND_UNIQUE_INDEX;
-    IndexDef::new(info, Arc::clone(table))
+    IndexDef::new(info, Arc::clone(table), None)
   }
 
   fn put_index(cache: &DictCache, def: IndexDef) -> Arc<IndexDef> {

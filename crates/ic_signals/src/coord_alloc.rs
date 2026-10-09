@@ -15,19 +15,28 @@
 //! number, so the replies are also the first to be routed to a user
 //! thread rather than executed where they arrive.
 //!
+//! **A release id** (RonDB 26.10): the allocate request carries a
+//! random number we pick, never zero, and the free request carries it
+//! again. The coordinator frees a record only for its own id, so a
+//! free that comes late, or twice, cannot free the record after the
+//! coordinator has handed it to another transaction: a free with
+//! another id is ignored while a transaction uses the record and
+//! refused otherwise, and one for a record already freed is refused. A
+//! coordinator without release ids reads the first three words only.
+//!
 //! All six are plain words with no sections. Verify: chapter 05 §17.10.
 
 use ic_port::err;
 use ic_port::IcError;
 
 /// Words in a `COORD_ALLOC_REQ`.
-pub const IC_COORD_ALLOC_REQ_LEN: usize = 3;
+pub const IC_COORD_ALLOC_REQ_LEN: usize = 4;
 /// Words in a `COORD_ALLOC_CONF`.
 pub const IC_COORD_ALLOC_CONF_LEN: usize = 3;
 /// Words in a `COORD_ALLOC_REF`.
 pub const IC_COORD_ALLOC_REF_LEN: usize = 2;
 /// Words in a `COORD_FREE_REQ`.
-pub const IC_COORD_FREE_REQ_LEN: usize = 3;
+pub const IC_COORD_FREE_REQ_LEN: usize = 4;
 /// Words in a `COORD_FREE_CONF`.
 pub const IC_COORD_FREE_CONF_LEN: usize = 1;
 /// Words in a `COORD_FREE_REF`. The third is where in the data node's
@@ -50,12 +59,20 @@ pub struct CoordAllocReq {
   pub client_block_ref: u32,
   /// Which coordinator instance we want, or [`IC_ANY_COORD_INSTANCE`].
   pub instance: u32,
+  /// The record's release id: random, never zero, sent again to free
+  /// it.
+  pub release_id: u32,
 }
 
 impl CoordAllocReq {
   /// The words of signal data this carries.
   pub fn encode(&self) -> [u32; IC_COORD_ALLOC_REQ_LEN] {
-    [self.client_ptr, self.client_block_ref, self.instance]
+    [
+      self.client_ptr,
+      self.client_block_ref,
+      self.instance,
+      self.release_id,
+    ]
   }
 }
 
@@ -122,12 +139,19 @@ pub struct CoordFreeReq {
   pub client_block_ref: u32,
   /// Our own name for the record, which comes back in the answer.
   pub client_ptr: u32,
+  /// The release id the record was allocated with.
+  pub release_id: u32,
 }
 
 impl CoordFreeReq {
   /// The words of signal data this carries.
   pub fn encode(&self) -> [u32; IC_COORD_FREE_REQ_LEN] {
-    [self.coord_ptr, self.client_block_ref, self.client_ptr]
+    [
+      self.coord_ptr,
+      self.client_block_ref,
+      self.client_ptr,
+      self.release_id,
+    ]
   }
 }
 
@@ -185,8 +209,9 @@ mod tests {
       client_ptr: 7,
       client_block_ref: block_ref,
       instance: IC_ANY_COORD_INSTANCE,
+      release_id: 0x5EED,
     };
-    assert_eq!(request.encode(), [7, block_ref, 0]);
+    assert_eq!(request.encode(), [7, block_ref, 0, 0x5EED]);
   }
 
   #[test]
@@ -197,8 +222,9 @@ mod tests {
       coord_ptr: 4711,
       client_block_ref: 0x8000_00C0,
       client_ptr: 7,
+      release_id: 0x5EED,
     };
-    assert_eq!(request.encode(), [4711, 0x8000_00C0, 7]);
+    assert_eq!(request.encode(), [4711, 0x8000_00C0, 7, 0x5EED]);
   }
 
   #[test]

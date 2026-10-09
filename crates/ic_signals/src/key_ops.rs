@@ -82,6 +82,7 @@ const IC_KEY_OP_EXECUTE_SHIFT: u32 = 10;
 const IC_KEY_OP_START_SHIFT: u32 = 11;
 const IC_KEY_OP_ABORT_SHIFT: u32 = 12;
 const IC_KEY_OP_ABORT_MASK: u32 = 3;
+const IC_KEY_OP_COMMITTED_BASE_SHIFT: u32 = 20;
 const IC_KEY_OP_NO_WAIT_SHIFT: u32 = 21;
 const IC_KEY_OP_BATCH_SAFE_SHIFT: u32 = 22;
 const IC_KEY_OP_BATCH_UNSAFE_SHIFT: u32 = 23;
@@ -108,6 +109,11 @@ pub struct KeyOpFlags {
   pub no_disk: bool,
   /// One of `IC_ABORT_ON_ERROR` or `IC_IGNORE_ERROR`.
   pub abort_option: u32,
+  /// A read through a unique index that wants the committed row: lets
+  /// the index read and the row read go to a backup replica of a
+  /// read-backup table, or to any node of a fully replicated one. The
+  /// shared lock is still held to commit. Verify: chapter 05 §6.8.
+  pub committed_base: bool,
   /// RonDB: fail rather than wait for a lock another transaction holds.
   pub no_wait: bool,
   /// RonDB: the operation does not depend on earlier ones in its batch.
@@ -129,6 +135,7 @@ impl KeyOpFlags {
     info |= (self.execute as u32) << IC_KEY_OP_EXECUTE_SHIFT;
     info |= (self.start as u32) << IC_KEY_OP_START_SHIFT;
     info |= (self.abort_option & IC_KEY_OP_ABORT_MASK) << IC_KEY_OP_ABORT_SHIFT;
+    info |= (self.committed_base as u32) << IC_KEY_OP_COMMITTED_BASE_SHIFT;
     info |= (self.no_wait as u32) << IC_KEY_OP_NO_WAIT_SHIFT;
     info |= (self.batch_safe as u32) << IC_KEY_OP_BATCH_SAFE_SHIFT;
     info |= (self.batch_unsafe as u32) << IC_KEY_OP_BATCH_UNSAFE_SHIFT;
@@ -729,6 +736,16 @@ mod tests {
       ..KeyOpFlags::default()
     };
     assert_eq!(flags.flags_word(), (1 << 21) | (1 << 22));
+  }
+
+  #[test]
+  fn a_committed_index_read_sets_bit_20() {
+    let flags = KeyOpFlags {
+      operation: IC_OP_READ,
+      committed_base: true,
+      ..KeyOpFlags::default()
+    };
+    assert_eq!(flags.flags_word(), 1 << 20);
   }
 
   #[test]

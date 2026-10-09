@@ -63,7 +63,6 @@ use crate::query::ReadKind;
 use crate::query::TransId;
 use crate::record::Record;
 use crate::row_codec;
-use crate::transaction::TransactionHint;
 
 /// How long a key operation waits for its outcome.
 pub const IC_KEY_OP_WAIT_MS: u32 = 10_000;
@@ -187,19 +186,24 @@ pub fn read_unique_committed(
     return Err(IcError::new(err::IC_ERROR_RECORD_LAYOUT));
   }
   let qid = conn.create_unique_query(index, key_rec, attr_rec)?;
-  let result = unique_read(conn, qid, &key_row[..key_len], attr_row);
+  let key_row = &key_row[..key_len];
+  let result = unique_read(conn, index, key_rec, qid, key_row, attr_row);
   let _ = conn.free_query(qid);
   result
 }
 
-/// The transaction of one committed read, waited for.
+/// The transaction of one committed read, waited for, at a node that
+/// holds the index's row for the key.
 fn unique_read(
   conn: &mut ApidConnection,
+  index: &IndexDef,
+  key_rec: &Record,
   qid: QueryId,
   key_row: &[u8],
   attr_row: &mut [u8],
 ) -> Result<bool, IcError> {
-  let tid = conn.start_transaction(TransactionHint::Any, None)?;
+  let hint = conn.hint_for_unique_key(index, key_rec, key_row);
+  let tid = conn.start_transaction(hint, Some(index.as_table()))?;
   if let Some(query) = conn.query_mut(qid) {
     query.key_row_mut().copy_from_slice(key_row);
   }

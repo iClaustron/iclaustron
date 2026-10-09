@@ -114,6 +114,12 @@ pub const IC_NDB_ERROR_TAKEOVER_ABORT: i32 = 4031;
 pub const IC_NDB_ERROR_TAKEOVER_READ_LOST: i32 = 4115;
 /// NDB's error for a simple or dirty read whose reading node failed.
 pub const IC_NDB_ERROR_READ_NODE_FAILURE: i32 = 4119;
+/// NDB's error for an operation on a table or index whose version has
+/// changed since it was bound.
+pub const IC_NDB_ERROR_SCHEMA_CHANGED: i32 = 241;
+/// NDB's error for an operation on a table or index the coordinator
+/// does not know, such as one dropped since it was bound.
+pub const IC_NDB_ERROR_UNKNOWN_TABLE: i32 = 284;
 /// NDB's error for a transaction whose replies never came while its
 /// link stayed up: the data node did not answer in time, and the
 /// outcome is unknown (chapter 06 §6.3).
@@ -170,6 +176,8 @@ pub struct Transaction {
   /// has not gone yet.
   end_wanted: Option<CommitState>,
   error: Option<IcError>,
+  /// What the coordinator's abort said beyond its error code, or zero.
+  error_data: u32,
   gci: u64,
   /// True while it is on the connection's list for the next send.
   pub(crate) queued_for_send: bool,
@@ -214,6 +222,14 @@ impl Transaction {
     self.error
   }
 
+  /// What the coordinator said about the error that rolled it back,
+  /// beyond its code, or zero: for 893, a duplicate key, the id of the
+  /// unique index whose value was taken. Its queries that failed with
+  /// the error carry it too.
+  pub fn error_data(&self) -> u32 {
+    self.error_data
+  }
+
   /// The global checkpoint a commit went into.
   pub fn gci(&self) -> u64 {
     self.gci
@@ -249,6 +265,23 @@ impl Transaction {
       && self.last_sent != 0
       && now.saturating_sub(self.last_sent) >= limit
   }
+}
+
+/// True if `rec` holds a column the unique index is over: one of the
+/// key columns of the index's own table, found in the record's table by
+/// name.
+fn holds_indexed_column(index: &IndexDef, rec: &Record) -> bool {
+  for column in &index.info().attributes {
+    if !column.primary_key {
+      continue;
+    }
+    if let Ok(field_id) = rec.table().field_id(&column.name) {
+      if rec.position_of(field_id).is_some() {
+        return true;
+      }
+    }
+  }
+  false
 }
 
 /// The record of a query's transaction id and the transaction's, for
@@ -340,9 +373,33 @@ impl ApidConnection {
     }
   }
 
+  /// A hint for a transaction whose first operation goes through a
+  /// unique index: the partition of the index's own table that the key
+  /// is in, to be given to [`start_transaction`](Self::start_transaction)
+  /// with `index.as_table()`, as the coordinator places the index read
+  /// there. Any node when it cannot be worked out, such as for an index
+  /// over a character column until collations are supported. The key
+  /// is built in the connection's scratch buffer, so this allocates
+  /// nothing.
+  pub fn hint_for_unique_key(
+    &mut self,
+    index: &IndexDef,
+    key_rec: &Record,
+    key_row: &[u8],
+  ) -> TransactionHint {
+    let mut scratch = std::mem::take(&mut self.key_scratch);
+    let placed =
+      hash::index_partition_of(index, key_rec, key_row, &mut scratch);
+    self.key_scratch = scratch;
+    match placed {
+      Ok(partition) => TransactionHint::Partition(partition),
+      Err(_) => TransactionHint::Any,
+    }
+  }
+
   /// Start a transaction at the node the hint chooses
   /// (`ic_apid_conn_start_transaction`). A partition hint needs the
-  /// table it is over.
+  /// table it is over: for a unique key's hint, the index's own table.
   pub fn start_transaction(
     &mut self,
     hint: TransactionHint,
@@ -367,6 +424,7 @@ impl ApidConnection {
       ops_completed: 0,
       end_wanted: None,
       error: None,
+      error_data: 0,
       gci: 0,
       queued_for_send: false,
       last_sent: 0,
@@ -474,6 +532,9 @@ impl ApidConnection {
       },
       simple: (args.kind == ReadKind::Simple || committed) && !through_index,
       dirty: committed && !through_index,
+      // Through an index, a committed read asks for the committed row
+      // this way instead, which a backup replica may serve.
+      committed_base: committed && through_index,
       abort_option,
       no_wait: args.kind == ReadKind::ExclusiveNoWait,
       ..KeyOpFlags::default()
@@ -567,6 +628,14 @@ impl ApidConnection {
           || flags.operation == key_ops::IC_OP_WRITE;
         if inserts {
           return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
+        }
+        // The row is found by the indexed columns, so an update through
+        // the index cannot change them; the reference takes them from
+        // the key row whatever the values say (chapter 06 §6.5, Q12).
+        if flags.operation == key_ops::IC_OP_UPDATE
+          && holds_indexed_column(index, query.attr_record())
+        {
+          return Err(IcError::new(err::IC_ERROR_INDEXED_COLUMN_UPDATE));
         }
         (
           numbers::IC_SIG_UNIQUE_OP_REQ,
@@ -1080,7 +1149,27 @@ impl ApidConnection {
     if !ok {
       return false;
     }
-    self.fail_query(qid, IcError::new(refusal.error_code as i32));
+    // A table or index found out of date is let go of, so that the
+    // next bind fetches it afresh; the query's index if it has one,
+    // since a unique request names the index's own version.
+    let code = refusal.error_code as i32;
+    if code == IC_NDB_ERROR_SCHEMA_CHANGED || code == IC_NDB_ERROR_UNKNOWN_TABLE
+    {
+      let bound = self.queries.get(qid.0).map(|query| {
+        (std::sync::Arc::clone(query.table()), query.index().cloned())
+      });
+      match bound {
+        Some((_, Some(index))) => self.index_changed(&index),
+        Some((table, None)) => self.table_changed(&table),
+        None => {}
+      }
+    }
+    // What the refusal says beyond its code, kept with it; failing the
+    // query then completes it as any other failure does.
+    if let Some(query) = self.queries.get_mut(qid.0) {
+      query.refuse(IcError::new(refusal.error_code as i32), refusal.error_data);
+    }
+    self.finish_query(qid);
     true
   }
 
@@ -1097,6 +1186,11 @@ impl ApidConnection {
       Some(tid) => tid,
       None => return false,
     };
+    // An operation sent to abort on error is refused this way, so the
+    // error data comes here, not with a refusal.
+    if let Some(trans) = self.transactions.get_mut(tid.0) {
+      trans.error_data = rep.error_data;
+    }
     let error = IcError::new(rep.error_code as i32);
     self.end_transaction(tid, CommitState::RolledBack, Some(error), 0);
     true
@@ -1304,13 +1398,18 @@ impl ApidConnection {
 
   /// Fail a query, whether sent or only defined.
   fn fail_query(&mut self, qid: QueryId, error: IcError) {
+    self.fail_query_with(qid, error, 0);
+  }
+
+  /// As `fail_query`, with what the data node said beyond the code.
+  fn fail_query_with(&mut self, qid: QueryId, error: IcError, data: u32) {
     if let Some(query) = self.queries.get_mut(qid.0) {
       if query.state() == QueryState::Completed
         || query.state() == QueryState::Idle
       {
         return;
       }
-      query.fail(error);
+      query.refuse(error, data);
     }
     self.finish_query(qid);
   }
@@ -1382,7 +1481,7 @@ impl ApidConnection {
     gci: u64,
   ) {
     let mut defined: Vec<QueryId> = Vec::new();
-    let sent: Vec<QueryId> = match self.transactions.get_mut(tid.0) {
+    let (sent, error_data) = match self.transactions.get_mut(tid.0) {
       Some(trans) => {
         if trans.ended() {
           return;
@@ -1391,12 +1490,12 @@ impl ApidConnection {
         trans.end_wanted = None;
         trans.error = error;
         trans.gci = gci;
+        let mut sent: Vec<QueryId> = Vec::new();
         if ended == CommitState::RolledBack {
           defined = trans.defined.clone();
-          trans.sent.clone()
-        } else {
-          Vec::new()
+          sent = trans.sent.clone();
         }
+        (sent, trans.error_data)
       }
       None => return,
     };
@@ -1411,10 +1510,10 @@ impl ApidConnection {
       self.unstage_query(*qid);
     }
     for qid in sent {
-      self.fail_query(qid, why);
+      self.fail_query_with(qid, why, error_data);
     }
     for qid in defined {
-      self.fail_query(qid, why);
+      self.fail_query_with(qid, why, error_data);
     }
     self.release_if_done(tid);
   }
@@ -1654,6 +1753,7 @@ mod tests {
       ops_completed: 0,
       end_wanted: None,
       error: None,
+      error_data: 0,
       gci: 0,
       queued_for_send: false,
       last_sent: 0,
@@ -1679,6 +1779,7 @@ mod tests {
       ops_completed: 1,
       end_wanted: None,
       error: None,
+      error_data: 0,
       gci: 0,
       queued_for_send: false,
       last_sent,

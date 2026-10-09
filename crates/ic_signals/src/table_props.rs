@@ -89,6 +89,9 @@ pub const IC_TP_BASE_TABLE_NAME: u16 = 19;
 pub const IC_TP_BASE_TABLE_ID: u16 = 20;
 /// For an index, whether it is online.
 pub const IC_TP_INDEX_STATE: u16 = 21;
+/// The index state of an index that can be used: built, and not being
+/// dropped. Verify: chapter 05 §17.8.
+pub const IC_INDEX_STATE_ONLINE: u32 = 4;
 /// The MySQL server's own description of the table, in its older form.
 pub const IC_TP_LEGACY_FRM: u16 = 27;
 /// Whether the table lives only in memory, without being restored.

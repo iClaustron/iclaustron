@@ -50,6 +50,11 @@ pub const IC_COL_READ_EVERY: u32 = 0xFFF0;
 pub const IC_COL_READ_MASKED: u32 = 0xFFF3;
 /// Pseudo column: the partition the row is in, as one word.
 pub const IC_COL_PARTITION: u32 = 0xFFFE;
+/// NDB's error for a key column given as NULL. A row with NULL in an
+/// indexed column is not in the unique index, so a lookup by NULL can
+/// find nothing; whatever bytes lie under the NULL would find a row by
+/// chance. Verify: chapter 05 §6.8.
+pub const IC_NDB_ERROR_NULL_KEY: i32 = 4316;
 
 /// The key section of a request: each primary key column of the key
 /// record's row, in attribute order, padded to words.
@@ -119,11 +124,15 @@ pub fn index_key_info_into(
       continue;
     }
     let attr_id = key_rec.table().field_id(&column.name)?;
-    let (attr, field) = match key_rec.position_of(attr_id) {
-      Some(position) => match field_at(key_rec, position) {
-        Some(found) => found,
-        None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
-      },
+    let position = match key_rec.position_of(attr_id) {
+      Some(position) => position,
+      None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
+    };
+    if key_rec.is_null(key_row, position) {
+      return Err(IcError::new(IC_NDB_ERROR_NULL_KEY));
+    }
+    let (attr, field) = match field_at(key_rec, position) {
+      Some(found) => found,
       None => return Err(IcError::new(err::IC_ERROR_KEY_RECORD)),
     };
     let start = field.offset() as usize;
@@ -602,7 +611,7 @@ mod tests {
     w.add_u32(IC_TP_COLUMN_LENGTH, 1);
     w.add_u32(IC_TP_COLUMN_END, 0);
     let info = parse_table_info(w.words()).expect("parsed");
-    let index = IndexDef::new(info, Arc::clone(&t));
+    let index = IndexDef::new(info, Arc::clone(&t), None);
     let rec = Record::default_for(&t, None).expect("record");
     let mut row = vec![0u8; rec.row_size() as usize];
     let at = rec.field(1).expect("name").offset() as usize;
@@ -613,6 +622,37 @@ mod tests {
     let without = Record::default_for(&t, Some(&[0])).expect("record");
     let row = vec![0u8; without.row_size() as usize];
     assert!(index_key_info(&index, &without, &row).is_err());
+  }
+
+  #[test]
+  fn a_null_in_an_indexed_column_is_refused() {
+    let t = table();
+    // A unique index over the nullable big.
+    let mut w = PropertyWriter::new();
+    w.add_string(IC_TP_TABLE_NAME, "sys/def/1/ubig$unique");
+    w.add_u32(IC_TP_COLUMN_COUNT, 2);
+    w.add_string(IC_TP_COLUMN_NAME, "big");
+    w.add_u32(IC_TP_COLUMN_ID, 0);
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_BIGINT);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 1);
+    w.add_u32(IC_TP_COLUMN_IN_KEY, 1);
+    w.add_u32(IC_TP_COLUMN_END, 0);
+    w.add_string(IC_TP_COLUMN_NAME, "NDB$PK");
+    w.add_u32(IC_TP_COLUMN_ID, 1);
+    w.add_u32(IC_TP_COLUMN_TYPE, IC_TYPE_BIGINT);
+    w.add_u32(IC_TP_COLUMN_LENGTH, 1);
+    w.add_u32(IC_TP_COLUMN_END, 0);
+    let info = parse_table_info(w.words()).expect("parsed");
+    let index = IndexDef::new(info, Arc::clone(&t), None);
+    let rec = Record::default_for(&t, None).expect("record");
+    let big = rec
+      .position_of(t.field_id("big").expect("big"))
+      .expect("in the record");
+    let mut row = vec![0u8; rec.row_size() as usize];
+    assert!(index_key_info(&index, &rec, &row).is_ok());
+    rec.set_null(&mut row, big, true).expect("set NULL");
+    let e = index_key_info(&index, &rec, &row).expect_err("refused");
+    assert_eq!(e.code, IC_NDB_ERROR_NULL_KEY);
   }
 
   #[test]

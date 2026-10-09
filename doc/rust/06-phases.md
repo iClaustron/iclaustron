@@ -691,7 +691,10 @@ once at most, and only one the coordinator confirmed: the first run
 freed the timed-out record again when the connection let go of its
 records, and the debug data node holding it stopped with error 2343
 (chapter 05 §17.10), so the group now checks that the node outlives
-the connection. One already ended
+the connection. RonDB answered the same day with release ids:
+every allocate now carries a random id per record, never zero, and the
+record's free carries it again (chapter 05 §6.1), so a stale free can no
+longer free a record the coordinator has handed on. One already ended
 that waits only for its reads' rows fails those queries alone. The
 one-shot calls of `key_op` keep their own ten-second wait. Unit tests:
 the wait from the configuration, the once-a-second pacing, and which
@@ -709,7 +712,7 @@ not a wrong answer.
 
 ### 6.5 Unique keys done properly (1.5 weeks)
 
-From reading the reference (chapter 05 §16.3), most important first:
+From reading the reference (chapter 05 §6.8), most important first:
 1. **NULL in a unique key (a bug).** A row with NULL in an indexed
    column is not in the index, so a lookup with NULL finds nothing.
    Today we send whatever bytes lie under the NULL and can find the row
@@ -755,6 +758,34 @@ From reading the reference (chapter 05 §16.3), most important first:
 
 The deferred unique check (bit 17) waits for an application that asks
 for it.
+
+As built (2026-10-09; the `uk` group and the whole suite pass), item by item:
+1. `row_codec::index_key_info_into` refuses a NULL indexed column with
+   4316 (`IC_NDB_ERROR_NULL_KEY`) before anything is packed.
+2. `IndexDef` keeps the index's own table (`as_table`), with its
+   replica data and its hash map, fetched at bind as a table's is;
+   `hash::index_partition_of` hashes the key a unique request carries
+   over that table, and `ApidConnection::hint_for_unique_key` gives the
+   partition, built in the connection's key buffer. A character column
+   gives no partition, so such a transaction goes to the next node in
+   turn. `key_op::read_unique_committed` starts where the hint says.
+3. A committed read through an index sets bit 20 (`committed_base`).
+4. `ReadKind::Simple` and `ReadKind::Committed` say what they do
+   through an index.
+5. `ApidQuery::error_data` keeps what a refusal says beyond its code,
+   and `Transaction::error_data` what an abort report does: seen live,
+   an 893 on an operation that aborts on error comes in the report.
+6. An index whose description gives a state other than online (4) is
+   refused at bind with `IC_ERROR_INDEX_NOT_ONLINE` (7154).
+7. A 241 or 284 lets go of the query's index, or its table when it has
+   none (`ApidConnection::index_changed`, `table_changed`).
+8. An update through an index whose values hold an indexed column is
+   refused with `IC_ERROR_INDEXED_COLUMN_UPDATE` (7155); an insert or
+   write through one stays refused.
+9. Chapter 05 §6.8 corrected.
+
+The group `uk` gains a table `uk2` and eight tests for the exit above.
+The dissector names bit 20.
 
 ### 6.6 Every row size can be written (1.5 weeks)
 
