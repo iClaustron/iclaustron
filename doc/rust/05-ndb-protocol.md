@@ -632,6 +632,24 @@ against the reference:
   through its collation's transform, which needs the
   MySQL collation tables; such a key is refused for now with
   `IC_ERROR_NOT_SUPPORTED`. Verify: `src/ndbapi/Ndb.cpp:657-724`.
+- **Binary columns** (the author, 2026-10-09): `BINARY` and `VARBINARY`
+  have no character set. A `VARBINARY` goes into the hash as it is
+  stored, its length byte or bytes and then its bytes, nothing
+  stripped, padded with zeros at the end to a whole number of words: a
+  value `abcd` behind one length byte is five bytes and three zeros. A
+  `BINARY` goes in as its whole field, padded with zeros likewise to a
+  whole number of words: a `BINARY(3)` is its three bytes and one zero.
+  That buffer is what XXH3, with seed 0, or MD5 for an older table,
+  hashes. They compare byte by
+  byte, as `memcmp` does: two `BINARY` values over their whole fields,
+  two `VARBINARY` values over their bytes up to the shorter one's
+  length, the length bytes left out, and if those are equal the longer
+  value is the larger. That is the order an ordered index scan's merge
+  needs for them (chapter 06 §8.7). Seen live (2026-10-09, the `pk`
+  group's binary-key test): our partition was the data nodes' for
+  `VARBINARY` keys of every length from 0 to 20, trailing spaces kept,
+  for keys of 250 to 300 bytes behind two length bytes, and for
+  `BINARY(5)` keys.
 - Which word places the key: word 1, the second word of the MD5
   digest or the high half of XXH3, exactly as step 2 says. Verify:
   `src/ndbapi/Ndb.cpp:570-574, 736-740`; `src/common/util/rondb_hash.cpp:52-57`.
@@ -1719,8 +1737,39 @@ Configuration parameters are named by id, with our names: 129
 - The coordinator does the same before hashing
   (`src/kernel/vm/SimulatedBlock.cpp:4794-4851`,
   `src/kernel/blocks/dbtc/DbtcMain.cpp:3330-3384`).
-- A "no pad" collation would be hashed another way
-  (`src/common/util/NdbSqlUtil.cpp:892`); no latin1 collation is one.
+- How the padding is done, for a "pad space" collation: the value's
+  sort key, and if it comes out shorter than m × the largest data
+  length, the sort key of a single space repeated after it until it is
+  that long. `src/common/util/NdbSqlUtil.cpp:847-882, 920-932`.
+- A "no pad" collation, every one of the Unicode 9.0.0 collations such
+  as utf8mb4's default utf8mb4_0900_ai_ci, is hashed another way: a
+  CHAR's trailing spaces are stripped, the collation's own hash function
+  turns the value into a 64-bit number, and that number's eight bytes,
+  in the machine's order, are the column's part of the key that is then
+  hashed. The author confirms the framing (2026-10-09): every no-pad
+  collation produces an 8-byte buffer this way, and in a key of several
+  columns it is concatenated with the other columns' buffers, so what
+  goes into XXH3 or MD5 is always a whole number of words per column.
+  The function (the author, 2026-10-09): every no-pad collation but
+  utf8mb4_0900_bin hashes with a variant of 64-bit FNV over the
+  collation's weights, starting from the offset basis
+  14695981039346656037 and multiplying by the prime 1099511628211; each
+  unit is XORed in first and the product taken after, as FNV-1a does,
+  and the unit is a whole 16-bit weight, XORed in as one number. How
+  many levels go in depends on the collation (the author); the likely
+  count is the levels the collation compares, which its description
+  gives (8.2). Within a level a weight of zero, an ignorable
+  character's, is skipped; the 0x0000 separators between levels are
+  hashed, as weights like any other (the author). utf8mb4_0900_bin
+  hashes its bytes instead (the author): trailing spaces stripped first;
+  then for each byte b, with two 64-bit numbers n1 and n2, n1 becomes n1
+  XOR (((n1 AND 63) + n2) × b + (n1 shifted left 8)), and n2 grows by
+  3; n1 starts at 0 and n2 at the seed, 0 in RonDB; n1's eight bytes
+  are the result. Still to settle before the weight hash is written
+  (Q16): the level count, to be read off the wire by comparing keys'
+  partitions against the data nodes'.
+  `src/common/util/NdbSqlUtil.cpp:886-916`.
+  No latin1 collation is one.
 - The latin1 collations and their numbers: 5 latin1_german1_ci, 8
   latin1_swedish_ci (latin1's default), 15 latin1_danish_ci, 31
   latin1_german2_ci, 47 latin1_bin, 48 latin1_general_ci, 49

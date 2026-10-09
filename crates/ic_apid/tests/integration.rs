@@ -787,6 +787,79 @@ fn pk_a_rollback_before_the_send_sends_nothing() {
   assert_eq!(seen, Some("12\t120".to_string()));
 }
 
+#[test]
+fn pk_binary_keys_are_placed_where_the_data_nodes_put_them() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  // A binary column has no character set: a VARBINARY is hashed as its
+  // length bytes and its bytes, a BINARY as its whole field padded with
+  // zeros (the author, 2026-10-09; chapter 05 §6.3).
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.vb;
+     CREATE TABLE {db}.vb (k VARBINARY(20) NOT NULL PRIMARY KEY, val INT)
+       ENGINE=NDB;
+     DROP TABLE IF EXISTS {db}.lvb;
+     CREATE TABLE {db}.lvb (k VARBINARY(300) NOT NULL PRIMARY KEY, val INT)
+       ENGINE=NDB;
+     DROP TABLE IF EXISTS {db}.fb;
+     CREATE TABLE {db}.fb (k BINARY(5) NOT NULL PRIMARY KEY, val INT)
+       ENGINE=NDB;",
+    db = IC_IT_DB
+  );
+  if mysql(&sql).is_none() {
+    return;
+  }
+  // Every length up to the column's, trailing spaces kept as bytes, a
+  // key long enough for two length bytes, and short fixed-size ones.
+  let mut short: Vec<String> = Vec::new();
+  for n in 0..=20 {
+    short.push("z".repeat(n));
+  }
+  short.push("a ".to_string());
+  short.push("a  ".to_string());
+  let mut long: Vec<String> = Vec::new();
+  for n in [250, 255, 256, 257, 299, 300] {
+    long.push("y".repeat(n));
+  }
+  let fixed: Vec<String> = ["a", "ab", "abc", "abcd", "abcde", "a b"]
+    .iter()
+    .map(|k| k.to_string())
+    .collect();
+
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  for (table, keys) in [("vb", &short), ("lvb", &long), ("fb", &fixed)] {
+    let mut values: Vec<String> = Vec::new();
+    for (i, key) in keys.iter().enumerate() {
+      values.push(format!("('{}', {})", key, i));
+    }
+    mysql(&format!(
+      "INSERT INTO {}.{} VALUES {}",
+      IC_IT_DB,
+      table,
+      values.join(", ")
+    ));
+    let t = bind(&mut conn, table);
+    for key in keys.iter() {
+      let mut row = t.row();
+      t.put(&mut row, "k", key);
+      let ours = ic_apid::hash::partition_of(&t.def, &t.rec, &row)
+        .expect("a binary key is placed");
+      let theirs = key_op::read_partition(&mut conn, &t.rec, &row)
+        .expect("read the row's partition");
+      assert_eq!(
+        theirs,
+        Some(ours),
+        "{}: a key of {} bytes",
+        table,
+        key.len()
+      );
+    }
+  }
+}
+
 // ---- uk ----
 
 #[test]
