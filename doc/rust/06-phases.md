@@ -634,6 +634,19 @@ send. The scripts are kept outside the tree (`target/rename/`).
   the rows; a write over a row whose TEXT holds parts leaves the TEXT
   readable through MySQL.
 
+As built (2026-10-09; `blob_guard` and `uk` pass): `ColumnProps::is_blob` (BLOB
+and TEXT, types 20 and 21) is the one test, which records use too;
+`TableDef::has_blob_columns` is worked out once when the table is
+bound. A delete is refused with `IC_ERROR_DELETE_WITH_BLOBS` (7153) in
+`key_op::write_key` and when a delete is defined on a transaction, by
+primary key or through a unique index, before anything is packed. The
+group `blob_guard` checks that BLOB, TEXT, JSON and GEOMETRY columns
+all read as blobs and stay out of the default record; that the three
+ways of deleting are refused and the rows, a 5000-byte TEXT among
+them, are still there; and that an insert, an update, a read, and a
+write and an update over a row whose 9000-byte TEXT is in parts leave
+the TEXT as MySQL wrote it.
+
 ### 6.3 A reply that never comes: 4012 (3 days)
 
 - Today a transaction whose reply never comes while its link stays up

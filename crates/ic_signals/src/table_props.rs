@@ -510,6 +510,14 @@ impl ColumnProps {
       || self.type_code == IC_TYPE_LONGVARCHAR
       || self.type_code == IC_TYPE_TEXT
   }
+
+  /// True for a blob column: BLOB and TEXT, as the dictionary also
+  /// describes a MySQL server's JSON and GEOMETRY columns. The row holds
+  /// a head and the first bytes; the rest is in rows of a parts table
+  /// that the client, not the data node, keeps in step.
+  pub fn is_blob(&self) -> bool {
+    self.type_code == IC_TYPE_BLOB || self.type_code == IC_TYPE_TEXT
+  }
 }
 
 /// One table, or one index, as the dictionary describes it.

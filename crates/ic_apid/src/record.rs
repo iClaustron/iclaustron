@@ -200,7 +200,7 @@ impl Record {
         Some(attr) => attr,
         None => return Err(IcError::new(err::IC_ERROR_NO_SUCH_FIELD)),
       };
-      if is_blob(attr) {
+      if attr.is_blob() {
         return Err(IcError::new(err::IC_ERROR_NOT_SUPPORTED));
       }
       for field in &fields {
@@ -259,7 +259,7 @@ impl Record {
       }
       None => {
         for attr in &table.info().attributes {
-          if !is_blob(attr) {
+          if !attr.is_blob() {
             attrs.push(attr);
           }
         }
@@ -372,11 +372,6 @@ impl Record {
     }
     Ok(())
   }
-}
-
-fn is_blob(attr: &ColumnProps) -> bool {
-  attr.type_code == table_props::IC_TYPE_BLOB
-    || attr.type_code == table_props::IC_TYPE_TEXT
 }
 
 /// Where a field of the default record may start: on a word, as the
@@ -545,6 +540,11 @@ mod tests {
       t1.field_id("nope").expect_err("none").code,
       err::IC_ERROR_NO_SUCH_FIELD
     );
+  }
+
+  #[test]
+  fn a_table_with_a_blob_column_says_so() {
+    assert!(table().has_blob_columns());
   }
 
   #[test]

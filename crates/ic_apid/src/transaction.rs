@@ -469,7 +469,9 @@ impl ApidConnection {
   /// Define a write by primary key on a transaction
   /// (`ic_apid_conn_write_key`). The query's key row holds the key and
   /// its attribute row the values; an update leaves the key columns
-  /// out, and a delete sends no values.
+  /// out, and a delete sends no values. A delete on a table with a blob
+  /// column is refused, by primary or unique key alike, with
+  /// `IC_ERROR_DELETE_WITH_BLOBS` (chapter 06 §6.2).
   pub fn write_key(
     &mut self,
     query_id: QueryId,
@@ -525,6 +527,14 @@ impl ApidConnection {
     let state = query.state();
     if state == QueryState::Defined || state == QueryState::Sent {
       return Err(IcError::new(err::IC_ERROR_TRANSACTION_ACTIVE));
+    }
+    // The blobs' parts are rows of another table that the client keeps
+    // in step; a delete of the row alone would leave them behind. A
+    // unique query's table is the base table, so this covers both.
+    if flags.operation == key_ops::IC_OP_DELETE
+      && query.table().has_blob_columns()
+    {
+      return Err(IcError::new(err::IC_ERROR_DELETE_WITH_BLOBS));
     }
     // A unique query names the index's own table and goes as a
     // UNIQUE_OP_REQ; the coordinator looks the row up through the index.

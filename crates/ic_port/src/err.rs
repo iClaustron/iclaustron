@@ -18,7 +18,7 @@ use std::fmt;
 /// First iClaustron error code.
 pub const IC_FIRST_ERROR: i32 = 7000;
 /// Last iClaustron error code.
-pub const IC_LAST_ERROR: i32 = 7152;
+pub const IC_LAST_ERROR: i32 = 7153;
 
 /// Line was too long.
 pub const IC_ERROR_LINE_TOO_LONG: i32 = 7000;
@@ -346,6 +346,10 @@ pub const IC_ERROR_TRANSACTION_ACTIVE: i32 = 7150;
 pub const IC_ERROR_TRANSACTION_ROLLED_BACK: i32 = 7151;
 /// The data node knows no such collation or character set.
 pub const IC_ERROR_NO_SUCH_COLLATION: i32 = 7152;
+/// A delete on a table with a blob column: the row's blob parts, kept
+/// in another table that the client looks after, would be left behind.
+/// Refused until blobs are supported.
+pub const IC_ERROR_DELETE_WITH_BLOBS: i32 = 7153;
 
 /// What kind of thing went wrong (`IC_ERROR_CATEGORY`), in the header's
 /// order.
@@ -820,6 +824,9 @@ pub fn message(code: i32) -> &'static str {
     IC_ERROR_TRANSACTION_ACTIVE => "The transaction or query is busy",
     IC_ERROR_TRANSACTION_ROLLED_BACK => "The transaction was rolled back",
     IC_ERROR_NO_SUCH_COLLATION => "No such collation or character set",
+    IC_ERROR_DELETE_WITH_BLOBS => {
+      "Deleting rows of a table with BLOB or TEXT columns is not supported yet"
+    }
     _ => "Unknown error code",
   }
 }

@@ -88,6 +88,8 @@ pub struct TableDef {
   /// `u32::MAX`: a column is found by index, not by a search, on paths
   /// taken for every column of every row.
   attr_index: Vec<u32>,
+  /// Whether any column is a blob, asked on every delete.
+  has_blob: bool,
 }
 
 /// The place of each column in `attributes`, by column id.
@@ -122,11 +124,13 @@ impl TableDef {
     hash_map: Option<Arc<HashMapProps>>,
   ) -> TableDef {
     let attr_index = index_attributes(&info);
+    let has_blob = info.attributes.iter().any(|attr| attr.is_blob());
     TableDef {
       info,
       hash_map,
       valid: AtomicBool::new(true),
       attr_index,
+      has_blob,
     }
   }
 
@@ -168,6 +172,13 @@ impl TableDef {
   pub fn field(&self, field_id: u32) -> Option<&ColumnProps> {
     let place = *self.attr_index.get(field_id as usize)?;
     self.info.attributes.get(place as usize)
+  }
+
+  /// True if any column is a blob (BLOB, TEXT, and a MySQL server's
+  /// JSON and GEOMETRY). Rows of such a table are not deleted until
+  /// blobs are supported: the blob's parts would be left behind.
+  pub fn has_blob_columns(&self) -> bool {
+    self.has_blob
   }
 
   /// Which fragment each key hash goes to, if the table is placed by a
@@ -698,6 +709,11 @@ mod tests {
     let def = Arc::new(def);
     assert!(cache.fetched(&name, Entry::Table(Arc::clone(&def))));
     def
+  }
+
+  #[test]
+  fn a_table_without_blob_columns_says_so() {
+    assert!(!table("x/def/x", 1, 1).has_blob_columns());
   }
 
   #[test]

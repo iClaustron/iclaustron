@@ -23,8 +23,11 @@
 //!   out over several.
 //!
 //! The groups are the phase-5 ones: `connect`, `dict`, `pk`, `uk`,
-//! `types`, `failure`, and `collation`, which asks the data nodes what
-//! a collation is and for its weights (RonDB 26.04 main and later).
+//! `types`, `failure`; `blob_guard`, which checks that rows of a table
+//! with a blob column are not deleted and that writes leave the blobs
+//! alone (chapter 06 §6.2); and `collation`, which asks the data nodes
+//! what a collation is and for its weights (RonDB 26.04 main and
+//! later).
 //! Each test is its own program against the cluster, as an application
 //! would be: it takes an API node id, binds its tables, does its work
 //! through the public API and lets go.
@@ -367,15 +370,25 @@ fn start_for(conn: &mut ApidConnection, t: &Table, key_row: &[u8]) -> TransId {
 }
 
 /// Bind the unique index the `uk` table's `UNIQUE KEY uk_code` made.
-/// A MySQL server names the unique hash index `uk_code$unique`, next
-/// to an ordered index `uk_code`; the plain name is tried second, for
-/// a table made another way.
 fn bind_uk_index(conn: &mut ApidConnection) -> Arc<IndexDef> {
-  let first = match conn.index_bind(IC_IT_DB, "uk_code$unique", "uk") {
+  bind_unique_index(conn, "uk_code", "uk")
+}
+
+/// Bind the unique index a `UNIQUE KEY name` made on `table`. A MySQL
+/// server names the unique hash index `name$unique`, next to an
+/// ordered index `name`; the plain name is tried second, for a table
+/// made another way.
+fn bind_unique_index(
+  conn: &mut ApidConnection,
+  name: &str,
+  table: &str,
+) -> Arc<IndexDef> {
+  let hash_name = format!("{}$unique", name);
+  let first = match conn.index_bind(IC_IT_DB, &hash_name, table) {
     Ok(index) => return index,
     Err(e) => e,
   };
-  match conn.index_bind(IC_IT_DB, "uk_code", "uk") {
+  match conn.index_bind(IC_IT_DB, name, table) {
     Ok(index) => index,
     Err(e) => panic!(
       "no unique index: {} ({}), then {} ({})",
@@ -1098,6 +1111,228 @@ fn row_with_val(t: &Table, row: &[u8], val: &str) -> Vec<u8> {
   t.put(&mut copy, "val", val);
   copy
 }
+
+// ---- blob_guard ----
+
+/// Make the blob tables afresh, or `None` if there is no MySQL client:
+/// `bt` with a TEXT column and a unique key, and one table for each of
+/// the other kinds of column a MySQL server keeps as a blob.
+fn setup_blob_tables() -> Option<()> {
+  let sql = format!(
+    "CREATE DATABASE IF NOT EXISTS {db};
+     DROP TABLE IF EXISTS {db}.bt;
+     CREATE TABLE {db}.bt (
+       id INT NOT NULL PRIMARY KEY,
+       code INT NOT NULL,
+       val INT,
+       txt TEXT,
+       UNIQUE KEY bt_code (code)
+     ) ENGINE=NDB;
+     DROP TABLE IF EXISTS {db}.bb;
+     CREATE TABLE {db}.bb (id INT NOT NULL PRIMARY KEY, val INT, b BLOB)
+       ENGINE=NDB;
+     DROP TABLE IF EXISTS {db}.bj;
+     CREATE TABLE {db}.bj (id INT NOT NULL PRIMARY KEY, val INT, j JSON)
+       ENGINE=NDB;
+     DROP TABLE IF EXISTS {db}.bg;
+     CREATE TABLE {db}.bg (id INT NOT NULL PRIMARY KEY, val INT, g GEOMETRY)
+       ENGINE=NDB;",
+    db = IC_IT_DB
+  );
+  mysql(&sql)?;
+  Some(())
+}
+
+/// Write a row of the `bt` table, its TEXT left out, with one
+/// operation that is its own transaction.
+fn write_bt(
+  conn: &mut ApidConnection,
+  t: &Table,
+  operation: u32,
+  id: i64,
+  code: i64,
+  val: &str,
+) -> Result<(), IcError> {
+  let mut row = t.row();
+  t.put(&mut row, "id", &id.to_string());
+  t.put(&mut row, "code", &code.to_string());
+  t.put(&mut row, "val", val);
+  key_op::write_key(conn, operation, &t.rec, &row, &t.rec, &row)
+}
+
+/// The code something was refused with.
+fn refused_with(result: Result<(), IcError>) -> i32 {
+  match result {
+    Ok(()) => panic!("it was not refused"),
+    Err(e) => e.code,
+  }
+}
+
+#[test]
+fn blob_guard_knows_every_kind_of_blob_column() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_blob_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  for (table, column) in [("bt", "txt"), ("bb", "b"), ("bj", "j"), ("bg", "g")]
+  {
+    let t = bind(&mut conn, table);
+    assert!(t.def.has_blob_columns(), "{} has a blob column", table);
+    let blob = t
+      .def
+      .field(t.def.field_id(column).expect("the blob column"))
+      .expect("the column");
+    assert!(blob.is_blob(), "{}.{} is a blob", table, column);
+    let val = t
+      .def
+      .field(t.def.field_id("val").expect("the val column"))
+      .expect("the column");
+    assert!(!val.is_blob(), "{}.val is not a blob", table);
+    assert!(
+      t.rec.position_of(blob.column_id).is_none(),
+      "the default record of {} leaves the blob out",
+      table
+    );
+  }
+}
+
+#[test]
+fn blob_guard_refuses_deletes_by_primary_and_unique_key() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_blob_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "bt");
+  mysql(&format!(
+    "INSERT INTO {db}.bt VALUES (1, 100, 1, 'short'),
+       (2, 200, 2, REPEAT('x', 5000))",
+    db = IC_IT_DB
+  ));
+
+  // One operation, its own transaction.
+  let mut key = t.row();
+  t.put(&mut key, "id", "1");
+  let done = key_op::write_key(
+    &mut conn,
+    key_ops::IC_OP_DELETE,
+    &t.rec,
+    &key,
+    &t.rec,
+    &key,
+  );
+  assert_eq!(refused_with(done), err::IC_ERROR_DELETE_WITH_BLOBS);
+
+  // By primary key in a transaction: refused when it is defined, and
+  // the transaction, with nothing sent, rolls back.
+  let delete = WriteKeyArgs {
+    kind: WriteKind::Delete,
+    ..WriteKeyArgs::default()
+  };
+  let qid = conn.create_query(&t.def, &t.rec, &t.rec).expect("a query");
+  let tid = start_for(&mut conn, &t, &key);
+  conn
+    .query_mut(qid)
+    .expect("the query")
+    .key_row_mut()
+    .copy_from_slice(&key);
+  assert_eq!(
+    refused_with(conn.write_key(qid, tid, &delete)),
+    err::IC_ERROR_DELETE_WITH_BLOBS
+  );
+  conn.rollback_transaction(tid).expect("ask to roll back");
+  assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+  conn.close_transaction(tid).expect("close");
+
+  // Through the unique index alike.
+  let index = bind_unique_index(&mut conn, "bt_code", "bt");
+  let key_rec = record_over(&t, &["code"]);
+  let val_rec = record_over(&t, &["id", "val"]);
+  let uq = conn
+    .create_unique_query(&index, &key_rec, &val_rec)
+    .expect("a unique query");
+  let mut code_key = vec![0; key_rec.row_size() as usize];
+  put_into(&t, &key_rec, &mut code_key, "code", "200");
+  let tid = conn
+    .start_transaction(TransactionHint::Any, Some(&t.def))
+    .expect("a transaction");
+  conn
+    .query_mut(uq)
+    .expect("the query")
+    .key_row_mut()
+    .copy_from_slice(&code_key);
+  assert_eq!(
+    refused_with(conn.write_key(uq, tid, &delete)),
+    err::IC_ERROR_DELETE_WITH_BLOBS
+  );
+  conn.rollback_transaction(tid).expect("ask to roll back");
+  assert_eq!(finish(&mut conn, tid), CommitState::RolledBack);
+  conn.close_transaction(tid).expect("close");
+
+  // Nothing went, and the long TEXT is whole.
+  let seen = mysql(&format!(
+    "SELECT id, LENGTH(txt) FROM {}.bt ORDER BY id",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("1\t5\n2\t5000".to_string()));
+}
+
+#[test]
+fn blob_guard_leaves_the_text_alone_on_insert_update_and_write() {
+  let cluster = match cluster() {
+    Some(cluster) => cluster,
+    None => return,
+  };
+  if setup_blob_tables().is_none() {
+    return;
+  }
+  let mut conn = cluster.global.create_connection().expect("a connection");
+  let t = bind(&mut conn, "bt");
+
+  // An insert leaves the TEXT NULL; an update and a read leave it be.
+  write_bt(&mut conn, &t, key_ops::IC_OP_INSERT, 10, 1000, "10")
+    .expect("insert");
+  write_bt(&mut conn, &t, key_ops::IC_OP_UPDATE, 10, 1000, "11")
+    .expect("update");
+  let row = read_by_id(&mut conn, &t, 10).expect("the row");
+  assert_eq!(t.get(&row, "code"), "1000");
+  assert_eq!(t.get(&row, "val"), "11");
+  let seen = mysql(&format!(
+    "SELECT id, code, val, txt IS NULL FROM {}.bt WHERE id = 10",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("10\t1000\t11\t1".to_string()));
+
+  // A row whose TEXT is long enough to be kept in parts, made by
+  // MySQL, then written over and updated by us: the TEXT stays whole.
+  mysql(&format!(
+    "INSERT INTO {}.bt VALUES (20, 2000, 20, REPEAT('abc', 3000))",
+    IC_IT_DB
+  ));
+  write_bt(&mut conn, &t, key_ops::IC_OP_WRITE, 20, 2000, "21")
+    .expect("write over it");
+  write_bt(&mut conn, &t, key_ops::IC_OP_UPDATE, 20, 2000, "22")
+    .expect("update it");
+  let seen = mysql(&format!(
+    "SELECT val, LENGTH(txt), txt = REPEAT('abc', 3000) FROM {}.bt
+       WHERE id = 20",
+    IC_IT_DB
+  ));
+  assert_eq!(seen, Some("22\t9000\t1".to_string()));
+
+  // MySQL deletes the rows, parts and all.
+  mysql(&format!("DELETE FROM {}.bt", IC_IT_DB));
+  assert!(read_by_id(&mut conn, &t, 20).is_none());
+}
+
+// ---- collation ----
 
 /// The weight string of one code point, empty if the set has none.
 fn weight(found: &Collation, code_point: u32) -> Vec<u8> {

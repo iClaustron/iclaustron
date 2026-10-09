@@ -308,6 +308,10 @@ pub fn read_partition(
 /// update, which may not change; a delete sends no values at all, and
 /// then `attr_row` is not read.
 ///
+/// A delete on a table with a blob column is refused before anything
+/// is sent, with `IC_ERROR_DELETE_WITH_BLOBS`: it would leave the
+/// blobs' parts behind (chapter 06 §6.2).
+///
 /// The NDB error comes back as it is: 626 for a row that is not there,
 /// 630 for one that already is.
 pub fn write_key(
@@ -323,6 +327,9 @@ pub fn write_key(
     && table.table_version() == attr_rec.table().table_version();
   if !same_table || !key_rec.covers_primary_key() {
     return Err(IcError::new(err::IC_ERROR_KEY_RECORD));
+  }
+  if operation == key_ops::IC_OP_DELETE && table.has_blob_columns() {
+    return Err(IcError::new(err::IC_ERROR_DELETE_WITH_BLOBS));
   }
   let key = row_codec::key_info(key_rec, key_row)?;
   let mut attr_info: Vec<u32> = Vec::new();
