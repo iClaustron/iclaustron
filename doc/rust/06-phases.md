@@ -599,6 +599,23 @@ of RonDB names is never stored here.
   group passes unchanged; a traffic capture taken before the rename
   replays byte for byte after it.
 
+The wire check, as made (2026-10-09): the same thirteen tool runs
+(`ic_desc`; inserts, an update, a write, reads, deletes and a read of a
+deleted row with `ic_write` and `ic_read`; a read through a unique
+index; a ten-row `ic_trans`) were captured from a build of `a9b9d19`,
+before the rename, and of `3464a98`, after it, and compared with the
+dissector's help, run by run and link by link. What the API sent
+matched in every run: the management session's lines, the handshake,
+and 111 signals (table descriptions, object lists, coordinator records
+taken and freed, key operations, a unique-index operation, commit
+marker frees) with their headers, data and sections, and every kind of
+heartbeat. Masked, as differing from run to run whatever the code: the
+API node id, signal ids, checksums, transaction ids, the coordinator's
+records and the instance of the receiving block. Not covered, as these
+tools do not send them: `COMMIT_REQ` and `ROLLBACK_REQ` on their own,
+the short form's `KEY_DATA_ORD` and `COLUMN_DATA_ORD`, and a fragmented
+send. The scripts are kept outside the tree (`target/rename/`).
+
 ### 6.2 Tables with BLOB columns (2 days)
 
 - BLOB, TEXT, JSON and GEOMETRY are all blob columns in the dictionary:
